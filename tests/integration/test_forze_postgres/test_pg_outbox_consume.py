@@ -15,14 +15,14 @@ from __future__ import annotations
 
 import asyncio
 import time
-from collections.abc import AsyncIterator, Sequence
+from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from contextlib import asynccontextmanager, suppress
 from datetime import timedelta
 from itertools import pairwise
 from typing import Any, Literal
 from unittest.mock import MagicMock, patch
 from urllib.parse import quote
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 from psycopg import sql
@@ -110,6 +110,48 @@ async def outbox_table(pg_client: PostgresClient) -> AsyncIterator[str]:
     await pg_client.execute(sql.SQL("DROP TABLE IF EXISTS {t}").format(t=ident))
 
 
+@pytest.fixture
+async def make_log(pg_client: PostgresClient) -> AsyncIterator[Callable[..., Awaitable[str]]]:
+    """Delivery logs as the schema page documents them: partitioned by day on publish time."""
+
+    made: list[str] = []
+
+    async def make(*, default_partition: bool) -> str:
+        table = f"outbox_log_{uuid4().hex[:8]}"
+        made.append(table)
+        ident = sql.Identifier("public", table)
+        await pg_client.execute(
+            sql.SQL(
+                """
+                CREATE TABLE {t} (
+                    id UUID NOT NULL,
+                    outbox_route TEXT NOT NULL,
+                    event_id UUID NOT NULL,
+                    tenant_id UUID,
+                    published_at TIMESTAMPTZ NOT NULL
+                ) PARTITION BY RANGE (published_at)
+                """
+            ).format(t=ident)
+        )
+        await pg_client.execute(sql.SQL("CREATE INDEX ON {t} (event_id)").format(t=ident))
+
+        if default_partition:
+            await pg_client.execute(
+                sql.SQL("CREATE TABLE {p} PARTITION OF {t} DEFAULT").format(
+                    p=sql.Identifier("public", f"{table}_default"), t=ident
+                )
+            )
+
+        return table
+
+    yield make
+
+    for table in made:
+        await pg_client.execute(
+            sql.SQL("DROP TABLE IF EXISTS {t}").format(t=sql.Identifier("public", table))
+        )
+
+
 def _runtime(
     client: PostgresClient,
     table: str,
@@ -134,14 +176,23 @@ def _runtime(
     return ExecutionRuntime(deps=registry.freeze())
 
 
-async def _stage(ctx: ExecutionContext, labels: Sequence[str]) -> None:
+async def _stage(
+    ctx: ExecutionContext,
+    labels: Sequence[str],
+    *,
+    event_id: UUID | None = None,
+    tenant_id: UUID | None = None,
+) -> None:
     """Persist each event on its own, so its ``created_at`` orders it after the last one."""
 
     store = ctx.outbox.query(_SPEC)
 
     for label in labels:
         event = IntegrationEvent(
-            event_type="demo.created", payload=_Payload(label=label), event_id=uuid4()
+            event_type="demo.created",
+            payload=_Payload(label=label),
+            event_id=event_id or uuid4(),
+            tenant_id=tenant_id,
         )
         entry = StagedOutboxEntry(outbox_route=_ROUTE, event=event, payload_json={"label": label})
         assert await store.persist_rows([entry]) == 1
@@ -154,6 +205,15 @@ async def _rows(client: PostgresClient, table: str) -> dict[str, dict[str, Any]]
         ).format(t=sql.Identifier("public", table))
     )
     return {str(row["label"]): row for row in rows}
+
+
+async def _logged(client: PostgresClient, table: str) -> list[dict[str, Any]]:
+    return await client.fetch_all(
+        sql.SQL(
+            "SELECT id, outbox_route, event_id, tenant_id, published_at FROM {t} "
+            "ORDER BY published_at"
+        ).format(t=sql.Identifier("public", table))
+    )
 
 
 def _queued(state: MockState) -> list[str]:
@@ -767,6 +827,115 @@ class TestConsumeShutdownDrain:
         assert published  # the drain did publish
         assert set(published).isdisjoint(rows)  # and everything it published was consumed
         assert completed
+
+
+# ....................... #
+
+
+@pytest.mark.integration
+class TestConsumeDeliveryLog:
+    async def test_a_log_row_commits_and_rolls_back_with_its_delete(
+        self, pg_client: PostgresClient, outbox_table: str, make_log: Any
+    ) -> None:
+        log = await make_log(default_partition=True)
+        runtime = _runtime(pg_client, outbox_table, delivery_log=("public", log))
+        tenant = uuid4()
+
+        class _PassFailed(Exception):
+            pass
+
+        async with runtime.scope():
+            ctx = runtime.get_context()
+            await _stage(ctx, ["e0"], tenant_id=tenant)
+            store = ctx.outbox.query(_SPEC)
+
+            # Published, then the pass fails before it commits.
+            with pytest.raises(_PassFailed):
+                async with store.pass_scope():
+                    [claim] = await store.claim_pending()
+                    assert await store.mark_published([claim.id]) == 1
+                    in_pass = await _logged(pg_client, log)
+                    raise _PassFailed
+
+            rolled_back = await _logged(pg_client, log)
+            pending = await _rows(pg_client, outbox_table)
+
+            before = utcnow()
+
+            async with store.pass_scope():
+                [claim] = await store.claim_pending()
+                marks = [await store.mark_published([claim.id]) for _ in range(2)]
+
+            after = utcnow()
+            [row] = await _logged(pg_client, log)
+            rows = await _rows(pg_client, outbox_table)
+
+        assert len(in_pass) == 1
+        assert rolled_back == []
+        assert pending["e0"]["status"] == "pending"
+        # Only the delete that matched a row logged it.
+        assert marks == [1, 0]
+        assert rows == {}
+        assert (row["id"], row["outbox_route"], row["event_id"], row["tenant_id"]) == (
+            claim.id,
+            _ROUTE,
+            claim.event_id,
+            tenant,
+        )
+        assert before <= row["published_at"] <= after
+
+    async def test_a_missing_partition_fails_the_pass_and_keeps_its_rows(
+        self, pg_client: PostgresClient, outbox_table: str, make_log: Any
+    ) -> None:
+        # No partition covers today, and there is no default to catch the row.
+        log = await make_log(default_partition=False)
+        runtime = _runtime(pg_client, outbox_table, delivery_log=("public", log))
+        published: list[str] = []
+
+        async def record(claim: OutboxClaim, payload: Any) -> None:
+            published.append(payload.label)
+
+        async with runtime.scope():
+            ctx = runtime.get_context()
+            await _stage(ctx, ["e0", "e1"])
+
+            with (
+                patch("forze_postgres.kernel.client.client.logger", MagicMock()),
+                pytest.raises(CoreException) as caught,
+            ):
+                await _relay(ctx, record)
+
+            rows = await _rows(pg_client, outbox_table)
+            logged = await _logged(pg_client, log)
+
+        # Postgres reports it as a check violation; the client keeps its message as the cause.
+        assert "no partition of relation" in str(caught.value.__cause__)
+        assert published == ["e0", "e1"]  # both went out before the pass failed
+        assert logged == []
+        assert {label: (row["status"], row["attempts"]) for label, row in rows.items()} == {
+            "e0": ("pending", 0),
+            "e1": ("pending", 0),
+        }
+
+    async def test_an_event_staged_again_after_delivery_is_logged_twice(
+        self, pg_client: PostgresClient, outbox_table: str, make_log: Any
+    ) -> None:
+        log = await make_log(default_partition=True)
+        runtime = _runtime(pg_client, outbox_table, delivery_log=("public", log))
+        event_id = uuid4()
+
+        async with runtime.scope():
+            ctx = runtime.get_context()
+
+            # The consumed row no longer dedups the second staging, so it publishes again.
+            for _ in range(2):
+                await _stage(ctx, ["again"], event_id=event_id)
+                assert (await _relay(ctx, _publish_ok)).published == 1
+
+            logged = await _logged(pg_client, log)
+
+        assert [row["event_id"] for row in logged] == [event_id, event_id]
+        assert logged[0]["id"] != logged[1]["id"]
 
 
 # ....................... #

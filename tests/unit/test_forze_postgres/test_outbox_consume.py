@@ -81,6 +81,16 @@ class TestPostgresOutboxConfigConsume:
         with pytest.raises(CoreException, match=field):
             PostgresOutboxConfig(relation=("public", "outbox"), **{field: value})
 
+    def test_a_delivery_log_is_refused_unless_rows_are_consumed(self) -> None:
+        # Retain never deletes a published row, so it has no statement to write the log in.
+        with pytest.raises(CoreException, match="delivery_log"):
+            PostgresOutboxConfig(relation=("public", "outbox"), delivery_log=("public", "log"))
+
+        config = PostgresOutboxConfig(
+            relation=("public", "outbox"), storage="consume", delivery_log=("public", "log")
+        )
+        assert config.delivery_log == ("public", "log")
+
     def test_the_shared_refusals_still_run(self) -> None:
         with pytest.raises(CoreException, match="max_claim_rows"):
             PostgresOutboxConfig(relation=("public", "outbox"), max_claim_rows=0)
