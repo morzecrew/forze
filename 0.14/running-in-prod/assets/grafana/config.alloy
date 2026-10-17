@@ -1,0 +1,169 @@
+// Alloy: the one component a Forze application talks to.
+//
+//   OTLP in  ->  traces to Tempo, metrics to Prometheus (remote-write)
+//   Docker stdout in  ->  JSON logs to Loki
+//
+// Nothing here is Forze-specific except two decisions, both called out below: metric name
+// suffixes are turned off, and no JSON field is promoted to a Loki label.
+
+// ----------------------- //
+// OTLP ingest
+
+otelcol.receiver.otlp "default" {
+  http {
+    endpoint = "0.0.0.0:4318"
+  }
+
+  // gRPC is left off on purpose: bootstrap_telemetry exports http/protobuf, and running
+  // only the transport you use is one less port to reason about.
+
+  output {
+    traces  = [otelcol.processor.batch.default.input]
+    metrics = [otelcol.processor.batch.default.input]
+  }
+}
+
+otelcol.processor.batch "default" {
+  // Batching is where export cost is won or lost. These are the OTel defaults; raise the
+  // timeout if your collector egress is metered, lower it if you want fresher panels.
+  timeout             = "5s"
+  send_batch_size     = 8192
+  send_batch_max_size = 16384
+
+  output {
+    traces  = [otelcol.exporter.otlp.tempo.input]
+    metrics = [otelcol.exporter.prometheus.default.input]
+  }
+}
+
+// ----------------------- //
+// Traces -> Tempo
+
+otelcol.exporter.otlp "tempo" {
+  client {
+    endpoint = "tempo:4317"
+
+    tls {
+      insecure = true // Local compose network. In a deployment, terminate TLS here.
+    }
+  }
+}
+
+// Tail sampling belongs here, not in the application: the collector is the only place that
+// has seen the whole trace before deciding. Head sampling (OTEL_TRACES_SAMPLER in the app)
+// throws spans away before anything can tell whether the trace was interesting.
+//
+// Uncomment and route traces through this instead of straight to the exporter once volume
+// justifies it — remember that Forze emits one CLIENT span per *retry attempt*, so a
+// flapping dependency multiplies span volume rather than adding to it.
+//
+// otelcol.processor.tail_sampling "default" {
+//   decision_wait = "10s"
+//
+//   policy {
+//     name = "errors"
+//     type = "status_code"
+//     status_code { status_codes = ["ERROR"] }
+//   }
+//
+//   policy {
+//     name = "slow"
+//     type = "latency"
+//     latency { threshold_ms = 500 }
+//   }
+//
+//   policy {
+//     name = "sample-the-rest"
+//     type = "probabilistic"
+//     probabilistic { sampling_percentage = 5 }
+//   }
+//
+//   output {
+//     traces = [otelcol.exporter.otlp.tempo.input]
+//   }
+// }
+
+// ----------------------- //
+// Metrics -> Prometheus
+
+otelcol.exporter.prometheus "default" {
+  // DECISION: no name mangling. With suffixes on, `forze.operation.duration` (ms) becomes
+  // `forze_operation_duration_milliseconds` and every counter grows a `_total`. Off, the
+  // Prometheus name is exactly the OTel name with dots turned into underscores — which is
+  // what the shipped dashboards and alert rules query, and what the framework's parity
+  // test checks them against. Turn this on and you must rewrite both.
+  add_metric_suffixes = false
+
+  forward_to = [prometheus.remote_write.default.receiver]
+}
+
+prometheus.remote_write "default" {
+  endpoint {
+    url = "http://prometheus:9090/api/v1/write"
+  }
+}
+
+// ----------------------- //
+// Logs -> Loki
+
+discovery.docker "containers" {
+  host = "unix:///var/run/docker.sock"
+}
+
+discovery.relabel "containers" {
+  targets = discovery.docker.containers.targets
+
+  // DECISION: labels come from container metadata only — a small, bounded set. The fields
+  // you actually query on (tenant_id, trace_id, correlation_id, principal_id) stay inside
+  // the JSON line and are read with `| json` at query time. Promoting any of them to a
+  // label multiplies Loki's stream count by their cardinality, and tenant_id in particular
+  // would put an unbounded dimension into the index.
+  rule {
+    source_labels = ["__meta_docker_container_name"]
+    regex         = "/(.*)"
+    target_label  = "container"
+  }
+
+  rule {
+    source_labels = ["__meta_docker_container_label_com_docker_compose_service"]
+    target_label  = "service"
+  }
+}
+
+loki.source.docker "containers" {
+  host       = "unix:///var/run/docker.sock"
+  targets    = discovery.relabel.containers.output
+  forward_to = [loki.process.forze.receiver]
+}
+
+loki.process "forze" {
+  // Parse just enough to correlate. `trace_id` becomes a structured-metadata field, so
+  // Grafana's derived field can jump from a log line to its trace without the index paying
+  // for it.
+  stage.json {
+    expressions = {
+      level    = "level",
+      trace_id = "trace_id",
+    }
+  }
+
+  stage.labels {
+    values = {
+      level = "",
+    }
+  }
+
+  stage.structured_metadata {
+    values = {
+      trace_id = "",
+    }
+  }
+
+  forward_to = [loki.write.default.receiver]
+}
+
+loki.write "default" {
+  endpoint {
+    url = "http://loki:3100/loki/api/v1/push"
+  }
+}
