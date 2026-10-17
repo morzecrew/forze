@@ -19,7 +19,9 @@ from forze.base.exceptions import CoreException
 from forze.base.primitives import utcnow
 from forze.base.serialization import PydanticModelCodec
 from forze_postgres.adapters.outbox import PostgresOutboxStore
+from forze_postgres.execution.deps import PostgresDepsModule
 from forze_postgres.execution.deps.configs import PostgresOutboxConfig
+from forze_postgres.kernel.client import PostgresClient
 
 # ----------------------- #
 
@@ -92,6 +94,39 @@ class TestPostgresOutboxConfigConsume:
             relation=("public", "outbox"), storage="consume", delivery_log=("public", "log")
         )
         assert config.delivery_log == ("public", "log")
+
+    @pytest.mark.parametrize(
+        ("delivery_log", "clears_the_floor"),
+        [
+            (None, True),
+            (lambda tid: (f"t_{tid.hex}", "log"), True),
+            # One table for every tenant's records, beside a per-tenant outbox.
+            (("app", "shared_log"), False),
+        ],
+    )
+    def test_a_namespace_floor_counts_the_delivery_log(
+        self, delivery_log: Any, clears_the_floor: bool
+    ) -> None:
+        def module() -> PostgresDepsModule:
+            return PostgresDepsModule(
+                client=PostgresClient(),
+                required_tenant_isolation="namespace",
+                outboxes={
+                    "events": PostgresOutboxConfig(
+                        relation=lambda tid: (f"t_{tid.hex}", "outbox"),
+                        storage="consume",
+                        delivery_log=delivery_log,
+                        tenant_aware=True,
+                    )
+                },
+            )
+
+        if clears_the_floor:
+            assert module() is not None
+
+        else:
+            with pytest.raises(CoreException, match="postgres_tenancy_validation_failed"):
+                module()
 
     def test_the_shared_refusals_still_run(self) -> None:
         with pytest.raises(CoreException, match="max_claim_rows"):
