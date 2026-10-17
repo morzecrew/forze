@@ -108,6 +108,12 @@ def _plant(stack: _Stack, digest: str, value: str) -> None:
     stack.states.inner.state.revocation_states[(STATES, "", f"k:{digest}")] = (value, FOREVER_MS)
 
 
+def _message(digest: str, body: str) -> bytes:
+    """What a state's MAC covers, as the server builds it."""
+
+    return b"\n".join((b"forze.authn.api-key-state.v1", f"k:{digest}".encode(), body.encode()))
+
+
 def _signed(
     key: bytes,
     digest: str,
@@ -120,9 +126,8 @@ def _signed(
 
     expires = "-" if expires_ms is None else str(expires_ms)
     body = f"live|{principal}|-|{expires}|{not_after_ms}"
-    message = b"\n".join((b"forze.authn.api-key-state.v1", f"k:{digest}".encode(), body.encode()))
 
-    return f"{body}|{StateMacKeys(active=key).sign(message)}"
+    return f"{body}|{StateMacKeys(active=key).sign(_message(digest, body))}"
 
 
 def _now_ms(stack: _Stack) -> int:
@@ -365,12 +370,9 @@ async def test_a_lookup_signs_under_the_active_key() -> None:
     stored = _stored(stack, _digest(key))
     assert stored is not None
     body, _, mac = stored[0].rpartition("|")
-    message = b"\n".join(
-        (b"forze.authn.api-key-state.v1", f"k:{_digest(key)}".encode(), body.encode()),
-    )
 
-    assert StateMacKeys(active=b"n" * 32).verify(message, mac)
-    assert not StateMacKeys(active=OLD_MAC).verify(message, mac)
+    assert StateMacKeys(active=b"n" * 32).verify(_message(_digest(key), body), mac)
+    assert not StateMacKeys(active=OLD_MAC).verify(_message(_digest(key), body), mac)
 
 
 async def test_a_state_whose_not_after_outlives_the_key_s_expiry_is_refused_once_it_expires() -> (
@@ -495,7 +497,8 @@ async def test_the_counters_are_exported_per_credential() -> None:
     key = (await _issue(stack, principal)).key
     token = await stack.login(principal)
 
-    for _ in range(2):
+    # One miss to warm each, then two hits.
+    for _ in range(3):
         await _verify(stack, key)
         await stack.verify(token)
 
@@ -525,8 +528,8 @@ async def test_the_counters_are_exported_per_credential() -> None:
     prefix = "forze.authn.revocation_states"
 
     assert seen == {
-        (f"{prefix}.hits", "session"): 1,
-        (f"{prefix}.hits", "api_key"): 1,
+        (f"{prefix}.hits", "session"): 2,
+        (f"{prefix}.hits", "api_key"): 2,
         (f"{prefix}.misses", "session"): 1,
         (f"{prefix}.misses", "api_key"): 1,
         (f"{prefix}.fallbacks", "session"): 1,
@@ -534,3 +537,45 @@ async def test_the_counters_are_exported_per_credential() -> None:
         (f"{prefix}.write_failures", "session"): 1,
         (f"{prefix}.write_failures", "api_key"): 0,
     }
+
+
+@pytest.mark.parametrize(
+    "value", ["livé|mac", "live|mäc", "signed but unreadable", "revoked|extra"]
+)
+async def test_a_state_that_proves_nothing_is_a_miss(value: str) -> None:
+    stack = _key_stack()
+    principal = await stack.principal()
+    key = (await _issue(stack, principal)).key
+    digest = _digest(key)
+
+    if value == "signed but unreadable":
+        # Signed under the server key, so only its fields are wrong.
+        body = f"live|not-a-uuid|-|-|{FOREVER_MS - 1}"
+        value = f"{body}|{MAC.sign(_message(digest, body))}"
+
+    _plant(stack, digest, value)
+
+    assert await _verify(stack, key) == principal
+    assert stack.reads == ["api_key.find"]
+
+
+async def test_a_fill_that_fails_admits_from_the_row() -> None:
+    stack = _key_stack()
+    principal = await stack.principal()
+    key = (await _issue(stack, principal)).key
+    stack.states.fill_down = True
+
+    with structlog.testing.capture_logs() as logs:
+        assert await _verify(stack, key) == principal
+
+    assert [entry["log_level"] for entry in logs if "fill failed" in entry["event"]] == ["warning"]
+
+
+async def test_deactivating_a_principal_with_no_active_key_writes_no_key_state() -> None:
+    stack = _key_stack()
+    principal = await stack.principal()
+
+    async with stack.ctx.tx_ctx.scope(TX):
+        await stack.ctx.authn.principal_deactivation(SPEC).deactivate(principal)
+
+    assert "revoke_api_keys" not in stack.states.calls
