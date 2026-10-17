@@ -9,6 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- ...
+
+### Changed
+
+- ...
+
+### Fixed
+
+- ...
+
+## [0.14.0] - 2026-10-17
+
+### Added
+
 - **A replica can withdraw readiness before refusing work, and drain while it still serves.** `runtime.begin_draining()` fails readiness, operations still admitted; `runtime.drain(budget, announce_delay=)` runs the phases steps put on `ctx.drain_phases`. `shutdown()` drains first if nobody did, within `drain_budget`.
 
 - **An embedded uvicorn drains the runtime on `SIGTERM` before it stops.** `forze_fastapi.serve_uvicorn(config, runtime, drain_budget=)` runs `runtime.drain()` on the first `SIGTERM` or `SIGINT`; a `SIGINT` during it forces the exit. A finite graceful timeout is set when none is, so an open stream cannot hold the exit.
@@ -2274,7 +2288,8 @@ Execution and mapping refactor, middleware-first usecases, split search/cache/do
 
 - Packaging metadata for PyOCI classifiers.
 
-[unreleased]: https://github.com/morzecrew/forze/compare/v0.13.0...HEAD
+[unreleased]: https://github.com/morzecrew/forze/compare/v0.14.0...HEAD
+[0.14.0]: https://github.com/morzecrew/forze/compare/v0.13.0...v0.14.0
 [0.13.0]: https://github.com/morzecrew/forze/compare/v0.12.0...v0.13.0
 [0.12.0]: https://github.com/morzecrew/forze/compare/v0.11.1...v0.12.0
 [0.11.1]: https://github.com/morzecrew/forze/compare/v0.11.0...v0.11.1
