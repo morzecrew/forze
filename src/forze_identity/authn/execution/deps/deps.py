@@ -137,6 +137,7 @@ def _api_key_revocation(
     return ApiKeyRevocation(
         config=config,
         states=_revocation_states(ctx, config),
+        accounts=ctx.doc.query(api_key_account_spec),
         in_transaction=lambda: ctx.tx_ctx.depth() > 0,
         defer=ctx.tx_ctx.run_or_defer,
     )
@@ -544,6 +545,7 @@ class ConfigurableTokenLifecycle:
             eligibility=_resolve_eligibility(ctx, spec),
             events=_resolve_events(ctx, spec),
             revocation=_session_revocation(ctx, self.shared),
+            key_revocation=_api_key_revocation(ctx, self.shared),
         )
 
 

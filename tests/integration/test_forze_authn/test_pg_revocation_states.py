@@ -670,3 +670,70 @@ async def test_an_api_key_is_verified_from_redis_and_a_forged_state_is_refused(
     assert (await store.read_api_key(digest)).state == REVOKED_STATE
     assert await verify(stack, issued.key) == "refused"
     assert await verify(down, issued.key) == "refused"
+
+
+@pytest.mark.parametrize("what", ["api_key", "switch"])
+@pytest.mark.parametrize("isolation", [None, IsolationLevel.SNAPSHOT], ids=["rc", "snapshot"])
+async def test_a_key_admitted_inside_the_window_cannot_mint(
+    pg_client: PostgresClient,
+    redis_client: RedisClient,
+    what: str,
+    isolation: IsolationLevel | None,
+) -> None:
+    stack, down, principals, _ = await _stacks(pg_client, redis_client)
+    principal = uuid4()
+    await insert_policy_principal_row(pg_client, table=principals, principal_id=principal)
+    identity = AuthnIdentity(principal_id=principal)
+    keys = stack.ctx.authn.api_key_lifecycle(SPEC)
+    issued = await stack.in_tx(lambda: keys.issue_api_key(identity))
+    snapshot, revoked = asyncio.Event(), asyncio.Event()
+
+    async def request() -> Any:
+        with stack.ctx.inv_ctx.bind(metadata=_invocation_metadata()):
+            # Admitted from the cached state the earlier lookup wrote.
+            await stack.ctx.authn.authn(SPEC).authenticate_with_api_key(issued.key)
+
+            async with stack.ctx.tx_ctx.scope(TX, isolation=isolation):
+                await stack.live_sessions(principal)  # takes the snapshot, when there is one
+                snapshot.set()
+                await revoked.wait()
+
+                if what == "api_key":
+                    return await keys.issue_api_key(identity)
+
+                return await stack.tokens.issue_tokens(identity, tenant_id=uuid4())
+
+    with stack.ctx.inv_ctx.bind(metadata=_invocation_metadata()):
+        await stack.ctx.authn.authn(SPEC).authenticate_with_api_key(issued.key)
+
+    async with asyncio.timeout(10):
+        minting = asyncio.create_task(request())
+        await snapshot.wait()
+
+        # Revoked from a process whose write-through fails: Redis still says live.
+        with down.ctx.inv_ctx.bind(metadata=_invocation_metadata()):
+            await down.ctx.authn.api_key_lifecycle(SPEC).revoke_api_key(
+                identity,
+                str(issued.key_id),
+            )
+
+        revoked.set()
+
+        with pytest.raises(CoreException) as caught:
+            await minting
+
+    # A fresh read refuses it; a snapshot older than the revocation fails on the row's lock.
+    if isolation is None:
+        assert caught.value.code == "api_key_revoked", caught.value
+
+    else:
+        assert caught.value.kind is ExceptionKind.CONCURRENCY, caught.value
+
+    assert await stack.live_sessions(principal) == []
+    minted = await pg_client.fetch_all(
+        sql.SQL("SELECT id FROM {table} WHERE principal_id = %s AND is_active").format(
+            table=sql.Identifier("public", principals.replace("authz_pri_", "authn_ak_"))
+        ),
+        (principal,),
+    )
+    assert minted == []

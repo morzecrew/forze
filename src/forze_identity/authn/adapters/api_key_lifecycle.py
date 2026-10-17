@@ -108,7 +108,9 @@ class ApiKeyLifecycleAdapter(ApiKeyLifecyclePort):
 
     key_revocation: ApiKeyRevocation | None = None
     """When set, every key this adapter retires (a revocation, or the presented key of a
-    rotation) has ``revoked`` written to the revocation states once the retirement commits."""
+    rotation) has ``revoked`` written to the revocation states once the retirement commits, and
+    a key issued from a request that authenticated with an API key re-reads that key's row
+    first."""
 
     # ....................... #
 
@@ -137,6 +139,10 @@ class ApiKeyLifecycleAdapter(ApiKeyLifecyclePort):
 
         await self.eligibility.require_authentication_allowed(identity.principal_id)
         await self._require_valid_actor(identity.principal_id, actor_principal_id)
+
+        # The credential before the epoch, the order every revocation takes them in.
+        if self.key_revocation is not None:
+            await self.key_revocation.recheck_caller(identity.principal_id)
 
         if self.revocation is not None:
             await self.revocation.recheck_caller(identity.principal_id)
@@ -364,8 +370,12 @@ class ApiKeyLifecycleAdapter(ApiKeyLifecyclePort):
     # ....................... #
 
     async def _revoke(self, account: ReadApiKeyAccount, *, revoked_by: str, **details: str) -> None:
-        # Already revoked answers as a revocation does, writing and emitting nothing.
+        # Already revoked answers as a revocation does, emitting nothing. Its state is written
+        # again, so a retry repairs a write-through that failed.
         if not account.is_active:
+            if self.key_revocation is not None:
+                await self.key_revocation.revoke([account])
+
             return
 
         await self.ak_cmd.update(

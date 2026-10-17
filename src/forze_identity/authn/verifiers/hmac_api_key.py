@@ -1,4 +1,3 @@
-from collections.abc import Awaitable
 from typing import Any, final
 
 import attrs
@@ -17,7 +16,13 @@ from forze_identity._secure_spec import forbid_cache_and_history
 from ..adapters._utils import find_api_key_account_by_key_hash
 from ..domain.constants import ISSUER_FORZE_API_KEY
 from ..domain.models.account import ReadApiKeyAccount
-from ..services import ApiKeyRevocation, ApiKeyService, remember_admitted_session
+from ..services import (
+    AdmittedApiKey,
+    ApiKeyRevocation,
+    ApiKeyService,
+    remember_admitted_api_key,
+)
+from ..services.revocation_states import CachedApiKey
 
 # ----------------------- #
 
@@ -56,10 +61,13 @@ class HmacApiKeyVerifier(ApiKeyVerifierPort):
     ) -> VerifiedAssertion:
         digest = self.api_key_svc.calculate_key_digest(credentials.key)
 
-        def load() -> Awaitable[ReadApiKeyAccount | None]:
-            return find_api_key_account_by_key_hash(self.ak_qry, digest)
+        account: ReadApiKeyAccount | CachedApiKey | None
 
-        account = await (load() if self.revocation is None else self.revocation.find(digest, load))
+        if self.revocation is None:
+            account = await find_api_key_account_by_key_hash(self.ak_qry, digest)
+
+        else:
+            account = await self.revocation.find(digest)
 
         if account is None or not account.is_active:
             raise exc.authentication("API key account not found")
@@ -82,8 +90,13 @@ class HmacApiKeyVerifier(ApiKeyVerifierPort):
         if account.actor_principal_id is not None:
             claims[ACT_CLAIM] = {"sub": str(account.actor_principal_id)}
 
-        # The request now authenticates with a key, not with any token verified before.
-        remember_admitted_session(None)
+        # The request now authenticates with this key, not with any token verified before; an
+        # issue that follows re-reads the key's row when its state may have answered.
+        remember_admitted_api_key(
+            AdmittedApiKey(principal_id=account.principal_id, digest=digest)
+            if self.revocation is not None
+            else None,
+        )
 
         return VerifiedAssertion(
             issuer=ISSUER_FORZE_API_KEY,

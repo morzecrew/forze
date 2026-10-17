@@ -26,6 +26,7 @@ from forze.application.contracts.authn import (
     IssuedApiKey,
 )
 from forze.application.contracts.authz import AuthzSpec
+from forze.application.execution.operations import run_operation
 from forze.base.exceptions import CoreException
 from forze.base.primitives import utcnow
 from forze_identity.authn import instrument_revocation_states
@@ -38,7 +39,15 @@ from forze_identity.authn.services import (
 )
 from forze_identity.authz.application.specs import policy_principal_spec
 from forze_identity.authz.domain.models.policy_principal import CreatePolicyPrincipalCmd
+from forze_kits.aggregates.authn import (
+    AuthnIssueApiKeyRequestDTO,
+    AuthnKernelOp,
+    build_authn_registry,
+)
+from forze_kits.aggregates.tenancy import TenancyKernelOp, build_tenancy_registry
+from forze_kits.aggregates.tenancy.dto import TenantSwitchRequestDTO
 from tests.unit.test_forze_identity.authn.test_revocation_states import (
+    NS,
     ROUTE,
     SPEC,
     STATES,
@@ -475,10 +484,18 @@ def test_a_short_mac_key_and_a_helper_without_one_are_refused() -> None:
     with pytest.raises(CoreException):
         StateMacKeys(active=b"m" * 32, previous=(b"o" * 31,))
 
+    # A str, or one bytes value where a tuple of them belongs, would fail on every verification.
+    with pytest.raises(CoreException):
+        StateMacKeys(active="m" * 32)  # type: ignore[arg-type]
+
+    with pytest.raises(CoreException):
+        StateMacKeys(active=b"m" * 32, previous=b"o" * 32)  # type: ignore[arg-type]
+
     with pytest.raises(CoreException):
         ApiKeyRevocation(
             config=RevocationStates(route=STATES, ttl=TTL),
             states=None,  # type: ignore[arg-type]
+            accounts=None,  # type: ignore[arg-type]
             in_transaction=lambda: False,
             defer=None,  # type: ignore[arg-type]
         )
@@ -579,3 +596,97 @@ async def test_deactivating_a_principal_with_no_active_key_writes_no_key_state()
         await stack.ctx.authn.principal_deactivation(SPEC).deactivate(principal)
 
     assert "revoke_api_keys" not in stack.states.calls
+
+
+# ....................... #
+
+
+async def _mint_with_key(stack: _Stack, key: ApiKeyCredentials, what: str) -> Any:
+    """One request: authenticate with *key*, then run the kit operation that mints from it."""
+
+    async def request() -> Any:
+        result = await stack.ctx.authn.authn(SPEC).authenticate_with_api_key(key)
+
+        with stack.ctx.inv_ctx.bind_identity(authn=result.identity):
+            if what == "switch":
+                return await run_operation(
+                    build_tenancy_registry(SPEC).freeze(),
+                    NS.key(TenancyKernelOp.SWITCH_TENANT),
+                    TenantSwitchRequestDTO(id=uuid4()),
+                    stack.ctx,
+                )
+
+            return await run_operation(
+                build_authn_registry(SPEC).freeze(),
+                NS.key(AuthnKernelOp.ISSUE_API_KEY),
+                AuthnIssueApiKeyRequestDTO(label="minted"),
+                stack.ctx,
+            )
+
+    return await asyncio.create_task(request())
+
+
+@pytest.mark.parametrize("what", ["api_key", "switch"])
+async def test_a_key_admitted_inside_the_window_mints_nothing(what: str) -> None:
+    stack = _key_stack()
+    principal = await stack.principal()
+    issued = await _issue(stack, principal)
+    await _verify(stack, issued.key)
+
+    stack.states.writes_down = True
+    await stack.ctx.authn.api_key_lifecycle(SPEC).revoke_api_key(
+        AuthnIdentity(principal_id=principal),
+        str(issued.key_id),
+    )
+    stack.states.writes_down = False
+
+    # The cached state still admits it, as the window allows; minting from it must not.
+    assert await _verify(stack, issued.key) == principal
+
+    with pytest.raises(CoreException) as caught:
+        await _mint_with_key(stack, issued.key, what)
+
+    assert caught.value.code == "api_key_revoked"
+
+
+@pytest.mark.parametrize("what", ["api_key", "switch"])
+async def test_a_live_key_still_mints(what: str) -> None:
+    stack = _key_stack()
+    principal = await stack.principal()
+    key = (await _issue(stack, principal)).key
+    await _verify(stack, key)
+
+    assert await _mint_with_key(stack, key, what) is not None
+
+
+async def test_a_store_clock_that_lags_cannot_keep_a_state_past_ttl() -> None:
+    stack = _key_stack()
+    principal = await stack.principal()
+    key = (await _issue(stack, principal)).key
+    digest = _digest(key)
+    stale = int(time.time() * 1000) - 2 * TTL_MS
+    _plant(stack, digest, _signed(MAC.active, digest, principal, not_after_ms=stale))
+
+    # A store whose clock reads before the not-after, as a replayed reply could.
+    stack.clock.now = (stale - 1_000) / 1000
+
+    assert await _verify(stack, key) == principal
+    assert stack.reads == ["api_key.find"]
+
+
+async def test_revoking_a_revoked_key_again_repairs_a_lost_write() -> None:
+    stack = _key_stack()
+    principal = await stack.principal()
+    issued = await _issue(stack, principal)
+    owner = AuthnIdentity(principal_id=principal)
+    lifecycle = stack.ctx.authn.api_key_lifecycle(SPEC)
+    await _verify(stack, issued.key)
+
+    stack.states.writes_down = True
+    await lifecycle.revoke_api_key(owner, str(issued.key_id))
+    stack.states.writes_down = False
+    assert (await stack.states.inner.read_api_key(_digest(issued.key))).state != REVOKED_STATE
+
+    await lifecycle.revoke_api_key(owner, str(issued.key_id))
+
+    assert (await stack.states.inner.read_api_key(_digest(issued.key))).state == REVOKED_STATE

@@ -123,11 +123,12 @@ CREATE TABLE authn_principal_epochs (
 - **`session_binding`.** `"session"` (the default) refuses a token once a refresh replaced its
   session, as without the fast path; `"family"` admits it until its own `exp` while the
   family is live. A logout, a family revocation and refresh-token reuse refuse it either way.
-- **Minting re-reads the token.** A tenant switch or an API-key issue in a request that
+- **Minting re-reads the credential.** A tenant switch or an API-key issue in a request that
   authenticated with an access token re-reads that token's session and epoch from Postgres
-  first, under locks inside a transaction, so a token admitted inside the window mints
-  nothing that outlives it; above read committed a revocation committed since the
-  transaction's snapshot fails it with a serialization error. A socket's
+  first, and one that authenticated with an API key (with `key_mac` set) re-reads the key's
+  row (`api_key_revoked`), under locks inside a transaction, so a credential admitted inside
+  the window mints nothing that outlives it; above read committed a revocation committed since
+  the transaction's snapshot fails it with a serialization error. A socket's
   commands run apart from the handshake that verified its token, and are not re-read.
 - **Redis down.** A Redis error or timeout makes the same checks from Postgres, so an outage
   never admits a credential the fast path would refuse. Tokens issued before the fast path
@@ -145,7 +146,9 @@ everything able to write the states' Redis namespace is kept from minting a key:
 - **Each live state carries a not-after**, the earlier of the key's own expiry and `ttl`
   after the lookup read Redis's clock. It is checked against Redis's clock from the same read,
   so a live state replayed over `revoked`, with no expiry of its own, stops verifying no later
-  than any other state would. The key's expiry is still checked on the application's clock.
+  than any other state would. A state the application's clock puts more than `ttl` past its
+  not-after is a miss too, so a Redis server that lies about its clock cannot stretch it
+  further. The key's expiry is still checked on the application's clock.
 - **A state that fails either check stays a miss** until it expires or is deleted: a lookup
   never overwrites a state, so a tampered key costs one row read per verification, never an
   admission. Keys nobody issued are never cached.
@@ -165,7 +168,8 @@ deactivation. A revoked credential stays admitted for at most `ttl` after that c
 Redis's clock, and only when one of these leaves a stale state in place:
 
 - **The write-through never lands.**
-  - Every one of `write_attempts` failed. It is logged at error level and counted.
+  - Every one of `write_attempts` failed. It is logged at error level and counted;
+    revoking an API key again writes its state again.
   - The process died between the commit and the write. Nothing logs it.
   - The process that revoked was not configured, for example during a rolling deploy, from
     another service, or without `key_mac` for an API key. Nothing logs it.

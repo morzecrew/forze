@@ -29,7 +29,7 @@ from forze.application.contracts.authn import (
 )
 from forze.application.contracts.document import DocumentQueryPort
 from forze.base.exceptions import CoreException, exc
-from forze.base.primitives import StrKey
+from forze.base.primitives import StrKey, utcnow
 from forze_identity._secure_spec import forbid_cache_and_history
 
 from .._logger import logger
@@ -116,7 +116,12 @@ class StateMacKeys:
     # ....................... #
 
     def __attrs_post_init__(self) -> None:
-        if any(len(key) < MIN_SECRET_BYTES for key in (self.active, *self.previous)):
+        keys = (self.active, *self.previous)
+
+        if not all(isinstance(key, bytes) for key in keys):
+            raise exc.configuration("API-key state MAC keys must be bytes")
+
+        if any(len(key) < MIN_SECRET_BYTES for key in keys):
             raise exc.configuration(
                 f"API-key state MAC keys must be at least {MIN_SECRET_BYTES} bytes",
             )
@@ -158,7 +163,16 @@ class AdmittedSession:
     epoch: int | None
 
 
-_ADMITTED: ContextVar[AdmittedSession | None] = ContextVar(
+@final
+@attrs.define(slots=True, frozen=True, kw_only=True)
+class AdmittedApiKey:
+    """The API key this request authenticated with, admitted while API-key states are on."""
+
+    principal_id: UUID
+    digest: str
+
+
+_ADMITTED: ContextVar[AdmittedSession | AdmittedApiKey | None] = ContextVar(
     "forze_identity_admitted_session",
     default=None,
 )
@@ -167,9 +181,16 @@ _ADMITTED: ContextVar[AdmittedSession | None] = ContextVar(
 def remember_admitted_session(admitted: AdmittedSession | None) -> None:
     """Record the token-backed session this request authenticated with, or forget it.
 
-    A credential verified later in the request replaces it: a password or an API key forgets it,
-    so an issue that follows re-checks only the credential the request authenticated with last.
+    A credential verified later in the request replaces it: a password forgets it, and an API
+    key replaces it with itself or forgets it, so an issue that follows re-checks only the
+    credential the request authenticated with last.
     """
+
+    _ADMITTED.set(admitted)
+
+
+def remember_admitted_api_key(admitted: AdmittedApiKey | None) -> None:
+    """Record the API key this request authenticated with, or forget the credential before it."""
 
     _ADMITTED.set(admitted)
 
@@ -544,7 +565,7 @@ class SessionRevocation:
 
         admitted = _ADMITTED.get()
 
-        if admitted is None or admitted.principal_id != principal_id:
+        if not isinstance(admitted, AdmittedSession) or admitted.principal_id != principal_id:
             return
 
         lock = self.in_transaction()
@@ -687,7 +708,8 @@ class ApiKeyRevocation:
     :attr:`RevocationStates.key_mac` over its digest and every field, and a not-after: the
     earlier of the store's time when the lookup read plus ``ttl``, and the key's own expiry. A
     state whose MAC fails, or that is past its not-after on the store's clock from the same read,
-    is a miss. ``revoked`` refuses without a read.
+    is a miss. ``revoked`` refuses without a read. An issue from a request a key authenticated
+    reads the key's row again first (:meth:`recheck_caller`).
     """
 
     config: RevocationStates
@@ -696,6 +718,9 @@ class ApiKeyRevocation:
 
     states: RevocationStatesPort
     """Cached states."""
+
+    accounts: DocumentQueryPort[ReadApiKeyAccount]
+    """API key rows, read on a miss and by :meth:`recheck_caller`."""
 
     in_transaction: Callable[[], bool]
     """Whether a transaction is open."""
@@ -708,6 +733,7 @@ class ApiKeyRevocation:
     def __attrs_post_init__(self) -> None:
         # Refused at construction rather than on the first key presented.
         _ = self._mac
+        forbid_cache_and_history(self.accounts.spec, label="API key account")
 
     @property
     def _mac(self) -> StateMacKeys:
@@ -718,18 +744,16 @@ class ApiKeyRevocation:
 
     # ....................... #
 
-    async def find(
-        self,
-        digest: str,
-        load: Callable[[], Awaitable[ReadApiKeyAccount | None]],
-    ) -> CachedApiKey | ReadApiKeyAccount | None:
-        """The key under *digest*: from its cached state, or from *load* on a miss.
+    async def _row(self, digest: str, *, lock: bool = False) -> ReadApiKeyAccount | None:
+        return await self.accounts.find(filters={"$values": {"key_hash": digest}}, for_update=lock)
 
-        ``None`` for a revoked or unknown key. On a miss, outside a transaction, what *load*
-        found is written back with ``SET NX``, so it never replaces a present state.
+    async def find(self, digest: str) -> CachedApiKey | ReadApiKeyAccount | None:
+        """The key under *digest*: from its cached state, or from its row on a miss.
+
+        ``None`` for a revoked or unknown key. On a miss, outside a transaction, the row read is
+        written back with ``SET NX``, so it never replaces a present state.
 
         :param digest: The presented key's digest.
-        :param load: Reads the key's row from the database.
         """
 
         try:
@@ -741,7 +765,7 @@ class ApiKeyRevocation:
                 "Revocation states read failed, verifying the API key from the database: %r",
                 error,
             )
-            return await load()
+            return await self._row(digest)
 
         if read.state == REVOKED_STATE:
             self.config.counters.add("hit", "api_key")
@@ -755,7 +779,7 @@ class ApiKeyRevocation:
                 return cached
 
         self.config.counters.add("miss", "api_key")
-        account = await load()
+        account = await self._row(digest)
 
         if not self.in_transaction():
             # Inside a transaction the read may predate a revocation, or be the revocation's.
@@ -778,7 +802,10 @@ class ApiKeyRevocation:
         try:
             live, principal, actor, expires, not_after = body.split("|")
 
-            if live != "live" or now_ms >= int(not_after):
+            # The store's clock decides; the application's only caps a store that lies about it.
+            local_ms = _to_ms(utcnow())
+
+            if live != "live" or max(now_ms, local_ms - self.config.ttl // _MS) >= int(not_after):
                 return None
 
             return CachedApiKey(
@@ -833,6 +860,34 @@ class ApiKeyRevocation:
 
         except Exception as error:
             logger.warning("Revocation states fill failed: %r", error)
+
+    # ....................... #
+
+    async def recheck_caller(self, principal_id: UUID) -> None:
+        """Refuse an issue for *principal_id* that this request's own API key no longer allows.
+
+        A credential minted from a key outlives the key, so it must not be minted from one
+        admitted inside the window. When this request authenticated with an API key of the same
+        subject, the key's row is read again, under a lock inside a transaction, so the read is
+        no older than a revocation that has since committed.
+
+        :raises CoreException: ``api_key_revoked``.
+        """
+
+        admitted = _ADMITTED.get()
+
+        if not isinstance(admitted, AdmittedApiKey) or admitted.principal_id != principal_id:
+            return
+
+        row = await self._row(admitted.digest, lock=self.in_transaction())
+
+        if (
+            row is None
+            or not row.is_active
+            or row.principal_id != principal_id
+            or (row.expires_at is not None and row.expires_at <= utcnow())
+        ):
+            raise exc.authentication("API key revoked", code="api_key_revoked")
 
     # ....................... #
 

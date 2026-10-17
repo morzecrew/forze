@@ -30,7 +30,12 @@ from ..domain.models.session import (
     Session,
     UpdateSessionCmd,
 )
-from ..services import AccessTokenService, RefreshTokenService, SessionRevocation
+from ..services import (
+    AccessTokenService,
+    ApiKeyRevocation,
+    RefreshTokenService,
+    SessionRevocation,
+)
 from ._utils import revoke_sessions_matching
 
 # ----------------------- #
@@ -72,6 +77,10 @@ class TokenLifecycleAdapter(TokenLifecyclePort):
     """When set, tokens carry ``fam`` and ``pep``, every issue holds the principal's epoch, and
     every revocation writes its states through after commit."""
 
+    key_revocation: ApiKeyRevocation | None = None
+    """When set, a session issued from a request that authenticated with an API key re-reads
+    that key's row first, so a key admitted from a stale cached state mints nothing."""
+
     # ....................... #
 
     def __attrs_post_init__(self) -> None:
@@ -111,6 +120,11 @@ class TokenLifecycleAdapter(TokenLifecyclePort):
             identity.principal_id,
             for_update=True,
         )
+
+        if self.key_revocation is not None:
+            # A session issued from an API key (a tenant switch) must not outlive that key; its
+            # row is taken before the epoch, the order every revocation takes them in.
+            await self.key_revocation.recheck_caller(identity.principal_id)
 
         # Held until the session commits, so a concurrent logout revokes it or raises first.
         epoch = await self._hold_epoch(identity.principal_id)
