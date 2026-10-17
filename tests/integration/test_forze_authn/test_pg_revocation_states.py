@@ -24,6 +24,8 @@ pytest.importorskip("jwt")
 pytest.importorskip("redis")
 
 from forze.application.contracts.authn import (
+    REVOKED_STATE,
+    ApiKeyCredentials,
     AuthnIdentity,
     AuthnSpec,
     IssuedTokens,
@@ -34,12 +36,19 @@ from forze.application.contracts.authn import (
 from forze.application.contracts.transaction import IsolationLevel, TransactionManagerDepKey
 from forze.application.execution import Deps, ExecutionContext
 from forze.base.exceptions import CoreException, ExceptionKind, exc
-from forze_identity.authn import AuthnDepsModule, AuthnKernelConfig, RevocationStates
+from forze_identity.authn import (
+    AuthnDepsModule,
+    AuthnKernelConfig,
+    RevocationStates,
+    StateMacKeys,
+)
+from forze_identity.authn.services import ApiKeyConfig, ApiKeyService
 from forze_postgres.execution.deps import postgres_txmanager
 from forze_postgres.execution.deps.configs import PostgresPrincipalEpochConfig
 from forze_postgres.execution.deps.factories import ConfigurablePostgresPrincipalEpoch
 from forze_postgres.kernel.client.client import PostgresClient
 from forze_redis import RedisClient, RedisConfig, RedisDepsModule, RedisRevocationStatesConfig
+from forze_redis.adapters.revocation_states import RedisRevocationStatesAdapter
 from tests.integration.test_forze_authn.test_pg_authn_integration import (
     _authn_pg_deps,
     _invocation_metadata,
@@ -52,7 +61,7 @@ from tests.support.execution_context import context_from_deps
 pytestmark = [pytest.mark.integration, pytest.mark.asyncio]
 
 ROUTE = "main"
-SPEC = AuthnSpec(name=ROUTE, enabled_methods=frozenset({"token"}))
+SPEC = AuthnSpec(name=ROUTE, enabled_methods=frozenset({"token", "api_key"}))
 STATES = "authn-revocations"
 TX = "default"
 BLOCKED_FOR = 0.3
@@ -205,7 +214,11 @@ async def _stacks(
             access_token_secret=b"k" * 32,
             refresh_token_pepper=b"p" * 32,
             api_key_pepper=b"a" * 32,
-            revocation_states=RevocationStates(route=STATES, ttl=timedelta(minutes=5)),
+            revocation_states=RevocationStates(
+                route=STATES,
+                ttl=timedelta(minutes=5),
+                key_mac=StateMacKeys(active=b"m" * 32),
+            ),
         )
         deps = (
             _authn_pg_deps(pg_client, suffix=suffix)
@@ -607,3 +620,53 @@ def _claims(issued: IssuedTokens) -> dict[str, Any]:
     import jwt
 
     return jwt.decode(issued.access.token.token, options={"verify_signature": False})
+
+
+# ....................... #
+
+
+async def test_an_api_key_is_verified_from_redis_and_a_forged_state_is_refused(
+    pg_client: PostgresClient,
+    redis_client: RedisClient,
+) -> None:
+    stack, down, principals, _ = await _stacks(pg_client, redis_client)
+    principal = uuid4()
+    await insert_policy_principal_row(pg_client, table=principals, principal_id=principal)
+    keys = stack.ctx.authn.api_key_lifecycle(SPEC)
+    issued = await stack.in_tx(lambda: keys.issue_api_key(AuthnIdentity(principal_id=principal)))
+    digest = ApiKeyService(pepper=b"a" * 32, config=ApiKeyConfig()).calculate_key_digest(
+        issued.key.key
+    )
+    suffix = principals.removeprefix("authz_pri_")
+    store = RedisRevocationStatesAdapter(client=redis_client, namespace=f"it:authn:{suffix}")
+
+    async def verify(on: _Stack, key: ApiKeyCredentials) -> UUID | str:
+        with on.ctx.inv_ctx.bind(metadata=_invocation_metadata()):
+            try:
+                result = await on.ctx.authn.authn(SPEC).authenticate_with_api_key(key)
+
+            except CoreException:
+                return "refused"
+
+        return result.identity.principal_id
+
+    assert await verify(stack, issued.key) == principal
+    cached = (await store.read_api_key(digest)).state
+    assert cached is not None and cached.startswith(f"live|{principal}|")
+    assert await verify(stack, issued.key) == principal
+    assert await verify(down, issued.key) == principal
+
+    # The state copied onto a key with no row: its MAC names another digest, so it is refused.
+    forged = ApiKeyCredentials(key=uuid4().hex)
+    forged_digest = ApiKeyService(pepper=b"a" * 32, config=ApiKeyConfig()).calculate_key_digest(
+        forged.key
+    )
+    await redis_client.set(store._api_key(forged_digest), cached)
+    assert await verify(stack, forged) == "refused"
+
+    # A revocation outside any transaction writes through once its update has committed.
+    with stack.ctx.inv_ctx.bind(metadata=_invocation_metadata()):
+        await keys.revoke_api_key(AuthnIdentity(principal_id=principal), str(issued.key_id))
+    assert (await store.read_api_key(digest)).state == REVOKED_STATE
+    assert await verify(stack, issued.key) == "refused"
+    assert await verify(down, issued.key) == "refused"

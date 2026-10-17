@@ -19,6 +19,7 @@ from ..domain.models.account import (
     UpdateApiKeyAccountCmd,
     UpdatePasswordAccountCmd,
 )
+from ..services import ApiKeyRevocation
 from ._utils import find_password_account_by_principal_id
 
 # ----------------------- #
@@ -53,6 +54,10 @@ class AuthnCredentialDeactivationHelper:
         ]
         | None
     ) = None
+
+    key_revocation: ApiKeyRevocation | None = None
+    """When set, every key deactivated has ``revoked`` written to the revocation states once the
+    deactivation commits."""
 
     # ....................... #
 
@@ -104,15 +109,18 @@ class AuthnCredentialDeactivationHelper:
             }
         )
 
+        active = [row for row in result.hits if row.is_active]
         upds = [
             KeyedUpdate(
                 id=row.id,
                 rev=row.rev,
                 dto=UpdateApiKeyAccountCmd(is_active=False),
             )
-            for row in result.hits
-            if row.is_active
+            for row in active
         ]
 
         if upds:
             await self.ak_cmd.update_many(upds, return_new=False)
+
+        if self.key_revocation is not None:
+            await self.key_revocation.revoke(active)

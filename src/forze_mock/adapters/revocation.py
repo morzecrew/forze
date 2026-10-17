@@ -23,6 +23,11 @@ from forze_mock.state import MockState
 
 # ----------------------- #
 
+_API_KEYS = ""
+"""The owner API-key states are stored under, in place of a principal id."""
+
+# ....................... #
+
 
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
@@ -44,17 +49,17 @@ class MockRevocationStates(RevocationStatesPort):
     def _now_ms(self) -> int:
         return int(self.clock() * 1000)
 
-    def _get(self, principal_id: UUID, key: str, now_ms: int) -> str | None:
-        entry = self.state.revocation_states.get((self.namespace, str(principal_id), key))
+    def _get(self, owner: str, key: str, now_ms: int) -> str | None:
+        entry = self.state.revocation_states.get((self.namespace, owner, key))
 
         if entry is None or entry[1] <= now_ms:
             return None
 
         return entry[0]
 
-    def _set(self, principal_id: UUID, key: str, value: str, expire_at_ms: int) -> None:
+    def _set(self, owner: str, key: str, value: str, expire_at_ms: int) -> None:
         states = self.state.revocation_states
-        stored = (self.namespace, str(principal_id), key)
+        stored = (self.namespace, owner, key)
         states[stored] = (value, expire_at_ms)
         # Kept in write order, so the oldest writes, the first to expire, sit at the front.
         states.move_to_end(stored)
@@ -84,8 +89,8 @@ class MockRevocationStates(RevocationStatesPort):
 
             return RevocationStatesRead(
                 now_ms=now_ms,
-                epoch=self._get(principal_id, EPOCH_STATE_KEY, now_ms),
-                state=self._get(principal_id, key, now_ms),
+                epoch=self._get(str(principal_id), EPOCH_STATE_KEY, now_ms),
+                state=self._get(str(principal_id), key, now_ms),
             )
 
     async def fill(
@@ -103,8 +108,8 @@ class MockRevocationStates(RevocationStatesPort):
                 return
 
             for key, value in states.items():
-                if self._get(principal_id, key, now_ms) is None:
-                    self._set(principal_id, key, value, expire_at_ms)
+                if self._get(str(principal_id), key, now_ms) is None:
+                    self._set(str(principal_id), key, value, expire_at_ms)
 
     async def revoke(self, principal_id: UUID, keys: Sequence[str], *, ttl: timedelta) -> None:
         with self.state.lock:
@@ -113,7 +118,7 @@ class MockRevocationStates(RevocationStatesPort):
             expire_at_ms = now_ms + ttl // timedelta(milliseconds=1)
 
             for key in keys:
-                self._set(principal_id, key, REVOKED_STATE, expire_at_ms)
+                self._set(str(principal_id), key, REVOKED_STATE, expire_at_ms)
 
     async def now_ms(self, principal_id: UUID) -> int:
         del principal_id
@@ -133,12 +138,39 @@ class MockRevocationStates(RevocationStatesPort):
             if expire_at_ms <= now_ms:
                 return
 
-            cached = self._get(principal_id, EPOCH_STATE_KEY, now_ms)
+            cached = self._get(str(principal_id), EPOCH_STATE_KEY, now_ms)
 
             if cached is not None and cached.isascii() and cached.isdigit():
                 epoch = max(epoch, int(cached))
 
-            self._set(principal_id, EPOCH_STATE_KEY, str(epoch), expire_at_ms)
+            self._set(str(principal_id), EPOCH_STATE_KEY, str(epoch), expire_at_ms)
+
+    async def read_api_key(self, digest: str) -> RevocationStatesRead:
+        with self.state.lock:
+            now_ms = self._now_ms()
+
+            return RevocationStatesRead(
+                now_ms=now_ms,
+                epoch=None,
+                state=self._get(_API_KEYS, f"k:{digest}", now_ms),
+            )
+
+    async def fill_api_key(self, digest: str, state: str, *, expire_at_ms: int) -> None:
+        with self.state.lock:
+            now_ms = self._now_ms()
+            self._sweep(now_ms)
+
+            if expire_at_ms > now_ms and self._get(_API_KEYS, f"k:{digest}", now_ms) is None:
+                self._set(_API_KEYS, f"k:{digest}", state, expire_at_ms)
+
+    async def revoke_api_keys(self, digests: Sequence[str], *, ttl: timedelta) -> None:
+        with self.state.lock:
+            now_ms = self._now_ms()
+            self._sweep(now_ms)
+            expire_at_ms = now_ms + ttl // timedelta(milliseconds=1)
+
+            for digest in digests:
+                self._set(_API_KEYS, f"k:{digest}", REVOKED_STATE, expire_at_ms)
 
 
 # ....................... #

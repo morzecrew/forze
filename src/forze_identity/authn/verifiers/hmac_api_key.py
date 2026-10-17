@@ -1,3 +1,4 @@
+from collections.abc import Awaitable
 from typing import Any, final
 
 import attrs
@@ -16,7 +17,7 @@ from forze_identity._secure_spec import forbid_cache_and_history
 from ..adapters._utils import find_api_key_account_by_key_hash
 from ..domain.constants import ISSUER_FORZE_API_KEY
 from ..domain.models.account import ReadApiKeyAccount
-from ..services import ApiKeyService, remember_admitted_session
+from ..services import ApiKeyRevocation, ApiKeyService, remember_admitted_session
 
 # ----------------------- #
 
@@ -24,13 +25,21 @@ from ..services import ApiKeyService, remember_admitted_session
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class HmacApiKeyVerifier(ApiKeyVerifierPort):
-    """Verify API key credentials against a document-backed account using HMAC-SHA256."""
+    """Verify API key credentials against a document-backed account using HMAC-SHA256.
+
+    With :attr:`revocation`, the key's state is read from the revocation states store first,
+    and the account row only on a miss. The principal's eligibility is still read after, by the
+    orchestrator, on every verification.
+    """
 
     api_key_svc: ApiKeyService
     """API key digest/verification service."""
 
     ak_qry: DocumentQueryPort[ReadApiKeyAccount]
     """Query port for API key accounts."""
+
+    revocation: ApiKeyRevocation | None = None
+    """When set, check keys from cached revocation states, reading the row only on a miss."""
 
     # ....................... #
 
@@ -46,7 +55,11 @@ class HmacApiKeyVerifier(ApiKeyVerifierPort):
         credentials: ApiKeyCredentials,
     ) -> VerifiedAssertion:
         digest = self.api_key_svc.calculate_key_digest(credentials.key)
-        account = await find_api_key_account_by_key_hash(self.ak_qry, digest)
+
+        def load() -> Awaitable[ReadApiKeyAccount | None]:
+            return find_api_key_account_by_key_hash(self.ak_qry, digest)
+
+        account = await (load() if self.revocation is None else self.revocation.find(digest, load))
 
         if account is None or not account.is_active:
             raise exc.authentication("API key account not found")

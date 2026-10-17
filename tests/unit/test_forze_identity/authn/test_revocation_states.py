@@ -45,9 +45,11 @@ from forze_identity.authn.application.specs import (
 from forze_identity.authn import ForzeJwtTokenVerifier
 from forze_identity.authn.services import (
     AccessTokenService,
+    ApiKeyConfig,
     Hs256Signer,
     PasswordConfig,
     SessionBinding,
+    StateMacKeys,
 )
 from forze_identity.authz.application.specs import policy_principal_spec
 from forze_identity.authz.domain.models.policy_principal import CreatePolicyPrincipalCmd
@@ -150,6 +152,22 @@ class _States:
         self._call("raise_epoch", write=True)
         await self.inner.raise_epoch(principal_id, epoch, expire_at_ms=expire_at_ms)
 
+    async def read_api_key(self, digest: str) -> RevocationStatesRead:
+        self._call("read_api_key", write=False)
+        return await self.inner.read_api_key(digest)
+
+    async def fill_api_key(self, digest: str, state: str, *, expire_at_ms: int) -> None:
+        self._call("fill_api_key", write=False)
+
+        if self.fill_down:
+            raise exc.infrastructure("states store unavailable")
+
+        await self.inner.fill_api_key(digest, state, expire_at_ms=expire_at_ms)
+
+    async def revoke_api_keys(self, digests: Sequence[str], *, ttl: timedelta) -> None:
+        self._call("revoke_api_keys", write=True)
+        await self.inner.revoke_api_keys(digests, ttl=ttl)
+
 
 @attrs.define(eq=False)
 class _Epochs:
@@ -183,11 +201,12 @@ class _Epochs:
 
 
 class _CountingQuery:
-    """A document query port that records its reads."""
+    """A document query port that records its reads, as ``<label>.<method>``."""
 
-    def __init__(self, inner: Any, reads: list[str]) -> None:
+    def __init__(self, inner: Any, reads: list[str], label: str = "session") -> None:
         self._inner = inner
         self._reads = reads
+        self._label = label
 
     def __getattr__(self, name: str) -> Any:
         attr = getattr(self._inner, name)
@@ -196,7 +215,7 @@ class _CountingQuery:
             return attr
 
         async def counted(*args: Any, **kwargs: Any) -> Any:
-            self._reads.append(f"session.{name}")
+            self._reads.append(f"{self._label}.{name}")
             return await attr(*args, **kwargs)
 
         return counted
@@ -302,10 +321,13 @@ def _stack(
     binding: SessionBinding = "session",
     fast_path: bool = True,
     write_attempts: int = 3,
+    key_mac: StateMacKeys | None = None,
+    clock: _Clock | None = None,
+    api_key: ApiKeyConfig | None = None,
 ) -> _Stack:
     mock = MockDepsModule()
     state = mock.state
-    clock = _Clock()
+    clock = clock or _Clock()
     reads: list[str] = []
     states = _States(inner=MockRevocationStates(state=state, namespace=STATES, clock=clock))
     document = ConfigurableMockDocument(module=mock)
@@ -313,6 +335,9 @@ def _stack(
 
     def counted_sessions(ctx: ExecutionContext, spec: Any) -> Any:
         return _CountingQuery(document(ctx, spec), reads)
+
+    def counted_keys(ctx: ExecutionContext, spec: Any) -> Any:
+        return _CountingQuery(document(ctx, spec), reads, label="api_key")
 
     def epochs(ctx: ExecutionContext) -> _Epochs:
         return epochs_by_ctx.setdefault(
@@ -331,6 +356,7 @@ def _stack(
         refresh_token_pepper=b"p" * 32,
         reset_token_pepper=b"r" * 32,
         api_key_pepper=b"a" * 32,
+        api_key=api_key or ApiKeyConfig(),
         password=PasswordConfig(time_cost=1, memory_cost=8, parallelism=1),
         revocation_states=(
             RevocationStates(
@@ -338,6 +364,7 @@ def _stack(
                 ttl=TTL,
                 write_attempts=write_attempts,
                 session_binding=binding,
+                key_mac=key_mac,
             )
             if fast_path
             else None
@@ -363,7 +390,7 @@ def _stack(
                         policy_principal_spec.name: document,
                         password_account_spec.name: document,
                         password_reset_spec.name: document,
-                        api_key_account_spec.name: document,
+                        api_key_account_spec.name: counted_keys,
                     },
                     DocumentCommandDepKey: dict.fromkeys(
                         (

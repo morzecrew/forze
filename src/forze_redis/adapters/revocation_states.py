@@ -1,7 +1,8 @@
 """Redis-backed revocation states: one script per call, on the server's clock.
 
-A principal's keys share one hash tag, so its epoch and a state are read in one script. Every
-expiry is an instant on the server's ``TIME`` or a ``PX`` relative to it, never a local clock.
+A principal's keys share one hash tag, so its epoch and a state are read in one script; an API
+key's state sits under its digest alone. Every expiry is an instant on the server's ``TIME`` or a
+``PX`` relative to it, never a local clock.
 """
 
 from forze_redis._compat import require_redis
@@ -30,6 +31,7 @@ from ..kernel.scripts import (
     REVOCATION_NOW,
     REVOCATION_RAISE_EPOCH,
     REVOCATION_READ,
+    REVOCATION_READ_ONE,
 )
 from .base import RedisBaseAdapter
 
@@ -54,6 +56,9 @@ class RedisRevocationStatesAdapter(RedisBaseAdapter, RevocationStatesPort):
 
     def _key(self, principal_id: UUID, key: str) -> str:
         return self.construct_key(_SCOPE, f"{{{principal_id}}}", key)
+
+    def _api_key(self, digest: str) -> str:
+        return self.construct_key(_SCOPE, f"k:{digest}")
 
     # ....................... #
 
@@ -124,3 +129,35 @@ class RedisRevocationStatesAdapter(RedisBaseAdapter, RevocationStatesPort):
             [self._key(principal_id, EPOCH_STATE_KEY)],
             [str(epoch), expire_at_ms],
         )
+
+    async def read_api_key(self, digest: str) -> RevocationStatesRead:
+        await self._prepare_keys()
+        raw = await self.client.run_script(REVOCATION_READ_ONE, [self._api_key(digest)], [])
+
+        try:
+            now_ms, state = raw.split("\n", 1)
+
+            return RevocationStatesRead(now_ms=int(now_ms), epoch=None, state=_present(state))
+
+        except ValueError as error:
+            raise exc.infrastructure("Unreadable revocation states reply") from error
+
+    async def fill_api_key(self, digest: str, state: str, *, expire_at_ms: int) -> None:
+        await self._prepare_keys()
+        await self.client.run_script(
+            REVOCATION_FILL,
+            [self._api_key(digest)],
+            [expire_at_ms, state],
+        )
+
+    async def revoke_api_keys(self, digests: Sequence[str], *, ttl: timedelta) -> None:
+        if not digests:
+            return
+
+        await self._prepare_keys()
+        px = ttl // timedelta(milliseconds=1)
+
+        # One round trip, and each key on its own slot: digests share no hash tag.
+        async with self.client.pipeline(transaction=False):
+            for digest in digests:
+                await self.client.set(self._api_key(digest), REVOKED_STATE, px=px)

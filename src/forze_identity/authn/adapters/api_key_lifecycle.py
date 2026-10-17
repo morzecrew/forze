@@ -27,7 +27,7 @@ from ..domain.models.account import (
     ReadApiKeyAccount,
     UpdateApiKeyAccountCmd,
 )
-from ..services import ApiKeyService, SessionRevocation
+from ..services import ApiKeyRevocation, ApiKeyService, SessionRevocation
 from ._utils import (
     find_api_key_account_by_id,
     find_api_key_account_by_key_hash,
@@ -105,6 +105,10 @@ class ApiKeyLifecycleAdapter(ApiKeyLifecyclePort):
     """When set, a key issued from a request that authenticated with an access token re-reads
     that token's session and epoch first (under locks inside a transaction), so a token admitted
     from a stale cached state mints nothing."""
+
+    key_revocation: ApiKeyRevocation | None = None
+    """When set, every key this adapter retires (a revocation, or the presented key of a
+    rotation) has ``revoked`` written to the revocation states once the retirement commits."""
 
     # ....................... #
 
@@ -261,6 +265,9 @@ class ApiKeyLifecycleAdapter(ApiKeyLifecyclePort):
             return_new=False,
         )
 
+        if self.key_revocation is not None:
+            await self.key_revocation.revoke([account])
+
         return issued
 
     # ....................... #
@@ -367,6 +374,9 @@ class ApiKeyLifecycleAdapter(ApiKeyLifecyclePort):
             UpdateApiKeyAccountCmd(is_active=False),
             return_new=False,
         )
+
+        if self.key_revocation is not None:
+            await self.key_revocation.revoke([account])
 
         if self.events is not None:
             await self.events.emit(

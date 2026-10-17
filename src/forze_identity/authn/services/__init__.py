@@ -12,9 +12,12 @@ from .refresh_token import RefreshTokenConfig, RefreshTokenService
 from .reset_token import ResetTokenConfig, ResetTokenService
 from .revocation_states import (
     AdmittedSession,
+    ApiKeyRevocation,
     RevocationStates,
+    RevocationStatesCounters,
     SessionBinding,
     SessionRevocation,
+    StateMacKeys,
     remember_admitted_session,
 )
 from .signing import (
@@ -47,8 +50,11 @@ __all__ = [
     "PasswordService",
     "PasswordConfig",
     "AdmittedSession",
+    "ApiKeyRevocation",
     "RevocationStates",
+    "RevocationStatesCounters",
     "SessionBinding",
     "SessionRevocation",
+    "StateMacKeys",
     "remember_admitted_session",
 ]

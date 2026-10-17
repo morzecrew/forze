@@ -4,13 +4,19 @@ A lookup reads the principal's epoch and the family's or the session's state fro
 store. A missing one is read from the database and written back, expiring ``ttl`` after the read
 began; a revocation overwrites what lookups wrote, after its transaction commits. Every state
 expires, so a revocation whose write never lands is enforced within ``ttl`` all the same.
+
+An API key's state is keyed by its digest and is the only proof the key exists, so a live one
+carries a MAC under a server key and an absolute not-after on the store's clock.
 """
 
 import asyncio
-from collections.abc import Awaitable, Callable, Iterable
+import hashlib
+import hmac
+from collections import Counter
+from collections.abc import Awaitable, Callable, Iterable, Sequence
 from contextvars import ContextVar
-from datetime import timedelta
-from typing import Literal, final
+from datetime import UTC, datetime, timedelta
+from typing import Final, Literal, final
 from uuid import UUID
 
 import attrs
@@ -27,15 +33,116 @@ from forze.base.primitives import StrKey
 from forze_identity._secure_spec import forbid_cache_and_history
 
 from .._logger import logger
+from ..domain.models.account import ReadApiKeyAccount
 from ..domain.models.session import ReadSession
+from .constants import MIN_SECRET_BYTES
 
 # ----------------------- #
 
 SessionBinding = Literal["session", "family"]
 """What a token's state is read under: its own session, or its session's family."""
 
+RevocationEvent = Literal["hit", "miss", "fallback", "write_failure"]
+"""What the fast path counts: a verification answered from the states store alone (``hit``), one
+that read the database for what the store lacked (``miss``), one whose store read failed and
+that read the database instead (``fallback``), and a revocation's write-through that failed
+every attempt (``write_failure``)."""
+
+RevocationCredential = Literal["session", "api_key"]
+"""The credential a count is for."""
+
 _LIVE = "live|"
 _NO_TENANT = "-"
+
+_ABSENT = "-"
+"""An API-key state's actor or expiry when the key has none."""
+
+_API_KEY_MAC_LABEL: Final = b"forze.authn.api-key-state.v1"
+"""Starts every MAC input, so a key state's MAC verifies as nothing else the server key signs."""
+
+_EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
+_MS = timedelta(milliseconds=1)
+
+# ....................... #
+
+
+@final
+@attrs.define(slots=True, kw_only=True)
+class RevocationStatesCounters:
+    """Cumulative fast-path counts, by event and credential, for metrics export."""
+
+    _counts: Counter[tuple[RevocationEvent, RevocationCredential]] = attrs.field(
+        factory=Counter,
+        init=False,
+    )
+
+    # ....................... #
+
+    def add(self, event: RevocationEvent, credential: RevocationCredential) -> None:
+        """Count one *event* for *credential*."""
+
+        self._counts[event, credential] += 1
+
+    def get(self, event: RevocationEvent, credential: RevocationCredential) -> int:
+        """How many *event* for *credential* so far."""
+
+        return self._counts[event, credential]
+
+
+# ....................... #
+
+
+def _mac(key: bytes, message: bytes) -> str:
+    return hmac.new(key, message, hashlib.sha256).hexdigest()
+
+
+@final
+@attrs.define(slots=True, frozen=True, kw_only=True)
+class StateMacKeys:
+    """Server keys that authenticate cached API-key states, with HMAC-SHA256.
+
+    A state is signed under :attr:`active` and accepted under it or any of :attr:`previous`. To
+    rotate, make the new key active and keep the old one in :attr:`previous` for at least the
+    states' ``ttl``, the longest a state signed under it lives; then drop it. A state signed under
+    a key that is no longer configured is read from the database, never admitted.
+    """
+
+    active: bytes = attrs.field(repr=False)
+    """Signs every state written from now on. At least :data:`MIN_SECRET_BYTES`."""
+
+    previous: tuple[bytes, ...] = attrs.field(factory=tuple, converter=tuple, repr=False)
+    """Accepted on verify only, until the states signed under them have expired."""
+
+    # ....................... #
+
+    def __attrs_post_init__(self) -> None:
+        if any(len(key) < MIN_SECRET_BYTES for key in (self.active, *self.previous)):
+            raise exc.configuration(
+                f"API-key state MAC keys must be at least {MIN_SECRET_BYTES} bytes",
+            )
+
+    # ....................... #
+
+    def sign(self, message: bytes) -> str:
+        """The MAC of *message* under the active key, in hex."""
+
+        return _mac(self.active, message)
+
+    def verify(self, message: bytes, mac: str) -> bool:
+        """Whether *mac* is the MAC of *message* under any configured key, in constant time."""
+
+        if not mac.isascii():
+            return False
+
+        presented = mac.encode("ascii")
+        matched = False
+
+        # Every key is tried, so the time taken does not tell which one matched.
+        for key in (self.active, *self.previous):
+            matched |= hmac.compare_digest(_mac(key, message).encode("ascii"), presented)
+
+        return matched
+
 
 # ....................... #
 
@@ -100,6 +207,19 @@ class RevocationStates:
     path. ``"family"``: admitted while its session's family is live, so a refresh elsewhere
     leaves it valid until its ``exp``; a logout, a family revocation or reuse still refuse it."""
 
+    key_mac: StateMacKeys | None = None
+    """When set, API keys are verified from cached states too, each carrying a MAC under these
+    keys, and every revocation or deactivation of a key writes its state through. ``None``
+    leaves API keys on their row read."""
+
+    counters: RevocationStatesCounters = attrs.field(
+        factory=RevocationStatesCounters,
+        init=False,
+        eq=False,
+        repr=False,
+    )
+    """Cumulative hit, miss, fallback and write-through failure counts, for metrics export."""
+
     # ....................... #
 
     def __attrs_post_init__(self) -> None:
@@ -156,6 +276,41 @@ def _state(raw: str | None) -> str | None:
     return raw
 
 
+async def _bounded[T](config: RevocationStates, call: Awaitable[T]) -> T:
+    async with asyncio.timeout(config.timeout.total_seconds()):
+        return await call
+
+
+async def _write_through(
+    config: RevocationStates,
+    credential: RevocationCredential,
+    principal_id: UUID,
+    keys: list[str],
+    write: Callable[[], Awaitable[None]],
+) -> None:
+    error: Exception | None = None
+
+    for _ in range(config.write_attempts):
+        try:
+            await write()
+            return
+
+        except Exception as failure:
+            error = failure
+
+    # The revocation is committed; until these states expire, a stale one admits.
+    config.counters.add("write_failure", credential)
+    logger.error(
+        "Revocation states write-through failed for principal %s, keys %s: %r",
+        principal_id,
+        keys,
+        error,
+    )
+
+
+# ....................... #
+
+
 def _judge(*, pep: int, epoch: int, state: str, tenant: str | None) -> None:
     if pep < epoch or state == REVOKED_STATE:
         raise _session_revoked()
@@ -207,10 +362,6 @@ class SessionRevocation:
 
     # ....................... #
 
-    async def _bounded[T](self, call: Awaitable[T]) -> T:
-        async with asyncio.timeout(self.config.timeout.total_seconds()):
-            return await call
-
     def _ttl_ms(self) -> int:
         return self.config.ttl // timedelta(milliseconds=1)
 
@@ -249,10 +400,11 @@ class SessionRevocation:
         key = self._state_key(session_id, family_id)
 
         try:
-            read = await self._bounded(self.states.read(principal_id, key))
+            read = await _bounded(self.config, self.states.read(principal_id, key))
 
         except Exception as error:
             # Down, slow, or behind an open breaker: the same checks from the database.
+            self.config.counters.add("fallback", "session")
             logger.warning(
                 "Revocation states read failed, verifying the session from the database: %r",
                 error,
@@ -269,13 +421,18 @@ class SessionRevocation:
 
         # Both move one way, so a cached revocation or a raised epoch refuses without a read.
         if (cached_epoch is not None and pep < cached_epoch) or cached_state == REVOKED_STATE:
+            self.config.counters.add("hit", "session")
             raise _session_revoked()
+
+        # Ahead of the cached epoch: a lookup that raced a raise cached the older value.
+        epoch_cached = cached_epoch == pep
+        hit = epoch_cached and cached_state is not None
+        self.config.counters.add("hit" if hit else "miss", "session")
 
         missing: dict[str, str] = {}
 
-        # Ahead of the cached epoch: a lookup that raced a raise cached the older value.
-        if cached_epoch is not None and pep == cached_epoch:
-            epoch = cached_epoch
+        if epoch_cached:
+            epoch = pep
 
         else:
             epoch = await self.epochs.current(principal_id)
@@ -361,7 +518,10 @@ class SessionRevocation:
 
     async def _fill(self, principal_id: UUID, states: dict[str, str], *, expire_at_ms: int) -> None:
         try:
-            await self._bounded(self.states.fill(principal_id, states, expire_at_ms=expire_at_ms))
+            await _bounded(
+                self.config,
+                self.states.fill(principal_id, states, expire_at_ms=expire_at_ms),
+            )
 
         except Exception as error:
             logger.warning("Revocation states fill failed: %r", error)
@@ -436,9 +596,10 @@ class SessionRevocation:
         async def _write() -> None:
             # The epoch is read again at write time: a write delayed past a newer raise then
             # caches the newer epoch, or one that expires within ttl of the newer commit.
-            now_ms = await self._bounded(self.states.now_ms(principal_id))
+            now_ms = await _bounded(self.config, self.states.now_ms(principal_id))
             epoch = await self.epochs.current(principal_id)
-            await self._bounded(
+            await _bounded(
+                self.config,
                 self.states.raise_epoch(
                     principal_id,
                     epoch,
@@ -446,7 +607,9 @@ class SessionRevocation:
                 ),
             )
 
-        await self.defer(lambda: self._write_through(principal_id, [EPOCH_STATE_KEY], _write))
+        await self.defer(
+            lambda: _write_through(self.config, "session", principal_id, [EPOCH_STATE_KEY], _write),
+        )
 
     async def revoke(
         self,
@@ -475,32 +638,230 @@ class SessionRevocation:
         self.require_transaction()
 
         async def _write() -> None:
-            await self._bounded(
+            await _bounded(
+                self.config,
                 self.states.revoke(principal_id, keys, ttl=self.config.ttl),
             )
 
-        await self.defer(lambda: self._write_through(principal_id, keys, _write))
+        await self.defer(lambda: _write_through(self.config, "session", principal_id, keys, _write))
 
-    async def _write_through(
+
+# ....................... #
+
+
+def _to_ms(moment: datetime) -> int:
+    return (moment - _EPOCH) // _MS
+
+
+def _api_key_message(digest: str, body: str) -> bytes:
+    return b"\n".join((_API_KEY_MAC_LABEL, f"k:{digest}".encode("ascii"), body.encode("ascii")))
+
+
+@final
+@attrs.define(slots=True, frozen=True, kw_only=True)
+class CachedApiKey:
+    """An API key as its cached state proves it: active, under the digest it was found by."""
+
+    principal_id: UUID
+    actor_principal_id: UUID | None
+    expires_at: datetime | None
+    key_hash: str
+
+    @property
+    def is_active(self) -> bool:
+        """Always ``True``: a revoked key's state names no principal."""
+
+        return True
+
+
+# ....................... #
+
+
+@final
+@attrs.define(slots=True, frozen=True, kw_only=True)
+class ApiKeyRevocation:
+    """The API-key fast path's reads and writes, shared by the key verifier and the key writers.
+
+    A key's state is keyed by its digest and is the only proof the key exists: the verifier takes
+    the principal, the actor and the expiry from it. So a live state carries a MAC under
+    :attr:`RevocationStates.key_mac` over its digest and every field, and a not-after: the
+    earlier of the store's time when the lookup read plus ``ttl``, and the key's own expiry. A
+    state whose MAC fails, or that is past its not-after on the store's clock from the same read,
+    is a miss. ``revoked`` refuses without a read.
+    """
+
+    config: RevocationStates
+    """The one configuration the verifier and every writer read; :attr:`~RevocationStates.key_mac`
+    must be set."""
+
+    states: RevocationStatesPort
+    """Cached states."""
+
+    in_transaction: Callable[[], bool]
+    """Whether a transaction is open."""
+
+    defer: Callable[[Callable[[], Awaitable[None]]], Awaitable[None]]
+    """Runs a callback once the current transaction commits, or at once outside one."""
+
+    # ....................... #
+
+    def __attrs_post_init__(self) -> None:
+        # Refused at construction rather than on the first key presented.
+        _ = self._mac
+
+    @property
+    def _mac(self) -> StateMacKeys:
+        if self.config.key_mac is None:
+            raise exc.configuration("API-key revocation states need RevocationStates.key_mac")
+
+        return self.config.key_mac
+
+    # ....................... #
+
+    async def find(
         self,
-        principal_id: UUID,
-        keys: list[str],
-        write: Callable[[], Awaitable[None]],
-    ) -> None:
-        error: Exception | None = None
+        digest: str,
+        load: Callable[[], Awaitable[ReadApiKeyAccount | None]],
+    ) -> CachedApiKey | ReadApiKeyAccount | None:
+        """The key under *digest*: from its cached state, or from *load* on a miss.
 
-        for _ in range(self.config.write_attempts):
-            try:
-                await write()
+        ``None`` for a revoked or unknown key. On a miss, outside a transaction, what *load*
+        found is written back with ``SET NX``, so it never replaces a present state.
+
+        :param digest: The presented key's digest.
+        :param load: Reads the key's row from the database.
+        """
+
+        try:
+            read = await _bounded(self.config, self.states.read_api_key(digest))
+
+        except Exception as error:
+            self.config.counters.add("fallback", "api_key")
+            logger.warning(
+                "Revocation states read failed, verifying the API key from the database: %r",
+                error,
+            )
+            return await load()
+
+        if read.state == REVOKED_STATE:
+            self.config.counters.add("hit", "api_key")
+            return None
+
+        if read.state is not None:
+            cached = self._live(digest, read.state, now_ms=read.now_ms)
+
+            if cached is not None:
+                self.config.counters.add("hit", "api_key")
+                return cached
+
+        self.config.counters.add("miss", "api_key")
+        account = await load()
+
+        if not self.in_transaction():
+            # Inside a transaction the read may predate a revocation, or be the revocation's.
+            await self._fill(digest, account, now_ms=read.now_ms)
+
+        return account
+
+    def _live(self, digest: str, raw: str, *, now_ms: int) -> CachedApiKey | None:
+        """The key a cached state proves, or ``None`` when it proves nothing."""
+
+        if not raw.isascii():
+            return None
+
+        body, _, mac = raw.rpartition("|")
+
+        # Nothing in the state is read before its MAC verifies.
+        if not body or not self._mac.verify(_api_key_message(digest, body), mac):
+            return None
+
+        try:
+            live, principal, actor, expires, not_after = body.split("|")
+
+            if live != "live" or now_ms >= int(not_after):
+                return None
+
+            return CachedApiKey(
+                principal_id=UUID(principal),
+                actor_principal_id=None if actor == _ABSENT else UUID(actor),
+                expires_at=None if expires == _ABSENT else _EPOCH + int(expires) * _MS,
+                key_hash=digest,
+            )
+
+        except ValueError:
+            return None
+
+    async def _fill(self, digest: str, account: ReadApiKeyAccount | None, *, now_ms: int) -> None:
+        # An unknown digest is not cached: anyone can present one.
+        if account is None:
+            return
+
+        expire_at_ms = now_ms + self.config.ttl // _MS
+
+        if not account.is_active:
+            state = REVOKED_STATE
+
+        else:
+            expires_ms = None
+
+            if account.expires_at is not None:
+                expires_ms = _to_ms(account.expires_at)
+                expire_at_ms = min(expire_at_ms, expires_ms)
+
+            # An expired key is refused from its row; nothing to cache.
+            if expire_at_ms <= now_ms:
                 return
 
-            except Exception as failure:
-                error = failure
+            actor = account.actor_principal_id
+            body = "|".join(
+                (
+                    "live",
+                    str(account.principal_id),
+                    _ABSENT if actor is None else str(actor),
+                    _ABSENT if expires_ms is None else str(expires_ms),
+                    str(expire_at_ms),
+                ),
+            )
+            state = f"{body}|{self._mac.sign(_api_key_message(digest, body))}"
 
-        # The revocation is committed; until these states expire, a stale one admits.
-        logger.error(
-            "Revocation states write-through failed for principal %s, keys %s: %r",
-            principal_id,
-            keys,
-            error,
+        try:
+            # Expires in the store at its not-after, so it never outlives what its MAC names.
+            await _bounded(
+                self.config,
+                self.states.fill_api_key(digest, state, expire_at_ms=expire_at_ms),
+            )
+
+        except Exception as error:
+            logger.warning("Revocation states fill failed: %r", error)
+
+    # ....................... #
+
+    async def revoke(self, accounts: Sequence[ReadApiKeyAccount]) -> None:
+        """Write ``revoked`` for *accounts*' keys once the current transaction commits.
+
+        Outside a transaction the write runs at once, after the deactivation it follows has
+        committed. Retried ``write_attempts`` times; a write that fails them all is logged with
+        the key ids and counted, and the revocation stands.
+        """
+
+        if not accounts:
+            return
+
+        digests = [account.key_hash for account in accounts]
+        keys = [f"api_key:{account.id}" for account in accounts]
+
+        async def _write() -> None:
+            await _bounded(
+                self.config,
+                self.states.revoke_api_keys(digests, ttl=self.config.ttl),
+            )
+
+        await self.defer(
+            lambda: _write_through(
+                self.config,
+                "api_key",
+                accounts[0].principal_id,
+                keys,
+                _write,
+            ),
         )
