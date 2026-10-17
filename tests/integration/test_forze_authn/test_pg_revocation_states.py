@@ -16,9 +16,7 @@ from typing import Any
 from uuid import UUID, uuid4
 
 import pytest
-import pytest_asyncio
 from psycopg import sql
-from testcontainers.redis import RedisContainer
 
 pytest.importorskip("jwt")
 pytest.importorskip("redis")
@@ -39,14 +37,13 @@ from forze_postgres.execution.deps import postgres_txmanager
 from forze_postgres.execution.deps.configs import PostgresPrincipalEpochConfig
 from forze_postgres.execution.deps.factories import ConfigurablePostgresPrincipalEpoch
 from forze_postgres.kernel.client.client import PostgresClient
-from forze_redis import RedisClient, RedisConfig, RedisDepsModule, RedisRevocationStatesConfig
+from forze_redis import RedisClient, RedisDepsModule, RedisRevocationStatesConfig
 from tests.integration.test_forze_authn.test_pg_authn_integration import (
     _authn_pg_deps,
     _invocation_metadata,
     session_spec,
 )
 from tests.support.authn_pg_fixtures import create_authn_tables, insert_policy_principal_row
-from tests.support.docker import ensure_docker_available
 from tests.support.execution_context import context_from_deps
 
 pytestmark = [pytest.mark.integration, pytest.mark.asyncio]
@@ -57,26 +54,6 @@ STATES = "authn-revocations"
 TX = "default"
 BLOCKED_FOR = 0.3
 """How long a statement must stay blocked to count as waiting on the other's lock."""
-
-
-@pytest.fixture(scope="module")
-def redis_container() -> Any:
-    ensure_docker_available()
-
-    with RedisContainer(image="valkey/valkey:9.0") as redis:
-        yield redis
-
-
-@pytest_asyncio.fixture
-async def redis_client(redis_container: Any) -> Any:
-    host = redis_container.get_container_host_ip()
-    port = redis_container.get_exposed_port(6379)
-    client = RedisClient()
-    await client.initialize(dsn=f"redis://{host}:{port}/0", config=RedisConfig(max_size=5))
-
-    yield client
-
-    await client.close()
 
 
 class _Down:

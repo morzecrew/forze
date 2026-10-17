@@ -248,7 +248,7 @@ class AuthnDepsModule(DepsModule):
             )
 
             if self.eligibility == "policy_principal":
-                eligibility_factory = ConfigurablePolicyPrincipalEligibility()
+                eligibility_factory = ConfigurablePolicyPrincipalEligibility(shared=shared)
 
             elif self.eligibility == "allow_all":
                 eligibility_factory = ConfigurableAllowAllEligibility()

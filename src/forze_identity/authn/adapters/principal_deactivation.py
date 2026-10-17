@@ -44,10 +44,11 @@ class PrincipalDeactivationAdapter(PrincipalDeactivationPort):
         if self.revocation is not None:
             self.revocation.require_transaction()
 
-        await self.principal_registry.deactivate_principal(principal_id)
-        # Credentials before sessions: a password change and reset write the account and
-        # then the sessions, and the same order keeps them from deadlocking with this.
+        # Credentials first: a password change and reset write the account and then the
+        # principal's epoch and sessions, and the policy principal's write may raise that epoch
+        # (with revocation states on the authz kernel). One order keeps them from deadlocking.
         await self.credentials.deactivate_all(principal_id)
+        await self.principal_registry.deactivate_principal(principal_id)
         await self.token_lifecycle.revoke_tokens(AuthnIdentity(principal_id=principal_id))
 
         if self.events is not None:

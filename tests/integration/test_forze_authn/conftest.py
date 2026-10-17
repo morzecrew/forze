@@ -27,9 +27,7 @@ def _ensure_docker_available() -> None:
 def postgres_container():
     """Postgres container (same pattern as ``test_forze_postgres``)."""
     _ensure_docker_available()
-    with PostgresContainer(
-        image="ghcr.io/morzecrew/postgres:18", driver="psycopg"
-    ) as postgres:
+    with PostgresContainer(image="ghcr.io/morzecrew/postgres:18", driver="psycopg") as postgres:
         yield postgres
 
 
@@ -43,6 +41,36 @@ async def pg_client(postgres_container):
 
     client = PostgresClient()
     await client.initialize(dsn=url, config=PostgresConfig(min_size=1, max_size=5))
+
+    yield client
+
+    await client.close()
+
+
+@pytest.fixture(scope="module")
+def redis_container():
+    """A Redis-compatible server for the session fast path's states."""
+
+    _ensure_docker_available()
+
+    from testcontainers.redis import RedisContainer
+
+    with RedisContainer(image="valkey/valkey:9.0") as redis:
+        yield redis
+
+
+@pytest_asyncio.fixture
+async def redis_client(redis_container):
+    """Initialized ``RedisClient`` on :func:`redis_container`."""
+
+    pytest.importorskip("redis")
+
+    from forze_redis import RedisClient, RedisConfig
+
+    host = redis_container.get_container_host_ip()
+    port = redis_container.get_exposed_port(6379)
+    client = RedisClient()
+    await client.initialize(dsn=f"redis://{host}:{port}/0", config=RedisConfig(max_size=5))
 
     yield client
 

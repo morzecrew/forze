@@ -34,8 +34,10 @@ from forze.application.contracts.authn import (
 )
 from forze.application.contracts.authz import AuthzSpec
 from forze.application.contracts.counter import CounterSpec
+from forze.application.contracts.deps import backend_of
 from forze.application.contracts.document import (
     DocumentCommandDepKey,
+    DocumentCommandHookDepKey,
     DocumentCommandPort,
     DocumentQueryDepKey,
     DocumentQueryPort,
@@ -63,6 +65,7 @@ from ...adapters import (
 from ...adapters.credential_deactivation import AuthnCredentialDeactivationHelper
 from ...adapters.principal_deactivation import PrincipalDeactivationAdapter
 from ...adapters.principal_eligibility import (
+    AdmittedTokenEligibilityAdapter,
     AllowAllPrincipalEligibilityAdapter,
     PolicyPrincipalEligibilityAdapter,
 )
@@ -80,7 +83,7 @@ from ...resolvers import (
     JwtNativeUuidResolver,
     MappingTableResolver,
 )
-from ...services import SessionRevocation
+from ...services import PolicyPrincipalEpochHook, RevocationStates, SessionRevocation
 from ...verifiers import (
     Argon2PasswordVerifier,
     ForzeJwtTokenVerifier,
@@ -379,10 +382,52 @@ class ConfigurableAuthn:
 # ....................... #
 
 
+_SKIP_BACKENDS = frozenset({"forze_postgres", "forze_mock"})
+"""Backends whose locking read of the policy principal excludes a concurrent deactivation, on
+which an issue therefore serializes with it: the skip's precondition."""
+
+
+def _deactivations_raise_epochs(ctx: ExecutionContext, config: RevocationStates) -> bool:
+    """Whether every write that may deactivate a policy principal raises its epoch here.
+
+    :raises CoreException: ``configuration`` when the policy principal's hook carries another
+        revocation configuration: its raises would be written where this verifier never reads.
+    """
+
+    route = policy_principal_spec.name
+
+    if not ctx.deps.exists(DocumentCommandHookDepKey, route=route):
+        return False
+
+    hook = ctx.deps.provide(DocumentCommandHookDepKey, route=route)
+
+    if not isinstance(hook, PolicyPrincipalEpochHook):
+        return False
+
+    if hook.config != config:
+        raise exc.configuration(
+            "The authn and authz kernels carry different revocation states. Pass the same "
+            "RevocationStates to both: the verifier reads the epochs deactivations raise.",
+            code="authn_revocation_states_mismatch",
+        )
+
+    return True
+
+
 @final
 @attrs.define(slots=True, frozen=True, kw_only=True)
 class ConfigurablePolicyPrincipalEligibility:
-    """Build :class:`PolicyPrincipalEligibilityAdapter` from policy principal documents."""
+    """Build :class:`PolicyPrincipalEligibilityAdapter` from policy principal documents.
+
+    With revocation states on both the authn and the authz kernel, and the policy principal on
+    Postgres (or the mock), the read is skipped right after the fast path admitted a token of
+    the same principal (:class:`AdmittedTokenEligibilityAdapter`).
+    """
+
+    shared: AuthnSharedServices | None = None
+    """Shared services; their revocation states enable the skip."""
+
+    # ....................... #
 
     def __call__(
         self,
@@ -390,10 +435,21 @@ class ConfigurablePolicyPrincipalEligibility:
         spec: AuthnSpec,
     ) -> PrincipalEligibilityPort:
         _ = spec
-        return PolicyPrincipalEligibilityAdapter(
-            principal_qry=ctx.doc.query(policy_principal_spec),
+        principal_qry = ctx.doc.query(policy_principal_spec)
+        adapter = PolicyPrincipalEligibilityAdapter(
+            principal_qry=principal_qry,
             in_transaction=lambda: ctx.tx_ctx.depth() > 0,
         )
+        config = self.shared.revocation_states if self.shared is not None else None
+
+        if (
+            config is None
+            or type(backend_of(principal_qry)).__module__.split(".")[0] not in _SKIP_BACKENDS
+            or not _deactivations_raise_epochs(ctx, config)
+        ):
+            return adapter
+
+        return AdmittedTokenEligibilityAdapter(inner=adapter)
 
 
 # ....................... #
