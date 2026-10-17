@@ -215,7 +215,7 @@ PostgresOutboxConfig(
 It takes what `relation` takes, a `(schema, table)` pair or a per-tenant resolver, and
 resolves for the same tenant. `storage="retain"` refuses it. The table is yours: forze only
 inserts into it, and never creates, drops or prunes its partitions. It is insert-only, so
-dropping a day's partition is its whole retention, with nothing for vacuum to clean up.
+dropping a day's partition is its whole retention, and no dead rows are left for vacuum.
 Partition it by day on `published_at`:
 
 ```sql
@@ -252,7 +252,8 @@ DROP TABLE app.outbox_delivered_20261011;
 
 - **A missing row does not prove the event was not delivered.** A pass that published and
   then rolled back logs nothing, though its consumers may have the event; the pass that
-  publishes it again logs it. An event still pending or parked has no log row either.
+  publishes it again logs it. A row still pending or parked in the outbox has no log row
+  yet.
 - **A missing partition fails the pass.** With no partition for the day and no default,
   the insert fails, Postgres reporting `no partition of relation … found for row` as a
   check violation, and the delete fails with it. The pass rolls back, so its rows are
