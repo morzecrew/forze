@@ -24,6 +24,7 @@ from forze_dst.conformance import (
     DELIVERY_OUTBOX,
     DeliveryOutcome,
     run_crash_recovery_delivery,
+    run_rollback_crash_delivery,
 )
 from forze_mongo.execution.deps import MongoDepsModule
 from forze_mongo.execution.deps.configs import MongoInboxConfig, MongoOutboxConfig
@@ -118,5 +119,32 @@ class TestMongoCrashRecoveryDelivery:
             delivered=2 * _N,
             reclaimed=_N,
             applied=2 * _N,
+            distinct_applied=_N,
+        )
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+@pytest.mark.conformance(plane="delivery", engine="mongo")
+class TestMongoRollbackCrashDelivery:
+    """A relay pass inside a transaction, crashed: the rollback returns every claim."""
+
+    @pytest.mark.parametrize("dedup", [True, False])
+    async def test_the_rolled_back_pass_is_redelivered_in_full(
+        self, mongo_client_replica: MongoClient, delivery_collections, dedup: bool
+    ) -> None:
+        db_name, outbox, inbox = delivery_collections
+        runtime = _runtime(mongo_client_replica, db_name, outbox, inbox)
+
+        async with runtime.scope():
+            outcome = await run_rollback_crash_delivery(
+                runtime.get_context(), tx_scope=_TX_SCOPE, dedup=dedup
+            )
+
+        assert outcome == DeliveryOutcome(
+            staged=_N,
+            delivered=2 * _N,
+            reclaimed=0,
+            applied=_N if dedup else 2 * _N,
             distinct_applied=_N,
         )

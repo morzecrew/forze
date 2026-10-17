@@ -179,8 +179,10 @@ class OutboxRelay:
     a row rescheduled (or parked as ``failed``) does not stall later rows — including later
     rows of the same ``ordering_key`` (deliberate trade-off: no per-key head-of-line
     blocking). Rows are claimed (``pending`` → ``processing``) in ``created_at`` order,
-    relayed one message per claim, then marked ``published``. Relay and ``mark_published``
-    are not atomic — consumers must deduplicate on
+    relayed one message per claim, then marked ``published``; a store that consumes its
+    rows locks them at the claim instead and deletes each once published, in one
+    transaction per pass. Relay and ``mark_published`` are not atomic — consumers must
+    deduplicate on
     :attr:`~forze.application.contracts.outbox.IntegrationEvent.event_id` (the
     ``forze_event_id`` header) and tolerate reordering.
 
@@ -210,6 +212,18 @@ class OutboxRelay:
     retry_max_backoff: timedelta = timedelta(minutes=5)
     """Cap on the backoff delay."""
 
+    publish_timeout: timedelta | None = None
+    """Longest one publish may take; a publish that outlasts it is a transient failure,
+    retried with backoff. ``None`` leaves a publish unbounded, unless the store bounds the
+    pass (consume storage), which caps each publish at what is left of the pass."""
+
+    publish_until: float | None = None
+    """Event-loop time (``loop.time()``) after which a run starts no further publish, and caps
+    each publish at, then marks what it published, for a caller that must be done by a
+    deadline. Set it per run. Rows claimed but not reached are left as a cut pass leaves
+    them: pending again for a store that runs a pass in one transaction, ``processing``
+    until reclaim for one that does not."""
+
     # ....................... #
 
     def __attrs_post_init__(self) -> None:
@@ -217,6 +231,7 @@ class OutboxRelay:
             max_attempts=self.max_attempts,
             retry_base_delay=self.retry_base_delay,
             retry_max_backoff=self.retry_max_backoff,
+            publish_timeout=self.publish_timeout,
         )
 
         if self.reclaim_stale_after is not None and self.reclaim_stale_after.total_seconds() <= 0:
@@ -398,4 +413,6 @@ class OutboxRelay:
             max_attempts=self.max_attempts,
             retry_base_delay=self.retry_base_delay,
             retry_max_backoff=self.retry_max_backoff,
+            publish_timeout=self.publish_timeout,
+            publish_until=self.publish_until,
         )

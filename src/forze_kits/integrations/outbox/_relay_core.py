@@ -27,6 +27,21 @@ at-least-once and ordering is **not** preserved across failures/retries —
 consumers must key on ``event_id`` and tolerate reordering as well as
 redelivery.
 
+Pass scope
+==========
+
+Each pass runs inside the query port's pass scope (``outbox_pass_scope``): a
+transaction for a store whose claim only locks its rows, and a no-op for one
+whose claims and marks commit one by one, or that does not implement
+``TransactionalOutboxPasses`` at all. When the scope
+yields an :class:`~forze.application.contracts.outbox.OutboxPassBudget`, the
+relay starts no publish once its deadline has passed — the rows it did not
+reach are left exactly as they were — and caps each decode and each publish at
+the time left. A publish cut short by that cap, or by ``publish_timeout``, is a
+transient failure; a decode cut short leaves its row as it was. A transactional
+pass that raises rolls back whole: every row it claimed is pending again,
+including the ones it already published.
+
 Batched marking
 ===============
 
@@ -50,10 +65,12 @@ each standalone ``UPDATE`` is BEGIN/UPDATE/COMMIT plus a pool checkout):
 
 If a mark flush raises it **propagates immediately** and aborts the pass:
 rows already published but not yet marked stay ``processing`` and are later
-reclaimed and redelivered — at-least-once holds, nothing is lost or silently
+reclaimed and redelivered (or, in a transactional pass, return to ``pending``
+with the rollback) — at-least-once holds, nothing is lost or silently
 swallowed.
 """
 
+import asyncio
 import random
 from collections.abc import Awaitable, Callable
 from contextlib import AbstractContextManager, nullcontext
@@ -62,7 +79,13 @@ from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
 from forze.application.contracts.crypto import KeyringDepKey
-from forze.application.contracts.outbox import OutboxRelayResult, OutboxSpec
+from forze.application.contracts.outbox import (
+    OutboxPassBudget,
+    OutboxQueryPort,
+    OutboxRelayResult,
+    OutboxSpec,
+    outbox_pass_scope,
+)
 from forze.application.contracts.resilience import BackoffStrategy
 from forze.application.contracts.tenancy import TenantIdentity
 from forze.application.execution.resilience.backoff import compute_delay
@@ -141,6 +164,7 @@ def validate_retry_options(
     max_attempts: int,
     retry_base_delay: timedelta,
     retry_max_backoff: timedelta,
+    publish_timeout: timedelta | None = None,
 ) -> None:
     """Validate relay retry options shared by relay entry points."""
 
@@ -152,6 +176,12 @@ def validate_retry_options(
 
     if retry_max_backoff < retry_base_delay:
         raise exc.precondition("retry_max_backoff must be >= retry_base_delay")
+
+    if publish_timeout is not None and publish_timeout.total_seconds() <= 0:
+        raise exc.precondition("publish_timeout must be positive")
+
+
+# ....................... #
 
 
 # ....................... #
@@ -195,14 +225,17 @@ async def relay_outbox_claims(
     max_attempts: int = 5,
     retry_base_delay: timedelta = timedelta(seconds=1),
     retry_max_backoff: timedelta = timedelta(minutes=5),
+    publish_timeout: timedelta | None = None,
+    publish_until: float | None = None,
 ) -> OutboxRelayResult:
     """Claim pending rows, decode payloads, invoke *publish_one*, and mark outcomes.
 
     Per-row outcome: published on success; ``failed`` immediately on decode
     (poison) errors; rescheduled with backoff via ``mark_retry`` on publish
     (transient) errors until *max_attempts* is exhausted, then ``failed``.
-    See the module docstring for the full failure model. Ordering is not
-    preserved across failures/retries.
+    A publish that outlasts *publish_timeout* is a transient error. See the
+    module docstring for the full failure model. Ordering is not preserved
+    across failures/retries.
 
     Marks are batched (see "Batched marking" in the module docstring):
     ``mark_published`` flushes in chunks of :data:`_MARK_CHUNK`, ``mark_retry``
@@ -212,6 +245,10 @@ async def relay_outbox_claims(
     immediately and aborts the pass: published-but-unmarked rows stay
     ``processing`` and are reclaimed and redelivered later, so at-least-once
     delivery holds and no failure is swallowed.
+
+    The whole pass, reclaim included, runs inside the query port's pass scope
+    (see "Pass scope" in the module docstring). *publish_until* (a ``loop.time()``
+    value) ends publishing like the scope's budget does, whichever comes first.
     """
 
     if reclaim_stale_after is not None and reclaim_stale_after.total_seconds() <= 0:
@@ -221,9 +258,50 @@ async def relay_outbox_claims(
         max_attempts=max_attempts,
         retry_base_delay=retry_base_delay,
         retry_max_backoff=retry_max_backoff,
+        publish_timeout=publish_timeout,
     )
 
     query = ctx.outbox.query(outbox_spec)
+
+    async with outbox_pass_scope(query) as scoped:
+        # Only a real budget bounds the pass; a test double's stand-in bounds nothing.
+        deadline = scoped.deadline if isinstance(scoped, OutboxPassBudget) else None
+        stops = [at for at in (deadline, publish_until) if at is not None]
+
+        return await _relay_pass(
+            ctx,
+            query,
+            min(stops) if stops else None,
+            outbox_spec=outbox_spec,
+            publish_one=publish_one,
+            limit=limit,
+            reclaim_stale_after=reclaim_stale_after,
+            max_attempts=max_attempts,
+            retry_base_delay=retry_base_delay,
+            retry_max_backoff=retry_max_backoff,
+            publish_timeout=publish_timeout,
+        )
+
+
+# ....................... #
+
+
+async def _relay_pass(
+    ctx: "ExecutionContext",
+    query: OutboxQueryPort,
+    stop_at: float | None,
+    *,
+    outbox_spec: OutboxSpec[Any],
+    publish_one: PublishOne,
+    limit: int | None,
+    reclaim_stale_after: timedelta | None,
+    max_attempts: int,
+    retry_base_delay: timedelta,
+    retry_max_backoff: timedelta,
+    publish_timeout: timedelta | None,
+) -> OutboxRelayResult:
+    """One pass of :func:`relay_outbox_claims`; it starts no publish after *stop_at*."""
+
     reclaimed = 0
 
     try:
@@ -250,6 +328,8 @@ async def relay_outbox_claims(
     # is the unencrypted path; an encrypted row needing a key with none wired fails loud.
     cipher = ctx.deps.provide(KeyringDepKey) if ctx.deps.exists(KeyringDepKey) else None
     end_to_end = outbox_spec.encryption == "end_to_end"
+    loop = asyncio.get_running_loop()
+    publish_seconds = publish_timeout.total_seconds() if publish_timeout is not None else None
 
     published = 0
     failed = 0
@@ -261,25 +341,38 @@ async def relay_outbox_claims(
     retry_groups: dict[int, tuple[list[UUID], list[str]]] = {}
 
     for claim in claims:
-        try:
-            if end_to_end and is_encrypted_payload(claim.payload):
-                # Forward the ciphertext envelope unchanged; the consumer decrypts it.
-                payload = claim.payload
+        if stop_at is not None and loop.time() >= stop_at:
+            # The pass has spent its budget: publish nothing more and mark what it did. The
+            # rows it did not reach are left as the claim left them.
+            break
 
-            else:
-                # ``at_rest`` decrypts here; ``none`` (and a legacy plaintext row on an
-                # ``end_to_end`` route) passes plaintext through. Decode then publish so
-                # the codec gets a model, not a raw dict. Decode/decrypt errors are
-                # poison — the row can't publish.
-                decrypted = await decrypt_outbox_payload(
-                    cipher,
-                    claim.payload,
-                    tenant_id=claim.tenant_id,
-                    event_id=claim.event_id,
-                )
-                payload = outbox_spec.codec.decode_mapping(decrypted)
+        # Decrypting can wait on a KMS. Bound it too, so a slow one cannot hold the pass's
+        # transaction idle past the server's idle timeout; a row cut here is left as it was.
+        decode_bound = asyncio.timeout_at(stop_at)
+
+        try:
+            async with decode_bound:
+                if end_to_end and is_encrypted_payload(claim.payload):
+                    # Forward the ciphertext envelope unchanged; the consumer decrypts it.
+                    payload = claim.payload
+
+                else:
+                    # ``at_rest`` decrypts here; ``none`` (and a legacy plaintext row on an
+                    # ``end_to_end`` route) passes plaintext through. Decode then publish so
+                    # the codec gets a model, not a raw dict. Decode/decrypt errors are
+                    # poison — the row can't publish.
+                    decrypted = await decrypt_outbox_payload(
+                        cipher,
+                        claim.payload,
+                        tenant_id=claim.tenant_id,
+                        event_id=claim.event_id,
+                    )
+                    payload = outbox_spec.codec.decode_mapping(decrypted)
 
         except CoreException as decode_error:
+            if decode_bound.expired():
+                break
+
             if is_payload_cipher_missing(decode_error):
                 # A deployment fault, not row poison: encrypted rows met a ``None``
                 # keyring (no CryptoDepsModule wired). Marking failed here would
@@ -302,29 +395,50 @@ async def relay_outbox_claims(
             continue
 
         except Exception as e:
+            if decode_bound.expired():
+                break
+
             # Terminal path stays per-row: rare, and error fidelity matters.
             await query.mark_failed([claim.id], error=str(e))
             failed += 1
             continue
+
+        if stop_at is not None and loop.time() >= stop_at:
+            break  # the decode outlasted the budget without being cut: leave the row
+
+        # Bounded by the shorter of the publish timeout and what is left of the budget.
+        started = loop.time()
+        bound_at = started + publish_seconds if publish_seconds is not None else None
+
+        if stop_at is not None:
+            bound_at = stop_at if bound_at is None else min(bound_at, stop_at)
+
+        bound = asyncio.timeout_at(bound_at)
 
         try:
             # Publish step: broker errors are transient — retry with backoff. Forward
             # under the claim's staging tenant so a tenant-aware destination routes to the
             # right tenant (no-op for a tenant-global destination).
             with _under_claim_tenant(ctx, claim.tenant_id):
-                await publish_one(claim, payload)
+                async with bound:
+                    await publish_one(claim, payload)
 
         except Exception as e:
             attempts = claim.attempts + 1
+            error = (
+                f"publish timed out after {max(bound_at - started, 0.0):.3f}s"
+                if bound_at is not None and bound.expired()
+                else str(e)
+            )
 
             if attempts >= max_attempts:
-                await query.mark_failed([claim.id], error=str(e))
+                await query.mark_failed([claim.id], error=error)
                 failed += 1
                 continue
 
             ids, errors = retry_groups.setdefault(attempts, ([], []))
             ids.append(claim.id)
-            errors.append(str(e))
+            errors.append(error)
             retried += 1
             continue
 

@@ -52,6 +52,7 @@ from .delivery import (
     DeliveryPayload,
     observe_uncommitted_outbox_visibility,
     run_crash_recovery_delivery,
+    run_rollback_crash_delivery,
 )
 from .divergence import (
     CONTRACT_STRENGTHENINGS,
@@ -155,6 +156,7 @@ __all__ = [
     "CONTRACT_STRENGTHENINGS",
     "MECHANISM_DIVERGENCES",
     "run_crash_recovery_delivery",
+    "run_rollback_crash_delivery",
     "observe_uncommitted_outbox_visibility",
     "run_gateway_crash_delivery",
     "GatewayCrashPoint",

@@ -188,3 +188,20 @@ class OutboxRelayResult:
 
     reclaimed: int = 0
     """Rows reset from processing to pending before claim."""
+
+
+# ....................... #
+
+
+@final
+@attrs.define(slots=True, kw_only=True, frozen=True)
+class OutboxPassBudget:
+    """How long a relay pass may keep publishing, yielded by a pass scope that bounds it.
+
+    A store whose pass runs in one transaction holds the batch's row locks and a connection
+    for the whole pass, so it bounds the pass: the relay publishes no more rows once
+    :attr:`deadline` has passed, and caps each publish at the time left.
+    """
+
+    deadline: float
+    """Event-loop time (``loop.time()``) after which the pass starts no further publish."""

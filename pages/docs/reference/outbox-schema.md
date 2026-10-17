@@ -114,6 +114,91 @@ from `(0, 0)` as before. A single shared `node_key` (the default)
 records one deployment-wide mark; distinct per-replica keys avoid write
 contention on one row, and recovery reads the max across all keys either way.
 
+### Consume storage
+
+`PostgresOutboxConfig(storage="consume")` keeps only the rows still to relay. Each relay
+pass runs in one transaction, and the table holds `pending` and `failed` rows only:
+
+| Step | `retain` (default) | `consume` |
+| --- | --- | --- |
+| claim | `UPDATE` to `processing` | `SELECT … FOR UPDATE SKIP LOCKED`: a row lock, no write |
+| published | `UPDATE` to `published` | `DELETE` |
+| retried | `UPDATE` attempts, `available_at`, back to `pending` | the same, the row stays `pending` |
+| parked | `UPDATE` to `failed` | the same |
+
+A row that publishes first time is written twice, inserted and deleted, and never
+updated, so nothing published is left for a retention job to prune. Postgres only: Mongo
+keeps `retain`.
+
+- **The indexes stay three:** the primary key, `UNIQUE (outbox_route, event_id)`, which
+  staging deduplicates on, and the claim index. A retry changes `available_at`, which the
+  claim index above includes, so a retry is not a HOT update under it. Retries are rare,
+  and a row that publishes first time never updates.
+- **The dedup window narrows.** Staging an event id again is deduplicated only while its
+  row is still in the table, pending or parked as `failed`. Once the row is relayed and
+  deleted, the same event id publishes again.
+- **A failed pass republishes its batch.** When a mark statement fails, a statement times
+  out or the session is cut off, the whole pass rolls back. Every row it claimed is pending
+  again, including the ones it already published: up to `max_claim_rows` (100)
+  duplicates, where `retain` republishes at most one mark chunk of 32. Lower
+  `max_claim_rows` for a smaller window.
+- **A failing route backs off on its own.** The background relay step ends the failed pass
+  and skips that route until it has waited: one `interval` after the first failure,
+  doubling with each consecutive one up to the larger of `retry_max_backoff` and
+  `interval`, and a pass that commits resets it. On a step with `tenants=`, only the failing tenant waits; the others keep the
+  step's cadence. A wake does not cut the wait short.
+- **A pass is bounded.** It stops publishing at `pass_deadline` (default 5 s) and commits
+  what it did; the rows it did not reach stay pending, untouched. A publish still running at
+  the deadline is cancelled and counted as a failed attempt, though it may already have
+  reached the broker, so that event can arrive twice. A destination that swallows the
+  cancellation and returns normally counts as published instead: it reached the broker,
+  and counting it failed would publish it again. Each statement in the pass, the reclaim
+  and the claim included, and each lock wait, is limited to `pass_statement_timeout`
+  (default 1 s): on a large table without the claim index above, the claim times out and
+  every pass fails. The server cuts the session off once it sits idle in the pass for
+  longer than the two durations together. The pass sets these for its own transaction
+  only, and only when it opens that transaction. A stricter limit the session already
+  has, from the role or the connection's `options`, stays in force.
+- **A shutdown drain keeps time to commit.** It stops publishing a fifth of the budget it
+  has left before its end, so its last pass commits instead of being cut and rolled back.
+  That fifth has to cover the pass's closing statements, each allowed up to
+  `pass_statement_timeout`, so keep `shutdown_drain_timeout` at least five times
+  `pass_statement_timeout`; the defaults, 5 s and 1 s, just meet it. A closing statement
+  that waits on a lock past the drain's end is cut with it, and that pass rolls back.
+- **A pass inside your transaction sets nothing.** Run a relay in a transaction of your own,
+  for example to check a lease before committing, and the pass becomes a savepoint in it:
+  your transaction's timeouts apply, and its rollback returns every row.
+- **Staging can wait for a pass.** Staging an event id whose row a pass has deleted but not
+  yet committed waits for that pass to end.
+- **A destination on the same Postgres client joins the pass.** Its statements run in the
+  pass's transaction, under `pass_statement_timeout`, and an SQL error there fails the
+  whole pass.
+- **A retry policy on the outbox route cannot save a pass.** A statement that fails aborts
+  the pass's transaction, so every retry of it fails too; the pass fails and the step
+  backs off.
+- **Behind pgbouncer, use session or transaction pooling.** The timeouts are set with
+  `set_config(..., true)`, which ends with the transaction, so transaction pooling is safe.
+  Statement pooling cannot hold a transaction across statements, so it cannot run a pass.
+
+`processing_at` and `published_at` are never written. To move a live table over:
+
+1. Deploy the relays with `storage="consume"`, keeping `reclaim_stale_after` set. Their
+   claims take `pending` rows, and reclaim still returns the `processing` rows `retain`
+   left behind for the next pass to relay.
+2. Leave the `published` rows to your existing retention job.
+3. Once no `processing` row is left, set `reclaim_stale_after=None`. Once the retention job
+   has removed every `published` row, retire it. Only then drop the two columns, and any
+   index that exists only for them:
+
+```sql
+ALTER TABLE app.outbox DROP COLUMN processing_at, DROP COLUMN published_at;
+```
+
+Reclaim reads `processing_at`, so dropping it while reclaim is on fails every pass, and
+the retention job reads `published_at`. Relays in both modes on one route stay
+at-least-once: a row a `retain` relay claimed is `processing`, which a `consume` claim never
+matches, until it is marked or reclaimed.
+
 ## Mongo
 
 For Mongo (`MongoOutboxConfig`), documents mirror these fields; recommended

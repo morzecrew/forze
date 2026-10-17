@@ -170,7 +170,8 @@ can't decode) can never publish, so it's marked `failed` immediately — fix the
 and re-drive with `ctx.outbox.query(spec).requeue_failed([id])`. A **transient**
 failure (the publish call raised) is rescheduled with exponential backoff + jitter and
 retried, becoming `failed` only after `max_attempts` (default 5). One row's failure
-never blocks the rest of the batch.
+never blocks the rest of the batch. Set `publish_timeout` on the relay (or the background
+step) and a publish that outlasts it is a transient failure too.
 
 ## Per-aggregate ordering
 
@@ -198,6 +199,32 @@ The outbox table is application-owned — you create and migrate it. The full DD
 indexes, migration steps, and the optional Hybrid Logical Clock ordering column
 (for causal claim order across replicas) are in
 [Outbox table schema](../reference/outbox-schema.md), for both Postgres and Mongo.
+
+## Deleting what the relay publishes (Postgres)
+
+With `storage="consume"` the Postgres store deletes a row once it is published, rather
+than keeping it as `published` for a retention job, and runs each relay pass in one
+transaction:
+
+```python
+from datetime import timedelta
+from forze_postgres.execution.deps.configs import PostgresOutboxConfig
+
+outbox = PostgresOutboxConfig(
+    relation=("app", "outbox"),
+    storage="consume",
+    pass_deadline=timedelta(seconds=5),
+)
+```
+
+A pass holds one pooled connection, and the row locks on its batch, for up to
+`pass_deadline`, plus its last mark statements. Size the deadline to the batch:
+`max_claim_rows` (100) times the destination's slow-end publish latency should fit well
+inside it. For a stream `XADD` of a few milliseconds that is well under a second. A pass
+that reaches its deadline commits what it published, and the rows it did not reach wait
+for the next pass. Other relays skip the locked rows rather than wait for them. What
+the mode writes, its duplicate window and how to move a live table over are in
+[Consume storage](../reference/outbox-schema.md#consume-storage).
 
 ## Notes
 

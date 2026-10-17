@@ -12,7 +12,13 @@ from .deps import (
     OutboxQueryDepPort,
 )
 from .integration_config import OutboxIntegrationConfig
-from .ports import OutboxCommandPort, OutboxQueryPort, OutboxRowPersistPort
+from .ports import (
+    OutboxCommandPort,
+    OutboxQueryPort,
+    OutboxRowPersistPort,
+    TransactionalOutboxPasses,
+    outbox_pass_scope,
+)
 from .specs import (
     OutboxDestination,
     OutboxDestinationKind,
@@ -23,6 +29,7 @@ from .staging_context import OutboxStagingContext
 from .value_objects import (
     IntegrationEvent,
     OutboxClaim,
+    OutboxPassBudget,
     OutboxRelayResult,
     OutboxStatus,
     StagedOutboxEntry,
@@ -46,6 +53,7 @@ __all__ = [
     "OutboxDeps",
     "OutboxDestination",
     "OutboxIntegrationConfig",
+    "OutboxPassBudget",
     "OutboxDestinationKind",
     "OutboxEncryptionTier",
     "OutboxQueryDepKey",
@@ -59,4 +67,6 @@ __all__ = [
     "OutboxWake",
     "OutboxWakeSignal",
     "StagedOutboxEntry",
+    "TransactionalOutboxPasses",
+    "outbox_pass_scope",
 ]

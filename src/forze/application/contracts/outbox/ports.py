@@ -1,14 +1,16 @@
 """Outbox command and query port protocols."""
 
 from collections.abc import Awaitable, Sequence
+from contextlib import AbstractAsyncContextManager, nullcontext
 from datetime import datetime
-from typing import Any, Protocol, runtime_checkable
+from typing import Any, Protocol, cast, runtime_checkable
 from uuid import UUID
 
 from pydantic import BaseModel
 
+from ..deps.keys import implements
 from .specs import OutboxSpec
-from .value_objects import IntegrationEvent, OutboxClaim, StagedOutboxEntry
+from .value_objects import IntegrationEvent, OutboxClaim, OutboxPassBudget, StagedOutboxEntry
 
 # ----------------------- #
 
@@ -102,7 +104,10 @@ class OutboxQueryPort(Protocol):
         ...  # pragma: no cover
 
     def mark_published(self, ids: Sequence[UUID]) -> Awaitable[int]:
-        """Mark claimed rows as published; returns rows updated."""
+        """Mark claimed rows as published; returns rows updated.
+
+        A store may delete them instead, when it keeps no published history.
+        """
         ...  # pragma: no cover
 
     def mark_failed(
@@ -128,9 +133,9 @@ class OutboxQueryPort(Protocol):
     ) -> Awaitable[int]:
         """Reschedule claimed rows for a future retry; returns rows updated.
 
-        Moves ``processing`` rows back to ``pending`` with the durable retry
-        counter set to *attempts* and the row invisible to
-        :meth:`claim_pending` until *available_at*.
+        Returns claimed rows to ``pending`` with the durable retry counter set
+        to *attempts* and the row invisible to :meth:`claim_pending` until
+        *available_at*.
         """
         ...  # pragma: no cover
 
@@ -149,3 +154,51 @@ class OutboxQueryPort(Protocol):
         schedule — operator intent is a fresh start.
         """
         ...  # pragma: no cover
+
+
+# ....................... #
+
+
+@runtime_checkable
+class TransactionalOutboxPasses(Protocol):
+    """Opt-in extension for an outbox query port that can run a relay pass in one transaction.
+
+    Kept off :class:`OutboxQueryPort`, so a store written against that port's surface still
+    satisfies it: a port without this extension relays as one whose claims and marks each
+    commit on their own. Detect it with :func:`~forze.application.contracts.deps.implements`,
+    or enter :func:`outbox_pass_scope`, which does.
+    """
+
+    @property
+    def transactional_passes(self) -> bool:
+        """Whether :meth:`pass_scope` runs a relay pass in one transaction.
+
+        When ``True``, a pass that fails rolls back: every row it claimed is claimable again
+        at once, including rows it already published, so a caller retrying in a loop must
+        back off rather than start the next pass straight away.
+        """
+        ...  # pragma: no cover
+
+    def pass_scope(self) -> AbstractAsyncContextManager[OutboxPassBudget | None]:
+        """Scope one relay pass: its claim, publishes and marks.
+
+        A store whose claim only locks its rows runs the pass in a transaction here and yields
+        the :class:`~.OutboxPassBudget` that bounds it; otherwise the scope does nothing.
+        """
+        ...  # pragma: no cover
+
+
+# ....................... #
+
+
+def outbox_pass_scope(port: object) -> AbstractAsyncContextManager[OutboxPassBudget | None]:
+    """*port*'s pass scope when its backend implements :class:`TransactionalOutboxPasses`.
+
+    Any other port gets a scope that does nothing and yields ``None``. The scope is taken
+    from *port* itself, so the wrappers resolution put around it still apply.
+    """
+
+    if implements(port, TransactionalOutboxPasses):
+        return cast(TransactionalOutboxPasses, port).pass_scope()
+
+    return nullcontext(None)

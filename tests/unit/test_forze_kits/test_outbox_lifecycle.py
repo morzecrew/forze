@@ -26,7 +26,7 @@ from forze_kits.integrations.outbox import (
     OutboxRelay,
     outbox_relay_background_lifecycle_step,
 )
-from forze_kits.integrations.outbox.lifecycle import _OutboxRelayBackgroundStartup
+from forze_kits.integrations.outbox.lifecycle import _OutboxRelayBackgroundStartup, _RelayPass
 from forze_mock import MockDepsModule, MockStateDepKey
 from forze_mock.adapters.outbox import MockOutboxRow
 
@@ -247,11 +247,12 @@ async def test_drain_tick_isolates_a_failing_tenant() -> None:
     startup = _startup(tenants=lambda: [_T1, _T2])
     seen: list[UUID] = []
 
-    async def _once(self: Any, ctx: Any, **_: Any) -> None:
+    async def _once(self: Any, ctx: Any, **_: Any) -> _RelayPass:
         tenant = ctx.inv_ctx.get_tenant().tenant_id
         seen.append(tenant)
         if tenant == _T1:
             raise RuntimeError("boom")
+        return _RelayPass(stop="drained")
 
     logger_mock = MagicMock()
     runtime = ExecutionRuntime(deps=DepsRegistry.from_modules(MockDepsModule()).freeze())

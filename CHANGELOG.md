@@ -31,6 +31,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **An overloaded socket.io replica sheds connections toward the fleet's mean.** `connection_rebalance_lifecycle_step(sio, fleet=, every=, movable=, per_minute=)` closes movable connections at a bounded rate once the fleet has settled; `connection_report(sio, movable=)` fills the membership report it reads.
 
+- **The Postgres outbox can delete what it relays.** `PostgresOutboxConfig(storage="consume")` runs a relay pass in one transaction bounded by `pass_deadline` and `pass_statement_timeout`: the claim locks rows, publishing deletes them, nothing is left to prune. A failed pass backs its route, or tenant, off.
+
+- **A relay can bound each publish, and a run.** `publish_timeout=` on `OutboxRelay` and the background step makes a slow publish a transient failure; `OutboxRelay(publish_until=)` ends a run's publishing. A store opts into transactional passes with `TransactionalOutboxPasses`; `outbox_pass_scope()` enters one.
+
+- **The delivery conformance battery covers a relay pass that rolls back.** `forze_dst.conformance.run_rollback_crash_delivery` runs on the mock, on Mongo, and on Postgres in both storage modes.
+
 - **Tokens can be verified from cached revocation states, not the session row.** `AuthnKernelConfig(revocation_states=RevocationStates(...))` checks new `fam` and `pep` claims against `RedisDepsModule(revocation_states=)` and `PostgresDepsModule(principal_epochs=)`. Opt-in; issue and revocation then need a transaction.
 
 - **Durable runs recovery gave up decrypting can be requeued.** `DurableRunStatus.QUARANTINED` marks a run the scan no longer claims; `DurableRunAdminPort.requeue_quarantined(run_ids=)` returns a bound tenant's or named ones, on Postgres, Mongo and the mock. **Breaking** for exhaustive status matches and own admin ports.
@@ -47,6 +53,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **The tenant-isolation floor leaves out routes that belong to the deployment.** Redis fleets, and lock and pub/sub routes marked `tenant_global=True` (a lifecycle lock, an outbox wake), no longer count toward `required_tenant_isolation`, so a module of only those meets it. Every other route is still held to it.
 
+- **The outbox relay step resolves its outbox route at startup even with `tenants=`.** A route that is not wired fails startup instead of every tick.
+
 - **A durable run whose key is gone no longer resumes by itself once its recovery hold reaches a day.** Quarantined, it waits for a requeue even after the key is back; one already claimed nine times, crash reclaims included, is parked on its first failed open. **Breaking** for deployments relying on a restored key.
 
 ### Deprecated
@@ -54,6 +62,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`probe_listener_step(runtime=...)`.** The step reads its scope from its hook's `ctx`, so it can sit in its own runtime's plan; a runtime passed in is still watched, with a `DeprecationWarning`.
 
 ### Fixed
+
+- **The crash-recovery delivery scenario marks the rows it re-publishes.** `forze_dst.conformance.run_crash_recovery_delivery` marked them by event id, which matched no row, so they stayed `processing`; the outcome never read the mark.
 
 - **Recovery no longer lands a saga asked to stop unread when its holder died first.** It landed `CANCELLED`, abandoning forward steps past the pivot and skipping the rollback before it. Such a saga now runs again and decides by its journal at its next step, as a live one does.
 
