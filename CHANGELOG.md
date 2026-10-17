@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- ...
+- **The Postgres outbox can log what it consumes.** `PostgresOutboxConfig(storage="consume", delivery_log=("app", "outbox_delivered"))` appends each published row to an application-owned table in the statement that deletes it, so a log row proves a committed delivery. A failure to write it fails the pass.
 
 ### Changed
 

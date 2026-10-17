@@ -224,7 +224,9 @@ inside it. For a stream `XADD` of a few milliseconds that is well under a second
 that reaches its deadline commits what it published, and the rows it did not reach wait
 for the next pass. Other relays skip the locked rows rather than wait for them. What
 the mode writes, its duplicate window and how to move a live table over are in
-[Consume storage](../reference/outbox-schema.md#consume-storage).
+[Consume storage](../reference/outbox-schema.md#consume-storage). To keep "was this event
+delivered" answerable once its row is gone, add a
+[delivery log](../reference/outbox-schema.md#delivery-log).
 
 ## Notes
 
