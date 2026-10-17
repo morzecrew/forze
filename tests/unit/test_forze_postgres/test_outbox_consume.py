@@ -7,12 +7,14 @@ from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from datetime import timedelta
 from typing import Any
+from uuid import uuid4
 
 import attrs
 import pytest
 from pydantic import BaseModel
 
 from forze.application.contracts.outbox import OutboxSpec
+from forze.application.contracts.tenancy import TenantIdentity
 from forze.base.exceptions import CoreException
 from forze.base.primitives import utcnow
 from forze.base.serialization import PydanticModelCodec
@@ -162,3 +164,26 @@ class TestPostgresOutboxPassScope:
             await store.claim_pending()
 
         assert caught.value.code == "outbox_claim_outside_transaction"
+
+    async def test_the_delivery_log_resolves_for_the_bound_tenant(self) -> None:
+        # A per-tenant log must take the tenant's table, as the outbox does, never a shared one.
+        tenant = uuid4()
+        client = _TxClient()
+        store = PostgresOutboxStore(
+            client=client,  # type: ignore[arg-type]
+            spec=OutboxSpec(name="events", codec=PydanticModelCodec(_Payload)),
+            config=PostgresOutboxConfig(
+                relation=lambda tid: (f"t_{tid.hex}", "outbox"),
+                storage="consume",
+                delivery_log=lambda tid: (f"t_{tid.hex}", "log"),
+            ),
+            tenant_aware=True,
+            tenant_provider=lambda: TenantIdentity(tenant_id=tenant),
+        )
+
+        await store.mark_published([uuid4()])
+
+        [(stmt, _)] = client.executes
+        rendered = stmt.as_string()
+        assert f'DELETE FROM "t_{tenant.hex}"."outbox"' in rendered
+        assert f'INSERT INTO "t_{tenant.hex}"."log"' in rendered
