@@ -213,10 +213,16 @@ PostgresOutboxConfig(
 ```
 
 It takes what `relation` takes, a `(schema, table)` pair or a per-tenant resolver, and
-resolves for the same tenant. `storage="retain"` refuses it. The table is yours: forze only
-inserts into it, and never creates, drops or prunes its partitions. It is insert-only, so
-dropping a day's partition is its whole retention, and no dead rows are left for vacuum.
-Partition it by day on `published_at`:
+resolves for the same tenant, at the claim, so a resolver that fails does so before the
+pass publishes anything. A single log table holds every tenant's records, so a per-tenant
+outbox beside one is only as isolated as the log's `tenant_id` filtering: a module that
+declares `required_tenant_isolation="namespace"` refuses it, and needs a per-tenant
+resolver for the log too. `storage="retain"` refuses the log.
+
+The table is yours: forze only inserts into it, and never creates, drops or prunes its
+partitions. Dropping a day's partition is its whole retention. Nothing updates or deletes
+a committed row; the only dead rows are the inserts of passes that rolled back after a
+mark, which vacuum clears as usual. Partition it by day on `published_at`:
 
 ```sql
 CREATE TABLE app.outbox_delivered (
@@ -230,12 +236,13 @@ CREATE TABLE app.outbox_delivered (
 -- no unique key: an event staged again after delivery is delivered again
 CREATE INDEX outbox_delivered_event_idx ON app.outbox_delivered (event_id);
 
--- a partition per day, created days ahead
-CREATE TABLE app.outbox_delivered_20261018 PARTITION OF app.outbox_delivered
-    FOR VALUES FROM ('2026-10-18 00:00+00') TO ('2026-10-19 00:00+00');
-
--- the net for a day nobody created
+-- the net for a day nobody added
 CREATE TABLE app.outbox_delivered_default PARTITION OF app.outbox_delivered DEFAULT;
+
+-- a partition per day, added days ahead: built apart, then attached
+CREATE TABLE app.outbox_delivered_20261018 (LIKE app.outbox_delivered);
+ALTER TABLE app.outbox_delivered ATTACH PARTITION app.outbox_delivered_20261018
+    FOR VALUES FROM ('2026-10-18 00:00+00') TO ('2026-10-19 00:00+00');
 
 -- retention: drop the oldest day
 DROP TABLE app.outbox_delivered_20261011;
@@ -260,14 +267,17 @@ DROP TABLE app.outbox_delivered_20261011;
   pending again and the batch it published goes out again later. The relay step backs
   that route off as for any failed pass, so a missing partition costs a duplicate batch
   per backoff step rather than a republish storm.
-- **Keep the default partition empty.** Postgres refuses to create a day's partition while
+- **Keep the default partition empty.** Postgres refuses to add a day's partition while
   the default holds rows in its range, so rows that land there must be moved out first.
-  Create partitions ahead and treat a row in the default as an alert.
-- **Partition maintenance locks the whole log.** Creating, detaching or dropping a
-  partition takes an `ACCESS EXCLUSIVE` lock on the log table, and with a default partition
-  Postgres refuses `DETACH PARTITION … CONCURRENTLY`. A pass whose insert waits behind that
-  lock for longer than `pass_statement_timeout` fails and backs off. Run the maintenance
-  with a short `lock_timeout`, well under `pass_statement_timeout`, and retry it.
+  Add partitions ahead and treat a row in the default as an alert.
+- **Attach a day's partition rather than create it in place.** `ATTACH PARTITION` takes a
+  `SHARE UPDATE EXCLUSIVE` lock on the log table, which a pass's insert does not wait on;
+  it also locks the default partition while it checks it, so only a pass whose row would
+  land there waits. `CREATE TABLE … PARTITION OF`, `DETACH PARTITION` and dropping a
+  partition each take an `ACCESS EXCLUSIVE` lock on the log table, and with a default
+  partition Postgres refuses `DETACH PARTITION … CONCURRENTLY`. A pass whose insert waits
+  behind that lock longer than `pass_statement_timeout` fails and backs off, so drop old
+  days with a short `lock_timeout`, well under `pass_statement_timeout`, and retry.
 
 ## Mongo
 
