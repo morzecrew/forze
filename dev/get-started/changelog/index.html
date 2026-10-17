@@ -9580,6 +9580,15 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <p><strong>An overloaded socket.io replica sheds connections toward the fleet's mean.</strong> <code>connection_rebalance_lifecycle_step(sio, fleet=, every=, movable=, per_minute=)</code> closes movable connections at a bounded rate once the fleet has settled; <code>connection_report(sio, movable=)</code> fills the membership report it reads.</p>
 </li>
 <li>
+<p><strong>The Postgres outbox can delete what it relays.</strong> <code>PostgresOutboxConfig(storage="consume")</code> runs a relay pass in one transaction bounded by <code>pass_deadline</code> and <code>pass_statement_timeout</code>: the claim locks rows, publishing deletes them, nothing is left to prune. A failed pass backs its route, or tenant, off.</p>
+</li>
+<li>
+<p><strong>A relay can bound each publish, and a run.</strong> <code>publish_timeout=</code> on <code>OutboxRelay</code> and the background step makes a slow publish a transient failure; <code>OutboxRelay(publish_until=)</code> ends a run's publishing. A store opts into transactional passes with <code>TransactionalOutboxPasses</code>; <code>outbox_pass_scope()</code> enters one.</p>
+</li>
+<li>
+<p><strong>The delivery conformance battery covers a relay pass that rolls back.</strong> <code>forze_dst.conformance.run_rollback_crash_delivery</code> runs on the mock, on Mongo, and on Postgres in both storage modes.</p>
+</li>
+<li>
 <p><strong>Tokens can be verified from cached revocation states, not the session row.</strong> <code>AuthnKernelConfig(revocation_states=RevocationStates(...))</code> checks new <code>fam</code> and <code>pep</code> claims against <code>RedisDepsModule(revocation_states=)</code> and <code>PostgresDepsModule(principal_epochs=)</code>. Opt-in; issue and revocation then need a transaction.</p>
 </li>
 <li>
@@ -9604,6 +9613,9 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <p><strong>The tenant-isolation floor leaves out routes that belong to the deployment.</strong> Redis fleets, and lock and pub/sub routes marked <code>tenant_global=True</code> (a lifecycle lock, an outbox wake), no longer count toward <code>required_tenant_isolation</code>, so a module of only those meets it. Every other route is still held to it.</p>
 </li>
 <li>
+<p><strong>The outbox relay step resolves its outbox route at startup even with <code>tenants=</code>.</strong> A route that is not wired fails startup instead of every tick.</p>
+</li>
+<li>
 <p><strong>A durable run whose key is gone no longer resumes by itself once its recovery hold reaches a day.</strong> Quarantined, it waits for a requeue even after the key is back; one already claimed nine times, crash reclaims included, is parked on its first failed open. <strong>Breaking</strong> for deployments relying on a restored key.</p>
 </li>
 </ul>
@@ -9613,6 +9625,9 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 </ul>
 <h3 id="fixed">Fixed<a class="headerlink" href="#fixed" title="Permanent link">&para;</a></h3>
 <ul>
+<li>
+<p><strong>The crash-recovery delivery scenario marks the rows it re-publishes.</strong> <code>forze_dst.conformance.run_crash_recovery_delivery</code> marked them by event id, which matched no row, so they stayed <code>processing</code>; the outcome never read the mark.</p>
+</li>
 <li>
 <p><strong>Recovery no longer lands a saga asked to stop unread when its holder died first.</strong> It landed <code>CANCELLED</code>, abandoning forward steps past the pivot and skipping the rollback before it. Such a saga now runs again and decides by its journal at its next step, as a live one does.</p>
 </li>

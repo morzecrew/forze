@@ -5197,6 +5197,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#deleting-what-the-relay-publishes-postgres" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Deleting what the relay publishes (Postgres)
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#notes" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -6596,6 +6607,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#deleting-what-the-relay-publishes-postgres" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Deleting what the relay publishes (Postgres)
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#notes" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -6909,7 +6931,8 @@ can't decode) can never publish, so it's marked <code>failed</code> immediately 
 and re-drive with <code>ctx.outbox.query(spec).requeue_failed([id])</code>. A <strong>transient</strong>
 failure (the publish call raised) is rescheduled with exponential backoff + jitter and
 retried, becoming <code>failed</code> only after <code>max_attempts</code> (default 5). One row's failure
-never blocks the rest of the batch.</p>
+never blocks the rest of the batch. Set <code>publish_timeout</code> on the relay (or the background
+step) and a publish that outlasts it is a transient failure too.</p>
 <h2 id="per-aggregate-ordering">Per-aggregate ordering<a class="headerlink" href="#per-aggregate-ordering" title="Permanent link">&para;</a></h2>
 <p>Stage with an <code>ordering_key</code> (typically the aggregate id) and the relay publishes it
 as the transport <code>key</code> instead of the event id:</p>
@@ -6931,6 +6954,27 @@ so one poison event never head-of-line blocks its aggregate. Consumers dedupe on
 indexes, migration steps, and the optional Hybrid Logical Clock ordering column
 (for causal claim order across replicas) are in
 <a href="../../reference/outbox-schema/">Outbox table schema</a>, for both Postgres and Mongo.</p>
+<h2 id="deleting-what-the-relay-publishes-postgres">Deleting what the relay publishes (Postgres)<a class="headerlink" href="#deleting-what-the-relay-publishes-postgres" title="Permanent link">&para;</a></h2>
+<p>With <code>storage="consume"</code> the Postgres store deletes a row once it is published, rather
+than keeping it as <code>published</code> for a retention job, and runs each relay pass in one
+transaction:</p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">datetime</span><span class="w"> </span><span class="kn">import</span> <span class="n">timedelta</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">forze_postgres.execution.deps.configs</span><span class="w"> </span><span class="kn">import</span> <span class="n">PostgresOutboxConfig</span>
+
+<span class="n">outbox</span> <span class="o">=</span> <span class="n">PostgresOutboxConfig</span><span class="p">(</span>
+    <span class="n">relation</span><span class="o">=</span><span class="p">(</span><span class="s2">"app"</span><span class="p">,</span> <span class="s2">"outbox"</span><span class="p">),</span>
+    <span class="n">storage</span><span class="o">=</span><span class="s2">"consume"</span><span class="p">,</span>
+    <span class="n">pass_deadline</span><span class="o">=</span><span class="n">timedelta</span><span class="p">(</span><span class="n">seconds</span><span class="o">=</span><span class="mi">5</span><span class="p">),</span>
+<span class="p">)</span>
+</code></pre></div>
+<p>A pass holds one pooled connection, and the row locks on its batch, for up to
+<code>pass_deadline</code>, plus its last mark statements. Size the deadline to the batch:
+<code>max_claim_rows</code> (100) times the destination's slow-end publish latency should fit well
+inside it. For a stream <code>XADD</code> of a few milliseconds that is well under a second. A pass
+that reaches its deadline commits what it published, and the rows it did not reach wait
+for the next pass. Other relays skip the locked rows rather than wait for them. What
+the mode writes, its duplicate window and how to move a live table over are in
+<a href="../../reference/outbox-schema/#consume-storage">Consume storage</a>.</p>
 <h2 id="notes">Notes<a class="headerlink" href="#notes" title="Permanent link">&para;</a></h2>
 <ul>
 <li><strong>Store the outbox where you store the data</strong> so the stage shares the

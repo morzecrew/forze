@@ -6145,6 +6145,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#consume-storage" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Consume storage
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -6497,6 +6508,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#consume-storage" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Consume storage
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -6715,6 +6737,110 @@ with its rows, so no checkpoint is wired for it. Unwired entirely, every route r
 from <code>(0, 0)</code> as before. A single shared <code>node_key</code> (the default)
 records one deployment-wide mark; distinct per-replica keys avoid write
 contention on one row, and recovery reads the max across all keys either way.</p>
+<h3 id="consume-storage">Consume storage<a class="headerlink" href="#consume-storage" title="Permanent link">&para;</a></h3>
+<p><code>PostgresOutboxConfig(storage="consume")</code> keeps only the rows still to relay. Each relay
+pass runs in one transaction, and the table holds <code>pending</code> and <code>failed</code> rows only:</p>
+<table>
+<thead>
+<tr>
+<th>Step</th>
+<th><code>retain</code> (default)</th>
+<th><code>consume</code></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>claim</td>
+<td><code>UPDATE</code> to <code>processing</code></td>
+<td><code>SELECT … FOR UPDATE SKIP LOCKED</code>: a row lock, no write</td>
+</tr>
+<tr>
+<td>published</td>
+<td><code>UPDATE</code> to <code>published</code></td>
+<td><code>DELETE</code></td>
+</tr>
+<tr>
+<td>retried</td>
+<td><code>UPDATE</code> attempts, <code>available_at</code>, back to <code>pending</code></td>
+<td>the same, the row stays <code>pending</code></td>
+</tr>
+<tr>
+<td>parked</td>
+<td><code>UPDATE</code> to <code>failed</code></td>
+<td>the same</td>
+</tr>
+</tbody>
+</table>
+<p>A row that publishes first time is written twice, inserted and deleted, and never
+updated, so nothing published is left for a retention job to prune. Postgres only: Mongo
+keeps <code>retain</code>.</p>
+<ul>
+<li><strong>The indexes stay three:</strong> the primary key, <code>UNIQUE (outbox_route, event_id)</code>, which
+  staging deduplicates on, and the claim index. A retry changes <code>available_at</code>, which the
+  claim index above includes, so a retry is not a HOT update under it. Retries are rare,
+  and a row that publishes first time never updates.</li>
+<li><strong>The dedup window narrows.</strong> Staging an event id again is deduplicated only while its
+  row is still in the table, pending or parked as <code>failed</code>. Once the row is relayed and
+  deleted, the same event id publishes again.</li>
+<li><strong>A failed pass republishes its batch.</strong> When a mark statement fails, a statement times
+  out or the session is cut off, the whole pass rolls back. Every row it claimed is pending
+  again, including the ones it already published: up to <code>max_claim_rows</code> (100)
+  duplicates, where <code>retain</code> republishes at most one mark chunk of 32. Lower
+  <code>max_claim_rows</code> for a smaller window.</li>
+<li><strong>A failing route backs off on its own.</strong> The background relay step ends the failed pass
+  and skips that route until it has waited: one <code>interval</code> after the first failure,
+  doubling with each consecutive one up to the larger of <code>retry_max_backoff</code> and
+  <code>interval</code>, and a pass that commits resets it. On a step with <code>tenants=</code>, only the failing tenant waits; the others keep the
+  step's cadence. A wake does not cut the wait short.</li>
+<li><strong>A pass is bounded.</strong> It stops publishing at <code>pass_deadline</code> (default 5 s) and commits
+  what it did; the rows it did not reach stay pending, untouched. A publish still running at
+  the deadline is cancelled and counted as a failed attempt, though it may already have
+  reached the broker, so that event can arrive twice. A destination that swallows the
+  cancellation and returns normally counts as published instead: it reached the broker,
+  and counting it failed would publish it again. Each statement in the pass, the reclaim
+  and the claim included, and each lock wait, is limited to <code>pass_statement_timeout</code>
+  (default 1 s): on a large table without the claim index above, the claim times out and
+  every pass fails. The server cuts the session off once it sits idle in the pass for
+  longer than the two durations together. The pass sets these for its own transaction
+  only, and only when it opens that transaction. A stricter limit the session already
+  has, from the role or the connection's <code>options</code>, stays in force.</li>
+<li><strong>A shutdown drain keeps time to commit.</strong> It stops publishing a fifth of the budget it
+  has left before its end, so its last pass commits instead of being cut and rolled back.
+  That fifth has to cover the pass's closing statements, each allowed up to
+  <code>pass_statement_timeout</code>, so keep <code>shutdown_drain_timeout</code> at least five times
+  <code>pass_statement_timeout</code>; the defaults, 5 s and 1 s, just meet it. A closing statement
+  that waits on a lock past the drain's end is cut with it, and that pass rolls back.</li>
+<li><strong>A pass inside your transaction sets nothing.</strong> Run a relay in a transaction of your own,
+  for example to check a lease before committing, and the pass becomes a savepoint in it:
+  your transaction's timeouts apply, and its rollback returns every row.</li>
+<li><strong>Staging can wait for a pass.</strong> Staging an event id whose row a pass has deleted but not
+  yet committed waits for that pass to end.</li>
+<li><strong>A destination on the same Postgres client joins the pass.</strong> Its statements run in the
+  pass's transaction, under <code>pass_statement_timeout</code>, and an SQL error there fails the
+  whole pass.</li>
+<li><strong>A retry policy on the outbox route cannot save a pass.</strong> A statement that fails aborts
+  the pass's transaction, so every retry of it fails too; the pass fails and the step
+  backs off.</li>
+<li><strong>Behind pgbouncer, use session or transaction pooling.</strong> The timeouts are set with
+  <code>set_config(..., true)</code>, which ends with the transaction, so transaction pooling is safe.
+  Statement pooling cannot hold a transaction across statements, so it cannot run a pass.</li>
+</ul>
+<p><code>processing_at</code> and <code>published_at</code> are never written. To move a live table over:</p>
+<ol>
+<li>Deploy the relays with <code>storage="consume"</code>, keeping <code>reclaim_stale_after</code> set. Their
+   claims take <code>pending</code> rows, and reclaim still returns the <code>processing</code> rows <code>retain</code>
+   left behind for the next pass to relay.</li>
+<li>Leave the <code>published</code> rows to your existing retention job.</li>
+<li>Once no <code>processing</code> row is left, set <code>reclaim_stale_after=None</code>. Once the retention job
+   has removed every <code>published</code> row, retire it. Only then drop the two columns, and any
+   index that exists only for them:</li>
+</ol>
+<div class="highlight"><pre><span></span><code><span class="k">ALTER</span><span class="w"> </span><span class="k">TABLE</span><span class="w"> </span><span class="n">app</span><span class="p">.</span><span class="n">outbox</span><span class="w"> </span><span class="k">DROP</span><span class="w"> </span><span class="k">COLUMN</span><span class="w"> </span><span class="n">processing_at</span><span class="p">,</span><span class="w"> </span><span class="k">DROP</span><span class="w"> </span><span class="k">COLUMN</span><span class="w"> </span><span class="n">published_at</span><span class="p">;</span>
+</code></pre></div>
+<p>Reclaim reads <code>processing_at</code>, so dropping it while reclaim is on fails every pass, and
+the retention job reads <code>published_at</code>. Relays in both modes on one route stay
+at-least-once: a row a <code>retain</code> relay claimed is <code>processing</code>, which a <code>consume</code> claim never
+matches, until it is marked or reclaimed.</p>
 <h2 id="mongo">Mongo<a class="headerlink" href="#mongo" title="Permanent link">&para;</a></h2>
 <p>For Mongo (<code>MongoOutboxConfig</code>), documents mirror these fields; recommended
 indexes:</p>
