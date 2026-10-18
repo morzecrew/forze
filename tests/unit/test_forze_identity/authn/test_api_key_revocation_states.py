@@ -972,7 +972,8 @@ async def test_a_deactivation_reaches_every_key_past_the_store_s_implicit_limit(
 ) -> None:
     """A read that names no limit stops at the store's cap; the deactivation must not."""
 
-    monkeypatch.setattr(credential_deactivation, "_DEACTIVATE_BATCH", 2, raising=False)
+    # Pages larger than the cap: a page read without its own limit would stop at the cap.
+    monkeypatch.setattr(credential_deactivation, "_DEACTIVATE_BATCH", 4, raising=False)
     stack = _key_stack(key_query_cap=3)
     principal = await stack.principal()
     issued = [await _issue(stack, principal) for _ in range(6)]

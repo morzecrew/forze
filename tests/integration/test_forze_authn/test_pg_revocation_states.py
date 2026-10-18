@@ -42,6 +42,10 @@ from forze_identity.authn import (
     RevocationStates,
     StateMacKeys,
 )
+from forze_identity.authn.adapters import credential_deactivation
+from forze_identity.authn.adapters.credential_deactivation import (
+    AuthnCredentialDeactivationHelper,
+)
 from forze_identity.authn.services import ApiKeyConfig, ApiKeyRevocation, ApiKeyService
 from forze_postgres.execution.deps import postgres_txmanager
 from forze_postgres.execution.deps.configs import PostgresPrincipalEpochConfig
@@ -52,6 +56,7 @@ from forze_redis.adapters.revocation_states import RedisRevocationStatesAdapter
 from tests.integration.test_forze_authn.test_pg_authn_integration import (
     _authn_pg_deps,
     _invocation_metadata,
+    api_key_account_spec,
     session_spec,
 )
 from tests.support.authn_pg_fixtures import create_authn_tables, insert_policy_principal_row
@@ -814,3 +819,37 @@ async def test_a_revoke_racing_a_key_mint_is_ordered_after_it(
 
     assert await authenticate(issued.key) == "refused"
     assert await authenticate(minted.key) == principal
+
+
+async def test_a_deactivation_pages_through_keys_whose_updates_move_them(
+    pg_client: PostgresClient,
+    redis_client: RedisClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An updated row moves in Postgres's heap, so pages without an order skip rows."""
+
+    monkeypatch.setattr(credential_deactivation, "_DEACTIVATE_BATCH", 2)
+    stack, _, principals, _ = await _stacks(pg_client, redis_client)
+    principal = uuid4()
+    await insert_policy_principal_row(pg_client, table=principals, principal_id=principal)
+    identity = AuthnIdentity(principal_id=principal)
+    keys = stack.ctx.authn.api_key_lifecycle(SPEC)
+
+    for _ in range(7):
+        await stack.in_tx(lambda: keys.issue_api_key(identity))
+
+    with stack.ctx.inv_ctx.bind(metadata=_invocation_metadata()):
+        helper = AuthnCredentialDeactivationHelper(
+            ak_qry=stack.ctx.document.query(api_key_account_spec),
+            ak_cmd=stack.ctx.document.command(api_key_account_spec),
+        )
+
+    await stack.in_tx(lambda: helper.deactivate_all(principal))
+
+    active = await pg_client.fetch_all(
+        sql.SQL("SELECT id FROM {table} WHERE principal_id = %s AND is_active").format(
+            table=sql.Identifier("public", principals.replace("authz_pri_", "authn_ak_"))
+        ),
+        (principal,),
+    )
+    assert active == []
