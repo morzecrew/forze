@@ -372,6 +372,48 @@ class TestCloseSpread:
 
     # ....................... #
 
+    async def test_a_close_that_runs_after_another_began_leaves_the_socket_listed(self) -> None:
+        server = _server()
+        presence = _GatedPresence()
+
+        for namespace in ("/", "/game"):
+            attach_realtime_connection(
+                server, namespace=namespace, resolve=_resolve, presence=presence
+            )
+
+        socket = _engine_socket(server, "eio-1")
+        game = await _connect(server, "eio-1", "/game")
+        await _connect(server, "eio-1", "/")
+
+        # The client's own close is mid-way through its handlers when the drain's close,
+        # scheduled a loop turn before that close began, runs.
+        own = asyncio.ensure_future(socket.close(wait=False, abort=True))
+        await asyncio.wait_for(presence.leaving.wait(), timeout=1.0)
+        await asyncio.wait_for(
+            drain_module._close(server, "eio-1", socket),  # pyright: ignore[reportPrivateUsage]
+            timeout=1.0,
+        )
+
+        # A namespace not yet let go keeps a readable session while the handlers run.
+        assert server.eio.sockets.get("eio-1") is socket
+        assert game in [sid for sid, _eio in server.manager.get_participants("/game", None)]
+        assert isinstance(await server.get_session(game, namespace="/game"), dict)
+
+        presence.release.set()
+        await asyncio.wait_for(own, timeout=1.0)
+
+        # Every namespace's cleanup ran, presence included.
+        assert socket.closed
+        assert await presence.count(_ROOM) == 0
+        assert server.eio.sockets.get("eio-1") is socket
+
+        with pytest.raises(KeyError):
+            await server.eio.get_session("eio-1")  # python-engineio drops it on a read
+
+        assert "eio-1" not in server.eio.sockets
+
+    # ....................... #
+
     async def test_two_closes_of_one_connection_share_one_close(self) -> None:
         server = _server()
         presence = _GatedPresence()

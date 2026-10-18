@@ -12,6 +12,7 @@ own socket and no transport behind it.
 from __future__ import annotations
 
 import asyncio
+import io
 from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
@@ -114,6 +115,11 @@ class _FailingPresence(InMemoryRealtimePresence):
         await super().joined(room, sid)
 
 
+class _FailingLeave(InMemoryRealtimePresence):
+    async def left(self, room: str, sid: str) -> None:
+        raise RuntimeError("presence store down")
+
+
 class TestIdentityEndsWithTheConnection:
     async def test_a_namespace_disconnect_drops_the_identity(self) -> None:
         server = _server()
@@ -123,6 +129,23 @@ class TestIdentityEndsWithTheConnection:
         await server._handle_disconnect("eio-1", "/", "client namespace disconnect")  # pyright: ignore[reportPrivateUsage]
 
         assert await _kept(server) == {}
+
+    # ....................... #
+
+    async def test_a_leave_the_presence_store_fails_does_not_strand_the_connection(
+        self, error_log_buf: io.StringIO
+    ) -> None:
+        server = _server()
+        attach_realtime_connection(server, resolve=_resolve, presence=_FailingLeave())
+        await _connect(server, "ok")
+
+        await server._handle_disconnect("eio-1", "/", "client namespace disconnect")  # pyright: ignore[reportPrivateUsage]
+
+        # The namespace still lets go of the sid; the store's entry lapses at its TTL.
+        assert _sids(server) == []
+        assert await _kept(server) == {}
+        (record,) = error_log_buf.getvalue().splitlines()
+        assert "presence store down" in record
 
     # ....................... #
 
