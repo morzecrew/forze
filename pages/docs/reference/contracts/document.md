@@ -367,6 +367,16 @@ through their usual path.
 `update`). On a spec declaring `hard_delete=False` both refuse with a
 `configuration` error (`hard_delete_forbidden`), whoever calls them.
 
+### Command hooks
+
+A plane that owns a document can wrap its command port wherever it is resolved: a provider
+registered under `DocumentCommandHookDepKey`, routed by the document's name, receives
+`(ctx, port)` and returns the port handed out, before any other wrap and before it is cached.
+Every write through `ctx.document.command(spec)` passes it, on every backend; a write around the
+port (SQL, another spec over the same table) does not. The identity plane registers one on the
+policy principal to raise a principal's epoch on deactivation (see
+[Authn](../../integrations/authn.md#skip-the-eligibility-read)).
+
 ## Implemented by
 
 | Backend | Tenancy ceiling | Integration |

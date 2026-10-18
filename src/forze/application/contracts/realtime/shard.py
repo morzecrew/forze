@@ -1,6 +1,6 @@
 """The realtime shard — one gateway instance's tenant assignment.
 
-The namespace-tier realtime plane has three sharded components that must agree on *which*
+The tenant-aware realtime plane has three sharded components that must agree on *which*
 tenants, *which* stream, and *which* consumer group: the gateway's
 :class:`~forze_socketio.TenantShardedSignalSource`, the group-ensure step, and the durable
 relay step. Passing the assignment to each by hand invites drift — get one wrong and a tenant
@@ -26,7 +26,7 @@ from .signal import RealtimeSignal
 @final
 @attrs.define(frozen=True, kw_only=True, slots=True)
 class RealtimeShard:
-    """One gateway instance's tenant shard for the namespace-tier realtime plane.
+    """One gateway instance's tenant shard for the tenant-aware realtime plane.
 
     Construct one and hand the same object to every sharded component
     (:class:`~forze_socketio.TenantShardedSignalSource`,

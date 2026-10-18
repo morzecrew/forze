@@ -2,7 +2,8 @@
 
 ``RevocationStatesPort`` caches revocation states, and its safety rests on three write rules no
 signature can carry: a lookup's ``fill`` never overwrites and never outlives the instant it was
-given; a revocation overwrites; an epoch only rises. Redis keeps them in Lua on the server's
+given; a revocation overwrites; an epoch only rises. An API key's state, under its digest alone,
+keeps the first two. Redis keeps them in Lua on the server's
 clock, the mock in memory on an injected one, so reading either proves nothing about the other.
 
 ``PrincipalEpochPort`` keeps the epoch in the database: it reads ``0`` for a principal with no
@@ -200,6 +201,64 @@ async def check_the_store_clock_moves_forward(h: StatesHarness) -> None:
     assert second - first >= _SHORT // timedelta(milliseconds=1) - 5, h.backend
 
 
+async def check_an_api_key_fill_sets_only_an_absent_state_until_its_instant(
+    h: StatesHarness,
+) -> None:
+    digest = uuid4().hex
+    now = await h.states.now_ms(uuid4())
+    read = await h.states.read_api_key(digest)
+
+    assert read.state is None, h.backend
+    assert read.now_ms >= now, h.backend
+
+    # The store's own name for the state, which a MAC binds: stable, and one per digest.
+    assert digest in read.key, h.backend
+    assert read.key == (await h.states.read_api_key(digest)).key, h.backend
+    assert read.key != (await h.states.read_api_key(uuid4().hex)).key, h.backend
+
+    # Landed after its instant: nothing is written.
+    await h.states.fill_api_key(digest, "live|one", expire_at_ms=now - 1)
+    assert (await h.states.read_api_key(digest)).state is None, h.backend
+
+    short = now + _SHORT // timedelta(milliseconds=1)
+    await h.states.fill_api_key(digest, "live|one", expire_at_ms=short)
+    await h.states.fill_api_key(digest, "live|two", expire_at_ms=now + _LONG_MS)
+    assert (await h.states.read_api_key(digest)).state == "live|one", h.backend
+
+    await h.wait(_PAST_SHORT)
+    assert (await h.states.read_api_key(digest)).state is None, h.backend
+
+
+async def check_an_api_key_revoke_overwrites_and_expires(h: StatesHarness) -> None:
+    one, two = uuid4().hex, uuid4().hex
+    expire_at = await h.states.now_ms(uuid4()) + _LONG_MS
+
+    await h.states.fill_api_key(one, "live|one", expire_at_ms=expire_at)
+    await h.states.revoke_api_keys([one, two], ttl=_SHORT)
+
+    assert (await h.states.read_api_key(one)).state == REVOKED_STATE, h.backend
+    assert (await h.states.read_api_key(two)).state == REVOKED_STATE, h.backend
+
+    # A lookup cannot replace a revocation that is still present.
+    await h.states.fill_api_key(one, "live|one", expire_at_ms=expire_at)
+    assert (await h.states.read_api_key(one)).state == REVOKED_STATE, h.backend
+
+    await h.wait(_PAST_SHORT)
+    assert (await h.states.read_api_key(one)).state is None, h.backend
+    await h.states.revoke_api_keys([], ttl=_SHORT)
+
+
+async def check_api_key_states_stand_apart_from_principal_states(h: StatesHarness) -> None:
+    principal, digest = uuid4(), uuid4().hex
+    expire_at = await h.states.now_ms(principal) + _LONG_MS
+
+    await h.states.fill(principal, {f"k:{digest}": "live|-"}, expire_at_ms=expire_at)
+    assert (await h.states.read_api_key(digest)).state is None, h.backend
+
+    await h.states.fill_api_key(digest, "live|one", expire_at_ms=expire_at)
+    assert (await h.states.read(principal, f"k:{digest}")).state == "live|-", h.backend
+
+
 STATES_BATTERY: tuple[StatesCheck, ...] = (
     check_an_empty_read_finds_nothing_at_the_store_time,
     check_fill_sets_only_absent_keys,
@@ -209,6 +268,9 @@ STATES_BATTERY: tuple[StatesCheck, ...] = (
     check_raise_epoch_replaces_an_unreadable_value,
     check_principals_never_share_states,
     check_the_store_clock_moves_forward,
+    check_an_api_key_fill_sets_only_an_absent_state_until_its_instant,
+    check_an_api_key_revoke_overwrites_and_expires,
+    check_api_key_states_stand_apart_from_principal_states,
 )
 
 # ....................... #

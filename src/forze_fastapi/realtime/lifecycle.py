@@ -185,7 +185,7 @@ async def _sharded_tail_to_hub(
     max_consecutive_crashes: int | None,
     stop: asyncio.Event,
 ) -> None:
-    """One tail loop per assigned tenant, each bound to it — the namespace-tier twin.
+    """One tail loop per assigned tenant, each bound to it — the tenant-aware twin.
 
     The tenant-global loop trusts a header; here the realtime stream route is wired
     ``tenant_aware``, so each loop binds its shard tenant, resolves the port to that
@@ -442,7 +442,7 @@ def realtime_sse_sharded_tail_lifecycle_step(
     max_consecutive_crashes: int | None = None,
     step_id: StrKey = "realtime_sse_sharded_tail",
 ) -> LifecycleStep:
-    """The namespace-tier twin of :func:`realtime_sse_tail_lifecycle_step`.
+    """The tenant-aware twin of :func:`realtime_sse_tail_lifecycle_step`.
 
     For a realtime stream route wired ``tenant_aware``: one supervised tail loop per
     tenant in *shard*, each bound to its tenant, so signals fan out under the

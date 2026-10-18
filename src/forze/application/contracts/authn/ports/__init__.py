@@ -15,6 +15,8 @@ from .resolution import PrincipalResolverPort
 from .revocation import (
     EPOCH_STATE_KEY,
     REVOKED_STATE,
+    ApiKeyStateRead,
+    ApiKeyStatesPort,
     PrincipalEpochPort,
     RevocationStatesPort,
     RevocationStatesRead,
@@ -46,4 +48,6 @@ __all__ = [
     "REVOKED_STATE",
     "RevocationStatesPort",
     "RevocationStatesRead",
+    "ApiKeyStateRead",
+    "ApiKeyStatesPort",
 ]

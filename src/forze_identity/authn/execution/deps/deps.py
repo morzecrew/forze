@@ -1,12 +1,13 @@
 """Configurable authn dependency factories resolving document ports from execution context."""
 
-from typing import final
+from typing import cast, final
 
 import attrs
 from pydantic import BaseModel
 
 from forze.application.contracts.authn import (
     ApiKeyLifecyclePort,
+    ApiKeyStatesPort,
     ApiKeyVerifierDepKey,
     ApiKeyVerifierPort,
     AuthnEventEmitter,
@@ -25,6 +26,7 @@ from forze.application.contracts.authn import (
     PrincipalResolverDepKey,
     PrincipalResolverPort,
     RevocationStatesDepKey,
+    RevocationStatesPort,
     RevocationStatesSpec,
     TokenLifecycleDepKey,
     TokenLifecyclePort,
@@ -34,8 +36,10 @@ from forze.application.contracts.authn import (
 )
 from forze.application.contracts.authz import AuthzSpec
 from forze.application.contracts.counter import CounterSpec
+from forze.application.contracts.deps import backend_of, implements
 from forze.application.contracts.document import (
     DocumentCommandDepKey,
+    DocumentCommandHookDepKey,
     DocumentCommandPort,
     DocumentQueryDepKey,
     DocumentQueryPort,
@@ -63,6 +67,7 @@ from ...adapters import (
 from ...adapters.credential_deactivation import AuthnCredentialDeactivationHelper
 from ...adapters.principal_deactivation import PrincipalDeactivationAdapter
 from ...adapters.principal_eligibility import (
+    AdmittedTokenEligibilityAdapter,
     AllowAllPrincipalEligibilityAdapter,
     PolicyPrincipalEligibilityAdapter,
 )
@@ -80,7 +85,12 @@ from ...resolvers import (
     JwtNativeUuidResolver,
     MappingTableResolver,
 )
-from ...services import SessionRevocation
+from ...services import (
+    ApiKeyRevocation,
+    PolicyPrincipalEpochHook,
+    RevocationStates,
+    SessionRevocation,
+)
 from ...verifiers import (
     Argon2PasswordVerifier,
     ForzeJwtTokenVerifier,
@@ -114,16 +124,71 @@ def _session_revocation(
 
     return SessionRevocation(
         config=config,
-        states=ctx.deps.resolve_configurable(
-            ctx,
-            RevocationStatesDepKey,
-            RevocationStatesSpec(name=config.route),
-            route=config.route,
-        ),
+        states=_revocation_states(ctx, config),
         epochs=ctx.deps.provide(PrincipalEpochDepKey)(ctx),
         sessions=ctx.doc.query(session_spec),
         in_transaction=lambda: ctx.tx_ctx.depth() > 0,
         defer=ctx.tx_ctx.run_or_defer,
+    )
+
+
+def _api_key_revocation(
+    ctx: ExecutionContext,
+    shared: AuthnSharedServices | None,
+) -> ApiKeyRevocation | None:
+    """The API-key fast path's reads and writes, or ``None`` without ``key_mac``."""
+
+    config = shared.revocation_states if shared is not None else None
+
+    if config is None or config.key_mac is None:
+        return None
+
+    states = _revocation_states(ctx, config)
+
+    if not implements(states, ApiKeyStatesPort):
+        raise exc.configuration(
+            f"RevocationStates.key_mac verifies API keys from cached states, but the states "
+            f"store on route {config.route!r} does not implement ApiKeyStatesPort.",
+            code="authn_api_key_states_unsupported",
+        )
+
+    return ApiKeyRevocation(
+        config=config,
+        states=cast(ApiKeyStatesPort, states),
+        accounts=ctx.doc.query(api_key_account_spec),
+        in_transaction=lambda: ctx.tx_ctx.depth() > 0,
+        defer=ctx.tx_ctx.run_or_defer,
+    )
+
+
+def _caller_key_revocation(
+    ctx: ExecutionContext,
+    shared: AuthnSharedServices | None,
+) -> ApiKeyRevocation | None:
+    """The re-check a mint runs on its caller's API key, or ``None`` when no key can be admitted
+    from a state here: without ``key_mac``, or without an API-key store to read.
+
+    It only reads the caller's key row, so the store's query port is enough; without
+    ``key_mac`` the store is never probed.
+    """
+
+    config = shared.revocation_states if shared is not None else None
+
+    if config is None or config.key_mac is None:
+        return None
+
+    if not ctx.deps.resolvable(DocumentQueryDepKey, route=api_key_account_spec.name):
+        return None
+
+    return _api_key_revocation(ctx, shared)
+
+
+def _revocation_states(ctx: ExecutionContext, config: RevocationStates) -> RevocationStatesPort:
+    return ctx.deps.resolve_configurable(
+        ctx,
+        RevocationStatesDepKey,
+        RevocationStatesSpec(name=config.route),
+        route=config.route,
     )
 
 
@@ -239,6 +304,7 @@ class ConfigurableHmacApiKeyVerifier:
         return HmacApiKeyVerifier(
             api_key_svc=self.shared.api_key_svc,
             ak_qry=ctx.doc.query(api_key_account_spec),
+            revocation=_api_key_revocation(ctx, self.shared),
         )
 
 
@@ -379,10 +445,53 @@ class ConfigurableAuthn:
 # ....................... #
 
 
+_SKIP_BACKEND = "forze_postgres"
+"""The backend whose locking read of the policy principal excludes a concurrent deactivation,
+so an issue serializes with it: the skip's precondition. The mock's locking read only claims
+the row, so on the mock (as on Mongo) every verification reads."""
+
+
+def _deactivations_raise_epochs(ctx: ExecutionContext, config: RevocationStates) -> bool:
+    """Whether every write that may deactivate a policy principal raises its epoch here.
+
+    :raises CoreException: ``configuration`` when the policy principal's hook carries another
+        revocation configuration: its raises would be written where this verifier never reads.
+    """
+
+    route = policy_principal_spec.name
+
+    if not ctx.deps.exists(DocumentCommandHookDepKey, route=route):
+        return False
+
+    hook = ctx.deps.provide(DocumentCommandHookDepKey, route=route)
+
+    if not isinstance(hook, PolicyPrincipalEpochHook):
+        return False
+
+    if hook.config != config:
+        raise exc.configuration(
+            "The authn and authz kernels carry different revocation states. Pass the same "
+            "RevocationStates to both: the verifier reads the epochs deactivations raise.",
+            code="authn_revocation_states_mismatch",
+        )
+
+    return True
+
+
 @final
 @attrs.define(slots=True, frozen=True, kw_only=True)
 class ConfigurablePolicyPrincipalEligibility:
-    """Build :class:`PolicyPrincipalEligibilityAdapter` from policy principal documents."""
+    """Build :class:`PolicyPrincipalEligibilityAdapter` from policy principal documents.
+
+    With revocation states on both the authn and the authz kernel, and the policy principal on
+    Postgres, the read is skipped right after the fast path admitted a token of
+    the same principal (:class:`AdmittedTokenEligibilityAdapter`).
+    """
+
+    shared: AuthnSharedServices | None = None
+    """Shared services; their revocation states enable the skip."""
+
+    # ....................... #
 
     def __call__(
         self,
@@ -390,10 +499,21 @@ class ConfigurablePolicyPrincipalEligibility:
         spec: AuthnSpec,
     ) -> PrincipalEligibilityPort:
         _ = spec
-        return PolicyPrincipalEligibilityAdapter(
-            principal_qry=ctx.doc.query(policy_principal_spec),
+        principal_qry = ctx.doc.query(policy_principal_spec)
+        adapter = PolicyPrincipalEligibilityAdapter(
+            principal_qry=principal_qry,
             in_transaction=lambda: ctx.tx_ctx.depth() > 0,
         )
+        config = self.shared.revocation_states if self.shared is not None else None
+
+        if (
+            config is None
+            or not _deactivations_raise_epochs(ctx, config)
+            or type(backend_of(principal_qry)).__module__.split(".")[0] != _SKIP_BACKEND
+        ):
+            return adapter
+
+        return AdmittedTokenEligibilityAdapter(inner=adapter)
 
 
 # ....................... #
@@ -479,13 +599,22 @@ class ConfigurablePrincipalDeactivation:
             pa_cmd=pa_cmd,
             ak_qry=ak_qry,
             ak_cmd=ak_cmd,
+            key_revocation=_api_key_revocation(ctx, self.shared) if ak_qry is not None else None,
         )
+        revocation = _session_revocation(ctx, self.shared)
+        stores = (
+            (pa_cmd, ak_cmd, ctx.doc.command(policy_principal_spec), ctx.doc.command(session_spec))
+            if revocation is not None
+            else ()
+        )
+
         return PrincipalDeactivationAdapter(
             principal_registry=registry,
             token_lifecycle=token_lifecycle,
             credentials=credentials,
             events=_resolve_events(ctx, spec),
-            revocation=_session_revocation(ctx, self.shared),
+            revocation=revocation,
+            stores=tuple(store for store in stores if store is not None),
         )
 
 
@@ -518,6 +647,7 @@ class ConfigurableTokenLifecycle:
             eligibility=_resolve_eligibility(ctx, spec),
             events=_resolve_events(ctx, spec),
             revocation=_session_revocation(ctx, self.shared),
+            key_revocation=_caller_key_revocation(ctx, self.shared),
         )
 
 
@@ -642,6 +772,7 @@ class ConfigurableApiKeyLifecycle:
             events=_resolve_events(ctx, spec),
             caller=ctx.inv_ctx.get_authn,
             revocation=_session_revocation(ctx, self.shared),
+            key_revocation=_api_key_revocation(ctx, self.shared),
         )
 
 
@@ -679,6 +810,8 @@ class ConfigurablePasswordAccountProvisioning:
             invite_svc=invite_svc,
             invite_qry=invite_qry,
             invite_cmd=invite_cmd,
+            revocation=_session_revocation(ctx, self.shared),
+            key_revocation=_caller_key_revocation(ctx, self.shared),
         )
 
 

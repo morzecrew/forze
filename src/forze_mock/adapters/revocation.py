@@ -12,21 +12,33 @@ import attrs
 from forze.application.contracts.authn import (
     EPOCH_STATE_KEY,
     REVOKED_STATE,
+    ApiKeyStateRead,
+    ApiKeyStatesPort,
     PrincipalEpochPort,
     RevocationStatesPort,
     RevocationStatesRead,
 )
 from forze.base.exceptions import exc
-from forze.base.primitives import monotonic
+from forze.base.primitives import utcnow
 from forze_mock.adapters._journal import record_undo
 from forze_mock.state import MockState
 
 # ----------------------- #
 
 
+def _wall_seconds() -> float:
+    return utcnow().timestamp()
+
+
+_API_KEYS = ""
+"""The owner API-key states are stored under, in place of a principal id."""
+
+# ....................... #
+
+
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class MockRevocationStates(RevocationStatesPort):
+class MockRevocationStates(RevocationStatesPort, ApiKeyStatesPort):
     """The Redis states store's model in memory: per-key expiries on one clock.
 
     The clock stands in for the server's ``TIME``: it alone decides expiry, and a value lives
@@ -36,25 +48,27 @@ class MockRevocationStates(RevocationStatesPort):
     state: MockState
     namespace: str
 
-    clock: Callable[[], float] = monotonic
-    """Seconds on a monotonic clock; inject one to move time in a test."""
+    clock: Callable[[], float] = _wall_seconds
+    """Seconds since the Unix epoch, as Redis's ``TIME`` gives them: the active time source's
+    wall clock, the one an application compares an API-key state's not-after with. Inject one
+    to move time in a test."""
 
     # ....................... #
 
     def _now_ms(self) -> int:
         return int(self.clock() * 1000)
 
-    def _get(self, principal_id: UUID, key: str, now_ms: int) -> str | None:
-        entry = self.state.revocation_states.get((self.namespace, str(principal_id), key))
+    def _get(self, owner: str, key: str, now_ms: int) -> str | None:
+        entry = self.state.revocation_states.get((self.namespace, owner, key))
 
         if entry is None or entry[1] <= now_ms:
             return None
 
         return entry[0]
 
-    def _set(self, principal_id: UUID, key: str, value: str, expire_at_ms: int) -> None:
+    def _set(self, owner: str, key: str, value: str, expire_at_ms: int) -> None:
         states = self.state.revocation_states
-        stored = (self.namespace, str(principal_id), key)
+        stored = (self.namespace, owner, key)
         states[stored] = (value, expire_at_ms)
         # Kept in write order, so the oldest writes, the first to expire, sit at the front.
         states.move_to_end(stored)
@@ -84,8 +98,8 @@ class MockRevocationStates(RevocationStatesPort):
 
             return RevocationStatesRead(
                 now_ms=now_ms,
-                epoch=self._get(principal_id, EPOCH_STATE_KEY, now_ms),
-                state=self._get(principal_id, key, now_ms),
+                epoch=self._get(str(principal_id), EPOCH_STATE_KEY, now_ms),
+                state=self._get(str(principal_id), key, now_ms),
             )
 
     async def fill(
@@ -103,8 +117,8 @@ class MockRevocationStates(RevocationStatesPort):
                 return
 
             for key, value in states.items():
-                if self._get(principal_id, key, now_ms) is None:
-                    self._set(principal_id, key, value, expire_at_ms)
+                if self._get(str(principal_id), key, now_ms) is None:
+                    self._set(str(principal_id), key, value, expire_at_ms)
 
     async def revoke(self, principal_id: UUID, keys: Sequence[str], *, ttl: timedelta) -> None:
         with self.state.lock:
@@ -113,7 +127,7 @@ class MockRevocationStates(RevocationStatesPort):
             expire_at_ms = now_ms + ttl // timedelta(milliseconds=1)
 
             for key in keys:
-                self._set(principal_id, key, REVOKED_STATE, expire_at_ms)
+                self._set(str(principal_id), key, REVOKED_STATE, expire_at_ms)
 
     async def now_ms(self, principal_id: UUID) -> int:
         del principal_id
@@ -133,12 +147,39 @@ class MockRevocationStates(RevocationStatesPort):
             if expire_at_ms <= now_ms:
                 return
 
-            cached = self._get(principal_id, EPOCH_STATE_KEY, now_ms)
+            cached = self._get(str(principal_id), EPOCH_STATE_KEY, now_ms)
 
             if cached is not None and cached.isascii() and cached.isdigit():
                 epoch = max(epoch, int(cached))
 
-            self._set(principal_id, EPOCH_STATE_KEY, str(epoch), expire_at_ms)
+            self._set(str(principal_id), EPOCH_STATE_KEY, str(epoch), expire_at_ms)
+
+    async def read_api_key(self, digest: str) -> ApiKeyStateRead:
+        with self.state.lock:
+            now_ms = self._now_ms()
+
+            return ApiKeyStateRead(
+                now_ms=now_ms,
+                state=self._get(_API_KEYS, f"k:{digest}", now_ms),
+                key=f"{self.namespace}:k:{digest}",
+            )
+
+    async def fill_api_key(self, digest: str, state: str, *, expire_at_ms: int) -> None:
+        with self.state.lock:
+            now_ms = self._now_ms()
+            self._sweep(now_ms)
+
+            if expire_at_ms > now_ms and self._get(_API_KEYS, f"k:{digest}", now_ms) is None:
+                self._set(_API_KEYS, f"k:{digest}", state, expire_at_ms)
+
+    async def revoke_api_keys(self, digests: Sequence[str], *, ttl: timedelta) -> None:
+        with self.state.lock:
+            now_ms = self._now_ms()
+            self._sweep(now_ms)
+            expire_at_ms = now_ms + ttl // timedelta(milliseconds=1)
+
+            for digest in digests:
+                self._set(_API_KEYS, f"k:{digest}", REVOKED_STATE, expire_at_ms)
 
 
 # ....................... #
@@ -159,6 +200,11 @@ class MockPrincipalEpochStore(PrincipalEpochPort):
     """Whether a transaction is open; :meth:`hold` and :meth:`advance` refuse outside one."""
 
     # ....................... #
+
+    def is_transactionally_enlisted(self) -> bool:
+        """Whether a raise or a hold would run in the open mock transaction."""
+
+        return self.in_transaction()
 
     def _require_transaction(self) -> None:
         if not self.in_transaction():

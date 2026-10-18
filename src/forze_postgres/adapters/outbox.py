@@ -81,7 +81,8 @@ class PostgresOutboxStore[M: BaseModel](
     refuses to run outside a transaction; :meth:`mark_published` deletes the rows, and the
     other marks match the locked ``pending`` rows. ``processing_at`` and ``published_at``
     are never written, and a row is never ``processing``, so nothing is left to reclaim
-    after a relay dies: its transaction rolls back and the rows are pending again.
+    after a relay dies: its transaction rolls back and the rows are pending again. With a
+    ``delivery_log``, the delete also appends each row to it, in the same statement.
     """
 
     client: PostgresClientPort
@@ -297,6 +298,12 @@ class PostgresOutboxStore[M: BaseModel](
                     code="outbox_claim_outside_transaction",
                 )
 
+            if self.config.delivery_log is not None:
+                # Resolved here, before anything is published, and again at the mark: a log
+                # resolver that fails only at the mark rolls back a batch already sent, and
+                # sends it again on every pass.
+                await resolve_postgres_qname(self.config.delivery_log, tenant_id)
+
             stmt = sql.SQL(
                 """
                 SELECT {columns}
@@ -396,16 +403,35 @@ class PostgresOutboxStore[M: BaseModel](
         # A claimed row is still ``pending`` under consume; the pass's row lock is what
         # makes it this relay's.
         table = await self._table()
-        stmt = sql.SQL(
+        delete = sql.SQL(
             """
             DELETE FROM {table}
             WHERE id = ANY(%(ids)s::uuid[])
               AND status = %(pending)s
             """
         ).format(table=table.ident())
-        params = {"ids": list(ids), "pending": OutboxStatus.PENDING.value}
+        params: dict[str, Any] = {"ids": list(ids), "pending": OutboxStatus.PENDING.value}
 
-        return int(await self.client.execute(stmt, params, return_rowcount=True) or 0)
+        if self.config.delivery_log is not None:
+            # One statement, so a log row exists exactly when its delete commits, and a log
+            # that cannot be written fails the delete, and with it the pass.
+            log = await resolve_postgres_qname(
+                self.config.delivery_log, self.require_tenant_if_aware()
+            )
+            delete = sql.SQL(
+                """
+                WITH consumed AS (
+                    {delete}
+                    RETURNING id, outbox_route, event_id, tenant_id
+                )
+                INSERT INTO {log} (id, outbox_route, event_id, tenant_id, published_at)
+                SELECT id, outbox_route, event_id, tenant_id, %(published_at)s
+                FROM consumed
+                """
+            ).format(delete=delete, log=log.ident())
+            params["published_at"] = utcnow()
+
+        return int(await self.client.execute(delete, params, return_rowcount=True) or 0)
 
     async def mark_failed(
         self,

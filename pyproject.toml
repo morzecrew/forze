@@ -822,6 +822,16 @@ plane's, which the isolation plane compares. The checker verifies the claim: any
 package registering the key fails here.\
 """
 
+[[tool.conformance_manifest.exempt_groups]]
+kind = "no-engine-matrix"
+keys = ["document_command_hook"]
+reason = """
+A hook around one document's command port, registered by the plane that owns the document \
+(forze_identity.authz for the policy principal) and applied to whichever backend's port the \
+document resolves to. No backend implements it, so there is no engine axis; the checker fails \
+if an integration package ever registers the key.\
+"""
+
 [tool.conformance_manifest.exemptions."crypto.required_reach"]
 kind = "config-value"
 reason = """

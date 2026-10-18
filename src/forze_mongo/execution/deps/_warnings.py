@@ -7,7 +7,6 @@ from .configs import (
     MongoDocumentConfig,
     MongoIdempotencyConfig,
     MongoInboxConfig,
-    MongoOutboxConfig,
     MongoReadOnlyDocumentConfig,
     MongoSearchConfig,
 )
@@ -45,12 +44,6 @@ MONGO_IDEMPOTENCY_WARNING = IntegrationRouteWarning[MongoIdempotencyConfig](
 
 MONGO_INBOX_WARNING = IntegrationRouteWarning[MongoInboxConfig](
     kind="inbox",
-    tenant_aware=lambda config: config.tenant_aware,
-    relation_fields=lambda config: [("collection", config.collection)],
-)
-
-MONGO_OUTBOX_WARNING = IntegrationRouteWarning[MongoOutboxConfig](
-    kind="outbox",
     tenant_aware=lambda config: config.tenant_aware,
     relation_fields=lambda config: [("collection", config.collection)],
 )

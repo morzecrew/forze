@@ -30,7 +30,12 @@ from ..domain.models.session import (
     Session,
     UpdateSessionCmd,
 )
-from ..services import AccessTokenService, RefreshTokenService, SessionRevocation
+from ..services import (
+    AccessTokenService,
+    ApiKeyRevocation,
+    RefreshTokenService,
+    SessionRevocation,
+)
 from ._utils import revoke_sessions_matching
 
 # ----------------------- #
@@ -72,6 +77,10 @@ class TokenLifecycleAdapter(TokenLifecyclePort):
     """When set, tokens carry ``fam`` and ``pep``, every issue holds the principal's epoch, and
     every revocation writes its states through after commit."""
 
+    key_revocation: ApiKeyRevocation | None = None
+    """When set, a session issued from a request that authenticated with an API key re-reads
+    that key's row first, so a key admitted from a stale cached state mints nothing."""
+
     # ....................... #
 
     def __attrs_post_init__(self) -> None:
@@ -105,6 +114,12 @@ class TokenLifecycleAdapter(TokenLifecyclePort):
                 "A delegated caller cannot mint a session for the principal it acts for",
                 code="delegate_denied",
             )
+
+        if self.key_revocation is not None:
+            # A session issued from a request an API key authenticated, for whomever, must not
+            # outlive that key. Its row is taken before the principal's and the epoch, the order
+            # a deactivation takes them in.
+            await self.key_revocation.recheck_caller()
 
         # Locked until the session commits, so a concurrent deactivation cannot miss it.
         await self.eligibility.require_authentication_allowed(

@@ -8,7 +8,9 @@ holds expires. A key that is missing or unreadable means "read Postgres", never 
 
 State keys, under one principal: :data:`EPOCH_STATE_KEY` for the epoch, ``f:<family id>`` for a
 family and ``s:<session id>`` for a session. A state is ``live|<tenant id or ->`` or
-:data:`REVOKED_STATE`; an epoch is a decimal integer.
+:data:`REVOKED_STATE`; an epoch is a decimal integer. An API key's state sits under its digest,
+``k:<digest>``, under no principal: :data:`REVOKED_STATE`, or a live state carrying a MAC the
+caller makes and checks, since it is the only proof the key exists.
 """
 
 from collections.abc import Awaitable, Mapping, Sequence
@@ -41,6 +43,21 @@ class RevocationStatesRead:
 
     state: str | None
     """The cached state as stored, or ``None`` when absent."""
+
+
+@attrs.define(slots=True, frozen=True, kw_only=True)
+class ApiKeyStateRead:
+    """What one read of an API key's state found, on the store's clock."""
+
+    now_ms: int
+    """The store's time when the read ran, in milliseconds since the Unix epoch."""
+
+    state: str | None
+    """The cached state as stored, or ``None`` when absent."""
+
+    key: str
+    """The store's own full name for the state, its namespace included. A MAC over it binds a
+    state to the store it was written in."""
 
 
 # ....................... #
@@ -111,6 +128,46 @@ class RevocationStatesPort(Protocol):
         :param principal_id: The principal the epoch belongs to.
         :param epoch: The epoch read from the source of truth.
         :param expire_at_ms: The instant the value expires, on the store's clock.
+        """
+        ...  # pragma: no cover
+
+
+# ....................... #
+
+
+@runtime_checkable
+class ApiKeyStatesPort(Protocol):
+    """Opt-in extension of a :class:`RevocationStatesPort` for API keys' states.
+
+    Kept off :class:`RevocationStatesPort`, so a store written against the session calls alone
+    still satisfies it. Only a deployment that verifies API keys from cached states needs it,
+    and the build refuses one whose states store lacks it. Detect it with
+    :func:`~forze.application.contracts.deps.implements`.
+    """
+
+    def read_api_key(self, digest: str) -> Awaitable[ApiKeyStateRead]:
+        """Read the state under an API key's digest, with the store's time and its key, at once.
+
+        :param digest: The key's digest.
+        """
+        ...  # pragma: no cover
+
+    def fill_api_key(self, digest: str, state: str, *, expire_at_ms: int) -> Awaitable[None]:
+        """Set the state under *digest* when absent, expiring at *expire_at_ms*; a present one stays.
+
+        A write that lands at or after *expire_at_ms* leaves nothing behind.
+
+        :param digest: The key's digest.
+        :param state: The state to cache.
+        :param expire_at_ms: The instant the value expires, on the store's clock.
+        """
+        ...  # pragma: no cover
+
+    def revoke_api_keys(self, digests: Sequence[str], *, ttl: timedelta) -> Awaitable[None]:
+        """Overwrite the state under each digest with :data:`REVOKED_STATE`, expiring after *ttl*.
+
+        :param digests: The keys' digests.
+        :param ttl: How long the revoked states live.
         """
         ...  # pragma: no cover
 

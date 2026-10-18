@@ -12,6 +12,7 @@ from forze.application.integrations.authz import (
     check_provider_timeout,
 )
 from forze.base.exceptions import exc
+from forze_identity.authn.services import RevocationStates
 
 from ...services.grants import ProviderKeyCheck
 from ...services.grants_cache import GrantsCache
@@ -60,6 +61,13 @@ class AuthzKernelConfig:
     """Remembers each principal's catalog grants for its TTL, which is then how long a removed
     binding keeps granting. ``None`` (the default) reads the bindings on every decision. See
     :class:`~forze_identity.authz.services.grants_cache.GrantsCache`."""
+
+    revocation_states: RevocationStates | None = None
+    """When set, every write that may deactivate a policy principal (``is_active`` set to
+    anything but ``True``, or the row removed) raises the principal's epoch in its transaction
+    and writes it through after commit, through the document's command port, so a token issued
+    before is refused. Authn skips its eligibility read only when this is the value its own
+    kernel carries. Such a write then refuses to run outside a transaction."""
 
     def __attrs_post_init__(self) -> None:
         check_permission_providers(self.permission_providers)

@@ -50,6 +50,7 @@ from forze.application.contracts.secrets import (
     RotatingCredentialsAdminDepKey,
     RotatingCredentialsDepKey,
 )
+from forze.application.contracts.tenancy import resolves_per_tenant
 from forze.application.contracts.transaction import TransactionManagerDepKey
 from forze.base.exceptions import exc
 from forze.base.primitives import MappingConverter, StrKey, StrKeyMapping
@@ -388,44 +389,53 @@ class PostgresDepsModule(DepsModule):
 
         if self.rw_documents:
             for name, cfg in self.rw_documents.items():
+                document_fields = [
+                    ("read", cfg.read),
+                    ("write", cfg.write),
+                    ("history", cfg.history),
+                ]
                 routes.append(
                     PostgresTenancyRouteSpec(
                         name=str(name),
                         tenant_aware=cfg.tenant_aware,
                         kind="document",
-                        has_namespace_routing=callable(cfg.read) or callable(cfg.write),
+                        has_namespace_routing=resolves_per_tenant(
+                            *(spec for _, spec in document_fields)
+                        ),
                     ),
                 )
                 warn_dynamic_relation_with_tenant_aware(
                     route_name=str(name),
                     kind="document",
                     tenant_aware=cfg.tenant_aware,
-                    fields=[
-                        ("read", cfg.read),
-                        ("write", cfg.write),
-                        ("history", cfg.history),
-                    ],
+                    fields=document_fields,
                 )
 
         if self.searches:
             for name, search_cfg in self.searches.items():
+                # The index is a name on the heap, not a store of its own. It counts all the
+                # same: an index lives in its table's schema, so a static one beside a
+                # per-tenant heap names some other table's index.
+                search_fields = [
+                    ("index", search_cfg.index),
+                    ("read", search_cfg.read),
+                    ("heap", search_cfg.heap_relation),
+                ]
                 routes.append(
                     PostgresTenancyRouteSpec(
                         name=str(name),
                         tenant_aware=search_cfg.tenant_aware,
                         kind="search",
-                        has_namespace_routing=callable(search_cfg.index),
+                        has_namespace_routing=resolves_per_tenant(
+                            *(spec for _, spec in search_fields)
+                        ),
                     ),
                 )
                 warn_dynamic_relation_with_tenant_aware(
                     route_name=str(name),
                     kind="search",
                     tenant_aware=search_cfg.tenant_aware,
-                    fields=[
-                        ("index", search_cfg.index),
-                        ("read", search_cfg.read),
-                        ("heap", search_cfg.heap_relation),
-                    ],
+                    fields=search_fields,
                 )
 
         if self.hub_searches:
@@ -458,10 +468,23 @@ class PostgresDepsModule(DepsModule):
 
         if self.federated_searches:
             for name, federated_search_cfg in self.federated_searches.items():
+                # A plain leg runs under its own flag, so the federation is only as scoped as
+                # its least-scoped leg. A hub leg takes the federation's flag for every leg
+                # it runs.
+                legs_scoped = all(
+                    isinstance(fed_leg, PostgresFederatedSearchLegHub)
+                    or fed_leg.search.tenant_aware
+                    or resolves_per_tenant(
+                        fed_leg.search.index,
+                        fed_leg.search.read,
+                        fed_leg.search.heap_relation,
+                    )
+                    for fed_leg in federated_search_cfg.members.values()
+                )
                 routes.append(
                     PostgresTenancyRouteSpec(
                         name=str(name),
-                        tenant_aware=federated_search_cfg.tenant_aware,
+                        tenant_aware=federated_search_cfg.tenant_aware and legs_scoped,
                         kind="federated_search",
                     ),
                 )
@@ -509,7 +532,10 @@ class PostgresDepsModule(DepsModule):
                         name=str(name),
                         tenant_aware=analytics_cfg.tenant_aware,
                         kind="analytics",
-                        has_namespace_routing=callable(analytics_cfg.query_schema),
+                        has_namespace_routing=resolves_per_tenant(
+                            analytics_cfg.query_schema,
+                            analytics_cfg.resolved_ingest_relation(),
+                        ),
                     ),
                 )
 
@@ -554,18 +580,37 @@ class PostgresDepsModule(DepsModule):
                         name=str(name),
                         tenant_aware=outbox_cfg.tenant_aware,
                         kind="outbox",
-                        has_namespace_routing=callable(outbox_cfg.relation),
+                        # The weaker of its two relations: a shared delivery log holds every
+                        # tenant's records, however the outbox itself is split. A store that is
+                        # not tenant-aware resolves both with no tenant, so it splits nothing.
+                        has_namespace_routing=outbox_cfg.tenant_aware
+                        and callable(outbox_cfg.relation)
+                        and (outbox_cfg.delivery_log is None or callable(outbox_cfg.delivery_log)),
                     ),
                 )
 
-        if self.inboxes:
-            for name, inbox_cfg in self.inboxes.items():
+        # The inbox and idempotency stores pass their resolver the tenant only when they are
+        # tenant-aware; otherwise it gets none, and every tenant lands in the one table it
+        # returns. So a per-tenant table counts only on a tenant-aware store, and a static
+        # one takes the tier the flag gives.
+        keyed_stores: tuple[
+            tuple[PostgresTenancyRouteKind, StrKeyMapping[Any] | None],
+            ...,
+        ] = (
+            ("inbox", self.inboxes),
+            ("idempotency", self.idempotencies),
+        )
+
+        for kind, store_cfgs in keyed_stores:
+            for name, store_cfg in (store_cfgs or {}).items():
                 routes.append(
                     PostgresTenancyRouteSpec(
                         name=str(name),
-                        tenant_aware=inbox_cfg.tenant_aware,
-                        kind="inbox",
-                        has_namespace_routing=callable(inbox_cfg.relation),
+                        tenant_aware=store_cfg.tenant_aware,
+                        kind=kind,
+                        has_namespace_routing=(
+                            store_cfg.tenant_aware and callable(store_cfg.relation)
+                        ),
                     ),
                 )
 

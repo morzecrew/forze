@@ -19,6 +19,7 @@ import pytest
 import structlog
 
 from forze.application.contracts.authn import (
+    ApiKeyStateRead,
     AuthnIdentity,
     AuthnSpec,
     IssuedTokens,
@@ -35,19 +36,26 @@ from forze.application.contracts.transaction import TransactionManagerDepKey
 from forze.application.execution import Deps, ExecutionContext
 from forze.application.execution.operations import run_operation
 from forze.base.exceptions import CoreException, exc
-from forze_identity.authn import AuthnDepsModule, AuthnKernelConfig, RevocationStates
+from forze_identity.authn import (
+    AuthnDepsModule,
+    AuthnKernelConfig,
+    ForzeJwtTokenVerifier,
+    RevocationStates,
+)
 from forze_identity.authn.application.specs import (
     api_key_account_spec,
     password_account_spec,
+    password_invite_spec,
     password_reset_spec,
     session_spec,
 )
-from forze_identity.authn import ForzeJwtTokenVerifier
 from forze_identity.authn.services import (
     AccessTokenService,
+    ApiKeyConfig,
     Hs256Signer,
     PasswordConfig,
     SessionBinding,
+    StateMacKeys,
 )
 from forze_identity.authz.application.specs import policy_principal_spec
 from forze_identity.authz.domain.models.policy_principal import CreatePolicyPrincipalCmd
@@ -150,6 +158,22 @@ class _States:
         self._call("raise_epoch", write=True)
         await self.inner.raise_epoch(principal_id, epoch, expire_at_ms=expire_at_ms)
 
+    async def read_api_key(self, digest: str) -> ApiKeyStateRead:
+        self._call("read_api_key", write=False)
+        return await self.inner.read_api_key(digest)
+
+    async def fill_api_key(self, digest: str, state: str, *, expire_at_ms: int) -> None:
+        self._call("fill_api_key", write=False)
+
+        if self.fill_down:
+            raise exc.infrastructure("states store unavailable")
+
+        await self.inner.fill_api_key(digest, state, expire_at_ms=expire_at_ms)
+
+    async def revoke_api_keys(self, digests: Sequence[str], *, ttl: timedelta) -> None:
+        self._call("revoke_api_keys", write=True)
+        await self.inner.revoke_api_keys(digests, ttl=ttl)
+
 
 @attrs.define(eq=False)
 class _Epochs:
@@ -183,11 +207,23 @@ class _Epochs:
 
 
 class _CountingQuery:
-    """A document query port that records its reads."""
+    """A document query port that records its reads, as ``<label>.<method>``.
 
-    def __init__(self, inner: Any, reads: list[str]) -> None:
+    With *cap*, a ``find_many`` that names no limit returns at most *cap* rows, as the Postgres,
+    Mongo and Firestore gateways' implicit limit does.
+    """
+
+    def __init__(
+        self,
+        inner: Any,
+        reads: list[str],
+        label: str = "session",
+        cap: int | None = None,
+    ) -> None:
         self._inner = inner
         self._reads = reads
+        self._label = label
+        self._cap = cap
 
     def __getattr__(self, name: str) -> Any:
         attr = getattr(self._inner, name)
@@ -196,7 +232,12 @@ class _CountingQuery:
             return attr
 
         async def counted(*args: Any, **kwargs: Any) -> Any:
-            self._reads.append(f"session.{name}")
+            self._reads.append(f"{self._label}.{name}")
+            pagination = kwargs.get("pagination") or {}
+
+            if name == "find_many" and self._cap is not None and pagination.get("limit") is None:
+                kwargs["pagination"] = {**pagination, "limit": self._cap}
+
             return await attr(*args, **kwargs)
 
         return counted
@@ -302,17 +343,35 @@ def _stack(
     binding: SessionBinding = "session",
     fast_path: bool = True,
     write_attempts: int = 3,
+    key_mac: StateMacKeys | None = None,
+    clock: _Clock | None = None,
+    api_key: ApiKeyConfig | None = None,
+    states_route: str = STATES,
+    namespace: str = STATES,
+    store_clock: bool = True,
+    states_port: Callable[[_States], Any] | None = None,
+    key_query_cap: int | None = None,
+    key_store: bool = True,
 ) -> _Stack:
     mock = MockDepsModule()
     state = mock.state
-    clock = _Clock()
+    clock = clock or _Clock()
     reads: list[str] = []
-    states = _States(inner=MockRevocationStates(state=state, namespace=STATES, clock=clock))
+    # Without *store_clock*, the mock keeps its own clock, as an application wiring it does.
+    inner = (
+        MockRevocationStates(state=state, namespace=namespace, clock=clock)
+        if store_clock
+        else MockRevocationStates(state=state, namespace=namespace)
+    )
+    states = _States(inner=inner)
     document = ConfigurableMockDocument(module=mock)
     epochs_by_ctx: dict[int, _Epochs] = {}
 
     def counted_sessions(ctx: ExecutionContext, spec: Any) -> Any:
         return _CountingQuery(document(ctx, spec), reads)
+
+    def counted_keys(ctx: ExecutionContext, spec: Any) -> Any:
+        return _CountingQuery(document(ctx, spec), reads, label="api_key", cap=key_query_cap)
 
     def epochs(ctx: ExecutionContext) -> _Epochs:
         return epochs_by_ctx.setdefault(
@@ -330,14 +389,17 @@ def _stack(
         access_token_secret=b"k" * 32,
         refresh_token_pepper=b"p" * 32,
         reset_token_pepper=b"r" * 32,
+        invite_token_pepper=b"i" * 32,
         api_key_pepper=b"a" * 32,
+        api_key=api_key or ApiKeyConfig(),
         password=PasswordConfig(time_cost=1, memory_cost=8, parallelism=1),
         revocation_states=(
             RevocationStates(
-                route=STATES,
+                route=states_route,
                 ttl=TTL,
                 write_attempts=write_attempts,
                 session_binding=binding,
+                key_mac=key_mac,
             )
             if fast_path
             else None
@@ -363,7 +425,9 @@ def _stack(
                         policy_principal_spec.name: document,
                         password_account_spec.name: document,
                         password_reset_spec.name: document,
-                        api_key_account_spec.name: document,
+                        password_invite_spec.name: document,
+                        # Without *key_store*, as a process that serves no API keys.
+                        **({api_key_account_spec.name: counted_keys} if key_store else {}),
                     },
                     DocumentCommandDepKey: dict.fromkeys(
                         (
@@ -371,12 +435,17 @@ def _stack(
                             policy_principal_spec.name,
                             password_account_spec.name,
                             password_reset_spec.name,
-                            api_key_account_spec.name,
+                            password_invite_spec.name,
+                            *((api_key_account_spec.name,) if key_store else ()),
                         ),
                         document,
                     ),
                     PrincipalRegistryDepKey: {ROUTE: ConfigurablePrincipalRegistry()},
-                    RevocationStatesDepKey: {STATES: lambda ctx, spec: states},
+                    RevocationStatesDepKey: {
+                        states_route: lambda ctx, spec: (
+                            states if states_port is None else states_port(states)
+                        ),
+                    },
                     TenantResolverDepKey: {ROUTE: lambda ctx: _AnyTenant()},
                 }
             )
@@ -1036,15 +1105,60 @@ async def test_a_password_login_after_a_stale_token_is_not_refused() -> None:
     assert await asyncio.create_task(request()) is not None
 
 
-async def test_an_issue_for_another_subject_does_not_re_read_the_caller() -> None:
-    # An application issuing a session for someone else, from a request its own token
-    # authenticated, re-reads nothing of that token: it is not the credential being minted from.
+async def _mint_for(
+    stack: _Stack, caller: UUID, other: UUID, mint: str, token: IssuedTokens
+) -> Any:
+    """One request: authenticate with *token* as *caller*, then mint a credential for *other*."""
+
+    operator = AuthnIdentity(principal_id=caller)
+    provisioning = stack.ctx.authn.password_account_provisioning(SPEC)
+
+    async def request() -> Any:
+        assert await stack.verify_here(token) == "admitted"
+
+        if mint == "session":
+            # As when a resolver maps the token's subject to another principal.
+            return await stack.login(other)
+
+        async with stack.ctx.tx_ctx.scope(TX):
+            if mint == "invite":
+                return await provisioning.issue_password_invite(operator, other)
+
+            await provisioning.provision_password_account(
+                operator, other, PasswordCredentials(login=f"{other}", password="pw-1")
+            )
+            return "provisioned"
+
+    return await asyncio.create_task(request())
+
+
+MINTS_FOR_ANOTHER = pytest.mark.parametrize("mint", ["session", "invite", "provision"])
+
+
+@MINTS_FOR_ANOTHER
+async def test_a_live_caller_still_mints_for_another_subject(mint: str) -> None:
     stack = _stack()
     caller, other = await stack.principal(), await stack.principal()
     token = await stack.login(caller)
 
-    async def request() -> IssuedTokens:
-        assert await stack.verify_here(token) == "admitted"
-        return await stack.login(other)
+    assert await _mint_for(stack, caller, other, mint, token) is not None
 
-    assert await asyncio.create_task(request()) is not None
+
+@BINDINGS
+@MINTS_FOR_ANOTHER
+async def test_a_caller_admitted_inside_the_window_mints_nothing_for_another_subject(
+    binding: SessionBinding,
+    mint: str,
+) -> None:
+    # The caller's credential is what must still be live, whoever the credential is for.
+    stack = _stack(binding=binding)
+    caller, other = await stack.principal(), await stack.principal()
+    stolen = await stack.login(caller)
+    assert await stack.verify(stolen) == "admitted"
+    await _logout_whose_write_is_lost(stack, caller)
+    assert await stack.verify(stolen) == "admitted"
+
+    with pytest.raises(CoreException) as caught:
+        await _mint_for(stack, caller, other, mint, stolen)
+
+    assert caught.value.code == "session_revoked"

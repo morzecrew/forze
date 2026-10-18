@@ -7,6 +7,8 @@ from .codecs import (
 from .deps import (
     DocumentCommandDepKey,
     DocumentCommandDepPort,
+    DocumentCommandHookDepKey,
+    DocumentCommandHookDepPort,
     DocumentDeps,
     DocumentQueryDepKey,
     DocumentQueryDepPort,
@@ -42,5 +44,7 @@ __all__ = [
     "DocumentCommandDepKey",
     "DocumentQueryDepPort",
     "DocumentCommandDepPort",
+    "DocumentCommandHookDepKey",
+    "DocumentCommandHookDepPort",
     "DocumentDeps",
 ]
