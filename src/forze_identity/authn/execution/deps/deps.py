@@ -543,7 +543,6 @@ class ConfigurablePrincipalDeactivation:
             credentials=credentials,
             events=_resolve_events(ctx, spec),
             revocation=_session_revocation(ctx, self.shared),
-            in_transaction=lambda: ctx.tx_ctx.depth() > 0,
         )
 
 

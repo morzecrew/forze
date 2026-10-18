@@ -1,4 +1,3 @@
-from collections.abc import Callable
 from typing import final
 from uuid import UUID
 
@@ -39,25 +38,23 @@ class PrincipalDeactivationAdapter(PrincipalDeactivationPort):
     """When set, refuse before the first write outside a transaction, which the session
     revocation would refuse after the principal and its credentials were already written."""
 
-    in_transaction: Callable[[], bool] | None = None
-    """Whether a transaction is open; the deps module wires it. Inside one the credentials are
-    closed before the principal is written, outside one the principal goes first."""
-
     # ....................... #
 
     async def deactivate(self, principal_id: UUID) -> None:
         if self.revocation is not None:
             self.revocation.require_transaction()
 
-        if self.in_transaction is not None and self.in_transaction():
-            # Credentials first: a password change or reset writes the account and then the
-            # principal's epoch, and the principal's write may raise that epoch (revocation
-            # states on the authz kernel). One order keeps the two from deadlocking.
+        if self.revocation is not None:
+            # Credentials first: a password change or reset then writes the account and raises
+            # the principal's epoch, and the principal's write may raise it too (revocation
+            # states on the authz kernel). One order keeps the two from deadlocking; the
+            # transaction required above makes the order invisible otherwise.
             await self.credentials.deactivate_all(principal_id)
             await self.principal_registry.deactivate_principal(principal_id)
 
         else:
-            # Each write commits alone: a failure part-way leaves the principal inactive.
+            # Without revocation states nothing raises an epoch here, and a failure part-way
+            # outside a transaction leaves the principal inactive.
             await self.principal_registry.deactivate_principal(principal_id)
             await self.credentials.deactivate_all(principal_id)
 

@@ -23,7 +23,9 @@ from forze.application.contracts.authn import (
     current_authn_admission,
     record_authn_admission,
 )
+from forze.application.contracts.deps import backend_of
 from forze.application.contracts.document import DocumentQueryPort
+from forze.application.contracts.transaction import TransactionallyEnlistable
 from forze.base.exceptions import CoreException, exc
 from forze.base.primitives import StrKey
 from forze_identity._secure_spec import forbid_cache_and_history
@@ -217,7 +219,14 @@ def _ttl_ms(config: RevocationStates) -> int:
     return config.ttl // timedelta(milliseconds=1)
 
 
-def _require_transaction(in_transaction: Callable[[], bool]) -> None:
+def _require_transaction(in_transaction: Callable[[], bool], *stores: object) -> None:
+    """Refuse outside a transaction, or when one of *stores* would not write in it.
+
+    A scope on another route, or on another database's client, is open but holds none of
+    *stores*' writes: each would commit on its own, and a refusal after the first of them
+    would leave it committed without the rest.
+    """
+
     if not in_transaction():
         raise exc.configuration(
             "With revocation states configured, sessions are issued and revoked, and policy "
@@ -227,6 +236,20 @@ def _require_transaction(in_transaction: Callable[[], bool]) -> None:
             "transaction around the call.",
             code="authn_revocation_requires_transaction",
         )
+
+    for store in stores:
+        backend = backend_of(store)
+
+        if isinstance(backend, TransactionallyEnlistable) and not (
+            backend.is_transactionally_enlisted()
+        ):
+            raise exc.configuration(
+                f"The open transaction does not hold the writes of {type(backend).__name__}: "
+                "with revocation states configured, a principal's epoch is raised in the "
+                "transaction of the write it guards. Open the transaction on the route of "
+                "the database that holds the epochs and the policy principals.",
+                code="authn_revocation_requires_transaction",
+            )
 
 
 async def _write_through(
@@ -283,13 +306,14 @@ class EpochRaise:
 
     # ....................... #
 
-    def require_transaction(self) -> None:
-        """Refuse to raise outside a transaction.
+    def require_transaction(self, *stores: object) -> None:
+        """Refuse to raise outside a transaction, or in one that holds neither the epoch's
+        writes nor those of *stores* (the write the raise guards).
 
         :raises CoreException: ``configuration`` (``authn_revocation_requires_transaction``).
         """
 
-        _require_transaction(self.in_transaction)
+        _require_transaction(self.in_transaction, self.epochs, *stores)
 
     async def __call__(self, principal_id: UUID) -> None:
         """Raise *principal_id*'s epoch, refusing every token issued before; write it after commit.
@@ -563,12 +587,13 @@ class SessionRevocation:
             raise _session_revoked()
 
     def require_transaction(self) -> None:
-        """Refuse to issue or revoke outside a transaction.
+        """Refuse to issue or revoke outside a transaction, or in one that does not hold the
+        epoch's writes.
 
         :raises CoreException: ``configuration`` (``authn_revocation_requires_transaction``).
         """
 
-        _require_transaction(self.in_transaction)
+        _require_transaction(self.in_transaction, self.epochs)
 
     async def hold_epoch(self, principal_id: UUID) -> int:
         """Read the principal's epoch for a session being issued, holding it until commit."""

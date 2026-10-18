@@ -30,6 +30,7 @@ from forze.application.contracts.authn import (
     PrincipalEpochDepKey,
 )
 from forze.application.contracts.authz import AuthzSpec
+from forze.application.contracts.deps import backend_of
 from forze.application.contracts.document import DocumentCommandHookDepKey, DocumentQueryDepKey
 from forze.application.contracts.transaction import IsolationLevel, TransactionManagerDepKey
 from forze.application.execution import Deps, ExecutionContext
@@ -39,16 +40,17 @@ from forze_identity.authn.services import PasswordConfig
 from forze_identity.authz import AuthzDepsModule, AuthzKernelConfig
 from forze_identity.authz.application.constants import AuthzResourceName
 from forze_identity.authz.application.specs import policy_principal_spec
+from forze_mock.adapters.tx import MockTxManagerAdapter
+from forze_postgres.adapters.principal_epoch import PostgresPrincipalEpochStore
 from forze_postgres.execution.deps import postgres_txmanager
 from forze_postgres.execution.deps.configs import (
     PostgresPrincipalEpochConfig,
     PostgresReadOnlyDocumentConfig,
 )
 from forze_postgres.execution.deps.factories import (
-    ConfigurablePostgresPrincipalEpoch,
     ConfigurablePostgresReadOnlyDocument,
 )
-from forze_postgres.kernel.client.client import PostgresClient
+from forze_postgres.kernel.client.client import PostgresClient, PostgresConfig
 from forze_redis import RedisClient, RedisDepsModule, RedisRevocationStatesConfig
 from tests.integration.test_forze_authn.test_pg_authn_integration import (
     _authn_pg_deps,
@@ -161,6 +163,7 @@ async def _stack(
     actor_claim: str | None = None,
     proxy: bool = True,
     extra: Deps | None = None,
+    epoch_client: PostgresClient | None = None,
 ) -> _Stack:
     suffix = uuid4().hex[:12]
     principals, epochs = f"authz_pri_{suffix}", f"authn_epochs_{suffix}"
@@ -220,9 +223,10 @@ async def _stack(
             Deps.plain(
                 {
                     PrincipalEpochDepKey: lambda ctx: _GatedEpochs(
-                        ConfigurablePostgresPrincipalEpoch(
+                        PostgresPrincipalEpochStore(
+                            client=epoch_client or pg_client,
                             config=PostgresPrincipalEpochConfig(relation=("public", epochs)),
-                        )(ctx),
+                        ),
                         gates if gates is not None else {},
                     ),
                 }
@@ -406,6 +410,104 @@ async def test_a_login_waits_for_a_deactivation_and_is_refused(
             await logging_in
 
     assert caught.value.kind is ExceptionKind.AUTHENTICATION
+
+
+@pytest.fixture
+async def other_client(postgres_container: Any) -> Any:
+    """A second client of the same database: its own pool, never in the stack's transaction."""
+
+    url = postgres_container.get_connection_url().replace("postgresql+psycopg://", "postgresql://")
+    client = PostgresClient()
+    await client.initialize(dsn=url, config=PostgresConfig(min_size=1, max_size=2))
+
+    yield client
+
+    await client.close()
+
+
+@pytest.mark.parametrize("write", ["password_change", *sorted(battery.DEACTIVATIONS)])
+@pytest.mark.parametrize("where", ["other_route", "epochs_elsewhere"])
+async def test_a_write_the_transaction_does_not_hold_is_refused_before_it_runs(
+    pg_client: PostgresClient,
+    redis_client: RedisClient,
+    other_client: PostgresClient,
+    where: str,
+    write: str,
+) -> None:
+    # "other_route": a scope is open, but on a route whose transaction holds no Postgres write,
+    # so each write would commit on its own. "epochs_elsewhere": the transaction holds the
+    # write's rows but not the epoch's. Either way it is refused before anything is written,
+    # never with the credentials closed, the password changed or the principal deactivated
+    # and no epoch raised.
+    stack = await _stack(
+        pg_client,
+        redis_client,
+        epoch_client=other_client if where == "epochs_elsewhere" else None,
+        extra=Deps.routed(
+            {TransactionManagerDepKey: {"other": lambda ctx: MockTxManagerAdapter()}}
+        ),
+    )
+    principal = await stack.principal()
+    identity = AuthnIdentity(principal_id=principal)
+    credentials = PasswordCredentials(login=f"{principal}@example.com", password="old horse")
+    await stack.run(
+        lambda: stack.ctx.authn.password_account_provisioning(SPEC).register_with_password(
+            principal, credentials
+        )
+    )
+    # With the epochs elsewhere no session can be issued either; the epoch row stays 0.
+    issued = await battery.login(stack, principal) if where == "other_route" else None
+    before = await stack.epoch(principal)
+
+    async def run() -> None:
+        async with stack.ctx.tx_ctx.scope("other" if where == "other_route" else TX):
+            if write == "password_change":
+                await stack.ctx.authn.password_lifecycle(SPEC).change_password(
+                    identity, "old horse", "new horse battery"
+                )
+
+            else:
+                await battery.DEACTIVATIONS[write](stack, principal)
+
+    with pytest.raises(CoreException) as caught:
+        await stack.run(run)
+
+    assert caught.value.code == "authn_revocation_requires_transaction", caught.value
+    assert await stack.is_active(principal)
+    assert await stack.epoch(principal) == before
+    result = await stack.run(
+        lambda: stack.ctx.authn.authn(SPEC).authenticate_with_password(credentials)
+    )
+    assert result.identity.principal_id == principal
+    assert issued is None or await battery.verify(stack, issued) == "admitted"
+
+
+async def test_the_policy_principal_port_reports_whether_the_transaction_holds_its_writes(
+    pg_client: PostgresClient,
+    redis_client: RedisClient,
+) -> None:
+    stack = await _stack(
+        pg_client,
+        redis_client,
+        extra=Deps.routed(
+            {TransactionManagerDepKey: {"other": lambda ctx: MockTxManagerAdapter()}}
+        ),
+    )
+
+    async def enlisted(route: str | None) -> bool:
+        port = backend_of(stack.ctx.doc.command(policy_principal_spec))
+
+        if route is None:
+            return port.is_transactionally_enlisted()
+
+        async with stack.ctx.tx_ctx.scope(route):
+            return port.is_transactionally_enlisted()
+
+    assert [await stack.run(lambda r=r: enlisted(r)) for r in (None, "other", TX)] == [
+        False,
+        False,
+        True,
+    ]
 
 
 async def test_a_deactivation_above_read_committed_is_refused(

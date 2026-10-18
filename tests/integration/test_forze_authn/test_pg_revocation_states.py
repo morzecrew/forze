@@ -144,6 +144,9 @@ class _GatedEpochs:
     def __init__(self, inner: Any, gates: dict[str, _Gate]) -> None:
         self._inner, self._gates = inner, gates
 
+    def is_transactionally_enlisted(self) -> bool:
+        return self._inner.is_transactionally_enlisted()
+
     async def current(self, principal_id: UUID) -> int:
         return await self._inner.current(principal_id)
 

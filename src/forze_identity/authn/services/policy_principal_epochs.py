@@ -110,7 +110,7 @@ class _EpochRaisingPrincipalPort(PortProxy):
                 if not _deactivates(arguments["dto"]):
                     return await method(*args, **kwargs)
 
-                self.raise_epoch.require_transaction()
+                self.raise_epoch.require_transaction(self.inner)
                 rows: Sequence[Any] = await method(
                     **{**arguments, "return_new": True},
                 )
@@ -123,8 +123,9 @@ class _EpochRaisingPrincipalPort(PortProxy):
             if not principals:
                 return await method(*args, **kwargs)
 
-            # Before the write: outside a transaction it would commit without its raise.
-            self.raise_epoch.require_transaction()
+            # Before the write: outside a transaction, or in one that holds neither the
+            # principal's write nor the epoch's, it would commit without its raise.
+            self.raise_epoch.require_transaction(self.inner)
             result = await method(*args, **kwargs)
             await self._raise(principals)
 

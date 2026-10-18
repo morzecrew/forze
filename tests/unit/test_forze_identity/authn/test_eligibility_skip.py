@@ -36,10 +36,13 @@ from forze_identity.authn.application.specs import (
     password_account_spec,
     session_spec,
 )
-from forze_identity.authn.services import PasswordConfig
+from forze_identity.authn.services import PasswordConfig, PolicyPrincipalEpochHook
 from forze_identity.authz import AuthzDepsModule, AuthzKernelConfig
 from forze_identity.authz.application.specs import policy_principal_spec
-from forze_identity.authz.domain.models.policy_principal import CreatePolicyPrincipalCmd
+from forze_identity.authz.domain.models.policy_principal import (
+    CreatePolicyPrincipalCmd,
+    UpdatePolicyPrincipalCmd,
+)
 from forze_mock import MockDepsModule, MockStateDepKey
 from forze_mock.adapters.revocation import MockPrincipalEpochStore, MockRevocationStates
 from forze_mock.execution.factories import ConfigurableMockDocument, mock_journal_txmanager
@@ -245,3 +248,33 @@ async def test_a_deactivation_outside_a_transaction_writes_nothing_first() -> No
 
     assert caught.value.code == "authn_revocation_requires_transaction"
     assert (await stack.ctx.authn.authn(SPEC).authenticate_with_password(credentials)).identity
+
+
+class _ElsewherePort:
+    """A command port whose writes run outside the open transaction (another database)."""
+
+    def __init__(self) -> None:
+        self.writes: list[str] = []
+
+    def is_transactionally_enlisted(self) -> bool:
+        return False
+
+    async def update(self, pk: UUID, rev: int, dto: Any, **kwargs: Any) -> None:
+        self.writes.append("update")
+
+
+async def test_a_principal_write_the_transaction_does_not_hold_is_refused_before_it_runs() -> None:
+    # The epochs are in the open transaction; the principal's own write is not, so it would
+    # commit whether or not the raise that follows it does.
+    stack = _stack()
+    hook = PolicyPrincipalEpochHook(config=CONFIG)
+    port = _ElsewherePort()
+    guarded = hook(stack.ctx, port)  # type: ignore[arg-type]
+
+    with pytest.raises(CoreException) as caught:
+        await stack.in_tx(
+            lambda: guarded.update(uuid4(), 1, UpdatePolicyPrincipalCmd(is_active=False))
+        )
+
+    assert caught.value.code == "authn_revocation_requires_transaction"
+    assert port.writes == []

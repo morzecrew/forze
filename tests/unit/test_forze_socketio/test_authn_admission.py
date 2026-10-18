@@ -145,3 +145,39 @@ async def test_an_identity_resolver_connect_carries_its_admission() -> None:
 
     ack = await asyncio.create_task(sio.handlers[("/", "admission")]("sid-1", {}))
     assert ack == {"admission": "admitted:routed"}
+
+
+async def test_a_connect_that_records_nothing_carries_nothing_it_inherited() -> None:
+    # The connect's task may already hold an admission (a middleware's, another
+    # verification's); a resolution that verifies nothing must not hand it to the commands.
+    server = _server()
+    attach_realtime_connection(server, resolve=_resolve)
+    _commands(server)
+
+    async def connect() -> None:
+        record_authn_admission("inherited")
+        await server._handle_connect("eio-1", "/", {"token": "plain"})  # pyright: ignore[reportPrivateUsage]
+
+    await asyncio.create_task(connect())
+    [(sid, _eio)] = list(server.manager.get_participants("/", None))
+
+    assert await _event(server, sid, "admission", {}) == {"admission": None}
+
+
+async def test_an_identity_resolver_connect_carries_nothing_it_inherited() -> None:
+    sio = StubSocketIOServer()
+
+    async def resolve(connect: SocketIOConnect) -> AuthnIdentity:
+        _record(_token(connect.auth))
+        return AuthnIdentity(principal_id=_PRINCIPAL)
+
+    _commands(sio, identity_resolver=resolve)
+
+    async def connect() -> None:
+        record_authn_admission("inherited")
+        await sio.handlers[("/", "connect")]("sid-1", {}, {"token": "plain"})
+
+    await asyncio.create_task(connect())
+
+    ack = await asyncio.create_task(sio.handlers[("/", "admission")]("sid-1", {}))
+    assert ack == {"admission": None}

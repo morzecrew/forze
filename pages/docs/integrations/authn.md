@@ -113,6 +113,11 @@ CREATE TABLE authn_principal_epochs (
   revocation commits. Configure every process that verifies or revokes, and give
   the states a Redis namespace nothing else flushes. Expiries are instants on the Redis
   primary's clock: a failover to a replica whose clock lags lengthens every state by the lag.
+- **Redis is trusted.** The session states and epochs carry no MAC, so whoever can write the
+  states' namespace can restore a `live` state or an older epoch, and a revoked token is
+  admitted until its own `exp`. With the [eligibility read skipped](#skip-the-eligibility-read)
+  that includes a deactivated principal's, which the eligibility read would otherwise still
+  refuse. Let nothing but the identity plane write that namespace.
 - **Transactions are required.** With the fast path on, issuing and revoking refuse to run
   outside a transaction (`authn_revocation_requires_transaction`), so keep `tx_route` set on
   both registries. Issue and logout serialize on the epoch's row on Postgres only, with the
@@ -158,9 +163,11 @@ issued before is then refused by its epoch, so the eligibility read has nothing 
   the token's own subject, is skipped. Issuing a session (login, refresh, tenant switch) reads
   under the principal's row lock, and a delegated actor is always read, even when it is the
   subject. Tokens issued before the fast path, passwords and API keys read as before.
-- **The same rules as revocations.** Such a write refuses to run outside a transaction
-  (`authn_revocation_requires_transaction`) or above read committed (`authn_epoch_isolation`),
-  and a deactivation whose write-through never lands is enforced within `ttl`.
+- **The same rules as revocations.** Such a write refuses to run outside a transaction, or in
+  one that holds neither its own write nor the epoch's (a scope on another route or another
+  database), before it writes (`authn_revocation_requires_transaction`); it refuses above read
+  committed too (`authn_epoch_isolation`). A deactivation whose write-through never lands is
+  enforced within `ttl`.
 - **Configure every process that writes policy principals.** A process without the authz
   configuration raises no epoch, and a token it should have ended is admitted until its own
   `exp`; so is one deactivated by a write around the document port (SQL, or another spec over
