@@ -586,14 +586,14 @@ class SessionRevocation:
         ):
             raise _session_revoked()
 
-    def require_transaction(self) -> None:
+    def require_transaction(self, *stores: object) -> None:
         """Refuse to issue or revoke outside a transaction, or in one that does not hold the
-        epoch's writes.
+        epoch's writes, or those of *stores* (the other ports the operation writes through).
 
         :raises CoreException: ``configuration`` (``authn_revocation_requires_transaction``).
         """
 
-        _require_transaction(self.in_transaction, self.epochs)
+        _require_transaction(self.in_transaction, self.epochs, *stores)
 
     async def hold_epoch(self, principal_id: UUID) -> int:
         """Read the principal's epoch for a session being issued, holding it until commit."""

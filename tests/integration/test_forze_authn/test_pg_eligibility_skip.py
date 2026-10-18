@@ -31,11 +31,16 @@ from forze.application.contracts.authn import (
 )
 from forze.application.contracts.authz import AuthzSpec
 from forze.application.contracts.deps import backend_of
-from forze.application.contracts.document import DocumentCommandHookDepKey, DocumentQueryDepKey
+from forze.application.contracts.document import (
+    DocumentCommandDepKey,
+    DocumentCommandHookDepKey,
+    DocumentQueryDepKey,
+)
 from forze.application.contracts.transaction import IsolationLevel, TransactionManagerDepKey
 from forze.application.execution import Deps, ExecutionContext
 from forze.base.exceptions import CoreException, ExceptionKind
 from forze_identity.authn import AuthnDepsModule, AuthnKernelConfig, RevocationStates
+from forze_identity.authn.application.constants import AuthnResourceName
 from forze_identity.authn.services import PasswordConfig
 from forze_identity.authz import AuthzDepsModule, AuthzKernelConfig
 from forze_identity.authz.application.constants import AuthzResourceName
@@ -44,12 +49,16 @@ from forze_mock.adapters.tx import MockTxManagerAdapter
 from forze_postgres.adapters.principal_epoch import PostgresPrincipalEpochStore
 from forze_postgres.execution.deps import postgres_txmanager
 from forze_postgres.execution.deps.configs import (
+    PostgresDocumentConfig,
     PostgresPrincipalEpochConfig,
     PostgresReadOnlyDocumentConfig,
 )
 from forze_postgres.execution.deps.factories import (
+    ConfigurablePostgresDocument,
     ConfigurablePostgresReadOnlyDocument,
 )
+from forze_postgres.execution.deps.keys import PostgresClientDepKey, PostgresIntrospectorDepKey
+from forze_postgres.kernel.catalog.introspect import PostgresIntrospector
 from forze_postgres.kernel.client.client import PostgresClient, PostgresConfig
 from forze_redis import RedisClient, RedisDepsModule, RedisRevocationStatesConfig
 from tests.integration.test_forze_authn.test_pg_authn_integration import (
@@ -164,6 +173,7 @@ async def _stack(
     proxy: bool = True,
     extra: Deps | None = None,
     epoch_client: PostgresClient | None = None,
+    account_client: PostgresClient | None = None,
 ) -> _Stack:
     suffix = uuid4().hex[:12]
     principals, epochs = f"authz_pri_{suffix}", f"authn_epochs_{suffix}"
@@ -202,12 +212,14 @@ async def _stack(
                     access_token_secret=b"k" * 32,
                     refresh_token_pepper=b"p" * 32,
                     password=PasswordConfig(time_cost=1, memory_cost=8, parallelism=1),
+                    reset_token_pepper=b"r" * 32,
                     revocation_states=config,
                 ),
                 authn={ROUTE: SPEC.enabled_methods},
                 authz_route=ROUTE,
                 token_lifecycle={ROUTE},
                 password_lifecycle={ROUTE},
+                password_reset={ROUTE},
                 password_account_provisioning={ROUTE},
                 principal_deactivation={ROUTE},
                 actor_claim=actor_claim,
@@ -241,6 +253,39 @@ async def _stack(
             )()
         )
     )
+
+    if account_client is not None:
+        # The password accounts' writes go through a client of their own, as on another database.
+        elsewhere = context_from_deps(
+            Deps.plain(
+                {
+                    PostgresClientDepKey: account_client,
+                    PostgresIntrospectorDepKey: PostgresIntrospector(client=account_client),
+                }
+            )
+        )
+        accounts = ConfigurablePostgresDocument(
+            config=PostgresDocumentConfig(
+                read=("public", f"authn_pwd_{suffix}"),
+                write=("public", f"authn_pwd_{suffix}"),
+                bookkeeping_strategy="application",
+            )
+        )
+        deps = Deps(
+            store=deps.store.without_route(
+                DocumentCommandDepKey, AuthnResourceName.PASSWORD_ACCOUNTS
+            )
+        ).merge(
+            Deps.routed(
+                {
+                    DocumentCommandDepKey: {
+                        AuthnResourceName.PASSWORD_ACCOUNTS: lambda ctx, spec: accounts(
+                            elsewhere, spec
+                        ),
+                    },
+                }
+            )
+        )
 
     if extra is not None:
         deps = deps.merge(extra)
@@ -423,6 +468,53 @@ async def other_client(postgres_container: Any) -> Any:
     yield client
 
     await client.close()
+
+
+@pytest.mark.parametrize("write", ["password_change", "password_reset", "authn_deactivation"])
+async def test_a_deactivation_whose_credentials_are_elsewhere_writes_nothing(
+    pg_client: PostgresClient,
+    redis_client: RedisClient,
+    other_client: PostgresClient,
+    write: str,
+) -> None:
+    # The password accounts commit through a client of their own: the transaction holds the
+    # epochs, the principal and the sessions but not the account, so closing or changing it
+    # would commit even when the rest is refused or rolls back.
+    stack = await _stack(pg_client, redis_client, account_client=other_client)
+    principal = await stack.principal()
+    identity = AuthnIdentity(principal_id=principal)
+    credentials = PasswordCredentials(login=f"{principal}@example.com", password="old horse")
+    await stack.run(
+        lambda: stack.ctx.authn.password_account_provisioning(SPEC).register_with_password(
+            principal, credentials
+        )
+    )
+    issued = await battery.login(stack, principal)
+    resets = stack.ctx.authn.password_reset(SPEC)
+    reset = await stack.run(lambda: resets.request_reset(credentials.login))
+
+    def run() -> Awaitable[Any]:
+        if write == "password_change":
+            return stack.ctx.authn.password_lifecycle(SPEC).change_password(
+                identity, "old horse", "new horse battery"
+            )
+
+        if write == "password_reset":
+            assert reset is not None
+            return resets.reset_password(reset.token, "new horse battery")
+
+        return stack.ctx.authn.principal_deactivation(SPEC).deactivate(principal)
+
+    with pytest.raises(CoreException) as caught:
+        await stack.in_tx(run)
+
+    assert caught.value.code == "authn_revocation_requires_transaction", caught.value
+    assert await stack.is_active(principal)
+    result = await stack.run(
+        lambda: stack.ctx.authn.authn(SPEC).authenticate_with_password(credentials)
+    )
+    assert result.identity.principal_id == principal
+    assert await battery.verify(stack, issued) == "admitted"
 
 
 @pytest.mark.parametrize("write", ["password_change", *sorted(battery.DEACTIVATIONS)])

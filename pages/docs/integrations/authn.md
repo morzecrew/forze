@@ -120,7 +120,10 @@ CREATE TABLE authn_principal_epochs (
   refuse. Let nothing but the identity plane write that namespace.
 - **Transactions are required.** With the fast path on, issuing and revoking refuse to run
   outside a transaction (`authn_revocation_requires_transaction`), so keep `tx_route` set on
-  both registries. Issue and logout serialize on the epoch's row on Postgres only, with the
+  both registries. They refuse the same way, before writing, in a transaction that does not
+  hold every store they write (the epochs, and for a deactivation or a password change the
+  credentials and sessions too): a store on another database would commit on its own. The
+  Postgres stores report it; one that cannot is not checked. Issue and logout serialize on the epoch's row on Postgres only, with the
   revocation at read committed (the default); a revocation at repeatable read or serializable
   is refused (`authn_epoch_isolation`).
 - **`session_binding`.** `"session"` (the default) refuses a token once a refresh replaced its

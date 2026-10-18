@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **Token verifications can skip the eligibility read as well.** With the authn kernel's `RevocationStates` on `AuthzKernelConfig(revocation_states=)`, every policy principal write that may deactivate raises the epoch in its transaction (and refuses outside one), and a fast-path token skips the read. Postgres only.
+- **Token verifications can skip the eligibility read too.** With the authn kernel's `RevocationStates` on `AuthzKernelConfig(revocation_states=)`, a deactivating write through the policy principal's document port raises the epoch in its transaction (refused outside one); a fast-path token skips the read. Postgres only.
 
 - **`DocumentCommandHookDepKey` wraps a document's command port wherever it is resolved**, registered routed under the document's name.
 
@@ -21,7 +21,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **`ensure_principal(..., is_active=False)` creates the principal inactive in one write**, so a failure can no longer leave it active; `CreatePolicyPrincipalCmd` gains `is_active` (default `True`).
 
-- **With revocation states, a revocation or a policy principal deactivation in a transaction that does not hold the epochs' writes is refused before it writes** (`authn_revocation_requires_transaction`), instead of committing part-way. The Postgres document and epoch stores report `is_transactionally_enlisted()`.
+- **With revocation states, a revocation or a deactivation in a transaction that does not hold all of its writes (the epoch's, the credentials', the principal's) is refused before it writes** (`authn_revocation_requires_transaction`), not committed part-way; Postgres stores report `is_transactionally_enlisted()`.
 
 - **A credential minted by a WebSocket or Socket.IO command re-checks the token that authenticated the connection.** Both transports carry what the handshake or last reauth recorded (`current_authn_admission`) to each command; once that session is revoked, or rotated under `"session"` binding, mints fail until a reauth.
 

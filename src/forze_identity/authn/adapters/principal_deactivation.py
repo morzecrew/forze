@@ -1,4 +1,4 @@
-from typing import final
+from typing import Any, final
 from uuid import UUID
 
 import attrs
@@ -38,11 +38,16 @@ class PrincipalDeactivationAdapter(PrincipalDeactivationPort):
     """When set, refuse before the first write outside a transaction, which the session
     revocation would refuse after the principal and its credentials were already written."""
 
+    stores: tuple[Any, ...] = ()
+    """The command ports the cascade writes through (credentials, principal, sessions). With
+    :attr:`revocation`, each must write in the open transaction, checked before the first
+    write; one that cannot report it is left unchecked."""
+
     # ....................... #
 
     async def deactivate(self, principal_id: UUID) -> None:
         if self.revocation is not None:
-            self.revocation.require_transaction()
+            self.revocation.require_transaction(*self.stores)
 
         if self.revocation is not None:
             # Credentials first: a password change or reset then writes the account and raises

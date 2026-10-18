@@ -537,12 +537,20 @@ class ConfigurablePrincipalDeactivation:
             ak_qry=ak_qry,
             ak_cmd=ak_cmd,
         )
+        revocation = _session_revocation(ctx, self.shared)
+        stores = (
+            (pa_cmd, ak_cmd, ctx.doc.command(policy_principal_spec), ctx.doc.command(session_spec))
+            if revocation is not None
+            else ()
+        )
+
         return PrincipalDeactivationAdapter(
             principal_registry=registry,
             token_lifecycle=token_lifecycle,
             credentials=credentials,
             events=_resolve_events(ctx, spec),
-            revocation=_session_revocation(ctx, self.shared),
+            revocation=revocation,
+            stores=tuple(store for store in stores if store is not None),
         )
 
 
