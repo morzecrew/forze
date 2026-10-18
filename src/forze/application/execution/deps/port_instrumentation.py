@@ -4,6 +4,7 @@ from typing import TYPE_CHECKING, Any
 
 from forze.application.contracts.base import BaseSpec
 from forze.application.contracts.deps import DepKey
+from forze.application.contracts.document import DocumentCommandDepKey, DocumentCommandHookDepKey
 from forze.application.contracts.resilience import ResiliencePortPoliciesDepKey
 from forze.base.primitives import StrKey
 
@@ -13,6 +14,34 @@ if TYPE_CHECKING:
     from .frozen import FrozenDeps
 
 # ----------------------- #
+
+
+def maybe_wrap_document_hook(
+    deps: "FrozenDeps",
+    ctx: "ExecutionContext",
+    key: DepKey[Any],
+    route: StrKey | None,
+    result: Any,
+) -> Any:
+    """Pass a document's command port through the hook registered under its name, if any.
+
+    Applied to the backend's port before every other wrap, so the hook sees each write the
+    port makes, and before the port is cached, so no resolution hands it out bare.
+    """
+
+    if (
+        key != DocumentCommandDepKey
+        or route is None
+        or not deps.store.exists(DocumentCommandHookDepKey, route=route)
+    ):
+        return result
+
+    hook = deps.store.get_provider(DocumentCommandHookDepKey, route=route)
+
+    return hook(ctx, result)
+
+
+# ....................... #
 
 
 def maybe_wrap_interceptors(

@@ -160,6 +160,11 @@ class MockPrincipalEpochStore(PrincipalEpochPort):
 
     # ....................... #
 
+    def is_transactionally_enlisted(self) -> bool:
+        """Whether a raise or a hold would run in the open mock transaction."""
+
+        return self.in_transaction()
+
     def _require_transaction(self) -> None:
         if not self.in_transaction():
             raise exc.internal("Transactional context is required")

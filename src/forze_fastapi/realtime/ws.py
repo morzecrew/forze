@@ -46,7 +46,12 @@ from fastapi import APIRouter, WebSocket
 from pydantic import ValidationError
 from starlette.websockets import WebSocketDisconnect
 
-from forze.application.contracts.authn import AuthnIdentity, ClientIdentity
+from forze.application.contracts.authn import (
+    AuthnIdentity,
+    ClientIdentity,
+    bind_authn_admission,
+    current_authn_admission,
+)
 from forze.application.contracts.tenancy import TenantIdentity
 from forze.application.execution import ExecutionContext
 from forze.application.execution.context import ExecutionContextFactory
@@ -243,14 +248,25 @@ def _egress_frame(*, event: str, event_id: str | None, payload: Mapping[str, Any
     return encode_frame({"event": event, "id": event_id, "data": dict(payload)})
 
 
-async def _resolve(resolver: WsConnectionResolver, connect: WsConnect) -> WsConnection | None:
-    result = resolver(connect)
-    connection = await result if isawaitable(result) else result
+async def _resolve(
+    resolver: WsConnectionResolver,
+    connect: WsConnect,
+) -> tuple[WsConnection | None, object | None]:
+    """The connection, and the admission its credential's verification recorded.
+
+    The admission travels with the connection to its commands, which run in other tasks, so
+    a credential minted over the socket is checked against the one that authenticated it.
+    """
+
+    with bind_authn_admission(None):
+        result = resolver(connect)
+        connection = await result if isawaitable(result) else result
+        admission = current_authn_admission()
 
     # Every accepted identity passes here, at connect and at reauth, whatever the resolver.
     refuse_delegated_identity(connection.authn if connection is not None else None)
 
-    return connection
+    return connection, admission
 
 
 def _bind(ctx: ExecutionContext, connection: WsConnection) -> Any:
@@ -341,6 +357,9 @@ class _WsSession:
     """Mutable per-connection state — reauth swaps the identity in place."""
 
     connection: WsConnection
+
+    admission: object | None = None
+    """What the connection's credential was admitted as, bound around each command."""
 
     replay: BacklogDrain = attrs.field(factory=BacklogDrain)
     """The connect-time replay's progress: while it is not ``complete``, acks clamp
@@ -448,10 +467,10 @@ def attach_realtime_ws_route(
             await websocket.close(code=WS_RECONNECT_CLOSE, reason=_DRAINING_REASON)
             return
 
-        async def _handshake() -> tuple[WsConnection, frozenset[str]]:
+        async def _handshake() -> tuple[WsConnection, object | None, frozenset[str]]:
             _require_allowed_origin(websocket, origin_allowlist)
             negotiate_realtime_protocol(websocket.query_params.get("protocol"))
-            connection = await _resolve(resolve, WsConnect(websocket=websocket))
+            connection, admission = await _resolve(resolve, WsConnect(websocket=websocket))
 
             if connection is None:
                 raise exc.authentication(
@@ -473,7 +492,7 @@ def attach_realtime_ws_route(
                         max_topics=max_topics,
                     )
 
-            return connection, topic_set
+            return connection, admission, topic_set
 
         outcome = await guard_frame(_handshake, on_server_error=_log_server_error)
 
@@ -484,8 +503,8 @@ def attach_realtime_ws_route(
             await websocket.close(code=WS_POLICY_CLOSE, reason=outcome.envelope.detail[:120])
             return
 
-        connection, topic_set = outcome.value
-        session = _WsSession(connection=connection)
+        connection, admission, topic_set = outcome.value
+        session = _WsSession(connection=connection, admission=admission)
         await websocket.accept()
 
         subscription: SseSubscription | None = (
@@ -683,7 +702,7 @@ def attach_realtime_ws_route(
 
         async def _handle_reauth(frame: Mapping[str, Any], cid: Any) -> None:
             async def _unit() -> dict[str, Any]:
-                refreshed = await _resolve(
+                refreshed, admission = await _resolve(
                     resolve, WsConnect(websocket=websocket, auth=frame.get("auth"))
                 )
 
@@ -698,6 +717,7 @@ def attach_realtime_ws_route(
                     )
 
                 session.connection = refreshed
+                session.admission = admission
 
                 return {"ok": True}
 
@@ -752,6 +772,7 @@ def attach_realtime_ws_route(
 
                 with (
                     _bind(ctx, session.connection),
+                    bind_authn_admission(session.admission),
                     ctx.inv_ctx.bind_idempotency(idempotency_key or None),
                     # None is a no-op passthrough; a bound budget is tighten-only
                     ctx.inv_ctx.bind_deadline(budget),

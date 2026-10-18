@@ -54,16 +54,10 @@ class PrincipalRegistryAdapter(PrincipalRegistryPort):
                 is_active=existing.is_active,
             )
 
-        dto = CreatePolicyPrincipalCmd(kind=kind)
+        # One write, so an inactive principal is never briefly (or, on a failure, lastingly)
+        # active.
+        dto = CreatePolicyPrincipalCmd(kind=kind, is_active=is_active)
         created = await self.principal_cmd.create(dto, id=principal_id, return_new=True)
-
-        if not is_active:
-            await self.principal_cmd.update(
-                created.id,
-                created.rev,
-                UpdatePolicyPrincipalCmd(is_active=False),
-            )
-            created = await self.principal_qry.get(created.id)
 
         return PrincipalRef(
             principal_id=created.id,
