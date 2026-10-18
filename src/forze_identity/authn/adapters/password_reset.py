@@ -263,7 +263,7 @@ class PasswordResetAdapter(PasswordResetPort):
         """
 
         if self.revocation is not None and self.revoke_sessions_on_reset:
-            self.revocation.require_transaction()
+            self.revocation.require_transaction(self.pa_cmd, self.reset_cmd, self.session_cmd)
 
         if not token:
             raise exc.authentication(INVALID_RESET_TOKEN_MSG)

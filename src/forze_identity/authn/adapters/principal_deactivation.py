@@ -1,4 +1,4 @@
-from typing import final
+from typing import Any, final
 from uuid import UUID
 
 import attrs
@@ -38,16 +38,31 @@ class PrincipalDeactivationAdapter(PrincipalDeactivationPort):
     """When set, refuse before the first write outside a transaction, which the session
     revocation would refuse after the principal and its credentials were already written."""
 
+    stores: tuple[Any, ...] = ()
+    """The command ports the cascade writes through (credentials, principal, sessions). With
+    :attr:`revocation`, each must write in the open transaction, checked before the first
+    write; one that cannot report it is left unchecked."""
+
     # ....................... #
 
     async def deactivate(self, principal_id: UUID) -> None:
         if self.revocation is not None:
-            self.revocation.require_transaction()
+            self.revocation.require_transaction(*self.stores)
 
-        await self.principal_registry.deactivate_principal(principal_id)
-        # Credentials before sessions: a password change and reset write the account and
-        # then the sessions, and the same order keeps them from deadlocking with this.
-        await self.credentials.deactivate_all(principal_id)
+        if self.revocation is not None:
+            # Credentials first: a password change or reset then writes the account and raises
+            # the principal's epoch, and the principal's write may raise it too (revocation
+            # states on the authz kernel). One order keeps the two from deadlocking; the
+            # transaction required above makes the order invisible otherwise.
+            await self.credentials.deactivate_all(principal_id)
+            await self.principal_registry.deactivate_principal(principal_id)
+
+        else:
+            # Without revocation states nothing raises an epoch here, and a failure part-way
+            # outside a transaction leaves the principal inactive.
+            await self.principal_registry.deactivate_principal(principal_id)
+            await self.credentials.deactivate_all(principal_id)
+
         await self.token_lifecycle.revoke_tokens(AuthnIdentity(principal_id=principal_id))
 
         if self.events is not None:

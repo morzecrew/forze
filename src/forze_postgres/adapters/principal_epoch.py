@@ -49,6 +49,13 @@ class PostgresPrincipalEpochStore(PrincipalEpochPort):
 
     # ....................... #
 
+    def is_transactionally_enlisted(self) -> bool:
+        """Whether a raise or a hold would run in the open transaction: its client is in one."""
+
+        return self.client.is_in_transaction()
+
+    # ....................... #
+
     async def _table(self) -> PostgresQualifiedName:
         # Principal-global (not tenant-partitioned): resolve the bare relation.
         return await resolve_postgres_qname(self.config.relation, None)

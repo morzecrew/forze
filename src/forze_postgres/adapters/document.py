@@ -105,6 +105,13 @@ class PostgresDocumentAdapter(DocumentAdapter[R, D, C, U]):
 
     # ....................... #
 
+    def is_transactionally_enlisted(self) -> bool:
+        """Whether this port's writes run in the open transaction: its write client is in one."""
+
+        return self.write_gw is not None and self.write_gw.client.is_in_transaction()
+
+    # ....................... #
+
     def with_parameters(self, params: BaseModel) -> "PostgresDocumentAdapter[R, D, C, U]":
         # Validate against the spec contract, then bind the params onto a clone of the read
         # gateway — its reads apply them as transaction-local session settings (the view reads

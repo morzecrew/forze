@@ -10,7 +10,7 @@ import asyncio
 from collections.abc import Awaitable, Callable, Iterable
 from contextvars import ContextVar
 from datetime import timedelta
-from typing import Literal, final
+from typing import Any, Literal, final
 from uuid import UUID
 
 import attrs
@@ -20,8 +20,12 @@ from forze.application.contracts.authn import (
     REVOKED_STATE,
     PrincipalEpochPort,
     RevocationStatesPort,
+    current_authn_admission,
+    record_authn_admission,
 )
+from forze.application.contracts.deps import backend_of
 from forze.application.contracts.document import DocumentQueryPort
+from forze.application.contracts.transaction import TransactionallyEnlistable
 from forze.base.exceptions import CoreException, exc
 from forze.base.primitives import StrKey
 from forze_identity._secure_spec import forbid_cache_and_history
@@ -51,20 +55,57 @@ class AdmittedSession:
     epoch: int | None
 
 
-_ADMITTED: ContextVar[AdmittedSession | None] = ContextVar(
-    "forze_identity_admitted_session",
-    default=None,
-)
+@final
+@attrs.define(slots=True, frozen=True)
+class _Fresh:
+    """A token admitted on its principal's current epoch, by a verification in *task*."""
+
+    principal_id: UUID
+    task: "asyncio.Task[Any] | None"
 
 
-def remember_admitted_session(admitted: AdmittedSession | None) -> None:
+_FRESH: ContextVar[_Fresh | None] = ContextVar("forze_identity_fresh_admission", default=None)
+
+
+def remember_admitted_session(admitted: AdmittedSession | None, *, fresh: bool = False) -> None:
     """Record the token-backed session this request authenticated with, or forget it.
 
     A credential verified later in the request replaces it: a password or an API key forgets it,
     so an issue that follows re-checks only the credential the request authenticated with last.
+    A transport that runs a connection's commands in other tasks carries the record to them.
+
+    :param fresh: The verification compared the token's epoch with the principal's, so the
+        eligibility call that follows it in this task may skip its read (see
+        :func:`admitted_just_now`). Never carried to another task.
     """
 
-    _ADMITTED.set(admitted)
+    record_authn_admission(admitted)
+    _FRESH.set(
+        _Fresh(admitted.principal_id, asyncio.current_task())
+        if fresh and admitted is not None
+        else None
+    )
+
+
+def admitted_just_now(principal_id: UUID) -> bool:
+    """Whether this task's last verification admitted a token of *principal_id* on its epoch.
+
+    One answer per verification: the call consumes it, whatever it asks, so only the
+    eligibility check that follows the verification can rely on it, never one after it.
+    """
+
+    fresh = _FRESH.get()
+
+    if fresh is None:
+        return False
+
+    _FRESH.set(None)
+
+    return (
+        fresh.principal_id == principal_id
+        and fresh.task is not None
+        and fresh.task is asyncio.current_task()
+    )
 
 
 # ....................... #
@@ -169,6 +210,139 @@ def _judge(*, pep: int, epoch: int, state: str, tenant: str | None) -> None:
         )
 
 
+async def _bounded[T](config: RevocationStates, call: Awaitable[T]) -> T:
+    async with asyncio.timeout(config.timeout.total_seconds()):
+        return await call
+
+
+def _ttl_ms(config: RevocationStates) -> int:
+    return config.ttl // timedelta(milliseconds=1)
+
+
+def _require_transaction(in_transaction: Callable[[], bool], *stores: object) -> None:
+    """Refuse outside a transaction, or when one of *stores* would not write in it.
+
+    A scope on another route, or on another database's client, is open but holds none of
+    *stores*' writes: each would commit on its own, and a refusal after the first of them
+    would leave it committed without the rest.
+    """
+
+    if not in_transaction():
+        raise exc.configuration(
+            "With revocation states configured, sessions are issued and revoked, and policy "
+            "principals deactivated, only inside a transaction: an issue holds the principal's "
+            "epoch under a lock, and a revocation raises it or writes its states through once "
+            "it commits. Keep tx_route set on the authn and tenancy registries, or open a "
+            "transaction around the call.",
+            code="authn_revocation_requires_transaction",
+        )
+
+    for store in stores:
+        backend = backend_of(store)
+
+        if isinstance(backend, TransactionallyEnlistable) and not (
+            backend.is_transactionally_enlisted()
+        ):
+            raise exc.configuration(
+                f"The open transaction does not hold the writes of {type(backend).__name__}: "
+                "with revocation states configured, a principal's epoch is raised in the "
+                "transaction of the write it guards. Open the transaction on the route of "
+                "the database that holds the epochs and the policy principals.",
+                code="authn_revocation_requires_transaction",
+            )
+
+
+async def _write_through(
+    config: RevocationStates,
+    principal_id: UUID,
+    keys: list[str],
+    write: Callable[[], Awaitable[None]],
+) -> None:
+    error: Exception | None = None
+
+    for _ in range(config.write_attempts):
+        try:
+            await write()
+            return
+
+        except Exception as failure:
+            error = failure
+
+    # The revocation is committed; until these states expire, a stale one admits.
+    logger.error(
+        "Revocation states write-through failed for principal %s, keys %s: %r",
+        principal_id,
+        keys,
+        error,
+    )
+
+
+# ....................... #
+
+
+@final
+@attrs.define(slots=True, frozen=True, kw_only=True)
+class EpochRaise:
+    """Raise a principal's epoch in the caller's transaction, and write it through after commit.
+
+    Every token issued before the raise is refused from then on; the eligibility read may be
+    skipped for a token on the current epoch only because every deactivation raises it too.
+    """
+
+    config: RevocationStates
+    """The one configuration the verifier and every writer read."""
+
+    states: RevocationStatesPort
+    """Cached states."""
+
+    epochs: PrincipalEpochPort
+    """Principal epochs, in the database."""
+
+    in_transaction: Callable[[], bool]
+    """Whether a transaction is open."""
+
+    defer: Callable[[Callable[[], Awaitable[None]]], Awaitable[None]]
+    """Runs a callback once the current transaction commits."""
+
+    # ....................... #
+
+    def require_transaction(self, *stores: object) -> None:
+        """Refuse to raise outside a transaction, or in one that holds neither the epoch's
+        writes nor those of *stores* (the write the raise guards).
+
+        :raises CoreException: ``configuration`` (``authn_revocation_requires_transaction``).
+        """
+
+        _require_transaction(self.in_transaction, self.epochs, *stores)
+
+    async def __call__(self, principal_id: UUID) -> None:
+        """Raise *principal_id*'s epoch, refusing every token issued before; write it after commit.
+
+        :raises CoreException: ``configuration`` outside a transaction, or above read committed.
+        """
+
+        self.require_transaction()
+        await self.epochs.advance(principal_id)
+
+        async def _write() -> None:
+            # The epoch is read again at write time: a write delayed past a newer raise then
+            # caches the newer epoch, or one that expires within ttl of the newer commit.
+            now_ms = await _bounded(self.config, self.states.now_ms(principal_id))
+            epoch = await self.epochs.current(principal_id)
+            await _bounded(
+                self.config,
+                self.states.raise_epoch(
+                    principal_id,
+                    epoch,
+                    expire_at_ms=now_ms + _ttl_ms(self.config),
+                ),
+            )
+
+        await self.defer(
+            lambda: _write_through(self.config, principal_id, [EPOCH_STATE_KEY], _write)
+        )
+
+
 # ....................... #
 
 
@@ -207,13 +381,6 @@ class SessionRevocation:
 
     # ....................... #
 
-    async def _bounded[T](self, call: Awaitable[T]) -> T:
-        async with asyncio.timeout(self.config.timeout.total_seconds()):
-            return await call
-
-    def _ttl_ms(self) -> int:
-        return self.config.ttl // timedelta(milliseconds=1)
-
     @property
     def _by_family(self) -> bool:
         return self.config.session_binding == "family"
@@ -234,7 +401,7 @@ class SessionRevocation:
         family_id: UUID,
         pep: int,
         tenant: str | None,
-    ) -> None:
+    ) -> int:
         """Admit the token, or refuse it with the codes the session row would give.
 
         :param principal_id: The token's subject.
@@ -242,6 +409,7 @@ class SessionRevocation:
         :param family_id: The token's family.
         :param pep: The epoch the token carries.
         :param tenant: The token's tenant claim.
+        :returns: The principal's epoch the token was judged against.
         :raises CoreException: ``session_revoked``, ``session_subject_mismatch`` or
             ``session_tenant_mismatch``.
         """
@@ -249,7 +417,7 @@ class SessionRevocation:
         key = self._state_key(session_id, family_id)
 
         try:
-            read = await self._bounded(self.states.read(principal_id, key))
+            read = await _bounded(self.config, self.states.read(principal_id, key))
 
         except Exception as error:
             # Down, slow, or behind an open breaker: the same checks from the database.
@@ -262,7 +430,7 @@ class SessionRevocation:
                 principal_id, session_id, family_id, by_family=self._by_family
             )
             _judge(pep=pep, epoch=epoch, state=state, tenant=tenant)
-            return
+            return epoch
 
         cached_epoch = _epoch(read.epoch)
         cached_state = _state(read.state)
@@ -294,9 +462,11 @@ class SessionRevocation:
 
         if missing and not self.in_transaction():
             # Inside a transaction the read may predate a revocation, or be the revocation's.
-            await self._fill(principal_id, missing, expire_at_ms=read.now_ms + self._ttl_ms())
+            await self._fill(principal_id, missing, expire_at_ms=read.now_ms + _ttl_ms(self.config))
 
         _judge(pep=pep, epoch=epoch, state=state, tenant=tenant)
+
+        return epoch
 
     # ....................... #
 
@@ -361,7 +531,10 @@ class SessionRevocation:
 
     async def _fill(self, principal_id: UUID, states: dict[str, str], *, expire_at_ms: int) -> None:
         try:
-            await self._bounded(self.states.fill(principal_id, states, expire_at_ms=expire_at_ms))
+            await _bounded(
+                self.config,
+                self.states.fill(principal_id, states, expire_at_ms=expire_at_ms),
+            )
 
         except Exception as error:
             logger.warning("Revocation states fill failed: %r", error)
@@ -369,56 +542,58 @@ class SessionRevocation:
     # ....................... #
 
     async def recheck_caller(self, principal_id: UUID, *, epoch: int | None = None) -> None:
-        """Refuse an issue for *principal_id* that this request's own token no longer allows.
+        """Refuse a credential minted for *principal_id* when this request's own token is no longer live.
 
         A credential minted from a token outlives the token, so it must not be minted from one
-        admitted inside the window. When this request authenticated with an access token of
-        the same subject, its session (or family, by the binding) is read again from the
-        database, and its epoch compared with *epoch*, the one the issue holds, or else a fresh
-        one. Inside a transaction both are read under locks, the epoch first as every revocation
-        takes it, so neither comes from a snapshot older than a revocation that has since
-        committed; outside one, each read is a fresh snapshot of its own.
+        admitted inside the window, whoever it is minted for: the caller's credential is what
+        must still be live. When this request (or the connection it runs on) authenticated with
+        an access token, that token's session (or family, by the binding) is read again from
+        the database, and the token's epoch compared with its principal's. *epoch* is the one
+        the issue holds for *principal_id*, used when that is the caller; otherwise the caller's
+        epoch is read here. Inside a transaction both are read under locks, the epoch first as
+        every revocation takes it, so neither comes from a snapshot older than a revocation that
+        has since committed; outside one, each read is a fresh snapshot of its own.
 
+        :param principal_id: The principal the credential is minted for.
+        :param epoch: The epoch the issue holds for *principal_id*, if it holds one.
         :raises CoreException: ``session_revoked``.
         """
 
-        admitted = _ADMITTED.get()
+        admitted = current_authn_admission()
 
-        if admitted is None or admitted.principal_id != principal_id:
+        if not isinstance(admitted, AdmittedSession):
             return
 
+        caller = admitted.principal_id
         lock = self.in_transaction()
 
         # The epoch before any session row: a principal-wide revocation raises the epoch and
-        # then stamps the sessions, and the reverse order would deadlock with it.
-        if epoch is None:
-            epoch = await (self.epochs.hold if lock else self.epochs.current)(principal_id)
+        # then stamps the sessions, and the reverse order would deadlock with it. A token from
+        # before the fast path carries no epoch to compare, and its session row is the guard.
+        if admitted.epoch is not None and (epoch is None or principal_id != caller):
+            epoch = await (self.epochs.hold if lock else self.epochs.current)(caller)
 
         state = await self._state_truth(
-            principal_id,
+            caller,
             admitted.session_id,
             admitted.family_id,
             by_family=self._by_family,
             lock=lock,
         )
 
-        if state == REVOKED_STATE or (admitted.epoch is not None and admitted.epoch < epoch):
+        if state == REVOKED_STATE or (
+            admitted.epoch is not None and epoch is not None and admitted.epoch < epoch
+        ):
             raise _session_revoked()
 
-    def require_transaction(self) -> None:
-        """Refuse to issue or revoke outside a transaction.
+    def require_transaction(self, *stores: object) -> None:
+        """Refuse to issue or revoke outside a transaction, or in one that does not hold the
+        epoch's writes, or those of *stores* (the other ports the operation writes through).
 
         :raises CoreException: ``configuration`` (``authn_revocation_requires_transaction``).
         """
 
-        if not self.in_transaction():
-            raise exc.configuration(
-                "With revocation states configured, sessions are issued and revoked only inside "
-                "a transaction: an issue holds the principal's epoch under a lock, and a "
-                "revocation writes its states through once it commits. Keep tx_route set on "
-                "the authn and tenancy registries, or open a transaction around the call.",
-                code="authn_revocation_requires_transaction",
-            )
+        _require_transaction(self.in_transaction, self.epochs, *stores)
 
     async def hold_epoch(self, principal_id: UUID) -> int:
         """Read the principal's epoch for a session being issued, holding it until commit."""
@@ -430,23 +605,13 @@ class SessionRevocation:
     async def raise_epoch(self, principal_id: UUID) -> None:
         """Raise the principal's epoch, refusing every token issued before; write it after commit."""
 
-        self.require_transaction()
-        await self.epochs.advance(principal_id)
-
-        async def _write() -> None:
-            # The epoch is read again at write time: a write delayed past a newer raise then
-            # caches the newer epoch, or one that expires within ttl of the newer commit.
-            now_ms = await self._bounded(self.states.now_ms(principal_id))
-            epoch = await self.epochs.current(principal_id)
-            await self._bounded(
-                self.states.raise_epoch(
-                    principal_id,
-                    epoch,
-                    expire_at_ms=now_ms + self._ttl_ms(),
-                ),
-            )
-
-        await self.defer(lambda: self._write_through(principal_id, [EPOCH_STATE_KEY], _write))
+        await EpochRaise(
+            config=self.config,
+            states=self.states,
+            epochs=self.epochs,
+            in_transaction=self.in_transaction,
+            defer=self.defer,
+        )(principal_id)
 
     async def revoke(
         self,
@@ -475,32 +640,9 @@ class SessionRevocation:
         self.require_transaction()
 
         async def _write() -> None:
-            await self._bounded(
+            await _bounded(
+                self.config,
                 self.states.revoke(principal_id, keys, ttl=self.config.ttl),
             )
 
-        await self.defer(lambda: self._write_through(principal_id, keys, _write))
-
-    async def _write_through(
-        self,
-        principal_id: UUID,
-        keys: list[str],
-        write: Callable[[], Awaitable[None]],
-    ) -> None:
-        error: Exception | None = None
-
-        for _ in range(self.config.write_attempts):
-            try:
-                await write()
-                return
-
-            except Exception as failure:
-                error = failure
-
-        # The revocation is committed; until these states expire, a stale one admits.
-        logger.error(
-            "Revocation states write-through failed for principal %s, keys %s: %r",
-            principal_id,
-            keys,
-            error,
-        )
+        await self.defer(lambda: _write_through(self.config, principal_id, keys, _write))

@@ -34,8 +34,10 @@ from forze.application.contracts.authn import (
 )
 from forze.application.contracts.authz import AuthzSpec
 from forze.application.contracts.counter import CounterSpec
+from forze.application.contracts.deps import backend_of
 from forze.application.contracts.document import (
     DocumentCommandDepKey,
+    DocumentCommandHookDepKey,
     DocumentCommandPort,
     DocumentQueryDepKey,
     DocumentQueryPort,
@@ -63,6 +65,7 @@ from ...adapters import (
 from ...adapters.credential_deactivation import AuthnCredentialDeactivationHelper
 from ...adapters.principal_deactivation import PrincipalDeactivationAdapter
 from ...adapters.principal_eligibility import (
+    AdmittedTokenEligibilityAdapter,
     AllowAllPrincipalEligibilityAdapter,
     PolicyPrincipalEligibilityAdapter,
 )
@@ -80,7 +83,7 @@ from ...resolvers import (
     JwtNativeUuidResolver,
     MappingTableResolver,
 )
-from ...services import SessionRevocation
+from ...services import PolicyPrincipalEpochHook, RevocationStates, SessionRevocation
 from ...verifiers import (
     Argon2PasswordVerifier,
     ForzeJwtTokenVerifier,
@@ -379,10 +382,53 @@ class ConfigurableAuthn:
 # ....................... #
 
 
+_SKIP_BACKEND = "forze_postgres"
+"""The backend whose locking read of the policy principal excludes a concurrent deactivation,
+so an issue serializes with it: the skip's precondition. The mock's locking read only claims
+the row, so on the mock (as on Mongo) every verification reads."""
+
+
+def _deactivations_raise_epochs(ctx: ExecutionContext, config: RevocationStates) -> bool:
+    """Whether every write that may deactivate a policy principal raises its epoch here.
+
+    :raises CoreException: ``configuration`` when the policy principal's hook carries another
+        revocation configuration: its raises would be written where this verifier never reads.
+    """
+
+    route = policy_principal_spec.name
+
+    if not ctx.deps.exists(DocumentCommandHookDepKey, route=route):
+        return False
+
+    hook = ctx.deps.provide(DocumentCommandHookDepKey, route=route)
+
+    if not isinstance(hook, PolicyPrincipalEpochHook):
+        return False
+
+    if hook.config != config:
+        raise exc.configuration(
+            "The authn and authz kernels carry different revocation states. Pass the same "
+            "RevocationStates to both: the verifier reads the epochs deactivations raise.",
+            code="authn_revocation_states_mismatch",
+        )
+
+    return True
+
+
 @final
 @attrs.define(slots=True, frozen=True, kw_only=True)
 class ConfigurablePolicyPrincipalEligibility:
-    """Build :class:`PolicyPrincipalEligibilityAdapter` from policy principal documents."""
+    """Build :class:`PolicyPrincipalEligibilityAdapter` from policy principal documents.
+
+    With revocation states on both the authn and the authz kernel, and the policy principal on
+    Postgres, the read is skipped right after the fast path admitted a token of
+    the same principal (:class:`AdmittedTokenEligibilityAdapter`).
+    """
+
+    shared: AuthnSharedServices | None = None
+    """Shared services; their revocation states enable the skip."""
+
+    # ....................... #
 
     def __call__(
         self,
@@ -390,10 +436,21 @@ class ConfigurablePolicyPrincipalEligibility:
         spec: AuthnSpec,
     ) -> PrincipalEligibilityPort:
         _ = spec
-        return PolicyPrincipalEligibilityAdapter(
-            principal_qry=ctx.doc.query(policy_principal_spec),
+        principal_qry = ctx.doc.query(policy_principal_spec)
+        adapter = PolicyPrincipalEligibilityAdapter(
+            principal_qry=principal_qry,
             in_transaction=lambda: ctx.tx_ctx.depth() > 0,
         )
+        config = self.shared.revocation_states if self.shared is not None else None
+
+        if (
+            config is None
+            or not _deactivations_raise_epochs(ctx, config)
+            or type(backend_of(principal_qry)).__module__.split(".")[0] != _SKIP_BACKEND
+        ):
+            return adapter
+
+        return AdmittedTokenEligibilityAdapter(inner=adapter)
 
 
 # ....................... #
@@ -480,12 +537,20 @@ class ConfigurablePrincipalDeactivation:
             ak_qry=ak_qry,
             ak_cmd=ak_cmd,
         )
+        revocation = _session_revocation(ctx, self.shared)
+        stores = (
+            (pa_cmd, ak_cmd, ctx.doc.command(policy_principal_spec), ctx.doc.command(session_spec))
+            if revocation is not None
+            else ()
+        )
+
         return PrincipalDeactivationAdapter(
             principal_registry=registry,
             token_lifecycle=token_lifecycle,
             credentials=credentials,
             events=_resolve_events(ctx, spec),
-            revocation=_session_revocation(ctx, self.shared),
+            revocation=revocation,
+            stores=tuple(store for store in stores if store is not None),
         )
 
 
@@ -679,6 +744,7 @@ class ConfigurablePasswordAccountProvisioning:
             invite_svc=invite_svc,
             invite_qry=invite_qry,
             invite_cmd=invite_cmd,
+            revocation=_session_revocation(ctx, self.shared),
         )
 
 

@@ -11,6 +11,7 @@ from .password_provisioning import PasswordAccountProvisioningAdapter
 from .password_reset import PasswordResetAdapter
 from .principal_deactivation import PrincipalDeactivationAdapter
 from .principal_eligibility import (
+    AdmittedTokenEligibilityAdapter,
     AllowAllPrincipalEligibilityAdapter,
     PolicyPrincipalEligibilityAdapter,
 )
@@ -24,6 +25,7 @@ __all__ = [
     "PasswordLifecycleAdapter",
     "PasswordResetAdapter",
     "AllowAllPrincipalEligibilityAdapter",
+    "AdmittedTokenEligibilityAdapter",
     "PolicyPrincipalEligibilityAdapter",
     "PrincipalDeactivationAdapter",
     "TokenLifecycleAdapter",

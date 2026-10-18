@@ -27,7 +27,7 @@ from ..domain.models.invite import (
     ReadPasswordInvite,
     UpdatePasswordInviteCmd,
 )
-from ..services import InviteTokenService, PasswordService
+from ..services import InviteTokenService, PasswordService, SessionRevocation
 from ._utils import find_password_account_by_login, find_password_invite_by_digest
 
 # ----------------------- #
@@ -78,6 +78,10 @@ class PasswordAccountProvisioningAdapter(PasswordAccountProvisioningPort):
 
     eligibility: PrincipalEligibilityPort
     """Principal eligibility gate."""
+
+    revocation: SessionRevocation | None = attrs.field(default=None)
+    """When set, an account or an invite minted in a request that authenticated with an access
+    token re-reads that token's session first, whoever it is minted for."""
 
     invite_svc: InviteTokenService | None = attrs.field(default=None)
     """Invite token service; ``None`` disables invite issuance/acceptance."""
@@ -142,6 +146,9 @@ class PasswordAccountProvisioningAdapter(PasswordAccountProvisioningPort):
         svc, _, cmd = self._require_invites()
 
         await self.eligibility.require_authentication_allowed(operator.principal_id)
+
+        if self.revocation is not None:
+            await self.revocation.recheck_caller(principal_id)
 
         now = utcnow()
         expires_in = svc.config.expires_in
@@ -241,6 +248,9 @@ class PasswordAccountProvisioningAdapter(PasswordAccountProvisioningPort):
         credentials: PasswordCredentials,
     ) -> None:
         await self.eligibility.require_authentication_allowed(principal_id)
+
+        if self.revocation is not None:
+            await self.revocation.recheck_caller(principal_id)
 
         existing = await find_password_account_by_login(
             self.password_account_qry,
