@@ -96,16 +96,18 @@ class TestPostgresOutboxConfigConsume:
         assert config.delivery_log == ("public", "log")
 
     @pytest.mark.parametrize(
-        ("delivery_log", "clears_the_floor"),
+        ("delivery_log", "tenant_aware", "clears_the_floor"),
         [
-            (None, True),
-            (lambda tid: (f"t_{tid.hex}", "log"), True),
+            (None, True, True),
+            (lambda tid: (f"t_{tid.hex}", "log"), True, True),
             # One table for every tenant's records, beside a per-tenant outbox.
-            (("app", "shared_log"), False),
+            (("app", "shared_log"), True, False),
+            # Not tenant-aware, the store resolves its relation with no tenant.
+            (None, False, False),
         ],
     )
     def test_a_namespace_floor_counts_the_delivery_log(
-        self, delivery_log: Any, clears_the_floor: bool
+        self, delivery_log: Any, tenant_aware: bool, clears_the_floor: bool
     ) -> None:
         def module() -> PostgresDepsModule:
             return PostgresDepsModule(
@@ -116,7 +118,7 @@ class TestPostgresOutboxConfigConsume:
                         relation=lambda tid: (f"t_{tid.hex}", "outbox"),
                         storage="consume",
                         delivery_log=delivery_log,
-                        tenant_aware=True,
+                        tenant_aware=tenant_aware,
                     )
                 },
             )

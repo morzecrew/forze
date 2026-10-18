@@ -555,8 +555,10 @@ class PostgresDepsModule(DepsModule):
                         tenant_aware=outbox_cfg.tenant_aware,
                         kind="outbox",
                         # The weaker of its two relations: a shared delivery log holds every
-                        # tenant's records, however the outbox itself is split.
-                        has_namespace_routing=callable(outbox_cfg.relation)
+                        # tenant's records, however the outbox itself is split. A store that is
+                        # not tenant-aware resolves both with no tenant, so it splits nothing.
+                        has_namespace_routing=outbox_cfg.tenant_aware
+                        and callable(outbox_cfg.relation)
                         and (outbox_cfg.delivery_log is None or callable(outbox_cfg.delivery_log)),
                     ),
                 )
