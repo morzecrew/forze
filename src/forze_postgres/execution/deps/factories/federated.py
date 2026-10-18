@@ -83,6 +83,9 @@ class ConfigurablePostgresFederatedSearch(FederatedSearchQueryDepPort):
                 )
 
             search_cfg = leg.search
+            if not search_cfg.tenant_aware and self.config.tenant_aware:
+                search_cfg = attrs.evolve(search_cfg, tenant_aware=True)
+
             if search_cfg.engine == "fts":
                 if search_cfg.fts_groups is None:
                     raise exc.internal("FTS groups are required for FTS federated member.")

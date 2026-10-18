@@ -143,13 +143,36 @@ def test_postgres_federated_search_config_accepts_embedded_hub_member() -> None:
     )
 
 
+def test_a_tenant_aware_federation_scopes_every_plain_leg() -> None:
+    # The route's floor reads the federation's flag, so a leg left unscoped would read
+    # every tenant's rows under it. Hub legs take the flag the same way.
+    def leg(name: str, *, tenant_aware: bool) -> PostgresFederatedSearchLegSearch:
+        return PostgresFederatedSearchLegSearch(
+            search=PostgresSearchConfig(
+                index=("public", f"i_{name}"),
+                read=("public", f"r_{name}"),
+                engine="pgroonga",
+                tenant_aware=tenant_aware,
+            ),
+        )
+
+    config = PostgresFederatedSearchConfig(
+        tenant_aware=True,
+        members={"a": leg("a", tenant_aware=True), "b": leg("b", tenant_aware=False)},
+    )
+    adapter = ConfigurablePostgresFederatedSearch(config=config)(MagicMock(), _fed())
+
+    assert {name: port.tenant_aware for name, port in adapter.legs} == {  # type: ignore[attr-defined]
+        "a": True,
+        "b": True,
+    }
+
+
 @pytest.mark.asyncio
 async def test_federated_search_reads_snapshot_without_running_legs() -> None:
     h = _Hit(id=1, label="x")
     row_key = SearchResultSnapshot.federated_record_key_string("a", h)
-    fp = SearchResultSnapshot.federated_fingerprint(
-        "q", None, None, spec_name="fed", rrf_k=60
-    )
+    fp = SearchResultSnapshot.federated_fingerprint("q", None, None, spec_name="fed", rrf_k=60)
     store = MagicMock()
     store.get_id_range = AsyncMock(return_value=[row_key])
     store.get_meta = AsyncMock(
@@ -197,9 +220,7 @@ async def test_federated_search_reads_snapshot_without_running_legs() -> None:
 async def test_federated_snapshot_honors_search_count_none() -> None:
     h = _Hit(id=1, label="x")
     row_key = SearchResultSnapshot.federated_record_key_string("a", h)
-    fp = SearchResultSnapshot.federated_fingerprint(
-        "q", None, None, spec_name="fed", rrf_k=60
-    )
+    fp = SearchResultSnapshot.federated_fingerprint("q", None, None, spec_name="fed", rrf_k=60)
     store = MagicMock()
     store.get_id_range = AsyncMock(return_value=[row_key])
     store.get_meta = AsyncMock(
@@ -264,9 +285,7 @@ async def test_federated_search_materializes_snapshot_after_merge() -> None:
     assert run_id
     assert page.snapshot.capped is False
     # The full merged pool was streamed into the store; replay serves exactly that many ids.
-    stored = await store.get_id_range(
-        run_id, 0, 10, expected_fingerprint=page.snapshot.fingerprint
-    )
+    stored = await store.get_id_range(run_id, 0, 10, expected_fingerprint=page.snapshot.fingerprint)
     assert stored is not None
     assert len(stored) == page.snapshot.total
 
@@ -274,13 +293,9 @@ async def test_federated_search_materializes_snapshot_after_merge() -> None:
 @pytest.mark.asyncio
 async def test_federated_search_skips_zero_weight_members() -> None:
     pa = MagicMock()
-    pa.search = AsyncMock(
-        return_value=page_from_limit_offset([_Hit(id=1)], {}, total=None)
-    )
+    pa.search = AsyncMock(return_value=page_from_limit_offset([_Hit(id=1)], {}, total=None))
     pb = MagicMock()
-    pb.search = AsyncMock(
-        return_value=page_from_limit_offset([_Hit(id=2)], {}, total=None)
-    )
+    pb.search = AsyncMock(return_value=page_from_limit_offset([_Hit(id=2)], {}, total=None))
     adapter = PostgresFederatedSearchAdapter(
         federated_spec=_fed(),
         legs=(("a", pa), ("b", pb)),
@@ -305,9 +320,7 @@ async def test_federated_search_pagination_on_merged_pool() -> None:
         return page_from_limit_offset([_Hit(id=i) for i in range(3)], {}, total=None)
 
     async def leg_b(*_a, **_kw):
-        return page_from_limit_offset(
-            [_Hit(id=i + 10) for i in range(3)], {}, total=None
-        )
+        return page_from_limit_offset([_Hit(id=i + 10) for i in range(3)], {}, total=None)
 
     pa = MagicMock()
     pa.search = AsyncMock(side_effect=leg_a)
@@ -352,9 +365,7 @@ async def test_federated_search_all_members_disabled_countless_page() -> None:
 
 
 @pytest.mark.asyncio
-async def test_federated_search_runs_legs_via_gather_db_when_postgres_client_set() -> (
-    None
-):
+async def test_federated_search_runs_legs_via_gather_db_when_postgres_client_set() -> None:
     """When ``postgres_client`` is set, leg work is dispatched through :func:`gather_db_work`."""
     pg = MagicMock()
     pg.is_in_transaction.return_value = False
@@ -612,16 +623,12 @@ def _federated_config_hub_and_flat() -> PostgresFederatedSearchConfig:
 
 
 def test_configurable_federated_search_resolves_hub_member() -> None:
-    factory = ConfigurablePostgresFederatedSearch(
-        config=_federated_config_hub_and_flat()
-    )
+    factory = ConfigurablePostgresFederatedSearch(config=_federated_config_hub_and_flat())
     adapter = factory(_federated_exec_context(), _fed_hub_and_flat())
     assert isinstance(adapter, PostgresFederatedSearchAdapter)
 
 
-def test_configurable_federated_search_hub_member_requires_embedded_hub_config() -> (
-    None
-):
+def test_configurable_federated_search_hub_member_requires_embedded_hub_config() -> None:
     cfg = _two_member_pgroonga_config()
     members = dict(cfg.members)
     factory = ConfigurablePostgresFederatedSearch(

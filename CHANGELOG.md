@@ -21,7 +21,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
-- **A declared isolation floor refuses more under-isolated routes** (**Breaking** for them): `namespace` needs every relation a route names to resolve per tenant, and Postgres idempotency stores now count, as `tagged` on a shared table. New: `TenancyRouteGroup(other_namespaces=)`, `resolves_per_tenant`.
+- **Declared isolation floors refuse more under-isolated routes** (**Breaking**): `namespace` needs every relation a route names per tenant; Postgres idempotency stores count (`tagged` on one table). A tenant-aware Postgres federation scopes each leg. New: `TenancyRouteGroup(other_namespaces=)`, `resolves_per_tenant`.
 
 ## [0.14.0] - 2026-10-17
 
