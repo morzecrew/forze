@@ -2,9 +2,10 @@
 
 ``RevocationStatesPort`` caches revocation states, and its safety rests on three write rules no
 signature can carry: a lookup's ``fill`` never overwrites and never outlives the instant it was
-given; a revocation overwrites; an epoch only rises. An API key's state, under its digest alone,
-keeps the first two. Redis keeps them in Lua on the server's
-clock, the mock in memory on an injected one, so reading either proves nothing about the other.
+given; a revocation overwrites; an epoch only rises, compared by the integer it starts with. An
+API key's state, under its digest alone, keeps the first two. Redis keeps them in Lua on the
+server's clock, the mock in memory on an injected one, so reading either proves nothing about
+the other.
 
 ``PrincipalEpochPort`` keeps the epoch in the database: it reads ``0`` for a principal with no
 row, rises by one per raise, rolls back with its transaction, refuses its locking calls outside
@@ -181,6 +182,27 @@ async def check_raise_epoch_replaces_an_unreadable_value(h: StatesHarness) -> No
     assert (await h.states.read(principal, f"s:{uuid4()}")).epoch == "1", h.backend
 
 
+async def check_raise_epoch_compares_a_signed_value_by_its_epoch(h: StatesHarness) -> None:
+    principal, key = uuid4(), f"s:{uuid4()}"
+    now = await h.states.now_ms(principal)
+
+    async def raised(epoch: int, state: str | None = None) -> str | None:
+        await h.states.raise_epoch(principal, epoch, expire_at_ms=now + _LONG_MS, state=state)
+        return (await h.states.read(principal, key)).epoch
+
+    assert await raised(50, "50|1|mac") == "50|1|mac", h.backend
+    # Compared as integers, by the epoch before the ``|``: 6 is not past 50.
+    assert await raised(6, "6|2|mac") == "50|1|mac", h.backend
+    # An equal epoch takes the new value, a larger one too; without a state, the epoch alone.
+    assert await raised(50, "50|3|mac") == "50|3|mac", h.backend
+    assert await raised(51) == "51", h.backend
+
+    other = uuid4()
+    await h.states.fill(other, {EPOCH_STATE_KEY: "99x|1|mac"}, expire_at_ms=now + _LONG_MS)
+    await h.states.raise_epoch(other, 1, expire_at_ms=now + _LONG_MS, state="1|4|mac")
+    assert (await h.states.read(other, key)).epoch == "1|4|mac", h.backend
+
+
 async def check_principals_never_share_states(h: StatesHarness) -> None:
     one, two, key = uuid4(), uuid4(), f"f:{uuid4()}"
     expire_at = await h.states.now_ms(one) + _LONG_MS
@@ -266,6 +288,7 @@ STATES_BATTERY: tuple[StatesCheck, ...] = (
     check_revoke_overwrites_and_expires,
     check_raise_epoch_keeps_the_larger_and_expires,
     check_raise_epoch_replaces_an_unreadable_value,
+    check_raise_epoch_compares_a_signed_value_by_its_epoch,
     check_principals_never_share_states,
     check_the_store_clock_moves_forward,
     check_an_api_key_fill_sets_only_an_absent_state_until_its_instant,

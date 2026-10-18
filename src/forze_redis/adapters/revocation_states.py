@@ -124,12 +124,13 @@ class RedisRevocationStatesAdapter(RedisBaseAdapter, RevocationStatesPort, ApiKe
         epoch: int,
         *,
         expire_at_ms: int,
+        state: str | None = None,
     ) -> None:
         await self._prepare_keys()
         await self.client.run_script(
             REVOCATION_RAISE_EPOCH,
             [self._key(principal_id, EPOCH_STATE_KEY)],
-            [str(epoch), expire_at_ms],
+            [str(epoch), expire_at_ms, str(epoch) if state is None else state],
         )
 
     async def read_api_key(self, digest: str) -> ApiKeyStateRead:

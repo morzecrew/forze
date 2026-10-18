@@ -139,6 +139,7 @@ class MockRevocationStates(RevocationStatesPort, ApiKeyStatesPort):
         epoch: int,
         *,
         expire_at_ms: int,
+        state: str | None = None,
     ) -> None:
         with self.state.lock:
             now_ms = self._now_ms()
@@ -147,12 +148,16 @@ class MockRevocationStates(RevocationStatesPort, ApiKeyStatesPort):
             if expire_at_ms <= now_ms:
                 return
 
+            value = str(epoch) if state is None else state
             cached = self._get(str(principal_id), EPOCH_STATE_KEY, now_ms)
 
-            if cached is not None and cached.isascii() and cached.isdigit():
-                epoch = max(epoch, int(cached))
+            if cached is not None:
+                held = cached.split("|", 1)[0]
 
-            self._set(str(principal_id), EPOCH_STATE_KEY, str(epoch), expire_at_ms)
+                if held.isascii() and held.isdigit() and int(held) > epoch:
+                    value = cached
+
+            self._set(str(principal_id), EPOCH_STATE_KEY, value, expire_at_ms)
 
     async def read_api_key(self, digest: str) -> ApiKeyStateRead:
         with self.state.lock:

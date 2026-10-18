@@ -6,7 +6,9 @@ began; a revocation overwrites what lookups wrote, after its transaction commits
 expires, so a revocation whose write never lands is enforced within ``ttl`` all the same.
 
 An API key's state is keyed by its digest and is the only proof the key exists, so a live one
-carries a MAC under a server key and an absolute not-after on the store's clock.
+carries a MAC under a server key and an absolute not-after on the store's clock. Under the same
+keys, a principal's epoch and live session states carry them too, so a store that can be
+written cannot restore an older epoch or a ``live`` state for longer than ``ttl``.
 """
 
 import asyncio
@@ -52,7 +54,7 @@ RevocationEvent = Literal["hit", "miss", "fallback", "write_failure", "clock_ske
 """What the fast path counts: a verification answered from the states store alone (``hit``), one
 that read the database for what the store lacked (``miss``), one whose store read failed and
 that read the database instead (``fallback``), a revocation's write-through that failed every
-attempt (``write_failure``), and an API-key state the store's clock still accepted but the
+attempt (``write_failure``), and a signed state the store's clock still accepted but the
 application's clock put more than ``ttl`` past its not-after (``clock_skew``, a miss too)."""
 
 RevocationCredential = Literal["session", "api_key"]
@@ -66,6 +68,9 @@ _ABSENT = "-"
 
 _API_KEY_MAC_LABEL: Final = b"forze.authn.api-key-state.v1"
 """Starts every MAC input, so a key state's MAC verifies as nothing else the server key signs."""
+
+_PRINCIPAL_STATE_MAC_LABEL: Final = b"forze.authn.principal-state.v1"
+"""Starts the MAC input of a principal's epoch and session states, apart from a key state's."""
 
 _API_KEY_MAC_KEY_LABEL: Final = b"forze.authn.api-key-state-mac-key.v1"
 """Derives each state MAC key from its configured secret, so a secret reused elsewhere (the API
@@ -112,7 +117,7 @@ def _mac(secret: bytes, message: bytes) -> str:
 @final
 @attrs.define(slots=True, frozen=True, kw_only=True)
 class StateMacKeys:
-    """Server keys that authenticate cached API-key states, with HMAC-SHA256.
+    """Server keys that authenticate cached revocation states, with HMAC-SHA256.
 
     Each deployment needs keys of its own, shared with no other deployment and no other secret:
     a state is bound to its store's namespace, but two deployments with one namespace name and
@@ -136,11 +141,11 @@ class StateMacKeys:
         keys = (self.active, *self.previous)
 
         if not all(isinstance(key, bytes) for key in keys):
-            raise exc.configuration("API-key state MAC keys must be bytes")
+            raise exc.configuration("Revocation state MAC keys must be bytes")
 
         if any(len(key) < MIN_SECRET_BYTES for key in keys):
             raise exc.configuration(
-                f"API-key state MAC keys must be at least {MIN_SECRET_BYTES} bytes",
+                f"Revocation state MAC keys must be at least {MIN_SECRET_BYTES} bytes",
             )
 
     # ....................... #
@@ -288,9 +293,11 @@ class RevocationStates:
     leaves it valid until its ``exp``; a logout, a family revocation or reuse still refuse it."""
 
     key_mac: StateMacKeys | None = None
-    """When set, API keys are verified from cached states too, each carrying a MAC under these
-    keys, and every revocation or deactivation of a key writes its state through. ``None``
-    leaves API keys on their row read."""
+    """When set, every live cached state carries a MAC under these keys and a not-after: API
+    keys are verified from cached states too, and every revocation or deactivation of a key
+    writes its state through; a principal's epoch and session states are signed, so the store
+    is no longer trusted with them. The eligibility skip requires it. ``None`` leaves API keys
+    on their row read and trusts the store with sessions."""
 
     counters: RevocationStatesCounters = attrs.field(
         factory=RevocationStatesCounters,
@@ -376,6 +383,100 @@ async def _bounded[T](config: RevocationStates, call: Awaitable[T]) -> T:
 
 def _ttl_ms(config: RevocationStates) -> int:
     return config.ttl // timedelta(milliseconds=1)
+
+
+def _to_ms(moment: datetime) -> int:
+    return (moment - _EPOCH) // _MS
+
+
+def _mac_input(label: bytes, *fields: str) -> bytes:
+    """*label* and *fields*, each length-prefixed so no two inputs read alike."""
+
+    parts = (label, *(field.encode() for field in fields))
+
+    return b"".join(len(part).to_bytes(4, "big") + part for part in parts)
+
+
+def _expired(
+    config: RevocationStates,
+    credential: RevocationCredential,
+    not_after_ms: int,
+    *,
+    now_ms: int,
+) -> bool:
+    """Whether a signed state read at the store's *now_ms* is past its not-after.
+
+    The store's clock decides; the application's only caps a store that lies about it. Ahead of
+    the store's by two ttl or more, it refuses every state: counted, so the cause shows.
+    """
+
+    if now_ms >= not_after_ms:
+        return True
+
+    if _to_ms(utcnow()) - config.ttl // _MS >= not_after_ms:
+        config.counters.add("clock_skew", credential)
+        return True
+
+    return False
+
+
+def _principal_message(config: RevocationStates, principal_id: UUID, key: str, body: str) -> bytes:
+    """What a principal state's MAC covers: the label, the states route, the principal, the
+    state key and the body."""
+
+    return _mac_input(_PRINCIPAL_STATE_MAC_LABEL, config.route, str(principal_id), key, body)
+
+
+def _seal(
+    config: RevocationStates,
+    principal_id: UUID,
+    key: str,
+    value: str,
+    *,
+    not_after_ms: int,
+) -> str:
+    """*value* as cached under *principal_id*'s *key*: with ``key_mac``, followed by its
+    not-after and a MAC over both. ``revoked`` carries none: forging it can refuse, never admit."""
+
+    if config.key_mac is None or value == REVOKED_STATE:
+        return value
+
+    body = f"{value}|{not_after_ms}"
+    mac = config.key_mac.sign(_principal_message(config, principal_id, key, body))
+
+    return f"{body}|{mac}"
+
+
+def _unseal(
+    config: RevocationStates,
+    principal_id: UUID,
+    key: str,
+    raw: str | None,
+    *,
+    now_ms: int,
+) -> str | None:
+    """The value cached under *principal_id*'s *key*, or ``None`` when it proves nothing.
+
+    With ``key_mac``, a value other than ``revoked`` counts only under a MAC that verifies and
+    before its not-after: one unsigned, copied from another principal or key, or replayed past
+    its not-after is a miss.
+    """
+
+    if raw is None or config.key_mac is None or raw == REVOKED_STATE:
+        return raw
+
+    body, _, mac = raw.rpartition("|")
+
+    # Nothing in the state is read before its MAC verifies.
+    if not body or not config.key_mac.verify(
+        _principal_message(config, principal_id, key, body), mac
+    ):
+        return None
+
+    # Signed, so written by _seal: a value, then an integer not-after.
+    value, _, not_after = body.rpartition("|")
+
+    return None if _expired(config, "session", int(not_after), now_ms=now_ms) else value
 
 
 def _require_transaction(in_transaction: Callable[[], bool], *stores: object) -> None:
@@ -490,14 +591,28 @@ class EpochRaise:
             # caches the newer epoch, or one that expires within ttl of the newer commit.
             now_ms = await _bounded(self.config, self.states.now_ms(principal_id))
             epoch = await self.epochs.current(principal_id)
-            await _bounded(
-                self.config,
-                self.states.raise_epoch(
+            expire_at_ms = now_ms + _ttl_ms(self.config)
+
+            if self.config.key_mac is None:
+                # Unsigned, a store that predates signed states takes it as before.
+                write = self.states.raise_epoch(principal_id, epoch, expire_at_ms=expire_at_ms)
+
+            else:
+                state = _seal(
+                    self.config,
+                    principal_id,
+                    EPOCH_STATE_KEY,
+                    str(epoch),
+                    not_after_ms=expire_at_ms,
+                )
+                write = self.states.raise_epoch(
                     principal_id,
                     epoch,
-                    expire_at_ms=now_ms + _ttl_ms(self.config),
-                ),
-            )
+                    expire_at_ms=expire_at_ms,
+                    state=state,
+                )
+
+            await _bounded(self.config, write)
 
         await self.defer(
             lambda: _write_through(self.config, "session", principal_id, [EPOCH_STATE_KEY], _write),
@@ -594,8 +709,12 @@ class SessionRevocation:
             _judge(pep=pep, epoch=epoch, state=state, tenant=tenant)
             return epoch
 
-        cached_epoch = _epoch(read.epoch)
-        cached_state = _state(read.state)
+        cached_epoch = _epoch(
+            _unseal(self.config, principal_id, EPOCH_STATE_KEY, read.epoch, now_ms=read.now_ms),
+        )
+        cached_state = _state(
+            _unseal(self.config, principal_id, key, read.state, now_ms=read.now_ms),
+        )
 
         # Both move one way, so a cached revocation or a raised epoch refuses without a read.
         if (cached_epoch is not None and pep < cached_epoch) or cached_state == REVOKED_STATE:
@@ -697,10 +816,16 @@ class SessionRevocation:
         return f"{_LIVE}{tenant}"
 
     async def _fill(self, principal_id: UUID, states: dict[str, str], *, expire_at_ms: int) -> None:
+        # Signed to expire with the store's copy, so a replayed one outlives it by nothing.
+        sealed = {
+            key: _seal(self.config, principal_id, key, value, not_after_ms=expire_at_ms)
+            for key, value in states.items()
+        }
+
         try:
             await _bounded(
                 self.config,
-                self.states.fill(principal_id, states, expire_at_ms=expire_at_ms),
+                self.states.fill(principal_id, sealed, expire_at_ms=expire_at_ms),
             )
 
         except Exception as error:
@@ -818,17 +943,11 @@ class SessionRevocation:
 # ....................... #
 
 
-def _to_ms(moment: datetime) -> int:
-    return (moment - _EPOCH) // _MS
-
-
 def _api_key_message(route: str, store_key: str, digest: str, body: str) -> bytes:
     """What an API-key state's MAC covers: the label, the states route, the store's full key for
-    the state, the digest and the body, each length-prefixed so no two inputs read alike."""
+    the state, the digest and the body."""
 
-    fields = (_API_KEY_MAC_LABEL, *(f.encode() for f in (route, store_key, f"k:{digest}", body)))
-
-    return b"".join(len(field).to_bytes(4, "big") + field for field in fields)
+    return _mac_input(_API_KEY_MAC_LABEL, route, store_key, f"k:{digest}", body)
 
 
 @final
@@ -955,14 +1074,9 @@ class ApiKeyRevocation:
         try:
             live, principal, actor, expires, not_after = body.split("|")
 
-            if live != "live" or read.now_ms >= int(not_after):
-                return None
-
-            # The store's clock decides; the application's only caps a store that lies about it.
-            # Ahead of the store's by two ttl or more, it refuses every state: counted, so the
-            # cause shows.
-            if _to_ms(utcnow()) - self.config.ttl // _MS >= int(not_after):
-                self.config.counters.add("clock_skew", "api_key")
+            if live != "live" or _expired(
+                self.config, "api_key", int(not_after), now_ms=read.now_ms
+            ):
                 return None
 
             return CachedApiKey(

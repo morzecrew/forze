@@ -684,9 +684,10 @@ REVOCATION_RAISE_EPOCH: Final = (
 if tonumber(ARGV[2]) <= now then
     return 0
 end
-local value = ARGV[1]
+local value = ARGV[3]
 local cached = redis.call('GET', KEYS[1])
-if cached and string.match(cached, '^%d+$') and tonumber(cached) > tonumber(value) then
+local held = cached and (string.match(cached, '^(%d+)$') or string.match(cached, '^(%d+)|'))
+if held and tonumber(held) > tonumber(ARGV[1]) then
     value = cached
 end
 redis.call('SET', KEYS[1], value, 'PXAT', ARGV[2])
@@ -696,8 +697,10 @@ return 1
 """Set the cached epoch to the larger of the cached one and ARGV[1], expiring at ARGV[2].
 
 KEYS[1]: epoch key. ARGV[1]: the epoch read from the database, a decimal string; ARGV[2]:
-expiry in ms since the epoch. A cached value that is not a decimal integer is replaced. A call
-that runs at or after the expiry writes nothing. Returns 1 when it wrote, else 0.
+expiry in ms since the epoch; ARGV[3]: the value cached when ARGV[1] wins, the epoch alone or
+followed by ``|`` and the caller's fields. A cached value is compared by the decimal integer it
+starts with, alone or before a ``|``; one that starts with none is replaced. A call that runs at
+or after the expiry writes nothing. Returns 1 when it wrote, else 0.
 """
 
 REVOCATION_NOW: Final = _REDIS_NOW_MS + "return string.format('%d', now)\n"

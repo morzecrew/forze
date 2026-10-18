@@ -483,9 +483,9 @@ def _deactivations_raise_epochs(ctx: ExecutionContext, config: RevocationStates)
 class ConfigurablePolicyPrincipalEligibility:
     """Build :class:`PolicyPrincipalEligibilityAdapter` from policy principal documents.
 
-    With revocation states on both the authn and the authz kernel, and the policy principal on
-    Postgres, the read is skipped right after the fast path admitted a token of
-    the same principal (:class:`AdmittedTokenEligibilityAdapter`).
+    With revocation states on both the authn and the authz kernel, signed under ``key_mac``,
+    and the policy principal on Postgres, the read is skipped right after the fast path
+    admitted a token of the same principal (:class:`AdmittedTokenEligibilityAdapter`).
     """
 
     shared: AuthnSharedServices | None = None
@@ -509,6 +509,9 @@ class ConfigurablePolicyPrincipalEligibility:
         if (
             config is None
             or not _deactivations_raise_epochs(ctx, config)
+            # Unsigned, a cached epoch can be restored by whoever writes the states store. The
+            # authz kernel refuses that configuration; a hook registered by hand reaches here.
+            or config.key_mac is None
             or type(backend_of(principal_qry)).__module__.split(".")[0] != _SKIP_BACKEND
         ):
             return adapter
