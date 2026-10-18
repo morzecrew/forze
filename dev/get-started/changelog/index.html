@@ -9694,13 +9694,13 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <p><strong>The Postgres outbox can log what it consumes.</strong> <code>PostgresOutboxConfig(storage="consume", delivery_log=("app", "outbox_delivered"))</code> appends each published row to an application-owned table in the statement that deletes it, so a log row proves a committed delivery. A failure to write it fails the pass.</p>
 </li>
 <li>
-<p><strong>Token verifications can skip the eligibility read too.</strong> With the authn kernel's <code>RevocationStates</code> on <code>AuthzKernelConfig(revocation_states=)</code>, a deactivating write through the policy principal's document port raises the epoch in its transaction (refused outside one); a fast-path token skips the read. Postgres only.</p>
+<p><strong>Token verifications can skip the eligibility read too.</strong> With the authn kernel's <code>RevocationStates</code> on <code>AuthzKernelConfig(revocation_states=)</code>, a deactivating write through the policy principal's document port raises the epoch in its transaction (refused outside one); a fast-path token skips the read. Postgres only; requires <code>key_mac</code> (<code>authn_eligibility_skip_requires_key_mac</code>).</p>
 </li>
 <li>
 <p><strong><code>DocumentCommandHookDepKey</code> wraps a document's command port wherever it is resolved</strong>, registered routed under the document's name.</p>
 </li>
 <li>
-<p><strong>API keys can be verified from Redis.</strong> <code>RevocationStates(key_mac=StateMacKeys(...))</code> checks a key from a MAC-signed state, reading its row only on a miss; revoking a key writes <code>revoked</code> through. A custom states store also implements the new <code>ApiKeyStatesPort</code>, needed only with <code>key_mac</code>.</p>
+<p><strong>API keys can be verified from Redis.</strong> <code>RevocationStates(key_mac=StateMacKeys(...))</code> checks a key from a MAC-signed state, reading its row only on a miss; revoking a key writes <code>revoked</code> through. The same keys sign the cached epochs and session states. A custom states store also implements the new <code>ApiKeyStatesPort</code> and takes <code>raise_epoch(state=)</code>, both needed only with <code>key_mac</code>.</p>
 </li>
 <li>
 <p><strong>An API key admitted from Redis cannot mint past its revocation.</strong> With <code>key_mac</code> set, a session, an API key, a password account or an invite minted in a request, or a WebSocket or Socket.IO command, that an API key authenticated re-reads that key's row first, whoever it is for, and refuses with <code>api_key_revoked</code> once it is revoked or expired.</p>

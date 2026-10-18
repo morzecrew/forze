@@ -6752,10 +6752,10 @@ and API-key revoke.</p>
 <p>By default every token verification reads its session row, and every API-key verification
 its key row. With <code>revocation_states</code> on the kernel, a token carries its session's family
 (<code>fam</code>) and the principal's epoch (<code>pep</code>), and the verifier checks them against states cached
-in Redis, reading Postgres only for what Redis misses. With <code>key_mac</code> too, API keys are checked
-the same way, from a state cached under the key's digest. The eligibility read stays for both,
-except that a token's is skipped when the authz kernel carries the same configuration
-(<a href="#skip-the-eligibility-read">below</a>).</p>
+in Redis, reading Postgres only for what Redis misses. With <code>key_mac</code> too, every live cached
+state is signed, and API keys are checked the same way, from a state cached under the key's
+digest. The eligibility read stays for both, except that a token's is skipped when the authz
+kernel carries the same configuration (<a href="#skip-the-eligibility-read">below</a>).</p>
 <div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">datetime</span><span class="w"> </span><span class="kn">import</span> <span class="n">timedelta</span>
 
 <span class="kn">from</span><span class="w"> </span><span class="nn">forze.application.contracts.authn</span><span class="w"> </span><span class="kn">import</span> <span class="n">RevocationStatesDepKey</span>
@@ -6771,7 +6771,7 @@ except that a token's is skipped when the authz kernel carries the same configur
     <span class="n">revocation_states</span><span class="o">=</span><span class="n">RevocationStates</span><span class="p">(</span>
         <span class="n">route</span><span class="o">=</span><span class="s2">"authn-revocations"</span><span class="p">,</span>
         <span class="n">ttl</span><span class="o">=</span><span class="n">timedelta</span><span class="p">(</span><span class="n">minutes</span><span class="o">=</span><span class="mi">5</span><span class="p">),</span>
-        <span class="n">key_mac</span><span class="o">=</span><span class="n">StateMacKeys</span><span class="p">(</span><span class="n">active</span><span class="o">=</span><span class="n">mac_key</span><span class="p">),</span>  <span class="c1"># optional: API keys too</span>
+        <span class="n">key_mac</span><span class="o">=</span><span class="n">StateMacKeys</span><span class="p">(</span><span class="n">active</span><span class="o">=</span><span class="n">mac_key</span><span class="p">),</span>  <span class="c1"># optional: signed states, API keys too</span>
     <span class="p">),</span>
 <span class="p">)</span>
 <span class="n">states</span> <span class="o">=</span> <span class="p">{</span><span class="s2">"authn-revocations"</span><span class="p">:</span> <span class="n">RedisRevocationStatesConfig</span><span class="p">(</span><span class="n">namespace</span><span class="o">=</span><span class="s2">"authn-revocations"</span><span class="p">)}</span>
@@ -6796,12 +6796,15 @@ table yourself and never delete its rows:</p>
 <span class="p">);</span>
 </code></pre></div>
 <ul>
-<li><strong>Redis is trusted for sessions.</strong> The session states and epochs carry no MAC (API-key
-  states do, <a href="#api-keys">below</a>), so whoever can write the states' namespace can restore a
-  <code>live</code> state or an older epoch, and a revoked token is admitted until its own <code>exp</code>. With the
-  <a href="#skip-the-eligibility-read">eligibility read skipped</a> that includes a deactivated
-  principal's, which the eligibility read would otherwise still refuse. Let nothing but the
-  identity plane write that namespace.</li>
+<li><strong>Without <code>key_mac</code>, Redis is trusted for sessions.</strong> The session states and epochs then
+  carry no MAC, so whoever can write the states' namespace can restore a <code>live</code> state or an
+  older epoch, and a revoked token is admitted until its own <code>exp</code>. Let nothing but the
+  identity plane write that namespace. With <code>key_mac</code>, each epoch and live family or session
+  state carries a MAC and a not-after, as an API key's state does (<a href="#api-keys">below</a>): one
+  forged, copied from another principal or session, or cached before <code>key_mac</code> was set is
+  read from Postgres, and one replayed over a newer state stops verifying <code>ttl</code> after it was
+  cached. Its MAC covers the states route, the principal and the state key, not the
+  namespace, so give every deployment its own <code>key_mac</code>.</li>
 <li><strong>Transactions are required.</strong> With the fast path on, issuing and revoking sessions refuse
   to run outside a transaction (<code>authn_revocation_requires_transaction</code>), so keep <code>tx_route</code>
   set on both registries. They refuse the same way, before writing, in a transaction that does
@@ -6887,6 +6890,9 @@ Redis's clock, and only when one of these leaves a stale state in place:</p>
     logs it.</li>
 <li><strong>Redis lost the revocation's key while an earlier lookup was still writing:</strong> an eviction,
   a flush, a restart, or a failover that dropped an acknowledged write. Nothing logs these.</li>
+<li><strong>Whoever can write Redis replayed a state cached before the revocation.</strong> With <code>key_mac</code>,
+  it verifies until its not-after, <code>ttl</code> after it was cached. Nothing logs it. Without
+  <code>key_mac</code>, nothing bounds a replay but the token's own <code>exp</code>, as said above.</li>
 </ul>
 <p>An access token is also bounded by its own <code>exp</code>; an API key may have no expiry, so its
 window is <code>ttl</code> alone. Configure every process that verifies or revokes, and give the states
@@ -6943,7 +6949,11 @@ the rest.</p>
 current epoch skips that read too:</p>
 <div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">forze_identity.authz</span><span class="w"> </span><span class="kn">import</span> <span class="n">AuthzDepsModule</span><span class="p">,</span> <span class="n">AuthzKernelConfig</span>
 
-<span class="n">states_config</span> <span class="o">=</span> <span class="n">RevocationStates</span><span class="p">(</span><span class="n">route</span><span class="o">=</span><span class="s2">"authn-revocations"</span><span class="p">,</span> <span class="n">ttl</span><span class="o">=</span><span class="n">timedelta</span><span class="p">(</span><span class="n">minutes</span><span class="o">=</span><span class="mi">5</span><span class="p">))</span>
+<span class="n">states_config</span> <span class="o">=</span> <span class="n">RevocationStates</span><span class="p">(</span>
+    <span class="n">route</span><span class="o">=</span><span class="s2">"authn-revocations"</span><span class="p">,</span>
+    <span class="n">ttl</span><span class="o">=</span><span class="n">timedelta</span><span class="p">(</span><span class="n">minutes</span><span class="o">=</span><span class="mi">5</span><span class="p">),</span>
+    <span class="n">key_mac</span><span class="o">=</span><span class="n">StateMacKeys</span><span class="p">(</span><span class="n">active</span><span class="o">=</span><span class="n">mac_key</span><span class="p">),</span>
+<span class="p">)</span>
 <span class="n">authn_kernel</span> <span class="o">=</span> <span class="n">AuthnKernelConfig</span><span class="p">(</span><span class="o">...</span><span class="p">,</span> <span class="n">revocation_states</span><span class="o">=</span><span class="n">states_config</span><span class="p">)</span>
 <span class="n">authz_kernel</span> <span class="o">=</span> <span class="n">AuthzKernelConfig</span><span class="p">(</span><span class="n">revocation_states</span><span class="o">=</span><span class="n">states_config</span><span class="p">)</span>
 </code></pre></div>
@@ -6953,6 +6963,11 @@ registry's <code>deactivate_principal</code>, the authn deactivation, or your ow
 upsert or delete of the <code>policy_principal_spec</code> document through its document port. A token
 issued before is then refused by its epoch, so the eligibility read has nothing left to catch.</p>
 <ul>
+<li><strong>Signed epochs only.</strong> The skip trusts the cached epoch, so the authz kernel refuses
+  <code>revocation_states</code> without <code>key_mac</code> (<code>authn_eligibility_skip_requires_key_mac</code>), and a
+  <code>PolicyPrincipalEpochHook</code> registered by hand without it leaves every verification reading.
+  Unsigned, an older epoch restored in Redis would admit a deactivated principal's tokens until
+  their <code>exp</code>.</li>
 <li><strong>What still reads.</strong> Only the check right after the verification, in the same request, about
   the token's own subject, is skipped. Issuing a session (login, refresh, tenant switch) reads
   under the principal's row lock, and a delegated actor is always read, even when it is the
