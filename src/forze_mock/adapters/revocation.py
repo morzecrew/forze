@@ -13,16 +13,22 @@ from forze.application.contracts.authn import (
     EPOCH_STATE_KEY,
     REVOKED_STATE,
     ApiKeyStateRead,
+    ApiKeyStatesPort,
     PrincipalEpochPort,
     RevocationStatesPort,
     RevocationStatesRead,
 )
 from forze.base.exceptions import exc
-from forze.base.primitives import monotonic
+from forze.base.primitives import utcnow
 from forze_mock.adapters._journal import record_undo
 from forze_mock.state import MockState
 
 # ----------------------- #
+
+
+def _wall_seconds() -> float:
+    return utcnow().timestamp()
+
 
 _API_KEYS = ""
 """The owner API-key states are stored under, in place of a principal id."""
@@ -32,7 +38,7 @@ _API_KEYS = ""
 
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class MockRevocationStates(RevocationStatesPort):
+class MockRevocationStates(RevocationStatesPort, ApiKeyStatesPort):
     """The Redis states store's model in memory: per-key expiries on one clock.
 
     The clock stands in for the server's ``TIME``: it alone decides expiry, and a value lives
@@ -42,8 +48,10 @@ class MockRevocationStates(RevocationStatesPort):
     state: MockState
     namespace: str
 
-    clock: Callable[[], float] = monotonic
-    """Seconds on a monotonic clock; inject one to move time in a test."""
+    clock: Callable[[], float] = _wall_seconds
+    """Seconds since the Unix epoch, as Redis's ``TIME`` gives them: the active time source's
+    wall clock, the one an application compares an API-key state's not-after with. Inject one
+    to move time in a test."""
 
     # ....................... #
 

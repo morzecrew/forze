@@ -16,6 +16,7 @@ from .revocation import (
     EPOCH_STATE_KEY,
     REVOKED_STATE,
     ApiKeyStateRead,
+    ApiKeyStatesPort,
     PrincipalEpochPort,
     RevocationStatesPort,
     RevocationStatesRead,
@@ -48,4 +49,5 @@ __all__ = [
     "RevocationStatesPort",
     "RevocationStatesRead",
     "ApiKeyStateRead",
+    "ApiKeyStatesPort",
 ]

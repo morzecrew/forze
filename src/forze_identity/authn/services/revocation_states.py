@@ -25,6 +25,7 @@ from forze.application.contracts.authn import (
     EPOCH_STATE_KEY,
     REVOKED_STATE,
     ApiKeyStateRead,
+    ApiKeyStatesPort,
     PrincipalEpochPort,
     RevocationStatesPort,
 )
@@ -733,8 +734,8 @@ class ApiKeyRevocation:
     """The one configuration the verifier and every writer read; :attr:`~RevocationStates.key_mac`
     must be set."""
 
-    states: RevocationStatesPort
-    """Cached states."""
+    states: ApiKeyStatesPort
+    """Cached states, through their API-key calls."""
 
     accounts: DocumentQueryPort[ReadApiKeyAccount]
     """API key rows, read on a miss and by :meth:`recheck_caller`."""

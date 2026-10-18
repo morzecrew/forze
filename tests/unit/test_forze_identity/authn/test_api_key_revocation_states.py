@@ -14,6 +14,7 @@ from datetime import timedelta
 from typing import Any
 from uuid import UUID, uuid4
 
+import attrs
 import pytest
 import structlog
 from opentelemetry.sdk.metrics import MeterProvider
@@ -24,6 +25,7 @@ from forze.application.contracts.authn import (
     ApiKeyCredentials,
     AuthnIdentity,
     IssuedApiKey,
+    RevocationStatesPort,
 )
 from forze.application.contracts.authz import AuthzSpec
 from forze.application.execution.operations import run_operation
@@ -34,6 +36,7 @@ from forze_identity.authn.services import (
     ApiKeyConfig,
     ApiKeyRevocation,
     ApiKeyService,
+    Hs256Signer,
     RevocationStates,
     StateMacKeys,
 )
@@ -57,7 +60,6 @@ from tests.unit.test_forze_identity.authn.test_revocation_states import (
     _Clock,
     _Stack,
     _stack,
-    _States,
 )
 
 pytest.importorskip("argon2")
@@ -742,6 +744,23 @@ def test_a_mac_key_that_reuses_another_authn_secret_is_refused() -> None:
 
         assert caught.value.code == "authn_state_mac_key_reused"
 
+    # An HMAC secret handed over inside a signer is a secret too.
+    for signers in (
+        {"access_token_signer": Hs256Signer(secret=pepper)},
+        {"access_token_verifiers": (Hs256Signer(secret=b"s" * 32), Hs256Signer(secret=pepper))},
+    ):
+        with pytest.raises(CoreException) as caught:
+            AuthnKernelConfig(
+                **signers,  # type: ignore[arg-type]
+                revocation_states=RevocationStates(
+                    route=STATES,
+                    ttl=TTL,
+                    key_mac=StateMacKeys(active=pepper),
+                ),
+            )
+
+        assert caught.value.code == "authn_state_mac_key_reused"
+
     for secret in ("access_token_secret", "refresh_token_pepper", "reset_token_pepper"):
         with pytest.raises(CoreException):
             AuthnKernelConfig(
@@ -839,15 +858,10 @@ async def test_clock_skew_never_refuses_a_key_and_past_two_ttl_is_counted(skew_t
     assert (skewed > 0) == (skew_ttls <= -2)
 
 
-async def test_keys_and_sessions_need_no_api_key_calls_without_key_mac(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+async def test_keys_and_sessions_need_no_api_key_calls_without_key_mac() -> None:
     """An application's own states port, written before the API-key calls, keeps working."""
 
-    for name in ("read_api_key", "fill_api_key", "revoke_api_keys"):
-        monkeypatch.delattr(_States, name)
-
-    stack = _stack(key_mac=None)
+    stack = _stack(key_mac=None, states_port=lambda states: _SessionStatesOnly(inner=states))
     principal = await stack.principal()
     issued = await _issue(stack, principal)
     lifecycle = stack.ctx.authn.api_key_lifecycle(SPEC)
@@ -877,3 +891,75 @@ async def test_an_expired_key_is_refused_and_not_cached() -> None:
 
     assert await asyncio.create_task(request()) == "refused"
     assert "fill_api_key" not in stack.states.calls
+
+
+async def test_a_deactivation_retried_after_a_failed_write_writes_revoked() -> None:
+    stack = _key_stack()
+    principal = await stack.principal()
+    key = (await _issue(stack, principal)).key
+    await _verify(stack, key)
+
+    stack.states.writes_down = True
+
+    async with stack.ctx.tx_ctx.scope(TX):
+        await stack.ctx.authn.principal_deactivation(SPEC).deactivate(principal)
+
+    stack.states.writes_down = False
+
+    # The principal's eligibility refuses the key meanwhile; the retry repairs its state.
+    assert await _verify(stack, key) == "refused"
+    assert (await stack.states.inner.read_api_key(_digest(key))).state != REVOKED_STATE
+
+    async with stack.ctx.tx_ctx.scope(TX):
+        await stack.ctx.authn.principal_deactivation(SPEC).deactivate(principal)
+
+    assert (await stack.states.inner.read_api_key(_digest(key))).state == REVOKED_STATE
+
+
+async def test_the_mock_store_s_own_clock_serves_hits() -> None:
+    """The mock's clock models Redis's ``TIME``: the application's clock must agree with it."""
+
+    stack = _stack(key_mac=MAC, store_clock=False)
+    principal = await stack.principal()
+    key = (await _issue(stack, principal)).key
+    await _verify(stack, key)
+    stack.reads.clear()
+
+    assert await _verify(stack, key) == principal
+    assert stack.reads == []
+    assert _config(stack).counters.get("clock_skew", "api_key") == 0
+
+
+@attrs.define(eq=False)
+class _SessionStatesOnly:
+    """An application's states port written against the session calls alone."""
+
+    inner: Any
+
+    async def read(self, principal_id: UUID, key: str) -> Any:
+        return await self.inner.read(principal_id, key)
+
+    async def fill(self, principal_id: UUID, states: Any, *, expire_at_ms: int) -> None:
+        await self.inner.fill(principal_id, states, expire_at_ms=expire_at_ms)
+
+    async def revoke(self, principal_id: UUID, keys: Any, *, ttl: timedelta) -> None:
+        await self.inner.revoke(principal_id, keys, ttl=ttl)
+
+    async def now_ms(self, principal_id: UUID) -> int:
+        return int(await self.inner.now_ms(principal_id))
+
+    async def raise_epoch(self, principal_id: UUID, epoch: int, *, expire_at_ms: int) -> None:
+        await self.inner.raise_epoch(principal_id, epoch, expire_at_ms=expire_at_ms)
+
+
+def test_a_session_states_port_satisfies_the_states_contract_without_the_key_calls() -> None:
+    assert isinstance(_SessionStatesOnly(inner=None), RevocationStatesPort)
+
+
+def test_key_mac_with_a_states_port_without_the_key_calls_is_refused() -> None:
+    stack = _stack(key_mac=MAC, states_port=lambda states: _SessionStatesOnly(inner=states))
+
+    with pytest.raises(CoreException) as caught:
+        stack.ctx.authn.authn(SPEC)
+
+    assert caught.value.code == "authn_api_key_states_unsupported"

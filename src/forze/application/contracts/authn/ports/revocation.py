@@ -131,6 +131,20 @@ class RevocationStatesPort(Protocol):
         """
         ...  # pragma: no cover
 
+
+# ....................... #
+
+
+@runtime_checkable
+class ApiKeyStatesPort(Protocol):
+    """Opt-in extension of a :class:`RevocationStatesPort` for API keys' states.
+
+    Kept off :class:`RevocationStatesPort`, so a store written against the session calls alone
+    still satisfies it. Only a deployment that verifies API keys from cached states needs it,
+    and the build refuses one whose states store lacks it. Detect it with
+    :func:`~forze.application.contracts.deps.implements`.
+    """
+
     def read_api_key(self, digest: str) -> Awaitable[ApiKeyStateRead]:
         """Read the state under an API key's digest, with the store's time and its key, at once.
 

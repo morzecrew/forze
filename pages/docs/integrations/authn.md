@@ -126,11 +126,15 @@ CREATE TABLE authn_principal_epochs (
 - **Minting re-reads the credential.** A tenant switch or an API-key issue in a request that
   authenticated with an access token re-reads that token's session and epoch from Postgres
   first, and one that authenticated with an API key (with `key_mac` set) re-reads the key's
-  row (`api_key_revoked`) whoever the issue is for, under locks inside a transaction, so a
-  credential admitted inside the window mints nothing that outlives it; above read committed a
-  revocation committed since the transaction's snapshot fails it with a serialization error.
-  A socket's commands run apart from the handshake that verified its token, and are not
-  re-read.
+  row (`api_key_revoked`) whoever the issue is for. So a credential revoked before that
+  re-read mints nothing, however stale its cached state. A revocation that commits after the
+  re-read is ordered after the issue, as if the issue had finished first: inside a
+  transaction the re-read locks the row, so the revocation waits for the issue to commit;
+  outside one it does not wait, and the end state is the same. Revoking a credential never
+  revokes what was minted from it before. Inside a transaction above read committed, a
+  revocation committed since the transaction's snapshot fails the issue with a serialization
+  error. A socket's commands run apart from the handshake that verified its token, and are
+  not re-read.
 - **Redis down.** A Redis error or timeout makes the same checks from Postgres, so an outage
   never admits a credential the fast path would refuse. Tokens issued before the fast path
   carry no `fam` or `pep`, and keep the session-row check until they expire.
@@ -161,8 +165,13 @@ namespace, so deployments that share one Redis are kept apart; but two deploymen
 same namespace name and the same `key_mac`, a staging copy of production or customers served
 from one secrets bundle, accept each other's states, and a state copied from one admits its key
 in the other without a row read. Never reuse another secret as `key_mac` either: the kernel
-refuses one equal to any of its peppers or its token secret (`authn_state_mac_key_reused`), and
-each MAC key is used only through a key derived from it.
+refuses one equal to any of its peppers, its token secret or an HS256 signer's secret
+(`authn_state_mac_key_reused`). It cannot see a key held by an asymmetric or KMS-backed signer;
+what makes any reuse harmless is that each MAC key is used only through a key derived from it.
+
+A states store of your own needs `ApiKeyStatesPort` as well as `RevocationStatesPort` for
+API keys: with `key_mac` set, the build refuses one without it
+(`authn_api_key_states_unsupported`). The Redis and mock stores implement both.
 
 `StateMacKeys` takes keys of at least 32 bytes. To rotate one, make the new key `active`
 and move the old one to `previous`, on every process that verifies or revokes; after `ttl`,

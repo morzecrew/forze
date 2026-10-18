@@ -1,12 +1,13 @@
 """Configurable authn dependency factories resolving document ports from execution context."""
 
-from typing import final
+from typing import cast, final
 
 import attrs
 from pydantic import BaseModel
 
 from forze.application.contracts.authn import (
     ApiKeyLifecyclePort,
+    ApiKeyStatesPort,
     ApiKeyVerifierDepKey,
     ApiKeyVerifierPort,
     AuthnEventEmitter,
@@ -35,6 +36,7 @@ from forze.application.contracts.authn import (
 )
 from forze.application.contracts.authz import AuthzSpec
 from forze.application.contracts.counter import CounterSpec
+from forze.application.contracts.deps import implements
 from forze.application.contracts.document import (
     DocumentCommandDepKey,
     DocumentCommandPort,
@@ -134,9 +136,18 @@ def _api_key_revocation(
     if config is None or config.key_mac is None:
         return None
 
+    states = _revocation_states(ctx, config)
+
+    if not implements(states, ApiKeyStatesPort):
+        raise exc.configuration(
+            f"RevocationStates.key_mac verifies API keys from cached states, but the states "
+            f"store on route {config.route!r} does not implement ApiKeyStatesPort.",
+            code="authn_api_key_states_unsupported",
+        )
+
     return ApiKeyRevocation(
         config=config,
-        states=_revocation_states(ctx, config),
+        states=cast(ApiKeyStatesPort, states),
         accounts=ctx.doc.query(api_key_account_spec),
         in_transaction=lambda: ctx.tx_ctx.depth() > 0,
         defer=ctx.tx_ctx.run_or_defer,

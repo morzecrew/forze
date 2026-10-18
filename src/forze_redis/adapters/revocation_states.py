@@ -22,6 +22,7 @@ from forze.application.contracts.authn import (
     EPOCH_STATE_KEY,
     REVOKED_STATE,
     ApiKeyStateRead,
+    ApiKeyStatesPort,
     RevocationStatesPort,
     RevocationStatesRead,
 )
@@ -52,7 +53,7 @@ def _present(field: str) -> str | None:
 
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class RedisRevocationStatesAdapter(RedisBaseAdapter, RevocationStatesPort):
+class RedisRevocationStatesAdapter(RedisBaseAdapter, RevocationStatesPort, ApiKeyStatesPort):
     """Cached revocation states in Redis, under ``{<principal id>}`` hash tags."""
 
     def _key(self, principal_id: UUID, key: str) -> str:

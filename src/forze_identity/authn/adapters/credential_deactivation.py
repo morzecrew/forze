@@ -56,8 +56,8 @@ class AuthnCredentialDeactivationHelper:
     ) = None
 
     key_revocation: ApiKeyRevocation | None = None
-    """When set, every key deactivated has ``revoked`` written to the revocation states once the
-    deactivation commits."""
+    """When set, every key of the principal, deactivated now or before, has ``revoked`` written
+    to the revocation states once the deactivation commits."""
 
     # ....................... #
 
@@ -122,5 +122,6 @@ class AuthnCredentialDeactivationHelper:
         if upds:
             await self.ak_cmd.update_many(upds, return_new=False)
 
+        # Every key, active or not: a retry then repairs a write-through that failed.
         if self.key_revocation is not None:
-            await self.key_revocation.revoke(active)
+            await self.key_revocation.revoke(result.hits)

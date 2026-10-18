@@ -36,14 +36,18 @@ from forze.application.contracts.transaction import TransactionManagerDepKey
 from forze.application.execution import Deps, ExecutionContext
 from forze.application.execution.operations import run_operation
 from forze.base.exceptions import CoreException, exc
-from forze_identity.authn import AuthnDepsModule, AuthnKernelConfig, RevocationStates
+from forze_identity.authn import (
+    AuthnDepsModule,
+    AuthnKernelConfig,
+    ForzeJwtTokenVerifier,
+    RevocationStates,
+)
 from forze_identity.authn.application.specs import (
     api_key_account_spec,
     password_account_spec,
     password_reset_spec,
     session_spec,
 )
-from forze_identity.authn import ForzeJwtTokenVerifier
 from forze_identity.authn.services import (
     AccessTokenService,
     ApiKeyConfig,
@@ -327,12 +331,20 @@ def _stack(
     api_key: ApiKeyConfig | None = None,
     states_route: str = STATES,
     namespace: str = STATES,
+    store_clock: bool = True,
+    states_port: Callable[[_States], Any] | None = None,
 ) -> _Stack:
     mock = MockDepsModule()
     state = mock.state
     clock = clock or _Clock()
     reads: list[str] = []
-    states = _States(inner=MockRevocationStates(state=state, namespace=namespace, clock=clock))
+    # Without *store_clock*, the mock keeps its own clock, as an application wiring it does.
+    inner = (
+        MockRevocationStates(state=state, namespace=namespace, clock=clock)
+        if store_clock
+        else MockRevocationStates(state=state, namespace=namespace)
+    )
+    states = _States(inner=inner)
     document = ConfigurableMockDocument(module=mock)
     epochs_by_ctx: dict[int, _Epochs] = {}
 
@@ -406,7 +418,11 @@ def _stack(
                         document,
                     ),
                     PrincipalRegistryDepKey: {ROUTE: ConfigurablePrincipalRegistry()},
-                    RevocationStatesDepKey: {states_route: lambda ctx, spec: states},
+                    RevocationStatesDepKey: {
+                        states_route: lambda ctx, spec: (
+                            states if states_port is None else states_port(states)
+                        ),
+                    },
                     TenantResolverDepKey: {ROUTE: lambda ctx: _AnyTenant()},
                 }
             )

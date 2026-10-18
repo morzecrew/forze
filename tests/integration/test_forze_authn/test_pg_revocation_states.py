@@ -42,7 +42,7 @@ from forze_identity.authn import (
     RevocationStates,
     StateMacKeys,
 )
-from forze_identity.authn.services import ApiKeyConfig, ApiKeyService
+from forze_identity.authn.services import ApiKeyConfig, ApiKeyRevocation, ApiKeyService
 from forze_postgres.execution.deps import postgres_txmanager
 from forze_postgres.execution.deps.configs import PostgresPrincipalEpochConfig
 from forze_postgres.execution.deps.factories import ConfigurablePostgresPrincipalEpoch
@@ -88,14 +88,19 @@ async def redis_client(redis_container: Any) -> Any:
     await client.close()
 
 
+async def _fail(*args: Any, **kwargs: Any) -> Any:
+    raise exc.infrastructure("states store unavailable")
+
+
 class _Down:
-    """A states store that fails every call, as Redis does when it is unreachable."""
+    """A states store that fails every call, as Redis does when it is unreachable.
 
-    def __getattr__(self, name: str) -> Any:
-        async def fail(*args: Any, **kwargs: Any) -> Any:
-            raise exc.infrastructure("states store unavailable")
+    Its calls are declared, not looked up dynamically: the build checks for the API-key calls
+    statically.
+    """
 
-        return fail
+    read = fill = revoke = now_ms = raise_epoch = staticmethod(_fail)
+    read_api_key = fill_api_key = revoke_api_keys = staticmethod(_fail)
 
 
 # ....................... #
@@ -737,3 +742,75 @@ async def test_a_key_admitted_inside_the_window_cannot_mint(
         (principal,),
     )
     assert minted == []
+
+
+@pytest.mark.parametrize("in_transaction", [False, True], ids=["no-tx", "tx"])
+async def test_a_revoke_racing_a_key_mint_is_ordered_after_it(
+    pg_client: PostgresClient,
+    redis_client: RedisClient,
+    monkeypatch: pytest.MonkeyPatch,
+    in_transaction: bool,
+) -> None:
+    """A revocation that commits after the mint re-read the key is ordered after the mint.
+
+    Outside a transaction it commits while the mint is held between its re-read and its insert;
+    inside one, the re-read's row lock holds it until the mint commits. Either way the end state
+    is the one the mint finishing first gives: the new key stands and the old one is revoked.
+    A revocation that commits before the re-read refuses the mint (the tests above).
+    """
+
+    stack, _, principals, _ = await _stacks(pg_client, redis_client)
+    principal = uuid4()
+    await insert_policy_principal_row(pg_client, table=principals, principal_id=principal)
+    identity = AuthnIdentity(principal_id=principal)
+    keys = stack.ctx.authn.api_key_lifecycle(SPEC)
+    issued = await stack.in_tx(lambda: keys.issue_api_key(identity))
+    reread, release = asyncio.Event(), asyncio.Event()
+    recheck = ApiKeyRevocation.recheck_caller
+
+    async def held(self: ApiKeyRevocation) -> None:
+        await recheck(self)
+        reread.set()
+        await release.wait()
+
+    monkeypatch.setattr(ApiKeyRevocation, "recheck_caller", held)
+
+    async def mint() -> Any:
+        with stack.ctx.inv_ctx.bind(metadata=_invocation_metadata()):
+            await stack.ctx.authn.authn(SPEC).authenticate_with_api_key(issued.key)
+
+            if in_transaction:
+                async with stack.ctx.tx_ctx.scope(TX):
+                    return await keys.issue_api_key(identity)
+
+            return await keys.issue_api_key(identity)
+
+    async def revoke() -> None:
+        with stack.ctx.inv_ctx.bind(metadata=_invocation_metadata()):
+            await keys.revoke_api_key(identity, str(issued.key_id))
+
+    async with asyncio.timeout(10):
+        minting = asyncio.create_task(mint())
+        await reread.wait()
+        revoking = asyncio.create_task(revoke())
+        done, _ = await asyncio.wait({revoking}, timeout=BLOCKED_FOR)
+
+        # Without a lock the revocation commits at once; with one it waits for the mint.
+        assert bool(done) is not in_transaction
+
+        release.set()
+        minted = await minting
+        await revoking
+
+    async def authenticate(key: ApiKeyCredentials) -> UUID | str:
+        with stack.ctx.inv_ctx.bind(metadata=_invocation_metadata()):
+            try:
+                result = await stack.ctx.authn.authn(SPEC).authenticate_with_api_key(key)
+
+            except CoreException:
+                return "refused"
+
+        return result.identity.principal_id
+
+    assert await authenticate(issued.key) == "refused"
+    assert await authenticate(minted.key) == principal
