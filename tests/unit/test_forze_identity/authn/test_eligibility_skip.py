@@ -30,7 +30,12 @@ from forze.application.contracts.tenancy import TenantResolverDepKey
 from forze.application.contracts.transaction import TransactionManagerDepKey
 from forze.application.execution import Deps, ExecutionContext
 from forze.base.exceptions import CoreException
-from forze_identity.authn import AuthnDepsModule, AuthnKernelConfig, RevocationStates
+from forze_identity.authn import (
+    AuthnDepsModule,
+    AuthnKernelConfig,
+    RevocationStates,
+    StateMacKeys,
+)
 from forze_identity.authn.application.specs import (
     api_key_account_spec,
     password_account_spec,
@@ -62,7 +67,11 @@ ROUTE = "main"
 SPEC = AuthnSpec(name=ROUTE, enabled_methods=frozenset({"token", "password"}))
 STATES = "authn-revocations"
 TX = "default"
-CONFIG = RevocationStates(route=STATES, ttl=timedelta(minutes=5))
+CONFIG = RevocationStates(
+    route=STATES,
+    ttl=timedelta(minutes=5),
+    key_mac=StateMacKeys(active=b"m" * 32),
+)
 
 
 class _AnyTenant:
@@ -341,3 +350,12 @@ async def test_an_activating_mapping_patch_passes_without_a_transaction() -> Non
 
     assert inner.writes == [{"is_active": True}]
     assert await stack.epoch(principal) == 0
+
+
+def test_the_skip_is_refused_without_signed_epochs() -> None:
+    unsigned = attrs.evolve(CONFIG, key_mac=None)
+
+    with pytest.raises(CoreException) as caught:
+        AuthzKernelConfig(revocation_states=unsigned)
+
+    assert caught.value.code == "authn_eligibility_skip_requires_key_mac"

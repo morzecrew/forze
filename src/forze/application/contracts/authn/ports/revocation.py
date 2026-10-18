@@ -8,7 +8,9 @@ holds expires. A key that is missing or unreadable means "read Postgres", never 
 
 State keys, under one principal: :data:`EPOCH_STATE_KEY` for the epoch, ``f:<family id>`` for a
 family and ``s:<session id>`` for a session. A state is ``live|<tenant id or ->`` or
-:data:`REVOKED_STATE`; an epoch is a decimal integer. An API key's state sits under its digest,
+:data:`REVOKED_STATE`; an epoch is a decimal integer. Either may be followed by ``|`` and fields
+the caller adds and checks (a not-after and a MAC, when it signs them); a store compares an
+epoch by the integer it starts with. An API key's state sits under its digest,
 ``k:<digest>``, under no principal: :data:`REVOKED_STATE`, or a live state carrying a MAC the
 caller makes and checks, since it is the only proof the key exists.
 """
@@ -120,14 +122,19 @@ class RevocationStatesPort(Protocol):
         epoch: int,
         *,
         expire_at_ms: int,
+        state: str | None = None,
     ) -> Awaitable[None]:
         """Set the cached epoch to the larger of the cached one and *epoch*, expiring at *expire_at_ms*.
 
-        A cached value that is not an integer is replaced.
+        A cached value is compared by the decimal integer it starts with, alone or before a
+        ``|``; one that starts with none is replaced.
 
         :param principal_id: The principal the epoch belongs to.
         :param epoch: The epoch read from the source of truth.
         :param expire_at_ms: The instant the value expires, on the store's clock.
+        :param state: The value cached when *epoch* wins: *epoch*, ``|`` and the fields the
+            caller signs it with. ``str(epoch)`` when omitted; a caller that does not sign
+            omits it.
         """
         ...  # pragma: no cover
 

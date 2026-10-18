@@ -1,9 +1,10 @@
 # RFC 0069 — Session revocation fast path
 
-- **Status:** 🚧 In progress — phase 1 shipped in 0.13.0 (2026-10-14). Phase 2 was redesigned on
-  2026-10-14 from hh-backend-v2's specification: §13 replaces §5.1–5.5, and holds
-  wherever §1–§12 conflict with it for phases 2 onward. Rows 14–28 replace the decisions they
-  name.
+- **Status:** ✅ Complete — phase 1 shipped in 0.13.0 (2026-10-14) and phase 2 in 0.14.0;
+  phases 2b, 2c and 5 followed, with the epoch and session states signed under `key_mac`
+  (row 29). Phase 2 was redesigned on 2026-10-14 from hh-backend-v2's specification: §13
+  replaces §5.1–5.5, and holds wherever §1–§12 conflict with it for phases 2 onward. Rows 14–29
+  replace the decisions they name.
 - **Scope:** *(As first proposed; §13 redesigns phase 2 onward.)* An opt-in fast path for verifying an access token's session that replaces the
   session-row read with one Redis read while Redis answers. Once two preconditions hold, it
   replaces the policy-principal eligibility read too. A verification admits the token from two
@@ -499,9 +500,11 @@ The authn page gets a "Session check fast path" section:
 | 26 | `ASSUMED` | API-key states (phase 2c) are keyed by digest and carry a MAC under a server key, over the prefix, the digest, the principal, the actor, the key's expiry, the state and an absolute not-after. The not-after is the earlier of Redis's read time plus `ttl` and the key's expiry. The verifier refuses a state past its not-after by Redis's `TIME` from the same read script, so one clock sets and checks it. It also checks the key's expiry as today, and treats a state whose MAC fails as a miss. Keys keep the eligibility read. |
 | 27 | `LOCKED` | Every issue reads the epoch with `FOR SHARE` after upserting its row, and every raise is an atomic upsert (`INSERT … ON CONFLICT DO UPDATE`) as its first statement, which locks the row or claims its key. So a principal-wide revocation and an issue serialize on Postgres, even when no row existed, and a login, refresh or tenant switch cannot commit a session a concurrent logout misses. |
 | 28 | `ASSUMED` | A revocation of chosen sessions or a family writes the state of each session it stamped and of its family, whatever the binding, so a family revocation refuses session-bound tokens and a change of binding is safe. A revocation that ends every session of a principal raises the epoch instead. |
+| 29 | `LOCKED` | With `key_mac`, a principal's epoch and every live family or session state carry a not-after and a MAC under the API-key states' keys, over a label of their own, the states route, the principal, the state key, the value and the not-after; `revoked` carries none. The not-after is the store's read time plus `ttl`, checked as in row 26, and a state that fails either check is a miss. The eligibility skip requires it, and the authz kernel refuses `revocation_states` without `key_mac`: unsigned, an older epoch restored in Redis admits a deactivated principal's tokens until their `exp`. |
 
 Rows 14–28 were added on 2026-10-14, when hh-backend-v2's specification for request 4 was
-adopted for phase 2 (§13), and revised the same day after an adversarial review of §13.
+adopted for phase 2 (§13), and revised the same day after an adversarial review of §13. Row 29
+was added on 2026-10-18, after phases 2b and 2c shipped.
 
 ## 12. Phasing
 
@@ -569,9 +572,9 @@ Postgres stays the only truth. Redis caches what a lookup read there, under a pr
 principal's hash tag:
 
 ```text
-{<principal_id>}:e            ->  <epoch>
-{<principal_id>}:f:<family>   ->  live|<tenant or -> | revoked
-{<principal_id>}:s:<sid>      ->  live|<tenant or -> | revoked
+{<principal_id>}:e            ->  <epoch>[|<not-after>|<mac>]
+{<principal_id>}:f:<family>   ->  live|<tenant or ->[|<not-after>|<mac>] | revoked
+{<principal_id>}:s:<sid>      ->  live|<tenant or ->[|<not-after>|<mac>] | revoked
 k:<digest>                    ->  live|<principal>|<actor or ->|<expires or ->|<not-after>|<mac> | revoked   (phase 2c)
 ```
 
@@ -736,7 +739,8 @@ within the window.
 An eligibility decorator may then skip a read only when all of these hold:
 - the call is non-locking (`for_update=False`);
 - it asks about the admitted token's own subject;
-- the admission was made in this request.
+- the admission was made in this request;
+- the epoch it was judged against was signed under `key_mac` (row 29), or read from Postgres.
 
 A locking call is an issue, and the tenant switch issues inside a token-authenticated
 request, so it always reads. An actor check never inherits the subject's admission. The
@@ -860,3 +864,5 @@ hh-backend-v2's acceptance list, plus what the corrections need:
 4. **2c, API keys:** digest-keyed states carrying a MAC.
 5. **Docs and metrics:** the window and every cause, plus hit, miss, write-through failure and
    fallback counters.
+6. **Signed principal states** (row 29): the epoch and the live family and session states
+   carry a MAC and a not-after under `key_mac`, which the eligibility skip requires.

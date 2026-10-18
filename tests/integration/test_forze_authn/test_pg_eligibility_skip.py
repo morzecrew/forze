@@ -24,6 +24,7 @@ pytest.importorskip("redis")
 pytest.importorskip("argon2")
 
 from forze.application.contracts.authn import (
+    EPOCH_STATE_KEY,
     AuthnIdentity,
     AuthnSpec,
     PasswordCredentials,
@@ -39,7 +40,12 @@ from forze.application.contracts.document import (
 from forze.application.contracts.transaction import IsolationLevel, TransactionManagerDepKey
 from forze.application.execution import Deps, ExecutionContext
 from forze.base.exceptions import CoreException, ExceptionKind
-from forze_identity.authn import AuthnDepsModule, AuthnKernelConfig, RevocationStates
+from forze_identity.authn import (
+    AuthnDepsModule,
+    AuthnKernelConfig,
+    RevocationStates,
+    StateMacKeys,
+)
 from forze_identity.authn.application.constants import AuthnResourceName
 from forze_identity.authn.services import PasswordConfig
 from forze_identity.authz import AuthzDepsModule, AuthzKernelConfig
@@ -174,6 +180,7 @@ async def _stack(
     extra: Deps | None = None,
     epoch_client: PostgresClient | None = None,
     account_client: PostgresClient | None = None,
+    ttl: timedelta = timedelta(minutes=5),
 ) -> _Stack:
     suffix = uuid4().hex[:12]
     principals, epochs = f"authz_pri_{suffix}", f"authn_epochs_{suffix}"
@@ -183,7 +190,11 @@ async def _stack(
             "CREATE TABLE {table} (principal_id uuid PRIMARY KEY, epoch bigint NOT NULL)"
         ).format(table=sql.Identifier("public", epochs))
     )
-    config = RevocationStates(route=STATES, ttl=timedelta(minutes=5))
+    config = RevocationStates(
+        route=STATES,
+        ttl=ttl,
+        key_mac=StateMacKeys(active=b"m" * 32),
+    )
     reads: list[str] = []
     principal_query = ConfigurablePostgresReadOnlyDocument(
         config=PostgresReadOnlyDocumentConfig(read=("public", principals)),
@@ -334,6 +345,53 @@ async def test_an_activation_raises_nothing(
     redis_client: RedisClient,
 ) -> None:
     await battery.an_activation_raises_nothing(await _stack(pg_client, redis_client))
+
+
+async def _epoch_key(redis_client: RedisClient, principal: UUID) -> str:
+    """The Redis key of *principal*'s cached epoch."""
+
+    cursor, found = 0, []
+
+    while True:
+        cursor, keys = await redis_client.scan(cursor, match=f"*{{{principal}}}*")
+        found += [key for key in keys if key.endswith(f"}}:{EPOCH_STATE_KEY}")]
+
+        if cursor == 0:
+            break
+
+    (key,) = found
+
+    return key
+
+
+@pytest.mark.parametrize("planted", ["unsigned", "replayed"])
+async def test_a_restored_epoch_admits_a_deactivated_principal_no_longer_than_ttl(
+    pg_client: PostgresClient,
+    redis_client: RedisClient,
+    planted: str,
+) -> None:
+    ttl = timedelta(seconds=2)
+    stack = await _stack(pg_client, redis_client, ttl=ttl)
+    principal = await stack.principal()
+    issued = await battery.login(stack, principal)
+
+    assert await battery.verify(stack, issued) == "admitted"
+
+    key = await _epoch_key(redis_client, principal)
+    cached = await redis_client.get(key)
+    assert cached is not None
+
+    await stack.in_tx(lambda: battery.DEACTIVATIONS["registry"](stack, principal))
+
+    # Over the raised epoch, with no expiry, as whoever can write Redis could.
+    await redis_client.set(key, b"0" if planted == "unsigned" else cached)
+
+    if planted == "replayed":
+        # Inside its not-after the replay is admitted, the window every cached state has.
+        assert await battery.verify(stack, issued) == "admitted"
+        await asyncio.sleep(ttl.total_seconds() + 0.2)
+
+    assert await battery.verify(stack, issued) == "session_revoked"
 
 
 @pytest.mark.parametrize(

@@ -11,11 +11,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **The Postgres outbox can log what it consumes.** `PostgresOutboxConfig(storage="consume", delivery_log=("app", "outbox_delivered"))` appends each published row to an application-owned table in the statement that deletes it, so a log row proves a committed delivery. A failure to write it fails the pass.
 
-- **Token verifications can skip the eligibility read too.** With the authn kernel's `RevocationStates` on `AuthzKernelConfig(revocation_states=)`, a deactivating write through the policy principal's document port raises the epoch in its transaction (refused outside one); a fast-path token skips the read. Postgres only.
+- **Token verifications can skip the eligibility read too.** With the authn kernel's `RevocationStates` on `AuthzKernelConfig(revocation_states=)`, a deactivating write through the policy principal's document port raises the epoch in its transaction (refused outside one); a fast-path token skips the read. Postgres only; requires `key_mac` (`authn_eligibility_skip_requires_key_mac`).
 
 - **`DocumentCommandHookDepKey` wraps a document's command port wherever it is resolved**, registered routed under the document's name.
 
-- **API keys can be verified from Redis.** `RevocationStates(key_mac=StateMacKeys(...))` checks a key from a MAC-signed state, reading its row only on a miss; revoking a key writes `revoked` through. A custom states store also implements the new `ApiKeyStatesPort`, needed only with `key_mac`.
+- **API keys can be verified from Redis.** `RevocationStates(key_mac=StateMacKeys(...))` checks a key from a MAC-signed state, reading its row only on a miss; revoking a key writes `revoked` through. The same keys sign the cached epochs and session states. A custom states store also implements the new `ApiKeyStatesPort` and takes `raise_epoch(state=)`, both needed only with `key_mac`.
 
 - **An API key admitted from Redis cannot mint past its revocation.** With `key_mac` set, a session, an API key, a password account or an invite minted in a request, or a WebSocket or Socket.IO command, that an API key authenticated re-reads that key's row first, whoever it is for, and refuses with `api_key_revoked` once it is revoked or expired.
 

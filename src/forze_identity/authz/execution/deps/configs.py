@@ -67,7 +67,9 @@ class AuthzKernelConfig:
     anything but ``True``, or the row removed) raises the principal's epoch in its transaction
     and writes it through after commit, through the document's command port, so a token issued
     before is refused. Authn skips its eligibility read only when this is the value its own
-    kernel carries. Such a write then refuses to run outside a transaction."""
+    kernel carries. Such a write then refuses to run outside a transaction. Requires
+    :attr:`~forze_identity.authn.services.RevocationStates.key_mac`: the skip trusts a cached
+    epoch, so the epoch must be signed."""
 
     def __attrs_post_init__(self) -> None:
         check_permission_providers(self.permission_providers)
@@ -76,6 +78,14 @@ class AuthzKernelConfig:
         if self.grants_cache is not None and not isinstance(self.grants_cache, GrantsCache):
             raise exc.configuration(
                 f"AuthzKernelConfig.grants_cache must be a GrantsCache, not {self.grants_cache!r}"
+            )
+
+        if self.revocation_states is not None and self.revocation_states.key_mac is None:
+            raise exc.configuration(
+                "AuthzKernelConfig.revocation_states lets authn skip its eligibility read on a "
+                "cached epoch, which whoever can write the states store could otherwise restore: "
+                "set RevocationStates.key_mac so the epochs are signed.",
+                code="authn_eligibility_skip_requires_key_mac",
             )
 
 

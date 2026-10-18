@@ -8,6 +8,7 @@ the session store and the epoch store shows which verifications read the databas
 from __future__ import annotations
 
 import asyncio
+import time
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from datetime import timedelta
 from typing import Any
@@ -19,6 +20,7 @@ import pytest
 import structlog
 
 from forze.application.contracts.authn import (
+    EPOCH_STATE_KEY,
     ApiKeyStateRead,
     AuthnIdentity,
     AuthnSpec,
@@ -154,9 +156,16 @@ class _States:
         self._call("now", write=True)
         return await self.inner.now_ms(principal_id)
 
-    async def raise_epoch(self, principal_id: UUID, epoch: int, *, expire_at_ms: int) -> None:
+    async def raise_epoch(
+        self,
+        principal_id: UUID,
+        epoch: int,
+        *,
+        expire_at_ms: int,
+        state: str | None = None,
+    ) -> None:
         self._call("raise_epoch", write=True)
-        await self.inner.raise_epoch(principal_id, epoch, expire_at_ms=expire_at_ms)
+        await self.inner.raise_epoch(principal_id, epoch, expire_at_ms=expire_at_ms, state=state)
 
     async def read_api_key(self, digest: str) -> ApiKeyStateRead:
         self._call("read_api_key", write=False)
@@ -467,6 +476,29 @@ def _stack(
 
 BINDINGS = pytest.mark.parametrize("binding", ["session", "family"])
 
+MAC = StateMacKeys(active=b"m" * 32)
+SIGNED = pytest.mark.parametrize("key_mac", [None, MAC], ids=["unsigned", "signed"])
+
+
+def _wall_clock() -> _Clock:
+    """A store clock on the wall clock, in whole seconds: the application's clock caps a signed
+    state's not-after, so a store clock far behind it would refuse every signed state."""
+
+    return _Clock(now=float(int(time.time())))
+
+
+def _cached(stack: _Stack, principal: UUID, key: str) -> str:
+    value, _ = stack.states.inner.state.revocation_states[(STATES, str(principal), key)]
+
+    return value
+
+
+def _plant(stack: _Stack, principal: UUID, key: str, value: str) -> None:
+    """Write *value* as whoever can write the store could: over anything, with no expiry."""
+
+    stack.states.inner.state.revocation_states[(STATES, str(principal), key)] = (value, 2**62)
+
+
 # ----------------------- #
 
 
@@ -486,10 +518,12 @@ async def test_tokens_carry_their_family_and_epoch_only_with_the_fast_path() -> 
 
 
 @BINDINGS
+@SIGNED
 async def test_after_warm_up_verifications_read_neither_sessions_nor_epochs(
     binding: SessionBinding,
+    key_mac: StateMacKeys | None,
 ) -> None:
-    stack = _stack(binding=binding)
+    stack = _stack(binding=binding, key_mac=key_mac, clock=_wall_clock())
     issued = await stack.login(await stack.principal())
 
     stack.reads.clear()
@@ -525,12 +559,14 @@ async def _revoke_everywhere(stack: _Stack, principal: UUID, flow: str) -> None:
 
 
 @BINDINGS
+@SIGNED
 @pytest.mark.parametrize("flow", ["logout", "change", "reset", "deactivate"])
 async def test_a_raised_epoch_refuses_with_no_read_and_a_later_token_is_admitted(
     binding: SessionBinding,
+    key_mac: StateMacKeys | None,
     flow: str,
 ) -> None:
-    stack = _stack(binding=binding)
+    stack = _stack(binding=binding, key_mac=key_mac, clock=_wall_clock())
     principal = await stack.principal()
     await stack.ctx.authn.password_account_provisioning(SPEC).register_with_password(
         principal,
@@ -910,6 +946,64 @@ async def test_a_session_under_another_principal_is_refused_and_writes_nothing()
 
     assert await stack.verify(forged) == "session_subject_mismatch"
     assert stack.states.inner.state.revocation_states == before
+
+
+@pytest.mark.parametrize(
+    "planted",
+    ["unsigned_epoch", "another_principals_epoch", "unsigned_state", "another_sessions_state"],
+)
+async def test_with_key_mac_a_state_it_did_not_sign_admits_nothing(planted: str) -> None:
+    stack = _stack(key_mac=MAC, clock=_wall_clock())
+    principal, other = await stack.principal(), await stack.principal()
+    issued, sibling = await stack.login(principal), await stack.login(principal)
+    others = await stack.login(other)
+
+    for token in (issued, sibling, others):
+        assert await stack.verify(token) == "admitted"
+
+    if planted.endswith("epoch"):
+        # Raises the epoch past the token's; the cached live states stay.
+        await stack.logout(principal)
+        key = EPOCH_STATE_KEY
+        value = "0" if planted == "unsigned_epoch" else _cached(stack, other, EPOCH_STATE_KEY)
+
+    else:
+        # Writes ``revoked`` for the token's session; the epoch stays.
+        await stack.revoke_family(principal, issued)
+        key = f"s:{_claims(issued)['sid']}"
+        sibling_state = _cached(stack, principal, f"s:{_claims(sibling)['sid']}")
+        value = "live|-" if planted == "unsigned_state" else sibling_state
+
+    _plant(stack, principal, key, value)
+
+    assert await stack.verify(issued) == "session_revoked"
+
+
+async def test_with_key_mac_a_replayed_epoch_admits_nothing_past_its_not_after() -> None:
+    stack = _stack(key_mac=MAC, clock=_wall_clock())
+    principal = await stack.principal()
+    first, second = await stack.login(principal), await stack.login(principal)
+
+    # The epoch is cached by the first verification, and the second session's state half a ttl
+    # later, so the state outlives the epoch.
+    assert await stack.verify(first) == "admitted"
+    epoch_cached_at = stack.clock.now
+    stack.clock.advance(TTL / 2)
+    assert await stack.verify(second) == "admitted"
+
+    state_key = f"s:{_claims(second)['sid']}"
+    epoch, state = _cached(stack, principal, EPOCH_STATE_KEY), _cached(stack, principal, state_key)
+    await stack.logout(principal)
+
+    _plant(stack, principal, EPOCH_STATE_KEY, epoch)
+    _plant(stack, principal, state_key, state)
+
+    # Inside the epoch's not-after: the window every cached state has.
+    assert await stack.verify(second) == "admitted"
+
+    stack.clock.now = epoch_cached_at + TTL.total_seconds()
+
+    assert await stack.verify(second) == "session_revoked"
 
 
 @pytest.mark.parametrize("value", ["live|not-a-uuid", "alive", "", "live"])
