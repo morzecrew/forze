@@ -38,14 +38,14 @@ from .execution import (
     ConfigurableTokenLifecycle,
     build_authn_shared_services,
 )
-from .observability import instrument_signing
+from .observability import instrument_revocation_states, instrument_signing
 from .orchestrator import AuthnOrchestrator
 from .resolvers import (
     DeterministicUuidResolver,
     JwtNativeUuidResolver,
     MappingTableResolver,
 )
-from .services import MIN_SECRET_BYTES, RevocationStates, SigningStats
+from .services import MIN_SECRET_BYTES, RevocationStates, SigningStats, StateMacKeys
 from .verifiers import (
     Argon2PasswordVerifier,
     ForzeJwtTokenVerifier,
@@ -84,6 +84,8 @@ __all__ = [
     "LoginLockoutGuard",
     "MappingTableResolver",
     "RevocationStates",
+    "StateMacKeys",
     "SigningStats",
     "instrument_signing",
+    "instrument_revocation_states",
 ]

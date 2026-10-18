@@ -22,6 +22,8 @@ pytest.importorskip("jwt")
 pytest.importorskip("redis")
 
 from forze.application.contracts.authn import (
+    REVOKED_STATE,
+    ApiKeyCredentials,
     AuthnIdentity,
     AuthnSpec,
     IssuedTokens,
@@ -33,16 +35,35 @@ from forze.application.contracts.authn import (
 from forze.application.contracts.transaction import IsolationLevel, TransactionManagerDepKey
 from forze.application.execution import Deps, ExecutionContext
 from forze.base.exceptions import CoreException, ExceptionKind, exc
-from forze_identity.authn import AuthnDepsModule, AuthnKernelConfig, RevocationStates
-from forze_identity.authn.services import PasswordConfig
+from forze_identity.authn import (
+    AuthnDepsModule,
+    AuthnKernelConfig,
+    RevocationStates,
+    StateMacKeys,
+)
+from forze_identity.authn.adapters import credential_deactivation
+from forze_identity.authn.adapters.credential_deactivation import (
+    AuthnCredentialDeactivationHelper,
+)
+from forze_identity.authn.adapters.principal_eligibility import (
+    PolicyPrincipalEligibilityAdapter,
+)
+from forze_identity.authn.services import (
+    ApiKeyConfig,
+    ApiKeyRevocation,
+    ApiKeyService,
+    PasswordConfig,
+)
 from forze_postgres.execution.deps import postgres_txmanager
 from forze_postgres.execution.deps.configs import PostgresPrincipalEpochConfig
 from forze_postgres.execution.deps.factories import ConfigurablePostgresPrincipalEpoch
 from forze_postgres.kernel.client.client import PostgresClient
 from forze_redis import RedisClient, RedisDepsModule, RedisRevocationStatesConfig
+from forze_redis.adapters.revocation_states import RedisRevocationStatesAdapter
 from tests.integration.test_forze_authn.test_pg_authn_integration import (
     _authn_pg_deps,
     _invocation_metadata,
+    api_key_account_spec,
     session_spec,
 )
 from tests.support.authn_pg_fixtures import create_authn_tables, insert_policy_principal_row
@@ -51,21 +72,26 @@ from tests.support.execution_context import context_from_deps
 pytestmark = [pytest.mark.integration, pytest.mark.asyncio]
 
 ROUTE = "main"
-SPEC = AuthnSpec(name=ROUTE, enabled_methods=frozenset({"token"}))
+SPEC = AuthnSpec(name=ROUTE, enabled_methods=frozenset({"token", "api_key"}))
 STATES = "authn-revocations"
 TX = "default"
 BLOCKED_FOR = 0.3
 """How long a statement must stay blocked to count as waiting on the other's lock."""
 
 
+async def _fail(*args: Any, **kwargs: Any) -> Any:
+    raise exc.infrastructure("states store unavailable")
+
+
 class _Down:
-    """A states store that fails every call, as Redis does when it is unreachable."""
+    """A states store that fails every call, as Redis does when it is unreachable.
 
-    def __getattr__(self, name: str) -> Any:
-        async def fail(*args: Any, **kwargs: Any) -> Any:
-            raise exc.infrastructure("states store unavailable")
+    Its calls are declared, not looked up dynamically: the build checks for the API-key calls
+    statically.
+    """
 
-        return fail
+    read = fill = revoke = now_ms = raise_epoch = staticmethod(_fail)
+    read_api_key = fill_api_key = revoke_api_keys = staticmethod(_fail)
 
 
 # ....................... #
@@ -193,7 +219,11 @@ async def _stacks(
             refresh_token_pepper=b"p" * 32,
             api_key_pepper=b"a" * 32,
             password=PasswordConfig(time_cost=1, memory_cost=8, parallelism=1),
-            revocation_states=RevocationStates(route=STATES, ttl=timedelta(minutes=5)),
+            revocation_states=RevocationStates(
+                route=STATES,
+                ttl=timedelta(minutes=5),
+                key_mac=StateMacKeys(active=b"m" * 32),
+            ),
         )
         deps = (
             _authn_pg_deps(pg_client, suffix=suffix)
@@ -695,3 +725,290 @@ def _claims(issued: IssuedTokens) -> dict[str, Any]:
     import jwt
 
     return jwt.decode(issued.access.token.token, options={"verify_signature": False})
+
+
+# ....................... #
+
+
+async def test_an_api_key_is_verified_from_redis_and_a_forged_state_is_refused(
+    pg_client: PostgresClient,
+    redis_client: RedisClient,
+) -> None:
+    stack, down, principals, _ = await _stacks(pg_client, redis_client)
+    principal = uuid4()
+    await insert_policy_principal_row(pg_client, table=principals, principal_id=principal)
+    keys = stack.ctx.authn.api_key_lifecycle(SPEC)
+    issued = await stack.in_tx(lambda: keys.issue_api_key(AuthnIdentity(principal_id=principal)))
+    digest = ApiKeyService(pepper=b"a" * 32, config=ApiKeyConfig()).calculate_key_digest(
+        issued.key.key
+    )
+    suffix = principals.removeprefix("authz_pri_")
+    store = RedisRevocationStatesAdapter(client=redis_client, namespace=f"it:authn:{suffix}")
+
+    async def verify(on: _Stack, key: ApiKeyCredentials) -> UUID | str:
+        with on.ctx.inv_ctx.bind(metadata=_invocation_metadata()):
+            try:
+                result = await on.ctx.authn.authn(SPEC).authenticate_with_api_key(key)
+
+            except CoreException:
+                return "refused"
+
+        return result.identity.principal_id
+
+    assert await verify(stack, issued.key) == principal
+    cached = (await store.read_api_key(digest)).state
+    assert cached is not None and cached.startswith(f"live|{principal}|")
+    assert await verify(stack, issued.key) == principal
+    assert await verify(down, issued.key) == principal
+
+    # The state copied onto a key with no row: its MAC names another digest, so it is refused.
+    forged = ApiKeyCredentials(key=uuid4().hex)
+    forged_digest = ApiKeyService(pepper=b"a" * 32, config=ApiKeyConfig()).calculate_key_digest(
+        forged.key
+    )
+    await redis_client.set(store._api_key(forged_digest), cached)
+    assert await verify(stack, forged) == "refused"
+
+    # A revocation outside any transaction writes through once its update has committed.
+    with stack.ctx.inv_ctx.bind(metadata=_invocation_metadata()):
+        await keys.revoke_api_key(AuthnIdentity(principal_id=principal), str(issued.key_id))
+    assert (await store.read_api_key(digest)).state == REVOKED_STATE
+    assert await verify(stack, issued.key) == "refused"
+    assert await verify(down, issued.key) == "refused"
+
+
+@pytest.mark.parametrize("what", ["api_key", "switch"])
+@pytest.mark.parametrize("isolation", [None, IsolationLevel.SNAPSHOT], ids=["rc", "snapshot"])
+async def test_a_key_admitted_inside_the_window_cannot_mint(
+    pg_client: PostgresClient,
+    redis_client: RedisClient,
+    what: str,
+    isolation: IsolationLevel | None,
+) -> None:
+    stack, down, principals, _ = await _stacks(pg_client, redis_client)
+    principal = uuid4()
+    await insert_policy_principal_row(pg_client, table=principals, principal_id=principal)
+    identity = AuthnIdentity(principal_id=principal)
+    keys = stack.ctx.authn.api_key_lifecycle(SPEC)
+    issued = await stack.in_tx(lambda: keys.issue_api_key(identity))
+    snapshot, revoked = asyncio.Event(), asyncio.Event()
+
+    async def request() -> Any:
+        with stack.ctx.inv_ctx.bind(metadata=_invocation_metadata()):
+            # Admitted from the cached state the earlier lookup wrote.
+            await stack.ctx.authn.authn(SPEC).authenticate_with_api_key(issued.key)
+
+            async with stack.ctx.tx_ctx.scope(TX, isolation=isolation):
+                await stack.live_sessions(principal)  # takes the snapshot, when there is one
+                snapshot.set()
+                await revoked.wait()
+
+                if what == "api_key":
+                    return await keys.issue_api_key(identity)
+
+                return await stack.tokens.issue_tokens(identity, tenant_id=uuid4())
+
+    with stack.ctx.inv_ctx.bind(metadata=_invocation_metadata()):
+        await stack.ctx.authn.authn(SPEC).authenticate_with_api_key(issued.key)
+
+    async with asyncio.timeout(10):
+        minting = asyncio.create_task(request())
+        await snapshot.wait()
+
+        # Revoked from a process whose write-through fails: Redis still says live.
+        with down.ctx.inv_ctx.bind(metadata=_invocation_metadata()):
+            await down.ctx.authn.api_key_lifecycle(SPEC).revoke_api_key(
+                identity,
+                str(issued.key_id),
+            )
+
+        revoked.set()
+
+        with pytest.raises(CoreException) as caught:
+            await minting
+
+    # A fresh read refuses it; a snapshot older than the revocation fails on the row's lock.
+    if isolation is None:
+        assert caught.value.code == "api_key_revoked", caught.value
+
+    else:
+        assert caught.value.kind is ExceptionKind.CONCURRENCY, caught.value
+
+    assert await stack.live_sessions(principal) == []
+    minted = await pg_client.fetch_all(
+        sql.SQL("SELECT id FROM {table} WHERE principal_id = %s AND is_active").format(
+            table=sql.Identifier("public", principals.replace("authz_pri_", "authn_ak_"))
+        ),
+        (principal,),
+    )
+    assert minted == []
+
+
+@pytest.mark.parametrize("in_transaction", [False, True], ids=["no-tx", "tx"])
+async def test_a_revoke_racing_a_key_mint_is_ordered_after_it(
+    pg_client: PostgresClient,
+    redis_client: RedisClient,
+    monkeypatch: pytest.MonkeyPatch,
+    in_transaction: bool,
+) -> None:
+    """A revocation that commits after the mint re-read the key is ordered after the mint.
+
+    Outside a transaction it commits while the mint is held between its re-read and its insert;
+    inside one, the re-read's row lock holds it until the mint commits. Either way the end state
+    is the one the mint finishing first gives: the new key stands and the old one is revoked.
+    A revocation that commits before the re-read refuses the mint (the tests above).
+    """
+
+    stack, _, principals, _ = await _stacks(pg_client, redis_client)
+    principal = uuid4()
+    await insert_policy_principal_row(pg_client, table=principals, principal_id=principal)
+    identity = AuthnIdentity(principal_id=principal)
+    keys = stack.ctx.authn.api_key_lifecycle(SPEC)
+    issued = await stack.in_tx(lambda: keys.issue_api_key(identity))
+    reread, release = asyncio.Event(), asyncio.Event()
+    recheck = ApiKeyRevocation.recheck_caller
+
+    async def held(self: ApiKeyRevocation) -> None:
+        await recheck(self)
+        reread.set()
+        await release.wait()
+
+    monkeypatch.setattr(ApiKeyRevocation, "recheck_caller", held)
+
+    async def mint() -> Any:
+        with stack.ctx.inv_ctx.bind(metadata=_invocation_metadata()):
+            await stack.ctx.authn.authn(SPEC).authenticate_with_api_key(issued.key)
+
+            if in_transaction:
+                async with stack.ctx.tx_ctx.scope(TX):
+                    return await keys.issue_api_key(identity)
+
+            return await keys.issue_api_key(identity)
+
+    async def revoke() -> None:
+        with stack.ctx.inv_ctx.bind(metadata=_invocation_metadata()):
+            await keys.revoke_api_key(identity, str(issued.key_id))
+
+    async with asyncio.timeout(10):
+        minting = asyncio.create_task(mint())
+        await reread.wait()
+        revoking = asyncio.create_task(revoke())
+        done, _ = await asyncio.wait({revoking}, timeout=BLOCKED_FOR)
+
+        # Without a lock the revocation commits at once; with one it waits for the mint.
+        assert bool(done) is not in_transaction
+
+        release.set()
+        minted = await minting
+        await revoking
+
+    async def authenticate(key: ApiKeyCredentials) -> UUID | str:
+        with stack.ctx.inv_ctx.bind(metadata=_invocation_metadata()):
+            try:
+                result = await stack.ctx.authn.authn(SPEC).authenticate_with_api_key(key)
+
+            except CoreException:
+                return "refused"
+
+        return result.identity.principal_id
+
+    assert await authenticate(issued.key) == "refused"
+    assert await authenticate(minted.key) == principal
+
+
+async def test_a_key_switch_and_a_deactivation_of_its_principal_never_deadlock(
+    pg_client: PostgresClient,
+    redis_client: RedisClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A deactivation locks the principal's keys and then its row; a tenant switch an API key of
+    # that principal authenticated takes the key's row too, so it must take the two in that order.
+    stack, _, principals, _ = await _stacks(pg_client, redis_client)
+    principal = uuid4()
+    await insert_policy_principal_row(pg_client, table=principals, principal_id=principal)
+    identity = AuthnIdentity(principal_id=principal)
+    keys = stack.ctx.authn.api_key_lifecycle(SPEC)
+    issued = await stack.in_tx(lambda: keys.issue_api_key(identity))
+    locked, release = asyncio.Event(), asyncio.Event()
+    allowed = PolicyPrincipalEligibilityAdapter.require_authentication_allowed
+
+    async def held(self: Any, principal_id: UUID, *, for_update: bool = False) -> None:
+        await allowed(self, principal_id, for_update=for_update)
+
+        if for_update:
+            # The switch holds the principal's row from here.
+            locked.set()
+            await release.wait()
+
+    monkeypatch.setattr(PolicyPrincipalEligibilityAdapter, "require_authentication_allowed", held)
+
+    async def switch() -> Any:
+        with stack.ctx.inv_ctx.bind(metadata=_invocation_metadata()):
+            await stack.ctx.authn.authn(SPEC).authenticate_with_api_key(issued.key)
+
+            async with stack.ctx.tx_ctx.scope(TX):
+                return await stack.tokens.issue_tokens(identity, tenant_id=uuid4())
+
+    async def deactivate() -> None:
+        with stack.ctx.inv_ctx.bind(metadata=_invocation_metadata()):
+            helper = AuthnCredentialDeactivationHelper(
+                ak_qry=stack.ctx.document.query(api_key_account_spec),
+                ak_cmd=stack.ctx.document.command(api_key_account_spec),
+            )
+
+            async with stack.ctx.tx_ctx.scope(TX):
+                await helper.deactivate_all(principal)
+                await pg_client.execute(
+                    sql.SQL("UPDATE {table} SET is_active = false WHERE id = %s").format(
+                        table=sql.Identifier("public", principals)
+                    ),
+                    (principal,),
+                )
+
+    async with asyncio.timeout(20):
+        switching = asyncio.create_task(switch())
+        await locked.wait()
+
+        deactivating = asyncio.create_task(deactivate())
+        await asyncio.sleep(BLOCKED_FOR)
+        assert not deactivating.done()
+
+        release.set()
+        results = await asyncio.gather(switching, deactivating, return_exceptions=True)
+
+    # The switch was first and minted while the key was live; the deactivation came after.
+    assert not any(isinstance(result, BaseException) for result in results), results
+
+
+async def test_a_deactivation_pages_through_keys_whose_updates_move_them(
+    pg_client: PostgresClient,
+    redis_client: RedisClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An updated row moves in Postgres's heap, so pages without an order skip rows."""
+
+    monkeypatch.setattr(credential_deactivation, "_DEACTIVATE_BATCH", 2)
+    stack, _, principals, _ = await _stacks(pg_client, redis_client)
+    principal = uuid4()
+    await insert_policy_principal_row(pg_client, table=principals, principal_id=principal)
+    identity = AuthnIdentity(principal_id=principal)
+    keys = stack.ctx.authn.api_key_lifecycle(SPEC)
+
+    for _ in range(7):
+        await stack.in_tx(lambda: keys.issue_api_key(identity))
+
+    with stack.ctx.inv_ctx.bind(metadata=_invocation_metadata()):
+        helper = AuthnCredentialDeactivationHelper(
+            ak_qry=stack.ctx.document.query(api_key_account_spec),
+            ak_cmd=stack.ctx.document.command(api_key_account_spec),
+        )
+
+    await stack.in_tx(lambda: helper.deactivate_all(principal))
+
+    active = await pg_client.fetch_all(
+        sql.SQL("SELECT id FROM {table} WHERE principal_id = %s AND is_active").format(
+            table=sql.Identifier("public", principals.replace("authz_pri_", "authn_ak_"))
+        ),
+        (principal,),
+    )
+    assert active == []

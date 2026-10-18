@@ -15,6 +15,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **`DocumentCommandHookDepKey` wraps a document's command port wherever it is resolved**, registered routed under the document's name.
 
+- **API keys can be verified from Redis.** `RevocationStates(key_mac=StateMacKeys(...))` checks a key from a MAC-signed state, reading its row only on a miss; revoking a key writes `revoked` through. A custom states store also implements the new `ApiKeyStatesPort`, needed only with `key_mac`.
+
+- **An API key admitted from Redis cannot mint past its revocation.** With `key_mac` set, a session, an API key, a password account or an invite minted in a request, or a WebSocket or Socket.IO command, that an API key authenticated re-reads that key's row first, whoever it is for, and refuses with `api_key_revoked` once it is revoked or expired.
+
+- **The revocation-states fast path is counted.** `instrument_revocation_states({"default": states})` exports hits, misses, fallbacks, failed write-throughs and clock-skew refusals, for sessions and API keys.
+
 ### Changed
 
 - ...
@@ -27,11 +33,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **A credential minted by a WebSocket or Socket.IO command re-checks the token that authenticated the connection.** Both transports carry what the handshake or last reauth recorded (`current_authn_admission`) to each command; once that session is revoked, or rotated under `"session"` binding, mints fail until a reauth.
 
+- **Deactivating a principal deactivates every API key it holds.** The keys were read with no limit, so past a store's implicit read limit (10,000 rows on Postgres, Mongo and Firestore) the rest stayed active; deactivation now pages through all of them.
+
 ### Security
 
 - **With revocation states, a credential minted from an access token re-checks that token whoever it is for**, including a password account or invite an operator issues for another principal.
-
-### Security
 
 - **A Postgres outbox that is not tenant-aware no longer meets a `namespace` floor through a per-tenant relation**, which it resolves with no tenant, so every tenant shares one table. A declared floor now refuses it. **Breaking** for such a floored module.
 

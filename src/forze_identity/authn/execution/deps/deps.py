@@ -1,12 +1,13 @@
 """Configurable authn dependency factories resolving document ports from execution context."""
 
-from typing import final
+from typing import cast, final
 
 import attrs
 from pydantic import BaseModel
 
 from forze.application.contracts.authn import (
     ApiKeyLifecyclePort,
+    ApiKeyStatesPort,
     ApiKeyVerifierDepKey,
     ApiKeyVerifierPort,
     AuthnEventEmitter,
@@ -25,6 +26,7 @@ from forze.application.contracts.authn import (
     PrincipalResolverDepKey,
     PrincipalResolverPort,
     RevocationStatesDepKey,
+    RevocationStatesPort,
     RevocationStatesSpec,
     TokenLifecycleDepKey,
     TokenLifecyclePort,
@@ -34,7 +36,7 @@ from forze.application.contracts.authn import (
 )
 from forze.application.contracts.authz import AuthzSpec
 from forze.application.contracts.counter import CounterSpec
-from forze.application.contracts.deps import backend_of
+from forze.application.contracts.deps import backend_of, implements
 from forze.application.contracts.document import (
     DocumentCommandDepKey,
     DocumentCommandHookDepKey,
@@ -83,7 +85,12 @@ from ...resolvers import (
     JwtNativeUuidResolver,
     MappingTableResolver,
 )
-from ...services import PolicyPrincipalEpochHook, RevocationStates, SessionRevocation
+from ...services import (
+    ApiKeyRevocation,
+    PolicyPrincipalEpochHook,
+    RevocationStates,
+    SessionRevocation,
+)
 from ...verifiers import (
     Argon2PasswordVerifier,
     ForzeJwtTokenVerifier,
@@ -117,16 +124,71 @@ def _session_revocation(
 
     return SessionRevocation(
         config=config,
-        states=ctx.deps.resolve_configurable(
-            ctx,
-            RevocationStatesDepKey,
-            RevocationStatesSpec(name=config.route),
-            route=config.route,
-        ),
+        states=_revocation_states(ctx, config),
         epochs=ctx.deps.provide(PrincipalEpochDepKey)(ctx),
         sessions=ctx.doc.query(session_spec),
         in_transaction=lambda: ctx.tx_ctx.depth() > 0,
         defer=ctx.tx_ctx.run_or_defer,
+    )
+
+
+def _api_key_revocation(
+    ctx: ExecutionContext,
+    shared: AuthnSharedServices | None,
+) -> ApiKeyRevocation | None:
+    """The API-key fast path's reads and writes, or ``None`` without ``key_mac``."""
+
+    config = shared.revocation_states if shared is not None else None
+
+    if config is None or config.key_mac is None:
+        return None
+
+    states = _revocation_states(ctx, config)
+
+    if not implements(states, ApiKeyStatesPort):
+        raise exc.configuration(
+            f"RevocationStates.key_mac verifies API keys from cached states, but the states "
+            f"store on route {config.route!r} does not implement ApiKeyStatesPort.",
+            code="authn_api_key_states_unsupported",
+        )
+
+    return ApiKeyRevocation(
+        config=config,
+        states=cast(ApiKeyStatesPort, states),
+        accounts=ctx.doc.query(api_key_account_spec),
+        in_transaction=lambda: ctx.tx_ctx.depth() > 0,
+        defer=ctx.tx_ctx.run_or_defer,
+    )
+
+
+def _caller_key_revocation(
+    ctx: ExecutionContext,
+    shared: AuthnSharedServices | None,
+) -> ApiKeyRevocation | None:
+    """The re-check a mint runs on its caller's API key, or ``None`` when no key can be admitted
+    from a state here: without ``key_mac``, or without an API-key store to read.
+
+    It only reads the caller's key row, so the store's query port is enough; without
+    ``key_mac`` the store is never probed.
+    """
+
+    config = shared.revocation_states if shared is not None else None
+
+    if config is None or config.key_mac is None:
+        return None
+
+    if not ctx.deps.resolvable(DocumentQueryDepKey, route=api_key_account_spec.name):
+        return None
+
+    return _api_key_revocation(ctx, shared)
+
+
+def _revocation_states(ctx: ExecutionContext, config: RevocationStates) -> RevocationStatesPort:
+    return ctx.deps.resolve_configurable(
+        ctx,
+        RevocationStatesDepKey,
+        RevocationStatesSpec(name=config.route),
+        route=config.route,
     )
 
 
@@ -242,6 +304,7 @@ class ConfigurableHmacApiKeyVerifier:
         return HmacApiKeyVerifier(
             api_key_svc=self.shared.api_key_svc,
             ak_qry=ctx.doc.query(api_key_account_spec),
+            revocation=_api_key_revocation(ctx, self.shared),
         )
 
 
@@ -536,6 +599,7 @@ class ConfigurablePrincipalDeactivation:
             pa_cmd=pa_cmd,
             ak_qry=ak_qry,
             ak_cmd=ak_cmd,
+            key_revocation=_api_key_revocation(ctx, self.shared) if ak_qry is not None else None,
         )
         revocation = _session_revocation(ctx, self.shared)
         stores = (
@@ -583,6 +647,7 @@ class ConfigurableTokenLifecycle:
             eligibility=_resolve_eligibility(ctx, spec),
             events=_resolve_events(ctx, spec),
             revocation=_session_revocation(ctx, self.shared),
+            key_revocation=_caller_key_revocation(ctx, self.shared),
         )
 
 
@@ -707,6 +772,7 @@ class ConfigurableApiKeyLifecycle:
             events=_resolve_events(ctx, spec),
             caller=ctx.inv_ctx.get_authn,
             revocation=_session_revocation(ctx, self.shared),
+            key_revocation=_api_key_revocation(ctx, self.shared),
         )
 
 
@@ -745,6 +811,7 @@ class ConfigurablePasswordAccountProvisioning:
             invite_qry=invite_qry,
             invite_cmd=invite_cmd,
             revocation=_session_revocation(ctx, self.shared),
+            key_revocation=_caller_key_revocation(ctx, self.shared),
         )
 
 

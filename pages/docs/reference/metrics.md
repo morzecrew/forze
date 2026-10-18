@@ -227,3 +227,21 @@ closes.
 
 A rising `verify_failed` rate is the signal that matters: key-rotation gaps, clock skew,
 or forgeries.
+
+## Revocation states
+
+`instrument_revocation_states({"default": revocation_states})` — the identity plane's fast
+path for sessions and API keys. Labelled `forze.revocation_states` and `forze.credential`
+(`session` or `api_key`).
+
+| Metric | Instrument | Unit | Notes |
+|---|---|---|---|
+| `forze.authn.revocation_states.hits` | observable counter | 1 | verifications answered from Redis alone, refusals included |
+| `forze.authn.revocation_states.misses` | observable counter | 1 | verifications that read the database for a state Redis lacked or could not trust |
+| `forze.authn.revocation_states.fallbacks` | observable counter | 1 | verifications whose Redis read failed, timed out or met an open breaker |
+| `forze.authn.revocation_states.write_failures` | observable counter | 1 | revocations whose write-through failed every attempt |
+| `forze.authn.revocation_states.clock_skew` | observable counter | 1 | API-key states refused because the application's clock runs two `ttl` or more ahead of Redis's |
+
+**The alert that matters:** every `write_failures` increment is a revoked credential that
+stays admitted for up to the states' `ttl`. See
+[Authentication](../integrations/authn.md#the-window) for every cause of that window.

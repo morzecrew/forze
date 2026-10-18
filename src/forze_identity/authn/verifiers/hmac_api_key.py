@@ -16,7 +16,13 @@ from forze_identity._secure_spec import forbid_cache_and_history
 from ..adapters._utils import find_api_key_account_by_key_hash
 from ..domain.constants import ISSUER_FORZE_API_KEY
 from ..domain.models.account import ReadApiKeyAccount
-from ..services import ApiKeyService, remember_admitted_session
+from ..services import (
+    AdmittedApiKey,
+    ApiKeyRevocation,
+    ApiKeyService,
+    remember_admitted_api_key,
+)
+from ..services.revocation_states import CachedApiKey
 
 # ----------------------- #
 
@@ -24,13 +30,21 @@ from ..services import ApiKeyService, remember_admitted_session
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class HmacApiKeyVerifier(ApiKeyVerifierPort):
-    """Verify API key credentials against a document-backed account using HMAC-SHA256."""
+    """Verify API key credentials against a document-backed account using HMAC-SHA256.
+
+    With :attr:`revocation`, the key's state is read from the revocation states store first,
+    and the account row only on a miss. The principal's eligibility is still read after, by the
+    orchestrator, on every verification.
+    """
 
     api_key_svc: ApiKeyService
     """API key digest/verification service."""
 
     ak_qry: DocumentQueryPort[ReadApiKeyAccount]
     """Query port for API key accounts."""
+
+    revocation: ApiKeyRevocation | None = None
+    """When set, check keys from cached revocation states, reading the row only on a miss."""
 
     # ....................... #
 
@@ -46,7 +60,14 @@ class HmacApiKeyVerifier(ApiKeyVerifierPort):
         credentials: ApiKeyCredentials,
     ) -> VerifiedAssertion:
         digest = self.api_key_svc.calculate_key_digest(credentials.key)
-        account = await find_api_key_account_by_key_hash(self.ak_qry, digest)
+
+        account: ReadApiKeyAccount | CachedApiKey | None
+
+        if self.revocation is None:
+            account = await find_api_key_account_by_key_hash(self.ak_qry, digest)
+
+        else:
+            account = await self.revocation.find(digest)
 
         if account is None or not account.is_active:
             raise exc.authentication("API key account not found")
@@ -69,8 +90,13 @@ class HmacApiKeyVerifier(ApiKeyVerifierPort):
         if account.actor_principal_id is not None:
             claims[ACT_CLAIM] = {"sub": str(account.actor_principal_id)}
 
-        # The request now authenticates with a key, not with any token verified before.
-        remember_admitted_session(None)
+        # The request now authenticates with this key, not with any token verified before; an
+        # issue that follows re-reads the key's row when its state may have answered.
+        remember_admitted_api_key(
+            AdmittedApiKey(principal_id=account.principal_id, digest=digest)
+            if self.revocation is not None
+            else None,
+        )
 
         return VerifiedAssertion(
             issuer=ISSUER_FORZE_API_KEY,
