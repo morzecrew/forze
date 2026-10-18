@@ -265,7 +265,7 @@ async def _ack_stream_plane(
     :meth:`~forze.application.contracts.stream.AckStreamGroupAdminPort.depth`. An unknown
     backlog (Redis after a trim) is reported residual, never treated as empty.
 
-    *tenants* mirrors the outbox plane: on a ``tenant_aware`` (namespace-tier) stream
+    *tenants* mirrors the outbox plane: on a ``tenant_aware`` (per-tenant key) stream
     route each assigned tenant's per-tenant stream key holds its own group — every one is
     probed under its bound identity, and any one still moving keeps the plane busy.
     """

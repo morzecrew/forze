@@ -12,13 +12,23 @@ the *isolation you get*:
 - **`none`** — a deliberately shared resource with no tenant boundary at all.
 - **`tagged`** — one shared container, a tenant marker you filter on (leakable by a
   forgotten predicate).
-- **`namespace`** — a separate key / path / schema / collection / dataset / index per
-  tenant; a name boundary a query can't cross.
+- **`namespace`** — a separate schema / collection / dataset / bucket / index / namespace
+  per tenant, picked by a resolver; a name boundary a query can't cross.
 - **`dedicated`** — a separate instance/connection per tenant (a routed client).
 
-`tenant_aware=True` reaches `tagged` on a column store and `namespace` on a key/path
-store (the prefix *is* a separate key). A per-tenant resolver on every relation a route
-names reaches `namespace`; a routed client reaches `dedicated`.
+`tenant_aware=True` reaches `tagged`, whatever the marker: a column, a property, a key
+prefix or a path prefix. A per-tenant resolver on every relation a route names reaches
+`namespace`; a routed client reaches `dedicated`. A static relation counts even when the
+spec doesn't use it, such as a history table with history off, or an ingest target the
+spec never declares. A few routes work differently:
+
+- A Postgres search counts its index as well as its read and heap relations. A Mongo
+  search counts only its collection: an Atlas or vector index name is scoped to it.
+- A Postgres inbox or idempotency store, and a Mongo outbox, pass their resolver the
+  tenant only when they are `tenant_aware`, so only then does a per-tenant table count.
+- A Postgres hub or federated search never reaches `namespace`.
+- A Redis stream or pub/sub route has no per-route namespace, so it never reaches
+  `namespace` either; a Kafka route has no `tagged` tier.
 
 ## Stores you query
 
@@ -37,9 +47,9 @@ A store read under the bound tenant scopes itself — adapters call
 | BigQuery | analytics | `tagged` (column) | dataset | `RoutedBigQueryClient` | `dedicated` |
 | Meilisearch | search | `tagged` (tenant filter) | per-tenant index | `RoutedMeilisearchClient` | `dedicated` |
 | Neo4j | graph | `tagged` (tenant property) | per-tenant database | `RoutedNeo4jClient` † | `dedicated` † |
-| Redis | cache, counter, idempotency, lock | `namespace` (key prefix) | per-tenant namespace | `RoutedRedisClient` | `dedicated` |
+| Redis | cache, counter, idempotency, lock | `tagged` (key prefix) | per-tenant namespace | `RoutedRedisClient` | `dedicated` |
 | Redis | [fleet membership](../running-in-prod/fleet-membership.md) | **refused** § | **refused** § | — | outside the floor § |
-| S3 / GCS | object storage | `namespace` (path prefix) | per-tenant bucket | routed client | `dedicated` |
+| S3 / GCS | object storage | `tagged` (path prefix) | per-tenant bucket | routed client | `dedicated` |
 | HTTP outbound | http service | — | — | per-tenant credentials (routed) | `dedicated` |
 | Served models (HTTP) | inference | `tagged` (bound tenant required) | per-tenant `model_name` | `RoutedInferenceHttpClient` | `dedicated` |
 | SageMaker | inference | `tagged` (bound tenant required) | per-tenant `endpoint_name` | `RoutedSageMakerRuntimeClient` | `dedicated` |
@@ -82,12 +92,12 @@ sharded, per-tenant read.
 
 | Resource | Default & reachable isolation | Read side (how to isolate per tenant) |
 |----------|------------------------------|----------------------------------------|
-| Stream / Pub/Sub (Redis) | `namespace` via `tenant_aware` key prefix | A **sharded gateway** — `TenantShardedSignalSource` + a `RealtimeShard` per instance binds each assigned tenant and reads its key ([tenant-aware Socket.IO gateway](../integrations/socketio.md#tenancy-and-addressing)). |
-| Queue (RabbitMQ, SQS) | `namespace` via name prefix | Keep the queue **tenant-global** and bind the tenant from the message envelope in the consumer; or run a **per-tenant worker** per queue. A built-in sharded queue worker is not yet shipped. |
+| Stream / Pub/Sub (Redis) | `tagged` via `tenant_aware` key prefix | A **sharded gateway** — `TenantShardedSignalSource` + a `RealtimeShard` per instance binds each assigned tenant and reads its key ([tenant-aware Socket.IO gateway](../integrations/socketio.md#tenancy-and-addressing)). |
+| Queue (RabbitMQ, SQS) | `tagged` via `tenant_aware` name prefix; `namespace` via a per-tenant `namespace` | Keep the queue **tenant-global** and bind the tenant from the message envelope in the consumer; or run a **per-tenant worker** per queue. A built-in sharded queue worker is not yet shipped. |
 | Commit-stream (Kafka) | `namespace` via per-tenant topic prefix; `dedicated` via routed client (no `tagged` — a topic has no row filter, so a fixed prefix counts as `none`) | Keep the topic **tenant-global** and bind the tenant from the envelope in the consumer (`bind_tenant_from_headers=True` on the commit-stream consumer — opt-in, headers are untrusted); or run your own consumer per namespaced topic under that tenant. The shipped commit-stream consumer reads unbound, so it refuses a `tenant_aware` group at startup. |
 | Outbox | **tenant-global** by default; as a Postgres/Mongo table it can reach `tagged`→`dedicated` (see read side) | The plain relay drains a tenant-global outbox cross-tenant and **binds each row's `tenant_id`** as it forwards (`_under_claim_tenant`), so a tenant-aware *destination* routes per-tenant. To isolate the **outbox table itself** (`tenant_aware` and up), use the sharded relay (`realtime_tenant_relay_lifecycle_step`); the plain relay refuses it at startup (`tenant_global_required`). |
 | Inbox | **tenant-global** by default; can be `tenant_aware` | Dedup is keyed by the globally-unique event id, so per-tenant isolation is **optional** (ids can't collide across tenants). Runs under whatever tenant the gateway binds — the shard tenant in namespace mode — so a tenant-aware inbox works there too. |
-| Realtime end-to-end | outbox **tenant-global** → stream `namespace` | The whole path stays on the ladder: stage (tenant-global outbox, relay binds per row) → per-tenant stream key → sharded gateway (binds from the key) → tenant-scoped room. The outbox stays shared; only the stream is isolated. Ceiling `namespace`. |
+| Realtime end-to-end | outbox **tenant-global** → stream `tagged` (per-tenant key) | The whole path stays on the ladder: stage (tenant-global outbox, relay binds per row) → per-tenant stream key → sharded gateway (binds from the key) → tenant-scoped room. The outbox stays shared; only the stream is isolated. Ceiling `tagged`. |
 | Durable — Temporal | `namespace` via per-tenant task queue | A worker drains one task queue; per-tenant isolation means a per-tenant queue with a worker assigned to it (operator-managed), or `tagged` with the tenant in the workflow context. |
 | Durable — Inngest | `dedicated` (routed) only | No route-level marker; isolation only via a routed client. |
 
@@ -110,10 +120,11 @@ provider steps check their lock or client the same way. A step of your own is no
 `required_tenant_isolation` on a deps module refuses to wire anything weaker than the
 declared tier — checked once at startup, never per request. Each module derives the tier
 it reaches from its config (routed client → `dedicated`, a resolver on every relation a
-route names → `namespace`, `tenant_aware` → `tagged`/`namespace` by backend). Routes that
-belong to the deployment rather than a tenant (Redis fleets, and the tenant-global routes
-in § above) are left out, so a module of only those meets the floor. A floor a backend can **never** reach
-fails as a **capability mismatch**, not a silent misconfiguration:
+route names → `namespace`, `tenant_aware` → `tagged`; the exceptions are
+listed at the top of this page). Routes that belong to the deployment rather than a tenant
+(Redis fleets, and the tenant-global routes in § above) are left out, so a module of only
+those meets the floor. A floor a backend can **never** reach fails as a **capability
+mismatch**, not a silent misconfiguration:
 
 | Backend | Ceiling | A floor above it… |
 |---------|---------|-------------------|

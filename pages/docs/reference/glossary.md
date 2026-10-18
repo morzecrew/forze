@@ -116,7 +116,7 @@ Skim it, or search for a single word.
 :   The tenant context bound to a request. Determines data isolation strategy.
 
 **Tenant tier**
-:   The isolation level for a resource: `none` (not tenant-scoped), `tagged` (marker column), `namespace` (schema/prefix), or `dedicated` (separate instance).
+:   The isolation level for a resource: `none` (not tenant-scoped), `tagged` (a marker column or key prefix), `namespace` (a per-tenant schema, collection or bucket), or `dedicated` (separate instance).
 
 ---
 
