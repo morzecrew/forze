@@ -6784,7 +6784,7 @@ sharded, per-tenant read.</p>
 <tr>
 <td>Inbox</td>
 <td><strong>tenant-global</strong> by default; can be <code>tenant_aware</code></td>
-<td>Dedup is keyed by the globally-unique event id, so per-tenant isolation is <strong>optional</strong> (ids can't collide across tenants). Runs under whatever tenant the gateway binds — the shard tenant on a tenant-aware stream — so a tenant-aware inbox works there too.</td>
+<td>Dedup is keyed by the event id, which the relay mints globally unique, so for relayed events per-tenant isolation is <strong>optional</strong>; a custom <code>message_id</code> extractor gives no such guarantee. A tenant-aware inbox also carries the tenant in its dedup key, so an id reused by two tenants never collides. Runs under whatever tenant the gateway binds — the shard tenant on a tenant-aware stream — so a tenant-aware inbox works there too.</td>
 </tr>
 <tr>
 <td>Realtime end-to-end</td>
