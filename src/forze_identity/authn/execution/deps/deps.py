@@ -161,6 +161,28 @@ def _api_key_revocation(
     )
 
 
+def _caller_key_revocation(
+    ctx: ExecutionContext,
+    shared: AuthnSharedServices | None,
+) -> ApiKeyRevocation | None:
+    """The re-check a mint runs on its caller's API key, or ``None`` when no key can be admitted
+    from a state here: without ``key_mac``, or without an API-key store to read.
+
+    It only reads the caller's key row, so the store's query port is enough; without
+    ``key_mac`` the store is never probed.
+    """
+
+    config = shared.revocation_states if shared is not None else None
+
+    if config is None or config.key_mac is None:
+        return None
+
+    if not ctx.deps.resolvable(DocumentQueryDepKey, route=api_key_account_spec.name):
+        return None
+
+    return _api_key_revocation(ctx, shared)
+
+
 def _revocation_states(ctx: ExecutionContext, config: RevocationStates) -> RevocationStatesPort:
     return ctx.deps.resolve_configurable(
         ctx,
@@ -625,7 +647,7 @@ class ConfigurableTokenLifecycle:
             eligibility=_resolve_eligibility(ctx, spec),
             events=_resolve_events(ctx, spec),
             revocation=_session_revocation(ctx, self.shared),
-            key_revocation=_api_key_revocation(ctx, self.shared),
+            key_revocation=_caller_key_revocation(ctx, self.shared),
         )
 
 
@@ -779,15 +801,6 @@ class ConfigurablePasswordAccountProvisioning:
         invite_svc = self.shared.invite_svc
         invite_qry = ctx.doc.query(password_invite_spec) if invite_svc is not None else None
         invite_cmd = ctx.doc.command(password_invite_spec) if invite_svc is not None else None
-        config = self.shared.revocation_states
-
-        # Only a key admitted from a state needs the re-check, and it only reads the key's row:
-        # without key_mac the API-key store is never probed, and its query port is enough.
-        key_rows = (
-            config is not None
-            and config.key_mac is not None
-            and ctx.deps.resolvable(DocumentQueryDepKey, route=api_key_account_spec.name)
-        )
 
         return PasswordAccountProvisioningAdapter(
             password_svc=self.shared.password_svc,
@@ -798,7 +811,7 @@ class ConfigurablePasswordAccountProvisioning:
             invite_qry=invite_qry,
             invite_cmd=invite_cmd,
             revocation=_session_revocation(ctx, self.shared),
-            key_revocation=_api_key_revocation(ctx, self.shared) if key_rows else None,
+            key_revocation=_caller_key_revocation(ctx, self.shared),
         )
 
 

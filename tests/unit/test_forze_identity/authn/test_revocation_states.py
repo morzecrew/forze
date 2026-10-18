@@ -351,6 +351,7 @@ def _stack(
     store_clock: bool = True,
     states_port: Callable[[_States], Any] | None = None,
     key_query_cap: int | None = None,
+    key_store: bool = True,
 ) -> _Stack:
     mock = MockDepsModule()
     state = mock.state
@@ -425,7 +426,8 @@ def _stack(
                         password_account_spec.name: document,
                         password_reset_spec.name: document,
                         password_invite_spec.name: document,
-                        api_key_account_spec.name: counted_keys,
+                        # Without *key_store*, as a process that serves no API keys.
+                        **({api_key_account_spec.name: counted_keys} if key_store else {}),
                     },
                     DocumentCommandDepKey: dict.fromkeys(
                         (
@@ -434,7 +436,7 @@ def _stack(
                             password_account_spec.name,
                             password_reset_spec.name,
                             password_invite_spec.name,
-                            api_key_account_spec.name,
+                            *((api_key_account_spec.name,) if key_store else ()),
                         ),
                         document,
                     ),

@@ -919,6 +919,20 @@ async def test_a_key_verification_leaves_no_fresh_admission_behind() -> None:
     assert await asyncio.create_task(request()) is False
 
 
+async def test_a_process_that_serves_no_api_keys_still_issues_sessions_and_provisions() -> None:
+    # key_mac on every process, API-key accounts on none of this one's routes: nothing to re-check.
+    stack = _key_stack(key_store=False)
+    principal = await stack.principal()
+
+    issued = await stack.login(principal)
+    assert issued is not None
+
+    async with stack.ctx.tx_ctx.scope(TX):
+        await stack.ctx.authn.password_account_provisioning(SPEC).register_with_password(
+            principal, PasswordCredentials(login="no-keys", password="pw-1")
+        )
+
+
 async def test_provisioning_rechecks_a_key_store_this_process_only_reads(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
