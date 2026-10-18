@@ -49,6 +49,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **A Postgres outbox that is not tenant-aware no longer meets a `namespace` floor through a per-tenant relation**, which it resolves with no tenant, so every tenant shares one table. A declared floor now refuses it. **Breaking** for such a floored module.
 
+### Security
+
+- **A tenant-aware Postgres inbox keeps tenants apart on a shared table.** It carries the tenant in its dedup key, as the Mongo inbox does. After upgrading, a message redelivered to a tenant-aware Postgres inbox is processed once more.
+
 ## [0.14.0] - 2026-10-17
 
 ### Added
