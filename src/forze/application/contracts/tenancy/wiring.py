@@ -302,8 +302,14 @@ class TenancyRouteSpec:
     """Resource kind for log messages (e.g. ``document``, ``search``)."""
 
     has_namespace_routing: bool = False
-    """Whether *this* route resolves a per-tenant namespace (a dynamic resolver) — the
-    ``namespace`` tier. Per-route so a declared floor is enforced route by route."""
+    """Whether every namespace or relation *this* route names resolves per tenant (a dynamic
+    resolver) — the ``namespace`` tier; see :func:`resolves_per_tenant`. Per-route so a
+    declared floor is enforced route by route."""
+
+    has_per_tenant_relation: bool = False
+    """Whether *any* namespace or relation this route names resolves per tenant. Weaker than
+    :attr:`has_namespace_routing`, and read only to refuse a :attr:`tenant_global` route,
+    whose resolvers would run with no tenant bound."""
 
     origin: StatementOrigin = "structured"
     """What kind of process authored the statements this route executes.
@@ -529,7 +535,7 @@ def _refuse_tenant_scoped_global(
     elif route.tenant_aware:
         reason = "it is tenant-aware"
 
-    elif route.has_namespace_routing:
+    elif route.has_namespace_routing or route.has_per_tenant_relation:
         reason = "it resolves its namespace per tenant"
 
     else:
@@ -800,15 +806,16 @@ def validate_module_tenancy(
 
     for group in groups:
         for name, config in (group.configs or {}).items():
+            namespace = group.namespace_resolver(config)
+            others = group.other_namespaces(config)
+
             routes.append(
                 TenancyRouteSpec(
                     name=str(name),
                     tenant_aware=group.tenant_aware(config),
                     kind=group.kind,
-                    has_namespace_routing=resolves_per_tenant(
-                        group.namespace_resolver(config),
-                        *group.other_namespaces(config),
-                    ),
+                    has_namespace_routing=resolves_per_tenant(namespace, *others),
+                    has_per_tenant_relation=any(map(callable, (namespace, *others))),
                     origin=group.origin(config),
                     tenant_global=group.tenant_global(config),
                 )

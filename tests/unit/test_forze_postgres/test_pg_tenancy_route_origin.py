@@ -110,6 +110,7 @@ def test_the_converter_forwards_every_contract_field() -> None:
         kind="analytics",
         tenant_aware=True,
         has_namespace_routing=True,
+        has_per_tenant_relation=True,
         origin="raw",
         tenant_global=True,
     )

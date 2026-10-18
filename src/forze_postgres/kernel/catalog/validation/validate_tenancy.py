@@ -47,7 +47,13 @@ class PostgresTenancyRouteSpec:
     tenant_aware: bool
     kind: PostgresTenancyRouteKind
     has_namespace_routing: bool = False
-    """Whether this route resolves a per-tenant schema (a dynamic relation / ``query_schema``)."""
+    """Whether every relation this route names resolves per tenant (a dynamic relation /
+    ``query_schema``) — the ``namespace`` tier."""
+
+    has_per_tenant_relation: bool = False
+    """Whether any relation this route names resolves per tenant; read only to refuse a
+    :attr:`tenant_global` route, and no Postgres route is one yet. See
+    :attr:`~forze.application.contracts.tenancy.TenancyRouteSpec.has_per_tenant_relation`."""
 
     origin: StatementOrigin = "structured"
     """What kind of process authored the statements this route executes.
@@ -77,6 +83,7 @@ class PostgresTenancyRouteSpec:
             tenant_aware=self.tenant_aware,
             kind=self.kind,
             has_namespace_routing=self.has_namespace_routing,
+            has_per_tenant_relation=self.has_per_tenant_relation,
             origin=self.origin,
             tenant_global=self.tenant_global,
         )
