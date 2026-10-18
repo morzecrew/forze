@@ -31,6 +31,7 @@ from ..interception import PortInterceptorChain
 from ..posture import WiringFinding
 from .port_instrumentation import (
     maybe_wrap_configurable,
+    maybe_wrap_document_hook,
     maybe_wrap_interceptors,
     maybe_wrap_otel_spans,
     maybe_wrap_port_policy,
@@ -264,7 +265,9 @@ class FrozenDeps:
         Wrapping order: the resilience port-policy proxy (when a
         :class:`~forze.application.contracts.resilience.PortPolicy` targets ``key``)
         wraps **outside** the runtime-tracing proxy, and the fully wrapped instance
-        is what gets cached.
+        is what gets cached. A document command port first passes through the hook
+        registered under the document's name
+        (:data:`~forze.application.contracts.document.DocumentCommandHookDepKey`), if any.
         """
 
         from ..interception import current_interceptors
@@ -313,6 +316,7 @@ class FrozenDeps:
             # OTel client span, then the resilience port policy outermost (so a fault interceptor's
             # transient error is retryable by the policy, and a retried call gets one OTel span per
             # attempt while a rejected call emits none).
+            result = maybe_wrap_document_hook(self, ctx, key, route, result)
             port = maybe_wrap_interceptors(self, ctx, key, spec, route, result)
             port = maybe_wrap_configurable(self, ctx, key, spec, route, port)
             port = maybe_wrap_otel_spans(self, ctx, key, spec, route, port)

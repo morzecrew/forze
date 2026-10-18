@@ -62,39 +62,51 @@ and API-key revoke.
 | API-key verifier | `HmacApiKeyVerifier` | `ApiKeyVerifierDepKey` |
 | Principal resolver | `JwtNativeUuidResolver` | `PrincipalResolverDepKey` |
 
-## Check sessions from Redis
+## Check sessions and API keys from Redis
 
-By default every token verification reads its session row. With
-`revocation_states` on the kernel, a token carries its session's family (`fam`) and the
-principal's epoch (`pep`), and the verifier checks them against states cached in Redis,
-reading Postgres only for what Redis misses. The eligibility read stays.
+By default every token verification reads its session row, and every API-key verification
+its key row. With `revocation_states` on the kernel, a token carries its session's family
+(`fam`) and the principal's epoch (`pep`), and the verifier checks them against states cached
+in Redis, reading Postgres only for what Redis misses. With `key_mac` too, API keys are checked
+the same way, from a state cached under the key's digest. The eligibility read stays for both,
+except that a token's is skipped when the authz kernel carries the same configuration
+([below](#skip-the-eligibility-read)).
 
 ```python
 from datetime import timedelta
 
 from forze.application.contracts.authn import RevocationStatesDepKey
 from forze.application.contracts.resilience import PortPolicy
-from forze_identity.authn import AuthnKernelConfig, RevocationStates
+from forze_identity.authn import AuthnKernelConfig, RevocationStates, StateMacKeys
 from forze_postgres import PostgresPrincipalEpochConfig
 from forze_redis import RedisRevocationStatesConfig
 
 kernel = AuthnKernelConfig(
     access_token_secret=secret,
     refresh_token_pepper=pepper,
-    revocation_states=RevocationStates(route="authn-revocations", ttl=timedelta(minutes=5)),
+    api_key_pepper=api_key_pepper,
+    revocation_states=RevocationStates(
+        route="authn-revocations",
+        ttl=timedelta(minutes=5),
+        key_mac=StateMacKeys(active=mac_key),  # optional: API keys too
+    ),
 )
 states = {"authn-revocations": RedisRevocationStatesConfig(namespace="authn-revocations")}
 epochs = PostgresPrincipalEpochConfig(relation=("public", "authn_principal_epochs"))
-breaker = PortPolicy(key=RevocationStatesDepKey, policy="authn-revocations", methods=("read",))
+breaker = PortPolicy(
+    key=RevocationStatesDepKey,
+    policy="authn-revocations",
+    methods=("read", "read_api_key"),
+)
 ```
 
 Wire `states` as `RedisDepsModule(revocation_states=...)`, `epochs` as
 `PostgresDepsModule(principal_epochs=...)`, on the database that holds the sessions, and
 `breaker` in `ResilienceDepsModule(port_policies=...)` under a policy with a circuit
 breaker, so a Redis outage stops costing every verification its `timeout` (50 ms by
-default). Bind it to `read` only: an open breaker on the writes would fail every attempt of a
-revocation's write-through at once. The states route is resolved by `RevocationStatesSpec` under
-`RevocationStatesDepKey`, and the epochs under `PrincipalEpochDepKey`. Create the epochs
+default). Bind it to the reads only: an open breaker on the writes would fail every attempt
+of a revocation's write-through at once. The states route is resolved by `RevocationStatesSpec`
+under `RevocationStatesDepKey`, and the epochs under `PrincipalEpochDepKey`. Create the epochs
 table yourself and never delete its rows:
 
 ```sql
@@ -104,31 +116,176 @@ CREATE TABLE authn_principal_epochs (
 );
 ```
 
-- **`ttl` is the window.** A revocation writes its states to Redis once it commits. If that
-  write never lands (it fails every one of `write_attempts`, which is logged at error level;
-  the process dies first; the revoking process was not configured; or the session was revoked
-  around the authn adapters, through its document port), or Redis loses the key while an
-  earlier lookup is still writing, a revoked token stays admitted for at most `ttl` after the
-  revocation commits. Configure every process that verifies or revokes, and give
-  the states a Redis namespace nothing else flushes. Expiries are instants on the Redis
-  primary's clock: a failover to a replica whose clock lags lengthens every state by the lag.
-- **Transactions are required.** With the fast path on, issuing and revoking refuse to run
-  outside a transaction (`authn_revocation_requires_transaction`), so keep `tx_route` set on
-  both registries. Issue and logout serialize on the epoch's row on Postgres only, with the
-  revocation at read committed (the default); a revocation at repeatable read or serializable
-  is refused (`authn_epoch_isolation`).
+- **Redis is trusted for sessions.** The session states and epochs carry no MAC (API-key
+  states do, [below](#api-keys)), so whoever can write the states' namespace can restore a
+  `live` state or an older epoch, and a revoked token is admitted until its own `exp`. With the
+  [eligibility read skipped](#skip-the-eligibility-read) that includes a deactivated
+  principal's, which the eligibility read would otherwise still refuse. Let nothing but the
+  identity plane write that namespace.
+- **Transactions are required.** With the fast path on, issuing and revoking sessions refuse
+  to run outside a transaction (`authn_revocation_requires_transaction`), so keep `tx_route`
+  set on both registries. They refuse the same way, before writing, in a transaction that does
+  not hold every store they write (the epochs, and for a deactivation or a password change the
+  credentials and sessions too): a store on another database would commit on its own. The
+  Postgres stores report it; one that cannot is not checked. Issue and logout serialize on the
+  epoch's row on Postgres only, with the revocation at read committed (the default); a
+  revocation at repeatable read or serializable is refused (`authn_epoch_isolation`). Revoking
+  an API key needs no transaction: its state is written once the key's row has committed,
+  whichever way it runs.
 - **`session_binding`.** `"session"` (the default) refuses a token once a refresh replaced its
   session, as without the fast path; `"family"` admits it until its own `exp` while the
   family is live. A logout, a family revocation and refresh-token reuse refuse it either way.
-- **Minting re-reads the token.** A tenant switch or an API-key issue in a request that
-  authenticated with an access token re-reads that token's session and epoch from Postgres
-  first, under locks inside a transaction, so a token admitted inside the window mints
-  nothing that outlives it; above read committed a revocation committed since the
-  transaction's snapshot fails it with a serialization error. A socket's
-  commands run apart from the handshake that verified its token, and are not re-read.
+- **Minting re-reads the credential.** A session, an API key, a password account or an invite
+  issued in a request that authenticated with an access token re-reads that token's session and
+  epoch from Postgres first, whoever it is issued for, so a token admitted inside the window
+  mints nothing that outlives it. The same mints in a request that authenticated with an API key
+  (with `key_mac` set) re-read the key's row the same way (`api_key_revoked`). A session is
+  issued only inside a transaction (above), where the re-read takes locks; above read committed,
+  a revocation committed since the transaction's snapshot fails it with a serialization error.
+  An API key, a password account or an invite can be minted outside one, `tx_route=None`
+  included: the re-read then takes no lock but reads the latest commit, and a revocation
+  committing after it is ordered after the mint, which it leaves in place, as it would a locked
+  mint it waited for. Revoking a credential never revokes what was minted from it before. A
+  WebSocket or Socket.IO connection carries what its handshake (or its last reauth) verified to
+  each command, so a command that mints re-reads that credential the same way: once a revocation
+  ends it, or a refresh elsewhere rotates the token's session (under `"session"` binding), the
+  socket's mints are refused until it reauths.
 - **Redis down.** A Redis error or timeout makes the same checks from Postgres, so an outage
-  never admits a token the fast path would refuse. Tokens issued before the fast path carry
-  no `fam` or `pep`, and keep the session-row check until they expire.
+  never admits a credential the fast path would refuse. Tokens issued before the fast path
+  carry no `fam` or `pep`, and keep the session-row check until they expire.
+
+### API keys
+
+A key's cached state is the only proof the key exists: a hit reads no row, and the
+verifier takes the principal, the delegation actor and the expiry from the state. So
+everything able to write the states' Redis namespace is kept from minting a key:
+
+- **Each live state carries a MAC** under `key_mac`, over the states route, the state's full
+  Redis key (its namespace included), the key's digest and every field. A state forged
+  without the key, copied onto another key's digest, or copied in from another namespace
+  fails it and is read from Postgres. `revoked` carries none: forging it can refuse a key,
+  never admit one.
+- **Each live state carries a not-after**, the earlier of the key's own expiry and `ttl`
+  after the lookup read Redis's clock. It is checked against Redis's clock from the same read,
+  so a live state replayed over `revoked`, with no expiry of its own, stops verifying no later
+  than any other state would. A state the application's clock puts more than `ttl` past its
+  not-after is a miss too, so a Redis server that lies about its clock cannot stretch it
+  further. The key's expiry is still checked on the application's clock.
+- **A state that fails either check stays a miss** until it expires or is deleted: a lookup
+  never overwrites a state, so a tampered key costs one row read per verification, never an
+  admission. Keys nobody issued are never cached.
+
+**Give every deployment its own `key_mac`.** The MAC binds a state to its route and
+namespace, so deployments that share one Redis are kept apart; but two deployments with the
+same namespace name and the same `key_mac`, a staging copy of production or customers served
+from one secrets bundle, accept each other's states, and a state copied from one admits its key
+in the other without a row read. Never reuse another secret as `key_mac` either: the kernel
+refuses one equal to any of its peppers, its token secret or an HS256 signer's secret
+(`authn_state_mac_key_reused`). It cannot see a key held by an asymmetric or KMS-backed signer;
+what makes any reuse harmless is that each MAC key is used only through a key derived from it.
+
+A states store of your own needs `ApiKeyStatesPort` as well as `RevocationStatesPort` for
+API keys: with `key_mac` set, the build refuses one without it
+(`authn_api_key_states_unsupported`). The Redis and mock stores implement both.
+
+`StateMacKeys` takes keys of at least 32 bytes. To rotate one, make the new key `active`
+and move the old one to `previous`, on every process that verifies or revokes; after `ttl`,
+when every state signed under the old key has expired, drop it. A state signed under a key
+no longer configured is read from Postgres, so dropping it early costs reads, not
+admissions. A key carries no tenant, cached or not, and a deactivated principal's keys are
+still refused by the eligibility read.
+
+### The window
+
+A revocation writes its states to Redis once it commits: `revoked` for each family, session
+or API key it ended, or the raised epoch for a logout, a password change or reset, or a
+deactivation. A revoked credential stays admitted for at most `ttl` after that commit, on
+Redis's clock, and only when one of these leaves a stale state in place:
+
+- **The write-through never lands.**
+  - Every one of `write_attempts` failed. It is logged at error level and counted;
+    revoking an API key again writes its state again.
+  - The process died between the commit and the write. Nothing logs it.
+  - The process that revoked was not configured, for example during a rolling deploy, from
+    another service, or without `key_mac` for an API key. Nothing logs it.
+  - The credential was revoked around the authn adapters, through its document port. Nothing
+    logs it.
+- **Redis lost the revocation's key while an earlier lookup was still writing:** an eviction,
+  a flush, a restart, or a failover that dropped an acknowledged write. Nothing logs these.
+
+An access token is also bounded by its own `exp`; an API key may have no expiry, so its
+window is `ttl` alone. Configure every process that verifies or revokes, and give the states
+a Redis namespace nothing else flushes or evicts.
+
+**Redis's clock.** Every expiry and every not-after is set on Redis's clock, from `TIME` in
+the script that reads or writes the state or relative to it with `PX`, so the bound has no
+skew term against the application's clock. It does lean on the Redis primary's clock: a
+failover to a replica whose clock lags lengthens every state by the lag, and moving the
+primary's clock back does the same. Keep its clock synchronized, and let only operators change
+it. The application's clock caps an API-key state at `ttl` past its not-after, so with the
+application two `ttl` or more ahead of Redis every key state is refused as soon as it is
+written, and every key verification reads its row; each such refusal is counted as
+`clock_skew`.
+
+### Metrics
+
+`instrument_revocation_states({"default": kernel.revocation_states})` exports five counters,
+labelled by credential (`session` or `api_key`):
+
+| Counter | Counts |
+|---|---|
+| `forze.authn.revocation_states.hits` | verifications answered from Redis alone, refusals included |
+| `forze.authn.revocation_states.misses` | verifications that read Postgres for a state Redis lacked or could not trust |
+| `forze.authn.revocation_states.fallbacks` | verifications whose Redis read failed, timed out or met an open breaker |
+| `forze.authn.revocation_states.write_failures` | revocations whose write-through failed every attempt |
+| `forze.authn.revocation_states.clock_skew` | API-key states refused because the application's clock is two `ttl` or more ahead of Redis's |
+
+Alert on any `write_failures`: each is a revoked credential admitted for up to `ttl`. A rising
+`fallbacks` rate is Redis being down for verifications, a steady `clock_skew` is a clock to
+fix, and `misses` against `hits` is what the cache saves. The [metrics reference](../reference/metrics.md#revocation-states) lists them with
+the rest.
+
+### Skip the eligibility read
+
+Every verification also reads the policy principal, to refuse a deactivated one. Pass the same
+`RevocationStates` to the authz kernel, and a token the fast path admitted on its principal's
+current epoch skips that read too:
+
+```python
+from forze_identity.authz import AuthzDepsModule, AuthzKernelConfig
+
+states_config = RevocationStates(route="authn-revocations", ttl=timedelta(minutes=5))
+authn_kernel = AuthnKernelConfig(..., revocation_states=states_config)
+authz_kernel = AuthzKernelConfig(revocation_states=states_config)
+```
+
+With it, every write that may deactivate a policy principal raises the principal's epoch in its
+transaction and writes it through to Redis after commit, whichever path writes it: the authz
+registry's `deactivate_principal`, the authn deactivation, or your own update, bulk patch,
+upsert or delete of the `policy_principal_spec` document through its document port. A token
+issued before is then refused by its epoch, so the eligibility read has nothing left to catch.
+
+- **What still reads.** Only the check right after the verification, in the same request, about
+  the token's own subject, is skipped. Issuing a session (login, refresh, tenant switch) reads
+  under the principal's row lock, and a delegated actor is always read, even when it is the
+  subject. Tokens issued before the fast path, passwords and API keys read as before.
+- **The same rules as revocations.** Such a write refuses to run outside a transaction, or in
+  one that holds neither its own write nor the epoch's (a scope on another route or another
+  database), before it writes (`authn_revocation_requires_transaction`); it refuses above read
+  committed too (`authn_epoch_isolation`). A deactivation whose write-through never lands is
+  enforced within `ttl`.
+- **Configure every process that writes policy principals.** A process without the authz
+  configuration raises no epoch, and a token it should have ended is admitted until its own
+  `exp`; so is one deactivated by a write around the document port (SQL, or another spec over
+  the same table), or one deactivated before you turned this on through a path that raised no
+  epoch (the authz registry alone). Logins and refreshes still read eligibility, so none of
+  these can be extended. Keep the policy principals on the database whose transaction holds the
+  epochs, so a deactivation and its raise commit together.
+- **Postgres only.** The skip needs the policy principal on Postgres, where an issue's locking
+  read excludes a concurrent deactivation; elsewhere, the mock included, every verification
+  reads. Without the authz configuration every verification reads, as before. With a
+  different one, building the eligibility gate (on the first authentication or issue) is
+  refused (`authn_revocation_states_mismatch`).
 
 ## Notes
 

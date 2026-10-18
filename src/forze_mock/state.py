@@ -260,8 +260,8 @@ class MockState:
     revocation_states: OrderedDict[tuple[str, str, str], tuple[str, int]] = attrs.field(
         factory=OrderedDict
     )
-    """(Namespace, principal id, state key) → (value, expiry ms on the states adapter's
-    clock), in write order. Written by
+    """(Namespace, principal id or ``""`` for an API key's state, state key) → (value, expiry ms
+    on the states adapter's clock), in write order. Written by
     :class:`~forze_mock.adapters.revocation.MockRevocationStates`, whose writes sweep the
     expired entries from the front."""
 

@@ -10,6 +10,8 @@ from forze.base.exceptions import exc
 from forze_identity._secure_spec import forbid_cache_and_history
 from forze_identity.authz.domain.models.policy_principal import ReadPolicyPrincipal
 
+from ..services import admitted_just_now
+
 # ----------------------- #
 
 
@@ -52,6 +54,41 @@ class PolicyPrincipalEligibilityAdapter(PrincipalEligibilityPort):
 
         if principal is None or not principal.is_active:
             raise exc.authentication("Principal not found")
+
+
+# ....................... #
+
+
+@final
+@attrs.define(slots=True, kw_only=True, frozen=True)
+class AdmittedTokenEligibilityAdapter(PrincipalEligibilityPort):
+    """Skip the eligibility read right after a token of the same principal was admitted.
+
+    A token the revocation states admitted on its principal's current epoch was issued while
+    the principal was eligible (an issue reads eligibility under the principal's row lock and
+    holds the epoch), and every write that deactivates a principal raises its epoch, so
+    nothing has deactivated it since, within the revocation states' window. Only the call that
+    follows that verification in the same task may rely on it, and only a non-locking one about
+    the token's own subject: an issue locks and always reads, and an actor check comes after
+    the subject's and always reads.
+    """
+
+    inner: PrincipalEligibilityPort
+    """The eligibility read this skips."""
+
+    # ....................... #
+
+    async def require_authentication_allowed(
+        self,
+        principal_id: UUID,
+        *,
+        for_update: bool = False,
+    ) -> None:
+        # Consumed whatever this call asks, so no later call inherits the verification.
+        if admitted_just_now(principal_id) and not for_update:
+            return
+
+        await self.inner.require_authentication_allowed(principal_id, for_update=for_update)
 
 
 # ....................... #

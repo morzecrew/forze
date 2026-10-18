@@ -19,9 +19,15 @@ from ..domain.models.account import (
     UpdateApiKeyAccountCmd,
     UpdatePasswordAccountCmd,
 )
+from ..services import ApiKeyRevocation
 from ._utils import find_password_account_by_principal_id
 
 # ----------------------- #
+
+_DEACTIVATE_BATCH = 1_000
+"""API keys deactivated per round trip, below every store's implicit read limit."""
+
+# ....................... #
 
 
 @final
@@ -53,6 +59,10 @@ class AuthnCredentialDeactivationHelper:
         ]
         | None
     ) = None
+
+    key_revocation: ApiKeyRevocation | None = None
+    """When set, every key of the principal, deactivated now or before, has ``revoked`` written
+    to the revocation states once the deactivation commits."""
 
     # ....................... #
 
@@ -96,23 +106,31 @@ class AuthnCredentialDeactivationHelper:
         if self.ak_qry is None or self.ak_cmd is None:
             return
 
-        result = await self.ak_qry.find_many(
-            filters={
-                "$values": {
-                    "principal_id": principal_id,
-                },
-            }
-        )
+        offset = 0
 
-        upds = [
-            KeyedUpdate(
-                id=row.id,
-                rev=row.rev,
-                dto=UpdateApiKeyAccountCmd(is_active=False),
+        # A read naming no limit stops at the store's implicit cap; page through every key.
+        # ponytail: offset pages; keyset by id if principals ever hold many thousands of keys.
+        while True:
+            page = await self.ak_qry.find_many(
+                filters={"$values": {"principal_id": principal_id}},
+                pagination={"limit": _DEACTIVATE_BATCH, "offset": offset},
+                sorts={"id": "asc"},
             )
-            for row in result.hits
-            if row.is_active
-        ]
+            upds = [
+                KeyedUpdate(id=row.id, rev=row.rev, dto=UpdateApiKeyAccountCmd(is_active=False))
+                for row in page.hits
+                if row.is_active
+            ]
 
-        if upds:
-            await self.ak_cmd.update_many(upds, return_new=False)
+            if upds:
+                await self.ak_cmd.update_many(upds, return_new=False)
+
+            # Every key, active or not: a retry then repairs a write-through that failed.
+            if self.key_revocation is not None:
+                await self.key_revocation.revoke(page.hits)
+
+            # A deactivated key stays under the filter, so the next page starts past this one.
+            if len(page.hits) < _DEACTIVATE_BATCH:
+                return
+
+            offset += len(page.hits)

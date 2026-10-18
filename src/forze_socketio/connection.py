@@ -31,7 +31,12 @@ import attrs
 from socketio.async_server import AsyncServer
 from socketio.exceptions import ConnectionRefusedError as SocketIOConnectionRefusedError
 
-from forze.application.contracts.authn import AuthnIdentity, ClientIdentity
+from forze.application.contracts.authn import (
+    AuthnIdentity,
+    ClientIdentity,
+    bind_authn_admission,
+    current_authn_admission,
+)
 from forze.application.contracts.realtime import Audience
 from forze.application.contracts.tenancy import TenantIdentity, require_tenant_global
 from forze.application.execution import ExecutionContext, ExecutionRuntime
@@ -72,7 +77,7 @@ from .exceptions import (
 from .gateway import room_for
 from .mailbox import MailboxCursors, RealtimeMailbox
 from .observability import ConnectRefusal, RealtimeConnectionStats
-from .routing import IDENTITY_SESSION_KEY, SocketIOConnect
+from .routing import AUTHN_ADMISSION_SESSION_KEY, IDENTITY_SESSION_KEY, SocketIOConnect
 
 # ----------------------- #
 
@@ -178,17 +183,23 @@ admissions by its own rules."""
 # ----------------------- #
 
 
+_Resolved = tuple["RealtimeConnection | None", object | None]
+"""A resolved connection, and what its credential was admitted as (carried to its commands)."""
+
+
 async def _resolve(
     resolver: ConnectionResolver,
     connect: SocketIOConnect,
-) -> RealtimeConnection | None:
-    result = resolver(connect)
-    connection = await result if isawaitable(result) else result
+) -> _Resolved:
+    with bind_authn_admission(None):
+        result = resolver(connect)
+        connection = await result if isawaitable(result) else result
+        admission = current_authn_admission()
 
     # Every accepted identity passes here, at connect and at reauth, whatever the resolver.
     refuse_delegated_identity(connection.authn if connection is not None else None)
 
-    return connection
+    return connection, admission
 
 
 # ....................... #
@@ -210,7 +221,7 @@ _ACCEPTED_KEY = "forze.accepted_namespaces"
 """Engine.IO session key holding the namespaces whose connect this layer accepted on the
 connection — not one still connecting — so a turn-away can tell what closing it would end."""
 
-_SharedIdentities = dict[tuple[int, str], "asyncio.Task[RealtimeConnection | None]"]
+_SharedIdentities = dict[tuple[int, str], "asyncio.Task[_Resolved]"]
 """Keyed by the resolver's identity, so any callable can be one, and the credential's
 fingerprint."""
 
@@ -229,7 +240,7 @@ def _credential_key(auth: Any) -> str | None:
         return None
 
 
-def _reusable(task: "asyncio.Task[RealtimeConnection | None] | None") -> bool:
+def _reusable(task: "asyncio.Task[_Resolved] | None") -> bool:
     """Whether a later connect may wait on or reuse *task*: one in flight, or one that
     succeeded with an identity that has not expired. A failed or cancelled one is a miss,
     whether or not anybody was waiting on it when it failed."""
@@ -243,7 +254,7 @@ def _reusable(task: "asyncio.Task[RealtimeConnection | None] | None") -> bool:
     if task.cancelled() or task.exception() is not None:
         return False
 
-    connection = task.result()
+    connection, _admission = task.result()
 
     return connection is None or not connection.is_expired(utcnow())
 
@@ -469,7 +480,7 @@ class _ConnectionLifecycle:
         connect = SocketIOConnect(sid=sid, namespace=self.namespace, environ={}, auth=data)
 
         try:
-            refreshed = await _resolve(self.resolve, connect)
+            refreshed, authn_admission = await _resolve(self.resolve, connect)
 
         except CoreException as error:
             # the ack builder logs server-side kinds itself — no second log here
@@ -509,6 +520,7 @@ class _ConnectionLifecycle:
             )
 
         session[IDENTITY_SESSION_KEY] = refreshed.authn
+        session[AUTHN_ADMISSION_SESSION_KEY] = authn_admission
         session[CONNECTION_SESSION_KEY] = refreshed
         await self.sio.save_session(sid, session, namespace=self.namespace)
 
@@ -564,7 +576,7 @@ class _ConnectionLifecycle:
 
     # ....................... #
 
-    async def _identify(self, connect: SocketIOConnect) -> RealtimeConnection | None:
+    async def _identify(self, connect: SocketIOConnect) -> _Resolved:
         """Resolve the connect, or reuse what this Engine.IO connection already resolved.
 
         With :attr:`share_identity`, the namespaces one Engine.IO connection opens with the
@@ -819,6 +831,7 @@ class _ConnectionLifecycle:
             return None  # the Engine.IO connection is gone, and its sessions with it
 
         session.pop(IDENTITY_SESSION_KEY, None)
+        session.pop(AUTHN_ADMISSION_SESSION_KEY, None)
         connection: RealtimeConnection | None = session.pop(CONNECTION_SESSION_KEY, None)
         await self.sio.save_session(sid, session, namespace=self.namespace)
 
@@ -854,7 +867,7 @@ class _ConnectionLifecycle:
             negotiate_realtime_protocol(auth.get("protocol") if isinstance(auth, Mapping) else None)  # pyright: ignore[reportUnknownMemberType, reportUnknownArgumentType]
 
         await self._staged("protocol", negotiate)
-        connection = await self._staged("auth", lambda: self._identify(connect))
+        connection, authn_admission = await self._staged("auth", lambda: self._identify(connect))
 
         if not await self._goes_on(sid):
             return
@@ -865,6 +878,7 @@ class _ConnectionLifecycle:
 
         session = await self.sio.get_session(sid, namespace=self.namespace)
         session[IDENTITY_SESSION_KEY] = connection.authn
+        session[AUTHN_ADMISSION_SESSION_KEY] = authn_admission
         session[CONNECTION_SESSION_KEY] = connection
         await self.sio.save_session(sid, session, namespace=self.namespace)
 

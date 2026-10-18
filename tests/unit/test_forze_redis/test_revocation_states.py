@@ -79,6 +79,14 @@ class TestRedisRevocationStatesAdapter:
 
         assert caught.value.kind is ExceptionKind.INFRASTRUCTURE
 
+    async def test_an_unreadable_api_key_reply_is_an_infrastructure_error(self) -> None:
+        adapter, _ = self._adapter("garbage")
+
+        with pytest.raises(CoreException) as caught:
+            await adapter.read_api_key("digest")
+
+        assert caught.value.kind is ExceptionKind.INFRASTRUCTURE
+
     async def test_nothing_to_fill_or_revoke_sends_nothing(self) -> None:
         adapter, client = self._adapter()
 

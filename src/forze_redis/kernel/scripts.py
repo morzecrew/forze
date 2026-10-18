@@ -647,6 +647,19 @@ KEYS[1]: epoch key, KEYS[2]: state key. Returns three lines: the server time in 
 epoch and the state, each ``+<value>`` when present and ``-`` when absent.
 """
 
+REVOCATION_READ_ONE: Final = (
+    _REDIS_NOW_MS
+    + """
+local state = redis.call('GET', KEYS[1])
+return string.format('%d', now) .. '\\n' .. (state and ('+' .. state) or '-')
+"""
+)
+"""Read one cached state, with the server time, at once.
+
+KEYS[1]: state key. Returns two lines: the server time in ms, then the state, ``+<value>`` when
+present and ``-`` when absent.
+"""
+
 REVOCATION_FILL: Final = (
     _REDIS_NOW_MS
     + """
