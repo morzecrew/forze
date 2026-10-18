@@ -28,6 +28,7 @@ PostgresTenancyRouteKind = Literal[
     "dynamic_read",
     "outbox",
     "inbox",
+    "idempotency",
     "counter",
     "rotating_credentials",
     "durable_step",

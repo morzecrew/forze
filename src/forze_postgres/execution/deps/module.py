@@ -571,14 +571,28 @@ class PostgresDepsModule(DepsModule):
                     ),
                 )
 
-        if self.inboxes:
-            for name, inbox_cfg in self.inboxes.items():
+        # The inbox and idempotency stores pass their resolver the tenant only when they are
+        # tenant-aware; otherwise it gets none, and every tenant lands in the one table it
+        # returns. So a per-tenant table counts only on a tenant-aware store, and a static
+        # one takes the tier the flag gives.
+        keyed_stores: tuple[
+            tuple[PostgresTenancyRouteKind, StrKeyMapping[Any] | None],
+            ...,
+        ] = (
+            ("inbox", self.inboxes),
+            ("idempotency", self.idempotencies),
+        )
+
+        for kind, store_cfgs in keyed_stores:
+            for name, store_cfg in (store_cfgs or {}).items():
                 routes.append(
                     PostgresTenancyRouteSpec(
                         name=str(name),
-                        tenant_aware=inbox_cfg.tenant_aware,
-                        kind="inbox",
-                        has_namespace_routing=callable(inbox_cfg.relation),
+                        tenant_aware=store_cfg.tenant_aware,
+                        kind=kind,
+                        has_namespace_routing=(
+                            store_cfg.tenant_aware and callable(store_cfg.relation)
+                        ),
                     ),
                 )
 
