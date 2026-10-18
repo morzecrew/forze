@@ -468,10 +468,23 @@ class PostgresDepsModule(DepsModule):
 
         if self.federated_searches:
             for name, federated_search_cfg in self.federated_searches.items():
+                # A plain leg runs under its own flag, so the federation is only as scoped as
+                # its least-scoped leg. A hub leg takes the federation's flag for every leg
+                # it runs.
+                legs_scoped = all(
+                    isinstance(fed_leg, PostgresFederatedSearchLegHub)
+                    or fed_leg.search.tenant_aware
+                    or resolves_per_tenant(
+                        fed_leg.search.index,
+                        fed_leg.search.read,
+                        fed_leg.search.heap_relation,
+                    )
+                    for fed_leg in federated_search_cfg.members.values()
+                )
                 routes.append(
                     PostgresTenancyRouteSpec(
                         name=str(name),
-                        tenant_aware=federated_search_cfg.tenant_aware,
+                        tenant_aware=federated_search_cfg.tenant_aware and legs_scoped,
                         kind="federated_search",
                     ),
                 )

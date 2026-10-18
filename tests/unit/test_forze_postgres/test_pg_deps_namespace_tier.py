@@ -18,6 +18,11 @@ from forze_postgres import PostgresClient, PostgresDepsModule
 from forze_postgres.execution.deps.configs import (
     PostgresAnalyticsConfig,
     PostgresDocumentConfig,
+    PostgresFederatedSearchConfig,
+    PostgresFederatedSearchLegHub,
+    PostgresFederatedSearchLegSearch,
+    PostgresHubSearchConfig,
+    PostgresHubSearchMemberConfig,
     PostgresIdempotencyConfig,
     PostgresInboxConfig,
     PostgresQueryConfig,
@@ -189,3 +194,86 @@ def test_a_shared_store_meets_a_tagged_floor_only_when_tenant_aware(
         _module(floor="tagged", **build("relation", tenant_aware=False))
 
     assert _module(floor="tagged", **build("relation", tenant_aware=True)) is not None
+
+
+def _search_leg(*, static: bool, tenant_aware: bool) -> PostgresFederatedSearchLegSearch:
+    return PostgresFederatedSearchLegSearch(
+        search=PostgresSearchConfig(
+            index=_relation("help_idx", static=static),
+            read=_relation("help", static=static),
+            engine="pgroonga",
+            tenant_aware=tenant_aware,
+        ),
+    )
+
+
+_HUB_LEG = PostgresFederatedSearchLegHub(
+    hub=PostgresHubSearchConfig(
+        hub=_relation("hub", static=True),
+        members={
+            "m": PostgresHubSearchMemberConfig(
+                index=_relation("m_idx", static=True),
+                read=_relation("m", static=True),
+                engine="pgroonga",
+                hub_fk="hub_id",
+            ),
+        },
+    ),
+)
+
+
+def _federated(leg: Any, *, tenant_aware: bool = True) -> dict[str, Any]:
+    return {
+        "federated_searches": {
+            "fed": PostgresFederatedSearchConfig(
+                tenant_aware=tenant_aware,
+                members={"docs": _search_leg(static=True, tenant_aware=True), "other": leg},
+            ),
+        },
+    }
+
+
+@pytest.mark.parametrize(
+    ("wiring", "meets_tagged"),
+    [
+        pytest.param(
+            _federated(_search_leg(static=True, tenant_aware=True)), True, id="tagged-leg"
+        ),
+        pytest.param(
+            _federated(_search_leg(static=False, tenant_aware=False)), True, id="per-tenant-leg"
+        ),
+        # The hub takes the federation's flag for every leg it runs.
+        pytest.param(_federated(_HUB_LEG), True, id="hub-leg"),
+        pytest.param(
+            _federated(_search_leg(static=True, tenant_aware=False)), False, id="untagged-leg"
+        ),
+        pytest.param(
+            _federated(_search_leg(static=True, tenant_aware=True), tenant_aware=False),
+            False,
+            id="untagged-federation",
+        ),
+    ],
+)
+def test_a_federated_search_is_tagged_only_when_every_leg_is_scoped(
+    wiring: dict[str, Any], meets_tagged: bool
+) -> None:
+    if meets_tagged:
+        assert _module(floor="tagged", **wiring) is not None
+    else:
+        with pytest.raises(CoreException) as caught:
+            _module(floor="tagged", **wiring)
+
+        assert caught.value.details["derived_isolation"] == "none"
+        assert "federated_search route 'fed'" in caught.value.summary
+
+    # The control: with no floor declared every wiring stands, so a refusal is the floor's.
+    assert _module(floor=None, **wiring) is not None
+
+
+def test_a_federated_search_never_claims_namespace() -> None:
+    wiring = _federated(_search_leg(static=False, tenant_aware=False))
+
+    with pytest.raises(CoreException) as caught:
+        _module(floor="namespace", **wiring)
+
+    assert caught.value.details["derived_isolation"] == "tagged"

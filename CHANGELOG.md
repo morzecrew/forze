@@ -21,7 +21,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
-- **Declared isolation floors refuse more under-isolated routes** (**Breaking**): `namespace` needs every relation a route names per tenant; Postgres idempotency stores count (`tagged` on one table). A tenant-aware Postgres federation scopes each leg. New: `TenancyRouteGroup(other_namespaces=)`, `resolves_per_tenant`.
+- **A route is `namespace`-isolated only when every relation it names resolves per tenant** (**Breaking**): a `namespace` floor refuses one with a static relation, and a per-tenant Postgres inbox or idempotency store that is not tenant-aware. New: `TenancyRouteGroup(other_namespaces=)`, `resolves_per_tenant`.
+
+- **Postgres idempotency stores and federated searches are held to a declared floor** (**Breaking**): an idempotency store on a shared table rates `tagged`, and a federated search rates `none` unless every leg is tenant-aware or per-tenant.
 
 ## [0.14.0] - 2026-10-17
 
