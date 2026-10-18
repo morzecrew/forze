@@ -45,6 +45,9 @@ from forze_identity.authn.adapters import credential_deactivation
 from forze_identity.authn.adapters.credential_deactivation import (
     AuthnCredentialDeactivationHelper,
 )
+from forze_identity.authn.adapters.principal_eligibility import (
+    PolicyPrincipalEligibilityAdapter,
+)
 from forze_identity.authn.services import (
     ApiKeyConfig,
     ApiKeyRevocation,
@@ -911,6 +914,70 @@ async def test_a_revoke_racing_a_key_mint_is_ordered_after_it(
 
     assert await authenticate(issued.key) == "refused"
     assert await authenticate(minted.key) == principal
+
+
+async def test_a_key_switch_and_a_deactivation_of_its_principal_never_deadlock(
+    pg_client: PostgresClient,
+    redis_client: RedisClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A deactivation locks the principal's keys and then its row; a tenant switch an API key of
+    # that principal authenticated takes the key's row too, so it must take the two in that order.
+    stack, _, principals, _ = await _stacks(pg_client, redis_client)
+    principal = uuid4()
+    await insert_policy_principal_row(pg_client, table=principals, principal_id=principal)
+    identity = AuthnIdentity(principal_id=principal)
+    keys = stack.ctx.authn.api_key_lifecycle(SPEC)
+    issued = await stack.in_tx(lambda: keys.issue_api_key(identity))
+    locked, release = asyncio.Event(), asyncio.Event()
+    allowed = PolicyPrincipalEligibilityAdapter.require_authentication_allowed
+
+    async def held(self: Any, principal_id: UUID, *, for_update: bool = False) -> None:
+        await allowed(self, principal_id, for_update=for_update)
+
+        if for_update:
+            # The switch holds the principal's row from here.
+            locked.set()
+            await release.wait()
+
+    monkeypatch.setattr(PolicyPrincipalEligibilityAdapter, "require_authentication_allowed", held)
+
+    async def switch() -> Any:
+        with stack.ctx.inv_ctx.bind(metadata=_invocation_metadata()):
+            await stack.ctx.authn.authn(SPEC).authenticate_with_api_key(issued.key)
+
+            async with stack.ctx.tx_ctx.scope(TX):
+                return await stack.tokens.issue_tokens(identity, tenant_id=uuid4())
+
+    async def deactivate() -> None:
+        with stack.ctx.inv_ctx.bind(metadata=_invocation_metadata()):
+            helper = AuthnCredentialDeactivationHelper(
+                ak_qry=stack.ctx.document.query(api_key_account_spec),
+                ak_cmd=stack.ctx.document.command(api_key_account_spec),
+            )
+
+            async with stack.ctx.tx_ctx.scope(TX):
+                await helper.deactivate_all(principal)
+                await pg_client.execute(
+                    sql.SQL("UPDATE {table} SET is_active = false WHERE id = %s").format(
+                        table=sql.Identifier("public", principals)
+                    ),
+                    (principal,),
+                )
+
+    async with asyncio.timeout(20):
+        switching = asyncio.create_task(switch())
+        await locked.wait()
+
+        deactivating = asyncio.create_task(deactivate())
+        await asyncio.sleep(BLOCKED_FOR)
+        assert not deactivating.done()
+
+        release.set()
+        results = await asyncio.gather(switching, deactivating, return_exceptions=True)
+
+    # The switch was first and minted while the key was live; the deactivation came after.
+    assert not any(isinstance(result, BaseException) for result in results), results
 
 
 async def test_a_deactivation_pages_through_keys_whose_updates_move_them(

@@ -115,16 +115,17 @@ class TokenLifecycleAdapter(TokenLifecyclePort):
                 code="delegate_denied",
             )
 
+        if self.key_revocation is not None:
+            # A session issued from a request an API key authenticated, for whomever, must not
+            # outlive that key. Its row is taken before the principal's and the epoch, the order
+            # a deactivation takes them in.
+            await self.key_revocation.recheck_caller()
+
         # Locked until the session commits, so a concurrent deactivation cannot miss it.
         await self.eligibility.require_authentication_allowed(
             identity.principal_id,
             for_update=True,
         )
-
-        if self.key_revocation is not None:
-            # A session issued from a request an API key authenticated, for whomever, must not
-            # outlive that key; its row is taken before the epoch, as every revocation takes them.
-            await self.key_revocation.recheck_caller()
 
         # Held until the session commits, so a concurrent logout revokes it or raises first.
         epoch = await self._hold_epoch(identity.principal_id)
