@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **The Postgres outbox can log what it consumes.** `PostgresOutboxConfig(storage="consume", delivery_log=("app", "outbox_delivered"))` appends each published row to an application-owned table in the statement that deletes it, so a log row proves a committed delivery. A failure to write it fails the pass.
+
 - **Token verifications can skip the eligibility read too.** With the authn kernel's `RevocationStates` on `AuthzKernelConfig(revocation_states=)`, a deactivating write through the policy principal's document port raises the epoch in its transaction (refused outside one); a fast-path token skips the read. Postgres only.
 
 - **`DocumentCommandHookDepKey` wraps a document's command port wherever it is resolved**, registered routed under the document's name.
@@ -28,6 +30,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Security
 
 - **With revocation states, a credential minted from an access token re-checks that token whoever it is for**, including a password account or invite an operator issues for another principal.
+
+### Security
+
+- **A Postgres outbox that is not tenant-aware no longer meets a `namespace` floor through a per-tenant relation**, which it resolves with no tenant, so every tenant shares one table. A declared floor now refuses it. **Breaking** for such a floored module.
 
 ## [0.14.0] - 2026-10-17
 

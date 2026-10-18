@@ -7,17 +7,21 @@ from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from datetime import timedelta
 from typing import Any
+from uuid import uuid4
 
 import attrs
 import pytest
 from pydantic import BaseModel
 
 from forze.application.contracts.outbox import OutboxSpec
+from forze.application.contracts.tenancy import TenantIdentity
 from forze.base.exceptions import CoreException
 from forze.base.primitives import utcnow
 from forze.base.serialization import PydanticModelCodec
 from forze_postgres.adapters.outbox import PostgresOutboxStore
+from forze_postgres.execution.deps import PostgresDepsModule
 from forze_postgres.execution.deps.configs import PostgresOutboxConfig
+from forze_postgres.kernel.client import PostgresClient
 
 # ----------------------- #
 
@@ -80,6 +84,51 @@ class TestPostgresOutboxConfigConsume:
         # Postgres reads a zero timeout as "no limit", so zero must not get through.
         with pytest.raises(CoreException, match=field):
             PostgresOutboxConfig(relation=("public", "outbox"), **{field: value})
+
+    def test_a_delivery_log_is_refused_unless_rows_are_consumed(self) -> None:
+        # Retain never deletes a published row, so it has no statement to write the log in.
+        with pytest.raises(CoreException, match="delivery_log"):
+            PostgresOutboxConfig(relation=("public", "outbox"), delivery_log=("public", "log"))
+
+        config = PostgresOutboxConfig(
+            relation=("public", "outbox"), storage="consume", delivery_log=("public", "log")
+        )
+        assert config.delivery_log == ("public", "log")
+
+    @pytest.mark.parametrize(
+        ("delivery_log", "tenant_aware", "clears_the_floor"),
+        [
+            (None, True, True),
+            (lambda tid: (f"t_{tid.hex}", "log"), True, True),
+            # One table for every tenant's records, beside a per-tenant outbox.
+            (("app", "shared_log"), True, False),
+            # Not tenant-aware, the store resolves its relation with no tenant.
+            (None, False, False),
+        ],
+    )
+    def test_a_namespace_floor_counts_the_delivery_log(
+        self, delivery_log: Any, tenant_aware: bool, clears_the_floor: bool
+    ) -> None:
+        def module() -> PostgresDepsModule:
+            return PostgresDepsModule(
+                client=PostgresClient(),
+                required_tenant_isolation="namespace",
+                outboxes={
+                    "events": PostgresOutboxConfig(
+                        relation=lambda tid: (f"t_{tid.hex}", "outbox"),
+                        storage="consume",
+                        delivery_log=delivery_log,
+                        tenant_aware=tenant_aware,
+                    )
+                },
+            )
+
+        if clears_the_floor:
+            assert module() is not None
+
+        else:
+            with pytest.raises(CoreException, match="postgres_tenancy_validation_failed"):
+                module()
 
     def test_the_shared_refusals_still_run(self) -> None:
         with pytest.raises(CoreException, match="max_claim_rows"):
@@ -152,3 +201,26 @@ class TestPostgresOutboxPassScope:
             await store.claim_pending()
 
         assert caught.value.code == "outbox_claim_outside_transaction"
+
+    async def test_the_delivery_log_resolves_for_the_bound_tenant(self) -> None:
+        # A per-tenant log must take the tenant's table, as the outbox does, never a shared one.
+        tenant = uuid4()
+        client = _TxClient()
+        store = PostgresOutboxStore(
+            client=client,  # type: ignore[arg-type]
+            spec=OutboxSpec(name="events", codec=PydanticModelCodec(_Payload)),
+            config=PostgresOutboxConfig(
+                relation=lambda tid: (f"t_{tid.hex}", "outbox"),
+                storage="consume",
+                delivery_log=lambda tid: (f"t_{tid.hex}", "log"),
+            ),
+            tenant_aware=True,
+            tenant_provider=lambda: TenantIdentity(tenant_id=tenant),
+        )
+
+        await store.mark_published([uuid4()])
+
+        [(stmt, _)] = client.executes
+        rendered = stmt.as_string()
+        assert f'DELETE FROM "t_{tenant.hex}"."outbox"' in rendered
+        assert f'INSERT INTO "t_{tenant.hex}"."log"' in rendered

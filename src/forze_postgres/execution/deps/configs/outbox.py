@@ -40,6 +40,14 @@ class PostgresOutboxConfig(OutboxIntegrationConfig):
     for longer than ``pass_deadline`` plus this. A stricter limit the session already has
     stays in force."""
 
+    delivery_log: RelationSpec | None = attrs.field(
+        default=None, converter=attrs.converters.optional(coerce_relation_spec)
+    )
+    """``consume`` only: an application-owned table each published row is appended to, in
+    the statement that deletes it, as ``id``, ``outbox_route``, ``event_id``, ``tenant_id``
+    and ``published_at``. A row there proves the event's consumption committed. A failure to
+    write it, such as no partition for the day, fails the pass. ``None`` keeps no log."""
+
     # ....................... #
 
     def __attrs_post_init__(self) -> None:
@@ -57,3 +65,7 @@ class PostgresOutboxConfig(OutboxIntegrationConfig):
 
         if self.pass_statement_timeout.total_seconds() <= 0:
             raise exc.configuration("Outbox pass_statement_timeout must be positive")
+
+        # Retain keeps its published rows, so it has no delete to write the log with.
+        if self.delivery_log is not None and self.storage != "consume":
+            raise exc.configuration("Outbox delivery_log requires storage='consume'")
