@@ -35,7 +35,7 @@ class PostgresInboxStore(TenancyMixin, InboxPort):
             PRIMARY KEY (inbox_route, message_id)
         );
 
-    A tenant-aware store stores ``message_id`` as ``t:<tenant_id>:<message_id>``, so tenants
+    A tenant-aware store stores ``inbox_route`` as ``t:<tenant_id>:<inbox_route>``, so tenants
     sharing one table never dedup each other's messages.
     """
 
@@ -63,18 +63,20 @@ class PostgresInboxStore(TenancyMixin, InboxPort):
 
     # ....................... #
 
-    def _stored_id(self, message_id: str) -> str:
-        """*message_id* scoped, on a tenant-aware store, to its tenant.
+    def _stored_route(self, inbox: str) -> str:
+        """*inbox* scoped, on a tenant-aware store, to its tenant.
 
         The table's identity is ``(inbox_route, message_id)`` with no tenant column, and a
         tenant-aware store may resolve one relation for every tenant, so the tenant rides in
-        the id — as the other inbox stores carry it in theirs. A store that is not
-        tenant-aware keeps its ids byte-identical.
+        the key — as the other inbox stores carry it in theirs. It rides in the route, which
+        the application names, not in the message id, which a producer may choose: an id
+        shaped like a tagged one cannot meet another tenant's message. A store that is not
+        tenant-aware keeps its routes byte-identical.
         """
 
         tenant_id = self.require_tenant_if_aware()
 
-        return message_id if tenant_id is None else f"t:{tenant_id}:{message_id}"
+        return inbox if tenant_id is None else f"t:{tenant_id}:{inbox}"
 
     # ....................... #
 
@@ -95,7 +97,7 @@ class PostgresInboxStore(TenancyMixin, InboxPort):
 
         rowcount = await self.client.execute(
             stmt,
-            [inbox, self._stored_id(message_id), utcnow()],
+            [self._stored_route(inbox), message_id, utcnow()],
             return_rowcount=True,
         )
 

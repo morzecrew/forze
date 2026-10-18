@@ -80,6 +80,20 @@ async def test_two_tenants_with_one_message_id_never_meet(
     assert await other.mark_if_unseen("events", "m1") is False
 
 
+async def test_a_message_id_shaped_like_a_tagged_one_never_meets_that_tenant(
+    pg_client: PostgresClient,
+    inbox_table: str,
+) -> None:
+    tenant_id = uuid4()
+    # A row written without a tenant (before the upgrade, or by a store that is not
+    # tenant-aware), whose producer chose an id that names the tenant.
+    untagged = _store(pg_client, inbox_table, None)
+    tenant = _store(pg_client, inbox_table, tenant_id)
+
+    assert await untagged.mark_if_unseen("events", f"t:{tenant_id}:m1") is True
+    assert await tenant.mark_if_unseen("events", "m1") is True
+
+
 async def test_store_that_is_not_tenant_aware_keeps_its_keys(
     pg_client: PostgresClient,
     inbox_table: str,
@@ -89,7 +103,9 @@ async def test_store_that_is_not_tenant_aware_keeps_its_keys(
     assert await store.mark_if_unseen("events", "m1") is True
 
     rows = await pg_client.fetch_all(
-        sql.SQL("SELECT message_id FROM {t}").format(t=sql.Identifier("public", inbox_table)),
+        sql.SQL("SELECT inbox_route, message_id FROM {t}").format(
+            t=sql.Identifier("public", inbox_table)
+        ),
     )
 
-    assert [row["message_id"] for row in rows] == ["m1"]
+    assert [(row["inbox_route"], row["message_id"]) for row in rows] == [("events", "m1")]

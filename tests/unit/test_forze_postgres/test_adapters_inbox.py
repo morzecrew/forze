@@ -43,7 +43,7 @@ async def test_mark_if_unseen_false_on_conflict() -> None:
     assert await store.mark_if_unseen("events", "m1") is False
 
 
-async def test_mark_if_unseen_scopes_message_id_by_tenant_when_aware() -> None:
+async def test_mark_if_unseen_scopes_route_by_tenant_when_aware() -> None:
     tenant_id = uuid4()
     client = AsyncMock()
     client.execute = AsyncMock(return_value=1)
@@ -58,5 +58,5 @@ async def test_mark_if_unseen_scopes_message_id_by_tenant_when_aware() -> None:
     assert await store.mark_if_unseen("events", "m1") is True
 
     params = client.execute.await_args.args[1]
-    assert params[0] == "events"
-    assert params[1] == f"t:{tenant_id}:m1"
+    assert params[0] == f"t:{tenant_id}:events"
+    assert params[1] == "m1"
