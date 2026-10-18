@@ -177,13 +177,24 @@ def test_an_unset_optional_relation_does_not_count() -> None:
     assert module is not None
 
 
-@pytest.mark.parametrize("build", [_idempotency, _inbox], ids=["idempotency", "inbox"])
+@pytest.mark.parametrize(
+    ("build", "kind"),
+    [(_idempotency, "idempotency"), (_inbox, "inbox")],
+    ids=["idempotency", "inbox"],
+)
 def test_a_store_resolving_its_table_without_the_tenant_is_not_namespace(
     build: Callable[..., dict[str, Any]],
+    kind: str,
 ) -> None:
     # Not tenant-aware, the store calls its resolver with no tenant: one table for all.
-    with pytest.raises(CoreException, match="postgres_tenancy_validation_failed"):
+    with pytest.raises(CoreException, match="postgres_tenancy_validation_failed") as caught:
         _module(floor="namespace", **build(None, tenant_aware=False))
+
+    assert caught.value.details["derived_isolation"] == "none"
+    assert f"{kind} route 'orders'" in caught.value.summary
+
+    # The control: with no floor declared the same wiring stands, so the refusal is the floor's.
+    assert _module(floor=None, **build(None, tenant_aware=False)) is not None
 
 
 @pytest.mark.parametrize("build", [_idempotency, _inbox], ids=["idempotency", "inbox"])

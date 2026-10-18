@@ -137,8 +137,14 @@ def test_a_search_on_a_per_tenant_collection_meets_a_namespace_floor(engine: Any
 
 def test_an_outbox_resolving_its_collection_without_the_tenant_is_not_namespace() -> None:
     # Not tenant-aware, the outbox calls its resolver with no tenant: one collection for all.
-    with pytest.raises(CoreException, match="mongo_tenancy_validation_failed"):
+    with pytest.raises(CoreException, match="mongo_tenancy_validation_failed") as caught:
         _module(floor="namespace", **_outbox(None, tenant_aware=False))
+
+    assert caught.value.details["derived_isolation"] == "none"
+    assert "outbox route 'orders'" in caught.value.summary
+
+    # The control: with no floor declared the same wiring stands, so the refusal is the floor's.
+    assert _module(floor=None, **_outbox(None, tenant_aware=False)) is not None
 
 
 def test_a_tenant_aware_outbox_is_not_advised_to_drop_the_flag(
