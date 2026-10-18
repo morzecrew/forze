@@ -27,8 +27,8 @@ spec never declares. A few routes work differently:
 - A Postgres inbox, idempotency store or outbox, and a Mongo outbox, pass their resolver
   the tenant only when they are `tenant_aware`, so only then does a per-tenant table count.
 - A Postgres hub or federated search never reaches `namespace`. A federated search is
-  `tagged` only when it is `tenant_aware` and every leg is `tenant_aware` or per-tenant;
-  otherwise it is `none`.
+  `tagged` only when it is `tenant_aware` and every leg is a hub leg, `tenant_aware` or
+  per-tenant; otherwise it is `none`.
 - Wiring rates the switch, not what it builds: a Redis per-tenant `namespace` rates
   `namespace`, though its keys share one keyspace with every other tenant's, and a
   `tenant_aware` queue rates `tagged`, though each tenant gets a queue of its own.
