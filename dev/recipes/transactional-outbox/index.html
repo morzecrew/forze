@@ -6974,7 +6974,9 @@ inside it. For a stream <code>XADD</code> of a few milliseconds that is well und
 that reaches its deadline commits what it published, and the rows it did not reach wait
 for the next pass. Other relays skip the locked rows rather than wait for them. What
 the mode writes, its duplicate window and how to move a live table over are in
-<a href="../../reference/outbox-schema/#consume-storage">Consume storage</a>.</p>
+<a href="../../reference/outbox-schema/#consume-storage">Consume storage</a>. To keep "was this event
+delivered" answerable once its row is gone, add a
+<a href="../../reference/outbox-schema/#delivery-log">delivery log</a>.</p>
 <h2 id="notes">Notes<a class="headerlink" href="#notes" title="Permanent link">&para;</a></h2>
 <ul>
 <li><strong>Store the outbox where you store the data</strong> so the stage shares the

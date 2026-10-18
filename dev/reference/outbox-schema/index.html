@@ -6154,6 +6154,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Consume storage">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#delivery-log" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Delivery log
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
         
       </ul>
@@ -6517,6 +6534,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Consume storage">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#delivery-log" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Delivery log
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
         
       </ul>
@@ -6841,6 +6875,80 @@ keeps <code>retain</code>.</p>
 the retention job reads <code>published_at</code>. Relays in both modes on one route stay
 at-least-once: a row a <code>retain</code> relay claimed is <code>processing</code>, which a <code>consume</code> claim never
 matches, until it is marked or reclaimed.</p>
+<h4 id="delivery-log">Delivery log<a class="headerlink" href="#delivery-log" title="Permanent link">&para;</a></h4>
+<p>With published rows deleted, the outbox no longer says what went out. <code>delivery_log</code> names
+a table the store appends each published row to, in the statement that deletes it:</p>
+<div class="highlight"><pre><span></span><code><span class="n">PostgresOutboxConfig</span><span class="p">(</span>
+    <span class="n">relation</span><span class="o">=</span><span class="p">(</span><span class="s2">"app"</span><span class="p">,</span> <span class="s2">"outbox"</span><span class="p">),</span>
+    <span class="n">storage</span><span class="o">=</span><span class="s2">"consume"</span><span class="p">,</span>
+    <span class="n">delivery_log</span><span class="o">=</span><span class="p">(</span><span class="s2">"app"</span><span class="p">,</span> <span class="s2">"outbox_delivered"</span><span class="p">),</span>
+<span class="p">)</span>
+</code></pre></div>
+<p>It takes what <code>relation</code> takes, a <code>(schema, table)</code> pair or a per-tenant resolver, and
+resolves for the same tenant, at the claim, so a resolver that fails does so before the
+pass publishes anything. A single log table holds every tenant's records, so a per-tenant
+outbox beside one is only as isolated as the log's <code>tenant_id</code> filtering: a module that
+declares <code>required_tenant_isolation="namespace"</code> refuses it, and needs a per-tenant
+resolver for the log too. <code>storage="retain"</code> refuses the log.</p>
+<p>The table is yours: forze only inserts into it, and never creates, drops or prunes its
+partitions. Dropping a day's partition is its whole retention. Nothing updates or deletes
+a committed row; the only dead rows are the inserts of passes that rolled back after a
+mark, which vacuum clears as usual. Partition it by day on <code>published_at</code>:</p>
+<div class="highlight"><pre><span></span><code><span class="k">CREATE</span><span class="w"> </span><span class="k">TABLE</span><span class="w"> </span><span class="n">app</span><span class="p">.</span><span class="n">outbox_delivered</span><span class="w"> </span><span class="p">(</span>
+<span class="w">    </span><span class="n">id</span><span class="w"> </span><span class="n">UUID</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="p">,</span><span class="w">              </span><span class="c1">-- the outbox row's id</span>
+<span class="w">    </span><span class="n">outbox_route</span><span class="w"> </span><span class="nb">TEXT</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="p">,</span>
+<span class="w">    </span><span class="n">event_id</span><span class="w"> </span><span class="n">UUID</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="p">,</span>
+<span class="w">    </span><span class="n">tenant_id</span><span class="w"> </span><span class="n">UUID</span><span class="p">,</span>
+<span class="w">    </span><span class="n">published_at</span><span class="w"> </span><span class="n">TIMESTAMPTZ</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span>
+<span class="p">)</span><span class="w"> </span><span class="n">PARTITION</span><span class="w"> </span><span class="k">BY</span><span class="w"> </span><span class="n">RANGE</span><span class="w"> </span><span class="p">(</span><span class="n">published_at</span><span class="p">);</span>
+
+<span class="c1">-- no unique key: an event staged again after delivery is delivered again</span>
+<span class="k">CREATE</span><span class="w"> </span><span class="k">INDEX</span><span class="w"> </span><span class="n">outbox_delivered_event_idx</span><span class="w"> </span><span class="k">ON</span><span class="w"> </span><span class="n">app</span><span class="p">.</span><span class="n">outbox_delivered</span><span class="w"> </span><span class="p">(</span><span class="n">event_id</span><span class="p">);</span>
+
+<span class="c1">-- the net for a day nobody added</span>
+<span class="k">CREATE</span><span class="w"> </span><span class="k">TABLE</span><span class="w"> </span><span class="n">app</span><span class="p">.</span><span class="n">outbox_delivered_default</span><span class="w"> </span><span class="n">PARTITION</span><span class="w"> </span><span class="k">OF</span><span class="w"> </span><span class="n">app</span><span class="p">.</span><span class="n">outbox_delivered</span><span class="w"> </span><span class="k">DEFAULT</span><span class="p">;</span>
+
+<span class="c1">-- a partition per day, added days ahead: built apart, then attached</span>
+<span class="k">CREATE</span><span class="w"> </span><span class="k">TABLE</span><span class="w"> </span><span class="n">app</span><span class="p">.</span><span class="n">outbox_delivered_20261018</span><span class="w"> </span><span class="p">(</span><span class="k">LIKE</span><span class="w"> </span><span class="n">app</span><span class="p">.</span><span class="n">outbox_delivered</span><span class="p">);</span>
+<span class="k">ALTER</span><span class="w"> </span><span class="k">TABLE</span><span class="w"> </span><span class="n">app</span><span class="p">.</span><span class="n">outbox_delivered</span><span class="w"> </span><span class="n">ATTACH</span><span class="w"> </span><span class="n">PARTITION</span><span class="w"> </span><span class="n">app</span><span class="p">.</span><span class="n">outbox_delivered_20261018</span>
+<span class="w">    </span><span class="k">FOR</span><span class="w"> </span><span class="k">VALUES</span><span class="w"> </span><span class="k">FROM</span><span class="w"> </span><span class="p">(</span><span class="s1">'2026-10-18 00:00+00'</span><span class="p">)</span><span class="w"> </span><span class="k">TO</span><span class="w"> </span><span class="p">(</span><span class="s1">'2026-10-19 00:00+00'</span><span class="p">);</span>
+
+<span class="c1">-- retention: drop the oldest day</span>
+<span class="k">DROP</span><span class="w"> </span><span class="k">TABLE</span><span class="w"> </span><span class="n">app</span><span class="p">.</span><span class="n">outbox_delivered_20261011</span><span class="p">;</span>
+</code></pre></div>
+<ul>
+<li>
+<p><strong>A row proves a committed delivery:</strong> the event was published and its row's deletion
+  committed. An event can have several rows, one per delivery, when it was staged again
+  after its row was consumed. When you answer a tenant, filter on its <code>tenant_id</code>, the
+  tenant of the outbox row:</p>
+<div class="highlight"><pre><span></span><code><span class="k">SELECT</span><span class="w"> </span><span class="n">published_at</span><span class="w"> </span><span class="k">FROM</span><span class="w"> </span><span class="n">app</span><span class="p">.</span><span class="n">outbox_delivered</span><span class="w"> </span><span class="k">WHERE</span><span class="w"> </span><span class="n">event_id</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="err">$</span><span class="mi">1</span><span class="w"> </span><span class="k">AND</span><span class="w"> </span><span class="n">tenant_id</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="err">$</span><span class="mi">2</span><span class="p">;</span>
+</code></pre></div>
+</li>
+<li>
+<p><strong>A missing row does not prove the event was not delivered.</strong> A pass that published and
+  then rolled back logs nothing, though its consumers may have the event; the pass that
+  publishes it again logs it. A row still pending or parked in the outbox has no log row
+  yet.</p>
+</li>
+<li><strong>A missing partition fails the pass.</strong> With no partition for the day and no default,
+  the insert fails, Postgres reporting <code>no partition of relation … found for row</code> as a
+  check violation, and the delete fails with it. The pass rolls back, so its rows are
+  pending again and the batch it published goes out again later. The relay step backs
+  that route off as for any failed pass, so a missing partition costs a duplicate batch
+  per backoff step rather than a republish storm.</li>
+<li><strong>Keep the default partition empty.</strong> Postgres refuses to add a day's partition while
+  the default holds rows in its range, so rows that land there must be moved out first.
+  Add partitions ahead and treat a row in the default as an alert.</li>
+<li><strong>Attach a day's partition rather than create it in place.</strong> <code>ATTACH PARTITION</code> takes a
+  <code>SHARE UPDATE EXCLUSIVE</code> lock on the log table, which a pass's insert does not wait on;
+  it also locks the default partition while it checks it, so only a pass whose row would
+  land there waits. <code>CREATE TABLE … PARTITION OF</code>, <code>DETACH PARTITION</code> and dropping a
+  partition each take an <code>ACCESS EXCLUSIVE</code> lock on the log table, and with a default
+  partition Postgres refuses <code>DETACH PARTITION … CONCURRENTLY</code>. A pass whose insert waits
+  behind that lock longer than <code>pass_statement_timeout</code> fails and backs off, so drop old
+  days with a short <code>lock_timeout</code>, well under <code>pass_statement_timeout</code>, and retry.</li>
+</ul>
 <h2 id="mongo">Mongo<a class="headerlink" href="#mongo" title="Permanent link">&para;</a></h2>
 <p>For Mongo (<code>MongoOutboxConfig</code>), documents mirror these fields; recommended
 indexes:</p>
