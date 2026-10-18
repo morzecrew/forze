@@ -17,7 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- ...
+- **Mongo searches and counters, tenant-aware Mongo outboxes and Firestore counters on a per-tenant collection now meet a `namespace` floor.** A Mongo search's index name, scoped to its collection, no longer counts.
 
 ### Security
 

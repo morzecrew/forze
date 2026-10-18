@@ -319,14 +319,17 @@ class MongoDepsModule(DepsModule):
                     kind="search",
                     configs=self.searches,
                     tenant_aware=lambda cfg: cfg.tenant_aware,
-                    namespace_resolver=lambda cfg: cfg.index_name,
-                    # The index is only a name within the collection that holds the data.
-                    other_namespaces=lambda cfg: (cfg.read,),
+                    # An index name, Atlas or vector, is scoped to the collection it searches,
+                    # so the collection alone holds the data.
+                    namespace_resolver=lambda cfg: cfg.read,
                 ),
                 TenancyRouteGroup(
                     kind="outbox",
                     configs=self.outboxes,
                     tenant_aware=lambda cfg: cfg.tenant_aware,
+                    # The outbox passes its resolver the tenant only when it is tenant-aware;
+                    # otherwise every tenant lands in the one collection it returns.
+                    namespace_resolver=lambda cfg: cfg.collection if cfg.tenant_aware else None,
                 ),
                 TenancyRouteGroup(
                     kind="inbox",
@@ -344,6 +347,7 @@ class MongoDepsModule(DepsModule):
                     kind="counter",
                     configs=self.counters,
                     tenant_aware=lambda cfg: cfg.tenant_aware,
+                    namespace_resolver=lambda cfg: cfg.collection,
                 ),
                 # The durable routes are single optional fields rather than route maps — a
                 # module has one run store, not a named set of them — so each is lifted into

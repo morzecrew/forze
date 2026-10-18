@@ -161,6 +161,7 @@ class FirestoreDepsModule(DepsModule):
                     kind="counter",
                     configs=self.counters,
                     tenant_aware=lambda cfg: cfg.tenant_aware,
+                    namespace_resolver=lambda cfg: cfg.collection,
                 ),
             ],
             required_isolation=self.required_tenant_isolation,
