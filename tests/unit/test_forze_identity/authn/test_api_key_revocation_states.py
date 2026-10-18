@@ -25,6 +25,7 @@ from forze.application.contracts.authn import (
     ApiKeyCredentials,
     AuthnIdentity,
     IssuedApiKey,
+    PasswordCredentials,
     RevocationStatesPort,
 )
 from forze.application.contracts.authz import AuthzSpec
@@ -788,7 +789,45 @@ def test_a_reused_secret_still_makes_the_digest_no_state_mac() -> None:
     assert not StateMacKeys(active=pepper).verify(message, digest_as_mac)
 
 
-@pytest.mark.parametrize("what", ["session", "api_key"])
+async def _mint_for_another(
+    stack: _Stack,
+    key: ApiKeyCredentials,
+    caller: UUID,
+    other: UUID,
+    what: str,
+) -> Any:
+    """One request: authenticate with *caller*'s *key*, then mint a credential for *other*."""
+
+    async def request() -> Any:
+        await stack.ctx.authn.authn(SPEC).authenticate_with_api_key(key)
+
+        async with stack.ctx.tx_ctx.scope(TX):
+            if what == "session":
+                return await stack.lifecycle.issue_tokens(AuthnIdentity(principal_id=other))
+
+            provisioning = stack.ctx.authn.password_account_provisioning(SPEC)
+            operator = AuthnIdentity(principal_id=caller)
+
+            if what == "invite":
+                return await provisioning.issue_password_invite(operator, other)
+
+            if what == "provision":
+                await provisioning.provision_password_account(
+                    operator, other, PasswordCredentials(login=f"{other}", password="pw-1")
+                )
+                return "provisioned"
+
+            return await stack.ctx.authn.api_key_lifecycle(SPEC).issue_api_key(
+                AuthnIdentity(principal_id=other),
+            )
+
+    return await asyncio.create_task(request())
+
+
+MINTS_FOR_ANOTHER = pytest.mark.parametrize("what", ["session", "api_key", "invite", "provision"])
+
+
+@MINTS_FOR_ANOTHER
 async def test_a_key_admitted_inside_the_window_mints_nothing_for_another_principal(
     what: str,
 ) -> None:
@@ -804,22 +843,21 @@ async def test_a_key_admitted_inside_the_window_mints_nothing_for_another_princi
     )
     stack.states.writes_down = False
 
-    async def request() -> Any:
-        # Admitted from the stale state, then a credential minted for someone else.
-        await stack.ctx.authn.authn(SPEC).authenticate_with_api_key(issued.key)
-
-        async with stack.ctx.tx_ctx.scope(TX):
-            if what == "session":
-                return await stack.lifecycle.issue_tokens(AuthnIdentity(principal_id=other))
-
-            return await stack.ctx.authn.api_key_lifecycle(SPEC).issue_api_key(
-                AuthnIdentity(principal_id=other),
-            )
-
+    # Admitted from the stale state, then a credential minted for someone else.
     with pytest.raises(CoreException) as caught:
-        await asyncio.create_task(request())
+        await _mint_for_another(stack, issued.key, caller, other, what)
 
     assert caught.value.code == "api_key_revoked"
+
+
+@MINTS_FOR_ANOTHER
+async def test_a_live_key_still_mints_for_another_principal(what: str) -> None:
+    stack = _key_stack()
+    caller, other = await stack.principal(), await stack.principal()
+    key = (await _issue(stack, caller)).key
+    await _verify(stack, key)
+
+    assert await _mint_for_another(stack, key, caller, other, what) is not None
 
 
 async def test_a_key_that_expires_before_the_mint_mints_nothing() -> None:

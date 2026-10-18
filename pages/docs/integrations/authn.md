@@ -136,20 +136,20 @@ CREATE TABLE authn_principal_epochs (
   session, as without the fast path; `"family"` admits it until its own `exp` while the
   family is live. A logout, a family revocation and refresh-token reuse refuse it either way.
 - **Minting re-reads the credential.** A session, an API key, a password account or an invite
-  issued in a request that authenticated with an access token re-reads that token's session
-  and epoch from Postgres first, whoever it is issued for, so a token admitted inside the
-  window mints nothing that outlives it. A session or an API key issued in a request that
-  authenticated with an API key (with `key_mac` set) re-reads the key's row the same way
-  (`api_key_revoked`). A session is issued only inside a transaction (above), where the
-  re-read takes locks; above read committed, a revocation committed since the transaction's
-  snapshot fails it with a serialization error. An API key, a password account or an invite
-  can be minted outside one, `tx_route=None` included: the re-read then takes no lock but reads
-  the latest commit, and a revocation committing after it is ordered after the mint, which it
-  leaves in place, as it would a locked mint it waited for. Revoking a credential never
-  revokes what was minted from it before. A WebSocket or Socket.IO connection carries what its
-  handshake (or its last reauth) verified to each command, so a command that mints re-reads
-  that credential the same way: once a revocation ends it, or a refresh elsewhere rotates the
-  token's session (under `"session"` binding), the socket's mints are refused until it reauths.
+  issued in a request that authenticated with an access token re-reads that token's session and
+  epoch from Postgres first, whoever it is issued for, so a token admitted inside the window
+  mints nothing that outlives it. The same mints in a request that authenticated with an API key
+  (with `key_mac` set) re-read the key's row the same way (`api_key_revoked`). A session is
+  issued only inside a transaction (above), where the re-read takes locks; above read committed,
+  a revocation committed since the transaction's snapshot fails it with a serialization error.
+  An API key, a password account or an invite can be minted outside one, `tx_route=None`
+  included: the re-read then takes no lock but reads the latest commit, and a revocation
+  committing after it is ordered after the mint, which it leaves in place, as it would a locked
+  mint it waited for. Revoking a credential never revokes what was minted from it before. A
+  WebSocket or Socket.IO connection carries what its handshake (or its last reauth) verified to
+  each command, so a command that mints re-reads that credential the same way: once a revocation
+  ends it, or a refresh elsewhere rotates the token's session (under `"session"` binding), the
+  socket's mints are refused until it reauths.
 - **Redis down.** A Redis error or timeout makes the same checks from Postgres, so an outage
   never admits a credential the fast path would refuse. Tokens issued before the fast path
   carry no `fam` or `pep`, and keep the session-row check until they expire.

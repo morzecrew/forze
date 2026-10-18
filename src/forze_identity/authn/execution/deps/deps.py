@@ -779,6 +779,13 @@ class ConfigurablePasswordAccountProvisioning:
         invite_svc = self.shared.invite_svc
         invite_qry = ctx.doc.query(password_invite_spec) if invite_svc is not None else None
         invite_cmd = ctx.doc.command(password_invite_spec) if invite_svc is not None else None
+        config = self.shared.revocation_states
+        ak_qry = None
+
+        # Only a key admitted from a state needs the re-check; without key_mac the API-key store
+        # is never probed, so a password-only deployment needs none.
+        if config is not None and config.key_mac is not None:
+            ak_qry, _ = _credential_store(ctx, api_key_account_spec)
 
         return PasswordAccountProvisioningAdapter(
             password_svc=self.shared.password_svc,
@@ -789,6 +796,7 @@ class ConfigurablePasswordAccountProvisioning:
             invite_qry=invite_qry,
             invite_cmd=invite_cmd,
             revocation=_session_revocation(ctx, self.shared),
+            key_revocation=_api_key_revocation(ctx, self.shared) if ak_qry is not None else None,
         )
 
 

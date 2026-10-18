@@ -27,7 +27,12 @@ from ..domain.models.invite import (
     ReadPasswordInvite,
     UpdatePasswordInviteCmd,
 )
-from ..services import InviteTokenService, PasswordService, SessionRevocation
+from ..services import (
+    ApiKeyRevocation,
+    InviteTokenService,
+    PasswordService,
+    SessionRevocation,
+)
 from ._utils import find_password_account_by_login, find_password_invite_by_digest
 
 # ----------------------- #
@@ -83,6 +88,10 @@ class PasswordAccountProvisioningAdapter(PasswordAccountProvisioningPort):
     """When set, an account or an invite minted in a request that authenticated with an access
     token re-reads that token's session first, whoever it is minted for."""
 
+    key_revocation: ApiKeyRevocation | None = attrs.field(default=None)
+    """When set, an account or an invite minted in a request that authenticated with an API key
+    re-reads that key's row first, whoever it is minted for."""
+
     invite_svc: InviteTokenService | None = attrs.field(default=None)
     """Invite token service; ``None`` disables invite issuance/acceptance."""
 
@@ -117,6 +126,16 @@ class PasswordAccountProvisioningAdapter(PasswordAccountProvisioningPort):
 
     # ....................... #
 
+    async def _recheck_caller(self, principal_id: UUID) -> None:
+        # The credential before the epoch, the order every revocation takes them in.
+        if self.key_revocation is not None:
+            await self.key_revocation.recheck_caller()
+
+        if self.revocation is not None:
+            await self.revocation.recheck_caller(principal_id)
+
+    # ....................... #
+
     def _require_invites(
         self,
     ) -> tuple[
@@ -147,8 +166,7 @@ class PasswordAccountProvisioningAdapter(PasswordAccountProvisioningPort):
 
         await self.eligibility.require_authentication_allowed(operator.principal_id)
 
-        if self.revocation is not None:
-            await self.revocation.recheck_caller(principal_id)
+        await self._recheck_caller(principal_id)
 
         now = utcnow()
         expires_in = svc.config.expires_in
@@ -249,8 +267,7 @@ class PasswordAccountProvisioningAdapter(PasswordAccountProvisioningPort):
     ) -> None:
         await self.eligibility.require_authentication_allowed(principal_id)
 
-        if self.revocation is not None:
-            await self.revocation.recheck_caller(principal_id)
+        await self._recheck_caller(principal_id)
 
         existing = await find_password_account_by_login(
             self.password_account_qry,
