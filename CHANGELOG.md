@@ -17,7 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- ...
+- `Term.live()` also ends a leadership term once its soft deadline has passed on the clock, so a body resumed after a pause stops at its next check instead of running one more unit past its deadline. Since it may now end the term, call it on the step's event loop.
 
 ## [0.15.0] - 2026-10-18
 

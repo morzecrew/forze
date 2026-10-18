@@ -90,7 +90,8 @@ for fifty campaign intervals.
 - **Keep the body's units short.** It is told its term is ending `yield_grace` before the
   deadline and cancelled after that, and must then finish within `release_timeout`. A unit
   that cannot finish in the grace is cut off mid-way.
-- **Fence every write the body makes as leader**, not only the first. A leader that is
-  paused past its lease keeps its `term`, and only the store can refuse it.
+- **Fence every write the body makes as leader**, not only the first. A leader paused past
+  its lease stops at its next `term.live()` check, but finishes the unit it was paused in,
+  and only the store can refuse that unit's writes.
 - **Wire the store's check yourself.** The framework issues the token; refusing a lower
   one is the store's job, and without it the lease is best-effort exclusion.
