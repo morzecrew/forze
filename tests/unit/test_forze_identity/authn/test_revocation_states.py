@@ -45,6 +45,7 @@ from forze_identity.authn import (
 from forze_identity.authn.application.specs import (
     api_key_account_spec,
     password_account_spec,
+    password_invite_spec,
     password_reset_spec,
     session_spec,
 )
@@ -387,6 +388,7 @@ def _stack(
         access_token_secret=b"k" * 32,
         refresh_token_pepper=b"p" * 32,
         reset_token_pepper=b"r" * 32,
+        invite_token_pepper=b"i" * 32,
         api_key_pepper=b"a" * 32,
         api_key=api_key or ApiKeyConfig(),
         password=PasswordConfig(time_cost=1, memory_cost=8, parallelism=1),
@@ -422,6 +424,7 @@ def _stack(
                         policy_principal_spec.name: document,
                         password_account_spec.name: document,
                         password_reset_spec.name: document,
+                        password_invite_spec.name: document,
                         api_key_account_spec.name: counted_keys,
                     },
                     DocumentCommandDepKey: dict.fromkeys(
@@ -430,6 +433,7 @@ def _stack(
                             policy_principal_spec.name,
                             password_account_spec.name,
                             password_reset_spec.name,
+                            password_invite_spec.name,
                             api_key_account_spec.name,
                         ),
                         document,
@@ -1099,15 +1103,60 @@ async def test_a_password_login_after_a_stale_token_is_not_refused() -> None:
     assert await asyncio.create_task(request()) is not None
 
 
-async def test_an_issue_for_another_subject_does_not_re_read_the_caller() -> None:
-    # An application issuing a session for someone else, from a request its own token
-    # authenticated, re-reads nothing of that token: it is not the credential being minted from.
+async def _mint_for(
+    stack: _Stack, caller: UUID, other: UUID, mint: str, token: IssuedTokens
+) -> Any:
+    """One request: authenticate with *token* as *caller*, then mint a credential for *other*."""
+
+    operator = AuthnIdentity(principal_id=caller)
+    provisioning = stack.ctx.authn.password_account_provisioning(SPEC)
+
+    async def request() -> Any:
+        assert await stack.verify_here(token) == "admitted"
+
+        if mint == "session":
+            # As when a resolver maps the token's subject to another principal.
+            return await stack.login(other)
+
+        async with stack.ctx.tx_ctx.scope(TX):
+            if mint == "invite":
+                return await provisioning.issue_password_invite(operator, other)
+
+            await provisioning.provision_password_account(
+                operator, other, PasswordCredentials(login=f"{other}", password="pw-1")
+            )
+            return "provisioned"
+
+    return await asyncio.create_task(request())
+
+
+MINTS_FOR_ANOTHER = pytest.mark.parametrize("mint", ["session", "invite", "provision"])
+
+
+@MINTS_FOR_ANOTHER
+async def test_a_live_caller_still_mints_for_another_subject(mint: str) -> None:
     stack = _stack()
     caller, other = await stack.principal(), await stack.principal()
     token = await stack.login(caller)
 
-    async def request() -> IssuedTokens:
-        assert await stack.verify_here(token) == "admitted"
-        return await stack.login(other)
+    assert await _mint_for(stack, caller, other, mint, token) is not None
 
-    assert await asyncio.create_task(request()) is not None
+
+@BINDINGS
+@MINTS_FOR_ANOTHER
+async def test_a_caller_admitted_inside_the_window_mints_nothing_for_another_subject(
+    binding: SessionBinding,
+    mint: str,
+) -> None:
+    # The caller's credential is what must still be live, whoever the credential is for.
+    stack = _stack(binding=binding)
+    caller, other = await stack.principal(), await stack.principal()
+    stolen = await stack.login(caller)
+    assert await stack.verify(stolen) == "admitted"
+    await _logout_whose_write_is_lost(stack, caller)
+    assert await stack.verify(stolen) == "admitted"
+
+    with pytest.raises(CoreException) as caught:
+        await _mint_for(stack, caller, other, mint, stolen)
+
+    assert caught.value.code == "session_revoked"

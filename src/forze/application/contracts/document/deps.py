@@ -1,6 +1,6 @@
 """Document dependency keys and routers."""
 
-from typing import Any, TypeVar
+from typing import TYPE_CHECKING, Any, Protocol, TypeVar
 
 from pydantic import BaseModel
 
@@ -9,6 +9,9 @@ from forze.domain.models import BaseDTO, Document
 from ..deps import ConfigurableDepPort, ConvenientDeps, DepKey
 from .ports import DocumentCommandPort, DocumentQueryPort
 from .specs import DocumentSpec
+
+if TYPE_CHECKING:
+    from forze.application.execution import ExecutionContext
 
 # ----------------------- #
 
@@ -36,6 +39,24 @@ DocumentQueryDepKey = DepKey[DocumentQueryDepPort[Any]]("document_query")
 
 DocumentCommandDepKey = DepKey[DocumentCommandDepPort[Any, Any, Any, Any]]("document_command")
 """Key used to register the ``DocumentCommandDepPort`` implementation."""
+
+
+class DocumentCommandHookDepPort(Protocol):
+    """Wraps the command port resolved for one document."""
+
+    def __call__(
+        self,
+        ctx: "ExecutionContext",
+        port: DocumentCommandPort[Any, Any, Any, Any],
+    ) -> DocumentCommandPort[Any, Any, Any, Any]: ...  # pragma: no cover
+
+
+DocumentCommandHookDepKey = DepKey[DocumentCommandHookDepPort]("document_command_hook")
+"""Key of a hook around a document's command port, registered routed under the document's name.
+
+Every command port resolved for that document passes through it, whichever backend serves the
+document, before the port is cached or wrapped further. A write that does not go through the
+document's command port (raw SQL, another spec over the same table) does not."""
 
 # ....................... #
 

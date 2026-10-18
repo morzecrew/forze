@@ -36,3 +36,43 @@ async def test_deactivate_cascades_registry_tokens_and_credentials() -> None:
         AuthnIdentity(principal_id=pid),
     )
     credentials.deactivate_all.assert_awaited_once_with(pid)
+
+
+class _Revocation:
+    def require_transaction(self) -> None:
+        pass
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("revocation", "order"),
+    [
+        # Without revocation states nothing raises an epoch here: the order is unchanged.
+        (None, ["principal", "credentials", "sessions"]),
+        # With them, a password change takes the account before the epoch the principal's
+        # write may raise, so the credentials go first.
+        (_Revocation(), ["credentials", "principal", "sessions"]),
+    ],
+)
+async def test_deactivate_orders_its_writes_by_whether_epochs_are_raised(
+    revocation: object,
+    order: list[str],
+) -> None:
+    calls: list[str] = []
+    registry = MagicMock()
+    registry.deactivate_principal = AsyncMock(side_effect=lambda _pid: calls.append("principal"))
+    token_lifecycle = MagicMock()
+    token_lifecycle.revoke_tokens = AsyncMock(side_effect=lambda _i: calls.append("sessions"))
+    credentials = MagicMock()
+    credentials.deactivate_all = AsyncMock(side_effect=lambda _pid: calls.append("credentials"))
+
+    adapter = PrincipalDeactivationAdapter(
+        principal_registry=registry,
+        token_lifecycle=token_lifecycle,
+        credentials=credentials,
+        revocation=revocation,  # type: ignore[arg-type]
+    )
+
+    await adapter.deactivate(uuid4())
+
+    assert calls == order

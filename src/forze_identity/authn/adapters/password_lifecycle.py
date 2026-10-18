@@ -110,7 +110,7 @@ class PasswordLifecycleAdapter(PasswordLifecyclePort):
         new_password: str,
     ) -> None:
         if self.revocation is not None and self.revoke_sessions_on_password_change:
-            self.revocation.require_transaction()
+            self.revocation.require_transaction(self.pa_cmd, self.session_cmd)
 
         await self.eligibility.require_authentication_allowed(identity.principal_id)
 

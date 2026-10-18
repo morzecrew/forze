@@ -6,6 +6,11 @@ Lifecycle and provisioning ports live in sibling contract groups
 implement only what they care about.
 """
 
+from .admission import (
+    bind_authn_admission,
+    current_authn_admission,
+    record_authn_admission,
+)
 from .deps import (
     ApiKeyLifecycleDepKey,
     ApiKeyLifecycleDepPort,
@@ -123,6 +128,8 @@ __all__ = [
     "AuthnPort",
     "AuthnSpec",
     "CredentialLifetime",
+    "bind_authn_admission",
+    "current_authn_admission",
     "emit_safe",
     "login_digest",
     "resolve_authn_event_emitter",
@@ -167,6 +174,7 @@ __all__ = [
     "ApiKeyStateRead",
     "ApiKeyStatesPort",
     "RevocationStatesSpec",
+    "record_authn_admission",
     "refuse_tenant_scoped_revocation_states",
     "RefreshTokenCredentials",
     "RefreshTokenReuseError",

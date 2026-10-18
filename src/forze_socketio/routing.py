@@ -35,7 +35,11 @@ from pydantic import ValidationError
 from socketio.async_server import AsyncServer
 from socketio.exceptions import ConnectionRefusedError as SocketIOConnectionRefusedError
 
-from forze.application.contracts.authn import AuthnIdentity
+from forze.application.contracts.authn import (
+    AuthnIdentity,
+    bind_authn_admission,
+    current_authn_admission,
+)
 from forze.application.contracts.execution import Handler
 from forze.application.execution import ExecutionContext
 from forze.application.integrations.realtime import RealtimeCommandRoute
@@ -54,6 +58,11 @@ from .exceptions import (
 
 IDENTITY_SESSION_KEY: Final[str] = "forze.authn_identity"
 """Socket.IO session key holding the identity resolved at connect time."""
+
+AUTHN_ADMISSION_SESSION_KEY: Final[str] = "forze.authn_admission"
+"""Socket.IO session key holding what the connect's credential was admitted as, which each
+command binds with the identity, so a credential minted over the socket is checked against the
+one that authenticated it."""
 
 # ....................... #
 
@@ -376,7 +385,7 @@ async def _dispatch_event(
         identity: AuthnIdentity | None = session[IDENTITY_SESSION_KEY]
         binding = ctx.inv_ctx.bind_identity(authn=identity)
 
-    with binding:
+    with binding, bind_authn_admission(session.get(AUTHN_ADMISSION_SESSION_KEY)):
         op = operation_resolver(route.operation, ctx)
         result = await op(args)
 
@@ -404,13 +413,14 @@ async def _resolve_context(
 async def _resolve_identity(
     resolver: IdentityResolverPort,
     connect: SocketIOConnect,
-) -> AuthnIdentity | None:
-    value = resolver(connect)
+) -> tuple[AuthnIdentity | None, object | None]:
+    """The identity, and the admission its credential's verification recorded."""
 
-    if isawaitable(value):
-        return await value
+    with bind_authn_admission(None):
+        value = resolver(connect)
+        identity = await value if isawaitable(value) else value
 
-    return value
+        return identity, current_authn_admission()
 
 
 # ....................... #
@@ -457,10 +467,11 @@ def _build_connect_handler(
         # runs the client's events while this resolves: an earlier connect's identity goes.
         session = await sio.get_session(sid, namespace=namespace)
         session.pop(IDENTITY_SESSION_KEY, None)
+        session.pop(AUTHN_ADMISSION_SESSION_KEY, None)
         await sio.save_session(sid, session, namespace=namespace)
 
         try:
-            identity = await _resolve_identity(identity_resolver, connect)
+            identity, admission = await _resolve_identity(identity_resolver, connect)
 
         except SocketIOConnectionRefusedError:
             raise
@@ -480,6 +491,7 @@ def _build_connect_handler(
 
         session = await sio.get_session(sid, namespace=namespace)
         session[IDENTITY_SESSION_KEY] = identity
+        session[AUTHN_ADMISSION_SESSION_KEY] = admission
         await sio.save_session(sid, session, namespace=namespace)
 
     return connect_handler

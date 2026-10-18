@@ -15,10 +15,13 @@ from forze.application.contracts.authz import (
     RoleAssignmentDepKey,
 )
 from forze.application.contracts.deps import Deps, DepsModule
+from forze.application.contracts.document import DocumentCommandHookDepKey
 from forze.base.exceptions import exc
 from forze.base.primitives import StrKey
 from forze_identity._routes import normalize_route_set as _normalize_route_set
+from forze_identity.authn.services import PolicyPrincipalEpochHook
 
+from ...application.specs import policy_principal_spec
 from .configs import AuthzKernelConfig, build_authz_shared_services
 from .deps import (
     ConfigurableAuthzDecision,
@@ -57,16 +60,17 @@ class AuthzDepsModule(DepsModule):
         sc = _normalize_route_set(self.scope)
 
         has_registrations = bool(pr or ra or gq or dl or dg or dc or sc)
+        hook = self._principal_epoch_hook()
 
         if not has_registrations:
-            return Deps()
+            return hook
 
         if self.kernel is None:
             raise exc.internal("kernel is required when registering authz dependency routes")
 
         shared = build_authz_shared_services(self.kernel)
 
-        merged: Deps = Deps()
+        merged: Deps = hook
 
         if pr:
             merged = merged.merge(
@@ -142,3 +146,23 @@ class AuthzDepsModule(DepsModule):
             )
 
         return merged
+
+    # ....................... #
+
+    def _principal_epoch_hook(self) -> Deps:
+        """With revocation states, every write that may deactivate a policy principal raises
+        its epoch: registered even without routes, since an application may write the document
+        directly."""
+
+        config = self.kernel.revocation_states if self.kernel is not None else None
+
+        if config is None:
+            return Deps()
+
+        return Deps.routed(
+            {
+                DocumentCommandHookDepKey: {
+                    policy_principal_spec.name: PolicyPrincipalEpochHook(config=config),
+                },
+            },
+        )

@@ -34,6 +34,9 @@ class PolicyPrincipal(Document, PolicyPrincipalImmutableFields, IsActiveMixin):
 class CreatePolicyPrincipalCmd(CreateDocumentCmd, PolicyPrincipalImmutableFields):
     """Create policy principal command."""
 
+    is_active: bool = True
+    """Whether the principal starts active."""
+
 
 # ....................... #
 

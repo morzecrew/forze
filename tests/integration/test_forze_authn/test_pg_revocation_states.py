@@ -16,9 +16,7 @@ from typing import Any
 from uuid import UUID, uuid4
 
 import pytest
-import pytest_asyncio
 from psycopg import sql
-from testcontainers.redis import RedisContainer
 
 pytest.importorskip("jwt")
 pytest.importorskip("redis")
@@ -29,6 +27,7 @@ from forze.application.contracts.authn import (
     AuthnIdentity,
     AuthnSpec,
     IssuedTokens,
+    PasswordCredentials,
     PrincipalEpochDepKey,
     RefreshTokenCredentials,
     RevocationStatesDepKey,
@@ -46,12 +45,17 @@ from forze_identity.authn.adapters import credential_deactivation
 from forze_identity.authn.adapters.credential_deactivation import (
     AuthnCredentialDeactivationHelper,
 )
-from forze_identity.authn.services import ApiKeyConfig, ApiKeyRevocation, ApiKeyService
+from forze_identity.authn.services import (
+    ApiKeyConfig,
+    ApiKeyRevocation,
+    ApiKeyService,
+    PasswordConfig,
+)
 from forze_postgres.execution.deps import postgres_txmanager
 from forze_postgres.execution.deps.configs import PostgresPrincipalEpochConfig
 from forze_postgres.execution.deps.factories import ConfigurablePostgresPrincipalEpoch
 from forze_postgres.kernel.client.client import PostgresClient
-from forze_redis import RedisClient, RedisConfig, RedisDepsModule, RedisRevocationStatesConfig
+from forze_redis import RedisClient, RedisDepsModule, RedisRevocationStatesConfig
 from forze_redis.adapters.revocation_states import RedisRevocationStatesAdapter
 from tests.integration.test_forze_authn.test_pg_authn_integration import (
     _authn_pg_deps,
@@ -60,7 +64,6 @@ from tests.integration.test_forze_authn.test_pg_authn_integration import (
     session_spec,
 )
 from tests.support.authn_pg_fixtures import create_authn_tables, insert_policy_principal_row
-from tests.support.docker import ensure_docker_available
 from tests.support.execution_context import context_from_deps
 
 pytestmark = [pytest.mark.integration, pytest.mark.asyncio]
@@ -71,26 +74,6 @@ STATES = "authn-revocations"
 TX = "default"
 BLOCKED_FOR = 0.3
 """How long a statement must stay blocked to count as waiting on the other's lock."""
-
-
-@pytest.fixture(scope="module")
-def redis_container() -> Any:
-    ensure_docker_available()
-
-    with RedisContainer(image="valkey/valkey:9.0") as redis:
-        yield redis
-
-
-@pytest_asyncio.fixture
-async def redis_client(redis_container: Any) -> Any:
-    host = redis_container.get_container_host_ip()
-    port = redis_container.get_exposed_port(6379)
-    client = RedisClient()
-    await client.initialize(dsn=f"redis://{host}:{port}/0", config=RedisConfig(max_size=5))
-
-    yield client
-
-    await client.close()
 
 
 async def _fail(*args: Any, **kwargs: Any) -> Any:
@@ -178,11 +161,14 @@ class _Gate:
 
 
 class _GatedEpochs:
-    """The Postgres epoch store, able to hold the next `hold` before it runs, or the next
-    `advance` after it ran (its lock taken)."""
+    """The Postgres epoch store, able to hold the next `hold` before it runs, the next `hold` of
+    one principal after it ran, or the next `advance` after it ran (its lock taken)."""
 
     def __init__(self, inner: Any, gates: dict[str, _Gate]) -> None:
         self._inner, self._gates = inner, gates
+
+    def is_transactionally_enlisted(self) -> bool:
+        return self._inner.is_transactionally_enlisted()
 
     async def current(self, principal_id: UUID) -> int:
         return await self._inner.current(principal_id)
@@ -191,7 +177,12 @@ class _GatedEpochs:
         if (gate := self._gates.pop("before_hold", None)) is not None:
             await gate.pass_()
 
-        return await self._inner.hold(principal_id)
+        epoch = await self._inner.hold(principal_id)
+
+        if (gate := self._gates.pop(f"after_hold:{principal_id}", None)) is not None:
+            await gate.pass_()
+
+        return epoch
 
     async def advance(self, principal_id: UUID) -> int:
         epoch = await self._inner.advance(principal_id)
@@ -224,6 +215,7 @@ async def _stacks(
             access_token_secret=b"k" * 32,
             refresh_token_pepper=b"p" * 32,
             api_key_pepper=b"a" * 32,
+            password=PasswordConfig(time_cost=1, memory_cost=8, parallelism=1),
             revocation_states=RevocationStates(
                 route=STATES,
                 ttl=timedelta(minutes=5),
@@ -238,6 +230,7 @@ async def _stacks(
                     authn={ROUTE: SPEC.enabled_methods},
                     token_lifecycle={ROUTE},
                     api_key_lifecycle={ROUTE},
+                    password_account_provisioning={ROUTE},
                 )()
             )
             .merge(
@@ -476,6 +469,105 @@ async def test_a_token_admitted_inside_the_window_cannot_mint_a_session(
 
     assert caught.value.code == "session_revoked"
     assert await stack.live_sessions(principal) == []
+
+
+@pytest.mark.parametrize("mint", ["session", "provision"])
+async def test_a_caller_admitted_inside_the_window_cannot_mint_for_another_principal(
+    pg_client: PostgresClient,
+    redis_client: RedisClient,
+    mint: str,
+) -> None:
+    # The caller's own credential is what must still be live, whoever the mint is for.
+    stack, down, principals, _ = await _stacks(pg_client, redis_client)
+    caller, other = uuid4(), uuid4()
+
+    for principal in (caller, other):
+        await insert_policy_principal_row(pg_client, table=principals, principal_id=principal)
+
+    stolen = await stack.in_tx(
+        lambda: stack.tokens.issue_tokens(AuthnIdentity(principal_id=caller))
+    )
+    assert await stack.verify(stolen) == "admitted"
+
+    # A logout from a process whose write-through fails every attempt leaves Redis stale.
+    await down.in_tx(lambda: down.tokens.revoke_tokens(AuthnIdentity(principal_id=caller)))
+    provisioning = stack.ctx.authn.password_account_provisioning(SPEC)
+
+    async def request() -> Any:
+        assert await stack.verify(stolen) == "admitted"
+
+        if mint == "session":
+            # As when a resolver maps the token's subject to another principal.
+            return await stack.in_tx(
+                lambda: stack.tokens.issue_tokens(AuthnIdentity(principal_id=other))
+            )
+
+        return await stack.in_tx(
+            lambda: provisioning.provision_password_account(
+                AuthnIdentity(principal_id=caller),
+                other,
+                PasswordCredentials(login=str(other), password="pw-1"),
+            )
+        )
+
+    with pytest.raises(CoreException) as caught:
+        await asyncio.create_task(request())
+
+    assert caught.value.code == "session_revoked"
+    assert await stack.live_sessions(other) == []
+
+
+@pytest.mark.parametrize("first", ["mint", "logout"])
+async def test_a_mint_for_another_principal_and_a_logout_of_the_caller_never_deadlock(
+    pg_client: PostgresClient,
+    redis_client: RedisClient,
+    first: str,
+) -> None:
+    # The mint locks the other principal's row and epoch, then the caller's epoch and session;
+    # the logout locks the caller's epoch, then its sessions. Whichever is first, the other waits.
+    gates: dict[str, _Gate] = {}
+    stack, _, principals, _ = await _stacks(pg_client, redis_client, gates=gates)
+    caller, other = uuid4(), uuid4()
+
+    for principal in (caller, other):
+        await insert_policy_principal_row(pg_client, table=principals, principal_id=principal)
+
+    token = await stack.in_tx(lambda: stack.tokens.issue_tokens(AuthnIdentity(principal_id=caller)))
+    gate = gates[f"after_hold:{caller}" if first == "mint" else "after_advance"] = _Gate()
+
+    async def mint() -> Any:
+        assert await stack.verify(token) == "admitted"
+
+        return await stack.in_tx(
+            lambda: stack.tokens.issue_tokens(AuthnIdentity(principal_id=other))
+        )
+
+    def logout() -> Awaitable[Any]:
+        return stack.in_tx(lambda: stack.tokens.revoke_tokens(AuthnIdentity(principal_id=caller)))
+
+    async with asyncio.timeout(20):
+        held = asyncio.create_task(mint() if first == "mint" else logout())
+        await gate.reached.wait()
+
+        waiting = asyncio.create_task(logout() if first == "mint" else mint())
+        await asyncio.sleep(BLOCKED_FOR)
+        assert not waiting.done()
+
+        gate.release.set()
+        results = await asyncio.gather(held, waiting, return_exceptions=True)
+
+    minted, logged_out = results if first == "mint" else results[::-1]
+
+    assert not isinstance(logged_out, BaseException), logged_out
+
+    if first == "mint":
+        # The caller was live when it minted; the logout came after.
+        assert not isinstance(minted, BaseException), minted
+
+    else:
+        assert isinstance(minted, CoreException) and minted.code == "session_revoked", minted
+
+    assert await stack.live_sessions(caller) == []
 
 
 @pytest.mark.parametrize(

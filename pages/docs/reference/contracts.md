@@ -18,7 +18,7 @@ the name a resolution error prints. Handlers should keep to the accessor.
 
 | Capability | Spec | Resolve via | Dep key |
 |------------|------|-------------|---------|
-| [Document](contracts/document.md) (read / write) | `DocumentSpec` | `ctx.document.query(spec)` / `ctx.document.command(spec)` | `DocumentQueryDepKey` / `DocumentCommandDepKey` |
+| [Document](contracts/document.md) (read / write) | `DocumentSpec` | `ctx.document.query(spec)` / `ctx.document.command(spec)` | `DocumentQueryDepKey` / `DocumentCommandDepKey` (+ `DocumentCommandHookDepKey`, which `ctx.deps` applies to one document's command port) |
 | [Cache](contracts/stores.md#cache) | `CacheSpec` | `ctx.cache(spec)` | `CacheDepKey` |
 | [Counter](contracts/stores.md#counter) | `CounterSpec` | `ctx.counter(spec)` | `CounterDepKey` (+ `CounterAdminDepKey` for reset / drop) |
 | [Object storage](contracts/stores.md#storage) | `StorageSpec` | `ctx.storage.query(spec)` / `ctx.storage.command(spec)` | `StorageQueryDepKey` / `StorageCommandDepKey` (+ `StorageUploadSessionDepKey` for presigned uploads) |

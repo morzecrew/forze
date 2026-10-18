@@ -69,6 +69,12 @@ _EXEMPTIONS: dict[str, tuple[str, str]] = {
         "forze_identity.authn registers it per route; the contract also treats an absent "
         "sink as a no-op, so unregistered is a supported state rather than a hole.",
     ),
+    "document_command_hook": (
+        _OTHER_MODULE,
+        "A hook around a document's command port, registered by the plane that owns the "
+        "document (forze_identity.authz for the policy principal); unregistered, every port "
+        "is the backend's own, so there is nothing for the mock to serve.",
+    ),
     "audit": (
         _OTHER_MODULE,
         "forze_kits.integrations.audit.AuditDepsModule registers it, writing through the "
