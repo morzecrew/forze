@@ -62,10 +62,12 @@ pruning still relies on the marker), whereas a `namespace` is a separate
 container — a *name-resolution boundary* a query cannot cross.
 
 So `tenant_aware=True` reaches `tagged` on **every** backend. On a key/path store
-the marker is a prefix (`tenant:{id}:…` on Redis, a path prefix on object storage)
-that keeps tenants apart inside one shared keyspace or bucket, as a column does
-inside one table. A per-tenant resolver, and routed clients, reach `namespace` and
-`dedicated` the same way everywhere.
+the marker is a prefix (`tenant:{id}:…` on Redis, a path prefix on object storage, a
+prefixed queue name). A per-tenant resolver, and routed clients, reach `namespace`
+and `dedicated` the same way everywhere. Wiring rates the switch, not what it
+builds: a Redis per-tenant `namespace` rates `namespace` though its keys share one
+keyspace, and a `tenant_aware` queue rates `tagged` though each tenant gets a queue
+of its own.
 
 ### The tenant marker (`tagged`)
 

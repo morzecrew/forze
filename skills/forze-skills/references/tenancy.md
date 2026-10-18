@@ -15,7 +15,7 @@ For database-per-tenant Postgres routing, set `PostgresDepsModule.introspector_c
 Every tenant-aware deps module reports the isolation tier its wiring reaches — `none < tagged < namespace < dedicated` (storage-agnostic names):
 
 - `tagged` — a shared store with a tenant marker (`tenant_aware=True`): a SQL `tenant_id` column, a Redis key prefix, an object-store path prefix, a graph property.
-- `namespace` — a per-tenant container on a shared instance via a dynamic resolver on every relation the route names (schema / dataset / bucket / collection). A static relation counts even when the spec doesn't use it. Postgres hub and federated searches never reach it, and a Postgres inbox or idempotency store or a Mongo outbox counts a per-tenant table only when `tenant_aware`.
+- `namespace` — a per-tenant container on a shared instance via a dynamic resolver on every relation the route names (schema / dataset / bucket / collection). A static relation counts even when the spec doesn't use it. Postgres hub and federated searches never reach it, and a Postgres inbox, idempotency store or outbox, or a Mongo outbox, counts a per-tenant table only when `tenant_aware`. A Redis per-tenant `namespace` rates `namespace` though its keys share one keyspace.
 - `dedicated` — a routed client with per-tenant credentials and connections.
 
 Set `required_tenant_isolation` on a module to declare a **minimum** and fail wiring closed below it — checked once at startup, never per request:

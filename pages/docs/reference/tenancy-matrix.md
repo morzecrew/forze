@@ -24,9 +24,14 @@ spec never declares. A few routes work differently:
 
 - A Postgres search counts its index as well as its read and heap relations. A Mongo
   search counts only its collection: an Atlas or vector index name is scoped to it.
-- A Postgres inbox or idempotency store, and a Mongo outbox, pass their resolver the
-  tenant only when they are `tenant_aware`, so only then does a per-tenant table count.
-- A Postgres hub or federated search never reaches `namespace`.
+- A Postgres inbox, idempotency store or outbox, and a Mongo outbox, pass their resolver
+  the tenant only when they are `tenant_aware`, so only then does a per-tenant table count.
+- A Postgres hub or federated search never reaches `namespace`. A federated search is
+  `tagged` only when it is `tenant_aware` and every leg is `tenant_aware` or per-tenant;
+  otherwise it is `none`.
+- Wiring rates the switch, not what it builds: a Redis per-tenant `namespace` rates
+  `namespace`, though its keys share one keyspace with every other tenant's, and a
+  `tenant_aware` queue rates `tagged`, though each tenant gets a queue of its own.
 - A Redis stream or pub/sub route has no per-route namespace, so it never reaches
   `namespace` either; a Kafka route has no `tagged` tier.
 
@@ -93,10 +98,10 @@ sharded, per-tenant read.
 | Resource | Default & reachable isolation | Read side (how to isolate per tenant) |
 |----------|------------------------------|----------------------------------------|
 | Stream / Pub/Sub (Redis) | `tagged` via `tenant_aware` key prefix | A **sharded gateway** — `TenantShardedSignalSource` + a `RealtimeShard` per instance binds each assigned tenant and reads its key ([tenant-aware Socket.IO gateway](../integrations/socketio.md#tenancy-and-addressing)). |
-| Queue (RabbitMQ, SQS) | `tagged` via `tenant_aware` name prefix; `namespace` via a per-tenant `namespace` | Keep the queue **tenant-global** and bind the tenant from the message envelope in the consumer; or run a **per-tenant worker** per queue. A built-in sharded queue worker is not yet shipped. |
+| Queue (RabbitMQ, SQS) | `tagged` via `tenant_aware` (a queue of its own per tenant, rated `tagged`); `namespace` via a per-tenant `namespace` | Keep the queue **tenant-global** and bind the tenant from the message envelope in the consumer; or run a **per-tenant worker** per queue. A built-in sharded queue worker is not yet shipped. |
 | Commit-stream (Kafka) | `namespace` via per-tenant topic prefix; `dedicated` via routed client (no `tagged` — a topic has no row filter, so a fixed prefix counts as `none`) | Keep the topic **tenant-global** and bind the tenant from the envelope in the consumer (`bind_tenant_from_headers=True` on the commit-stream consumer — opt-in, headers are untrusted); or run your own consumer per namespaced topic under that tenant. The shipped commit-stream consumer reads unbound, so it refuses a `tenant_aware` group at startup. |
 | Outbox | **tenant-global** by default; as a Postgres/Mongo table it can reach `tagged`→`dedicated` (see read side) | The plain relay drains a tenant-global outbox cross-tenant and **binds each row's `tenant_id`** as it forwards (`_under_claim_tenant`), so a tenant-aware *destination* routes per-tenant. To isolate the **outbox table itself** (`tenant_aware` and up), use the sharded relay (`realtime_tenant_relay_lifecycle_step`); the plain relay refuses it at startup (`tenant_global_required`). |
-| Inbox | **tenant-global** by default; can be `tenant_aware` | Dedup is keyed by the globally-unique event id, so per-tenant isolation is **optional** (ids can't collide across tenants). Runs under whatever tenant the gateway binds — the shard tenant in namespace mode — so a tenant-aware inbox works there too. |
+| Inbox | **tenant-global** by default; can be `tenant_aware` | Dedup is keyed by the globally-unique event id, so per-tenant isolation is **optional** (ids can't collide across tenants). Runs under whatever tenant the gateway binds — the shard tenant on a tenant-aware stream — so a tenant-aware inbox works there too. |
 | Realtime end-to-end | outbox **tenant-global** → stream `tagged` (per-tenant key) | The whole path stays on the ladder: stage (tenant-global outbox, relay binds per row) → per-tenant stream key → sharded gateway (binds from the key) → tenant-scoped room. The outbox stays shared; only the stream is isolated. Ceiling `tagged`. |
 | Durable — Temporal | `namespace` via per-tenant task queue | A worker drains one task queue; per-tenant isolation means a per-tenant queue with a worker assigned to it (operator-managed), or `tagged` with the tenant in the workflow context. |
 | Durable — Inngest | `dedicated` (routed) only | No route-level marker; isolation only via a routed client. |
