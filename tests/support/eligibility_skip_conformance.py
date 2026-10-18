@@ -445,6 +445,10 @@ async def an_activation_raises_nothing(stack: Stack) -> None:
     async def touch_it() -> None:
         rev = await _rev(stack, principal)
         await command.update(principal, rev, UpdatePolicyPrincipalCmd(is_active=True))
+        # A bulk patch that activates passes as it is asked, unrefused.
+        await command.update_matching(
+            _by_id(principal), UpdatePolicyPrincipalCmd(is_active=True), return_new=False
+        )
 
     # Outside a transaction too: a write that deactivates nobody is not refused.
     await stack.run(touch_it)

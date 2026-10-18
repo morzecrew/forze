@@ -670,3 +670,67 @@ async def test_a_deactivation_and_a_password_change_never_deadlock(
         if isinstance(result, BaseException):
             assert "deadlock" not in str(result).lower(), result
             assert isinstance(result, CoreException), result
+
+
+class _GatedCreate:
+    """A command port whose next ``create`` waits at *gate* before it writes."""
+
+    def __init__(self, inner: Any, gate: _Gate) -> None:
+        self._inner, self._gate = inner, gate
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._inner, name)
+
+    async def create(self, *args: Any, **kwargs: Any) -> Any:
+        await self._gate.pass_()
+        return await self._inner.create(*args, **kwargs)
+
+
+async def test_a_logout_between_an_unlocked_recheck_and_its_mint_is_ordered_after_the_mint(
+    pg_client: PostgresClient,
+    redis_client: RedisClient,
+) -> None:
+    # Outside a transaction the re-check of a password account's mint takes no lock, so a
+    # logout of the caller can commit between it and the account's write. That is the order
+    # "mint, then logout": the logout revokes the caller's sessions and leaves the account,
+    # exactly as when it waits for a locked mint to commit.
+    gate = _Gate()
+    stack = await _stack(
+        pg_client,
+        redis_client,
+        extra=Deps.routed(
+            {
+                DocumentCommandHookDepKey: {
+                    AuthnResourceName.PASSWORD_ACCOUNTS: lambda ctx, port: _GatedCreate(port, gate),
+                },
+            }
+        ),
+    )
+    caller, other = await stack.principal(), await stack.principal()
+    token = await battery.login(stack, caller)
+    credentials = PasswordCredentials(login=f"{other}@example.com", password="horse battery")
+    provisioning = stack.ctx.authn.password_account_provisioning(SPEC)
+
+    async def mint() -> None:
+        await battery.verify_token_only(stack, token)
+        await provisioning.provision_password_account(
+            AuthnIdentity(principal_id=caller), other, credentials
+        )
+
+    async with asyncio.timeout(20):
+        minting = asyncio.create_task(stack.run(mint))
+        await gate.reached.wait()
+
+        await stack.in_tx(
+            lambda: stack.ctx.authn.token_lifecycle(SPEC).revoke_tokens(
+                AuthnIdentity(principal_id=caller)
+            )
+        )
+        gate.release.set()
+        await minting
+
+    result = await stack.run(
+        lambda: stack.ctx.authn.authn(SPEC).authenticate_with_password(credentials)
+    )
+    assert result.identity.principal_id == other
+    assert await battery.verify(stack, token) == "session_revoked"

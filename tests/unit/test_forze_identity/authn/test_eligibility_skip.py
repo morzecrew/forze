@@ -278,3 +278,66 @@ async def test_a_principal_write_the_transaction_does_not_hold_is_refused_before
 
     assert caught.value.code == "authn_revocation_requires_transaction"
     assert port.writes == []
+
+
+class _AsyncPort:
+    """A policy principal command port that records the patches reaching it."""
+
+    def __init__(self) -> None:
+        self.writes: list[Any] = []
+
+    async def update(self, pk: UUID, rev: int, dto: Any, **kwargs: Any) -> None:
+        self.writes.append(dto)
+
+
+class _SyncPort(_AsyncPort):
+    """The same, its write a plain method returning an awaitable."""
+
+    def update(self, pk: UUID, rev: int, dto: Any, **kwargs: Any) -> Any:  # type: ignore[override]
+        self.writes.append(dto)
+
+        async def done() -> None:
+            return None
+
+        return done()
+
+
+@pytest.mark.parametrize(
+    ("port", "patch"),
+    [
+        pytest.param(_AsyncPort, {"is_active": False}, id="mapping"),
+        pytest.param(_AsyncPort, object(), id="unknown-shape"),
+        pytest.param(_SyncPort, UpdatePolicyPrincipalCmd(is_active=False), id="sync-method"),
+    ],
+)
+async def test_a_deactivating_patch_of_any_shape_raises_the_epoch(port: type, patch: Any) -> None:
+    # A mapping, a patch of no known shape (assumed to deactivate) and a write method that is
+    # not a coroutine function all reach the hook: refused outside a transaction before the
+    # write, raised inside one.
+    stack = _stack()
+    inner = port()
+    guarded = PolicyPrincipalEpochHook(config=CONFIG)(stack.ctx, inner)
+    principal = uuid4()
+
+    with pytest.raises(CoreException) as caught:
+        await guarded.update(principal, 1, patch)
+
+    assert caught.value.code == "authn_revocation_requires_transaction"
+    assert inner.writes == []
+
+    await stack.in_tx(lambda: guarded.update(principal, 1, patch))
+
+    assert inner.writes == [patch]
+    assert await stack.epoch(principal) == 1
+
+
+async def test_an_activating_mapping_patch_passes_without_a_transaction() -> None:
+    stack = _stack()
+    inner = _AsyncPort()
+    guarded = PolicyPrincipalEpochHook(config=CONFIG)(stack.ctx, inner)
+    principal = uuid4()
+
+    await guarded.update(principal, 1, {"is_active": True})
+
+    assert inner.writes == [{"is_active": True}]
+    assert await stack.epoch(principal) == 0

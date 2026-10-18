@@ -123,17 +123,21 @@ CREATE TABLE authn_principal_epochs (
   both registries. They refuse the same way, before writing, in a transaction that does not
   hold every store they write (the epochs, and for a deactivation or a password change the
   credentials and sessions too): a store on another database would commit on its own. The
-  Postgres stores report it; one that cannot is not checked. Issue and logout serialize on the epoch's row on Postgres only, with the
-  revocation at read committed (the default); a revocation at repeatable read or serializable
-  is refused (`authn_epoch_isolation`).
+  Postgres stores report it; one that cannot is not checked. Issue and logout serialize on the
+  epoch's row on Postgres only, with the revocation at read committed (the default); a
+  revocation at repeatable read or serializable is refused (`authn_epoch_isolation`).
 - **`session_binding`.** `"session"` (the default) refuses a token once a refresh replaced its
   session, as without the fast path; `"family"` admits it until its own `exp` while the
   family is live. A logout, a family revocation and refresh-token reuse refuse it either way.
 - **Minting re-reads the token.** A session, an API key, a password account or an invite issued
   in a request that authenticated with an access token re-reads that token's session and epoch
-  from Postgres first, whoever it is issued for, under locks inside a transaction, so a token
-  admitted inside the window mints nothing that outlives it; above read committed a revocation committed since the
-  transaction's snapshot fails it with a serialization error. A WebSocket or Socket.IO
+  from Postgres first, whoever it is issued for, so a token admitted inside the window mints
+  nothing that outlives it. A session is issued only inside a transaction (above), where the
+  re-read takes locks; above read committed, a revocation committed since the transaction's
+  snapshot fails it with a serialization error. An API key, a password account or an invite
+  can be minted outside one, `tx_route=None` included: the re-read then takes no lock but reads
+  the latest commit, and a revocation committing after it is ordered after the mint, which it
+  leaves in place, as it would a locked mint it waited for. A WebSocket or Socket.IO
   connection carries what its handshake (or its last reauth) verified to each command, so a
   command that mints re-reads that token's session the same way: once a refresh elsewhere
   rotates that session (under `"session"` binding) or a revocation ends it, the socket's mints
@@ -180,8 +184,9 @@ issued before is then refused by its epoch, so the eligibility read has nothing 
   epochs, so a deactivation and its raise commit together.
 - **Postgres only.** The skip needs the policy principal on Postgres, where an issue's locking
   read excludes a concurrent deactivation; elsewhere, the mock included, every verification
-  reads. The authn and authz kernels must carry equal configurations, or the wiring is refused
-  (`authn_revocation_states_mismatch`).
+  reads. Without the authz configuration every verification reads, as before. With a
+  different one, building the eligibility gate (on the first authentication or issue) is
+  refused (`authn_revocation_states_mismatch`).
 
 ## Notes
 
