@@ -863,3 +863,17 @@ async def test_keys_and_sessions_need_no_api_key_calls_without_key_mac(
         await stack.ctx.authn.principal_deactivation(SPEC).deactivate(principal)
 
     assert await stack.verify(token) == "session_revoked"
+
+
+async def test_an_expired_key_is_refused_and_not_cached() -> None:
+    stack = _key_stack(api_key=ApiKeyConfig(expires_in=timedelta(minutes=1)))
+    principal = await stack.principal()
+    issued = await _issue(stack, principal)
+    stack.clock.advance(timedelta(minutes=2))
+
+    async def request() -> UUID | str:
+        with bind_time_source(FrozenTimeSource(instant=utcnow() + timedelta(minutes=2))):
+            return await _verify(stack, issued.key)
+
+    assert await asyncio.create_task(request()) == "refused"
+    assert "fill_api_key" not in stack.states.calls

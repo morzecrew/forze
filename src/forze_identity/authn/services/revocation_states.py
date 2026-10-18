@@ -810,9 +810,6 @@ class ApiKeyRevocation:
     def _live(self, digest: str, raw: str, *, read: ApiKeyStateRead) -> CachedApiKey | None:
         """The key a cached state proves, or ``None`` when it proves nothing."""
 
-        if not raw.isascii():
-            return None
-
         body, _, mac = raw.rpartition("|")
 
         # Nothing in the state is read before its MAC verifies.
