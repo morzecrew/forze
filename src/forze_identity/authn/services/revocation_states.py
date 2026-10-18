@@ -518,40 +518,48 @@ class SessionRevocation:
     # ....................... #
 
     async def recheck_caller(self, principal_id: UUID, *, epoch: int | None = None) -> None:
-        """Refuse an issue for *principal_id* that this request's own token no longer allows.
+        """Refuse a credential minted for *principal_id* when this request's own token is no longer live.
 
         A credential minted from a token outlives the token, so it must not be minted from one
-        admitted inside the window. When this request authenticated with an access token of
-        the same subject, its session (or family, by the binding) is read again from the
-        database, and its epoch compared with *epoch*, the one the issue holds, or else a fresh
-        one. Inside a transaction both are read under locks, the epoch first as every revocation
-        takes it, so neither comes from a snapshot older than a revocation that has since
-        committed; outside one, each read is a fresh snapshot of its own.
+        admitted inside the window, whoever it is minted for: the caller's credential is what
+        must still be live. When this request (or the connection it runs on) authenticated with
+        an access token, that token's session (or family, by the binding) is read again from
+        the database, and the token's epoch compared with its principal's. *epoch* is the one
+        the issue holds for *principal_id*, used when that is the caller; otherwise the caller's
+        epoch is read here. Inside a transaction both are read under locks, the epoch first as
+        every revocation takes it, so neither comes from a snapshot older than a revocation that
+        has since committed; outside one, each read is a fresh snapshot of its own.
 
+        :param principal_id: The principal the credential is minted for.
+        :param epoch: The epoch the issue holds for *principal_id*, if it holds one.
         :raises CoreException: ``session_revoked``.
         """
 
         admitted = current_authn_admission()
 
-        if not isinstance(admitted, AdmittedSession) or admitted.principal_id != principal_id:
+        if not isinstance(admitted, AdmittedSession):
             return
 
+        caller = admitted.principal_id
         lock = self.in_transaction()
 
         # The epoch before any session row: a principal-wide revocation raises the epoch and
-        # then stamps the sessions, and the reverse order would deadlock with it.
-        if epoch is None:
-            epoch = await (self.epochs.hold if lock else self.epochs.current)(principal_id)
+        # then stamps the sessions, and the reverse order would deadlock with it. A token from
+        # before the fast path carries no epoch to compare, and its session row is the guard.
+        if admitted.epoch is not None and (epoch is None or principal_id != caller):
+            epoch = await (self.epochs.hold if lock else self.epochs.current)(caller)
 
         state = await self._state_truth(
-            principal_id,
+            caller,
             admitted.session_id,
             admitted.family_id,
             by_family=self._by_family,
             lock=lock,
         )
 
-        if state == REVOKED_STATE or (admitted.epoch is not None and admitted.epoch < epoch):
+        if state == REVOKED_STATE or (
+            admitted.epoch is not None and epoch is not None and admitted.epoch < epoch
+        ):
             raise _session_revoked()
 
     def require_transaction(self) -> None:

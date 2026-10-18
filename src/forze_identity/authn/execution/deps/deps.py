@@ -737,6 +737,7 @@ class ConfigurablePasswordAccountProvisioning:
             invite_svc=invite_svc,
             invite_qry=invite_qry,
             invite_cmd=invite_cmd,
+            revocation=_session_revocation(ctx, self.shared),
         )
 
 

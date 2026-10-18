@@ -121,10 +121,10 @@ CREATE TABLE authn_principal_epochs (
 - **`session_binding`.** `"session"` (the default) refuses a token once a refresh replaced its
   session, as without the fast path; `"family"` admits it until its own `exp` while the
   family is live. A logout, a family revocation and refresh-token reuse refuse it either way.
-- **Minting re-reads the token.** A tenant switch or an API-key issue in a request that
-  authenticated with an access token re-reads that token's session and epoch from Postgres
-  first, under locks inside a transaction, so a token admitted inside the window mints
-  nothing that outlives it; above read committed a revocation committed since the
+- **Minting re-reads the token.** A session, an API key, a password account or an invite issued
+  in a request that authenticated with an access token re-reads that token's session and epoch
+  from Postgres first, whoever it is issued for, under locks inside a transaction, so a token
+  admitted inside the window mints nothing that outlives it; above read committed a revocation committed since the
   transaction's snapshot fails it with a serialization error. A WebSocket or Socket.IO
   connection carries what its handshake (or its last reauth) verified to each command, so a
   command that mints re-reads that token's session the same way: once a refresh elsewhere
