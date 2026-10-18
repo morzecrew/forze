@@ -27,8 +27,12 @@ from forze.application.contracts.authn import (
     IssuedApiKey,
     PasswordCredentials,
     RevocationStatesPort,
+    bind_authn_admission,
+    current_authn_admission,
 )
 from forze.application.contracts.authz import AuthzSpec
+from forze.application.contracts.document import DocumentCommandDepKey
+from forze.application.execution.deps.frozen import FrozenDeps
 from forze.application.execution.operations import run_operation
 from forze.base.exceptions import CoreException
 from forze.base.primitives import FrozenTimeSource, bind_time_source, utcnow
@@ -36,12 +40,17 @@ from forze_identity.authn import AuthnKernelConfig, instrument_revocation_states
 from forze_identity.authn.adapters import credential_deactivation
 from forze_identity.authn.application.specs import api_key_account_spec
 from forze_identity.authn.services import (
+    AdmittedApiKey,
+    AdmittedSession,
     ApiKeyConfig,
     ApiKeyRevocation,
     ApiKeyService,
     Hs256Signer,
     RevocationStates,
     StateMacKeys,
+    admitted_just_now,
+    remember_admitted_api_key,
+    remember_admitted_session,
 )
 from forze_identity.authn.services.revocation_states import _api_key_message
 from forze_identity.authz.application.specs import policy_principal_spec
@@ -858,6 +867,76 @@ async def test_a_live_key_still_mints_for_another_principal(what: str) -> None:
     await _verify(stack, key)
 
     assert await _mint_for_another(stack, key, caller, other, what) is not None
+
+
+async def test_a_key_carried_to_another_task_is_rechecked_there() -> None:
+    stack = _key_stack()
+    caller, other = await stack.principal(), await stack.principal()
+    issued = await _issue(stack, caller)
+
+    # A connection's handshake verifies the key; its commands run in other tasks.
+    async def handshake() -> object:
+        await stack.ctx.authn.authn(SPEC).authenticate_with_api_key(issued.key)
+        return current_authn_admission()
+
+    admission = await asyncio.create_task(handshake())
+    assert isinstance(admission, AdmittedApiKey)
+
+    stack.states.writes_down = True
+    await stack.ctx.authn.api_key_lifecycle(SPEC).revoke_api_key(
+        AuthnIdentity(principal_id=caller),
+        str(issued.key_id),
+    )
+    stack.states.writes_down = False
+
+    async def command() -> Any:
+        # Bound as a transport binds what its handshake recorded.
+        with bind_authn_admission(admission):
+            async with stack.ctx.tx_ctx.scope(TX):
+                return await stack.ctx.authn.api_key_lifecycle(SPEC).issue_api_key(
+                    AuthnIdentity(principal_id=other),
+                )
+
+    with pytest.raises(CoreException) as caught:
+        await asyncio.create_task(command())
+
+    assert caught.value.code == "api_key_revoked"
+
+
+async def test_a_key_verification_leaves_no_fresh_admission_behind() -> None:
+    principal = uuid4()
+
+    async def request() -> bool:
+        session = AdmittedSession(
+            principal_id=principal, session_id=uuid4(), family_id=None, epoch=1
+        )
+        remember_admitted_session(session, fresh=True)
+        remember_admitted_api_key(AdmittedApiKey(principal_id=principal, digest="d"))
+
+        return admitted_just_now(principal)
+
+    # The eligibility check after a key verification always reads.
+    assert await asyncio.create_task(request()) is False
+
+
+async def test_provisioning_rechecks_a_key_store_this_process_only_reads(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Keys verified here and issued elsewhere: the re-check only reads rows.
+    stack = _key_stack()
+    real = FrozenDeps.resolvable
+
+    def resolvable(self: FrozenDeps, key: Any, *, route: Any) -> bool:
+        if key is DocumentCommandDepKey and str(route) == str(api_key_account_spec.name):
+            return False
+
+        return real(self, key, route=route)
+
+    monkeypatch.setattr(FrozenDeps, "resolvable", resolvable)
+
+    provisioning = stack.ctx.authn.password_account_provisioning(SPEC)
+
+    assert getattr(provisioning, "key_revocation", None) is not None
 
 
 async def test_a_key_that_expires_before_the_mint_mints_nothing() -> None:
