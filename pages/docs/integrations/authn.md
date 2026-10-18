@@ -67,10 +67,10 @@ and API-key revoke.
 By default every token verification reads its session row, and every API-key verification
 its key row. With `revocation_states` on the kernel, a token carries its session's family
 (`fam`) and the principal's epoch (`pep`), and the verifier checks them against states cached
-in Redis, reading Postgres only for what Redis misses. With `key_mac` too, every cached state is
-signed, and API keys are checked the same way, from a state cached under the key's digest. The
-eligibility read stays for both, except that a token's is skipped when the authz kernel carries
-the same configuration ([below](#skip-the-eligibility-read)).
+in Redis, reading Postgres only for what Redis misses. With `key_mac` too, every live cached
+state is signed, and API keys are checked the same way, from a state cached under the key's
+digest. The eligibility read stays for both, except that a token's is skipped when the authz
+kernel carries the same configuration ([below](#skip-the-eligibility-read)).
 
 ```python
 from datetime import timedelta

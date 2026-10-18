@@ -473,15 +473,10 @@ def _unseal(
     ):
         return None
 
+    # Signed, so written by _seal: a value, then an integer not-after.
     value, _, not_after = body.rpartition("|")
 
-    try:
-        expired = _expired(config, "session", int(not_after), now_ms=now_ms)
-
-    except ValueError:
-        return None
-
-    return None if expired else value
+    return None if _expired(config, "session", int(not_after), now_ms=now_ms) else value
 
 
 def _require_transaction(in_transaction: Callable[[], bool], *stores: object) -> None:
