@@ -115,6 +115,29 @@ class AuthnKernelConfig:
     """When set, verify access tokens from cached revocation states, and write them through
     on every revocation. The verifier and every revoking adapter read this one value."""
 
+    # ....................... #
+
+    def __attrs_post_init__(self) -> None:
+        key_mac = self.revocation_states.key_mac if self.revocation_states is not None else None
+
+        if key_mac is None:
+            return
+
+        secrets = (
+            self.access_token_secret,
+            self.refresh_token_pepper,
+            self.invite_token_pepper,
+            self.reset_token_pepper,
+            self.api_key_pepper,
+        )
+
+        if any(key in secrets for key in (key_mac.active, *key_mac.previous)):
+            raise exc.configuration(
+                "RevocationStates.key_mac must not reuse another authn secret, the API key "
+                "pepper above all: give the state MAC keys of their own.",
+                code="authn_state_mac_key_reused",
+            )
+
 
 # ....................... #
 

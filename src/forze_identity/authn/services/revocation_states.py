@@ -24,6 +24,7 @@ import attrs
 from forze.application.contracts.authn import (
     EPOCH_STATE_KEY,
     REVOKED_STATE,
+    ApiKeyStateRead,
     PrincipalEpochPort,
     RevocationStatesPort,
 )
@@ -42,11 +43,12 @@ from .constants import MIN_SECRET_BYTES
 SessionBinding = Literal["session", "family"]
 """What a token's state is read under: its own session, or its session's family."""
 
-RevocationEvent = Literal["hit", "miss", "fallback", "write_failure"]
+RevocationEvent = Literal["hit", "miss", "fallback", "write_failure", "clock_skew"]
 """What the fast path counts: a verification answered from the states store alone (``hit``), one
 that read the database for what the store lacked (``miss``), one whose store read failed and
-that read the database instead (``fallback``), and a revocation's write-through that failed
-every attempt (``write_failure``)."""
+that read the database instead (``fallback``), a revocation's write-through that failed every
+attempt (``write_failure``), and an API-key state the store's clock still accepted but the
+application's clock put more than ``ttl`` past its not-after (``clock_skew``, a miss too)."""
 
 RevocationCredential = Literal["session", "api_key"]
 """The credential a count is for."""
@@ -59,6 +61,10 @@ _ABSENT = "-"
 
 _API_KEY_MAC_LABEL: Final = b"forze.authn.api-key-state.v1"
 """Starts every MAC input, so a key state's MAC verifies as nothing else the server key signs."""
+
+_API_KEY_MAC_KEY_LABEL: Final = b"forze.authn.api-key-state-mac-key.v1"
+"""Derives each state MAC key from its configured secret, so a secret reused elsewhere (the API
+key pepper above all, whose digests travel to Redis as key names) signs nothing a state takes."""
 
 _EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
 _MS = timedelta(milliseconds=1)
@@ -92,7 +98,9 @@ class RevocationStatesCounters:
 # ....................... #
 
 
-def _mac(key: bytes, message: bytes) -> str:
+def _mac(secret: bytes, message: bytes) -> str:
+    key = hmac.new(secret, _API_KEY_MAC_KEY_LABEL, hashlib.sha256).digest()
+
     return hmac.new(key, message, hashlib.sha256).hexdigest()
 
 
@@ -100,6 +108,10 @@ def _mac(key: bytes, message: bytes) -> str:
 @attrs.define(slots=True, frozen=True, kw_only=True)
 class StateMacKeys:
     """Server keys that authenticate cached API-key states, with HMAC-SHA256.
+
+    Each deployment needs keys of its own, shared with no other deployment and no other secret:
+    a state is bound to its store's namespace, but two deployments with one namespace name and
+    one key accept each other's states. Each key is used through a key derived from it.
 
     A state is signed under :attr:`active` and accepted under it or any of :attr:`previous`. To
     rotate, make the new key active and keep the old one in :attr:`previous` for at least the
@@ -674,8 +686,13 @@ def _to_ms(moment: datetime) -> int:
     return (moment - _EPOCH) // _MS
 
 
-def _api_key_message(digest: str, body: str) -> bytes:
-    return b"\n".join((_API_KEY_MAC_LABEL, f"k:{digest}".encode("ascii"), body.encode("ascii")))
+def _api_key_message(route: str, store_key: str, digest: str, body: str) -> bytes:
+    """What an API-key state's MAC covers: the label, the states route, the store's full key for
+    the state, the digest and the body, each length-prefixed so no two inputs read alike."""
+
+    fields = (_API_KEY_MAC_LABEL, *(f.encode() for f in (route, store_key, f"k:{digest}", body)))
+
+    return b"".join(len(field).to_bytes(4, "big") + field for field in fields)
 
 
 @final
@@ -772,7 +789,7 @@ class ApiKeyRevocation:
             return None
 
         if read.state is not None:
-            cached = self._live(digest, read.state, now_ms=read.now_ms)
+            cached = self._live(digest, read.state, read=read)
 
             if cached is not None:
                 self.config.counters.add("hit", "api_key")
@@ -783,11 +800,14 @@ class ApiKeyRevocation:
 
         if not self.in_transaction():
             # Inside a transaction the read may predate a revocation, or be the revocation's.
-            await self._fill(digest, account, now_ms=read.now_ms)
+            await self._fill(digest, account, read=read)
 
         return account
 
-    def _live(self, digest: str, raw: str, *, now_ms: int) -> CachedApiKey | None:
+    def _message(self, read: ApiKeyStateRead, digest: str, body: str) -> bytes:
+        return _api_key_message(self.config.route, read.key, digest, body)
+
+    def _live(self, digest: str, raw: str, *, read: ApiKeyStateRead) -> CachedApiKey | None:
         """The key a cached state proves, or ``None`` when it proves nothing."""
 
         if not raw.isascii():
@@ -796,16 +816,20 @@ class ApiKeyRevocation:
         body, _, mac = raw.rpartition("|")
 
         # Nothing in the state is read before its MAC verifies.
-        if not body or not self._mac.verify(_api_key_message(digest, body), mac):
+        if not body or not self._mac.verify(self._message(read, digest, body), mac):
             return None
 
         try:
             live, principal, actor, expires, not_after = body.split("|")
 
-            # The store's clock decides; the application's only caps a store that lies about it.
-            local_ms = _to_ms(utcnow())
+            if live != "live" or read.now_ms >= int(not_after):
+                return None
 
-            if live != "live" or max(now_ms, local_ms - self.config.ttl // _MS) >= int(not_after):
+            # The store's clock decides; the application's only caps a store that lies about it.
+            # Ahead of the store's by two ttl or more, it refuses every state: counted, so the
+            # cause shows.
+            if _to_ms(utcnow()) - self.config.ttl // _MS >= int(not_after):
+                self.config.counters.add("clock_skew", "api_key")
                 return None
 
             return CachedApiKey(
@@ -818,11 +842,18 @@ class ApiKeyRevocation:
         except ValueError:
             return None
 
-    async def _fill(self, digest: str, account: ReadApiKeyAccount | None, *, now_ms: int) -> None:
+    async def _fill(
+        self,
+        digest: str,
+        account: ReadApiKeyAccount | None,
+        *,
+        read: ApiKeyStateRead,
+    ) -> None:
         # An unknown digest is not cached: anyone can present one.
         if account is None:
             return
 
+        now_ms = read.now_ms
         expire_at_ms = now_ms + self.config.ttl // _MS
 
         if not account.is_active:
@@ -849,7 +880,7 @@ class ApiKeyRevocation:
                     str(expire_at_ms),
                 ),
             )
-            state = f"{body}|{self._mac.sign(_api_key_message(digest, body))}"
+            state = f"{body}|{self._mac.sign(self._message(read, digest, body))}"
 
         try:
             # Expires in the store at its not-after, so it never outlives what its MAC names.
@@ -863,20 +894,20 @@ class ApiKeyRevocation:
 
     # ....................... #
 
-    async def recheck_caller(self, principal_id: UUID) -> None:
-        """Refuse an issue for *principal_id* that this request's own API key no longer allows.
+    async def recheck_caller(self) -> None:
+        """Refuse an issue this request's own API key no longer allows, whoever it is for.
 
         A credential minted from a key outlives the key, so it must not be minted from one
-        admitted inside the window. When this request authenticated with an API key of the same
-        subject, the key's row is read again, under a lock inside a transaction, so the read is
-        no older than a revocation that has since committed.
+        admitted inside the window, for its own principal or anyone else. When this request
+        authenticated with an API key, the key's row is read again, under a lock inside a
+        transaction, so the read is no older than a revocation that has since committed.
 
         :raises CoreException: ``api_key_revoked``.
         """
 
         admitted = _ADMITTED.get()
 
-        if not isinstance(admitted, AdmittedApiKey) or admitted.principal_id != principal_id:
+        if not isinstance(admitted, AdmittedApiKey):
             return
 
         row = await self._row(admitted.digest, lock=self.in_transaction())
@@ -884,7 +915,7 @@ class ApiKeyRevocation:
         if (
             row is None
             or not row.is_active
-            or row.principal_id != principal_id
+            or row.principal_id != admitted.principal_id
             or (row.expires_at is not None and row.expires_at <= utcnow())
         ):
             raise exc.authentication("API key revoked", code="api_key_revoked")

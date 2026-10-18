@@ -208,8 +208,13 @@ async def check_an_api_key_fill_sets_only_an_absent_state_until_its_instant(
     now = await h.states.now_ms(uuid4())
     read = await h.states.read_api_key(digest)
 
-    assert (read.epoch, read.state) == (None, None), h.backend
+    assert read.state is None, h.backend
     assert read.now_ms >= now, h.backend
+
+    # The store's own name for the state, which a MAC binds: stable, and one per digest.
+    assert digest in read.key, h.backend
+    assert read.key == (await h.states.read_api_key(digest)).key, h.backend
+    assert read.key != (await h.states.read_api_key(uuid4().hex)).key, h.backend
 
     # Landed after its instant: nothing is written.
     await h.states.fill_api_key(digest, "live|one", expire_at_ms=now - 1)

@@ -11,7 +11,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **API keys can be verified from Redis.** `RevocationStates(key_mac=StateMacKeys(...))` checks a key from a MAC-signed state, reading its row only on a miss; revoking a key writes `revoked` through. `RevocationStatesPort` gains `read_api_key`, `fill_api_key` and `revoke_api_keys`, called only with `key_mac`.
 
-- **The revocation-states fast path is counted.** `instrument_revocation_states({"default": states})` exports hits, misses, fallbacks and failed write-throughs, for sessions and API keys.
+- **An API key admitted from Redis cannot mint past its revocation.** With `key_mac` set, an API-key issue or a session issue (a tenant switch) in a request an API key authenticated re-reads that key's row first, and refuses with `api_key_revoked` once it is revoked or expired.
+
+- **The revocation-states fast path is counted.** `instrument_revocation_states({"default": states})` exports hits, misses, fallbacks, failed write-throughs and clock-skew refusals, for sessions and API keys.
 
 ### Changed
 

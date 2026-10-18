@@ -12,6 +12,7 @@ import attrs
 from forze.application.contracts.authn import (
     EPOCH_STATE_KEY,
     REVOKED_STATE,
+    ApiKeyStateRead,
     PrincipalEpochPort,
     RevocationStatesPort,
     RevocationStatesRead,
@@ -145,14 +146,14 @@ class MockRevocationStates(RevocationStatesPort):
 
             self._set(str(principal_id), EPOCH_STATE_KEY, str(epoch), expire_at_ms)
 
-    async def read_api_key(self, digest: str) -> RevocationStatesRead:
+    async def read_api_key(self, digest: str) -> ApiKeyStateRead:
         with self.state.lock:
             now_ms = self._now_ms()
 
-            return RevocationStatesRead(
+            return ApiKeyStateRead(
                 now_ms=now_ms,
-                epoch=None,
                 state=self._get(_API_KEYS, f"k:{digest}", now_ms),
+                key=f"{self.namespace}:k:{digest}",
             )
 
     async def fill_api_key(self, digest: str, state: str, *, expire_at_ms: int) -> None:

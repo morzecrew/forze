@@ -122,9 +122,9 @@ class TokenLifecycleAdapter(TokenLifecyclePort):
         )
 
         if self.key_revocation is not None:
-            # A session issued from an API key (a tenant switch) must not outlive that key; its
-            # row is taken before the epoch, the order every revocation takes them in.
-            await self.key_revocation.recheck_caller(identity.principal_id)
+            # A session issued from a request an API key authenticated, for whomever, must not
+            # outlive that key; its row is taken before the epoch, as every revocation takes them.
+            await self.key_revocation.recheck_caller()
 
         # Held until the session commits, so a concurrent logout revokes it or raises first.
         epoch = await self._hold_epoch(identity.principal_id)

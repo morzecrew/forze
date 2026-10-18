@@ -109,8 +109,8 @@ class ApiKeyLifecycleAdapter(ApiKeyLifecyclePort):
     key_revocation: ApiKeyRevocation | None = None
     """When set, every key this adapter retires (a revocation, or the presented key of a
     rotation) has ``revoked`` written to the revocation states once the retirement commits, and
-    a key issued from a request that authenticated with an API key re-reads that key's row
-    first."""
+    a key issued from a request that authenticated with an API key, for whomever, re-reads that
+    key's row first."""
 
     # ....................... #
 
@@ -142,7 +142,7 @@ class ApiKeyLifecycleAdapter(ApiKeyLifecyclePort):
 
         # The credential before the epoch, the order every revocation takes them in.
         if self.key_revocation is not None:
-            await self.key_revocation.recheck_caller(identity.principal_id)
+            await self.key_revocation.recheck_caller()
 
         if self.revocation is not None:
             await self.revocation.recheck_caller(identity.principal_id)

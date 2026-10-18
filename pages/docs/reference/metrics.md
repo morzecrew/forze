@@ -240,6 +240,7 @@ path for sessions and API keys. Labelled `forze.revocation_states` and `forze.cr
 | `forze.authn.revocation_states.misses` | observable counter | 1 | verifications that read the database for a state Redis lacked or could not trust |
 | `forze.authn.revocation_states.fallbacks` | observable counter | 1 | verifications whose Redis read failed, timed out or met an open breaker |
 | `forze.authn.revocation_states.write_failures` | observable counter | 1 | revocations whose write-through failed every attempt |
+| `forze.authn.revocation_states.clock_skew` | observable counter | 1 | API-key states refused because the application's clock runs two `ttl` or more ahead of Redis's |
 
 **The alert that matters:** every `write_failures` increment is a revoked credential that
 stays admitted for up to the states' `ttl`. See

@@ -45,6 +45,21 @@ class RevocationStatesRead:
     """The cached state as stored, or ``None`` when absent."""
 
 
+@attrs.define(slots=True, frozen=True, kw_only=True)
+class ApiKeyStateRead:
+    """What one read of an API key's state found, on the store's clock."""
+
+    now_ms: int
+    """The store's time when the read ran, in milliseconds since the Unix epoch."""
+
+    state: str | None
+    """The cached state as stored, or ``None`` when absent."""
+
+    key: str
+    """The store's own full name for the state, its namespace included. A MAC over it binds a
+    state to the store it was written in."""
+
+
 # ....................... #
 
 
@@ -116,10 +131,8 @@ class RevocationStatesPort(Protocol):
         """
         ...  # pragma: no cover
 
-    def read_api_key(self, digest: str) -> Awaitable[RevocationStatesRead]:
-        """Read the state under an API key's digest, with the store's time, at once.
-
-        The read's :attr:`~RevocationStatesRead.epoch` is always ``None``: a key has none.
+    def read_api_key(self, digest: str) -> Awaitable[ApiKeyStateRead]:
+        """Read the state under an API key's digest, with the store's time and its key, at once.
 
         :param digest: The key's digest.
         """

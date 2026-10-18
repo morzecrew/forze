@@ -28,8 +28,8 @@ from forze.application.contracts.authn import (
 from forze.application.contracts.authz import AuthzSpec
 from forze.application.execution.operations import run_operation
 from forze.base.exceptions import CoreException
-from forze.base.primitives import utcnow
-from forze_identity.authn import instrument_revocation_states
+from forze.base.primitives import FrozenTimeSource, bind_time_source, utcnow
+from forze_identity.authn import AuthnKernelConfig, instrument_revocation_states
 from forze_identity.authn.services import (
     ApiKeyConfig,
     ApiKeyRevocation,
@@ -37,6 +37,7 @@ from forze_identity.authn.services import (
     RevocationStates,
     StateMacKeys,
 )
+from forze_identity.authn.services.revocation_states import _api_key_message
 from forze_identity.authz.application.specs import policy_principal_spec
 from forze_identity.authz.domain.models.policy_principal import CreatePolicyPrincipalCmd
 from forze_kits.aggregates.authn import (
@@ -56,6 +57,7 @@ from tests.unit.test_forze_identity.authn.test_revocation_states import (
     _Clock,
     _Stack,
     _stack,
+    _States,
 )
 
 pytest.importorskip("argon2")
@@ -108,19 +110,22 @@ def _digest(key: ApiKeyCredentials) -> str:
 def _stored(stack: _Stack, digest: str) -> tuple[str, int] | None:
     """The raw state and its expiry, as the store holds them."""
 
-    return stack.states.inner.state.revocation_states.get((STATES, "", f"k:{digest}"))
+    stored = (stack.states.inner.namespace, "", f"k:{digest}")
+
+    return stack.states.inner.state.revocation_states.get(stored)
 
 
 def _plant(stack: _Stack, digest: str, value: str) -> None:
     """Write *value* as anyone able to write the store could: over what is there, never expiring."""
 
-    stack.states.inner.state.revocation_states[(STATES, "", f"k:{digest}")] = (value, FOREVER_MS)
+    stored = (stack.states.inner.namespace, "", f"k:{digest}")
+    stack.states.inner.state.revocation_states[stored] = (value, FOREVER_MS)
 
 
-def _message(digest: str, body: str) -> bytes:
-    """What a state's MAC covers, as the server builds it."""
+def _message(digest: str, body: str, *, namespace: str = STATES, route: str = STATES) -> bytes:
+    """What a state's MAC covers, built by the server's own function for the unit stack."""
 
-    return b"\n".join((b"forze.authn.api-key-state.v1", f"k:{digest}".encode(), body.encode()))
+    return _api_key_message(route, f"{namespace}:k:{digest}", digest, body)
 
 
 def _signed(
@@ -553,6 +558,8 @@ async def test_the_counters_are_exported_per_credential() -> None:
         (f"{prefix}.fallbacks", "api_key"): 1,
         (f"{prefix}.write_failures", "session"): 1,
         (f"{prefix}.write_failures", "api_key"): 0,
+        (f"{prefix}.clock_skew", "session"): 0,
+        (f"{prefix}.clock_skew", "api_key"): 0,
     }
 
 
@@ -690,3 +697,169 @@ async def test_revoking_a_revoked_key_again_repairs_a_lost_write() -> None:
     await lifecycle.revoke_api_key(owner, str(issued.key_id))
 
     assert (await stack.states.inner.read_api_key(_digest(issued.key))).state == REVOKED_STATE
+
+
+# ....................... #
+
+
+@pytest.mark.parametrize("apart", ["namespace", "route"])
+async def test_a_state_copied_from_another_deployment_is_a_miss(apart: str) -> None:
+    """Two deployments sharing the pepper and the MAC key, but not a database or a namespace."""
+
+    one = _key_stack()
+    other = _key_stack(**{"namespace" if apart == "namespace" else "states_route": "other"})
+    principal = await one.principal()
+    # The same principal exists in both, as in a clone.
+    await other.ctx.doc.command(policy_principal_spec).create(
+        CreatePolicyPrincipalCmd(kind="user"),
+        id=principal,
+    )
+    key = (await _issue(one, principal)).key
+    await _verify(one, key)
+    stored = _stored(one, _digest(key))
+    assert stored is not None
+
+    _plant(other, _digest(key), stored[0])
+    other.reads.clear()
+
+    # The key exists only in the first: the copied state proves nothing, and its row is missing.
+    assert await _verify(other, key) == "refused"
+    assert other.reads == ["api_key.find"]
+
+
+def test_a_mac_key_that_reuses_another_authn_secret_is_refused() -> None:
+    pepper = b"a" * 32
+
+    for key_mac in (
+        StateMacKeys(active=pepper),
+        StateMacKeys(active=b"m" * 32, previous=(pepper,)),
+    ):
+        with pytest.raises(CoreException) as caught:
+            AuthnKernelConfig(
+                api_key_pepper=pepper,
+                revocation_states=RevocationStates(route=STATES, ttl=TTL, key_mac=key_mac),
+            )
+
+        assert caught.value.code == "authn_state_mac_key_reused"
+
+    for secret in ("access_token_secret", "refresh_token_pepper", "reset_token_pepper"):
+        with pytest.raises(CoreException):
+            AuthnKernelConfig(
+                **{secret: pepper},  # type: ignore[arg-type]
+                revocation_states=RevocationStates(
+                    route=STATES,
+                    ttl=TTL,
+                    key_mac=StateMacKeys(active=pepper),
+                ),
+            )
+
+
+def test_a_reused_secret_still_makes_the_digest_no_state_mac() -> None:
+    """With no domain separation, a key presented as a crafted message would have the server
+    compute that message's state MAC as the key's digest, a name sent to Redis."""
+
+    pepper = b"a" * 32
+    message = b"whatever message a presenter wants signed"
+    digest_as_mac = ApiKeyService(pepper=pepper, config=ApiKeyConfig()).calculate_key_digest(
+        message.decode(),
+    )
+
+    assert not StateMacKeys(active=pepper).verify(message, digest_as_mac)
+
+
+@pytest.mark.parametrize("what", ["session", "api_key"])
+async def test_a_key_admitted_inside_the_window_mints_nothing_for_another_principal(
+    what: str,
+) -> None:
+    stack = _key_stack()
+    caller, other = await stack.principal(), await stack.principal()
+    issued = await _issue(stack, caller)
+    await _verify(stack, issued.key)
+
+    stack.states.writes_down = True
+    await stack.ctx.authn.api_key_lifecycle(SPEC).revoke_api_key(
+        AuthnIdentity(principal_id=caller),
+        str(issued.key_id),
+    )
+    stack.states.writes_down = False
+
+    async def request() -> Any:
+        # Admitted from the stale state, then a credential minted for someone else.
+        await stack.ctx.authn.authn(SPEC).authenticate_with_api_key(issued.key)
+
+        async with stack.ctx.tx_ctx.scope(TX):
+            if what == "session":
+                return await stack.lifecycle.issue_tokens(AuthnIdentity(principal_id=other))
+
+            return await stack.ctx.authn.api_key_lifecycle(SPEC).issue_api_key(
+                AuthnIdentity(principal_id=other),
+            )
+
+    with pytest.raises(CoreException) as caught:
+        await asyncio.create_task(request())
+
+    assert caught.value.code == "api_key_revoked"
+
+
+async def test_a_key_that_expires_before_the_mint_mints_nothing() -> None:
+    stack = _key_stack(api_key=ApiKeyConfig(expires_in=timedelta(hours=1)))
+    principal = await stack.principal()
+    issued = await _issue(stack, principal)
+    await _verify(stack, issued.key)
+
+    async def request() -> Any:
+        await stack.ctx.authn.authn(SPEC).authenticate_with_api_key(issued.key)
+
+        # The key expires between its verification and the issue the request makes from it.
+        with bind_time_source(FrozenTimeSource(instant=utcnow() + timedelta(hours=2))):
+            return await stack.ctx.authn.api_key_lifecycle(SPEC).issue_api_key(
+                AuthnIdentity(principal_id=principal),
+            )
+
+    with pytest.raises(CoreException) as caught:
+        await asyncio.create_task(request())
+
+    assert caught.value.code == "api_key_revoked"
+
+
+@pytest.mark.parametrize("skew_ttls", [-3, -1, 1, 3])
+async def test_clock_skew_never_refuses_a_key_and_past_two_ttl_is_counted(skew_ttls: int) -> None:
+    """The store's clock is the application's plus *skew_ttls* times ``ttl``."""
+
+    stack = _stack(clock=_Clock(now=time.time() + skew_ttls * TTL.total_seconds()), key_mac=MAC)
+    principal = await stack.principal()
+    key = (await _issue(stack, principal)).key
+
+    for _ in range(3):
+        assert await _verify(stack, key) == principal
+        stack.clock.advance(timedelta(seconds=1))
+
+    # Behind by two ttl or more, every state is past the application's cap when written.
+    skewed = _config(stack).counters.get("clock_skew", "api_key")
+    assert (skewed > 0) == (skew_ttls <= -2)
+
+
+async def test_keys_and_sessions_need_no_api_key_calls_without_key_mac(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An application's own states port, written before the API-key calls, keeps working."""
+
+    for name in ("read_api_key", "fill_api_key", "revoke_api_keys"):
+        monkeypatch.delattr(_States, name)
+
+    stack = _stack(key_mac=None)
+    principal = await stack.principal()
+    issued = await _issue(stack, principal)
+    lifecycle = stack.ctx.authn.api_key_lifecycle(SPEC)
+    token = await stack.login(principal)
+
+    assert await _verify(stack, issued.key) == principal
+    assert await stack.verify(token) == "admitted"
+
+    await lifecycle.refresh_api_key(issued.key)
+    await lifecycle.revoke_principal_api_key(str((await _issue(stack, principal)).key_id))
+
+    async with stack.ctx.tx_ctx.scope(TX):
+        await stack.ctx.authn.principal_deactivation(SPEC).deactivate(principal)
+
+    assert await stack.verify(token) == "session_revoked"

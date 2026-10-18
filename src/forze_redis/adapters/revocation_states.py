@@ -21,6 +21,7 @@ import attrs
 from forze.application.contracts.authn import (
     EPOCH_STATE_KEY,
     REVOKED_STATE,
+    ApiKeyStateRead,
     RevocationStatesPort,
     RevocationStatesRead,
 )
@@ -130,14 +131,15 @@ class RedisRevocationStatesAdapter(RedisBaseAdapter, RevocationStatesPort):
             [str(epoch), expire_at_ms],
         )
 
-    async def read_api_key(self, digest: str) -> RevocationStatesRead:
+    async def read_api_key(self, digest: str) -> ApiKeyStateRead:
         await self._prepare_keys()
-        raw = await self.client.run_script(REVOCATION_READ_ONE, [self._api_key(digest)], [])
+        key = self._api_key(digest)
+        raw = await self.client.run_script(REVOCATION_READ_ONE, [key], [])
 
         try:
             now_ms, state = raw.split("\n", 1)
 
-            return RevocationStatesRead(now_ms=int(now_ms), epoch=None, state=_present(state))
+            return ApiKeyStateRead(now_ms=int(now_ms), state=_present(state), key=key)
 
         except ValueError as error:
             raise exc.infrastructure("Unreadable revocation states reply") from error

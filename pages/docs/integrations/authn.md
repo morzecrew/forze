@@ -126,10 +126,11 @@ CREATE TABLE authn_principal_epochs (
 - **Minting re-reads the credential.** A tenant switch or an API-key issue in a request that
   authenticated with an access token re-reads that token's session and epoch from Postgres
   first, and one that authenticated with an API key (with `key_mac` set) re-reads the key's
-  row (`api_key_revoked`), under locks inside a transaction, so a credential admitted inside
-  the window mints nothing that outlives it; above read committed a revocation committed since
-  the transaction's snapshot fails it with a serialization error. A socket's
-  commands run apart from the handshake that verified its token, and are not re-read.
+  row (`api_key_revoked`) whoever the issue is for, under locks inside a transaction, so a
+  credential admitted inside the window mints nothing that outlives it; above read committed a
+  revocation committed since the transaction's snapshot fails it with a serialization error.
+  A socket's commands run apart from the handshake that verified its token, and are not
+  re-read.
 - **Redis down.** A Redis error or timeout makes the same checks from Postgres, so an outage
   never admits a credential the fast path would refuse. Tokens issued before the fast path
   carry no `fam` or `pep`, and keep the session-row check until they expire.
@@ -140,9 +141,11 @@ A key's cached state is the only proof the key exists: a hit reads no row, and t
 verifier takes the principal, the delegation actor and the expiry from the state. So
 everything able to write the states' Redis namespace is kept from minting a key:
 
-- **Each live state carries a MAC** under `key_mac`, over the key's digest and every field.
-  A state forged without the key, or copied onto another key's digest, fails it and is read
-  from Postgres. `revoked` carries none: forging it can refuse a key, never admit one.
+- **Each live state carries a MAC** under `key_mac`, over the states route, the state's full
+  Redis key (its namespace included), the key's digest and every field. A state forged
+  without the key, copied onto another key's digest, or copied in from another namespace
+  fails it and is read from Postgres. `revoked` carries none: forging it can refuse a key,
+  never admit one.
 - **Each live state carries a not-after**, the earlier of the key's own expiry and `ttl`
   after the lookup read Redis's clock. It is checked against Redis's clock from the same read,
   so a live state replayed over `revoked`, with no expiry of its own, stops verifying no later
@@ -152,6 +155,14 @@ everything able to write the states' Redis namespace is kept from minting a key:
 - **A state that fails either check stays a miss** until it expires or is deleted: a lookup
   never overwrites a state, so a tampered key costs one row read per verification, never an
   admission. Keys nobody issued are never cached.
+
+**Give every deployment its own `key_mac`.** The MAC binds a state to its route and
+namespace, so deployments that share one Redis are kept apart; but two deployments with the
+same namespace name and the same `key_mac`, a staging copy of production or customers served
+from one secrets bundle, accept each other's states, and a state copied from one admits its key
+in the other without a row read. Never reuse another secret as `key_mac` either: the kernel
+refuses one equal to any of its peppers or its token secret (`authn_state_mac_key_reused`), and
+each MAC key is used only through a key derived from it.
 
 `StateMacKeys` takes keys of at least 32 bytes. To rotate one, make the new key `active`
 and move the old one to `previous`, on every process that verifies or revokes; after `ttl`,
@@ -184,13 +195,17 @@ a Redis namespace nothing else flushes or evicts.
 
 **Redis's clock.** Every expiry and every not-after is set on Redis's clock, from `TIME` in
 the script that reads or writes the state or relative to it with `PX`, so the bound has no
-skew term against the application's clock. It does lean on the Redis primary's clock: a failover to a replica whose
-clock lags lengthens every state by the lag, and moving the primary's clock back does the
-same. Keep its clock synchronized, and let only operators change it.
+skew term against the application's clock. It does lean on the Redis primary's clock: a
+failover to a replica whose clock lags lengthens every state by the lag, and moving the
+primary's clock back does the same. Keep its clock synchronized, and let only operators change
+it. The application's clock caps an API-key state at `ttl` past its not-after, so with the
+application two `ttl` or more ahead of Redis every key state is refused as soon as it is
+written, and every key verification reads its row; each such refusal is counted as
+`clock_skew`.
 
 ### Metrics
 
-`instrument_revocation_states({"default": kernel.revocation_states})` exports four counters,
+`instrument_revocation_states({"default": kernel.revocation_states})` exports five counters,
 labelled by credential (`session` or `api_key`):
 
 | Counter | Counts |
@@ -199,10 +214,11 @@ labelled by credential (`session` or `api_key`):
 | `forze.authn.revocation_states.misses` | verifications that read Postgres for a state Redis lacked or could not trust |
 | `forze.authn.revocation_states.fallbacks` | verifications whose Redis read failed, timed out or met an open breaker |
 | `forze.authn.revocation_states.write_failures` | revocations whose write-through failed every attempt |
+| `forze.authn.revocation_states.clock_skew` | API-key states refused because the application's clock is two `ttl` or more ahead of Redis's |
 
 Alert on any `write_failures`: each is a revoked credential admitted for up to `ttl`. A rising
-`fallbacks` rate is Redis being down for verifications, and `misses` against `hits` is what the
-cache saves. The [metrics reference](../reference/metrics.md#revocation-states) lists them with
+`fallbacks` rate is Redis being down for verifications, a steady `clock_skew` is a clock to
+fix, and `misses` against `hits` is what the cache saves. The [metrics reference](../reference/metrics.md#revocation-states) lists them with
 the rest.
 
 ## Notes

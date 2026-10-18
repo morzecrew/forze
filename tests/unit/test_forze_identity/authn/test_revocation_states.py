@@ -19,6 +19,7 @@ import pytest
 import structlog
 
 from forze.application.contracts.authn import (
+    ApiKeyStateRead,
     AuthnIdentity,
     AuthnSpec,
     IssuedTokens,
@@ -152,7 +153,7 @@ class _States:
         self._call("raise_epoch", write=True)
         await self.inner.raise_epoch(principal_id, epoch, expire_at_ms=expire_at_ms)
 
-    async def read_api_key(self, digest: str) -> RevocationStatesRead:
+    async def read_api_key(self, digest: str) -> ApiKeyStateRead:
         self._call("read_api_key", write=False)
         return await self.inner.read_api_key(digest)
 
@@ -324,12 +325,14 @@ def _stack(
     key_mac: StateMacKeys | None = None,
     clock: _Clock | None = None,
     api_key: ApiKeyConfig | None = None,
+    states_route: str = STATES,
+    namespace: str = STATES,
 ) -> _Stack:
     mock = MockDepsModule()
     state = mock.state
     clock = clock or _Clock()
     reads: list[str] = []
-    states = _States(inner=MockRevocationStates(state=state, namespace=STATES, clock=clock))
+    states = _States(inner=MockRevocationStates(state=state, namespace=namespace, clock=clock))
     document = ConfigurableMockDocument(module=mock)
     epochs_by_ctx: dict[int, _Epochs] = {}
 
@@ -360,7 +363,7 @@ def _stack(
         password=PasswordConfig(time_cost=1, memory_cost=8, parallelism=1),
         revocation_states=(
             RevocationStates(
-                route=STATES,
+                route=states_route,
                 ttl=TTL,
                 write_attempts=write_attempts,
                 session_binding=binding,
@@ -403,7 +406,7 @@ def _stack(
                         document,
                     ),
                     PrincipalRegistryDepKey: {ROUTE: ConfigurablePrincipalRegistry()},
-                    RevocationStatesDepKey: {STATES: lambda ctx, spec: states},
+                    RevocationStatesDepKey: {states_route: lambda ctx, spec: states},
                     TenantResolverDepKey: {ROUTE: lambda ctx: _AnyTenant()},
                 }
             )

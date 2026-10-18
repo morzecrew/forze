@@ -30,6 +30,7 @@ REVOCATION_HITS_COUNTER = "forze.authn.revocation_states.hits"
 REVOCATION_MISSES_COUNTER = "forze.authn.revocation_states.misses"
 REVOCATION_FALLBACKS_COUNTER = "forze.authn.revocation_states.fallbacks"
 REVOCATION_WRITE_FAILURES_COUNTER = "forze.authn.revocation_states.write_failures"
+REVOCATION_CLOCK_SKEW_COUNTER = "forze.authn.revocation_states.clock_skew"
 
 _REVOCATION_COUNTERS: tuple[tuple[str, RevocationEvent, str], ...] = (
     (REVOCATION_HITS_COUNTER, "hit", "Verifications answered from cached states alone."),
@@ -43,6 +44,11 @@ _REVOCATION_COUNTERS: tuple[tuple[str, RevocationEvent, str], ...] = (
         REVOCATION_WRITE_FAILURES_COUNTER,
         "write_failure",
         "Revocations whose write-through to the states store failed every attempt.",
+    ),
+    (
+        REVOCATION_CLOCK_SKEW_COUNTER,
+        "clock_skew",
+        "API-key states refused because the application clock runs ahead of the store's.",
     ),
 )
 
@@ -135,6 +141,10 @@ def instrument_revocation_states(
       timed out, or met an open breaker, and that read the database instead.
     - ``forze.authn.revocation_states.write_failures`` — revocations whose write-through failed
       every attempt; each leaves a revoked credential admitted for up to ``ttl``.
+    - ``forze.authn.revocation_states.clock_skew`` — API-key states the store's clock accepted
+      and the application's put more than ``ttl`` past their not-after, each a miss. A steady
+      rate means the application's clock runs two ``ttl`` or more ahead of Redis's, and every
+      key verification reads its row.
 
     Emits via the global OTel meter unless *meter* is supplied. Call once at assembly time.
     """
