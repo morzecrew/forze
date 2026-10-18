@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from typing import Any
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -138,3 +139,18 @@ def test_an_outbox_resolving_its_collection_without_the_tenant_is_not_namespace(
     # Not tenant-aware, the outbox calls its resolver with no tenant: one collection for all.
     with pytest.raises(CoreException, match="mongo_tenancy_validation_failed"):
         _module(floor="namespace", **_outbox(None, tenant_aware=False))
+
+
+def test_a_tenant_aware_outbox_is_not_advised_to_drop_the_flag(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Dropping it would have the outbox call its resolver with no tenant.
+    import forze_mongo.execution.deps.module as mongo_module
+
+    log = MagicMock()
+    monkeypatch.setattr(mongo_module, "logger", log)
+
+    _module(floor=None, **_outbox(None, tenant_aware=True))
+
+    advice = [str(call) for call in log.warning.call_args_list]
+    assert not [line for line in advice if "outbox" in line], advice

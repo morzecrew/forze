@@ -19,6 +19,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Mongo searches and counters, tenant-aware Mongo outboxes and Firestore counters on a per-tenant collection now meet a `namespace` floor.** A Mongo search's index name, scoped to its collection, no longer counts.
 
+- **Mongo no longer advises a tenant-aware outbox on a per-tenant collection to drop `tenant_aware`**, which would put every tenant's records in one collection.
+
 ### Security
 
 - **A route is `namespace`-isolated only when every relation it names resolves per tenant** (**Breaking**): a `namespace` floor refuses one with a static relation, and a per-tenant Postgres inbox or idempotency store that is not tenant-aware. New: `TenancyRouteGroup(other_namespaces=)`, `resolves_per_tenant`.

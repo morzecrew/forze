@@ -57,7 +57,6 @@ from ._warnings import (
     MONGO_DOCUMENT_RW_WARNING,
     MONGO_IDEMPOTENCY_WARNING,
     MONGO_INBOX_WARNING,
-    MONGO_OUTBOX_WARNING,
     MONGO_SEARCH_WARNING,
 )
 from .configs import (
@@ -274,12 +273,8 @@ class MongoDepsModule(DepsModule):
             warning=MONGO_SEARCH_WARNING,
             log_warning=logger.warning,
         )
-        warn_integration_routes(
-            integration="Mongo",
-            routes=self.outboxes,
-            warning=MONGO_OUTBOX_WARNING,
-            log_warning=logger.warning,
-        )
+        # No advice for outboxes: one that is not tenant-aware passes its resolver no tenant,
+        # so dropping the flag on a per-tenant collection would put every tenant in one.
         warn_integration_routes(
             integration="Mongo",
             routes=self.inboxes,
