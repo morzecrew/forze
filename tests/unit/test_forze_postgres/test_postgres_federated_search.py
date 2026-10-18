@@ -143,6 +143,29 @@ def test_postgres_federated_search_config_accepts_embedded_hub_member() -> None:
     )
 
 
+
+def test_a_plain_leg_keeps_its_own_tenant_aware_flag() -> None:
+    # A leg left untagged on purpose may read a table with no tenant column; the
+    # isolation floor rates the route by its least-scoped leg instead.
+    def leg(name: str, *, tenant_aware: bool) -> PostgresFederatedSearchLegSearch:
+        return PostgresFederatedSearchLegSearch(
+            search=PostgresSearchConfig(
+                index=("public", f"i_{name}"),
+                read=("public", f"r_{name}"),
+                engine="pgroonga",
+                tenant_aware=tenant_aware,
+            ),
+        )
+
+    config = PostgresFederatedSearchConfig(
+        tenant_aware=True,
+        members={"a": leg("a", tenant_aware=True), "b": leg("b", tenant_aware=False)},
+    )
+    adapter = ConfigurablePostgresFederatedSearch(config=config)(MagicMock(), _fed())
+    flags = {name: port.tenant_aware for name, port in adapter.legs}  # type: ignore[attr-defined]
+
+    assert flags == {"a": True, "b": False}
+
 @pytest.mark.asyncio
 async def test_federated_search_reads_snapshot_without_running_legs() -> None:
     h = _Hit(id=1, label="x")

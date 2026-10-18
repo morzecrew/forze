@@ -57,6 +57,7 @@ class ClickHouseDepsModule(DepsModule):
                     configs=self.analytics,
                     tenant_aware=lambda cfg: cfg.tenant_aware,
                     namespace_resolver=lambda cfg: cfg.query_database,
+                    other_namespaces=lambda cfg: (cfg.resolved_ingest_relation(),),
                 )
             ],
             required_isolation=self.required_tenant_isolation,

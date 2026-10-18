@@ -141,3 +141,35 @@ def test_namespace_floor_rejects_static_query_database() -> None:
                 ),
             },
         )
+
+
+@pytest.mark.parametrize("static", [None, "query_database", "ingest"])
+def test_namespace_floor_needs_every_database_per_tenant(static: str | None) -> None:
+    # Unset, the queries fall back to the static ``database``: one place for every tenant.
+    def module(*, floor: str | None) -> ClickHouseDepsModule:
+        return ClickHouseDepsModule(
+            client=ClickHouseClient(),
+            required_tenant_isolation=floor,  # type: ignore[arg-type]
+            analytics={
+                "events": ClickHouseAnalyticsConfig(
+                    database="analytics",
+                    queries={"counts": ClickHouseQueryConfig(sql="SELECT 1 AS value")},
+                    query_database=None if static == "query_database" else lambda t: f"t_{t}",
+                    ingest=(
+                        ("analytics", "events")
+                        if static == "ingest"
+                        else lambda t: (f"t_{t}", "events")
+                    ),
+                ),
+            },
+        )
+
+    if static is None:
+        assert module(floor="namespace") is not None
+        return
+
+    with pytest.raises(CoreException, match="clickhouse_analytics_tenancy_validation_failed"):
+        module(floor="namespace")
+
+    # The control: with no floor declared the same wiring stands, so the refusal is the floor's.
+    assert module(floor=None) is not None

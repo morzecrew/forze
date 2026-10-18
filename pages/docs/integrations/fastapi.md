@@ -360,8 +360,8 @@ membership is the app's authorization decision, exactly as Socket.IO topic rooms
 are joined by app code; the requested set is also bounded (`max_topics`, default
 32).
 
-On the [tenancy ladder](../identity-tenancy-enc/multi-tenancy.md)'s namespace tier —
-the realtime stream route wired `tenant_aware` — use
+With the realtime stream route wired `tenant_aware` — a per-tenant stream key, the
+[tenancy ladder](../identity-tenancy-enc/multi-tenancy.md)'s `tagged` tier — use
 `realtime_sse_sharded_tail_lifecycle_step(hub, shard=shard)` instead: one supervised
 tail loop per shard tenant, each bound to its tenant, so signals fan out under the
 **stream's** trusted identity rather than an untrusted header (the SSE analog of
@@ -511,7 +511,7 @@ runs them. The surface, at a glance:
 | `attach_readiness_route` | a drain-aware `GET /readyz` probe, optionally sweeping dependency `health()` |
 | `attach_document_routes` / `attach_search_routes` / `attach_storage_routes` / `attach_authn_routes` | project a frozen registry's operations onto a router |
 | `attach_realtime_sse_route` / `realtime_sse_tail_lifecycle_step` | realtime egress over SSE: mailbox replay + per-node live tail |
-| `realtime_sse_sharded_tail_lifecycle_step` | namespace-tier SSE: per-tenant tail loops, tenant trusted from the stream |
+| `realtime_sse_sharded_tail_lifecycle_step` | tenant-aware SSE: per-tenant tail loops, tenant trusted from the stream |
 | `realtime_sse_presence_heartbeat_lifecycle_step` | SSE streams report into the shared presence store (TTL heartbeat) |
 | `realtime_sse_drain_lifecycle_step` | end the SSE streams and WebSocket tails spread over a window when the replica drains |
 | `attach_realtime_ws_route` | duplex realtime over raw WebSocket: replay + live egress, inline ack/reauth, governed `cmd` dispatch |

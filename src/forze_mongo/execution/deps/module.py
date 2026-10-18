@@ -57,7 +57,6 @@ from ._warnings import (
     MONGO_DOCUMENT_RW_WARNING,
     MONGO_IDEMPOTENCY_WARNING,
     MONGO_INBOX_WARNING,
-    MONGO_OUTBOX_WARNING,
     MONGO_SEARCH_WARNING,
 )
 from .configs import (
@@ -274,12 +273,8 @@ class MongoDepsModule(DepsModule):
             warning=MONGO_SEARCH_WARNING,
             log_warning=logger.warning,
         )
-        warn_integration_routes(
-            integration="Mongo",
-            routes=self.outboxes,
-            warning=MONGO_OUTBOX_WARNING,
-            log_warning=logger.warning,
-        )
+        # No advice for outboxes: one that is not tenant-aware passes its resolver no tenant,
+        # so dropping the flag on a per-tenant collection would put every tenant in one.
         warn_integration_routes(
             integration="Mongo",
             routes=self.inboxes,
@@ -313,17 +308,23 @@ class MongoDepsModule(DepsModule):
                     configs=self.rw_documents,
                     tenant_aware=lambda cfg: cfg.tenant_aware,
                     namespace_resolver=lambda cfg: cfg.read,
+                    other_namespaces=lambda cfg: (cfg.write, cfg.history),
                 ),
                 TenancyRouteGroup(
                     kind="search",
                     configs=self.searches,
                     tenant_aware=lambda cfg: cfg.tenant_aware,
-                    namespace_resolver=lambda cfg: cfg.index_name,
+                    # An index name, Atlas or vector, is scoped to the collection it searches,
+                    # so the collection alone holds the data.
+                    namespace_resolver=lambda cfg: cfg.read,
                 ),
                 TenancyRouteGroup(
                     kind="outbox",
                     configs=self.outboxes,
                     tenant_aware=lambda cfg: cfg.tenant_aware,
+                    # The outbox passes its resolver the tenant only when it is tenant-aware;
+                    # otherwise every tenant lands in the one collection it returns.
+                    namespace_resolver=lambda cfg: cfg.collection if cfg.tenant_aware else None,
                 ),
                 TenancyRouteGroup(
                     kind="inbox",
@@ -341,6 +342,7 @@ class MongoDepsModule(DepsModule):
                     kind="counter",
                     configs=self.counters,
                     tenant_aware=lambda cfg: cfg.tenant_aware,
+                    namespace_resolver=lambda cfg: cfg.collection,
                 ),
                 # The durable routes are single optional fields rather than route maps — a
                 # module has one run store, not a named set of them — so each is lifted into

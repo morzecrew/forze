@@ -198,7 +198,7 @@ class _OutboxRelayBackgroundStartup(LifecycleHook):
 
     tenants: Callable[[], Sequence[UUID]] | None = None
     """When set, the outbox is tenant-aware (partitioned): each tick drains every assigned
-    tenant's partition under a bound tenant (namespace tier). The shard is
+    tenant's partition under a bound tenant. The shard is
     evaluated **once at startup** and frozen for the process (restart to repartition),
     matching the gateway source. ``None`` = tenant-global; one unbound pass drains it."""
 
@@ -1079,7 +1079,7 @@ def outbox_relay_background_lifecycle_step(
 
     When *tenants* is set the outbox is **tenant-aware** (partitioned): each tick drains
     every assigned tenant's partition under a bound tenant, so the relay can read a
-    namespace-tier outbox (which fail-closes when read unbound) and forward each row to its
+    tenant-aware outbox (which fail-closes when read unbound) and forward each row to its
     tenant's destination. Tenants drain **sequentially** per tick; assign the **same shard**
     this instance's gateway consumes, and shard across instances to parallelize. Omit it for
     a tenant-global (tagged) outbox, which one unbound pass drains with per-row routing; a

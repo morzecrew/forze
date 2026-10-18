@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 
 from forze.application.contracts.tenancy.wiring import (
@@ -270,7 +272,9 @@ def _validate_redis(
     )
 
 
-def _lock_group(*, tenant_aware: bool = False, per_tenant: bool = False) -> object:
+def _lock_group(
+    *, tenant_aware: bool = False, per_tenant: bool = False, others: tuple[object, ...] = ()
+) -> object:
     from forze.application.contracts.tenancy import TenancyRouteGroup
 
     return TenancyRouteGroup(
@@ -278,6 +282,7 @@ def _lock_group(*, tenant_aware: bool = False, per_tenant: bool = False) -> obje
         configs={"lifecycle": object()},
         tenant_aware=lambda _c: tenant_aware,
         namespace_resolver=lambda _c: (lambda tid: f"app:{tid}") if per_tenant else "app",
+        other_namespaces=lambda _c: others,
         tenant_global=lambda _c: True,
     )
 
@@ -325,11 +330,16 @@ def test_tenant_global_routes_keep_the_capability_ceiling() -> None:
     [
         pytest.param({"tenant_aware": True}, False, id="tenant-aware"),
         pytest.param({"per_tenant": True}, False, id="per-tenant-namespace"),
+        # One per-tenant relation is enough: its resolver still runs with no tenant bound.
+        pytest.param(
+            {"per_tenant": True, "others": ("app:static",)}, False, id="per-tenant-beside-static"
+        ),
+        pytest.param({"others": (lambda tid: f"app:{tid}",)}, False, id="per-tenant-other"),
         pytest.param({}, True, id="routed-client"),
     ],
 )
 def test_a_tenant_scoped_route_cannot_be_tenant_global(
-    group: dict[str, bool], routed: bool
+    group: dict[str, Any], routed: bool
 ) -> None:
     # Used where no tenant is bound: scoped per tenant, it would refuse every call.
     with pytest.raises(CoreException) as caught:

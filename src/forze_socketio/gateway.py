@@ -802,7 +802,7 @@ class TenantShardedSignalSource(RealtimeSignalSource):
     assigned shard, binding the tenant from the **stream identity**.
 
     The tenant-global :class:`StreamGroupSignalSource` reads one shared stream and takes
-    the tenant from the (untrusted) ``forze_tenant_id`` header. This is the **namespace-tier**
+    the tenant from the (untrusted) ``forze_tenant_id`` header. This is the **tenant-aware**
     alternative: the realtime stream route is wired ``tenant_aware`` (so the adapter scopes
     each tenant to its own key/partition), and this source runs one consume loop per assigned
     tenant, each **bound** to that tenant. The tenant a signal belongs to is therefore the

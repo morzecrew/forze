@@ -109,7 +109,7 @@ def realtime_group_ensure_lifecycle_step(
 @attrs.define(slots=True, kw_only=True)
 class _EnsureTenantGroupsStartup(LifecycleHook):
     """Idempotently create the gateway's consumer group on **each** assigned tenant's
-    realtime stream (namespace-tier)."""
+    realtime stream (tenant-aware)."""
 
     shard: RealtimeShard
     """The realtime shard."""
@@ -150,7 +150,7 @@ def realtime_tenant_group_ensure_lifecycle_step(
 ) -> LifecycleStep:
     """Create the gateway's consumer group on **each** assigned tenant's realtime stream.
 
-    The namespace-tier counterpart of :func:`realtime_group_ensure_lifecycle_step`, paired
+    The tenant-aware counterpart of :func:`realtime_group_ensure_lifecycle_step`, paired
     with :class:`~forze_socketio.TenantShardedSignalSource`: the realtime stream route is
     wired ``tenant_aware``, so ensuring the group under each bound tenant creates it on that
     tenant's per-tenant stream key/partition. Pass the **same** :class:`RealtimeShard` the
@@ -203,9 +203,9 @@ def realtime_tenant_relay_lifecycle_step(
     interval: timedelta = timedelta(seconds=2),
     step_id: StrKey = "realtime_tenant_relay",
 ) -> LifecycleStep:
-    """Relay durable realtime signals **per assigned tenant** — the namespace-tier on-ramp.
+    """Relay durable realtime signals **per assigned tenant** — the tenant-aware on-ramp.
 
-    The namespace-tier counterpart of :func:`realtime_relay_lifecycle_step`, paired with
+    The tenant-aware counterpart of :func:`realtime_relay_lifecycle_step`, paired with
     :class:`~forze_socketio.TenantShardedSignalSource` and
     :func:`realtime_tenant_group_ensure_lifecycle_step`: when the realtime **outbox** is
     wired ``tenant_aware`` (partitioned), the relay must drain each tenant's partition under
@@ -722,7 +722,7 @@ def realtime_stream_trim_lifecycle_step(
     another holds the lock never trims. Work that must run on one node at a time belongs
     behind :func:`~forze_kits.lifecycle.leadership_lifecycle_step`.
 
-    *tenants* mirrors the sharded gateway/relay: on a ``tenant_aware`` (namespace-tier)
+    *tenants* mirrors the sharded gateway/relay: on a ``tenant_aware`` (per-tenant key)
     stream route, each sweep binds every assigned tenant in turn and trims its per-tenant
     stream key — pass ``lambda: shard.tenants`` from the same
     :class:`~forze.application.contracts.realtime.RealtimeShard` the other components use.
