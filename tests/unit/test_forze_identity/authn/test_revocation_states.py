@@ -206,12 +206,23 @@ class _Epochs:
 
 
 class _CountingQuery:
-    """A document query port that records its reads, as ``<label>.<method>``."""
+    """A document query port that records its reads, as ``<label>.<method>``.
 
-    def __init__(self, inner: Any, reads: list[str], label: str = "session") -> None:
+    With *cap*, a ``find_many`` that names no limit returns at most *cap* rows, as the Postgres,
+    Mongo and Firestore gateways' implicit limit does.
+    """
+
+    def __init__(
+        self,
+        inner: Any,
+        reads: list[str],
+        label: str = "session",
+        cap: int | None = None,
+    ) -> None:
         self._inner = inner
         self._reads = reads
         self._label = label
+        self._cap = cap
 
     def __getattr__(self, name: str) -> Any:
         attr = getattr(self._inner, name)
@@ -221,6 +232,11 @@ class _CountingQuery:
 
         async def counted(*args: Any, **kwargs: Any) -> Any:
             self._reads.append(f"{self._label}.{name}")
+            pagination = kwargs.get("pagination") or {}
+
+            if name == "find_many" and self._cap is not None and pagination.get("limit") is None:
+                kwargs["pagination"] = {**pagination, "limit": self._cap}
+
             return await attr(*args, **kwargs)
 
         return counted
@@ -333,6 +349,7 @@ def _stack(
     namespace: str = STATES,
     store_clock: bool = True,
     states_port: Callable[[_States], Any] | None = None,
+    key_query_cap: int | None = None,
 ) -> _Stack:
     mock = MockDepsModule()
     state = mock.state
@@ -352,7 +369,7 @@ def _stack(
         return _CountingQuery(document(ctx, spec), reads)
 
     def counted_keys(ctx: ExecutionContext, spec: Any) -> Any:
-        return _CountingQuery(document(ctx, spec), reads, label="api_key")
+        return _CountingQuery(document(ctx, spec), reads, label="api_key", cap=key_query_cap)
 
     def epochs(ctx: ExecutionContext) -> _Epochs:
         return epochs_by_ctx.setdefault(

@@ -21,7 +21,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- ...
+- **Deactivating a principal deactivates every API key it holds.** The keys were read with no limit, so past a store's implicit read limit (10,000 rows on Postgres, Mongo and Firestore) the rest stayed active; deactivation now pages through all of them.
 
 ## [0.14.0] - 2026-10-17
 

@@ -32,6 +32,8 @@ from forze.application.execution.operations import run_operation
 from forze.base.exceptions import CoreException
 from forze.base.primitives import FrozenTimeSource, bind_time_source, utcnow
 from forze_identity.authn import AuthnKernelConfig, instrument_revocation_states
+from forze_identity.authn.adapters import credential_deactivation
+from forze_identity.authn.application.specs import api_key_account_spec
 from forze_identity.authn.services import (
     ApiKeyConfig,
     ApiKeyRevocation,
@@ -963,3 +965,38 @@ def test_key_mac_with_a_states_port_without_the_key_calls_is_refused() -> None:
         stack.ctx.authn.authn(SPEC)
 
     assert caught.value.code == "authn_api_key_states_unsupported"
+
+
+async def test_a_deactivation_reaches_every_key_past_the_store_s_implicit_limit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A read that names no limit stops at the store's cap; the deactivation must not."""
+
+    monkeypatch.setattr(credential_deactivation, "_DEACTIVATE_BATCH", 2, raising=False)
+    stack = _key_stack(key_query_cap=3)
+    principal = await stack.principal()
+    issued = [await _issue(stack, principal) for _ in range(6)]
+
+    for each in issued:
+        await _verify(stack, each.key)
+
+    # One key already revoked, its state still live: the deactivation repairs it too.
+    stack.states.writes_down = True
+    await stack.ctx.authn.api_key_lifecycle(SPEC).revoke_api_key(
+        AuthnIdentity(principal_id=principal),
+        str(issued[0].key_id),
+    )
+    stack.states.writes_down = False
+
+    async with stack.ctx.tx_ctx.scope(TX):
+        await stack.ctx.authn.principal_deactivation(SPEC).deactivate(principal)
+
+    rows = await stack.ctx.doc.query(api_key_account_spec).find_many(
+        filters={"$values": {"principal_id": principal}},
+        pagination={"limit": 100},
+    )
+    assert len(rows.hits) == 6
+    assert not any(row.is_active for row in rows.hits)
+
+    for each in issued:
+        assert (await stack.states.inner.read_api_key(_digest(each.key))).state == REVOKED_STATE
