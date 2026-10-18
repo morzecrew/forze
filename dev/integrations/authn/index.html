@@ -3949,6 +3949,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Check sessions from Redis">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#skip-the-eligibility-read" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Skip the eligibility read
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -6468,6 +6485,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Check sessions from Redis">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#skip-the-eligibility-read" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Skip the eligibility read
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -6652,7 +6686,8 @@ and API-key revoke.</p>
 <p>By default every token verification reads its session row. With
 <code>revocation_states</code> on the kernel, a token carries its session's family (<code>fam</code>) and the
 principal's epoch (<code>pep</code>), and the verifier checks them against states cached in Redis,
-reading Postgres only for what Redis misses. The eligibility read stays.</p>
+reading Postgres only for what Redis misses. The eligibility read stays, unless the authz
+kernel carries the same configuration (<a href="#skip-the-eligibility-read">below</a>).</p>
 <div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">datetime</span><span class="w"> </span><span class="kn">import</span> <span class="n">timedelta</span>
 
 <span class="kn">from</span><span class="w"> </span><span class="nn">forze.application.contracts.authn</span><span class="w"> </span><span class="kn">import</span> <span class="n">RevocationStatesDepKey</span>
@@ -6692,23 +6727,76 @@ table yourself and never delete its rows:</p>
   revocation commits. Configure every process that verifies or revokes, and give
   the states a Redis namespace nothing else flushes. Expiries are instants on the Redis
   primary's clock: a failover to a replica whose clock lags lengthens every state by the lag.</li>
+<li><strong>Redis is trusted.</strong> The session states and epochs carry no MAC, so whoever can write the
+  states' namespace can restore a <code>live</code> state or an older epoch, and a revoked token is
+  admitted until its own <code>exp</code>. With the <a href="#skip-the-eligibility-read">eligibility read skipped</a>
+  that includes a deactivated principal's, which the eligibility read would otherwise still
+  refuse. Let nothing but the identity plane write that namespace.</li>
 <li><strong>Transactions are required.</strong> With the fast path on, issuing and revoking refuse to run
   outside a transaction (<code>authn_revocation_requires_transaction</code>), so keep <code>tx_route</code> set on
-  both registries. Issue and logout serialize on the epoch's row on Postgres only, with the
-  revocation at read committed (the default); a revocation at repeatable read or serializable
-  is refused (<code>authn_epoch_isolation</code>).</li>
+  both registries. They refuse the same way, before writing, in a transaction that does not
+  hold every store they write (the epochs, and for a deactivation or a password change the
+  credentials and sessions too): a store on another database would commit on its own. The
+  Postgres stores report it; one that cannot is not checked. Issue and logout serialize on the
+  epoch's row on Postgres only, with the revocation at read committed (the default); a
+  revocation at repeatable read or serializable is refused (<code>authn_epoch_isolation</code>).</li>
 <li><strong><code>session_binding</code>.</strong> <code>"session"</code> (the default) refuses a token once a refresh replaced its
   session, as without the fast path; <code>"family"</code> admits it until its own <code>exp</code> while the
   family is live. A logout, a family revocation and refresh-token reuse refuse it either way.</li>
-<li><strong>Minting re-reads the token.</strong> A tenant switch or an API-key issue in a request that
-  authenticated with an access token re-reads that token's session and epoch from Postgres
-  first, under locks inside a transaction, so a token admitted inside the window mints
-  nothing that outlives it; above read committed a revocation committed since the
-  transaction's snapshot fails it with a serialization error. A socket's
-  commands run apart from the handshake that verified its token, and are not re-read.</li>
+<li><strong>Minting re-reads the token.</strong> A session, an API key, a password account or an invite issued
+  in a request that authenticated with an access token re-reads that token's session and epoch
+  from Postgres first, whoever it is issued for, so a token admitted inside the window mints
+  nothing that outlives it. A session is issued only inside a transaction (above), where the
+  re-read takes locks; above read committed, a revocation committed since the transaction's
+  snapshot fails it with a serialization error. An API key, a password account or an invite
+  can be minted outside one, <code>tx_route=None</code> included: the re-read then takes no lock but reads
+  the latest commit, and a revocation committing after it is ordered after the mint, which it
+  leaves in place, as it would a locked mint it waited for. A WebSocket or Socket.IO
+  connection carries what its handshake (or its last reauth) verified to each command, so a
+  command that mints re-reads that token's session the same way: once a refresh elsewhere
+  rotates that session (under <code>"session"</code> binding) or a revocation ends it, the socket's mints
+  are refused until it reauths.</li>
 <li><strong>Redis down.</strong> A Redis error or timeout makes the same checks from Postgres, so an outage
   never admits a token the fast path would refuse. Tokens issued before the fast path carry
   no <code>fam</code> or <code>pep</code>, and keep the session-row check until they expire.</li>
+</ul>
+<h3 id="skip-the-eligibility-read">Skip the eligibility read<a class="headerlink" href="#skip-the-eligibility-read" title="Permanent link">&para;</a></h3>
+<p>Every verification also reads the policy principal, to refuse a deactivated one. Pass the same
+<code>RevocationStates</code> to the authz kernel, and a token the fast path admitted on its principal's
+current epoch skips that read too:</p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">forze_identity.authz</span><span class="w"> </span><span class="kn">import</span> <span class="n">AuthzDepsModule</span><span class="p">,</span> <span class="n">AuthzKernelConfig</span>
+
+<span class="n">states_config</span> <span class="o">=</span> <span class="n">RevocationStates</span><span class="p">(</span><span class="n">route</span><span class="o">=</span><span class="s2">"authn-revocations"</span><span class="p">,</span> <span class="n">ttl</span><span class="o">=</span><span class="n">timedelta</span><span class="p">(</span><span class="n">minutes</span><span class="o">=</span><span class="mi">5</span><span class="p">))</span>
+<span class="n">authn_kernel</span> <span class="o">=</span> <span class="n">AuthnKernelConfig</span><span class="p">(</span><span class="o">...</span><span class="p">,</span> <span class="n">revocation_states</span><span class="o">=</span><span class="n">states_config</span><span class="p">)</span>
+<span class="n">authz_kernel</span> <span class="o">=</span> <span class="n">AuthzKernelConfig</span><span class="p">(</span><span class="n">revocation_states</span><span class="o">=</span><span class="n">states_config</span><span class="p">)</span>
+</code></pre></div>
+<p>With it, every write that may deactivate a policy principal raises the principal's epoch in its
+transaction and writes it through to Redis after commit, whichever path writes it: the authz
+registry's <code>deactivate_principal</code>, the authn deactivation, or your own update, bulk patch,
+upsert or delete of the <code>policy_principal_spec</code> document through its document port. A token
+issued before is then refused by its epoch, so the eligibility read has nothing left to catch.</p>
+<ul>
+<li><strong>What still reads.</strong> Only the check right after the verification, in the same request, about
+  the token's own subject, is skipped. Issuing a session (login, refresh, tenant switch) reads
+  under the principal's row lock, and a delegated actor is always read, even when it is the
+  subject. Tokens issued before the fast path, passwords and API keys read as before.</li>
+<li><strong>The same rules as revocations.</strong> Such a write refuses to run outside a transaction, or in
+  one that holds neither its own write nor the epoch's (a scope on another route or another
+  database), before it writes (<code>authn_revocation_requires_transaction</code>); it refuses above read
+  committed too (<code>authn_epoch_isolation</code>). A deactivation whose write-through never lands is
+  enforced within <code>ttl</code>.</li>
+<li><strong>Configure every process that writes policy principals.</strong> A process without the authz
+  configuration raises no epoch, and a token it should have ended is admitted until its own
+  <code>exp</code>; so is one deactivated by a write around the document port (SQL, or another spec over
+  the same table), or one deactivated before you turned this on through a path that raised no
+  epoch (the authz registry alone). Logins and refreshes still read eligibility, so none of
+  these can be extended. Keep the policy principals on the database whose transaction holds the
+  epochs, so a deactivation and its raise commit together.</li>
+<li><strong>Postgres only.</strong> The skip needs the policy principal on Postgres, where an issue's locking
+  read excludes a concurrent deactivation; elsewhere, the mock included, every verification
+  reads. Without the authz configuration every verification reads, as before. With a
+  different one, building the eligibility gate (on the first authentication or issue) is
+  refused (<code>authn_revocation_states_mismatch</code>).</li>
 </ul>
 <h2 id="notes">Notes<a class="headerlink" href="#notes" title="Permanent link">&para;</a></h2>
 <ul>

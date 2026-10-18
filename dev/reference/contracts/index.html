@@ -6635,7 +6635,7 @@ the name a resolution error prints. Handlers should keep to the accessor.</p>
 <td><a href="../contracts/document/">Document</a> (read / write)</td>
 <td><code>DocumentSpec</code></td>
 <td><code>ctx.document.query(spec)</code> / <code>ctx.document.command(spec)</code></td>
-<td><code>DocumentQueryDepKey</code> / <code>DocumentCommandDepKey</code></td>
+<td><code>DocumentQueryDepKey</code> / <code>DocumentCommandDepKey</code> (+ <code>DocumentCommandHookDepKey</code>, which <code>ctx.deps</code> applies to one document's command port)</td>
 </tr>
 <tr>
 <td><a href="../contracts/stores/#cache">Cache</a></td>

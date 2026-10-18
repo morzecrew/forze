@@ -5657,6 +5657,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#command-hooks" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Command hooks
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -6680,6 +6691,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#command-hooks" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Command hooks
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -7411,6 +7433,14 @@ through their usual path.</p>
 <code>restore</code> on the port (model soft-delete is a domain concern, applied via
 <code>update</code>). On a spec declaring <code>hard_delete=False</code> both refuse with a
 <code>configuration</code> error (<code>hard_delete_forbidden</code>), whoever calls them.</p>
+<h3 id="command-hooks">Command hooks<a class="headerlink" href="#command-hooks" title="Permanent link">&para;</a></h3>
+<p>A plane that owns a document can wrap its command port wherever it is resolved: a provider
+registered under <code>DocumentCommandHookDepKey</code>, routed by the document's name, receives
+<code>(ctx, port)</code> and returns the port handed out, before any other wrap and before it is cached.
+Every write through <code>ctx.document.command(spec)</code> passes it, on every backend; a write around the
+port (SQL, another spec over the same table) does not. The identity plane registers one on the
+policy principal to raise a principal's epoch on deactivation (see
+<a href="../../../integrations/authn/#skip-the-eligibility-read">Authn</a>).</p>
 <h2 id="implemented-by">Implemented by<a class="headerlink" href="#implemented-by" title="Permanent link">&para;</a></h2>
 <table>
 <thead>
