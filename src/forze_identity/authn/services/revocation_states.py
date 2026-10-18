@@ -141,11 +141,11 @@ class StateMacKeys:
         keys = (self.active, *self.previous)
 
         if not all(isinstance(key, bytes) for key in keys):
-            raise exc.configuration("API-key state MAC keys must be bytes")
+            raise exc.configuration("Revocation state MAC keys must be bytes")
 
         if any(len(key) < MIN_SECRET_BYTES for key in keys):
             raise exc.configuration(
-                f"API-key state MAC keys must be at least {MIN_SECRET_BYTES} bytes",
+                f"Revocation state MAC keys must be at least {MIN_SECRET_BYTES} bytes",
             )
 
     # ....................... #

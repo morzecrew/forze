@@ -276,9 +276,10 @@ upsert or delete of the `policy_principal_spec` document through its document po
 issued before is then refused by its epoch, so the eligibility read has nothing left to catch.
 
 - **Signed epochs only.** The skip trusts the cached epoch, so the authz kernel refuses
-  `revocation_states` without `key_mac` (`authn_eligibility_skip_requires_key_mac`). Unsigned,
-  an older epoch restored in Redis would admit a deactivated principal's tokens until their
-  `exp`.
+  `revocation_states` without `key_mac` (`authn_eligibility_skip_requires_key_mac`), and a
+  `PolicyPrincipalEpochHook` registered by hand without it leaves every verification reading.
+  Unsigned, an older epoch restored in Redis would admit a deactivated principal's tokens until
+  their `exp`.
 - **What still reads.** Only the check right after the verification, in the same request, about
   the token's own subject, is skipped. Issuing a session (login, refresh, tenant switch) reads
   under the principal's row lock, and a delegated actor is always read, even when it is the

@@ -59,6 +59,7 @@ from forze_identity.authn.services import (
     SessionBinding,
     StateMacKeys,
 )
+from forze_identity.authn.services.revocation_states import _seal
 from forze_identity.authz.application.specs import policy_principal_spec
 from forze_identity.authz.domain.models.policy_principal import CreatePolicyPrincipalCmd
 from forze_identity.authz.execution.deps.deps import ConfigurablePrincipalRegistry
@@ -950,7 +951,13 @@ async def test_a_session_under_another_principal_is_refused_and_writes_nothing()
 
 @pytest.mark.parametrize(
     "planted",
-    ["unsigned_epoch", "another_principals_epoch", "unsigned_state", "another_sessions_state"],
+    [
+        "unsigned_epoch",
+        "another_principals_epoch",
+        "another_routes_epoch",
+        "unsigned_state",
+        "another_sessions_state",
+    ],
 )
 async def test_with_key_mac_a_state_it_did_not_sign_admits_nothing(planted: str) -> None:
     stack = _stack(key_mac=MAC, clock=_wall_clock())
@@ -965,7 +972,15 @@ async def test_with_key_mac_a_state_it_did_not_sign_admits_nothing(planted: str)
         # Raises the epoch past the token's; the cached live states stay.
         await stack.logout(principal)
         key = EPOCH_STATE_KEY
-        value = "0" if planted == "unsigned_epoch" else _cached(stack, other, EPOCH_STATE_KEY)
+
+        if planted == "another_routes_epoch":
+            # Signed under the same keys for the same principal, on another states route.
+            elsewhere = RevocationStates(route="elsewhere", ttl=TTL, key_mac=MAC)
+            not_after_ms = await stack.states.inner.now_ms(principal) + 60_000
+            value = _seal(elsewhere, principal, key, "0", not_after_ms=not_after_ms)
+
+        else:
+            value = "0" if planted == "unsigned_epoch" else _cached(stack, other, key)
 
     else:
         # Writes ``revoked`` for the token's session; the epoch stays.
@@ -977,6 +992,22 @@ async def test_with_key_mac_a_state_it_did_not_sign_admits_nothing(planted: str)
     _plant(stack, principal, key, value)
 
     assert await stack.verify(issued) == "session_revoked"
+
+
+async def test_with_key_mac_a_store_clock_two_ttl_behind_admits_from_the_database() -> None:
+    # The application's clock caps a signed state's not-after, so a store whose clock lags by
+    # two ttl or more cannot keep a state live: every one it holds is a miss, counted.
+    lagging = _Clock(now=float(int(time.time())) - 2 * TTL.total_seconds())
+    stack = _stack(key_mac=MAC, clock=lagging)
+    config = stack.ctx.authn.authn(SPEC).token_verifier.revocation.config  # type: ignore[attr-defined]
+    issued = await stack.login(await stack.principal())
+
+    for _ in range(2):
+        stack.reads.clear()
+        assert await stack.verify(issued) == "admitted"
+        assert "epoch" in stack.reads
+
+    assert config.counters.get("clock_skew", "session") > 0
 
 
 async def test_with_key_mac_a_replayed_epoch_admits_nothing_past_its_not_after() -> None:

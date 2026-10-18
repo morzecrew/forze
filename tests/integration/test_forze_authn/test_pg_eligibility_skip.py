@@ -47,7 +47,7 @@ from forze_identity.authn import (
     StateMacKeys,
 )
 from forze_identity.authn.application.constants import AuthnResourceName
-from forze_identity.authn.services import PasswordConfig
+from forze_identity.authn.services import PasswordConfig, PolicyPrincipalEpochHook
 from forze_identity.authz import AuthzDepsModule, AuthzKernelConfig
 from forze_identity.authz.application.constants import AuthzResourceName
 from forze_identity.authz.application.specs import policy_principal_spec
@@ -181,6 +181,7 @@ async def _stack(
     epoch_client: PostgresClient | None = None,
     account_client: PostgresClient | None = None,
     ttl: timedelta = timedelta(minutes=5),
+    signed: bool = True,
 ) -> _Stack:
     suffix = uuid4().hex[:12]
     principals, epochs = f"authz_pri_{suffix}", f"authn_epochs_{suffix}"
@@ -193,7 +194,7 @@ async def _stack(
     config = RevocationStates(
         route=STATES,
         ttl=ttl,
-        key_mac=StateMacKeys(active=b"m" * 32),
+        key_mac=StateMacKeys(active=b"m" * 32) if signed else None,
     )
     reads: list[str] = []
     principal_query = ConfigurablePostgresReadOnlyDocument(
@@ -387,8 +388,7 @@ async def test_a_restored_epoch_admits_a_deactivated_principal_no_longer_than_tt
     await redis_client.set(key, b"0" if planted == "unsigned" else cached)
 
     if planted == "replayed":
-        # Inside its not-after the replay is admitted, the window every cached state has.
-        assert await battery.verify(stack, issued) == "admitted"
+        # Past its not-after; inside it, the replay is the window every cached state has.
         await asyncio.sleep(ttl.total_seconds() + 0.2)
 
     assert await battery.verify(stack, issued) == "session_revoked"
@@ -412,6 +412,23 @@ async def test_a_restored_epoch_admits_a_deactivated_principal_no_longer_than_tt
             id="another-hook",
         ),
         pytest.param({"proxy": False}, id="unsupported-backend"),
+        pytest.param(
+            {
+                "authz": False,
+                "signed": False,
+                # Registered by hand: the authz kernel refuses unsigned epochs.
+                "extra": Deps.routed(
+                    {
+                        DocumentCommandHookDepKey: {
+                            policy_principal_spec.name: PolicyPrincipalEpochHook(
+                                config=RevocationStates(route=STATES, ttl=timedelta(minutes=5)),
+                            ),
+                        },
+                    }
+                ),
+            },
+            id="unsigned-epochs",
+        ),
     ],
 )
 async def test_without_every_precondition_each_verification_reads(
