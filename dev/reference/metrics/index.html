@@ -6441,6 +6441,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#revocation-states" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Revocation states
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -6640,6 +6651,17 @@
     <span class="md-ellipsis">
       <span class="md-typeset">
         Access-token signing
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#revocation-states" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Revocation states
       </span>
     </span>
   </a>
@@ -7342,6 +7364,55 @@ closes.</p>
 </table>
 <p>A rising <code>verify_failed</code> rate is the signal that matters: key-rotation gaps, clock skew,
 or forgeries.</p>
+<h2 id="revocation-states">Revocation states<a class="headerlink" href="#revocation-states" title="Permanent link">&para;</a></h2>
+<p><code>instrument_revocation_states({"default": revocation_states})</code> — the identity plane's fast
+path for sessions and API keys. Labelled <code>forze.revocation_states</code> and <code>forze.credential</code>
+(<code>session</code> or <code>api_key</code>).</p>
+<table>
+<thead>
+<tr>
+<th>Metric</th>
+<th>Instrument</th>
+<th>Unit</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>forze.authn.revocation_states.hits</code></td>
+<td>observable counter</td>
+<td>1</td>
+<td>verifications answered from Redis alone, refusals included</td>
+</tr>
+<tr>
+<td><code>forze.authn.revocation_states.misses</code></td>
+<td>observable counter</td>
+<td>1</td>
+<td>verifications that read the database for a state Redis lacked or could not trust</td>
+</tr>
+<tr>
+<td><code>forze.authn.revocation_states.fallbacks</code></td>
+<td>observable counter</td>
+<td>1</td>
+<td>verifications whose Redis read failed, timed out or met an open breaker</td>
+</tr>
+<tr>
+<td><code>forze.authn.revocation_states.write_failures</code></td>
+<td>observable counter</td>
+<td>1</td>
+<td>revocations whose write-through failed every attempt</td>
+</tr>
+<tr>
+<td><code>forze.authn.revocation_states.clock_skew</code></td>
+<td>observable counter</td>
+<td>1</td>
+<td>API-key states refused because the application's clock runs two <code>ttl</code> or more ahead of Redis's</td>
+</tr>
+</tbody>
+</table>
+<p><strong>The alert that matters:</strong> every <code>write_failures</code> increment is a revoked credential that
+stays admitted for up to the states' <code>ttl</code>. See
+<a href="../../integrations/authn/#the-window">Authentication</a> for every cause of that window.</p>
 
 
 

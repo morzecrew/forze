@@ -3941,16 +3941,49 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#check-sessions-from-redis" class="md-nav__link">
+  <a href="#check-sessions-and-api-keys-from-redis" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        Check sessions from Redis
+        Check sessions and API keys from Redis
       </span>
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="Check sessions from Redis">
+    <nav class="md-nav" aria-label="Check sessions and API keys from Redis">
       <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#api-keys" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        API keys
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#the-window" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        The window
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#metrics" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Metrics
+      </span>
+    </span>
+  </a>
+  
+</li>
         
           <li class="md-nav__item">
   <a href="#skip-the-eligibility-read" class="md-nav__link">
@@ -6477,16 +6510,49 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#check-sessions-from-redis" class="md-nav__link">
+  <a href="#check-sessions-and-api-keys-from-redis" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        Check sessions from Redis
+        Check sessions and API keys from Redis
       </span>
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="Check sessions from Redis">
+    <nav class="md-nav" aria-label="Check sessions and API keys from Redis">
       <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#api-keys" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        API keys
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#the-window" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        The window
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#metrics" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Metrics
+      </span>
+    </span>
+  </a>
+  
+</li>
         
           <li class="md-nav__item">
   <a href="#skip-the-eligibility-read" class="md-nav__link">
@@ -6682,36 +6748,47 @@ and API-key revoke.</p>
 </tr>
 </tbody>
 </table>
-<h2 id="check-sessions-from-redis">Check sessions from Redis<a class="headerlink" href="#check-sessions-from-redis" title="Permanent link">&para;</a></h2>
-<p>By default every token verification reads its session row. With
-<code>revocation_states</code> on the kernel, a token carries its session's family (<code>fam</code>) and the
-principal's epoch (<code>pep</code>), and the verifier checks them against states cached in Redis,
-reading Postgres only for what Redis misses. The eligibility read stays, unless the authz
-kernel carries the same configuration (<a href="#skip-the-eligibility-read">below</a>).</p>
+<h2 id="check-sessions-and-api-keys-from-redis">Check sessions and API keys from Redis<a class="headerlink" href="#check-sessions-and-api-keys-from-redis" title="Permanent link">&para;</a></h2>
+<p>By default every token verification reads its session row, and every API-key verification
+its key row. With <code>revocation_states</code> on the kernel, a token carries its session's family
+(<code>fam</code>) and the principal's epoch (<code>pep</code>), and the verifier checks them against states cached
+in Redis, reading Postgres only for what Redis misses. With <code>key_mac</code> too, API keys are checked
+the same way, from a state cached under the key's digest. The eligibility read stays for both,
+except that a token's is skipped when the authz kernel carries the same configuration
+(<a href="#skip-the-eligibility-read">below</a>).</p>
 <div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">datetime</span><span class="w"> </span><span class="kn">import</span> <span class="n">timedelta</span>
 
 <span class="kn">from</span><span class="w"> </span><span class="nn">forze.application.contracts.authn</span><span class="w"> </span><span class="kn">import</span> <span class="n">RevocationStatesDepKey</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">forze.application.contracts.resilience</span><span class="w"> </span><span class="kn">import</span> <span class="n">PortPolicy</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">forze_identity.authn</span><span class="w"> </span><span class="kn">import</span> <span class="n">AuthnKernelConfig</span><span class="p">,</span> <span class="n">RevocationStates</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">forze_identity.authn</span><span class="w"> </span><span class="kn">import</span> <span class="n">AuthnKernelConfig</span><span class="p">,</span> <span class="n">RevocationStates</span><span class="p">,</span> <span class="n">StateMacKeys</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">forze_postgres</span><span class="w"> </span><span class="kn">import</span> <span class="n">PostgresPrincipalEpochConfig</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">forze_redis</span><span class="w"> </span><span class="kn">import</span> <span class="n">RedisRevocationStatesConfig</span>
 
 <span class="n">kernel</span> <span class="o">=</span> <span class="n">AuthnKernelConfig</span><span class="p">(</span>
     <span class="n">access_token_secret</span><span class="o">=</span><span class="n">secret</span><span class="p">,</span>
     <span class="n">refresh_token_pepper</span><span class="o">=</span><span class="n">pepper</span><span class="p">,</span>
-    <span class="n">revocation_states</span><span class="o">=</span><span class="n">RevocationStates</span><span class="p">(</span><span class="n">route</span><span class="o">=</span><span class="s2">"authn-revocations"</span><span class="p">,</span> <span class="n">ttl</span><span class="o">=</span><span class="n">timedelta</span><span class="p">(</span><span class="n">minutes</span><span class="o">=</span><span class="mi">5</span><span class="p">)),</span>
+    <span class="n">api_key_pepper</span><span class="o">=</span><span class="n">api_key_pepper</span><span class="p">,</span>
+    <span class="n">revocation_states</span><span class="o">=</span><span class="n">RevocationStates</span><span class="p">(</span>
+        <span class="n">route</span><span class="o">=</span><span class="s2">"authn-revocations"</span><span class="p">,</span>
+        <span class="n">ttl</span><span class="o">=</span><span class="n">timedelta</span><span class="p">(</span><span class="n">minutes</span><span class="o">=</span><span class="mi">5</span><span class="p">),</span>
+        <span class="n">key_mac</span><span class="o">=</span><span class="n">StateMacKeys</span><span class="p">(</span><span class="n">active</span><span class="o">=</span><span class="n">mac_key</span><span class="p">),</span>  <span class="c1"># optional: API keys too</span>
+    <span class="p">),</span>
 <span class="p">)</span>
 <span class="n">states</span> <span class="o">=</span> <span class="p">{</span><span class="s2">"authn-revocations"</span><span class="p">:</span> <span class="n">RedisRevocationStatesConfig</span><span class="p">(</span><span class="n">namespace</span><span class="o">=</span><span class="s2">"authn-revocations"</span><span class="p">)}</span>
 <span class="n">epochs</span> <span class="o">=</span> <span class="n">PostgresPrincipalEpochConfig</span><span class="p">(</span><span class="n">relation</span><span class="o">=</span><span class="p">(</span><span class="s2">"public"</span><span class="p">,</span> <span class="s2">"authn_principal_epochs"</span><span class="p">))</span>
-<span class="n">breaker</span> <span class="o">=</span> <span class="n">PortPolicy</span><span class="p">(</span><span class="n">key</span><span class="o">=</span><span class="n">RevocationStatesDepKey</span><span class="p">,</span> <span class="n">policy</span><span class="o">=</span><span class="s2">"authn-revocations"</span><span class="p">,</span> <span class="n">methods</span><span class="o">=</span><span class="p">(</span><span class="s2">"read"</span><span class="p">,))</span>
+<span class="n">breaker</span> <span class="o">=</span> <span class="n">PortPolicy</span><span class="p">(</span>
+    <span class="n">key</span><span class="o">=</span><span class="n">RevocationStatesDepKey</span><span class="p">,</span>
+    <span class="n">policy</span><span class="o">=</span><span class="s2">"authn-revocations"</span><span class="p">,</span>
+    <span class="n">methods</span><span class="o">=</span><span class="p">(</span><span class="s2">"read"</span><span class="p">,</span> <span class="s2">"read_api_key"</span><span class="p">),</span>
+<span class="p">)</span>
 </code></pre></div>
 <p>Wire <code>states</code> as <code>RedisDepsModule(revocation_states=...)</code>, <code>epochs</code> as
 <code>PostgresDepsModule(principal_epochs=...)</code>, on the database that holds the sessions, and
 <code>breaker</code> in <code>ResilienceDepsModule(port_policies=...)</code> under a policy with a circuit
 breaker, so a Redis outage stops costing every verification its <code>timeout</code> (50 ms by
-default). Bind it to <code>read</code> only: an open breaker on the writes would fail every attempt of a
-revocation's write-through at once. The states route is resolved by <code>RevocationStatesSpec</code> under
-<code>RevocationStatesDepKey</code>, and the epochs under <code>PrincipalEpochDepKey</code>. Create the epochs
+default). Bind it to the reads only: an open breaker on the writes would fail every attempt
+of a revocation's write-through at once. The states route is resolved by <code>RevocationStatesSpec</code>
+under <code>RevocationStatesDepKey</code>, and the epochs under <code>PrincipalEpochDepKey</code>. Create the epochs
 table yourself and never delete its rows:</p>
 <div class="highlight"><pre><span></span><code><span class="k">CREATE</span><span class="w"> </span><span class="k">TABLE</span><span class="w"> </span><span class="n">authn_principal_epochs</span><span class="w"> </span><span class="p">(</span>
 <span class="w">    </span><span class="n">principal_id</span><span class="w"> </span><span class="n">uuid</span><span class="w">   </span><span class="k">PRIMARY</span><span class="w"> </span><span class="k">KEY</span><span class="p">,</span>
@@ -6719,47 +6796,147 @@ table yourself and never delete its rows:</p>
 <span class="p">);</span>
 </code></pre></div>
 <ul>
-<li><strong><code>ttl</code> is the window.</strong> A revocation writes its states to Redis once it commits. If that
-  write never lands (it fails every one of <code>write_attempts</code>, which is logged at error level;
-  the process dies first; the revoking process was not configured; or the session was revoked
-  around the authn adapters, through its document port), or Redis loses the key while an
-  earlier lookup is still writing, a revoked token stays admitted for at most <code>ttl</code> after the
-  revocation commits. Configure every process that verifies or revokes, and give
-  the states a Redis namespace nothing else flushes. Expiries are instants on the Redis
-  primary's clock: a failover to a replica whose clock lags lengthens every state by the lag.</li>
-<li><strong>Redis is trusted.</strong> The session states and epochs carry no MAC, so whoever can write the
-  states' namespace can restore a <code>live</code> state or an older epoch, and a revoked token is
-  admitted until its own <code>exp</code>. With the <a href="#skip-the-eligibility-read">eligibility read skipped</a>
-  that includes a deactivated principal's, which the eligibility read would otherwise still
-  refuse. Let nothing but the identity plane write that namespace.</li>
-<li><strong>Transactions are required.</strong> With the fast path on, issuing and revoking refuse to run
-  outside a transaction (<code>authn_revocation_requires_transaction</code>), so keep <code>tx_route</code> set on
-  both registries. They refuse the same way, before writing, in a transaction that does not
-  hold every store they write (the epochs, and for a deactivation or a password change the
+<li><strong>Redis is trusted for sessions.</strong> The session states and epochs carry no MAC (API-key
+  states do, <a href="#api-keys">below</a>), so whoever can write the states' namespace can restore a
+  <code>live</code> state or an older epoch, and a revoked token is admitted until its own <code>exp</code>. With the
+  <a href="#skip-the-eligibility-read">eligibility read skipped</a> that includes a deactivated
+  principal's, which the eligibility read would otherwise still refuse. Let nothing but the
+  identity plane write that namespace.</li>
+<li><strong>Transactions are required.</strong> With the fast path on, issuing and revoking sessions refuse
+  to run outside a transaction (<code>authn_revocation_requires_transaction</code>), so keep <code>tx_route</code>
+  set on both registries. They refuse the same way, before writing, in a transaction that does
+  not hold every store they write (the epochs, and for a deactivation or a password change the
   credentials and sessions too): a store on another database would commit on its own. The
   Postgres stores report it; one that cannot is not checked. Issue and logout serialize on the
   epoch's row on Postgres only, with the revocation at read committed (the default); a
-  revocation at repeatable read or serializable is refused (<code>authn_epoch_isolation</code>).</li>
+  revocation at repeatable read or serializable is refused (<code>authn_epoch_isolation</code>). Revoking
+  an API key needs no transaction: its state is written once the key's row has committed,
+  whichever way it runs.</li>
 <li><strong><code>session_binding</code>.</strong> <code>"session"</code> (the default) refuses a token once a refresh replaced its
   session, as without the fast path; <code>"family"</code> admits it until its own <code>exp</code> while the
   family is live. A logout, a family revocation and refresh-token reuse refuse it either way.</li>
-<li><strong>Minting re-reads the token.</strong> A session, an API key, a password account or an invite issued
-  in a request that authenticated with an access token re-reads that token's session and epoch
-  from Postgres first, whoever it is issued for, so a token admitted inside the window mints
-  nothing that outlives it. A session is issued only inside a transaction (above), where the
-  re-read takes locks; above read committed, a revocation committed since the transaction's
-  snapshot fails it with a serialization error. An API key, a password account or an invite
-  can be minted outside one, <code>tx_route=None</code> included: the re-read then takes no lock but reads
-  the latest commit, and a revocation committing after it is ordered after the mint, which it
-  leaves in place, as it would a locked mint it waited for. A WebSocket or Socket.IO
-  connection carries what its handshake (or its last reauth) verified to each command, so a
-  command that mints re-reads that token's session the same way: once a refresh elsewhere
-  rotates that session (under <code>"session"</code> binding) or a revocation ends it, the socket's mints
-  are refused until it reauths.</li>
+<li><strong>Minting re-reads the credential.</strong> A session, an API key, a password account or an invite
+  issued in a request that authenticated with an access token re-reads that token's session and
+  epoch from Postgres first, whoever it is issued for, so a token admitted inside the window
+  mints nothing that outlives it. The same mints in a request that authenticated with an API key
+  (with <code>key_mac</code> set) re-read the key's row the same way (<code>api_key_revoked</code>). A session is
+  issued only inside a transaction (above), where the re-read takes locks; above read committed,
+  a revocation committed since the transaction's snapshot fails it with a serialization error.
+  An API key, a password account or an invite can be minted outside one, <code>tx_route=None</code>
+  included: the re-read then takes no lock but reads the latest commit, and a revocation
+  committing after it is ordered after the mint, which it leaves in place, as it would a locked
+  mint it waited for. Revoking a credential never revokes what was minted from it before. A
+  WebSocket or Socket.IO connection carries what its handshake (or its last reauth) verified to
+  each command, so a command that mints re-reads that credential the same way: once a revocation
+  ends it, or a refresh elsewhere rotates the token's session (under <code>"session"</code> binding), the
+  socket's mints are refused until it reauths.</li>
 <li><strong>Redis down.</strong> A Redis error or timeout makes the same checks from Postgres, so an outage
-  never admits a token the fast path would refuse. Tokens issued before the fast path carry
-  no <code>fam</code> or <code>pep</code>, and keep the session-row check until they expire.</li>
+  never admits a credential the fast path would refuse. Tokens issued before the fast path
+  carry no <code>fam</code> or <code>pep</code>, and keep the session-row check until they expire.</li>
 </ul>
+<h3 id="api-keys">API keys<a class="headerlink" href="#api-keys" title="Permanent link">&para;</a></h3>
+<p>A key's cached state is the only proof the key exists: a hit reads no row, and the
+verifier takes the principal, the delegation actor and the expiry from the state. So
+everything able to write the states' Redis namespace is kept from minting a key:</p>
+<ul>
+<li><strong>Each live state carries a MAC</strong> under <code>key_mac</code>, over the states route, the state's full
+  Redis key (its namespace included), the key's digest and every field. A state forged
+  without the key, copied onto another key's digest, or copied in from another namespace
+  fails it and is read from Postgres. <code>revoked</code> carries none: forging it can refuse a key,
+  never admit one.</li>
+<li><strong>Each live state carries a not-after</strong>, the earlier of the key's own expiry and <code>ttl</code>
+  after the lookup read Redis's clock. It is checked against Redis's clock from the same read,
+  so a live state replayed over <code>revoked</code>, with no expiry of its own, stops verifying no later
+  than any other state would. A state the application's clock puts more than <code>ttl</code> past its
+  not-after is a miss too, so a Redis server that lies about its clock cannot stretch it
+  further. The key's expiry is still checked on the application's clock.</li>
+<li><strong>A state that fails either check stays a miss</strong> until it expires or is deleted: a lookup
+  never overwrites a state, so a tampered key costs one row read per verification, never an
+  admission. Keys nobody issued are never cached.</li>
+</ul>
+<p><strong>Give every deployment its own <code>key_mac</code>.</strong> The MAC binds a state to its route and
+namespace, so deployments that share one Redis are kept apart; but two deployments with the
+same namespace name and the same <code>key_mac</code>, a staging copy of production or customers served
+from one secrets bundle, accept each other's states, and a state copied from one admits its key
+in the other without a row read. Never reuse another secret as <code>key_mac</code> either: the kernel
+refuses one equal to any of its peppers, its token secret or an HS256 signer's secret
+(<code>authn_state_mac_key_reused</code>). It cannot see a key held by an asymmetric or <abbr title="Key Management Service">KMS</abbr>-backed signer;
+what makes any reuse harmless is that each MAC key is used only through a key derived from it.</p>
+<p>A states store of your own needs <code>ApiKeyStatesPort</code> as well as <code>RevocationStatesPort</code> for
+API keys: with <code>key_mac</code> set, the build refuses one without it
+(<code>authn_api_key_states_unsupported</code>). The Redis and mock stores implement both.</p>
+<p><code>StateMacKeys</code> takes keys of at least 32 bytes. To rotate one, make the new key <code>active</code>
+and move the old one to <code>previous</code>, on every process that verifies or revokes; after <code>ttl</code>,
+when every state signed under the old key has expired, drop it. A state signed under a key
+no longer configured is read from Postgres, so dropping it early costs reads, not
+admissions. A key carries no tenant, cached or not, and a deactivated principal's keys are
+still refused by the eligibility read.</p>
+<h3 id="the-window">The window<a class="headerlink" href="#the-window" title="Permanent link">&para;</a></h3>
+<p>A revocation writes its states to Redis once it commits: <code>revoked</code> for each family, session
+or API key it ended, or the raised epoch for a logout, a password change or reset, or a
+deactivation. A revoked credential stays admitted for at most <code>ttl</code> after that commit, on
+Redis's clock, and only when one of these leaves a stale state in place:</p>
+<ul>
+<li><strong>The write-through never lands.</strong></li>
+<li>Every one of <code>write_attempts</code> failed. It is logged at error level and counted;
+    revoking an API key again writes its state again.</li>
+<li>The process died between the commit and the write. Nothing logs it.</li>
+<li>The process that revoked was not configured, for example during a rolling deploy, from
+    another service, or without <code>key_mac</code> for an API key. Nothing logs it.</li>
+<li>The credential was revoked around the authn adapters, through its document port. Nothing
+    logs it.</li>
+<li><strong>Redis lost the revocation's key while an earlier lookup was still writing:</strong> an eviction,
+  a flush, a restart, or a failover that dropped an acknowledged write. Nothing logs these.</li>
+</ul>
+<p>An access token is also bounded by its own <code>exp</code>; an API key may have no expiry, so its
+window is <code>ttl</code> alone. Configure every process that verifies or revokes, and give the states
+a Redis namespace nothing else flushes or evicts.</p>
+<p><strong>Redis's clock.</strong> Every expiry and every not-after is set on Redis's clock, from <code>TIME</code> in
+the script that reads or writes the state or relative to it with <code>PX</code>, so the bound has no
+skew term against the application's clock. It does lean on the Redis primary's clock: a
+failover to a replica whose clock lags lengthens every state by the lag, and moving the
+primary's clock back does the same. Keep its clock synchronized, and let only operators change
+it. The application's clock caps an API-key state at <code>ttl</code> past its not-after, so with the
+application two <code>ttl</code> or more ahead of Redis every key state is refused as soon as it is
+written, and every key verification reads its row; each such refusal is counted as
+<code>clock_skew</code>.</p>
+<h3 id="metrics">Metrics<a class="headerlink" href="#metrics" title="Permanent link">&para;</a></h3>
+<p><code>instrument_revocation_states({"default": kernel.revocation_states})</code> exports five counters,
+labelled by credential (<code>session</code> or <code>api_key</code>):</p>
+<table>
+<thead>
+<tr>
+<th>Counter</th>
+<th>Counts</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>forze.authn.revocation_states.hits</code></td>
+<td>verifications answered from Redis alone, refusals included</td>
+</tr>
+<tr>
+<td><code>forze.authn.revocation_states.misses</code></td>
+<td>verifications that read Postgres for a state Redis lacked or could not trust</td>
+</tr>
+<tr>
+<td><code>forze.authn.revocation_states.fallbacks</code></td>
+<td>verifications whose Redis read failed, timed out or met an open breaker</td>
+</tr>
+<tr>
+<td><code>forze.authn.revocation_states.write_failures</code></td>
+<td>revocations whose write-through failed every attempt</td>
+</tr>
+<tr>
+<td><code>forze.authn.revocation_states.clock_skew</code></td>
+<td>API-key states refused because the application's clock is two <code>ttl</code> or more ahead of Redis's</td>
+</tr>
+</tbody>
+</table>
+<p>Alert on any <code>write_failures</code>: each is a revoked credential admitted for up to <code>ttl</code>. A rising
+<code>fallbacks</code> rate is Redis being down for verifications, a steady <code>clock_skew</code> is a clock to
+fix, and <code>misses</code> against <code>hits</code> is what the cache saves. The <a href="../../reference/metrics/#revocation-states">metrics reference</a> lists them with
+the rest.</p>
 <h3 id="skip-the-eligibility-read">Skip the eligibility read<a class="headerlink" href="#skip-the-eligibility-read" title="Permanent link">&para;</a></h3>
 <p>Every verification also reads the policy principal, to refuse a deactivated one. Pass the same
 <code>RevocationStates</code> to the authz kernel, and a token the fast path admitted on its principal's
