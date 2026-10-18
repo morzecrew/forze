@@ -9,21 +9,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **The Postgres outbox can log what it consumes.** `PostgresOutboxConfig(storage="consume", delivery_log=("app", "outbox_delivered"))` appends each published row to an application-owned table in the statement that deletes it, so a log row proves a committed delivery. A failure to write it fails the pass.
-
-- **Token verifications can skip the eligibility read too.** With the authn kernel's `RevocationStates` on `AuthzKernelConfig(revocation_states=)`, a deactivating write through the policy principal's document port raises the epoch in its transaction (refused outside one); a fast-path token skips the read. Postgres only; requires `key_mac` (`authn_eligibility_skip_requires_key_mac`).
-
-- **`DocumentCommandHookDepKey` wraps a document's command port wherever it is resolved**, registered routed under the document's name.
-
-- **API keys can be verified from Redis.** `RevocationStates(key_mac=StateMacKeys(...))` checks a key from a MAC-signed state, reading its row only on a miss; revoking a key writes `revoked` through. The same keys sign the cached epochs and session states. A custom states store also implements the new `ApiKeyStatesPort` and takes `raise_epoch(state=)`, both needed only with `key_mac`.
-
-- **An API key admitted from Redis cannot mint past its revocation.** With `key_mac` set, a session, an API key, a password account or an invite minted in a request, or a WebSocket or Socket.IO command, that an API key authenticated re-reads that key's row first, whoever it is for, and refuses with `api_key_revoked` once it is revoked or expired.
-
-- **The revocation-states fast path is counted.** `instrument_revocation_states({"default": states})` exports hits, misses, fallbacks, failed write-throughs and clock-skew refusals, for sessions and API keys.
+- ...
 
 ### Changed
 
 - ...
+
+### Fixed
+
+- ...
+
+## [0.15.0] - 2026-10-18
+
+### Added
+
+- **The Postgres outbox can log what it consumes.** `PostgresOutboxConfig(storage="consume", delivery_log=("app", "outbox_delivered"))` appends each published row to an application-owned table in the statement that deletes it, so a log row proves a committed delivery. A failure to write it fails the pass.
+
+- **Token verifications can skip the eligibility read too.** Pass the authn kernel's `RevocationStates` to `AuthzKernelConfig(revocation_states=)`: a deactivating policy-principal write then raises the epoch in its transaction, and a fast-path token skips the read. Postgres only; needs `key_mac`.
+
+- **`DocumentCommandHookDepKey` wraps a document's command port wherever it is resolved**, registered routed under the document's name.
+
+- **API keys can be verified from Redis, and cached states signed.** `RevocationStates(key_mac=StateMacKeys(...))` checks a key from a MAC-signed state, reading its row only on a miss, and signs cached epochs and session states. A custom states store then needs `ApiKeyStatesPort` and `raise_epoch(state=)`.
+
+- **An API key admitted from Redis cannot mint past its revocation.** With `key_mac` set, any credential minted in a request or socket command an API key authenticated re-reads that key's row first, whoever it is for, and fails with `api_key_revoked` once the key is revoked or expired.
+
+- **The revocation-states fast path is counted.** `instrument_revocation_states({"default": states})` exports hits, misses, fallbacks, failed write-throughs and clock-skew refusals, for sessions and API keys.
 
 ### Fixed
 
@@ -33,7 +43,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
-- **A route is `namespace`-isolated only when every relation it names resolves per tenant** (**Breaking**): a `namespace` floor refuses one with a static relation, and a per-tenant Postgres inbox or idempotency store that is not tenant-aware. New: `TenancyRouteGroup(other_namespaces=)`, `resolves_per_tenant`.
+- **A route is `namespace`-isolated only when every relation it names resolves per tenant** (**Breaking**): a `namespace` floor refuses one with a static relation, and a per-tenant Postgres inbox, idempotency store or outbox that is not tenant-aware. New: `TenancyRouteGroup(other_namespaces=)`, `resolves_per_tenant`.
 
 - **Postgres idempotency stores and federated searches are held to a declared floor** (**Breaking**): an idempotency store on a shared table rates `tagged`, and a federated search rates `none` unless every leg is a hub leg, tenant-aware or per-tenant.
 
@@ -46,10 +56,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Deactivating a principal deactivates every API key it holds.** The keys were read with no limit, so past a store's implicit read limit (10,000 rows on Postgres, Mongo and Firestore) the rest stayed active; deactivation now pages through all of them.
 
 - **With revocation states, a credential minted from an access token re-checks that token whoever it is for**, including a password account or invite an operator issues for another principal.
-
-- **A Postgres outbox that is not tenant-aware no longer meets a `namespace` floor through a per-tenant relation**, which it resolves with no tenant, so every tenant shares one table. A declared floor now refuses it. **Breaking** for such a floored module.
-
-### Security
 
 - **A tenant-aware Postgres inbox keeps tenants apart on a shared table.** It carries the tenant in its dedup key, as the Mongo inbox does. After upgrading, a message redelivered to a tenant-aware Postgres inbox is processed once more.
 
@@ -2322,7 +2328,8 @@ Execution and mapping refactor, middleware-first usecases, split search/cache/do
 
 - Packaging metadata for PyOCI classifiers.
 
-[unreleased]: https://github.com/morzecrew/forze/compare/v0.14.0...HEAD
+[unreleased]: https://github.com/morzecrew/forze/compare/v0.15.0...HEAD
+[0.15.0]: https://github.com/morzecrew/forze/compare/v0.14.0...v0.15.0
 [0.14.0]: https://github.com/morzecrew/forze/compare/v0.13.0...v0.14.0
 [0.13.0]: https://github.com/morzecrew/forze/compare/v0.12.0...v0.13.0
 [0.12.0]: https://github.com/morzecrew/forze/compare/v0.11.1...v0.12.0
