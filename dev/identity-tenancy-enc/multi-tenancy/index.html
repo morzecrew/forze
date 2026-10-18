@@ -6715,12 +6715,12 @@ actually reaches:</p>
 <tr>
 <td><code>tagged</code></td>
 <td>one container — every record carries its tenant, a <em>filter</em> a forgotten predicate can leak past</td>
-<td><code>tenant_aware=True</code> on a <strong>column</strong> store (a SQL <code>tenant_id</code> column, a graph property)</td>
+<td><code>tenant_aware=True</code> (a SQL <code>tenant_id</code> column, a graph property, a Redis key prefix, an object-store path prefix)</td>
 </tr>
 <tr>
 <td><code>namespace</code></td>
 <td>a separate container each on one instance — a <em>name boundary</em> a query can't cross</td>
-<td><code>tenant_aware=True</code> on a <strong>key/path</strong> store (a Redis key prefix, an object-store path prefix), <strong>or</strong> a per-tenant resolver (a Postgres schema, a Mongo collection, a dataset, a bucket, an index)</td>
+<td>a per-tenant resolver on every relation a route names (a Postgres schema, a Mongo collection, a dataset, a bucket, an index, a Redis or queue namespace)</td>
 </tr>
 <tr>
 <td><code>dedicated</code></td>
@@ -6735,32 +6735,36 @@ you get</em>, not the switch you flip. The jump that matters is <code>tagged</co
 (a SQL <code>tenant_id</code> column, a graph property — table partitioning included, since
 pruning still relies on the marker), whereas a <code>namespace</code> is a separate
 container — a <em>name-resolution boundary</em> a query cannot cross.</p>
-<p>So <code>tenant_aware=True</code> lands on a <strong>different tier depending on the backend</strong>: a
-column store gains a filter (<code>tagged</code>), but a key/path store gains a separate key
-or path (<code>namespace</code>) — the prefix <em>is</em> the boundary. A per-tenant resolver, and
-routed clients, reach <code>namespace</code> and <code>dedicated</code> the same way everywhere.</p>
+<p>So <code>tenant_aware=True</code> reaches <code>tagged</code> on <strong>every</strong> backend. On a key/path store
+the marker is a prefix (<code>tenant:{id}:…</code> on Redis, a path prefix on object storage, a
+prefixed queue name). A per-tenant resolver, and routed clients, reach <code>namespace</code>
+and <code>dedicated</code> the same way everywhere. Wiring rates the switch, not what it
+builds: a Redis per-tenant <code>namespace</code> rates <code>namespace</code> though its keys share one
+keyspace, and a <code>tenant_aware</code> queue rates <code>tagged</code> though each tenant gets a queue
+of its own.</p>
 <h3 id="the-tenant-marker-tagged">The tenant marker (<code>tagged</code>)<a class="headerlink" href="#the-tenant-marker-tagged" title="Permanent link">&para;</a></h3>
 <p>The lightest cut: one connection, one shared container, a tenant marker.
-<code>tenant_aware=True</code> on a <strong>column</strong> store makes the adapter filter every read and
-stamp every write with the bound tenant — a <code>tenant_id</code> column on Postgres or
-Mongo, a property on a graph node. Correctness rests on the marker: a forgotten
-predicate leaks. Combining it with a stronger cut is redundant — acceptable as
-defense-in-depth, and startup warns when it spots the overlap.</p>
+<code>tenant_aware=True</code> makes the adapter filter every read and stamp every write with
+the bound tenant — a <code>tenant_id</code> column on Postgres or Mongo, a property on a graph
+node, a key or path prefix on Redis or object storage. Correctness rests on the
+marker: a forgotten predicate leaks. Combining it with a stronger cut is redundant
+— acceptable as defense-in-depth, and startup warns when it spots the overlap.</p>
 <h3 id="per-tenant-containers-namespace">Per-tenant containers (<code>namespace</code>)<a class="headerlink" href="#per-tenant-containers-namespace" title="Permanent link">&para;</a></h3>
-<p>A container per tenant — a name boundary a query can't cross. Two ways to reach
-it. On a <strong>key/path</strong> store, the <em>same</em> <code>tenant_aware=True</code> switch is already a
-namespace: the adapter prefixes each tenant's key or path (<code>tenant:{id}:…</code> on
-Redis, a path prefix on object storage, a per-tenant queue/stream key), so a read
-addresses a separate key, not a shared one with a filter. On a store with named
-containers, point a route's relation — or its named resource, a bucket / dataset
-/ index — at a <strong>resolver</strong> instead of a static value, evaluated per request
-against the bound tenant:</p>
+<p>A container per tenant — a name boundary a query can't cross. Point a route's
+relation — or its named resource, a bucket / dataset / index / namespace — at a
+<strong>resolver</strong> instead of a static value, evaluated per request against the bound
+tenant:</p>
 <div class="highlight"><pre><span></span><code><span class="n">PostgresDocumentConfig</span><span class="p">(</span>
     <span class="n">read</span><span class="o">=</span><span class="k">lambda</span> <span class="n">tid</span><span class="p">:</span> <span class="p">(</span><span class="sa">f</span><span class="s2">"tenant_</span><span class="si">{</span><span class="n">tid</span><span class="o">.</span><span class="n">hex</span><span class="p">[:</span><span class="mi">8</span><span class="p">]</span><span class="si">}</span><span class="s2">"</span><span class="p">,</span> <span class="s2">"orders"</span><span class="p">),</span>
     <span class="n">write</span><span class="o">=</span><span class="k">lambda</span> <span class="n">tid</span><span class="p">:</span> <span class="p">(</span><span class="sa">f</span><span class="s2">"tenant_</span><span class="si">{</span><span class="n">tid</span><span class="o">.</span><span class="n">hex</span><span class="p">[:</span><span class="mi">8</span><span class="p">]</span><span class="si">}</span><span class="s2">"</span><span class="p">,</span> <span class="s2">"orders"</span><span class="p">),</span>
     <span class="n">bookkeeping_strategy</span><span class="o">=</span><span class="s2">"application"</span><span class="p">,</span>
 <span class="p">)</span>
 </code></pre></div>
+<p>Every relation the route names needs a resolver: one static relation holds every
+tenant's rows, so the route keeps the tier its <code>tenant_aware</code> flag gives. It counts
+even when the spec doesn't use it, such as a history table with history off. The
+<a href="../../reference/tenancy-matrix/">tenancy matrix</a> lists the routes
+that work differently.</p>
 <p>Because the name is only known per request, startup schema validation (which
 needs fixed names) skips these routes.</p>
 <h3 id="routed-clients-dedicated">Routed clients (<code>dedicated</code>)<a class="headerlink" href="#routed-clients-dedicated" title="Permanent link">&para;</a></h3>
@@ -6796,9 +6800,9 @@ cover it:</p>
 <li>A <strong>column store</strong> (Postgres / Mongo / Firestore documents, most analytics) spans
   the whole ladder: <code>tagged</code> (column) → <code>namespace</code> (schema/collection resolver) →
   <code>dedicated</code> (routed client).</li>
-<li>A <strong>key/path store</strong> (Redis, S3/GCS, queues) has no shared container to tag, so it
-  <em>starts</em> at <code>namespace</code> — the per-tenant key or prefix <strong>is</strong> <code>tenant_aware</code> — and
-  reaches <code>dedicated</code> with a routed client.</li>
+<li>A <strong>key/path store</strong> (Redis, S3/GCS, queues) spans the same ladder: <code>tagged</code> (a
+  tenant key or path prefix) → <code>namespace</code> (a per-tenant namespace or bucket resolver)
+  → <code>dedicated</code> (routed client).</li>
 <li>An <strong>in-process</strong> backend caps low: DuckDB analytics at <code>tagged</code>, the mock at
   <code>namespace</code>, with no routed-client equivalent.</li>
 </ul>
@@ -6825,12 +6829,14 @@ request.</p>
 <span class="p">)</span>
 </code></pre></div>
 <p>Each module derives the tier it actually reaches from the config it already
-carries — a routed client → <code>dedicated</code>, a per-tenant resolver → <code>namespace</code>,
-<code>tenant_aware</code> → <code>tagged</code> — and raises a clear configuration error when that's
-below the floor. A floor a backend can <em>never</em> reach (<code>dedicated</code> on in-process
-DuckDB, or on single-client Neo4j) fails as a <strong>capability mismatch</strong> rather
-than a silent misconfiguration, because each integration's ceiling is known.
-Leave it unset (the default) and nothing is enforced.</p>
+carries — a routed client → <code>dedicated</code>, a per-tenant resolver on every relation
+a route names → <code>namespace</code> (the <a href="../../reference/tenancy-matrix/">tenancy matrix</a>
+lists the exceptions), <code>tenant_aware</code> → <code>tagged</code> — and raises a clear
+configuration error when that's below the floor. A floor a backend can <em>never</em>
+reach (<code>dedicated</code> on in-process DuckDB, or on single-client Neo4j) fails as a
+<strong>capability mismatch</strong> rather than a silent misconfiguration, because each
+integration's ceiling is known. Leave it unset (the default) and nothing is
+enforced.</p>
 <div class="admonition tip">
 <p class="admonition-title">Where the floor earns its keep</p>
 <p>Untrusted or self-scoping query paths — a raw SQL hatch, an analytics query

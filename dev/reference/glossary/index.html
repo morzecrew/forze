@@ -6638,7 +6638,7 @@ Skim it, or search for a single word.</p>
 <p><strong>TenantIdentity</strong>
 :   The tenant context bound to a request. Determines data isolation strategy.</p>
 <p><strong>Tenant tier</strong>
-:   The isolation level for a resource: <code>none</code> (not tenant-scoped), <code>tagged</code> (marker column), <code>namespace</code> (schema/prefix), or <code>dedicated</code> (separate instance).</p>
+:   The isolation level for a resource: <code>none</code> (not tenant-scoped), <code>tagged</code> (a tenant marker, such as a column or a <code>tenant_aware</code> key prefix), <code>namespace</code> (a per-tenant container a resolver picks, such as a schema, collection, bucket or namespace), or <code>dedicated</code> (separate instance).</p>
 <hr />
 <h2 id="patterns">Patterns<a class="headerlink" href="#patterns" title="Permanent link">&para;</a></h2>
 <p><strong><abbr title="Command Query Responsibility Segregation">CQRS</abbr></strong>

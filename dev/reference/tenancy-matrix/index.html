@@ -6554,13 +6554,29 @@ the <em>isolation you get</em>:</p>
 <li><strong><code>none</code></strong> — a deliberately shared resource with no tenant boundary at all.</li>
 <li><strong><code>tagged</code></strong> — one shared container, a tenant marker you filter on (leakable by a
   forgotten predicate).</li>
-<li><strong><code>namespace</code></strong> — a separate key / path / schema / collection / dataset / index per
-  tenant; a name boundary a query can't cross.</li>
+<li><strong><code>namespace</code></strong> — a separate schema / collection / dataset / bucket / index / namespace
+  per tenant, picked by a resolver; a name boundary a query can't cross.</li>
 <li><strong><code>dedicated</code></strong> — a separate instance/connection per tenant (a routed client).</li>
 </ul>
-<p><code>tenant_aware=True</code> reaches <code>tagged</code> on a column store and <code>namespace</code> on a key/path
-store (the prefix <em>is</em> a separate key). A per-tenant resolver reaches <code>namespace</code>; a
-routed client reaches <code>dedicated</code>.</p>
+<p><code>tenant_aware=True</code> reaches <code>tagged</code>, whatever the marker: a column, a property, a key
+prefix or a path prefix. A per-tenant resolver on every relation a route names reaches
+<code>namespace</code>; a routed client reaches <code>dedicated</code>. A static relation counts even when the
+spec doesn't use it, such as a history table with history off, or an ingest target the
+spec never declares. A few routes work differently:</p>
+<ul>
+<li>A Postgres search counts its index as well as its read and heap relations. A Mongo
+  search counts only its collection: an Atlas or vector index name is scoped to it.</li>
+<li>A Postgres inbox, idempotency store or outbox, and a Mongo outbox, pass their resolver
+  the tenant only when they are <code>tenant_aware</code>, so only then does a per-tenant table count.</li>
+<li>A Postgres hub or federated search never reaches <code>namespace</code>. A federated search is
+  <code>tagged</code> only when it is <code>tenant_aware</code> and every leg is a hub leg, <code>tenant_aware</code> or
+  per-tenant; otherwise it is <code>none</code>.</li>
+<li>Wiring rates the switch, not what it builds: a Redis per-tenant <code>namespace</code> rates
+  <code>namespace</code>, though its keys share one keyspace with every other tenant's, and a
+  <code>tenant_aware</code> queue rates <code>tagged</code>, though each tenant gets a queue of its own.</li>
+<li>A Redis stream or pub/sub route has no per-route namespace, so it never reaches
+  <code>namespace</code> either; a Kafka route has no <code>tagged</code> tier.</li>
+</ul>
 <h2 id="stores-you-query">Stores you query<a class="headerlink" href="#stores-you-query" title="Permanent link">&para;</a></h2>
 <p>A store read under the bound tenant scopes itself — adapters call
 <code>ctx.inv_ctx.get_tenant()</code> on their own, no handler argument.</p>
@@ -6587,8 +6603,8 @@ routed client reaches <code>dedicated</code>.</p>
 <tr>
 <td>Postgres</td>
 <td>idempotency</td>
-<td><code>namespace</code> (key prefix)</td>
-<td>schema</td>
+<td><code>tagged</code> (key prefix)</td>
+<td>schema, on a tenant-aware store</td>
 <td><code>RoutedPostgresClient</code></td>
 <td><code>dedicated</code></td>
 </tr>
@@ -6659,7 +6675,7 @@ routed client reaches <code>dedicated</code>.</p>
 <tr>
 <td>Redis</td>
 <td>cache, counter, idempotency, lock</td>
-<td><code>namespace</code> (key prefix)</td>
+<td><code>tagged</code> (key prefix)</td>
 <td>per-tenant namespace</td>
 <td><code>RoutedRedisClient</code></td>
 <td><code>dedicated</code></td>
@@ -6675,7 +6691,7 @@ routed client reaches <code>dedicated</code>.</p>
 <tr>
 <td>S3 / GCS</td>
 <td>object storage</td>
-<td><code>namespace</code> (path prefix)</td>
+<td><code>tagged</code> (path prefix)</td>
 <td>per-tenant bucket</td>
 <td>routed client</td>
 <td><code>dedicated</code></td>
@@ -6747,12 +6763,12 @@ sharded, per-tenant read.</p>
 <tbody>
 <tr>
 <td>Stream / Pub/Sub (Redis)</td>
-<td><code>namespace</code> via <code>tenant_aware</code> key prefix</td>
+<td><code>tagged</code> via <code>tenant_aware</code> key prefix</td>
 <td>A <strong>sharded gateway</strong> — <code>TenantShardedSignalSource</code> + a <code>RealtimeShard</code> per instance binds each assigned tenant and reads its key (<a href="../../integrations/socketio/#tenancy-and-addressing">tenant-aware Socket.IO gateway</a>).</td>
 </tr>
 <tr>
 <td>Queue (RabbitMQ, SQS)</td>
-<td><code>namespace</code> via name prefix</td>
+<td><code>tagged</code> via <code>tenant_aware</code> (a queue of its own per tenant, rated <code>tagged</code>); <code>namespace</code> via a per-tenant <code>namespace</code></td>
 <td>Keep the queue <strong>tenant-global</strong> and bind the tenant from the message envelope in the consumer; or run a <strong>per-tenant worker</strong> per queue. A built-in sharded queue worker is not yet shipped.</td>
 </tr>
 <tr>
@@ -6768,12 +6784,12 @@ sharded, per-tenant read.</p>
 <tr>
 <td>Inbox</td>
 <td><strong>tenant-global</strong> by default; can be <code>tenant_aware</code></td>
-<td>Dedup is keyed by the globally-unique event id, so per-tenant isolation is <strong>optional</strong> (ids can't collide across tenants). Runs under whatever tenant the gateway binds — the shard tenant in namespace mode — so a tenant-aware inbox works there too.</td>
+<td>Dedup is keyed by the globally-unique event id, so per-tenant isolation is <strong>optional</strong> (ids can't collide across tenants). Runs under whatever tenant the gateway binds — the shard tenant on a tenant-aware stream — so a tenant-aware inbox works there too.</td>
 </tr>
 <tr>
 <td>Realtime end-to-end</td>
-<td>outbox <strong>tenant-global</strong> → stream <code>namespace</code></td>
-<td>The whole path stays on the ladder: stage (tenant-global outbox, relay binds per row) → per-tenant stream key → sharded gateway (binds from the key) → tenant-scoped room. The outbox stays shared; only the stream is isolated. Ceiling <code>namespace</code>.</td>
+<td>outbox <strong>tenant-global</strong> → stream <code>tagged</code> (per-tenant key)</td>
+<td>The whole path stays on the ladder: stage (tenant-global outbox, relay binds per row) → per-tenant stream key → sharded gateway (binds from the key) → tenant-scoped room. The outbox stays shared; only the stream is isolated. Ceiling <code>tagged</code>.</td>
 </tr>
 <tr>
 <td>Durable — Temporal</td>
@@ -6803,11 +6819,12 @@ provider steps check their lock or client the same way. A step of your own is no
 <h2 id="declaring-and-enforcing-a-floor">Declaring and enforcing a floor<a class="headerlink" href="#declaring-and-enforcing-a-floor" title="Permanent link">&para;</a></h2>
 <p><code>required_tenant_isolation</code> on a deps module refuses to wire anything weaker than the
 declared tier — checked once at startup, never per request. Each module derives the tier
-it reaches from its config (routed client → <code>dedicated</code>, resolver → <code>namespace</code>,
-<code>tenant_aware</code> → <code>tagged</code>/<code>namespace</code> by backend). Routes that belong to the deployment
-rather than a tenant (Redis fleets, and the tenant-global routes in § above) are left out,
-so a module of only those meets the floor. A floor a backend can <strong>never</strong> reach
-fails as a <strong>capability mismatch</strong>, not a silent misconfiguration:</p>
+it reaches from its config (routed client → <code>dedicated</code>, a resolver on every relation a
+route names → <code>namespace</code>, <code>tenant_aware</code> → <code>tagged</code>; the exceptions are
+listed at the top of this page). Routes that belong to the deployment rather than a tenant
+(Redis fleets, and the tenant-global routes in § above) are left out, so a module of only
+those meets the floor. A floor a backend can <strong>never</strong> reach fails as a <strong>capability
+mismatch</strong>, not a silent misconfiguration:</p>
 <table>
 <thead>
 <tr>

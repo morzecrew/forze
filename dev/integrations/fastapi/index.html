@@ -7087,8 +7087,8 @@ principal, tenant, requested) -&gt; granted</code> — and the connection is ref
 membership is the app's authorization decision, exactly as Socket.IO topic rooms
 are joined by app code; the requested set is also bounded (<code>max_topics</code>, default
 32).</p>
-<p>On the <a href="../../identity-tenancy-enc/multi-tenancy/">tenancy ladder</a>'s namespace tier —
-the realtime stream route wired <code>tenant_aware</code> — use
+<p>With the realtime stream route wired <code>tenant_aware</code> — a per-tenant stream key, the
+<a href="../../identity-tenancy-enc/multi-tenancy/">tenancy ladder</a>'s <code>tagged</code> tier — use
 <code>realtime_sse_sharded_tail_lifecycle_step(hub, shard=shard)</code> instead: one supervised
 tail loop per shard tenant, each bound to its tenant, so signals fan out under the
 <strong>stream's</strong> trusted identity rather than an untrusted header (the <abbr title="Server-Side Encryption">SSE</abbr> analog of
@@ -7254,7 +7254,7 @@ runs them. The surface, at a glance:</p>
 </tr>
 <tr>
 <td><code>realtime_sse_sharded_tail_lifecycle_step</code></td>
-<td>namespace-tier <abbr title="Server-Side Encryption">SSE</abbr>: per-tenant tail loops, tenant trusted from the stream</td>
+<td>tenant-aware <abbr title="Server-Side Encryption">SSE</abbr>: per-tenant tail loops, tenant trusted from the stream</td>
 </tr>
 <tr>
 <td><code>realtime_sse_presence_heartbeat_lifecycle_step</code></td>

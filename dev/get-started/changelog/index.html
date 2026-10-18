@@ -9694,6 +9694,21 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <h3 id="fixed">Fixed<a class="headerlink" href="#fixed" title="Permanent link">&para;</a></h3>
 <ul>
 <li>
+<p><strong>Mongo searches and counters, tenant-aware Mongo outboxes and Firestore counters on a per-tenant collection now meet a <code>namespace</code> floor.</strong> A Mongo search's index name, scoped to its collection, no longer counts.</p>
+</li>
+<li>
+<p><strong>Mongo no longer advises a tenant-aware outbox on a per-tenant collection to drop <code>tenant_aware</code></strong>, which would put every tenant's records in one collection.</p>
+</li>
+</ul>
+<h3 id="security">Security<a class="headerlink" href="#security" title="Permanent link">&para;</a></h3>
+<ul>
+<li>
+<p><strong>A route is <code>namespace</code>-isolated only when every relation it names resolves per tenant</strong> (<strong>Breaking</strong>): a <code>namespace</code> floor refuses one with a static relation, and a per-tenant Postgres inbox or idempotency store that is not tenant-aware. New: <code>TenancyRouteGroup(other_namespaces=)</code>, <code>resolves_per_tenant</code>.</p>
+</li>
+<li>
+<p><strong>Postgres idempotency stores and federated searches are held to a declared floor</strong> (<strong>Breaking</strong>): an idempotency store on a shared table rates <code>tagged</code>, and a federated search rates <code>none</code> unless every leg is a hub leg, tenant-aware or per-tenant.</p>
+</li>
+<li>
 <p><strong><code>ensure_principal(..., is_active=False)</code> creates the principal inactive in one write</strong>, so a failure can no longer leave it active; <code>CreatePolicyPrincipalCmd</code> gains <code>is_active</code> (default <code>True</code>).</p>
 </li>
 <li>
@@ -9705,9 +9720,6 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <li>
 <p><strong>Deactivating a principal deactivates every API key it holds.</strong> The keys were read with no limit, so past a store's implicit read limit (10,000 rows on Postgres, Mongo and Firestore) the rest stayed active; deactivation now pages through all of them.</p>
 </li>
-</ul>
-<h3 id="security">Security<a class="headerlink" href="#security" title="Permanent link">&para;</a></h3>
-<ul>
 <li>
 <p><strong>With revocation states, a credential minted from an access token re-checks that token whoever it is for</strong>, including a password account or invite an operator issues for another principal.</p>
 </li>
