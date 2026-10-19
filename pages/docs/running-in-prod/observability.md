@@ -206,6 +206,11 @@ Name a package root and the stdlib logger hierarchy carries the setting to every
 logger under it (`forze_postgres.kernel`, `forze_postgres.adapters`, …), so there
 is nothing per-subpackage to enumerate.
 
+Until structlog is configured (`configure_logging`, `bootstrap_logging` or your own
+`structlog.configure`), forze writes nothing to stdout: it hands each event to the
+stdlib logger of the same name at that logger's level, so warnings and above reach
+stderr by default, or your own `logging` handlers at the level you set.
+
 `configure_logging` remains the lower-level entry point when you want to wire the
 pieces yourself. Either way, pass `otel_config=...` and the active span's
 `trace_id` and `span_id` are injected into every log line — because
