@@ -69,7 +69,13 @@ async def _close(sio: AsyncServer, eio_sid: str, socket: Any) -> None:
     # which closes the WebSocket. A polling client reads the CLOSE from a pending poll, or
     # has its next poll refused; either way its transport ends, and it reconnects.
     socket.queue.put_nowait(None)
-    sio.eio.sockets.pop(eio_sid, None)
+
+    # Only a socket this close closed: `close` returns at once when another close is still
+    # running the disconnect handlers, and a pop then would leave their sids listed with no
+    # session. python-engineio drops a socket closed that way at its next service pass,
+    # request or session read.
+    if socket.closed:
+        sio.eio.sockets.pop(eio_sid, None)
 
 
 async def close_transport(sio: AsyncServer, eio_sid: str) -> None:

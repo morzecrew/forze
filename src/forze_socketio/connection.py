@@ -280,9 +280,12 @@ def _core_refusal(error: CoreException) -> SocketIOConnectionRefusedError:
     return SocketIOConnectionRefusedError(error.summary)
 
 
-async def _best_effort(work: Awaitable[object]) -> None:
+async def _best_effort[**P](
+    call: Callable[P, Awaitable[object]], *args: P.args, **kwargs: P.kwargs
+) -> None:
+    # Takes the call, not its awaitable: a port may raise before it returns one.
     try:
-        await work
+        await call(*args, **kwargs)
 
     except Exception as error:
         log_server_error(error)
@@ -806,13 +809,13 @@ class _ConnectionLifecycle:
         room = connection.principal_room
 
         if self.presence is not None:
-            await _best_effort(self.presence.left(room, sid))
+            await _best_effort(self.presence.left, room, sid)
 
         if gone:
             return
 
-        await _best_effort(self.sio.leave_room(sid, room, namespace=self.namespace))
-        await _best_effort(self._drop_identity(sid))
+        await _best_effort(self.sio.leave_room, sid, room, namespace=self.namespace)
+        await _best_effort(self._drop_identity, sid)
 
     # ....................... #
 
@@ -935,7 +938,9 @@ class _ConnectionLifecycle:
         connection = await self._drop_identity(sid)
 
         if self.presence is not None and connection is not None:
-            await self.presence.left(connection.principal_room, sid)
+            # Contained: a raise here would stop python-socketio before it lets go of the sid,
+            # and of the connection's later namespaces. The store's entry lapses at its TTL.
+            await _best_effort(self.presence.left, connection.principal_room, sid)
 
 
 # ....................... #
@@ -1082,6 +1087,26 @@ def _local_connections(sio: AsyncServer, namespace: str) -> list[str]:
     return [sid for sid, _eio in sio.manager.get_participants(namespace, None)]
 
 
+async def _session_of(sio: AsyncServer, sid: str, namespace: str) -> dict[str, Any] | None:
+    """The socket's session, or ``None`` for a socket on its way out.
+
+    A socket is on its way out once its namespace's disconnect has begun, or once its
+    Engine.IO session is gone: a close under way removed it before every namespace let go.
+    Its disconnect handlers end it; a sweep has nothing to do for it.
+    """
+
+    if not sio.manager.is_connected(sid, namespace):
+        return None
+
+    try:
+        session: dict[str, Any] = await sio.get_session(sid, namespace=namespace)
+
+    except KeyError:
+        return None
+
+    return session
+
+
 # ....................... #
 
 
@@ -1108,7 +1133,11 @@ async def sweep_expired_connections(
         # that would extend expired credentials past their lifetime for as long as the
         # early failure persists. CancelledError is a BaseException and still propagates.
         try:
-            session = await sio.get_session(sid, namespace=namespace)
+            session = await _session_of(sio, sid, namespace)
+
+            if session is None:
+                continue
+
             connection: RealtimeConnection | None = session.get(CONNECTION_SESSION_KEY)
 
             if connection is not None and connection.is_expired(moment):
@@ -1143,7 +1172,11 @@ async def refresh_presence(
         # otherwise expire healthy connections and the gateway would skip their live
         # deliveries. CancelledError is a BaseException and still propagates.
         try:
-            session = await sio.get_session(sid, namespace=namespace)
+            session = await _session_of(sio, sid, namespace)
+
+            if session is None:
+                continue
+
             connection: RealtimeConnection | None = session.get(CONNECTION_SESSION_KEY)
 
             if connection is not None:

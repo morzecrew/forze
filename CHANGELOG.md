@@ -17,6 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The Socket.IO expiry sweep and presence heartbeat skip a socket already on its way out instead of logging a server error for it. A connection the drain closes while another close is under way no longer leaves its presence entry behind, and a presence store failing a leave no longer strands the connection.
+
 - `Term.live()` also ends a leadership term once its soft deadline has passed on the clock, so a body resumed after a pause stops at its next check instead of running one more unit past its deadline. Since it may now end the term, call it on the step's event loop.
 
 ## [0.15.0] - 2026-10-18

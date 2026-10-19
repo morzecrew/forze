@@ -3,10 +3,14 @@
 from __future__ import annotations
 
 import asyncio
+import io
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from typing import Any, cast
 from uuid import UUID
+
+from engineio.async_socket import AsyncSocket
+from socketio.async_server import AsyncServer
 
 from forze.application.contracts.authn import AuthnIdentity
 from forze.application.execution import ExecutionContext
@@ -41,6 +45,9 @@ class _StubManager:
     def get_participants(self, namespace: str, room: str | None) -> Any:
         for sid in self._sids:
             yield sid, f"eio-{sid}"
+
+    def is_connected(self, sid: str, namespace: str) -> bool:
+        return True
 
 
 class _StubSio:
@@ -174,13 +181,14 @@ class _FlakyDisconnectSio(_StubSio):
 class _FlakyPresence(_RecordingPresence):
     """Heartbeating the named room always raises (store blip for one key)."""
 
-    def __init__(self, *, broken_sid: str) -> None:
+    def __init__(self, *, broken_sid: str, error: Exception | None = None) -> None:
         super().__init__()
         self.broken_sid = broken_sid
+        self.error = error or RuntimeError("store blip")
 
     async def joined(self, room: str, sid: str) -> None:
         if sid == self.broken_sid:
-            raise RuntimeError("store blip")
+            raise self.error
 
         await super().joined(room, sid)
 
@@ -219,6 +227,97 @@ async def test_refresh_presence_continues_past_a_failing_heartbeat() -> None:
     # failing early entry must not expire healthy connections behind it
     assert [sid for _room, sid in presence.joins] == ["sid-later"]
     assert refreshed == 1
+
+
+async def test_a_key_error_from_the_presence_store_is_still_logged(
+    error_log_buf: io.StringIO,
+) -> None:
+    live = _conn(expires_at=None)
+    sio = _StubSio(
+        {
+            "sid-broken": {CONNECTION_SESSION_KEY: live},
+            "sid-later": {CONNECTION_SESSION_KEY: live},
+        }
+    )
+    presence = _FlakyPresence(broken_sid="sid-broken", error=KeyError("presence row gone"))
+
+    refreshed = await refresh_presence(cast(Any, sio), presence)
+
+    # Only a session that is gone is skipped quietly; a store's KeyError is a fault.
+    assert [sid for _room, sid in presence.joins] == ["sid-later"]
+    assert refreshed == 1
+    (record,) = error_log_buf.getvalue().splitlines()
+    assert "presence row gone" in record
+
+
+# ----------------------- #
+# a socket on its way out — over python-socketio's own server and manager
+
+_EXPIRED = _conn(expires_at=_NOW - timedelta(minutes=5))
+
+
+async def _listed(server: AsyncServer, eio_sid: str, connection: RealtimeConnection) -> str:
+    """A ``/`` connection over its own Engine.IO socket, its session holding *connection*."""
+
+    server.eio.sockets[eio_sid] = AsyncSocket(server.eio, eio_sid)
+    sid: str = await server.manager.connect(eio_sid, "/")
+    await server.save_session(sid, {CONNECTION_SESSION_KEY: connection})
+
+    return sid
+
+
+def _sids(server: AsyncServer) -> list[str]:
+    return [sid for sid, _eio in server.manager.get_participants("/", None)]
+
+
+async def test_the_sweep_skips_a_listed_socket_whose_session_is_gone(
+    error_log_buf: io.StringIO,
+) -> None:
+    server = AsyncServer()
+    leaving = await _listed(server, "eio-1", _EXPIRED)
+    await _listed(server, "eio-2", _EXPIRED)
+    server.eio.sockets.pop("eio-1")  # a close under way removed it before "/" let go
+
+    dropped = await sweep_expired_connections(server, now=_NOW)
+
+    assert dropped == 1
+    assert _sids(server) == [leaving]  # left to its own disconnect handlers
+    assert error_log_buf.getvalue() == ""
+
+
+async def test_the_heartbeat_skips_a_listed_socket_whose_session_is_gone(
+    error_log_buf: io.StringIO,
+) -> None:
+    server = AsyncServer()
+    await _listed(server, "eio-1", _EXPIRED)
+    staying = await _listed(server, "eio-2", _EXPIRED)
+    server.eio.sockets.pop("eio-1")
+    presence = _RecordingPresence()
+
+    refreshed = await refresh_presence(server, cast(Any, presence))
+
+    assert refreshed == 1
+    assert presence.joins == [(_EXPIRED.principal_room, staying)]
+    assert error_log_buf.getvalue() == ""
+
+
+async def test_the_sweeps_leave_a_socket_whose_namespace_disconnect_has_begun(
+    error_log_buf: io.StringIO,
+) -> None:
+    server = AsyncServer()
+    leaving = await _listed(server, "eio-1", _EXPIRED)
+    staying = await _listed(server, "eio-2", _EXPIRED)
+    server.manager.pre_disconnect(leaving, "/")  # its disconnect handler is running
+    presence = _RecordingPresence()
+
+    refreshed = await refresh_presence(server, cast(Any, presence))
+    dropped = await sweep_expired_connections(server, now=_NOW)
+
+    # Not re-asserted beside the handler's leave, and not disconnected a second time.
+    assert refreshed == 1
+    assert presence.joins == [(_EXPIRED.principal_room, staying)]
+    assert dropped == 1
+    assert error_log_buf.getvalue() == ""
 
 
 def test_naive_expires_at_is_refused_at_construction() -> None:
