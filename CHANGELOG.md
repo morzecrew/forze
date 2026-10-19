@@ -17,9 +17,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- The Socket.IO expiry sweep and presence heartbeat skip a socket already on its way out instead of logging a server error for it. A connection the drain closes while another close is under way no longer leaves its presence entry behind, and a presence store failing a leave no longer strands the connection.
+- ...
 
-- `Term.live()` also ends a leadership term once its soft deadline has passed on the clock, so a body resumed after a pause stops at its next check instead of running one more unit past its deadline. Since it may now end the term, call it on the step's event loop.
+## [0.15.1] - 2026-10-19
+
+### Fixed
+
+- **A leadership body resumed after a pause stops at its next `Term.live()` check.** `live()` now ends the term once its soft deadline has passed on the clock, instead of letting the body run one more unit past it. Since it may now end the term, call it on the step's event loop, not from a worker thread.
+
+- **The Socket.IO expiry sweep and presence heartbeat skip a socket already on its way out**, instead of logging a server error for it. A connection the drain closes while another close is under way no longer leaves its presence entry behind, and a presence store failing a leave no longer strands the connection.
 
 ## [0.15.0] - 2026-10-18
 
@@ -2330,7 +2336,8 @@ Execution and mapping refactor, middleware-first usecases, split search/cache/do
 
 - Packaging metadata for PyOCI classifiers.
 
-[unreleased]: https://github.com/morzecrew/forze/compare/v0.15.0...HEAD
+[unreleased]: https://github.com/morzecrew/forze/compare/v0.15.1...HEAD
+[0.15.1]: https://github.com/morzecrew/forze/compare/v0.15.0...v0.15.1
 [0.15.0]: https://github.com/morzecrew/forze/compare/v0.14.0...v0.15.0
 [0.14.0]: https://github.com/morzecrew/forze/compare/v0.13.0...v0.14.0
 [0.13.0]: https://github.com/morzecrew/forze/compare/v0.12.0...v0.13.0
