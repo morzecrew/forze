@@ -29,8 +29,8 @@ it was.
   Signals and updates push messages into a running workflow.
 - **Schedules** — fire a workflow on a cron or interval; the durable counterpart to a
   queue's delayed jobs.
-- **Functions** — event-triggered work composed of individually-retried, memoized **steps**
-  (the Inngest model).
+- **Functions** — event-triggered work composed of memoized **steps** (the Inngest model;
+  Inngest retries each step; the self-hosted tier runs a step once and can retry the run).
 
 A workflow start returns a handle you observe through the query port:
 
@@ -109,10 +109,10 @@ still held (nothing double-executes) and the run lands `TIMED_OUT` with the dead
 so a body hung on a dead peer can't pin a recovery slot forever. `TIMED_OUT` is its own
 terminal rather than a flavour of `FAILED` because the two send you to different places —
 `FAILED` to the body's code, `TIMED_OUT` to the cap, the workload's size, or a hung peer. Set
-it above your longest body, or `None` to remove the cap; re-enqueue a timed-out run to retry
-it. Run the scanner unwrapped on every replica. The singleton lifecycle guard cannot elect one
-scanner: it holds its lock only while startup launches the loop, so later replicas scan too, and
-one that starts while another holds the lock runs none.
+it above your longest body, or `None` to remove the cap. A timeout is not retried: requeue
+the run (below) to run it again. Run the scanner unwrapped on every replica. The singleton
+lifecycle guard cannot elect one scanner: it holds its lock only while startup launches the
+loop, so later replicas scan too, and one that starts while another holds the lock runs none.
 `max_concurrency` bounds how many runs a sweep recovers at once. Enqueue with
 `run_at=<when>` for a **delayed** run — the scan skips it until it's due.
 
@@ -279,8 +279,8 @@ structure the body for it (await regularly, `run_cpu` with checkpoints at chunk 
 True hard kill exists only at process/container granularity and is a deployment concern.
 
 `CANCELLED` is deliberately not `FAILED`: nothing is wrong with the code, so it should not
-page anyone. Completed steps stay journaled, so re-enqueueing a cancelled run replays them
-rather than redoing the work.
+page anyone. Its completed steps stay journaled — cancelling is not a rollback — and
+`requeue_failed` leaves it alone.
 
 The ask is **unfenced** and the landing is **fenced**: anyone may ask, but only the run's
 current claim holder may write the terminal state, so a stalled replica can't cancel a run

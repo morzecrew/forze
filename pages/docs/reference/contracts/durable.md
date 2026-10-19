@@ -54,8 +54,8 @@ queue's delayed jobs.
 | Dep key | Side |
 |---------|------|
 | `DurableFunctionEventCommandDepKey` | emit events that trigger functions |
-| `DurableFunctionStepDepKey` | run memoized, individually-retried steps inside a function |
-| `DurableRunStoreDepKey` | the run store behind the self-hosted tier — enqueue / begin / renew / complete / fail, `claim_abandoned` recovery, and the fenced terminal landings `mark_cancelled` / `mark_timed_out` |
+| `DurableFunctionStepDepKey` | run memoized steps inside a function — an engine tier may retry each one; the self-hosted tier runs each once and can retry the run (`DurableFunctionRunner(retry=)`) |
+| `DurableRunStoreDepKey` | the run store behind the self-hosted tier — enqueue / begin / renew / complete / fail, `claim_abandoned` recovery, the fenced terminal landings `mark_cancelled` / `mark_timed_out`, and `mark_retry`, which sends a running run back to `pending` for its retry |
 | `DurableRunAdminDepKey` | run listing and control — `list_runs(status=None, name=None, limit=50, cursor=None)` returns a cursor-paged `DurableRunPage`; `request_cancel(run_id)` asks a run to stop; `requeue_quarantined(run_ids=None)` returns quarantined runs to `pending` and says how many — unbound, it must name them while any belongs to a tenant; `requeue_failed(run_ids=None, name=None)` returns the named `failed` and `timed_out` runs to `pending` under their own id, so the steps they journaled replay — it needs `run_ids` or `name`, and skips a run whose cancel ask is unanswered |
 | `DurableScheduleStoreDepKey` | the cron schedule store — put / claim_due / advance / load / delete |
 

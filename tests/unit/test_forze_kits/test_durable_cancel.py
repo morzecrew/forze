@@ -159,8 +159,8 @@ class TestCancelRunning:
         assert result.cancel_requested_at is not None
         assert result.cancel_refused_at is None
 
-        # The journal survives the cancel: a manual re-enqueue replays the charged step
-        # rather than charging twice. Cancelling is not a rollback.
+        # The journal survives the cancel: the charged step stays recorded, not undone.
+        # Cancelling is not a rollback.
         assert state.durable_step_memo[f"{run_id}:charge"] == {"charged": True}
 
     async def test_cancel_is_not_a_failure(self) -> None:

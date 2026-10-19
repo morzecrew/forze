@@ -164,8 +164,10 @@ class DurableFunctionRunner:
     ``TIMED_OUT`` with the deadline reason. Without a cap a body hung on a dead peer
     heartbeats its lease alive forever — never reclaimed, pinning a recovery slot on this
     replica. The body is cancelled while the lease is still held, so nothing
-    double-executes; re-enqueue to retry. Must comfortably exceed the longest legitimate
-    body; ``None`` removes the cap (and restores the hang hazard).
+    double-executes. A timeout is not retried: requeue the run with
+    :meth:`~forze.application.contracts.durable.function.DurableRunAdminPort.requeue_failed`
+    to run it again. Must comfortably exceed the longest legitimate body; ``None`` removes
+    the cap (and restores the hang hazard).
 
     The cap composes with cancellation rather than competing with it: a body that ignores an
     operator's stop is still bounded here, and because the *ask* was recorded first such a
@@ -833,12 +835,12 @@ class DurableFunctionRunner:
 
                 # The body was cancelled while the lease was still held (no lapse, so no
                 # double-execution) and the run lands TIMED_OUT — distinct from FAILED
-                # because it sends you to the cap, not to the body's code. There is no
-                # retry machinery here; an operator re-enqueues.
+                # because it sends you to the cap, not to the body's code. A timeout is
+                # never retried; an operator requeues the run.
                 raise exc.timeout(
                     f"Durable run {record.run_id} ({record.name}) exceeded "
                     f"max_run_duration ({self.max_run_duration}); the body was cancelled "
-                    "before its lease could lapse — re-enqueue to retry",
+                    "before its lease could lapse — requeue it to run it again",
                     code=_RUN_TIMED_OUT_CODE,
                 ) from None
 
