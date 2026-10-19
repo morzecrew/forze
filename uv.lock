@@ -3007,16 +3007,16 @@ wheels = [
 
 [[package]]
 name = "opentelemetry-exporter-prometheus"
-version = "0.66b0"
+version = "0.66b1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "opentelemetry-api" },
     { name = "opentelemetry-sdk" },
     { name = "prometheus-client" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/d9/01/bb73b339b89a33ed0b229e7e86330017430457c2c41d6254aa077b032ade/opentelemetry_exporter_prometheus-0.66b0.tar.gz", hash = "sha256:941434dd88e7c0fb8c1ec0d4e5c1b62c6206bb47b8b35f287cbac56fea82bd40", size = 16987, upload-time = "2026-09-25T12:32:36.19Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/ed/58/e552853748c3a1478d3f0db31bb4e3bef2e45385f64d658148693183410e/opentelemetry_exporter_prometheus-0.66b1.tar.gz", hash = "sha256:1c702a0cc7a1b8c5e1f3f246aeb4273dbd707179af30dbb66182a75e16a06ed8", size = 16987, upload-time = "2026-10-06T17:33:06.358Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/fc/6f/677afe0bc7af0f913c42c93fad2dad7b3c223735a3d0bbd4ec1bfa74a43e/opentelemetry_exporter_prometheus-0.66b0-py3-none-any.whl", hash = "sha256:12448682ee2824fef00bd290568297bb5bebd5fd8403fd7d70b3e567cf8b2a93", size = 13216, upload-time = "2026-09-25T12:32:15.662Z" },
+    { url = "https://files.pythonhosted.org/packages/4d/8a/5e7262d970586a8d69dd159bebc68fbee7457088883b179599a562881a6f/opentelemetry_exporter_prometheus-0.66b1-py3-none-any.whl", hash = "sha256:a938e6af7295d5bacf82da9ca845cab9a9cb1c5f565abe39f54ef8bf511c05d9", size = 13222, upload-time = "2026-10-06T17:32:44.94Z" },
 ]
 
 [[package]]
