@@ -280,9 +280,12 @@ def _core_refusal(error: CoreException) -> SocketIOConnectionRefusedError:
     return SocketIOConnectionRefusedError(error.summary)
 
 
-async def _best_effort(work: Awaitable[object]) -> None:
+async def _best_effort[**P](
+    call: Callable[P, Awaitable[object]], *args: P.args, **kwargs: P.kwargs
+) -> None:
+    # Takes the call, not its awaitable: a port may raise before it returns one.
     try:
-        await work
+        await call(*args, **kwargs)
 
     except Exception as error:
         log_server_error(error)
@@ -806,13 +809,13 @@ class _ConnectionLifecycle:
         room = connection.principal_room
 
         if self.presence is not None:
-            await _best_effort(self.presence.left(room, sid))
+            await _best_effort(self.presence.left, room, sid)
 
         if gone:
             return
 
-        await _best_effort(self.sio.leave_room(sid, room, namespace=self.namespace))
-        await _best_effort(self._drop_identity(sid))
+        await _best_effort(self.sio.leave_room, sid, room, namespace=self.namespace)
+        await _best_effort(self._drop_identity, sid)
 
     # ....................... #
 
@@ -937,7 +940,7 @@ class _ConnectionLifecycle:
         if self.presence is not None and connection is not None:
             # Contained: a raise here would stop python-socketio before it lets go of the sid,
             # and of the connection's later namespaces. The store's entry lapses at its TTL.
-            await _best_effort(self.presence.left(connection.principal_room, sid))
+            await _best_effort(self.presence.left, connection.principal_room, sid)
 
 
 # ....................... #

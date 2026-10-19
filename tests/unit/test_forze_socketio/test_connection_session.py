@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import io
+from collections.abc import Awaitable
 from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
@@ -116,7 +117,19 @@ class _FailingPresence(InMemoryRealtimePresence):
 
 
 class _FailingLeave(InMemoryRealtimePresence):
-    async def left(self, room: str, sid: str) -> None:
+    """A presence store whose leave fails when awaited, or (*at_call*) when called."""
+
+    def __init__(self, *, at_call: bool) -> None:
+        super().__init__()
+        self.at_call = at_call
+
+    def left(self, room: str, sid: str) -> Awaitable[None]:  # type: ignore[override]  # as the protocol allows
+        if self.at_call:
+            raise RuntimeError("presence store down")
+
+        return self._down()
+
+    async def _down(self) -> None:
         raise RuntimeError("presence store down")
 
 
@@ -132,11 +145,14 @@ class TestIdentityEndsWithTheConnection:
 
     # ....................... #
 
+    @pytest.mark.parametrize("at_call", [False, True])
     async def test_a_leave_the_presence_store_fails_does_not_strand_the_connection(
-        self, error_log_buf: io.StringIO
+        self, at_call: bool, error_log_buf: io.StringIO
     ) -> None:
         server = _server()
-        attach_realtime_connection(server, resolve=_resolve, presence=_FailingLeave())
+        attach_realtime_connection(
+            server, resolve=_resolve, presence=_FailingLeave(at_call=at_call)
+        )
         await _connect(server, "ok")
 
         await server._handle_disconnect("eio-1", "/", "client namespace disconnect")  # pyright: ignore[reportPrivateUsage]
