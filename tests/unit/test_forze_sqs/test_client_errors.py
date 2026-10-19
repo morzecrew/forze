@@ -110,6 +110,9 @@ class TestSqsErrorHandler:
         r = _sqs_eh(_client_error(code), site="op")
         assert r is not None
         assert needle in r.summary.lower()
+        # A throttle is `throttled`: retryable, and neutral to the breaker.
+        throttled = needle == "throttl"
+        assert (r.kind == ExceptionKind.THROTTLED) is throttled
 
     def test_botocore_fallback(self) -> None:
         raised = sqs_errors.BotoCoreError()

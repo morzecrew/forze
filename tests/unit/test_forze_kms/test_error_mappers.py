@@ -48,6 +48,9 @@ from forze_kms.yc.kernel.client.errors import _yckms_eh
 
 _DETAILS = {"key_id": "cmk"}
 
+_TRANSIENT_KINDS = frozenset({ExceptionKind.INFRASTRUCTURE, ExceptionKind.THROTTLED})
+"""A transient fault is a downstream failure or a throttle: both retryable."""
+
 
 def _client_error(code: str, message: str = "") -> boto_errors.ClientError:
     return boto_errors.ClientError({"Error": {"Code": code, "Message": message}}, "Decrypt")
@@ -136,7 +139,7 @@ class TestAwsErrorMapper:
         mapped = _awskms_eh(_client_error(code), site="awskms.decrypt")
 
         assert mapped is not None
-        assert mapped.kind is ExceptionKind.INFRASTRUCTURE
+        assert mapped.kind in _TRANSIENT_KINDS
         assert exception_egress_policy(mapped.kind).retryable is True
 
     @pytest.mark.parametrize(
@@ -285,7 +288,7 @@ class TestGcpErrorMapper:
         mapped = _gcpkms_eh(error, site="gcpkms.decrypt")
 
         assert mapped is not None
-        assert mapped.kind is ExceptionKind.INFRASTRUCTURE
+        assert mapped.kind in _TRANSIENT_KINDS
         assert exception_egress_policy(mapped.kind).retryable is True
 
     def test_an_unrelated_exception_is_not_claimed(self) -> None:
@@ -345,7 +348,7 @@ class TestYcErrorMapper:
         mapped = _yckms_eh(_RpcError(status), site="yckms.decrypt")
 
         assert mapped is not None
-        assert mapped.kind is ExceptionKind.INFRASTRUCTURE
+        assert mapped.kind in _TRANSIENT_KINDS
         assert exception_egress_policy(mapped.kind).retryable is True
 
     @pytest.mark.parametrize(

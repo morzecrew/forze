@@ -207,19 +207,17 @@ class HttpServiceAdapter(HttpServicePort):
                 return operation.return_type.model_validate_json(content)
 
             except ValidationError as error:
-                invalid = exc.validation(
+                # `internal`: the counterparty broke its contract, which the caller did not.
+                raise exc.internal(
                     f"HTTP operation {operation.name!r}: response failed validation",
                     code="http.response.validation",
                     details={"errors": sanitize_pydantic_errors(list(error.errors()))},
-                )
-                # The errors describe the counterparty's response, not anything the caller sent.
-                invalid.expose_details = False
-                raise invalid from error
+                ) from error
 
         if operation.allows_empty_body or _return_type_allows_empty(operation.return_type):
             return operation.return_type.model_construct()
 
-        raise exc.validation(
+        raise exc.internal(
             f"HTTP operation {operation.name!r} returned an empty body",
         )
 

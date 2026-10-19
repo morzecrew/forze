@@ -159,7 +159,7 @@ def _awskms_eh(
                 )
 
             if code in {"ThrottlingException", "LimitExceededException"}:
-                return CoreException.infrastructure(
+                return CoreException.throttled(
                     "AWS KMS request throttled.",
                     details=details,
                 )

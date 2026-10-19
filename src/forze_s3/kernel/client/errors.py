@@ -105,7 +105,7 @@ def _s3_eh(  # skipcq: PY-R1000
 
             # throttling / rate limiting
             if code in {"SlowDown", "Throttling", "ThrottlingException"}:
-                return CoreException.infrastructure(
+                return CoreException.throttled(
                     "S3 request throttled.",
                     details=details,
                 )

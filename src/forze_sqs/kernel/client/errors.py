@@ -82,7 +82,7 @@ def _sqs_eh(  # skipcq: PY-R1000
                 "RequestThrottled",
                 "TooManyRequestsException",
             }:
-                return CoreException.infrastructure(
+                return CoreException.throttled(
                     "SQS request throttled.",
                     details=details,
                 )

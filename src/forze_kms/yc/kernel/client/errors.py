@@ -128,7 +128,7 @@ def _yckms_eh(
         )
 
     if code is grpc.StatusCode.RESOURCE_EXHAUSTED:
-        return CoreException.infrastructure(
+        return CoreException.throttled(
             "Yandex Cloud KMS request throttled (quota exhausted).",
             details=details,
         )
