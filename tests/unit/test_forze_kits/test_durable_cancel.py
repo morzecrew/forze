@@ -396,6 +396,11 @@ class _ListOnlyAdmin:
     async def requeue_quarantined(self, *, run_ids: Sequence[str] | None = None) -> int:
         return 0
 
+    async def requeue_failed(
+        self, *, run_ids: Sequence[str] | None = None, name: str | None = None
+    ) -> int:
+        return 0
+
 
 # ....................... #
 

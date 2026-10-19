@@ -191,6 +191,30 @@ again. `registry.register(name, body, retry=...)` gives one function its own str
 An attempt that sends its run back counts under the `retrying` outcome, and the last one
 under `failed`: alert on `failed`.
 
+**Requeue a failed run** once whatever failed it is fixed, naming the runs or the function.
+A run that landed `FAILED` or `TIMED_OUT` goes back to `PENDING` under its own id, so it too
+replays its journal and reruns only the steps it did not finish:
+
+```python
+from forze_kits.integrations.durable import resolve_durable_run_admin
+
+
+async def requeue(ctx):
+    admin = resolve_durable_run_admin(ctx)
+    await admin.requeue_failed(run_ids=["..."])     # or name="profile"
+```
+
+A call naming neither is refused: a run's failure history is not something to bring back
+whole. It is scoped like `list_runs`, though an unbound call may name a function across
+tenants, and it leaves alone `CANCELLED` and `FORWARD_INCOMPLETE` runs and a failed run whose
+cancel ask is unanswered. A requeued run keeps its `attempts`, so one that spent a retry
+strategy's budget gets one attempt per requeue, and its `created_at`, so the scan claims
+requeued runs ahead of fresh ones.
+
+A saga journals a failed forward step, so requeueing one that rolled back
+(`saga.step_failed`) fails it the same way again; that work needs a new run. Requeueing one
+whose rollback failed runs again only the compensations that failed.
+
 ### Runs recovery cannot decrypt
 
 With payloads encrypted, a run whose tenant's key is gone (an offboarded tenant, a key

@@ -56,7 +56,7 @@ queue's delayed jobs.
 | `DurableFunctionEventCommandDepKey` | emit events that trigger functions |
 | `DurableFunctionStepDepKey` | run memoized, individually-retried steps inside a function |
 | `DurableRunStoreDepKey` | the run store behind the self-hosted tier — enqueue / begin / renew / complete / fail, `claim_abandoned` recovery, and the fenced terminal landings `mark_cancelled` / `mark_timed_out` |
-| `DurableRunAdminDepKey` | run listing and control — `list_runs(status=None, name=None, limit=50, cursor=None)` returns a cursor-paged `DurableRunPage`; `request_cancel(run_id)` asks a run to stop; `requeue_quarantined(run_ids=None)` returns quarantined runs to `pending` and says how many — unbound, it must name them while any belongs to a tenant |
+| `DurableRunAdminDepKey` | run listing and control — `list_runs(status=None, name=None, limit=50, cursor=None)` returns a cursor-paged `DurableRunPage`; `request_cancel(run_id)` asks a run to stop; `requeue_quarantined(run_ids=None)` returns quarantined runs to `pending` and says how many — unbound, it must name them while any belongs to a tenant; `requeue_failed(run_ids=None, name=None)` returns the named `failed` and `timed_out` runs to `pending` under their own id, so the steps they journaled replay — it needs `run_ids` or `name`, and skips a run whose cancel ask is unanswered |
 | `DurableScheduleStoreDepKey` | the cron schedule store — put / claim_due / advance / load / delete |
 
 A `DurableFunctionEventSpec` binds an event channel to its payload codec. A run's status is
@@ -73,9 +73,10 @@ holds all three to it.
 | Verbs | Reach when a tenant is bound |
 |-------|------------------------------|
 | `begin`, `renew`, `load`, `complete` / `fail` / `mark_*` | that tenant's runs **and untagged ones** |
-| `claim_abandoned`, `list_runs`, `request_cancel`, `requeue_quarantined`, `refuse_cancel` | that tenant's runs, exactly |
+| `claim_abandoned`, `list_runs`, `request_cancel`, `requeue_quarantined`, `requeue_failed`, `refuse_cancel` | that tenant's runs, exactly |
 | all of them, unbound | everything — the recovery and single-tenant role — except `requeue_quarantined` |
 | `requeue_quarantined`, unbound and naming no runs | untagged runs only, and refused while any quarantined run in scope carries a tenant |
+| `requeue_failed` naming neither runs nor a function | refused, bound or not |
 
 The untagged arm on the first row is liveness, not laxity. A run tagged with no tenant belongs
 to none, and a terminal write that matched nothing would leave it running until its lease

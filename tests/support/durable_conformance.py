@@ -491,6 +491,160 @@ RETRY_OUTCOME: dict[str, Any] = {
 # ....................... #
 
 
+async def run_requeue_failed_scenario(
+    store_for: Callable[[UUID | None], DurableRunStorePort],
+) -> dict[str, Any]:
+    """Requeue landed runs from both sides of the tenant boundary.
+
+    Only ``FAILED`` and ``TIMED_OUT`` runs move, back to a due ``PENDING`` under their own
+    id, keeping ``attempts``, ``error`` and cancel stamps, so the next claim advances the
+    fence and replays the journal. ``CANCELLED`` and ``FORWARD_INCOMPLETE`` runs stay, and so
+    does a failed run whose cancel ask is unanswered. A call naming neither runs nor a
+    function is refused, bound or not. *store_for* builds a store bound to a tenant
+    (``None`` for unbound) over one relation.
+    """
+
+    tenant_a = UUID("00000000-0000-0000-0000-00000000000a")
+    tenant_b = UUID("00000000-0000-0000-0000-00000000000b")
+    as_a, as_b, unbound = store_for(tenant_a), store_for(tenant_b), store_for(None)
+    admin_a, admin = cast(DurableRunAdminPort, as_a), cast(DurableRunAdminPort, unbound)
+    lease = timedelta(minutes=5)
+
+    async def landed(
+        store: DurableRunStorePort,
+        name: str,
+        land: Callable[[DurableRunStorePort, str, int], Awaitable[None]],
+        *,
+        asked: bool = False,
+        declined: bool = False,
+    ) -> str:
+        run = await store.enqueue(name, input_json={"n": name})
+        held = await store.begin(run.run_id, lease_for=lease)
+        assert held is not None
+
+        if asked:
+            await cast(DurableRunAdminPort, store).request_cancel(run.run_id)
+
+        if declined:
+            await store.refuse_cancel(run.run_id, fence=held.attempts)
+
+        await land(store, run.run_id, held.attempts)
+
+        return run.run_id
+
+    async def fail(store: DurableRunStorePort, run_id: str, fence: int) -> None:
+        await store.fail(run_id, error="boom", fence=fence)
+
+    async def time_out(store: DurableRunStorePort, run_id: str, fence: int) -> None:
+        await store.mark_timed_out(run_id, error="cap", fence=fence)
+
+    async def cancel(store: DurableRunStorePort, run_id: str, fence: int) -> None:
+        await store.mark_cancelled(run_id, fence=fence)
+
+    async def forward(store: DurableRunStorePort, run_id: str, fence: int) -> None:
+        await store.mark_forward_incomplete(run_id, error="pivot", fence=fence)
+
+    failed_a = await landed(as_a, "fa", fail)
+    timed_out_a = await landed(as_a, "ta", time_out)
+    asked_a = await landed(as_a, "xa", fail, asked=True)
+    declined_a = await landed(as_a, "ra", fail, asked=True, declined=True)
+    await landed(as_a, "oa", fail)
+    cancelled_a = await landed(as_a, "ca", cancel)
+    forward_a = await landed(as_a, "wa", forward)
+    await landed(as_a, "shared", fail)
+    failed_b = await landed(as_b, "fb", fail)
+    await landed(as_b, "shared", fail)
+    await landed(unbound, "fn", fail)
+
+    async def state(run_id: str) -> tuple[str, int, str | None, bool, bool] | None:
+        record = await unbound.load(run_id)
+
+        if record is None:
+            return None
+
+        return (
+            record.status.value,
+            record.attempts,
+            record.error,
+            record.cancel_requested_at is not None,
+            record.available_at is None,
+        )
+
+    async def outcome(call: Awaitable[int]) -> Any:
+        try:
+            return await call
+
+        except CoreException as error:
+            return error.kind.value, error.code
+
+    out: dict[str, Any] = {}
+
+    # A run's failure history is not brought back whole: name the runs or the function.
+    out["bound_unnamed"] = await outcome(admin_a.requeue_failed())
+    out["unbound_unnamed"] = await outcome(admin.requeue_failed())
+
+    out["named_across_tenants"] = await admin_a.requeue_failed(run_ids=[failed_b])
+    out["named_none"] = await admin_a.requeue_failed(run_ids=[])
+    out["by_name"] = await admin_a.requeue_failed(name="oa")
+    out["by_ids"] = await admin_a.requeue_failed(
+        run_ids=[failed_a, timed_out_a, asked_a, declined_a, cancelled_a, forward_a]
+    )
+    out["requeued"] = await state(failed_a)
+    out["requeued_timed_out"] = await state(timed_out_a)
+    out["requeued_declined"] = await state(declined_a)
+    out["left"] = [
+        await state(asked_a),
+        await state(cancelled_a),
+        await state(forward_a),
+        await state(failed_b),
+    ]
+
+    out["unbound_named"] = await admin.requeue_failed(run_ids=[failed_b, "no-such-run"])
+    out["unbound_by_name"] = await admin.requeue_failed(name="shared")
+    out["requeued_again"] = await admin.requeue_failed(name="shared")
+
+    out["claimed"] = sorted(
+        (r.name, r.attempts) for r in await unbound.claim_abandoned(limit=20, lease_for=lease)
+    )
+
+    return out
+
+
+REQUEUE_FAILED_OUTCOME: dict[str, Any] = {
+    "bound_unnamed": ("validation", REQUEUE_UNSCOPED_CODE),
+    "unbound_unnamed": ("validation", REQUEUE_UNSCOPED_CODE),
+    "named_across_tenants": 0,
+    "named_none": 0,
+    "by_name": 1,
+    "by_ids": 3,
+    "requeued": ("pending", 1, "boom", False, True),
+    "requeued_timed_out": ("pending", 1, "cap", False, True),
+    "requeued_declined": ("pending", 1, "boom", True, True),
+    "left": [
+        ("failed", 1, "boom", True, True),
+        ("cancelled", 1, None, False, True),
+        ("forward_incomplete", 1, "pivot", False, True),
+        ("failed", 1, "boom", False, True),
+    ],
+    "unbound_named": 1,
+    "unbound_by_name": 2,
+    "requeued_again": 0,
+    "claimed": [
+        ("fa", 2),
+        ("fb", 2),
+        ("oa", 2),
+        ("ra", 2),
+        ("shared", 2),
+        ("shared", 2),
+        ("ta", 2),
+    ],
+}
+"""What :func:`run_requeue_failed_scenario` answers on every engine, the mock included."""
+
+
+# ....................... #
+
+
 @attrs.define
 class _RecoveryKms:
     """A KMS that refuses one tenant's key for good, and another's for now."""

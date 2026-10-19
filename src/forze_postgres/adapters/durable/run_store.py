@@ -23,6 +23,7 @@ from forze.application.contracts.durable.function import (
     DurableRunStorePort,
     build_run_page,
     decode_run_cursor,
+    requeue_failed_unnamed_error,
     requeue_unscoped_error,
 )
 from forze.application.contracts.tenancy import TenancyMixin
@@ -114,10 +115,10 @@ class PostgresDurableRunStore(
 
     What a bound caller reaches splits by verb. ``begin``, ``renew``, ``load``, ``mark_retry``
     and every terminal write reach that tenant's runs and untagged ones (see
-    :meth:`_worker_scope`);
-    ``claim_abandoned``, ``list_runs``, ``request_cancel``, ``requeue_quarantined`` and
-    ``refuse_cancel`` match the tenant exactly. ``enqueue`` resolves one effective tenant for the table, the tag and the
-    scoped key together, and refuses an explicit tenant that contradicts the binding.
+    :meth:`_worker_scope`); ``claim_abandoned``, ``list_runs``, ``request_cancel``,
+    ``requeue_quarantined``, ``requeue_failed`` and ``refuse_cancel`` match the tenant
+    exactly. ``enqueue`` resolves one effective tenant for the table, the tag and the scoped
+    key together, and refuses an explicit tenant that contradicts the binding.
 
     The table is provided by the application; expected schema::
 
@@ -572,6 +573,53 @@ class PostgresDurableRunStore(
 
             clauses.append(sql.SQL("tenant_id IS NULL"))
 
+        return await self._requeue(table, clauses, params)
+
+    # ....................... #
+
+    async def requeue_failed(
+        self,
+        *,
+        run_ids: Sequence[str] | None = None,
+        name: str | None = None,
+    ) -> int:
+        if run_ids is None and name is None:
+            raise requeue_failed_unnamed_error()
+
+        table = await self._table()
+        params: dict[str, object] = {}
+        clauses: list[sql.Composable] = [
+            sql.SQL("status IN ('failed', 'timed_out')"),
+            # An unanswered cancel ask is honoured: such a run stays where it landed.
+            sql.SQL("(cancel_requested_at IS NULL OR cancel_refused_at IS NOT NULL)"),
+        ]
+
+        # Scoped like ``list_runs``; a landed run has no lease and no holder to fence against.
+        tenant_id = self._tenant_id_for_resolve()
+
+        if tenant_id is not None:
+            clauses.append(sql.SQL("tenant_id = %(tenant_id)s"))
+            params["tenant_id"] = tenant_id
+
+        if run_ids is not None:
+            clauses.append(sql.SQL("run_id = ANY(%(run_ids)s)"))
+            params["run_ids"] = list(run_ids)
+
+        if name is not None:
+            clauses.append(sql.SQL("name = %(name)s"))
+            params["name"] = name
+
+        return await self._requeue(table, clauses, params)
+
+    # ....................... #
+
+    async def _requeue(
+        self,
+        table: PostgresQualifiedName,
+        clauses: list[sql.Composable],
+        params: dict[str, object],
+    ) -> int:
+        # Due at once, keeping attempts (the fence), payloads and cancel stamps.
         return await self.client.execute(
             sql.SQL(
                 "UPDATE {table} SET status = 'pending', available_at = NULL, "

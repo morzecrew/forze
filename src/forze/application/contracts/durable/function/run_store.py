@@ -198,9 +198,9 @@ class DurableRunStorePort(Protocol):
       what keeps a run belonging to no tenant completable: without it such a run's terminal
       write would match nothing, and it would be reclaimed and re-run forever.
     - The verbs that enumerate or control — ``claim_abandoned``, ``list_runs``,
-      ``request_cancel``, ``requeue_quarantined``, ``refuse_cancel`` — match the tenant
-      **exactly**. Widening an enumeration is a disclosure, and none of them has the
-      liveness problem above.
+      ``request_cancel``, ``requeue_quarantined``, ``requeue_failed``, ``refuse_cancel`` —
+      match the tenant **exactly**. Widening an enumeration is a disclosure, and none of
+      them has the liveness problem above.
     - Unbound reaches everything. That is the recovery and single-tenant role, and it is
       what lets one sweep serve every tenant on a tagged relation.
 

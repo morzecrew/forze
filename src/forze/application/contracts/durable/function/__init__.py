@@ -21,6 +21,7 @@ from .run_admin import (
     decode_run_cursor,
     durable_run_control_capabilities,
     encode_run_cursor,
+    requeue_failed_unnamed_error,
     requeue_unscoped_error,
 )
 from .run_cancel import (
@@ -97,6 +98,7 @@ __all__ = [
     "decode_run_cursor",
     "durable_run_control_capabilities",
     "encode_run_cursor",
+    "requeue_failed_unnamed_error",
     "requeue_unscoped_error",
     "require_durable_run",
     "reset_durable_cancel_signal",

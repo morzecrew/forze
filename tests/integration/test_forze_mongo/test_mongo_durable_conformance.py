@@ -59,6 +59,7 @@ from tests.support.durable_cancel_races import (
 )
 from tests.support.durable_conformance import (
     QUARANTINE_ADMIN_OUTCOME,
+    REQUEUE_FAILED_OUTCOME,
     RETRY_OUTCOME,
     FirstCallRuns,
     mock_quarantine,
@@ -67,6 +68,7 @@ from tests.support.durable_conformance import (
     run_lifecycle_scenario,
     run_list_scenario,
     run_quarantine_admin_scenario,
+    run_requeue_failed_scenario,
     run_requeue_race_scenario,
     run_retry_scenario,
     run_schedule_scenario,
@@ -378,6 +380,26 @@ class TestDurableMockVsMongo:
         )
 
         assert mock_out == mongo_out == QUARANTINE_ADMIN_OUTCOME
+
+    async def test_mock_matches_mongo_for_requeued_failed_runs(
+        self, mongo_client: MongoClient, run_collection: tuple[str, str]
+    ) -> None:
+        mock_state = MockState()
+        mock_out = await run_requeue_failed_scenario(
+            lambda tenant: MockDurableRunStore(
+                state=mock_state,
+                tenant_provider=tenant_provider_for(tenant),
+            )
+        )
+        mongo_out = await run_requeue_failed_scenario(
+            lambda tenant: MongoDurableRunStore(
+                client=mongo_client,
+                config=MongoDurableRunConfig(collection=run_collection),
+                tenant_provider=tenant_provider_for(tenant),
+            )
+        )
+
+        assert mock_out == mongo_out == REQUEUE_FAILED_OUTCOME
 
     async def test_an_unnamed_requeue_leaves_a_run_tagged_after_its_check(
         self, mongo_client: MongoClient, run_collection: tuple[str, str]

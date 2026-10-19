@@ -479,3 +479,149 @@ class TestRunRetry:
             DurableFunctionRegistry().register("fn", body, retry=budgeted)
 
         assert on_runner.value.kind is on_registry.value.kind is ExceptionKind.CONFIGURATION
+
+
+# ....................... #
+
+
+class TestRequeueFailed:
+    async def test_a_requeued_failed_run_reruns_only_what_it_did_not_journal(self) -> None:
+        ctx = context_from_modules(MockDepsModule())
+        calls = {"s1": 0, "s2": 0}
+        broken = {"on": True}
+
+        async def body(ctx: ExecutionContext, input_json: dict | None) -> dict:
+            step = resolve_durable_step(ctx)
+
+            async def one() -> dict:
+                calls["s1"] += 1
+                return {"v": 1}
+
+            async def two() -> dict:
+                calls["s2"] += 1
+
+                if broken["on"]:
+                    raise exc.internal("bug")
+
+                return {"v": 2}
+
+            await step.run("s1", one)
+            await step.run("s2", two)
+
+            return {"ok": True}
+
+        registry = DurableFunctionRegistry()
+        registry.register("fn", body)
+        runner = DurableFunctionRunner(registry=registry)
+        store = resolve_durable_run_store(ctx)
+        record = await store.enqueue("fn", input_json=None, idempotency_key="k")
+
+        with pytest.raises(CoreException, match="bug"):
+            await runner.run_now(ctx, "fn", idempotency_key="k")
+
+        broken["on"] = False  # the bug is fixed
+
+        assert await resolve_durable_run_admin(ctx).requeue_failed(run_ids=[record.run_id]) == 1
+        assert await runner.recover(ctx) == 1
+
+        final = await store.load(record.run_id)
+        assert final is not None
+        assert (final.status, final.attempts) == (DurableRunStatus.COMPLETED, 2)
+        assert calls == {"s1": 1, "s2": 2}
+
+    async def test_a_requeued_saga_that_rolled_back_fails_the_same_way(self) -> None:
+        # Its failed forward step is journaled: the requeue replays the failure, it does not
+        # run the step again. Such work needs a new run.
+        ctx = context_from_modules(MockDepsModule(state=MockState()))
+        calls = {"ship": 0}
+
+        async def charge(ctx: ExecutionContext, state: _Order) -> _Order:
+            return _Order(trail=[*state.trail, "charged"])
+
+        async def refund(ctx: ExecutionContext, state: _Order) -> None:
+            return None
+
+        async def ship(ctx: ExecutionContext, state: _Order) -> _Order:
+            calls["ship"] += 1
+            raise exc.validation("address rejected")
+
+        record, runner = await _saga_run(ctx, charge=charge, refund=refund, ship=ship)
+
+        assert await resolve_durable_run_admin(ctx).requeue_failed(run_ids=[record.run_id]) == 1
+        assert await runner.recover(ctx) == 1
+
+        final = await resolve_durable_run_store(ctx).load(record.run_id)
+        assert final is not None
+        assert (final.status, final.attempts) == (DurableRunStatus.FAILED, 2)
+        assert calls["ship"] == 1
+
+    async def test_a_requeued_saga_whose_rollback_failed_reruns_only_that_compensation(
+        self,
+    ) -> None:
+        ctx = context_from_modules(MockDepsModule(state=MockState()))
+        calls = {"refund": 0, "ship": 0}
+        refund_down = {"on": True}
+
+        async def charge(ctx: ExecutionContext, state: _Order) -> _Order:
+            return _Order(trail=[*state.trail, "charged"])
+
+        async def refund(ctx: ExecutionContext, state: _Order) -> None:
+            calls["refund"] += 1
+
+            if refund_down["on"]:
+                raise exc.infrastructure("refund api down")
+
+        async def ship(ctx: ExecutionContext, state: _Order) -> _Order:
+            calls["ship"] += 1
+            raise exc.validation("address rejected")
+
+        record, runner = await _saga_run(ctx, charge=charge, refund=refund, ship=ship)
+        failed = await resolve_durable_run_store(ctx).load(record.run_id)
+        assert failed is not None and failed.status is DurableRunStatus.FAILED
+        tried = calls["refund"]  # retried in place by the saga executor, then given up
+
+        refund_down["on"] = False
+        assert await resolve_durable_run_admin(ctx).requeue_failed(run_ids=[record.run_id]) == 1
+        assert await runner.recover(ctx) == 1
+
+        final = await resolve_durable_run_store(ctx).load(record.run_id)
+        assert final is not None
+        assert final.status is DurableRunStatus.FAILED  # rolled back cleanly this time
+        assert final.error is not None and "compensated" in final.error
+        assert calls == {"refund": tried + 1, "ship": 1}
+
+
+async def _saga_run(
+    ctx: ExecutionContext,
+    *,
+    charge: Any,
+    refund: Any,
+    ship: Any,
+) -> tuple[Any, DurableFunctionRunner]:
+    """Run a three-step saga whose second step fails, and return its record and runner."""
+
+    async def confirm(ctx: ExecutionContext, state: _Order) -> _Order:
+        return state  # pragma: no cover — the saga fails before it
+
+    async def nothing(ctx: ExecutionContext, state: _Order) -> None:
+        return None
+
+    saga: SagaDefinition[_Order] = SagaDefinition(
+        name="order",
+        steps=(
+            SagaStep(name="charge", action=charge, compensation=refund, tx_route="mock"),
+            SagaStep(name="ship", action=ship, compensation=nothing, tx_route="mock"),
+            SagaStep(name="confirm", action=confirm, kind=SagaStepKind.PIVOT, tx_route="mock"),
+        ),
+    )
+    registry = DurableFunctionRegistry()
+    registry.register("order", durable_saga_handler(saga, _Order))
+    runner = DurableFunctionRunner(registry=registry)
+    store = resolve_durable_run_store(ctx)
+    payload = _Order().model_dump(mode="json")
+    record = await store.enqueue("order", input_json=payload, idempotency_key="k")
+
+    with pytest.raises(CoreException):
+        await runner.run_now(ctx, "order", payload, idempotency_key="k")
+
+    return record, runner
