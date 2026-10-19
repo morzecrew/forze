@@ -512,6 +512,14 @@ def _require_transaction(in_transaction: Callable[[], bool], *stores: object) ->
             )
 
 
+def _enlisted(port: object) -> bool:
+    """Whether *port* reports that the open transaction holds its work; one that cannot, no."""
+
+    backend = backend_of(port)
+
+    return isinstance(backend, TransactionallyEnlistable) and backend.is_transactionally_enlisted()
+
+
 async def _write_through(
     config: RevocationStates,
     credential: RevocationCredential,
@@ -566,6 +574,13 @@ class EpochRaise:
     defer: Callable[[Callable[[], Awaitable[None]]], Awaitable[None]]
     """Runs a callback once the current transaction commits."""
 
+    principals: DocumentQueryPort[Any] | None = None
+    """The policy principals, on Postgres: when the open transaction holds their reads, the
+    raise first reads the principal's row ``for_update``, as an issue does before it holds the
+    epoch, so a deactivation of that row later in the transaction cannot deadlock with an issue.
+    ``None`` where the raise follows a write that already took the row, where an issue locks no
+    principal, and on a backend whose locking read excludes nothing (Mongo, the mock)."""
+
     # ....................... #
 
     def require_transaction(self, *stores: object) -> None:
@@ -584,6 +599,12 @@ class EpochRaise:
         """
 
         self.require_transaction()
+
+        if self.principals is not None and _enlisted(self.principals):
+            # A raise then a deactivation in one transaction would otherwise take the epoch
+            # before the principal, the reverse of an issue, and deadlock with it.
+            await self.principals.find(filters={"$values": {"id": principal_id}}, for_update=True)
+
         await self.epochs.advance(principal_id)
 
         async def _write() -> None:
@@ -628,8 +649,9 @@ class SessionRevocation:
     """The fast path's reads and writes for one request, shared by the verifier and the writers.
 
     Issuing holds the epoch under a share lock; a revocation of every session of a principal
-    raises it; a revocation of families or sessions, and a rotation, write ``revoked`` for them
-    after commit. Each of those refuses to run outside a transaction.
+    raises it, after locking the principal's row where an issue locks it; a revocation of
+    families or sessions, and a rotation, write ``revoked`` for them after commit. Each of those
+    refuses to run outside a transaction.
     """
 
     config: RevocationStates
@@ -649,6 +671,9 @@ class SessionRevocation:
 
     defer: Callable[[Callable[[], Awaitable[None]]], Awaitable[None]]
     """Runs a callback once the current transaction commits."""
+
+    principals: DocumentQueryPort[Any] | None = None
+    """The policy principals each epoch raise locks first (:attr:`EpochRaise.principals`)."""
 
     # ....................... #
 
@@ -903,6 +928,7 @@ class SessionRevocation:
             epochs=self.epochs,
             in_transaction=self.in_transaction,
             defer=self.defer,
+            principals=self.principals,
         )(principal_id)
 
     async def revoke(

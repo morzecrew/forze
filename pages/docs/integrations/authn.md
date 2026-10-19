@@ -132,9 +132,14 @@ CREATE TABLE authn_principal_epochs (
   credentials and sessions too): a store on another database would commit on its own. The
   Postgres stores report it; one that cannot is not checked. Issue and logout serialize on the
   epoch's row on Postgres only, with the revocation at read committed (the default); a
-  revocation at repeatable read or serializable is refused (`authn_epoch_isolation`). Revoking
-  an API key needs no transaction: its state is written once the key's row has committed,
-  whichever way it runs.
+  revocation at repeatable read or serializable is refused (`authn_epoch_isolation`). On
+  Postgres, a raise of the epoch (a logout everywhere, a password change or reset) first locks
+  the policy principal's row, as an issue does before it holds the epoch, so a deactivation of
+  that row later in the same transaction, through SQL or its document port, waits for a
+  concurrent login instead of deadlocking with it. The authn deactivation takes the
+  credentials first and ends with `revoke_tokens` itself, so do not call `revoke_tokens` before
+  it. Revoking an API key needs no transaction: its state is written once the key's row has
+  committed, whichever way it runs.
 - **`session_binding`.** `"session"` (the default) refuses a token once a refresh replaced its
   session, as without the fast path; `"family"` admits it until its own `exp` while the
   family is live. A logout, a family revocation and refresh-token reuse refuse it either way.
@@ -288,7 +293,8 @@ issued before is then refused by its epoch, so the eligibility read has nothing 
   one that holds neither its own write nor the epoch's (a scope on another route or another
   database), before it writes (`authn_revocation_requires_transaction`); it refuses above read
   committed too (`authn_epoch_isolation`). A deactivation whose write-through never lands is
-  enforced within `ttl`.
+  enforced within `ttl`. For a logout and a deactivation in one transaction, see
+  **Transactions are required** ([above](#check-sessions-and-api-keys-from-redis)).
 - **Configure every process that writes policy principals.** A process without the authz
   configuration raises no epoch, and a token it should have ended is admitted until its own
   `exp`; so is one deactivated by a write around the document port (SQL, or another spec over

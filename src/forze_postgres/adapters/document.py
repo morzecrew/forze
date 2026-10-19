@@ -106,9 +106,13 @@ class PostgresDocumentAdapter(DocumentAdapter[R, D, C, U]):
     # ....................... #
 
     def is_transactionally_enlisted(self) -> bool:
-        """Whether this port's writes run in the open transaction: its write client is in one."""
+        """Whether this port's writes run in the open transaction: its write client is in one.
+        A read-only port reports its read client, so a locking read can tell whether the
+        transaction would hold its lock."""
 
-        return self.write_gw is not None and self.write_gw.client.is_in_transaction()
+        gateway = self.write_gw if self.write_gw is not None else self.read_gw
+
+        return gateway.client.is_in_transaction()
 
     # ....................... #
 

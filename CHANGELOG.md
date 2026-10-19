@@ -20,6 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - A circuit breaker whose half-open probes recorded no outcome (an ignored error kind, a cancelled call) no longer rejects every call until restart: after `break_duration` it admits a new probe round.
+- **A logout everywhere followed by a deactivation in one transaction no longer deadlocks with a concurrent login** (revocation states, policy principal on Postgres; deactivation through SQL or its document port).
 
 ### Security
 
