@@ -14,6 +14,7 @@ from .reset_token import ResetTokenConfig, ResetTokenService
 from .revocation_states import (
     AdmittedApiKey,
     AdmittedSession,
+    ApiKeyEligibilitySkip,
     ApiKeyRevocation,
     EpochRaise,
     RevocationStates,
@@ -56,6 +57,7 @@ __all__ = [
     "PasswordConfig",
     "AdmittedApiKey",
     "AdmittedSession",
+    "ApiKeyEligibilitySkip",
     "ApiKeyRevocation",
     "EpochRaise",
     "PolicyPrincipalEpochHook",

@@ -15,6 +15,7 @@ from datetime import timedelta
 from typing import Any
 from uuid import UUID, uuid4
 
+import attrs
 import pytest
 from psycopg import sql
 
@@ -32,6 +33,7 @@ from forze.application.contracts.authn import (
     RefreshTokenCredentials,
     RevocationStatesDepKey,
 )
+from forze.application.contracts.deps.proxy import PortProxy
 from forze.application.contracts.transaction import IsolationLevel, TransactionManagerDepKey
 from forze.application.execution import Deps, ExecutionContext
 from forze.base.exceptions import CoreException, ExceptionKind, exc
@@ -163,34 +165,29 @@ class _Gate:
         await asyncio.wait_for(self.release.wait(), timeout=10)
 
 
-class _GatedEpochs:
+@attrs.define(slots=True)
+class _GatedEpochs(PortProxy):
     """The Postgres epoch store, able to hold the next `hold` before it runs, the next `hold` of
-    one principal after it ran, or the next `advance` after it ran (its lock taken)."""
+    one principal after it ran, or the next `advance` after it ran (its lock taken). A port
+    proxy, so a check of the backend behind it still sees the Postgres store."""
 
-    def __init__(self, inner: Any, gates: dict[str, _Gate]) -> None:
-        self._inner, self._gates = inner, gates
-
-    def is_transactionally_enlisted(self) -> bool:
-        return self._inner.is_transactionally_enlisted()
-
-    async def current(self, principal_id: UUID) -> int:
-        return await self._inner.current(principal_id)
+    gates: dict[str, _Gate] = attrs.field(kw_only=True)
 
     async def hold(self, principal_id: UUID) -> int:
-        if (gate := self._gates.pop("before_hold", None)) is not None:
+        if (gate := self.gates.pop("before_hold", None)) is not None:
             await gate.pass_()
 
-        epoch = await self._inner.hold(principal_id)
+        epoch = await self.inner.hold(principal_id)
 
-        if (gate := self._gates.pop(f"after_hold:{principal_id}", None)) is not None:
+        if (gate := self.gates.pop(f"after_hold:{principal_id}", None)) is not None:
             await gate.pass_()
 
         return epoch
 
     async def advance(self, principal_id: UUID) -> int:
-        epoch = await self._inner.advance(principal_id)
+        epoch = await self.inner.advance(principal_id)
 
-        if (gate := self._gates.pop("after_advance", None)) is not None:
+        if (gate := self.gates.pop("after_advance", None)) is not None:
             await gate.pass_()
 
         return epoch
@@ -246,7 +243,7 @@ async def _stacks(
                             ConfigurablePostgresPrincipalEpoch(
                                 config=PostgresPrincipalEpochConfig(relation=("public", epochs)),
                             )(ctx),
-                            gates if gates is not None else {},
+                            gates=gates if gates is not None else {},
                         ),
                     }
                 )

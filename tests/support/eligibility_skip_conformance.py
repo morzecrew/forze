@@ -27,6 +27,7 @@ import jwt
 
 from forze.application.contracts.authn import (
     AccessTokenCredentials,
+    ApiKeyCredentials,
     AuthnIdentity,
     AuthnSpec,
     IssuedTokens,
@@ -69,6 +70,24 @@ class CountingPrincipalReads(PortProxy):
         return counted
 
 
+@attrs.define(slots=True)
+class CountingEpochReads(PortProxy):
+    """The principal epoch store, recording each unlocked read it serves."""
+
+    reads: list[str] = attrs.field(kw_only=True)
+
+    def _should_wrap(self, name: str, attr: Any) -> bool:
+        del attr
+        return name == "current"
+
+    def _wrap_async(self, name: str, attr: Any) -> Any:
+        async def counted(*args: Any, **kwargs: Any) -> Any:
+            self.reads.append(name)
+            return await attr(*args, **kwargs)
+
+        return counted
+
+
 class Stack(Protocol):
     """One backend's identity plane, with revocation states on the authn and authz kernels."""
 
@@ -76,6 +95,8 @@ class Stack(Protocol):
     spec: AuthnSpec
     authz_route: str
     principal_reads: list[str]
+    key_reads: list[str]
+    epoch_reads: list[str]
 
     async def principal(self) -> UUID: ...
 
@@ -383,6 +404,61 @@ async def an_actor_check_reads_even_for_the_subject_itself(stack: Stack) -> None
 
     # The subject's check skipped; the actor's, about the same principal, read.
     assert await _reads_on(stack, resign(issued, act={"sub": str(principal)})) == ["find"]
+
+
+async def issue_key(stack: Stack, principal: UUID) -> ApiKeyCredentials:
+    keys = stack.ctx.authn.api_key_lifecycle(stack.spec)
+    issued = await stack.in_tx(lambda: keys.issue_api_key(AuthnIdentity(principal_id=principal)))
+
+    return issued.key
+
+
+async def verify_key(stack: Stack, key: ApiKeyCredentials) -> str:
+    """``admitted`` or the refusal's code, from a request of its own (its own task)."""
+
+    async def request() -> str:
+        try:
+            await stack.ctx.authn.authn(stack.spec).authenticate_with_api_key(key)
+
+        except CoreException as error:
+            return str(error.code)
+
+        return "admitted"
+
+    return await asyncio.create_task(stack.run(request))
+
+
+async def a_warm_api_key_reads_neither_its_row_nor_the_principal(stack: Stack) -> None:
+    """Needs a stack whose authn route verifies API keys."""
+
+    key = await issue_key(stack, await stack.principal())
+
+    # The miss reads the row, and the principal after its epoch for the state it writes.
+    assert await verify_key(stack, key) == "admitted"
+    assert stack.key_reads == ["find"]
+
+    for _ in range(2):
+        stack.principal_reads.clear()
+        stack.key_reads.clear()
+        stack.epoch_reads.clear()
+        assert await verify_key(stack, key) == "admitted"
+        # The miss wrote the principal's epoch too, so none is read from the database either.
+        assert (stack.key_reads, stack.principal_reads, stack.epoch_reads) == ([], [], [])
+
+
+async def a_deactivation_refuses_a_warm_api_key(stack: Stack, path: str) -> None:
+    """Needs a stack whose authn route verifies API keys. Whichever write deactivates the
+    principal, the epoch it raised no longer matches the one the key's state recorded."""
+
+    principal = await stack.principal()
+    key = await issue_key(stack, principal)
+
+    for _ in range(2):
+        assert await verify_key(stack, key) == "admitted"
+
+    await stack.in_tx(lambda: DEACTIVATIONS[path](stack, principal))
+
+    assert await verify_key(stack, key) != "admitted"
 
 
 SKIP_CASES: Mapping[str, Callable[[Stack], Awaitable[None]]] = {

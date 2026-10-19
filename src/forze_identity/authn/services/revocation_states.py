@@ -248,15 +248,22 @@ def admitted_just_now(principal_id: UUID) -> bool:
     )
 
 
-def remember_admitted_api_key(admitted: AdmittedApiKey | None) -> None:
+def remember_admitted_api_key(admitted: AdmittedApiKey | None, *, fresh: bool = False) -> None:
     """Record the API key this request authenticated with, or forget the credential before it.
 
-    Carried to a connection's other tasks like a session's record; never fresh, so the
-    eligibility call that follows reads.
+    Carried to a connection's other tasks like a session's record.
+
+    :param fresh: The key's state recorded its principal's current epoch, so the eligibility
+        call that follows it in this task may skip its read, as after a token (see
+        :func:`admitted_just_now`). Never carried to another task.
     """
 
     record_authn_admission(admitted)
-    _FRESH.set(None)
+    _FRESH.set(
+        _Fresh(admitted.principal_id, asyncio.current_task())
+        if fresh and admitted is not None
+        else None
+    )
 
 
 # ....................... #
@@ -986,11 +993,35 @@ class CachedApiKey:
     expires_at: datetime | None
     key_hash: str
 
+    epoch: int | None = None
+    """The principal's epoch the state records, read before the principal was found active;
+    ``None`` in a state written without the eligibility skip, or by an older version."""
+
     @property
     def is_active(self) -> bool:
         """Always ``True``: a revoked key's state names no principal."""
 
         return True
+
+
+@final
+@attrs.define(slots=True, frozen=True, kw_only=True)
+class ApiKeyEligibilitySkip:
+    """What lets a key admitted from its state skip the eligibility read, as a token does.
+
+    On a miss, the key's state records the principal's epoch, read before the principal is found
+    active, so an epoch that has not moved since implies nothing deactivated the principal: every
+    deactivation raises it. Set only where the token skip applies.
+    """
+
+    states: RevocationStatesPort
+    """Cached states, through their principal calls: the principal's cached epoch."""
+
+    epochs: PrincipalEpochPort
+    """Principal epochs, in the database."""
+
+    principals: DocumentQueryPort[Any]
+    """The policy principals, read on a miss after the epoch."""
 
 
 # ....................... #
@@ -1007,7 +1038,9 @@ class ApiKeyRevocation:
     earlier of the store's time when the lookup read plus ``ttl``, and the key's own expiry. A
     state whose MAC fails, or that is past its not-after on the store's clock from the same read,
     is a miss. ``revoked`` refuses without a read. An issue from a request a key authenticated
-    reads the key's row again first (:meth:`recheck_caller`).
+    reads the key's row again first (:meth:`recheck_caller`). With :attr:`skip`, a state also
+    records its principal's epoch, and a key whose recorded epoch is the principal's cached one
+    skips the eligibility read that follows (:meth:`fresh`).
     """
 
     config: RevocationStates
@@ -1025,6 +1058,9 @@ class ApiKeyRevocation:
 
     defer: Callable[[Callable[[], Awaitable[None]]], Awaitable[None]]
     """Runs a callback once the current transaction commits, or at once outside one."""
+
+    skip: ApiKeyEligibilitySkip | None = None
+    """Set where the eligibility read may be skipped; ``None`` leaves every key to that read."""
 
     # ....................... #
 
@@ -1079,8 +1115,9 @@ class ApiKeyRevocation:
         self.config.counters.add("miss", "api_key")
         account = await self._row(digest)
 
-        if not self.in_transaction():
-            # Inside a transaction the read may predate a revocation, or be the revocation's.
+        # Inside a transaction the read may predate a revocation, or be the revocation's. A
+        # state present but unproven is never replaced, so there is nothing to write.
+        if read.state is None and not self.in_transaction():
             await self._fill(digest, account, read=read)
 
         return account
@@ -1098,10 +1135,13 @@ class ApiKeyRevocation:
             return None
 
         try:
-            live, principal, actor, expires, not_after = body.split("|")
+            # The principal's epoch sits before the not-after only in a state written to skip.
+            live, principal, actor, expires, *epoch, not_after = body.split("|")
 
-            if live != "live" or _expired(
-                self.config, "api_key", int(not_after), now_ms=read.now_ms
+            if (
+                live != "live"
+                or len(epoch) > 1
+                or _expired(self.config, "api_key", int(not_after), now_ms=read.now_ms)
             ):
                 return None
 
@@ -1110,10 +1150,87 @@ class ApiKeyRevocation:
                 actor_principal_id=None if actor == _ABSENT else UUID(actor),
                 expires_at=None if expires == _ABSENT else _EPOCH + int(expires) * _MS,
                 key_hash=digest,
+                epoch=int(epoch[0]) if epoch else None,
             )
 
         except ValueError:
             return None
+
+    async def fresh(self, key: CachedApiKey) -> bool:
+        """Whether *key*'s state recorded its principal's current epoch: then nothing has
+        deactivated the principal since the state was written, and the eligibility read that
+        follows may be skipped.
+
+        The epoch is the principal's cached one, signed as a token reads it. When it is missing,
+        outside a transaction, the database's is compared instead and written back: as sound,
+        since a deactivation raises it in its own transaction, and one read where the
+        eligibility check would make one. Anything else reads eligibility.
+        """
+
+        if self.skip is None or key.epoch is None:
+            return False
+
+        principal_id = key.principal_id
+
+        try:
+            read = await _bounded(self.config, self.skip.states.read(principal_id, EPOCH_STATE_KEY))
+
+        except Exception as error:
+            self.config.counters.add("fallback", "api_key")
+            logger.warning("Revocation states read failed, reading eligibility: %r", error)
+            return False
+
+        cached = _epoch(
+            _unseal(self.config, principal_id, EPOCH_STATE_KEY, read.epoch, now_ms=read.now_ms),
+        )
+
+        if cached is not None:
+            return cached == key.epoch
+
+        if self.in_transaction():
+            # Inside a transaction the read may predate a raise, or be the raise's.
+            return False
+
+        epoch = await self.skip.epochs.current(principal_id)
+        await self._fill_epoch(principal_id, epoch, expire_at_ms=read.now_ms + _ttl_ms(self.config))
+
+        return epoch == key.epoch
+
+    async def _fill_epoch(self, principal_id: UUID, epoch: int, *, expire_at_ms: int) -> None:
+        """Write *principal_id*'s epoch, read from the database, back where it is missing."""
+
+        if self.skip is None:
+            return
+
+        state = _seal(
+            self.config, principal_id, EPOCH_STATE_KEY, str(epoch), not_after_ms=expire_at_ms
+        )
+
+        try:
+            await _bounded(
+                self.config,
+                self.skip.states.fill(
+                    principal_id, {EPOCH_STATE_KEY: state}, expire_at_ms=expire_at_ms
+                ),
+            )
+
+        except Exception as error:
+            logger.warning("Revocation states fill failed: %r", error)
+
+    async def _eligible_epoch(self, principal_id: UUID) -> int | None:
+        """The principal's epoch, when the principal is active after it was read; else ``None``.
+
+        In that order: a deactivation that committed before the epoch read is seen by the
+        principal's read after it, and one after it has raised the epoch the state records.
+        """
+
+        if self.skip is None:
+            return None
+
+        epoch = await self.skip.epochs.current(principal_id)
+        principal = await self.skip.principals.find(filters={"$values": {"id": principal_id}})
+
+        return epoch if principal is not None and principal.is_active else None
 
     async def _fill(
         self,
@@ -1128,6 +1245,7 @@ class ApiKeyRevocation:
 
         now_ms = read.now_ms
         expire_at_ms = now_ms + self.config.ttl // _MS
+        epoch: int | None = None
 
         if not account.is_active:
             state = REVOKED_STATE
@@ -1144,12 +1262,15 @@ class ApiKeyRevocation:
                 return
 
             actor = account.actor_principal_id
+            epoch = await self._eligible_epoch(account.principal_id)
             body = "|".join(
                 (
                     "live",
                     str(account.principal_id),
                     _ABSENT if actor is None else str(actor),
                     _ABSENT if expires_ms is None else str(expires_ms),
+                    # Only when there is one, so a state without it reads as an older version's.
+                    *(() if epoch is None else (str(epoch),)),
                     str(expire_at_ms),
                 ),
             )
@@ -1164,6 +1285,10 @@ class ApiKeyRevocation:
 
         except Exception as error:
             logger.warning("Revocation states fill failed: %r", error)
+
+        if account.is_active and epoch is not None:
+            # So the next verification compares the epoch from the cache, not the database.
+            await self._fill_epoch(account.principal_id, epoch, expire_at_ms=expire_at_ms)
 
     # ....................... #
 

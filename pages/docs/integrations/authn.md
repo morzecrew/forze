@@ -201,7 +201,9 @@ and move the old one to `previous`, on every process that verifies or revokes; a
 when every state signed under the old key has expired, drop it. A state signed under a key
 no longer configured is read from Postgres, so dropping it early costs reads, not
 admissions. A key carries no tenant, cached or not, and a deactivated principal's keys are
-still refused by the eligibility read.
+still refused, by the eligibility read or, where it is [skipped](#skip-the-eligibility-read),
+by the epoch the deactivation raised, except within the replay window under
+[The window](#the-window).
 
 ### The window
 
@@ -260,7 +262,7 @@ the rest.
 
 Every verification also reads the policy principal, to refuse a deactivated one. Pass the same
 `RevocationStates` to the authz kernel, and a token the fast path admitted on its principal's
-current epoch skips that read too:
+current epoch skips that read too, as does an API key whose cached state recorded that epoch:
 
 ```python
 from forze_identity.authz import AuthzDepsModule, AuthzKernelConfig
@@ -288,7 +290,21 @@ issued before is then refused by its epoch, so the eligibility read has nothing 
 - **What still reads.** Only the check right after the verification, in the same request, about
   the token's own subject, is skipped. Issuing a session (login, refresh, tenant switch) reads
   under the principal's row lock, and a delegated actor is always read, even when it is the
-  subject. Tokens issued before the fast path, passwords and API keys read as before.
+  subject. Tokens issued before the fast path and passwords read as before.
+- **API keys.** A key's state written on a miss records the principal's epoch, read before the
+  principal is found active; a later verification whose state carries the principal's current
+  cached epoch skips the read, and reads neither the key's row nor the principal. The miss itself
+  reads, and so does a key whose principal's epoch has moved since, whose principal was inactive
+  when its state was written, or whose state an earlier release wrote. During a rolling deploy,
+  a process of an earlier release reads such a state as a miss, from the key's row, until it
+  expires.
+  - **A missing cached epoch.** Outside a transaction, the verification compares the database's
+    epoch instead and writes it back: as sound, since a deactivation raises the epoch in its own
+    transaction, and one read where the eligibility check would make one. Inside a
+    transaction, it reads eligibility.
+  - **Two Redis reads.** A key's state and its principal's epoch sit on different Redis Cluster
+    slots, so a warm verification reads them one after the other, each bounded by `timeout`:
+    twice `timeout` at worst before it falls back to the eligibility read.
 - **The same rules as revocations.** Such a write refuses to run outside a transaction, or in
   one that holds neither its own write nor the epoch's (a scope on another route or another
   database), before it writes (`authn_revocation_requires_transaction`); it refuses above read
@@ -297,13 +313,15 @@ issued before is then refused by its epoch, so the eligibility read has nothing 
   **Transactions are required** ([above](#check-sessions-and-api-keys-from-redis)).
 - **Configure every process that writes policy principals.** A process without the authz
   configuration raises no epoch, and a token it should have ended is admitted until its own
-  `exp`; so is one deactivated by a write around the document port (SQL, or another spec over
+  `exp`, an API key until its cached state expires (`ttl`); so is one deactivated by a write
+  around the document port (SQL, or another spec over
   the same table), or one deactivated before you turned this on through a path that raised no
   epoch (the authz registry alone). Logins and refreshes still read eligibility, so none of
   these can be extended. Keep the policy principals on the database whose transaction holds the
   epochs, so a deactivation and its raise commit together.
 - **Postgres only.** The skip needs the policy principal on Postgres, where an issue's locking
-  read excludes a concurrent deactivation; elsewhere, the mock included, every verification
+  read excludes a concurrent deactivation, and the principal epochs there too, so a raise is
+  held to the deactivation's transaction; elsewhere, the mock included, every verification
   reads. Without the authz configuration every verification reads, as before. With a
   different one, building the eligibility gate (on the first authentication or issue) is
   refused (`authn_revocation_states_mismatch`).

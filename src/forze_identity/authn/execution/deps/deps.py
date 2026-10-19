@@ -87,6 +87,7 @@ from ...resolvers import (
     MappingTableResolver,
 )
 from ...services import (
+    ApiKeyEligibilitySkip,
     ApiKeyRevocation,
     PolicyPrincipalEpochHook,
     RevocationStates,
@@ -169,8 +170,11 @@ def _principals_to_lock(
 def _api_key_revocation(
     ctx: ExecutionContext,
     shared: AuthnSharedServices | None,
+    *,
+    spec: AuthnSpec | None = None,
 ) -> ApiKeyRevocation | None:
-    """The API-key fast path's reads and writes, or ``None`` without ``key_mac``."""
+    """The API-key fast path's reads and writes, or ``None`` without ``key_mac``. With *spec*,
+    the route a verifier runs on: there a key may skip the eligibility read, as a token does."""
 
     config = shared.revocation_states if shared is not None else None
 
@@ -192,6 +196,34 @@ def _api_key_revocation(
         accounts=ctx.doc.query(api_key_account_spec),
         in_transaction=lambda: ctx.tx_ctx.depth() > 0,
         defer=ctx.tx_ctx.run_or_defer,
+        skip=_api_key_skip(ctx, spec, config, states) if spec is not None else None,
+    )
+
+
+def _api_key_skip(
+    ctx: ExecutionContext,
+    spec: AuthnSpec,
+    config: RevocationStates,
+    states: RevocationStatesPort,
+) -> ApiKeyEligibilitySkip | None:
+    """What lets a key admitted from its state skip the eligibility read on *spec*'s route, or
+    ``None`` where that route's eligibility never skips."""
+
+    if not ctx.deps.exists(PrincipalEligibilityDepKey, route=spec.name) or not isinstance(
+        ctx.deps.provide(PrincipalEligibilityDepKey, route=spec.name),
+        ConfigurablePolicyPrincipalEligibility,
+    ):
+        return None
+
+    principals = ctx.doc.query(policy_principal_spec)
+
+    if not _skips_eligibility(ctx, config, principals):
+        return None
+
+    return ApiKeyEligibilitySkip(
+        states=states,
+        epochs=ctx.deps.provide(PrincipalEpochDepKey)(ctx),
+        principals=principals,
     )
 
 
@@ -338,7 +370,7 @@ class ConfigurableHmacApiKeyVerifier:
         return HmacApiKeyVerifier(
             api_key_svc=self.shared.api_key_svc,
             ak_qry=ctx.doc.query(api_key_account_spec),
-            revocation=_api_key_revocation(ctx, self.shared),
+            revocation=_api_key_revocation(ctx, self.shared, spec=spec),
         )
 
 
@@ -486,10 +518,38 @@ principal's row first. The mock's locking read only claims the row, so on the mo
 Mongo) every verification reads."""
 
 
+def _on_skip_backend(port: object) -> bool:
+    """Whether *port*, behind its wrappers, is built by the skip's backend."""
+
+    return type(backend_of(port)).__module__.split(".")[0] == _SKIP_BACKEND
+
+
 def _locks_exclude(principals: DocumentQueryPort[ReadPolicyPrincipal]) -> bool:
     """Whether a locking read of *principals* excludes a concurrent writer of the row."""
 
-    return type(backend_of(principals)).__module__.split(".")[0] == _SKIP_BACKEND
+    return _on_skip_backend(principals)
+
+
+def _skips_eligibility(
+    ctx: ExecutionContext,
+    config: RevocationStates,
+    principals: DocumentQueryPort[ReadPolicyPrincipal],
+) -> bool:
+    """Whether the eligibility read may be skipped after a fast-path admission: every write that
+    may deactivate a policy principal raises its epoch under *config*, signed, in its own
+    transaction on the epochs' Postgres store, and a locking read of *principals* excludes a
+    concurrent deactivation."""
+
+    return (
+        _deactivations_raise_epochs(ctx, config)
+        # Unsigned, a cached epoch can be restored by whoever writes the states store. The
+        # authz kernel refuses that configuration; a hook registered by hand reaches here.
+        and config.key_mac is not None
+        and _locks_exclude(principals)
+        # Elsewhere a store need not report its enlistment, so a raise may commit on its own.
+        and ctx.deps.exists(PrincipalEpochDepKey)
+        and _on_skip_backend(ctx.deps.provide(PrincipalEpochDepKey)(ctx))
+    )
 
 
 def _deactivations_raise_epochs(ctx: ExecutionContext, config: RevocationStates) -> bool:
@@ -526,7 +586,8 @@ class ConfigurablePolicyPrincipalEligibility:
 
     With revocation states on both the authn and the authz kernel, signed under ``key_mac``,
     and the policy principal on Postgres, the read is skipped right after the fast path
-    admitted a token of the same principal (:class:`AdmittedTokenEligibilityAdapter`).
+    admitted a token of the same principal, or an API key whose state recorded its current epoch
+    (:class:`AdmittedTokenEligibilityAdapter`).
     """
 
     shared: AuthnSharedServices | None = None
@@ -547,14 +608,7 @@ class ConfigurablePolicyPrincipalEligibility:
         )
         config = self.shared.revocation_states if self.shared is not None else None
 
-        if (
-            config is None
-            or not _deactivations_raise_epochs(ctx, config)
-            # Unsigned, a cached epoch can be restored by whoever writes the states store. The
-            # authz kernel refuses that configuration; a hook registered by hand reaches here.
-            or config.key_mac is None
-            or not _locks_exclude(principal_qry)
-        ):
+        if config is None or not _skips_eligibility(ctx, config, principal_qry):
             return adapter
 
         return AdmittedTokenEligibilityAdapter(inner=adapter)
