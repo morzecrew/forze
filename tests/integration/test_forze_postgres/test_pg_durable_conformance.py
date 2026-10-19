@@ -58,6 +58,7 @@ from tests.support.durable_cancel_races import (
 )
 from tests.support.durable_conformance import (
     QUARANTINE_ADMIN_OUTCOME,
+    RETRY_OUTCOME,
     FirstCallRuns,
     mock_quarantine,
     run_claim_scenario,
@@ -66,6 +67,7 @@ from tests.support.durable_conformance import (
     run_list_scenario,
     run_quarantine_admin_scenario,
     run_requeue_race_scenario,
+    run_retry_scenario,
     run_schedule_scenario,
     run_tenancy_scenario,
     tenant_provider_for,
@@ -313,6 +315,20 @@ class TestDurableMockVsPostgres:
         assert mock_out["begin_while_running"] is True
         assert mock_out["zero_limit_scan"] == []
 
+    async def test_mock_matches_postgres_for_a_retry(
+        self, pg_client: PostgresClient, run_table: str
+    ) -> None:
+        mock_out = await run_retry_scenario(MockDurableRunStore(state=MockState()))
+
+        pg_out = await run_retry_scenario(
+            PostgresDurableRunStore(
+                client=pg_client,
+                config=PostgresDurableRunConfig(relation=("public", run_table)),
+            )
+        )
+
+        assert mock_out == pg_out == RETRY_OUTCOME
+
     async def test_mock_matches_postgres_for_the_tenant_boundary(
         self, pg_client: PostgresClient, run_table: str, schedule_table: str
     ) -> None:
@@ -351,6 +367,7 @@ class TestDurableMockVsPostgres:
         assert mock_out["cross_complete_output"] is None
         assert mock_out["own_complete_status"] == "completed"
         assert mock_out["own_complete_output"] == {"ok": True}
+        assert mock_out["cross_retry_status"] == "running"
         assert mock_out["cross_fail_status"] == "running"
         assert mock_out["cross_fail_error"] is None
 

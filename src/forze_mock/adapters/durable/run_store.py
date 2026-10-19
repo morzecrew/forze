@@ -42,8 +42,8 @@ class MockDurableRunStore(DurableRunStorePort, DurableRunAdminPort, DurableRunCo
     control); unbound, the scan spans every tenant. It never seals, so it never quarantines
     a run itself.
 
-    The verbs reached with a run id — ``begin``, ``renew``, ``load`` and every terminal
-    write — reach the bound tenant's runs and the untagged ones (see :meth:`_reaches`);
+    The verbs reached with a run id — ``begin``, ``renew``, ``load``, ``mark_retry`` and every
+    terminal write — reach the bound tenant's runs and the untagged ones (see :meth:`_reaches`);
     unbound they reach everything, which is the recovery and single-tenant role.
     """
 
@@ -222,6 +222,24 @@ class MockDurableRunStore(DurableRunStorePort, DurableRunAdminPort, DurableRunCo
 
     async def fail(self, run_id: str, *, error: str, fence: int | None = None) -> None:
         self._finish(run_id, status=DurableRunStatus.FAILED, error=error, fence=fence)
+
+    # ....................... #
+
+    async def mark_retry(
+        self,
+        run_id: str,
+        *,
+        error: str,
+        available_at: datetime,
+        fence: int | None = None,
+    ) -> None:
+        self._finish(
+            run_id,
+            status=DurableRunStatus.PENDING,
+            error=error,
+            fence=fence,
+            available_at=available_at,
+        )
 
     # ....................... #
 
@@ -420,6 +438,7 @@ class MockDurableRunStore(DurableRunStorePort, DurableRunAdminPort, DurableRunCo
         output: JsonDict | None = None,
         error: str | None = None,
         fence: int | None = None,
+        available_at: datetime | None = None,
     ) -> None:
         with self.state.lock:
             data = self.state.durable_runs.get(run_id)
@@ -440,6 +459,11 @@ class MockDurableRunStore(DurableRunStorePort, DurableRunAdminPort, DurableRunCo
             data["output"] = output
             data["error"] = error
             data["leased_until"] = None
+
+            # A retry goes back to PENDING due at *available_at*; a terminal write leaves
+            # ``available_at`` as it is.
+            if status is DurableRunStatus.PENDING:
+                data["available_at"] = available_at
 
 
 # ....................... #

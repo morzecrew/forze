@@ -26,7 +26,8 @@ class DurableRunStatus(StrEnum):
     """Lifecycle state of a durable run."""
 
     PENDING = "pending"
-    """Enqueued, not yet claimed for execution."""
+    """Enqueued, not yet claimed for execution — or back from a failed attempt, waiting for
+    its retry (:meth:`DurableRunStorePort.mark_retry`), or requeued by an operator."""
 
     RUNNING = "running"
     """Claimed and executing (leased); a crash leaves it here for the recovery scanner."""
@@ -119,7 +120,8 @@ class DurableRunRecord:
 
     error: str | None = None
     """Failure message, present once :attr:`status` is
-    ``FAILED``/``FORWARD_INCOMPLETE``/``TIMED_OUT``.
+    ``FAILED``/``FORWARD_INCOMPLETE``/``TIMED_OUT``, and on a ``PENDING`` run waiting for a
+    retry or requeued after a failure, where it is the failure that sent it back.
 
     Also populated on some ``CANCELLED`` runs, where it is an explanatory **note** rather
     than a failure — a cancelled saga records which step it stopped at and that its completed
@@ -135,11 +137,16 @@ class DurableRunRecord:
     Doubles as the **fence token**: a claim advances it under a row lock, so a later claim
     always sees a higher value. Pass it back as *fence* to a terminal write so a stale
     worker whose lease was reclaimed cannot overwrite the run (its fence no longer matches).
+
+    It is also what a run-level retry strategy's ``max_attempts`` counts, so every claim
+    spends one: a retry, a recovery claim after a crash, and a claim that could not decrypt
+    the run alike. Nothing resets it.
     """
 
     available_at: datetime | None = None
     """Earliest instant the run may be claimed (``None`` = immediately). Set for a delayed
-    run; the recovery scan skips a ``PENDING`` run until it is due."""
+    run, and by :meth:`DurableRunStorePort.mark_retry` for one waiting for its retry; the
+    recovery scan skips a ``PENDING`` run until it is due."""
 
     created_at: datetime | None = None
     """When the run was first enqueued. Populated by the store on read; ``None`` on a record
@@ -185,8 +192,9 @@ class DurableRunStorePort(Protocol):
     **What a bound tenant reaches.** Every implementation answers this the same way, and the
     shared conformance battery holds them to it:
 
-    - The verbs taking a run id — :meth:`begin`, :meth:`renew`, :meth:`load` and every
-      terminal write — reach that tenant's runs **and untagged ones**. The untagged arm is
+    - The verbs taking a run id — :meth:`begin`, :meth:`renew`, :meth:`load`,
+      :meth:`mark_retry` and every terminal write — reach that tenant's runs **and untagged
+      ones**. The untagged arm is
       what keeps a run belonging to no tenant completable: without it such a run's terminal
       write would match nothing, and it would be reclaimed and re-run forever.
     - The verbs that enumerate or control — ``claim_abandoned``, ``list_runs``,
@@ -307,6 +315,25 @@ class DurableRunStorePort(Protocol):
         fence: int | None = None,
     ) -> Awaitable[None]:
         """Mark a running run ``FAILED`` with a message (fenced when *fence* is given)."""
+        ...  # pragma: no cover
+
+    def mark_retry(
+        self,
+        run_id: str,
+        *,
+        error: str,
+        available_at: datetime,
+        fence: int | None = None,
+    ) -> Awaitable[None]:
+        """Send a running run back to ``PENDING`` for another attempt, due at *available_at*.
+
+        The runner's write after a retryable failure under a retry strategy. The run keeps
+        its ``run_id``, so the steps it journaled replay on its next claim, and its
+        ``attempts``, which that claim advances; *error* records the failure. The lease is
+        cleared, so the worker is free while the run waits. Guarded on ``RUNNING`` and fenced
+        on *fence* like the terminal writes, so a stale worker cannot send back a run that
+        was reclaimed.
+        """
         ...  # pragma: no cover
 
     def mark_forward_incomplete(

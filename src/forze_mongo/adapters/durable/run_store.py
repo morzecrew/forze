@@ -98,8 +98,8 @@ class MongoDurableRunStore(
     it) or per-tenant over a namespace collection. An unbound scan never fails, and a bound
     scan claims only that tenant's runs.
 
-    What a bound caller reaches splits by verb. :meth:`begin`, :meth:`renew`, :meth:`load`
-    and every terminal write reach that tenant's runs and untagged ones (see
+    What a bound caller reaches splits by verb. :meth:`begin`, :meth:`renew`, :meth:`load`,
+    :meth:`mark_retry` and every terminal write reach that tenant's runs and untagged ones (see
     :meth:`_worker_scope`); :meth:`claim_abandoned`, :meth:`list_runs`,
     :meth:`request_cancel`, :meth:`requeue_quarantined` and :meth:`refuse_cancel` match the
     tenant exactly.
@@ -558,6 +558,25 @@ class MongoDurableRunStore(
 
     # ....................... #
 
+    async def mark_retry(
+        self,
+        run_id: str,
+        *,
+        error: str,
+        available_at: datetime,
+        fence: int | None = None,
+    ) -> None:
+        await self._finish(
+            run_id,
+            status=DurableRunStatus.PENDING,
+            output=None,
+            error=error,
+            fence=fence,
+            available_at=available_at,
+        )
+
+    # ....................... #
+
     async def mark_forward_incomplete(
         self, run_id: str, *, error: str, fence: int | None = None
     ) -> None:
@@ -745,6 +764,7 @@ class MongoDurableRunStore(
         output: JsonDict | None,
         error: str | None,
         fence: int | None = None,
+        available_at: datetime | None = None,
     ) -> None:
         coll = await self._collection()
         now = utcnow()
@@ -758,19 +778,20 @@ class MongoDurableRunStore(
         if fence is not None:
             filter_["attempts"] = fence
 
-        await self.client.update_one(
-            coll,
-            filter_,
-            {
-                "$set": {
-                    "status": status.value,
-                    "output": output,
-                    "error": error,
-                    "leased_until": None,
-                    "updated_at": now,
-                }
-            },
-        )
+        update: dict[str, Any] = {
+            "status": status.value,
+            "output": output,
+            "error": error,
+            "leased_until": None,
+            "updated_at": now,
+        }
+
+        # A retry goes back to PENDING due at *available_at*; a terminal write leaves
+        # ``available_at`` as it is.
+        if status is DurableRunStatus.PENDING:
+            update["available_at"] = available_at
+
+        await self.client.update_one(coll, filter_, {"$set": update})
 
     # ....................... #
 

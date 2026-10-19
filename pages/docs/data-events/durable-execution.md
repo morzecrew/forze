@@ -131,7 +131,7 @@ find it. Naming a tenant that **contradicts** a bound one is refused
 (`authentication` / `tenant_mismatch`) rather than applied to some of the three.
 
 What a bound caller reaches splits by what the verb does. The verbs taking a run id —
-`begin`, `renew`, `load` and every terminal write — reach that tenant's runs and **untagged**
+`begin`, `renew`, `load`, `mark_retry` and every terminal write — reach that tenant's runs and **untagged**
 ones; the untagged arm is what keeps a run belonging to no tenant completable, since a
 terminal write that matched nothing would leave it reclaimed and re-run forever. The verbs
 that enumerate or control — the recovery scan, `list_runs`, `request_cancel`, `refuse_cancel`
@@ -144,6 +144,52 @@ than passing on the strength of the other planes. Note the coupling that creates
 `tenant_aware=True` on a run store fails closed when nothing is bound, which is how the
 cross-tenant sweep runs, so a deployment declaring `tagged` runs per-tenant recovery
 (`tenants=…`) instead.
+
+### Retrying a failed run
+
+A step that raises writes no journal row, and by default the run lands `FAILED`. Give the
+runner a retry strategy and a run whose body raises a retryable error goes back to `PENDING`
+instead, due after a backoff:
+
+```python
+from datetime import timedelta
+
+from forze.application.contracts.resilience import BackoffStrategy, RetryStrategy
+from forze.base.exceptions import ExceptionKind
+
+runner = DurableFunctionRunner(
+    registry=registry,
+    retry=RetryStrategy(
+        max_attempts=5,
+        backoff=BackoffStrategy(base=timedelta(seconds=10), max=timedelta(minutes=10)),
+        retry_on=frozenset({ExceptionKind.INFRASTRUCTURE, ExceptionKind.THROTTLED}),
+    ),
+)
+```
+
+The worker is freed while the run waits; the recovery scan claims it once it is due, on any
+replica, and the steps it journaled replay — only the failed step and those after it run
+again. `registry.register(name, body, retry=...)` gives one function its own strategy, and
+`max_attempts=1` there opts it out of the runner's.
+
+- **What is retried.** A `CoreException` whose kind is in `retry_on`. A vendor exception is
+  not: map it to a kind with an exception interceptor. These land as they would have: a
+  timeout; a failure while an operator's cancel is pending; a saga that rolled back
+  (`domain` — it journals its failed step, so running it again fails the same way); and a
+  saga whose rollback failed or whose step's outcome is unknown, which need an operator.
+- **The budget is the run's `attempts`.** Every claim spends one, a recovery claim after a
+  crash included, so `max_attempts` bounds how often the run is claimed, not how often its
+  body raised. The strategy's `budget` is refused: a process-local bucket cannot count claims
+  spread across replicas.
+- **While it waits** the run is `PENDING` with the failure in `error`. `run_now` returns that
+  record instead of raising, and so does a re-submit under its key until it is due. A cancel
+  asked of a waiting run is stamped and lands when the retry comes due, without running the
+  body (a saga runs again and decides by its pivot); that claim spends an attempt.
+- **When it is due** it keeps its `created_at`, so the scan, oldest first, claims it ahead of
+  fresh runs.
+
+An attempt that sends its run back counts under the `retrying` outcome, and the last one
+under `failed`: alert on `failed`.
 
 ### Runs recovery cannot decrypt
 

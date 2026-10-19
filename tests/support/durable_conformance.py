@@ -401,6 +401,96 @@ async def run_claim_scenario(store: DurableRunStorePort) -> dict[str, Any]:
 # ....................... #
 
 
+async def run_retry_scenario(store: DurableRunStorePort) -> dict[str, Any]:
+    """Send a running run back for a retry and collect plane-independent observables.
+
+    ``mark_retry`` is the one write that returns a claimed run to ``PENDING``. It is guarded
+    on ``RUNNING`` and fenced like a terminal write, keeps the run's id, payload and
+    ``attempts``, and makes it due at the instant given: the scan leaves it alone until
+    then, and the claim that takes it advances the fence past the worker that sent it back.
+    """
+
+    lease = timedelta(minutes=5)
+    out: dict[str, Any] = {}
+
+    later = await store.enqueue("retry-later", input_json={"n": 1})
+    held = await store.begin(later.run_id, lease_for=lease)
+    assert held is not None
+
+    # A stale holder cannot send back a run it no longer holds.
+    await store.mark_retry(
+        later.run_id, error="stale", available_at=utcnow(), fence=held.attempts + 99
+    )
+    unmoved = await store.load(later.run_id)
+    out["stale_retry_ignored"] = unmoved is not None and (unmoved.status.value, unmoved.error) == (
+        "running",
+        None,
+    )
+
+    await store.mark_retry(
+        later.run_id,
+        error="blip",
+        available_at=utcnow() + timedelta(hours=1),
+        fence=held.attempts,
+    )
+    waiting = await store.load(later.run_id)
+    assert waiting is not None
+    out["waiting"] = (waiting.status.value, waiting.attempts, waiting.error, waiting.input_json)
+    out["waiting_is_delayed"] = waiting.available_at is not None and waiting.available_at > utcnow()
+
+    # The lease went with it: the worker that sent it back holds nothing any more.
+    renewal = await store.renew(later.run_id, lease_for=lease, fence=held.attempts)
+    out["old_holder_renews"] = renewal.held
+
+    # Only a running run goes back, so a second retry of the waiting one changes nothing.
+    await store.mark_retry(later.run_id, error="again", available_at=utcnow(), fence=held.attempts)
+    again = await store.load(later.run_id)
+    out["retry_of_pending_ignored"] = again is not None and again.error == "blip"
+
+    # A due retry is claimed by the scan under a fence one higher; the one not due is not.
+    due = await store.enqueue("retry-due", input_json=None)
+    due_held = await store.begin(due.run_id, lease_for=lease)
+    assert due_held is not None
+    await store.mark_retry(
+        due.run_id,
+        error="blip",
+        available_at=utcnow() - timedelta(seconds=1),
+        fence=due_held.attempts,
+    )
+    claimed = await store.claim_abandoned(limit=10, lease_for=lease)
+    out["scan_claims"] = sorted((r.name, r.attempts, r.error) for r in claimed)
+
+    # A run that already landed is not sent back.
+    done = await store.enqueue("retry-done", input_json=None)
+    done_held = await store.begin(done.run_id, lease_for=lease)
+    assert done_held is not None
+    await store.complete(done.run_id, output_json={"ok": True}, fence=done_held.attempts)
+    await store.mark_retry(
+        done.run_id, error="late", available_at=utcnow(), fence=done_held.attempts
+    )
+    finished = await store.load(done.run_id)
+    out["terminal_not_retried"] = (
+        None if finished is None else (finished.status.value, finished.error)
+    )
+
+    return out
+
+
+RETRY_OUTCOME: dict[str, Any] = {
+    "stale_retry_ignored": True,
+    "waiting": ("pending", 1, "blip", {"n": 1}),
+    "waiting_is_delayed": True,
+    "old_holder_renews": False,
+    "retry_of_pending_ignored": True,
+    "scan_claims": [("retry-due", 2, "blip")],
+    "terminal_not_retried": ("completed", None),
+}
+"""What :func:`run_retry_scenario` answers on every engine, the mock included."""
+
+
+# ....................... #
+
+
 @attrs.define
 class _RecoveryKms:
     """A KMS that refuses one tenant's key for good, and another's for now."""
@@ -518,8 +608,7 @@ async def run_unreadable_listing_scenario(
 
     out: dict[str, Any] = {
         "listed": sorted(
-            (record.name, record.input_json, record.payloads_unreadable)
-            for record in page.records
+            (record.name, record.input_json, record.payloads_unreadable) for record in page.records
         ),
     }
 
@@ -841,7 +930,6 @@ async def run_quarantine_admin_scenario(
     return out
 
 
-
 async def run_requeue_race_scenario(
     store_for: Callable[[UUID | None], DurableRunStorePort],
     racing: Callable[[Callable[[], Awaitable[None]]], DurableRunStorePort],
@@ -873,6 +961,7 @@ async def run_requeue_race_scenario(
     )
 
     return {"moved": moved, "still_quarantined": [record.name for record in page.records]}
+
 
 QUARANTINE_ADMIN_OUTCOME: dict[str, Any] = {
     "listed": ["qa", "qb", "qd", "qn"],
@@ -985,6 +1074,14 @@ async def run_tenancy_scenario(
     second = await as_a.enqueue("owned-2", input_json=None)
     second_held = await as_a.begin(second.run_id, lease_for=timedelta(minutes=5))
     assert second_held is not None
+
+    await as_b.mark_retry(
+        second.run_id, error="stolen", available_at=utcnow(), fence=second_held.attempts
+    )
+    after_cross_retry = await as_a.load(second.run_id)
+    out["cross_retry_status"] = (
+        None if after_cross_retry is None else after_cross_retry.status.value
+    )
 
     await as_b.fail(second.run_id, error="stolen", fence=second_held.attempts)
     after_cross_fail = await as_a.load(second.run_id)

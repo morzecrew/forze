@@ -8,7 +8,7 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import pytest
@@ -19,8 +19,9 @@ from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 from opentelemetry.trace import StatusCode
 
+from forze.application.contracts.resilience import BackoffStrategy, RetryStrategy
 from forze.application.execution import ExecutionContext
-from forze.base.exceptions import CoreException, exc
+from forze.base.exceptions import CoreException, ExceptionKind, exc
 from forze_kits.integrations.durable import (
     DURABLE_RECOVERED_COUNTER,
     DURABLE_RUN_DURATION_HISTOGRAM,
@@ -240,6 +241,30 @@ class TestRunTelemetry:
         ((labels, _),) = _points(reader, DURABLE_RUNS_COUNTER)
         assert labels["forze.durable.outcome"] == "forward_incomplete"
 
+    async def test_an_attempt_sent_back_for_a_retry_is_counted_retrying(self) -> None:
+        tracer, meter, _exporter, reader = _otel()
+        ctx = context_from_modules(MockDepsModule())
+        registry = DurableFunctionRegistry()
+
+        async def broken(ctx: ExecutionContext, input_json: dict | None) -> dict:
+            raise exc.infrastructure("down")
+
+        registry.register("fn", broken)
+        runner = DurableFunctionRunner(
+            registry=registry,
+            telemetry=DurableTelemetry.create(tracer=tracer, meter=meter),
+            retry=RetryStrategy(
+                max_attempts=3,
+                backoff=BackoffStrategy(base=timedelta(minutes=1), max=timedelta(minutes=5)),
+                retry_on=frozenset({ExceptionKind.INFRASTRUCTURE}),
+            ),
+        )
+
+        await runner.run_now(ctx, "fn")
+
+        ((labels, _),) = _points(reader, DURABLE_RUNS_COUNTER)
+        assert labels["forze.durable.outcome"] == "retrying"
+
     async def test_recover_counts_reclaimed_runs(self) -> None:
         tracer, meter, _exporter, reader = _otel()
         ctx = context_from_modules(MockDepsModule())
@@ -259,9 +284,7 @@ class TestScheduleTelemetry:
     async def test_fire_is_counted(self) -> None:
         tracer, meter, _exporter, reader = _otel()
         ctx = context_from_modules(MockDepsModule())
-        scheduler = DurableScheduler(
-            telemetry=DurableTelemetry.create(tracer=tracer, meter=meter)
-        )
+        scheduler = DurableScheduler(telemetry=DurableTelemetry.create(tracer=tracer, meter=meter))
 
         await scheduler.put(
             ctx, "s", "fn", "* * * * *", now=datetime(2026, 1, 1, 0, 0, 30, tzinfo=UTC)
