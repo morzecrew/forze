@@ -32,6 +32,7 @@ from psycopg.abc import Params, QueryNoTemplate
 from psycopg_pool import AsyncConnectionPool, PoolTimeout
 
 from forze.base.exceptions import CoreException, exc
+from forze.base.exceptions._utils import reraise_mapped
 from forze.base.primitives import JsonDict, uuid4
 
 from .._logger import logger
@@ -1150,16 +1151,16 @@ class PostgresClient(PostgresClientPort):
             raise
 
         except Exception as error:
-            mapped = copy_data_error(error, binary=binary) or exc_interceptor.mapper(
-                error,
-                site="postgres.copy_rows",
-                details=details,
+            mapped = copy_data_error(error, binary=binary)
+
+            if mapped is not None:
+                # The server's message quotes the rejected value: for the server, not a client.
+                mapped.expose_details = False
+                raise mapped from error
+
+            reraise_mapped(
+                exc_interceptor.mapper, error, site="postgres.copy_rows", details=details
             )
-
-            if mapped is None:  # pragma: no cover — the chain ends in a total fallback
-                raise
-
-            raise mapped from error
 
     # ....................... #
 

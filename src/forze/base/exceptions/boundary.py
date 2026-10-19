@@ -7,8 +7,9 @@ The companion to :mod:`~forze.base.exceptions.envelope`: where ``envelope``
 
 It is transport-neutral: any dispatch-style transport (Socket.IO today, a
 websocket or SSE adapter next) wraps its handler call in :func:`guard_frame` and
-renders the resulting envelope its own way. Logging stays with the caller via the
-``on_server_error`` hook, so this boundary performs no I/O of its own.
+renders the resulting envelope its own way. Logging a server error stays with the
+caller via the ``on_server_error`` hook; the boundary itself only records, at debug,
+the details an error withholds from the client.
 """
 
 from collections.abc import Awaitable, Callable
@@ -16,10 +17,15 @@ from typing import Any, final
 
 import attrs
 
+from forze.base.logging import Logger, log_withheld_details
+
 from .envelope import ErrorEnvelope, error_envelope, unhandled_error_envelope
 from .model import CoreException
 
 # ----------------------- #
+
+_logger = Logger("errors.boundary")
+"""Where a frame's withheld error details are recorded, at debug."""
 
 
 @final
@@ -85,6 +91,8 @@ async def guard_frame(
 
         if envelope.server_error and on_server_error is not None:
             on_server_error(error, error)
+
+        log_withheld_details(_logger, error)
 
         return FrameErr(envelope)
 

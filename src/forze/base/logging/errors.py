@@ -45,3 +45,30 @@ def log_server_error(
 
     else:
         logger.critical_exception("Unhandled exception", exc=exc)
+
+
+# ....................... #
+
+
+def log_withheld_details(logger: "Logger", exc: "CoreException") -> None:
+    """Log at debug, scrubbed, the details *exc* keeps from the client.
+
+    An error that withholds its details
+    (:attr:`~forze.base.exceptions.CoreException.expose_details`) still renders to the
+    client without them; this is where an operator sees them. Every edge renderer calls it.
+
+    :param logger: Transport error logger to emit on.
+    :param exc: The error being rendered.
+    """
+
+    if exc.expose_details or not exc.details:
+        return
+
+    from forze.base.scrubbing import sanitize
+
+    logger.debug(
+        "Error details withheld from the client",
+        error_code=exc.code,
+        error_kind=exc.kind.value,
+        details=sanitize(exc.details, context="log"),
+    )

@@ -20,10 +20,12 @@ class TestFirestoreErrorHandler:
         assert exc_interceptor.mapper(original, site="op") is original
 
     def test_not_found(self) -> None:
-        err = gax_exceptions.NotFound("missing")
+        err = gax_exceptions.NotFound("No document to update: projects/p-internal/documents/x")
         mapped = _firestore_eh(err, site="get")
         assert isinstance(mapped, CoreException)
         assert mapped.kind == ExceptionKind.NOT_FOUND
+        # A client sees the summary of a not-found: it must not echo the API's message.
+        assert "p-internal" not in mapped.summary
 
     def test_already_exists(self) -> None:
         mapped = _firestore_eh(gax_exceptions.AlreadyExists("dup"), site="create")
@@ -66,11 +68,12 @@ class TestFirestoreErrorHandler:
 
     def test_invalid_argument_maps_to_validation(self) -> None:
         mapped = _firestore_eh(
-            gax_exceptions.InvalidArgument("bad field"),
+            gax_exceptions.InvalidArgument("bad field in projects/p-internal"),
             site="write",
         )
         assert isinstance(mapped, CoreException)
         assert mapped.kind == ExceptionKind.VALIDATION
+        assert "p-internal" not in mapped.summary
 
     def test_deadline_exceeded_maps_to_infrastructure(self) -> None:
         mapped = _firestore_eh(

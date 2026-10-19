@@ -40,16 +40,27 @@ class ChainExceptionMapper(ExceptionMapper):
         if isinstance(exc, CoreException):
             return exc
 
+        res: CoreException | None = None
+
         for mapper in self.mappers:
             res = mapper(exc, site=site, details=details)
 
             if res is not None:
-                return res
+                break
 
-        if self.fallback is not None:
-            return self.fallback(exc, site=site, details=details)
+        else:
+            res = (
+                self.fallback(exc, site=site, details=details)
+                if self.fallback is not None
+                else default_exception(exc, site=site)
+            )
 
-        return default_exception(exc, site=site)
+        # Fail closed: whatever a mapper translated carries the backend's context, not the
+        # caller's, on every path that raises it.
+        if res is not None:
+            res.expose_details = False
+
+        return res
 
     # ....................... #
 

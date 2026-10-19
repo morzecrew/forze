@@ -76,11 +76,14 @@ def ensure_mock_tx_writable(*, store: str) -> None:
     """
 
     if _mock_tx_read_only.get():
-        raise exc.precondition(
+        refused = exc.precondition(
             f"Write to {store!r} inside a read-only transaction.",
             code="read_only_tx",
             details={"store": store},
         )
+        # As the backend's mapped refusal: its details are not the client's.
+        refused.expose_details = False
+        raise refused
 
 
 # ....................... #

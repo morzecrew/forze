@@ -1,14 +1,23 @@
 """Unit tests for :mod:`forze.base.exceptions.envelope`."""
 
+import asyncio
+
+import pytest
+import structlog
+
 from forze.base.exceptions import (
     GENERIC_INTERNAL_DETAIL,
     INTERNAL_ERROR_CODE,
+    ChainExceptionMapper,
+    CoreException,
+    ExceptionInterceptor,
     ExceptionKind,
     error_envelope,
     exc,
     is_server_error_kind,
     unhandled_error_envelope,
 )
+from forze.base.logging import Logger, log_withheld_details
 
 # ----------------------- #
 
@@ -50,6 +59,99 @@ def test_client_safe_envelope_without_details_has_no_context() -> None:
     envelope = error_envelope(exc.not_found("missing"))
 
     assert envelope.context is None
+
+
+# ....................... #
+
+
+def test_an_error_that_withholds_its_details_has_no_context() -> None:
+    error = exc.not_found("Note not found", details={"id": "n-1"})
+    error.expose_details = False
+
+    envelope = error_envelope(error)
+
+    assert envelope.detail == "Note not found"
+    assert envelope.status == 404
+    assert envelope.context is None
+
+
+# ....................... #
+
+
+def test_a_mapped_backend_error_keeps_its_details_from_the_client() -> None:
+    def mapper(error: BaseException, *, site: str, details: object = None) -> CoreException:
+        return exc.not_found("Object not found.", details=details)  # type: ignore[arg-type]
+
+    interceptor = ExceptionInterceptor(mapper=mapper)
+
+    @interceptor.coroutine("store.get")
+    async def get(bucket: str, key: str) -> None:
+        raise LookupError(key)
+
+    with pytest.raises(CoreException) as raised:
+        asyncio.run(get("internal-bucket", "k"))
+
+    # Kept for the code that made the call and for the server, never for the client.
+    assert raised.value.details == {"bucket": "internal-bucket", "key": "k", "site": "store.get"}
+    assert isinstance(raised.value.__cause__, LookupError)
+    assert error_envelope(raised.value).context is None
+
+
+# ....................... #
+
+
+def test_a_mapper_that_fails_does_not_replace_the_original_error() -> None:
+    def mapper(error: BaseException, *, site: str, details: object = None) -> CoreException:
+        raise RuntimeError("mapper bug")
+
+    interceptor = ExceptionInterceptor(mapper=mapper)
+
+    @interceptor.function("store.get")
+    def get() -> None:
+        raise LookupError("original")
+
+    with pytest.raises(CoreException) as raised:
+        get()
+
+    assert raised.value.kind is ExceptionKind.INTERNAL
+    assert isinstance(raised.value.__cause__, LookupError)
+    assert raised.value.expose_details is False
+
+
+# ....................... #
+
+
+def test_a_chain_mapper_withholds_what_it_translates() -> None:
+    chain = ChainExceptionMapper.chain(
+        lambda e, *, site, details: exc.not_found("Object not found.", details=details)
+    )
+
+    mapped = chain(LookupError("k"), site="store.get", details={"bucket": "internal"})
+    passthrough = exc.not_found("Note not found", details={"id": "n-1"})
+
+    assert mapped is not None and mapped.expose_details is False
+    assert chain(passthrough, site="store.get") is passthrough
+    assert passthrough.expose_details is True
+
+
+# ....................... #
+
+
+def test_withheld_details_are_logged_scrubbed_at_debug() -> None:
+    error = exc.not_found(
+        "Object not found.", details={"bucket": "internal", "password": "hunter2"}
+    )
+    error.expose_details = False
+
+    with structlog.testing.capture_logs() as logs:
+        log_withheld_details(Logger("test.errors"), error)
+        log_withheld_details(Logger("test.errors"), exc.not_found("shown", details={"a": 1}))
+
+    (record,) = logs
+    assert record["log_level"] == "debug"
+    assert record["error_code"] == error.code
+    assert record["details"]["bucket"] == "internal"
+    assert record["details"]["password"] != "hunter2"
 
 
 # ....................... #

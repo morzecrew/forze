@@ -10,7 +10,7 @@ from forze.application.integrations.http.descriptors import (
     BaseHttpIntegration,
     async_http_op,
 )
-from forze.base.exceptions import CoreException, ExceptionKind
+from forze.base.exceptions import CoreException, ExceptionKind, error_envelope
 from forze_http.adapters.http_service import HttpServiceAdapter
 from forze_http.execution.deps.configs import HttpServiceConfig
 from forze_http.kernel.client import HttpClient
@@ -135,6 +135,9 @@ async def test_invoke_invalid_response_is_validation_error() -> None:
     assert raised.value.code == "http.response.validation"
     assert raised.value.details is not None
     assert "errors" in raised.value.details
+    # The errors describe the counterparty's response: the code that called sees them,
+    # a client does not.
+    assert error_envelope(raised.value).context is None
 
     await client.aclose()
 
@@ -216,3 +219,60 @@ async def test_invoke_propagates_deadline_budget_header() -> None:
 
     assert seen["budget"] is None
     await client.aclose()
+
+
+# ....................... #
+
+
+class UpstreamError(BaseModel):
+    error: str
+
+
+class DeclaringClient(BaseHttpIntegration):
+    list_items = async_http_op(
+        request=None,
+        response=ListResponse,
+        method="GET",
+        path="/items",
+        error_type=UpstreamError,
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("integration", [DemoClient, DeclaringClient])
+async def test_an_upstream_404_reaches_the_client_without_the_upstream_context(
+    integration: type[BaseHttpIntegration],
+) -> None:
+    spec = build_http_service_spec(integration, name="billing-internal")
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(404, json={"error": "no such route"})
+
+    client = HttpClient()
+    await client.initialize(
+        base_url="https://billing.internal.example",
+        transport=httpx.MockTransport(handler),
+    )
+    adapter = HttpServiceAdapter(
+        client=client,
+        config=HttpServiceConfig(base_url="https://billing.internal.example"),
+        spec=spec,
+    )
+
+    try:
+        with pytest.raises(CoreException) as raised:
+            await adapter.invoke("list_items")
+
+    finally:
+        await client.aclose()
+
+    envelope = error_envelope(raised.value)
+
+    assert envelope.status == 404
+    assert envelope.context is None
+    assert "billing" not in envelope.detail
+
+    # Kept for the code that made the call, and for the server through the cause.
+    assert raised.value.details is not None
+    assert raised.value.details["url"] == "https://billing.internal.example/items"
+    assert isinstance(raised.value.__cause__, httpx.HTTPStatusError)

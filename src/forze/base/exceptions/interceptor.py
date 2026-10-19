@@ -159,10 +159,7 @@ class ExceptionInterceptor:
 
             @wraps(fn)
             async def wrapper(*args: P.args, **kwargs: P.kwargs) -> AsyncGenerator[R]:
-                try:
-                    it = fn(*args, **kwargs)
-
-                except BaseException as e:
+                def mapped(e: BaseException) -> Never:
                     _reraise_lazy(
                         self.mapper,
                         e,
@@ -172,20 +169,29 @@ class ExceptionInterceptor:
                         kwargs=kwargs,
                     )
 
+                try:
+                    it = fn(*args, **kwargs)
+
+                except BaseException as e:
+                    mapped(e)
+
                 async with aclosing(it) as agen:
-                    async for x in agen:
+                    while True:
+                        # Producing the next item is where a stream's backend fails.
+                        try:
+                            x = await anext(agen)
+
+                        except StopAsyncIteration:
+                            return
+
+                        except BaseException as e:
+                            mapped(e)
+
                         try:
                             yield x
 
                         except BaseException as e:
-                            _reraise_lazy(
-                                self.mapper,
-                                e,
-                                site=resolved_site,
-                                fn=fn,
-                                args=args,
-                                kwargs=kwargs,
-                            )
+                            mapped(e)
 
             return wrapper
 
@@ -204,10 +210,7 @@ class ExceptionInterceptor:
 
             @wraps(fn)
             def wrapper(*args: P.args, **kwargs: P.kwargs) -> Generator[R]:
-                try:
-                    it = fn(*args, **kwargs)
-
-                except BaseException as e:
+                def mapped(e: BaseException) -> Never:
                     _reraise_lazy(
                         self.mapper,
                         e,
@@ -217,20 +220,29 @@ class ExceptionInterceptor:
                         kwargs=kwargs,
                     )
 
+                try:
+                    it = fn(*args, **kwargs)
+
+                except BaseException as e:
+                    mapped(e)
+
                 with closing(it) as gen:
-                    for x in gen:
+                    while True:
+                        # Producing the next item is where a stream's backend fails.
+                        try:
+                            x = next(gen)
+
+                        except StopIteration:
+                            return
+
+                        except BaseException as e:
+                            mapped(e)
+
                         try:
                             yield x
 
                         except BaseException as e:
-                            _reraise_lazy(
-                                self.mapper,
-                                e,
-                                site=resolved_site,
-                                fn=fn,
-                                args=args,
-                                kwargs=kwargs,
-                            )
+                            mapped(e)
 
             return wrapper
 

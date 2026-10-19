@@ -342,10 +342,13 @@ class MvccTx:
 
             for key in keys:
                 if key in live:
-                    raise exc.conflict(
+                    conflict = exc.conflict(
                         "Unique violation: a concurrent transaction created a row with this id.",
                         details={"id": str(key), "namespace": ns},
                     )
+                    # As the backends' mapped violation: its details are not the client's.
+                    conflict.expose_details = False
+                    raise conflict
 
     def _check_guarantee_conflicts(self, state: Any) -> None:
         # Re-run each buffered write's own guarantee check against the *committed* store, which

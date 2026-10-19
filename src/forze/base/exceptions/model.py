@@ -138,6 +138,12 @@ class CoreException(Exception):
     error about a covered type renders as one canonical not-found. Set by the authz hook
     for a denial about a resource and by the document adapters for a missing row."""
 
+    expose_details: bool = attrs.field(default=True, kw_only=True)
+    """Whether :func:`~forze.base.exceptions.error_envelope` may show :attr:`details` to a
+    client at all; the kind's egress policy decides beyond that. ``False`` on every error an
+    exception mapper translated from a backend's: its details are the failed call's own
+    context, kept for the server."""
+
     # ....................... #
 
     def __str__(self) -> str:

@@ -190,8 +190,8 @@ class HttpServiceAdapter(HttpServicePort):
                 method=operation.method,
             )
             # The declared fields of a rejected response ride the same `details` the
-            # mapper already carries, so the scrubber and the per-kind egress policy govern
-            # them exactly as they govern every other error context.
+            # mapper already carries: scrubbed, readable by the code that made the call, and
+            # never shown to a client, like every other mapped error's context.
             reraise_mapped(
                 exc_interceptor.mapper,
                 error,
@@ -207,11 +207,14 @@ class HttpServiceAdapter(HttpServicePort):
                 return operation.return_type.model_validate_json(content)
 
             except ValidationError as error:
-                raise exc.validation(
+                invalid = exc.validation(
                     f"HTTP operation {operation.name!r}: response failed validation",
                     code="http.response.validation",
                     details={"errors": sanitize_pydantic_errors(list(error.errors()))},
-                ) from error
+                )
+                # The errors describe the counterparty's response, not anything the caller sent.
+                invalid.expose_details = False
+                raise invalid from error
 
         if operation.allows_empty_body or _return_type_allows_empty(operation.return_type):
             return operation.return_type.model_construct()

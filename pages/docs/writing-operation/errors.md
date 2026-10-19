@@ -60,7 +60,9 @@ Beyond its meaning, each kind has an **egress policy** with two booleans:
 
 - **`expose_details`** — are the details safe to show a caller? (`internal`,
   `authentication`, `authorization`, `configuration`, `infrastructure`,
-  `throttled`, and `timeout` say no.)
+  `throttled`, and `timeout` say no.) An error an integration translated from its
+  backend's never shows its details, whatever its kind: they describe the failed
+  call, and stay on the exception for your code and your logs.
 - **`retryable`** — is this transient? Only **`concurrency`**,
   **`infrastructure`**, and **`throttled`** are. This flag is what the
   [resilience](../running-in-prod/resilience.md) retry policies key on — you can only retry a kind
