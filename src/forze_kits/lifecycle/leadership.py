@@ -55,8 +55,9 @@ TermEnd = Literal["lost", "expiring", "stopped", "yielded", "returned", "raised"
 """Why a term ended.
 
 - ``lost`` — a renewal answered that the lease is gone; the body is cancelled at once.
-- ``expiring`` — the soft deadline passed without a successful renewal; the body is cancelled
-  ``release_timeout`` before the hard deadline, so its unwind is done by then.
+- ``expiring`` — the soft deadline passed with no successful renewal the step has processed,
+  noticed by the step or by the body's own :meth:`Term.live` check, whichever comes first; the
+  body is cancelled ``release_timeout`` before the hard deadline, so its unwind is done by then.
 - ``stopped`` — the step is stopping; the body is cancelled after ``yield_grace``, or
   ``release_timeout`` before the hard deadline if that comes first.
 - ``yielded`` — another replica asked for the lease; cancelled as for ``stopped``.
@@ -253,8 +254,9 @@ class Term:
     backend does not issue tokens."""
 
     ended: asyncio.Event = attrs.field(factory=asyncio.Event, init=False)
-    """Set by the step when the term ends; wait on it. The term's state is the step's own, so a
-    body that sets it signals only its own waiters: the term goes on."""
+    """Set when the term ends, by the step or by a :meth:`live` check past the soft deadline;
+    wait on it. The term's state is the step's own, so a body that sets it signals only its own
+    waiters: the term goes on."""
 
     reason: TermEnd | None = attrs.field(default=None, init=False)
     """Why the term ended; ``None`` while it is live."""
@@ -266,10 +268,23 @@ class Term:
     )
     """Reads the lease's current owner; set when the spec asks to ``verify``."""
 
+    _soft: float = attrs.field(default=math.inf, alias="soft", repr=False)
+    """The soft deadline on forze's monotonic clock, set by the step at the acquire and at every
+    successful renewal; a term built by hand has none."""
+
     # ....................... #
 
     def live(self) -> bool:
-        """Whether the step has not ended the term. No I/O."""
+        """Whether the term goes on: the step has not ended it, and its soft deadline has not
+        passed on forze's monotonic clock. No I/O; call it on the step's event loop.
+
+        The clock half holds for a process that was paused: on resume, the body's next check
+        finds the deadline passed before the step's own timer has run, and ends the term as
+        ``expiring``.
+        """
+
+        if self.reason is None and monotonic() >= self._soft:
+            self._end("expiring")
 
         return self.reason is None
 
@@ -901,6 +916,7 @@ class _Campaign:
             owner_of=(
                 self.query.get_owner if self.spec.verify and self.query is not None else None
             ),
+            soft=self._soft(sent),
         )
         self.state.holding = True
         logger.info(
@@ -1001,7 +1017,7 @@ class _Campaign:
         # cancellation is then done by the hard deadline.
         unwind = self.spec.release_timeout.total_seconds()
 
-        hard, soft = self._hard(sent), self._soft(sent)
+        hard = self._hard(sent)
         next_renewal = sent + renew_every
         renewal: asyncio.Task[bool | None] | None = None
         renewal_sent = sent
@@ -1026,7 +1042,8 @@ class _Campaign:
                         return True
 
                     if renewed:
-                        hard, soft = self._hard(renewal_sent), self._soft(renewal_sent)
+                        hard = self._hard(renewal_sent)
+                        term._soft = self._soft(renewal_sent)
 
                         # Asked apart from the renewal, so a slow check never holds back the
                         # deadlines a successful reset moved.
@@ -1041,20 +1058,24 @@ class _Campaign:
                         term._end("yielded")
                         grace_end = min(now + grace, hard - unwind)
 
-                if term.live():
-                    if self.stop.is_set():
-                        term._end("stopped")
-                        grace_end = min(now + grace, hard - unwind)
+                if term.live() and self.stop.is_set():
+                    term._end("stopped")
+                    grace_end = min(now + grace, hard - unwind)
 
-                    elif now >= soft:
-                        term._end("expiring")
-                        grace_end = hard - unwind
+                if not term.live() and grace_end is None:
+                    # Ended by the clock: in the check above, or in the body's own check when
+                    # the process resumed from a pause before this loop woke.
+                    grace_end = hard - unwind
+
+                # Read once: the clock may yet end the term in this pass, and the next pass then
+                # gives it its grace.
+                live = grace_end is None
 
                 if grace_end is not None and now >= grace_end:
                     return False
 
                 if renewal is None and now >= next_renewal:
-                    bound = (soft if term.live() else hard) - now
+                    bound = (term._soft if live else hard) - now
 
                     if bound > 0:
                         renewal_sent = now
@@ -1062,7 +1083,7 @@ class _Campaign:
 
                     next_renewal = now + renew_every
 
-                wakes = [soft if term.live() else grace_end]
+                wakes = [term._soft if live else grace_end]
 
                 if renewal is None:
                     wakes.append(next_renewal)
@@ -1078,7 +1099,7 @@ class _Campaign:
                 await self._until(
                     waits,
                     timeout=min(t for t in wakes if t is not None) - monotonic(),
-                    watch_stop=term.live(),
+                    watch_stop=live,
                 )
 
             return False
@@ -1312,9 +1333,11 @@ def leadership_lifecycle_step(
 
     A responsive leader whose body finishes within ``release_timeout`` of being cancelled runs
     only while it holds the lease, as long as the lock backend's clock does not jump forward by
-    more than ``margin``. A paused
-    process, a blocked loop or a backend that lost its data is covered only by fencing: pass
-    ``term.token`` with every write and have the store refuse a lower token.
+    more than ``margin``. A body that checks ``term.live()`` between units also stops at its
+    first check after a pause or a blocked loop that carried it past the soft deadline, because
+    the check compares that deadline with the clock. The unit a pause interrupts, a body that ignores its term, and a backend
+    that lost its data are covered only by fencing: pass ``term.token`` with every write and
+    have the store refuse a lower token.
 
     The step's startup runs on every replica and writes nothing shared, so it is marked only
     ``requires_long_running``: accepted under ``FLEET`` without a singleton guard, refused under

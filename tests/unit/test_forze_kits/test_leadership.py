@@ -39,11 +39,13 @@ from forze.application.execution.runtime import ExecutionRuntime
 from forze.base.exceptions import CoreException, ExceptionKind, exc
 from forze.base.primitives import monotonic
 from forze.testing import context_from_deps
+from forze_dst.loop import SimulationEventLoop
 from forze_dst.runtime import run_simulation
 from forze_kits.lifecycle import (
     LeadershipSpec,
     Term,
     instrument_leadership,
+    leadership,
     leadership_lifecycle_step,
 )
 from forze_mock import MockDepsModule
@@ -340,6 +342,14 @@ def _first_acquire(replica: _Replica) -> float:
     return replica.lock.calls("acquire")[0][0]
 
 
+def _pause(seconds: float) -> None:
+    """The process is paused: the clock moves on and no task runs, as across SIGSTOP/SIGCONT."""
+
+    loop = asyncio.get_running_loop()
+    assert isinstance(loop, SimulationEventLoop)
+    loop._advance(seconds)  # pyright: ignore[reportPrivateUsage]
+
+
 # ----------------------- #
 
 
@@ -622,6 +632,145 @@ class TestDeadlines:
             assert not a.lock.calls("release")  # the lease is not this term's to release
 
             await fleet.stop_all()
+
+        _simulate(scenario)
+
+    def test_a_term_ends_once_its_soft_deadline_passes_on_the_clock(self) -> None:
+        async def scenario() -> None:
+            term = Term(key=KEY, owner="a", token=1, soft=monotonic() + 1)
+            assert term.live()
+
+            _pause(1)  # no task runs: only the check itself can see the deadline pass
+
+            assert not term.live()
+            assert term.reason == "expiring" and term.ended.is_set()
+            assert Term(key=KEY, owner="a", token=1).live()  # built by hand: no deadline
+
+        _simulate(scenario)
+
+    def test_a_body_resumed_past_its_soft_deadline_does_no_more_units(self) -> None:
+        async def scenario() -> None:
+            fleet = _Fleet()
+            units: list[tuple[Term, float]] = []
+
+            async def lead(_ctx: Any, term: Term) -> None:
+                fleet.runs.append(_Run(replica="a", term=term, started=monotonic()))
+
+                for unit in range(5):  # one batch, checked unit by unit with no await between
+                    if not term.live():
+                        break
+
+                    units.append((term, monotonic()))
+
+                    if unit == 1:
+                        _pause(25)  # past the soft deadline at +24, short of the hard one at +29
+
+                await term.ended.wait()
+
+            a = fleet.replica("a", lead=lead)
+            await a.start()
+            await asyncio.sleep(60)
+
+            sent = _first_acquire(a)
+            first = fleet.runs[0].term
+            # None after the pause: the step's timer had not run when the body resumed.
+            assert [at for term, at in units if term is first] == [sent, sent]
+            assert first.reason == "expiring"
+
+            await fleet.stop_all()
+
+        _simulate(scenario)
+
+    def test_a_body_that_ignores_a_term_the_clock_ended_is_cancelled_in_the_lease(self) -> None:
+        async def scenario() -> None:
+            fleet = _Fleet()
+
+            async def lead(_ctx: Any, term: Term) -> None:
+                run = _Run(replica="a", term=term, started=monotonic())
+                fleet.runs.append(run)
+                _pause(25)  # past the soft deadline at +24, short of the hard one at +29
+
+                if not term.live():
+                    run.saw_end = monotonic()
+
+                try:
+                    await asyncio.sleep(FOREVER)
+
+                except asyncio.CancelledError:
+                    run.cancelled = run.finished = monotonic()
+                    raise
+
+            a = fleet.replica("a", lead=lead)
+            await a.start()
+            await fleet.replica("b").start()
+            await asyncio.sleep(60)
+
+            sent = _first_acquire(a)
+            leader, successor, *_ = fleet.runs
+            assert leader.term.reason == "expiring"
+            assert leader.saw_end == sent + 25
+            # On the schedule of a term the step ended as expiring.
+            assert leader.cancelled == sent + TTL - MARGIN - RELEASE
+            assert successor.replica == "b"
+            fleet.assert_one_at_a_time()
+
+            await fleet.stop_all()
+
+        _simulate(scenario)
+
+    def test_a_pause_inside_the_steps_own_pass_still_cancels_in_the_lease(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        launch = leadership._Campaign._renew  # pyright: ignore[reportPrivateUsage]
+        pauses = [15.0]
+
+        def renew(campaign: Any, term: Term, bound: float) -> Any:
+            if pauses:
+                # Lands after the step's clock check and before its next wake: +10 to +25.
+                _pause(pauses.pop())
+
+            return launch(campaign, term, bound)
+
+        monkeypatch.setattr(leadership._Campaign, "_renew", renew)  # pyright: ignore[reportPrivateUsage]
+
+        async def scenario() -> None:
+            fleet = _Fleet()
+            a = fleet.replica("a", lead=fleet.body("a", listens=False))
+            a.lock.reset_plan = [None] * 10
+            await a.start()
+            await asyncio.sleep(60)
+
+            sent = _first_acquire(a)
+            leader = fleet.by("a")[0]
+            assert leader.term.reason == "expiring"
+            assert leader.cancelled == sent + TTL - MARGIN - RELEASE
+            assert a.lock.calls("release")[0][0] == leader.cancelled
+
+            await fleet.stop_all()
+
+        _simulate(scenario)
+
+    def test_a_polling_body_stays_live_while_slow_renewals_succeed(self) -> None:
+        async def scenario() -> None:
+            fleet = _Fleet()
+
+            async def lead(_ctx: Any, term: Term) -> None:
+                fleet.runs.append(_Run(replica="a", term=term, started=monotonic()))
+
+                while term.live():
+                    await asyncio.sleep(0.5)
+
+            a = fleet.replica("a", lead=lead)
+            a.lock.reset_plan = [3.0] * 20  # every renewal answers three seconds after it is sent
+            await a.start()
+            await asyncio.sleep(120)
+
+            (run,) = fleet.runs  # each renewal moved the deadline the body checks
+            assert run.term.live()
+
+            await fleet.stop_all()
+
+            assert run.term.reason == "stopped"
 
         _simulate(scenario)
 
