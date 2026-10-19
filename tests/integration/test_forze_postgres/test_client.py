@@ -455,3 +455,66 @@ async def test_a_busy_pool_is_throttled_not_reported_as_unreachable(
     # while three callers waited on it.
     assert attempts_before > 0
     assert attempts_after == attempts_before
+
+
+@pytest.mark.asyncio
+async def test_session_options_are_in_effect_on_pooled_connections(postgres_container) -> None:
+    """Session options set by the pool's ``configure`` reach the connection, and survive the
+    reset a commit's and a rollback's check-in run on it. psycopg_pool discards a connection
+    ``configure`` leaves in a transaction, so before the fix no connection ever reached the
+    pool."""
+
+    url = postgres_container.get_connection_url().replace("postgresql+psycopg://", "postgresql://")
+    client = PostgresClient()
+    await client.initialize(
+        dsn=url,
+        # One connection, so the second read runs on the one the transaction checked back in.
+        config=PostgresConfig(
+            min_size=1,
+            max_size=1,
+            application_name="forze-configure",
+            statement_timeout=timedelta(seconds=3),
+            lock_timeout=timedelta(milliseconds=1500),
+            idle_in_transaction_session_timeout=timedelta(minutes=1),
+        ),
+        acquire_timeout=timedelta(seconds=2),
+    )
+
+    query = (
+        "SELECT pg_backend_pid() AS pid, "
+        "current_setting('application_name') AS application_name, "
+        "current_setting('statement_timeout') AS statement_timeout, "
+        "current_setting('lock_timeout') AS lock_timeout, "
+        "current_setting('idle_in_transaction_session_timeout') AS idle_timeout"
+    )
+    expected = {
+        "application_name": "forze-configure",
+        "statement_timeout": "3s",
+        "lock_timeout": "1500ms",
+        "idle_timeout": "1min",
+    }
+
+    try:
+        first = await client.fetch_one(query)
+        assert first is not None
+        pid = first.pop("pid")
+        assert first == expected
+
+        async with client.transaction():
+            await client.fetch_value("SELECT 1")
+
+        after_commit = await client.fetch_one(query)
+
+        with pytest.raises(RuntimeError):
+            async with client.transaction():
+                await client.fetch_value("SELECT 1")
+                raise RuntimeError("roll back")
+
+        after_rollback = await client.fetch_one(query)
+
+    finally:
+        await client.close()
+
+    # The same server connection throughout: the checks ran on the one checked back in.
+    assert after_commit == {"pid": pid, **expected}
+    assert after_rollback == {"pid": pid, **expected}

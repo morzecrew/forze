@@ -46,7 +46,14 @@ class DeadlinePushdownPolicy:
 @final
 @attrs.define(frozen=True, slots=True, kw_only=True)
 class PostgresConfig:
-    """Connection pool configuration for :class:`PostgresClient`."""
+    """Connection pool configuration for :class:`PostgresClient`.
+
+    :attr:`statement_timeout`, :attr:`lock_timeout`,
+    :attr:`idle_in_transaction_session_timeout` and :attr:`application_name` are session
+    settings, set once when the pool opens a connection. Behind pgbouncer in transaction
+    pooling they land only on the server connection that ran the setup: use session pooling,
+    a direct connection, or ``ALTER ROLE … SET`` there instead.
+    """
 
     min_size: int = 2
     """Minimum number of connections in the pool."""
@@ -76,7 +83,8 @@ class PostgresConfig:
     """
 
     statement_timeout: timedelta | None = None
-    """If set, ``SET statement_timeout`` on each new pool connection (milliseconds)."""
+    """If set, ``SET statement_timeout`` on each new pool connection (milliseconds). A session
+    setting: see the class docstring for pgbouncer."""
 
     push_invocation_deadline: bool = True
     """Push a bound invocation deadline down as a per-transaction ``statement_timeout`` backstop.
@@ -89,13 +97,16 @@ class PostgresConfig:
     to keep deadline enforcement asyncio-only."""
 
     lock_timeout: timedelta | None = None
-    """If set, ``SET lock_timeout`` on each new pool connection (milliseconds)."""
+    """If set, ``SET lock_timeout`` on each new pool connection (milliseconds). A session
+    setting: see the class docstring for pgbouncer."""
 
     idle_in_transaction_session_timeout: timedelta | None = None
-    """If set, ``SET idle_in_transaction_session_timeout`` on each new pool connection."""
+    """If set, ``SET idle_in_transaction_session_timeout`` on each new pool connection. A
+    session setting: see the class docstring for pgbouncer."""
 
     application_name: str | None = None
-    """If set, ``SET application_name`` on each new pool connection."""
+    """If set, ``SET application_name`` on each new pool connection. A session setting: see the
+    class docstring for pgbouncer."""
 
     lazy_transaction: bool = True
     """Defer pool checkout + ``BEGIN`` until the first query inside a transaction.
