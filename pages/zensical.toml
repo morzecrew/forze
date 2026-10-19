@@ -218,6 +218,7 @@ nav = [
             "reference/query-syntax.md",
             "reference/mapping.md",
             "reference/outbox-schema.md",
+            "reference/durable-schema.md",
             "reference/fastapi-routes.md",
             "reference/realtime-protocol.md",
         ] },

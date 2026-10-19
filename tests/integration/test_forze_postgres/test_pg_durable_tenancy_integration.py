@@ -40,6 +40,11 @@ from forze_postgres.execution.deps.configs import (
     PostgresDurableScheduleConfig,
 )
 from forze_postgres.kernel.client import PostgresClient
+from tests.support.durable_schema import (
+    DURABLE_RUN_COLUMNS,
+    DURABLE_SCHEDULE_COLUMNS,
+    create_durable_table,
+)
 
 # ----------------------- #
 
@@ -58,20 +63,8 @@ async def namespaced_tenants(pg_client: PostgresClient) -> tuple[str, UUID, UUID
                 schema=sql.Identifier(schema)
             )
         )
-        await pg_client.execute(
-            sql.SQL(
-                """
-                CREATE TABLE {table} (
-                    run_id text NOT NULL, name text NOT NULL, status text NOT NULL,
-                    idempotency_key text, input jsonb, output jsonb, error text,
-                    tenant_id uuid, attempts integer NOT NULL DEFAULT 0,
-                    leased_until timestamptz, available_at timestamptz,
-                    created_at timestamptz NOT NULL, updated_at timestamptz NOT NULL,
-                    cancel_requested_at timestamptz, cancel_refused_at timestamptz,
-                    PRIMARY KEY (run_id), UNIQUE (idempotency_key)
-                )
-                """
-            ).format(table=sql.Identifier(schema, table))
+        await create_durable_table(
+            pg_client, DURABLE_RUN_COLUMNS, sql.Identifier(schema, table)
         )
 
     return table, tenant_a, tenant_b
@@ -136,18 +129,8 @@ async def namespaced_schedule_tenants(pg_client: PostgresClient) -> tuple[str, U
         await pg_client.execute(
             sql.SQL("CREATE SCHEMA IF NOT EXISTS {schema}").format(schema=sql.Identifier(schema))
         )
-        await pg_client.execute(
-            sql.SQL(
-                """
-                CREATE TABLE {table} (
-                    schedule_id text NOT NULL, name text NOT NULL, cron text NOT NULL,
-                    tz text, input jsonb, next_fire_at timestamptz NOT NULL,
-                    enabled boolean NOT NULL DEFAULT true, tenant_id uuid,
-                    created_at timestamptz NOT NULL, updated_at timestamptz NOT NULL,
-                    PRIMARY KEY (schedule_id)
-                )
-                """
-            ).format(table=sql.Identifier(schema, table))
+        await create_durable_table(
+            pg_client, DURABLE_SCHEDULE_COLUMNS, sql.Identifier(schema, table)
         )
 
     return table, tenant_a, tenant_b
@@ -319,21 +302,7 @@ async def tagged_table(pg_client: PostgresClient) -> str:
     """One shared ``durable_run`` relation — the tier where the tenant predicate is load-bearing."""
 
     table = f"durable_run_tagged_{uuid4().hex[:8]}"
-    await pg_client.execute(
-        sql.SQL(
-            """
-            CREATE TABLE {table} (
-                run_id text NOT NULL, name text NOT NULL, status text NOT NULL,
-                idempotency_key text, input jsonb, output jsonb, error text,
-                tenant_id uuid, attempts integer NOT NULL DEFAULT 0,
-                leased_until timestamptz, available_at timestamptz,
-                created_at timestamptz NOT NULL, updated_at timestamptz NOT NULL,
-                cancel_requested_at timestamptz, cancel_refused_at timestamptz,
-                PRIMARY KEY (run_id), UNIQUE (idempotency_key)
-            )
-            """
-        ).format(table=sql.Identifier("public", table))
-    )
+    await create_durable_table(pg_client, DURABLE_RUN_COLUMNS, sql.Identifier("public", table))
     return table
 
 

@@ -113,7 +113,8 @@ class MongoDurableRunStore(
     tenant_id, attempts, leased_until, available_at, created_at, updated_at,
     cancel_requested_at, cancel_refused_at, claim_token}``, where ``_id`` is the ``run_id``.
 
-    The application owns the indexes; two are worth creating::
+    The application owns the indexes (see ``pages/docs/reference/durable-schema.md``).
+    One is required; the rest are recommended::
 
         // Idempotency convergence. **Required for correctness under concurrency**: without
         // it two simultaneous enqueues of one key can both insert, and the port promises
@@ -127,6 +128,10 @@ class MongoDurableRunStore(
         // collection-scans as the collection grows.
         db.<collection>.createIndex({status: 1, created_at: 1})
         db.<collection>.createIndex({created_at: -1, _id: -1})
+        // On a shared tagged collection a bound scan and listing also filter `tenant_id`,
+        // so lead with it to skip other tenants' runs:
+        db.<collection>.createIndex({tenant_id: 1, status: 1, created_at: 1})
+        db.<collection>.createIndex({tenant_id: 1, created_at: -1, _id: -1})
 
         // Read-back of a batch claim, which every recovery cycle performs. Recommended for
         // the same reason as the scan itself: without it the read-back collection-scans.

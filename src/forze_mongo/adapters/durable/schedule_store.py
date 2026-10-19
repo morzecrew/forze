@@ -73,7 +73,9 @@ class MongoDurableScheduleStore(TenancyMixin, DurableScheduleStorePort):
     and the key together, and refuses a record naming a tenant that contradicts the binding.
 
     Documents look like ``{_id, name, cron, tz, input, next_fire_at, enabled, tenant_id,
-    created_at, updated_at}``. One index is worth creating; none is required::
+    created_at, updated_at}``. No index is required; one is worth creating, led by
+    ``tenant_id`` on a shared tagged collection (see
+    ``pages/docs/reference/durable-schema.md``)::
 
         // Backs claim_due, which scans `enabled` schedules due at now, oldest first.
         db.<collection>.createIndex({enabled: 1, next_fire_at: 1})
