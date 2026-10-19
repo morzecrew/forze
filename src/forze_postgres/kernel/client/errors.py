@@ -39,6 +39,14 @@ Distinct either way from the server refusing connections (``too many connections
 Which of the two it was is decided by :func:`pool_acquire_error`, where the caller can measure
 it; this code is what remains when the answer is "a busy pool"."""
 
+SCHEMA_MISMATCH_CODE: Final[str] = "postgres_schema_mismatch"
+"""Code for a statement naming a relation, column, function, operator, type, schema or
+database that does not exist: a migration not applied (perhaps for one tenant only), or a bug."""
+
+PRIVILEGE_DENIED_CODE: Final[str] = "postgres_privilege_denied"
+"""Code for SQLSTATE 42501: a missing grant, a row-level security ``WITH CHECK`` refusal, or a
+credential whose rights were revoked."""
+
 DATABASE_UNREACHABLE_CODE: Final[str] = "database_unreachable"
 """Code for a wait that ended with the pool unable to establish any connection.
 
@@ -129,6 +137,13 @@ def _psycopg_eh(  # skipcq: PY-R1000
                 details=details,
             )
 
+        case errors.WithCheckOptionViolation():
+            # A row the write leaves outside its view's WHERE: the data's condition, not a bug.
+            return CoreException.precondition(
+                "Invalid value (view check option).",
+                details=details,
+            )
+
         case errors.NotNullViolation():
             return CoreException.precondition(
                 "Missing required value (not-null constraint).",
@@ -136,28 +151,9 @@ def _psycopg_eh(  # skipcq: PY-R1000
             )
 
         case errors.StringDataRightTruncation() | errors.DataError():
-            # too long for varchar/char etc.
+            # too long for varchar/char, out of range, invalid text or datetime: all class 22
             return CoreException.precondition(
                 "Invalid value (data too long or invalid format).",
-                details=details,
-            )
-
-        case errors.NumericValueOutOfRange():
-            return CoreException.precondition(
-                "Invalid value (number out of range).",
-                details=details,
-            )
-
-        case errors.InvalidTextRepresentation():
-            # e.g. invalid uuid, invalid int, etc.
-            return CoreException.precondition(
-                "Invalid value (text representation).",
-                details=details,
-            )
-
-        case errors.DatetimeFieldOverflow() | errors.InvalidDatetimeFormat():
-            return CoreException.precondition(
-                "Invalid datetime value.",
                 details=details,
             )
 
@@ -207,35 +203,38 @@ def _psycopg_eh(  # skipcq: PY-R1000
                 details=details,
             )
 
-        # Programming / schema issues #! Should be InfrastructureError ?
+        # Programming / schema issues. Not retryable: a missing migration, a refused privilege
+        # or a malformed statement does not improve by asking again, so a retry policy, a saga
+        # or a consumer that read them as transient would spin until an operator noticed.
+        # `internal` rather than `configuration`, which supervised loops treat as terminal:
+        # one tenant's schema not migrated yet must not stop the loop for every tenant.
 
-        case errors.UndefinedTable():
-            return CoreException.infrastructure(
-                "Database schema error (undefined table).",
-                details=details,
-            )
-
-        case errors.UndefinedColumn():
-            return CoreException.infrastructure(
-                "Database schema error (undefined column).",
-                details=details,
-            )
-
-        case errors.UndefinedFunction():
-            return CoreException.infrastructure(
-                "Database schema error (undefined function).",
+        case (
+            errors.UndefinedTable()
+            | errors.UndefinedColumn()
+            | errors.UndefinedFunction()
+            | errors.UndefinedObject()
+            | errors.InvalidSchemaName()
+            | errors.InvalidCatalogName()
+        ):
+            # 42883 is also an operator with no match for its argument types.
+            return CoreException.internal(
+                "Database schema mismatch: the statement names an object that does not exist.",
+                code=SCHEMA_MISMATCH_CODE,
                 details=details,
             )
 
         case errors.SyntaxError() | errors.InvalidSqlStatementName():
-            return CoreException.infrastructure(
+            return CoreException.internal(
                 "Database query syntax error.",
                 details=details,
             )
 
         case errors.InsufficientPrivilege():
-            return CoreException.infrastructure(
-                "Database permission error.",
+            # A missing grant, a row-level security policy, or a revoked credential lease.
+            return CoreException.internal(
+                "Database refused the statement (insufficient privilege).",
+                code=PRIVILEGE_DENIED_CODE,
                 details=details,
             )
 
@@ -317,14 +316,10 @@ def _psycopg_eh(  # skipcq: PY-R1000
             )
 
         case errors.ProgrammingError():
-            return CoreException.infrastructure(
+            # The rest of class 42, classes 10, 20, 21, 26 and 34, and PL/pgSQL's P0 (a
+            # ``RAISE EXCEPTION`` among them): a bug, not an outage.
+            return CoreException.internal(
                 "Database programming error.",
-                details=details,
-            )
-
-        case errors.GroupingError():
-            return CoreException.infrastructure(
-                "Database grouping error",
                 details=details,
             )
 

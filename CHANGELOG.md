@@ -22,6 +22,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A circuit breaker whose half-open probes recorded no outcome (an ignored error kind, a cancelled call) no longer rejects every call until restart: after `break_duration` it admits a new probe round.
 - **A logout everywhere followed by a deactivation in one transaction no longer deadlocks with a concurrent login** (revocation states, policy principal on Postgres; deactivation through SQL or its document port).
 - **`PostgresConfig` session options no longer empty the pool.** With `application_name`, `statement_timeout`, `lock_timeout` or `idle_in_transaction_session_timeout` set, every new connection was discarded, and queries failed as a busy pool. They now take effect on every pooled connection.
+- **Postgres schema and programming errors are no longer retried** (**behaviour change**). A missing object (`postgres_schema_mismatch`), a refused privilege (`postgres_privilege_denied`), a syntax error or a PL/pgSQL `RAISE EXCEPTION` is now `internal`, not retryable `infrastructure`.
 
 ### Security
 
