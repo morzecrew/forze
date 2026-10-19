@@ -79,6 +79,26 @@ class TestRedisCircuitBreakerLua:
 
         assert await breaker_store.record(_KEY, strat, False) == "open"
 
+    async def test_a_probe_that_records_nothing_frees_its_slot_after_break_duration(
+        self,
+        breaker_store: RedisCircuitBreakerStore,
+    ) -> None:
+        strat = _strat()
+
+        await breaker_store.record(_KEY, strat, False)
+        await breaker_store.record(_KEY, strat, False)  # open
+        await asyncio.sleep(1.2)
+        allowed, tr = await breaker_store.admit(_KEY, strat)
+        assert (allowed, tr) == (True, "half_open")
+
+        allowed, _ = await breaker_store.admit(_KEY, strat)
+        assert allowed is False  # the probe recorded nothing and still holds its slot
+
+        await asyncio.sleep(1.2)  # past break_duration: a new probe round
+        allowed, _ = await breaker_store.admit(_KEY, strat)
+        assert allowed is True
+        assert await breaker_store.record(_KEY, strat, True) == "closed"
+
     async def test_two_stores_share_the_trip(
         self,
         redis_client: RedisClient,
