@@ -11,11 +11,11 @@ whether the engine pre-filters, post-filters, or filters inside the ANN traversa
 adapter publishes what it can serve (:attr:`~.SearchQueryPort.search_capabilities`),
 and a request that strays is rejected up front with a clean
 :func:`~forze.base.exceptions.exc.precondition` (code ``query_feature_unsupported``)
-naming the feature and backend — never a silent empty result. The in-memory mock is
-the canonical superset (:data:`FULL_SEARCH_CAPABILITIES`).
+naming the feature and backend — never a silent empty result. Every backend is a subset of
+:data:`FULL_SEARCH_CAPABILITIES`.
 
 Scope: this declares *retrieval-topology* capabilities (vector support, which fusion
-strategies, the filtered-ANN strategy, engine-side vs bring-your-own embedding). Index
+strategies, the filtered-ANN strategy, engine-side vs adapter-side embedding). Index
 build parameters (HNSW ``m`` / ``ef_construction``, IVFFlat ``lists``, quantization) are
 DDL/adapter config and never appear here — only what a portable caller can request at
 query time does.
@@ -65,8 +65,8 @@ class SearchCapabilities:
     clean precondition, instead of a silent empty page or a deep render-time failure.
 
     Defaults describe a plain keyword/full-text single-index adapter: no vector, no
-    multi-source fusion, filters do not interact with an ANN stage, and the app owns any
-    embedding. Richer adapters widen the surface via :func:`attrs.evolve`.
+    multi-source fusion, filters do not interact with an ANN stage, and the engine embeds
+    nothing. Richer adapters widen the surface via :func:`attrs.evolve`.
     """
 
     supports_vector: bool = False
@@ -84,9 +84,10 @@ class SearchCapabilities:
     :data:`FilteredAnnKind`). ``none`` for keyword-only adapters."""
 
     auto_embed: bool = False
-    """Whether the engine embeds query text itself (engine-side embedders), rather than the
-    app embedding via :class:`~forze.application.contracts.embeddings.EmbeddingsProviderPort`
-    before the call. ``False`` is the bring-your-own-vector default (e.g. pgvector)."""
+    """Whether the database engine embeds query text itself (engine-side embedders). ``False``
+    (pgvector, Atlas Vector Search): the adapter encodes the query text with its configured
+    :class:`~forze.application.contracts.embeddings.EmbeddingsProviderPort`, or ranks by the
+    caller's :attr:`~.SearchOptions.query_vector` instead."""
 
     supports_stream: bool = False
     """Whether this adapter can iterate the whole ranked result set in bounded-memory keyset
@@ -129,11 +130,10 @@ FULL_SEARCH_CAPABILITIES: Final[SearchCapabilities] = SearchCapabilities(
 )
 """The canonical full retrieval surface every backend is a subset of.
 
-The in-memory mock is the reference: it evaluates keyword scoring, mixes legs by both
-RRF and weighted fusion, and applies filters exactly (an ``integrated`` filter that never
-loses recall), so it advertises the superset. ``auto_embed`` stays ``False`` — the mock
-(like pgvector) is bring-your-own-vector; engine-side embedding is a per-adapter opt-in,
-not part of the reference surface.
+No single backend serves all of it: the in-memory mock evaluates keyword scoring, mixes legs
+by both RRF and weighted fusion and applies filters exactly, but serves no vector search.
+``auto_embed`` stays ``False``: engine-side embedding is a per-adapter opt-in, not part of the
+reference surface.
 """
 
 DEFAULT_SEARCH_CAPABILITIES: Final[SearchCapabilities] = SearchCapabilities()

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import Any, final
 
 import attrs
@@ -14,6 +15,7 @@ from forze.application.contracts.resolution import (
     resolve_scoped_namespace,
 )
 from forze.application.contracts.search import SearchCapabilities, SearchOptions
+from forze.application.contracts.search.search_options import requested_query_vector
 from forze.base.primitives import OnceCell
 from forze_mongo.adapters._logger import logger
 from forze_mongo.kernel.relation import resolve_mongo_named_resource
@@ -73,8 +75,9 @@ class MongoVectorSearchAdapter[M: BaseModel](MongoSimpleSearchAdapter[M]):
 
     @property
     def search_capabilities(self) -> SearchCapabilities:
-        # Atlas $vectorSearch: bring-your-own vector (embedder-encoded query); the stage
-        # pre-filters on indexed fields before the ANN traversal.
+        # Atlas $vectorSearch: the adapter encodes query text with its embedder (or takes the
+        # caller's query_vector); the stage pre-filters on indexed fields before the ANN
+        # traversal.
         return SearchCapabilities(
             supports_vector=True,
             filtered_ann="prefilter",
@@ -93,6 +96,16 @@ class MongoVectorSearchAdapter[M: BaseModel](MongoSimpleSearchAdapter[M]):
 
     # ....................... #
 
+    @property
+    def _query_vector_dimensions(self) -> int | None:
+        return self.embedding_dimensions
+
+    def _ranks(self, terms: tuple[str, ...], options: SearchOptions | None) -> bool:
+        # A caller's vector ranks a blank query instead of browsing.
+        return bool(terms) or (options or {}).get("query_vector") is not None
+
+    # ....................... #
+
     async def _ranked_pipeline(
         self,
         *,
@@ -102,13 +115,31 @@ class MongoVectorSearchAdapter[M: BaseModel](MongoSimpleSearchAdapter[M]):
         sorts: QuerySortExpression | None,
         options: SearchOptions | None,
     ) -> list[dict[str, Any]]:
-        if not terms:
+        given = requested_query_vector(terms, options)
+
+        if given is None and not terms:
             return build_browse_pipeline(
                 pre_filter=pre_filter,
                 user_sorts=self._user_sorts(sorts),
                 rank_field=self.rank_field,
             )
 
+        vec = given if given is not None else await self._embed(terms, combine=combine)
+
+        return build_vector_ranked_pipeline(
+            pre_filter=pre_filter,
+            query_vector=vec,
+            index_name=await self._resolved_index_name(),
+            vector_path=self.vector_path,
+            num_candidates=self._effective_num_candidates(options),
+            limit=self.vector_fetch_limit,
+            rank_field=self.rank_field,
+            user_sorts=self._user_sorts(sorts),
+        )
+
+    # ....................... #
+
+    async def _embed(self, terms: tuple[str, ...], *, combine: str) -> Sequence[float]:
         text = _embedding_query_text(terms, combine=combine)
 
         if len(terms) > 1 and combine == "any":
@@ -129,16 +160,7 @@ class MongoVectorSearchAdapter[M: BaseModel](MongoSimpleSearchAdapter[M]):
                 f"Query embedding dimension {len(vec)} != configured {self.embedding_dimensions}."
             )
 
-        return build_vector_ranked_pipeline(
-            pre_filter=pre_filter,
-            query_vector=vec,
-            index_name=await self._resolved_index_name(),
-            vector_path=self.vector_path,
-            num_candidates=self._effective_num_candidates(options),
-            limit=self.vector_fetch_limit,
-            rank_field=self.rank_field,
-            user_sorts=self._user_sorts(sorts),
-        )
+        return vec
 
     # ....................... #
 

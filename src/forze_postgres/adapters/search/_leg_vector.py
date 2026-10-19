@@ -6,6 +6,7 @@ require_psycopg()
 
 # ....................... #
 
+from collections.abc import Sequence
 from typing import Any
 
 from psycopg import sql
@@ -36,14 +37,27 @@ async def build_vector_leg(
     queries: tuple[str, ...],
     options: SearchOptions | None,
     score_column: str,
+    query_vector: Sequence[float] | None = None,
 ) -> tuple[sql.Composable, sql.Composable, list[Any]]:
     """Build heap ``WHERE`` (always ``TRUE``), KNN rank fragment, and vector parameters.
 
-    Parameter order: one ``vector`` literal per query (``vector_param_literal``).
+    Parameter order: one ``vector`` literal per query (``vector_param_literal``), or the one
+    *query_vector* the caller computed, which ranks in place of embedding *queries*.
     """
 
     _ = introspector
     combine = effective_phrase_combine(options)
+    rank_one = vector_knn_score_expr(
+        index_alias=index_alias,
+        column=vector_column,
+        kind=vector_distance,
+        score_name=score_column,
+    )
+
+    if query_vector is not None:
+        assert_embedding_shape(query_vector, expect_dim=embedding_dimensions)
+
+        return sql.SQL("TRUE"), rank_one, [vector_param_literal(query_vector)]
 
     if not queries:
         return (
@@ -60,12 +74,7 @@ async def build_vector_leg(
         one = await embedder.embed_one(queries[0], input_kind="query")
         assert_embedding_shape(one, expect_dim=embedding_dimensions)
 
-        rank = vector_knn_score_expr(
-            index_alias=index_alias,
-            column=vector_column,
-            kind=vector_distance,
-            score_name=score_column,
-        )
+        rank = rank_one
         leg_params = [vector_param_literal(one)]
 
     else:

@@ -67,6 +67,34 @@ class MongoSimpleSearchAdapter[M: BaseModel](
 
     # ....................... #
 
+    @property
+    def _query_vector_dimensions(self) -> int | None:
+        """The length a caller's ``query_vector`` must have; ``None`` where none is served."""
+
+        return None
+
+    def _search_options(
+        self,
+        options: SearchOptions | None,
+        snapshot: SearchResultSnapshotOptions | None = None,
+    ) -> SearchOptions:
+        return search_options_for_simple_adapter(
+            options,
+            spec=self.spec,
+            snapshot=snapshot,
+            capabilities=self.search_capabilities,
+            backend=type(self).__name__,
+            vector_dimensions=self._query_vector_dimensions,
+        )
+
+    def _ranks(self, terms: tuple[str, ...], options: SearchOptions | None) -> bool:
+        """Whether the request ranks; a blank query browses instead."""
+
+        _ = options
+        return bool(terms)
+
+    # ....................... #
+
     async def _ranked_pipeline(
         self,
         *,
@@ -109,7 +137,7 @@ class MongoSimpleSearchAdapter[M: BaseModel](
         return_type: type[BaseModel] | None = None,
         return_fields: Sequence[str] | None = None,
     ) -> Any:
-        options = search_options_for_simple_adapter(options, spec=self.spec, snapshot=snapshot)
+        options = self._search_options(options, snapshot)
 
         # Mongo search does not produce facets or highlights; fail closed rather than
         # silently ignore a request (which would let a caller think sidecars were coming).
@@ -127,17 +155,23 @@ class MongoSimpleSearchAdapter[M: BaseModel](
             sorts=sorts,
             options=options,
         )
+        fingerprint_extras: dict[str, object] = {"phrase_combine": str(combine)}
+
+        if (vector := options.get("query_vector")) is not None:
+            # A stored snapshot for one vector must not answer another.
+            fingerprint_extras["query_vector"] = list(vector)
 
         return await execute_mongo_ranked_offset_search(
             self,
             client=self.client,
             ranked_pipeline=pipeline,
+            ranked=self._ranks(terms, options),
             query=query,
             filters=filters,
             sorts=sorts,
             spec=self.spec,
             variant=self.search_variant,
-            fingerprint_extras={"phrase_combine": str(combine)},
+            fingerprint_extras=fingerprint_extras,
             pagination=pagination,
             snapshot=snapshot,
             return_count=return_count,
@@ -159,7 +193,7 @@ class MongoSimpleSearchAdapter[M: BaseModel](
         return_type: type[BaseModel] | None = None,
         return_fields: Sequence[str] | None = None,
     ) -> Any:
-        options = search_options_for_simple_adapter(options, spec=self.spec)
+        options = self._search_options(options)
         reject_unsupported_facets(options, backend="Mongo")
         reject_unsupported_highlight(self.spec, options, backend="Mongo")
         reject_encrypted_sort_fields(
@@ -180,7 +214,7 @@ class MongoSimpleSearchAdapter[M: BaseModel](
             self,
             client=self.client,
             ranked_pipeline=pipeline,
-            terms=terms,
+            ranked=self._ranks(terms, options),
             query=query,
             filters=filters,
             sorts=sorts,

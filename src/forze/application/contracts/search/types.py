@@ -1,12 +1,15 @@
 from collections.abc import Sequence
-from typing import Literal, TypeAlias, TypedDict
+from typing import Annotated, Final, Literal, TypeAlias, TypedDict
 
-from pydantic import with_config
+from pydantic import Field, with_config
 
 from ..querying.expressions import CLOSED_EXPRESSION
 from .capabilities import FusionStrategy
 
 # ----------------------- #
+
+MAX_QUERY_VECTOR_LENGTH: Final[int] = 16_000
+"""The longest :attr:`SearchOptions.query_vector` accepted: pgvector's vector column limit."""
 
 PhraseCombine = Literal["any", "all"]
 """``any``: at least one list phrase matches (disjunction). ``all``: every phrase must match."""
@@ -136,6 +139,15 @@ class SearchOptions(TypedDict, total=False):
     all highlightable fields with default markers; a :class:`HighlightOptions` narrows the
     fields / customizes markers. Returned index-aligned on the page
     (:attr:`~forze.application.contracts.base.value_objects.CountlessPage.highlights`)."""
+
+    query_vector: Annotated[Sequence[float], Field(max_length=MAX_QUERY_VECTOR_LENGTH)]
+    """A precomputed query embedding to rank by, in place of embedding ``query``: one computed
+    once and reused or cached. It must come from the same embedding model as the indexed
+    documents (a same-length vector from another model passes every check and ranks
+    nonsense), its length must match the index's dimensions, and ``query`` must then be blank.
+    ``None`` reads as no vector. Served only by a single-index vector adapter
+    (:attr:`~.SearchCapabilities.supports_vector`); every other adapter, hub and federated
+    search refuse it with a ``precondition``."""
 
 
 # ....................... #

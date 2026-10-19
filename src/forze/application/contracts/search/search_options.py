@@ -1,14 +1,21 @@
 """Normalize :class:`~forze.application.contracts.search.SearchOptions` for adapter shape."""
 
-from collections.abc import Mapping
+import math
+from collections.abc import Mapping, Sequence
 from typing import Any, Literal, cast
 
+from forze.application.contracts.search.capabilities import (
+    DEFAULT_SEARCH_CAPABILITIES,
+    SearchCapabilities,
+    validate_vector_supported,
+)
 from forze.application.contracts.search.specs import (
     FederatedSearchSpec,
     HubSearchSpec,
     SearchSpec,
 )
 from forze.application.contracts.search.types import (
+    MAX_QUERY_VECTOR_LENGTH,
     HighlightOptions,
     MultiSourceSearchOptions,
     SearchOptions,
@@ -17,7 +24,9 @@ from forze.application.contracts.search.types import (
 from forze.base.exceptions import exc
 
 from ..._logger import logger
+from ..querying.capabilities import UNSUPPORTED_QUERY_FEATURE_CODE
 from ..querying.expressions import refuse_unknown_keys
+from .utils import normalize_search_queries
 
 # ----------------------- #
 
@@ -51,17 +60,33 @@ def search_options_for_simple_adapter(
     *,
     spec: SearchSpec[Any] | None = None,
     snapshot: SearchResultSnapshotOptions | None = None,
+    capabilities: SearchCapabilities = DEFAULT_SEARCH_CAPABILITIES,
+    backend: str = "search",
+    vector_dimensions: int | None = None,
 ) -> SearchOptions:
     """Normalize single-index search options, for *spec* when given.
 
-    Refuses a key no search options type defines (in *snapshot* too), drops hub/federated
-    member keys (warning when callers pass them), and fills ``search_count`` from *spec*'s
-    :attr:`~SearchSpec.default_search_count` when the request leaves it out. Without *spec* no
-    default is applied.
+    Refuses a key no search options type defines (in *snapshot* too), and a ``query_vector``
+    *capabilities* cannot serve (named after *backend*), or that is not *vector_dimensions*
+    finite numbers; a served one is returned as a ``list[float]``, and an explicit ``None`` is
+    dropped. Drops hub/federated member keys (warning when callers pass them), and fills
+    ``search_count`` from *spec*'s :attr:`~SearchSpec.default_search_count` when the request
+    leaves it out. Without *spec* no default is applied.
     """
 
     refuse_unknown_search_options(options, snapshot)
     opts = dict(options or {})
+
+    if opts.get("query_vector") is None:
+        opts.pop("query_vector", None)
+
+    else:
+        # A keyword adapter would rank by the blank query and ignore the vector.
+        validate_vector_supported(capabilities, backend=backend)
+        # Checked once, so the ranking and the snapshot fingerprint read the same list.
+        opts["query_vector"] = _checked_query_vector(
+            opts["query_vector"], dimensions=vector_dimensions
+        )
 
     if spec is not None and spec.default_search_count is not None:
         opts.setdefault("search_count", spec.default_search_count)
@@ -97,6 +122,7 @@ def prepare_hub_search_options(
     """
 
     refuse_unknown_search_options(options, snapshot)
+    _refuse_query_vector(options, scope="hub")
     opts = dict(options or {})
 
     if hub_spec.default_search_count is not None:
@@ -138,6 +164,7 @@ def prepare_federated_search_options(
     """Strip field-level tuning and federation member keys; return leg options + weights."""
 
     refuse_unknown_search_options(options, snapshot)
+    _refuse_query_vector(options, scope="federated")
     opts = dict(options or {})
 
     if "weights" in opts or "fields" in opts:
@@ -162,6 +189,68 @@ def prepare_federated_search_options(
     leg_opts.pop("fusion", None)
 
     return cast(SearchOptions, leg_opts), weights_list
+
+
+# ....................... #
+
+
+def requested_query_vector(
+    query: str | Sequence[str],
+    options: SearchOptions | None,
+) -> Sequence[float] | None:
+    """The request's ``query_vector``, as :func:`search_options_for_simple_adapter` checked it,
+    or ``None``.
+
+    :raises exc.precondition: a vector alongside a non-blank *query*, which it would leave
+        unranked.
+    """
+
+    vector = (options or {}).get("query_vector")
+
+    if vector is not None and normalize_search_queries(query):
+        raise exc.precondition(
+            "Pass either a query or a query_vector, not both: the vector replaces the "
+            "query's embedding.",
+            code="search_query_vector_with_query",
+        )
+
+    return vector
+
+
+def _checked_query_vector(raw: object, *, dimensions: int | None) -> list[float]:
+    """*raw* as a list of finite floats, its length checked before any value is converted."""
+
+    if isinstance(raw, (str, bytes)) or not isinstance(raw, Sequence):
+        raise exc.validation("query_vector must be a list or tuple of numbers.")
+
+    length = len(raw)
+
+    if dimensions is not None and length != dimensions:
+        raise exc.validation(f"query_vector must have {dimensions} values, got {length}.")
+
+    if length > MAX_QUERY_VECTOR_LENGTH:
+        raise exc.validation(
+            f"query_vector must have at most {MAX_QUERY_VECTOR_LENGTH} values, got {length}."
+        )
+
+    try:
+        vector = [float(x) for x in raw]
+
+    except (TypeError, ValueError, OverflowError):
+        raise exc.validation("query_vector must be a list or tuple of finite numbers.") from None
+
+    if not vector or not all(math.isfinite(x) for x in vector):
+        raise exc.validation("query_vector must be a list or tuple of finite numbers.")
+
+    return vector
+
+
+def _refuse_query_vector(options: SearchOptions | None, *, scope: str) -> None:
+    if "query_vector" in (options or {}):
+        raise exc.precondition(
+            f"Search feature query_vector is not supported for {scope} search.",
+            code=UNSUPPORTED_QUERY_FEATURE_CODE,
+        )
 
 
 # ....................... #

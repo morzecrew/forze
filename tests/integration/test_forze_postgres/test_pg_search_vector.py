@@ -964,3 +964,36 @@ async def test_vector_exact_total_exceeds_candidate_cap(
     )
     assert page.count == 11
     assert len(page.hits) == 2
+
+
+@pytest.mark.asyncio
+async def test_a_query_vector_finds_what_its_text_finds(pgvector_client: PostgresClient) -> None:
+    await _ensure_vector_extension(pgvector_client)
+
+    suffix = uuid4().hex[:12]
+    table = f"vec_qv_{suffix}"
+    prov = MockHashEmbeddingsProvider(dimensions=3)
+    labels = ["alpha", "beta", "gamma"]
+    await pgvector_client.execute(
+        f"CREATE TABLE {table} (id uuid PRIMARY KEY, label text NOT NULL, emb vector(3) NOT NULL)"
+    )
+
+    for label in labels:
+        literal = vector_param_literal(await prov.embed_one(label))
+        await pgvector_client.execute(
+            f"INSERT INTO {table} (id, label, emb) VALUES (%(id)s, %(label)s, '{literal}'::vector)",
+            {"id": uuid4(), "label": label},
+        )
+
+    ctx = _vector_search_context(pgvector_client, table=table, index_name=f"idx_vec_qv_{suffix}")
+    port = ctx.search.query(SearchSpec(name="vec_qv", model_type=VecDoc, fields=["id", "label"]))
+    vector = list(await prov.embed_one("beta", input_kind="query"))
+
+    by_text = await port.search_page("beta")
+    by_vector = await port.search_page("", options={"query_vector": vector})
+    by_cursor = await port.search_cursor("", cursor={"limit": 3}, options={"query_vector": vector})
+
+    assert [hit.id for hit in by_vector.hits] == [hit.id for hit in by_text.hits]
+    assert by_vector.scores == by_text.scores
+    assert [hit.id for hit in by_cursor.hits] == [hit.id for hit in by_text.hits]
+    assert by_vector.hits[0].label == "beta"

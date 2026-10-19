@@ -23,6 +23,7 @@ from forze.application.contracts.search import (
     SearchSpec,
     effective_phrase_combine,
 )
+from forze.application.contracts.search.search_options import requested_query_vector
 from forze.domain.constants import ID_FIELD
 from forze_postgres.kernel.relation import RelationSpec
 
@@ -38,7 +39,7 @@ from ._pipeline_sql import (
 from ._ranked_pipeline import build_filter_first_ranked_pipeline, ranked_parts_to_sql
 from ._search_count import effective_search_count
 from ._simple_base import PostgresRankedPipelineSearchAdapter
-from ._vector_sql import VectorDistanceKind
+from ._vector_sql import VectorDistanceKind, vector_param_literal
 
 # ----------------------- #
 
@@ -91,8 +92,9 @@ class PostgresVectorSearchAdapter[M: BaseModel](PostgresRankedPipelineSearchAdap
 
     @property
     def search_capabilities(self) -> SearchCapabilities:
-        # pgvector: bring-your-own vector (embedder-encoded query), filters applied around
-        # the ANN scan so recall follows post-filter semantics under selective predicates.
+        # pgvector: the adapter encodes query text with its embedder (or takes the caller's
+        # query_vector); filters apply around the ANN scan, so recall follows post-filter
+        # semantics under selective predicates.
         return SearchCapabilities(
             supports_vector=True,
             filtered_ann="postfilter",
@@ -113,6 +115,16 @@ class PostgresVectorSearchAdapter[M: BaseModel](PostgresRankedPipelineSearchAdap
 
     # ....................... #
 
+    @property
+    def _query_vector_dimensions(self) -> int | None:
+        return self.embeddings_spec.dimensions
+
+    def _ranks(self, query: str | Sequence[str], options: SearchOptions | None) -> bool:
+        # A caller's vector ranks a blank query instead of browsing.
+        return super()._ranks(query, options) or (options or {}).get("query_vector") is not None
+
+    # ....................... #
+
     def _fingerprint_extras(  # type: ignore[override]
         self,
         options: SearchOptions | None,
@@ -126,6 +138,9 @@ class PostgresVectorSearchAdapter[M: BaseModel](PostgresRankedPipelineSearchAdap
             "embeddings_dim": int(self.embeddings_spec.dimensions),
             "search_count": str(effective_search_count(options)),
         }
+        vector = (options or {}).get("query_vector")
+        if vector is not None:
+            extras["query_vector"] = vector_param_literal(vector)
         cap = kwargs.get("candidate_limit")
         if cap is not None:
             extras["candidate_limit"] = cap
@@ -150,7 +165,7 @@ class PostgresVectorSearchAdapter[M: BaseModel](PostgresRankedPipelineSearchAdap
     ) -> RankedPipelineSql:
         # Vector is top-k: its candidate cap is the retrieval bound, not an offset-page
         # optimization, so cursor pagination keeps it (unlike the keyword/text engines).
-        _ = query, filters, for_cursor
+        _ = filters, for_cursor
         join = self._safe_join_pairs
         proj_qname = await self._pipeline_read_qname()
         index_heap_qname = await self._pipeline_heap_qname()
@@ -166,11 +181,12 @@ class PostgresVectorSearchAdapter[M: BaseModel](PostgresRankedPipelineSearchAdap
             queries=terms,
             options=options,
             score_column=self.search_rank_column,
+            query_vector=requested_query_vector(query, options),
         )
         scored_keys = scored_key_columns(join, index_alias=self.pipeline.index)
 
-        # (A blank query never reaches here: with no embedding to rank by, it browses the
-        # projection.)
+        # (A blank query reaches here only with a query_vector: with no embedding to rank by,
+        # it browses the projection.)
         candidate_cap = effective_ranked_candidate_limit(
             config_limit=self.ranked_candidate_limit,
             options=options,

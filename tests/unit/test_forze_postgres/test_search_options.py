@@ -4,13 +4,15 @@ from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
-from pydantic import BaseModel
+from pydantic import BaseModel, TypeAdapter, ValidationError
 
+from forze.application.contracts.querying.capabilities import UNSUPPORTED_QUERY_FEATURE_CODE
 from forze.application.contracts.search import (
     FederatedSearchSpec,
     HighlightOptions,
     HubSearchSpec,
     MultiSourceSearchOptions,
+    SearchCapabilities,
     SearchOptions,
     SearchSpec,
     prepare_federated_search_options,
@@ -270,6 +272,7 @@ def test_every_option_the_type_defines_is_accepted() -> None:
             "fragment_size": 10,
             "max_fragments": 1,
         },
+        "query_vector": [0.1, 0.2],
     }
     multi: dict[str, Any] = {
         "member_weights": {"a": 1.0},
@@ -283,6 +286,88 @@ def test_every_option_the_type_defines_is_accepted() -> None:
     assert options["highlight"].keys() == HighlightOptions.__optional_keys__
     assert options.keys() | multi.keys() == MultiSourceSearchOptions.__optional_keys__
 
-    assert search_options_for_simple_adapter(options, spec=_leg("a")) == options
-    prepare_hub_search_options(_hub(), {**options, **multi})
-    prepare_federated_search_options(_federated(), {**options, **multi})
+    vector = SearchCapabilities(supports_vector=True)
+    assert (
+        search_options_for_simple_adapter(options, spec=_leg("a"), capabilities=vector) == options
+    )
+    # Multi-source search serves no caller vector (refused below).
+    multi_options = {k: v for k, v in options.items() if k != "query_vector"}
+    prepare_hub_search_options(_hub(), {**multi_options, **multi})
+    prepare_federated_search_options(_federated(), {**multi_options, **multi})
+
+
+def test_a_query_vector_is_refused_where_no_vector_search_serves_it() -> None:
+    options: SearchOptions = {"query_vector": [0.1, 0.2]}
+
+    for refuse in (
+        lambda: search_options_for_simple_adapter(options, spec=_leg("a")),
+        lambda: prepare_hub_search_options(_hub(), options),
+        lambda: prepare_federated_search_options(_federated(), options),
+    ):
+        with pytest.raises(CoreException) as caught:
+            refuse()
+
+        assert caught.value.code == UNSUPPORTED_QUERY_FEATURE_CODE
+
+
+def test_an_explicit_none_query_vector_reads_as_none() -> None:
+    options: Any = {"query_vector": None, "fuzzy": True}
+
+    assert search_options_for_simple_adapter(options) == {"fuzzy": True}
+
+
+_VECTOR = SearchCapabilities(supports_vector=True)
+
+
+def test_a_query_vector_is_normalised_to_a_list_of_floats() -> None:
+    options: Any = {"query_vector": (1, 2.5, 3)}
+
+    normalised = search_options_for_simple_adapter(
+        options, capabilities=_VECTOR, vector_dimensions=3
+    )
+
+    assert normalised["query_vector"] == [1.0, 2.5, 3.0]
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        [10**400, 1, 2],
+        [1.0, float("inf"), 2.0],
+        [1.0, "x", 2.0],
+        (x for x in (1.0, 2.0, 3.0)),
+        {1.0, 2.0, 3.0},
+        {"a": 1.0, "b": 2.0, "c": 3.0}.values(),
+        "abc",
+        [],
+    ],
+    ids=["overflow", "inf", "text", "generator", "set", "dict-view", "str", "empty"],
+)
+def test_a_query_vector_that_is_not_finite_numbers_is_the_callers_error(raw: Any) -> None:
+    with pytest.raises(CoreException) as caught:
+        search_options_for_simple_adapter({"query_vector": raw}, capabilities=_VECTOR)
+
+    assert caught.value.kind is ExceptionKind.VALIDATION
+
+
+def test_a_query_vectors_length_is_checked_before_its_values() -> None:
+    unconvertible: Any = [object()] * 4
+
+    with pytest.raises(CoreException, match="must have 3 values, got 4"):
+        search_options_for_simple_adapter(
+            {"query_vector": unconvertible}, capabilities=_VECTOR, vector_dimensions=3
+        )
+
+    with pytest.raises(CoreException, match="at most 16000"):
+        search_options_for_simple_adapter(
+            {"query_vector": [object()] * 16_001}, capabilities=_VECTOR
+        )
+
+
+def test_a_request_body_caps_the_query_vector_at_pgvectors_limit() -> None:
+    body = TypeAdapter(SearchOptions)
+
+    assert body.validate_python({"query_vector": [0.5] * 16_000})["query_vector"]
+
+    with pytest.raises(ValidationError):
+        body.validate_python({"query_vector": [0.5] * 16_001})

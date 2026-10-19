@@ -109,7 +109,7 @@ async def test_non_ranked_cursor_preserves_non_default_null_placement() -> None:
             gw,
             client=client,
             ranked_pipeline=[],
-            terms=(),
+            ranked=False,
             query="",
             filters=None,
             sorts=sorts,  # type: ignore[arg-type]

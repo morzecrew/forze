@@ -140,7 +140,10 @@ highlightable (the full option surface is the
 measures every match, as `aggregate_many` does the rows a filter matches.
 Engines cover full-text, vector similarity, and **hub / federated** search that spans several relations. Vector
 search ranks by **embeddings** — vectors produced by an embeddings provider
-(`ctx.embeddings.provider(spec)`) — so semantically similar text scores together. Keeping
+(`ctx.embeddings.provider(spec)`) — so semantically similar text scores together. A vector
+you already hold (cached, or reused across searches) can rank in place of the text:
+`search("", options={"query_vector": vector})`. It must come from the same embedding model as
+the indexed documents. Keeping
 the index current — upsert and delete — is the separate **search command port**;
 querying and index maintenance never mix.
 
