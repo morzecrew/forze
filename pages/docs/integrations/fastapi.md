@@ -84,6 +84,24 @@ server fault, not a missing credential. This matters most in
 cookie rides every request including the one that would replace it. Paths are
 exact, never prefixes.
 
+On an application mounted under a prefix, with the middleware added to the mounted
+application, an entry may be the full path or the path relative to the mount:
+
+```python
+api = FastAPI()
+api.add_middleware(
+    SecurityContextMiddleware,
+    ctx_dep=runtime.get_context,
+    anonymous_paths={"/auth/login", "/auth/refresh"},  # relative to the mount
+)
+app.mount("/v1", api)  # /v1/auth/login is anonymous; "/v1/auth/login" works too
+```
+
+A server `root_path` counts as a mount the same way. An entry whose leading path segments
+are the mount prefix (`/v1` or `/v1/...` under `/v1`, not `/v1x`) is only ever read as a
+full path, so no entry names two routes. A middleware added to the parent application
+sees no mount: list full paths there.
+
 Probe paths want the opposite treatment. Both middlewares resolve the execution
 context on every HTTP request, so in front of `/livez` they answer 500 while the
 runtime scope is not yet open — precisely the window a liveness probe exists to

@@ -33,6 +33,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **`UpsertItem.update` is now derived from the update passed and `skip_none`.** Constructors are unchanged; `attrs.asdict` output and `__match_args__` differ. An override of `DocumentSpec.require_set_based_upsert` must accept the new `updates` argument.
 
+- **`anonymous_paths` entries may be relative to the mount.** With `SecurityContextMiddleware` on an application mounted under a prefix or served with a `root_path`, `/auth/login` now matches `/v1/auth/login`; full paths keep working.
+
 ### Fixed
 
 - **Firestore raises a stale write's preconditions as Postgres and Mongo do** (**behaviour change**). A future revision is `precondition` with `revision_mismatch`, and a revision whose history snapshot is missing is `precondition` with `history_not_found_retry`, not `not_found`.

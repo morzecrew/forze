@@ -86,7 +86,15 @@ class SecurityContextMiddleware:
     (infrastructure, configuration, internal) still returns the error response —
     a secrets-store outage is a server fault, not a missing credential.
     Exact paths, never prefixes — a prefix is one refactor away from an ungoverned
-    hole (the same stance as ``allowed_websocket_paths``)."""
+    hole (the same stance as ``allowed_websocket_paths``).
+
+    On an application mounted under a prefix (``parent.mount("/v1", app)``, or a server
+    ``root_path``), with this middleware on the mounted application, an entry is either
+    the full path (``/v1/auth/login``) or the path relative to the mount
+    (``/auth/login``) — the path the application's own router matches. An entry whose
+    leading path segments are the mount prefix (``/v1`` or ``/v1/...`` under ``/v1``,
+    not ``/v1x``) is only ever read as a full path, so no entry can name two routes. A
+    middleware on the parent application sees no mount: list full paths there."""
 
     allowed_websocket_paths: frozenset[str] = attrs.field(
         default=frozenset(), kw_only=True, converter=frozenset
@@ -117,6 +125,37 @@ class SecurityContextMiddleware:
     :func:`~forze_fastapi.middlewares.check_bypass_paths` (run by ``runtime_lifespan``)
     fails the boot on that, on a bypassed path that serves a generated operation route,
     and on the two middlewares carrying different sets."""
+
+    # ....................... #
+
+    def _is_anonymous(self, scope: Scope) -> bool:
+        """Whether the request path is listed in :attr:`anonymous_paths`.
+
+        Reads the percent-decoded ``scope["path"]`` routing reads, never ``request.url``:
+        that is re-split from it, so an encoded ``?`` or ``#`` would end its path early and
+        borrow an anonymous one.
+        """
+
+        path: str = scope.get("path", "")
+
+        if path in self.anonymous_paths:
+            return True
+
+        # Strip the mount exactly as Starlette's router does, so the relative path is
+        # the one the request is routed by — never a different route.
+        root: str = scope.get("root_path", "")
+
+        if not root or not path.startswith(root) or path[len(root) : len(root) + 1] != "/":
+            return False
+
+        relative = path[len(root) :]
+
+        # Led by the prefix's path segments, it could also be another route's full path:
+        # an entry that reads both ways only ever counts as full (checked above).
+        if relative == root or relative.startswith(root + "/"):
+            return False
+
+        return relative in self.anonymous_paths
 
     # ....................... #
 
@@ -182,9 +221,7 @@ class SecurityContextMiddleware:
 
         request = Request(scope, receive)
         ctx = self.ctx_dep()
-        # The path routing reads: already percent-decoded. ``request.url`` is re-split from it,
-        # so an encoded ``?`` or ``#`` would end its path early and borrow an anonymous one.
-        anonymous = scope.get("path") in self.anonymous_paths
+        anonymous = self._is_anonymous(scope)
 
         try:
             # A preflight carries no credential, so an ingress's own `required` must not

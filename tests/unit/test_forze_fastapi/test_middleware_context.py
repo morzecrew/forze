@@ -741,7 +741,9 @@ class TestAnonymousPaths:
     that exist without one — /auth/login is the route that REPLACES the stale
     cookie, and it used to 401 before routing."""
 
-    def _middleware(self, downstream: AsyncMock) -> SecurityContextMiddleware:
+    def _middleware(
+        self, downstream: AsyncMock, paths: frozenset[str] = frozenset({"/auth/login"})
+    ) -> SecurityContextMiddleware:
         ctx = context_from_deps(Deps.plain({AuthnDepKey: _ExpiredTokenAuthFactory()}))
 
         return SecurityContextMiddleware(
@@ -751,13 +753,14 @@ class TestAnonymousPaths:
             ),
             "first_in_order",
             ctx_dep=lambda: ctx,
-            anonymous_paths=frozenset({"/auth/login"}),
+            anonymous_paths=paths,
         )
 
-    def _scope(self, path: str) -> dict[str, object]:
+    def _scope(self, path: str, root_path: str = "") -> dict[str, object]:
         return {
             "type": "http",
             "path": path,
+            "root_path": root_path,
             "method": "POST",
             "headers": [(b"authorization", b"Bearer stale")],
             "query_string": b"",
@@ -811,3 +814,71 @@ class TestAnonymousPaths:
             c.args[0] for c in send.await_args_list if c.args[0]["type"] == "http.response.start"
         )
         assert start["status"] >= 500
+
+    # ....................... #
+    # A mounted application: entries may be relative to the mount.
+
+    async def _passes(self, paths: frozenset[str], path: str, root_path: str) -> bool:
+        """Whether the request reaches the app (anonymous) instead of a 401."""
+
+        downstream = AsyncMock()
+        await self._middleware(downstream, paths)(
+            self._scope(path, root_path), AsyncMock(), AsyncMock()
+        )
+
+        return downstream.await_count == 1
+
+    @pytest.mark.asyncio
+    async def test_relative_entry_matches_under_the_mount(self) -> None:
+        assert await self._passes(frozenset({"/auth/login"}), "/v1/auth/login", "/v1")
+
+    @pytest.mark.asyncio
+    async def test_full_entry_still_matches_under_the_mount(self) -> None:
+        assert await self._passes(frozenset({"/v1/auth/login"}), "/v1/auth/login", "/v1")
+
+    @pytest.mark.asyncio
+    async def test_full_entry_is_never_read_relative(self) -> None:
+        # "/v1/auth/login" names the route /auth/login under the /v1 mount; it must
+        # not also name the mounted app's own /v1/auth/login (served at /v1/v1/...).
+        assert not await self._passes(frozenset({"/v1/auth/login"}), "/v1/v1/auth/login", "/v1")
+
+    @pytest.mark.asyncio
+    async def test_relative_entry_matches_only_the_path_the_router_routes(self) -> None:
+        paths = frozenset({"/auth/login"})
+
+        # Starlette does not strip a root_path with a trailing slash: this request is
+        # routed as /api/auth/login, so the relative entry must not match it.
+        assert not await self._passes(paths, "/api/auth/login", "/api/")
+        # A path that only shares the prefix's characters is outside the mount.
+        assert not await self._passes(paths, "/v1x/auth/login", "/v1")
+        # Without a mount, only the full path counts.
+        assert not await self._passes(paths, "/v1/auth/login", "")
+
+    def test_mounted_app_resolves_relative_entries_end_to_end(self) -> None:
+        ctx = context_from_deps(Deps.plain({AuthnDepKey: _ExpiredTokenAuthFactory()}))
+        sub = FastAPI()
+
+        @sub.post("/auth/login")
+        async def login() -> dict[str, bool]:
+            return {"ok": True}
+
+        @sub.post("/orders")
+        async def orders() -> dict[str, bool]:
+            return {"ok": True}
+
+        sub.add_middleware(
+            SecurityContextMiddleware,  # type: ignore[arg-type]
+            ctx_dep=lambda: ctx,
+            authn=AuthnRequirement(
+                ingress=[HeaderTokenAuthn(authn_spec=_TOKEN_SPEC, header_name="Authorization")]
+            ),
+            when_multiple_credentials="first_in_order",
+            anonymous_paths={"/auth/login"},
+        )
+        parent = FastAPI()
+        parent.mount("/v1", sub)
+        client = TestClient(parent)
+
+        # No credential: the relative entry admits login, everything else is refused.
+        assert client.post("/v1/auth/login").status_code == 200
+        assert client.post("/v1/orders").status_code == 401
