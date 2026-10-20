@@ -33,7 +33,7 @@ from forze_fastapi.middlewares import (
     SecurityContextMiddleware,
 )
 from forze_fastapi.routes import attach_authn_routes
-from forze_fastapi.security import AuthnRequirement, HeaderTokenAuthn
+from forze_fastapi.security import AuthnRequirement, CookieCsrf, HeaderTokenAuthn
 from forze_kits.aggregates.authn import (
     AuthnKernelOp,
     AuthnLoginRequestDTO,
@@ -661,6 +661,20 @@ class TestPasswordResetRoutes:
 # ....................... #
 # Cookie mode: tokens ride HttpOnly cookies, never the body.
 
+_SAME_ORIGIN = {"origin": "http://testserver"}
+_CROSS_SITE = {"origin": "https://evil.example"}
+
+# Every request shape that takes the refresh token from the cookie.
+_COOKIE_REFRESH_BODIES: list[dict[str, Any]] = [
+    {},
+    {"content": b"", "headers": {"content-type": "application/json"}},
+]
+_COOKIE_REFRESH_BODY_IDS = ["no-body", "empty-json-body"]
+
+
+def _with_headers(variant: dict[str, Any], headers: dict[str, str]) -> dict[str, Any]:
+    return {**variant, "headers": {**variant.get("headers", {}), **headers}}
+
 
 class TestCookieMode:
     def _cookie_client(self, state: MockState) -> TestClient:
@@ -713,7 +727,8 @@ class TestCookieMode:
 
         before = client.cookies.get("forze_refresh", path="/auth/refresh")
 
-        response = client.post("/auth/refresh")  # no body: the cookie carries it
+        # No body: the cookie carries it, behind the default CSRF gate (same origin).
+        response = client.post("/auth/refresh", headers=_SAME_ORIGIN)
 
         assert response.status_code == 200
         body = response.json()
@@ -784,6 +799,166 @@ class TestCookieMode:
         assert any(
             "forze_refresh=" in c and ("Max-Age=0" in c or "max-age=0" in c) for c in cleared
         )
+
+
+class TestRefreshCookieCsrf:
+    """The refresh cookie is an ambient credential: /refresh applies the access cookie's
+    CSRF gate when it reads it. The access cookie is scoped to ``/api`` here, so a refresh
+    carries the refresh cookie alone and the middleware's own gate never fires."""
+
+    def _client(
+        self,
+        state: MockState,
+        *,
+        gates: tuple[CookieCsrf | None, ...] = (CookieCsrf(),),
+        middleware: bool = True,
+    ) -> TestClient:
+        """Cookie-mode app; one access-cookie ingress per entry of *gates* (its ``csrf``)."""
+
+        from forze_fastapi.security import AuthnCookieCarrier, CookieTokenAuthn
+
+        ctx = context_from_modules(MockDepsModule(state=state))
+        carrier = AuthnCookieCarrier(
+            secure=False, access_path="/api", refresh_path="/auth/refresh"
+        )
+
+        router = APIRouter(prefix="/auth")
+        attach_authn_routes(
+            router,
+            registry=build_authn_registry(AUTHN_SPEC).freeze(),
+            ns=_NS,
+            ctx_dep=lambda: ctx,
+            cookies=carrier,
+        )
+
+        app = FastAPI()
+        app.include_router(router)
+        register_exception_handlers(app)
+
+        if middleware:
+            app.add_middleware(
+                SecurityContextMiddleware,  # type: ignore[arg-type]
+                ctx_dep=lambda: ctx,
+                authn=AuthnRequirement(
+                    ingress=tuple(
+                        CookieTokenAuthn(
+                            authn_spec=AUTHN_SPEC, cookie_name=carrier.access_cookie, csrf=gate
+                        )
+                        for gate in gates
+                    ),
+                ),
+                when_multiple_credentials="first_in_order",
+                anonymous_paths={"/auth/login", "/auth/refresh"},
+            )
+
+        client = TestClient(app)
+        login = client.post("/auth/login", json={"login": "alice", "password": "pw-1"})
+        assert login.status_code == 200
+
+        return client
+
+    def _refresh_cookie(self, client: TestClient) -> str | None:
+        return client.cookies.get("forze_refresh", path="/auth/refresh")
+
+    @pytest.mark.parametrize("variant", _COOKIE_REFRESH_BODIES, ids=_COOKIE_REFRESH_BODY_IDS)
+    def test_cross_site_refresh_is_refused_without_rotation(
+        self, variant: dict[str, Any]
+    ) -> None:
+        state = MockState()
+        _seed(state)
+        client = self._client(state)
+        before = self._refresh_cookie(client)
+
+        refused = client.post("/auth/refresh", **_with_headers(variant, _CROSS_SITE))
+
+        assert refused.status_code == 403
+        assert refused.headers[ERROR_CODE_HEADER] == "csrf_rejected"
+        assert self._refresh_cookie(client) == before
+        # The token was not spent: the same cookie still refreshes from the app's origin.
+        assert client.post("/auth/refresh", headers=_SAME_ORIGIN).status_code == 200
+
+    @pytest.mark.parametrize("variant", _COOKIE_REFRESH_BODIES, ids=_COOKIE_REFRESH_BODY_IDS)
+    def test_refresh_without_origin_proof_is_refused(self, variant: dict[str, Any]) -> None:
+        state = MockState()
+        _seed(state)
+        client = self._client(state)
+
+        refused = client.post("/auth/refresh", **variant)
+
+        assert refused.status_code == 403
+        assert refused.headers[ERROR_CODE_HEADER] == "csrf_rejected"
+
+    @pytest.mark.parametrize("variant", _COOKIE_REFRESH_BODIES, ids=_COOKIE_REFRESH_BODY_IDS)
+    def test_same_origin_refresh_rotates(self, variant: dict[str, Any]) -> None:
+        state = MockState()
+        _seed(state)
+        client = self._client(state)
+        before = self._refresh_cookie(client)
+
+        response = client.post("/auth/refresh", **_with_headers(variant, _SAME_ORIGIN))
+
+        assert response.status_code == 200
+        assert self._refresh_cookie(client) != before
+
+    def test_the_apps_allowed_origins_apply(self) -> None:
+        state = MockState()
+        _seed(state)
+        client = self._client(
+            state, gates=(CookieCsrf(allowed_origins={"https://app.example.com"}),)
+        )
+
+        allowed = client.post("/auth/refresh", headers={"origin": "https://app.example.com"})
+
+        assert allowed.status_code == 200
+
+    def test_body_token_refresh_is_not_gated(self) -> None:
+        # No cookie is read, so there is no ambient credential to forge.
+        state = MockState()
+        _seed(state)
+        client = self._client(state)
+        token = self._refresh_cookie(client)
+        client.cookies.clear()
+
+        response = client.post(
+            "/auth/refresh", json={"refresh_token": token}, headers=_CROSS_SITE
+        )
+
+        assert response.status_code == 200
+
+    def test_declared_opt_out_is_honoured(self) -> None:
+        state = MockState()
+        _seed(state)
+        client = self._client(state, gates=(None,))
+
+        assert client.post("/auth/refresh", headers=_CROSS_SITE).status_code == 200
+
+    @pytest.mark.parametrize(
+        "gates", [(CookieCsrf(), None), (None, CookieCsrf())], ids=["gate-first", "gate-last"]
+    )
+    def test_an_opt_out_never_drops_another_ingress_gate(
+        self, gates: tuple[CookieCsrf | None, ...]
+    ) -> None:
+        # Two ingresses read the access cookie, one opted out: the refresh cookie stays gated.
+        state = MockState()
+        _seed(state)
+        client = self._client(state, gates=gates)
+
+        refused = client.post("/auth/refresh", headers=_CROSS_SITE)
+
+        assert refused.status_code == 403
+        assert refused.headers[ERROR_CODE_HEADER] == "csrf_rejected"
+
+    def test_gate_stays_on_without_a_cookie_ingress(self) -> None:
+        # No security middleware published a policy: the default gate applies.
+        state = MockState()
+        _seed(state)
+        client = self._client(state, middleware=False)
+
+        refused = client.post("/auth/refresh", headers=_CROSS_SITE)
+
+        assert refused.status_code == 403
+        assert refused.headers[ERROR_CODE_HEADER] == "csrf_rejected"
+        assert client.post("/auth/refresh", headers=_SAME_ORIGIN).status_code == 200
 
 
 class TestAuthnCookieCarrier:

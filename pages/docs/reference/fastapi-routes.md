@@ -275,10 +275,13 @@ otherwise a stale access cookie 401s the very route that would replace it, and a
 logout arriving with no cookie gets a 401 instead of having the cookies expired.
 Cookies are always `HttpOnly` and `Secure` by default, with `samesite="lax"` as
 the outbound browser-side default. Inbound, `CookieTokenAuthn` ships a
-server-side CSRF gate **on by default** (`CookieCsrf`): a request using the
+server-side CSRF gate **on by default** (`CookieCsrf`): a request using either
 cookie on an unsafe method must prove a same-host origin via `Origin` (or
 `Referer`), so the defense holds even when a proxy strips `SameSite` or a
-`samesite="none"` deployment relies on it. A cross-origin frontend (a SPA on
+`samesite="none"` deployment relies on it. The middleware applies it to the
+access cookie; refresh applies the same ingress's gate when it reads the refresh
+cookie (the default gate if no `CookieTokenAuthn` reads the carrier's
+`access_cookie`), so the settings below cover both. A cross-origin frontend (a SPA on
 another host) lists itself in `CookieCsrf(allowed_origins={...})` — a dev server
 that picks a free port may be named as a range on a loopback host
 (`http://localhost:5173-5199`, or `http://localhost:*`); non-browser

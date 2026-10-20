@@ -34,6 +34,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **An error an integration translates from its backend no longer shows the failed call's context to API callers** (**behaviour change**): such an error carries no `context`, whatever its kind. The details stay on the exception and are logged at debug. A stream's failure between items is now translated too.
 
+- **Cookie-mode `/refresh` applies the cookie CSRF gate to the refresh cookie** (**behaviour change**): a refresh taking its token from the cookie must prove its origin as access-cookie requests do, under the same `CookieTokenAuthn(csrf=...)` gate (its `allowed_origins`, or `None`). A body token is unaffected.
+
 ## [0.15.1] - 2026-10-19
 
 ### Fixed

@@ -74,6 +74,7 @@ from forze.base.primitives import StrKeyNamespace
 from forze_kits.aggregates.authn import AuthnKernelOp
 
 from ..security.cookies import AuthnCookieCarrier
+from ..security.resolvers import enforce_published_cookie_csrf
 from ._attach import (
     OperationRunner,
     RouteBinding,
@@ -137,7 +138,9 @@ def _cookie_refresh_endpoint(cookies: AuthnCookieCarrier) -> Any:
 
     The body stays accepted (an API client may still send it); absent one, the
     refresh token comes from the carrier's cookie — the reason a browser can
-    refresh without ever seeing token strings.
+    refresh without ever seeing token strings. Reading the cookie applies the
+    :class:`~forze_fastapi.security.CookieCsrf` gate of the ``CookieTokenAuthn``
+    reading the carrier's access cookie (the default gate when there is none).
     """
 
     def build(
@@ -159,6 +162,10 @@ def _cookie_refresh_endpoint(cookies: AuthnCookieCarrier) -> Any:
                         f"the {cookies.refresh_cookie!r} cookie.",
                         code="auth_required",
                     )
+
+                # The refresh cookie is an ambient credential like the access cookie: the
+                # same gate, before the token is spent.
+                enforce_published_cookie_csrf(request, cookies.access_cookie)
 
                 body = dto_type.model_validate({"refresh_token": token})
 
@@ -390,7 +397,8 @@ def attach_authn_routes(
         cookies (AuthnCookieCarrier | None): Cookie mode. When set, ``/login`` and
             ``/refresh`` set (and rotate) the carrier's HttpOnly cookies and strip
             token strings from their bodies; ``/refresh`` also accepts a body-less
-            request, reading the refresh token from its cookie; ``/logout`` expires
+            request, reading the refresh token from its cookie behind the access
+            cookie's CSRF gate; ``/logout`` expires
             both cookies. Point ``CookieTokenAuthn`` at the carrier's access cookie,
             and list the login/refresh paths in the security middleware's
             ``anonymous_paths`` so a stale access cookie cannot 401 them.
