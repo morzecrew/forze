@@ -6810,9 +6810,14 @@ table yourself and never delete its rows:</p>
   credentials and sessions too): a store on another database would commit on its own. The
   Postgres stores report it; one that cannot is not checked. Issue and logout serialize on the
   epoch's row on Postgres only, with the revocation at read committed (the default); a
-  revocation at repeatable read or serializable is refused (<code>authn_epoch_isolation</code>). Revoking
-  an API key needs no transaction: its state is written once the key's row has committed,
-  whichever way it runs.</li>
+  revocation at repeatable read or serializable is refused (<code>authn_epoch_isolation</code>). On
+  Postgres, a raise of the epoch (a logout everywhere, a password change or reset) first locks
+  the policy principal's row, as an issue does before it holds the epoch, so a deactivation of
+  that row later in the same transaction, through SQL or its document port, waits for a
+  concurrent login instead of deadlocking with it. The authn deactivation takes the
+  credentials first and ends with <code>revoke_tokens</code> itself, so do not call <code>revoke_tokens</code> before
+  it. Revoking an API key needs no transaction: its state is written once the key's row has
+  committed, whichever way it runs.</li>
 <li><strong><code>session_binding</code>.</strong> <code>"session"</code> (the default) refuses a token once a refresh replaced its
   session, as without the fast path; <code>"family"</code> admits it until its own <code>exp</code> while the
   family is live. A logout, a family revocation and refresh-token reuse refuse it either way.</li>
@@ -6974,7 +6979,8 @@ issued before is then refused by its epoch, so the eligibility read has nothing 
   one that holds neither its own write nor the epoch's (a scope on another route or another
   database), before it writes (<code>authn_revocation_requires_transaction</code>); it refuses above read
   committed too (<code>authn_epoch_isolation</code>). A deactivation whose write-through never lands is
-  enforced within <code>ttl</code>.</li>
+  enforced within <code>ttl</code>. For a logout and a deactivation in one transaction, see
+  <strong>Transactions are required</strong> (<a href="#check-sessions-and-api-keys-from-redis">above</a>).</li>
 <li><strong>Configure every process that writes policy principals.</strong> A process without the authz
   configuration raises no epoch, and a token it should have ended is admitted until its own
   <code>exp</code>; so is one deactivated by a write around the document port (SQL, or another spec over

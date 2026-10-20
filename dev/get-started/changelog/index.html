@@ -9836,6 +9836,7 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <h3 id="fixed">Fixed<a class="headerlink" href="#fixed" title="Permanent link">&para;</a></h3>
 <ul>
 <li>A circuit breaker whose half-open probes recorded no outcome (an ignored error kind, a cancelled call) no longer rejects every call until restart: after <code>break_duration</code> it admits a new probe round.</li>
+<li><strong>A logout everywhere followed by a deactivation in one transaction no longer deadlocks with a concurrent login</strong> (revocation states, policy principal on Postgres; deactivation through SQL or its document port).</li>
 </ul>
 <h3 id="security">Security<a class="headerlink" href="#security" title="Permanent link">&para;</a></h3>
 <ul>
