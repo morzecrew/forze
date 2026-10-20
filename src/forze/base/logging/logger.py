@@ -1,3 +1,4 @@
+import logging
 from enum import StrEnum
 from functools import cache
 from importlib import import_module
@@ -5,7 +6,10 @@ from typing import Any, Final, Self, cast, final
 
 import attrs
 from structlog import get_logger as _structlog_get_logger
-from structlog.typing import ExcInfo, FilteringBoundLogger
+from structlog import is_configured, make_filtering_bound_logger, wrap_logger
+from structlog.dev import ConsoleRenderer, plain_traceback
+from structlog.stdlib import filter_by_level
+from structlog.typing import ExcInfo, FilteringBoundLogger, Processor
 
 from .constants import (
     INTEGRATION_LOGGER_PREFIX,
@@ -13,6 +17,7 @@ from .constants import (
     LogLevel,
     LogLevelToRank,
 )
+from .processors import EventDictSanitizer
 
 # ----------------------- #
 
@@ -28,8 +33,8 @@ building the event dict and running the full structlog pipeline for output
 nobody asked for. ``configure_logging(level="trace")`` opens the gate.
 
 :meth:`Logger.debug` has a gate of its own, :data:`_debug_dropping_wrapper`; info
-and above always go to the structlog backend, whose own (configured or default)
-filtering applies.
+and above always go to the backend, whose own filtering applies: the configured one,
+or, until structlog is configured, the stdlib logger's level (:data:`_UNCONFIGURED_PROCESSORS`).
 
 :class:`~forze.base.logging.processors.TraceLevelResolver` drops a trace event
 (rank 5) whenever ``5 < configured_rank``, so :meth:`Logger.trace` can short-circuit
@@ -62,9 +67,41 @@ That wrapper drops debug anyway, so while it is still structlog's active wrapper
 :meth:`Logger.debug` returns before materializing the backend logger, which costs
 microseconds per call on per-statement paths. The gate follows the configuration
 actually in force: ``structlog.reset_defaults()`` or a ``structlog.configure`` with
-another wrapper class opens it, and a process that never configures logging keeps
-structlog's default, which prints debug.
+another wrapper class opens it, and a process that never configures logging leaves debug
+to the stdlib logger's level instead (:data:`_UNCONFIGURED_PROCESSORS`).
 """
+
+
+def _scrub_rendered(_: Any, __: str, rendered: Any) -> Any:
+    from forze.base.scrubbing.policy import scrub_log_string
+
+    # After the renderer: the traceback is text only once rendered.
+    return scrub_log_string(rendered)
+
+
+_UNCONFIGURED_PROCESSORS: Final[list[Processor]] = [
+    filter_by_level,
+    EventDictSanitizer(),
+    ConsoleRenderer(colors=False, exception_formatter=plain_traceback),
+    _scrub_rendered,
+]
+"""Until structlog is configured, an event the stdlib logger of the same name accepts at its
+effective level (``WARNING`` by default) is scrubbed, traceback included, rendered as plain
+text and handed to that logger: stderr through Python's last-resort handler, or the
+application's own handlers, never stdout. A library must not write to stdout uninvited: a
+CLI's output or a stdio protocol shares it."""
+
+
+@cache
+def _unconfigured_backend(name: str) -> FilteringBoundLogger:
+    # Bound once per name: a dropped call costs a lookup and the level check.
+    proxy = wrap_logger(
+        logging.getLogger(name),
+        processors=_UNCONFIGURED_PROCESSORS,
+        wrapper_class=make_filtering_bound_logger(logging.DEBUG),
+    )
+
+    return cast(FilteringBoundLogger, proxy.bind())
 
 
 def set_configured_min_rank(level: LogLevel, *, wrapper_class: Any = None) -> None:
@@ -118,7 +155,11 @@ class Logger:
 
     @property
     def backend(self) -> FilteringBoundLogger:
-        log = cast(FilteringBoundLogger, _structlog_get_logger(self.name))
+        if is_configured():
+            log = cast(FilteringBoundLogger, _structlog_get_logger(self.name))
+
+        else:
+            log = _unconfigured_backend(self.name)
 
         if self.bound:
             log = log.bind(**self.bound)

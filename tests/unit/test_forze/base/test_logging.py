@@ -4,6 +4,7 @@ import io
 import json
 import logging
 import sys
+from collections.abc import Iterator
 
 import pytest
 import structlog
@@ -572,10 +573,9 @@ class TestForzeConsoleRenderer:
         assert "ValueError" in out
 
 
-def test_unconfigured_process_drops_trace_but_emits_debug_and_info() -> None:
-    """Trace is opt-in: without ``configure_logging`` the gate defaults to INFO.
-
-    The debug gate starts open instead, so structlog's default still prints debug.
+def test_unconfigured_process_writes_only_warnings_and_never_to_stdout() -> None:
+    """Without ``configure_logging``, trace, debug and info are dropped, and warning and
+    above reach stderr through stdlib's last-resort handler: stdout stays the app's.
 
     Runs in a subprocess so the module-level default is observed untouched by
     other tests (the rank is process-global mutable state).
@@ -591,6 +591,7 @@ def test_unconfigured_process_drops_trace_but_emits_debug_and_info() -> None:
         "log.trace('trace-firehose', n=1)\n"
         "log.debug('debug-line')\n"
         "log.info('info-line')\n"
+        "log.warning('warning-line', password='hunter2')\n"
     )
     result = subprocess.run(
         [sys.executable, "-c", code],
@@ -598,10 +599,107 @@ def test_unconfigured_process_drops_trace_but_emits_debug_and_info() -> None:
         text=True,
         check=True,
     )
-    out = result.stdout + result.stderr
-    assert "trace-firehose" not in out  # unconfigured trace is dropped at the gate
-    assert "debug-line" in out  # everything else keeps structlog default behavior
-    assert "info-line" in out
+    assert result.stdout == ""
+    assert "trace-firehose" not in result.stderr
+    assert "debug-line" not in result.stderr
+    assert "info-line" not in result.stderr
+    assert "warning-line" in result.stderr
+    assert "hunter2" not in result.stderr
+
+
+@pytest.fixture
+def stdlib_records() -> Iterator[tuple[logging.Logger, list[logging.LogRecord]]]:
+    """Records reaching the stdlib ``forze.test`` logger, with structlog unconfigured."""
+
+    records: list[logging.LogRecord] = []
+    handler = logging.Handler()
+    handler.emit = records.append  # type: ignore[method-assign]
+    stdlib = logging.getLogger("forze.test")
+    stdlib.addHandler(handler)
+    stdlib.setLevel(logging.WARNING)
+    structlog.reset_defaults()
+
+    try:
+        yield stdlib, records
+    finally:
+        stdlib.removeHandler(handler)
+        stdlib.setLevel(logging.NOTSET)
+        _cleanup_logging()
+
+
+def test_unconfigured_logging_goes_through_the_applications_stdlib_handlers(
+    stdlib_records: tuple[logging.Logger, list[logging.LogRecord]],
+) -> None:
+    """Until structlog is configured, an error is a plain-text record on the stdlib logger
+    of the same name, with its extras and traceback; info below its level is dropped."""
+
+    _, records = stdlib_records
+    log = Logger("forze.test").bind(attempt=2)
+    log.info("dropped")
+
+    try:
+        raise ValueError("boom-detail")
+    except ValueError:
+        log.exception("failed %s", "once")
+
+    (record,) = records
+    message = record.getMessage()
+
+    assert record.levelno == logging.ERROR
+    assert message.startswith("failed once")
+    assert "attempt=2" in message
+    assert "ValueError: boom-detail" in message
+    assert "\x1b[" not in message
+
+
+def test_unconfigured_logging_scrubs_the_traceback(
+    stdlib_records: tuple[logging.Logger, list[logging.LogRecord]],
+) -> None:
+    """A secret in the exception text is masked once the traceback is rendered."""
+
+    _, records = stdlib_records
+
+    try:
+        raise ValueError("connect postgresql://admin:hunter2@db:5432/app failed")
+    except ValueError:
+        Logger("forze.test").exception("connect failed")
+
+    (record,) = records
+    message = record.getMessage()
+
+    assert "Traceback" in message
+    assert "hunter2" not in message
+
+
+def test_unconfigured_logging_follows_the_stdlib_level(
+    stdlib_records: tuple[logging.Logger, list[logging.LogRecord]],
+) -> None:
+    """An application that opens its stdlib loggers to debug gets forze's debug too."""
+
+    stdlib, records = stdlib_records
+    log = Logger("forze.test")
+    log.debug("hidden")
+    stdlib.setLevel(logging.DEBUG)
+    log.debug("shown")
+    log.trace("still-gated")
+
+    assert [record.getMessage() for record in records] == ["shown"]
+
+
+def test_configuring_logging_takes_over_from_the_unconfigured_default(
+    stdlib_records: tuple[logging.Logger, list[logging.LogRecord]],
+) -> None:
+    """The same logger instance writes through ``configure_logging`` once it runs."""
+
+    _, records = stdlib_records
+    log = Logger("forze.test")
+    log.warning("before")
+    buf = io.StringIO()
+    configure_logging(level="info", logger_names=["forze.test"], stream=buf, render_mode="json")
+    log.info("after")
+
+    assert [record.getMessage() for record in records] == ["before"]
+    assert [entry["event"] for entry in _json_records(buf)] == ["after"]
 
 
 def test_configure_logging_trace_level_opens_the_gate() -> None:
@@ -642,6 +740,7 @@ def test_trace_fast_skips_below_configured_level(monkeypatch: pytest.MonkeyPatch
             return self
 
     monkeypatch.setattr(lm, "_structlog_get_logger", lambda _name: _Recorder())
+    monkeypatch.setattr(lm, "is_configured", lambda: True)
 
     log = lm.Logger("trace-gate-test")
     original = lm._configured_min_rank

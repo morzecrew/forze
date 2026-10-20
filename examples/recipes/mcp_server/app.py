@@ -17,8 +17,9 @@ you can mutate state and read it back. The server also registers the querying-DS
 prompts (``forze.querying`` / ``forze.aggregates``, in the Inspector's "Prompts" tab) that
 teach how to build ``notes.list`` filters/sorts/pagination, and a ``notes://{id}`` resource
 template (in "Resources") to fetch a single note by id. (For a stdio Inspector session
-instead, change the transport at the bottom to ``"stdio"`` and launch this module as the
-Inspector command.)
+instead, change the transport at the bottom to ``"stdio"``, pass ``stream=sys.stderr`` to
+both logging calls below, since stdout then carries the protocol, and launch this module as
+the Inspector command.)
 
 Logging is routed through Forze's structured logger: ``LoggingMiddleware`` emits an access
 line per MCP message (method, tool/resource target, duration, outcome), and uvicorn's own

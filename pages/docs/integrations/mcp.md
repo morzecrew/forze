@@ -162,6 +162,9 @@ forze stays the Resource Server and never runs an authorization server.
   tools as destructive. Every query in the registry becomes a tool, so an authn registry
   built with `admin_guards` exposes `list_principal_api_keys`, which lists any
   principal's API keys behind those guards; pass `operations=` to keep it off.
+- Over the stdio transport, stdout carries the protocol. Until structlog is configured,
+  forze's events go only to your stdlib logging handlers (stderr by default), so keep
+  those off stdout, and pass `stream=sys.stderr` to `configure_logging` in a stdio server.
 - API-key auth is built in (`auth=` above); for custom transports or server
   policies, bring your own `FastMCP` — `build_mcp_server` is a convenience. See the
   [expose-an-aggregate-over-MCP recipe](../recipes/expose-an-aggregate-over-mcp.md)
