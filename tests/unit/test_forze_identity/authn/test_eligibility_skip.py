@@ -693,15 +693,19 @@ async def test_a_deactivation_refuses_a_key_whose_cached_epoch_is_gone(
     assert await battery.verify_key(stack, key) != "admitted"
 
 
-async def test_inside_a_transaction_a_missing_cached_epoch_reads_eligibility(
+@pytest.mark.parametrize("cached", [True, False], ids=["cached epoch", "no cached epoch"])
+async def test_inside_a_transaction_a_key_reads_eligibility(
+    cached: bool,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # The database's epoch could be the transaction's own raise, so it is not compared there.
+    # The transaction may have raised the epoch itself, which reaches the cache after commit.
     _as_postgres(monkeypatch)
     stack = _stack()
     principal = await stack.principal()
     key = await _warm_key(stack, principal)
-    _drop_cached_epoch(stack, principal)
+
+    if not cached:
+        _drop_cached_epoch(stack, principal)
 
     async def request() -> None:
         await stack.ctx.authn.authn(SPEC).authenticate_with_api_key(key)
@@ -733,6 +737,56 @@ async def test_a_failed_epoch_read_reads_eligibility_and_counts_a_fallback(
     assert await battery.verify_key(stack, key) == "admitted"
     assert stack.principal_reads == ["find"]
     assert CONFIG.counters.get("fallback", "api_key") == before + 1
+
+
+async def test_a_failed_database_epoch_read_reads_eligibility_and_counts_a_fallback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _as_postgres(monkeypatch)
+    current = MockPrincipalEpochStore.current
+    down = False
+
+    # Patched before the stack is built: its counting wrapper binds the method then.
+    async def failing(self: MockPrincipalEpochStore, principal_id: UUID) -> int:
+        if down:
+            raise RuntimeError("epoch store down")
+
+        return await current(self, principal_id)
+
+    monkeypatch.setattr(MockPrincipalEpochStore, "current", failing)
+    stack = _stack()
+    principal = await stack.principal()
+    key = await _warm_key(stack, principal)
+    _drop_cached_epoch(stack, principal)
+    down = True
+    before = CONFIG.counters.get("fallback", "api_key")
+    stack.principal_reads.clear()
+
+    assert await battery.verify_key(stack, key) == "admitted"
+    assert stack.principal_reads == ["find"]
+    assert CONFIG.counters.get("fallback", "api_key") == before + 1
+
+
+@pytest.mark.parametrize("registration", ["routed", "plain"])
+def test_a_key_skips_with_eligibility_registered_plain(
+    registration: Literal["routed", "plain"],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # An issue resolves eligibility through provide, which falls back to a plain registration.
+    monkeypatch.setattr(authn_deps, "_skips_eligibility", lambda *args: True)
+    eligibility = authn_deps.ConfigurablePolicyPrincipalEligibility()
+    deps = Deps.routed(
+        {DocumentQueryDepKey: {policy_principal_spec.name: lambda ctx, spec: object()}}
+    ).merge(
+        Deps.plain({PrincipalEpochDepKey: lambda ctx: object()}),
+        Deps.routed({PrincipalEligibilityDepKey: {ROUTE: eligibility}})
+        if registration == "routed"
+        else Deps.plain({PrincipalEligibilityDepKey: eligibility}),
+    )
+
+    skip = authn_deps._api_key_skip(context_from_deps(deps), SPEC, CONFIG, object())  # type: ignore[arg-type]
+
+    assert skip is not None
 
 
 @attrs.define(slots=True)

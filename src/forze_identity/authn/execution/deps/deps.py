@@ -209,7 +209,12 @@ def _api_key_skip(
     """What lets a key admitted from its state skip the eligibility read on *spec*'s route, or
     ``None`` where that route's eligibility never skips."""
 
-    if not ctx.deps.exists(PrincipalEligibilityDepKey, route=spec.name) or not isinstance(
+    # The lookup an issue's provide makes: the route, then the plain fallback.
+    registered = ctx.deps.exists(PrincipalEligibilityDepKey, route=spec.name) or ctx.deps.exists(
+        PrincipalEligibilityDepKey
+    )
+
+    if not registered or not isinstance(
         ctx.deps.provide(PrincipalEligibilityDepKey, route=spec.name),
         ConfigurablePolicyPrincipalEligibility,
     ):

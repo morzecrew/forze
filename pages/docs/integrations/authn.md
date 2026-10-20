@@ -298,10 +298,12 @@ issued before is then refused by its epoch, so the eligibility read has nothing 
   when its state was written, or whose state an earlier release wrote. During a rolling deploy,
   a process of an earlier release reads such a state as a miss, from the key's row, until it
   expires.
-  - **A missing cached epoch.** Outside a transaction, the verification compares the database's
-    epoch instead and writes it back: as sound, since a deactivation raises the epoch in its own
-    transaction, and one read where the eligibility check would make one. Inside a
-    transaction, it reads eligibility.
+  - **Inside a transaction, a key always reads.** The transaction may have raised the epoch
+    itself, which reaches the cache only after commit.
+  - **A missing cached epoch.** The verification compares the database's epoch instead and
+    writes it back: as sound, since a deactivation raises the epoch in its own transaction, and
+    one read where the eligibility check would make one. If that read fails, it reads
+    eligibility.
   - **Two Redis reads.** A key's state and its principal's epoch sit on different Redis Cluster
     slots, so a warm verification reads them one after the other, each bounded by `timeout`:
     twice `timeout` at worst before it falls back to the eligibility read.

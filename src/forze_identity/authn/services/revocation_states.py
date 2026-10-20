@@ -1162,12 +1162,13 @@ class ApiKeyRevocation:
         follows may be skipped.
 
         The epoch is the principal's cached one, signed as a token reads it. When it is missing,
-        outside a transaction, the database's is compared instead and written back: as sound,
-        since a deactivation raises it in its own transaction, and one read where the
-        eligibility check would make one. Anything else reads eligibility.
+        the database's is compared instead and written back: as sound, since a deactivation
+        raises it in its own transaction, and one read where the eligibility check would make
+        one. Inside a transaction it never skips: the transaction may have raised the epoch
+        itself, which reaches the cache only after commit. Anything else reads eligibility.
         """
 
-        if self.skip is None or key.epoch is None:
+        if self.skip is None or key.epoch is None or self.in_transaction():
             return False
 
         principal_id = key.principal_id
@@ -1187,11 +1188,14 @@ class ApiKeyRevocation:
         if cached is not None:
             return cached == key.epoch
 
-        if self.in_transaction():
-            # Inside a transaction the read may predate a raise, or be the raise's.
+        try:
+            epoch = await self.skip.epochs.current(principal_id)
+
+        except Exception as error:
+            self.config.counters.add("fallback", "api_key")
+            logger.warning("Principal epoch read failed, reading eligibility: %r", error)
             return False
 
-        epoch = await self.skip.epochs.current(principal_id)
         await self._fill_epoch(principal_id, epoch, expire_at_ms=read.now_ms + _ttl_ms(self.config))
 
         return epoch == key.epoch
