@@ -6864,8 +6864,13 @@ exception for a query with search text: it sorts by the request's <code>sorts</c
 relevance ties in the engine's order. <code>options: SearchOptions</code> is the backend- and
 topology-agnostic per-request surface — relevance <code>weights</code>, <code>fuzzy</code> matching, a per-request
 <code>fields</code> narrowing, multi-term combination (<code>phrase_combine</code>: <code>"any"</code> / <code>"all"</code>), the count
-policy (<code>search_count</code>), an advisory candidate cap (<code>max_candidates</code>), and the facet /
-highlight requests below (<code>facets</code>, <code>facet_size</code>, <code>highlight</code>). Hub and federated searches
+policy (<code>search_count</code>), an advisory candidate cap (<code>max_candidates</code>), the facet /
+highlight requests below (<code>facets</code>, <code>facet_size</code>, <code>highlight</code>), and a precomputed
+<code>query_vector</code>. A <code>query_vector</code> ranks a vector index (pgvector, Atlas Vector Search) in place
+of embedding the query. It must come from the same embedding model as the indexed documents,
+its length must match the index's dimensions, and <code>query</code> must be blank; <code>None</code> reads as no
+vector. Every other backend, and hub and federated search, refuse it with
+<code>query_feature_unsupported</code>. Hub and federated searches
 resolve to a <code>MultiSourceSearchOptions</code> port that also carries member selection
 (<code>member_weights</code> / <code>members</code>), a post-merge cap (<code>merge_candidates</code>), and the <code>fusion</code>
 strategy (<code>"rrf"</code> / <code>"weighted"</code>); passing those keys to a single-index <code>query(...)</code> port is
@@ -6921,7 +6926,8 @@ fields / customize the <code>&lt;em&gt;</code> markers), over the spec's <code>f
 <code>highlightable_fields</code>. Results ride the page as optional <code>page.facets</code> (one set per query,
 over the full matching set) and <code>page.highlights</code> (per hit, index-aligned with <code>hits</code>),
 <code>None</code> when not requested. (Pages also carry optional per-hit relevance <code>page.scores</code>,
-index-aligned the same way.) A field or backend that cannot serve a request fails closed with
+index-aligned the same way; on pgvector a score is the negated distance, so higher is nearer.)
+A field or backend that cannot serve a request fails closed with
 <code>query_feature_unsupported</code>.</p>
 <p>Support is per backend (single-index) and per topology (hub / federated). <strong>fail-closed</strong>
 raises <code>query_feature_unsupported</code>; <strong>—</strong> means not applicable.</p>
