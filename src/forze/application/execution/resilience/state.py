@@ -69,7 +69,7 @@ class BreakerState:
     """The number of failed calls in the current window."""
 
     opened_at: float = 0.0
-    """The timestamp of the start of the half-open phase."""
+    """The timestamp the breaker last opened, or started its current half-open probe round."""
 
     half_open_calls: int = 0
     """The number of calls made during the half-open phase."""
@@ -92,6 +92,7 @@ class BreakerState:
         if self.phase == "open":
             if now - self.opened_at >= self.break_duration:
                 self.phase = "half_open"
+                self.opened_at = now
                 self.half_open_calls = 0
                 transition = "half_open"
 
@@ -99,6 +100,12 @@ class BreakerState:
                 return False, None
 
         if self.phase == "half_open":
+            # A probe that records nothing (an ignored kind, a cancelled call, a lost replica)
+            # would hold its slot for good: after break_duration the round starts over.
+            if now - self.opened_at >= self.break_duration:
+                self.opened_at = now
+                self.half_open_calls = 0
+
             if self.half_open_calls < self.half_open_max_calls:
                 self.half_open_calls += 1
                 return True, transition

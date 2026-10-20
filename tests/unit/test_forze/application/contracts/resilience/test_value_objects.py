@@ -68,6 +68,37 @@ class TestStrategyValidation:
                 break_duration=timedelta(seconds=5),
             )
 
+    def test_circuit_breaker_outcome_kinds_default_to_health(self) -> None:
+        strat = CircuitBreakerStrategy(
+            failure_ratio=0.5,
+            sampling_window=timedelta(seconds=10),
+            min_throughput=5,
+            break_duration=timedelta(seconds=5),
+        )
+
+        assert strat.failure_on == {ExceptionKind.INFRASTRUCTURE, ExceptionKind.TIMEOUT}
+        assert strat.ignore_on == {ExceptionKind.THROTTLED, ExceptionKind.CONCURRENCY}
+
+    def test_circuit_breaker_refuses_a_kind_in_both_sets(self) -> None:
+        with pytest.raises(CoreException, match="share kinds: throttled"):
+            CircuitBreakerStrategy(
+                failure_ratio=0.5,
+                sampling_window=timedelta(seconds=10),
+                min_throughput=5,
+                break_duration=timedelta(seconds=5),
+                failure_on=frozenset({ExceptionKind.THROTTLED}),
+            )
+
+    def test_circuit_breaker_refuses_an_empty_failure_on(self) -> None:
+        with pytest.raises(CoreException, match="failure_on must not be empty"):
+            CircuitBreakerStrategy(
+                failure_ratio=0.5,
+                sampling_window=timedelta(seconds=10),
+                min_throughput=5,
+                break_duration=timedelta(seconds=5),
+                failure_on=frozenset(),
+            )
+
     def test_timeout_must_be_positive(self) -> None:
         with pytest.raises(CoreException, match="Timeout must be positive"):
             TimeoutStrategy(timeout=timedelta(0))

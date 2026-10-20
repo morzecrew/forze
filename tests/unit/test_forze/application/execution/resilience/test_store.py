@@ -79,6 +79,26 @@ class TestInMemoryCircuitBreakerStore:
 
         assert await store.record(_KEY, strat, False) == "open"  # probe fails -> reopen
 
+    async def test_a_probe_that_records_nothing_frees_its_slot_after_break_duration(self) -> None:
+        # An ignored kind (or a cancelled call) records no outcome for its probe.
+        clock = _Clock()
+        store = InMemoryCircuitBreakerStore(clock=clock)
+        strat = _strat()
+
+        await store.record(_KEY, strat, False)
+        await store.record(_KEY, strat, False)  # open
+        clock.t += 6
+        allowed, tr = await store.admit(_KEY, strat)
+        assert (allowed, tr) == (True, "half_open")
+
+        allowed, _ = await store.admit(_KEY, strat)
+        assert allowed is False  # the probe's slot is still held
+
+        clock.t += 6  # past break_duration: a new probe round
+        allowed, _ = await store.admit(_KEY, strat)
+        assert allowed is True
+        assert await store.record(_KEY, strat, True) == "closed"
+
     async def test_keys_are_independent(self) -> None:
         store = InMemoryCircuitBreakerStore(clock=_Clock())
         strat = _strat()
