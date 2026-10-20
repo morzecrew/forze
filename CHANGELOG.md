@@ -37,6 +37,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **`anonymous_paths` entries may be relative to the mount.** With `SecurityContextMiddleware` on an application mounted under a prefix or served with a `root_path`, `/auth/login` now matches `/v1/auth/login`; full paths keep working.
 
+- **A set-based `upsert_many` on Postgres takes less time**: about 13% for calls of a few dozen rows and 30% for calls of thousands, on a fresh load or a reload. The rows written are unchanged.
+
 ### Fixed
 
 - **Firestore raises a stale write's preconditions as Postgres and Mongo do** (**behaviour change**). A future revision is `precondition` with `revision_mismatch`, and a revision whose history snapshot is missing is `precondition` with `history_not_found_retry`, not `not_found`.

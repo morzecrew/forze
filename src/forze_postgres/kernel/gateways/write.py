@@ -15,6 +15,7 @@ from uuid import UUID
 
 import attrs
 from psycopg import sql
+from psycopg.adapt import PyFormat
 from pydantic.fields import FieldInfo
 
 from forze.application.contracts.document import (
@@ -113,6 +114,29 @@ _UNNEST_BASES: frozenset[str] = frozenset(
 )
 """Built-in scalar types an ``unnest`` array cast can name exactly as introspected."""
 
+_BINARY_BASES: frozenset[str] = frozenset(
+    {
+        "uuid",
+        "text",
+        "bool",
+        "int2",
+        "int4",
+        "int8",
+        "float8",
+        "date",
+        "timestamp",
+        "timestamptz",
+        "json",
+        "jsonb",
+        "bytea",
+    }
+)
+"""Types whose ``unnest`` array goes in binary, named bare (no modifier): a few times cheaper to
+encode than text, and the same array type and values. Not ``float4`` (a ``float8`` rounded
+again), ``numeric``, a string type with a modifier (``varchar(n)``), which text sends as an
+untyped literal, or ``timestamptz(3)``, whose values the write coercion leaves naive or aware
+as they come."""
+
 _NO_EQUALITY: frozenset[str] = frozenset(
     {
         "xml",
@@ -170,9 +194,10 @@ def _row_source(
 
     ``SELECT * FROM unnest(%s::type[], …)`` when every column has a built-in scalar type: one
     array per column, so the statement stays a few bytes and is parsed once whatever the row
-    count. Otherwise (an array, which ``unnest`` would flatten, a user-defined or untyped
-    column) the rows are spelled out as ``VALUES``, each cell cast to its column type when
-    *typed_values*, as the domain path's batched update casts them.
+    count, most of them sent in binary (:data:`_BINARY_BASES`). Otherwise (an array, which
+    ``unnest`` would flatten, a user-defined or untyped column) the rows are spelled out as
+    ``VALUES``, each cell cast to its column type when *typed_values*, as the domain path's
+    batched update casts them.
     """
 
     casts: list[sql.Composable] = []
@@ -183,7 +208,12 @@ def _row_source(
         if pg_t is None or pg_t.is_array or _scalar_base(pg_t) not in _UNNEST_BASES:
             break
 
-        casts.append(sql.SQL("{}::{}[]").format(sql.Placeholder(), _pg_cast_type_sql(pg_t)))
+        # The type exactly as introspected: the write coercion normalizes values (a naive
+        # datetime made aware) only for a bare name, and binary needs them uniform.
+        placeholder = sql.Placeholder(
+            format=PyFormat.BINARY if pg_t.base in _BINARY_BASES else PyFormat.AUTO
+        )
+        casts.append(sql.SQL("{}::{}[]").format(placeholder, _pg_cast_type_sql(pg_t)))
 
     else:
         return (
@@ -208,6 +238,12 @@ def _row_source(
         sql.SQL("VALUES {}").format(sql.SQL(", ").join([row_template] * len(rows))),
         [row[column] for row in rows for column in columns],
     )
+
+
+def _as_uuid(value: Any) -> UUID:
+    """A key column's value as a :class:`UUID`; psycopg already returns one for ``uuid``."""
+
+    return value if isinstance(value, UUID) else UUID(str(value))
 
 
 def _null_is_null(field: FieldInfo) -> bool:
@@ -1120,7 +1156,7 @@ class PostgresWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
 
         rows = await self.client.fetch_all(stmt, params, row_factory="dict", commit=False)
 
-        return {UUID(str(row[ID_FIELD])) for row in rows}
+        return {_as_uuid(row[ID_FIELD]) for row in rows}
 
     # ....................... #
 
@@ -1160,7 +1196,7 @@ class PostgresWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
             commit=False,
         )
 
-        return {UUID(str(row[ID_FIELD])) for row in inserted}
+        return {_as_uuid(row[ID_FIELD]) for row in inserted}
 
     # ....................... #
 
@@ -1179,7 +1215,7 @@ class PostgresWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
             [u for _, u, _ in stored], record_ids=pks, seal=False
         )
         fields = self.model_type.model_fields
-        groups: dict[tuple[str, ...], list[JsonDict]] = defaultdict(list)
+        written: list[JsonDict] = []
 
         for (pk, _, create), patch in zip(stored, patches, strict=True):
             # An explicit null on a field the domain does not let be null means what the
@@ -1196,9 +1232,13 @@ class PostgresWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
                 after, _ = base.update(patch, materialized=self.read_codec.materialized)
                 patch = {**patch, **after.model_dump(mode="python", include=set(nulled))}
 
-            patch = self._seal_written(patch, record_id=pk)
-            adapted = dict(await self.adapt_payload_for_write(patch, create=False))
+            written.append(self._seal_written(patch, record_id=pk))
 
+        groups: dict[tuple[str, ...], list[JsonDict]] = defaultdict(list)
+
+        for pk, adapted in zip(
+            pks, await self.adapt_many_payload_for_write(written, create=False), strict=True
+        ):
             for field in (ID_FIELD, REV_FIELD, LAST_UPDATE_AT_FIELD):
                 adapted.pop(field, None)
 
