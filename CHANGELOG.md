@@ -39,6 +39,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **`update_many` with revision history no longer fails on a row it leaves unchanged.** Postgres raised a unique violation and rolled the batch back; Mongo wrote a duplicate snapshot.
 
+- **Cookie-mode `/refresh` accepts an empty JSON object.** A `{}` body now reads the refresh token from its cookie, as a body-less request does, instead of answering 422. A token in the body still takes precedence.
+
 ### Security
 
 - **An error an integration translates from its backend no longer shows the failed call's context to API callers** (**behaviour change**): such an error carries no `context`, whatever its kind. The details stay on the exception and are logged at debug. A stream's failure between items is now translated too.

@@ -61,11 +61,11 @@ require_fastapi()
 import inspect
 from collections.abc import Awaitable, Callable, Mapping
 from collections.abc import Set as AbstractSet
-from typing import Any
+from typing import Annotated, Any
 
 import attrs
 from fastapi import APIRouter, Request, Response
-from pydantic import BaseModel
+from pydantic import BaseModel, BeforeValidator
 
 from forze.application.execution.context import ExecutionContextFactory
 from forze.application.execution.operations import FrozenOperationRegistry
@@ -133,12 +133,24 @@ def _cookie_token_endpoint(cookies: AuthnCookieCarrier) -> Any:
     return build
 
 
+def _empty_object_as_none(value: Any) -> Any:
+    """Read an empty JSON object as no body at all.
+
+    Browser fetch wrappers and generated clients send ``{}`` where they mean "no
+    payload"; on refresh that is the cookie-mode request, not an invalid body.
+    """
+
+    return None if isinstance(value, dict) and not value else value
+
+
 def _cookie_refresh_endpoint(cookies: AuthnCookieCarrier) -> Any:
     """Refresh builder: the token may ride the cookie instead of the body.
 
-    The body stays accepted (an API client may still send it); absent one, the
-    refresh token comes from the carrier's cookie — the reason a browser can
-    refresh without ever seeing token strings. Reading the cookie applies the
+    The body stays accepted (an API client may still send it) and wins over the
+    cookie; absent one — no body, an empty body, ``null`` or ``{}`` — the refresh
+    token comes from the carrier's cookie, the reason a browser can refresh
+    without ever seeing token strings. A non-empty body without the token is
+    still a validation error. Reading the cookie applies the
     :class:`~forze_fastapi.security.CookieCsrf` gate of the ``CookieTokenAuthn``
     reading the carrier's access cookie (the default gate when there is none).
     """
@@ -149,6 +161,11 @@ def _cookie_refresh_endpoint(cookies: AuthnCookieCarrier) -> Any:
         op: str,
     ) -> Callable[..., Awaitable[Any]]:
         dto_type = require_input_type(input_type, op)
+        # The validator changes no schema: OpenAPI still documents the DTO body.
+        payload_type = Annotated[
+            dto_type | None,  # type: ignore[valid-type]
+            BeforeValidator(_empty_object_as_none),
+        ]
 
         async def endpoint(*, request: Request, response: Response, payload: Any = None) -> Any:
             body = payload
@@ -158,8 +175,8 @@ def _cookie_refresh_endpoint(cookies: AuthnCookieCarrier) -> Any:
 
                 if token is None:
                     raise exc.authentication(
-                        "No refresh token: the request carried neither a body nor "
-                        f"the {cookies.refresh_cookie!r} cookie.",
+                        "No refresh token: the request carried neither a token in its "
+                        f"body nor the {cookies.refresh_cookie!r} cookie.",
                         code="auth_required",
                     )
 
@@ -178,7 +195,7 @@ def _cookie_refresh_endpoint(cookies: AuthnCookieCarrier) -> Any:
                 inspect.Parameter(
                     "payload",
                     inspect.Parameter.KEYWORD_ONLY,
-                    annotation=dto_type | None,
+                    annotation=payload_type,
                     default=None,
                 ),
             ]
@@ -186,7 +203,7 @@ def _cookie_refresh_endpoint(cookies: AuthnCookieCarrier) -> Any:
         endpoint.__annotations__ = {
             "request": Request,
             "response": Response,
-            "payload": dto_type | None,
+            "payload": payload_type,
         }
 
         return endpoint
@@ -396,12 +413,13 @@ def attach_authn_routes(
 
         cookies (AuthnCookieCarrier | None): Cookie mode. When set, ``/login`` and
             ``/refresh`` set (and rotate) the carrier's HttpOnly cookies and strip
-            token strings from their bodies; ``/refresh`` also accepts a body-less
-            request, reading the refresh token from its cookie behind the access
-            cookie's CSRF gate; ``/logout`` expires
-            both cookies. Point ``CookieTokenAuthn`` at the carrier's access cookie,
-            and list the login/refresh paths in the security middleware's
-            ``anonymous_paths`` so a stale access cookie cannot 401 them.
+            token strings from their bodies; ``/refresh`` also accepts a request with
+            no body or an empty JSON object, reading the refresh token from its
+            cookie behind the access cookie's CSRF gate (a token in the body takes
+            precedence); ``/logout`` expires both cookies. Point ``CookieTokenAuthn``
+            at the carrier's access cookie, and list the login/refresh paths in the
+            security middleware's ``anonymous_paths`` so a stale access cookie cannot
+            401 them.
 
     Raises:
         CoreException: On a configuration error — an unknown *include*/override
