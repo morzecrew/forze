@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- ...
+- `CircuitBreakerStrategy` takes `failure_on` and `ignore_on`: which error kinds count as breaker failures and which are not recorded. The defaults keep the previous classification: infrastructure and timeout fail, throttled and concurrency are ignored.
 
 ### Changed
 
@@ -17,7 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- ...
+- A circuit breaker whose half-open probes recorded no outcome (an ignored error kind, a cancelled call) no longer rejects every call until restart: after `break_duration` it admits a new probe round.
 
 ## [0.15.1] - 2026-10-19
 

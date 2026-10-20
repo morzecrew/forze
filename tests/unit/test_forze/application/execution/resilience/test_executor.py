@@ -368,6 +368,80 @@ class TestCircuitBreaker:
         with pytest.raises(CoreException, match="Circuit breaker open"):
             await executor.run(unexpected, policy="p")
 
+    async def test_an_unmapped_exception_counts_as_a_failure(self) -> None:
+        # No kind to classify by: the breaker assumes the downstream failed.
+        clock = _Clock()
+        executor = _executor(_breaker_policy(min_throughput=1), clock=clock)
+
+        async def vendor_error() -> str:
+            raise RuntimeError("vendor SDK error")
+
+        with pytest.raises(RuntimeError):
+            await executor.run(vendor_error, policy="p")
+
+        async def unexpected() -> str:  # pragma: no cover - must not run
+            raise AssertionError("breaker should have short-circuited")
+
+        with pytest.raises(CoreException, match="Circuit breaker open"):
+            await executor.run(unexpected, policy="p")
+
+    async def test_failure_on_counts_a_caller_kind_as_a_failure(self) -> None:
+        clock = _Clock()
+        executor = _executor(
+            _breaker_policy(
+                min_throughput=1,
+                failure_on=frozenset({ExceptionKind.INFRASTRUCTURE, ExceptionKind.CONFLICT}),
+            ),
+            clock=clock,
+        )
+
+        async def conflict() -> str:
+            raise exc.conflict("upstream refused")
+
+        with pytest.raises(CoreException, match="upstream refused"):
+            await executor.run(conflict, policy="p")
+
+        async def unexpected() -> str:  # pragma: no cover - must not run
+            raise AssertionError("breaker should have short-circuited")
+
+        with pytest.raises(CoreException, match="Circuit breaker open"):
+            await executor.run(unexpected, policy="p")
+
+    async def test_ignore_on_leaves_a_kind_unrecorded(self) -> None:
+        # Infrastructure moved from failure_on to ignore_on: neither a failure that opens
+        # the breaker nor a success that dilutes the timeouts.
+        clock = _Clock()
+        executor = _executor(
+            _breaker_policy(
+                failure_on=frozenset({ExceptionKind.TIMEOUT}),
+                ignore_on=frozenset({ExceptionKind.INFRASTRUCTURE}),
+            ),
+            clock=clock,
+        )
+
+        async def slow() -> str:
+            raise exc.timeout("no response")
+
+        async def down() -> str:
+            raise exc.infrastructure("down")
+
+        with pytest.raises(CoreException, match="no response"):
+            await executor.run(slow, policy="p")
+
+        for _ in range(3):
+            with pytest.raises(CoreException, match="down"):
+                await executor.run(down, policy="p")
+
+        # The second recorded call: two timeouts out of two opens it.
+        with pytest.raises(CoreException, match="no response"):
+            await executor.run(slow, policy="p")
+
+        async def unexpected() -> str:  # pragma: no cover - must not run
+            raise AssertionError("breaker should have short-circuited")
+
+        with pytest.raises(CoreException, match="Circuit breaker open"):
+            await executor.run(unexpected, policy="p")
+
 
 # ....................... #
 
@@ -456,6 +530,30 @@ class TestRunStream:
 
         assert await executor.run(ok, policy="p") == "ok"
         assert counter.calls == 1
+
+    async def test_failure_on_applies_mid_stream(self) -> None:
+        clock = _Clock()
+        executor = _executor(
+            _breaker_policy(
+                min_throughput=1,
+                failure_on=frozenset({ExceptionKind.INFRASTRUCTURE, ExceptionKind.CONFLICT}),
+            ),
+            clock=clock,
+        )
+
+        async def rejected() -> AsyncGenerator[int]:
+            yield 1
+            raise exc.conflict("upstream refused")
+
+        with pytest.raises(CoreException, match="upstream refused"):
+            async for _ in executor.run_stream(rejected, policy="p"):
+                pass
+
+        async def unexpected() -> str:  # pragma: no cover - must not run
+            raise AssertionError("breaker should have short-circuited")
+
+        with pytest.raises(CoreException, match="Circuit breaker open"):
+            await executor.run(unexpected, policy="p")
 
     async def test_throttled_mid_stream_is_neutral(self) -> None:
         # Backpressure mid-stream is not a health signal — same as unary.

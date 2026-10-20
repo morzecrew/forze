@@ -466,7 +466,14 @@ class GradientBulkheadStrategy:
 @final
 @attrs.define(slots=True, frozen=True, kw_only=True)
 class CircuitBreakerStrategy:
-    """Rolling-window circuit breaker."""
+    """Rolling-window circuit breaker.
+
+    A failed call is classified by its kind: one in :attr:`failure_on` is a failure, one in
+    :attr:`ignore_on` is not recorded, and any other kind counts as a success, since the
+    downstream answered. An exception that is not a
+    :class:`~forze.base.exceptions.CoreException` counts as a failure; map a vendor's errors to
+    kinds with :func:`~forze.base.exceptions.build_exc_interceptor` to classify them.
+    """
 
     failure_ratio: float
     """Failure fraction within the window that trips the breaker open."""
@@ -483,9 +490,30 @@ class CircuitBreakerStrategy:
     half_open_max_calls: int = 1
     """Number of probe calls allowed while half-open."""
 
+    failure_on: frozenset[ExceptionKind] = frozenset(
+        {ExceptionKind.INFRASTRUCTURE, ExceptionKind.TIMEOUT}
+    )
+    """Error kinds counted as failures: the downstream is unreachable or unresponsive (must
+    not be empty)."""
+
+    ignore_on: frozenset[ExceptionKind] = frozenset(
+        {ExceptionKind.THROTTLED, ExceptionKind.CONCURRENCY}
+    )
+    """Error kinds not recorded at all: backpressure and contention, not downstream health."""
+
     # ....................... #
 
     def __attrs_post_init__(self) -> None:
+        if not self.failure_on:
+            raise exc.configuration("Circuit breaker failure_on must not be empty")
+
+        overlap = sorted(kind.value for kind in self.failure_on & self.ignore_on)
+
+        if overlap:
+            raise exc.configuration(
+                "Circuit breaker failure_on and ignore_on share kinds: " + ", ".join(overlap),
+            )
+
         if not 0 < self.failure_ratio <= 1:
             raise exc.configuration("Circuit breaker failure_ratio must be in (0, 1]")
 
@@ -520,9 +548,9 @@ class AdaptiveThrottleStrategy:
     which is what makes the steady state self-limiting (the client converges
     on roughly ``k ×`` the downstream's current capacity).
 
-    "Accepted" mirrors the breaker's outcome classification inverted: a
-    success, or a failure whose kind is *non-retryable* (a domain error is
-    the downstream doing its job, not buckling). Mutually exclusive with
+    "Accepted" is a success, or a failure whose kind is *non-retryable* (a
+    domain error is the downstream doing its job, not buckling); it does not
+    read the breaker's ``failure_on`` / ``ignore_on``. Mutually exclusive with
     :class:`CircuitBreakerStrategy` in one policy — composed, the throttle
     would observe the breaker's own local rejections as overload evidence.
     Position the throttle on degraded-but-alive downstreams and the breaker

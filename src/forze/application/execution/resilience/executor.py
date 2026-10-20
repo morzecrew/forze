@@ -88,29 +88,24 @@ rejection counts as always-on metrics in production.
 
 # ....................... #
 
-_BREAKER_FAILURE_KINDS = frozenset({ExceptionKind.INFRASTRUCTURE, ExceptionKind.TIMEOUT})
-"""Kinds that mean the downstream is unreachable / unresponsive — a breaker *failure*."""
 
-_BREAKER_NEUTRAL_KINDS = frozenset({ExceptionKind.THROTTLED, ExceptionKind.CONCURRENCY})
-"""Kinds the breaker ignores: throttling is backpressure and concurrency is contention —
-neither is a downstream *health* signal, so they are recorded as neither success nor failure."""
-
-
-def _classify_breaker_outcome(kind: ExceptionKind) -> bool | None:
+def _classify_breaker_outcome(kind: ExceptionKind, strat: CircuitBreakerStrategy) -> bool | None:
     """Classify a failed call for the circuit breaker by downstream **health**.
 
     The breaker opens on an unhealthy *downstream*, which is a different question from
-    whether the error is retryable. Returns ``False`` for a failure (infrastructure /
-    timeout), ``None`` to not record the call at all (throttling / concurrency — backpressure
-    and contention, not health), and ``True`` for a success (any other error is caller-caused;
-    the downstream answered fine). Using retryability instead would wrongly trip the breaker
-    open on a downstream's ``429`` and count a timeout as a success.
+    whether the error is retryable. Returns ``False`` for a failure (a kind in
+    :attr:`~CircuitBreakerStrategy.failure_on`: infrastructure / timeout by default), ``None``
+    to not record the call at all (a kind in :attr:`~CircuitBreakerStrategy.ignore_on`:
+    throttling / concurrency by default — backpressure and contention, not health), and
+    ``True`` for a success (any other error is caller-caused; the downstream answered fine).
+    Using retryability instead would wrongly trip the breaker open on a downstream's ``429``
+    and count a timeout as a success.
     """
 
-    if kind in _BREAKER_FAILURE_KINDS:
+    if kind in strat.failure_on:
         return False
 
-    if kind in _BREAKER_NEUTRAL_KINDS:
+    if kind in strat.ignore_on:
         return None
 
     return True
@@ -623,10 +618,11 @@ class InProcessResilienceExecutor:
             # Classify by downstream health, exactly like the unary path: a
             # throttle or a concurrency conflict is not a breaker failure, and
             # a timeout is not a success.
-            ok = _classify_breaker_outcome(error.kind)
+            if strat is not None:
+                ok = _classify_breaker_outcome(error.kind, strat)
 
-            if strat is not None and ok is not None:
-                await self._record_breaker_outcome(key, strat, ok, pol, route)
+                if ok is not None:
+                    await self._record_breaker_outcome(key, strat, ok, pol, route)
 
             raise
 
@@ -1008,7 +1004,7 @@ class InProcessResilienceExecutor:
         except CoreException as error:
             # Classify by downstream health, not retryability: a throttle (429) or a
             # concurrency conflict is not a breaker failure, and a timeout is not a success.
-            ok = _classify_breaker_outcome(error.kind)
+            ok = _classify_breaker_outcome(error.kind, strat)
 
             if ok is not None:
                 await self._record_breaker_outcome(key, strat, ok, pol, route)
@@ -1057,9 +1053,9 @@ class InProcessResilienceExecutor:
             result = await inner()
 
         except CoreException as error:
-            # Same outcome classification as the breaker, inverted: a
-            # non-retryable failure is the downstream doing its job (a domain
-            # rejection), not buckling — it counts as an accept.
+            # A success or a non-retryable failure counts as an accept: the
+            # latter is the downstream doing its job (a domain rejection), not
+            # buckling. The breaker's failure_on / ignore_on are not read.
             if not exception_egress_policy(error.kind).retryable:
                 state.record_accept(self.clock())
 

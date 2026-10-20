@@ -54,6 +54,16 @@ have been seen), then probes half-open after `break_duration`.
 | `min_throughput` | — | minimum calls in the window before it may trip |
 | `break_duration` | — | how long it stays open before probing half-open |
 | `half_open_max_calls` | `1` | probe calls allowed while half-open |
+| `failure_on` | `{infrastructure, timeout}` | `ExceptionKind`s counted as failures |
+| `ignore_on` | `{throttled, concurrency}` | `ExceptionKind`s not recorded at all |
+
+The breaker classifies each failed call by downstream health, not by retryability. A kind
+in `failure_on` is a failure: the downstream is unreachable or unresponsive. A kind in
+`ignore_on` is not recorded: throttling is backpressure and concurrency is contention.
+Any other kind counts as a success, since the downstream answered. An exception that is not
+a `CoreException` counts as a failure; map a vendor's errors to kinds with
+`build_exc_interceptor` so the breaker can classify them. `failure_on` must not be empty,
+and a kind may not be in both sets.
 
 ## Bulkheads
 
@@ -148,8 +158,9 @@ self-limiting because shed calls count as requests but not accepts, so the clien
 converges on ~`k ×` the downstream's current capacity, leaving a continuous probe that
 detects recovery on its own (no half-open ceremony). Shed calls fail with a retryable
 `throttled` (`code="adaptive_throttle"`). **Mutually exclusive with the circuit breaker**
-in one policy. "Accepted" mirrors the breaker's classification inverted — a
-non-retryable (domain) failure is the downstream doing its job, so it never sheds.
+in one policy. "Accepted" is a success or a non-retryable failure — a non-retryable
+(domain) failure is the downstream doing its job, so it never sheds. It does not read the
+breaker's `failure_on` / `ignore_on`.
 
 | Param | Default | Meaning |
 |-------|---------|---------|
