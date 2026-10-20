@@ -246,7 +246,8 @@ def _checked_query_vector(raw: object, *, dimensions: int | None) -> list[float]
 
 
 def _refuse_query_vector(options: SearchOptions | None, *, scope: str) -> None:
-    if "query_vector" in (options or {}):
+    # ``None`` reads as no vector, as a single-index search reads it.
+    if (options or {}).get("query_vector") is not None:
         raise exc.precondition(
             f"Search feature query_vector is not supported for {scope} search.",
             code=UNSUPPORTED_QUERY_FEATURE_CODE,

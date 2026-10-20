@@ -140,7 +140,7 @@ class SearchOptions(TypedDict, total=False):
     fields / customizes markers. Returned index-aligned on the page
     (:attr:`~forze.application.contracts.base.value_objects.CountlessPage.highlights`)."""
 
-    query_vector: Annotated[Sequence[float], Field(max_length=MAX_QUERY_VECTOR_LENGTH)]
+    query_vector: Annotated[Sequence[float], Field(max_length=MAX_QUERY_VECTOR_LENGTH)] | None
     """A precomputed query embedding to rank by, in place of embedding ``query``: one computed
     once and reused or cached. It must come from the same embedding model as the indexed
     documents (a same-length vector from another model passes every check and ranks

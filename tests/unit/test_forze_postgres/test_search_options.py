@@ -315,6 +315,10 @@ def test_an_explicit_none_query_vector_reads_as_none() -> None:
 
     assert search_options_for_simple_adapter(options) == {"fuzzy": True}
 
+    # Hub and federated searches, which refuse a vector, take a None one as no vector too.
+    prepare_hub_search_options(_hub(), options)
+    prepare_federated_search_options(_federated(), options)
+
 
 _VECTOR = SearchCapabilities(supports_vector=True)
 
@@ -368,6 +372,7 @@ def test_a_request_body_caps_the_query_vector_at_pgvectors_limit() -> None:
     body = TypeAdapter(SearchOptions)
 
     assert body.validate_python({"query_vector": [0.5] * 16_000})["query_vector"]
+    assert body.validate_python({"query_vector": None})["query_vector"] is None
 
     with pytest.raises(ValidationError):
         body.validate_python({"query_vector": [0.5] * 16_001})
