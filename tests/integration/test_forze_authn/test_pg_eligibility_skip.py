@@ -47,7 +47,12 @@ from forze_identity.authn import (
     StateMacKeys,
 )
 from forze_identity.authn.application.constants import AuthnResourceName
-from forze_identity.authn.services import PasswordConfig, PolicyPrincipalEpochHook
+from forze_identity.authn.services import (
+    ApiKeyConfig,
+    ApiKeyService,
+    PasswordConfig,
+    PolicyPrincipalEpochHook,
+)
 from forze_identity.authz import AuthzDepsModule, AuthzKernelConfig
 from forze_identity.authz.application.constants import AuthzResourceName
 from forze_identity.authz.application.specs import policy_principal_spec
@@ -67,6 +72,7 @@ from forze_postgres.execution.deps.keys import PostgresClientDepKey, PostgresInt
 from forze_postgres.kernel.catalog.introspect import PostgresIntrospector
 from forze_postgres.kernel.client.client import PostgresClient, PostgresConfig
 from forze_redis import RedisClient, RedisDepsModule, RedisRevocationStatesConfig
+from forze_redis.adapters.revocation_states import RedisRevocationStatesAdapter
 from tests.integration.test_forze_authn.test_pg_authn_integration import (
     _authn_pg_deps,
     _invocation_metadata,
@@ -77,7 +83,10 @@ from tests.integration.test_forze_authn.test_pg_revocation_states import (
 )
 from tests.support import eligibility_skip_conformance as battery
 from tests.support.authn_pg_fixtures import create_authn_tables, insert_policy_principal_row
-from tests.support.eligibility_skip_conformance import CountingPrincipalReads
+from tests.support.eligibility_skip_conformance import (
+    CountingEpochReads,
+    CountingPrincipalReads,
+)
 from tests.support.execution_context import context_from_deps
 
 pytestmark = [pytest.mark.integration, pytest.mark.asyncio]
@@ -85,7 +94,7 @@ pytestmark = [pytest.mark.integration, pytest.mark.asyncio]
 T = TypeVar("T")
 
 ROUTE = "main"
-SPEC = AuthnSpec(name=ROUTE, enabled_methods=frozenset({"token", "password"}))
+SPEC = AuthnSpec(name=ROUTE, enabled_methods=frozenset({"token", "password", "api_key"}))
 STATES = "authn-revocations"
 TX = "default"
 BLOCKED_FOR = 0.3
@@ -106,8 +115,11 @@ class _Stack:
         principals: str,
         epochs: str,
         reads: list[str],
+        key_reads: list[str],
+        epoch_reads: list[str],
     ) -> None:
-        self.ctx, self.principal_reads = ctx, reads
+        self.ctx, self.principal_reads, self.key_reads = ctx, reads, key_reads
+        self.epoch_reads = epoch_reads
         self._pg, self._principals, self._epochs = pg_client, principals, epochs
 
     async def principal(self) -> UUID:
@@ -209,6 +221,8 @@ async def _stack(
         key_mac=StateMacKeys(active=b"m" * 32) if signed else None,
     )
     reads: list[str] = []
+    key_reads: list[str] = []
+    epoch_reads: list[str] = []
     principal_query = ConfigurablePostgresReadOnlyDocument(
         config=PostgresReadOnlyDocumentConfig(read=("public", principals)),
     )
@@ -216,11 +230,14 @@ async def _stack(
     principals_elsewhere = (
         _client_context(principal_client) if principal_client is not None else None
     )
+    key_query = ConfigurablePostgresReadOnlyDocument(
+        config=PostgresReadOnlyDocumentConfig(read=("public", f"authn_ak_{suffix}")),
+    )
     deps = (
         Deps(
-            store=_authn_pg_deps(pg_client, suffix=suffix).store.without_route(
-                DocumentQueryDepKey, AuthzResourceName.POLICY_PRINCIPALS
-            )
+            store=_authn_pg_deps(pg_client, suffix=suffix)
+            .store.without_route(DocumentQueryDepKey, AuthzResourceName.POLICY_PRINCIPALS)
+            .without_route(DocumentQueryDepKey, AuthnResourceName.API_KEY_ACCOUNTS)
         )
         .merge(
             Deps.routed(
@@ -229,6 +246,9 @@ async def _stack(
                         policy_principal_spec.name: lambda ctx, spec: (
                             CountingPrincipalReads if proxy else _ForeignPort
                         )(principal_query(principals_elsewhere or ctx, spec), reads=reads),
+                        AuthnResourceName.API_KEY_ACCOUNTS: lambda ctx, spec: (
+                            CountingPrincipalReads(key_query(ctx, spec), reads=key_reads)
+                        ),
                     },
                     TransactionManagerDepKey: {TX: postgres_txmanager},
                 }
@@ -239,6 +259,7 @@ async def _stack(
                 kernel=AuthnKernelConfig(
                     access_token_secret=b"k" * 32,
                     refresh_token_pepper=b"p" * 32,
+                    api_key_pepper=b"a" * 32,
                     password=PasswordConfig(time_cost=1, memory_cost=8, parallelism=1),
                     reset_token_pepper=b"r" * 32,
                     revocation_states=config,
@@ -246,6 +267,7 @@ async def _stack(
                 authn={ROUTE: SPEC.enabled_methods},
                 authz_route=ROUTE,
                 token_lifecycle={ROUTE},
+                api_key_lifecycle={ROUTE},
                 password_lifecycle={ROUTE},
                 password_reset={ROUTE},
                 password_account_provisioning={ROUTE},
@@ -262,12 +284,15 @@ async def _stack(
         .merge(
             Deps.plain(
                 {
-                    PrincipalEpochDepKey: lambda ctx: _GatedEpochs(
-                        PostgresPrincipalEpochStore(
-                            client=epoch_client or pg_client,
-                            config=PostgresPrincipalEpochConfig(relation=("public", epochs)),
+                    PrincipalEpochDepKey: lambda ctx: CountingEpochReads(
+                        _GatedEpochs(
+                            PostgresPrincipalEpochStore(
+                                client=epoch_client or pg_client,
+                                config=PostgresPrincipalEpochConfig(relation=("public", epochs)),
+                            ),
+                            gates=gates if gates is not None else {},
                         ),
-                        gates if gates is not None else {},
+                        reads=epoch_reads,
                     ),
                 }
             )
@@ -317,6 +342,8 @@ async def _stack(
         principals=principals,
         epochs=epochs,
         reads=reads,
+        key_reads=key_reads,
+        epoch_reads=epoch_reads,
     )
 
 
@@ -355,6 +382,79 @@ async def test_an_activation_raises_nothing(
     redis_client: RedisClient,
 ) -> None:
     await battery.an_activation_raises_nothing(await _stack(pg_client, redis_client))
+
+
+async def test_a_warm_api_key_reads_neither_its_row_nor_the_principal(
+    pg_client: PostgresClient,
+    redis_client: RedisClient,
+) -> None:
+    await battery.a_warm_api_key_reads_neither_its_row_nor_the_principal(
+        await _stack(pg_client, redis_client)
+    )
+
+
+@pytest.mark.parametrize("path", sorted(battery.DEACTIVATIONS))
+async def test_a_deactivation_refuses_a_warm_api_key(
+    pg_client: PostgresClient,
+    redis_client: RedisClient,
+    path: str,
+) -> None:
+    await battery.a_deactivation_refuses_a_warm_api_key(await _stack(pg_client, redis_client), path)
+
+
+@pytest.mark.parametrize("planted", ["raised", "another_principals"])
+async def test_an_altered_epoch_in_a_key_state_is_read_from_the_row(
+    pg_client: PostgresClient,
+    redis_client: RedisClient,
+    planted: str,
+) -> None:
+    stack = await _stack(pg_client, redis_client)
+    principal, other = await stack.principal(), await stack.principal()
+    key = await battery.issue_key(stack, principal)
+    assert await battery.verify_key(stack, key) == "admitted"
+
+    # The other principal's epoch, raised by a logout everywhere.
+    await stack.in_tx(
+        lambda: stack.ctx.authn.token_lifecycle(SPEC).revoke_tokens(
+            AuthnIdentity(principal_id=other)
+        )
+    )
+    suffix = stack._epochs.removeprefix("authn_epochs_")
+    stored = RedisRevocationStatesAdapter(
+        client=redis_client, namespace=f"it:authn:{suffix}"
+    )._api_key(ApiKeyService(pepper=b"a" * 32, config=ApiKeyConfig()).calculate_key_digest(key.key))
+    raw = await redis_client.get(stored)
+    assert raw is not None
+    live, owner, actor, expires, epoch, not_after, mac = raw.decode().split("|")
+    altered = str(int(epoch) + 1) if planted == "raised" else str(await stack.epoch(other))
+    assert altered != epoch
+    await redis_client.set(stored, "|".join((live, owner, actor, expires, altered, not_after, mac)))
+
+    for _ in range(2):
+        stack.key_reads.clear()
+        assert await battery.verify_key(stack, key) == "admitted"
+        # Its MAC fails: a miss, read from the row; the planted state stays.
+        assert stack.key_reads == ["find"]
+
+
+async def test_a_deactivation_refuses_a_key_whose_cached_epoch_is_gone(
+    pg_client: PostgresClient,
+    redis_client: RedisClient,
+) -> None:
+    # Then the database's epoch is compared: the raised one.
+    stack = await _stack(pg_client, redis_client)
+    principal = await stack.principal()
+    key = await battery.issue_key(stack, principal)
+
+    for _ in range(2):
+        assert await battery.verify_key(stack, key) == "admitted"
+
+    await stack.in_tx(lambda: battery.DEACTIVATIONS["registry"](stack, principal))
+    await redis_client.delete(await _epoch_key(redis_client, principal))
+
+    stack.epoch_reads.clear()
+    assert await battery.verify_key(stack, key) != "admitted"
+    assert stack.epoch_reads == ["current"]
 
 
 async def _epoch_key(redis_client: RedisClient, principal: UUID) -> str:
@@ -446,11 +546,20 @@ async def test_without_every_precondition_each_verification_reads(
     variant: dict[str, Any],
 ) -> None:
     stack = await _stack(pg_client, redis_client, **variant)
-    issued = await battery.login(stack, await stack.principal())
+    principal = await stack.principal()
+    issued = await battery.login(stack, principal)
 
     for _ in range(2):
         stack.principal_reads.clear()
         assert await battery.verify(stack, issued) == "admitted"
+        assert stack.principal_reads == ["find"]
+
+    # An API key too, from its first verification on: none records an epoch to skip by.
+    key = await battery.issue_key(stack, principal)
+
+    for _ in range(3):
+        stack.principal_reads.clear()
+        assert await battery.verify_key(stack, key) == "admitted"
         assert stack.principal_reads == ["find"]
 
 

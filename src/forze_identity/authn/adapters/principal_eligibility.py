@@ -67,7 +67,9 @@ class AdmittedTokenEligibilityAdapter(PrincipalEligibilityPort):
     A token the revocation states admitted on its principal's current epoch was issued while
     the principal was eligible (an issue reads eligibility under the principal's row lock and
     holds the epoch), and every write that deactivates a principal raises its epoch, so
-    nothing has deactivated it since, within the revocation states' window. Only the call that
+    nothing has deactivated it since, within the revocation states' window. An API key whose
+    state recorded the principal's current epoch counts the same: the state was written once
+    the principal was read active after that epoch. Only the call that
     follows that verification in the same task may rely on it, and only a non-locking one about
     the token's own subject: an issue locks and always reads, and an actor check comes after
     the subject's and always reads.

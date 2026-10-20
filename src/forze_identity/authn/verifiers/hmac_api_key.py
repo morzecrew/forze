@@ -33,8 +33,9 @@ class HmacApiKeyVerifier(ApiKeyVerifierPort):
     """Verify API key credentials against a document-backed account using HMAC-SHA256.
 
     With :attr:`revocation`, the key's state is read from the revocation states store first,
-    and the account row only on a miss. The principal's eligibility is still read after, by the
-    orchestrator, on every verification.
+    and the account row only on a miss. The principal's eligibility is read after, by the
+    orchestrator, unless the state recorded the principal's current epoch where the eligibility
+    skip applies (:meth:`ApiKeyRevocation.fresh`).
     """
 
     api_key_svc: ApiKeyService
@@ -96,6 +97,11 @@ class HmacApiKeyVerifier(ApiKeyVerifierPort):
             AdmittedApiKey(principal_id=account.principal_id, digest=digest)
             if self.revocation is not None
             else None,
+            fresh=(
+                self.revocation is not None
+                and isinstance(account, CachedApiKey)
+                and await self.revocation.fresh(account)
+            ),
         )
 
         return VerifiedAssertion(

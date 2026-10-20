@@ -7,6 +7,7 @@ configuration and credential cases that need the mock's flexibility.
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Awaitable, Callable
 from datetime import timedelta
 from typing import Any, Literal, TypeVar
@@ -16,6 +17,8 @@ import attrs
 import pytest
 
 from forze.application.contracts.authn import (
+    EPOCH_STATE_KEY,
+    ApiKeyCredentials,
     AuthnIdentity,
     AuthnSpec,
     PasswordCredentials,
@@ -24,6 +27,8 @@ from forze.application.contracts.authn import (
     RevocationStatesDepKey,
 )
 from forze.application.contracts.authz import AuthzSpec
+from forze.application.contracts.deps import backend_of
+from forze.application.contracts.deps.proxy import PortProxy
 from forze.application.contracts.document import (
     DocumentCommandDepKey,
     DocumentQueryDepKey,
@@ -45,6 +50,7 @@ from forze_identity.authn.application.specs import (
 )
 from forze_identity.authn.execution.deps import deps as authn_deps
 from forze_identity.authn.services import (
+    ApiKeyRevocation,
     EpochRaise,
     PasswordConfig,
     PolicyPrincipalEpochHook,
@@ -60,7 +66,10 @@ from forze_mock import MockDepsModule, MockStateDepKey
 from forze_mock.adapters.revocation import MockPrincipalEpochStore, MockRevocationStates
 from forze_mock.execution.factories import ConfigurableMockDocument, mock_journal_txmanager
 from tests.support import eligibility_skip_conformance as battery
-from tests.support.eligibility_skip_conformance import CountingPrincipalReads
+from tests.support.eligibility_skip_conformance import (
+    CountingEpochReads,
+    CountingPrincipalReads,
+)
 from tests.support.execution_context import context_from_deps
 
 pytest.importorskip("argon2")
@@ -72,7 +81,7 @@ T = TypeVar("T")
 # ----------------------- #
 
 ROUTE = "main"
-SPEC = AuthnSpec(name=ROUTE, enabled_methods=frozenset({"token", "password"}))
+SPEC = AuthnSpec(name=ROUTE, enabled_methods=frozenset({"token", "password", "api_key"}))
 STATES = "authn-revocations"
 TX = "default"
 CONFIG = RevocationStates(
@@ -92,6 +101,8 @@ class _Stack:
     ctx: ExecutionContext
     principal_reads: list[str]
     epochs: MockPrincipalEpochStore
+    key_reads: list[str] = attrs.field(factory=list)
+    epoch_reads: list[str] = attrs.field(factory=list)
     spec: AuthnSpec = SPEC
     authz_route: str = ROUTE
 
@@ -117,6 +128,7 @@ def _stack(
     authz: RevocationStates | None = CONFIG,
     authn: RevocationStates | None = CONFIG,
     eligibility: Literal["policy_principal", "allow_all"] = "policy_principal",
+    actor_claim: str | None = None,
 ) -> _Stack:
     mock = MockDepsModule()
     state = mock.state
@@ -125,15 +137,26 @@ def _stack(
     epochs = MockPrincipalEpochStore(state=state, in_transaction=lambda: False)
     states = MockRevocationStates(state=state, namespace=STATES)
 
+    key_reads: list[str] = []
+
     def principals(ctx: ExecutionContext, spec: Any) -> Any:
         return CountingPrincipalReads(document(ctx, spec), reads=reads)
 
-    def epoch_store(ctx: ExecutionContext) -> MockPrincipalEpochStore:
-        return MockPrincipalEpochStore(state=state, in_transaction=lambda: ctx.tx_ctx.depth() > 0)
+    def keys(ctx: ExecutionContext, spec: Any) -> Any:
+        return CountingPrincipalReads(document(ctx, spec), reads=key_reads)
+
+    epoch_reads: list[str] = []
+
+    def epoch_store(ctx: ExecutionContext) -> Any:
+        return CountingEpochReads(
+            MockPrincipalEpochStore(state=state, in_transaction=lambda: ctx.tx_ctx.depth() > 0),
+            reads=epoch_reads,
+        )
 
     kernel = AuthnKernelConfig(
         access_token_secret=b"k" * 32,
         refresh_token_pepper=b"p" * 32,
+        api_key_pepper=b"a" * 32,
         password=PasswordConfig(time_cost=1, memory_cost=8, parallelism=1),
         revocation_states=authn,
     )
@@ -141,9 +164,11 @@ def _stack(
         AuthnDepsModule(
             kernel=kernel,
             eligibility=eligibility,
+            actor_claim=actor_claim,
             authn={ROUTE: SPEC.enabled_methods},
             authz_route=ROUTE,
             token_lifecycle={ROUTE},
+            api_key_lifecycle={ROUTE},
             password_account_provisioning={ROUTE},
             principal_deactivation={ROUTE},
         )()
@@ -160,7 +185,7 @@ def _stack(
                         session_spec.name: document,
                         policy_principal_spec.name: principals,
                         password_account_spec.name: document,
-                        api_key_account_spec.name: document,
+                        api_key_account_spec.name: keys,
                     },
                     DocumentCommandDepKey: dict.fromkeys(
                         (
@@ -187,7 +212,13 @@ def _stack(
         )
     )
 
-    return _Stack(ctx=context_from_deps(deps), principal_reads=reads, epochs=epochs)
+    return _Stack(
+        ctx=context_from_deps(deps),
+        principal_reads=reads,
+        epochs=epochs,
+        key_reads=key_reads,
+        epoch_reads=epoch_reads,
+    )
 
 
 # ----------------------- #
@@ -501,3 +532,386 @@ def test_a_raise_finds_the_eligibility_an_issue_falls_back_to(
     found = authn_deps._principals_to_lock(context_from_deps(deps), SPEC)
 
     assert (found is not None) is locks
+
+
+# ....................... #
+# API keys. The mock refuses the skip, so these stand it on Postgres's footing.
+
+
+def _as_postgres(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(authn_deps, "_on_skip_backend", lambda port: True)
+
+
+def _key_states(stack: _Stack) -> dict[Any, tuple[str, int]]:
+    """The mock store's API-key states, by their stored key."""
+
+    states = stack.ctx.deps.provide(MockStateDepKey).revocation_states
+    return {stored: entry for stored, entry in states.items() if stored[2].startswith("k:")}
+
+
+async def test_a_warm_api_key_reads_neither_its_row_nor_the_principal(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _as_postgres(monkeypatch)
+    await battery.a_warm_api_key_reads_neither_its_row_nor_the_principal(_stack())
+
+
+@pytest.mark.parametrize("path", sorted(battery.DEACTIVATIONS))
+async def test_a_deactivation_refuses_a_warm_api_key(
+    path: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _as_postgres(monkeypatch)
+    await battery.a_deactivation_refuses_a_warm_api_key(_stack(), path)
+
+
+@pytest.mark.parametrize("postgres", [True, False], ids=["no-authz-configuration", "mock"])
+async def test_without_the_skip_every_api_key_verification_reads(
+    postgres: bool,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    if postgres:
+        _as_postgres(monkeypatch)
+
+    stack = _stack(authz=None) if postgres else _stack()
+    key = await battery.issue_key(stack, await stack.principal())
+
+    for _ in range(3):
+        stack.principal_reads.clear()
+        assert await battery.verify_key(stack, key) == "admitted"
+        assert stack.principal_reads == ["find"]
+
+    # Without the skip the state records no epoch, and reads as an older version's.
+    ((state, _),) = _key_states(stack).values()
+    assert state.count("|") == 5
+
+
+async def test_a_state_without_an_epoch_reads_eligibility(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # As one an older version wrote: admitted from the state, then read.
+    _as_postgres(monkeypatch)
+    stack = _stack()
+    key = await battery.issue_key(stack, await stack.principal())
+
+    async def none(self: Any, principal_id: UUID) -> None:
+        del self, principal_id
+
+    with monkeypatch.context() as patched:
+        patched.setattr(ApiKeyRevocation, "_eligible_epoch", none)
+        assert await battery.verify_key(stack, key) == "admitted"
+
+    stack.principal_reads.clear()
+    stack.key_reads.clear()
+    assert await battery.verify_key(stack, key) == "admitted"
+    assert (stack.key_reads, stack.principal_reads) == ([], ["find"])
+
+
+async def test_an_inactive_principal_records_no_epoch(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Read after the epoch, so a deactivation before that read leaves the state unable to skip.
+    _as_postgres(monkeypatch)
+    stack = _stack()
+    principal = await stack.principal()
+    key = await battery.issue_key(stack, principal)
+    command = stack.ctx.doc.command(policy_principal_spec)
+    rev = (await stack.ctx.doc.query(policy_principal_spec).get(principal)).rev
+
+    async def deactivate() -> None:
+        await command.update(principal, rev, UpdatePolicyPrincipalCmd(is_active=False))
+
+    await stack.in_tx(deactivate)
+
+    # The state the first verification writes must not let the next one skip.
+    for _ in range(2):
+        assert await battery.verify_key(stack, key) != "admitted"
+
+    ((state, _),) = _key_states(stack).values()
+    assert state.count("|") == 5
+
+
+@pytest.mark.parametrize("planted", ["raised", "another_principals"])
+async def test_an_altered_epoch_fails_the_states_mac(
+    planted: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _as_postgres(monkeypatch)
+    stack = _stack()
+    principal, other = await stack.principal(), await stack.principal()
+    key = await battery.issue_key(stack, principal)
+    assert await battery.verify_key(stack, key) == "admitted"
+
+    # The other principal's epoch, raised by a logout everywhere.
+    await stack.in_tx(
+        lambda: stack.ctx.authn.token_lifecycle(SPEC).revoke_tokens(
+            AuthnIdentity(principal_id=other)
+        )
+    )
+    states = stack.ctx.deps.provide(MockStateDepKey).revocation_states
+    ((stored, (state, expire_at_ms)),) = _key_states(stack).items()
+    live, owner, actor, expires, epoch, not_after, mac = state.split("|")
+    altered = str(int(epoch) + 1) if planted == "raised" else str(await stack.epoch(other))
+    assert altered != epoch
+    states[stored] = (
+        "|".join((live, owner, actor, expires, altered, not_after, mac)),
+        expire_at_ms,
+    )
+
+    for _ in range(2):
+        stack.key_reads.clear()
+        stack.principal_reads.clear()
+        assert await battery.verify_key(stack, key) == "admitted"
+        # A miss, read from the row. The planted state stays, so nothing is written over it.
+        assert (stack.key_reads, stack.principal_reads) == (["find"], ["find"])
+
+
+async def _warm_key(stack: _Stack, principal: UUID) -> ApiKeyCredentials:
+    key = await battery.issue_key(stack, principal)
+
+    for _ in range(2):
+        assert await battery.verify_key(stack, key) == "admitted"
+
+    return key
+
+
+def _drop_cached_epoch(stack: _Stack, principal: UUID) -> None:
+    states = stack.ctx.deps.provide(MockStateDepKey).revocation_states
+    del states[(STATES, str(principal), EPOCH_STATE_KEY)]
+
+
+async def test_a_deactivation_refuses_a_key_whose_cached_epoch_is_gone(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Then the database's epoch is compared: the raised one.
+    _as_postgres(monkeypatch)
+    stack = _stack()
+    principal = await stack.principal()
+    key = await _warm_key(stack, principal)
+
+    await stack.in_tx(lambda: battery.DEACTIVATIONS["registry"](stack, principal))
+    _drop_cached_epoch(stack, principal)
+
+    assert await battery.verify_key(stack, key) != "admitted"
+
+
+@pytest.mark.parametrize("cached", [True, False], ids=["cached epoch", "no cached epoch"])
+async def test_inside_a_transaction_a_key_reads_eligibility(
+    cached: bool,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The transaction may have raised the epoch itself, which reaches the cache after commit.
+    _as_postgres(monkeypatch)
+    stack = _stack()
+    principal = await stack.principal()
+    key = await _warm_key(stack, principal)
+
+    if not cached:
+        _drop_cached_epoch(stack, principal)
+
+    async def request() -> None:
+        await stack.ctx.authn.authn(SPEC).authenticate_with_api_key(key)
+
+    stack.principal_reads.clear()
+    await asyncio.create_task(stack.in_tx(request))
+
+    assert stack.principal_reads == ["find"]
+
+
+async def test_a_failed_epoch_read_reads_eligibility_and_counts_a_fallback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _as_postgres(monkeypatch)
+    stack = _stack()
+    key = await _warm_key(stack, await stack.principal())
+    read = MockRevocationStates.read
+
+    async def failing(self: MockRevocationStates, principal_id: UUID, key: str) -> Any:
+        if key == EPOCH_STATE_KEY:
+            raise RuntimeError("states store down")
+
+        return await read(self, principal_id, key)
+
+    monkeypatch.setattr(MockRevocationStates, "read", failing)
+    before = CONFIG.counters.get("fallback", "api_key")
+    stack.principal_reads.clear()
+
+    assert await battery.verify_key(stack, key) == "admitted"
+    assert stack.principal_reads == ["find"]
+    assert CONFIG.counters.get("fallback", "api_key") == before + 1
+
+
+async def test_a_failed_database_epoch_read_reads_eligibility_and_counts_a_fallback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _as_postgres(monkeypatch)
+    current = MockPrincipalEpochStore.current
+    down = False
+
+    # Patched before the stack is built: its counting wrapper binds the method then.
+    async def failing(self: MockPrincipalEpochStore, principal_id: UUID) -> int:
+        if down:
+            raise RuntimeError("epoch store down")
+
+        return await current(self, principal_id)
+
+    monkeypatch.setattr(MockPrincipalEpochStore, "current", failing)
+    stack = _stack()
+    principal = await stack.principal()
+    key = await _warm_key(stack, principal)
+    _drop_cached_epoch(stack, principal)
+    down = True
+    before = CONFIG.counters.get("fallback", "api_key")
+    stack.principal_reads.clear()
+
+    assert await battery.verify_key(stack, key) == "admitted"
+    assert stack.principal_reads == ["find"]
+    assert CONFIG.counters.get("fallback", "api_key") == before + 1
+
+
+@pytest.mark.parametrize("registration", ["routed", "plain"])
+def test_a_key_skips_with_eligibility_registered_plain(
+    registration: Literal["routed", "plain"],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # An issue resolves eligibility through provide, which falls back to a plain registration.
+    monkeypatch.setattr(authn_deps, "_skips_eligibility", lambda *args: True)
+    eligibility = authn_deps.ConfigurablePolicyPrincipalEligibility()
+    deps = Deps.routed(
+        {DocumentQueryDepKey: {policy_principal_spec.name: lambda ctx, spec: object()}}
+    ).merge(
+        Deps.plain({PrincipalEpochDepKey: lambda ctx: object()}),
+        Deps.routed({PrincipalEligibilityDepKey: {ROUTE: eligibility}})
+        if registration == "routed"
+        else Deps.plain({PrincipalEligibilityDepKey: eligibility}),
+    )
+
+    skip = authn_deps._api_key_skip(context_from_deps(deps), SPEC, CONFIG, object())  # type: ignore[arg-type]
+
+    assert skip is not None
+
+
+@attrs.define(slots=True)
+class _Pause:
+    """Holds the first call that reaches it until released; every later one passes."""
+
+    reached: asyncio.Event = attrs.field(factory=asyncio.Event)
+    release: asyncio.Event = attrs.field(factory=asyncio.Event)
+
+    async def once(self) -> None:
+        if self.reached.is_set():
+            return
+
+        self.reached.set()
+        await asyncio.wait_for(self.release.wait(), timeout=10)
+
+
+@attrs.define(slots=True)
+class _PausedAfter(PortProxy):
+    """A port whose *names* calls each stop at *pause* once they return."""
+
+    names: frozenset[str] = attrs.field(kw_only=True)
+    pause: _Pause = attrs.field(kw_only=True)
+
+    def _should_wrap(self, name: str, attr: Any) -> bool:
+        del attr
+        return name in self.names
+
+    def _wrap_async(self, name: str, attr: Any) -> Any:
+        async def paused(*args: Any, **kwargs: Any) -> Any:
+            result = await attr(*args, **kwargs)
+            await self.pause.once()
+            return result
+
+        return paused
+
+
+async def test_a_deactivation_between_the_misss_two_reads_leaves_no_epoch_to_skip_by(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Whichever of the epoch and the principal the miss reads first, a deactivation then lands
+    # before the other. Epoch first, the principal reads inactive and no epoch is recorded.
+    _as_postgres(monkeypatch)
+    pause = _Pause()
+    skip_for = authn_deps._api_key_skip
+
+    def paused_skip(*args: Any) -> Any:
+        skip = skip_for(*args)
+
+        if skip is None:
+            return None
+
+        return attrs.evolve(
+            skip,
+            epochs=_PausedAfter(skip.epochs, names=frozenset({"current"}), pause=pause),
+            principals=_PausedAfter(skip.principals, names=frozenset({"find"}), pause=pause),
+        )
+
+    monkeypatch.setattr(authn_deps, "_api_key_skip", paused_skip)
+    stack = _stack()
+    principal = await stack.principal()
+    key = await battery.issue_key(stack, principal)
+
+    async with asyncio.timeout(10):
+        verifying = asyncio.create_task(battery.verify_key(stack, key))
+        await pause.reached.wait()
+        await stack.in_tx(lambda: battery.DEACTIVATIONS["update"](stack, principal))
+        pause.release.set()
+        assert await verifying != "admitted"
+
+    assert await battery.verify_key(stack, key) != "admitted"
+
+
+async def test_the_skip_needs_the_epochs_on_postgres(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Another epoch store need not report its enlistment, so its raise may commit on its own.
+    monkeypatch.setattr(
+        authn_deps,
+        "_on_skip_backend",
+        lambda port: not isinstance(backend_of(port), MockPrincipalEpochStore),
+    )
+    stack = _stack()
+    principal = await stack.principal()
+    issued = await battery.login(stack, principal)
+    key = await battery.issue_key(stack, principal)
+
+    for _ in range(2):
+        stack.principal_reads.clear()
+        assert await battery.verify(stack, issued) == "admitted"
+        assert stack.principal_reads == ["find"]
+
+        stack.principal_reads.clear()
+        assert await battery.verify_key(stack, key) == "admitted"
+        assert stack.principal_reads == ["find"]
+
+
+@pytest.mark.parametrize("self_acting", [False, True], ids=["agent", "subject"])
+async def test_a_delegated_keys_actor_is_always_read(
+    self_acting: bool,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _as_postgres(monkeypatch)
+    stack = _stack(actor_claim="act")
+    principal = await stack.principal()
+    keys = stack.ctx.authn.api_key_lifecycle(SPEC)
+
+    if self_acting:
+        # Refused at issue; a row written around it names the subject all the same.
+        issued = await stack.in_tx(
+            lambda: keys._issue_for_principal(principal, actor_principal_id=principal)
+        )
+
+    else:
+        agent = await stack.ctx.doc.command(policy_principal_spec).create(
+            CreatePolicyPrincipalCmd(kind="service"),
+        )
+        issued = await stack.in_tx(
+            lambda: keys.issue_api_key(
+                AuthnIdentity(principal_id=principal), actor_principal_id=agent.id
+            )
+        )
+
+    assert await battery.verify_key(stack, issued.key) == "admitted"
+
+    for _ in range(2):
+        stack.principal_reads.clear()
+        assert await battery.verify_key(stack, issued.key) == "admitted"
+        # The subject's check skipped; the actor's read, even when it is the subject.
+        assert stack.principal_reads == ["find"]
