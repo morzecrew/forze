@@ -327,6 +327,8 @@ async def test_document_create_duplicate_id_raises_conflict() -> None:
         await doc.create(_ProductCreate(title="B", category="y"), id=created.id)
 
     assert excinfo.value.kind is ExceptionKind.CONFLICT
+    # As Postgres's mapped violation, the details stay off the client's envelope.
+    assert excinfo.value.expose_details is False
     # The original document is untouched.
     assert (await doc.get(created.id)).title == "A"
 

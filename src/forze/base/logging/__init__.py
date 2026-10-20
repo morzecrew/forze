@@ -10,7 +10,7 @@ from .configure import (
     configure_logging,
 )
 from .constants import LogLevel, RenderMode
-from .errors import log_server_error
+from .errors import log_server_error, log_withheld_details
 from .excepthook import install_excepthook, uninstall_excepthook
 from .logger import Logger, get_logger, resolve_logger
 from .renderers import ForzeConsoleRenderer
@@ -26,6 +26,7 @@ __all__ = [
     "bootstrap_logging",
     "attach_foreign_loggers",
     "log_server_error",
+    "log_withheld_details",
     "install_excepthook",
     "uninstall_excepthook",
     "ForzeConsoleRenderer",

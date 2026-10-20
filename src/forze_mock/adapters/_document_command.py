@@ -181,17 +181,20 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
                 continue
 
             if tuple(instant_key(other.get(field)) for field in guarantee.fields) == key:
-                raise exc.conflict(
-                    f"Document {self.spec.name!r} guarantees at most one row per "
-                    f"({', '.join(guarantee.fields)}); {other_pk} already holds "
-                    f"{values!r}"
-                    + (" among the rows the guarantee selects." if guarantee.where else "."),
+                # The backends' summary, so a client sees the same text; the row stays in details.
+                conflict = exc.conflict(
+                    "Unique violation.",
                     details={
                         "guarantee": guarantee.kind,
                         "fields": list(guarantee.fields),
                         "conflicting_id": str(other_pk),
+                        "values": repr(values),
+                        "document": self.spec.name,
                     },
                 )
+                # As the backends' mapped violation: its details are not the client's.
+                conflict.expose_details = False
+                raise conflict
 
     # ....................... #
 
@@ -265,17 +268,21 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
             if other_period is None or not period.overlaps(other_period):
                 continue
 
-            raise exc.conflict(
-                f"Document {self.spec.name!r} guarantees no two rows per "
-                f"({', '.join(guarantee.key)}) hold overlapping periods; {other_pk} already "
-                f"holds {other_period} for {key!r}, which overlaps {period}"
-                + (" among the rows the guarantee selects." if guarantee.where else "."),
+            conflict = exc.conflict(
+                "Constraint violation (exclusion).",
                 details={
                     "guarantee": guarantee.kind,
                     "key": list(guarantee.key),
                     "conflicting_id": str(other_pk),
+                    "values": repr(key),
+                    "period": str(period),
+                    "conflicting_period": str(other_period),
+                    "document": self.spec.name,
                 },
             )
+            # As the backends' mapped violation: its details are not the client's.
+            conflict.expose_details = False
+            raise conflict
 
     # ....................... #
 
@@ -409,12 +416,15 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
                 return
 
             if other.waiting_for in holder.write_locks:
-                raise exc.concurrency(
+                deadlock = exc.concurrency(
                     "Two writers want each other's owners, so neither can finish. One is "
                     "refused rather than both waiting: retrying it after the other finishes "
                     "takes the owners in one order and succeeds.",
                     details={"key": str(key)},
                 )
+                # As the backends' mapped deadlock: its details are not the client's.
+                deadlock.expose_details = False
+                raise deadlock
 
             cursor = other.waiting_for
 
@@ -582,11 +592,13 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
         store = self._store()
         if domain.id in store:
             # Mirror the integration adapters: Postgres maps a duplicate
-            # primary key (UniqueViolation) to ``exc.conflict``.
-            raise exc.conflict(
+            # primary key (UniqueViolation) to ``exc.conflict``, details withheld.
+            conflict = exc.conflict(
                 "Unique violation.",
                 details={"id": str(domain.id)},
             )
+            conflict.expose_details = False
+            raise conflict
         self._write_row(store, domain.id, serialized)
 
         # Publish-time unique-violation guard: a concurrent transaction may commit the same id

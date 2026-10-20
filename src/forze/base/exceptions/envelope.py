@@ -144,7 +144,8 @@ def error_envelope(exc: CoreException) -> ErrorEnvelope:
 
     Pure: server-side errors get a generic detail and no context; client-safe
     kinds keep their summary and expose sanitized context only when the kind's
-    egress policy allows it. Under a non-disclosing
+    egress policy allows it and the exception does
+    (:attr:`~forze.base.exceptions.CoreException.expose_details`). Under a non-disclosing
     :class:`~forze.base.exceptions.DenialPosture`, a denial or not-found about a
     covered resource type renders as one canonical not-found instead.
     """
@@ -157,7 +158,7 @@ def error_envelope(exc: CoreException) -> ErrorEnvelope:
     server_error = status >= 500
 
     context: JsonDict | None = None
-    if exc.details and policy.expose_details and not server_error:
+    if exc.details and exc.expose_details and policy.expose_details and not server_error:
         context = _jsonable(sanitize(exc.details, context="egress"))
 
     return ErrorEnvelope(

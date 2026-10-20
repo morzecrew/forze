@@ -17,7 +17,7 @@ from forze.base.exceptions import (
     exc,
     unhandled_error_envelope,
 )
-from forze.base.logging import Logger, log_server_error
+from forze.base.logging import Logger, log_server_error, log_withheld_details
 
 # ----------------------- #
 
@@ -44,6 +44,8 @@ def build_core_exception_response(exc: CoreException) -> JSONResponse:
 
     if envelope.server_error:
         log_server_error(error_logger, exc, core=exc)
+
+    log_withheld_details(error_logger, exc)
 
     content: JsonDict = {"detail": envelope.detail}
 

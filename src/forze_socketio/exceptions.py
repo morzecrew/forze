@@ -38,7 +38,7 @@ from forze.base.exceptions import (
     is_server_error_kind,
     unhandled_error_envelope,
 )
-from forze.base.logging import Logger
+from forze.base.logging import Logger, log_withheld_details
 from forze.base.logging import log_server_error as _log_server_error
 from forze.base.primitives import JsonDict
 
@@ -106,6 +106,8 @@ def build_core_exception_ack(exc: CoreException) -> JsonDict:
 
     if envelope.server_error:
         log_server_error(exc, core=exc)
+
+    log_withheld_details(error_logger, exc)
 
     return render_error_ack(envelope)
 

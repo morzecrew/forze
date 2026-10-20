@@ -41,7 +41,7 @@ def reraise_mapped(
     site: str,
     details: Mapping[str, Any] | None = None,
 ) -> Never:
-    """Reraise a mapped exception."""
+    """Reraise a mapped exception, its details withheld from clients."""
 
     if isinstance(exc, CoreException):
         raise exc
@@ -49,7 +49,12 @@ def reraise_mapped(
     if isinstance(exc, BYPASS_INTERCEPTION):
         raise exc
 
-    err = mapper(exc, site=site, details=details)
+    try:
+        err = mapper(exc, site=site, details=details)
+
+    except Exception:
+        # A mapper that fails must not replace the error it was handed.
+        err = None
 
     if err is None:
         err = default_exception(exc, site)
@@ -61,6 +66,10 @@ def reraise_mapped(
 
     elif "site" not in err.details:
         err.details = {**err.details, "site": site}
+
+    # The call's arguments and the backend's own fields are context for the server, whatever
+    # the kind: a client-facing kind must not carry them out to the caller.
+    err.expose_details = False
 
     raise err from exc
 

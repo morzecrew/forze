@@ -159,10 +159,7 @@ class ExceptionInterceptor:
 
             @wraps(fn)
             async def wrapper(*args: P.args, **kwargs: P.kwargs) -> AsyncGenerator[R]:
-                try:
-                    it = fn(*args, **kwargs)
-
-                except BaseException as e:
+                def mapped(e: BaseException) -> Never:
                     _reraise_lazy(
                         self.mapper,
                         e,
@@ -172,20 +169,34 @@ class ExceptionInterceptor:
                         kwargs=kwargs,
                     )
 
-                async with aclosing(it) as agen:
-                    async for x in agen:
-                        try:
-                            yield x
+                try:
+                    it = fn(*args, **kwargs)
 
-                        except BaseException as e:
-                            _reraise_lazy(
-                                self.mapper,
-                                e,
-                                site=resolved_site,
-                                fn=fn,
-                                args=args,
-                                kwargs=kwargs,
-                            )
+                except BaseException as e:
+                    mapped(e)
+
+                # The close a consumer's early exit runs is backend work too: map what it raises.
+                try:
+                    async with aclosing(it) as agen:
+                        while True:
+                            # Producing the next item is where a stream's backend fails.
+                            try:
+                                x = await anext(agen)
+
+                            except StopAsyncIteration:
+                                return
+
+                            except BaseException as e:
+                                mapped(e)
+
+                            try:
+                                yield x
+
+                            except BaseException as e:
+                                mapped(e)
+
+                except BaseException as e:
+                    mapped(e)
 
             return wrapper
 
@@ -204,10 +215,7 @@ class ExceptionInterceptor:
 
             @wraps(fn)
             def wrapper(*args: P.args, **kwargs: P.kwargs) -> Generator[R]:
-                try:
-                    it = fn(*args, **kwargs)
-
-                except BaseException as e:
+                def mapped(e: BaseException) -> Never:
                     _reraise_lazy(
                         self.mapper,
                         e,
@@ -217,20 +225,34 @@ class ExceptionInterceptor:
                         kwargs=kwargs,
                     )
 
-                with closing(it) as gen:
-                    for x in gen:
-                        try:
-                            yield x
+                try:
+                    it = fn(*args, **kwargs)
 
-                        except BaseException as e:
-                            _reraise_lazy(
-                                self.mapper,
-                                e,
-                                site=resolved_site,
-                                fn=fn,
-                                args=args,
-                                kwargs=kwargs,
-                            )
+                except BaseException as e:
+                    mapped(e)
+
+                # The close a consumer's early exit runs is backend work too: map what it raises.
+                try:
+                    with closing(it) as gen:
+                        while True:
+                            # Producing the next item is where a stream's backend fails.
+                            try:
+                                x = next(gen)
+
+                            except StopIteration:
+                                return
+
+                            except BaseException as e:
+                                mapped(e)
+
+                            try:
+                                yield x
+
+                            except BaseException as e:
+                                mapped(e)
+
+                except BaseException as e:
+                    mapped(e)
 
             return wrapper
 

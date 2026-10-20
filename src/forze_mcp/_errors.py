@@ -13,7 +13,7 @@ import json
 from fastmcp.exceptions import FastMCPError
 
 from forze.base.exceptions import CoreException, error_envelope
-from forze.base.logging import Logger
+from forze.base.logging import Logger, log_withheld_details
 
 # ----------------------- #
 
@@ -51,6 +51,8 @@ def client_safe_error[E: FastMCPError](e: CoreException, error_type: type[E]) ->
                 error_kind=e.kind.value,
                 detail=e.summary,
             )
+
+    log_withheld_details(_error_logger, e)
 
     rendered = f"{envelope.code}: {envelope.detail}"
 

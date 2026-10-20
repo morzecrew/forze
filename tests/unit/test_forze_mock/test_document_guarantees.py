@@ -149,7 +149,7 @@ class TestTheFilteredGuarantee:
         details = caught.value.details or {}
 
         assert caught.value.kind.value == "conflict"
-        assert str(first.id) in caught.value.summary
+        assert caught.value.details["conflicting_id"] == str(first.id)
         assert details["guarantee"] == "unique_together"
         assert details["fields"] == ["root_id"]
 
@@ -189,7 +189,7 @@ class TestEveryWritePathIsCovered:
         await command.create(_FactCreate(root_id="r1"))
         stale = await command.create(_FactCreate(root_id="r1", is_current=False))
 
-        with pytest.raises(CoreException, match="at most one row per"):
+        with pytest.raises(CoreException, match="Unique violation"):
             await command.update(stale.id, stale.rev, _FactUpdate(is_current=True))
 
     async def test_update_within_the_filter_that_changes_nothing_relevant(self) -> None:
@@ -203,20 +203,20 @@ class TestEveryWritePathIsCovered:
         command = _command(_spec(ONE_CURRENT))
         await command.create(_FactCreate(root_id="r1"))
 
-        with pytest.raises(CoreException, match="at most one row per"):
+        with pytest.raises(CoreException, match="Unique violation"):
             await command.ensure(uuid4(), _FactCreate(root_id="r1"))
 
     async def test_upsert_is_covered(self) -> None:
         command = _command(_spec(ONE_CURRENT))
         await command.create(_FactCreate(root_id="r1"))
 
-        with pytest.raises(CoreException, match="at most one row per"):
+        with pytest.raises(CoreException, match="Unique violation"):
             await command.upsert(uuid4(), _FactCreate(root_id="r1"), _FactUpdate())
 
     async def test_create_many_is_covered(self) -> None:
         command = _command(_spec(ONE_CURRENT))
 
-        with pytest.raises(CoreException, match="at most one row per"):
+        with pytest.raises(CoreException, match="Unique violation"):
             await command.create_many([_FactCreate(root_id="r1"), _FactCreate(root_id="r1")])
 
     async def test_update_many_is_covered(self) -> None:
@@ -224,7 +224,7 @@ class TestEveryWritePathIsCovered:
         await command.create(_FactCreate(root_id="r1"))
         stale = await command.create(_FactCreate(root_id="r1", is_current=False))
 
-        with pytest.raises(CoreException, match="at most one row per"):
+        with pytest.raises(CoreException, match="Unique violation"):
             await command.update_many(
                 [KeyedUpdate(id=stale.id, rev=stale.rev, dto=_FactUpdate(is_current=True))],
             )
@@ -243,7 +243,7 @@ class TestEveryWritePathIsCovered:
 
         assert replacement.root_id == "r1"
 
-        with pytest.raises(CoreException, match="at most one row per"):
+        with pytest.raises(CoreException, match="Unique violation"):
             await command.restore(first.id, deleted.rev)
 
     async def test_an_unfiltered_guarantee_keeps_a_deleted_row_s_tuple(self) -> None:
@@ -254,7 +254,7 @@ class TestEveryWritePathIsCovered:
         first = await command.create(_ErasableCreate(root_id="r1"))
         await command.delete(first.id, first.rev)
 
-        with pytest.raises(CoreException, match="at most one row per"):
+        with pytest.raises(CoreException, match="Unique violation"):
             await command.create(_ErasableCreate(root_id="r1"))
 
     async def test_touch_leaves_a_satisfied_guarantee_satisfied(self) -> None:
@@ -292,7 +292,7 @@ class TestSkipNull:
         command = _command(_spec(UniqueTogether(fields=("supersedes_id",))))
         await command.create(_FactCreate(root_id="r1"))
 
-        with pytest.raises(CoreException, match="at most one row per"):
+        with pytest.raises(CoreException, match="Unique violation"):
             await command.create(_FactCreate(root_id="r2"))
 
     async def test_skip_null_exempts_two_nulls(self) -> None:
@@ -307,7 +307,7 @@ class TestSkipNull:
         command = _command(_spec(UniqueTogether(fields=("supersedes_id",), skip_null=True)))
         await command.create(_FactCreate(root_id="r1", supersedes_id="s1"))
 
-        with pytest.raises(CoreException, match="at most one row per"):
+        with pytest.raises(CoreException, match="Unique violation"):
             await command.create(_FactCreate(root_id="r2", supersedes_id="s1"))
 
     async def test_a_partly_null_tuple_is_exempt_under_skip_null(self) -> None:
@@ -347,7 +347,7 @@ class TestPeriodsUnderOneKeyDoNotOverlap:
         details = caught.value.details or {}
 
         assert caught.value.kind.value == "conflict"
-        assert str(first.id) in caught.value.summary
+        assert caught.value.details["conflicting_id"] == str(first.id)
         assert details["guarantee"] == "non_overlapping"
         assert details["key"] == ["root_id"]
 

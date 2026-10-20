@@ -45,8 +45,9 @@ def _firestore_eh(  # skipcq: PY-R1000
 
     match exc:
         case gax_exceptions.NotFound():
+            # A generic summary: the API's message names the project and the document path.
             return CoreException.not_found(
-                str(exc),
+                "Firestore document not found.",
                 details=details,
             )
 
@@ -71,7 +72,10 @@ def _firestore_eh(  # skipcq: PY-R1000
             )
 
         case gax_exceptions.InvalidArgument():
-            return CoreException.validation(str(exc))
+            return CoreException.validation(
+                "Firestore rejected the request as invalid.",
+                details=details,
+            )
 
         case gax_exceptions.DeadlineExceeded() | gax_exceptions.ServiceUnavailable():
             return CoreException.infrastructure(
