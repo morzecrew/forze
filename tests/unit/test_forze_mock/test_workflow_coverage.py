@@ -91,6 +91,19 @@ async def test_signal_not_found() -> None:
     assert caught.value.code == WORKFLOW_NOT_FOUND_CODE
 
 
+@pytest.mark.parametrize("close", ["cancel", "terminate"])
+async def test_signal_to_a_closed_run_is_not_found(close: str) -> None:
+    state = MockState()
+    cmd = _cmd(state)
+    handle = await cmd.start(_In(n=1), workflow_id="wf-1")
+    await getattr(cmd, close)(handle)
+    sig = DurableWorkflowSignalSpec(name="ping", args_type=_Sig)
+    with pytest.raises(CoreException) as caught:
+        await cmd.signal(handle, signal=sig, args=_Sig(k="x"))
+    assert caught.value.code == WORKFLOW_NOT_FOUND_CODE
+    assert state.durable_workflows["wf"]["wf-1"]["signals"] == []
+
+
 async def test_signal_appends_to_existing_run() -> None:
     state = MockState()
     cmd = _cmd(state)
