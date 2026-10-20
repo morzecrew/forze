@@ -181,15 +181,15 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
                 continue
 
             if tuple(instant_key(other.get(field)) for field in guarantee.fields) == key:
+                # The backends' summary, so a client sees the same text; the row stays in details.
                 conflict = exc.conflict(
-                    f"Document {self.spec.name!r} guarantees at most one row per "
-                    f"({', '.join(guarantee.fields)}); {other_pk} already holds "
-                    f"{values!r}"
-                    + (" among the rows the guarantee selects." if guarantee.where else "."),
+                    "Unique violation.",
                     details={
                         "guarantee": guarantee.kind,
                         "fields": list(guarantee.fields),
                         "conflicting_id": str(other_pk),
+                        "values": repr(values),
+                        "document": self.spec.name,
                     },
                 )
                 # As the backends' mapped violation: its details are not the client's.
@@ -269,14 +269,15 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
                 continue
 
             conflict = exc.conflict(
-                f"Document {self.spec.name!r} guarantees no two rows per "
-                f"({', '.join(guarantee.key)}) hold overlapping periods; {other_pk} already "
-                f"holds {other_period} for {key!r}, which overlaps {period}"
-                + (" among the rows the guarantee selects." if guarantee.where else "."),
+                "Constraint violation (exclusion).",
                 details={
                     "guarantee": guarantee.kind,
                     "key": list(guarantee.key),
                     "conflicting_id": str(other_pk),
+                    "values": repr(key),
+                    "period": str(period),
+                    "conflicting_period": str(other_period),
+                    "document": self.spec.name,
                 },
             )
             # As the backends' mapped violation: its details are not the client's.

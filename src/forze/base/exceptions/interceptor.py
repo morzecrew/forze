@@ -175,23 +175,28 @@ class ExceptionInterceptor:
                 except BaseException as e:
                     mapped(e)
 
-                async with aclosing(it) as agen:
-                    while True:
-                        # Producing the next item is where a stream's backend fails.
-                        try:
-                            x = await anext(agen)
+                # The close a consumer's early exit runs is backend work too: map what it raises.
+                try:
+                    async with aclosing(it) as agen:
+                        while True:
+                            # Producing the next item is where a stream's backend fails.
+                            try:
+                                x = await anext(agen)
 
-                        except StopAsyncIteration:
-                            return
+                            except StopAsyncIteration:
+                                return
 
-                        except BaseException as e:
-                            mapped(e)
+                            except BaseException as e:
+                                mapped(e)
 
-                        try:
-                            yield x
+                            try:
+                                yield x
 
-                        except BaseException as e:
-                            mapped(e)
+                            except BaseException as e:
+                                mapped(e)
+
+                except BaseException as e:
+                    mapped(e)
 
             return wrapper
 
@@ -226,23 +231,28 @@ class ExceptionInterceptor:
                 except BaseException as e:
                     mapped(e)
 
-                with closing(it) as gen:
-                    while True:
-                        # Producing the next item is where a stream's backend fails.
-                        try:
-                            x = next(gen)
+                # The close a consumer's early exit runs is backend work too: map what it raises.
+                try:
+                    with closing(it) as gen:
+                        while True:
+                            # Producing the next item is where a stream's backend fails.
+                            try:
+                                x = next(gen)
 
-                        except StopIteration:
-                            return
+                            except StopIteration:
+                                return
 
-                        except BaseException as e:
-                            mapped(e)
+                            except BaseException as e:
+                                mapped(e)
 
-                        try:
-                            yield x
+                            try:
+                                yield x
 
-                        except BaseException as e:
-                            mapped(e)
+                            except BaseException as e:
+                                mapped(e)
+
+                except BaseException as e:
+                    mapped(e)
 
             return wrapper
 

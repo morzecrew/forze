@@ -105,6 +105,47 @@ class TestExceptionInterceptorGenerators:
         assert raised.value.code == "wrapped"
         assert raised.value.expose_details is False
 
+    def test_generator_failure_closing_on_an_early_exit_is_mapped(self) -> None:
+        interceptor = ExceptionInterceptor(mapper=_mapper())
+
+        @interceptor.generator(site="gen")
+        def stream() -> __import__("typing").Generator[int, None, None]:
+            try:
+                yield 1
+                yield 2
+
+            finally:
+                raise ValueError("driver: cursor close failed on db-7")
+
+        gen = stream()
+        assert next(gen) == 1
+
+        with pytest.raises(CoreException, match="gen:driver") as raised:
+            gen.close()
+
+        assert raised.value.expose_details is False
+
+    @pytest.mark.asyncio
+    async def test_asyncgenerator_failure_closing_on_an_early_exit_is_mapped(self) -> None:
+        interceptor = ExceptionInterceptor(mapper=_mapper())
+
+        @interceptor.asyncgenerator(site="agen")
+        async def stream() -> __import__("collections.abc").AsyncGenerator[int, None]:
+            try:
+                yield 1
+                yield 2
+
+            finally:
+                raise ValueError("driver: cursor close failed on db-7")
+
+        agen = stream()
+        assert await agen.__anext__() == 1
+
+        with pytest.raises(CoreException, match="agen:driver") as raised:
+            await agen.aclose()
+
+        assert raised.value.expose_details is False
+
     @pytest.mark.asyncio
     async def test_asyncgenerator_cancellation_producing_an_item_passes_through(self) -> None:
         interceptor = ExceptionInterceptor(mapper=_mapper())
