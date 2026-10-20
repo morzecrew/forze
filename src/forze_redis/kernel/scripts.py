@@ -198,6 +198,7 @@ local transition = 'none'
 if phase == 'open' then
     if now - opened_at >= break_duration then
         phase = 'half_open'
+        opened_at = now
         half_open_calls = 0
         transition = 'half_open'
     else
@@ -206,6 +207,10 @@ if phase == 'open' then
 end
 
 if allowed == 1 and phase == 'half_open' then
+    if now - opened_at >= break_duration then
+        opened_at = now
+        half_open_calls = 0
+    end
     if half_open_calls < half_open_max then
         half_open_calls = half_open_calls + 1
     else

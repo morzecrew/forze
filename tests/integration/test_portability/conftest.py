@@ -34,7 +34,8 @@ def portability_postgres_container() -> Iterator[PostgresContainer]:
 def portability_mongo_container() -> Iterator[MongoDbContainer]:
     ensure_docker_available()
 
-    with MongoDbContainer(image="mongo:8.0-noble") as mongo:
+    # 7.0, not 8.x: see the mongo_container fixture in tests/integration/test_forze_mongo.
+    with MongoDbContainer(image="mongo:7.0-jammy") as mongo:
         yield mongo
 
 

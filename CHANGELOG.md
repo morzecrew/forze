@@ -11,13 +11,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **`CoreException.expose_details`** withholds an error's details from the client envelope, whatever its kind.
 
+- `CircuitBreakerStrategy` takes `failure_on` and `ignore_on`: which error kinds count as breaker failures and which are not recorded. The defaults keep the previous classification: infrastructure and timeout fail, throttled and concurrency are ignored.
+
 ### Changed
 
 - ...
 
 ### Fixed
 
-- ...
+- A circuit breaker whose half-open probes recorded no outcome (an ignored error kind, a cancelled call) no longer rejects every call until restart: after `break_duration` it admits a new probe round.
 
 ### Security
 
