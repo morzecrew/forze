@@ -2,6 +2,7 @@
 
 from collections.abc import Iterable
 from copy import deepcopy
+from datetime import UTC, datetime
 from typing import Any, cast
 
 from .._logger import logger
@@ -89,6 +90,36 @@ def apply_dict_patch(before: JsonDict, patch: JsonDict) -> JsonDict:
 # ....................... #
 
 
+def _same(before: Any, after: Any) -> bool:
+    """``before == after``, except that a naive ``datetime`` is the UTC instant beside an aware one.
+
+    A store reads back aware what it was given naive (``timestamptz``, BSON), so ``==``, never
+    true between a naive and an aware value, would count every resend of an unchanged instant
+    as a change.
+    """
+
+    if before == after:
+        return True
+
+    if isinstance(before, datetime) and isinstance(after, datetime):
+        return _as_utc(before) == _as_utc(after)
+
+    if isinstance(before, dict) and isinstance(after, dict):
+        return before.keys() == after.keys() and all(_same(v, after[k]) for k, v in before.items())
+
+    if type(before) is type(after) and isinstance(before, (list, tuple)):
+        return len(before) == len(after) and all(map(_same, before, after))
+
+    return False
+
+
+def _as_utc(value: datetime) -> datetime:
+    return value.replace(tzinfo=UTC) if value.utcoffset() is None else value
+
+
+# ....................... #
+
+
 def _diff_recursive(
     before: Any,
     after: Any,
@@ -142,13 +173,13 @@ def _diff_recursive(
         before = cast(list[Any], before)  # type: ignore[redundant-cast]
         after = cast(list[Any], after)  # type: ignore[redundant-cast]
 
-        if before != after:
+        if not _same(before, after):
             logger.trace("Diff replaced list at %s", path)
             _set_nested(patch, path, deepcopy(after))
 
         return
 
-    if before != after:
+    if not _same(before, after):
         logger.trace("Diff changed value at %s", path)
         _set_nested(
             patch,
@@ -171,7 +202,8 @@ def calculate_dict_difference(
     The resulting patch can be applied with :func:`apply_dict_patch` to obtain
     ``after`` from ``before`` when ``after`` holds no ``None``: a removed key and a key set
     to ``None`` both read ``None`` here. List changes are represented by replacing the
-    entire parent list.
+    entire parent list. A naive ``datetime`` beside an aware one is read as UTC, so the same
+    instant in either form is no change.
 
     :param before: Original JSON-like dictionary.
     :param after: Target JSON-like dictionary.
@@ -310,7 +342,7 @@ def has_hybrid_patch_conflict(
 
         is_both_scalar = pa in a_scalars and pb in b_scalars
 
-        if is_both_scalar and pa == pb and a_scalars[pa] == b_scalars[pb]:
+        if is_both_scalar and pa == pb and _same(a_scalars[pa], b_scalars[pb]):
             logger.trace("Ignoring compatible scalar overlap at '%s'", pa)
             return False
 

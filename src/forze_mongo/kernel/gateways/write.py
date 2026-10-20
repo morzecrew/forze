@@ -513,6 +513,9 @@ class MongoWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
         current = await self.read_gw.get(pk)
 
         if update is not None:
+            # As the store will keep it, so a value it would round finds no change.
+            update = cast(JsonDict, _bson_normalize_value(update))
+
             if rev is not None:
                 await self._validate_history((current, rev, update))
 
@@ -569,6 +572,8 @@ class MongoWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
         to_patch: list[tuple[int, D, JsonDict, JsonDict]] = []
 
         if updates is not None:
+            updates = [cast(JsonDict, _bson_normalize_value(u)) for u in updates]
+
             if revs is not None:
                 await self._validate_history(
                     *[(c, r, u) for c, r, u in zip(currents, revs, updates, strict=True)]

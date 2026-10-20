@@ -31,6 +31,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **A document update keeps the nulls inside a mapping or `Any` value** (**behaviour change**). A `None` there is stored as null, as create stores it, or refused where the value type admits no null. An update can no longer remove a key from a mapping.
 
+- **Resending an unchanged instant no longer bumps `rev`.** A document `update`, `upsert` or `upsert_many` compares a naive `datetime` with an aware one as UTC, either way round; on Mongo, finer than a millisecond is no change either.
+
 ### Security
 
 - **An error an integration translates from its backend no longer shows the failed call's context to API callers** (**behaviour change**): such an error carries no `context`, whatever its kind. The details stay on the exception and are logged at debug. A stream's failure between items is now translated too.

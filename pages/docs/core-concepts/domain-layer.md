@@ -97,7 +97,9 @@ class Order(Document):
 
 Updates are structured. `order.update({"total": 99})` returns a **new immutable
 instance** and a minimal diff, runs the validators, and bumps `last_update_at`.
-A patch that changes nothing returns the original and an empty diff.
+A patch that changes nothing returns the original and an empty diff. An update compares a
+naive `datetime` with a stored aware one as UTC, as Postgres and Mongo store a naive value
+(Mongo at millisecond precision), so resending the same instant is no change.
 
 The patch merges into what is stored: a field it names is set, and the rest are kept. Into
 a model (the document, a nested model, or one held in a union or a mapping) it merges field

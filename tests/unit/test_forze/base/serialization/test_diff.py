@@ -1,5 +1,6 @@
 import random
 from copy import deepcopy
+from datetime import UTC, datetime, timedelta, timezone
 from typing import Any
 
 import pytest
@@ -147,6 +148,26 @@ class TestCalculateDictDifference:
         assert diff == {"b": None}
         restored = apply_dict_patch(before, diff)
         assert restored == after
+
+    def test_a_naive_datetime_is_the_utc_instant_beside_an_aware_one(self) -> None:
+        aware = datetime(2026, 1, 1, 12, tzinfo=UTC)
+        naive = aware.replace(tzinfo=None)
+        plus3 = aware.astimezone(timezone(timedelta(hours=3)))
+
+        for before, after in ((aware, naive), (naive, aware), (naive, plus3)):
+            assert calculate_dict_difference(
+                {"at": before, "rows": [{"at": before}], "deep": {"at": before}, "span": (before,)},
+                {"at": after, "rows": [{"at": after}], "deep": {"at": after}, "span": (after,)},
+            ) == {}
+
+        # A tuple is compared element-wise only against a tuple.
+        assert calculate_dict_difference({"span": (aware,)}, {"span": [naive]}) == {
+            "span": [naive]
+        }
+
+        later = naive + timedelta(hours=1)
+        assert calculate_dict_difference({"at": aware}, {"at": later}) == {"at": later}
+        assert calculate_dict_difference({"rows": [aware]}, {"rows": [later]}) == {"rows": [later]}
 
 
 # ----------------------- #
@@ -398,6 +419,15 @@ class TestHasHybridPatchConflict:
 
     def test_conflict_same_scalar_different_value(self) -> None:
         assert has_hybrid_patch_conflict({("a",): 1}, set(), {("a",): 2}, set())
+
+    def test_no_conflict_same_instant_naive_and_aware(self) -> None:
+        aware = datetime(2026, 1, 1, 12, tzinfo=UTC)
+        naive = aware.replace(tzinfo=None)
+
+        assert not has_hybrid_patch_conflict({("a",): aware}, set(), {("a",): naive}, set())
+        assert has_hybrid_patch_conflict(
+            {("a",): aware}, set(), {("a",): naive + timedelta(hours=1)}, set()
+        )
 
     def test_conflict_container_overlap(self) -> None:
         assert has_hybrid_patch_conflict({}, {("a",)}, {}, {("a", "b")})
