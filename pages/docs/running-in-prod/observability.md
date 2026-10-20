@@ -207,8 +207,8 @@ logger under it (`forze_postgres.kernel`, `forze_postgres.adapters`, …), so th
 is nothing per-subpackage to enumerate.
 
 Until structlog is configured (`configure_logging`, `bootstrap_logging` or your own
-`structlog.configure`), forze writes nothing to stdout: it hands each event to the
-stdlib logger of the same name at that logger's level, so warnings and above reach
+`structlog.configure`), forze does not print to stdout itself: it hands each event to
+the stdlib logger of the same name at that logger's level, so warnings and above reach
 stderr by default, or your own `logging` handlers at the level you set.
 
 `configure_logging` remains the lower-level entry point when you want to wire the
