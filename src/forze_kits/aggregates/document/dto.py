@@ -62,7 +62,8 @@ class DocumentUpdateRes[Out: BaseModel](BaseDTO):
     """Updated read model."""
 
     diff: JsonDict
-    """Diff of the update."""
+    """Diff of the update, merge-patch shaped: inside a mapping or ``Any`` value a ``None`` is
+    a key removed or set to null."""
 
 
 # ....................... #
