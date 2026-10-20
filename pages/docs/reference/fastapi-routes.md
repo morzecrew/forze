@@ -47,7 +47,8 @@ Instead of `ns=spec.default_namespace` you can pass `resource="notes"` — the
 attacher builds the namespace for you (`StrKeyNamespace(prefix="notes")`). It
 must equal the prefix the operations were registered under (the kit builders
 default to `spec.default_namespace`); `ns=` and `resource=` are mutually
-exclusive, so provide exactly one. To move a single operation off its default
+exclusive, so provide exactly one (only `attach_authn_routes` can infer it, see
+[Authn routes](#authn-routes)). To move a single operation off its default
 path, pass `path_overrides={DocumentKernelOp.GET: "/by-id/{id}"}` (keyed like
 `include=`). Only the path changes — the `operationId` stays the verbatim catalog
 key, so the HTTP/MCP/catalog identity is preserved; an override that drops a
@@ -246,6 +247,12 @@ they 401 without a bound identity and show up protected under
 `build_authn_registry` gets `admin_guards`, and run behind them. The full
 wiring (including how the reset token reaches the user via the outbox) is in the
 [Authn, authz & tenancy recipe](../recipes/authn-authz-tenancy-fastapi.md#http-login-endpoints).
+
+Unlike the other helpers, `attach_authn_routes` needs neither `ns=` nor `resource=`:
+without them it uses the one namespace in the registry that holds `password_login` or
+`refresh_tokens` under the default `.` separator, which is `spec.default_namespace` for
+`build_authn_registry(spec)`. It never guesses — several such namespaces, or none, is a
+configuration error that asks for `ns=`.
 
 ### Cookie mode
 

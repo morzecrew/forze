@@ -43,7 +43,7 @@ cookies = AuthnCookieCarrier(access_path="/api", refresh_path="/auth/refresh")
 attach_authn_routes(router, registry=registry, ctx_dep=ctx_dep, cookies=cookies)
 ```
 
-Login and refresh then set and rotate two `HttpOnly` cookies and strip the token strings from the body (scheme and lifetimes stay); refresh falls back to its cookie; logout expires both idempotently. Point `CookieTokenAuthn(cookie_name=...)` at the same `access_cookie`.
+Login and refresh then set and rotate two `HttpOnly` cookies and strip the token strings from the body (scheme and lifetimes stay); refresh falls back to its cookie for no body or `{}`; logout expires both idempotently. Point `CookieTokenAuthn(cookie_name=...)` at the same `access_cookie`. `ns=` may be omitted: the routes use the registry's one authn namespace (`spec.default_namespace`).
 
 Two things break cookie mode if you skip them:
 

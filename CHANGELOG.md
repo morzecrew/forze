@@ -25,6 +25,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **`IssuedApiKey.secret`** returns the raw key of a freshly issued API key. It stays out of `repr()` and `str()`.
 
+- **`attach_authn_routes` no longer needs `ns=`.** Without `ns=` or `resource=` it uses the one namespace in the registry holding its login and refresh operations, `spec.default_namespace` for `build_authn_registry(spec)`, and refuses to guess.
+
 ### Changed
 
 - **Until structlog is configured (`configure_logging` or your own `structlog.configure`), forze no longer prints to stdout itself** (behaviour change): its events go to the same-named stdlib logger at its level, so they reach only your stdlib handlers, or stderr from warnings up by default. Call `configure_logging` to keep info output.

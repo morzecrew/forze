@@ -340,6 +340,67 @@ class TestAuthnRouteSurface:
                 include={AuthnKernelOp.LOGOUT},
             )
 
+    def test_namespace_defaults_to_the_registrys_authn_namespace(self) -> None:
+        # build_authn_registry(spec) registers under spec.default_namespace; with
+        # neither ns= nor resource=, that is the namespace the routes dispatch to.
+        router = APIRouter(prefix="/auth")
+        attach_authn_routes(
+            router,
+            registry=build_authn_registry(AUTHN_SPEC).freeze(),
+            ctx_dep=lambda: context_from_modules(MockDepsModule(state=MockState())),
+        )
+        app = FastAPI()
+        app.include_router(router)
+
+        assert _operation_ids(app) == _operation_ids(_build_app())
+
+    def test_namespace_is_not_guessed_between_two_authn_namespaces(self) -> None:
+        registry = OperationRegistry.merge(
+            build_authn_registry(AUTHN_SPEC),
+            build_authn_registry(AUTHN_SPEC, ns=StrKeyNamespace(prefix="other")),
+        ).freeze()
+
+        with pytest.raises(CoreException, match="main, other"):
+            attach_authn_routes(APIRouter(), registry=registry, ctx_dep=lambda: None)  # type: ignore[arg-type, return-value]
+
+    def test_namespace_inference_without_authn_operations_raises(self) -> None:
+        with pytest.raises(CoreException, match="refresh_tokens: none"):
+            attach_authn_routes(
+                APIRouter(),
+                registry=OperationRegistry().freeze(),
+                ctx_dep=lambda: None,  # type: ignore[arg-type, return-value]
+            )
+
+    def test_a_foreign_op_named_like_a_kernel_op_is_not_an_authn_namespace(self) -> None:
+        foreign = OperationRegistry(handlers={"billing.logout": lambda _ctx: _allow})
+
+        with pytest.raises(CoreException, match="refresh_tokens: none"):
+            attach_authn_routes(
+                APIRouter(),
+                registry=foreign.freeze(),
+                ctx_dep=lambda: None,  # type: ignore[arg-type, return-value]
+            )
+
+        # Beside a real authn registry it is no rival: the authn namespace is inferred.
+        router = APIRouter(prefix="/auth")
+        attach_authn_routes(
+            router,
+            registry=OperationRegistry.merge(build_authn_registry(AUTHN_SPEC), foreign).freeze(),
+            ctx_dep=lambda: context_from_modules(MockDepsModule(state=MockState())),
+        )
+        app = FastAPI()
+        app.include_router(router)
+
+        assert _operation_ids(app) == _operation_ids(_build_app())
+
+    def test_a_custom_separator_is_never_inferred(self) -> None:
+        registry = build_authn_registry(
+            AUTHN_SPEC, ns=StrKeyNamespace(prefix="main", sep=":")
+        ).freeze()
+
+        with pytest.raises(CoreException, match="refresh_tokens: none"):
+            attach_authn_routes(APIRouter(), registry=registry, ctx_dep=lambda: None)  # type: ignore[arg-type, return-value]
+
     def test_unregistered_operations_are_skipped(self) -> None:
         app = _build_app(registry=_partial_registry(_NS))
 
