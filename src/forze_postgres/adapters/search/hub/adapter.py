@@ -13,8 +13,11 @@ import attrs
 from psycopg import sql
 from pydantic import BaseModel
 
+from forze.application.contracts.base import CountlessPage, Page
 from forze.application.contracts.embeddings import EmbeddingsProviderPort
 from forze.application.contracts.querying import (
+    UNSUPPORTED_QUERY_FEATURE_CODE,
+    AggregatesExpression,
     PaginationExpression,
     QueryFilterExpression,
     QuerySortExpression,
@@ -32,8 +35,11 @@ from forze.application.contracts.search import (
 )
 from forze.application.integrations.search import SearchResultSnapshot
 from forze.base.exceptions import exc
+from forze.base.primitives import JsonDict
 
 from ....kernel.gateways import PostgresGateway
+from ....kernel.sql.query import PsycopgQueryRenderer, compose_aggregate_statement
+from .._aggregate_run import execute_search_aggregate
 from .._materialize_hits import search_trust_source
 from .._offset_run import RankedOffsetPlan, execute_hub_ranked_offset_search
 from .._pipeline_sql import SEARCH_SCORE_ALIAS
@@ -81,6 +87,12 @@ class PostgresHubSearchAdapter[M: BaseModel](  # pyright: ignore[reportIncompati
     read_validation: Literal["strict", "trusted"] = "strict"
     """Row decode mode for hub search hits (``trusted`` skips Pydantic validation)."""
 
+    spec: HubSearchSpec[M] = attrs.field(
+        default=attrs.Factory(lambda self: self.hub_spec, takes_self=True),
+        init=False,
+    )
+    """:attr:`hub_spec`, under the name the shared search port reads (aggregate checks)."""
+
     # ....................... #
 
     def __attrs_post_init__(self) -> None:
@@ -107,7 +119,96 @@ class PostgresHubSearchAdapter[M: BaseModel](  # pyright: ignore[reportIncompati
         # from each leg before merging, so a keyset walk (and a stream export) cannot go past
         # that per-leg bound — completeness is not guaranteed. Streaming fails closed; a hub
         # export uses a result snapshot instead.
-        return SearchCapabilities(hybrid_fusion=frozenset({"rrf"}))
+        #
+        # ``supports_aggregates``: an aggregate merges uncapped legs, the set an exact page
+        # total counts, not the capped one a page ranks.
+        return SearchCapabilities(hybrid_fusion=frozenset({"rrf"}), supports_aggregates=True)
+
+    # ....................... #
+
+    async def _aggregate_search_impl(
+        self,
+        aggregates: AggregatesExpression,
+        query: str | Sequence[str],
+        filters: QueryFilterExpression | None,  # type: ignore[valid-type]
+        pagination: PaginationExpression | None,
+        sorts: QuerySortExpression | None,  # type: ignore[valid-type]
+        *,
+        options: SearchOptions | None,
+        return_count: bool,
+    ) -> CountlessPage[JsonDict] | Page[JsonDict]:
+        """Group the merged hub rows an exact page total counts: every leg uncapped, no
+        merge cap, the hub's filters applied. The rows carry the read fields and
+        :attr:`~HubSearchSpec.extra_aggregatable_fields`."""
+
+        resolve_fusion(
+            cast("MultiSourceSearchOptions", options or {}).get("fusion"),
+            self.search_capabilities,
+            backend="postgres_hub",
+        )
+        types = await self.column_types()
+        hub_qn = await self._qname()
+
+        if missing := self.hub_spec.extra_aggregatable_fields - frozenset(types):
+            raise exc.internal(
+                f"Hub search {self.hub_spec.name!r} ({hub_qn.schema}.{hub_qn.name}): extra "
+                f"aggregatable field(s) {sorted(missing)} are not columns of the hub relation.",
+                code="postgres_schema_validation_failed",
+                details={"missing": sorted(missing)},
+            )
+
+        # The cursor plan has no merge cap; ``uncapped_legs`` lifts the per-leg one.
+        plan = await build_hub_search_plan(
+            self,
+            query=query,
+            options=options,
+            sorts=None,
+            pagination_or_cursor={},
+            snapshot=None,
+            result_snapshot=None,
+            mode="cursor",
+        )
+
+        if plan.do_legs and any(leg.engine == "vector" for _i, leg, _w in plan.active):
+            # Uncapped, a vector leg matches every embedded row: there is no matched set.
+            raise exc.precondition(
+                f"Hub search {self.hub_spec.name!r}: an aggregate cannot measure a vector "
+                "leg's matches; weight its member out with member_weights.",
+                code=UNSUPPORTED_QUERY_FEATURE_CODE,
+            )
+
+        with_clause, params, _, combo, _ = await self._hub_build_with_clause_from_plan(
+            plan,
+            filters=filters,
+            uncapped_legs=True,
+            fields=sorted(self.read_fields | self.hub_spec.extra_aggregatable_fields),
+        )
+        renderer = PsycopgQueryRenderer(
+            types=types,
+            model_type=self.model_type,
+            nested_field_hints=self.nested_field_hints,
+            table_alias=COMBO_ALIAS,
+        )
+        aggregate = compose_aggregate_statement(
+            renderer,
+            aggregates,
+            filter_parser=self.filter_parser,
+            source=sql.SQL("FROM {} AS {}").format(
+                sql.Identifier(combo), sql.Identifier(COMBO_ALIAS)
+            ),
+            source_params=[],
+        )
+
+        return await execute_search_aggregate(
+            self.client,
+            head=with_clause,
+            head_params=params,
+            aggregate=aggregate,
+            aggregates=aggregates,
+            pagination=pagination,
+            sorts=sorts,
+            return_count=return_count,
+        )
 
     # ....................... #
 

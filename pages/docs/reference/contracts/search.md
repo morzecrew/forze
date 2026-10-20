@@ -44,7 +44,9 @@ result-set snapshots.
 | `read_codec` | `ModelCodec \| None` | `None` | row codec override (auto-derived otherwise) |
 
 `HubSearchSpec` carries the same `read_conformity` / `lenient_read_fields` / `materialized`
-over its hub-row model (a hub has no index `fields` of its own). `FederatedSearchSpec`
+over its hub-row model (a hub has no index `fields` of its own), and takes
+`extra_aggregatable_fields`: hub-relation columns outside that model an aggregate may group by
+or measure (see [Aggregating matches](#aggregating-matches)). `FederatedSearchSpec`
 inherits these from each member spec.
 A federated search merges thin by default (`thin_merge=True`): each member returns its ids
 (and the fields of any requested sort), and just the page is re-read from its member.
@@ -140,12 +142,20 @@ the groups after them, so pages of groups neither repeat nor skip one; without a
 every group comes back, as `aggregate_many` returns them. `aggregate_search_page` adds the number of groups, after `$having`.
 Groups, measures and per-metric filters may name only the spec's `aggregatable_fields` —
 stored, not field-encrypted — and the `facets` and `highlight` options are refused, as they
-describe hits, as is `max_candidates`, which would cut the set.
+describe hits, as are `max_candidates` and a hub's `merge_candidates`, which would cut the set.
+
+A hub aggregates its merged rows with every leg uncapped: `per_leg_limit` and the merge cap
+bound a page, not an aggregate, so the groups add up to the exact page total. Its measures
+often live in columns of the hub relation that its read model leaves out, such as a view's
+computed totals; name them in `HubSearchSpec.extra_aggregatable_fields` and an aggregate may
+group by or measure them too, though not filter on them. Postgres checks they exist on the first
+aggregate. A query that reaches a vector leg is refused, since an uncapped vector leg matches
+every embedded row.
 
 Aggregation is capability-gated (`SearchCapabilities.supports_aggregates`): Postgres FTS /
-PGroonga and the in-memory adapter aggregate; vector search (every row is some embedding's
-neighbour), hub search (legs are capped before the merge), federated search, Mongo and
-Meilisearch **refuse** with `query_feature_unsupported` rather than measure a partial set.
+PGroonga, hub search (Postgres and in-memory) and the in-memory adapter aggregate; vector
+search (every row is some embedding's neighbour), federated search, Mongo and Meilisearch
+**refuse** with `query_feature_unsupported` rather than measure a partial set.
 
 ### Facets and highlights
 
