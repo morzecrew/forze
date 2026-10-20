@@ -54,7 +54,8 @@ def _split_authorization(raw: str, sep: str = " ") -> tuple[str, str | None]:
 
 COOKIE_CSRF_SCOPE_KEY = "forze.cookie_csrf"
 """ASGI scope key under which :class:`~forze_fastapi.middlewares.SecurityContextMiddleware`
-publishes :func:`cookie_csrf_gates` of its ingress."""
+publishes :func:`cookie_csrf_gates` of its ingress, read by each cookie ingress it resolves
+and by the cookie-mode refresh route."""
 
 _DEFAULT_COOKIE_CSRF = CookieCsrf()
 
@@ -145,8 +146,13 @@ async def _resolve_cookie_token_authn(
     # proof, independent of the outbound carrier's SameSite (which a proxy or a
     # SameSite=None deployment can void), and fires only when the cookie is
     # present — a cookie-less request has no ambient credential to forge, so
-    # header-authenticated non-browser clients pass untouched.
-    enforce_cookie_csrf(ingress.csrf, request)
+    # header-authenticated non-browser clients pass untouched. Every gate the app
+    # declared for this cookie applies, not only this ingress's: an opt-out on an
+    # ingress resolved first must not let another ingress's gated cookie through.
+    published = request.scope.get(COOKIE_CSRF_SCOPE_KEY) or {}
+
+    for gate in (ingress.csrf, *published.get(ingress.cookie_name, ())):
+        enforce_cookie_csrf(gate, request)
 
     creds = AccessTokenCredentials(
         token=token,

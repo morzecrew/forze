@@ -175,8 +175,9 @@ class SecurityContextMiddleware:
             await self.app(scope, receive, send)
             return
 
-        # The cookie-mode refresh route reads its own cookie after routing; it applies the
-        # gate configured on the ingress that reads the carrier's access cookie.
+        # Before resolution: a cookie ingress applies every gate declared for its cookie. The
+        # cookie-mode refresh route, which reads its own cookie after routing, applies the
+        # gates declared for the carrier's access cookie.
         scope[COOKIE_CSRF_SCOPE_KEY] = cookie_csrf_gates(self.authn.ingress)
 
         request = Request(scope, receive)

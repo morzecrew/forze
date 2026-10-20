@@ -37,6 +37,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Cookie-mode `/refresh` applies the cookie CSRF gate to the refresh cookie** (**behaviour change**): a refresh taking its token from the cookie must prove its origin as access-cookie requests do, under the same `CookieTokenAuthn(csrf=...)` gate (its `allowed_origins`, or `None`). A body token is unaffected.
 
+- **A cookie read by several `CookieTokenAuthn` ingresses keeps every CSRF gate they declare**: one ingress's `csrf=None` no longer lets the cookie through ungated.
+
 ## [0.15.1] - 2026-10-19
 
 ### Fixed

@@ -23,6 +23,7 @@ from forze.application.contracts.authn import (
 from forze.application.execution import Deps, ExecutionContext
 from forze.base.exceptions import CoreException, ExceptionKind
 from forze_fastapi.security import CookieCsrf, CookieTokenAuthn, resolve_authn_ingress
+from forze_fastapi.security.resolvers import COOKIE_CSRF_SCOPE_KEY, cookie_csrf_gates
 from tests.support.execution_context import context_from_deps
 
 # ----------------------- #
@@ -357,3 +358,26 @@ class TestCookieIngressCsrfGate:
         )
 
         assert authn is not None
+
+    @pytest.mark.asyncio
+    async def test_an_opt_out_never_drops_another_ingress_gate(self) -> None:
+        # Resolved first, the opted-out ingress still applies the gate another ingress
+        # declares for the same cookie, as the security middleware publishes it.
+        request = _request(origin="https://evil.example.net")
+        request.scope[COOKIE_CSRF_SCOPE_KEY] = cookie_csrf_gates(
+            [_ingress(csrf=None), _ingress()]
+        )
+
+        with pytest.raises(CoreException) as ei:
+            await resolve_authn_ingress(_ingress(csrf=None), request=request, ctx=_ctx())
+
+        assert ei.value.code == "csrf_rejected"
+
+    @pytest.mark.asyncio
+    async def test_a_cookie_every_ingress_opts_out_of_is_ungated(self) -> None:
+        request = _request(origin="https://evil.example.net")
+        request.scope[COOKIE_CSRF_SCOPE_KEY] = cookie_csrf_gates(
+            [_ingress(csrf=None), _ingress(csrf=None)]
+        )
+
+        assert await resolve_authn_ingress(_ingress(csrf=None), request=request, ctx=_ctx())
