@@ -56,6 +56,7 @@ from forze.base.exceptions import exc
 from forze.base.primitives import StrKey
 from forze.domain.models import BaseDTO, Document
 from forze_identity.authz.application import policy_principal_spec
+from forze_identity.authz.domain.models.policy_principal import ReadPolicyPrincipal
 
 from ...adapters import (
     ApiKeyLifecycleAdapter,
@@ -113,9 +114,14 @@ def _resolve_eligibility(
 
 def _session_revocation(
     ctx: ExecutionContext,
+    spec: AuthnSpec,
     shared: AuthnSharedServices | None,
+    *,
+    raises: bool = True,
 ) -> SessionRevocation | None:
-    """The fast path's reads and writes for this request, or ``None`` when not configured."""
+    """The fast path's reads and writes for this request, or ``None`` when not configured.
+    *raises* is ``False`` for a consumer that never raises an epoch, which then resolves no
+    policy principals to lock."""
 
     config = shared.revocation_states if shared is not None else None
 
@@ -129,7 +135,35 @@ def _session_revocation(
         sessions=ctx.doc.query(session_spec),
         in_transaction=lambda: ctx.tx_ctx.depth() > 0,
         defer=ctx.tx_ctx.run_or_defer,
+        principals=_principals_to_lock(ctx, spec) if raises else None,
     )
+
+
+def _principals_to_lock(
+    ctx: ExecutionContext,
+    spec: AuthnSpec,
+) -> DocumentQueryPort[ReadPolicyPrincipal] | None:
+    """The policy principals an epoch raise locks first, or ``None``: where an issue locks no
+    principal (``eligibility="allow_all"``), none is registered, or a locking read on their
+    backend excludes nothing."""
+
+    # The lookup an issue's provide makes: the route, then the plain fallback.
+    eligibility = (
+        ctx.deps.provide(PrincipalEligibilityDepKey, route=spec.name)
+        if ctx.deps.exists(PrincipalEligibilityDepKey, route=spec.name)
+        or ctx.deps.exists(PrincipalEligibilityDepKey)
+        else None
+    )
+
+    if eligibility is None or isinstance(eligibility, ConfigurableAllowAllEligibility):
+        return None
+
+    if not ctx.deps.resolvable(DocumentQueryDepKey, route=policy_principal_spec.name):
+        return None
+
+    principals = ctx.doc.query(policy_principal_spec)
+
+    return principals if _locks_exclude(principals) else None
 
 
 def _api_key_revocation(
@@ -273,7 +307,7 @@ class ConfigurableForzeJwtTokenVerifier:
         return ForzeJwtTokenVerifier(
             access_svc=self.shared.access_svc,
             session_qry=ctx.doc.query(session_spec),
-            revocation=_session_revocation(ctx, self.shared),
+            revocation=_session_revocation(ctx, spec, self.shared, raises=False),
         )
 
 
@@ -447,8 +481,15 @@ class ConfigurableAuthn:
 
 _SKIP_BACKEND = "forze_postgres"
 """The backend whose locking read of the policy principal excludes a concurrent deactivation,
-so an issue serializes with it: the skip's precondition. The mock's locking read only claims
-the row, so on the mock (as on Mongo) every verification reads."""
+so an issue serializes with it: the skip's precondition, and where an epoch raise takes the
+principal's row first. The mock's locking read only claims the row, so on the mock (as on
+Mongo) every verification reads."""
+
+
+def _locks_exclude(principals: DocumentQueryPort[ReadPolicyPrincipal]) -> bool:
+    """Whether a locking read of *principals* excludes a concurrent writer of the row."""
+
+    return type(backend_of(principals)).__module__.split(".")[0] == _SKIP_BACKEND
 
 
 def _deactivations_raise_epochs(ctx: ExecutionContext, config: RevocationStates) -> bool:
@@ -512,7 +553,7 @@ class ConfigurablePolicyPrincipalEligibility:
             # Unsigned, a cached epoch can be restored by whoever writes the states store. The
             # authz kernel refuses that configuration; a hook registered by hand reaches here.
             or config.key_mac is None
-            or type(backend_of(principal_qry)).__module__.split(".")[0] != _SKIP_BACKEND
+            or not _locks_exclude(principal_qry)
         ):
             return adapter
 
@@ -604,7 +645,7 @@ class ConfigurablePrincipalDeactivation:
             ak_cmd=ak_cmd,
             key_revocation=_api_key_revocation(ctx, self.shared) if ak_qry is not None else None,
         )
-        revocation = _session_revocation(ctx, self.shared)
+        revocation = _session_revocation(ctx, spec, self.shared, raises=False)
         stores = (
             (pa_cmd, ak_cmd, ctx.doc.command(policy_principal_spec), ctx.doc.command(session_spec))
             if revocation is not None
@@ -649,7 +690,7 @@ class ConfigurableTokenLifecycle:
             session_cmd=ctx.doc.command(session_spec),
             eligibility=_resolve_eligibility(ctx, spec),
             events=_resolve_events(ctx, spec),
-            revocation=_session_revocation(ctx, self.shared),
+            revocation=_session_revocation(ctx, spec, self.shared),
             key_revocation=_caller_key_revocation(ctx, self.shared),
         )
 
@@ -691,7 +732,7 @@ class ConfigurablePasswordLifecycle:
             session_cmd=ctx.doc.command(session_spec) if revoke else None,
             revoke_sessions_on_password_change=revoke,
             events=_resolve_events(ctx, spec),
-            revocation=_session_revocation(ctx, self.shared) if revoke else None,
+            revocation=_session_revocation(ctx, spec, self.shared) if revoke else None,
         )
 
 
@@ -738,7 +779,7 @@ class ConfigurablePasswordReset:
             session_cmd=ctx.doc.command(session_spec) if revoke else None,
             revoke_sessions_on_reset=revoke,
             events=_resolve_events(ctx, spec),
-            revocation=_session_revocation(ctx, self.shared) if revoke else None,
+            revocation=_session_revocation(ctx, spec, self.shared) if revoke else None,
         )
 
 
@@ -774,7 +815,7 @@ class ConfigurableApiKeyLifecycle:
             ),
             events=_resolve_events(ctx, spec),
             caller=ctx.inv_ctx.get_authn,
-            revocation=_session_revocation(ctx, self.shared),
+            revocation=_session_revocation(ctx, spec, self.shared, raises=False),
             key_revocation=_api_key_revocation(ctx, self.shared),
         )
 
@@ -813,7 +854,7 @@ class ConfigurablePasswordAccountProvisioning:
             invite_svc=invite_svc,
             invite_qry=invite_qry,
             invite_cmd=invite_cmd,
-            revocation=_session_revocation(ctx, self.shared),
+            revocation=_session_revocation(ctx, spec, self.shared, raises=False),
             key_revocation=_caller_key_revocation(ctx, self.shared),
         )
 

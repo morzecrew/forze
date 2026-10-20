@@ -169,6 +169,17 @@ class _ForeignPort:
         return counted
 
 
+def _client_context(client: PostgresClient) -> ExecutionContext:
+    return context_from_deps(
+        Deps.plain(
+            {
+                PostgresClientDepKey: client,
+                PostgresIntrospectorDepKey: PostgresIntrospector(client=client),
+            }
+        )
+    )
+
+
 async def _stack(
     pg_client: PostgresClient,
     redis_client: RedisClient,
@@ -180,6 +191,7 @@ async def _stack(
     extra: Deps | None = None,
     epoch_client: PostgresClient | None = None,
     account_client: PostgresClient | None = None,
+    principal_client: PostgresClient | None = None,
     ttl: timedelta = timedelta(minutes=5),
     signed: bool = True,
 ) -> _Stack:
@@ -200,6 +212,10 @@ async def _stack(
     principal_query = ConfigurablePostgresReadOnlyDocument(
         config=PostgresReadOnlyDocumentConfig(read=("public", principals)),
     )
+    # The policy principals read through a client of their own, as on another database.
+    principals_elsewhere = (
+        _client_context(principal_client) if principal_client is not None else None
+    )
     deps = (
         Deps(
             store=_authn_pg_deps(pg_client, suffix=suffix).store.without_route(
@@ -212,7 +228,7 @@ async def _stack(
                     DocumentQueryDepKey: {
                         policy_principal_spec.name: lambda ctx, spec: (
                             CountingPrincipalReads if proxy else _ForeignPort
-                        )(principal_query(ctx, spec), reads=reads),
+                        )(principal_query(principals_elsewhere or ctx, spec), reads=reads),
                     },
                     TransactionManagerDepKey: {TX: postgres_txmanager},
                 }
@@ -268,14 +284,7 @@ async def _stack(
 
     if account_client is not None:
         # The password accounts' writes go through a client of their own, as on another database.
-        elsewhere = context_from_deps(
-            Deps.plain(
-                {
-                    PostgresClientDepKey: account_client,
-                    PostgresIntrospectorDepKey: PostgresIntrospector(client=account_client),
-                }
-            )
-        )
+        elsewhere = _client_context(account_client)
         accounts = ConfigurablePostgresDocument(
             config=PostgresDocumentConfig(
                 read=("public", f"authn_pwd_{suffix}"),
@@ -745,6 +754,100 @@ async def test_a_deactivation_and_a_password_change_never_deadlock(
         if isinstance(result, BaseException):
             assert "deadlock" not in str(result).lower(), result
             assert isinstance(result, CoreException), result
+
+
+async def _lock_waiter_relations(pg_client: PostgresClient) -> set[str]:
+    """Once one backend waits on a lock, the relations it holds or awaits locks on."""
+
+    while True:
+        waiting = await pg_client.fetch_all(
+            "SELECT pid FROM pg_stat_activity "
+            "WHERE wait_event_type = 'Lock' AND datname = current_database()",
+            row_factory="tuple",
+        )
+
+        if waiting:
+            break
+
+        await asyncio.sleep(0.05)
+
+    ((pid,),) = waiting
+    rows = await pg_client.fetch_all(
+        "SELECT c.relname FROM pg_locks l JOIN pg_class c ON c.oid = l.relation WHERE l.pid = %s",
+        (pid,),
+        row_factory="tuple",
+    )
+
+    return {str(row[0]) for row in rows}
+
+
+@pytest.mark.parametrize("deactivation", ["document_port", "sql"])
+async def test_a_logout_then_a_deactivation_never_deadlocks_with_a_login(
+    pg_client: PostgresClient,
+    redis_client: RedisClient,
+    deactivation: str,
+) -> None:
+    # The login holds the principal's row and waits to hold the epoch. The raise locks the
+    # principal first too, so the logout waits for the login instead of taking the epoch the
+    # login then waits on while the deactivation waits on the login's row.
+    gates: dict[str, _Gate] = {}
+    stack = await _stack(pg_client, redis_client, gates=gates)
+    principal = await stack.principal()
+    gate = gates["before_hold"] = _Gate()
+
+    async def close() -> None:
+        await stack.ctx.authn.token_lifecycle(SPEC).revoke_tokens(
+            AuthnIdentity(principal_id=principal)
+        )
+
+        if deactivation == "document_port":
+            await battery.DEACTIVATIONS["update"](stack, principal)
+
+        else:
+            await pg_client.execute(
+                sql.SQL("UPDATE {table} SET is_active = false WHERE id = %s").format(
+                    table=sql.Identifier("public", stack._principals)
+                ),
+                (principal,),
+            )
+
+    async with asyncio.timeout(20):
+        logging_in = asyncio.create_task(battery.login(stack, principal))
+        await gate.reached.wait()
+
+        closing = asyncio.create_task(stack.in_tx(close))
+        # Waiting on the principal's row, before it has touched the epoch.
+        relations = await _lock_waiter_relations(pg_client)
+        assert stack._principals in relations
+        assert stack._epochs not in relations
+        assert not closing.done()
+
+        gate.release.set()
+        issued, _ = await asyncio.gather(logging_in, closing)
+
+    assert not await stack.is_active(principal)
+    assert await battery.verify(stack, issued) == "session_revoked"
+
+
+async def test_a_logout_with_the_principals_on_another_database_locks_nothing(
+    pg_client: PostgresClient,
+    redis_client: RedisClient,
+    other_client: PostgresClient,
+) -> None:
+    # The transaction does not hold the principals' reads, so the raise cannot lock their row
+    # there: it raises the epoch as before.
+    stack = await _stack(pg_client, redis_client, principal_client=other_client)
+    principal = await stack.principal()
+    stack.principal_reads.clear()
+
+    await stack.in_tx(
+        lambda: stack.ctx.authn.token_lifecycle(SPEC).revoke_tokens(
+            AuthnIdentity(principal_id=principal)
+        )
+    )
+
+    assert stack.principal_reads == []
+    assert await stack.epoch(principal) == 1
 
 
 class _GatedCreate:

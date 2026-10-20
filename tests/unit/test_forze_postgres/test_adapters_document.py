@@ -451,6 +451,17 @@ class TestPostgresDocumentAdapterRequireWrite:
         with pytest.raises(CoreException, match="not configured"):
             await adapter.create(TCreate(title="x"))
 
+class TestPostgresDocumentAdapterEnlistment:
+    @pytest.mark.parametrize("in_transaction", [True, False])
+    def test_a_read_only_port_reports_its_read_client(self, in_transaction: bool) -> None:
+        rg = _read_gw_full()
+        rg.client = MagicMock()
+        rg.client.is_in_transaction.return_value = in_transaction
+        ds = _full_spec()
+        adapter = PostgresDocumentAdapter(spec=ds, read_gw=rg, document_cache=_pg_cc(rg, ds))
+
+        assert adapter.is_transactionally_enlisted() is in_transaction
+
 class TestPostgresDocumentAdapterQueryDelegation:
     @pytest.mark.asyncio
     async def test_find_delegates(self) -> None:

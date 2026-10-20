@@ -9,15 +9,17 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
 from datetime import timedelta
-from typing import Any, TypeVar
+from typing import Any, Literal, TypeVar
 from uuid import UUID, uuid4
 
 import attrs
 import pytest
 
 from forze.application.contracts.authn import (
+    AuthnIdentity,
     AuthnSpec,
     PasswordCredentials,
+    PrincipalEligibilityDepKey,
     PrincipalEpochDepKey,
     RevocationStatesDepKey,
 )
@@ -41,7 +43,13 @@ from forze_identity.authn.application.specs import (
     password_account_spec,
     session_spec,
 )
-from forze_identity.authn.services import PasswordConfig, PolicyPrincipalEpochHook
+from forze_identity.authn.execution.deps import deps as authn_deps
+from forze_identity.authn.services import (
+    EpochRaise,
+    PasswordConfig,
+    PolicyPrincipalEpochHook,
+    revocation_states,
+)
 from forze_identity.authz import AuthzDepsModule, AuthzKernelConfig
 from forze_identity.authz.application.specs import policy_principal_spec
 from forze_identity.authz.domain.models.policy_principal import (
@@ -108,6 +116,7 @@ def _stack(
     *,
     authz: RevocationStates | None = CONFIG,
     authn: RevocationStates | None = CONFIG,
+    eligibility: Literal["policy_principal", "allow_all"] = "policy_principal",
 ) -> _Stack:
     mock = MockDepsModule()
     state = mock.state
@@ -131,6 +140,7 @@ def _stack(
     deps = (
         AuthnDepsModule(
             kernel=kernel,
+            eligibility=eligibility,
             authn={ROUTE: SPEC.enabled_methods},
             authz_route=ROUTE,
             token_lifecycle={ROUTE},
@@ -359,3 +369,135 @@ def test_the_skip_is_refused_without_signed_epochs() -> None:
         AuthzKernelConfig(revocation_states=unsigned)
 
     assert caught.value.code == "authn_eligibility_skip_requires_key_mac"
+
+
+class _Principals:
+    """A policy principal query port recording its locking reads into *calls*."""
+
+    def __init__(self, calls: list[tuple[str, Any]], *, found: bool, enlisted: bool) -> None:
+        self.calls, self._found, self._enlisted = calls, found, enlisted
+
+    def is_transactionally_enlisted(self) -> bool:
+        return self._enlisted
+
+    async def find(self, *, filters: Any, for_update: bool = False) -> Any:
+        self.calls.append(("find", for_update))
+        return object() if self._found else None
+
+
+class _Epochs:
+    """An epoch store recording its raises into *calls*."""
+
+    def __init__(self, calls: list[tuple[str, Any]]) -> None:
+        self.calls = calls
+
+    async def advance(self, principal_id: UUID) -> int:
+        self.calls.append(("advance", principal_id))
+        return 1
+
+
+async def _never_runs(callback: Any) -> None:
+    del callback
+
+
+@pytest.mark.parametrize(
+    ("found", "enlisted", "calls"),
+    [
+        (True, True, [("find", True), "advance"]),
+        (False, True, [("find", True), "advance"]),
+        (True, False, ["advance"]),
+    ],
+)
+async def test_an_epoch_raise_locks_the_principal_before_the_epoch(
+    found: bool, enlisted: bool, calls: list[Any]
+) -> None:
+    # A principal with no row (deleted) is raised all the same: the lock read finds nothing.
+    # Principals the open transaction does not hold (another database) are not locked.
+    recorded: list[tuple[str, Any]] = []
+    principal = uuid4()
+    raise_epoch = EpochRaise(
+        config=CONFIG,
+        states=MockRevocationStates(state=MockDepsModule().state, namespace=STATES),
+        epochs=_Epochs(recorded),  # type: ignore[arg-type]
+        in_transaction=lambda: True,
+        defer=_never_runs,
+        principals=_Principals(recorded, found=found, enlisted=enlisted),  # type: ignore[arg-type]
+    )
+
+    await raise_epoch(principal)
+
+    assert recorded == [("advance", principal) if call == "advance" else call for call in calls]
+
+
+async def test_a_logout_locks_no_principal_on_the_mock() -> None:
+    # The mock's locking read only claims the row: the raise keeps to the epoch, as the skip does.
+    stack = _stack()
+    principal = await stack.principal()
+    stack.principal_reads.clear()
+
+    await stack.in_tx(
+        lambda: stack.ctx.authn.token_lifecycle(SPEC).revoke_tokens(
+            AuthnIdentity(principal_id=principal)
+        )
+    )
+
+    assert stack.principal_reads == []
+    assert await stack.epoch(principal) == 1
+
+
+@pytest.mark.parametrize(
+    ("eligibility", "reads"),
+    [("policy_principal", ["find"]), ("allow_all", [])],
+)
+async def test_a_logout_locks_the_principal_only_where_an_issue_does(
+    eligibility: Literal["policy_principal", "allow_all"],
+    reads: list[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # As on Postgres. Under allow_all an issue locks no principal, so a raise has no order to match.
+    monkeypatch.setattr(authn_deps, "_locks_exclude", lambda principals: True)
+    monkeypatch.setattr(revocation_states, "_enlisted", lambda port: True)
+    stack = _stack(eligibility=eligibility)
+    principal = await stack.principal()
+    stack.principal_reads.clear()
+
+    await stack.in_tx(
+        lambda: stack.ctx.authn.token_lifecycle(SPEC).revoke_tokens(
+            AuthnIdentity(principal_id=principal)
+        )
+    )
+
+    assert stack.principal_reads == reads
+
+
+@pytest.mark.parametrize(
+    ("eligibility_at", "principals", "locks"),
+    [("routed", True, True), ("plain", True, True), (None, True, False), ("routed", False, False)],
+)
+def test_a_raise_finds_the_eligibility_an_issue_falls_back_to(
+    eligibility_at: Literal["routed", "plain"] | None,
+    principals: bool,
+    locks: bool,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # An issue resolves eligibility through provide, which falls back to a plain registration.
+    monkeypatch.setattr(authn_deps, "_locks_exclude", lambda principals: True)
+
+    def eligibility(ctx: ExecutionContext, spec: Any) -> Any:
+        raise AssertionError("only looked up, never built")
+
+    deps = Deps.routed(
+        {DocumentQueryDepKey: {policy_principal_spec.name: lambda ctx, spec: object()}}
+        if principals
+        else {}
+    )
+
+    if eligibility_at == "routed":
+        deps = deps.merge(Deps.routed({PrincipalEligibilityDepKey: {ROUTE: eligibility}}))
+
+    elif eligibility_at == "plain":
+        deps = deps.merge(Deps.plain({PrincipalEligibilityDepKey: eligibility}))
+
+    found = authn_deps._principals_to_lock(context_from_deps(deps), SPEC)
+
+    assert (found is not None) is locks
