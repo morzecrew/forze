@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **A durable run can retry a retryable failure.** `retry=RetryStrategy(...)` on `DurableFunctionRunner`, `durable_kits_deps` or one registered function sends a run raising a `retry_on` kind back to `PENDING` after the backoff, counted as `retrying`; its journal replays. **Breaking** for own run stores (`mark_retry`).
 - **Failed durable runs can be requeued.** `DurableRunAdminPort.requeue_failed(run_ids=, name=)` returns the named `FAILED` and `TIMED_OUT` runs in scope to `PENDING` under their own id, so their journaled steps replay, on Postgres, Mongo and the mock. **Breaking** for own admin ports.
 - **A warm API key skips the eligibility read too.** With revocation states on the authn and authz kernels, a key whose cached state recorded its principal's current epoch is admitted without reading Postgres, as a token is. New `ApiKeyEligibilitySkip`.
+- **Vector search can rank by a vector you already hold.** `SearchOptions(query_vector=...)` ranks pgvector or Atlas Vector Search with a blank query; other searches refuse it. A custom vector adapter passes `capabilities=`, `backend=` and `vector_dimensions=` to `search_options_for_simple_adapter` to accept it.
 
 ### Changed
 

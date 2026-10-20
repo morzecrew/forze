@@ -80,8 +80,13 @@ exception for a query with search text: it sorts by the request's `sorts` only, 
 relevance ties in the engine's order. `options: SearchOptions` is the backend- and
 topology-agnostic per-request surface — relevance `weights`, `fuzzy` matching, a per-request
 `fields` narrowing, multi-term combination (`phrase_combine`: `"any"` / `"all"`), the count
-policy (`search_count`), an advisory candidate cap (`max_candidates`), and the facet /
-highlight requests below (`facets`, `facet_size`, `highlight`). Hub and federated searches
+policy (`search_count`), an advisory candidate cap (`max_candidates`), the facet /
+highlight requests below (`facets`, `facet_size`, `highlight`), and a precomputed
+`query_vector`. A `query_vector` ranks a vector index (pgvector, Atlas Vector Search) in place
+of embedding the query. It must come from the same embedding model as the indexed documents,
+its length must match the index's dimensions, and `query` must be blank; `None` reads as no
+vector. Every other backend, and hub and federated search, refuse it with
+`query_feature_unsupported`. Hub and federated searches
 resolve to a `MultiSourceSearchOptions` port that also carries member selection
 (`member_weights` / `members`), a post-merge cap (`merge_candidates`), and the `fusion`
 strategy (`"rrf"` / `"weighted"`); passing those keys to a single-index `query(...)` port is
@@ -150,7 +155,8 @@ fields / customize the `<em>` markers), over the spec's `facetable_fields` /
 `highlightable_fields`. Results ride the page as optional `page.facets` (one set per query,
 over the full matching set) and `page.highlights` (per hit, index-aligned with `hits`),
 `None` when not requested. (Pages also carry optional per-hit relevance `page.scores`,
-index-aligned the same way.) A field or backend that cannot serve a request fails closed with
+index-aligned the same way; on pgvector a score is the negated distance, so higher is nearer.)
+A field or backend that cannot serve a request fails closed with
 `query_feature_unsupported`.
 
 Support is per backend (single-index) and per topology (hub / federated). **fail-closed**

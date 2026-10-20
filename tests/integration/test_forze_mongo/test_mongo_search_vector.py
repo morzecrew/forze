@@ -112,3 +112,8 @@ async def test_mongo_vector_search_knn(mongo_atlas_client: MongoClient) -> None:
     page = await adapter.search_page("alpha")
     assert page.count >= 1
     assert page.hits[0].label == "alpha"
+
+    # A precomputed vector finds what its text finds, with no embedding of a blank query.
+    by_vector = await adapter.search_page("", options={"query_vector": list(v_alpha)})
+    assert [hit.id for hit in by_vector.hits] == [hit.id for hit in page.hits]
+    assert by_vector.scores == page.scores

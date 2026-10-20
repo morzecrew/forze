@@ -133,6 +133,34 @@ class PostgresRankedPipelineSearchAdapter[M: BaseModel](
 
     # ....................... #
 
+    @property
+    def _query_vector_dimensions(self) -> int | None:
+        """The length a caller's ``query_vector`` must have; ``None`` where none is served."""
+
+        return None
+
+    def _search_options(
+        self,
+        options: SearchOptions | None,
+        snapshot: SearchResultSnapshotOptions | None = None,
+    ) -> SearchOptions:
+        return search_options_for_simple_adapter(
+            options,
+            spec=self.spec,
+            snapshot=snapshot,
+            capabilities=self.search_capabilities,
+            backend=type(self).__name__,
+            vector_dimensions=self._query_vector_dimensions,
+        )
+
+    def _ranks(self, query: str | Sequence[str], options: SearchOptions | None) -> bool:
+        """Whether the request ranks; a blank query browses the projection instead."""
+
+        _ = options
+        return bool(normalize_search_queries(query))
+
+    # ....................... #
+
     async def _index_qname(self) -> PostgresQualifiedName:
         async def _factory() -> PostgresQualifiedName:
             return await resolve_postgres_qname(
@@ -376,9 +404,9 @@ class PostgresRankedPipelineSearchAdapter[M: BaseModel](
         return_type: type[BaseModel] | None = None,
         return_fields: Sequence[str] | None = None,
     ) -> Any:
-        options = search_options_for_simple_adapter(options, spec=self.spec, snapshot=snapshot)
+        options = self._search_options(options, snapshot)
 
-        if not normalize_search_queries(query):
+        if not self._ranks(query, options):
             return await self._offset_empty_query_browse(
                 filters=filters,
                 pagination=pagination,
@@ -790,7 +818,7 @@ class PostgresRankedPipelineSearchAdapter[M: BaseModel](
         """Group the rows the search matches (:meth:`_aggregate_source`), read as a
         ``_matched`` CTE and aggregated as the document gateway aggregates its relation."""
 
-        options = search_options_for_simple_adapter(options, spec=self.spec)
+        options = self._search_options(options)
         with_clause, from_outer, source_params = await self._aggregate_source(
             query=query,
             filters=filters,
@@ -896,12 +924,12 @@ class PostgresRankedPipelineSearchAdapter[M: BaseModel](
             backend="Postgres search cursor",
             sealed=self.sealed_fields,
         )
-        options = search_options_for_simple_adapter(options, spec=self.spec)
+        options = self._search_options(options)
         lim, _, _ = parse_search_cursor(cursor)
         terms = tuple(normalize_search_queries(query))
         parsed_filters = self.compile_filters(filters)
 
-        if not terms:
+        if not self._ranks(query, options):
             return await execute_projection_keyset_cursor(
                 self,
                 filters=filters,

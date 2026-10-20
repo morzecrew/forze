@@ -43,7 +43,7 @@ async def execute_mongo_ranked_cursor_search[M: BaseModel](
     *,
     client: MongoClientPort,
     ranked_pipeline: list[JsonDict],
-    terms: tuple[str, ...],
+    ranked: bool,
     query: str | Sequence[str],
     filters: QueryFilterExpression | None,  # type: ignore[valid-type]
     sorts: QuerySortExpression | None,  # type: ignore[valid-type]
@@ -66,7 +66,7 @@ async def execute_mongo_ranked_cursor_search[M: BaseModel](
     use_after = c.get("after") is not None
     use_before = c.get("before") is not None
 
-    if terms:
+    if ranked:
         key_spec = ranked_search_cursor_key_spec(
             rank_field=MONGO_RANK_FIELD,
             sorts=sorts or gw.spec.default_sort,
@@ -171,7 +171,7 @@ async def execute_mongo_ranked_cursor_search[M: BaseModel](
     # Per-hit engine score for the page window (ranked queries only); read before the
     # rank column is popped ahead of decode.
     scores = (
-        [float(doc.get(MONGO_RANK_FIELD, 0.0)) for doc in page_rows_with_rank] if terms else None
+        [float(doc.get(MONGO_RANK_FIELD, 0.0)) for doc in page_rows_with_rank] if ranked else None
     )
 
     for doc in page_rows_with_rank:

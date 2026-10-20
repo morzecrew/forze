@@ -17,7 +17,6 @@ from forze.application.contracts.querying import (
 from forze.application.contracts.search import (
     SearchResultSnapshotOptions,
     SearchSpec,
-    normalize_search_queries,
 )
 from forze.application.integrations.search import SearchResultSnapshot
 from forze.application.integrations.search.offset_executor import (
@@ -156,6 +155,7 @@ async def execute_mongo_ranked_offset_search[M: BaseModel](
     *,
     client: MongoClientPort,
     ranked_pipeline: list[JsonDict],
+    ranked: bool,
     query: str | Sequence[str],
     filters: QueryFilterExpression | None,  # type: ignore[valid-type]
     sorts: QuerySortExpression | None,  # type: ignore[valid-type]
@@ -194,6 +194,6 @@ async def execute_mongo_ranked_offset_search[M: BaseModel](
             ranked_pipeline=ranked_pipeline,
             pagination_dict=pagination_dict,
             return_count=return_count,
-            is_ranked=bool(normalize_search_queries(query)),
+            is_ranked=ranked,
         ),
     )
