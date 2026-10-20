@@ -62,11 +62,14 @@ def _bson_normalize_value(value: Any) -> Any:
         # of an inserted doc must undo that, exactly as a read-back would (see _decode_bson_value).
         return value.to_decimal()
 
-    if isinstance(value, list):
-        return [
+    if isinstance(value, (list, tuple)):
+        items = [
             _bson_normalize_value(item)
             for item in value  # pyright: ignore[reportUnknownVariableType]
         ]
+
+        # A tuple field dumps as a tuple; BSON stores it as an array all the same.
+        return items if isinstance(value, list) else tuple(items)
 
     if isinstance(value, dict):
         return {key: _bson_normalize_value(item) for key, item in cast(JsonDict, value).items()}
