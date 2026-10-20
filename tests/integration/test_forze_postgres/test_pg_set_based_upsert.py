@@ -20,6 +20,13 @@ from forze.base.primitives import FrozenTimeSource, bind_time_source
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
 from forze_postgres.kernel.client.client import PostgresClient, PostgresConfig
 from tests.integration.test_forze_postgres._document_fixtures import document_context
+from tests.support.upsert_modes import (
+    ModeCreate,
+    ModeDoc,
+    ModeRead,
+    ModeUpdate,
+    assert_upsert_modes,
+)
 
 pytestmark = [pytest.mark.integration, pytest.mark.asyncio]
 
@@ -466,3 +473,108 @@ async def test_a_searchable_field_is_sealed_and_compared_as_on_the_domain_path(
     assert set_rows == await pg_client.fetch_all(sql.format(domain_t), [])
     assert [row["rev"] for row in sorted(set_rows, key=lambda r: ids.index(r["id"]))] == [2, 2, 2]
     assert all(row["label"] not in ("dflt", "custom", "moved") for row in set_rows)
+
+
+# ....................... #
+
+
+async def _modes_table(pg_client: PostgresClient, note: str = "text") -> str:
+    t = f"pg_setbased_modes_{uuid4().hex[:10]}"
+    await pg_client.execute(
+        f"""
+        CREATE TABLE {t} (
+            id uuid PRIMARY KEY,
+            rev integer NOT NULL,
+            created_at timestamptz NOT NULL,
+            last_update_at timestamptz NOT NULL,
+            name text NOT NULL,
+            qty integer NOT NULL,
+            note {note},
+            label text NOT NULL
+        );
+        """
+    )
+    return t
+
+
+_MODES_SPEC = DocumentSpec(
+    name="setbased_modes",
+    read=ModeRead,
+    write=DocumentWriteTypes(domain=ModeDoc, create_cmd=ModeCreate, update_cmd=ModeUpdate),
+)
+
+
+async def test_a_mirror_and_skip_none_write_what_the_domain_path_writes(
+    pg_client: PostgresClient,
+) -> None:
+    domain_t, set_t = await _modes_table(pg_client), await _modes_table(pg_client)
+    ids = [uuid4() for _ in range(3)]
+
+    for t, set_based in ((domain_t, False), (set_t, True)):
+        ctx = document_context(pg_client, t)
+
+        with bind_time_source(FrozenTimeSource(instant=datetime(2026, 1, 1, tzinfo=UTC))):
+            await assert_upsert_modes(
+                ctx.document.command(_MODES_SPEC),
+                ctx.document.query(_MODES_SPEC),
+                ids,
+                set_based=set_based,
+            )
+
+    sql = "SELECT * FROM {} ORDER BY id"
+    assert await pg_client.fetch_all(sql.format(set_t), []) == await pg_client.fetch_all(
+        sql.format(domain_t), []
+    )
+
+
+async def test_a_mirror_is_refused_where_the_create_carries_a_merged_field(
+    pg_client: PostgresClient,
+) -> None:
+    """``meta`` is create-only and a mapping, which the domain path merges into the stored one;
+    updating with the create payload must refuse set-based rather than replace it."""
+
+    t = await _table(pg_client)
+    cmd = document_context(pg_client, t).document.command(_SPEC)
+    pk = uuid4()
+    await cmd.upsert_many([_item(pk, "stored", 1)], return_new=False)
+    payload = _Create(name="stored", qty=1, meta={"other": 2}, ref=1)
+
+    with pytest.raises(CoreException) as refused:
+        await cmd.upsert_many(
+            [UpsertItem(id=pk, create=payload, update=payload)], return_new=False, set_based=True
+        )
+
+    assert refused.value.code == "set_based_upsert_unsupported"
+    assert refused.value.details["reasons"] == [
+        "update fields the domain derives, merges or refuses (meta)"
+    ]
+    assert await pg_client.fetch_one(f"SELECT meta FROM {t} WHERE id = %s", [pk]) == {
+        "meta": {"k": 1}
+    }
+
+
+# ``xml`` has no equality at all; ``citext`` calls ``Alpha`` and ``alpha`` equal.
+@pytest.mark.parametrize("note", ["xml", "citext"])
+async def test_a_mirror_writing_a_column_sql_cannot_compare_takes_the_domain_path(
+    pg_client: PostgresClient, note: str
+) -> None:
+    """``note`` is create-only, so only a mirror writes it; the comparability check must cover
+    it, or the set-based statement fails or skips the change."""
+
+    await pg_client.execute("CREATE EXTENSION IF NOT EXISTS citext")
+    domain_t = await _modes_table(pg_client, note)
+    set_t = await _modes_table(pg_client, note)
+    pk = uuid4()
+
+    def mirror(value: str) -> UpsertItem[ModeCreate, Any]:
+        payload = ModeCreate(name="n", qty=1, note=value)
+        return UpsertItem(id=pk, create=payload, update=payload)
+
+    for t, set_based in ((domain_t, False), (set_t, True)):
+        cmd = document_context(pg_client, t).document.command(_MODES_SPEC)
+        await cmd.upsert_many([mirror("<Alpha/>")], return_new=False)
+        await cmd.upsert_many([mirror("<alpha/>")], return_new=False, set_based=set_based)
+
+    sql = "SELECT note::text AS note, rev FROM {}"
+    assert await pg_client.fetch_all(sql.format(set_t), []) == [{"note": "<alpha/>", "rev": 2}]
+    assert await pg_client.fetch_all(sql.format(domain_t), []) == [{"note": "<alpha/>", "rev": 2}]

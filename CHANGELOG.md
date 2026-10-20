@@ -19,9 +19,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Hub searches aggregate.** `aggregate_search` / `aggregate_search_page` on a Postgres or in-memory hub group every merged match of its members, legs uncapped. New `HubSearchSpec.extra_aggregatable_fields` names hub-relation columns outside the read model that an aggregate may also group by or measure.
 
+- **`upsert_many` can mirror a source and keep values a null would erase.** `UpsertItem.mirror(id, payload)` updates with the create payload; `skip_none=True` leaves out each top-level field an update sets to `None`. A set-based upsert is now judged on the fields the items' updates write.
+
 ### Changed
 
 - **Until structlog is configured (`configure_logging` or your own `structlog.configure`), forze no longer prints to stdout itself** (behaviour change): its events go to the same-named stdlib logger at its level, so they reach only your stdlib handlers, or stderr from warnings up by default. Call `configure_logging` to keep info output.
+
+- **`UpsertItem.update` is now derived from the update passed and `skip_none`.** Constructors are unchanged; `attrs.asdict` output and `__match_args__` differ. An override of `DocumentSpec.require_set_based_upsert` must accept the new `updates` argument.
 
 ### Fixed
 

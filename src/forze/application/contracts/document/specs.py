@@ -1,6 +1,6 @@
 """Specifications for document models and storage layout."""
 
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from types import UnionType
 from typing import Annotated, Any, Generic, TypeVar, Union, get_args, get_origin
 
@@ -810,7 +810,7 @@ class DocumentSpec(BaseSpec, Generic[R, D, C, U]):
 
     # ....................... #
 
-    def require_set_based_upsert(self) -> None:
+    def require_set_based_upsert(self, updates: Iterable[type[BaseModel]] | None = None) -> None:
         """Refuse a set-based ``upsert_many`` that would not write what the domain path writes.
 
         A set-based upsert reads no stored row: it inserts each create payload's domain and
@@ -824,6 +824,8 @@ class DocumentSpec(BaseSpec, Generic[R, D, C, U]):
         mapping the update merges into the stored one, or a default derived from the other
         fields).
 
+        :param updates: The update DTO types the upsert writes (a mirrored item's is its create
+            payload's); the update command when omitted.
         :raises CoreException: ``configuration`` (``set_based_upsert_unsupported``) naming
             what rules it out.
         """
@@ -859,23 +861,29 @@ class DocumentSpec(BaseSpec, Generic[R, D, C, U]):
 
             update_cmd = self.write.get("update_cmd")
 
-            if update_cmd is not None:
-                updated = frozenset(update_cmd.model_fields)
+            if updates is None:
+                updates = () if update_cmd is None else (update_cmd,)
+
+            written = list(updates)
+
+            if written:
                 # Any one: an update revalidates the whole model, and a validator may rewrite
                 # a field the update leaves alone from one it changes.
                 validated = sorted(_validated_fields(domain))
                 merged = sorted(
-                    name
-                    for name in updated
-                    if (field := domain.model_fields.get(name)) is None
-                    or field.frozen
-                    or _merged(field.annotation)
-                    # A nulled field takes its default, here one read off the stored row.
-                    or field.default_factory_takes_validated_data
-                    # The DTO validates the value; a narrower domain type (a ``Literal`` for a
-                    # ``str``) would refuse what the DTO admits.
-                    or _without_none(field.annotation)
-                    != _without_none(update_cmd.model_fields[name].annotation)
+                    {
+                        name
+                        for dto in written
+                        for name, dto_field in dto.model_fields.items()
+                        if (field := domain.model_fields.get(name)) is None
+                        or field.frozen
+                        or _merged(field.annotation)
+                        # A nulled field takes its default, here one read off the stored row.
+                        or field.default_factory_takes_validated_data
+                        # The DTO validates the value; a narrower domain type (a ``Literal``
+                        # for a ``str``) would refuse what the DTO admits.
+                        or _without_none(field.annotation) != _without_none(dto_field.annotation)
+                    }
                 )
 
                 if validated:

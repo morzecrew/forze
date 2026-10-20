@@ -545,12 +545,14 @@ class DocumentCommandPort(BaseDocumentPort[R, D, C, U], Protocol[R, D, C, U]):
     ) -> Awaitable[Sequence[R] | None]:
         """Bulk insert-or-update keyed by each :class:`UpsertItem.id`; ids must be unique.
 
-        Result order matches ``items``.
+        Result order matches ``items``. An item from :meth:`UpsertItem.mirror` updates with its
+        create payload; one with ``skip_none`` leaves out each field its update sets to
+        ``None``.
 
         ``set_based=True`` (with ``return_new=False``) writes each chunk with set-based
         statements and reads nothing back: a stored row takes the update as its DTO encodes
         it, only where that changes it, without the domain model's update. A spec whose
-        updates need the domain path refuses it
+        updates need the domain path refuses it, judged on the update types the items carry
         (:meth:`~forze.application.contracts.document.DocumentSpec.require_set_based_upsert`);
         a backend with no set-based statement takes its usual path.
         """

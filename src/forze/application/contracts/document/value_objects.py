@@ -145,9 +145,28 @@ class KeyedCreate[C: BaseDTO]:
 # ....................... #
 
 
+def _without_none[T: BaseModel](dto: T) -> T:
+    """*dto* with every top-level field it sets to ``None`` unset, so an update leaves it out."""
+
+    kept = {name for name in dto.model_fields_set if getattr(dto, name) is not None}
+
+    if len(kept) == len(dto.model_fields_set):
+        return dto
+
+    # Already validated: only which fields count as set changes.
+    return type(dto).model_construct(_fields_set=kept, **dict(dto))
+
+
+# ....................... #
+
+
 @attrs.define(slots=True, frozen=True)
 class UpsertItem[C: BaseDTO, U: BaseDTO]:
-    """A create payload + update payload for one primary key, for bulk upsert."""
+    """A create payload + update payload for one primary key, for bulk upsert.
+
+    The update writes the fields it sets, as every update does. :meth:`mirror` builds an item
+    whose update is the create payload itself.
+    """
 
     id: UUID
     """Primary key to upsert at."""
@@ -155,8 +174,47 @@ class UpsertItem[C: BaseDTO, U: BaseDTO]:
     create: C
     """Payload inserted when the key is absent."""
 
-    update: U
-    """Patch applied when the key already exists."""
+    _update: U = attrs.field(alias="update", repr=False)
+    """The update as passed; :attr:`update` is what is written."""
+
+    skip_none: bool = attrs.field(default=False, kw_only=True)
+    """Leave out of :attr:`update` each top-level field it sets to ``None``, so a stored value
+    is never overwritten with null. A mapping or model value is not looked into, and
+    :attr:`create` is inserted as it is."""
+
+    # Derived once, so a large batch builds each trimmed update once, however often it is read.
+    update: U = attrs.field(
+        init=False,
+        eq=False,
+        default=attrs.Factory(
+            lambda self: _without_none(self._update) if self.skip_none else self._update,
+            takes_self=True,
+        ),
+    )
+    """Patch applied when the key already exists: the update passed, less the fields
+    :attr:`skip_none` leaves out."""
+
+    # ....................... #
+
+    @staticmethod
+    def mirror[P: BaseDTO](
+        id: UUID, payload: P, *, skip_none: bool = False
+    ) -> "UpsertItem[P, Any]":
+        """Upsert *payload* at *id*: inserted when the key is absent, applied as the update
+        when it exists.
+
+        For a mirrored source, whose newer version rewrites every field the create carries
+        rather than only the update command's. *payload* is written as any update is: the
+        fields it sets, merged into a stored mapping or model on the domain path. A set-based
+        ``upsert_many`` checks the fields of *payload*'s type, not the update command's.
+
+        :param id: Primary key to upsert at.
+        :param payload: Create payload, inserted or applied as the update.
+        :param skip_none: As :attr:`skip_none`.
+        :returns: The item, typed to pass as any update.
+        """
+
+        return UpsertItem(id=id, create=payload, update=payload, skip_none=skip_none)
 
 
 # ....................... #
