@@ -23,13 +23,16 @@ from forze.application.contracts.durable.function import (
     reset_durable_cancel_signal,
     reset_durable_run,
 )
-from forze.application.contracts.saga import SAGA_CANCELLED_CODE
+from forze.application.contracts.resilience import RetryStrategy
+from forze.application.contracts.saga import SAGA_CANCELLED_CODE, SAGA_STEP_AMBIGUOUS_CODE
 from forze.application.contracts.tenancy import TenantIdentity
-from forze.base.exceptions import CoreException, exc
+from forze.application.execution.resilience.backoff import compute_delay
+from forze.base.exceptions import CoreException, exc, exception_egress_policy
+from forze.base.primitives import current_entropy_source, utcnow
 
 from .._logger import logger
 from ._resolve import resolve_durable_run_admin, resolve_durable_run_store
-from .registry import DurableFunctionRegistry, decides_its_own_cancel
+from .registry import DurableFunctionRegistry, check_run_retry, decides_its_own_cancel
 from .telemetry import DurableTelemetry
 
 if TYPE_CHECKING:
@@ -45,6 +48,14 @@ if TYPE_CHECKING:
 _FORWARD_INCOMPLETE_CODE = "saga.forward_incomplete"
 """A saga that committed at its pivot but could not complete forward — a distinct terminal
 state from an ordinary failure (no compensation happened; manual completion is required)."""
+
+_COMPENSATION_FAILED_CODE = "saga.compensation_failed"
+"""A saga whose rollback failed: an operator must reconcile it, and the saga executor has
+already retried its compensations in place."""
+
+_NEVER_RETRIED = frozenset({SAGA_STEP_AMBIGUOUS_CODE, _COMPENSATION_FAILED_CODE})
+"""Infrastructure-kind codes a retry strategy never retries: each leaves a saga for an
+operator to reconcile, and running it again could repeat an effect that may have committed."""
 
 _RUN_TIMED_OUT_CODE = "durable.run_timed_out"
 """A run cancelled by the deadline watchdog. Distinct from an ordinary failure: it sends an
@@ -117,6 +128,10 @@ class _Landing:
     """What a ``reraise`` caller should see, or ``None`` when the caller caused nothing. Kept
     apart from :attr:`error` because a cancelled run records a note but raises at nobody."""
 
+    retry_at: datetime | None = None
+    """When the run is due again, for the ``retrying`` landing only: it goes back to
+    ``PENDING`` rather than to a terminal state."""
+
 
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
@@ -127,7 +142,9 @@ class DurableFunctionRunner:
     re-claims abandoned runs (crashed mid-flight) and re-invokes them — completed steps
     replay from the journal rather than re-running (exactly-once for the recorded result; a
     body may still re-run if a worker is reclaimed / crashes before it journals, so keep step
-    bodies idempotent).
+    bodies idempotent). With :attr:`retry`, a run whose body fails with a retryable error goes
+    back to ``PENDING`` and ``recover`` claims it again once its backoff has passed, replaying
+    its journal the same way.
     """
 
     registry: DurableFunctionRegistry
@@ -147,8 +164,10 @@ class DurableFunctionRunner:
     ``TIMED_OUT`` with the deadline reason. Without a cap a body hung on a dead peer
     heartbeats its lease alive forever — never reclaimed, pinning a recovery slot on this
     replica. The body is cancelled while the lease is still held, so nothing
-    double-executes; re-enqueue to retry. Must comfortably exceed the longest legitimate
-    body; ``None`` removes the cap (and restores the hang hazard).
+    double-executes. A timeout is not retried: requeue the run with
+    :meth:`~forze.application.contracts.durable.function.DurableRunAdminPort.requeue_failed`
+    to run it again. Must comfortably exceed the longest legitimate body; ``None`` removes
+    the cap (and restores the hang hazard).
 
     The cap composes with cancellation rather than competing with it: a body that ignores an
     operator's stop is still bounded here, and because the *ask* was recorded first such a
@@ -157,11 +176,30 @@ class DurableFunctionRunner:
     telemetry: DurableTelemetry | None = None
     """Optional OpenTelemetry spans + metrics for run execution and recovery."""
 
+    retry: RetryStrategy | None = None
+    """Retry a run whose body raises a ``CoreException`` of a kind in ``retry_on``, until the
+    run has been claimed ``max_attempts`` times. Instead of landing ``FAILED``, the run goes
+    back to ``PENDING``, due after the strategy's ``backoff``; the worker is freed meanwhile,
+    and the next claim, on any replica, replays the steps the run journaled.
+
+    The count is the run's ``attempts``: every claim spends one, a recovery claim after a
+    crash included, and nothing resets it, so a run requeued by an operator after its
+    retries ran out gets one attempt per requeue. An exception that is not a
+    ``CoreException`` is never retried (map vendor errors to kinds with an exception
+    interceptor), nor is a failure while an operator's cancel is pending, a timeout, or a
+    saga that rolled back (``domain``: it journals its failed step, so running it again fails
+    the same way), whose rollback failed, or whose step's outcome is unknown (both need an
+    operator). ``budget`` is refused: a process-local token bucket cannot count claims spread
+    across replicas. ``None`` (the default) lands every failure ``FAILED``. A function
+    registered with its own ``retry`` uses that instead."""
+
     # ....................... #
 
     def __attrs_post_init__(self) -> None:
         if self.max_run_duration is not None and self.max_run_duration.total_seconds() <= 0:
             raise exc.configuration("Max run duration must be positive (None disables the cap)")
+
+        check_run_retry(self.retry)
 
     # ....................... #
 
@@ -201,7 +239,9 @@ class DurableFunctionRunner:
         the next lease heartbeat — so observation latency is ``lease_for / heartbeat_divisor`` (100 s at
         stock settings), and a body that never awaits is bounded only by
         :attr:`max_run_duration`. A ``QUARANTINED`` run, or one requeued from quarantine, is
-        only stamped, and decided once a claim can decrypt it. A terminal run returns
+        only stamped, and decided once a claim can decrypt it. So is a run waiting for its
+        :attr:`retry`: it lands once its retry comes due, without running the body unless it
+        is a saga, and that claim spends an attempt. A terminal run returns
         ``False``.
 
         Fails **closed** rather than silently: a backend that does not advertise
@@ -237,7 +277,11 @@ class DurableFunctionRunner:
         """Enqueue and execute a run in-process; return its final record.
 
         An idempotent re-submit that already completed returns immediately; a run already
-        claimed elsewhere is returned as-is (not double-executed).
+        claimed elsewhere is returned as-is (not double-executed). A run whose body failed
+        with an error :attr:`retry` retries comes back ``PENDING``, due for its retry, with
+        the failure in ``error``, rather than raising; a re-submit before it is due returns
+        it as-is, so a client retrying under its key cannot cut the backoff short. A run
+        enqueued with ``run_at`` and not due yet still executes at once.
         """
 
         store = resolve_durable_run_store(ctx)
@@ -249,6 +293,15 @@ class DurableFunctionRunner:
         )
 
         if record.status is DurableRunStatus.COMPLETED:
+            return record
+
+        # Waiting out a retry backoff: only ``mark_retry`` leaves a pending run failed and not
+        # due. A requeued run keeps its ``error`` but is due at once, so it gets through.
+        if (
+            record.error is not None
+            and record.available_at is not None
+            and record.available_at > utcnow()
+        ):
             return record
 
         claimed = await store.begin(record.run_id, lease_for=self.lease_for)
@@ -553,6 +606,20 @@ class DurableFunctionRunner:
             if landed != "cancelled":
                 self._mark_span_error(span, error)
 
+            # An operator's pending ask outranks a retry: the run lands as it would have.
+            retry_at = (
+                self._retry_at(record, error)
+                if landed == "failed" and not cancel.requested
+                else None
+            )
+
+            # An ask recorded since the last heartbeat is on the row only: read it back, as the
+            # deadline path does, before sending the run back.
+            if retry_at is not None and not await self._cancel_pending_on_record(
+                store, record.run_id
+            ):
+                return _Landing(outcome="retrying", error=error, retry_at=retry_at)
+
             return _Landing(
                 outcome=landed,
                 error=error,
@@ -591,6 +658,14 @@ class DurableFunctionRunner:
         if landing.outcome == "completed":
             await store.complete(record.run_id, output_json=landing.output, fence=fence)
 
+        elif landing.retry_at is not None:
+            await store.mark_retry(
+                record.run_id,
+                error=str(landing.error),
+                available_at=landing.retry_at,
+                fence=fence,
+            )
+
         elif landing.error is None:
             # Only an operator's ask lands without a message — it is not a fault, and there
             # is nothing about it to report beyond the fact of it.
@@ -616,6 +691,37 @@ class DurableFunctionRunner:
             _RUN_TIMED_OUT_CODE: "timed_out",
             SAGA_CANCELLED_CODE: "cancelled",
         }.get(error.code or "", "failed")
+
+    # ....................... #
+
+    def _retry_at(self, record: DurableRunRecord, error: CoreException) -> datetime | None:
+        """When *record*'s run is due again after *error*, or ``None`` to land it ``FAILED``."""
+
+        strategy = self.registry.retry_for(record.name) or self.retry
+
+        if (
+            strategy is None
+            or record.attempts >= strategy.max_attempts
+            or error.code in _NEVER_RETRIED
+            or error.kind not in strategy.retry_on
+            or not exception_egress_policy(error.kind).retryable
+        ):
+            return None
+
+        rng = current_entropy_source().as_random()
+
+        # The previous delay is not stored, so decorrelated jitter grows from the schedule's
+        # un-jittered step before this one instead.
+        previous = (
+            compute_delay(
+                attrs.evolve(strategy.backoff, jitter="none"), record.attempts - 1, 0.0, rng
+            )
+            if record.attempts > 1
+            else 0.0
+        )
+        delay = compute_delay(strategy.backoff, record.attempts, previous, rng)
+
+        return utcnow() + timedelta(seconds=delay)
 
     # ....................... #
 
@@ -729,12 +835,12 @@ class DurableFunctionRunner:
 
                 # The body was cancelled while the lease was still held (no lapse, so no
                 # double-execution) and the run lands TIMED_OUT — distinct from FAILED
-                # because it sends you to the cap, not to the body's code. There is no
-                # retry machinery here; an operator re-enqueues.
+                # because it sends you to the cap, not to the body's code. A timeout is
+                # never retried; an operator requeues the run.
                 raise exc.timeout(
                     f"Durable run {record.run_id} ({record.name}) exceeded "
                     f"max_run_duration ({self.max_run_duration}); the body was cancelled "
-                    "before its lease could lapse — re-enqueue to retry",
+                    "before its lease could lapse — requeue it to run it again",
                     code=_RUN_TIMED_OUT_CODE,
                 ) from None
 
@@ -779,9 +885,9 @@ class DurableFunctionRunner:
     ) -> bool:
         """Whether the row carries an ask this execution has not already settled.
 
-        One read, only on the deadline path, to close the gap between an ask being recorded
-        and the next heartbeat reading it back. A refused ask does not count: the run decided
-        to keep going, so a later deadline is the deadline's own.
+        One read, on the deadline path and before a retry, to close the gap between an ask
+        being recorded and the next heartbeat reading it back. A refused ask does not count:
+        the run decided to keep going, so a later deadline or failure is its own.
         """
 
         try:
@@ -794,10 +900,11 @@ class DurableFunctionRunner:
                 record = await store.load(run_id)
 
         except Exception:
-            # Best effort — a read failure here must not turn a real deadline into an error.
+            # Best effort — a read failure here must not turn a real deadline or failure into
+            # an error. A retry that misses an ask still lands it: the next claim reads it.
             logger.warning(
-                "Durable run %s could not be re-read to order its deadline against a "
-                "possible cancel request; recording it as a timeout",
+                "Durable run %s could not be re-read for a possible cancel request; "
+                "landing it as its execution ended",
                 run_id,
                 exc_info=True,
             )

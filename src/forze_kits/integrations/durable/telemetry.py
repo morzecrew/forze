@@ -43,13 +43,15 @@ class DurableTelemetry:
     Emits: a ``durable.run`` span per run execution (labelled name / run id / attempt /
     tenant, marked error on failure); ``forze.durable.runs`` (counter) +
     ``forze.durable.run.duration`` (histogram, ms) by name and outcome (``completed`` /
-    ``failed`` / ``forward_incomplete`` / ``cancelled`` / ``timed_out`` / ``reclaimed`` /
-    ``interrupted`` / ``unrecorded``); ``forze.durable.recovered`` (counter) for reclaimed runs; and
-    ``forze.durable.schedule.fires`` (counter) per fire.
+    ``failed`` / ``retrying`` / ``forward_incomplete`` / ``cancelled`` / ``timed_out`` /
+    ``reclaimed`` / ``interrupted`` / ``unrecorded``); ``forze.durable.recovered`` (counter) for
+    reclaimed runs; and ``forze.durable.schedule.fires`` (counter) per fire.
 
     ``cancelled`` and ``timed_out`` are separate outcome labels rather than shades of
     ``failed`` on purpose: an alert on the failure rate should not fire because an operator
     pressed Stop, and a run that outlived its cap is a capacity signal, not a defect.
+    ``retrying`` is an attempt that failed and sent its run back for another under the
+    runner's retry strategy: the run has not failed yet.
 
     ``interrupted`` means the body never finished — a drain, a shutdown, an external
     cancellation — so no terminal write was ever attempted. It is the expected label during

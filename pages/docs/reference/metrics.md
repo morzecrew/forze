@@ -108,13 +108,15 @@ justifies W-TinyLFU (`L1Spec(store_factory=tiny_lfu_l1_store)`) or a bigger capa
 
 | Metric | Instrument | Unit | Labels | Notes |
 |---|---|---|---|---|
-| `forze.durable.runs` | counter | 1 | `forze.durable.name`, `forze.durable.outcome` | outcome is `completed` / `failed` / `forward_incomplete` / `cancelled` / `timed_out` / `reclaimed` / `interrupted` / `unrecorded` — alert on `failed`, not on the total: `cancelled` means somebody pressed Stop. `unrecorded` describes the *attempt*, not the run: the body finished and its terminal write went unacknowledged, so the row is either already terminal (the write committed, the ack was lost) or still `RUNNING` for recovery — the worker cannot tell. A sustained rate of it means the run store is unreachable. `interrupted` is the neighbouring case where the body never finished at all (drain, shutdown) and no terminal state was written — expected during a deploy |
+| `forze.durable.runs` | counter | 1 | `forze.durable.name`, `forze.durable.outcome` | outcome is `completed` / `failed` / `retrying` / `forward_incomplete` / `cancelled` / `timed_out` / `reclaimed` / `interrupted` / `unrecorded` — alert on `failed`, not on the total: `cancelled` means somebody pressed Stop, and `retrying` is an attempt that failed and sent its run back for another under the runner's retry strategy. `unrecorded` describes the *attempt*, not the run: the body finished and its terminal write went unacknowledged, so the row is either already terminal (the write committed, the ack was lost) or still `RUNNING` for recovery — the worker cannot tell. A sustained rate of it means the run store is unreachable. `interrupted` is the neighbouring case where the body never finished at all (drain, shutdown) and no terminal state was written — expected during a deploy |
 | `forze.durable.run.duration` | histogram | ms | `forze.durable.name`, `forze.durable.outcome` | ms-ladder buckets installed by `bootstrap_telemetry` |
-| `forze.durable.recovered` | counter | 1 | — | runs reclaimed by a recovery sweep |
+| `forze.durable.recovered` | counter | 1 | — | runs a recovery sweep claimed: reclaimed from a process that died holding them, or simply due (enqueued, back for a retry, requeued) |
 | `forze.durable.schedule.fires` | counter | 1 | `forze.durable.name` | one per schedule fire |
 
 A `recovered` spike means runs are being reclaimed from processes that died holding them —
 normal in small numbers after a deploy, a signal when it is sustained.
+The counter cannot tell those from runs that were simply due, so enqueued runs, retries
+under a retry strategy and requeues set its baseline: alert above it.
 
 ## Leadership
 

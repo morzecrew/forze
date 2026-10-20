@@ -12,6 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`CoreException.expose_details`** withholds an error's details from the client envelope, whatever its kind.
 
 - `CircuitBreakerStrategy` takes `failure_on` and `ignore_on`: which error kinds count as breaker failures and which are not recorded. The defaults keep the previous classification: infrastructure and timeout fail, throttled and concurrency are ignored.
+- **A durable run can retry a retryable failure.** `retry=RetryStrategy(...)` on `DurableFunctionRunner`, `durable_kits_deps` or one registered function sends a run raising a `retry_on` kind back to `PENDING` after the backoff, counted as `retrying`; its journal replays. **Breaking** for own run stores (`mark_retry`).
+- **Failed durable runs can be requeued.** `DurableRunAdminPort.requeue_failed(run_ids=, name=)` returns the named `FAILED` and `TIMED_OUT` runs in scope to `PENDING` under their own id, so their journaled steps replay, on Postgres, Mongo and the mock. **Breaking** for own admin ports.
 
 ### Changed
 

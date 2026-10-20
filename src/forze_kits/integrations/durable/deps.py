@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING, final
 import attrs
 
 from forze.application.contracts.deps import DepKey, Deps, DepsModule
+from forze.application.contracts.resilience import RetryStrategy
 
 from .registry import DurableFunctionRegistry
 from .runner import DurableFunctionRunner
@@ -96,6 +97,7 @@ def durable_kits_deps(
     lease_for: timedelta = timedelta(minutes=5),
     heartbeat_divisor: int = 3,
     telemetry: DurableTelemetry | None = None,
+    retry: RetryStrategy | None = None,
 ) -> tuple[Deps, DurableFunctionRunner, DurableScheduler]:
     """Build the durable runner + scheduler from *registry* and register both in one call.
 
@@ -111,6 +113,7 @@ def durable_kits_deps(
         lease_for=lease_for,
         heartbeat_divisor=heartbeat_divisor,
         telemetry=telemetry,
+        retry=retry,
     )
     scheduler = DurableScheduler(telemetry=telemetry)
 

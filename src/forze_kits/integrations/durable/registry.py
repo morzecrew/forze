@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, final
 
 import attrs
 
+from forze.application.contracts.resilience import RetryStrategy
 from forze.base.exceptions import exc
 
 if TYPE_CHECKING:
@@ -42,6 +43,25 @@ def decides_its_own_cancel(handler: object) -> bool:
 # ....................... #
 
 
+def check_run_retry(retry: RetryStrategy | None) -> None:
+    """Refuse a retry strategy a durable run cannot honour.
+
+    A run's attempts are claims, spread across replicas and restarts, so a process-local
+    retry budget would cap nothing.
+
+    :raises CoreException: ``configuration`` for a strategy that sets ``budget``.
+    """
+
+    if retry is not None and retry.budget is not None:
+        raise exc.configuration(
+            "A durable run's retry strategy cannot take a budget: its attempts are claims "
+            "spread across replicas and restarts, which a process-local budget does not see.",
+        )
+
+
+# ....................... #
+
+
 @final
 @attrs.define(slots=True, kw_only=True)
 class DurableFunctionRegistry:
@@ -52,18 +72,33 @@ class DurableFunctionRegistry:
     """
 
     _handlers: dict[str, DurableFunctionHandler] = attrs.field(factory=dict, init=False)
+    _retries: dict[str, RetryStrategy] = attrs.field(factory=dict, init=False)
 
     # ....................... #
 
-    def register(self, name: str, handler: DurableFunctionHandler) -> None:
-        """Register *handler* under *name* (rejects a duplicate name)."""
+    def register(
+        self,
+        name: str,
+        handler: DurableFunctionHandler,
+        *,
+        retry: RetryStrategy | None = None,
+    ) -> None:
+        """Register *handler* under *name* (rejects a duplicate name).
+
+        *retry* replaces the runner's :attr:`~DurableFunctionRunner.retry` for this function's
+        runs; a strategy with ``max_attempts=1`` opts the function out of the runner's.
+        """
 
         if name in self._handlers:
             raise exc.configuration(
                 f"Durable function {name!r} is already registered.",
             )
 
+        check_run_retry(retry)
         self._handlers[name] = handler
+
+        if retry is not None:
+            self._retries[name] = retry
 
     # ....................... #
 
@@ -84,3 +119,10 @@ class DurableFunctionRegistry:
         """Return whether a body is registered under *name*."""
 
         return name in self._handlers
+
+    # ....................... #
+
+    def retry_for(self, name: str) -> RetryStrategy | None:
+        """Return the retry strategy registered with *name*'s body, or ``None``."""
+
+        return self._retries.get(name)

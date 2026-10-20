@@ -408,3 +408,34 @@ async def test_the_mock_lists_cancels_and_requeues_quarantined_runs() -> None:
         )
         == QUARANTINE_ADMIN_OUTCOME
     )
+
+
+async def test_the_mock_sends_a_running_run_back_for_a_retry() -> None:
+    """# covers: DurableRunStorePort.mark_retry"""
+
+    from forze_mock.adapters.durable import MockDurableRunStore
+    from tests.support.durable_conformance import RETRY_OUTCOME, run_retry_scenario
+
+    assert await run_retry_scenario(MockDurableRunStore(state=MockState())) == RETRY_OUTCOME
+
+
+async def test_the_mock_requeues_failed_and_timed_out_runs() -> None:
+    """# covers: DurableRunAdminPort.requeue_failed"""
+
+    from forze_mock.adapters.durable import MockDurableRunStore
+    from tests.support.durable_conformance import (
+        REQUEUE_FAILED_OUTCOME,
+        run_requeue_failed_scenario,
+        tenant_provider_for,
+    )
+
+    state = MockState()
+
+    assert (
+        await run_requeue_failed_scenario(
+            lambda tenant: MockDurableRunStore(
+                state=state, tenant_provider=tenant_provider_for(tenant)
+            )
+        )
+        == REQUEUE_FAILED_OUTCOME
+    )

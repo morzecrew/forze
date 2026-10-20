@@ -401,6 +401,250 @@ async def run_claim_scenario(store: DurableRunStorePort) -> dict[str, Any]:
 # ....................... #
 
 
+async def run_retry_scenario(store: DurableRunStorePort) -> dict[str, Any]:
+    """Send a running run back for a retry and collect plane-independent observables.
+
+    ``mark_retry`` is the one write that returns a claimed run to ``PENDING``. It is guarded
+    on ``RUNNING`` and fenced like a terminal write, keeps the run's id, payload and
+    ``attempts``, and makes it due at the instant given: the scan leaves it alone until
+    then, and the claim that takes it advances the fence past the worker that sent it back.
+    """
+
+    lease = timedelta(minutes=5)
+    out: dict[str, Any] = {}
+
+    later = await store.enqueue("retry-later", input_json={"n": 1})
+    held = await store.begin(later.run_id, lease_for=lease)
+    assert held is not None
+
+    # A stale holder cannot send back a run it no longer holds.
+    await store.mark_retry(
+        later.run_id, error="stale", available_at=utcnow(), fence=held.attempts + 99
+    )
+    unmoved = await store.load(later.run_id)
+    out["stale_retry_ignored"] = unmoved is not None and (unmoved.status.value, unmoved.error) == (
+        "running",
+        None,
+    )
+
+    await store.mark_retry(
+        later.run_id,
+        error="blip",
+        available_at=utcnow() + timedelta(hours=1),
+        fence=held.attempts,
+    )
+    waiting = await store.load(later.run_id)
+    assert waiting is not None
+    out["waiting"] = (waiting.status.value, waiting.attempts, waiting.error, waiting.input_json)
+    out["waiting_is_delayed"] = waiting.available_at is not None and waiting.available_at > utcnow()
+
+    # The lease went with it: the worker that sent it back holds nothing any more.
+    renewal = await store.renew(later.run_id, lease_for=lease, fence=held.attempts)
+    out["old_holder_renews"] = renewal.held
+
+    # Only a running run goes back, so a second retry of the waiting one changes nothing.
+    await store.mark_retry(later.run_id, error="again", available_at=utcnow(), fence=held.attempts)
+    again = await store.load(later.run_id)
+    out["retry_of_pending_ignored"] = again is not None and again.error == "blip"
+
+    # A due retry is claimed by the scan under a fence one higher; the one not due is not.
+    due = await store.enqueue("retry-due", input_json=None)
+    due_held = await store.begin(due.run_id, lease_for=lease)
+    assert due_held is not None
+    await store.mark_retry(
+        due.run_id,
+        error="blip",
+        available_at=utcnow() - timedelta(seconds=1),
+        fence=due_held.attempts,
+    )
+    claimed = await store.claim_abandoned(limit=10, lease_for=lease)
+    out["scan_claims"] = sorted((r.name, r.attempts, r.error) for r in claimed)
+
+    # A run that already landed is not sent back.
+    done = await store.enqueue("retry-done", input_json=None)
+    done_held = await store.begin(done.run_id, lease_for=lease)
+    assert done_held is not None
+    await store.complete(done.run_id, output_json={"ok": True}, fence=done_held.attempts)
+    await store.mark_retry(
+        done.run_id, error="late", available_at=utcnow(), fence=done_held.attempts
+    )
+    finished = await store.load(done.run_id)
+    out["terminal_not_retried"] = (
+        None if finished is None else (finished.status.value, finished.error)
+    )
+
+    return out
+
+
+RETRY_OUTCOME: dict[str, Any] = {
+    "stale_retry_ignored": True,
+    "waiting": ("pending", 1, "blip", {"n": 1}),
+    "waiting_is_delayed": True,
+    "old_holder_renews": False,
+    "retry_of_pending_ignored": True,
+    "scan_claims": [("retry-due", 2, "blip")],
+    "terminal_not_retried": ("completed", None),
+}
+"""What :func:`run_retry_scenario` answers on every engine, the mock included."""
+
+
+# ....................... #
+
+
+async def run_requeue_failed_scenario(
+    store_for: Callable[[UUID | None], DurableRunStorePort],
+) -> dict[str, Any]:
+    """Requeue landed runs from both sides of the tenant boundary.
+
+    Only ``FAILED`` and ``TIMED_OUT`` runs move, back to a due ``PENDING`` under their own
+    id, keeping ``attempts``, ``error`` and cancel stamps, so the next claim advances the
+    fence and replays the journal. ``CANCELLED`` and ``FORWARD_INCOMPLETE`` runs stay, and so
+    does a failed run whose cancel ask is unanswered. A call naming neither runs nor a
+    function is refused, bound or not. *store_for* builds a store bound to a tenant
+    (``None`` for unbound) over one relation.
+    """
+
+    tenant_a = UUID("00000000-0000-0000-0000-00000000000a")
+    tenant_b = UUID("00000000-0000-0000-0000-00000000000b")
+    as_a, as_b, unbound = store_for(tenant_a), store_for(tenant_b), store_for(None)
+    admin_a, admin = cast(DurableRunAdminPort, as_a), cast(DurableRunAdminPort, unbound)
+    lease = timedelta(minutes=5)
+
+    async def landed(
+        store: DurableRunStorePort,
+        name: str,
+        land: Callable[[DurableRunStorePort, str, int], Awaitable[None]],
+        *,
+        asked: bool = False,
+        declined: bool = False,
+    ) -> str:
+        run = await store.enqueue(name, input_json={"n": name})
+        held = await store.begin(run.run_id, lease_for=lease)
+        assert held is not None
+
+        if asked:
+            await cast(DurableRunAdminPort, store).request_cancel(run.run_id)
+
+        if declined:
+            await store.refuse_cancel(run.run_id, fence=held.attempts)
+
+        await land(store, run.run_id, held.attempts)
+
+        return run.run_id
+
+    async def fail(store: DurableRunStorePort, run_id: str, fence: int) -> None:
+        await store.fail(run_id, error="boom", fence=fence)
+
+    async def time_out(store: DurableRunStorePort, run_id: str, fence: int) -> None:
+        await store.mark_timed_out(run_id, error="cap", fence=fence)
+
+    async def cancel(store: DurableRunStorePort, run_id: str, fence: int) -> None:
+        await store.mark_cancelled(run_id, fence=fence)
+
+    async def forward(store: DurableRunStorePort, run_id: str, fence: int) -> None:
+        await store.mark_forward_incomplete(run_id, error="pivot", fence=fence)
+
+    failed_a = await landed(as_a, "fa", fail)
+    timed_out_a = await landed(as_a, "ta", time_out)
+    asked_a = await landed(as_a, "xa", fail, asked=True)
+    declined_a = await landed(as_a, "ra", fail, asked=True, declined=True)
+    await landed(as_a, "oa", fail)
+    cancelled_a = await landed(as_a, "ca", cancel)
+    forward_a = await landed(as_a, "wa", forward)
+    await landed(as_a, "shared", fail)
+    failed_b = await landed(as_b, "fb", fail)
+    await landed(as_b, "shared", fail)
+    await landed(unbound, "fn", fail)
+
+    async def state(run_id: str) -> tuple[str, int, str | None, bool, bool] | None:
+        record = await unbound.load(run_id)
+
+        if record is None:
+            return None
+
+        return (
+            record.status.value,
+            record.attempts,
+            record.error,
+            record.cancel_requested_at is not None,
+            record.available_at is None,
+        )
+
+    async def outcome(call: Awaitable[int]) -> Any:
+        try:
+            return await call
+
+        except CoreException as error:
+            return error.kind.value, error.code
+
+    out: dict[str, Any] = {}
+
+    # A run's failure history is not brought back whole: name the runs or the function.
+    out["bound_unnamed"] = await outcome(admin_a.requeue_failed())
+    out["unbound_unnamed"] = await outcome(admin.requeue_failed())
+
+    out["named_across_tenants"] = await admin_a.requeue_failed(run_ids=[failed_b])
+    out["named_none"] = await admin_a.requeue_failed(run_ids=[])
+    out["by_name"] = await admin_a.requeue_failed(name="oa")
+    out["by_ids"] = await admin_a.requeue_failed(
+        run_ids=[failed_a, timed_out_a, asked_a, declined_a, cancelled_a, forward_a]
+    )
+    out["requeued"] = await state(failed_a)
+    out["requeued_timed_out"] = await state(timed_out_a)
+    out["requeued_declined"] = await state(declined_a)
+    out["left"] = [
+        await state(asked_a),
+        await state(cancelled_a),
+        await state(forward_a),
+        await state(failed_b),
+    ]
+
+    out["unbound_named"] = await admin.requeue_failed(run_ids=[failed_b, "no-such-run"])
+    out["unbound_by_name"] = await admin.requeue_failed(name="shared")
+    out["requeued_again"] = await admin.requeue_failed(name="shared")
+
+    out["claimed"] = sorted(
+        (r.name, r.attempts) for r in await unbound.claim_abandoned(limit=20, lease_for=lease)
+    )
+
+    return out
+
+
+REQUEUE_FAILED_OUTCOME: dict[str, Any] = {
+    "bound_unnamed": ("validation", REQUEUE_UNSCOPED_CODE),
+    "unbound_unnamed": ("validation", REQUEUE_UNSCOPED_CODE),
+    "named_across_tenants": 0,
+    "named_none": 0,
+    "by_name": 1,
+    "by_ids": 3,
+    "requeued": ("pending", 1, "boom", False, True),
+    "requeued_timed_out": ("pending", 1, "cap", False, True),
+    "requeued_declined": ("pending", 1, "boom", True, True),
+    "left": [
+        ("failed", 1, "boom", True, True),
+        ("cancelled", 1, None, False, True),
+        ("forward_incomplete", 1, "pivot", False, True),
+        ("failed", 1, "boom", False, True),
+    ],
+    "unbound_named": 1,
+    "unbound_by_name": 2,
+    "requeued_again": 0,
+    "claimed": [
+        ("fa", 2),
+        ("fb", 2),
+        ("oa", 2),
+        ("ra", 2),
+        ("shared", 2),
+        ("shared", 2),
+        ("ta", 2),
+    ],
+}
+"""What :func:`run_requeue_failed_scenario` answers on every engine, the mock included."""
+
+
+# ....................... #
+
+
 @attrs.define
 class _RecoveryKms:
     """A KMS that refuses one tenant's key for good, and another's for now."""
@@ -518,8 +762,7 @@ async def run_unreadable_listing_scenario(
 
     out: dict[str, Any] = {
         "listed": sorted(
-            (record.name, record.input_json, record.payloads_unreadable)
-            for record in page.records
+            (record.name, record.input_json, record.payloads_unreadable) for record in page.records
         ),
     }
 
@@ -841,7 +1084,6 @@ async def run_quarantine_admin_scenario(
     return out
 
 
-
 async def run_requeue_race_scenario(
     store_for: Callable[[UUID | None], DurableRunStorePort],
     racing: Callable[[Callable[[], Awaitable[None]]], DurableRunStorePort],
@@ -873,6 +1115,7 @@ async def run_requeue_race_scenario(
     )
 
     return {"moved": moved, "still_quarantined": [record.name for record in page.records]}
+
 
 QUARANTINE_ADMIN_OUTCOME: dict[str, Any] = {
     "listed": ["qa", "qb", "qd", "qn"],
@@ -985,6 +1228,14 @@ async def run_tenancy_scenario(
     second = await as_a.enqueue("owned-2", input_json=None)
     second_held = await as_a.begin(second.run_id, lease_for=timedelta(minutes=5))
     assert second_held is not None
+
+    await as_b.mark_retry(
+        second.run_id, error="stolen", available_at=utcnow(), fence=second_held.attempts
+    )
+    after_cross_retry = await as_a.load(second.run_id)
+    out["cross_retry_status"] = (
+        None if after_cross_retry is None else after_cross_retry.status.value
+    )
 
     await as_b.fail(second.run_id, error="stolen", fence=second_held.attempts)
     after_cross_fail = await as_a.load(second.run_id)

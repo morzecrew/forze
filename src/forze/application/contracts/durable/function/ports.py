@@ -44,5 +44,10 @@ class DurableFunctionStepPort(Protocol):
         step_id: str,
         fn: Callable[[], Awaitable[T]],
     ) -> Awaitable[T]:
-        """Run *fn* as a durable, retriable step."""
+        """Run *fn* as a durable step: its result is journaled under the run, so a
+        re-invocation of the run replays it instead of running *fn* again.
+
+        An engine tier (Inngest) may retry *fn* itself. The self-hosted tier runs it once and
+        leaves retrying to the run (the runner's retry strategy, or a requeue).
+        """
         ...  # pragma: no cover

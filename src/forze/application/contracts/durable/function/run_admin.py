@@ -4,11 +4,12 @@ Kept **separate** from the operational :class:`DurableRunStorePort` (enqueue / c
 complete) — mirroring the framework's management/data split — so a handler driving an ops
 dashboard never acquires the claim/write store. Backed by the same ``durable_run`` relation.
 
-Three verbs live here, all operator-shaped. :meth:`DurableRunAdminPort.list_runs` never
+Four verbs live here, all operator-shaped. :meth:`DurableRunAdminPort.list_runs` never
 mutates a run. :meth:`DurableRunAdminPort.request_cancel` records an *ask*, deliberately not
 on the data-plane store: anyone may ask a run to stop, but only the fence-holding runner may
 land the terminal state. :meth:`DurableRunAdminPort.requeue_quarantined` returns runs
-recovery gave up on to the scan; they have no holder, so it needs no fence.
+recovery gave up on to the scan, and :meth:`DurableRunAdminPort.requeue_failed` runs that
+failed; neither has a holder, so they need no fence.
 """
 
 from __future__ import annotations
@@ -31,7 +32,9 @@ _CURSOR_CODEC = B64UrlJsonCodec()
 """Opaque base64url-JSON encoder for the ``(created_at, run_id)`` keyset cursor."""
 
 REQUEUE_UNSCOPED_CODE: Final = "durable.requeue_unscoped"
-"""Code of the refusal of an unbound, unnamed requeue while a quarantined run has a tenant."""
+"""Code of the refusal of a requeue that names nothing it may take: an unbound, unnamed
+:meth:`DurableRunAdminPort.requeue_quarantined` while a quarantined run has a tenant, or a
+:meth:`DurableRunAdminPort.requeue_failed` with neither run ids nor a name."""
 
 
 def requeue_unscoped_error() -> CoreException:
@@ -41,6 +44,17 @@ def requeue_unscoped_error() -> CoreException:
     return exc.validation(
         "Requeueing quarantined durable runs with no tenant bound needs run_ids while any of "
         "them belongs to a tenant: bind the tenant whose key is back, or name the runs.",
+        code=REQUEUE_UNSCOPED_CODE,
+    )
+
+
+def requeue_failed_unnamed_error() -> CoreException:
+    """The refusal :meth:`DurableRunAdminPort.requeue_failed` raises for a call naming neither
+    runs nor a function."""
+
+    return exc.validation(
+        "Requeueing failed durable runs needs run_ids or a name: a run's failure history is "
+        "not something to bring back whole.",
         code=REQUEUE_UNSCOPED_CODE,
     )
 
@@ -187,8 +201,9 @@ class DurableRunAdminPort(Protocol):
     Newest-first keyset pagination over the same ``durable_run`` relation the store writes.
     Tenant scoping mirrors recovery: scoped to the bound tenant when one is bound, and spans
     every tenant when unbound (an operator view over a tagged shared table) — and that
-    applies to :meth:`request_cancel` and :meth:`requeue_quarantined` too, so an operator
-    bound to one tenant cannot stop or requeue a run it could not have listed.
+    applies to :meth:`request_cancel`, :meth:`requeue_quarantined` and :meth:`requeue_failed`
+    too, so an operator bound to one tenant cannot stop or requeue a run it could not have
+    listed.
     """
 
     def list_runs(
@@ -238,6 +253,9 @@ class DurableRunAdminPort(Protocol):
         - ``QUARANTINED``, or ``PENDING`` after a requeue from it — stamps the ask, leaves the
           state alone and returns ``True``. The run may be a saga past its pivot, which must
           not be cancelled unread; the ask is decided once a claim can decrypt it.
+        - ``PENDING`` waiting for a retry, or requeued after it failed (``attempts`` of one or
+          more) — stamps the ask and returns ``True``. It lands when the run comes due, by
+          the claim that would have run it, which spends an attempt.
         - terminal — no-op, returns ``False``.
         - unknown, or owned by another tenant while one is bound — no-op, returns ``False``
           (indistinguishable on purpose: an operator scoped to one tenant learns nothing
@@ -285,5 +303,43 @@ class DurableRunAdminPort(Protocol):
         :raises CoreException: ``validation`` (:data:`REQUEUE_UNSCOPED_CODE`) for an unbound
             call without *run_ids* while any quarantined run belongs to a tenant. A
             deployment whose runs carry no tenant requeues unbound.
+        """
+        ...  # pragma: no cover
+
+    def requeue_failed(
+        self,
+        *,
+        run_ids: Sequence[str] | None = None,
+        name: str | None = None,
+    ) -> Awaitable[int]:
+        """Return ``FAILED`` and ``TIMED_OUT`` runs to ``PENDING``; return how many moved.
+
+        Call it once whatever failed them is fixed, naming the runs or the function. A
+        requeued run keeps its ``run_id``, so the steps it journaled replay on its next claim
+        and only the rest run again. It is due at once, with no lease, and keeps its payloads,
+        its ``error`` until it lands again, and its ``attempts``: they are its fence, and count
+        toward a retry strategy's ``max_attempts``, so a run that spent them gets one attempt
+        per requeue. It keeps ``created_at`` too, so the scan, oldest first, claims requeued
+        runs ahead of fresh ones.
+
+        A saga journals a failed forward step, so a requeue of one that rolled back
+        (``saga.step_failed``) fails the same way again: such work needs a new run. A requeue
+        of one whose rollback failed runs again only the compensations that failed.
+
+        Left where they are: ``CANCELLED`` runs, since an operator stopped them;
+        ``FORWARD_INCOMPLETE`` ones, which committed at their pivot and are completed by hand;
+        and a failed run whose cancel ask is still unanswered, which honours the ask.
+
+        Scoped like :meth:`list_runs`: bound, only that tenant's runs; unbound, any tenant's.
+        Unlike :meth:`requeue_quarantined` an unbound call may name a function across tenants:
+        a failed run opens like any other, so bringing it back puts no unreadable run at the
+        head of the scan.
+
+        :param run_ids: Requeue only these runs, skipping any not failed, timed out or in
+            scope; an empty sequence names none.
+        :param name: Requeue only runs of this function.
+        :returns: How many runs moved.
+        :raises CoreException: ``validation`` (:data:`REQUEUE_UNSCOPED_CODE`) for a call with
+            neither *run_ids* nor *name*.
         """
         ...  # pragma: no cover

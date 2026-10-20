@@ -29,8 +29,8 @@ it was.
   Signals and updates push messages into a running workflow.
 - **Schedules** — fire a workflow on a cron or interval; the durable counterpart to a
   queue's delayed jobs.
-- **Functions** — event-triggered work composed of individually-retried, memoized **steps**
-  (the Inngest model).
+- **Functions** — event-triggered work composed of memoized **steps** (the Inngest model;
+  Inngest retries each step; the self-hosted tier runs a step once and can retry the run).
 
 A workflow start returns a handle you observe through the query port:
 
@@ -109,10 +109,10 @@ still held (nothing double-executes) and the run lands `TIMED_OUT` with the dead
 so a body hung on a dead peer can't pin a recovery slot forever. `TIMED_OUT` is its own
 terminal rather than a flavour of `FAILED` because the two send you to different places —
 `FAILED` to the body's code, `TIMED_OUT` to the cap, the workload's size, or a hung peer. Set
-it above your longest body, or `None` to remove the cap; re-enqueue a timed-out run to retry
-it. Run the scanner unwrapped on every replica. The singleton lifecycle guard cannot elect one
-scanner: it holds its lock only while startup launches the loop, so later replicas scan too, and
-one that starts while another holds the lock runs none.
+it above your longest body, or `None` to remove the cap. A timeout is not retried: requeue
+the run (below) to run it again. Run the scanner unwrapped on every replica. The singleton
+lifecycle guard cannot elect one scanner: it holds its lock only while startup launches the
+loop, so later replicas scan too, and one that starts while another holds the lock runs none.
 `max_concurrency` bounds how many runs a sweep recovers at once. Enqueue with
 `run_at=<when>` for a **delayed** run — the scan skips it until it's due.
 
@@ -131,7 +131,7 @@ find it. Naming a tenant that **contradicts** a bound one is refused
 (`authentication` / `tenant_mismatch`) rather than applied to some of the three.
 
 What a bound caller reaches splits by what the verb does. The verbs taking a run id —
-`begin`, `renew`, `load` and every terminal write — reach that tenant's runs and **untagged**
+`begin`, `renew`, `load`, `mark_retry` and every terminal write — reach that tenant's runs and **untagged**
 ones; the untagged arm is what keeps a run belonging to no tenant completable, since a
 terminal write that matched nothing would leave it reclaimed and re-run forever. The verbs
 that enumerate or control — the recovery scan, `list_runs`, `request_cancel`, `refuse_cancel`
@@ -144,6 +144,76 @@ than passing on the strength of the other planes. Note the coupling that creates
 `tenant_aware=True` on a run store fails closed when nothing is bound, which is how the
 cross-tenant sweep runs, so a deployment declaring `tagged` runs per-tenant recovery
 (`tenants=…`) instead.
+
+### Retrying a failed run
+
+A step that raises writes no journal row, and by default the run lands `FAILED`. Give the
+runner a retry strategy and a run whose body raises a retryable error goes back to `PENDING`
+instead, due after a backoff:
+
+```python
+from datetime import timedelta
+
+from forze.application.contracts.resilience import BackoffStrategy, RetryStrategy
+from forze.base.exceptions import ExceptionKind
+
+runner = DurableFunctionRunner(
+    registry=registry,
+    retry=RetryStrategy(
+        max_attempts=5,
+        backoff=BackoffStrategy(base=timedelta(seconds=10), max=timedelta(minutes=10)),
+        retry_on=frozenset({ExceptionKind.INFRASTRUCTURE, ExceptionKind.THROTTLED}),
+    ),
+)
+```
+
+The worker is freed while the run waits; the recovery scan claims it once it is due, on any
+replica, and the steps it journaled replay — only the failed step and those after it run
+again. `registry.register(name, body, retry=...)` gives one function its own strategy, and
+`max_attempts=1` there opts it out of the runner's.
+
+- **What is retried.** A `CoreException` whose kind is in `retry_on`. A vendor exception is
+  not: map it to a kind with an exception interceptor. These land as they would have: a
+  timeout; a failure while an operator's cancel is pending; a saga that rolled back
+  (`domain` — it journals its failed step, so running it again fails the same way); and a
+  saga whose rollback failed or whose step's outcome is unknown, which need an operator.
+- **The budget is the run's `attempts`.** Every claim spends one, a recovery claim after a
+  crash included, so `max_attempts` bounds how often the run is claimed, not how often its
+  body raised. The strategy's `budget` is refused: a process-local bucket cannot count claims
+  spread across replicas.
+- **While it waits** the run is `PENDING` with the failure in `error`. `run_now` returns that
+  record instead of raising, and so does a re-submit under its key until it is due. A cancel
+  asked of a waiting run is stamped and lands when the retry comes due, without running the
+  body (a saga runs again and decides by its pivot); that claim spends an attempt.
+- **When it is due** it keeps its `created_at`, so the scan, oldest first, claims it ahead of
+  fresh runs.
+
+An attempt that sends its run back counts under the `retrying` outcome, and the last one
+under `failed`: alert on `failed`.
+
+**Requeue a failed run** once whatever failed it is fixed, naming the runs or the function.
+A run that landed `FAILED` or `TIMED_OUT` goes back to `PENDING` under its own id, so it too
+replays its journal and reruns only the steps it did not finish:
+
+```python
+from forze_kits.integrations.durable import resolve_durable_run_admin
+
+
+async def requeue(ctx):
+    admin = resolve_durable_run_admin(ctx)
+    await admin.requeue_failed(run_ids=["..."])     # or name="profile"
+```
+
+A call naming neither is refused: a run's failure history is not something to bring back
+whole. It is scoped like `list_runs`, though an unbound call may name a function across
+tenants, and it leaves alone `CANCELLED` and `FORWARD_INCOMPLETE` runs and a failed run whose
+cancel ask is unanswered. A requeued run keeps its `attempts`, so one that spent a retry
+strategy's budget gets one attempt per requeue, and its `created_at`, so the scan claims
+requeued runs ahead of fresh ones.
+
+A saga journals a failed forward step, so requeueing one that rolled back
+(`saga.step_failed`) fails it the same way again; that work needs a new run. Requeueing one
+whose rollback failed runs again only the compensations that failed.
 
 ### Runs recovery cannot decrypt
 
@@ -209,8 +279,8 @@ structure the body for it (await regularly, `run_cpu` with checkpoints at chunk 
 True hard kill exists only at process/container granularity and is a deployment concern.
 
 `CANCELLED` is deliberately not `FAILED`: nothing is wrong with the code, so it should not
-page anyone. Completed steps stay journaled, so re-enqueueing a cancelled run replays them
-rather than redoing the work.
+page anyone. Its completed steps stay journaled — cancelling is not a rollback — and
+`requeue_failed` leaves it alone.
 
 The ask is **unfenced** and the landing is **fenced**: anyone may ask, but only the run's
 current claim holder may write the terminal state, so a stalled replica can't cancel a run

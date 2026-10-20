@@ -159,8 +159,8 @@ class TestCancelRunning:
         assert result.cancel_requested_at is not None
         assert result.cancel_refused_at is None
 
-        # The journal survives the cancel: a manual re-enqueue replays the charged step
-        # rather than charging twice. Cancelling is not a rollback.
+        # The journal survives the cancel: the charged step stays recorded, not undone.
+        # Cancelling is not a rollback.
         assert state.durable_step_memo[f"{run_id}:charge"] == {"charged": True}
 
     async def test_cancel_is_not_a_failure(self) -> None:
@@ -394,6 +394,11 @@ class _ListOnlyAdmin:
         raise AssertionError("must not be reached — the gate refuses first")
 
     async def requeue_quarantined(self, *, run_ids: Sequence[str] | None = None) -> int:
+        return 0
+
+    async def requeue_failed(
+        self, *, run_ids: Sequence[str] | None = None, name: str | None = None
+    ) -> int:
         return 0
 
 

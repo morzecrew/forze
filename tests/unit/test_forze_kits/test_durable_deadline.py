@@ -83,7 +83,7 @@ class TestRunDeadline:
         assert unwound["body"] is True
 
         # TIMED_OUT with the deadline reason: the body was cancelled before any lease lapse,
-        # so no double-execution; there is no retry machinery — an operator re-enqueues.
+        # so no double-execution; a timeout is never retried — an operator requeues it.
         reloaded = await store.load(record.run_id)
         assert reloaded is not None
         assert reloaded.status is DurableRunStatus.TIMED_OUT

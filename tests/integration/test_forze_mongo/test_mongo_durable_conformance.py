@@ -59,6 +59,8 @@ from tests.support.durable_cancel_races import (
 )
 from tests.support.durable_conformance import (
     QUARANTINE_ADMIN_OUTCOME,
+    REQUEUE_FAILED_OUTCOME,
+    RETRY_OUTCOME,
     FirstCallRuns,
     mock_quarantine,
     run_claim_scenario,
@@ -66,7 +68,9 @@ from tests.support.durable_conformance import (
     run_lifecycle_scenario,
     run_list_scenario,
     run_quarantine_admin_scenario,
+    run_requeue_failed_scenario,
     run_requeue_race_scenario,
+    run_retry_scenario,
     run_schedule_scenario,
     run_tenancy_scenario,
     tenant_provider_for,
@@ -283,6 +287,14 @@ class TestDurableMockVsMongo:
         assert mock_out["begin_while_running"] is True
         assert mock_out["zero_limit_scan"] == []
 
+    async def test_mock_matches_mongo_for_a_retry(
+        self, mongo_client: MongoClient, run_collection: tuple[str, str]
+    ) -> None:
+        mock_out = await run_retry_scenario(MockDurableRunStore(state=MockState()))
+        mongo_out = await run_retry_scenario(_mongo_store(mongo_client, run_collection))
+
+        assert mock_out == mongo_out == RETRY_OUTCOME
+
     async def test_mock_matches_mongo_for_the_tenant_boundary(
         self,
         mongo_client: MongoClient,
@@ -324,6 +336,7 @@ class TestDurableMockVsMongo:
         assert mongo_out["cross_complete_output"] is None
         assert mongo_out["own_complete_status"] == "completed"
         assert mongo_out["own_complete_output"] == {"ok": True}
+        assert mongo_out["cross_retry_status"] == "running"
         assert mongo_out["cross_fail_status"] == "running"
         assert mongo_out["cross_fail_error"] is None
 
@@ -367,6 +380,26 @@ class TestDurableMockVsMongo:
         )
 
         assert mock_out == mongo_out == QUARANTINE_ADMIN_OUTCOME
+
+    async def test_mock_matches_mongo_for_requeued_failed_runs(
+        self, mongo_client: MongoClient, run_collection: tuple[str, str]
+    ) -> None:
+        mock_state = MockState()
+        mock_out = await run_requeue_failed_scenario(
+            lambda tenant: MockDurableRunStore(
+                state=mock_state,
+                tenant_provider=tenant_provider_for(tenant),
+            )
+        )
+        mongo_out = await run_requeue_failed_scenario(
+            lambda tenant: MongoDurableRunStore(
+                client=mongo_client,
+                config=MongoDurableRunConfig(collection=run_collection),
+                tenant_provider=tenant_provider_for(tenant),
+            )
+        )
+
+        assert mock_out == mongo_out == REQUEUE_FAILED_OUTCOME
 
     async def test_an_unnamed_requeue_leaves_a_run_tagged_after_its_check(
         self, mongo_client: MongoClient, run_collection: tuple[str, str]

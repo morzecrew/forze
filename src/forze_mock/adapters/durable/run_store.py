@@ -20,6 +20,7 @@ from forze.application.contracts.durable.function import (
     DurableRunStorePort,
     build_run_page,
     decode_run_cursor,
+    requeue_failed_unnamed_error,
     requeue_unscoped_error,
 )
 from forze.application.contracts.tenancy import TenantProviderPort, effective_tenant
@@ -38,12 +39,12 @@ class MockDurableRunStore(DurableRunStorePort, DurableRunAdminPort, DurableRunCo
     Same lifecycle and lease/claim semantics as the Postgres store (``PENDING`` →
     ``RUNNING`` under a lease, abandoned reclaim, idempotency-key convergence, the cancel
     ask/land split), in memory. A bound tenant scopes ``enqueue``/``claim_abandoned``/
-    ``request_cancel``/``requeue_quarantined`` to that tenant (per-tenant recovery and
-    control); unbound, the scan spans every tenant. It never seals, so it never quarantines
-    a run itself.
+    ``request_cancel``/``requeue_quarantined``/``requeue_failed`` to that tenant (per-tenant
+    recovery and control); unbound, the scan spans every tenant. It never seals, so it never
+    quarantines a run itself.
 
-    The verbs reached with a run id — ``begin``, ``renew``, ``load`` and every terminal
-    write — reach the bound tenant's runs and the untagged ones (see :meth:`_reaches`);
+    The verbs reached with a run id — ``begin``, ``renew``, ``load``, ``mark_retry`` and every
+    terminal write — reach the bound tenant's runs and the untagged ones (see :meth:`_reaches`);
     unbound they reach everything, which is the recovery and single-tenant role.
     """
 
@@ -225,6 +226,24 @@ class MockDurableRunStore(DurableRunStorePort, DurableRunAdminPort, DurableRunCo
 
     # ....................... #
 
+    async def mark_retry(
+        self,
+        run_id: str,
+        *,
+        error: str,
+        available_at: datetime,
+        fence: int | None = None,
+    ) -> None:
+        self._finish(
+            run_id,
+            status=DurableRunStatus.PENDING,
+            error=error,
+            fence=fence,
+            available_at=available_at,
+        )
+
+    # ....................... #
+
     async def mark_forward_incomplete(
         self, run_id: str, *, error: str, fence: int | None = None
     ) -> None:
@@ -341,11 +360,39 @@ class MockDurableRunStore(DurableRunStorePort, DurableRunAdminPort, DurableRunCo
 
             # Due at once: ``begin`` takes a run before its ``available_at``, so one can
             # reach quarantine still delayed.
-            for data in quarantined:
-                data["status"] = DurableRunStatus.PENDING.value
-                data["available_at"] = None
+            _requeue(quarantined)
 
         return len(quarantined)
+
+    # ....................... #
+
+    async def requeue_failed(
+        self,
+        *,
+        run_ids: Sequence[str] | None = None,
+        name: str | None = None,
+    ) -> int:
+        if run_ids is None and name is None:
+            raise requeue_failed_unnamed_error()
+
+        bound_tenant = self._bound_tenant()
+        named = None if run_ids is None else set(run_ids)
+
+        with self.state.lock:
+            # Scoped like ``list_runs``; a landed run has no lease and no holder to fence. An
+            # unanswered cancel ask is honoured: such a run stays where it landed.
+            failed = [
+                data
+                for data in self.state.durable_runs.values()
+                if data["status"] in _REQUEUEABLE
+                and (data["cancel_requested_at"] is None or data["cancel_refused_at"] is not None)
+                and (bound_tenant is None or data["tenant_id"] == bound_tenant)
+                and (named is None or data["run_id"] in named)
+                and (name is None or data["name"] == name)
+            ]
+            _requeue(failed)
+
+        return len(failed)
 
     # ....................... #
 
@@ -420,6 +467,7 @@ class MockDurableRunStore(DurableRunStorePort, DurableRunAdminPort, DurableRunCo
         output: JsonDict | None = None,
         error: str | None = None,
         fence: int | None = None,
+        available_at: datetime | None = None,
     ) -> None:
         with self.state.lock:
             data = self.state.durable_runs.get(run_id)
@@ -441,6 +489,11 @@ class MockDurableRunStore(DurableRunStorePort, DurableRunAdminPort, DurableRunCo
             data["error"] = error
             data["leased_until"] = None
 
+            # A retry goes back to PENDING due at *available_at*; a terminal write leaves
+            # ``available_at`` as it is.
+            if status is DurableRunStatus.PENDING:
+                data["available_at"] = available_at
+
 
 # ....................... #
 
@@ -450,6 +503,16 @@ _LIVE = (
     DurableRunStatus.QUARANTINED.value,
 )
 """The states a cancel can still be asked of."""
+
+_REQUEUEABLE = (DurableRunStatus.FAILED.value, DurableRunStatus.TIMED_OUT.value)
+"""The landed states :meth:`MockDurableRunStore.requeue_failed` returns to ``PENDING``."""
+
+
+def _requeue(runs: list[dict[str, Any]]) -> None:
+    # Due at once, keeping attempts (the fence), payloads and cancel stamps.
+    for data in runs:
+        data["status"] = DurableRunStatus.PENDING.value
+        data["available_at"] = None
 
 
 def _is_abandoned(data: dict[str, Any], now: Any) -> bool:

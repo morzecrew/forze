@@ -10,6 +10,8 @@ from __future__ import annotations
 
 from datetime import timedelta
 
+from forze.application.contracts.resilience import BackoffStrategy, RetryStrategy
+from forze.base.exceptions import ExceptionKind
 from forze.testing import context_from_deps, context_from_modules
 from forze_kits.integrations.durable import (
     DurableFunctionRegistry,
@@ -29,9 +31,7 @@ class TestDurableKitsDepsModule:
         runner = DurableFunctionRunner(registry=DurableFunctionRegistry())
         scheduler = DurableScheduler()
 
-        ctx = context_from_modules(
-            DurableKitsDepsModule(runner=runner, scheduler=scheduler)
-        )
+        ctx = context_from_modules(DurableKitsDepsModule(runner=runner, scheduler=scheduler))
 
         assert resolve_durable_runner(ctx) is runner
         assert resolve_durable_scheduler(ctx) is scheduler
@@ -52,12 +52,20 @@ class TestDurableKitsDeps:
     def test_forwards_runner_configuration(self) -> None:
         registry = DurableFunctionRegistry()
 
+        retry = RetryStrategy(
+            max_attempts=3,
+            backoff=BackoffStrategy(base=timedelta(seconds=1), max=timedelta(seconds=10)),
+            retry_on=frozenset({ExceptionKind.INFRASTRUCTURE}),
+        )
+
         _, runner, _ = durable_kits_deps(
             registry=registry,
             lease_for=timedelta(seconds=90),
             heartbeat_divisor=4,
+            retry=retry,
         )
 
         assert runner.registry is registry
         assert runner.lease_for == timedelta(seconds=90)
         assert runner.heartbeat_divisor == 4
+        assert runner.retry is retry

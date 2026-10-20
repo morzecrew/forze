@@ -28,6 +28,7 @@ from forze.application.contracts.durable.function import (
     DurableRunStorePort,
     build_run_page,
     decode_run_cursor,
+    requeue_failed_unnamed_error,
     requeue_unscoped_error,
 )
 from forze.application.contracts.tenancy import TenancyMixin
@@ -65,6 +66,8 @@ def _unscope_key(stored: str | None, tenant_id: UUID | None) -> str | None:
 _PENDING = DurableRunStatus.PENDING.value
 _RUNNING = DurableRunStatus.RUNNING.value
 _QUARANTINED = DurableRunStatus.QUARANTINED.value
+_REQUEUEABLE = [DurableRunStatus.FAILED.value, DurableRunStatus.TIMED_OUT.value]
+"""The landed states :meth:`MongoDurableRunStore.requeue_failed` returns to ``PENDING``."""
 
 
 @final
@@ -98,11 +101,11 @@ class MongoDurableRunStore(
     it) or per-tenant over a namespace collection. An unbound scan never fails, and a bound
     scan claims only that tenant's runs.
 
-    What a bound caller reaches splits by verb. :meth:`begin`, :meth:`renew`, :meth:`load`
-    and every terminal write reach that tenant's runs and untagged ones (see
+    What a bound caller reaches splits by verb. :meth:`begin`, :meth:`renew`, :meth:`load`,
+    :meth:`mark_retry` and every terminal write reach that tenant's runs and untagged ones (see
     :meth:`_worker_scope`); :meth:`claim_abandoned`, :meth:`list_runs`,
-    :meth:`request_cancel`, :meth:`requeue_quarantined` and :meth:`refuse_cancel` match the
-    tenant exactly.
+    :meth:`request_cancel`, :meth:`requeue_quarantined`, :meth:`requeue_failed` and
+    :meth:`refuse_cancel` match the tenant exactly.
     :meth:`enqueue` resolves one effective tenant for the collection, the tag and the scoped
     key together, and refuses an explicit tenant that contradicts the binding.
 
@@ -484,6 +487,41 @@ class MongoDurableRunStore(
 
             filter_["tenant_id"] = None
 
+        return await self._requeue(coll, filter_)
+
+    # ....................... #
+
+    async def requeue_failed(
+        self,
+        *,
+        run_ids: Sequence[str] | None = None,
+        name: str | None = None,
+    ) -> int:
+        if run_ids is None and name is None:
+            raise requeue_failed_unnamed_error()
+
+        coll = await self._collection()
+
+        # Scoped like ``list_runs``; a landed run has no lease and no holder to fence against.
+        # An unanswered cancel ask is honoured: such a run stays where it landed.
+        filter_: dict[str, Any] = {
+            "status": {"$in": _REQUEUEABLE},
+            "$or": [{"cancel_requested_at": None}, {"cancel_refused_at": {"$ne": None}}],
+            **self._tenant_filter(),
+        }
+
+        if run_ids is not None:
+            filter_["_id"] = {"$in": list(run_ids)}
+
+        if name is not None:
+            filter_["name"] = name
+
+        return await self._requeue(coll, filter_)
+
+    # ....................... #
+
+    async def _requeue(self, coll: AsyncCollection[JsonDict], filter_: dict[str, Any]) -> int:
+        # Due at once, keeping attempts (the fence), payloads and cancel stamps.
         return await self.client.update_many(
             coll,
             filter_,
@@ -554,6 +592,25 @@ class MongoDurableRunStore(
             output=None,
             error=error,
             fence=fence,
+        )
+
+    # ....................... #
+
+    async def mark_retry(
+        self,
+        run_id: str,
+        *,
+        error: str,
+        available_at: datetime,
+        fence: int | None = None,
+    ) -> None:
+        await self._finish(
+            run_id,
+            status=DurableRunStatus.PENDING,
+            output=None,
+            error=error,
+            fence=fence,
+            available_at=available_at,
         )
 
     # ....................... #
@@ -745,6 +802,7 @@ class MongoDurableRunStore(
         output: JsonDict | None,
         error: str | None,
         fence: int | None = None,
+        available_at: datetime | None = None,
     ) -> None:
         coll = await self._collection()
         now = utcnow()
@@ -758,19 +816,20 @@ class MongoDurableRunStore(
         if fence is not None:
             filter_["attempts"] = fence
 
-        await self.client.update_one(
-            coll,
-            filter_,
-            {
-                "$set": {
-                    "status": status.value,
-                    "output": output,
-                    "error": error,
-                    "leased_until": None,
-                    "updated_at": now,
-                }
-            },
-        )
+        update: dict[str, Any] = {
+            "status": status.value,
+            "output": output,
+            "error": error,
+            "leased_until": None,
+            "updated_at": now,
+        }
+
+        # A retry goes back to PENDING due at *available_at*; a terminal write leaves
+        # ``available_at`` as it is.
+        if status is DurableRunStatus.PENDING:
+            update["available_at"] = available_at
+
+        await self.client.update_one(coll, filter_, {"$set": update})
 
     # ....................... #
 
