@@ -62,8 +62,8 @@ def _shallow_merge(base: JsonDict, patch: JsonDict) -> JsonDict:
 def apply_dict_patch(before: JsonDict, patch: JsonDict) -> JsonDict:
     """Apply a merge-style JSON patch to ``before``.
 
-    A ``None`` in *patch* removes its key at any depth, so this inverts
-    :func:`calculate_dict_difference`; it cannot set a value to ``None``.
+    A ``None`` in *patch* removes its key at any depth, so it cannot set a value to ``None``.
+    It inverts :func:`calculate_dict_difference` only when ``after`` holds no ``None``.
 
     :param before: Original JSON-like dictionary.
     :param patch: Merge patch to apply.
@@ -169,7 +169,8 @@ def calculate_dict_difference(
     """Calculate a JSON-merge-style patch representing ``after`` vs ``before``.
 
     The resulting patch can be applied with :func:`apply_dict_patch` to obtain
-    ``after`` from ``before``. List changes are represented by replacing the
+    ``after`` from ``before`` when ``after`` holds no ``None``: a removed key and a key set
+    to ``None`` both read ``None`` here. List changes are represented by replacing the
     entire parent list.
 
     :param before: Original JSON-like dictionary.

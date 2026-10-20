@@ -506,6 +506,16 @@ class TestJsonValueUpdate:
         # The update adds ``b: null`` to the mapping a concurrent update changed.
         assert not current.validate_historical_consistency(old, {"data": {"b": None}})
 
+    def test_a_reset_and_a_null_on_the_same_key_conflict(self) -> None:
+        class Doc(Document):
+            meta: dict[str, Any] = {}
+
+        old = Doc(meta={"k": 1})
+        current, _ = old.update({"meta": None})  # a reset removed ``k``
+
+        # Both diffs read ``{"meta": {"k": None}}``; a ``None`` in a mapping touches the mapping.
+        assert not current.validate_historical_consistency(old, {"meta": {"k": None}})
+
 
 class TestMaterializeUpdateIsolation:
     """Pin the aliasing safety of the scoped per-value deepcopy in
