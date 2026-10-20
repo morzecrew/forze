@@ -560,6 +560,35 @@ async def check_an_unknown_option_is_refused_by_name(h: SearchHarness) -> None:
         assert key in str(refused.value), f"{h.backend}: {refused.value}"
 
 
+async def check_a_query_vector_is_refused_without_vector_search(h: SearchHarness) -> None:
+    """A ``query_vector`` is refused as a capability gate on every read path of a backend that
+    does not declare ``supports_vector``.
+
+    A keyword backend that read past it would rank by the blank query and drop the vector,
+    returning a plausible page that ignored the request.
+    """
+
+    if h.query.search_capabilities.supports_vector:
+        return
+
+    vector: Any = {"query_vector": [0.1, 0.2, 0.3]}
+    calls: list[Callable[[], Any]] = [
+        lambda: h.query.search_page("", None, {"limit": 5}, options=vector),
+    ]
+
+    if h.supports_cursor:
+        calls.append(lambda: h.query.search_cursor("", None, {"limit": 5}, options=vector))
+
+    if h.query.search_capabilities.supports_aggregates:
+        calls.append(lambda: h.query.aggregate_search(_GLOBAL_COUNT, "", options=vector))
+
+    for call in calls:
+        with pytest.raises(CoreException) as refused:
+            await call()
+
+        assert refused.value.code == UNSUPPORTED_QUERY_FEATURE_CODE, f"{h.backend}: {refused.value}"
+
+
 async def check_the_stream_gate_matches_the_declaration(h: SearchHarness) -> None:
     """A backend serves ``search_stream`` if and only if it declares ``supports_stream``.
 
@@ -788,6 +817,7 @@ SEARCH_BATTERY: tuple[Check, ...] = (
     check_windows_partition_under_a_non_unique_sort,
     check_phrase_combine_is_honored,
     check_an_unknown_option_is_refused_by_name,
+    check_a_query_vector_is_refused_without_vector_search,
     check_the_default_sort_orders_a_page_without_one,
     check_a_tie_breaks_by_id_in_the_sort_direction,
     check_a_cursor_walk_follows_the_offset_order,

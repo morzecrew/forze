@@ -262,7 +262,7 @@ class MockSearchAdapter(MockTenancyMixin, SearchQueryPort[M]):
         parses a hub filter once for its hub rows.
         """
 
-        options = search_options_for_simple_adapter(options, spec=self.spec)
+        options = search_options_for_simple_adapter(options, spec=self.spec, backend="mock")
         fields, weights = self._resolve_fields(options)
         terms = normalize_search_queries(query)
         combine = effective_phrase_combine(options)
@@ -432,7 +432,9 @@ class MockSearchAdapter(MockTenancyMixin, SearchQueryPort[M]):
         return_fields: Sequence[str] | None = None,
     ) -> Any:
         # Before a replay, which answers without reading the options, as Postgres does.
-        options = search_options_for_simple_adapter(options, spec=self.spec, snapshot=snapshot)
+        options = search_options_for_simple_adapter(
+            options, spec=self.spec, snapshot=snapshot, backend="mock"
+        )
         rs_spec = self.spec.snapshot
         order = self._page_order(sorts)
 

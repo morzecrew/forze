@@ -125,7 +125,7 @@ def test_thin_ranked_pipeline_is_none_without_sort() -> None:
 # `max_candidates` -> Mongo `$vectorSearch.numCandidates`
 
 
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 from uuid import UUID
 
 import pytest
@@ -136,6 +136,7 @@ from forze.application.execution import Deps, ExecutionContext
 from forze.base.exceptions import CoreException
 from forze_mock import MockHashEmbeddingsProvider
 from forze_mongo.adapters.search import MongoVectorSearchAdapter
+from forze_mongo.adapters.search import _simple_base as simple_base
 from forze_mongo.execution.deps import ConfigurableMongoSearch
 from forze_mongo.execution.deps.configs import MongoSearchConfig, MongoVectorEngine
 from forze_mongo.execution.deps.keys import MongoClientDepKey
@@ -212,3 +213,96 @@ async def test_mongo_search_fails_closed_on_facets_or_highlights(
 
     with pytest.raises(CoreException, match="not yet supported"):
         await adapter.search_cursor("alpha", options=bad_options)
+
+
+@pytest.mark.asyncio
+async def test_mongo_vector_ranks_a_query_vector_without_the_embedder() -> None:
+    adapter = _vector_adapter()
+    qvec = [0.5, 0.25, 0.125]
+
+    pipeline = await adapter._ranked_pipeline(
+        terms=(), combine="any", pre_filter={}, sorts=None, options={"query_vector": qvec}
+    )
+
+    assert pipeline[0]["$vectorSearch"]["queryVector"] == qvec
+    assert adapter._ranks((), {"query_vector": qvec})
+    assert not adapter._ranks((), None)
+
+
+@pytest.mark.asyncio
+async def test_mongo_vector_refuses_a_query_vector_of_the_wrong_length() -> None:
+    adapter = _vector_adapter()
+
+    with pytest.raises(CoreException) as caught:
+        await adapter.search("", options={"query_vector": [0.1]})
+
+    assert caught.value.kind.value == "validation"
+
+
+@pytest.mark.asyncio
+async def test_mongo_vector_refuses_a_query_vector_alongside_a_query() -> None:
+    adapter = _vector_adapter()
+
+    with pytest.raises(CoreException) as caught:
+        await adapter.search("alpha", options={"query_vector": [0.1, 0.2, 0.3]})
+
+    assert caught.value.code == "search_query_vector_with_query"
+
+
+def _answering(adapter: MongoVectorSearchAdapter[_VecDoc], doc_id: UUID) -> AsyncMock:
+    # One document: the ranked row the aggregate returns, and the row a thin page hydrates.
+    doc = {"_id": str(doc_id), "id": str(doc_id), "label": "a"}
+    aggregate = AsyncMock(return_value=[{**doc, MONGO_RANK_FIELD: 0.9}])
+    adapter.client.aggregate = aggregate  # type: ignore[method-assign]
+    adapter.client.find_many = AsyncMock(return_value=[doc])  # type: ignore[method-assign]
+    adapter.client.collection = AsyncMock(return_value=MagicMock())  # type: ignore[method-assign]
+    return aggregate
+
+
+@pytest.mark.asyncio
+async def test_mongo_vector_searches_by_a_query_vector_through_the_port() -> None:
+    adapter = _vector_adapter()
+    doc_id = UUID("00000000-0000-4000-8000-000000000001")
+    aggregate = _answering(adapter, doc_id)
+    qvec = [0.5, 0.25, 0.125]
+
+    page = await adapter.search("", options={"query_vector": qvec})
+    cursor_page = await adapter.search_cursor(
+        "", cursor={"limit": 5}, options={"query_vector": qvec}
+    )
+
+    assert [hit.id for hit in page.hits] == [doc_id]
+    assert page.scores == [0.9]
+    assert [hit.id for hit in cursor_page.hits] == [doc_id]
+    assert cursor_page.scores == [0.9]
+
+    for call in aggregate.call_args_list:
+        assert call[0][1][0]["$vectorSearch"]["queryVector"] == qvec
+
+
+@pytest.mark.asyncio
+async def test_mongo_vector_browses_an_explicit_none_query_vector() -> None:
+    adapter = _vector_adapter()
+    aggregate = _answering(adapter, UUID("00000000-0000-4000-8000-000000000002"))
+
+    page = await adapter.search("", options={"query_vector": None})  # type: ignore[typeddict-item]
+
+    assert page.scores is None
+    assert "$vectorSearch" not in aggregate.call_args[0][1][0]
+
+
+@pytest.mark.asyncio
+async def test_mongo_vector_fingerprints_tell_query_vectors_apart(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    run = AsyncMock()
+    monkeypatch.setattr(simple_base, "execute_mongo_ranked_offset_search", run)
+    adapter = _vector_adapter()
+
+    for qvec in ([0.1, 0.2, 0.3], [0.3, 0.2, 0.1]):
+        await adapter._offset_search_impl("", options={"query_vector": qvec}, return_count=False)
+
+    one, other = (call.kwargs["fingerprint_extras"] for call in run.call_args_list)
+
+    assert one["query_vector"] == [0.1, 0.2, 0.3]
+    assert one != other
