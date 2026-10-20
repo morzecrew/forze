@@ -5,6 +5,7 @@ from pydantic import BaseModel
 
 from forze.base.serialization.pydantic import (
     pydantic_dump,
+    pydantic_dump_many,
     pydantic_dump_many_batched,
     pydantic_field_names,
     pydantic_model_hash,
@@ -95,6 +96,41 @@ def test_pydantic_transform_many_two_step() -> None:
 def test_pydantic_validate_many_batched_rejects_invalid_batch_size() -> None:
     with pytest.raises(ValueError, match="batch_size"):
         next(iter(pydantic_validate_many_batched(SampleModel, [], batch_size=0)))
+
+
+class _Narrow(BaseModel):
+    qty: int | None = None
+
+
+class _Wide(BaseModel):
+    name: str
+    qty: int
+
+
+class _NarrowSub(_Narrow):
+    name: str
+
+
+@pytest.mark.parametrize(
+    "objs",
+    [
+        [_Narrow(qty=1), _Wide(name="a", qty=2)],
+        [_Wide(name="a", qty=2), _Narrow(qty=1)],
+        [_Narrow(qty=1), _NarrowSub(name="a", qty=2)],
+        [_NarrowSub(name="a", qty=2), _Narrow(qty=1)],
+    ],
+)
+def test_pydantic_dump_many_dumps_each_model_with_its_own_fields(objs: list[BaseModel]) -> None:
+    """A batch of mixed types, a subclass included, dumps each model as itself, not as the
+    first one's type."""
+
+    expected = [o.model_dump(exclude_unset=True) for o in objs]
+
+    assert pydantic_dump_many(objs, exclude={"unset": True}) == expected
+
+    for batch_size in (1, 4):
+        chunks = pydantic_dump_many_batched(objs, batch_size=batch_size, exclude={"unset": True})
+        assert [d for chunk in chunks for d in chunk] == expected
 
 
 def test_pydantic_model_hash_is_stable_for_same_data() -> None:
