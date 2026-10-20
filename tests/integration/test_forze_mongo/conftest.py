@@ -32,7 +32,10 @@ def mongo_container() -> MongoDbContainer:
 
     _ensure_docker()
 
-    with MongoDbContainer(image="mongo:8.0-noble") as mongo:
+    # 7.0, not 8.x: MongoDB 8 refuses to start on Linux 6.19 through 7.0.13 (SERVER-121912),
+    # which CI runners now ship. 7.0 is also the oldest server forze's aggregations need.
+    # Move back to 8.x once runners ship kernel 7.0.14+ or MongoDB lifts the check.
+    with MongoDbContainer(image="mongo:7.0-jammy") as mongo:
         yield mongo
 
 
@@ -49,7 +52,7 @@ def mongo_rotation_container() -> MongoDbContainer:
 
     _ensure_docker()
 
-    container = MongoDbContainer(image="mongo:8.0-noble")
+    container = MongoDbContainer(image="mongo:7.0-jammy")
     container.with_command("mongod --setParameter enableTestCommands=1")
 
     with container as mongo:
@@ -63,7 +66,7 @@ def mongo_replica_container() -> DockerContainer:
     _ensure_docker()
 
     mongo = (
-        DockerContainer(image="mongo:8.0-noble")
+        DockerContainer(image="mongo:7.0-jammy")
         .with_command(["--replSet", "rs0"])
         .with_bind_ports(27017, 27017)
     )
@@ -154,7 +157,7 @@ def mongo_atlas_local_container() -> DockerContainer:
     _ensure_docker()
 
     container = (
-        DockerContainer("mongodb/mongodb-atlas-local:latest")
+        DockerContainer("mongodb/mongodb-atlas-local:7.0")
         .with_exposed_ports(27017)
         .with_env("DO_NOT_TRACK", "1")
     )
