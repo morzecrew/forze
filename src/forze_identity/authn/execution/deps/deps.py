@@ -147,9 +147,11 @@ def _principals_to_lock(
     principal (``eligibility="allow_all"``), none is registered, or a locking read on their
     backend excludes nothing."""
 
+    # The lookup an issue's provide makes: the route, then the plain fallback.
     eligibility = (
         ctx.deps.provide(PrincipalEligibilityDepKey, route=spec.name)
         if ctx.deps.exists(PrincipalEligibilityDepKey, route=spec.name)
+        or ctx.deps.exists(PrincipalEligibilityDepKey)
         else None
     )
 

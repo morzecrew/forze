@@ -19,6 +19,7 @@ from forze.application.contracts.authn import (
     AuthnIdentity,
     AuthnSpec,
     PasswordCredentials,
+    PrincipalEligibilityDepKey,
     PrincipalEpochDepKey,
     RevocationStatesDepKey,
 )
@@ -467,3 +468,25 @@ async def test_a_logout_locks_the_principal_only_where_an_issue_does(
     )
 
     assert stack.principal_reads == reads
+
+
+@pytest.mark.parametrize("registration", ["routed", "plain"])
+def test_a_raise_finds_the_eligibility_an_issue_falls_back_to(
+    registration: Literal["routed", "plain"],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # An issue resolves eligibility through provide, which falls back to a plain registration.
+    monkeypatch.setattr(authn_deps, "_locks_exclude", lambda principals: True)
+
+    def eligibility(ctx: ExecutionContext, spec: Any) -> Any:
+        raise AssertionError("only looked up, never built")
+
+    deps = Deps.routed(
+        {DocumentQueryDepKey: {policy_principal_spec.name: lambda ctx, spec: object()}}
+    ).merge(
+        Deps.routed({PrincipalEligibilityDepKey: {ROUTE: eligibility}})
+        if registration == "routed"
+        else Deps.plain({PrincipalEligibilityDepKey: eligibility})
+    )
+
+    assert authn_deps._principals_to_lock(context_from_deps(deps), SPEC) is not None
