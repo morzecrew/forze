@@ -319,8 +319,12 @@ class CookieTokenAuthn:
     csrf: CookieCsrf | None = attrs.field(factory=CookieCsrf)
     """Server-side CSRF gate, **on by default** (see :class:`CookieCsrf`): an unsafe
     method must prove a same-host or allowlisted origin before the cookie is read.
-    ``None`` disables it — a declared decision that the deployment brings its own
-    CSRF defense (a double-submit token), not just the carrier's ``SameSite``."""
+    Cookie-mode ``/refresh`` applies the same gate to the refresh cookie when this
+    ingress reads the carrier's access cookie. ``None`` disables it for both — a
+    declared decision that the deployment brings its own CSRF defense (a
+    double-submit token), not just the carrier's ``SameSite``. Under
+    :class:`~forze_fastapi.middlewares.SecurityContextMiddleware`, the cookie stays gated,
+    on ``/refresh`` too, when another ingress reading the same cookie declares a gate."""
 
     description: str | None = None
     """Human-readable description of the ingress method (informational only)."""

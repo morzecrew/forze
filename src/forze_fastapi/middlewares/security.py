@@ -20,6 +20,7 @@ from forze.base.exceptions import CoreException, ExceptionKind, exc
 
 from ..exceptions import build_core_exception_response
 from ..security import AuthnRequirement, resolve_authn_ingress, resolve_tenant_identity
+from ..security.resolvers import COOKIE_CSRF_SCOPE_KEY, cookie_csrf_gates
 from .raw_websocket import refuse_raw_websocket, websocket_scope_refused
 
 # ----------------------- #
@@ -173,6 +174,11 @@ class SecurityContextMiddleware:
         if scope.get("path") in self.bypass_paths:
             await self.app(scope, receive, send)
             return
+
+        # Before resolution: a cookie ingress applies every gate declared for its cookie. The
+        # cookie-mode refresh route, which reads its own cookie after routing, applies the
+        # gates declared for the carrier's access cookie.
+        scope[COOKIE_CSRF_SCOPE_KEY] = cookie_csrf_gates(self.authn.ingress)
 
         request = Request(scope, receive)
         ctx = self.ctx_dep()

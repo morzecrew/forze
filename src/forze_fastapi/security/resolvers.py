@@ -18,6 +18,7 @@ from forze.base.exceptions import exc
 
 from .value_objects import (
     AuthnIngress,
+    CookieCsrf,
     CookieTokenAuthn,
     HeaderApiKeyAuthn,
     HeaderTokenAuthn,
@@ -51,6 +52,79 @@ def _split_authorization(raw: str, sep: str = " ") -> tuple[str, str | None]:
 
 # ....................... #
 
+COOKIE_CSRF_SCOPE_KEY = "forze.cookie_csrf"
+"""ASGI scope key under which :class:`~forze_fastapi.middlewares.SecurityContextMiddleware`
+publishes :func:`cookie_csrf_gates` of its ingress, read by each cookie ingress it resolves
+and by the cookie-mode refresh route."""
+
+_DEFAULT_COOKIE_CSRF = CookieCsrf()
+
+
+def enforce_cookie_csrf(csrf: CookieCsrf | None, request: Request) -> None:
+    """Refuse a request riding an ambient cookie credential that fails *csrf*.
+
+    The one place a cookie credential's CSRF verdict becomes an error, so every cookie the
+    framework reads answers alike. ``None`` is the declared opt-out and passes.
+
+    Authorization kind, not authentication: the credential may be perfectly valid — it is
+    the request's *provenance* that is refused, and a 401 would invite clients to retry
+    with the same cookie.
+
+    :raises CoreException: ``csrf_rejected`` (authorization) when the gate refuses.
+    """
+
+    if csrf is None:
+        return
+
+    refusal = csrf.rejection(
+        method=request.method,
+        host=request.headers.get("host"),
+        origin=request.headers.get("origin"),
+        referer=request.headers.get("referer"),
+    )
+
+    if refusal is not None:
+        raise exc.authorization(
+            f"Cookie authentication refused cross-site: {refusal}",
+            code="csrf_rejected",
+        )
+
+
+def cookie_csrf_gates(ingress: Sequence[AuthnIngress]) -> dict[str, tuple[CookieCsrf, ...]]:
+    """Every CSRF gate configured per cookie, across the cookie ingresses reading it.
+
+    Fails closed: an ingress declaring ``csrf=None`` drops no gate another ingress declares
+    for the same cookie, so a cookie is ungated only when every ingress reading it opted out.
+    """
+
+    gates: dict[str, tuple[CookieCsrf, ...]] = {}
+
+    for x in ingress:
+        if isinstance(x, CookieTokenAuthn):
+            declared = () if x.csrf is None else (x.csrf,)
+            gates[x.cookie_name] = gates.get(x.cookie_name, ()) + declared
+
+    return gates
+
+
+def enforce_published_cookie_csrf(request: Request, cookie_name: str) -> None:
+    """Apply every CSRF gate the app configured for the cookie ingress reading *cookie_name*.
+
+    Read from what the security middleware published for this request. With no such
+    ingress (or no middleware), the default :class:`CookieCsrf` applies — the gate stays on
+    unless the app declared ``csrf=None`` on every ingress reading that cookie.
+
+    :raises CoreException: ``csrf_rejected`` (authorization) when a gate refuses.
+    """
+
+    published = request.scope.get(COOKIE_CSRF_SCOPE_KEY) or {}
+
+    for gate in published.get(cookie_name, (_DEFAULT_COOKIE_CSRF,)):
+        enforce_cookie_csrf(gate, request)
+
+
+# ....................... #
+
 
 async def _resolve_cookie_token_authn(
     ingress: CookieTokenAuthn,
@@ -67,28 +141,18 @@ async def _resolve_cookie_token_authn(
 
         return None
 
-    if ingress.csrf is not None:
-        # Before the ambient credential authenticates anything: a cross-site request
-        # must not ride the browser's cookie into a state change. The gate is origin
-        # proof, independent of the outbound carrier's SameSite (which a proxy or a
-        # SameSite=None deployment can void), and fires only when the cookie is
-        # present — a cookie-less request has no ambient credential to forge, so
-        # header-authenticated non-browser clients pass untouched. Authorization
-        # kind, not authentication: the credential may be perfectly valid — it is
-        # the request's *provenance* that is refused, and a 401 would invite
-        # clients to retry with the same cookie.
-        refusal = ingress.csrf.rejection(
-            method=request.method,
-            host=request.headers.get("host"),
-            origin=request.headers.get("origin"),
-            referer=request.headers.get("referer"),
-        )
+    # Before the ambient credential authenticates anything: a cross-site request
+    # must not ride the browser's cookie into a state change. The gate is origin
+    # proof, independent of the outbound carrier's SameSite (which a proxy or a
+    # SameSite=None deployment can void), and fires only when the cookie is
+    # present — a cookie-less request has no ambient credential to forge, so
+    # header-authenticated non-browser clients pass untouched. Every gate the app
+    # declared for this cookie applies, not only this ingress's: an opt-out on an
+    # ingress resolved first must not let another ingress's gated cookie through.
+    published = request.scope.get(COOKIE_CSRF_SCOPE_KEY) or {}
 
-        if refusal is not None:
-            raise exc.authorization(
-                f"Cookie authentication refused cross-site: {refusal}",
-                code="csrf_rejected",
-            )
+    for gate in (ingress.csrf, *published.get(ingress.cookie_name, ())):
+        enforce_cookie_csrf(gate, request)
 
     creds = AccessTokenCredentials(
         token=token,
