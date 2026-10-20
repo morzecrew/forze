@@ -13,6 +13,7 @@ pytest.importorskip("temporalio")
 from temporalio.worker import Worker
 
 from forze.application.contracts.durable.workflow import (
+    DurableWorkflowScheduleHandle,
     DurableWorkflowScheduleTiming,
     DurableWorkflowSpec,
 )
@@ -331,8 +332,49 @@ async def test_a_schedule_with_no_forze_timing_does_not_break_listing(temporal_d
                 await forze_client.describe_schedule(schedule_id, workflow_name="OtherWorkflow")
 
             assert foreign.value.kind is ExceptionKind.NOT_FOUND
+            assert foreign.value.code == "schedule_not_found"
 
     finally:
         for schedule_id in (*native, listed_id):
             with contextlib.suppress(Exception):
                 await sdk_client.get_schedule_handle(schedule_id).delete()
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_a_missing_schedule_is_not_found(temporal_dev_env) -> None:
+    """Every operation on a schedule id that does not exist is ``not_found``, not the raw
+    RPC error an API would answer with a 500."""
+
+    spec = DurableWorkflowSpec(
+        name="ItSumWorkflow",
+        run=DurableWorkflowInvokeSpec(args_type=SumIn, return_type=SumOut),
+    )
+    cmd = TemporalWorkflowScheduleCommandAdapter(
+        client=temporal_dev_env.forze_client,
+        queue="it-forze-missing",
+        spec=spec,
+        tenant_aware=False,
+    )
+    qry = TemporalWorkflowScheduleQueryAdapter(
+        client=temporal_dev_env.forze_client,
+        queue="it-forze-missing",
+        spec=spec,
+        tenant_aware=False,
+    )
+    handle = DurableWorkflowScheduleHandle(schedule_id=f"it-missing-{uuid7().hex[:8]}")
+    timing = DurableWorkflowScheduleTiming(interval=timedelta(hours=1))
+
+    for operation in (
+        lambda: cmd.trigger(handle),
+        lambda: cmd.delete(handle),
+        lambda: cmd.pause(handle),
+        lambda: cmd.unpause(handle),
+        lambda: cmd.update(handle, timing=timing),
+        lambda: qry.describe(handle),
+    ):
+        with pytest.raises(CoreException) as missing:
+            await operation()
+
+        assert missing.value.kind is ExceptionKind.NOT_FOUND
+        assert missing.value.code == "schedule_not_found"

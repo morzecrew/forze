@@ -8,8 +8,15 @@ from .deps import (
     DurableWorkflowScheduleQueryDepKey,
     DurableWorkflowScheduleQueryDepPort,
 )
-from .ports import DurableWorkflowCommandPort, DurableWorkflowQueryPort
+from .ports import (
+    WORKFLOW_ALREADY_EXISTS_CODE,
+    WORKFLOW_NOT_FOUND_CODE,
+    DurableWorkflowCommandPort,
+    DurableWorkflowQueryPort,
+)
 from .schedule_ports import (
+    SCHEDULE_ALREADY_EXISTS_CODE,
+    SCHEDULE_NOT_FOUND_CODE,
     DurableWorkflowScheduleCommandPort,
     DurableWorkflowScheduleQueryPort,
 )
@@ -31,6 +38,10 @@ from .specs import (
 # ----------------------- #
 
 __all__ = [
+    "WORKFLOW_NOT_FOUND_CODE",
+    "WORKFLOW_ALREADY_EXISTS_CODE",
+    "SCHEDULE_NOT_FOUND_CODE",
+    "SCHEDULE_ALREADY_EXISTS_CODE",
     "DurableWorkflowCommandPort",
     "DurableWorkflowQueryPort",
     "DurableWorkflowScheduleCommandPort",

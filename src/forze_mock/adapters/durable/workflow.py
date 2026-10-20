@@ -8,6 +8,8 @@ import attrs
 from pydantic import BaseModel
 
 from forze.application.contracts.durable.workflow import (
+    WORKFLOW_ALREADY_EXISTS_CODE,
+    WORKFLOW_NOT_FOUND_CODE,
     DurableWorkflowCommandPort,
     DurableWorkflowHandle,
     DurableWorkflowQueryPort,
@@ -57,7 +59,9 @@ class MockDurableWorkflowCommandAdapter[In: BaseModel, Out: BaseModel](
         with self.state.lock:
             runs = self._runs()
             if wid in runs and raise_on_already_started:
-                raise exc.conflict(f"Workflow {wid!r} already started")
+                raise exc.conflict(
+                    f"Workflow {wid!r} already started", code=WORKFLOW_ALREADY_EXISTS_CODE
+                )
             runs[wid] = {
                 "run_id": run_id,
                 "args": args.model_dump(mode="json"),
@@ -77,7 +81,9 @@ class MockDurableWorkflowCommandAdapter[In: BaseModel, Out: BaseModel](
         with self.state.lock:
             run = self._runs().get(handle.workflow_id)
             if run is None:
-                raise exc.not_found(f"Workflow {handle.workflow_id!r} not found")
+                raise exc.not_found(
+                    f"Workflow {handle.workflow_id!r} not found", code=WORKFLOW_NOT_FOUND_CODE
+                )
             run["signals"].append((signal.name, args.model_dump(mode="json")))
 
     async def update[U: BaseModel, Res: BaseModel](
@@ -137,7 +143,9 @@ class MockDurableWorkflowQueryAdapter[In: BaseModel, Out: BaseModel](
         with self.state.lock:
             run = self._runs().get(handle.workflow_id)
             if run is None:
-                raise exc.not_found(f"Workflow {handle.workflow_id!r} not found")
+                raise exc.not_found(
+                    f"Workflow {handle.workflow_id!r} not found", code=WORKFLOW_NOT_FOUND_CODE
+                )
             raw = run.get("result")
             if raw is None:
                 raise exc.not_found("Workflow result not available")
@@ -153,7 +161,9 @@ class MockDurableWorkflowQueryAdapter[In: BaseModel, Out: BaseModel](
         with self.state.lock:
             run = self._runs().get(handle.workflow_id)
             if run is None:
-                raise exc.not_found(f"Workflow {handle.workflow_id!r} not found")
+                raise exc.not_found(
+                    f"Workflow {handle.workflow_id!r} not found", code=WORKFLOW_NOT_FOUND_CODE
+                )
             return DurableWorkflowRunDescription(
                 workflow_id=handle.workflow_id,
                 run_id=str(run["run_id"]),

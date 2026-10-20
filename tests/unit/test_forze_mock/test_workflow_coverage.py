@@ -6,6 +6,8 @@ import pytest
 from pydantic import BaseModel
 
 from forze.application.contracts.durable.workflow import (
+    WORKFLOW_ALREADY_EXISTS_CODE,
+    WORKFLOW_NOT_FOUND_CODE,
     DurableWorkflowHandle,
     DurableWorkflowInvokeSpec,
     DurableWorkflowQuerySpec,
@@ -62,8 +64,9 @@ async def test_start_conflict_raises_when_flag_true() -> None:
     state = MockState()
     cmd = _cmd(state)
     await cmd.start(_In(n=1), workflow_id="dup")
-    with pytest.raises(CoreException):
+    with pytest.raises(CoreException) as caught:
         await cmd.start(_In(n=2), workflow_id="dup")
+    assert caught.value.code == WORKFLOW_ALREADY_EXISTS_CODE
 
 
 async def test_start_conflict_suppressed_when_flag_false() -> None:
@@ -83,8 +86,9 @@ async def test_signal_not_found() -> None:
     cmd = _cmd(state)
     handle = DurableWorkflowHandle(workflow_id="missing", run_id="r")
     sig = DurableWorkflowSignalSpec(name="ping", args_type=_Sig)
-    with pytest.raises(CoreException):
+    with pytest.raises(CoreException) as caught:
         await cmd.signal(handle, signal=sig, args=_Sig(k="x"))
+    assert caught.value.code == WORKFLOW_NOT_FOUND_CODE
 
 
 async def test_signal_appends_to_existing_run() -> None:
@@ -153,8 +157,9 @@ async def test_result_not_found() -> None:
     state = MockState()
     qry = _qry(state)
     handle = DurableWorkflowHandle(workflow_id="missing", run_id="r")
-    with pytest.raises(CoreException):
+    with pytest.raises(CoreException) as caught:
         await qry.result(handle)
+    assert caught.value.code == WORKFLOW_NOT_FOUND_CODE
 
 
 async def test_result_unavailable_when_no_result_set() -> None:
@@ -194,5 +199,6 @@ async def test_describe_not_found() -> None:
     state = MockState()
     qry = _qry(state)
     handle = DurableWorkflowHandle(workflow_id="missing", run_id="r")
-    with pytest.raises(CoreException):
+    with pytest.raises(CoreException) as caught:
         await qry.describe(handle)
+    assert caught.value.code == WORKFLOW_NOT_FOUND_CODE

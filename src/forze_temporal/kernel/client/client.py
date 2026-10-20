@@ -12,7 +12,6 @@ from pydantic import BaseModel
 from temporalio.client import (
     Client,
     ScheduleActionStartWorkflow,
-    ScheduleAlreadyRunningError,
     ScheduleUpdate,
     ScheduleUpdateInput,
     WorkflowHandle,
@@ -21,6 +20,7 @@ from temporalio.contrib.pydantic import pydantic_data_converter
 from temporalio.exceptions import WorkflowAlreadyStartedError
 
 from forze.application.contracts.durable.workflow import (
+    SCHEDULE_NOT_FOUND_CODE,
     DurableWorkflowRunDescription,
     DurableWorkflowScheduleDescription,
     DurableWorkflowScheduleTiming,
@@ -29,6 +29,7 @@ from forze.base.exceptions import exc
 from forze.base.primitives import GuardedLifecycle
 
 from .._logger import logger
+from .errors import map_id_errors
 from .port import TemporalClientPort
 from .schedule_mapping import (
     build_schedule,
@@ -248,7 +249,8 @@ class TemporalClient(TemporalClientPort):
     ) -> DurableWorkflowRunDescription:
         h = self.get_workflow_handle(workflow_id, run_id=run_id)
 
-        desc = await h.describe()
+        with map_id_errors("workflow", workflow_id):
+            desc = await h.describe()
 
         return description_from_temporal_execution(desc)
 
@@ -266,21 +268,21 @@ class TemporalClient(TemporalClientPort):
     ) -> WorkflowHandle[Any, Any]:
         c = self.__require_client()
 
-        try:
-            handle = await c.start_workflow(
-                workflow=name,
-                id=workflow_id,
-                task_queue=queue,
-                arg=arg,
-                **(options.as_start_kwargs() if options is not None else {}),
-            )
+        with map_id_errors("workflow", workflow_id):
+            try:
+                handle = await c.start_workflow(
+                    workflow=name,
+                    id=workflow_id,
+                    task_queue=queue,
+                    arg=arg,
+                    **(options.as_start_kwargs() if options is not None else {}),
+                )
 
-        except WorkflowAlreadyStartedError as e:
-            # log e
-            if raise_on_already_started:
-                raise e
+            except WorkflowAlreadyStartedError:
+                if raise_on_already_started:
+                    raise
 
-            handle = c.get_workflow_handle(workflow_id)
+                handle = c.get_workflow_handle(workflow_id)
 
         return handle
 
@@ -313,7 +315,8 @@ class TemporalClient(TemporalClientPort):
     ) -> None:
         h = self.get_workflow_handle(workflow_id, run_id=run_id)
 
-        await h.signal(signal=signal, arg=arg)
+        with map_id_errors("workflow", workflow_id):
+            await h.signal(signal=signal, arg=arg)
 
     # ....................... #
 
@@ -328,7 +331,8 @@ class TemporalClient(TemporalClientPort):
     ) -> Any:
         h = self.get_workflow_handle(workflow_id, run_id=run_id)
 
-        return await h.query(query=query, arg=arg, result_type=result_type)
+        with map_id_errors("workflow", workflow_id):
+            return await h.query(query=query, arg=arg, result_type=result_type)
 
     # ....................... #
 
@@ -343,11 +347,12 @@ class TemporalClient(TemporalClientPort):
     ) -> Any:
         h = self.get_workflow_handle(workflow_id, run_id=run_id)
 
-        return await h.execute_update(  # type: ignore[misc]
-            update=update,
-            arg=arg,
-            result_type=result_type,
-        )
+        with map_id_errors("workflow", workflow_id):
+            return await h.execute_update(  # type: ignore[misc]
+                update=update,
+                arg=arg,
+                result_type=result_type,
+            )
 
     # ....................... #
 
@@ -364,7 +369,8 @@ class TemporalClient(TemporalClientPort):
             result_type=result_type,
         )
 
-        return await h.result()
+        with map_id_errors("workflow", workflow_id):
+            return await h.result()
 
     # ....................... #
 
@@ -376,7 +382,8 @@ class TemporalClient(TemporalClientPort):
     ) -> None:
         h = self.get_workflow_handle(workflow_id, run_id=run_id)
 
-        await h.cancel()
+        with map_id_errors("workflow", workflow_id):
+            await h.cancel()
 
     # ....................... #
 
@@ -389,7 +396,8 @@ class TemporalClient(TemporalClientPort):
     ) -> None:
         h = self.get_workflow_handle(workflow_id, run_id=run_id)
 
-        await h.terminate(reason=reason)
+        with map_id_errors("workflow", workflow_id):
+            await h.terminate(reason=reason)
 
     # ....................... #
     # Schedules
@@ -416,15 +424,12 @@ class TemporalClient(TemporalClientPort):
             note=note,
         )
 
-        try:
+        with map_id_errors("schedule", schedule_id):
             await c.create_schedule(
                 schedule_id,
                 schedule,
                 trigger_immediately=trigger_immediately,
             )
-
-        except ScheduleAlreadyRunningError as e:
-            raise exc.conflict(f"Schedule {schedule_id!r} already exists") from e
 
     # ....................... #
 
@@ -466,14 +471,17 @@ class TemporalClient(TemporalClientPort):
 
             return ScheduleUpdate(schedule=sched)
 
-        await handle.update(updater)
+        with map_id_errors("schedule", schedule_id):
+            await handle.update(updater)
 
     # ....................... #
 
     async def delete_schedule(self, schedule_id: str) -> None:
         c = self.__require_client()
         handle = c.get_schedule_handle(schedule_id)
-        await handle.delete()
+
+        with map_id_errors("schedule", schedule_id):
+            await handle.delete()
 
     # ....................... #
 
@@ -485,7 +493,9 @@ class TemporalClient(TemporalClientPort):
     ) -> None:
         c = self.__require_client()
         handle = c.get_schedule_handle(schedule_id)
-        await handle.pause(note=note or "")
+
+        with map_id_errors("schedule", schedule_id):
+            await handle.pause(note=note or "")
 
     # ....................... #
 
@@ -497,14 +507,18 @@ class TemporalClient(TemporalClientPort):
     ) -> None:
         c = self.__require_client()
         handle = c.get_schedule_handle(schedule_id)
-        await handle.unpause(note=note or "")
+
+        with map_id_errors("schedule", schedule_id):
+            await handle.unpause(note=note or "")
 
     # ....................... #
 
     async def trigger_schedule(self, schedule_id: str) -> None:
         c = self.__require_client()
         handle = c.get_schedule_handle(schedule_id)
-        await handle.trigger()
+
+        with map_id_errors("schedule", schedule_id):
+            await handle.trigger()
 
     # ....................... #
 
@@ -517,7 +531,9 @@ class TemporalClient(TemporalClientPort):
         c = self.__require_client()
 
         handle = c.get_schedule_handle(schedule_id)
-        desc = await handle.describe()
+
+        with map_id_errors("schedule", schedule_id):
+            desc = await handle.describe()
 
         action = desc.schedule.action
         action_workflow = action.workflow if isinstance(action, ScheduleActionStartWorkflow) else ""
@@ -527,6 +543,7 @@ class TemporalClient(TemporalClientPort):
         if workflow_name is not None and action_workflow != workflow_name:
             raise exc.not_found(
                 f"Schedule {schedule_id!r} is not for workflow {workflow_name!r}",
+                code=SCHEDULE_NOT_FOUND_CODE,
             )
 
         return description_from_temporal(desc, workflow_name=action_workflow)
