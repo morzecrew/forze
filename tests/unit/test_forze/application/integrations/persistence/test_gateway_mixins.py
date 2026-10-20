@@ -311,6 +311,24 @@ class TestHistoryOccMixin:
         await gw._validate_history((current, 2, {"due": due}))
 
     @pytest.mark.asyncio
+    async def test_validate_history_returns_what_each_update_changes(self) -> None:
+        # A stale update keeps only what it changes against its snapshot, so its echo of
+        # `due` does not revert the concurrent change; one at the stored rev is kept whole.
+        pk = uuid4()
+        due = datetime(2026, 1, 1, tzinfo=UTC)
+        hist = _HistDueDoc(id=pk, rev=2, name="alpha", due=due)
+        stale = _HistDueDoc(id=pk, rev=3, name="alpha", due=datetime(2027, 2, 2, tzinfo=UTC))
+        fresh = _HistDueDoc(name="beta", due=due)
+        gw = _OccGateway(_FakeHistoryGw([hist]))  # type: ignore[list-item]
+
+        updates = await gw._validate_history(
+            (stale, 2, {"name": "gamma", "due": due}),
+            (fresh, fresh.rev, {"due": due}),
+        )
+
+        assert updates == [{"name": "gamma"}, {"due": due}]
+
+    @pytest.mark.asyncio
     async def test_validate_history_datetime_resend_untouched_field_passes(
         self,
     ) -> None:

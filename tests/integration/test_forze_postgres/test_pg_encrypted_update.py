@@ -29,6 +29,7 @@ from tests.support.encrypted_update import (
     EncDoc,
     EncRead,
     EncUpdate,
+    assert_a_stale_update_seals_afresh,
     assert_encrypted_updates,
 )
 from tests.support.execution_context import context_from_deps
@@ -36,8 +37,26 @@ from tests.support.execution_context import context_from_deps
 pytestmark = [pytest.mark.integration, pytest.mark.asyncio]
 
 
-async def _documents(pg_client: PostgresClient, *guarantees: SerializedBy) -> tuple[Any, Any, Any]:
+async def _documents(
+    pg_client: PostgresClient, *guarantees: SerializedBy, history: bool = False
+) -> tuple[Any, Any, Any]:
     t = f"pg_enc_upd_{uuid4().hex[:10]}"
+    hist = f"{t}_h"
+
+    if history:
+        await pg_client.execute(
+            f"""
+            CREATE TABLE {hist} (
+                source text NOT NULL,
+                id uuid NOT NULL,
+                rev integer NOT NULL,
+                created_at timestamptz NOT NULL,
+                data jsonb NOT NULL,
+                PRIMARY KEY (source, id, rev)
+            );
+            """
+        )
+
     await pg_client.execute(
         f"""
         CREATE TABLE {t} (
@@ -55,7 +74,10 @@ async def _documents(pg_client: PostgresClient, *guarantees: SerializedBy) -> tu
     )
     doc = ConfigurablePostgresDocument(
         config=PostgresDocumentConfig(
-            read=("public", t), write=("public", t), bookkeeping_strategy="application"
+            read=("public", t),
+            write=("public", t),
+            history=("public", hist) if history else None,
+            bookkeeping_strategy="application",
         )
     )
     ctx = context_from_deps(
@@ -77,6 +99,7 @@ async def _documents(pg_client: PostgresClient, *guarantees: SerializedBy) -> tu
         write=DocumentWriteTypes(domain=EncDoc, create_cmd=EncCreate, update_cmd=EncUpdate),
         encryption=ENCRYPTION,
         guarantees=guarantees,
+        history_enabled=history,
     )
 
     async def raw(pk: UUID) -> dict[str, Any]:
@@ -89,6 +112,10 @@ async def _documents(pg_client: PostgresClient, *guarantees: SerializedBy) -> tu
 
 async def test_a_sealed_field_of_any_type_updates(pg_client: PostgresClient) -> None:
     await assert_encrypted_updates(*await _documents(pg_client))
+
+
+async def test_a_stale_update_seals_afresh(pg_client: PostgresClient) -> None:
+    await assert_a_stale_update_seals_afresh(*await _documents(pg_client, history=True))
 
 
 async def test_a_serialized_matching_update_sets_a_sealed_int(pg_client: PostgresClient) -> None:

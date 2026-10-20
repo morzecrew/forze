@@ -741,7 +741,7 @@ class HistoryOccMixin(Generic[D]):
 
     # ....................... #
 
-    async def _validate_history(self, *data: tuple[D, int, JsonDict]) -> None:
+    async def _validate_history(self, *data: tuple[D, int, JsonDict]) -> list[JsonDict]:
         """Validate optimistic-concurrency revisions against persisted history.
 
         For each ``(current, presented_rev, update)`` whose presented revision differs
@@ -749,7 +749,14 @@ class HistoryOccMixin(Generic[D]):
         presented revision's history snapshot exists and is consistent with the update.
         A missing history snapshot is a stale-revision precondition (retryable), not a
         missing resource.
+
+        :returns: Each update to apply, in order: as given at the stored revision, and at a
+            stale one only what it changes against that revision's snapshot
+            (:meth:`~forze.domain.models.Document.historical_update`), so a field it resends
+            unchanged keeps a concurrent change.
         """
+
+        updates = [update for _, _, update in data]
 
         if self.history_gw is None:
             for current, rev, _ in data:
@@ -759,21 +766,25 @@ class HistoryOccMixin(Generic[D]):
                         code="revision_mismatch",
                     )
 
-            return
+            return updates
 
-        to_check = [(current, rev, update) for current, rev, update in data if rev != current.rev]
+        to_check = [
+            (i, current, rev, update)
+            for i, (current, rev, update) in enumerate(data)
+            if rev != current.rev
+        ]
 
-        if [rev for current, rev, _ in to_check if rev > current.rev]:
+        if [rev for _, current, rev, _ in to_check if rev > current.rev]:
             raise exc.precondition(
                 "Invalid revision number",
                 code="revision_mismatch",
             )
 
         if not to_check:
-            return
+            return updates
 
-        pks_to_check = [current.id for current, _, _ in to_check]
-        revs_to_check = [rev for _, rev, _ in to_check]
+        pks_to_check = [current.id for _, current, _, _ in to_check]
+        revs_to_check = [rev for _, _, rev, _ in to_check]
         hist_records = await self.history_gw.read_many(pks_to_check, revs_to_check)
 
         if len(hist_records) != len(to_check):
@@ -787,7 +798,7 @@ class HistoryOccMixin(Generic[D]):
         # (current, historical) snapshots.
         hist_by_key = {(record.id, record.rev): record for record in hist_records}
 
-        for current, rev, update in to_check:
+        for i, current, rev, update in to_check:
             historical = hist_by_key.get((current.id, rev))
 
             if historical is None:
@@ -796,8 +807,14 @@ class HistoryOccMixin(Generic[D]):
                     code="history_not_found_retry",
                 )
 
-            if not current.validate_historical_consistency(historical, update):
+            merged = current.historical_update(historical, update)
+
+            if merged is None:
                 raise exc.conflict(
                     "Historical consistency violation during update",
                     code="historical_consistency_violation",
                 )
+
+            updates[i] = merged
+
+        return updates

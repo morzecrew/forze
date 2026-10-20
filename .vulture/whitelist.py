@@ -416,6 +416,7 @@ _.update_matching_strict  # unused method (src/forze/application/integrations/do
 _.update_matching_strict  # unused method (src/forze/application/integrations/document/_command.py:509)
 _._chain_instance  # unused method (src/forze/base/exceptions/mapping.py:101)
 _._apply_update  # unused method (src/forze/domain/models/document.py:254)
+_.validate_historical_consistency  # unused method (src/forze/domain/models/document.py:464)
 _.quick  # unused method (src/forze_dst/config.py:260)
 _.survival_at  # unused method (src/forze_dst/stats.py:434)
 _.revoke_many_api_keys  # unused method (src/forze_identity/authn/adapters/api_key_lifecycle.py:262)

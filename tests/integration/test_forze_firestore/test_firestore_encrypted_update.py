@@ -26,6 +26,7 @@ from tests.support.encrypted_update import (
     EncDoc,
     EncRead,
     EncUpdate,
+    assert_a_stale_update_seals_afresh,
     assert_encrypted_updates,
 )
 from tests.support.execution_context import context_from_deps
@@ -33,11 +34,15 @@ from tests.support.execution_context import context_from_deps
 pytestmark = [pytest.mark.integration, pytest.mark.asyncio]
 
 
-async def test_a_sealed_field_of_any_type_updates(firestore_client: FirestoreClient) -> None:
+async def _documents(
+    firestore_client: FirestoreClient, *, history: bool = False
+) -> tuple[Any, Any, Any]:
     collection = f"enc_upd_{uuid4().hex[:8]}"
     doc = ConfigurableFirestoreDocument(
         config=FirestoreDocumentConfig(
-            read=("(default)", collection), write=("(default)", collection)
+            read=("(default)", collection),
+            write=("(default)", collection),
+            history=("(default)", f"{collection}_history") if history else None,
         )
     )
     ctx = context_from_deps(
@@ -57,6 +62,7 @@ async def test_a_sealed_field_of_any_type_updates(firestore_client: FirestoreCli
         read=EncRead,
         write=DocumentWriteTypes(domain=EncDoc, create_cmd=EncCreate, update_cmd=EncUpdate),
         encryption=ENCRYPTION,
+        history_enabled=history,
     )
 
     async def raw(pk: UUID) -> dict[str, Any]:
@@ -66,4 +72,12 @@ async def test_a_sealed_field_of_any_type_updates(firestore_client: FirestoreCli
         assert found is not None
         return found
 
-    await assert_encrypted_updates(ctx.document.command(spec), ctx.document.query(spec), raw)
+    return ctx.document.command(spec), ctx.document.query(spec), raw
+
+
+async def test_a_sealed_field_of_any_type_updates(firestore_client: FirestoreClient) -> None:
+    await assert_encrypted_updates(*await _documents(firestore_client))
+
+
+async def test_a_stale_update_seals_afresh(firestore_client: FirestoreClient) -> None:
+    await assert_a_stale_update_seals_afresh(*await _documents(firestore_client, history=True))

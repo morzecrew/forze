@@ -124,8 +124,10 @@ async def reencrypt_documents(
 
     *to_update* maps a read model to an update DTO carrying the field values to
     re-encrypt, e.g. ``lambda d: CustomerUpdate(email=d.email)``. Best-effort: a
-    row modified concurrently mid-sweep raises a revision conflict — rerun, or wrap
-    the call with retry. A row *deleted* mid-sweep is skipped instead (nothing left
+    row modified concurrently mid-sweep raises ``revision_mismatch`` — rerun, or wrap
+    the call with retry — unless the document keeps revision history: then the write
+    merges onto the newer revision, keeping its changes, and seals the fields it names
+    afresh from it. A row *deleted* mid-sweep is skipped instead (nothing left
     to re-encrypt), so a pass over a live collection can complete. Returns a
     :class:`ReencryptReport` with the re-written and skipped counts.
     """

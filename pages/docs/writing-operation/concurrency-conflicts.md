@@ -35,7 +35,9 @@ The store compares your expected `rev` to the stored one:
 - **Differ** — load the history snapshot at your revision and run a **three-way
   merge**. Edits that touch *disjoint* fields merge through (last-writer-wins per
   field); edits that touch the *same* fields raise `exc.conflict`
-  (`historical_consistency_violation`).
+  (`historical_consistency_violation`). A field your write resends with the value
+  it had at your revision touches nothing and is not written, so a concurrent
+  change to it is kept.
 - **A future or unknown revision** (or a missing history snapshot) raises
   `exc.precondition` (`revision_mismatch`) — re-read the document and retry.
 
@@ -51,6 +53,8 @@ a [conflict](errors.md) for the caller to resolve.
 
 - `Document.validate_historical_consistency(old, patch)` is the check behind the
   merge — `True` when the concurrent change and yours touch disjoint fields.
+- `Document.historical_update(old, patch)` is what the merge writes: the part of
+  `patch` that changes `old`, or `None` on a conflict.
 - `command.touch(pk)` bumps `last_update_at` and `rev` without other changes.
 
 Retrying a conflict safely is only half the story — a retried write must also

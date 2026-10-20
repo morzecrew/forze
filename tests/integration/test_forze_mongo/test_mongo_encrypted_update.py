@@ -25,6 +25,7 @@ from tests.support.encrypted_update import (
     EncDoc,
     EncRead,
     EncUpdate,
+    assert_a_stale_update_seals_afresh,
     assert_encrypted_updates,
 )
 from tests.support.execution_context import context_from_deps
@@ -32,11 +33,15 @@ from tests.support.execution_context import context_from_deps
 pytestmark = [pytest.mark.integration, pytest.mark.asyncio]
 
 
-async def test_a_sealed_field_of_any_type_updates(mongo_client: MongoClient) -> None:
+async def _documents(mongo_client: MongoClient, *, history: bool = False) -> tuple[Any, Any, Any]:
     collection = f"enc_upd_{uuid4().hex[:8]}"
     db_name = (await mongo_client.db()).name
     doc = ConfigurableMongoDocument(
-        config=MongoDocumentConfig(read=(db_name, collection), write=(db_name, collection))
+        config=MongoDocumentConfig(
+            read=(db_name, collection),
+            write=(db_name, collection),
+            history=(db_name, f"{collection}_h") if history else None,
+        )
     )
     ctx = context_from_deps(
         Deps.merge(
@@ -55,6 +60,7 @@ async def test_a_sealed_field_of_any_type_updates(mongo_client: MongoClient) -> 
         read=EncRead,
         write=DocumentWriteTypes(domain=EncDoc, create_cmd=EncCreate, update_cmd=EncUpdate),
         encryption=ENCRYPTION,
+        history_enabled=history,
     )
 
     async def raw(pk: UUID) -> dict[str, Any]:
@@ -62,4 +68,12 @@ async def test_a_sealed_field_of_any_type_updates(mongo_client: MongoClient) -> 
         assert found is not None
         return dict(found)
 
-    await assert_encrypted_updates(ctx.document.command(spec), ctx.document.query(spec), raw)
+    return ctx.document.command(spec), ctx.document.query(spec), raw
+
+
+async def test_a_sealed_field_of_any_type_updates(mongo_client: MongoClient) -> None:
+    await assert_encrypted_updates(*await _documents(mongo_client))
+
+
+async def test_a_stale_update_seals_afresh(mongo_client: MongoClient) -> None:
+    await assert_a_stale_update_seals_afresh(*await _documents(mongo_client, history=True))

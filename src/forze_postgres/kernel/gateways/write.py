@@ -1282,10 +1282,13 @@ class PostgresWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
             current = await self.read_gw.get(pk)
 
             if update is not None:
-                if rev is not None:
-                    await self._validate_history((current, rev, update))
+                patch = update
 
-                after, diff = current.update(update, materialized=self.read_codec.materialized)
+                if rev is not None:
+                    (patch,) = await self._validate_history((current, rev, update))
+
+                after, diff = current.update(patch, materialized=self.read_codec.materialized)
+                # Every sealed field the caller named, from `after`: a stale one too.
                 diff = self._with_resealed(after, update, diff)
                 written = self._seal_written(after.stored_changes(diff), record_id=current.id)
 
@@ -1499,6 +1502,8 @@ class PostgresWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
                     groups[key].append((cid, crev, diff))
 
             else:
+                patches: Sequence[JsonDict] = updates
+
                 # if revisions are provided, validate historical consistency
                 if revs is not None:
                     data = [
@@ -1510,13 +1515,15 @@ class PostgresWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
                             strict=True,
                         )
                     ]
-                    await self._validate_history(*data)
+                    patches = await self._validate_history(*data)
 
                 async def _prepare_update(
                     c: D,
+                    p: JsonDict,
                     u: JsonDict,
                 ) -> tuple[UUID, int, JsonDict] | None:
-                    after, diff = c.update(u, materialized=self.read_codec.materialized)
+                    after, diff = c.update(p, materialized=self.read_codec.materialized)
+                    # Every sealed field the caller named, from `after`: a stale one too.
                     diff = self._with_resealed(after, u, diff)
                     if not diff:
                         return None
@@ -1530,8 +1537,8 @@ class PostgresWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
                 results = await gather_db_work(
                     self.client,
                     [
-                        partial(_prepare_update, c, u)  # type: ignore[misc]
-                        for c, u in zip(currents, updates, strict=True)
+                        partial(_prepare_update, c, p, u)  # type: ignore[misc]
+                        for c, p, u in zip(currents, patches, updates, strict=True)
                     ],
                 )
                 for r in results:
@@ -1574,7 +1581,8 @@ class PostgresWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
             res = [updated_models.get(c.id, c) for c in currents]
             res_diffs = [update_diffs.get(c.id, {}) for c in res]
 
-            await self._write_history(*res)
+            # Only the rows written: an unchanged one already has its revision's snapshot.
+            await self._write_history(*updated_models.values())
 
             return res, res_diffs
 

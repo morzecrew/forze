@@ -124,3 +124,25 @@ async def assert_encrypted_updates(
 
     for written in (single, bulk):
         assert written.rev == revs[written.id] and written.hint is None
+
+
+async def assert_a_stale_update_seals_afresh(command: Any, query: Any, raw: RawReader) -> None:
+    """With revision history, an update at a stale revision that names a sealed field with
+    its stored value still writes it sealed afresh, through ``update`` and ``update_many``,
+    and keeps the concurrent change it merges with."""
+
+    one, many = await command.create(SEED), await command.create(SEED)
+
+    for doc in (one, many):
+        await command.update(doc.id, doc.rev, EncUpdate(name="moved"))
+
+    before = {doc.id: (await raw(doc.id))["note"] for doc in (one, many)}
+    same = EncUpdate(note=SEED.note)
+    single = await command.update(one.id, one.rev, same)
+    (bulk,) = await command.update_many([KeyedUpdate(id=many.id, rev=many.rev, dto=same)])
+
+    for written in (single, bulk):
+        stored = await query.get(written.id, skip_cache=True)
+
+        assert (stored.rev, stored.name, stored.note) == (3, "moved", SEED.note)
+        assert (await raw(written.id))["note"] != before[written.id]

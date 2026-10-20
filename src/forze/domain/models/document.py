@@ -480,11 +480,30 @@ class Document(CoreModel):
         conflict.
         """
 
+        return self.historical_update(old, data) is not None
+
+    # ....................... #
+
+    def historical_update(self, old: Self, data: JsonDict) -> JsonDict | None:
+        """The part of ``data``, an update written against ``old``, to apply to ``self``.
+
+        That part is the merge patch ``data`` makes to ``old``: a key ``data`` resends
+        unchanged is left out, so it cannot revert a change made since ``old``. Compared as
+        :meth:`validate_historical_consistency` describes.
+
+        :returns: The merge patch, or ``None`` when it touches what changed since ``old``.
+        :raises CoreException: ``domain`` for a field the model does not have or holds frozen,
+            as :meth:`update` refuses it.
+        """
+
         logger.trace(
             "Validating historical consistency for %s with update keys=%s",
             type(self).__qualname__,
             tuple(data.keys()),
         )
+
+        # Refused as at the stored revision, though the patch would drop it unchanged.
+        self._validate_update_data(data)
 
         old_state = old._dump_stored_fields()
         self_state = self._dump_stored_fields()
@@ -506,7 +525,7 @@ class Document(CoreModel):
 
         logger.trace("Historical consistency conflict=%s", has_conflict)
 
-        return not has_conflict
+        return None if has_conflict else old_upd_diff
 
 
 # ....................... #

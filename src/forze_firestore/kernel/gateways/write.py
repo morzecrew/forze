@@ -123,23 +123,33 @@ class FirestoreWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
 
     # ....................... #
 
-    async def _validate_history(self, *data: tuple[D, int, JsonDict]) -> None:
+    async def _validate_history(self, *data: tuple[D, int, JsonDict]) -> list[JsonDict]:
+        """Validate stale revisions against history; the updates to apply, in order (see
+        :meth:`~forze.application.integrations.persistence.HistoryOccMixin._validate_history`).
+        """
+
+        updates = [update for _, _, update in data]
+
         if self.history_gw is None:
             for current, rev, _ in data:
                 if rev != current.rev:
                     raise exc.precondition("Revision mismatch", code="revision_mismatch")
 
-            return
+            return updates
 
-        to_check = [(current, rev, update) for current, rev, update in data if rev != current.rev]
-        bad_records = [rev for current, rev, _ in to_check if rev > current.rev]
+        to_check = [
+            (i, current, rev, update)
+            for i, (current, rev, update) in enumerate(data)
+            if rev != current.rev
+        ]
+        bad_records = [rev for _, current, rev, _ in to_check if rev > current.rev]
 
         if bad_records:
             raise exc.precondition("Invalid revision number")
 
         if to_check:
-            pks_to_check = [current.id for current, _, _ in to_check]
-            revs_to_check = [rev for _, rev, _ in to_check]
+            pks_to_check = [current.id for _, current, _, _ in to_check]
+            revs_to_check = [rev for _, _, rev, _ in to_check]
             hist_records = await self.history_gw.read_many(pks_to_check, revs_to_check)
 
             if len(hist_records) != len(to_check):
@@ -147,12 +157,18 @@ class FirestoreWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
                     "History records not found. Please retry with actual revision number."
                 )
 
-            for (current, _, update), historical in zip(to_check, hist_records, strict=True):
-                if not current.validate_historical_consistency(historical, update):
+            for (i, current, _, update), historical in zip(to_check, hist_records, strict=True):
+                merged = current.historical_update(historical, update)
+
+                if merged is None:
                     raise exc.conflict(
                         "Historical consistency violation during update",
                         code="historical_consistency_violation",
                     )
+
+                updates[i] = merged
+
+        return updates
 
     # ....................... #
 
@@ -252,10 +268,13 @@ class FirestoreWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
             current = await self.read_gw.get(pk)
 
             if update is not None:
-                if rev is not None:
-                    await self._validate_history((current, rev, update))
+                patch = update
 
-                after, diff = current.update(update, materialized=self.read_codec.materialized)
+                if rev is not None:
+                    (patch,) = await self._validate_history((current, rev, update))
+
+                after, diff = current.update(patch, materialized=self.read_codec.materialized)
+                # Every sealed field the caller named, from `after`: a stale one too.
                 diff = self._with_resealed(after, update, diff)
                 # The merge patch reports the update; the whole value of a changed mapping is
                 # what replaces the stored field (:meth:`Document.stored_changes`).
