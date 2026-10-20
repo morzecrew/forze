@@ -95,9 +95,29 @@ request and at the port alike.
 
 A sort on a field the read model lacks is refused as the caller's error, a key after `id`
 included. On Postgres, a ranked page reads a capped pool of candidates (`max_candidates`, or
-the route's `candidate_limit`), always widened to cover the page plus a margin. The pool is the
+the route's `candidate_limit`; on a hub, its merge cap), always widened to cover the page plus
+a margin of 50 rows (`offset + limit + 50`). The pool is the
 first rows of the page order itself, so a capped offset page holds the rows the uncapped cursor
 puts there; a cursor walk is uncapped, except on a vector index, whose cap bounds it too.
+
+### Page totals
+
+On Postgres, `search_count` (or the spec's `default_search_count`) picks how a `_page` call
+counts its total:
+
+| Policy | Total |
+|--------|-------|
+| `exact` | `COUNT(*)` over every match (the default) |
+| `approximate` | blank query: the planner's estimate of the rows the filters match, which can be off by a multiple and is never 0. With search text: the capped candidates the page ranks — exact while the matches fit the cap, the cap above it, zero for no match |
+| `none` | no total |
+
+The planner can't estimate a text match: it gives a PGroonga predicate the same estimate
+whatever the query. A hub's cap is its merged-rows cap (`combo_limit`, or `per_leg_limit`
+by default), and each leg brings at most `per_leg_limit` rows, so a leg cut there makes the
+approximate total a lower bound. The cap widens with a deeper page, so that page's
+approximate total can be larger, never past the exact one. A hub usually counts it in the
+page's own query, so it
+costs about what `none` does; `exact` runs the whole match again.
 
 ### Streaming exports
 

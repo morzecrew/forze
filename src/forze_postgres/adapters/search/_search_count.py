@@ -20,19 +20,21 @@ async def resolve_ranked_approximate_total(
     relation: str,
     where_sql: sql.Composable,
     params: list[Any],
-    combo_limit: int | None = None,
+    alias: str | None = None,
 ) -> int:
-    """Planner estimate for filtered rows, optionally clamped to a combo top-K cap."""
+    """Planner estimate of the rows ``where_sql`` matches, for a page with no search text.
+
+    A text predicate is left to the caller: the planner estimates a PGroonga match at a fixed
+    selectivity whatever the query, so a ranked page counts its capped candidates instead.
+    """
 
     est = await introspector.estimate_filtered_rows(
         schema=schema,
         relation=relation,
         where_sql=where_sql,
         params=params,
+        alias=alias,
     )
-
-    if combo_limit is not None:
-        return min(int(est), int(combo_limit))
 
     return int(est)
 

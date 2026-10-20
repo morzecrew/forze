@@ -206,7 +206,9 @@ class PostgresHubSearchAdapter[M: BaseModel](  # pyright: ignore[reportIncompati
 
         approximate_total: int | None = None
 
-        if return_count and plan.count_policy == "approximate":
+        # Only a blank query's total is the planner's estimate of the filters; with search
+        # text the executor counts the capped merged rows the page reads.
+        if return_count and plan.count_policy == "approximate" and not plan.do_legs:
             fw, fp = await self.where_clause(filters)
             hub_qn = await self._qname()
             approximate_total = await resolve_ranked_approximate_total(
@@ -215,7 +217,7 @@ class PostgresHubSearchAdapter[M: BaseModel](  # pyright: ignore[reportIncompati
                 relation=hub_qn.name,
                 where_sql=fw,
                 params=fp,
-                combo_limit=combo_cap,
+                alias=self.filter_table_alias,
             )
 
         # Surface the merged hub score (``_hub_rank``) as ``_score`` on ranked queries; a

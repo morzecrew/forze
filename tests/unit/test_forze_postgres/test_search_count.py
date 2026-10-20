@@ -14,7 +14,7 @@ from forze_postgres.adapters.search._search_count import resolve_ranked_approxim
 
 
 @pytest.mark.asyncio
-async def test_resolve_ranked_approximate_total_clamps_combo_limit() -> None:
+async def test_resolve_ranked_approximate_total_is_the_planner_estimate() -> None:
     intro = AsyncMock()
     intro.estimate_filtered_rows = AsyncMock(return_value=10_000)
 
@@ -24,8 +24,8 @@ async def test_resolve_ranked_approximate_total_clamps_combo_limit() -> None:
         relation="hub",
         where_sql=sql.SQL("TRUE"),
         params=[],
-        combo_limit=100,
+        alias="h",
     )
 
-    assert total == 100
-    intro.estimate_filtered_rows.assert_awaited_once()
+    assert total == 10_000
+    assert intro.estimate_filtered_rows.await_args.kwargs["alias"] == "h"

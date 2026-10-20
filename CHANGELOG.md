@@ -39,6 +39,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **`update_many` with revision history no longer fails on a row it leaves unchanged.** Postgres raised a unique violation and rolled the batch back; Mongo wrote a duplicate snapshot.
 
+- **A hub's `search_count="approximate"` total counts its search text** (**behaviour change**): with a query it is the merged rows the page reads instead of the cap: exact under the cap, the cap above it, zero for no match, a lower bound once a leg is cut at `per_leg_limit`.
+
+- **A filtered Postgres search no longer fails with `postgres_schema_mismatch`** under `search_count="approximate"` or a PGroonga `plan="auto"`.
+
+- **A Postgres hub page with `limit: 0` reports its total** instead of 0.
+
 ### Security
 
 - **An error an integration translates from its backend no longer shows the failed call's context to API callers** (**behaviour change**): such an error carries no `context`, whatever its kind. The details stay on the exception and are logged at debug. A stream's failure between items is now translated too.

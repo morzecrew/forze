@@ -608,6 +608,7 @@ class PostgresRankedPipelineSearchAdapter[M: BaseModel](
                     relation=proj_qname.name,
                     where_sql=fw,
                     params=params_base,
+                    alias=self.projection_alias,
                 )
 
         def _select(cols: sql.Composable) -> sql.Composed:

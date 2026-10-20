@@ -496,7 +496,7 @@ async def _hydrate_thin_hub_page(
 
     When ``fold_count`` is set, Phase A also carries ``count(*) OVER ()`` so the exact total
     comes from the same scan instead of a separate count statement (caller guarantees this is
-    sound — uncapped relation, first page).
+    sound — the scanned relation is the counted one, first page).
     """
 
     page_total = total if count_policy != "none" else None
@@ -638,6 +638,8 @@ async def execute_hub_ranked_offset_search(
         if read_page is not None:
             return read_page
 
+    # An approximate total with search text counts the capped merged rows the page reads
+    # (``combo_top``), as a single index counts its capped candidates.
     count_stmt = sql.SQL(
         """
             {with_clause}
@@ -645,7 +647,9 @@ async def execute_hub_ranked_offset_search(
             """
     ).format(
         with_clause=plan.with_clause,
-        combo=sql.Identifier(plan.count_relation),
+        combo=sql.Identifier(
+            plan.data_relation if count_policy == "approximate" else plan.count_relation
+        ),
         ca=sql.Identifier(combo_alias),
     )
 
@@ -665,14 +669,20 @@ async def execute_hub_ranked_offset_search(
     # path. Sound only when the data scan reads the uncapped ``combo`` (``data_relation`` ==
     # ``count_relation``, i.e. no ``combo_top`` cap / no active legs) and the first page is
     # requested (a past-the-end offset returns no rows and would lose the window count). The
-    # thin (non-snapshot) branch reads the folded total from Phase A.
+    # thin (non-snapshot) branch reads the folded total from Phase A. An approximate total
+    # with search text counts the scanned ``data_relation`` itself, so it folds too. A
+    # ``limit: 0`` page scans no rows, so it has no window count to read either.
+    page_limit_raw = pagination_dict.get("limit")
     fold_count = (
         plan.thin
         and not want_sn
         and return_count
-        and count_policy == "exact"
-        and plan.data_relation == plan.count_relation
         and page_offset == 0
+        and (page_limit_raw is None or int(page_limit_raw) > 0)
+        and (
+            (count_policy == "exact" and plan.data_relation == plan.count_relation)
+            or (count_policy == "approximate" and plan.approximate_total is None)
+        )
     )
 
     if return_count and count_policy != "none" and not fold_count:

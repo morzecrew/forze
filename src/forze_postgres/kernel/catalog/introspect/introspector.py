@@ -1133,11 +1133,12 @@ class PostgresIntrospector:
         where_sql: sql.Composable,
         params: Sequence[Any],
         cache_key: CacheKey,
+        alias: str | None = None,
     ) -> int:
         rel_ident = sql.Identifier(schema, relation)
         stmt = sql.SQL(
-            "EXPLAIN (FORMAT JSON) SELECT 1 FROM {} WHERE {}",
-        ).format(rel_ident, where_sql)
+            "EXPLAIN (FORMAT JSON) SELECT 1 FROM {} {} WHERE {}",
+        ).format(rel_ident, sql.Identifier(alias) if alias else sql.SQL(""), where_sql)
 
         raw = await self.client.fetch_value(stmt, list(params), default=None)
         estimate: int | None = None
@@ -1172,10 +1173,13 @@ class PostgresIntrospector:
         relation: str,
         where_sql: sql.Composable,
         params: Sequence[Any],
+        alias: str | None = None,
     ) -> int:
         """Approximate rows matching ``where_sql`` via ``EXPLAIN (FORMAT JSON)``.
 
         Falls back to :meth:`estimate_relation_rows` when the planner returns no row estimate.
+
+        :param alias: Table alias ``where_sql`` qualifies its columns with, if any.
         """
 
         schema = self.__normalize_schema(schema)
@@ -1194,6 +1198,7 @@ class PostgresIntrospector:
                 where_sql=where_sql,
                 params=params,
                 cache_key=key,
+                alias=alias,
             ),
         )
 
