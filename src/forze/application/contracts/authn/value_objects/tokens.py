@@ -33,6 +33,17 @@ class IssuedApiKey:
     lifetime: CredentialLifetime | None = attrs.field(default=None)
     """Lifetime of the API key."""
 
+    # ....................... #
+
+    @property
+    def secret(self) -> str:
+        """The raw API key string (``key.key``), only shown at issuance time.
+
+        Read-only, and never part of ``repr()`` or ``str()``, so it stays out of logs.
+        """
+
+        return self.key.key
+
 
 # ....................... #
 

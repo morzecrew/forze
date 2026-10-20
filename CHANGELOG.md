@@ -23,6 +23,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **`upsert_many` can mirror a source and keep values a null would erase.** `UpsertItem.mirror(id, payload)` updates with the create payload; `skip_none=True` leaves out each top-level field an update sets to `None`. A set-based upsert is now judged on the fields the items' updates write.
 
+- **`IssuedApiKey.secret`** returns the raw key of a freshly issued API key. It stays out of `repr()` and `str()`.
+
 ### Changed
 
 - **Until structlog is configured (`configure_logging` or your own `structlog.configure`), forze no longer prints to stdout itself** (behaviour change): its events go to the same-named stdlib logger at its level, so they reach only your stdlib handlers, or stderr from warnings up by default. Call `configure_logging` to keep info output.

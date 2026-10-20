@@ -88,6 +88,25 @@ class TestCredentialReprMasking:
         assert "s3cr3t-api-key" not in repr(issued)
 
 
+class TestIssuedApiKey:
+    def test_secret_is_the_raw_key(self) -> None:
+        issued = IssuedApiKey(key=ApiKeyCredentials(key="s3cr3t-api-key", prefix="fz"))
+
+        assert issued.secret == "s3cr3t-api-key"
+
+    def test_secret_stays_out_of_str_and_repr(self) -> None:
+        issued = IssuedApiKey(key=ApiKeyCredentials(key="s3cr3t-api-key"))
+
+        assert "s3cr3t-api-key" not in str(issued)
+        assert "s3cr3t-api-key" not in repr(issued)
+
+    def test_secret_is_read_only(self) -> None:
+        issued = IssuedApiKey(key=ApiKeyCredentials(key="s3cr3t-api-key"))
+
+        with pytest.raises(AttributeError):
+            issued.secret = "other"  # type: ignore[misc]
+
+
 class TestAuthnIdentity:
     def test_principal_only(self) -> None:
         pid = uuid4()

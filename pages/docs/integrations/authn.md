@@ -345,6 +345,9 @@ issued before is then refused by its epoch, so the eligibility read has nothing 
   Refresh refuses to run inside a transaction the caller already opened: a reused refresh
   token's family is revoked in a transaction of its own, which an enclosing one would roll
   back.
+- **Issued API keys:** `issue_api_key` returns an `IssuedApiKey`; its raw key, shown only
+  at issuance, is `issued.secret`. It stays out of `repr()` and `str()`, so logging the
+  result does not log the key.
 - **Browser clients:** the generated login/refresh/logout routes can carry their
   tokens in `HttpOnly` cookies instead of response bodies — see
   [cookie mode](../reference/fastapi-routes.md#cookie-mode).
