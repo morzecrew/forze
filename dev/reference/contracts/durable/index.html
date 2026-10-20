@@ -6697,15 +6697,15 @@ queue's delayed jobs.</p>
 </tr>
 <tr>
 <td><code>DurableFunctionStepDepKey</code></td>
-<td>run memoized, individually-retried steps inside a function</td>
+<td>run memoized steps inside a function — an engine tier may retry each one; the self-hosted tier runs each once and can retry the run (<code>DurableFunctionRunner(retry=)</code>)</td>
 </tr>
 <tr>
 <td><code>DurableRunStoreDepKey</code></td>
-<td>the run store behind the self-hosted tier — enqueue / begin / renew / complete / fail, <code>claim_abandoned</code> recovery, and the fenced terminal landings <code>mark_cancelled</code> / <code>mark_timed_out</code></td>
+<td>the run store behind the self-hosted tier — enqueue / begin / renew / complete / fail, <code>claim_abandoned</code> recovery, the fenced terminal landings <code>mark_cancelled</code> / <code>mark_timed_out</code>, and <code>mark_retry</code>, which sends a running run back to <code>pending</code> for its retry</td>
 </tr>
 <tr>
 <td><code>DurableRunAdminDepKey</code></td>
-<td>run listing and control — <code>list_runs(status=None, name=None, limit=50, cursor=None)</code> returns a cursor-paged <code>DurableRunPage</code>; <code>request_cancel(run_id)</code> asks a run to stop; <code>requeue_quarantined(run_ids=None)</code> returns quarantined runs to <code>pending</code> and says how many — unbound, it must name them while any belongs to a tenant</td>
+<td>run listing and control — <code>list_runs(status=None, name=None, limit=50, cursor=None)</code> returns a cursor-paged <code>DurableRunPage</code>; <code>request_cancel(run_id)</code> asks a run to stop; <code>requeue_quarantined(run_ids=None)</code> returns quarantined runs to <code>pending</code> and says how many — unbound, it must name them while any belongs to a tenant; <code>requeue_failed(run_ids=None, name=None)</code> returns the named <code>failed</code> and <code>timed_out</code> runs to <code>pending</code> under their own id, so the steps they journaled replay — it needs <code>run_ids</code> or <code>name</code>, and skips a run whose cancel ask is unanswered</td>
 </tr>
 <tr>
 <td><code>DurableScheduleStoreDepKey</code></td>
@@ -6734,7 +6734,7 @@ holds all three to it.</p>
 <td>that tenant's runs <strong>and untagged ones</strong></td>
 </tr>
 <tr>
-<td><code>claim_abandoned</code>, <code>list_runs</code>, <code>request_cancel</code>, <code>requeue_quarantined</code>, <code>refuse_cancel</code></td>
+<td><code>claim_abandoned</code>, <code>list_runs</code>, <code>request_cancel</code>, <code>requeue_quarantined</code>, <code>requeue_failed</code>, <code>refuse_cancel</code></td>
 <td>that tenant's runs, exactly</td>
 </tr>
 <tr>
@@ -6744,6 +6744,10 @@ holds all three to it.</p>
 <tr>
 <td><code>requeue_quarantined</code>, unbound and naming no runs</td>
 <td>untagged runs only, and refused while any quarantined run in scope carries a tenant</td>
+</tr>
+<tr>
+<td><code>requeue_failed</code> naming neither runs nor a function</td>
+<td>refused, bound or not</td>
 </tr>
 </tbody>
 </table>

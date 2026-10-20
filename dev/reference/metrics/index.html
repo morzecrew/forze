@@ -7036,7 +7036,7 @@ justifies W-TinyLFU (<code>L1Spec(store_factory=tiny_lfu_l1_store)</code>) or a 
 <td>counter</td>
 <td>1</td>
 <td><code>forze.durable.name</code>, <code>forze.durable.outcome</code></td>
-<td>outcome is <code>completed</code> / <code>failed</code> / <code>forward_incomplete</code> / <code>cancelled</code> / <code>timed_out</code> / <code>reclaimed</code> / <code>interrupted</code> / <code>unrecorded</code> — alert on <code>failed</code>, not on the total: <code>cancelled</code> means somebody pressed Stop. <code>unrecorded</code> describes the <em>attempt</em>, not the run: the body finished and its terminal write went unacknowledged, so the row is either already terminal (the write committed, the ack was lost) or still <code>RUNNING</code> for recovery — the worker cannot tell. A sustained rate of it means the run store is unreachable. <code>interrupted</code> is the neighbouring case where the body never finished at all (drain, shutdown) and no terminal state was written — expected during a deploy</td>
+<td>outcome is <code>completed</code> / <code>failed</code> / <code>retrying</code> / <code>forward_incomplete</code> / <code>cancelled</code> / <code>timed_out</code> / <code>reclaimed</code> / <code>interrupted</code> / <code>unrecorded</code> — alert on <code>failed</code>, not on the total: <code>cancelled</code> means somebody pressed Stop, and <code>retrying</code> is an attempt that failed and sent its run back for another under the runner's retry strategy. <code>unrecorded</code> describes the <em>attempt</em>, not the run: the body finished and its terminal write went unacknowledged, so the row is either already terminal (the write committed, the ack was lost) or still <code>RUNNING</code> for recovery — the worker cannot tell. A sustained rate of it means the run store is unreachable. <code>interrupted</code> is the neighbouring case where the body never finished at all (drain, shutdown) and no terminal state was written — expected during a deploy</td>
 </tr>
 <tr>
 <td><code>forze.durable.run.duration</code></td>
@@ -7050,7 +7050,7 @@ justifies W-TinyLFU (<code>L1Spec(store_factory=tiny_lfu_l1_store)</code>) or a 
 <td>counter</td>
 <td>1</td>
 <td>—</td>
-<td>runs reclaimed by a recovery sweep</td>
+<td>runs a recovery sweep claimed: reclaimed from a process that died holding them, or simply due (enqueued, back for a retry, requeued)</td>
 </tr>
 <tr>
 <td><code>forze.durable.schedule.fires</code></td>
@@ -7062,7 +7062,9 @@ justifies W-TinyLFU (<code>L1Spec(store_factory=tiny_lfu_l1_store)</code>) or a 
 </tbody>
 </table>
 <p>A <code>recovered</code> spike means runs are being reclaimed from processes that died holding them —
-normal in small numbers after a deploy, a signal when it is sustained.</p>
+normal in small numbers after a deploy, a signal when it is sustained.
+The counter cannot tell those from runs that were simply due, so enqueued runs, retries
+under a retry strategy and requeues set its baseline: alert above it.</p>
 <h2 id="leadership">Leadership<a class="headerlink" href="#leadership" title="Permanent link">&para;</a></h2>
 <p><code>instrument_leadership()</code> — reads every <code>leadership_lifecycle_step</code> in the process.</p>
 <table>

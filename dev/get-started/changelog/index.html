@@ -9828,6 +9828,8 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <li>
 <p><code>CircuitBreakerStrategy</code> takes <code>failure_on</code> and <code>ignore_on</code>: which error kinds count as breaker failures and which are not recorded. The defaults keep the previous classification: infrastructure and timeout fail, throttled and concurrency are ignored.</p>
 </li>
+<li><strong>A durable run can retry a retryable failure.</strong> <code>retry=RetryStrategy(...)</code> on <code>DurableFunctionRunner</code>, <code>durable_kits_deps</code> or one registered function sends a run raising a <code>retry_on</code> kind back to <code>PENDING</code> after the backoff, counted as <code>retrying</code>; its journal replays. <strong>Breaking</strong> for own run stores (<code>mark_retry</code>).</li>
+<li><strong>Failed durable runs can be requeued.</strong> <code>DurableRunAdminPort.requeue_failed(run_ids=, name=)</code> returns the named <code>FAILED</code> and <code>TIMED_OUT</code> runs in scope to <code>PENDING</code> under their own id, so their journaled steps replay, on Postgres, Mongo and the mock. <strong>Breaking</strong> for own admin ports.</li>
 </ul>
 <h3 id="changed">Changed<a class="headerlink" href="#changed" title="Permanent link">&para;</a></h3>
 <ul>

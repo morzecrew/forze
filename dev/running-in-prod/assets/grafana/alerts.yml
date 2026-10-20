@@ -46,6 +46,9 @@ groups:
             burst right after a deploy is expected. Sustained, it means workers are dying
             mid-run — OOM kills, ungraceful shutdown, or a lease that expires faster than
             a run takes.
+            The counter also includes runs that were simply due — enqueued, back for a
+            retry under a retry strategy, or requeued — so set the threshold above that
+            baseline.
 
   - name: forze-job-progress
     interval: 30s

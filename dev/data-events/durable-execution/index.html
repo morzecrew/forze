@@ -1825,6 +1825,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#retrying-a-failed-run" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Retrying a failed run
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#runs-recovery-cannot-decrypt" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -6496,6 +6507,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#retrying-a-failed-run" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Retrying a failed run
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#runs-recovery-cannot-decrypt" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -6685,8 +6707,8 @@ it was.</p>
   Signals and updates push messages into a running workflow.</li>
 <li><strong>Schedules</strong> — fire a workflow on a cron or interval; the durable counterpart to a
   queue's delayed jobs.</li>
-<li><strong>Functions</strong> — event-triggered work composed of individually-retried, memoized <strong>steps</strong>
-  (the Inngest model).</li>
+<li><strong>Functions</strong> — event-triggered work composed of memoized <strong>steps</strong> (the Inngest model;
+  Inngest retries each step; the self-hosted tier runs a step once and can retry the run).</li>
 </ul>
 <p>A workflow start returns a handle you observe through the query port:</p>
 <div class="highlight"><pre><span></span><code><span class="n">handle</span> <span class="o">=</span> <span class="k">await</span> <span class="n">workflows</span><span class="o">.</span><span class="n">start</span><span class="p">(</span><span class="n">FulfilOrder</span><span class="p">(</span><span class="n">order_id</span><span class="o">=</span><span class="n">order_id</span><span class="p">),</span> <span class="n">workflow_id</span><span class="o">=</span><span class="sa">f</span><span class="s2">"fulfil-</span><span class="si">{</span><span class="n">order_id</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
@@ -6749,10 +6771,10 @@ still held (nothing double-executes) and the run lands <code>TIMED_OUT</code> wi
 so a body hung on a dead peer can't pin a recovery slot forever. <code>TIMED_OUT</code> is its own
 terminal rather than a flavour of <code>FAILED</code> because the two send you to different places —
 <code>FAILED</code> to the body's code, <code>TIMED_OUT</code> to the cap, the workload's size, or a hung peer. Set
-it above your longest body, or <code>None</code> to remove the cap; re-enqueue a timed-out run to retry
-it. Run the scanner unwrapped on every replica. The singleton lifecycle guard cannot elect one
-scanner: it holds its lock only while startup launches the loop, so later replicas scan too, and
-one that starts while another holds the lock runs none.
+it above your longest body, or <code>None</code> to remove the cap. A timeout is not retried: requeue
+the run (below) to run it again. Run the scanner unwrapped on every replica. The singleton
+lifecycle guard cannot elect one scanner: it holds its lock only while startup launches the
+loop, so later replicas scan too, and one that starts while another holds the lock runs none.
 <code>max_concurrency</code> bounds how many runs a sweep recovers at once. Enqueue with
 <code>run_at=&lt;when&gt;</code> for a <strong>delayed</strong> run — the scan skips it until it's due.</p>
 <p><strong>Multi-tenant.</strong> The stores resolve their table under the bound tenant. On a <strong>tagged</strong>
@@ -6768,7 +6790,7 @@ control plane bound to nothing can register work for a tenant and that tenant's 
 find it. Naming a tenant that <strong>contradicts</strong> a bound one is refused
 (<code>authentication</code> / <code>tenant_mismatch</code>) rather than applied to some of the three.</p>
 <p>What a bound caller reaches splits by what the verb does. The verbs taking a run id —
-<code>begin</code>, <code>renew</code>, <code>load</code> and every terminal write — reach that tenant's runs and <strong>untagged</strong>
+<code>begin</code>, <code>renew</code>, <code>load</code>, <code>mark_retry</code> and every terminal write — reach that tenant's runs and <strong>untagged</strong>
 ones; the untagged arm is what keeps a run belonging to no tenant completable, since a
 terminal write that matched nothing would leave it reclaimed and re-run forever. The verbs
 that enumerate or control — the recovery scan, <code>list_runs</code>, <code>request_cancel</code>, <code>refuse_cancel</code>
@@ -6780,6 +6802,66 @@ than passing on the strength of the other planes. Note the coupling that creates
 <code>tenant_aware=True</code> on a run store fails closed when nothing is bound, which is how the
 cross-tenant sweep runs, so a deployment declaring <code>tagged</code> runs per-tenant recovery
 (<code>tenants=…</code>) instead.</p>
+<h3 id="retrying-a-failed-run">Retrying a failed run<a class="headerlink" href="#retrying-a-failed-run" title="Permanent link">&para;</a></h3>
+<p>A step that raises writes no journal row, and by default the run lands <code>FAILED</code>. Give the
+runner a retry strategy and a run whose body raises a retryable error goes back to <code>PENDING</code>
+instead, due after a backoff:</p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">datetime</span><span class="w"> </span><span class="kn">import</span> <span class="n">timedelta</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">forze.application.contracts.resilience</span><span class="w"> </span><span class="kn">import</span> <span class="n">BackoffStrategy</span><span class="p">,</span> <span class="n">RetryStrategy</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">forze.base.exceptions</span><span class="w"> </span><span class="kn">import</span> <span class="n">ExceptionKind</span>
+
+<span class="n">runner</span> <span class="o">=</span> <span class="n">DurableFunctionRunner</span><span class="p">(</span>
+    <span class="n">registry</span><span class="o">=</span><span class="n">registry</span><span class="p">,</span>
+    <span class="n">retry</span><span class="o">=</span><span class="n">RetryStrategy</span><span class="p">(</span>
+        <span class="n">max_attempts</span><span class="o">=</span><span class="mi">5</span><span class="p">,</span>
+        <span class="n">backoff</span><span class="o">=</span><span class="n">BackoffStrategy</span><span class="p">(</span><span class="n">base</span><span class="o">=</span><span class="n">timedelta</span><span class="p">(</span><span class="n">seconds</span><span class="o">=</span><span class="mi">10</span><span class="p">),</span> <span class="nb">max</span><span class="o">=</span><span class="n">timedelta</span><span class="p">(</span><span class="n">minutes</span><span class="o">=</span><span class="mi">10</span><span class="p">)),</span>
+        <span class="n">retry_on</span><span class="o">=</span><span class="nb">frozenset</span><span class="p">({</span><span class="n">ExceptionKind</span><span class="o">.</span><span class="n">INFRASTRUCTURE</span><span class="p">,</span> <span class="n">ExceptionKind</span><span class="o">.</span><span class="n">THROTTLED</span><span class="p">}),</span>
+    <span class="p">),</span>
+<span class="p">)</span>
+</code></pre></div>
+<p>The worker is freed while the run waits; the recovery scan claims it once it is due, on any
+replica, and the steps it journaled replay — only the failed step and those after it run
+again. <code>registry.register(name, body, retry=...)</code> gives one function its own strategy, and
+<code>max_attempts=1</code> there opts it out of the runner's.</p>
+<ul>
+<li><strong>What is retried.</strong> A <code>CoreException</code> whose kind is in <code>retry_on</code>. A vendor exception is
+  not: map it to a kind with an exception interceptor. These land as they would have: a
+  timeout; a failure while an operator's cancel is pending; a saga that rolled back
+  (<code>domain</code> — it journals its failed step, so running it again fails the same way); and a
+  saga whose rollback failed or whose step's outcome is unknown, which need an operator.</li>
+<li><strong>The budget is the run's <code>attempts</code>.</strong> Every claim spends one, a recovery claim after a
+  crash included, so <code>max_attempts</code> bounds how often the run is claimed, not how often its
+  body raised. The strategy's <code>budget</code> is refused: a process-local bucket cannot count claims
+  spread across replicas.</li>
+<li><strong>While it waits</strong> the run is <code>PENDING</code> with the failure in <code>error</code>. <code>run_now</code> returns that
+  record instead of raising, and so does a re-submit under its key until it is due. A cancel
+  asked of a waiting run is stamped and lands when the retry comes due, without running the
+  body (a saga runs again and decides by its pivot); that claim spends an attempt.</li>
+<li><strong>When it is due</strong> it keeps its <code>created_at</code>, so the scan, oldest first, claims it ahead of
+  fresh runs.</li>
+</ul>
+<p>An attempt that sends its run back counts under the <code>retrying</code> outcome, and the last one
+under <code>failed</code>: alert on <code>failed</code>.</p>
+<p><strong>Requeue a failed run</strong> once whatever failed it is fixed, naming the runs or the function.
+A run that landed <code>FAILED</code> or <code>TIMED_OUT</code> goes back to <code>PENDING</code> under its own id, so it too
+replays its journal and reruns only the steps it did not finish:</p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">forze_kits.integrations.durable</span><span class="w"> </span><span class="kn">import</span> <span class="n">resolve_durable_run_admin</span>
+
+
+<span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">requeue</span><span class="p">(</span><span class="n">ctx</span><span class="p">):</span>
+    <span class="n">admin</span> <span class="o">=</span> <span class="n">resolve_durable_run_admin</span><span class="p">(</span><span class="n">ctx</span><span class="p">)</span>
+    <span class="k">await</span> <span class="n">admin</span><span class="o">.</span><span class="n">requeue_failed</span><span class="p">(</span><span class="n">run_ids</span><span class="o">=</span><span class="p">[</span><span class="s2">"..."</span><span class="p">])</span>     <span class="c1"># or name="profile"</span>
+</code></pre></div>
+<p>A call naming neither is refused: a run's failure history is not something to bring back
+whole. It is scoped like <code>list_runs</code>, though an unbound call may name a function across
+tenants, and it leaves alone <code>CANCELLED</code> and <code>FORWARD_INCOMPLETE</code> runs and a failed run whose
+cancel ask is unanswered. A requeued run keeps its <code>attempts</code>, so one that spent a retry
+strategy's budget gets one attempt per requeue, and its <code>created_at</code>, so the scan claims
+requeued runs ahead of fresh ones.</p>
+<p>A saga journals a failed forward step, so requeueing one that rolled back
+(<code>saga.step_failed</code>) fails it the same way again; that work needs a new run. Requeueing one
+whose rollback failed runs again only the compensations that failed.</p>
 <h3 id="runs-recovery-cannot-decrypt">Runs recovery cannot decrypt<a class="headerlink" href="#runs-recovery-cannot-decrypt" title="Permanent link">&para;</a></h3>
 <p>With payloads encrypted, a run whose tenant's key is gone (an offboarded tenant, a key
 pending deletion) cannot be opened when the recovery scan claims it. The scan skips it rather
@@ -6830,8 +6912,8 @@ that never awaits is bounded only by <code>max_run_duration</code>; if you need 
 structure the body for it (await regularly, <code>run_cpu</code> with checkpoints at chunk boundaries).
 True hard kill exists only at process/container granularity and is a deployment concern.</p>
 <p><code>CANCELLED</code> is deliberately not <code>FAILED</code>: nothing is wrong with the code, so it should not
-page anyone. Completed steps stay journaled, so re-enqueueing a cancelled run replays them
-rather than redoing the work.</p>
+page anyone. Its completed steps stay journaled — cancelling is not a rollback — and
+<code>requeue_failed</code> leaves it alone.</p>
 <p>The ask is <strong>unfenced</strong> and the landing is <strong>fenced</strong>: anyone may ask, but only the run's
 current claim holder may write the terminal state, so a stalled replica can't cancel a run
 its new owner is midway through. If the holder dies with the stamp down, the recovery scan
