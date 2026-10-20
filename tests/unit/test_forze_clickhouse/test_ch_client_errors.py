@@ -46,7 +46,7 @@ class TestClickHouseErrorHandler:
 
     def test_throttled(self) -> None:
         r = _clickhouse_eh(_client_error(429), site="query")
-        assert isinstance(r, CoreException) and r.kind == ExceptionKind.INFRASTRUCTURE
+        assert isinstance(r, CoreException) and r.kind == ExceptionKind.THROTTLED
         assert "throttled" in r.summary.lower()
 
     def test_generic_client_error_status(self) -> None:

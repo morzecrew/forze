@@ -56,6 +56,25 @@ resolved via `ctx.http.service(spec)`.
 |----------|----------|
 | Outbound HTTP service (typed operations) | `HttpServiceSpec.name` (`services`) |
 
+## Errors
+
+A failed call raises a `CoreException` whose kind follows the counterparty's answer:
+
+| Answer | Kind | Retryable |
+|--------|------|-----------|
+| 404 | `not_found` | no |
+| 429 | `throttled`, with a parsed `Retry-After` as `retry_after` seconds (at most 3600) in `details` | yes |
+| 401, 403 | `infrastructure`: the counterparty refused this service's credential | yes |
+| 408, 5xx, timeout, connection failure | `infrastructure` | yes |
+| 3xx | `internal`: a redirect is not followed | no |
+| any other 4xx | `internal`: it rejected the request this service built | no |
+| 2xx whose body fails validation, or is empty when the operation needs one | `internal` | no |
+
+A refused credential is `infrastructure` rather than `configuration` because a supervised
+loop stops for good on `configuration`, so a rotated credential would need a restart.
+
+The details stay on the exception for your code; a client sees none of them.
+
 ## Notes
 
 - A service is either static (`base_url`) or per-tenant — `tenant_aware=True`

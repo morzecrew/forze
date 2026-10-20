@@ -39,8 +39,9 @@ def make_http_exception_mapper(
     """Build an :class:`ExceptionMapper` for aiohttp-style HTTP backends.
 
     Passes :class:`CoreException` through unchanged. For *response_error_type*
-    instances, maps ``404``/``401``/``403``/``429`` to standard ``{label} ...``
-    infrastructure errors and defers other statuses to *http_status_message*.
+    instances, maps ``404``/``401``/``403`` to standard ``{label} ...``
+    infrastructure errors and ``429`` to ``throttled``, and defers other statuses
+    to *http_status_message*.
     A non-HTTP error is handed to *fallback*, or — when *fallback* is ``None`` —
     returned as ``None`` so an enclosing chain (e.g. :func:`build_exc_interceptor`)
     supplies the terminal fallback.
@@ -85,7 +86,7 @@ def make_http_exception_mapper(
                 return CoreException.infrastructure(f"{label} access denied.", details=details)
 
             if status == 429:
-                return CoreException.infrastructure(f"{label} request throttled.", details=details)
+                return CoreException.throttled(f"{label} request throttled.", details=details)
 
             return CoreException.infrastructure(http_status_message(status), details=details)
 

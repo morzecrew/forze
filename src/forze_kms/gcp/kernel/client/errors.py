@@ -129,7 +129,7 @@ def _gcpkms_eh(
             )
 
         case gcp_errors.ResourceExhausted():
-            return CoreException.infrastructure(
+            return CoreException.throttled(
                 "GCP KMS request throttled (quota exhausted).",
                 details=details,
             )

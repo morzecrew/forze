@@ -52,18 +52,19 @@ class TestS3ErrorHandler:
         assert "ssl" in r.summary.lower()
 
     @pytest.mark.parametrize(
-        ("code", "needle"),
+        ("code", "needle", "kind"),
         [
-            ("AccessDenied", "access denied"),
-            ("SlowDown", "throttl"),
-            ("Throttling", "throttl"),
-            ("InternalError", "internal error"),
-            ("UnknownCode", "unknowncode"),
+            ("AccessDenied", "access denied", ExceptionKind.INFRASTRUCTURE),
+            ("SlowDown", "throttl", ExceptionKind.THROTTLED),
+            ("Throttling", "throttl", ExceptionKind.THROTTLED),
+            ("ThrottlingException", "throttl", ExceptionKind.THROTTLED),
+            ("InternalError", "internal error", ExceptionKind.INFRASTRUCTURE),
+            ("UnknownCode", "unknowncode", ExceptionKind.INFRASTRUCTURE),
         ],
     )
-    def test_client_error_codes(self, code: str, needle: str) -> None:
+    def test_client_error_codes(self, code: str, needle: str, kind: ExceptionKind) -> None:
         r = _s3_eh(_client_error(code), site="op")
-        assert isinstance(r, CoreException) and r.kind == ExceptionKind.INFRASTRUCTURE
+        assert isinstance(r, CoreException) and r.kind == kind
         assert needle in r.summary.lower()
 
     def test_missing_bucket_is_configuration_not_retryable_infrastructure(self) -> None:

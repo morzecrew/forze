@@ -109,7 +109,7 @@ async def test_invoke_omits_traceparent_without_a_span() -> None:
 
 
 @pytest.mark.asyncio
-async def test_invoke_invalid_response_is_validation_error() -> None:
+async def test_invoke_invalid_response_is_an_internal_error() -> None:
     spec = build_http_service_spec(DemoClient, name="demo")
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -131,7 +131,8 @@ async def test_invoke_invalid_response_is_validation_error() -> None:
     with pytest.raises(CoreException) as raised:
         await adapter.invoke("list_items")
 
-    assert raised.value.kind == ExceptionKind.VALIDATION
+    # The counterparty broke its contract, not the caller: a server error, not a 422.
+    assert raised.value.kind == ExceptionKind.INTERNAL
     assert raised.value.code == "http.response.validation"
     assert raised.value.details is not None
     assert "errors" in raised.value.details
@@ -140,6 +141,31 @@ async def test_invoke_invalid_response_is_validation_error() -> None:
     assert error_envelope(raised.value).context is None
 
     await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_invoke_empty_response_is_an_internal_error() -> None:
+    spec = build_http_service_spec(DemoClient, name="demo")
+    client = HttpClient()
+    await client.initialize(
+        base_url="https://api.example.com",
+        transport=httpx.MockTransport(lambda _r: httpx.Response(200, content=b"")),
+    )
+    adapter = HttpServiceAdapter(
+        client=client,
+        config=HttpServiceConfig(base_url="https://api.example.com"),
+        spec=spec,
+    )
+
+    try:
+        with pytest.raises(CoreException) as raised:
+            await adapter.invoke("list_items")
+
+    finally:
+        await client.aclose()
+
+    assert raised.value.kind == ExceptionKind.INTERNAL
+    assert error_envelope(raised.value).status == 500
 
 
 @pytest.mark.asyncio
