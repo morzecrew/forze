@@ -9849,6 +9849,15 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <li>
 <p><strong>A document update keeps the nulls inside a mapping or <code>Any</code> value</strong> (<strong>behaviour change</strong>). A <code>None</code> there is stored as null, as create stores it, or refused where the value type admits no null. An update can no longer remove a key from a mapping.</p>
 </li>
+<li>
+<p><strong>Resending an unchanged instant no longer bumps <code>rev</code>.</strong> A document <code>update</code>, <code>upsert</code> or <code>upsert_many</code> compares a naive <code>datetime</code> with an aware one as UTC, either way round; on Mongo, finer than a millisecond is no change either.</p>
+</li>
+<li>
+<p><strong>A stale-revision update no longer reverts a concurrent change</strong> (<strong>behaviour change</strong>, revision history on). A field it resends with the value it read is not written; only what it changes lands. New <code>Document.historical_update</code>.</p>
+</li>
+<li>
+<p><strong><code>update_many</code> with revision history no longer fails on a row it leaves unchanged.</strong> Postgres raised a unique violation and rolled the batch back; Mongo wrote a duplicate snapshot.</p>
+</li>
 </ul>
 <h3 id="security">Security<a class="headerlink" href="#security" title="Permanent link">&para;</a></h3>
 <ul>

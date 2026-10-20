@@ -6564,7 +6564,9 @@ write. You read at a revision, then write back the one you read:</p>
 <li><strong>Differ</strong> — load the history snapshot at your revision and run a <strong>three-way
   merge</strong>. Edits that touch <em>disjoint</em> fields merge through (last-writer-wins per
   field); edits that touch the <em>same</em> fields raise <code>exc.conflict</code>
-  (<code>historical_consistency_violation</code>).</li>
+  (<code>historical_consistency_violation</code>). A field your write resends with the value
+  it had at your revision touches nothing and is not written, so a concurrent
+  change to it is kept.</li>
 <li><strong>A future or unknown revision</strong> (or a missing history snapshot) raises
   <code>exc.precondition</code> (<code>revision_mismatch</code>) — re-read the document and retry.</li>
 </ul>
@@ -6579,6 +6581,8 @@ revision mismatch is a <code>precondition</code> error rather than a merge attem
 <ul>
 <li><code>Document.validate_historical_consistency(old, patch)</code> is the check behind the
   merge — <code>True</code> when the concurrent change and yours touch disjoint fields.</li>
+<li><code>Document.historical_update(old, patch)</code> is what the merge writes: the part of
+  <code>patch</code> that changes <code>old</code>, or <code>None</code> on a conflict.</li>
 <li><code>command.touch(pk)</code> bumps <code>last_update_at</code> and <code>rev</code> without other changes.</li>
 </ul>
 <p>Retrying a conflict safely is only half the story — a retried write must also
