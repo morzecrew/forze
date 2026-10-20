@@ -60,7 +60,8 @@ def _merge_update(live: Any, before: JsonDict, patch: JsonDict) -> JsonDict:
         if v is None and declared:
             out.pop(k, None)
 
-        elif isinstance(v, dict) and isinstance(current, dict):
+        # Any mapping: an ``Any`` field dumps a custom one (a ``MappingProxyType``) as it is.
+        elif isinstance(v, dict) and isinstance(current, Mapping):
             if declared:
                 inner = getattr(live, k, None)
 

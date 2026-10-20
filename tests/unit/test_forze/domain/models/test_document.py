@@ -1,6 +1,7 @@
 """Tests for forze.domain.models.document."""
 
 from datetime import UTC, datetime
+from types import MappingProxyType
 from typing import Annotated, Any, Literal
 from uuid import UUID
 
@@ -313,6 +314,15 @@ class TestJsonValueUpdate:
         after, _ = doc.update({"extra": {"y": {"z": None}}})
 
         assert after.extra == {"x": 0, "y": {"z": None}}
+
+    def test_an_any_value_holding_a_custom_mapping_merges(self) -> None:
+        class Doc(Document):
+            extra: Any = None
+
+        doc = Doc(extra=MappingProxyType({"x": 0, "y": 1}))
+        after, _ = doc.update({"extra": {"y": None}})
+
+        assert after.extra == {"x": 0, "y": None}
 
     def test_a_list_is_replaced_with_its_nulls(self) -> None:
         class Doc(Document):
