@@ -333,6 +333,16 @@ def pydantic_decode_json_bytes[M: BaseModel](
 # ....................... #
 
 
+def _one_type(objs: Sequence[BaseModel], cls: type[BaseModel]) -> bool:
+    """Whether every one of *objs* is exactly a *cls*.
+
+    A ``list[cls]`` adapter serializes any model that has *cls*'s fields with *cls*'s schema,
+    so a subclass or a wider model would lose the fields *cls* lacks, silently.
+    """
+
+    return all(type(o) is cls for o in objs)
+
+
 def pydantic_dump_many(
     objs: Sequence[BaseModel],
     *,
@@ -352,7 +362,8 @@ def pydantic_dump_many(
     if not objs:
         return []
 
-    cls = type(objs[0])
+    seq = sequence_as_list(objs)
+    cls = type(seq[0])
 
     logger.trace(
         "Dumping %s models into list[dict[str, Any]] (mode=%s, exclude=%s)",
@@ -361,9 +372,12 @@ def pydantic_dump_many(
         exclude,
     )
 
+    if not _one_type(seq, cls):
+        return [pydantic_dump(o, mode=mode, exclude=exclude) for o in seq]
+
     adapter = _list_adapter(cls)
     dumped = adapter.dump_python(
-        sequence_as_list(objs),
+        seq,
         mode=mode,
         exclude_unset=exclude.get("unset", False),
         exclude_none=exclude.get("none", False),
@@ -386,7 +400,8 @@ def pydantic_dump_many_batched(
 ) -> Iterator[list[JsonDict]]:
     """Dump models in fixed-size chunks to cap peak memory.
 
-    :param objs: Homogeneous sequence of model instances (same concrete type).
+    :param objs: Model instances; a batch of more than one concrete type dumps each model on
+        its own.
     :param batch_size: Maximum models per yielded chunk (must be >= 1).
     :param mode: Serialization mode forwarded to :class:`~pydantic.TypeAdapter`.
     :param exclude: Fine-grained field omission options.
@@ -402,6 +417,16 @@ def pydantic_dump_many_batched(
 
     seq = sequence_as_list(objs)
     cls = type(seq[0])
+
+    if not _one_type(seq, cls):
+        for start in range(0, len(seq), batch_size):
+            yield [
+                pydantic_dump(o, mode=mode, exclude=exclude)
+                for o in seq[start : start + batch_size]
+            ]
+
+        return
+
     adapter = _list_adapter(cls)
     exclude_unset = exclude.get("unset", False)
     exclude_none = exclude.get("none", False)

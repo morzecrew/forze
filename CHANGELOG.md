@@ -29,6 +29,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Postgres schema and programming errors are no longer retried** (**behaviour change**). A missing object (`postgres_schema_mismatch`), a refused privilege (`postgres_privilege_denied`), a syntax error or a PL/pgSQL `RAISE EXCEPTION` is now `internal`, not retryable `infrastructure`.
 - **Upstream throttles are `throttled`, rejections `internal`** (**behaviour change**). `forze_http`: 429 `throttled` (`retry_after` in `details`), 401/403 `infrastructure` (now retried), 3xx, other 4xx, bad bodies `internal`. GCS, BigQuery, ClickHouse, S3, SQS, KMS throttles too; `transient` retries none.
 
+- **A bulk update or upsert mixing patch types no longer drops fields.** Each patch in an `update_many` or `upsert_many` was encoded as the first one's type, so the fields a subclass or other type adds were silently not written, on Postgres and Mongo.
+
 - **A document update keeps the nulls inside a mapping or `Any` value** (**behaviour change**). A `None` there is stored as null, as create stores it, or refused where the value type admits no null. An update can no longer remove a key from a mapping.
 
 - **Resending an unchanged instant no longer bumps `rev`.** A document `update`, `upsert` or `upsert_many` compares a naive `datetime` with an aware one as UTC, either way round; on Mongo, finer than a millisecond is no change either.
