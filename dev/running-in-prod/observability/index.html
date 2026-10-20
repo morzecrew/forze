@@ -6996,6 +6996,10 @@ formatter, and the uncaught-exception hook.</p>
 <p>Name a package root and the stdlib logger hierarchy carries the setting to every
 logger under it (<code>forze_postgres.kernel</code>, <code>forze_postgres.adapters</code>, …), so there
 is nothing per-subpackage to enumerate.</p>
+<p>Until structlog is configured (<code>configure_logging</code>, <code>bootstrap_logging</code> or your own
+<code>structlog.configure</code>), forze does not print to stdout itself: it hands each event to
+the stdlib logger of the same name at that logger's level, so warnings and above reach
+stderr by default, or your own <code>logging</code> handlers at the level you set.</p>
 <p><code>configure_logging</code> remains the lower-level entry point when you want to wire the
 pieces yourself. Either way, pass <code>otel_config=...</code> and the active span's
 <code>trace_id</code> and <code>span_id</code> are injected into every log line — because

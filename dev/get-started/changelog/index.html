@@ -9831,12 +9831,14 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 </ul>
 <h3 id="changed">Changed<a class="headerlink" href="#changed" title="Permanent link">&para;</a></h3>
 <ul>
-<li>...</li>
+<li><strong>Until structlog is configured (<code>configure_logging</code> or your own <code>structlog.configure</code>), forze no longer prints to stdout itself</strong> (behaviour change): its events go to the same-named stdlib logger at its level, so they reach only your stdlib handlers, or stderr from warnings up by default. Call <code>configure_logging</code> to keep info output.</li>
 </ul>
 <h3 id="fixed">Fixed<a class="headerlink" href="#fixed" title="Permanent link">&para;</a></h3>
 <ul>
 <li>A circuit breaker whose half-open probes recorded no outcome (an ignored error kind, a cancelled call) no longer rejects every call until restart: after <code>break_duration</code> it admits a new probe round.</li>
 <li><strong>A logout everywhere followed by a deactivation in one transaction no longer deadlocks with a concurrent login</strong> (revocation states, policy principal on Postgres; deactivation through SQL or its document port).</li>
+<li><strong><code>PostgresConfig</code> session options no longer empty the pool.</strong> With <code>application_name</code>, <code>statement_timeout</code>, <code>lock_timeout</code> or <code>idle_in_transaction_session_timeout</code> set, every new connection was discarded, and queries failed as a busy pool. They now take effect on every pooled connection.</li>
+<li><strong>Postgres schema and programming errors are no longer retried</strong> (<strong>behaviour change</strong>). A missing object (<code>postgres_schema_mismatch</code>), a refused privilege (<code>postgres_privilege_denied</code>), a syntax error or a PL/pgSQL <code>RAISE EXCEPTION</code> is now <code>internal</code>, not retryable <code>infrastructure</code>.</li>
 </ul>
 <h3 id="security">Security<a class="headerlink" href="#security" title="Permanent link">&para;</a></h3>
 <ul>
