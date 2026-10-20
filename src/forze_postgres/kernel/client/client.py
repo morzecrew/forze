@@ -187,6 +187,10 @@ def _pool_configure_for_config(  # type: ignore[no-untyped-def]
                     ),
                 )
 
+        # The SETs opened a transaction; the pool discards a connection left in it. A session
+        # SET survives the commit.
+        await conn.commit()
+
     return configure
 
 

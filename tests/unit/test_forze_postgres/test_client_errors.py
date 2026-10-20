@@ -8,8 +8,13 @@ import psycopg_pool as pool_errors
 import pytest
 from psycopg import errors
 
+from forze.application.contracts.resilience import CircuitBreakerStrategy, ResiliencePolicy
+from forze.application.execution.background import is_terminal_crash
+from forze.application.execution.resilience import InProcessResilienceExecutor
+from forze.application.execution.resilience.policies import builtin_default_policies
 from forze.base.exceptions import CoreException, ExceptionKind, exc
 from forze.base.exceptions.egress import exception_egress_policy, http_status_for_kind
+from forze_kits.integrations._wiring import is_wiring_error
 from forze_postgres.kernel.client import errors as client_errors
 from forze_postgres.kernel.client.client import PostgresClient, PostgresConfig
 
@@ -91,6 +96,7 @@ class TestPsycopgErrorHandlerBranches:
             (lambda: errors.UniqueViolation(), ExceptionKind.CONFLICT),
             (lambda: errors.ExclusionViolation(), ExceptionKind.CONFLICT),
             (lambda: errors.CheckViolation(), ExceptionKind.PRECONDITION),
+            (lambda: errors.WithCheckOptionViolation(), ExceptionKind.PRECONDITION),
             (lambda: errors.NotNullViolation(), ExceptionKind.PRECONDITION),
             (lambda: errors.StringDataRightTruncation(), ExceptionKind.PRECONDITION),
             (lambda: errors.DataError(), ExceptionKind.PRECONDITION),
@@ -114,12 +120,15 @@ class TestPsycopgErrorHandlerBranches:
                 lambda: errors.SqlserverRejectedEstablishmentOfSqlconnection(),
                 ExceptionKind.INFRASTRUCTURE,
             ),
-            (lambda: errors.UndefinedTable(), ExceptionKind.INFRASTRUCTURE),
-            (lambda: errors.UndefinedColumn(), ExceptionKind.INFRASTRUCTURE),
-            (lambda: errors.UndefinedFunction(), ExceptionKind.INFRASTRUCTURE),
-            (lambda: errors.SyntaxError(), ExceptionKind.INFRASTRUCTURE),
-            (lambda: errors.InvalidSqlStatementName(), ExceptionKind.INFRASTRUCTURE),
-            (lambda: errors.InsufficientPrivilege(), ExceptionKind.INFRASTRUCTURE),
+            (lambda: errors.UndefinedTable(), ExceptionKind.INTERNAL),
+            (lambda: errors.UndefinedColumn(), ExceptionKind.INTERNAL),
+            (lambda: errors.UndefinedFunction(), ExceptionKind.INTERNAL),
+            (lambda: errors.UndefinedObject(), ExceptionKind.INTERNAL),
+            (lambda: errors.InvalidSchemaName(), ExceptionKind.INTERNAL),
+            (lambda: errors.InvalidCatalogName(), ExceptionKind.INTERNAL),
+            (lambda: errors.SyntaxError(), ExceptionKind.INTERNAL),
+            (lambda: errors.InvalidSqlStatementName(), ExceptionKind.INTERNAL),
+            (lambda: errors.InsufficientPrivilege(), ExceptionKind.INTERNAL),
             (lambda: errors.QueryCanceled(), ExceptionKind.INFRASTRUCTURE),
             (lambda: errors.TooManyConnections(), ExceptionKind.CONCURRENCY),
             (lambda: errors.OutOfMemory(), ExceptionKind.INFRASTRUCTURE),
@@ -127,8 +136,10 @@ class TestPsycopgErrorHandlerBranches:
             (lambda: errors.IntegrityError(), ExceptionKind.CONFLICT),
             # No SQLSTATE → client-side connectivity failure → transient.
             (lambda: errors.OperationalError(), ExceptionKind.CONCURRENCY),
-            (lambda: errors.ProgrammingError(), ExceptionKind.INFRASTRUCTURE),
-            (lambda: errors.GroupingError(), ExceptionKind.INFRASTRUCTURE),
+            (lambda: errors.ProgrammingError(), ExceptionKind.INTERNAL),
+            (lambda: errors.GroupingError(), ExceptionKind.INTERNAL),
+            # A PL/pgSQL `RAISE EXCEPTION` from an application trigger or function.
+            (lambda: errors.RaiseException(), ExceptionKind.INTERNAL),
         ],
     )
     def test_maps_exception_to_domain_kind(
@@ -333,3 +344,100 @@ class TestPoolAcquisitionTimeout:
 
         assert caught.value.kind == ExceptionKind.INFRASTRUCTURE
         assert caught.value.code == client_errors.DATABASE_UNREACHABLE_CODE
+
+
+class TestSchemaErrorsAreNotTerminal:
+    """A schema mismatch or a refused privilege can be one tenant's, or heal with the next
+    migration: a supervised loop must log it and go on, not stop for every tenant."""
+
+    @pytest.mark.parametrize(
+        ("raised", "code"),
+        [
+            (errors.UndefinedTable(), client_errors.SCHEMA_MISMATCH_CODE),
+            (errors.InvalidSchemaName(), client_errors.SCHEMA_MISMATCH_CODE),
+            (errors.UndefinedObject(), client_errors.SCHEMA_MISMATCH_CODE),
+            (errors.InsufficientPrivilege(), client_errors.PRIVILEGE_DENIED_CODE),
+        ],
+    )
+    def test_it_is_neither_a_terminal_crash_nor_a_wiring_error(
+        self,
+        raised: Exception,
+        code: str,
+    ) -> None:
+        out = client_errors._psycopg_eh(raised, site="op")
+
+        assert out is not None
+        assert out.code == code
+        assert not is_terminal_crash(out)
+        assert not is_wiring_error(out)
+        assert not exception_egress_policy(out.kind).retryable
+
+
+class TestSchemaErrorsUnderResilience:
+    """A schema error is a bug or a missing migration: the ``transient`` policy must not retry
+    it, and a circuit breaker must not read it as the database failing."""
+
+    @staticmethod
+    def _executor() -> InProcessResilienceExecutor:
+        transient = builtin_default_policies()["transient"]
+        policy = ResiliencePolicy(
+            name="guarded",
+            strategies=(
+                CircuitBreakerStrategy(
+                    failure_ratio=1.0,
+                    sampling_window=timedelta(seconds=100),
+                    min_throughput=1,
+                    break_duration=timedelta(seconds=10),
+                    half_open_max_calls=1,
+                ),
+                *transient.strategies,
+            ),
+        )
+
+        async def no_sleep(_delay: float) -> None:
+            return None
+
+        return InProcessResilienceExecutor(policies={policy.name: policy}, sleep=no_sleep)
+
+    @staticmethod
+    async def _attempts(executor: InProcessResilienceExecutor, raised: Exception) -> int:
+        attempts = 0
+
+        async def call() -> None:
+            nonlocal attempts
+            attempts += 1
+            mapped = client_errors.exc_interceptor.mapper(raised, site="op")
+            raise mapped
+
+        with pytest.raises(CoreException):
+            await executor.run(call, policy="guarded")
+
+        return attempts
+
+    @staticmethod
+    async def _breaker_open(executor: InProcessResilienceExecutor) -> bool:
+        async def ok() -> str:
+            return "ok"
+
+        try:
+            await executor.run(ok, policy="guarded")
+
+        except CoreException:
+            return True
+
+        return False
+
+    async def test_an_undefined_column_is_attempted_once_and_leaves_the_breaker_closed(
+        self,
+    ) -> None:
+        executor = self._executor()
+
+        assert await self._attempts(executor, errors.UndefinedColumn()) == 1
+        assert not await self._breaker_open(executor)
+
+    async def test_a_lost_server_is_still_retried_and_opens_the_breaker(self) -> None:
+        # Non-vacuous: the same policy does retry, and does open, on a transient fault.
+        executor = self._executor()
+
+        assert await self._attempts(executor, errors.AdminShutdown()) == 3
+        assert await self._breaker_open(executor)

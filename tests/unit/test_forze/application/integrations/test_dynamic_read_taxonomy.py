@@ -86,8 +86,7 @@ def test_nothing_on_this_plane_egresses_as_internal() -> None:
 
     The statement is the caller's input here, so an undefined relation is a malformed request.
     Reported as ``internal`` it would page whoever owns the database for a typo somebody's
-    report builder produced — and it would be retried, because that is what the egress policy
-    does with an internal error.
+    report builder produced, and hide from the caller the details that say what to fix.
     """
 
     assert all(error.kind is not ExceptionKind.INTERNAL for error, _, _ in BUILT)
