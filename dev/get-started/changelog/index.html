@@ -9852,7 +9852,15 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 </ul>
 <h3 id="security">Security<a class="headerlink" href="#security" title="Permanent link">&para;</a></h3>
 <ul>
-<li><strong>An error an integration translates from its backend no longer shows the failed call's context to API callers</strong> (<strong>behaviour change</strong>): such an error carries no <code>context</code>, whatever its kind. The details stay on the exception and are logged at debug. A stream's failure between items is now translated too.</li>
+<li>
+<p><strong>An error an integration translates from its backend no longer shows the failed call's context to API callers</strong> (<strong>behaviour change</strong>): such an error carries no <code>context</code>, whatever its kind. The details stay on the exception and are logged at debug. A stream's failure between items is now translated too.</p>
+</li>
+<li>
+<p><strong>Cookie-mode <code>/refresh</code> applies the cookie CSRF gate to the refresh cookie</strong> (<strong>behaviour change</strong>): a refresh taking its token from the cookie must prove its origin as access-cookie requests do, under the same <code>CookieTokenAuthn(csrf=...)</code> gate (its <code>allowed_origins</code>, or <code>None</code>). A body token is unaffected.</p>
+</li>
+<li>
+<p><strong>A cookie read by several <code>CookieTokenAuthn</code> ingresses keeps every CSRF gate they declare</strong>: one ingress's <code>csrf=None</code> no longer lets the cookie through ungated.</p>
+</li>
 </ul>
 <h2 id="0151-2026-10-19"><a href="https://github.com/morzecrew/forze/compare/v0.15.0...v0.15.1">0.15.1</a> - 2026-10-19<a class="headerlink" href="#0151-2026-10-19" title="Permanent link">&para;</a></h2>
 <h3 id="fixed_1">Fixed<a class="headerlink" href="#fixed_1" title="Permanent link">&para;</a></h3>
