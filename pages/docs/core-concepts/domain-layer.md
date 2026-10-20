@@ -99,6 +99,13 @@ Updates are structured. `order.update({"total": 99})` returns a **new immutable
 instance** and a minimal diff, runs the validators, and bumps `last_update_at`.
 A patch that changes nothing returns the original and an empty diff.
 
+The patch merges into what is stored: a field it names is set, and the rest are kept. Into
+a model (the document, a nested model, or one held in a union or a mapping) it merges field
+by field, and a field set to `None` takes its default, or is refused when it has none. Into
+a mapping or `Any` value it merges key by key: the keys the patch leaves out are kept, and a
+`None` is stored as null where the value's type admits one (a `dict[str, int]` refuses it).
+A list is replaced. An update cannot remove a key from a mapping.
+
 These validate a *single* write. A state **transition** — its guard plus the change
 it makes — belongs on the aggregate too, as a *decider* method that returns the patch
 to persist; see [Aggregate decisions](../writing-operation/aggregate-decisions.md).

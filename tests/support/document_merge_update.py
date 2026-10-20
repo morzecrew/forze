@@ -1,9 +1,9 @@
 """An update merges into a stored mapping or nested model, on every backend.
 
-``Document.update`` merges a patch into the stored value (a JSON merge patch: a key it names
-is set, a key set to ``None`` is removed, the rest are kept) and revalidates. What a store
-holds afterwards must be the merged value, not the patch: reading the document back gives the
-siblings the patch did not name.
+``Document.update`` merges a patch into the stored value (a key it names is set, the rest are
+kept) and revalidates. In a mapping or ``Any`` value a key set to ``None`` is stored as null,
+never removed; a list is replaced. What a store holds afterwards must be the merged value, not
+the patch: reading the document back gives the siblings the patch did not name, and every null.
 """
 
 from __future__ import annotations
@@ -59,38 +59,52 @@ class MergeUpdate(BaseDTO):
 
 SEED = MergeCreate(
     name="stored",
-    meta={"k": 1, "j": 5, "deep": {"a": 1, "b": 2}},
+    meta={"k": 1, "j": 5, "deep": {"a": 1, "b": None}},
     address=MergeAddress(city="A", street="S"),
-    items=[{"a": 0}],
-    extra={"x": 0, "y": 1},
+    items=[{"a": 0, "b": None}],
+    extra={"x": 0, "y": [1, None]},
 )
 
 UPDATES: tuple[tuple[MergeUpdate, dict[str, Any], dict[str, str], dict[str, Any]], ...] = (
-    # One key changed, the rest kept.
+    # One key changed; the keys the update leaves out are kept, a nested null among them.
     (
         MergeUpdate(meta={"k": 2}),
-        {"k": 2, "j": 5, "deep": {"a": 1, "b": 2}},
+        {"k": 2, "j": 5, "deep": {"a": 1, "b": None}},
         {"city": "A", "street": "S"},
         {"meta": {"k": 2}},
     ),
     # A nested key changed, its siblings kept.
     (
         MergeUpdate(meta={"deep": {"a": 9}}),
-        {"k": 2, "j": 5, "deep": {"a": 9, "b": 2}},
+        {"k": 2, "j": 5, "deep": {"a": 9, "b": None}},
         {"city": "A", "street": "S"},
         {"meta": {"deep": {"a": 9}}},
     ),
-    # A key removed by naming it with null.
+    # A nested key changed beside a null the update sends again: the null is kept.
+    (
+        MergeUpdate(meta={"deep": {"a": 8, "b": None}}),
+        {"k": 2, "j": 5, "deep": {"a": 8, "b": None}},
+        {"city": "A", "street": "S"},
+        {"meta": {"deep": {"a": 8}}},
+    ),
+    # A key set to null is stored as null, not removed.
     (
         MergeUpdate(meta={"j": None}),
-        {"k": 2, "deep": {"a": 9, "b": 2}},
+        {"k": 2, "j": None, "deep": {"a": 8, "b": None}},
         {"city": "A", "street": "S"},
         {"meta": {"j": None}},
+    ),
+    # A nested key set to null.
+    (
+        MergeUpdate(meta={"deep": {"a": None}}),
+        {"k": 2, "j": None, "deep": {"a": None, "b": None}},
+        {"city": "A", "street": "S"},
+        {"meta": {"deep": {"a": None}}},
     ),
     # One field of a nested model changed, the other kept.
     (
         MergeUpdate(address=MergeAddressPatch(city="B")),
-        {"k": 2, "deep": {"a": 9, "b": 2}},
+        {"k": 2, "j": None, "deep": {"a": None, "b": None}},
         {"city": "B", "street": "S"},
         {"address": {"city": "B"}},
     ),
@@ -110,6 +124,8 @@ async def assert_updates_merge(command: Any, query: Any) -> None:
 
     one, many = await command.create(SEED), await command.create(SEED)
     revs = {one.id: one.rev, many.id: many.rev}
+    created = await query.get(one.id, skip_cache=True)
+    assert (created.meta, created.items, created.extra) == (SEED.meta, SEED.items, SEED.extra)
 
     for update, meta, address, patch in UPDATES:
         single = await command.update(one.id, revs[one.id], update, return_diff=True)
@@ -126,10 +142,15 @@ async def assert_updates_merge(command: Any, query: Any) -> None:
             assert written.meta == meta and written.address.model_dump() == address, update
             assert {k: _unwrapped(diff[k]) for k in patch} == patch, (update, diff)
 
-    # A field typed ``Any`` that holds a mapping merges the same way.
-    written = await command.update(one.id, revs[one.id], MergeUpdate(extra={"x": 2}))
-    assert written.extra == {"x": 2, "y": 1}
-    assert (await query.get(one.id, skip_cache=True)).extra == {"x": 2, "y": 1}
+    # A field typed ``Any`` that holds a mapping merges the same way; a list is replaced, the
+    # nulls in it kept.
+    update = MergeUpdate(items=[{"a": None}, {"b": 1}], extra={"y": [None, {"z": None}]})
+    written = await command.update(one.id, revs[one.id], update)
+    stored = await query.get(one.id, skip_cache=True)
+
+    for read in (written, stored):
+        assert read.items == [{"a": None}, {"b": 1}], read.items
+        assert read.extra == {"x": 0, "y": [None, {"z": None}]}, read.extra
 
 
 async def assert_update_matching_refuses_a_merge(command: Any, query: Any) -> None:

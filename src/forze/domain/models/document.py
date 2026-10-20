@@ -2,11 +2,12 @@
 
 from collections.abc import Mapping
 from copy import deepcopy
+from dataclasses import is_dataclass
 from datetime import datetime
 from typing import Any, ClassVar, Literal, Self, cast
 from uuid import UUID
 
-from pydantic import Field, model_validator
+from pydantic import BaseModel, Field, RootModel, model_validator
 
 from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict, utcnow, uuid7
@@ -30,6 +31,52 @@ from .base import BaseDTO, CoreModel
 from .emitters import has_event_emitters
 
 # ----------------------- #
+
+
+def _merge_update(live: Any, before: JsonDict, patch: JsonDict) -> JsonDict:
+    """Merge an update *patch* into *before*, the python-mode dump of *live*.
+
+    The rule is read off the live value, whatever the annotation (a union, an alias): into a
+    model or a dataclass the patch merges field by field, and a ``None`` drops its field so
+    revalidation gives it its default (or refuses it when it has none). Into anything else (a
+    mapping, an ``Any`` value) it merges key by key and stores a ``None`` as null. A list, or
+    a value with nothing stored to merge into, replaces the stored one.
+
+    :param live: The value *before* is a dump of: the document, or a value inside it.
+    :param before: Python-mode dump of *live*.
+    :param patch: The update's keys for *live*.
+    :returns: New mapping with *patch* merged in.
+    """
+
+    if isinstance(live, RootModel):
+        live = cast(Any, live.root)
+
+    declared = isinstance(live, BaseModel) or (is_dataclass(live) and not isinstance(live, type))
+    out = dict(before)
+
+    for k, v in patch.items():
+        current = out.get(k)
+
+        if v is None and declared:
+            out.pop(k, None)
+
+        elif isinstance(v, dict) and isinstance(current, dict):
+            if declared:
+                inner = getattr(live, k, None)
+
+            else:
+                # A value a custom type dumps to a mapping has no keys to read: merged as JSON.
+                inner = cast(Mapping[str, Any], live).get(k) if isinstance(live, Mapping) else None
+
+            out[k] = _merge_update(inner, cast(JsonDict, current), cast(JsonDict, v))
+
+        else:
+            out[k] = v
+
+    return out
+
+
+# ....................... #
 
 
 class Document(CoreModel):
@@ -143,7 +190,7 @@ class Document(CoreModel):
 
         patch = self._validate_update_data(data)
         before = self._dump_stored_fields()
-        merged = apply_dict_patch(before, patch)
+        merged = _merge_update(self, before, patch)
         candidate = type(self).model_validate(merged)
         diff = calculate_dict_difference(
             self._dump_persisted_fields(materialized),
@@ -257,6 +304,8 @@ class Document(CoreModel):
             logger.trace("No diff for %s; returning original instance", type(self).__qualname__)
             return self
 
+        # shortcut: reads every ``None`` in *diff* as a removed key, so a null an update stored
+        # in a mapping is dropped here; only tests call this, make it exact before using it.
         merged = apply_dict_patch(self._dump_stored_fields(), diff)
         candidate = type(self).model_validate(merged)
 
@@ -312,10 +361,14 @@ class Document(CoreModel):
 
         * validates the requested field changes,
         * merges them into the current state and **re-validates** the result, so the
-          returned instance always carries properly typed field values,
+          returned instance always carries properly typed field values (a field set to
+          ``None`` takes its default, a nested model merges field by field, a mapping or
+          ``Any`` value merges key by key and stores a ``None`` in it, a list is replaced),
         * computes a JSON merge-style diff over canonical (python-mode, validated)
           values — a patch that validates to the current state yields an empty diff
-          and returns ``self`` unchanged (no ``last_update_at`` bump),
+          and returns ``self`` unchanged (no ``last_update_at`` bump); inside a mapping or
+          ``Any`` value a ``None`` in it is a key removed or set to null, so it cannot be
+          applied back as a JSON merge patch,
         * bumps ``last_update_at`` when the diff is non-empty,
         * runs registered :func:`update_validator` hooks.
 
@@ -364,10 +417,10 @@ class Document(CoreModel):
         """*diff* with each changed mapping as its whole stored value in this updated document.
 
         :meth:`update`'s diff is a merge patch: a mapping or nested model in it holds only the
-        keys that changed, and a removed key as ``None``. A store that sets a field from it
-        replaces the stored value with that fragment and loses the siblings; this is what to
-        write instead. A scalar or a list is already whole, and a diff with no mapping is
-        returned as it is.
+        keys that changed, and a key removed or set to null as ``None``. A store that sets a
+        field from it replaces the stored value with that fragment and loses the siblings; this
+        is what to write instead. A scalar or a list is already whole, and a diff with no
+        mapping is returned as it is.
 
         :param diff: The diff :meth:`update` returned with this document.
         :returns: *diff*'s keys, each mapping-valued one with this document's whole value.
@@ -435,7 +488,7 @@ class Document(CoreModel):
         old_state = old._dump_stored_fields()
         self_state = self._dump_stored_fields()
 
-        old_upd_state = apply_dict_patch(old_state, data)
+        old_upd_state = _merge_update(old, old_state, data)
 
         old_self_diff = calculate_dict_difference(old_state, self_state)
         old_upd_diff = calculate_dict_difference(old_state, old_upd_state)

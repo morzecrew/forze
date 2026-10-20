@@ -62,6 +62,9 @@ def _shallow_merge(base: JsonDict, patch: JsonDict) -> JsonDict:
 def apply_dict_patch(before: JsonDict, patch: JsonDict) -> JsonDict:
     """Apply a merge-style JSON patch to ``before``.
 
+    A ``None`` in *patch* removes its key at any depth, so this inverts
+    :func:`calculate_dict_difference`; it cannot set a value to ``None``.
+
     :param before: Original JSON-like dictionary.
     :param patch: Merge patch to apply.
     :returns: New dictionary with the patch applied.

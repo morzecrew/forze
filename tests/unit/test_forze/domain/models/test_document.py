@@ -1,11 +1,12 @@
 """Tests for forze.domain.models.document."""
 
 from datetime import UTC, datetime
-from typing import Any
+from typing import Annotated, Any, Literal
 from uuid import UUID
 
 import pytest
-from pydantic import computed_field
+from pydantic import Field, RootModel, ValidationError, computed_field
+from pydantic.dataclasses import dataclass
 
 from forze.base.exceptions import CoreException, exc
 from forze.base.primitives import JsonDict
@@ -278,6 +279,223 @@ class TestDocumentUpdateCanonicalization:
         assert diff["address"] == {"city": "NY"}
         assert "label" not in diff["address"]
         assert after.address.label == "main, NY"
+
+class TestJsonValueUpdate:
+    """A JSON value (a mapping, ``Any``) merges key by key and stores the ``None`` values in
+    it; a list is replaced; a ``None`` on a declared field resets it to its default."""
+
+    def test_a_nested_null_survives_an_update(self) -> None:
+        class Doc(Document):
+            data: dict[str, Any]
+
+        doc = Doc(data={"a": {"b": None, "c": 1}})
+        after, diff = doc.update({"data": {"a": {"b": None, "c": 2}}})
+
+        assert after.data == {"a": {"b": None, "c": 2}}
+        assert after.stored_changes(diff)["data"] == {"a": {"b": None, "c": 2}}
+
+    def test_a_mapping_merges_and_stores_nulls(self) -> None:
+        class Doc(Document):
+            data: dict[str, Any]
+
+        doc = Doc(data={"a": 1, "b": {"x": 1, "y": 2}})
+        after, diff = doc.update({"data": {"b": {"x": None}, "c": [1, None]}})
+
+        # The keys the update leaves out are kept; its nulls are stored, not removals.
+        assert after.data == {"a": 1, "b": {"x": None, "y": 2}, "c": [1, None]}
+        assert after.stored_changes(diff)["data"] == after.data
+
+    def test_an_any_value_merges_and_stores_nulls(self) -> None:
+        class Doc(Document):
+            extra: Any = None
+
+        doc = Doc(extra={"x": 0, "y": {"z": 1}})
+        after, _ = doc.update({"extra": {"y": {"z": None}}})
+
+        assert after.extra == {"x": 0, "y": {"z": None}}
+
+    def test_a_list_is_replaced_with_its_nulls(self) -> None:
+        class Doc(Document):
+            items: list[Any] = []
+
+        doc = Doc(items=[1, {"a": 1, "b": 2}])
+        after, _ = doc.update({"items": [None, {"a": None}]})
+
+        assert after.items == [None, {"a": None}]
+
+    def test_a_json_value_in_a_nested_model_merges_and_stores_nulls(self) -> None:
+        class Settings(CoreModel):
+            theme: str = "light"
+            prefs: dict[str, Any] = {}
+
+        class Doc(Document):
+            settings: Settings
+
+        doc = Doc(settings=Settings(theme="dark", prefs={"a": 1, "b": 2}))
+        after, _ = doc.update({"settings": {"prefs": {"b": None, "c": 2}}})
+
+        assert after.settings == Settings(theme="dark", prefs={"a": 1, "b": None, "c": 2})
+
+    def test_a_null_field_resets_to_its_default(self) -> None:
+        class Settings(CoreModel):
+            theme: str = "light"
+            font: str = "mono"
+
+        class Doc(Document):
+            hint: str | None = "d"
+            meta: dict[str, Any] = {}
+            settings: Settings | None = None
+
+        doc = Doc(hint="h", meta={"k": 1}, settings=Settings(theme="dark", font="serif"))
+        after, _ = doc.update({"hint": None, "meta": None, "settings": {"theme": None}})
+
+        # A mapping field reset this way is the one way an update empties it of a key.
+        assert (after.hint, after.meta) == ("d", {})
+        assert after.settings == Settings(theme="light", font="serif")
+
+    def test_a_model_in_a_union_merges_as_a_model(self) -> None:
+        class Circle(CoreModel):
+            kind: Literal["circle"] = "circle"
+            radius: int
+            color: str = "black"
+            meta: dict[str, Any] = {}
+
+        class Square(CoreModel):
+            kind: Literal["square"] = "square"
+            side: int
+            color: str = "black"
+
+        class Doc(Document):
+            shape: Annotated[Circle | Square, Field(discriminator="kind")]
+            label: Annotated[Circle, "tag"] | None = None
+
+        red = Circle(radius=1, color="red", meta={"a": 1, "b": None})
+        doc = Doc(shape=red, label=red)
+        after, _ = doc.update(
+            {
+                "shape": {"radius": 2, "meta": {"a": 2, "b": None}},
+                "label": {"radius": 3, "color": None},
+            }
+        )
+
+        # The siblings kept, a JSON null kept, and a declared field reset to its default.
+        assert after.shape == Circle(radius=2, color="red", meta={"a": 2, "b": None})
+        assert after.label == Circle(radius=3, color="black", meta={"a": 1, "b": None})
+
+    def test_json_nulls_in_an_optional_model_are_kept(self) -> None:
+        class Settings(CoreModel):
+            prefs: dict[str, Any] = {}
+
+        class Doc(Document):
+            settings: Settings | None = None
+
+        doc = Doc(settings=Settings(prefs={"a": 1, "b": None}))
+        after, _ = doc.update({"settings": {"prefs": {"a": 2, "b": None}}})
+
+        assert after.settings == Settings(prefs={"a": 2, "b": None})
+
+    def test_a_partial_dict_into_an_unset_model_is_validated_as_given(self) -> None:
+        class Settings(CoreModel):
+            theme: str = "light"
+            font: str = "mono"
+
+        class Doc(Document):
+            settings: Settings | None = None
+
+        after, _ = Doc().update({"settings": {"theme": "dark"}})
+
+        assert after.settings == Settings(theme="dark", font="mono")
+
+    def test_a_model_in_a_mapping_merges_as_a_model(self) -> None:
+        class Item(CoreModel):
+            qty: int = 1
+            note: str | None = "n"
+
+        class Doc(Document):
+            items: dict[str, Item] = {}
+
+        doc = Doc(items={"a": Item(qty=5, note="x"), "b": Item()})
+        after, _ = doc.update({"items": {"a": {"note": None}}})
+
+        assert after.items == {"a": Item(qty=5, note="n"), "b": Item()}
+
+    def test_a_mapping_in_a_model_or_mapping_union_keeps_nulls(self) -> None:
+        class Ref(CoreModel):
+            x: int
+
+        class Doc(Document):
+            ref: Ref | dict[str, Any]
+
+        after, _ = Doc(ref={"k": 1, "z": 2}).update({"ref": {"z": None}})
+
+        assert after.ref == {"k": 1, "z": None}
+
+    def test_a_root_model_merges_as_its_root(self) -> None:
+        class Sub(CoreModel):
+            x: int = 0
+            y: int = 0
+
+        class RootSub(RootModel[Sub]):
+            pass
+
+        class RootJson(RootModel[dict[str, Any]]):
+            pass
+
+        class Doc(Document):
+            sub: RootSub
+            json_: RootJson
+
+        doc = Doc(sub=RootSub(Sub(x=1, y=2)), json_=RootJson({"a": 1, "b": 2}))
+        after, _ = doc.update({"sub": {"x": None}, "json_": {"b": None}})
+
+        assert after.sub.root == Sub(x=0, y=2)
+        assert after.json_.root == {"a": 1, "b": None}
+
+    def test_a_model_behind_a_type_alias_merges_as_a_model(self) -> None:
+        class Sub(CoreModel):
+            x: int = 0
+            y: int = 0
+
+        type SubAlias = Sub
+
+        class Doc(Document):
+            sub: SubAlias
+
+        after, _ = Doc(sub=Sub(x=1, y=2)).update({"sub": {"x": None}})
+
+        assert after.sub == Sub(x=0, y=2)
+
+    def test_a_dataclass_merges_as_a_model(self) -> None:
+        @dataclass
+        class Point:
+            x: int = 0
+            y: int = 0
+
+        class Doc(Document):
+            point: Point
+
+        after, _ = Doc(point=Point(x=1, y=2)).update({"point": {"x": None}})
+
+        assert after.point == Point(x=0, y=2)
+
+    def test_a_null_a_mapping_value_type_refuses_is_refused(self) -> None:
+        class Doc(Document):
+            counts: dict[str, int] = {}
+
+        # Main removed the key; a null is stored only where the value type admits one.
+        with pytest.raises(ValidationError, match="counts"):
+            Doc(counts={"a": 1}).update({"counts": {"a": None}})
+
+    def test_a_null_stored_in_a_mapping_counts_for_the_conflict_check(self) -> None:
+        class Doc(Document):
+            data: dict[str, Any]
+
+        old = Doc(data={"a": 1})
+        current, _ = old.update({"data": {"a": 2}})
+
+        # The update adds ``b: null`` to the mapping a concurrent update changed.
+        assert not current.validate_historical_consistency(old, {"data": {"b": None}})
+
 
 class TestMaterializeUpdateIsolation:
     """Pin the aliasing safety of the scoped per-value deepcopy in
@@ -638,12 +856,12 @@ class TestStoredChanges:
             meta: dict[str, Any] = {}
             name: str = "n"
 
-        doc = Doc(meta={"k": 1, "j": 5})
+        doc = Doc(meta={"k": 1, "j": 5, "x": 0})
         after, diff = doc.update({"meta": {"k": 2, "j": None}})
 
         assert diff["meta"] == {"k": 2, "j": None}
         written = after.stored_changes(diff)
-        assert written["meta"] == {"k": 2}
+        assert written["meta"] == {"k": 2, "j": None, "x": 0}
         assert set(written) == set(diff)
 
     def test_a_materialized_mapping_is_written_whole(self) -> None:
