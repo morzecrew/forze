@@ -4208,6 +4208,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#errors" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Errors
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#notes" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -6502,6 +6513,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#errors" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Errors
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#notes" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -6655,6 +6677,57 @@ resolved via <code>ctx.http.service(spec)</code>.</p>
 </tr>
 </tbody>
 </table>
+<h2 id="errors">Errors<a class="headerlink" href="#errors" title="Permanent link">&para;</a></h2>
+<p>A failed call raises a <code>CoreException</code> whose kind follows the counterparty's answer:</p>
+<table>
+<thead>
+<tr>
+<th>Answer</th>
+<th>Kind</th>
+<th>Retryable</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>404</td>
+<td><code>not_found</code></td>
+<td>no</td>
+</tr>
+<tr>
+<td>429</td>
+<td><code>throttled</code>, with a parsed <code>Retry-After</code> as <code>retry_after</code> seconds (at most 3600) in <code>details</code></td>
+<td>yes</td>
+</tr>
+<tr>
+<td>401, 403</td>
+<td><code>infrastructure</code>: the counterparty refused this service's credential</td>
+<td>yes</td>
+</tr>
+<tr>
+<td>408, 5xx, timeout, connection failure</td>
+<td><code>infrastructure</code></td>
+<td>yes</td>
+</tr>
+<tr>
+<td>3xx</td>
+<td><code>internal</code>: a redirect is not followed</td>
+<td>no</td>
+</tr>
+<tr>
+<td>any other 4xx</td>
+<td><code>internal</code>: it rejected the request this service built</td>
+<td>no</td>
+</tr>
+<tr>
+<td>2xx whose body fails validation, or is empty when the operation needs one</td>
+<td><code>internal</code></td>
+<td>no</td>
+</tr>
+</tbody>
+</table>
+<p>A refused credential is <code>infrastructure</code> rather than <code>configuration</code> because a supervised
+loop stops for good on <code>configuration</code>, so a rotated credential would need a restart.</p>
+<p>The details stay on the exception for your code; a client sees none of them.</p>
 <h2 id="notes">Notes<a class="headerlink" href="#notes" title="Permanent link">&para;</a></h2>
 <ul>
 <li>A service is either static (<code>base_url</code>) or per-tenant — <code>tenant_aware=True</code>
