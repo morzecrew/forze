@@ -514,12 +514,13 @@ class MongoWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
 
         if update is not None:
             # As the store will keep it, so a value it would round finds no change.
-            update = cast(JsonDict, _bson_normalize_value(update))
+            update = patch = cast(JsonDict, _bson_normalize_value(update))
 
             if rev is not None:
-                await self._validate_history((current, rev, update))
+                (patch,) = await self._validate_history((current, rev, update))
 
-            after, diff = current.update(update, materialized=self.read_codec.materialized)
+            after, diff = current.update(patch, materialized=self.read_codec.materialized)
+            # Every sealed field the caller named, from `after`: a stale one too.
             diff = self._with_resealed(after, update, diff)
             written = self._seal_written(after.stored_changes(diff), record_id=current.id)
 
@@ -572,15 +573,18 @@ class MongoWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
         to_patch: list[tuple[int, D, JsonDict, JsonDict]] = []
 
         if updates is not None:
-            updates = [cast(JsonDict, _bson_normalize_value(u)) for u in updates]
+            updates = patches = [cast(JsonDict, _bson_normalize_value(u)) for u in updates]
 
             if revs is not None:
-                await self._validate_history(
+                patches = await self._validate_history(
                     *[(c, r, u) for c, r, u in zip(currents, revs, updates, strict=True)]
                 )
 
-            for i, (current, update) in enumerate(zip(currents, updates, strict=True)):
-                after, diff = current.update(update, materialized=self.read_codec.materialized)
+            for i, (current, patch, update) in enumerate(
+                zip(currents, patches, updates, strict=True)
+            ):
+                after, diff = current.update(patch, materialized=self.read_codec.materialized)
+                # Every sealed field the caller named, from `after`: a stale one too.
                 diff = self._with_resealed(after, update, diff)
                 if diff:
                     written = self._seal_written(after.stored_changes(diff), record_id=current.id)
@@ -616,7 +620,9 @@ class MongoWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
             raise exc.concurrency("Failed to update one or more records")
 
         updated = await self.read_gw.get_many(pks)
-        await self._write_history(*updated)
+        # Only the rows written: an unchanged one already has its revision's snapshot.
+        written_ids = {current.id for _, current, _, _ in to_patch}
+        await self._write_history(*(doc for doc in updated if doc.id in written_ids))
 
         res_diffs = [id_to_written.get(c.id, {}) for c in currents]
 

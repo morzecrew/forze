@@ -834,6 +834,38 @@ class TestValidateHistoricalConsistency:
 
         assert not current.validate_historical_consistency(old, {"tags": ["c"]})
 
+    def test_historical_update_leaves_out_what_it_resends_unchanged(self) -> None:
+        class Doc(Document):
+            name: str
+            due: datetime
+            address: Address
+
+        # Applied whole, the stale update would put back the `due` it read.
+        due = datetime(2026, 1, 1, 12, tzinfo=UTC)
+        old = Doc(name="a", due=due, address=Address(street="main", city="LA"))
+        current, _ = old.update({"due": datetime(2027, 2, 2, tzinfo=UTC)})
+
+        stale: JsonDict = {"name": "b", "due": due.replace(tzinfo=None), "address": {"city": "LA"}}
+        patch = current.historical_update(old, stale)
+
+        assert patch == {"name": "b"}
+        after, _ = current.update(patch)
+        assert (after.name, after.due) == ("b", current.due)
+
+    def test_historical_update_is_none_on_a_conflict(self) -> None:
+        old = SampleDocument(name="v1", value=1)
+        current = SampleDocument(name="v2", value=1)
+
+        assert current.historical_update(old, {"name": "v3"}) is None
+
+    def test_historical_update_refuses_a_frozen_field_resent_unchanged(self) -> None:
+        # As at the stored revision: resending it unchanged does not make it allowed.
+        old = SampleDocument(name="v1", value=1)
+        current, _ = old.update({"value": 2})
+
+        with pytest.raises(CoreException, match="frozen"):
+            current.historical_update(old, {"created_at": old.created_at})
+
 # ----------------------- #
 # DTOs
 

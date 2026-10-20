@@ -181,8 +181,9 @@ async def test_stale_rev_identical_datetime_resend_does_not_false_conflict(
     change it) while another writer concurrently changed that field used to
     raise a false ``historical_consistency_violation`` when the historical
     snapshot was compared json-mode (ISO strings) against the python-mode
-    update mapping. The echoed field wins last-write style; the genuinely
-    changed field (``name``) does not overlap the concurrent change.
+    update mapping. The genuinely changed field (``name``) does not overlap the
+    concurrent change, and the echo, which changes nothing against the revision
+    it was read at, is not applied: the concurrent change to ``due`` is kept.
     """
     suf = uuid4().hex[:8]
     ctx, _ = await _ctx(
@@ -199,8 +200,7 @@ async def test_stale_rev_identical_datetime_resend_does_not_false_conflict(
 
     assert updated.rev == 3
     assert updated.name == "v2"
-    # The echo is treated as intent (last write wins on echoed fields).
-    assert updated.due == DUE_V1
+    assert updated.due == DUE_V2
 
 
 @pytest.mark.asyncio

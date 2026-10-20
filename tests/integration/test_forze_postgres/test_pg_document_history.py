@@ -182,8 +182,8 @@ async def test_stale_rev_identical_datetime_resend_does_not_false_conflict(
     was dumped json-mode (ISO strings) and compared against the python-mode
     update mapping, so the identical datetime registered as a touch. The
     genuinely-changed field (``name``) does not overlap the concurrent change,
-    so the update must succeed (deliberate loosening: no-op resends no longer
-    conflict — the echoed value wins, last-write style).
+    so the update must succeed. The echo changes nothing against the revision it
+    was read at, so it is not applied: the concurrent change to ``due`` is kept.
     """
     suf = uuid4().hex[:12]
     main = f"doc_hist_occ_{suf}"
@@ -255,8 +255,7 @@ async def test_stale_rev_identical_datetime_resend_does_not_false_conflict(
 
     assert updated.rev == 3
     assert updated.name == "v2"
-    # The echo is treated as intent (last write wins on echoed fields).
-    assert updated.due == due_v1
+    assert updated.due == moved.due
 
 
 @pytest.mark.asyncio

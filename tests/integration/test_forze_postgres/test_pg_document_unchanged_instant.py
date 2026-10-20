@@ -3,7 +3,7 @@ reads back: on the domain path, set-based, and with revision history."""
 
 from __future__ import annotations
 
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 
@@ -13,7 +13,7 @@ from forze.application.contracts.document import (
     DocumentSpec,
     DocumentWriteTypes,
 )
-from forze.application.execution import Deps
+from forze.application.execution import Deps, ExecutionContext
 from forze_postgres.execution.deps import ConfigurablePostgresDocument
 from forze_postgres.execution.deps.configs import PostgresDocumentConfig
 from forze_postgres.execution.deps.keys import (
@@ -28,6 +28,8 @@ from tests.support.document_unchanged_instant import (
     InstantDoc,
     InstantRead,
     InstantUpdate,
+    assert_a_batch_writes_only_the_rows_it_changes,
+    assert_a_stale_resend_keeps_a_concurrent_change,
     assert_an_unchanged_instant_is_not_a_change,
 )
 from tests.support.execution_context import context_from_deps
@@ -71,7 +73,9 @@ async def test_an_unchanged_instant_is_not_a_change(pg_client: PostgresClient) -
     )
 
 
-async def test_an_unchanged_instant_writes_no_history(pg_client: PostgresClient) -> None:
+async def _history_ctx(pg_client: PostgresClient) -> tuple[ExecutionContext, str]:
+    """A context whose document keeps revision history, and the history table's name."""
+
     t = await _table(pg_client)
     hist = f"{t}_h"
     await pg_client.execute(
@@ -104,6 +108,12 @@ async def test_an_unchanged_instant_writes_no_history(pg_client: PostgresClient)
             }
         )
     )
+
+    return ctx, hist
+
+
+async def test_an_unchanged_instant_writes_no_history(pg_client: PostgresClient) -> None:
+    ctx, hist = await _history_ctx(pg_client)
     spec = _spec(history_enabled=True)
 
     created = await assert_an_unchanged_instant_is_not_a_change(
@@ -113,3 +123,24 @@ async def test_an_unchanged_instant_writes_no_history(pg_client: PostgresClient)
     # One row per create and one for the move at the end: nothing for the resends.
     count = await pg_client.fetch_value(f"SELECT COUNT(*) FROM {hist}", [])
     assert count == len(created) + 1
+
+
+async def test_a_stale_resend_keeps_a_concurrent_change(pg_client: PostgresClient) -> None:
+    ctx, _ = await _history_ctx(pg_client)
+    spec = _spec(history_enabled=True)
+
+    await assert_a_stale_resend_keeps_a_concurrent_change(
+        ctx.document.command(spec), ctx.document.query(spec)
+    )
+
+
+async def test_a_batch_writes_only_the_rows_it_changes(pg_client: PostgresClient) -> None:
+    ctx, hist = await _history_ctx(pg_client)
+    spec = _spec(history_enabled=True)
+
+    async def history_rows(pk: UUID) -> int:
+        return int(await pg_client.fetch_value(f"SELECT COUNT(*) FROM {hist} WHERE id = %s", [pk]))
+
+    await assert_a_batch_writes_only_the_rows_it_changes(
+        ctx.document.command(spec), ctx.document.query(spec), history_rows
+    )
