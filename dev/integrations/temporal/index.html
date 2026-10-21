@@ -6863,6 +6863,13 @@ error mapping and the test doubles can see.</p>
   hand-written: use the worker step above.</li>
 <li>The cluster host is the lifecycle step's <code>host=</code>; <code>TemporalConfig</code> carries
   <code>namespace</code> and interceptors.</li>
+<li>A schedule id that does not exist raises <code>not_found</code> (<code>schedule_not_found</code>). So does
+  a workflow id that does not exist, or a closed run you signal, update or terminate
+  (<code>workflow_not_found</code>, "not found or already closed"): Temporal answers both alike.
+  Starting or creating with a taken id raises <code>conflict</code> (<code>workflow_already_exists</code>,
+  <code>schedule_already_exists</code>). The codes are constants in
+  <code>forze.application.contracts.durable.workflow</code>, and the mock raises them too. Every
+  other Temporal error, a missing namespace included, propagates unchanged.</li>
 <li>Schedules need a real Temporal server (not the time-skipping test env). Pass
   the same <code>workflow_configs</code> to the lifecycle step to bootstrap them.</li>
 <li>Worker-side helpers (<code>ExecutionContextInterceptor</code>, <code>sandboxed_workflow_runner</code>,
