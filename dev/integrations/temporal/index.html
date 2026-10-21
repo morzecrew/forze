@@ -3739,6 +3739,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#schedules" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Schedules
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#what-it-provides" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -6630,6 +6641,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#schedules" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Schedules
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#what-it-provides" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -6862,6 +6884,21 @@ the configured data converter, interceptor stack, or rpc metadata — so payload
 deployment believes are sealed go to the datastore in plaintext, and nothing fails.</p>
 <p>Anything reachable <em>through</em> the port goes through the port: that is what tenancy,
 error mapping and the test doubles can see.</p>
+<h2 id="schedules">Schedules<a class="headerlink" href="#schedules" title="Permanent link">&para;</a></h2>
+<p>The schedule command and query ports create, update, pause, trigger, describe and list
+the schedules that start a workflow. Temporal keeps a cron expression only as the
+calendar it compiles it into, so forze stores the expression as that calendar's comment
+(<code>forze:cron=&lt;expression&gt;</code>, visible in the Temporal UI). Describe and list report
+<code>timing.cron_expressions</code> as you wrote them, and an update that changes the timing
+replaces them.</p>
+<p>The cron rebuilt from the calendar, equivalent but not always the same text, is
+reported instead for:</p>
+<ul>
+<li>a schedule created by an earlier forze, or whose timing was rewritten outside forze;</li>
+<li>an expression with its own <code># comment</code> or a <code>CRON_TZ=</code> / <code>TZ=</code> prefix.</li>
+</ul>
+<p>An outside edit that changes a calendar but keeps its comment still reports the old
+expression.</p>
 <h2 id="what-it-provides">What it provides<a class="headerlink" href="#what-it-provides" title="Permanent link">&para;</a></h2>
 <table>
 <thead>
