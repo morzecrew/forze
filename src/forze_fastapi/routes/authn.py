@@ -337,6 +337,46 @@ routes.
 # ....................... #
 
 
+def _authn_namespace(
+    registry: FrozenOperationRegistry,
+    ns: StrKeyNamespace | None,
+    resource: str | None,
+) -> StrKeyNamespace:
+    """*ns* or *resource* when given; otherwise the one namespace holding the authn flows.
+
+    ``build_authn_registry(spec)`` registers ``password_login`` and ``refresh_tokens``
+    under ``spec.default_namespace``, so the inferred namespace is that one. Inference
+    never guesses: no namespace holding either operation, or more than one, is a
+    configuration error.
+    """
+
+    if ns is not None or resource is not None:
+        return resolve_namespace(ns, resource)
+
+    # Anchored on the operations every authn registry holds, so a foreign namespace with
+    # an operation merely named like a lesser kernel op is never picked; and only under
+    # the default separator, so a custom one is passed explicitly, never guessed.
+    anchors = {str(AuthnKernelOp.PASSWORD_LOGIN), str(AuthnKernelOp.REFRESH_TOKENS)}
+    prefixes: set[str] = set()
+
+    for key in registry.handlers:
+        prefix, _, op = str(key).partition(".")
+
+        if prefix and op in anchors:
+            prefixes.add(prefix)
+
+    if len(prefixes) == 1:
+        return StrKeyNamespace(prefix=prefixes.pop())
+
+    found = ", ".join(sorted(prefixes)) if prefixes else "none"
+
+    raise exc.configuration(
+        "Cannot infer the authn namespace from the registry (namespaces holding "
+        f"password_login or refresh_tokens: {found}). Pass ns=spec.default_namespace "
+        "or resource=."
+    )
+
+
 def attach_authn_routes(
     router: APIRouter,
     *,
@@ -393,8 +433,10 @@ def attach_authn_routes(
         registry (FrozenOperationRegistry): Frozen registry holding the authn
             operations.
         ns (StrKeyNamespace | None): Namespace the operations were registered under
-            (e.g. ``spec.default_namespace``). Mutually exclusive with *resource* —
-            provide exactly one.
+            (e.g. ``spec.default_namespace``). Mutually exclusive with *resource*. With
+            neither, the one namespace in *registry* holding ``password_login`` or
+            ``refresh_tokens`` (default separator) is used — ``spec.default_namespace``
+            for ``build_authn_registry(spec)``.
         ctx_dep (ExecutionContextFactory): Factory yielding the current execution
             context per request.
         include (AbstractSet | None): Optional narrowing to a subset of kernel
@@ -402,15 +444,11 @@ def attach_authn_routes(
             error.
         resource (str | None): Convenience alternative to *ns* — a prefix string the
             namespace is built from; must equal the prefix the operations were
-            registered under. Mutually exclusive with *ns* — provide exactly one.
+            registered under. Mutually exclusive with *ns*.
         path_overrides (Mapping | None): Optional per-operation route-path replacements
             (keyed like *include*); only the path changes, the ``operation_id`` stays
             verbatim. An override must bind exactly the ``{id}`` placeholder the
             default path binds.
-
-    Returns:
-        APIRouter: The same *router*, for chaining.
-
         cookies (AuthnCookieCarrier | None): Cookie mode. When set, ``/login`` and
             ``/refresh`` set (and rotate) the carrier's HttpOnly cookies and strip
             token strings from their bodies; ``/refresh`` also accepts a request with
@@ -421,16 +459,20 @@ def attach_authn_routes(
             security middleware's ``anonymous_paths`` so a stale access cookie cannot
             401 them.
 
+    Returns:
+        APIRouter: The same *router*, for chaining.
+
     Raises:
         CoreException: On a configuration error — an unknown *include*/override
-            operation, both or neither of *ns*/*resource*, or a path override that
-            drops or adds a placeholder.
+            operation, both *ns* and *resource*, neither of them with no single
+            authn namespace in *registry*, or a path override that drops or adds a
+            placeholder.
     """
 
     return attach_operation_routes(
         router,
         registry=registry,
-        ns=resolve_namespace(ns, resource),
+        ns=_authn_namespace(registry, ns, resource),
         ctx_dep=ctx_dep,
         bindings=_AUTHN_BINDINGS if cookies is None else _cookie_bindings(cookies),
         include=include,
