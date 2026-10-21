@@ -267,10 +267,13 @@ class _Rebalance:
         reported = mine.report.get(self.load)
         # The lower of the live load and its own last report, so connections that arrived since
         # that report are not counted against peers' reports; never above what is open now.
-        # What can move is live. A report that holds no number leaves the live load.
+        # What can move is live. A report that holds no number, or a negative one, leaves the
+        # live load.
         compared = (
             min(load, reported)
-            if isinstance(reported, int | float) and not isinstance(reported, bool)
+            if isinstance(reported, int | float)
+            and not isinstance(reported, bool)
+            and reported >= 0
             else load
         )
         live = attrs.evolve(
@@ -418,8 +421,8 @@ def connection_rebalance_lifecycle_step(
     shed. :func:`connection_report` fills both keys. A replica that reports no *load* is
     left out of the mean and sheds nothing itself, and so does one with no entry in the view
     or not serving. This replica's load is the lower of its live count and its own last
-    report, so connections that arrived since that report are not counted; its movable count
-    is always live.
+    report, so connections that arrived since that report are not counted; a report that is
+    not a number, or is negative, leaves the live count. Its movable count is always live.
 
     :param fleet: The fleet the membership step beats into.
     :param every: How often to tick.

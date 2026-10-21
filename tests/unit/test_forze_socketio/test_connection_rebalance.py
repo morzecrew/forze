@@ -345,8 +345,16 @@ class TestComparedLoad:
             (350, 0, 400, 200, 100),
             # No number in its own report: its live count, as in the second case.
             (400, 0, "pending", 200, 134),
+            # A negative report is no load either: its live count again.
+            (400, 0, -5, 200, 134),
         ],
-        ids=["connect storm", "report and live agree", "after a shed", "no number reported"],
+        ids=[
+            "connect storm",
+            "report and live agree",
+            "after a shed",
+            "no number reported",
+            "negative report",
+        ],
     )
     def test_its_load_is_the_lower_of_its_live_count_and_its_report(
         self, lobby: int, game: int, own: int | str, peers: int, closed: int
