@@ -226,8 +226,10 @@ class TestTemporalWorkflowQueryAdapter:
             tenant_aware=False,
         )
 
-        with pytest.raises(CoreException, match="not for workflow"):
+        with pytest.raises(CoreException, match="not for workflow") as caught:
             await adapter.describe(DurableWorkflowHandle(workflow_id="w2", run_id="r2"))
+
+        assert caught.value.code == "workflow_not_found"
 
 
 class TestTemporalWorkflowTenantScoping:

@@ -7,7 +7,6 @@ import pytest
 
 pytest.importorskip("temporalio")
 
-from temporalio.service import RPCError
 
 from forze.application.contracts.durable.workflow import (
     DurableWorkflowHandle,
@@ -72,8 +71,10 @@ async def test_workflow_handle_ops_are_tenant_isolated(temporal_dev_env) -> None
 
         # B addressing the same raw id lands in B's own namespace, where no
         # such workflow exists — never on A's workflow.
-        with pytest.raises(RPCError):
+        with pytest.raises(CoreException) as missing:
             await cmd_b.cancel(DurableWorkflowHandle(workflow_id="iso-wf"))
+
+        assert missing.value.code == "workflow_not_found"
 
     finally:
         # A can address its own workflow with the raw id it used at start.

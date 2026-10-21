@@ -1,5 +1,5 @@
 from collections.abc import Awaitable
-from typing import Generic, Protocol, runtime_checkable
+from typing import Final, Generic, Protocol, runtime_checkable
 
 from pydantic import BaseModel
 
@@ -15,6 +15,14 @@ from .specs import (
 )
 
 # ----------------------- #
+
+WORKFLOW_NOT_FOUND_CODE: Final = "workflow_not_found"
+"""Code of the ``not_found`` error for a workflow id with no run, or none that is open."""
+
+WORKFLOW_ALREADY_EXISTS_CODE: Final = "workflow_already_exists"
+"""Code of the ``conflict`` error for a start whose workflow id is taken."""
+
+# ....................... #
 
 
 class BaseDurableWorkflowPort(Protocol, Generic[In, Out]):

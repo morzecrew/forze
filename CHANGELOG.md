@@ -43,6 +43,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **`update_many` with revision history no longer fails on a row it leaves unchanged.** Postgres raised a unique violation and rolled the batch back; Mongo wrote a duplicate snapshot.
 
+- **A missing or closed Temporal workflow, or a missing schedule, is `not_found`; a taken workflow id `conflict`** (**behaviour change**), not `RPCError` or `WorkflowAlreadyStartedError`. A taken schedule kept `conflict`, now coded. New `WORKFLOW_NOT_FOUND_CODE` etc.; the mock raises them and refuses a taken schedule.
+
 ### Security
 
 - **An error an integration translates from its backend no longer shows the failed call's context to API callers** (**behaviour change**): such an error carries no `context`, whatever its kind. The details stay on the exception and are logged at debug. A stream's failure between items is now translated too.
