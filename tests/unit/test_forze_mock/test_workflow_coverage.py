@@ -104,6 +104,22 @@ async def test_signal_to_a_closed_run_is_not_found(close: str) -> None:
     assert state.durable_workflows["wf"]["wf-1"]["signals"] == []
 
 
+async def test_signal_to_a_replaced_run_is_not_found() -> None:
+    state = MockState()
+    cmd = _cmd(state)
+    first = await cmd.start(_In(n=1), workflow_id="wf-1")
+    await cmd.terminate(first)
+    await cmd.start(_In(n=2), workflow_id="wf-1", raise_on_already_started=False)
+    sig = DurableWorkflowSignalSpec(name="ping", args_type=_Sig)
+    with pytest.raises(CoreException) as caught:
+        await cmd.signal(first, signal=sig, args=_Sig(k="x"))
+    assert caught.value.code == WORKFLOW_NOT_FOUND_CODE
+    assert state.durable_workflows["wf"]["wf-1"]["signals"] == []
+    # Without a run id, the handle reaches the current run.
+    await cmd.signal(DurableWorkflowHandle(workflow_id="wf-1"), signal=sig, args=_Sig(k="x"))
+    assert state.durable_workflows["wf"]["wf-1"]["signals"] == [("ping", {"k": "x"})]
+
+
 async def test_signal_appends_to_existing_run() -> None:
     state = MockState()
     cmd = _cmd(state)
