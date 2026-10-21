@@ -143,8 +143,10 @@ class TestTemporalWorkflowScheduleQueryAdapter:
             tenant_aware=False,
         )
 
-        with pytest.raises(CoreException, match="not for workflow"):
+        with pytest.raises(CoreException, match="not for workflow") as caught:
             await adapter.describe(DurableWorkflowScheduleHandle(schedule_id="s1"))
+
+        assert caught.value.code == "schedule_not_found"
 
 
 class TestTemporalScheduleCommandLifecycle:
