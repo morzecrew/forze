@@ -77,6 +77,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **`FleetView.excess` leaves a negative load out of the mean** (**behaviour change**), as it does a non-numeric one: a load is a count. A negative peer load no longer inflates a member's excess, and a member whose own load is negative gets 0.
 
+- **Mock workflows and schedules answer as Temporal does** (**behaviour change**): cancel or terminate of a missing run, terminate of a closed one, and delete, pause or unpause of a missing schedule are `not_found`. A start conflicts only with a running run, which `raise_on_already_started=False` keeps.
+
 ### Security
 
 - **An error an integration translates from its backend no longer shows the failed call's context to API callers** (**behaviour change**): such an error carries no `context`, whatever its kind. The details stay on the exception and are logged at debug. A stream's failure between items is now translated too.

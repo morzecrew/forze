@@ -44,6 +44,22 @@ class MockDurableWorkflowScheduleCommandAdapter[In: BaseModel](
     def _schedules(self) -> dict[str, Any]:
         return _workflow_schedules(self.state, self._partitioned_namespace(str(self.spec.name)))
 
+    def _entry(self, handle: DurableWorkflowScheduleHandle) -> dict[str, Any]:
+        """Return the schedule *handle* names; call under the state lock.
+
+        :param handle: The handle naming the schedule.
+        :returns: The stored schedule.
+        """
+
+        entry = self._schedules().get(handle.schedule_id)
+
+        if entry is None:
+            raise exc.not_found(
+                f"Schedule {handle.schedule_id!r} not found", code=SCHEDULE_NOT_FOUND_CODE
+            )
+
+        return entry
+
     async def create(
         self,
         schedule_id: str,
@@ -79,7 +95,10 @@ class MockDurableWorkflowScheduleCommandAdapter[In: BaseModel](
     ) -> DurableWorkflowScheduleHandle:
         _ = workflow_id_base, trigger_immediately, note
         with self.state.lock:
-            self._schedules()[schedule_id] = {
+            schedules = self._schedules()
+            # An existing schedule keeps its paused state, as Temporal's update does.
+            schedules[schedule_id] = {
+                **schedules.get(schedule_id, {}),
                 "args": args.model_dump(mode="json"),
                 "timing": timing,
             }
@@ -96,11 +115,7 @@ class MockDurableWorkflowScheduleCommandAdapter[In: BaseModel](
     ) -> None:
         _ = workflow_id_base, note
         with self.state.lock:
-            entry = self._schedules().get(handle.schedule_id)
-            if entry is None:
-                raise exc.not_found(
-                    f"Schedule {handle.schedule_id!r} not found", code=SCHEDULE_NOT_FOUND_CODE
-                )
+            entry = self._entry(handle)
             if timing is not None:
                 entry["timing"] = timing
             if args is not None:
@@ -108,7 +123,8 @@ class MockDurableWorkflowScheduleCommandAdapter[In: BaseModel](
 
     async def delete(self, handle: DurableWorkflowScheduleHandle) -> None:
         with self.state.lock:
-            self._schedules().pop(handle.schedule_id, None)
+            self._entry(handle)
+            del self._schedules()[handle.schedule_id]
 
     async def pause(
         self,
@@ -118,9 +134,7 @@ class MockDurableWorkflowScheduleCommandAdapter[In: BaseModel](
     ) -> None:
         _ = note
         with self.state.lock:
-            entry = self._schedules().get(handle.schedule_id)
-            if entry is not None:
-                entry["paused"] = True
+            self._entry(handle)["paused"] = True
 
     async def unpause(
         self,
@@ -130,15 +144,11 @@ class MockDurableWorkflowScheduleCommandAdapter[In: BaseModel](
     ) -> None:
         _ = note
         with self.state.lock:
-            entry = self._schedules().get(handle.schedule_id)
-            if entry is not None:
-                entry["paused"] = False
+            self._entry(handle)["paused"] = False
 
     async def trigger(self, handle: DurableWorkflowScheduleHandle) -> None:
-        if handle.schedule_id not in self._schedules():
-            raise exc.not_found(
-                f"Schedule {handle.schedule_id!r} not found", code=SCHEDULE_NOT_FOUND_CODE
-            )
+        with self.state.lock:
+            self._entry(handle)
 
 
 @final
