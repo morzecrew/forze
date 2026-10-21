@@ -40,7 +40,6 @@ from .._cursor_run import parse_search_cursor
 from .._facets import fetch_hub_facets
 from .._materialize_hits import decode_search_hits, materialize_search_page, search_trust_source
 from .._offset_run import hydrate_rows_by_id
-from .._search_count import resolve_ranked_approximate_total
 from ._leg_sql import HubLegSqlContext, build_hub_cte, build_hub_leg_sql_parts
 from .constants import COMBO_ALIAS, HUB_CTE, HUB_RANK, HUB_ROW_ALIAS, LEG_EID, LEG_SCORE
 from .merge import hub_row_for_materialize
@@ -368,26 +367,18 @@ class HubParallelSearchMixin(HubSearchSqlMixin[M]):
         count_policy = plan.count_policy
         total = 0
 
+        if resolved_combo is not None:
+            merged = merged[:resolved_combo]
+
         if return_count and count_policy != "none":
             if count_policy == "approximate":
-                fw, fp = await host.where_clause(filters)
-                hub_qn = await host._qname()  # type: ignore[protected-access]
-                total = await resolve_ranked_approximate_total(
-                    introspector=host.introspector,
-                    schema=hub_qn.schema,
-                    relation=hub_qn.name,
-                    where_sql=fw,
-                    params=fp,
-                    combo_limit=resolved_combo,
-                )
+                # The capped merged rows the page reads, as the ``sql`` execution counts them.
+                total = len(merged)
             else:
                 total = await self._hub_sql_combo_count_for_plan(
                     plan,
                     filters=filters,
                 )
-
-        if resolved_combo is not None:
-            merged = merged[:resolved_combo]
 
         pagination_dict: dict[str, Any] = dict(pagination or {})
         offset = int(pagination_dict.get("offset") or 0)
