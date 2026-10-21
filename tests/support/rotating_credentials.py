@@ -513,7 +513,11 @@ async def check_a_cancelled_exchange_leaves_no_replayable_token(
     h.counterparty.delay = 5.0
 
     rotating = asyncio.ensure_future(h.store.refresh(REF, observed=before.version))
-    await asyncio.sleep(0.05)  # let it reach the counterparty
+
+    async with asyncio.timeout(5):  # let it reach the counterparty, however slow the store
+        while not h.counterparty.presented and not rotating.done():
+            await asyncio.sleep(0.005)
+
     rotating.cancel()
 
     with pytest.raises(asyncio.CancelledError):
