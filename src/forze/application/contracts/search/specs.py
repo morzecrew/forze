@@ -650,8 +650,9 @@ class HubSearchSpec[M: BaseModel](BaseSpec):
     )
     """Hub-relation columns outside :attr:`model_type` that a search aggregate may also group
     by or measure (see :attr:`aggregatable_fields`), such as a view's computed totals a hit
-    does not return. None may name a read-model field. Relational only; Postgres checks the
-    columns exist on the first aggregate. Empty by default."""
+    does not return. None may name a read-model field. Relational only; on the first aggregate,
+    Postgres checks the columns exist and refuses a name its pipeline reserves (such as
+    ``_hub_rank``). Empty by default."""
 
     # ....................... #
 

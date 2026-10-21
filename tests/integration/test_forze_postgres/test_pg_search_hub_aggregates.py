@@ -16,7 +16,7 @@ from pydantic import BaseModel
 
 from forze.application.contracts.search import HubSearchSpec, SearchSpec
 from forze.application.execution import Deps
-from forze.base.exceptions import CoreException
+from forze.base.exceptions import CoreException, ExceptionKind
 from forze_postgres.execution.deps import ConfigurablePostgresHubSearch
 from forze_postgres.execution.deps.configs import (
     PostgresHubSearchConfig,
@@ -186,3 +186,15 @@ async def test_an_extra_field_missing_from_the_hub_relation_is_refused(
 
     assert refused.value.code == "postgres_schema_validation_failed"
     assert "upd_or_quantity" in str(refused.value)
+
+
+async def test_an_extra_field_named_like_a_pipeline_column_is_refused(
+    pg_client: PostgresClient,
+) -> None:
+    hub = await _hub(pg_client, extra=frozenset({"_hub_rank"}))
+
+    with pytest.raises(CoreException) as refused:
+        await hub.aggregate_search({"$computed": {"n": {"$count": None}}}, "omega")
+
+    assert refused.value.kind is ExceptionKind.CONFIGURATION
+    assert "_hub_rank" in str(refused.value)

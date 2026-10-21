@@ -46,7 +46,7 @@ from .._pipeline_sql import SEARCH_SCORE_ALIAS
 from .._port import PostgresSearchPortMixin
 from .._search_count import resolve_ranked_approximate_total
 from ._facets_highlights import attach_hub_highlights
-from .constants import COMBO_ALIAS, HUB_RANK
+from .constants import COMBO_ALIAS, HUB_INTERNAL_ROW_KEYS, HUB_RANK
 from .cursor import HubSearchCursorMixin
 from .plan import build_hub_search_plan, hub_members_weighted
 from .runtime import HubLegRuntime
@@ -146,6 +146,14 @@ class PostgresHubSearchAdapter[M: BaseModel](  # pyright: ignore[reportIncompati
             self.search_capabilities,
             backend="postgres_hub",
         )
+        if reserved := self.hub_spec.extra_aggregatable_fields & HUB_INTERNAL_ROW_KEYS:
+            # The merged rows carry these as the pipeline's own columns; a hub column of the
+            # same name would be ambiguous there.
+            raise exc.configuration(
+                f"Hub search {self.hub_spec.name!r}: extra aggregatable field(s) "
+                f"{sorted(reserved)} use names the hub search reserves.",
+            )
+
         types = await self.column_types()
         hub_qn = await self._qname()
 
