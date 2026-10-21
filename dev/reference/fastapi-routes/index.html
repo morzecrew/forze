@@ -7099,9 +7099,10 @@ wiring (including how the reset token reaches the user via the outbox) is in the
 <code>AuthnCookieCarrier</code> to <code>attach_authn_routes(cookies=…)</code>. Login and refresh then
 set and rotate two <code>HttpOnly</code> cookies instead of returning token strings; the
 body keeps the scheme and the <code>*_expires_in</code> lifetimes, so a cookie client still
-learns how long its credential is valid. Refresh falls back to reading the
-refresh cookie when the body carries no token, and logout expires both cookies
-idempotently.</p>
+learns how long its credential is valid. Refresh reads the refresh cookie when
+the request has no body or an empty JSON object (<code>{}</code>, as fetch wrappers and
+generated clients send); a token in the body takes precedence. Logout expires
+both cookies idempotently.</p>
 <div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">forze_fastapi.security</span><span class="w"> </span><span class="kn">import</span> <span class="n">AuthnCookieCarrier</span>
 
 <span class="n">cookies</span> <span class="o">=</span> <span class="n">AuthnCookieCarrier</span><span class="p">(</span>
