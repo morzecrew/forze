@@ -644,6 +644,16 @@ class HubSearchSpec[M: BaseModel](BaseSpec):
     on at least one member leg and not field-encrypted. (Highlighting a merged hub row is
     backend-dependent — see the adapter docs.)"""
 
+    extra_aggregatable_fields: frozenset[str] = attrs.field(
+        factory=frozenset,
+        converter=frozenset,
+    )
+    """Hub-relation columns outside :attr:`model_type` that a search aggregate may also group
+    by or measure (see :attr:`aggregatable_fields`), such as a view's computed totals a hit
+    does not return. None may name a read-model field. Relational only; on the first aggregate,
+    Postgres checks the columns exist and refuses a name its pipeline reserves (such as
+    ``_hub_rank``). Empty by default."""
+
     # ....................... #
 
     @property
@@ -700,6 +710,18 @@ class HubSearchSpec[M: BaseModel](BaseSpec):
             encryption=self.encryption,
         )
 
+        if self.extra_aggregatable_fields:
+            model_names = frozenset(self.model_type.model_fields) | frozenset(
+                self.model_type.model_computed_fields
+            )
+
+            if overlap := self.extra_aggregatable_fields & model_names:
+                # A stored field is aggregatable already; a lenient or sealed one must stay out.
+                raise exc.configuration(
+                    f"Search spec {self.name!r}: extra aggregatable field(s) {sorted(overlap)} "
+                    "are fields on the read model; list only hub-relation columns outside it.",
+                )
+
         names = [member.name for member in self.members]
 
         if len(names) != len(set(names)):
@@ -733,6 +755,18 @@ class HubSearchSpec[M: BaseModel](BaseSpec):
             materialized=self.materialized,
             lenient_read_fields=self.resolved_lenient_read_fields,
         )
+
+    # ....................... #
+
+    @property
+    def aggregatable_fields(self) -> frozenset[str]:
+        """Stored hub-row fields that are not field-encrypted, as on :class:`SearchSpec`,
+        plus :attr:`extra_aggregatable_fields`: what a hub search aggregate may group by or
+        measure."""
+
+        return (
+            self.stored_read_fields - _sealed_fields(self.encryption)
+        ) | self.extra_aggregatable_fields
 
     # ....................... #
 

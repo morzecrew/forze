@@ -197,7 +197,14 @@ class HubSearchSqlMixin[M: BaseModel](HubSearchMixinBase[M]):
         combo_limit: int | None = None,
         uncapped_legs: bool = False,
         thin: bool = False,
+        fields: Sequence[str] | None = None,
     ) -> tuple[sql.Composable, list[Any], bool, str, str]:
+        """``WITH`` pipeline ending in ``combo`` (and ``combo_top`` when capped).
+
+        :param fields: Hub columns to carry through ``hf`` and ``combo``, overriding the
+            read fields (or the thin projection).
+        """
+
         fw, fp = await self.where_clause(filters)
         tenant_id = (
             self._tenant_id_for_resolve()  # pyright: ignore[reportPrivateUsage]
@@ -209,7 +216,7 @@ class HubSearchSqlMixin[M: BaseModel](HubSearchMixinBase[M]):
         need_groonga_sys = False
 
         thin_fields = self._hub_thin_projection(plan) if thin else None
-        proj_fields = thin_fields if thin_fields is not None else sorted(self.read_fields)
+        proj_fields = list(fields or thin_fields or sorted(self.read_fields))
 
         hub_cte = build_hub_cte(
             hub_cols=self._hub_select_list(

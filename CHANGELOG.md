@@ -19,6 +19,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Durable schema reference.** A new page lists the Postgres tables and Mongo collections the durable stores use, with their required and recommended indexes and the migrations between releases. The concurrency page now states that a stale-revision precondition is not retried for you.
 
+- **Hub searches aggregate.** `aggregate_search` / `aggregate_search_page` on a Postgres or in-memory hub group every merged match of its members, legs uncapped. New `HubSearchSpec.extra_aggregatable_fields` names hub-relation columns outside the read model that an aggregate may also group by or measure.
+
 ### Changed
 
 - **Until structlog is configured (`configure_logging` or your own `structlog.configure`), forze no longer prints to stdout itself** (behaviour change): its events go to the same-named stdlib logger at its level, so they reach only your stdlib handlers, or stderr from warnings up by default. Call `configure_logging` to keep info output.
