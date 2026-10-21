@@ -9831,7 +9831,12 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <li><strong>A durable run can retry a retryable failure.</strong> <code>retry=RetryStrategy(...)</code> on <code>DurableFunctionRunner</code>, <code>durable_kits_deps</code> or one registered function sends a run raising a <code>retry_on</code> kind back to <code>PENDING</code> after the backoff, counted as <code>retrying</code>; its journal replays. <strong>Breaking</strong> for own run stores (<code>mark_retry</code>).</li>
 <li><strong>Failed durable runs can be requeued.</strong> <code>DurableRunAdminPort.requeue_failed(run_ids=, name=)</code> returns the named <code>FAILED</code> and <code>TIMED_OUT</code> runs in scope to <code>PENDING</code> under their own id, so their journaled steps replay, on Postgres, Mongo and the mock. <strong>Breaking</strong> for own admin ports.</li>
 <li><strong>A warm API key skips the eligibility read too.</strong> With revocation states on the authn and authz kernels, a key whose cached state recorded its principal's current epoch is admitted without reading Postgres, as a token is. New <code>ApiKeyEligibilitySkip</code>.</li>
-<li><strong>Vector search can rank by a vector you already hold.</strong> <code>SearchOptions(query_vector=...)</code> ranks pgvector or Atlas Vector Search with a blank query; other searches refuse it. A custom vector adapter passes <code>capabilities=</code>, <code>backend=</code> and <code>vector_dimensions=</code> to <code>search_options_for_simple_adapter</code> to accept it.</li>
+<li>
+<p><strong>Vector search can rank by a vector you already hold.</strong> <code>SearchOptions(query_vector=...)</code> ranks pgvector or Atlas Vector Search with a blank query; other searches refuse it. A custom vector adapter passes <code>capabilities=</code>, <code>backend=</code> and <code>vector_dimensions=</code> to <code>search_options_for_simple_adapter</code> to accept it.</p>
+</li>
+<li>
+<p><strong>Hub searches aggregate.</strong> <code>aggregate_search</code> / <code>aggregate_search_page</code> on a Postgres or in-memory hub group every merged match of its members, legs uncapped. New <code>HubSearchSpec.extra_aggregatable_fields</code> names hub-relation columns outside the read model that an aggregate may also group by or measure.</p>
+</li>
 </ul>
 <h3 id="changed">Changed<a class="headerlink" href="#changed" title="Permanent link">&para;</a></h3>
 <ul>
@@ -9845,6 +9850,9 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <li><strong>Postgres schema and programming errors are no longer retried</strong> (<strong>behaviour change</strong>). A missing object (<code>postgres_schema_mismatch</code>), a refused privilege (<code>postgres_privilege_denied</code>), a syntax error or a PL/pgSQL <code>RAISE EXCEPTION</code> is now <code>internal</code>, not retryable <code>infrastructure</code>.</li>
 <li>
 <p><strong>Upstream throttles are <code>throttled</code>, rejections <code>internal</code></strong> (<strong>behaviour change</strong>). <code>forze_http</code>: 429 <code>throttled</code> (<code>retry_after</code> in <code>details</code>), 401/403 <code>infrastructure</code> (now retried), 3xx, other 4xx, bad bodies <code>internal</code>. GCS, BigQuery, ClickHouse, S3, SQS, <abbr title="Key Management Service">KMS</abbr> throttles too; <code>transient</code> retries none.</p>
+</li>
+<li>
+<p><strong>A bulk update or upsert mixing patch types no longer drops fields.</strong> Each patch in an <code>update_many</code> or <code>upsert_many</code> was encoded as the first one's type, so the fields a subclass or other type adds were silently not written, on Postgres and Mongo.</p>
 </li>
 <li>
 <p><strong>A document update keeps the nulls inside a mapping or <code>Any</code> value</strong> (<strong>behaviour change</strong>). A <code>None</code> there is stored as null, as create stores it, or refused where the value type admits no null. An update can no longer remove a key from a mapping.</p>

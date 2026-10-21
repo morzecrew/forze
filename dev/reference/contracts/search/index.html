@@ -6804,7 +6804,9 @@ result-set snapshots.</p>
 </tbody>
 </table>
 <p><code>HubSearchSpec</code> carries the same <code>read_conformity</code> / <code>lenient_read_fields</code> / <code>materialized</code>
-over its hub-row model (a hub has no index <code>fields</code> of its own). <code>FederatedSearchSpec</code>
+over its hub-row model (a hub has no index <code>fields</code> of its own), and takes
+<code>extra_aggregatable_fields</code>: hub-relation columns outside that model an aggregate may group by
+or measure (see <a href="#aggregating-matches">Aggregating matches</a>). <code>FederatedSearchSpec</code>
 inherits these from each member spec.
 A federated search merges thin by default (<code>thin_merge=True</code>): each member returns its ids
 (and the fields of any requested sort), and just the page is re-read from its member.
@@ -6914,11 +6916,18 @@ the groups after them, so pages of groups neither repeat nor skip one; without a
 every group comes back, as <code>aggregate_many</code> returns them. <code>aggregate_search_page</code> adds the number of groups, after <code>$having</code>.
 Groups, measures and per-metric filters may name only the spec's <code>aggregatable_fields</code> —
 stored, not field-encrypted — and the <code>facets</code> and <code>highlight</code> options are refused, as they
-describe hits, as is <code>max_candidates</code>, which would cut the set.</p>
+describe hits, as are <code>max_candidates</code> and a hub's <code>merge_candidates</code>, which would cut the set.</p>
+<p>A hub aggregates its merged rows with every leg uncapped: <code>per_leg_limit</code> and the merge cap
+bound a page, not an aggregate, so the groups add up to the exact page total. Its measures
+often live in columns of the hub relation that its read model leaves out, such as a view's
+computed totals; name them in <code>HubSearchSpec.extra_aggregatable_fields</code> and an aggregate may
+group by or measure them too, though not filter on them. Postgres checks they exist on the first
+aggregate. A query that reaches a vector leg is refused, since an uncapped vector leg matches
+every embedded row.</p>
 <p>Aggregation is capability-gated (<code>SearchCapabilities.supports_aggregates</code>): Postgres FTS /
-PGroonga and the in-memory adapter aggregate; vector search (every row is some embedding's
-neighbour), hub search (legs are capped before the merge), federated search, Mongo and
-Meilisearch <strong>refuse</strong> with <code>query_feature_unsupported</code> rather than measure a partial set.</p>
+PGroonga, hub search (Postgres and in-memory) and the in-memory adapter aggregate; vector
+search (every row is some embedding's neighbour), federated search, Mongo and Meilisearch
+<strong>refuse</strong> with <code>query_feature_unsupported</code> rather than measure a partial set.</p>
 <h3 id="facets-and-highlights">Facets and highlights<a class="headerlink" href="#facets-and-highlights" title="Permanent link">&para;</a></h3>
 <p>A query requests term facet distributions with <code>options={"facets": [...]}</code> and per-hit
 match snippets with <code>options={"highlight": True}</code> (or a <code>HighlightOptions</code> mapping to narrow
