@@ -9867,6 +9867,9 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <p><strong><code>update_many</code> with revision history no longer fails on a row it leaves unchanged.</strong> Postgres raised a unique violation and rolled the batch back; Mongo wrote a duplicate snapshot.</p>
 </li>
 <li>
+<p><strong>The Socket.IO rebalance step sheds fewer connections during a connect storm</strong>: a replica's load is now the lower of its live count and its own last report, so connections since that report are not counted against its peers' reports.</p>
+</li>
+<li>
 <p><strong>A hub's <code>search_count="approximate"</code> total counts its search text</strong> (<strong>behaviour change</strong>): with a query it is the merged rows the page reads instead of the cap: exact under the cap, the cap above it, zero for no match, a lower bound once a leg is cut at <code>per_leg_limit</code>.</p>
 </li>
 <li>
