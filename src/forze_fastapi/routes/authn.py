@@ -449,10 +449,6 @@ def attach_authn_routes(
             (keyed like *include*); only the path changes, the ``operation_id`` stays
             verbatim. An override must bind exactly the ``{id}`` placeholder the
             default path binds.
-
-    Returns:
-        APIRouter: The same *router*, for chaining.
-
         cookies (AuthnCookieCarrier | None): Cookie mode. When set, ``/login`` and
             ``/refresh`` set (and rotate) the carrier's HttpOnly cookies and strip
             token strings from their bodies; ``/refresh`` also accepts a request with
@@ -462,6 +458,9 @@ def attach_authn_routes(
             at the carrier's access cookie, and list the login/refresh paths in the
             security middleware's ``anonymous_paths`` so a stale access cookie cannot
             401 them.
+
+    Returns:
+        APIRouter: The same *router*, for chaining.
 
     Raises:
         CoreException: On a configuration error — an unknown *include*/override
