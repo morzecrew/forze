@@ -103,8 +103,10 @@ _PREVENT = Verdict.PREVENTED
 # claims a FRESH marker, so its predicate selects only the rows it itself created. That keeps the
 # predicate cases self-isolating (like the id-based cases, which read back only the ids they wrote)
 # even on a store reused across runs — otherwise an absolute predicate count would be corrupted by
-# rows a prior run left behind.
-_marker_seq = itertools.count(7)
+# rows a prior run left behind. Markers start above every value the other cases write, or a marker
+# equal to one (11 or 18 from read_skew, say) would count that case's leftover row as its own.
+_MARKER_FLOOR = 1_000
+_marker_seq = itertools.count(_MARKER_FLOOR)
 
 # A deterministic (no-random) source of fresh primary keys for the duplicate-key race — a monotonic
 # counter, so each run claims an id absent from the store even when it is reused across runs.

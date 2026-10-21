@@ -20,8 +20,11 @@ from forze_dst.conformance import (
     BATTERY,
     CONTRACT_STRENGTHENINGS,
     Verdict,
+    collect_verdicts,
     expected_verdict,
 )
+from forze_dst.conformance._models import CELL  # pyright: ignore[reportPrivateUsage]
+from forze_dst.conformance.anomalies import _MARKER_FLOOR  # pyright: ignore[reportPrivateUsage]
 from forze_mock import MockDepsModule, MockState
 from tests.support.isolation_conformance import MockConformanceBackend
 
@@ -179,3 +182,16 @@ class TestCasesSelfIsolateOnAReusedStore:
         )  # one shared store; rows accumulate across the three runs
         for _ in range(3):
             assert await case.run(backend, level) == expected
+
+    async def test_no_other_case_writes_a_value_a_marker_could_take(self) -> None:
+        # The rows the other cases leave in one store, as a real adapter's tables keep them through
+        # a matrix run. A marker equal to one of them would make a predicate case count it.
+        backend = _ReusedStoreBackend()
+        others = [case for case in BATTERY if case.name not in {"phantom", "predicate_write_skew"}]
+        await collect_verdicts(backend, levels=_LEVELS, cases=others)
+        [ctx] = backend.contexts(1)
+
+        async with ctx.tx_ctx.scope(backend.scope_name):
+            page = await ctx.document.query(CELL).find_many()
+
+        assert max(hit.value for hit in page.hits) < _MARKER_FLOOR
