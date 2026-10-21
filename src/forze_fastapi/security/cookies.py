@@ -49,9 +49,9 @@ class AuthnCookieCarrier:
     :class:`~forze_fastapi.security.CookieCsrf` gate (on by default) requires an
     unsafe request using either cookie to prove a same-host or allowlisted origin:
     :class:`CookieTokenAuthn` applies it when the access cookie is read,
-    ``/login`` and ``/logout`` apply the same ingress's gate to every request, and
-    ``/refresh`` applies it when it reads the refresh cookie (the default gate when
-    no ``CookieTokenAuthn`` reads :attr:`access_cookie`).
+    and ``/login``, ``/logout`` and ``/refresh`` apply the same ingress's gate to
+    every request (the default gate when no ``CookieTokenAuthn`` reads
+    :attr:`access_cookie`).
     It is the server-side check that still holds when a proxy strips ``SameSite``
     or a ``samesite="none"`` deployment relies on it; list your cross-origin
     frontends in its ``allowed_origins``. ``csrf=None`` opts out of all of them only

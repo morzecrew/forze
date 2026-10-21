@@ -111,7 +111,7 @@ def _cookie_token_endpoint(cookies: AuthnCookieCarrier) -> Any:
     """Login-shaped builder: run the op, set/rotate cookies, strip the body.
 
     Setting the cookies applies the access cookie's CSRF gate first, as refresh and
-    logout do.
+    logout do, on every request.
     """
 
     def build(
@@ -161,9 +161,10 @@ def _cookie_refresh_endpoint(cookies: AuthnCookieCarrier) -> Any:
     cookie; absent one — no body, an empty body, ``null`` or ``{}`` — the refresh
     token comes from the carrier's cookie, the reason a browser can refresh
     without ever seeing token strings. A non-empty body without the token is
-    still a validation error. Reading the cookie applies the
+    still a validation error. Every request applies the
     :class:`~forze_fastapi.security.CookieCsrf` gate of the ``CookieTokenAuthn``
-    reading the carrier's access cookie (the default gate when there is none).
+    reading the carrier's access cookie (the default gate when there is none),
+    whichever carries the token, since either way the response sets the cookies.
     """
 
     def build(
@@ -179,6 +180,10 @@ def _cookie_refresh_endpoint(cookies: AuthnCookieCarrier) -> Any:
         ]
 
         async def endpoint(*, request: Request, response: Response, payload: Any = None) -> Any:
+            # The response sets the session cookies whichever carries the token: the same
+            # gate as login, before the token is read or spent.
+            enforce_published_cookie_csrf(request, cookies.access_cookie)
+
             body = payload
 
             if body is None:
@@ -190,10 +195,6 @@ def _cookie_refresh_endpoint(cookies: AuthnCookieCarrier) -> Any:
                         f"body nor the {cookies.refresh_cookie!r} cookie.",
                         code="auth_required",
                     )
-
-                # The refresh cookie is an ambient credential like the access cookie: the
-                # same gate, before the token is spent.
-                enforce_published_cookie_csrf(request, cookies.access_cookie)
 
                 body = dto_type.model_validate({"refresh_token": token})
 

@@ -812,7 +812,7 @@ class TestCookieMode:
         _seed(state)
         client = self._cookie_client(state)
 
-        response = client.post("/auth/refresh")
+        response = client.post("/auth/refresh", headers=_SAME_ORIGIN)
 
         assert response.status_code == 401
 
@@ -827,7 +827,9 @@ class TestCookieMode:
         token = client.cookies.get("forze_refresh", path="/auth/refresh")
         client.cookies.clear()  # no cookie jar: the body must carry it alone
 
-        response = client.post("/auth/refresh", json={"refresh_token": token})
+        response = client.post(
+            "/auth/refresh", json={"refresh_token": token}, headers=_SAME_ORIGIN
+        )
 
         assert response.status_code == 200
         assert "refresh_token" not in response.json()  # still stripped to cookies
@@ -854,7 +856,7 @@ class TestCookieMode:
         _seed(state)
         client = self._cookie_client(state)
 
-        response = client.post("/auth/refresh", json={})
+        response = client.post("/auth/refresh", json={}, headers=_SAME_ORIGIN)
 
         assert response.status_code == 401
 
@@ -865,7 +867,9 @@ class TestCookieMode:
         _cookie_login(client)
 
         # A valid cookie rides along, but the body's token is the one used.
-        response = client.post("/auth/refresh", json={"refresh_token": "not-a-token"})
+        response = client.post(
+            "/auth/refresh", json={"refresh_token": "not-a-token"}, headers=_SAME_ORIGIN
+        )
 
         assert response.status_code == 401
 
@@ -875,7 +879,7 @@ class TestCookieMode:
         client = self._cookie_client(state)
         _cookie_login(client)
 
-        response = client.post("/auth/refresh", json={"token": "x"})
+        response = client.post("/auth/refresh", json={"token": "x"}, headers=_SAME_ORIGIN)
 
         assert response.status_code == 422
 
@@ -1066,19 +1070,23 @@ class TestRefreshCookieCsrf:
 
         assert allowed.status_code == 200
 
-    def test_body_token_refresh_is_not_gated(self) -> None:
-        # No cookie is read, so there is no ambient credential to forge.
+    def test_body_token_refresh_is_gated(self) -> None:
+        # The response sets the session cookies, so a body token is gated as login is.
         state = MockState()
         _seed(state)
         client = self._client(state)
         token = self._refresh_cookie(client)
         client.cookies.clear()
 
-        response = client.post(
-            "/auth/refresh", json={"refresh_token": token}, headers=_CROSS_SITE
-        )
+        refused = client.post("/auth/refresh", json={"refresh_token": token}, headers=_CROSS_SITE)
 
-        assert response.status_code == 200
+        assert refused.status_code == 403
+        assert refused.headers[ERROR_CODE_HEADER] == "csrf_rejected"
+        assert not refused.headers.get_list("set-cookie")
+
+        allowed = client.post("/auth/refresh", json={"refresh_token": token}, headers=_SAME_ORIGIN)
+
+        assert allowed.status_code == 200  # the refused attempt did not spend the token
 
     def test_declared_opt_out_is_honoured(self) -> None:
         state = MockState()
