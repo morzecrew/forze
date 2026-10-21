@@ -65,6 +65,33 @@ class TestSagaProgress:
         assert err.kind is ExceptionKind.DOMAIN
         assert "step_failed" in (err.code or "")
 
+    def test_step_failed_envelope_keeps_the_cause_text_server_side(self) -> None:
+        # DOMAIN exposes details to clients: only the step and the cause's code/kind
+        # may reach them; the step error's text stays on the chained ``__cause__``.
+        from forze.base.exceptions import error_envelope, exc
+
+        p = _progress()
+        raw = "relation orders_private does not exist"
+        core = p.step_failed_error(
+            2, exc.infrastructure(raw, code="db.query_failed"), comp_errors=[]
+        )
+        plain = p.step_failed_error(2, RuntimeError(raw), comp_errors=[])
+
+        core_env = error_envelope(core)
+        plain_env = error_envelope(plain)
+
+        assert core_env.context == {
+            "saga": "checkout",
+            "step": "ship",
+            "cause": {"code": "db.query_failed", "kind": "infrastructure"},
+        }
+        assert plain_env.context == {"saga": "checkout", "step": "ship"}
+
+        for env in (core_env, plain_env):
+            assert env.code == "saga.step_failed"
+            assert raw not in env.detail
+            assert raw not in str(env.context)
+
     def test_step_failed_error_is_infrastructure_when_compensation_fails(self) -> None:
         p = _progress()
         err = p.step_failed_error(

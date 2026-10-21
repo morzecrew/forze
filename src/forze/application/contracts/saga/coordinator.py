@@ -138,11 +138,13 @@ class SagaProgress:
           succeeded, so the system is consistent and "the process did not
           complete and was rolled back" is the saga's modeled business
           outcome — exactly what sagas exist to make a normal, handled
-          result. DOMAIN egress exposes the details (saga/step/cause) to the
+          result. DOMAIN egress exposes the details (saga, step, and the
+          cause's ``code``/``kind`` when it is a :class:`CoreException`) to the
           caller and is non-retryable: a rolled-back saga must not be
           blind-retried by resilience policies; re-running it is a business
           decision. The step's original failure is not lost — drivers chain
-          it as ``__cause__`` and ``details["cause"]`` carries its message.
+          it as ``__cause__`` — but its text stays out of the details, since
+          they reach the client.
           Deriving the wrapper's kind from the cause instead would make the
           saga's failure kind unpredictable to callers and require an
           arbitrary kind mapping for non-``CoreException`` causes.
@@ -169,16 +171,18 @@ class SagaProgress:
                 },
             )
 
+        details: dict[str, object] = {"saga": self.saga_name, "step": step_name}
+
+        # Client-visible: the cause's code and kind only, never its text.
+        if isinstance(error, CoreException):
+            details["cause"] = {"code": error.code, "kind": error.kind.value}
+
         # DOMAIN, deliberately — consistent state + modeled outcome (see docstring).
         return exc.domain(
             f"Saga {self.saga_name!r} failed at step {step_name!r}; completed steps "
             "were compensated.",
             code="saga.step_failed",
-            details={
-                "saga": self.saga_name,
-                "step": step_name,
-                "cause": str(error),
-            },
+            details=details,
         )
 
     # ....................... #
