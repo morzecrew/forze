@@ -61,7 +61,7 @@ Every handler runs inside an error boundary: a `CoreException` is acked as
 `{"error": {"detail", "code", "kind", ...}}` honoring the same egress policy as
 the HTTP boundary, so internals never leak to clients. An optional `identity_resolver`
 on the adapter authenticates connections at connect time (refusing them via
-`ConnectionRefusedError`) and binds the resolved `AuthnIdentity` onto each event;
+`ConnectionRefusedError`, whose data is that same error payload) and binds the resolved `AuthnIdentity` onto each event;
 without one, handlers run unauthenticated. Tenant resolution stays in the
 `context_factory`.
 
@@ -390,8 +390,9 @@ or by hash, so the reconnects fill the replicas with room.
 `SocketIOConnect` (sid, namespace, environ, auth) before the protocol is negotiated or the
 connection authenticated. Return to admit it; awaiting delays the connect, so an app can
 pace admissions by its own rules — priority lanes, a per-tenant budget. Raise a
-`CoreException` to refuse it: a client-safe error's summary reaches the client, a
-server-side kind shows the generic detail and is logged.
+`CoreException` to refuse it: the refusal renders as an error ack does, its message the
+detail and its data `{"detail", "code", "kind", ...}`; a server-side kind shows the generic
+detail and is logged.
 
 ### Count connections
 

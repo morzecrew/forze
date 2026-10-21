@@ -58,8 +58,9 @@ remains the ``context_factory``'s responsibility::
 
 A resolver raising a client-safe :class:`~forze.base.exceptions.CoreException`
 (for example ``exc.authentication``) refuses the connection via python-socketio's
-``ConnectionRefusedError`` with the exception summary; unexpected resolver
-failures are logged and refused with a generic message.
+``ConnectionRefusedError``: its message is the client-safe detail and its data the
+error ack's payload (``detail``, ``code``, ``kind``, ``context`` when exposed);
+unexpected resolver failures are logged and refused with a generic message.
 
 Without an ``identity_resolver`` behavior is unchanged from earlier releases:
 no connect handler is registered and no identity is bound, so handlers run
