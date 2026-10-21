@@ -264,10 +264,21 @@ class _Rebalance:
             return
 
         load, targets = _live_counts(self.sio, namespaces=self.namespaces, movable=self.movable)
-        # Live counts, not this replica's own report, which can be a beat behind its last shed.
+        reported = mine.report.get(self.load)
+        # The lower of the live load and its own last report, so connections that arrived since
+        # that report are not counted against peers' reports; never above what is open now.
+        # What can move is live. A report that holds no number, or a negative one, leaves the
+        # live load.
+        compared = (
+            min(load, reported)
+            if isinstance(reported, int | float)
+            and not isinstance(reported, bool)
+            and reported >= 0
+            else load
+        )
         live = attrs.evolve(
             mine,
-            report={**mine.report, self.load: load, self.movable_report: len(targets)},
+            report={**mine.report, self.load: compared, self.movable_report: len(targets)},
         )
         view = attrs.evolve(
             view,
@@ -395,7 +406,7 @@ def connection_rebalance_lifecycle_step(
     (fractions carried, banked over at most one shed cycle), then sheds nothing while the
     scope is not ready (starting or draining), while an earlier shed is still closing, or
     within *cooldown* of the last shed's end. Otherwise it reads the fleet's view, puts this
-    replica's live counts in its own entry, and asks
+    replica's counts in its own entry, and asks
     :meth:`~forze.application.contracts.fleet.FleetView.excess` how far above the mean it
     is. It closes that many movable transports, at most the allowance, the way
     :func:`~forze_socketio.close_spread` does, over *every*, each given up to another *every*
@@ -409,8 +420,9 @@ def connection_rebalance_lifecycle_step(
     reports under *load*, in the same unit; only this replica's own movable count limits its
     shed. :func:`connection_report` fills both keys. A replica that reports no *load* is
     left out of the mean and sheds nothing itself, and so does one with no entry in the view
-    or not serving. This replica's own reported values are never used: its live counts
-    replace them.
+    or not serving. This replica's load is the lower of its live count and its own last
+    report, so connections that arrived since that report are not counted; a report that is
+    not a number, or is negative, leaves the live count. Its movable count is always live.
 
     :param fleet: The fleet the membership step beats into.
     :param every: How often to tick.
