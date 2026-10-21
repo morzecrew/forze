@@ -159,6 +159,24 @@ deployment believes are sealed go to the datastore in plaintext, and nothing fai
 Anything reachable *through* the port goes through the port: that is what tenancy,
 error mapping and the test doubles can see.
 
+## Schedules
+
+The schedule command and query ports create, update, pause, trigger, describe and list
+the schedules that start a workflow. Temporal keeps a cron expression only as the
+calendar it compiles it into, so forze stores the expression as that calendar's comment
+(`forze:cron=<expression>`, visible in the Temporal UI). Describe and list report
+`timing.cron_expressions` as you wrote them, and an update that changes the timing
+replaces them.
+
+The cron rebuilt from the calendar, equivalent but not always the same text, is
+reported instead for:
+
+- a schedule created by an earlier forze, or whose timing was rewritten outside forze;
+- an expression with its own `# comment` or a `CRON_TZ=` / `TZ=` prefix.
+
+An outside edit that changes a calendar but keeps its comment still reports the old
+expression.
+
 ## What it provides
 
 | Contract | Keyed by |

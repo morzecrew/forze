@@ -15,10 +15,12 @@ from temporalio.client import (
     ScheduleSpec,
 )
 
+from forze.application.contracts.durable.workflow import DurableWorkflowScheduleTiming
 from forze.base.exceptions import CoreException
 from forze_temporal.kernel.client.schedule_mapping import (
     calendar_to_cron,
     schedule_spec_to_timing,
+    timing_to_schedule_spec,
 )
 
 # ----------------------- #
@@ -28,7 +30,9 @@ def _r(start: int, end: int = 0, step: int = 0) -> ScheduleRange:
     return ScheduleRange(start=start, end=end, step=step)
 
 
-def _calendar(**fields: tuple[ScheduleRange, ...]) -> ScheduleCalendarSpec:
+def _calendar(
+    comment: str | None = None, **fields: tuple[ScheduleRange, ...]
+) -> ScheduleCalendarSpec:
     base: dict[str, tuple[ScheduleRange, ...]] = {
         "second": (_r(0),),
         "minute": (_r(0),),
@@ -37,7 +41,7 @@ def _calendar(**fields: tuple[ScheduleRange, ...]) -> ScheduleCalendarSpec:
         "month": (_r(1, 12),),
         "day_of_week": (_r(0, 6),),
     }
-    return ScheduleCalendarSpec(**{**base, **fields})  # type: ignore[arg-type]
+    return ScheduleCalendarSpec(**{**base, **fields}, comment=comment)  # type: ignore[arg-type]
 
 
 @pytest.mark.parametrize(
@@ -121,3 +125,50 @@ def test_an_interval_without_an_offset_is_supported() -> None:
     )
 
     assert schedule_spec_to_timing(spec).interval == timedelta(hours=1)
+
+
+# ....................... #
+
+
+@pytest.mark.parametrize(
+    ("expression", "sent"),
+    [
+        ("0 9 * * MON-FRI", "0 9 * * MON-FRI # forze:cron=0 9 * * MON-FRI"),
+        ("@daily", "@daily # forze:cron=@daily"),
+        # Its own comment would be cut short, and the server moves a timezone prefix to the
+        # schedule: both are sent as they are and read back rebuilt.
+        ("0 3 * * * # nightly", "0 3 * * * # nightly"),
+        ("CRON_TZ=Europe/Berlin 0 3 * * *", "CRON_TZ=Europe/Berlin 0 3 * * *"),
+        ("TZ=UTC 0 3 * * *", "TZ=UTC 0 3 * * *"),
+    ],
+)
+def test_an_expression_is_sent_with_its_text_as_the_calendar_comment(
+    expression: str, sent: str
+) -> None:
+    timing = DurableWorkflowScheduleTiming(cron_expressions=(expression,))
+
+    assert timing_to_schedule_spec(timing).cron_expressions == [sent]
+
+
+def test_a_described_schedule_reports_its_expressions_as_written() -> None:
+    """The server compiles ``0 9 * * MON-FRI`` into the calendar of ``0 9 * * 1-5``; the
+    comment it keeps on that calendar is what is reported."""
+
+    spec = ScheduleSpec(
+        calendars=[
+            _calendar(
+                hour=(_r(9),),
+                day_of_week=(_r(1, 5),),
+                comment="forze:cron=0 9 * * MON-FRI",
+            ),
+            # A calendar without the comment: an older forze's, or one written outside forze.
+            _calendar(hour=(_r(3),)),
+            _calendar(hour=(_r(4),), comment="nightly"),
+        ]
+    )
+
+    assert schedule_spec_to_timing(spec).cron_expressions == (
+        "0 9 * * MON-FRI",
+        "0 3 * * *",
+        "0 4 * * * # nightly",
+    )

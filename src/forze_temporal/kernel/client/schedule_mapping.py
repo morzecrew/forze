@@ -34,6 +34,9 @@ _CRON_FIELDS: Final = (
 )
 """Calendar fields in cron order, with the bounds a ``*`` stands for."""
 
+_CRON_TEXT_PREFIX: Final = "forze:cron="
+"""Opens a calendar comment that holds the cron expression forze compiled the calendar from."""
+
 # ....................... #
 
 
@@ -87,6 +90,37 @@ def calendar_to_cron(calendar: ScheduleCalendarSpec) -> str | None:
     return f"{cron} # {calendar.comment}" if calendar.comment else cron
 
 
+def _with_cron_text(expression: str) -> str:
+    """*expression* carrying itself as the comment of the calendar the server compiles it into.
+
+    The server keeps an expression only as that calendar; the comment rides with it, through
+    updates, describe and list, so the schedule reports the expression as written. One with its
+    own comment, or a timezone prefix the server moves to the schedule, is sent unchanged.
+    """
+
+    if "#" in expression or expression.lstrip().startswith(("TZ=", "CRON_TZ=")):
+        return expression
+
+    return f"{expression} # {_CRON_TEXT_PREFIX}{expression}"
+
+
+def _calendar_cron(calendar: ScheduleCalendarSpec) -> str | None:
+    """The expression forze compiled *calendar* from, else the cron rebuilt from it.
+
+    A spec rewritten outside forze carries calendars compiled from other expressions, without
+    the prefixed comment, so it reads back rebuilt; so does a schedule an older forze created.
+    """
+
+    comment = calendar.comment or ""
+
+    # shortcut: an outside edit that changes this calendar's fields but keeps its comment reads
+    # back the old text; telling them apart would take a cron parser that matches the server's.
+    if comment.startswith(_CRON_TEXT_PREFIX):
+        return comment.removeprefix(_CRON_TEXT_PREFIX)
+
+    return calendar_to_cron(calendar)
+
+
 # ....................... #
 
 
@@ -98,7 +132,7 @@ def timing_to_schedule_spec(timing: DurableWorkflowScheduleTiming) -> ScheduleSp
         intervals.append(ScheduleIntervalSpec(every=timing.interval))
 
     return ScheduleSpec(
-        cron_expressions=list(timing.cron_expressions),
+        cron_expressions=[_with_cron_text(e) for e in timing.cron_expressions],
         intervals=intervals,
         start_at=timing.start_at,
         end_at=timing.end_at,
@@ -126,7 +160,7 @@ def schedule_spec_to_timing(spec: ScheduleSpec) -> DurableWorkflowScheduleTiming
     # A described schedule carries no cron expressions, only the calendars the server
     # compiled them into.
     cron = tuple(spec.cron_expressions) or tuple(
-        expression for c in spec.calendars if (expression := calendar_to_cron(c)) is not None
+        expression for c in spec.calendars if (expression := _calendar_cron(c)) is not None
     )
 
     if not cron and interval is None:

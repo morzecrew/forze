@@ -80,9 +80,16 @@ class MockDurableWorkflowCommandAdapter[In: BaseModel, Out: BaseModel](
     ) -> None:
         with self.state.lock:
             run = self._runs().get(handle.workflow_id)
-            if run is None:
+            # A closed run takes no signal: Temporal answers it as it answers a missing id. A
+            # handle's run id targets that run, not a later one started under the same id.
+            if (
+                run is None
+                or (handle.run_id is not None and run["run_id"] != handle.run_id)
+                or run["status"] != DurableWorkflowRunStatus.RUNNING
+            ):
                 raise exc.not_found(
-                    f"Workflow {handle.workflow_id!r} not found", code=WORKFLOW_NOT_FOUND_CODE
+                    f"Workflow {handle.workflow_id!r} not found or already closed",
+                    code=WORKFLOW_NOT_FOUND_CODE,
                 )
             run["signals"].append((signal.name, args.model_dump(mode="json")))
 

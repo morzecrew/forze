@@ -27,6 +27,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Until structlog is configured (`configure_logging` or your own `structlog.configure`), forze no longer prints to stdout itself** (behaviour change): its events go to the same-named stdlib logger at its level, so they reach only your stdlib handlers, or stderr from warnings up by default. Call `configure_logging` to keep info output.
 
+- **A Temporal schedule describes and lists with its cron expressions as written** (**behaviour change**), not the equivalent ones rebuilt from its calendars. Each is kept as its calendar's comment (`forze:cron=…`); schedules from earlier versions or rewritten outside forze still report the rebuilt cron.
+
 - **`UpsertItem.update` is now derived from the update passed and `skip_none`.** Constructors are unchanged; `attrs.asdict` output and `__match_args__` differ. An override of `DocumentSpec.require_set_based_upsert` must accept the new `updates` argument.
 
 ### Fixed

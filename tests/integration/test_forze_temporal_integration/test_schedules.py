@@ -378,3 +378,63 @@ async def test_a_missing_schedule_is_not_found(temporal_dev_env) -> None:
 
         assert missing.value.kind is ExceptionKind.NOT_FOUND
         assert missing.value.code == "schedule_not_found"
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_cron_expressions_read_back_as_written(temporal_dev_env) -> None:
+    """Described and listed, a schedule reports its cron expressions as given, not the
+    equivalent ones rebuilt from the server's calendars, and an update replaces them. Once
+    its spec is rewritten outside forze, it reports the rebuilt cron again."""
+
+    from temporalio.client import ScheduleSpec, ScheduleUpdate, ScheduleUpdateInput
+
+    forze_client = temporal_dev_env.forze_client
+    spec = DurableWorkflowSpec(
+        name="ItSumWorkflow",
+        run=DurableWorkflowInvokeSpec(args_type=SumIn, return_type=SumOut),
+    )
+    cmd = TemporalWorkflowScheduleCommandAdapter(
+        client=forze_client, queue="it-forze-cron-text", spec=spec, tenant_aware=False
+    )
+    qry = TemporalWorkflowScheduleQueryAdapter(
+        client=forze_client, queue="it-forze-cron-text", spec=spec, tenant_aware=False
+    )
+    schedule_id = f"it-cron-text-{uuid7().hex[:8]}"
+    created = ("0 9 * * MON-FRI", "@daily", "0 0 1 JAN *")
+
+    handle = await cmd.create(
+        schedule_id,
+        SumIn(a=1, b=2),
+        DurableWorkflowScheduleTiming(cron_expressions=created),
+    )
+
+    try:
+        assert (await qry.describe(handle)).timing.cron_expressions == created
+
+        async def _listed():
+            page = await forze_client.list_schedules(schedule_id_prefix=schedule_id)
+            return page.descriptions
+
+        listed = await await_listed_schedules(_listed, count=1)
+        assert listed[0].timing.cron_expressions == created
+
+        # An update that leaves the timing alone keeps the spec, comments included.
+        await cmd.update(handle, args=SumIn(a=3, b=4), note="kept")
+        kept = await qry.describe(handle)
+        assert (kept.note, kept.timing.cron_expressions) == ("kept", created)
+
+        updated = ("30 6 * * SAT,SUN",)
+        await cmd.update(handle, timing=DurableWorkflowScheduleTiming(cron_expressions=updated))
+        assert (await qry.describe(handle)).timing.cron_expressions == updated
+
+        def _rewrite(update: ScheduleUpdateInput) -> ScheduleUpdate:
+            schedule = update.description.schedule
+            schedule.spec = ScheduleSpec(cron_expressions=["0 7 * * MON"])
+            return ScheduleUpdate(schedule=schedule)
+
+        await temporal_dev_env.client.get_schedule_handle(schedule_id).update(_rewrite)
+        assert (await qry.describe(handle)).timing.cron_expressions == ("0 7 * * 1",)
+
+    finally:
+        await cmd.delete(handle)
