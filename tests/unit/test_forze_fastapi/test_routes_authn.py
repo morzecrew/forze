@@ -664,12 +664,13 @@ class TestPasswordResetRoutes:
 _SAME_ORIGIN = {"origin": "http://testserver"}
 _CROSS_SITE = {"origin": "https://evil.example"}
 
-# Every request shape that takes the refresh token from the cookie.
+# Every request shape that means "no payload": the refresh token comes from the cookie.
 _COOKIE_REFRESH_BODIES: list[dict[str, Any]] = [
     {},
+    {"json": {}},
     {"content": b"", "headers": {"content-type": "application/json"}},
 ]
-_COOKIE_REFRESH_BODY_IDS = ["no-body", "empty-json-body"]
+_COOKIE_REFRESH_BODY_IDS = ["no-body", "empty-object", "empty-json-body"]
 
 
 def _with_headers(variant: dict[str, Any], headers: dict[str, str]) -> dict[str, Any]:
@@ -762,6 +763,53 @@ class TestCookieMode:
         assert response.status_code == 200
         assert "refresh_token" not in response.json()  # still stripped to cookies
 
+    @pytest.mark.parametrize("variant", _COOKIE_REFRESH_BODIES, ids=_COOKIE_REFRESH_BODY_IDS)
+    def test_refresh_reads_the_cookie_for_an_empty_body(self, variant: dict[str, Any]) -> None:
+        # Fetch wrappers and generated clients send `{}` (or an empty JSON body)
+        # where they mean "no payload": cookie mode, not a validation error.
+        state = MockState()
+        _seed(state)
+        client = self._cookie_client(state)
+        client.post("/auth/login", json={"login": "alice", "password": "pw-1"})
+
+        before = client.cookies.get("forze_refresh", path="/auth/refresh")
+
+        response = client.post("/auth/refresh", **_with_headers(variant, _SAME_ORIGIN))
+
+        assert response.status_code == 200
+        after = client.cookies.get("forze_refresh", path="/auth/refresh")
+        assert after is not None and after != before
+
+    def test_refresh_with_empty_object_and_no_cookie_is_401(self) -> None:
+        state = MockState()
+        _seed(state)
+        client = self._cookie_client(state)
+
+        response = client.post("/auth/refresh", json={})
+
+        assert response.status_code == 401
+
+    def test_refresh_body_token_wins_over_the_cookie(self) -> None:
+        state = MockState()
+        _seed(state)
+        client = self._cookie_client(state)
+        client.post("/auth/login", json={"login": "alice", "password": "pw-1"})
+
+        # A valid cookie rides along, but the body's token is the one used.
+        response = client.post("/auth/refresh", json={"refresh_token": "not-a-token"})
+
+        assert response.status_code == 401
+
+    def test_refresh_body_without_the_token_is_still_invalid(self) -> None:
+        state = MockState()
+        _seed(state)
+        client = self._cookie_client(state)
+        client.post("/auth/login", json={"login": "alice", "password": "pw-1"})
+
+        response = client.post("/auth/refresh", json={"token": "x"})
+
+        assert response.status_code == 422
+
     def test_logout_propagates_non_auth_failures(self) -> None:
         # Idempotency covers ONLY the no-identity case; any other failure from
         # the logout operation must surface, not silently clear cookies.
@@ -803,7 +851,8 @@ class TestCookieMode:
 
 class TestRefreshCookieCsrf:
     """The refresh cookie is an ambient credential: /refresh applies the access cookie's
-    CSRF gate when it reads it. The access cookie is scoped to ``/api`` here, so a refresh
+    CSRF gate when it reads it, and ``{}`` takes the same path as a body-less request,
+    that check included. The access cookie is scoped to ``/api`` here, so a refresh
     carries the refresh cookie alone and the middleware's own gate never fires."""
 
     def _client(
