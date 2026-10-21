@@ -68,8 +68,8 @@ class TestInstanceId:
             def randbits(self, k: int) -> int:
                 return next(draws)
 
-        monkeypatch.setattr(instance_module, "SystemEntropySource", _Counting)
         first = instance_id()
+        monkeypatch.setattr(instance_module, "SystemEntropySource", _Counting)
 
         try:
             instance_module._IDS.clear()  # what a restarted process starts with
