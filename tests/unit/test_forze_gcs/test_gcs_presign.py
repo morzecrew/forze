@@ -350,3 +350,4 @@ async def test_presign_keeps_the_library_refusal_text_out_of_the_summary(
     assert ei.value.kind is ExceptionKind.VALIDATION
     assert "alice@example.test" not in str(ei.value)
     assert ei.value.details == {"error": "refused for alice@example.test"}
+    assert ei.value.expose_details is False
