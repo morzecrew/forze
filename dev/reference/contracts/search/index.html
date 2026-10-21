@@ -5556,6 +5556,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#page-totals" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Page totals
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#streaming-exports" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -6488,6 +6499,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#page-totals" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Page totals
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#streaming-exports" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -6880,9 +6902,42 @@ a type error. A key neither type defines is refused as a <code>precondition</cod
 request and at the port alike.</p>
 <p>A sort on a field the read model lacks is refused as the caller's error, a key after <code>id</code>
 included. On Postgres, a ranked page reads a capped pool of candidates (<code>max_candidates</code>, or
-the route's <code>candidate_limit</code>), always widened to cover the page plus a margin. The pool is the
+the route's <code>candidate_limit</code>; on a hub, its merge cap), always widened to cover the page plus
+a margin of 50 rows (<code>offset + limit + 50</code>). The pool is the
 first rows of the page order itself, so a capped offset page holds the rows the uncapped cursor
 puts there; a cursor walk is uncapped, except on a vector index, whose cap bounds it too.</p>
+<h3 id="page-totals">Page totals<a class="headerlink" href="#page-totals" title="Permanent link">&para;</a></h3>
+<p>On Postgres, <code>search_count</code> (or the spec's <code>default_search_count</code>) picks how a <code>_page</code> call
+counts its total:</p>
+<table>
+<thead>
+<tr>
+<th>Policy</th>
+<th>Total</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>exact</code></td>
+<td><code>COUNT(*)</code> over every match (the default)</td>
+</tr>
+<tr>
+<td><code>approximate</code></td>
+<td>blank query: the planner's estimate of the rows the filters match, which can be off by a multiple and is never 0. With search text: the capped candidates the page ranks — exact while the matches fit the cap, the cap above it, zero for no match</td>
+</tr>
+<tr>
+<td><code>none</code></td>
+<td>no total</td>
+</tr>
+</tbody>
+</table>
+<p>The planner can't estimate a text match: it gives a PGroonga predicate the same estimate
+whatever the query. A hub's cap is its merged-rows cap (<code>combo_limit</code>, or <code>per_leg_limit</code>
+by default), and each leg brings at most <code>per_leg_limit</code> rows, so a leg cut there makes the
+approximate total a lower bound. The cap widens with a deeper page, so that page's
+approximate total can be larger, never past the exact one. A hub usually counts it in the
+page's own query, so it
+costs about what <code>none</code> does; <code>exact</code> runs the whole match again.</p>
 <h3 id="streaming-exports">Streaming exports<a class="headerlink" href="#streaming-exports" title="Permanent link">&para;</a></h3>
 <p><code>search_stream</code> (and the <code>project_</code> / <code>select_</code> variants) iterate the <strong>whole</strong> matching set
 in bounded-memory keyset chunks — peak memory is one chunk, there is no total count. Use it to

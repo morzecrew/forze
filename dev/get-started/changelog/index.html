@@ -9867,6 +9867,15 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <p><strong><code>update_many</code> with revision history no longer fails on a row it leaves unchanged.</strong> Postgres raised a unique violation and rolled the batch back; Mongo wrote a duplicate snapshot.</p>
 </li>
 <li>
+<p><strong>A hub's <code>search_count="approximate"</code> total counts its search text</strong> (<strong>behaviour change</strong>): with a query it is the merged rows the page reads instead of the cap: exact under the cap, the cap above it, zero for no match, a lower bound once a leg is cut at <code>per_leg_limit</code>.</p>
+</li>
+<li>
+<p><strong>A filtered Postgres search no longer fails with <code>postgres_schema_mismatch</code></strong> under <code>search_count="approximate"</code> or a PGroonga <code>plan="auto"</code>.</p>
+</li>
+<li>
+<p><strong>A Postgres hub page with <code>limit: 0</code> reports its total</strong> instead of 0.</p>
+</li>
+<li>
 <p><strong>A missing or closed Temporal workflow, or a missing schedule, is <code>not_found</code>; a taken workflow id <code>conflict</code></strong> (<strong>behaviour change</strong>), not <code>RPCError</code> or <code>WorkflowAlreadyStartedError</code>. A taken schedule kept <code>conflict</code>, now coded. New <code>WORKFLOW_NOT_FOUND_CODE</code> etc.; the mock raises them and refuses a taken schedule.</p>
 </li>
 </ul>
