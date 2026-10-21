@@ -48,7 +48,7 @@ from forze.base.primitives import (
 from ..context.active_operation import continue_operation_on_task
 from ..context.deadline import remaining_time
 from ..tracing import record
-from .backoff import compute_delay
+from .backoff import compute_delay, retry_after
 from .limiter import Gradient2Limiter
 from .state import (
     AdaptiveBulkheadState,
@@ -959,6 +959,14 @@ class InProcessResilienceExecutor:
                 if not retryable or attempt >= strat.max_attempts:
                     raise
 
+                # A throttle's ``retry_after`` is the soonest a retry can succeed: wait at
+                # least that long, or give up now when the policy would not wait that long.
+                wait = retry_after(error)
+
+                if wait is not None and wait > strat.backoff.max.total_seconds():
+                    self._emit("retry_after_exceeds_max", pol, route)
+                    raise
+
                 if budget is not None and not budget.try_spend():
                     self._emit("retry_budget_exhausted", pol, route)
                     raise
@@ -969,6 +977,9 @@ class InProcessResilienceExecutor:
                     prev_delay,
                     current_entropy_source().as_random(),
                 )
+
+                if wait is not None:
+                    delay = max(delay, wait)
 
                 # Deadline-aware retry: when the backoff sleep would outlive
                 # the invocation deadline, surface the real error now instead

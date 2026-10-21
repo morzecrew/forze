@@ -77,6 +77,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **`FleetView.excess` leaves a negative load out of the mean** (**behaviour change**), as it does a non-numeric one: a load is a count. A negative peer load no longer inflates a member's excess, and a member whose own load is negative gets 0.
 
+- **A retry waits out a throttle's `retry_after`** (**behaviour change**). Resilience policies, durable runs and durable saga steps retry a `throttled` error no sooner than its `details["retry_after"]`; a policy or saga whose longest backoff is shorter gives up at once.
+
 ### Security
 
 - **An error an integration translates from its backend no longer shows the failed call's context to API callers** (**behaviour change**): such an error carries no `context`, whatever its kind. The details stay on the exception and are logged at debug. A stream's failure between items is now translated too.

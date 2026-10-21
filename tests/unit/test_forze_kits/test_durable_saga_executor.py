@@ -959,6 +959,43 @@ class TestDurableSagaTransientFailures:
         assert await executor._retry_transient("a", fn) == {"ok": True}
         assert fn.await_count == 1101
 
+    async def test_a_throttle_waits_its_retry_after_over_a_shorter_backoff(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        sleeps: list[float] = []
+
+        async def record_sleep(delay: float) -> None:
+            sleeps.append(delay)
+
+        monkeypatch.setattr(saga_executor_mod.asyncio, "sleep", record_sleep)
+        fn = AsyncMock(
+            side_effect=[exc.throttled("slow down", details={"retry_after": 1.5}), {"ok": True}]
+        )
+        # Backoff 1 s then 2 s: a 1.5 s hint is within the schedule, so it is waited out.
+        executor = DurableSagaExecutor(retry_attempts=2, retry_base_delay=1.0)
+
+        assert await executor._retry_transient("a", fn) == {"ok": True}
+        assert sleeps == [1.5]
+
+    async def test_a_retry_after_past_the_backoff_schedule_gives_up_at_once(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        sleeps: list[float] = []
+
+        async def record_sleep(delay: float) -> None:
+            sleeps.append(delay)
+
+        monkeypatch.setattr(saga_executor_mod.asyncio, "sleep", record_sleep)
+        fn = AsyncMock(side_effect=exc.throttled("slow down", details={"retry_after": 5}))
+        executor = DurableSagaExecutor(retry_attempts=2, retry_base_delay=1.0)
+
+        with pytest.raises(CoreException) as ei:
+            await executor._retry_transient("a", fn)
+
+        assert ei.value.kind is ExceptionKind.THROTTLED
+        assert fn.await_count == 1
+        assert sleeps == []
+
     async def test_non_retryable_step_failure_compensates_without_retrying(self) -> None:
         ctx = context_from_modules(MockDepsModule())
         effects: list[str] = []

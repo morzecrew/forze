@@ -8,7 +8,8 @@ from datetime import timedelta
 import pytest
 
 from forze.application.contracts.resilience import BackoffStrategy
-from forze.application.execution.resilience.backoff import compute_delay
+from forze.application.execution.resilience.backoff import compute_delay, retry_after
+from forze.base.exceptions import CoreException, exc
 
 # ----------------------- #
 
@@ -68,3 +69,24 @@ def test_cap_holds_for_any_attempt(jitter: str, attempt: int) -> None:
     # large max_attempts (or an outbox row's attempt count) stops growing.
     delay = compute_delay(_backoff(jitter), attempt, 0.0, random.Random(4))
     assert 0.0 <= delay <= 10.0
+
+
+@pytest.mark.parametrize(
+    ("error", "expected"),
+    [
+        (exc.throttled("slow", details={"retry_after": 5}), 5.0),
+        (exc.throttled("slow", details={"retry_after": 0.5}), 0.5),
+        (exc.throttled("slow", details={"retry_after": 0}), 0.0),
+        (exc.throttled("slow"), None),
+        (exc.throttled("slow", details={"retry_after": True}), None),
+        (exc.throttled("slow", details={"retry_after": -1}), None),
+        (exc.throttled("slow", details={"retry_after": "5"}), None),
+        (exc.throttled("slow", details={"retry_after": float("nan")}), None),
+        (exc.throttled("slow", details={"retry_after": float("inf")}), None),
+        (exc.infrastructure("down", details={"retry_after": 5}), None),
+    ],
+)
+def test_retry_after_reads_only_a_throttles_numeric_hint(
+    error: CoreException, expected: float | None
+) -> None:
+    assert retry_after(error) == expected

@@ -1,8 +1,10 @@
 """Backoff delay computation with jitter modes."""
 
+import math
 import random
 
 from forze.application.contracts.resilience import BackoffStrategy
+from forze.base.exceptions import CoreException, ExceptionKind
 
 # ----------------------- #
 
@@ -42,3 +44,25 @@ def compute_delay(
     prev = prev_delay if prev_delay > 0 else base
 
     return min(cap, rng.uniform(base, prev * 3))
+
+
+# ....................... #
+
+
+def retry_after(error: CoreException) -> float | None:
+    """Return the soonest a retry of a throttled *error* can succeed, in seconds.
+
+    Reads ``details["retry_after"]`` — the upstream's ``Retry-After``, as the HTTP client
+    maps a ``429`` — and returns ``None`` for any other kind, a missing value, or one that is
+    not a finite non-negative number.
+    """
+
+    if error.kind is not ExceptionKind.THROTTLED or not error.details:
+        return None
+
+    value = error.details.get("retry_after")
+
+    if isinstance(value, bool) or not isinstance(value, int | float):
+        return None
+
+    return float(value) if math.isfinite(value) and value >= 0 else None

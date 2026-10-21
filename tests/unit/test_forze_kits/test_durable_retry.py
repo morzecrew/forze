@@ -198,6 +198,27 @@ class TestRunRetry:
         assert timedelta(minutes=10) <= first.available_at - before < timedelta(minutes=11)
         assert await runner.recover(ctx) == 0
 
+    async def test_a_throttled_run_is_due_no_sooner_than_its_retry_after(self) -> None:
+        ctx = context_from_modules(MockDepsModule())
+
+        async def throttled(ctx: ExecutionContext, input_json: dict | None) -> dict:
+            raise exc.throttled("slow down", details={"retry_after": 600})
+
+        registry = DurableFunctionRegistry()
+        registry.register("throttled", throttled)
+        runner = DurableFunctionRunner(
+            registry=registry,
+            retry=_strategy(3, retry_on=frozenset({ExceptionKind.THROTTLED})),
+        )
+
+        before = utcnow()
+        first = await runner.run_now(ctx, "throttled")
+
+        # The backoff alone (1 ms) would be due at once; the upstream asked for 10 minutes.
+        assert first.available_at is not None
+        assert first.available_at - before >= timedelta(minutes=10)
+        assert await runner.recover(ctx) == 0
+
     async def test_a_function_registered_with_a_strategy_uses_it(self) -> None:
         ctx = context_from_modules(MockDepsModule())
 
