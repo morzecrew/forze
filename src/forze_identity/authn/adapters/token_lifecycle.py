@@ -209,6 +209,39 @@ class TokenLifecycleAdapter(TokenLifecyclePort):
 
     # ....................... #
 
+    async def revoke_tokens_by_refresh_token(self, refresh_token: RefreshTokenCredentials) -> None:
+        session = await self._find_session(refresh_token)
+
+        if (
+            session is None
+            or session.revoked_at is not None
+            or session.rotated_at is not None
+            or session.expires_at <= utcnow()
+        ):
+            return
+
+        await self.revoke_tokens(AuthnIdentity(principal_id=session.principal_id))
+
+    # ....................... #
+
+    async def _find_session(self, refresh_token: RefreshTokenCredentials) -> ReadSession | None:
+        """The session row *refresh_token* was issued for, by its digest."""
+
+        if not refresh_token.token:
+            return None
+
+        refresh_digest = self.refresh_svc.calculate_token_digest(refresh_token.token)
+
+        return await self.session_qry.find(
+            filters={
+                "$values": {
+                    "refresh_digest": refresh_digest,
+                }
+            }
+        )
+
+    # ....................... #
+
     async def revoke_chain_of_tokens(self, principal_id: UUID, family_id: UUID) -> None:
         if self.revocation is not None:
             self.revocation.require_transaction()
@@ -235,15 +268,7 @@ class TokenLifecycleAdapter(TokenLifecyclePort):
         if not refresh_token.token:
             raise exc.authentication("Refresh token is required")
 
-        refresh_digest = self.refresh_svc.calculate_token_digest(refresh_token.token)
-
-        old_session = await self.session_qry.find(
-            filters={
-                "$values": {
-                    "refresh_digest": refresh_digest,
-                }
-            }
-        )
+        old_session = await self._find_session(refresh_token)
 
         if old_session is None or old_session.revoked_at is not None:
             raise exc.authentication("Invalid refresh token")

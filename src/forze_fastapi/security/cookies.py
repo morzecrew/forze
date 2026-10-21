@@ -10,9 +10,13 @@ so cookie clients still learn how long the credential is valid — exactly the s
 Wire it into :func:`~forze_fastapi.routes.attach_authn_routes` via ``cookies=`` and
 point :class:`CookieTokenAuthn`'s ``cookie_name`` at :attr:`access_cookie`. Scope
 the two cookies with :attr:`access_path` / :attr:`refresh_path` (e.g. access →
-``/api``, refresh → ``/auth/refresh``) so the refresh token never rides ordinary
-API requests — and pair the login/refresh paths with the security middleware's
+``/api``, refresh → ``/api/auth``, every authn route) so the refresh token never rides
+ordinary API requests — and pair the login/refresh paths with the security middleware's
 ``anonymous_paths``, or a stale access cookie 401s the very route that replaces it.
+Logout revokes the session from the access cookie or, without one, the refresh
+cookie, so one of the two paths must cover the logout route;
+:func:`~forze_fastapi.middlewares.check_authn_cookie_paths` refuses it at startup
+otherwise.
 """
 
 from forze_fastapi._compat import require_fastapi
@@ -70,8 +74,10 @@ class AuthnCookieCarrier:
     """Path scope of the access cookie (e.g. ``/api``)."""
 
     refresh_path: str = "/"
-    """Path scope of the refresh cookie. Scope it to the refresh route (e.g.
-    ``/auth/refresh``) so the long-lived credential rides exactly one request shape."""
+    """Path scope of the refresh cookie. Scope it to the authn routes (e.g. ``/auth``) so
+    the long-lived credential never rides ordinary API calls, and covers logout, which
+    revokes from it once the access cookie has expired. The browser then sends it to every
+    authn route under that path; only refresh and logout read it."""
 
     domain: str | None = None
     """Cookie ``Domain``; ``None`` = host-only."""

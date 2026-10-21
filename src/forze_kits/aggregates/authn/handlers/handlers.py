@@ -115,6 +115,34 @@ class AuthnLogout(Handler[None, None]):
 
 
 @attrs.define(slots=True, kw_only=True, frozen=True)
+class AuthnLogoutByRefreshToken(Handler[AuthnRefreshRequestDTO, None]):
+    """Usecase for logging out by a refresh token when no access token is usable.
+
+    Delegates to
+    :meth:`~forze.application.contracts.authn.TokenLifecyclePort.revoke_tokens_by_refresh_token`,
+    which revokes what :class:`AuthnLogout` revokes, for the refresh token's principal. An
+    unknown or spent token revokes nothing.
+    """
+
+    token_lifecycle: TokenLifecyclePort
+    """Token lifecycle port."""
+
+    tx: TxScope = nullcontext
+    """Opens the transaction the lifecycle calls run in."""
+
+    # ....................... #
+
+    async def __call__(self, args: AuthnRefreshRequestDTO) -> None:
+        async with self.tx():
+            await self.token_lifecycle.revoke_tokens_by_refresh_token(
+                RefreshTokenCredentials(token=args.refresh_token)
+            )
+
+
+# ....................... #
+
+
+@attrs.define(slots=True, kw_only=True, frozen=True)
 class AuthnRefreshTokens(Handler[AuthnRefreshRequestDTO, AuthnTokenResponseDTO]):
     """Handler for refreshing authentication tokens."""
 

@@ -1,3 +1,4 @@
+from .authn_cookies import check_authn_cookie_paths
 from .bypass import GOVERNED_OPERATION_ATTR, check_bypass_paths
 from .cors import EXPOSED_RESPONSE_HEADERS, AllowlistCORSMiddleware
 from .custom_headers import CustomHeadersMiddleware
@@ -18,5 +19,6 @@ __all__ = [
     "InvocationMetadataMiddleware",
     "check_websocket_allowlist",
     "check_bypass_paths",
+    "check_authn_cookie_paths",
     "GOVERNED_OPERATION_ATTR",
 ]

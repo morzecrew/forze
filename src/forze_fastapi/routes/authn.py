@@ -21,7 +21,8 @@ Authentication posture (read this before exposing the router):
   else. On those paths a request with a missing or failing credential proceeds
   with no identity (a valid credential still binds); nothing in the generated
   routes demands one. In cookie mode list ``/logout`` too: it is reachable without
-  a cookie by design, and expires the cookies in that case.
+  an access cookie by design, revokes from the refresh cookie then, and expires the
+  cookies either way.
 - ``/password-reset/request`` answers a **uniform 202 acknowledgment** for
   known and unknown logins alike (no account enumeration) and never carries the
   reset token in its response — delivery happens out of band via the
@@ -32,7 +33,8 @@ Authentication posture (read this before exposing the router):
   ``build_authn_registry`` binds no before-hooks, but both handlers resolve the
   bound :class:`~forze.application.contracts.authn.AuthnIdentity` and raise a
   401 (``auth_required``) when none is present. The identity comes from the
-  boundary middleware verifying the caller's access token.
+  boundary middleware verifying the caller's access token. Cookie-mode logout
+  without one names the session by the refresh cookie instead.
 - The admin routes act on another principal: ``/deactivate``
   (``deactivate_principal``), ``GET /admin/principals/{id}/api-keys``
   (``list_principal_api_keys``) and ``DELETE /admin/api-keys/{id}``
@@ -71,13 +73,15 @@ from forze.application.execution.context import ExecutionContextFactory
 from forze.application.execution.operations import FrozenOperationRegistry
 from forze.base.exceptions import exc
 from forze.base.primitives import StrKeyNamespace
-from forze_kits.aggregates.authn import AuthnKernelOp
+from forze_kits.aggregates.authn import AuthnKernelOp, AuthnRefreshRequestDTO
 
+from ..middlewares.authn_cookies import AUTHN_COOKIE_LOGOUT_ATTR
 from ..security.cookies import AuthnCookieCarrier
 from ..security.resolvers import enforce_published_cookie_csrf
 from ._attach import (
     OperationRunner,
     RouteBinding,
+    _operation_runner,
     attach_operation_routes,
     body_endpoint,
     id_endpoint,
@@ -223,15 +227,18 @@ def _cookie_refresh_endpoint(cookies: AuthnCookieCarrier) -> Any:
     return build
 
 
-def _cookie_logout_endpoint(cookies: AuthnCookieCarrier) -> Any:
+def _cookie_logout_endpoint(
+    cookies: AuthnCookieCarrier,
+    logout_by_refresh_token: OperationRunner,
+) -> Any:
     """Logout builder: run the op, then expire both cookies.
 
-    Idempotent in cookie mode: with a stale or missing access cookie there is no
-    bound identity and nothing server-side to revoke — but the caller's goal is
-    "end this browser session", and a 401 would leave the dead cookies pinned to
-    the browser. The unauthenticated case clears them and answers 204; every
-    other failure propagates. The access cookie's CSRF gate applies first, with or
-    without a cookie, as on login.
+    With no bound identity, the refresh cookie names the sessions to revoke instead
+    (*logout_by_refresh_token*). Idempotent in cookie mode: with neither there is
+    nothing server-side to revoke — but the caller's goal is "end this browser
+    session", and a 401 would leave the dead cookies pinned to the browser. The
+    unauthenticated case clears them and answers 204; every other failure propagates.
+    The access cookie's CSRF gate applies first, with or without a cookie, as on login.
     """
 
     def build(
@@ -253,7 +260,12 @@ def _cookie_logout_endpoint(cookies: AuthnCookieCarrier) -> Any:
                 if error.code != "auth_required":
                     raise
 
-                result = None  # nothing to revoke server-side; still clear below
+                token = cookies.read_refresh(request)
+
+                if token is not None:
+                    await logout_by_refresh_token(AuthnRefreshRequestDTO(refresh_token=token))
+
+                result = None  # nothing else to revoke server-side; still clear below
 
             cookies.clear(response)
             return result
@@ -265,13 +277,18 @@ def _cookie_logout_endpoint(cookies: AuthnCookieCarrier) -> Any:
             ]
         )
         endpoint.__annotations__ = {"request": Request, "response": Response}
+        # check_authn_cookie_paths holds the route's mounted path against these at startup.
+        setattr(endpoint, AUTHN_COOKIE_LOGOUT_ATTR, (cookies.access_path, cookies.refresh_path))
 
         return endpoint
 
     return build
 
 
-def _cookie_bindings(cookies: AuthnCookieCarrier) -> Mapping[str, RouteBinding]:
+def _cookie_bindings(
+    cookies: AuthnCookieCarrier,
+    logout_by_refresh_token: OperationRunner,
+) -> Mapping[str, RouteBinding]:
     """The action bindings with login/refresh/logout swapped to cookie mode."""
 
     bindings = dict(_AUTHN_BINDINGS)
@@ -282,7 +299,8 @@ def _cookie_bindings(cookies: AuthnCookieCarrier) -> Mapping[str, RouteBinding]:
         bindings[AuthnKernelOp.REFRESH_TOKENS], build=_cookie_refresh_endpoint(cookies)
     )
     bindings[AuthnKernelOp.LOGOUT] = attrs.evolve(
-        bindings[AuthnKernelOp.LOGOUT], build=_cookie_logout_endpoint(cookies)
+        bindings[AuthnKernelOp.LOGOUT],
+        build=_cookie_logout_endpoint(cookies, logout_by_refresh_token),
     )
 
     return bindings
@@ -470,11 +488,16 @@ def attach_authn_routes(
             token strings from their bodies; ``/refresh`` also accepts a request with
             no body or an empty JSON object, reading the refresh token from its
             cookie behind the access cookie's CSRF gate (a token in the body takes
-            precedence); ``/logout`` expires both cookies. ``/login`` and ``/logout``
-            apply the same gate on every request. Point ``CookieTokenAuthn``
-            at the carrier's access cookie, and list the login/refresh paths in the
-            security middleware's ``anonymous_paths`` so a stale access cookie cannot
-            401 them.
+            precedence); ``/logout`` revokes the session the access cookie's identity
+            or, without one, the refresh cookie names (``logout_by_refresh_token``,
+            which gets no route of its own), and expires both cookies.
+            ``/login`` and ``/logout`` apply the same gate on every request. The path
+            of the access cookie or of the refresh cookie must cover the logout route,
+            checked at startup by
+            :func:`~forze_fastapi.middlewares.check_authn_cookie_paths`. Point
+            ``CookieTokenAuthn`` at the carrier's access cookie, and list the
+            login/refresh paths in the security middleware's ``anonymous_paths`` so a
+            stale access cookie cannot 401 them.
 
     Returns:
         APIRouter: The same *router*, for chaining.
@@ -482,16 +505,35 @@ def attach_authn_routes(
     Raises:
         CoreException: On a configuration error — an unknown *include*/override
             operation, both *ns* and *resource*, neither of them with no single
-            authn namespace in *registry*, or a path override that drops or adds a
-            placeholder.
+            authn namespace in *registry*, a path override that drops or adds a
+            placeholder, or cookie mode on a registry holding ``logout`` but not
+            ``logout_by_refresh_token``.
     """
+
+    resolved_ns = _authn_namespace(registry, ns, resource)
+    bindings = _AUTHN_BINDINGS
+
+    if cookies is not None:
+        by_refresh = resolved_ns.key(AuthnKernelOp.LOGOUT_BY_REFRESH_TOKEN)
+
+        # Without it, a logout with an expired access cookie would revoke nothing.
+        if (
+            resolved_ns.key(AuthnKernelOp.LOGOUT) in registry.handlers
+            and by_refresh not in registry.handlers
+        ):
+            raise exc.configuration(
+                f"Cookie-mode logout needs the '{by_refresh}' operation to revoke a "
+                "session from the refresh cookie; register it (build_authn_registry does)."
+            )
+
+        bindings = _cookie_bindings(cookies, _operation_runner(registry, by_refresh, ctx_dep))
 
     return attach_operation_routes(
         router,
         registry=registry,
-        ns=_authn_namespace(registry, ns, resource),
+        ns=resolved_ns,
         ctx_dep=ctx_dep,
-        bindings=_AUTHN_BINDINGS if cookies is None else _cookie_bindings(cookies),
+        bindings=bindings,
         include=include,
         path_overrides=path_overrides,
         exclude_none=exclude_none,

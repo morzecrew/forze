@@ -36,14 +36,16 @@ Handlers read identity only from `ExecutionContext`. The ingress `scheme` and AP
 For browsers that must not hold a token in JavaScript, pair the inbound `CookieTokenAuthn` with the outbound `AuthnCookieCarrier`:
 
 ```python
+from fastapi import APIRouter
 from forze_fastapi.routes import attach_authn_routes
 from forze_fastapi.security import AuthnCookieCarrier
 
-cookies = AuthnCookieCarrier(access_path="/api", refresh_path="/auth/refresh")
+router = APIRouter(prefix="/api/auth")
+cookies = AuthnCookieCarrier(access_path="/api", refresh_path="/api/auth")
 attach_authn_routes(router, registry=registry, ctx_dep=ctx_dep, cookies=cookies)
 ```
 
-Login and refresh then set and rotate two `HttpOnly` cookies and strip the token strings from the body (scheme and lifetimes stay); refresh falls back to its cookie for no body or `{}`; logout expires both idempotently. Point `CookieTokenAuthn(cookie_name=...)` at the same `access_cookie`. `ns=` may be omitted: the routes use the registry's one authn namespace (`spec.default_namespace`).
+Login and refresh then set and rotate two `HttpOnly` cookies and strip the token strings from the body (scheme and lifetimes stay); refresh falls back to its cookie for no body or `{}`; logout revokes every session of the principal its access cookie's identity or, without one, its refresh cookie names, and expires both idempotently. Scope `refresh_path` to cover refresh and logout (as above) so logout still revokes after the access cookie expires; `runtime_lifespan` refuses an app where neither cookie's path covers logout. No single cookie path covers only `/refresh` and `/logout`: with `refresh_path="/api/auth"` the browser sends the refresh cookie to every authn route under that prefix, and only refresh and logout read it. Point `CookieTokenAuthn(cookie_name=...)` at the same `access_cookie`. `ns=` may be omitted: the routes use the registry's one authn namespace (`spec.default_namespace`).
 
 Two things break cookie mode if you skip them:
 
