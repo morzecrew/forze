@@ -6151,6 +6151,35 @@
   
   
     <li class="md-nav__item">
+      <a href="../../reference/durable-schema/" class="md-nav__link">
+        
+  
+  
+    <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-table" viewBox="0 0 24 24"><path d="M12 3v18"/><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M3 9h18M3 15h18"/></svg>
+  
+  <span class="md-ellipsis">
+    
+  
+  Durable execution schema
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../reference/fastapi-routes/" class="md-nav__link">
         
   
@@ -6567,8 +6596,10 @@ write. You read at a revision, then write back the one you read:</p>
   (<code>historical_consistency_violation</code>). A field your write resends with the value
   it had at your revision touches nothing and is not written, so a concurrent
   change to it is kept.</li>
-<li><strong>A future or unknown revision</strong> (or a missing history snapshot) raises
-  <code>exc.precondition</code> (<code>revision_mismatch</code>) — re-read the document and retry.</li>
+<li><strong>A future revision</strong> raises <code>exc.precondition</code> (<code>revision_mismatch</code>); a
+  revision whose history snapshot is missing raises <code>exc.precondition</code>
+  (<code>history_not_found_retry</code>). Neither is retried for you: re-read the document
+  and resubmit with its current <code>rev</code>.</li>
 </ul>
 <p>So a stale write doesn't blindly overwrite: it either merges cleanly or surfaces
 a <a href="../errors/">conflict</a> for the caller to resolve.</p>

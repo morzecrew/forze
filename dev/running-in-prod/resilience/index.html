@@ -6217,6 +6217,35 @@
   
   
     <li class="md-nav__item">
+      <a href="../../reference/durable-schema/" class="md-nav__link">
+        
+  
+  
+    <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-table" viewBox="0 0 24 24"><path d="M12 3v18"/><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M3 9h18M3 15h18"/></svg>
+  
+  <span class="md-ellipsis">
+    
+  
+  Durable execution schema
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../reference/fastapi-routes/" class="md-nav__link">
         
   
@@ -6682,7 +6711,14 @@ scattered through handlers.</p>
 <h2 id="built-in-policies">Built-in policies<a class="headerlink" href="#built-in-policies" title="Permanent link">&para;</a></h2>
 <p>Two ship ready to use, no <code>ResilienceSpec</code> required:</p>
 <ul>
-<li><strong><code>occ</code></strong> — retry on <code>concurrency</code> (optimistic-concurrency contention).</li>
+<li><strong><code>occ</code></strong> — retry on <code>concurrency</code> (optimistic-concurrency contention): the store's
+  own update losing a race with another write, or a serialization failure, deadlock or
+  lock timeout the database reports. Inside a transaction you opened, a Postgres gateway
+  retries only the first in place; the others have aborted your transaction, so they
+  surface for you to re-run the whole scope. A stale <code>rev</code> you passed is judged before
+  the update: it merges, or raises <code>conflict</code> or <code>precondition</code>, and <code>occ</code> retries
+  neither. Re-read the document and resubmit
+  (<a href="../../writing-operation/concurrency-conflicts/">concurrency conflicts</a>).</li>
 <li><strong><code>transient</code></strong> — retry on <code>infrastructure</code>, with a 30 s per-attempt timeout.</li>
 </ul>
 <h2 id="applying-a-policy">Applying a policy<a class="headerlink" href="#applying-a-policy" title="Permanent link">&para;</a></h2>

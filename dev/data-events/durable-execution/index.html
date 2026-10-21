@@ -6223,6 +6223,35 @@
   
   
     <li class="md-nav__item">
+      <a href="../../reference/durable-schema/" class="md-nav__link">
+        
+  
+  
+    <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-table" viewBox="0 0 24 24"><path d="M12 3v18"/><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M3 9h18M3 15h18"/></svg>
+  
+  <span class="md-ellipsis">
+    
+  
+  Durable execution schema
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../reference/fastapi-routes/" class="md-nav__link">
         
   
@@ -6750,8 +6779,9 @@ no row locks to take). Wire both on your database's module and drive them with t
 <span class="p">)</span>
 </code></pre></div>
 <p>The run collection needs one index — a partial unique index on <code>idempotency_key</code> — or two
-simultaneous submits of one key can both insert. See
-<a href="../../integrations/mongo/">MongoDB → durable execution</a> for it and the two optional ones.</p>
+simultaneous submits of one key can both insert. See the
+<a href="../../reference/durable-schema/#mongo">Durable execution schema</a> for it and the
+recommended ones.</p>
 <p>A registered function does its work in <strong>steps</strong> via the step port; each step memoizes, so a
 re-invocation after a crash replays completed steps and resumes at the first incomplete one:</p>
 <div class="highlight"><pre><span></span><code><span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">fulfil_order</span><span class="p">(</span><span class="n">ctx</span><span class="p">,</span> <span class="nb">input</span><span class="p">):</span>
@@ -6968,8 +6998,9 @@ steps). A step failure classified retryable (infrastructure, throttled, concurre
 retried in place with backoff before it is journaled — compensation only runs on genuine
 failures or exhausted retries, never a one-off blip. This tier is self-hosted only
 (Postgres or MongoDB); a full workflow engine (timers, signals, versioning) is still
-Temporal/Inngest. The relations come from your migrations; their schema — and the one index
-the Mongo run store needs — is documented on the adapter classes.</p>
+Temporal/Inngest. The relations come from your migrations; their schema, indexes and
+migrations — and the one index the Mongo run store needs — are in the
+<a href="../../reference/durable-schema/">Durable execution schema</a>.</p>
 <h3 id="recurring-schedules">Recurring schedules<a class="headerlink" href="#recurring-schedules" title="Permanent link">&para;</a></h3>
 <p>A <code>durable_schedule</code> table + the <code>DurableScheduler</code> fire a run on a <strong>cron cadence</strong>. Put a
 schedule and run the scheduler step (alongside the recovery step, which executes the runs it

@@ -6191,6 +6191,35 @@
   
   
     <li class="md-nav__item">
+      <a href="../../reference/durable-schema/" class="md-nav__link">
+        
+  
+  
+    <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-table" viewBox="0 0 24 24"><path d="M12 3v18"/><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M3 9h18M3 15h18"/></svg>
+  
+  <span class="md-ellipsis">
+    
+  
+  Durable execution schema
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../reference/fastapi-routes/" class="md-nav__link">
         
   
@@ -6735,10 +6764,9 @@ models follows.</p>
   (<code>partialFilterExpression: {idempotency_key: {$type: "string"}}</code>). Without it
   two simultaneous submits of one key can both insert, and the port promises they
   converge on a single run. The step journal needs none — its dedup key is the
-  document <code>_id</code>. Indexes on <code>{status: 1, created_at: 1}</code>, a sparse
-  <code>{claim_token: 1}</code> (the batch claim reads back what it just took) and
-  <code>{enabled: 1, next_fire_at: 1}</code> keep the recovery scan and the scheduler off
-  collection scans as the collections grow.</li>
+  document <code>_id</code>. The recommended indexes that keep the recovery scan, the
+  listing and the scheduler off collection scans are in the
+  <a href="../../reference/durable-schema/#mongo">Durable execution schema</a>.</li>
 <li><strong>Claiming without row locks.</strong> Postgres hands out runs under
   <code>FOR UPDATE SKIP LOCKED</code>; Mongo has no equivalent, so the batch claim reads
   candidates and stamps them in one update whose per-document filter still

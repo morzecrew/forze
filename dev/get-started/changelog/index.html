@@ -7794,6 +7794,35 @@
   
   
     <li class="md-nav__item">
+      <a href="../../reference/durable-schema/" class="md-nav__link">
+        
+  
+  
+    <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-table" viewBox="0 0 24 24"><path d="M12 3v18"/><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M3 9h18M3 15h18"/></svg>
+  
+  <span class="md-ellipsis">
+    
+  
+  Durable execution schema
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../reference/fastapi-routes/" class="md-nav__link">
         
   
@@ -9833,6 +9862,9 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <li><strong>A warm API key skips the eligibility read too.</strong> With revocation states on the authn and authz kernels, a key whose cached state recorded its principal's current epoch is admitted without reading Postgres, as a token is. New <code>ApiKeyEligibilitySkip</code>.</li>
 <li>
 <p><strong>Vector search can rank by a vector you already hold.</strong> <code>SearchOptions(query_vector=...)</code> ranks pgvector or Atlas Vector Search with a blank query; other searches refuse it. A custom vector adapter passes <code>capabilities=</code>, <code>backend=</code> and <code>vector_dimensions=</code> to <code>search_options_for_simple_adapter</code> to accept it.</p>
+</li>
+<li>
+<p><strong>Durable schema reference.</strong> A new page lists the Postgres tables and Mongo collections the durable stores use, with their required and recommended indexes and the migrations between releases. The concurrency page now states that a stale-revision precondition is not retried for you.</p>
 </li>
 <li>
 <p><strong>Hub searches aggregate.</strong> <code>aggregate_search</code> / <code>aggregate_search_page</code> on a Postgres or in-memory hub group every merged match of its members, legs uncapped. New <code>HubSearchSpec.extra_aggregatable_fields</code> names hub-relation columns outside the read model that an aggregate may also group by or measure.</p>
