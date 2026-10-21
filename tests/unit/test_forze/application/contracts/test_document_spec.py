@@ -1,7 +1,7 @@
 """Tests for :class:`~forze.application.contracts.document.DocumentSpec`."""
 
 from datetime import datetime
-from typing import Any, Literal, TypedDict
+from typing import Annotated, Any, Literal, TypedDict
 from uuid import UUID
 
 import pytest
@@ -9,9 +9,13 @@ import structlog
 from pydantic import (
     BaseModel,
     Field,
+    PlainSerializer,
+    SerializerFunctionWrapHandler,
     ValidationInfo,
     computed_field,
+    field_serializer,
     field_validator,
+    model_serializer,
     model_validator,
 )
 
@@ -916,6 +920,26 @@ class _CheckedDomain(Document):
         return self
 
 
+class _ShoutedDomain(Document):
+    name: str
+
+    @field_serializer("name")
+    def _shout(self, value: str) -> str:
+        return value.upper()
+
+
+class _AnnotatedShoutedDomain(Document):
+    name: Annotated[str, PlainSerializer(str.upper)]
+
+
+class _DumpedDomain(Document):
+    name: str
+
+    @model_serializer(mode="wrap")
+    def _dump(self, handler: SerializerFunctionWrapHandler) -> dict[str, Any]:
+        return {**handler(self), "name": self.name.upper()}
+
+
 class _SlugDomain(Document):
     name: str
     slug: str = ""
@@ -1039,6 +1063,19 @@ def test_a_list_of_mappings_is_replaced_whole_so_set_based_is_allowed() -> None:
         (
             DocumentSpec(name="doc", read=_Read, write=_named_write(_CheckedDomain)),
             "model validators",
+        ),
+        # The domain path diffs serialized dumps; the set-based one writes the DTO's encoding.
+        (
+            DocumentSpec(name="doc", read=_Read, write=_named_write(_ShoutedDomain)),
+            "fields the domain serializes (name)",
+        ),
+        (
+            DocumentSpec(name="doc", read=_Read, write=_named_write(_AnnotatedShoutedDomain)),
+            "fields the domain serializes (name)",
+        ),
+        (
+            DocumentSpec(name="doc", read=_Read, write=_named_write(_DumpedDomain)),
+            "model serializers",
         ),
         # The update touches only ``name``; the validator on ``slug`` still reruns.
         (

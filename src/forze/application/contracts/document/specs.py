@@ -5,7 +5,7 @@ from types import UnionType
 from typing import Annotated, Any, Generic, TypeVar, Union, get_args, get_origin
 
 import attrs
-from pydantic import BaseModel
+from pydantic import BaseModel, PlainSerializer, WrapSerializer
 
 from forze.application._logger import logger
 from forze.base.exceptions import exc
@@ -111,6 +111,10 @@ def require_whole_update_matching(dto: BaseModel, *, document: str) -> None:
     )
 
 
+# Annotation metadata that changes how a field dumps, not what it accepts.
+_SERIALIZERS = (PlainSerializer, WrapSerializer)
+
+
 def _own_decorators(domain: type[Document], kind: str) -> list[Any]:
     """The pydantic decorators of *kind* *domain* declares or overrides beyond :class:`Document`'s.
 
@@ -139,7 +143,29 @@ def _validated_fields(domain: type[Document]) -> frozenset[str]:
     for decorator in _own_decorators(domain, "field_validators"):
         names.update(decorator.info.fields)
 
-    names.update(name for name, field in domain.model_fields.items() if field.metadata)
+    names.update(
+        name
+        for name, field in domain.model_fields.items()
+        if any(not isinstance(m, _SERIALIZERS) for m in field.metadata)
+    )
+
+    return frozenset(names)
+
+
+def _serialized_fields(domain: type[Document]) -> frozenset[str]:
+    """The fields *domain* dumps other than as their type does: a field serializer of its own
+    (``"*"`` for every field) or a ``PlainSerializer``/``WrapSerializer`` annotation."""
+
+    names: set[str] = set()
+
+    for decorator in _own_decorators(domain, "field_serializers"):
+        names.update(decorator.info.fields)
+
+    names.update(
+        name
+        for name, field in domain.model_fields.items()
+        if any(isinstance(m, _SERIALIZERS) for m in field.metadata)
+    )
 
     return frozenset(names)
 
@@ -818,11 +844,11 @@ class DocumentSpec(BaseSpec, Generic[R, D, C, U]):
         names a searchable field. So it is refused when an update needs the stored row or the
         domain model: revision history, materialized fields, per-owner write serialization,
         randomized field encryption (every write looks like a change), a domain with update
-        validators, invariants, domain events, or validators or constraints of its own on any
-        field (an update revalidates the whole model, so one may refuse or rewrite a value),
-        and an update field the domain does not hold plainly (absent, frozen, a model or
-        mapping the update merges into the stored one, or a default derived from the other
-        fields).
+        validators, invariants, domain events, model serializers, or validators, constraints or
+        serializers of its own on any field (an update revalidates the whole model, so one may
+        refuse or rewrite a value, and the domain path writes what the model dumps), and an
+        update field the domain does not hold plainly (absent, frozen, a model or mapping the
+        update merges into the stored one, or a default derived from the other fields).
 
         :param updates: The update DTO types the upsert writes (a mirrored item's is its create
             payload's); the update command when omitted.
@@ -859,6 +885,9 @@ class DocumentSpec(BaseSpec, Generic[R, D, C, U]):
             if _own_decorators(domain, "model_validators"):
                 reasons.append("model validators")
 
+            if _own_decorators(domain, "model_serializers"):
+                reasons.append("model serializers")
+
             update_cmd = self.write.get("update_cmd")
 
             if updates is None:
@@ -870,6 +899,9 @@ class DocumentSpec(BaseSpec, Generic[R, D, C, U]):
                 # Any one: an update revalidates the whole model, and a validator may rewrite
                 # a field the update leaves alone from one it changes.
                 validated = sorted(_validated_fields(domain))
+                # Likewise a serializer: the domain path diffs serialized dumps, and one may
+                # read a field the update changes.
+                serialized = sorted(_serialized_fields(domain))
                 merged = sorted(
                     {
                         name
@@ -888,6 +920,9 @@ class DocumentSpec(BaseSpec, Generic[R, D, C, U]):
 
                 if validated:
                     reasons.append(f"fields the domain validates ({', '.join(validated)})")
+
+                if serialized:
+                    reasons.append(f"fields the domain serializes ({', '.join(serialized)})")
 
                 if merged:
                     reasons.append(
