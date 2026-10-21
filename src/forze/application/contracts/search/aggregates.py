@@ -1,6 +1,6 @@
 """Shared checks for a search aggregate request, ahead of any backend work."""
 
-from typing import Any
+from typing import Any, cast
 
 from forze.base.exceptions import exc
 
@@ -13,14 +13,14 @@ from ..querying import (
     validate_runtime_filter_fields,
 )
 from ..querying.capabilities import UNSUPPORTED_QUERY_FEATURE_CODE
-from .specs import SearchSpec
-from .types import SearchOptions
+from .specs import HubSearchSpec, SearchSpec
+from .types import MultiSourceSearchOptions, SearchOptions
 
 # ----------------------- #
 
 
 def validate_search_aggregates(
-    spec: SearchSpec[Any],
+    spec: SearchSpec[Any] | HubSearchSpec[Any],
     aggregates: AggregatesExpression,
     options: SearchOptions | None,
     *,
@@ -29,13 +29,14 @@ def validate_search_aggregates(
     """Refuse a search aggregate no backend should run, the same way on every backend.
 
     Facets and highlights describe hits, and an aggregate returns groups, so asking for them
-    (``highlight={}`` included) is refused rather than ignored; so is ``max_candidates``, which would cut the matched set an
-    aggregate measures whole. Groups, measures and per-metric filters may name only
+    (``highlight={}`` included) is refused rather than ignored; so are ``max_candidates`` and
+    a hub's ``merge_candidates``, which would cut the matched set an aggregate measures whole.
+    Groups, measures and per-metric filters may name only
     :attr:`~.SearchSpec.aggregatable_fields`: a lenient field has no stored value, and a
     field-encrypted one holds ciphertext.
     """
 
-    opts = options or {}
+    opts = cast("MultiSourceSearchOptions", options or {})
 
     # Any highlight value but an absent or ``False`` one is a request (``{}`` asks for the
     # defaults); an empty ``facets`` list asks for none.
@@ -46,10 +47,10 @@ def validate_search_aggregates(
             code=UNSUPPORTED_QUERY_FEATURE_CODE,
         )
 
-    if opts.get("max_candidates") is not None:
+    if opts.get("max_candidates") is not None or opts.get("merge_candidates") is not None:
         raise exc.precondition(
             f"Search spec {spec.name!r}: an aggregate measures every match, so it takes no "
-            "max_candidates cap.",
+            "max_candidates or merge_candidates cap.",
             code=UNSUPPORTED_QUERY_FEATURE_CODE,
         )
 

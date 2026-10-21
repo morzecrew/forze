@@ -17,6 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **A warm API key skips the eligibility read too.** With revocation states on the authn and authz kernels, a key whose cached state recorded its principal's current epoch is admitted without reading Postgres, as a token is. New `ApiKeyEligibilitySkip`.
 - **Vector search can rank by a vector you already hold.** `SearchOptions(query_vector=...)` ranks pgvector or Atlas Vector Search with a blank query; other searches refuse it. A custom vector adapter passes `capabilities=`, `backend=` and `vector_dimensions=` to `search_options_for_simple_adapter` to accept it.
 
+- **Hub searches aggregate.** `aggregate_search` / `aggregate_search_page` on a Postgres or in-memory hub group every merged match of its members, legs uncapped. New `HubSearchSpec.extra_aggregatable_fields` names hub-relation columns outside the read model that an aggregate may also group by or measure.
+
 ### Changed
 
 - **Until structlog is configured (`configure_logging` or your own `structlog.configure`), forze no longer prints to stdout itself** (behaviour change): its events go to the same-named stdlib logger at its level, so they reach only your stdlib handlers, or stderr from warnings up by default. Call `configure_logging` to keep info output.

@@ -330,3 +330,56 @@ async def test_a_hub_or_federated_search_refuses_a_key_no_type_defines(
     for adapter in _multi_leg_adapters(MockState()):
         with pytest.raises(CoreException, match=key):
             await getattr(adapter, method)("a", pagination={"limit": 10}, **kwargs)
+
+
+class _Stock(BaseModel):
+    id: str
+    title: str
+    region: str
+    quantity: int
+
+
+class _HubStock(BaseModel):
+    id: str
+    title: str
+    region: str
+
+
+@pytest.mark.asyncio
+async def test_a_hub_aggregate_measures_an_extra_field_across_its_legs() -> None:
+    """As on Postgres: every merged match of a query and a filter, measured by a column the
+    hub's read model does not carry."""
+
+    state = MockState()
+    leg_a = SearchSpec(name="a", model_type=_Stock, fields=["title"])
+    leg_b = SearchSpec(name="b", model_type=_Stock, fields=["title"])
+    await MockSearchCommandAdapter(state=state, spec=leg_a).upsert(
+        [
+            _Stock(id="1", title="omega one", region="north", quantity=1),
+            _Stock(id="2", title="omega two", region="south", quantity=2),
+            _Stock(id="3", title="alpha", region="north", quantity=4),
+        ]
+    )
+    await MockSearchCommandAdapter(state=state, spec=leg_b).upsert(
+        [_Stock(id="4", title="omega four", region="north", quantity=8)]
+    )
+    hub = MockHubSearchAdapter(
+        hub_spec=HubSearchSpec(
+            name="hub",
+            model_type=_HubStock,
+            members=[leg_a, leg_b],
+            extra_aggregatable_fields=frozenset({"quantity"}),
+        ),
+        legs=[
+            ("a", MockSearchAdapter(state=state, spec=leg_a)),
+            ("b", MockSearchAdapter(state=state, spec=leg_b)),
+        ],
+    )
+
+    page = await hub.aggregate_search(
+        {"$computed": {"n": {"$count": None}, "q": {"$sum": "quantity"}}},
+        "omega",
+        {"$values": {"region": {"$eq": "north"}}},
+    )
+
+    assert [(row["n"], row["q"]) for row in page.hits] == [(2, 9)]

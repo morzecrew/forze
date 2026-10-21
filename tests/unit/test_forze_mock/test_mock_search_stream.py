@@ -156,19 +156,16 @@ class TestFailClosed:
 
 
 class TestAggregatesFailClosed:
-    """A mock hub or federation has no one complete matched set, so it refuses to aggregate."""
+    """A mock federation has no one complete matched set, so it refuses to aggregate; a hub's
+    merged matches are one, so it aggregates them."""
 
     @pytest.mark.asyncio
-    async def test_hub_and_federated_refuse_aggregates(self) -> None:
+    async def test_federated_refuses_aggregates(self) -> None:
         state = MockState()
         leg_a = SearchSpec(name="a", model_type=_Item, fields=["title"])
         leg_b = SearchSpec(name="b", model_type=_Item, fields=["title"])
         await _seed(state, leg_a, 3)
         await _seed(state, leg_b, 3)
-        hub = MockHubSearchAdapter(
-            hub_spec=HubSearchSpec(name="hub", model_type=_Item, members=[leg_a]),
-            legs=[("a", MockSearchAdapter(state=state, spec=leg_a))],
-        )
         fed = MockFederatedSearchAdapter(
             federated_spec=FederatedSearchSpec(name="fed", members=[leg_a, leg_b]),
             legs=[
@@ -178,11 +175,27 @@ class TestAggregatesFailClosed:
         )
         count = {"$computed": {"n": {"$count": None}}}
 
-        for adapter in (hub, fed):
-            assert adapter.search_capabilities.supports_aggregates is False
+        assert fed.search_capabilities.supports_aggregates is False
 
-            for call in (adapter.aggregate_search, adapter.aggregate_search_page):
-                with pytest.raises(CoreException) as refused:
-                    await call(count, "alpha")
+        for call in (fed.aggregate_search, fed.aggregate_search_page):
+            with pytest.raises(CoreException) as refused:
+                await call(count, "alpha")
 
-                assert refused.value.code == UNSUPPORTED_QUERY_FEATURE_CODE
+            assert refused.value.code == UNSUPPORTED_QUERY_FEATURE_CODE
+
+    @pytest.mark.asyncio
+    async def test_a_hub_aggregates_what_its_page_counts(self) -> None:
+        state = MockState()
+        leg_a = SearchSpec(name="a", model_type=_Item, fields=["title"])
+        await _seed(state, leg_a, 3)
+        hub = MockHubSearchAdapter(
+            hub_spec=HubSearchSpec(name="hub", model_type=_Item, members=[leg_a]),
+            legs=[("a", MockSearchAdapter(state=state, spec=leg_a))],
+        )
+        count = {"$computed": {"n": {"$count": None}}}
+
+        page = await hub.aggregate_search_page(count, "alpha")
+        counted = await hub.search_page("alpha")
+
+        assert hub.search_capabilities.supports_aggregates is True
+        assert ([row["n"] for row in page.hits], page.count) == ([counted.count], 1)
