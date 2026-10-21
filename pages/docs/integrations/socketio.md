@@ -457,9 +457,11 @@ runtime = build_runtime(
 )
 ```
 
-Every `every`, the step reads the fleet's view, puts its own live counts in its own entry,
-and asks [`FleetView.excess`](../running-in-prod/fleet-membership.md#the-policies) how far
-above the mean it is. It closes that many movable connections, no more than its rate allows,
+Every `every`, the step reads the fleet's view and puts its own counts in its own entry. Its
+load there is the lower of its live count and its last report, so connections that arrived
+since that report are not counted; its movable count is live. It
+then asks [`FleetView.excess`](../running-in-prod/fleet-membership.md#the-policies) how far
+above the mean it is, and closes that many movable connections, no more than its rate allows,
 the way the drain does: at the Engine.IO level, spread over `every`, each given up to another
 `every` to finish. Each is checked again right before its close starts, so a client that
 joined a game since the tick picked it stays.
@@ -504,7 +506,9 @@ full.
   when the drain begins goes on; one still running at shutdown starts no more closes, and
   teardown waits for the closes it started, as it does for the drain's.
 - Its count is more than `tolerance` (15%) above the mean. Peers' reports can be a beat old;
-  the tolerance absorbs that.
+  the tolerance absorbs that. Replicas beat at different moments, so in a connect storm
+  their reports differ by up to one beat's growth: keep the membership step's `every` short
+  enough that this stays within the tolerance.
 - No earlier shed is still closing, and `cooldown` (default: `settle`) has passed since the
   last one ended, long enough for its clients to land elsewhere and be reported.
 

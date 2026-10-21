@@ -56,7 +56,8 @@ class PostgresDurableFunctionStepAdapter(TenancyMixin, DurableFunctionStepPort):
     JSON projection on replay (e.g. a tuple returns as a list). A configured keyring seals
     the journaled result at rest.
 
-    The table is provided by the application; expected schema::
+    The table is provided by the application (see
+    ``pages/docs/reference/durable-schema.md``); expected schema::
 
         CREATE TABLE <relation> (
             run_id     text        NOT NULL,

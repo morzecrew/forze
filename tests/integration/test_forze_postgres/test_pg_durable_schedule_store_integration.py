@@ -20,6 +20,7 @@ from forze.base.primitives import utcnow
 from forze_postgres.adapters.durable import PostgresDurableScheduleStore
 from forze_postgres.execution.deps.configs import PostgresDurableScheduleConfig
 from forze_postgres.kernel.client import PostgresClient
+from tests.support.durable_schema import DURABLE_SCHEDULE_COLUMNS, create_durable_table
 
 # ----------------------- #
 
@@ -27,24 +28,8 @@ from forze_postgres.kernel.client import PostgresClient
 @pytest.fixture
 async def schedule_table(pg_client: PostgresClient) -> str:
     table = f"durable_schedule_{uuid4().hex[:8]}"
-    await pg_client.execute(
-        sql.SQL(
-            """
-            CREATE TABLE {table} (
-                schedule_id  TEXT        NOT NULL,
-                name         TEXT        NOT NULL,
-                cron         TEXT        NOT NULL,
-                tz           TEXT,
-                input        JSONB,
-                next_fire_at TIMESTAMPTZ NOT NULL,
-                enabled      BOOLEAN     NOT NULL DEFAULT true,
-                tenant_id    UUID,
-                created_at   TIMESTAMPTZ NOT NULL,
-                updated_at   TIMESTAMPTZ NOT NULL,
-                PRIMARY KEY (schedule_id)
-            )
-            """
-        ).format(table=sql.Identifier("public", table))
+    await create_durable_table(
+        pg_client, DURABLE_SCHEDULE_COLUMNS, sql.Identifier("public", table)
     )
     return table
 

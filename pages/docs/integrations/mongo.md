@@ -105,10 +105,9 @@ lifecycle = LifecyclePlan.from_steps(
   (`partialFilterExpression: {idempotency_key: {$type: "string"}}`). Without it
   two simultaneous submits of one key can both insert, and the port promises they
   converge on a single run. The step journal needs none — its dedup key is the
-  document `_id`. Indexes on `{status: 1, created_at: 1}`, a sparse
-  `{claim_token: 1}` (the batch claim reads back what it just took) and
-  `{enabled: 1, next_fire_at: 1}` keep the recovery scan and the scheduler off
-  collection scans as the collections grow.
+  document `_id`. The recommended indexes that keep the recovery scan, the
+  listing and the scheduler off collection scans are in the
+  [Durable execution schema](../reference/durable-schema.md#mongo).
 - **Claiming without row locks.** Postgres hands out runs under
   `FOR UPDATE SKIP LOCKED`; Mongo has no equivalent, so the batch claim reads
   candidates and stamps them in one update whose per-document filter still

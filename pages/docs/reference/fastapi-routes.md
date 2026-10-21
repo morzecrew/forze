@@ -253,9 +253,10 @@ Browser clients that must not hold a token in JavaScript pass an
 `AuthnCookieCarrier` to `attach_authn_routes(cookies=…)`. Login and refresh then
 set and rotate two `HttpOnly` cookies instead of returning token strings; the
 body keeps the scheme and the `*_expires_in` lifetimes, so a cookie client still
-learns how long its credential is valid. Refresh falls back to reading the
-refresh cookie when the body carries no token, and logout expires both cookies
-idempotently.
+learns how long its credential is valid. Refresh reads the refresh cookie when
+the request has no body or an empty JSON object (`{}`, as fetch wrappers and
+generated clients send); a token in the body takes precedence. Logout expires
+both cookies idempotently.
 
 ```python
 from forze_fastapi.security import AuthnCookieCarrier

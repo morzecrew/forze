@@ -251,6 +251,7 @@ class PostgresPGroongaSearchAdapter[M: BaseModel](
                 relation=proj_qname.name,
                 where_sql=fw,
                 params=fp,
+                alias=self.pipeline.projection,
             )
 
         use_exact = self.pgroonga_auto_use_exact_count and not is_trivial_filter(

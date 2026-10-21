@@ -16,7 +16,14 @@ scattered through handlers.
 
 Two ship ready to use, no `ResilienceSpec` required:
 
-- **`occ`** — retry on `concurrency` (optimistic-concurrency contention).
+- **`occ`** — retry on `concurrency` (optimistic-concurrency contention): the store's
+  own update losing a race with another write, or a serialization failure, deadlock or
+  lock timeout the database reports. Inside a transaction you opened, a Postgres gateway
+  retries only the first in place; the others have aborted your transaction, so they
+  surface for you to re-run the whole scope. A stale `rev` you passed is judged before
+  the update: it merges, or raises `conflict` or `precondition`, and `occ` retries
+  neither. Re-read the document and resubmit
+  ([concurrency conflicts](../writing-operation/concurrency-conflicts.md)).
 - **`transient`** — retry on `infrastructure`, with a 30 s per-attempt timeout.
 
 ## Applying a policy

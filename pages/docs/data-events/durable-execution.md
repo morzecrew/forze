@@ -84,8 +84,9 @@ deps = MongoDepsModule(
 ```
 
 The run collection needs one index — a partial unique index on `idempotency_key` — or two
-simultaneous submits of one key can both insert. See
-[MongoDB → durable execution](../integrations/mongo.md) for it and the two optional ones.
+simultaneous submits of one key can both insert. See the
+[Durable execution schema](../reference/durable-schema.md#mongo) for it and the
+recommended ones.
 
 A registered function does its work in **steps** via the step port; each step memoizes, so a
 re-invocation after a crash replays completed steps and resumes at the first incomplete one:
@@ -346,8 +347,9 @@ steps). A step failure classified retryable (infrastructure, throttled, concurre
 retried in place with backoff before it is journaled — compensation only runs on genuine
 failures or exhausted retries, never a one-off blip. This tier is self-hosted only
 (Postgres or MongoDB); a full workflow engine (timers, signals, versioning) is still
-Temporal/Inngest. The relations come from your migrations; their schema — and the one index
-the Mongo run store needs — is documented on the adapter classes.
+Temporal/Inngest. The relations come from your migrations; their schema, indexes and
+migrations — and the one index the Mongo run store needs — are in the
+[Durable execution schema](../reference/durable-schema.md).
 
 ### Recurring schedules
 

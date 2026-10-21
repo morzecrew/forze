@@ -34,9 +34,14 @@ def _require_distinct_ids(ids: Sequence[UUID]) -> None:
         )
 
 
-def _require_set_based(spec: DocumentSpec[Any, Any, Any, Any], *, return_new: bool) -> None:
+def _require_set_based(
+    spec: DocumentSpec[Any, Any, Any, Any],
+    items: Sequence[UpsertItem[Any, Any]],
+    *,
+    return_new: bool,
+) -> None:
     """Refuse a set-based ``upsert_many`` that asks for rows back or whose spec needs the
-    domain path."""
+    domain path for the updates *items* write."""
 
     if return_new:
         raise exc.precondition(
@@ -44,7 +49,7 @@ def _require_set_based(spec: DocumentSpec[Any, Any, Any, Any], *, return_new: bo
             code="set_based_upsert_unsupported",
         )
 
-    spec.require_set_based_upsert()
+    spec.require_set_based_upsert({type(it.update) for it in items} or None)
 
 
 # ....................... #
@@ -264,7 +269,7 @@ class DocumentCommandMixin(
         w = self._require_write()
 
         if set_based:
-            _require_set_based(self.spec, return_new=return_new)
+            _require_set_based(self.spec, items, return_new=return_new)
 
         if not items:
             if not return_new:

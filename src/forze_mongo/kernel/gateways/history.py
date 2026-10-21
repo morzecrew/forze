@@ -91,8 +91,9 @@ class MongoHistoryGateway[D: Document](MongoGateway[D]):
         cost is small and self-healing: a legacy document's ordinary update presents its
         current revision, skips history validation entirely, and writes a fresh stamped
         snapshot. Only a concurrent stale-revision update of a not-yet-rewritten document
-        sees a ``history_not_found_retry`` precondition, which the standard retry loop
-        resolves against the now-stamped current revision. Operators needing strict
+        sees a ``history_not_found_retry`` precondition, which is not retried
+        automatically: the caller re-reads and resubmits against the now-stamped current
+        revision. Operators needing strict
         pre-upgrade concurrency continuity should backfill ``tenant_id`` on legacy
         history rows.
         """

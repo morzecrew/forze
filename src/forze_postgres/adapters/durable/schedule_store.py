@@ -71,7 +71,8 @@ class PostgresDurableScheduleStore(TenancyMixin, DurableScheduleStorePort):
     being exact. :meth:`put` resolves one effective tenant for the table, the tag and the key
     together, and refuses a record naming a tenant that contradicts the binding.
 
-    The table is provided by the application; expected schema::
+    The table is provided by the application (see
+    ``pages/docs/reference/durable-schema.md``); expected schema::
 
         CREATE TABLE <relation> (
             schedule_id  text        NOT NULL,

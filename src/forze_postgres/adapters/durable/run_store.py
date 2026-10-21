@@ -120,7 +120,8 @@ class PostgresDurableRunStore(
     exactly. ``enqueue`` resolves one effective tenant for the table, the tag and the scoped
     key together, and refuses an explicit tenant that contradicts the binding.
 
-    The table is provided by the application; expected schema::
+    The table is provided by the application, with its migrations in
+    ``pages/docs/reference/durable-schema.md``; expected schema::
 
         CREATE TABLE <relation> (
             run_id              text        NOT NULL,
@@ -147,13 +148,11 @@ class PostgresDurableRunStore(
         --   ALTER TABLE <relation> ADD COLUMN cancel_requested_at timestamptz,
         --                          ADD COLUMN cancel_refused_at   timestamptz;
         --
-        -- RUN THE MIGRATION BEFORE DEPLOYING THIS CODE. Every read here projects both
-        -- columns and `renew` returns `cancel_requested_at IS NOT NULL`, so against the old
-        -- schema each one raises `UndefinedColumn`. That is worst for the heartbeat, which
-        -- treats a failed renewal as lease loss: instead of a loud startup error, every
-        -- in-flight body is torn down as if it had been reclaimed, and the runs are left for
-        -- the recovery scan to pick up and tear down again. Migrate first and the deploy is
-        -- uneventful; migrate second and the tier looks like it is silently losing leases.
+        -- RUN THE MIGRATION BEFORE DEPLOYING THIS CODE. `begin`, the recovery scan
+        -- (`claim_abandoned`) and every read return both columns, so against the old schema
+        -- each one raises `UndefinedColumn` and no body starts. A new `enqueue` still
+        -- inserts, so its run waits `pending` until the migration lands and the recovery
+        -- scan claims it; a re-submit of an existing key fails like a read.
 
         -- Recommended: back the recovery scan (claim_abandoned), which filters on
         -- status/available_at/leased_until and orders by created_at under

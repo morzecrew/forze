@@ -74,6 +74,12 @@ from tests.support.durable_conformance import (
     run_tenancy_scenario,
     tenant_provider_for,
 )
+from tests.support.durable_schema import (
+    DURABLE_RUN_COLUMNS,
+    DURABLE_SCHEDULE_COLUMNS,
+    DURABLE_STEP_COLUMNS,
+    create_durable_table,
+)
 
 # ----------------------- #
 
@@ -81,39 +87,15 @@ from tests.support.durable_conformance import (
 @pytest.fixture
 async def run_table(pg_client: PostgresClient) -> str:
     table = f"durable_run_{uuid4().hex[:8]}"
-    await pg_client.execute(
-        sql.SQL(
-            """
-            CREATE TABLE {table} (
-                run_id text NOT NULL, name text NOT NULL, status text NOT NULL,
-                idempotency_key text, input jsonb, output jsonb, error text,
-                tenant_id uuid, attempts integer NOT NULL DEFAULT 0,
-                leased_until timestamptz, available_at timestamptz,
-                created_at timestamptz NOT NULL, updated_at timestamptz NOT NULL,
-                cancel_requested_at timestamptz, cancel_refused_at timestamptz,
-                PRIMARY KEY (run_id), UNIQUE (idempotency_key)
-            )
-            """
-        ).format(table=sql.Identifier("public", table))
-    )
+    await create_durable_table(pg_client, DURABLE_RUN_COLUMNS, sql.Identifier("public", table))
     return table
 
 
 @pytest.fixture
 async def schedule_table(pg_client: PostgresClient) -> str:
     table = f"durable_schedule_{uuid4().hex[:8]}"
-    await pg_client.execute(
-        sql.SQL(
-            """
-            CREATE TABLE {table} (
-                schedule_id text NOT NULL, name text NOT NULL, cron text NOT NULL,
-                tz text, input jsonb, next_fire_at timestamptz NOT NULL,
-                enabled boolean NOT NULL DEFAULT true, tenant_id uuid,
-                created_at timestamptz NOT NULL, updated_at timestamptz NOT NULL,
-                PRIMARY KEY (schedule_id)
-            )
-            """
-        ).format(table=sql.Identifier("public", table))
+    await create_durable_table(
+        pg_client, DURABLE_SCHEDULE_COLUMNS, sql.Identifier("public", table)
     )
     return table
 
@@ -121,17 +103,7 @@ async def schedule_table(pg_client: PostgresClient) -> str:
 @pytest.fixture
 async def step_table(pg_client: PostgresClient) -> str:
     table = f"durable_step_{uuid4().hex[:8]}"
-    await pg_client.execute(
-        sql.SQL(
-            """
-            CREATE TABLE {table} (
-                run_id text NOT NULL, step_id text NOT NULL, result jsonb NOT NULL,
-                tenant_id uuid, created_at timestamptz NOT NULL,
-                PRIMARY KEY (run_id, step_id)
-            )
-            """
-        ).format(table=sql.Identifier("public", table))
-    )
+    await create_durable_table(pg_client, DURABLE_STEP_COLUMNS, sql.Identifier("public", table))
     return table
 
 
