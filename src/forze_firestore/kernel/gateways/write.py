@@ -19,7 +19,10 @@ from forze.application.execution.resilience import (
     default_resilience_executor,
     occ_retry,
 )
-from forze.application.integrations.persistence import DocumentWriteCodecMixin
+from forze.application.integrations.persistence import (
+    DocumentWriteCodecMixin,
+    HistoryOccMixin,
+)
 from forze.base.exceptions import CoreException, ExceptionKind, exc
 from forze.base.primitives import JsonDict
 from forze.base.serialization import ModelCodec
@@ -38,6 +41,7 @@ from .read import FirestoreReadGateway
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class FirestoreWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
     DocumentWriteCodecMixin[D],
+    HistoryOccMixin[D],
     FirestoreGateway[D],
 ):
     """Write gateway for Firestore documents with optimistic concurrency."""
@@ -100,12 +104,6 @@ class FirestoreWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
 
     # ....................... #
 
-    async def _write_history(self, *data: D) -> None:
-        if self.history_gw is not None:
-            await self.history_gw.write_many(data)
-
-    # ....................... #
-
     def _materialize_after_write(self, payload: JsonDict) -> D:
         """Build a domain model from written storage without a post-write read."""
 
@@ -120,55 +118,6 @@ class FirestoreWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
             return self._decode_row(merged)
 
         return await self.read_gw.get(pk)
-
-    # ....................... #
-
-    async def _validate_history(self, *data: tuple[D, int, JsonDict]) -> list[JsonDict]:
-        """Validate stale revisions against history; the updates to apply, in order (see
-        :meth:`~forze.application.integrations.persistence.HistoryOccMixin._validate_history`).
-        """
-
-        updates = [update for _, _, update in data]
-
-        if self.history_gw is None:
-            for current, rev, _ in data:
-                if rev != current.rev:
-                    raise exc.precondition("Revision mismatch", code="revision_mismatch")
-
-            return updates
-
-        to_check = [
-            (i, current, rev, update)
-            for i, (current, rev, update) in enumerate(data)
-            if rev != current.rev
-        ]
-        bad_records = [rev for _, current, rev, _ in to_check if rev > current.rev]
-
-        if bad_records:
-            raise exc.precondition("Invalid revision number")
-
-        if to_check:
-            pks_to_check = [current.id for _, current, _, _ in to_check]
-            revs_to_check = [rev for _, _, rev, _ in to_check]
-            hist_records = await self.history_gw.read_many(pks_to_check, revs_to_check)
-
-            if len(hist_records) != len(to_check):
-                raise exc.not_found(
-                    "History records not found. Please retry with actual revision number."
-                )
-
-            for (i, current, _, update), historical in zip(to_check, hist_records, strict=True):
-                merged = current.historical_update(historical, update)
-
-                if merged is None:
-                    raise exc.conflict(
-                        "Historical consistency violation during update",
-                        code="historical_consistency_violation",
-                    )
-
-                updates[i] = merged
-
-        return updates
 
     # ....................... #
 

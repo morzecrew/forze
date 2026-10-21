@@ -6,7 +6,7 @@ from uuid import UUID
 
 import pytest
 
-from forze.base.exceptions import CoreException
+from forze.base.exceptions import CoreException, ExceptionKind
 from forze_firestore.execution.deps.utils import doc_write_gw
 from forze_firestore.kernel.client import FirestoreClient
 from tests.integration.test_forze_firestore._fixtures import client_context
@@ -108,3 +108,53 @@ async def test_history_write_many_persists_snapshots(
     snap_b = await hist.read(b.id, rev=1)
     assert snap_a.name == "a"
     assert snap_b.name == "b"
+
+
+async def test_a_future_revision_is_a_revision_mismatch(
+    firestore_client: FirestoreClient,
+    unique_collection: str,
+) -> None:
+    collection = f"hist_future_{unique_collection}"
+    write = doc_write_gw(
+        client_context(firestore_client),
+        write_types=_WRITE_TYPES,
+        write_relation=("(default)", collection),
+        history_relation=("(default)", f"{collection}_history"),
+        history_enabled=True,
+        tenant_aware=False,
+    )
+    created = await write.create(make_create_cmd(name="v1"))
+
+    with pytest.raises(CoreException) as ei:
+        await write.update(created.id, IntegrationUpdateCmd(name="v2"), rev=created.rev + 1)
+
+    assert ei.value.kind is ExceptionKind.PRECONDITION
+    assert ei.value.code == "revision_mismatch"
+
+
+async def test_a_missing_history_snapshot_is_a_precondition_to_resubmit(
+    firestore_client: FirestoreClient,
+    unique_collection: str,
+) -> None:
+    collection = f"hist_lost_{unique_collection}"
+    history = f"{collection}_history"
+    write = doc_write_gw(
+        client_context(firestore_client),
+        write_types=_WRITE_TYPES,
+        write_relation=("(default)", collection),
+        history_relation=("(default)", history),
+        history_enabled=True,
+        tenant_aware=False,
+    )
+    created = await write.create(make_create_cmd(name="v1"))
+    await write.update(created.id, IntegrationUpdateCmd(name="theirs"), rev=created.rev)
+
+    # Lost history: every snapshot gone.
+    async for snapshot in (await firestore_client.collection(history)).stream():
+        await snapshot.reference.delete()
+
+    with pytest.raises(CoreException) as ei:
+        await write.update(created.id, IntegrationUpdateCmd(name="ours"), rev=created.rev)
+
+    assert ei.value.kind is ExceptionKind.PRECONDITION
+    assert ei.value.code == "history_not_found_retry"
