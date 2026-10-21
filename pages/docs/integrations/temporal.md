@@ -174,6 +174,13 @@ error mapping and the test doubles can see.
   hand-written: use the worker step above.
 - The cluster host is the lifecycle step's `host=`; `TemporalConfig` carries
   `namespace` and interceptors.
+- A schedule id that does not exist raises `not_found` (`schedule_not_found`). So does
+  a workflow id that does not exist, or a closed run you signal, update or terminate
+  (`workflow_not_found`, "not found or already closed"): Temporal answers both alike.
+  Starting or creating with a taken id raises `conflict` (`workflow_already_exists`,
+  `schedule_already_exists`). The codes are constants in
+  `forze.application.contracts.durable.workflow`, and the mock raises them too. Every
+  other Temporal error, a missing namespace included, propagates unchanged.
 - Schedules need a real Temporal server (not the time-skipping test env). Pass
   the same `workflow_configs` to the lifecycle step to bootstrap them.
 - Worker-side helpers (`ExecutionContextInterceptor`, `sandboxed_workflow_runner`,

@@ -12,10 +12,12 @@ from forze.application.contracts.authn import AuthnIdentity
 from forze.application.contracts.durable.workflow import (
     DurableWorkflowHandle,
     DurableWorkflowRunStatus,
+    DurableWorkflowSignalSpec,
     DurableWorkflowSpec,
 )
 from forze.application.contracts.durable.workflow.specs import DurableWorkflowInvokeSpec
 from forze.application.execution import Deps, InvocationMetadata
+from forze.base.exceptions import CoreException
 from forze.base.primitives import uuid7
 from forze_temporal.adapters.workflow import (
     TemporalWorkflowCommandAdapter,
@@ -164,3 +166,68 @@ async def test_interceptor_is_worker_and_client_for_sdk_merge() -> None:
 
     assert isinstance(eci, ClientInterceptor)
     assert isinstance(eci, WorkerInterceptor)
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_a_missing_or_taken_workflow_id_is_the_callers_error() -> None:
+    """A missing workflow id, or a closed run signalled or terminated, is ``not_found``, and a
+    taken id is ``conflict``, not raw RPC errors.
+
+    On the time-skipping server, whose ``NOT_FOUND`` carries no failure detail.
+    """
+
+    env = await WorkflowEnvironment.start_time_skipping(data_converter=pydantic_data_converter)
+
+    try:
+        temporal = TemporalClient()
+        object.__setattr__(temporal, "_TemporalClient__client", env.client)
+        spec = DurableWorkflowSpec(
+            name="ItSumWorkflow",
+            run=DurableWorkflowInvokeSpec(args_type=SumIn, return_type=SumOut),
+        )
+        cmd = TemporalWorkflowCommandAdapter(
+            client=temporal, queue="it-forze-missing", spec=spec, tenant_aware=False
+        )
+        qry = TemporalWorkflowQueryAdapter(
+            client=temporal, queue="it-forze-missing", spec=spec, tenant_aware=False
+        )
+        missing = DurableWorkflowHandle(workflow_id=f"it-missing-{uuid7().hex[:8]}")
+
+        for operation in (
+            lambda: cmd.cancel(missing),
+            lambda: cmd.terminate(missing),
+            lambda: qry.describe(missing),
+            lambda: qry.result(missing),
+        ):
+            with pytest.raises(CoreException) as not_found:
+                await operation()
+
+            assert not_found.value.code == "workflow_not_found"
+
+        # Nothing polls the queue, so the first run is still open when the second start comes.
+        taken = await cmd.start(SumIn(a=1, b=2), workflow_id=f"it-taken-{uuid7().hex[:8]}")
+
+        with pytest.raises(CoreException) as conflict:
+            await cmd.start(SumIn(a=1, b=2), workflow_id=taken.workflow_id)
+
+        assert conflict.value.code == "workflow_already_exists"
+
+        # A closed run gets the same answer as a missing id, though describe still finds it.
+        await cmd.terminate(taken)
+        ping = DurableWorkflowSignalSpec(name="ping", args_type=SumIn)
+
+        for operation in (
+            lambda: cmd.signal(taken, signal=ping, args=SumIn(a=1, b=2)),
+            lambda: cmd.terminate(taken),
+        ):
+            with pytest.raises(CoreException) as closed:
+                await operation()
+
+            assert closed.value.code == "workflow_not_found"
+            assert closed.value.summary.endswith("not found or already closed")
+
+        assert (await qry.describe(taken)).is_terminal is True
+
+    finally:
+        await env.shutdown()

@@ -24,6 +24,7 @@ from forze.base.exceptions import CoreException
 from forze_postgres.adapters.durable import PostgresDurableFunctionStepAdapter
 from forze_postgres.execution.deps.configs import PostgresDurableStepConfig
 from forze_postgres.kernel.client import PostgresClient
+from tests.support.durable_schema import DURABLE_STEP_COLUMNS, create_durable_table
 
 # ----------------------- #
 
@@ -33,20 +34,7 @@ async def durable_step_table(pg_client: PostgresClient) -> str:
     """Create a dedicated ``durable_step`` table and return its name."""
 
     table = f"durable_step_{uuid4().hex[:8]}"
-    await pg_client.execute(
-        sql.SQL(
-            """
-            CREATE TABLE {table} (
-                run_id     TEXT        NOT NULL,
-                step_id    TEXT        NOT NULL,
-                result     JSONB       NOT NULL,
-                tenant_id  UUID,
-                created_at TIMESTAMPTZ NOT NULL,
-                PRIMARY KEY (run_id, step_id)
-            )
-            """
-        ).format(table=sql.Identifier("public", table))
-    )
+    await create_durable_table(pg_client, DURABLE_STEP_COLUMNS, sql.Identifier("public", table))
     return table
 
 

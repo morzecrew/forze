@@ -8,7 +8,9 @@ from typing import Any, Literal, cast, final
 import attrs
 from pydantic import BaseModel
 
+from forze.application.contracts.base import CountlessPage, Page
 from forze.application.contracts.querying import (
+    AggregatesExpression,
     PaginationExpression,
     QueryFilterExpression,
     QuerySortExpression,
@@ -33,13 +35,20 @@ from forze.application.contracts.search import (
     search_page_from_limit_offset,
 )
 from forze.application.integrations.search import SearchResultSnapshot
+from forze.base.exceptions import exc
+from forze.base.primitives import JsonDict
 from forze.domain.constants import ID_FIELD
 from forze_mock.adapters.search._facets_highlights import (
     compute_facets,
     compute_highlights,
 )
 from forze_mock.adapters.search._unsupported import MockOffsetOnlySearchMixin
-from forze_mock.adapters.search.query import MockSearchAdapter, filter_predicate
+from forze_mock.adapters.search.query import (
+    MockSearchAdapter,
+    check_mock_search_aggregate,
+    filter_predicate,
+    mock_aggregate_page,
+)
 from forze_mock.query.matching import (
     _sort_docs,  # pyright: ignore[reportPrivateUsage]
 )
@@ -72,8 +81,72 @@ class MockHubSearchAdapter[M: BaseModel](
     def search_capabilities(self) -> SearchCapabilities:
         # Single-store hybrid: the hub's own rank-based leg merge (score_merge) is the
         # ``rrf`` fusion family. Weighted relative-score fusion is a federated concept and
-        # is refused here rather than silently treated as the default merge.
-        return SearchCapabilities(hybrid_fusion=frozenset({"rrf"}))
+        # is refused here rather than silently treated as the default merge. Aggregates read
+        # every merged match, as the Postgres hub's do.
+        return SearchCapabilities(hybrid_fusion=frozenset({"rrf"}), supports_aggregates=True)
+
+    # ....................... #
+
+    async def _aggregate_impl(
+        self,
+        aggregates: AggregatesExpression,
+        query: str | Sequence[str],
+        filters: QueryFilterExpression | None,
+        pagination: PaginationExpression | None,
+        sorts: QuerySortExpression | None,
+        *,
+        options: SearchOptions | None,
+        return_count: bool,
+    ) -> CountlessPage[JsonDict] | Page[JsonDict]:
+        """Group every merged hub match, the rows :meth:`search_page` counts."""
+
+        parser = check_mock_search_aggregate(
+            self.hub_spec, self.search_capabilities, aggregates, sorts, options=options
+        )
+        merged = await self._merged_docs(query, filters, None, options)
+
+        return mock_aggregate_page(
+            [doc for doc, _score in merged],
+            self.hub_spec,
+            aggregates,
+            pagination,
+            sorts,
+            parser=parser,
+            return_count=return_count,
+        )
+
+    async def aggregate_search(
+        self,
+        aggregates: AggregatesExpression,
+        query: str | Sequence[str],
+        filters: QueryFilterExpression | None = None,
+        pagination: PaginationExpression | None = None,
+        sorts: QuerySortExpression | None = None,
+        *,
+        options: SearchOptions | None = None,
+    ) -> CountlessPage[JsonDict]:
+        return await self._aggregate_impl(
+            aggregates, query, filters, pagination, sorts, options=options, return_count=False
+        )
+
+    async def aggregate_search_page(
+        self,
+        aggregates: AggregatesExpression,
+        query: str | Sequence[str],
+        filters: QueryFilterExpression | None = None,
+        pagination: PaginationExpression | None = None,
+        sorts: QuerySortExpression | None = None,
+        *,
+        options: SearchOptions | None = None,
+    ) -> Page[JsonDict]:
+        page = await self._aggregate_impl(
+            aggregates, query, filters, pagination, sorts, options=options, return_count=True
+        )
+
+        if not isinstance(page, Page):
+            raise exc.internal("Mock hub search returned no total for a counted aggregate.")
+
+        return page
 
     # ....................... #
 

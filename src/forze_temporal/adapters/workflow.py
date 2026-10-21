@@ -10,6 +10,7 @@ import attrs
 from pydantic import BaseModel
 
 from forze.application.contracts.durable.workflow import (
+    WORKFLOW_NOT_FOUND_CODE,
     DurableWorkflowCommandPort,
     DurableWorkflowHandle,
     DurableWorkflowQueryPort,
@@ -195,6 +196,7 @@ class TemporalWorkflowQueryAdapter[In: BaseModel, Out: BaseModel](
         if desc.workflow_name != self.spec.name:
             raise exc.not_found(
                 f"Workflow run {handle.workflow_id!r} is not for workflow {self.spec.name!r}",
+                code=WORKFLOW_NOT_FOUND_CODE,
             )
 
         return desc

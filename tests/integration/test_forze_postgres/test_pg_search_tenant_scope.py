@@ -308,3 +308,9 @@ async def test_hub_search_reads_only_the_tenants_rows(
             )
             assert [h.id for h in page.hits] == [ids[mine]], (query, filters)
             assert page.count == 1, (query, filters)
+
+            # An aggregate merges uncapped legs; the tenant still scopes every one of them.
+            measured = await port.aggregate_search(
+                {"$computed": {"n": {"$count": None}}}, query, filters
+            )
+            assert [row["n"] for row in measured.hits] == [1], (query, filters)

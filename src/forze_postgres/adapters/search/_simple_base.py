@@ -13,7 +13,7 @@ import attrs
 from psycopg import sql
 from pydantic import BaseModel
 
-from forze.application.contracts.base import CountlessPage, Page, page_from_limit_offset
+from forze.application.contracts.base import CountlessPage, Page
 from forze.application.contracts.querying import (
     AggregatesExpression,
     CursorPaginationExpression,
@@ -21,7 +21,6 @@ from forze.application.contracts.querying import (
     QueryExpr,
     QueryFilterExpression,
     QuerySortExpression,
-    with_group_tiebreakers,
 )
 from forze.application.contracts.search import (
     SearchCapabilities,
@@ -36,7 +35,6 @@ from forze.application.contracts.search import (
     search_options_for_simple_adapter,
     search_page_from_limit_offset,
 )
-from forze.application.integrations.document._limits import page_limit, page_offset
 from forze.application.integrations.search import (
     SearchResultSnapshot,
     SnapshotWindow,
@@ -55,6 +53,7 @@ from forze_postgres.kernel.relation import (
 
 from ...kernel.gateways import PostgresGateway, PostgresQualifiedName
 from ...kernel.sql.query import PsycopgQueryRenderer, compose_aggregate_statement
+from ._aggregate_run import execute_search_aggregate
 from ._cursor_run import (
     execute_projection_keyset_cursor,
     execute_ranked_pipeline_cursor,
@@ -608,6 +607,7 @@ class PostgresRankedPipelineSearchAdapter[M: BaseModel](
                     relation=proj_qname.name,
                     where_sql=fw,
                     params=params_base,
+                    alias=self.projection_alias,
                 )
 
         def _select(cols: sql.Composable) -> sql.Composed:
@@ -850,47 +850,16 @@ class PostgresRankedPipelineSearchAdapter[M: BaseModel](
             source=sql.SQL("FROM _matched AS {alias}").format(alias=alias),
             source_params=[],
         )
-        params = [*source_params, *aggregate.params]
-        window: dict[str, Any] = dict(pagination or {})
-        limit, offset = page_limit(window), page_offset(window)
-        # Rendered before anything runs, so a sort naming no output alias costs no query.
-        # The group keys close the order, so pages of groups neither repeat nor skip one.
-        order = PsycopgQueryRenderer.render_aggregate_order_by(
-            aggregate.parsed,
-            with_group_tiebreakers(aggregates, sorts),
+        return await execute_search_aggregate(
+            self.client,
+            head=head,
+            head_params=source_params,
+            aggregate=aggregate,
+            aggregates=aggregates,
+            pagination=pagination,
+            sorts=sorts,
+            return_count=return_count,
         )
-        total: int | None = None
-
-        if return_count:
-            count_stmt = sql.SQL("{head} SELECT COUNT(*) FROM ({inner}) AS _groups").format(
-                head=head,
-                inner=aggregate.stmt,
-            )
-            total = int(await self.client.fetch_value(count_stmt, params, default=0))
-
-        stmt = sql.SQL("{head} {inner}").format(head=head, inner=aggregate.stmt)
-
-        if order is not None:
-            stmt += sql.SQL(" ORDER BY {order}").format(order=order)
-
-        page_params = list(params)
-
-        # Without a limit every group comes back, as the document port's aggregate drains them.
-        if limit is not None:
-            stmt += sql.SQL(" LIMIT {}").format(sql.Placeholder())
-            page_params.append(limit)
-
-        if offset:
-            stmt += sql.SQL(" OFFSET {}").format(sql.Placeholder())
-            page_params.append(offset)
-
-        rows = await self.client.fetch_all(stmt, page_params, row_factory="dict")
-        hits = [dict(row) for row in rows]
-
-        if total is None:
-            return page_from_limit_offset(hits, window)
-
-        return page_from_limit_offset(hits, window, total=total)
 
     # ....................... #
 

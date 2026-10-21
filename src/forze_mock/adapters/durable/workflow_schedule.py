@@ -8,6 +8,8 @@ import attrs
 from pydantic import BaseModel
 
 from forze.application.contracts.durable.workflow import (
+    SCHEDULE_ALREADY_EXISTS_CODE,
+    SCHEDULE_NOT_FOUND_CODE,
     DurableWorkflowScheduleCommandPort,
     DurableWorkflowScheduleDescription,
     DurableWorkflowScheduleHandle,
@@ -54,7 +56,12 @@ class MockDurableWorkflowScheduleCommandAdapter[In: BaseModel](
     ) -> DurableWorkflowScheduleHandle:
         _ = workflow_id_base, trigger_immediately, note
         with self.state.lock:
-            self._schedules()[schedule_id] = {
+            schedules = self._schedules()
+            if schedule_id in schedules:
+                raise exc.conflict(
+                    f"Schedule {schedule_id!r} already exists", code=SCHEDULE_ALREADY_EXISTS_CODE
+                )
+            schedules[schedule_id] = {
                 "args": args.model_dump(mode="json"),
                 "timing": timing,
             }
@@ -70,14 +77,13 @@ class MockDurableWorkflowScheduleCommandAdapter[In: BaseModel](
         trigger_immediately: bool = False,
         note: str | None = None,
     ) -> DurableWorkflowScheduleHandle:
-        return await self.create(
-            schedule_id,
-            args,
-            timing,
-            workflow_id_base=workflow_id_base,
-            trigger_immediately=trigger_immediately,
-            note=note,
-        )
+        _ = workflow_id_base, trigger_immediately, note
+        with self.state.lock:
+            self._schedules()[schedule_id] = {
+                "args": args.model_dump(mode="json"),
+                "timing": timing,
+            }
+        return DurableWorkflowScheduleHandle(schedule_id=schedule_id)
 
     async def update(
         self,
@@ -92,7 +98,9 @@ class MockDurableWorkflowScheduleCommandAdapter[In: BaseModel](
         with self.state.lock:
             entry = self._schedules().get(handle.schedule_id)
             if entry is None:
-                raise exc.not_found(f"Schedule {handle.schedule_id!r} not found")
+                raise exc.not_found(
+                    f"Schedule {handle.schedule_id!r} not found", code=SCHEDULE_NOT_FOUND_CODE
+                )
             if timing is not None:
                 entry["timing"] = timing
             if args is not None:
@@ -128,7 +136,9 @@ class MockDurableWorkflowScheduleCommandAdapter[In: BaseModel](
 
     async def trigger(self, handle: DurableWorkflowScheduleHandle) -> None:
         if handle.schedule_id not in self._schedules():
-            raise exc.not_found(f"Schedule {handle.schedule_id!r} not found")
+            raise exc.not_found(
+                f"Schedule {handle.schedule_id!r} not found", code=SCHEDULE_NOT_FOUND_CODE
+            )
 
 
 @final
@@ -150,7 +160,9 @@ class MockDurableWorkflowScheduleQueryAdapter[In: BaseModel](
         with self.state.lock:
             entry = self._schedules().get(handle.schedule_id)
             if entry is None:
-                raise exc.not_found(f"Schedule {handle.schedule_id!r} not found")
+                raise exc.not_found(
+                    f"Schedule {handle.schedule_id!r} not found", code=SCHEDULE_NOT_FOUND_CODE
+                )
             return DurableWorkflowScheduleDescription(
                 schedule_id=handle.schedule_id,
                 workflow_name=self.spec.name,

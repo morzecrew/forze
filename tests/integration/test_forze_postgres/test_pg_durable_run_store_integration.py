@@ -44,6 +44,7 @@ from tests.support.durable_conformance import (
     run_unreadable_listing_scenario,
     tenant_provider_for,
 )
+from tests.support.durable_schema import DURABLE_RUN_COLUMNS, create_durable_table
 
 # ----------------------- #
 
@@ -51,31 +52,7 @@ from tests.support.durable_conformance import (
 @pytest.fixture
 async def durable_run_table(pg_client: PostgresClient) -> str:
     table = f"durable_run_{uuid4().hex[:8]}"
-    await pg_client.execute(
-        sql.SQL(
-            """
-            CREATE TABLE {table} (
-                run_id          TEXT        NOT NULL,
-                name            TEXT        NOT NULL,
-                status          TEXT        NOT NULL,
-                idempotency_key TEXT,
-                input           JSONB,
-                output          JSONB,
-                error           TEXT,
-                tenant_id       UUID,
-                attempts        INTEGER     NOT NULL DEFAULT 0,
-                leased_until    TIMESTAMPTZ,
-                available_at    TIMESTAMPTZ,
-                created_at      TIMESTAMPTZ NOT NULL,
-                updated_at      TIMESTAMPTZ NOT NULL,
-                cancel_requested_at TIMESTAMPTZ,
-                cancel_refused_at   TIMESTAMPTZ,
-                PRIMARY KEY (run_id),
-                UNIQUE (idempotency_key)
-            )
-            """
-        ).format(table=sql.Identifier("public", table))
-    )
+    await create_durable_table(pg_client, DURABLE_RUN_COLUMNS, sql.Identifier("public", table))
     return table
 
 

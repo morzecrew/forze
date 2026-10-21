@@ -747,8 +747,9 @@ class HistoryOccMixin(Generic[D]):
         For each ``(current, presented_rev, update)`` whose presented revision differs
         from the stored one, rejects a future revision outright, then confirms the
         presented revision's history snapshot exists and is consistent with the update.
-        A missing history snapshot is a stale-revision precondition (retryable), not a
-        missing resource.
+        A missing history snapshot is a stale-revision precondition, not a missing
+        resource. Nothing retries it automatically: the caller re-reads the document and
+        resubmits with its current revision.
 
         :returns: Each update to apply, in order: as given at the stored revision, and at a
             stale one only what it changes against that revision's snapshot

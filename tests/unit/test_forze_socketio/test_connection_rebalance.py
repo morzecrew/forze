@@ -38,8 +38,8 @@ from forze_socketio.rebalance import _Rebalance
 
 SPEC = FleetSpec(name="gateways", ttl=timedelta(hours=1))
 SECOND = timedelta(seconds=1)
-_REPORTED: Report = {"connections": 0, "movable": 0}
-"""This replica's own report: present, so it takes part, but never read — live counts win."""
+_REPORTED: Report = {"connections": 10_000, "movable": 0}
+"""This replica's own report: above every live count here, so its live count is compared."""
 
 
 class _Socket:
@@ -330,6 +330,49 @@ class TestNoDoubleShedding:
             return node.closed()
 
         assert run_simulation(scenario) == 0
+
+
+class TestComparedLoad:
+    @pytest.mark.parametrize(
+        ("lobby", "game", "own", "peers", "closed"),
+        [
+            # A connect storm: 286 open, while its report and each peer's still say 192.
+            # Live against those would be 63 over the mean (286 + 192 + 192) / 3.
+            (94, 192, 192, 192, 0),
+            # Its report and its live count agree: 400 against a mean of 266.7.
+            (400, 0, 400, 200, 134),
+            # Its report is from before a shed of 50: live 350, against a mean of 250.
+            (350, 0, 400, 200, 100),
+            # No number in its own report: its live count, as in the second case.
+            (400, 0, "pending", 200, 134),
+            # A negative report is no load either: its live count again.
+            (400, 0, -5, 200, 134),
+        ],
+        ids=[
+            "connect storm",
+            "report and live agree",
+            "after a shed",
+            "no number reported",
+            "negative report",
+        ],
+    )
+    def test_its_load_is_the_lower_of_its_live_count_and_its_report(
+        self, lobby: int, game: int, own: int | str, peers: int, closed: int
+    ) -> None:
+        async def scenario() -> int:
+            state, node = MockState(), _Node()
+            await node.connect(lobby, "/lobby")
+            await node.connect(game, "/game")
+            await _peers(state, peers, peers)
+            await _beat(state, "me", {"connections": own, "movable": lobby})
+
+            # An allowance far above any excess here, and one shed only.
+            step = _step(node, per_minute=60_000, cooldown=timedelta(hours=1))
+            await _serve(state, step, _sleep(5))
+
+            return node.closed()
+
+        assert run_simulation(scenario) == closed
 
 
 class TestRate:

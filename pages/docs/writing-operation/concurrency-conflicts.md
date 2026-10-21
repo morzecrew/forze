@@ -38,8 +38,10 @@ The store compares your expected `rev` to the stored one:
   (`historical_consistency_violation`). A field your write resends with the value
   it had at your revision touches nothing and is not written, so a concurrent
   change to it is kept.
-- **A future or unknown revision** (or a missing history snapshot) raises
-  `exc.precondition` (`revision_mismatch`) — re-read the document and retry.
+- **A future revision** raises `exc.precondition` (`revision_mismatch`); a
+  revision whose history snapshot is missing raises `exc.precondition`
+  (`history_not_found_retry`). Neither is retried for you: re-read the document
+  and resubmit with its current `rev`.
 
 So a stale write doesn't blindly overwrite: it either merges cleanly or surfaces
 a [conflict](errors.md) for the caller to resolve.

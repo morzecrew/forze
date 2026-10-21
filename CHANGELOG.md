@@ -17,6 +17,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **A warm API key skips the eligibility read too.** With revocation states on the authn and authz kernels, a key whose cached state recorded its principal's current epoch is admitted without reading Postgres, as a token is. New `ApiKeyEligibilitySkip`.
 - **Vector search can rank by a vector you already hold.** `SearchOptions(query_vector=...)` ranks pgvector or Atlas Vector Search with a blank query; other searches refuse it. A custom vector adapter passes `capabilities=`, `backend=` and `vector_dimensions=` to `search_options_for_simple_adapter` to accept it.
 
+- **Durable schema reference.** A new page lists the Postgres tables and Mongo collections the durable stores use, with their required and recommended indexes and the migrations between releases. The concurrency page now states that a stale-revision precondition is not retried for you.
+
+- **Hub searches aggregate.** `aggregate_search` / `aggregate_search_page` on a Postgres or in-memory hub group every merged match of its members, legs uncapped. New `HubSearchSpec.extra_aggregatable_fields` names hub-relation columns outside the read model that an aggregate may also group by or measure.
+
 ### Changed
 
 - **Until structlog is configured (`configure_logging` or your own `structlog.configure`), forze no longer prints to stdout itself** (behaviour change): its events go to the same-named stdlib logger at its level, so they reach only your stdlib handlers, or stderr from warnings up by default. Call `configure_logging` to keep info output.
@@ -40,6 +44,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`update_many` with revision history no longer fails on a row it leaves unchanged.** Postgres raised a unique violation and rolled the batch back; Mongo wrote a duplicate snapshot.
 
 - **Cookie-mode `/refresh` accepts an empty JSON object.** A `{}` body now reads the refresh token from its cookie, as a body-less request does, instead of answering 422. A token in the body still takes precedence.
+
+- **The Socket.IO rebalance step sheds fewer connections during a connect storm**: a replica's load is now the lower of its live count and its own last report, so connections since that report are not counted against its peers' reports.
+
+- **A hub's `search_count="approximate"` total counts its search text** (**behaviour change**): with a query it is the merged rows the page reads instead of the cap: exact under the cap, the cap above it, zero for no match, a lower bound once a leg is cut at `per_leg_limit`.
+
+- **A filtered Postgres search no longer fails with `postgres_schema_mismatch`** under `search_count="approximate"` or a PGroonga `plan="auto"`.
+
+- **A Postgres hub page with `limit: 0` reports its total** instead of 0.
+
+- **A missing or closed Temporal workflow, or a missing schedule, is `not_found`; a taken workflow id `conflict`** (**behaviour change**), not `RPCError` or `WorkflowAlreadyStartedError`. A taken schedule kept `conflict`, now coded. New `WORKFLOW_NOT_FOUND_CODE` etc.; the mock raises them and refuses a taken schedule.
 
 ### Security
 
