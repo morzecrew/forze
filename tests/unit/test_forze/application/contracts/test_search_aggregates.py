@@ -13,6 +13,7 @@ from forze.application.contracts.querying import UNSUPPORTED_QUERY_FEATURE_CODE
 from forze.application.contracts.search import (
     DEFAULT_SEARCH_CAPABILITIES,
     FULL_SEARCH_CAPABILITIES,
+    HubSearchSpec,
     SearchSpec,
     validate_aggregates_supported,
     validate_search_aggregates,
@@ -91,6 +92,7 @@ def test_a_metric_filter_on_an_encrypted_field_is_refused(field: str) -> None:
         {"highlight": {}},
         {"highlight": True},
         {"max_candidates": 2},
+        {"merge_candidates": 2},
     ],
 )
 def test_hit_options_and_a_candidate_cap_are_refused_not_ignored(
@@ -114,3 +116,46 @@ def test_the_gate_follows_the_declaration() -> None:
 @pytest.mark.parametrize("options", [{"facets": []}, {"highlight": False}, {"highlight": None}])
 def test_options_that_request_nothing_pass(options: dict[str, object]) -> None:
     validate_search_aggregates(_SPEC, _BY_CATEGORY, options)  # type: ignore[arg-type]
+
+
+# ....................... #
+
+
+class _HubRow(BaseModel):
+    id: UUID
+    region: str
+    secret: str
+
+
+_HUB = HubSearchSpec(
+    name="hub",
+    model_type=_HubRow,
+    members=(SearchSpec(name="leg", model_type=_Row, fields=["title"]),),
+    encryption=FieldEncryption(encrypted=frozenset({"secret"})),
+    extra_aggregatable_fields=frozenset({"quantity", "price_upd_quantity"}),
+)
+
+
+def test_a_hub_aggregates_its_stored_fields_and_its_extra_columns() -> None:
+    assert _HUB.aggregatable_fields == {"id", "region", "quantity", "price_upd_quantity"}
+
+    validate_search_aggregates(
+        _HUB,
+        {"$groups": {"region": "region"}, "$computed": {"q": {"$sum": "price_upd_quantity"}}},
+        None,
+    )
+
+
+@pytest.mark.parametrize("field", ["region", "secret"])
+def test_an_extra_aggregatable_field_on_the_hub_model_is_refused(field: str) -> None:
+    """A stored field is aggregatable already; a sealed one must not become so."""
+
+    with pytest.raises(CoreException) as refused:
+        HubSearchSpec(
+            name="hub",
+            model_type=_HubRow,
+            members=(SearchSpec(name="leg", model_type=_Row, fields=["title"]),),
+            extra_aggregatable_fields=frozenset({field}),
+        )
+
+    assert field in str(refused.value)

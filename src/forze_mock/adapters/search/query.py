@@ -30,6 +30,7 @@ from forze.application.contracts.querying import (
     with_group_tiebreakers,
 )
 from forze.application.contracts.search import (
+    HubSearchSpec,
     PhraseCombine,
     SearchCapabilities,
     SearchCountlessPage,
@@ -107,6 +108,58 @@ def filter_predicate(
         filters,
         parser=QueryFilterExpressionParser(limits=limits) if limits is not None else None,
     )
+
+
+def check_mock_search_aggregate(
+    spec: SearchSpec[Any] | HubSearchSpec[Any],
+    capabilities: SearchCapabilities,
+    aggregates: AggregatesExpression,
+    sorts: QuerySortExpression | None,
+    *,
+    options: SearchOptions | None,
+) -> QueryFilterExpressionParser:
+    """Refuse a search aggregate as the relational backends do, before matching anything.
+
+    :returns: The filter parser the aggregate runs under.
+    """
+
+    validate_aggregates_supported(capabilities, backend="mock")
+    parser = QueryFilterExpressionParser(limits=spec.filter_limits or QueryFilterLimits())
+    validate_search_aggregates(spec, aggregates, options, parser=parser)
+
+    # A relational backend refuses an order on anything but an output alias.
+    aliases = AggregatesExpressionParser.parse(aggregates, filter_parser=parser).aliases
+
+    if bad := [field for field in sorts or {} if field not in aliases]:
+        raise exc.precondition(f"Invalid aggregate sort fields: {bad}")
+
+    return parser
+
+
+def mock_aggregate_page(
+    matched: Sequence[JsonDict],
+    spec: SearchSpec[Any] | HubSearchSpec[Any],
+    aggregates: AggregatesExpression,
+    pagination: PaginationExpression | None,
+    sorts: QuerySortExpression | None,
+    *,
+    parser: QueryFilterExpressionParser,
+    return_count: bool,
+) -> CountlessPage[JsonDict] | Page[JsonDict]:
+    """Group *matched*, then order and window the groups (counting them on request)."""
+
+    rows = _sort_docs(
+        _aggregate_docs(matched, aggregates, parser, spec.model_type),
+        with_group_tiebreakers(aggregates, sorts),
+    )
+    window: dict[str, Any] = dict(pagination or {})
+    offset, limit = page_offset(window), page_limit(window)
+    hits = rows[offset : offset + limit] if limit is not None else rows[offset:]
+
+    if not return_count:
+        return page_from_limit_offset(hits, window)
+
+    return page_from_limit_offset(hits, window, total=len(rows))
 
 
 @final
@@ -819,29 +872,20 @@ class MockSearchAdapter(MockTenancyMixin, SearchQueryPort[M]):
     ) -> CountlessPage[JsonDict] | Page[JsonDict]:
         """Group every matching document, as the relational backends group their matched set."""
 
-        validate_aggregates_supported(self.search_capabilities, backend="mock")
-        parser = QueryFilterExpressionParser(limits=self.spec.filter_limits or QueryFilterLimits())
-        validate_search_aggregates(self.spec, aggregates, options, parser=parser)
-
-        # A relational backend refuses an order on anything but an output alias.
-        aliases = AggregatesExpressionParser.parse(aggregates, filter_parser=parser).aliases
-
-        if bad := [field for field in sorts or {} if field not in aliases]:
-            raise exc.precondition(f"Invalid aggregate sort fields: {bad}")
-
-        matched = self._full_ordered_search_documents(query, filters, {}, options)
-        rows = _sort_docs(
-            _aggregate_docs(matched, aggregates, parser, self.spec.model_type),
-            with_group_tiebreakers(aggregates, sorts),
+        parser = check_mock_search_aggregate(
+            self.spec, self.search_capabilities, aggregates, sorts, options=options
         )
-        window: dict[str, Any] = dict(pagination or {})
-        offset, limit = page_offset(window), page_limit(window)
-        hits = rows[offset : offset + limit] if limit is not None else rows[offset:]
+        matched = self._full_ordered_search_documents(query, filters, {}, options)
 
-        if not return_count:
-            return page_from_limit_offset(hits, window)
-
-        return page_from_limit_offset(hits, window, total=len(rows))
+        return mock_aggregate_page(
+            matched,
+            self.spec,
+            aggregates,
+            pagination,
+            sorts,
+            parser=parser,
+            return_count=return_count,
+        )
 
     async def aggregate_search(
         self,
