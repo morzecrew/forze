@@ -8,6 +8,8 @@ import pytest
 from pydantic import BaseModel
 
 from forze.application.contracts.durable.workflow import (
+    SCHEDULE_ALREADY_EXISTS_CODE,
+    SCHEDULE_NOT_FOUND_CODE,
     DurableWorkflowInvokeSpec,
     DurableWorkflowScheduleHandle,
     DurableWorkflowScheduleTiming,
@@ -63,13 +65,27 @@ async def test_upsert_with_kwargs() -> None:
     assert handle.schedule_id == "daily"
     assert state.durable_schedules["wf"]["daily"]["args"] == {"n": 1}
 
+    await cmd.upsert("daily", _In(n=2), _timing())
+    assert state.durable_schedules["wf"]["daily"]["args"] == {"n": 2}
+
+
+async def test_create_refuses_a_taken_id() -> None:
+    state = MockState()
+    cmd = _cmd(state)
+    await cmd.create("daily", _In(n=1), _timing())
+    with pytest.raises(CoreException) as caught:
+        await cmd.create("daily", _In(n=2), _timing())
+    assert caught.value.code == SCHEDULE_ALREADY_EXISTS_CODE
+    assert state.durable_schedules["wf"]["daily"]["args"] == {"n": 1}
+
 
 async def test_update_not_found() -> None:
     state = MockState()
     cmd = _cmd(state)
     handle = DurableWorkflowScheduleHandle(schedule_id="missing")
-    with pytest.raises(CoreException):
+    with pytest.raises(CoreException) as caught:
         await cmd.update(handle, timing=_timing())
+    assert caught.value.code == SCHEDULE_NOT_FOUND_CODE
 
 
 async def test_update_timing_and_args() -> None:
@@ -118,8 +134,9 @@ async def test_describe_not_found() -> None:
     state = MockState()
     qry = _qry(state)
     handle = DurableWorkflowScheduleHandle(schedule_id="missing")
-    with pytest.raises(CoreException):
+    with pytest.raises(CoreException) as caught:
         await qry.describe(handle)
+    assert caught.value.code == SCHEDULE_NOT_FOUND_CODE
 
 
 async def test_update_no_changes_is_noop() -> None:
@@ -147,8 +164,9 @@ async def test_delete_and_trigger_missing() -> None:
     await cmd.create("daily", _In(n=1), _timing())
     handle = DurableWorkflowScheduleHandle(schedule_id="daily")
     await cmd.delete(handle)
-    with pytest.raises(CoreException):
+    with pytest.raises(CoreException) as caught:
         await cmd.trigger(handle)
+    assert caught.value.code == SCHEDULE_NOT_FOUND_CODE
 
 
 async def test_list_with_limit_and_token() -> None:

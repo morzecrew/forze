@@ -1,18 +1,25 @@
 """Unit tests for :mod:`forze_temporal.kernel.client.client`."""
 
 import base64
+from collections.abc import Awaitable, Callable
+from datetime import timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from google.protobuf.message import Message
 from pydantic import BaseModel
 from temporalio.exceptions import WorkflowAlreadyStartedError
 
+from forze.application.contracts.durable.workflow import DurableWorkflowScheduleTiming
 from forze.base.exceptions import CoreException, ExceptionKind
 
 pytest.importorskip("temporalio")
 
-from temporalio.client import TLSConfig
+from temporalio.api.common.v1 import GrpcStatus
+from temporalio.api.errordetails.v1 import NamespaceNotFoundFailure, NotFoundFailure
+from temporalio.client import ScheduleAlreadyRunningError, TLSConfig
 from temporalio.contrib.pydantic import pydantic_data_converter
+from temporalio.service import RPCError, RPCStatusCode
 
 from forze_temporal.kernel.client.client import TemporalClient, TemporalConfig
 
@@ -314,15 +321,19 @@ class TestTemporalClientWorkflowApi:
 
     @pytest.mark.asyncio
     async def test_start_workflow_already_started_raises_by_default(self) -> None:
-        """WorkflowAlreadyStartedError is re-raised when raise_on_already_started."""
+        """A taken workflow id is a conflict when raise_on_already_started."""
         backend = MagicMock()
         err = WorkflowAlreadyStartedError("w-1", "wf", run_id="r1")
         backend.start_workflow = AsyncMock(side_effect=err)
 
         client = self._connected_client(backend)
 
-        with pytest.raises(WorkflowAlreadyStartedError):
+        with pytest.raises(CoreException) as caught:
             await client.start_workflow("q", "wf", _Arg(), workflow_id="w-1")
+
+        assert caught.value.kind == ExceptionKind.CONFLICT
+        assert caught.value.code == "workflow_already_exists"
+        assert caught.value.__cause__ is err
 
     @pytest.mark.asyncio
     async def test_start_workflow_already_started_returns_handle(self) -> None:
@@ -439,6 +450,165 @@ class TestTemporalClientWorkflowApi:
         )
         handle.describe.assert_awaited_once()
         map_fn.assert_called_once_with(temporal_desc)
+
+
+def _rpc_error(status: RPCStatusCode, *details: Message) -> RPCError:
+    """An ``RPCError`` as the SDK raises it, gRPC status details included."""
+
+    grpc_status = GrpcStatus(code=status.value, message="not found")
+
+    for detail in details:
+        grpc_status.details.add().Pack(detail)
+
+    return RPCError("not found", status, grpc_status.SerializeToString())
+
+
+_WORKFLOW_CALLS: dict[str, Callable[[TemporalClient], Awaitable[object]]] = {
+    "describe": lambda c: c.describe_workflow("w-1"),
+    "signal": lambda c: c.signal_workflow("w-1", signal="s", arg=_Arg()),
+    "query": lambda c: c.query_workflow("w-1", query="q", arg=_Arg()),
+    "update": lambda c: c.update_workflow("w-1", update="u", arg=_Arg()),
+    "result": lambda c: c.get_workflow_result("w-1"),
+    "cancel": lambda c: c.cancel_workflow("w-1"),
+    "terminate": lambda c: c.terminate_workflow("w-1"),
+}
+
+_SCHEDULE_CALLS: dict[str, Callable[[TemporalClient], Awaitable[object]]] = {
+    "describe": lambda c: c.describe_schedule("s-1"),
+    "update": lambda c: c.update_schedule(
+        "s-1", workflow_name="wf", queue="q", arg=None, timing=None, workflow_id=None, note=None
+    ),
+    "delete": lambda c: c.delete_schedule("s-1"),
+    "pause": lambda c: c.pause_schedule("s-1"),
+    "unpause": lambda c: c.unpause_schedule("s-1"),
+    "trigger": lambda c: c.trigger_schedule("s-1"),
+}
+
+_CALLS = [
+    *(
+        pytest.param("workflow", call, id=f"workflow-{name}")
+        for name, call in _WORKFLOW_CALLS.items()
+    ),
+    *(
+        pytest.param("schedule", call, id=f"schedule-{name}")
+        for name, call in _SCHEDULE_CALLS.items()
+    ),
+]
+
+
+def _failing_backend(error: BaseException) -> MagicMock:
+    """Backend whose every workflow and schedule handle call raises *error*."""
+
+    handle = MagicMock()
+
+    for method in (
+        "describe",
+        "signal",
+        "query",
+        "execute_update",
+        "result",
+        "cancel",
+        "terminate",
+        "update",
+        "delete",
+        "pause",
+        "unpause",
+        "trigger",
+    ):
+        setattr(handle, method, AsyncMock(side_effect=error))
+
+    backend = MagicMock()
+    backend.get_workflow_handle = MagicMock(return_value=handle)
+    backend.get_schedule_handle = MagicMock(return_value=handle)
+    backend.create_schedule = AsyncMock(side_effect=error)
+    return backend
+
+
+class TestTemporalClientIdErrors:
+    """A missing or taken workflow / schedule id is the caller's error, not an unhandled one."""
+
+    @staticmethod
+    def _connected_client(error: BaseException) -> TemporalClient:
+        client = TemporalClient()
+        client._TemporalClient__client = _failing_backend(error)  # type: ignore[attr-defined]
+        return client
+
+    @pytest.mark.parametrize(
+        "details",
+        [(NotFoundFailure(),), ()],
+        # The time-skipping test server answers a missing id with no detail at all.
+        ids=["server", "time-skipping-server"],
+    )
+    @pytest.mark.parametrize(("resource", "call"), _CALLS)
+    @pytest.mark.asyncio
+    async def test_missing_id_is_not_found(
+        self, resource: str, call, details: tuple[Message, ...]
+    ) -> None:
+        error = _rpc_error(RPCStatusCode.NOT_FOUND, *details)
+
+        with pytest.raises(CoreException) as caught:
+            await call(self._connected_client(error))
+
+        assert caught.value.kind == ExceptionKind.NOT_FOUND
+        assert caught.value.code == f"{resource}_not_found"
+        assert caught.value.__cause__ is error
+        # Temporal answers a closed run's signal, update or terminate as it answers a missing id.
+        assert caught.value.summary == (
+            "Workflow 'w-1' not found or already closed"
+            if resource == "workflow"
+            else "Schedule 's-1' not found"
+        )
+
+    @pytest.mark.parametrize(("resource", "call"), _CALLS)
+    @pytest.mark.asyncio
+    async def test_already_exists_is_conflict(self, resource: str, call) -> None:
+        error = _rpc_error(RPCStatusCode.ALREADY_EXISTS)
+
+        with pytest.raises(CoreException) as caught:
+            await call(self._connected_client(error))
+
+        assert caught.value.kind == ExceptionKind.CONFLICT
+        assert caught.value.code == f"{resource}_already_exists"
+
+    @pytest.mark.parametrize(
+        "error",
+        [
+            # A missing namespace shares the status, but it is the deployment's fault.
+            _rpc_error(RPCStatusCode.NOT_FOUND, NamespaceNotFoundFailure(namespace="nope")),
+            _rpc_error(RPCStatusCode.UNAVAILABLE),
+            _rpc_error(RPCStatusCode.PERMISSION_DENIED),
+            _rpc_error(RPCStatusCode.INTERNAL),
+        ],
+        ids=["namespace-not-found", "unavailable", "permission-denied", "internal"],
+    )
+    @pytest.mark.parametrize(("resource", "call"), _CALLS)
+    @pytest.mark.asyncio
+    async def test_other_rpc_errors_propagate_unchanged(
+        self, resource: str, call, error: RPCError
+    ) -> None:
+        _ = resource
+
+        with pytest.raises(RPCError) as caught:
+            await call(self._connected_client(error))
+
+        assert caught.value is error
+
+    @pytest.mark.asyncio
+    async def test_creating_a_taken_schedule_id_is_conflict(self) -> None:
+        client = self._connected_client(ScheduleAlreadyRunningError())
+
+        with pytest.raises(CoreException) as caught:
+            await client.create_schedule(
+                "s-1",
+                workflow_name="wf",
+                queue="q",
+                arg=_Arg(),
+                timing=DurableWorkflowScheduleTiming(interval=timedelta(minutes=5)),
+                workflow_id="s-1-run",
+            )
+
+        assert caught.value.kind == ExceptionKind.CONFLICT
+        assert caught.value.code == "schedule_already_exists"
 
 
 def _page_token(index: int) -> bytes:

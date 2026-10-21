@@ -190,8 +190,8 @@ class MockOffsetOnlySearchMixin(Generic[M]):
         options: SearchOptions | None = None,
     ) -> CountlessPage[JsonDict]:
         _ = aggregates, query, filters, pagination, sorts, options
-        # A hub merges capped legs and a federation merges unlike rows: neither has the one
-        # complete matched set an aggregate reads, so both refuse as the real ones do.
+        # A federation merges unlike rows: it has no one complete matched set for an aggregate
+        # to read, so it refuses as the real one does. (The hub overrides this.)
         validate_aggregates_supported(DEFAULT_SEARCH_CAPABILITIES, backend=type(self).__name__)
         raise exc.internal("unreachable")  # pragma: no cover
 

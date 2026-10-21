@@ -10,6 +10,7 @@ import attrs
 from pydantic import BaseModel
 
 from forze.application.contracts.durable.workflow import (
+    SCHEDULE_NOT_FOUND_CODE,
     DurableWorkflowScheduleCommandPort,
     DurableWorkflowScheduleDescription,
     DurableWorkflowScheduleHandle,
@@ -232,6 +233,7 @@ class TemporalWorkflowScheduleQueryAdapter[In: BaseModel](
         if desc.workflow_name != self.spec.name:
             raise exc.not_found(
                 f"Schedule {handle.schedule_id!r} is not for workflow {self.spec.name!r}",
+                code=SCHEDULE_NOT_FOUND_CODE,
             )
 
         return desc
