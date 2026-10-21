@@ -9872,6 +9872,12 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <li>
 <p><strong><code>upsert_many</code> can mirror a source and keep values a null would erase.</strong> <code>UpsertItem.mirror(id, payload)</code> updates with the create payload; <code>skip_none=True</code> leaves out each top-level field an update sets to <code>None</code>. A set-based upsert is now judged on the fields the items' updates write.</p>
 </li>
+<li>
+<p><strong><code>IssuedApiKey.secret</code></strong> returns the raw key of a freshly issued API key. It stays out of <code>repr()</code> and <code>str()</code>.</p>
+</li>
+<li>
+<p><strong><code>attach_authn_routes</code> no longer needs <code>ns=</code>.</strong> Without <code>ns=</code> or <code>resource=</code> it uses the one namespace in the registry holding its <code>password_login</code> or <code>refresh_tokens</code> operation, <code>spec.default_namespace</code> for <code>build_authn_registry(spec)</code>, and refuses to guess.</p>
+</li>
 </ul>
 <h3 id="changed">Changed<a class="headerlink" href="#changed" title="Permanent link">&para;</a></h3>
 <ul>
@@ -9883,6 +9889,9 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 </li>
 <li>
 <p><strong><code>UpsertItem.update</code> is now derived from the update passed and <code>skip_none</code>.</strong> Constructors are unchanged; <code>attrs.asdict</code> output and <code>__match_args__</code> differ. An override of <code>DocumentSpec.require_set_based_upsert</code> must accept the new <code>updates</code> argument.</p>
+</li>
+<li>
+<p><strong><code>anonymous_paths</code> entries may be relative to the mount.</strong> With <code>SecurityContextMiddleware</code> on an application mounted under a prefix or served with a <code>root_path</code>, <code>/auth/login</code> now matches <code>/v1/auth/login</code>; full paths keep working.</p>
 </li>
 </ul>
 <h3 id="fixed">Fixed<a class="headerlink" href="#fixed" title="Permanent link">&para;</a></h3>

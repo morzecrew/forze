@@ -6875,6 +6875,20 @@ server fault, not a missing credential. This matters most in
 <a href="../../reference/fastapi-routes/#cookie-mode">cookie mode</a>, where a stale access
 cookie rides every request including the one that would replace it. Paths are
 exact, never prefixes.</p>
+<p>On an application mounted under a prefix, with the middleware added to the mounted
+application, an entry may be the full path or the path relative to the mount:</p>
+<div class="highlight"><pre><span></span><code><span class="n">api</span> <span class="o">=</span> <span class="n">FastAPI</span><span class="p">()</span>
+<span class="n">api</span><span class="o">.</span><span class="n">add_middleware</span><span class="p">(</span>
+    <span class="n">SecurityContextMiddleware</span><span class="p">,</span>
+    <span class="n">ctx_dep</span><span class="o">=</span><span class="n">runtime</span><span class="o">.</span><span class="n">get_context</span><span class="p">,</span>
+    <span class="n">anonymous_paths</span><span class="o">=</span><span class="p">{</span><span class="s2">"/auth/login"</span><span class="p">,</span> <span class="s2">"/auth/refresh"</span><span class="p">},</span>  <span class="c1"># relative to the mount</span>
+<span class="p">)</span>
+<span class="n">app</span><span class="o">.</span><span class="n">mount</span><span class="p">(</span><span class="s2">"/v1"</span><span class="p">,</span> <span class="n">api</span><span class="p">)</span>  <span class="c1"># /v1/auth/login is anonymous; "/v1/auth/login" works too</span>
+</code></pre></div>
+<p>A server <code>root_path</code> counts as a mount the same way. An entry whose leading path segments
+are the mount prefix (<code>/v1</code> or <code>/v1/...</code> under <code>/v1</code>, not <code>/v1x</code>) is only ever read as a
+full path, so no entry names two routes. A middleware added to the parent application
+sees no mount: list full paths there.</p>
 <p>Probe paths want the opposite treatment. Both middlewares resolve the execution
 context on every HTTP request, so in front of <code>/livez</code> they answer 500 while the
 runtime scope is not yet open — precisely the window a liveness probe exists to

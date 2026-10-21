@@ -6888,7 +6888,8 @@ registry adds its <code>delete</code>/<code>restore</code> operations to the sam
 attacher builds the namespace for you (<code>StrKeyNamespace(prefix="notes")</code>). It
 must equal the prefix the operations were registered under (the kit builders
 default to <code>spec.default_namespace</code>); <code>ns=</code> and <code>resource=</code> are mutually
-exclusive, so provide exactly one. To move a single operation off its default
+exclusive, so provide exactly one (only <code>attach_authn_routes</code> can infer it, see
+<a href="#authn-routes">Authn routes</a>). To move a single operation off its default
 path, pass <code>path_overrides={DocumentKernelOp.GET: "/by-id/{id}"}</code> (keyed like
 <code>include=</code>). Only the path changes — the <code>operationId</code> stays the verbatim catalog
 key, so the HTTP/<abbr title="Model Context Protocol">MCP</abbr>/catalog identity is preserved; an override that drops a
@@ -7094,6 +7095,11 @@ they 401 without a bound identity and show up protected under
 <code>build_authn_registry</code> gets <code>admin_guards</code>, and run behind them. The full
 wiring (including how the reset token reaches the user via the outbox) is in the
 <a href="../../recipes/authn-authz-tenancy-fastapi/#http-login-endpoints">Authn, authz &amp; tenancy recipe</a>.</p>
+<p>Unlike the other helpers, <code>attach_authn_routes</code> needs neither <code>ns=</code> nor <code>resource=</code>:
+without them it uses the one namespace in the registry that holds <code>password_login</code> or
+<code>refresh_tokens</code> under the default <code>.</code> separator, which is <code>spec.default_namespace</code> for
+<code>build_authn_registry(spec)</code>. It never guesses — several such namespaces, or none, is a
+configuration error that asks for <code>ns=</code>.</p>
 <h3 id="cookie-mode">Cookie mode<a class="headerlink" href="#cookie-mode" title="Permanent link">&para;</a></h3>
 <p>Browser clients that must not hold a token in JavaScript pass an
 <code>AuthnCookieCarrier</code> to <code>attach_authn_routes(cookies=…)</code>. Login and refresh then
