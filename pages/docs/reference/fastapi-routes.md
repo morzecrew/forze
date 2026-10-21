@@ -287,9 +287,10 @@ server-side CSRF gate **on by default** (`CookieCsrf`): a request using either
 cookie on an unsafe method must prove a same-host origin via `Origin` (or
 `Referer`), so the defense holds even when a proxy strips `SameSite` or a
 `samesite="none"` deployment relies on it. The middleware applies it to the
-access cookie; refresh applies the same ingress's gate when it reads the refresh
-cookie (the default gate if no `CookieTokenAuthn` reads the carrier's
-`access_cookie`), so the settings below cover both. A cross-origin frontend (a SPA on
+access cookie. Login and logout apply the same ingress's gate to every request,
+with or without a cookie, and refresh applies it when it reads the refresh cookie
+(the default gate if no `CookieTokenAuthn` reads the carrier's `access_cookie`), so
+the settings below cover all three. A cross-origin frontend (a SPA on
 another host) lists itself in `CookieCsrf(allowed_origins={...})` — a dev server
 that picks a free port may be named as a range on a loopback host
 (`http://localhost:5173-5199`, or `http://localhost:*`); non-browser
