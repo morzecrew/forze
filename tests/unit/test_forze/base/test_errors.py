@@ -2,6 +2,11 @@
 
 from __future__ import annotations
 
+import copy
+import pickle
+from collections.abc import Callable
+
+import attrs
 import pytest
 from pydantic import BaseModel
 from pydantic import ValidationError as PydanticValidationError
@@ -19,6 +24,22 @@ from forze.base.exceptions import (
 )
 
 # ----------------------- #
+
+
+@attrs.define(slots=True, eq=False)
+class _ScopedError(CoreException):
+    """A subclass with its own keyword-only field, like ``RefreshTokenReuseError``."""
+
+    scope_id: str = attrs.field(kw_only=True)
+
+
+_ROUND_TRIPS: list[Callable[[CoreException], CoreException]] = [
+    copy.copy,
+    copy.deepcopy,
+    lambda e: pickle.loads(pickle.dumps(e)),
+]
+
+# ....................... #
 
 
 class TestCoreException:
@@ -55,6 +76,53 @@ class TestCoreException:
         assert enriched is not err
         assert enriched.summary == err.summary
         assert enriched.details is not None
+
+    @pytest.mark.parametrize("round_trip", _ROUND_TRIPS, ids=["copy", "deepcopy", "pickle"])
+    def test_round_trip_keeps_every_field(
+        self, round_trip: Callable[[CoreException], CoreException]
+    ) -> None:
+        err = exc.not_found("missing", code="doc.gone", details={"id": "1"}, resource_type="doc")
+        err.expose_details = False  # set in place, as the exception mappers do
+        err.add_note("while loading")
+
+        out = round_trip(err)
+
+        assert type(out) is CoreException
+        assert out.kind is ExceptionKind.NOT_FOUND
+        assert out.summary == "missing"
+        assert out.code == "doc.gone"
+        assert out.details == {"id": "1"}
+        assert out.resource_type == "doc"
+        assert out.expose_details is False
+        assert out.__notes__ == ["while loading"]
+
+    @pytest.mark.parametrize("round_trip", _ROUND_TRIPS, ids=["copy", "deepcopy", "pickle"])
+    def test_round_trip_keeps_enriched_details(
+        self, round_trip: Callable[[CoreException], CoreException]
+    ) -> None:
+        err = exc.domain("bad state").enrich(resource={"id": "1"})
+
+        assert round_trip(err).details == err.details
+
+    @pytest.mark.parametrize("round_trip", _ROUND_TRIPS, ids=["copy", "deepcopy", "pickle"])
+    def test_round_trip_keeps_subclass_fields(
+        self, round_trip: Callable[[CoreException], CoreException]
+    ) -> None:
+        err = _ScopedError(ExceptionKind.CONFLICT, "taken", code="scope.taken", scope_id="s1")
+
+        out = round_trip(err)
+
+        assert isinstance(out, _ScopedError)
+        assert out.scope_id == "s1"
+        assert out.code == "scope.taken"
+
+    def test_deepcopy_does_not_share_details(self) -> None:
+        err = exc.conflict("mismatch", details={"rev": [1]})
+
+        out = copy.deepcopy(err)
+
+        assert out.details is not err.details
+        assert out.details["rev"] is not err.details["rev"]  # type: ignore[index]
 
 
 class TestMapPydantic:
