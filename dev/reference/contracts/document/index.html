@@ -7415,9 +7415,22 @@ revision history, materialized fields, a <code>SerializedBy</code> guarantee or 
 encryption; a domain with update validators, invariants, domain events, or pydantic validators
 or constraints of its own on any field; or an update field the domain lacks, freezes, merges
 (a model or mapping) or derives from the other fields. A table
-keyed by more than the id (and tenant), or a patched column Postgres cannot compare, takes the
-usual path instead. Mongo, Firestore and the mock apply the same refusals and then write
-through their usual path.</p>
+keyed by more than the id (and tenant), or a column an update can write that Postgres cannot
+compare, takes the usual path instead. Mongo, Firestore and the mock apply the same refusals
+and then write through their usual path.</p>
+<p>Each item says what its update writes, on every backend and with or without <code>set_based</code>:</p>
+<ul>
+<li><code>UpsertItem.mirror(id, payload)</code> updates with the create payload itself, for a mirrored
+  source whose newer version rewrites every field the create carries, not only the update
+  command's. A set-based upsert is judged on the fields the items' update types carry, so a
+  mirror whose create holds a mapping, a model or a frozen field is refused.</li>
+<li><code>skip_none=True</code>, on <code>mirror</code> or on <code>UpsertItem(...)</code>, leaves out each top-level field the
+  update sets to <code>None</code>, so a stored value is kept instead of cleared. A <code>None</code> inside a mapping
+  or model is not looked into, and the create is still inserted as it is.</li>
+</ul>
+<p>An update writes the fields its DTO sets: a field the payload leaves unset keeps its stored
+value, a mirror's too. On the domain path, a mirror whose create sets a frozen field (such as
+<code>ImportTimestamps.created_at</code>) is refused for a stored row with "Field … is frozen".</p>
 <h3 id="update">Update<a class="headerlink" href="#update" title="Permanent link">&para;</a></h3>
 <table>
 <thead>
