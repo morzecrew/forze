@@ -1,5 +1,5 @@
 from collections.abc import Awaitable
-from typing import Any, Generic, Protocol, runtime_checkable
+from typing import Any, Final, Generic, Protocol, runtime_checkable
 
 from .ports import BaseDurableWorkflowPort
 from .specs import (
@@ -10,6 +10,14 @@ from .specs import (
 )
 
 # ----------------------- #
+
+SCHEDULE_NOT_FOUND_CODE: Final = "schedule_not_found"
+"""Code of the ``not_found`` error for a schedule id that does not exist."""
+
+SCHEDULE_ALREADY_EXISTS_CODE: Final = "schedule_already_exists"
+"""Code of the ``conflict`` error for a create whose schedule id is taken."""
+
+# ....................... #
 
 
 @runtime_checkable

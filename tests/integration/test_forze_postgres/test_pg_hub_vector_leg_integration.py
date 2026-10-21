@@ -2,14 +2,17 @@
 
 from __future__ import annotations
 
+from typing import Any
 from uuid import UUID, uuid4
 
 import pytest
 from pydantic import BaseModel
 
 from forze.application.contracts.embeddings import EmbeddingsProviderDepKey, EmbeddingsSpec
+from forze.application.contracts.querying import UNSUPPORTED_QUERY_FEATURE_CODE
 from forze.application.contracts.search import HubSearchSpec, SearchSpec
 from forze.application.execution import Deps, ExecutionContext
+from forze.base.exceptions import CoreException
 from forze_mock import MockHashEmbeddingsProvider
 from forze_postgres.adapters.search._vector_sql import vector_param_literal
 from forze_postgres.execution.deps import ConfigurablePostgresHubSearch
@@ -138,6 +141,16 @@ async def test_hub_vector_leg_knn_single_and_multi_query(
 
     browse = await adapter.search_page("")
     assert browse.count == 2
+
+    # Uncapped, a vector leg matches every embedded row, so an aggregate refuses to measure
+    # it; a blank query has no leg and measures the hub rows.
+    count: Any = {"$computed": {"n": {"$count": None}}}
+
+    with pytest.raises(CoreException) as refused:
+        await adapter.aggregate_search(count, "alpha")
+
+    assert refused.value.code == UNSUPPORTED_QUERY_FEATURE_CODE
+    assert [row["n"] for row in (await adapter.aggregate_search(count, "")).hits] == [2]
 
 
 @pytest.mark.integration

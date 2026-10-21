@@ -17,11 +17,11 @@ pytest.importorskip("temporalio")
 pytest.importorskip("testcontainers")
 
 from temporalio.common import RetryPolicy, WorkflowIDReusePolicy
-from temporalio.exceptions import WorkflowAlreadyStartedError
 from temporalio.worker import Worker
 
 from forze.application.contracts.durable.workflow import DurableWorkflowSpec
 from forze.application.contracts.durable.workflow.specs import DurableWorkflowInvokeSpec
+from forze.base.exceptions import CoreException, ExceptionKind
 from forze_temporal import TemporalStartOptions, sandboxed_workflow_runner
 from forze_temporal.adapters.workflow import TemporalWorkflowCommandAdapter
 from forze_temporal.kernel.client import TemporalClient
@@ -197,8 +197,10 @@ async def test_id_reuse_policy_is_enforced_by_the_server(echo_client) -> None:
         native_handle = echo_client.native.get_workflow_handle(workflow_id)
         first_run = (await native_handle.describe()).run_id
 
-        with pytest.raises(WorkflowAlreadyStartedError):
+        with pytest.raises(CoreException) as refused:
             await adapter.start(EchoIn(marker="reuse-again"), workflow_id=workflow_id)
+
+        assert refused.value.kind == ExceptionKind.CONFLICT
 
         # The control: the same closed id starts fine when the policy allows it, so the
         # refusal above is the policy talking and not some unrelated rejection.
