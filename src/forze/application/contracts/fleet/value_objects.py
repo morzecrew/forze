@@ -176,14 +176,15 @@ class FleetView:
     ) -> int:
         """How many units this member holds above the fleet's mean load.
 
-        The mean is over the serving members whose *load* report is a number. The result is
-        ``0`` unless the fleet is :meth:`settled` for *settle*, *me* is serving and reports
-        *load*, and that load exceeds ``mean * (1 + tolerance)``. Then it is
-        ``ceil(load - mean)``, capped by the floor of *me*'s *movable* report when that is a
-        number. A result below *smallest* is ``0``.
+        A load is a count, so the mean is over the serving members whose *load* report is a
+        number ``0`` or more; a negative one counts as absent. The result is ``0`` unless the
+        fleet is :meth:`settled` for *settle*, *me* is serving and reports such a load, and
+        that load exceeds ``mean * (1 + tolerance)``. Then it is ``ceil(load - mean)``, capped
+        by the floor of *me*'s *movable* report when that is a number. A result below
+        *smallest* is ``0``.
 
         :param me: This member's id.
-        :param load: The report key holding each member's load.
+        :param load: The report key holding each member's load, a count ``0`` or more.
         :param movable: The report key holding how many units *me* could move, if any.
         :param tolerance: How far above the mean, relative to it, is still fine.
         :param settle: How long the fleet must have been settled.
@@ -198,7 +199,7 @@ class FleetView:
         loads = {
             member_id: value
             for member_id, member in serving.items()
-            if (value := _number(member.report.get(load))) is not None
+            if (value := _number(member.report.get(load))) is not None and value >= 0
         }
 
         mine = loads.get(me)

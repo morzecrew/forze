@@ -71,6 +71,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **A missing or closed Temporal workflow, or a missing schedule, is `not_found`; a taken workflow id `conflict`** (**behaviour change**), not `RPCError` or `WorkflowAlreadyStartedError`. A taken schedule kept `conflict`, now coded. New `WORKFLOW_NOT_FOUND_CODE` etc.; the mock raises them and refuses a taken schedule.
 
+- **`FleetView.excess` leaves a negative load out of the mean** (**behaviour change**), as it does a non-numeric one: a load is a count. A negative peer load no longer inflates a member's excess, and a member whose own load is negative gets 0.
+
 ### Security
 
 - **An error an integration translates from its backend no longer shows the failed call's context to API callers** (**behaviour change**): such an error carries no `context`, whatever its kind. The details stay on the exception and are logged at debug. A stream's failure between items is now translated too.
