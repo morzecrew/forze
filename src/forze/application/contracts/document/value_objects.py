@@ -153,8 +153,13 @@ def _without_none[T: BaseModel](dto: T) -> T:
     if len(kept) == len(dto.model_fields_set):
         return dto
 
-    # Already validated: only which fields count as set changes.
-    return type(dto).model_construct(_fields_set=kept, **dict(dto))
+    # Already validated: a shallow copy where only which fields count as set changes. Not
+    # ``model_construct``: it reads aliases first, so a field aliased to another field's name
+    # would take that field's value.
+    trimmed = dto.model_copy()
+    trimmed.__pydantic_fields_set__ = kept
+
+    return trimmed
 
 
 # ....................... #

@@ -728,3 +728,4 @@ _.share  # unused method (src/forze/application/contracts/fleet/value_objects.py
 _.excess  # unused method (src/forze/application/contracts/fleet/value_objects.py:167)
 payloads_unreadable  # unused variable (src/forze/application/contracts/durable/function/run_store.py:155)
 _.mirror  # unused method (src/forze/application/contracts/document/value_objects.py:199)
+_.__pydantic_fields_set__  # unused attribute (src/forze/application/contracts/document/value_objects.py:160) — read by pydantic

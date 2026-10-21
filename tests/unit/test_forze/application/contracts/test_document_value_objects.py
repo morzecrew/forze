@@ -8,6 +8,8 @@ from uuid import uuid4
 
 import pytest
 
+from pydantic import ConfigDict, Field
+
 from forze.application.contracts.document import UpsertItem
 from forze.domain.models import BaseDTO
 
@@ -50,3 +52,17 @@ class TestUpsertItem:
         assert UpsertItem(id=uuid4(), create=_Payload(), update=update, skip_none=True).update is (
             update
         )
+
+    def test_skip_none_keeps_each_value_on_its_own_field_whatever_the_aliases(self) -> None:
+        class _Aliased(BaseDTO):
+            model_config = ConfigDict(populate_by_name=True)
+
+            first: str | None = Field(default=None, alias="second")
+            second: str | None = None
+
+        # By field name: validating {"second": None} would fill ``first`` through its alias.
+        update = _Aliased(first="kept").model_copy(update={"second": None})
+        item = UpsertItem(id=uuid4(), create=_Aliased(), update=update, skip_none=True)
+
+        assert item.update.first == "kept"
+        assert item.update.model_fields_set == {"first"}

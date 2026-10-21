@@ -7,7 +7,8 @@ under the same frozen clock; every stored column must come out equal, including 
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
+from decimal import Decimal
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -578,3 +579,136 @@ async def test_a_mirror_writing_a_column_sql_cannot_compare_takes_the_domain_pat
     sql = "SELECT note::text AS note, rev FROM {}"
     assert await pg_client.fetch_all(sql.format(set_t), []) == [{"note": "<alpha/>", "rev": 2}]
     assert await pg_client.fetch_all(sql.format(domain_t), []) == [{"note": "<alpha/>", "rev": 2}]
+
+
+# ....................... #
+
+
+class _TypedFields(BaseDTO):
+    flag: bool
+    small: int
+    big: int
+    ratio: float
+    day: date
+    naive: datetime
+    at: datetime
+    blob: bytes
+    body: str
+    doc: list[int]
+    price: Decimal
+    code: str
+    weight: float
+    at3: datetime
+    naive3: datetime
+    note: str | None = None
+
+
+class _TypedCreate(CreateDocumentCmd, _TypedFields):
+    pass
+
+
+class _TypedDoc(Document, _TypedFields):
+    pass
+
+
+class _TypedRead(ReadDocument, _TypedFields):
+    pass
+
+
+class _TypedUpdate(BaseDTO):
+    flag: bool | None = None
+    big: int | None = None
+    ratio: float | None = None
+    naive: datetime | None = None
+    blob: bytes | None = None
+    body: str | None = None
+    price: Decimal | None = None
+    code: str | None = None
+    weight: float | None = None
+    at3: datetime | None = None
+    note: str | None = None
+
+
+_TYPED_SPEC = DocumentSpec(
+    name="setbased_typed",
+    read=_TypedRead,
+    write=DocumentWriteTypes(domain=_TypedDoc, create_cmd=_TypedCreate, update_cmd=_TypedUpdate),
+)
+
+
+def _typed(i: int, ratio: float) -> _TypedCreate:
+    return _TypedCreate(
+        flag=bool(i % 2),
+        small=-(2**15) if i else 2**15 - 1,
+        big=-(2**63) + i if i % 2 else 2**63 - 1 - i,
+        ratio=ratio,
+        day=date(1, 1, 1) if i else date(9999, 12, 31),
+        naive=datetime(2026, 1, 2, 3, 4, 5, 678901),
+        at=datetime(1999, 12, 31, 23, 59, 59, 999999, tzinfo=UTC),
+        blob=bytes(range(256)) if i % 2 else b"",
+        body='a,"b"\\c{d} é\n\t NULL' if i % 2 else "",
+        doc=[i, -i],
+        price=Decimal("12345678901234567890.123456789"),
+        code="ab,{c}",
+        weight=0.1,
+        # A column type with a modifier, the batch mixing naive and aware values.
+        at3=datetime(2026, 1, 2, 3, 4, 5, 678901, tzinfo=UTC if i % 2 else None),
+        naive3=datetime(2026, 1, 2, 3, 4, 5, 678901, tzinfo=None if i % 2 else UTC),
+        note=None if i % 3 else "n",
+    )
+
+
+async def test_every_column_type_is_written_as_the_domain_path_writes_it(
+    pg_client: PostgresClient,
+) -> None:
+    """The ``unnest`` row source sends most types in binary and the rest as text; whichever,
+    every stored value must equal what the domain path stores, extremes and specials included."""
+
+    ddl = """
+        CREATE TABLE {} (
+            id uuid PRIMARY KEY, rev integer NOT NULL, created_at timestamptz NOT NULL,
+            last_update_at timestamptz NOT NULL, flag boolean NOT NULL, small int2 NOT NULL,
+            big int8 NOT NULL, ratio float8 NOT NULL, day date NOT NULL,
+            naive timestamp NOT NULL, at timestamptz NOT NULL, blob bytea NOT NULL,
+            body text NOT NULL, doc jsonb NOT NULL, price numeric NOT NULL,
+            code varchar(8) NOT NULL, weight float4 NOT NULL, at3 timestamptz(3) NOT NULL,
+            naive3 timestamp(3) NOT NULL, note text
+        )
+    """
+    domain_t, set_t = (f"pg_setbased_typed_{uuid4().hex[:10]}" for _ in range(2))
+    ids = [uuid4() for _ in range(4)]
+    ratios = [1.7976931348623157e308, -5e-324, 1e-308, 0.1 + 0.2]
+    patches = [
+        _TypedUpdate(ratio=2.5, blob=b"\x00\\x", body="{}", price=Decimal("-0.5"), note=None),
+        _TypedUpdate(flag=False, big=0, naive=datetime(2000, 2, 29), code="x", weight=1e-3),
+        # One patch group, its modified-type values naive and aware.
+        _TypedUpdate(ratio=0.25, at3=datetime(2027, 1, 1, 12)),
+        _TypedUpdate(ratio=1 / 3, at3=datetime(2027, 1, 1, tzinfo=UTC)),
+    ]
+
+    for t, set_based in ((domain_t, False), (set_t, True)):
+        await pg_client.execute(ddl.format(t))
+        cmd = document_context(pg_client, t).document.command(_TYPED_SPEC)
+
+        with bind_time_source(FrozenTimeSource(instant=datetime(2026, 1, 1, tzinfo=UTC))):
+            await cmd.upsert_many(
+                [
+                    UpsertItem(id=pk, create=_typed(i, ratios[i]), update=_TypedUpdate())
+                    for i, pk in enumerate(ids)
+                ],
+                return_new=False,
+                set_based=set_based,
+            )
+            await cmd.upsert_many(
+                [
+                    UpsertItem(id=pk, create=_typed(0, 0.0), update=patch)
+                    for pk, patch in zip(ids, patches, strict=True)
+                ],
+                return_new=False,
+                set_based=set_based,
+            )
+
+    sql = "SELECT * FROM {} ORDER BY id"
+    set_rows = await pg_client.fetch_all(sql.format(set_t), [])
+    assert set_rows == await pg_client.fetch_all(sql.format(domain_t), [])
+    assert [row["rev"] for row in set_rows] == [2, 2, 2, 2]
