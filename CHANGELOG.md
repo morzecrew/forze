@@ -25,7 +25,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **`IssuedApiKey.secret`** returns the raw key of a freshly issued API key. It stays out of `repr()` and `str()`.
 
-- **`attach_authn_routes` no longer needs `ns=`.** Without `ns=` or `resource=` it uses the one namespace in the registry holding its login and refresh operations, `spec.default_namespace` for `build_authn_registry(spec)`, and refuses to guess.
+- **`attach_authn_routes` no longer needs `ns=`.** Without `ns=` or `resource=` it uses the one namespace in the registry holding its `password_login` or `refresh_tokens` operation, `spec.default_namespace` for `build_authn_registry(spec)`, and refuses to guess.
 
 ### Changed
 
