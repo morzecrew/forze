@@ -108,7 +108,11 @@ def _no_body_endpoint(
 
 
 def _cookie_token_endpoint(cookies: AuthnCookieCarrier) -> Any:
-    """Login-shaped builder: run the op, set/rotate cookies, strip the body."""
+    """Login-shaped builder: run the op, set/rotate cookies, strip the body.
+
+    Setting the cookies applies the access cookie's CSRF gate first, as refresh and
+    logout do, on every request.
+    """
 
     def build(
         runner: OperationRunner,
@@ -117,16 +121,23 @@ def _cookie_token_endpoint(cookies: AuthnCookieCarrier) -> Any:
     ) -> Callable[..., Awaitable[Any]]:
         dto_type = require_input_type(input_type, op)
 
-        async def endpoint(*, payload: Any, response: Response) -> Any:
+        async def endpoint(*, request: Request, payload: Any, response: Response) -> Any:
+            enforce_published_cookie_csrf(request, cookies.access_cookie)
+
             return cookies.apply(response, await runner(payload))
 
         endpoint.__signature__ = inspect.Signature(  # type: ignore[attr-defined]
             [
+                inspect.Parameter("request", inspect.Parameter.KEYWORD_ONLY, annotation=Request),
                 inspect.Parameter("payload", inspect.Parameter.KEYWORD_ONLY, annotation=dto_type),
                 inspect.Parameter("response", inspect.Parameter.KEYWORD_ONLY, annotation=Response),
             ]
         )
-        endpoint.__annotations__ = {"payload": dto_type, "response": Response}
+        endpoint.__annotations__ = {
+            "request": Request,
+            "payload": dto_type,
+            "response": Response,
+        }
 
         return endpoint
 
@@ -150,9 +161,10 @@ def _cookie_refresh_endpoint(cookies: AuthnCookieCarrier) -> Any:
     cookie; absent one — no body, an empty body, ``null`` or ``{}`` — the refresh
     token comes from the carrier's cookie, the reason a browser can refresh
     without ever seeing token strings. A non-empty body without the token is
-    still a validation error. Reading the cookie applies the
+    still a validation error. Every request applies the
     :class:`~forze_fastapi.security.CookieCsrf` gate of the ``CookieTokenAuthn``
-    reading the carrier's access cookie (the default gate when there is none).
+    reading the carrier's access cookie (the default gate when there is none),
+    whichever carries the token, since either way the response sets the cookies.
     """
 
     def build(
@@ -168,6 +180,10 @@ def _cookie_refresh_endpoint(cookies: AuthnCookieCarrier) -> Any:
         ]
 
         async def endpoint(*, request: Request, response: Response, payload: Any = None) -> Any:
+            # The response sets the session cookies whichever carries the token: the same
+            # gate as login, before the token is read or spent.
+            enforce_published_cookie_csrf(request, cookies.access_cookie)
+
             body = payload
 
             if body is None:
@@ -179,10 +195,6 @@ def _cookie_refresh_endpoint(cookies: AuthnCookieCarrier) -> Any:
                         f"body nor the {cookies.refresh_cookie!r} cookie.",
                         code="auth_required",
                     )
-
-                # The refresh cookie is an ambient credential like the access cookie: the
-                # same gate, before the token is spent.
-                enforce_published_cookie_csrf(request, cookies.access_cookie)
 
                 body = dto_type.model_validate({"refresh_token": token})
 
@@ -218,7 +230,8 @@ def _cookie_logout_endpoint(cookies: AuthnCookieCarrier) -> Any:
     bound identity and nothing server-side to revoke — but the caller's goal is
     "end this browser session", and a 401 would leave the dead cookies pinned to
     the browser. The unauthenticated case clears them and answers 204; every
-    other failure propagates.
+    other failure propagates. The access cookie's CSRF gate applies first, with or
+    without a cookie, as on login.
     """
 
     def build(
@@ -228,8 +241,10 @@ def _cookie_logout_endpoint(cookies: AuthnCookieCarrier) -> Any:
     ) -> Callable[..., Awaitable[Any]]:
         _ = input_type, op
 
-        async def endpoint(*, response: Response) -> Any:
+        async def endpoint(*, request: Request, response: Response) -> Any:
             from forze.base.exceptions import CoreException
+
+            enforce_published_cookie_csrf(request, cookies.access_cookie)
 
             try:
                 result = await runner(None)
@@ -245,10 +260,11 @@ def _cookie_logout_endpoint(cookies: AuthnCookieCarrier) -> Any:
 
         endpoint.__signature__ = inspect.Signature(  # type: ignore[attr-defined]
             [
+                inspect.Parameter("request", inspect.Parameter.KEYWORD_ONLY, annotation=Request),
                 inspect.Parameter("response", inspect.Parameter.KEYWORD_ONLY, annotation=Response),
             ]
         )
-        endpoint.__annotations__ = {"response": Response}
+        endpoint.__annotations__ = {"request": Request, "response": Response}
 
         return endpoint
 
@@ -454,7 +470,8 @@ def attach_authn_routes(
             token strings from their bodies; ``/refresh`` also accepts a request with
             no body or an empty JSON object, reading the refresh token from its
             cookie behind the access cookie's CSRF gate (a token in the body takes
-            precedence); ``/logout`` expires both cookies. Point ``CookieTokenAuthn``
+            precedence); ``/logout`` expires both cookies. ``/login`` and ``/logout``
+            apply the same gate on every request. Point ``CookieTokenAuthn``
             at the carrier's access cookie, and list the login/refresh paths in the
             security middleware's ``anonymous_paths`` so a stale access cookie cannot
             401 them.

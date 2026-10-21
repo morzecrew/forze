@@ -738,6 +738,14 @@ def _with_headers(variant: dict[str, Any], headers: dict[str, str]) -> dict[str,
     return {**variant, "headers": {**variant.get("headers", {}), **headers}}
 
 
+def _cookie_login(client: TestClient) -> Any:
+    """Cookie-mode login from the app's own origin, as a browser sends it."""
+
+    return client.post(
+        "/auth/login", json={"login": "alice", "password": "pw-1"}, headers=_SAME_ORIGIN
+    )
+
+
 class TestCookieMode:
     def _cookie_client(self, state: MockState) -> TestClient:
         from forze_fastapi.security import AuthnCookieCarrier
@@ -765,7 +773,7 @@ class TestCookieMode:
         _seed(state)
         client = self._cookie_client(state)
 
-        response = client.post("/auth/login", json={"login": "alice", "password": "pw-1"})
+        response = _cookie_login(client)
 
         assert response.status_code == 200
         body = response.json()
@@ -785,7 +793,7 @@ class TestCookieMode:
         state = MockState()
         _seed(state)
         client = self._cookie_client(state)
-        client.post("/auth/login", json={"login": "alice", "password": "pw-1"})
+        _cookie_login(client)
 
         before = client.cookies.get("forze_refresh", path="/auth/refresh")
 
@@ -804,7 +812,7 @@ class TestCookieMode:
         _seed(state)
         client = self._cookie_client(state)
 
-        response = client.post("/auth/refresh")
+        response = client.post("/auth/refresh", headers=_SAME_ORIGIN)
 
         assert response.status_code == 401
 
@@ -814,12 +822,14 @@ class TestCookieMode:
         state = MockState()
         _seed(state)
         client = self._cookie_client(state)
-        client.post("/auth/login", json={"login": "alice", "password": "pw-1"})
+        _cookie_login(client)
 
         token = client.cookies.get("forze_refresh", path="/auth/refresh")
         client.cookies.clear()  # no cookie jar: the body must carry it alone
 
-        response = client.post("/auth/refresh", json={"refresh_token": token})
+        response = client.post(
+            "/auth/refresh", json={"refresh_token": token}, headers=_SAME_ORIGIN
+        )
 
         assert response.status_code == 200
         assert "refresh_token" not in response.json()  # still stripped to cookies
@@ -831,7 +841,7 @@ class TestCookieMode:
         state = MockState()
         _seed(state)
         client = self._cookie_client(state)
-        client.post("/auth/login", json={"login": "alice", "password": "pw-1"})
+        _cookie_login(client)
 
         before = client.cookies.get("forze_refresh", path="/auth/refresh")
 
@@ -846,7 +856,7 @@ class TestCookieMode:
         _seed(state)
         client = self._cookie_client(state)
 
-        response = client.post("/auth/refresh", json={})
+        response = client.post("/auth/refresh", json={}, headers=_SAME_ORIGIN)
 
         assert response.status_code == 401
 
@@ -854,10 +864,12 @@ class TestCookieMode:
         state = MockState()
         _seed(state)
         client = self._cookie_client(state)
-        client.post("/auth/login", json={"login": "alice", "password": "pw-1"})
+        _cookie_login(client)
 
         # A valid cookie rides along, but the body's token is the one used.
-        response = client.post("/auth/refresh", json={"refresh_token": "not-a-token"})
+        response = client.post(
+            "/auth/refresh", json={"refresh_token": "not-a-token"}, headers=_SAME_ORIGIN
+        )
 
         assert response.status_code == 401
 
@@ -865,9 +877,9 @@ class TestCookieMode:
         state = MockState()
         _seed(state)
         client = self._cookie_client(state)
-        client.post("/auth/login", json={"login": "alice", "password": "pw-1"})
+        _cookie_login(client)
 
-        response = client.post("/auth/refresh", json={"token": "x"})
+        response = client.post("/auth/refresh", json={"token": "x"}, headers=_SAME_ORIGIN)
 
         assert response.status_code == 422
 
@@ -877,7 +889,7 @@ class TestCookieMode:
         import asyncio
         from unittest.mock import MagicMock
 
-        from fastapi import Response
+        from fastapi import Request, Response
 
         from forze.base.exceptions import CoreException, exc
         from forze_fastapi.routes.authn import _cookie_logout_endpoint
@@ -887,17 +899,24 @@ class TestCookieMode:
             raise exc.infrastructure("session store down")
 
         endpoint = _cookie_logout_endpoint(AuthnCookieCarrier())(runner, None, "logout")
+        same_origin = Request(
+            {
+                "type": "http",
+                "method": "POST",
+                "headers": [(b"host", b"testserver"), (b"origin", b"http://testserver")],
+            }
+        )
 
         with pytest.raises(CoreException, match="session store down"):
-            asyncio.run(endpoint(response=MagicMock(spec=Response)))
+            asyncio.run(endpoint(request=same_origin, response=MagicMock(spec=Response)))
 
     def test_logout_expires_both_cookies(self) -> None:
         state = MockState()
         _seed(state)
         client = self._cookie_client(state)
-        client.post("/auth/login", json={"login": "alice", "password": "pw-1"})
+        _cookie_login(client)
 
-        response = client.post("/auth/logout")
+        response = client.post("/auth/logout", headers=_SAME_ORIGIN)
 
         # Idempotent in cookie mode: even with no bound identity (this plain app
         # runs no security middleware) the dead cookies are cleared, never pinned
@@ -908,6 +927,36 @@ class TestCookieMode:
         assert any(
             "forze_refresh=" in c and ("Max-Age=0" in c or "max-age=0" in c) for c in cleared
         )
+
+    @pytest.mark.parametrize("headers", [_CROSS_SITE, {}], ids=["cross-site", "no-origin"])
+    def test_login_without_origin_proof_is_refused_and_sets_no_cookie(
+        self, headers: dict[str, str]
+    ) -> None:
+        state = MockState()
+        _seed(state)
+        client = self._cookie_client(state)
+
+        refused = client.post(
+            "/auth/login", json={"login": "alice", "password": "pw-1"}, headers=headers
+        )
+
+        assert refused.status_code == 403
+        assert refused.headers[ERROR_CODE_HEADER] == "csrf_rejected"
+        assert not refused.headers.get_list("set-cookie")
+
+    @pytest.mark.parametrize("headers", [_CROSS_SITE, {}], ids=["cross-site", "no-origin"])
+    def test_logout_without_origin_proof_is_refused_and_clears_no_cookie(
+        self, headers: dict[str, str]
+    ) -> None:
+        state = MockState()
+        _seed(state)
+        client = self._cookie_client(state)
+
+        refused = client.post("/auth/logout", headers=headers)
+
+        assert refused.status_code == 403
+        assert refused.headers[ERROR_CODE_HEADER] == "csrf_rejected"
+        assert not refused.headers.get_list("set-cookie")
 
 
 class TestRefreshCookieCsrf:
@@ -962,7 +1011,7 @@ class TestRefreshCookieCsrf:
             )
 
         client = TestClient(app)
-        login = client.post("/auth/login", json={"login": "alice", "password": "pw-1"})
+        login = _cookie_login(client)
         assert login.status_code == 200
 
         return client
@@ -1021,19 +1070,23 @@ class TestRefreshCookieCsrf:
 
         assert allowed.status_code == 200
 
-    def test_body_token_refresh_is_not_gated(self) -> None:
-        # No cookie is read, so there is no ambient credential to forge.
+    def test_body_token_refresh_is_gated(self) -> None:
+        # The response sets the session cookies, so a body token is gated as login is.
         state = MockState()
         _seed(state)
         client = self._client(state)
         token = self._refresh_cookie(client)
         client.cookies.clear()
 
-        response = client.post(
-            "/auth/refresh", json={"refresh_token": token}, headers=_CROSS_SITE
-        )
+        refused = client.post("/auth/refresh", json={"refresh_token": token}, headers=_CROSS_SITE)
 
-        assert response.status_code == 200
+        assert refused.status_code == 403
+        assert refused.headers[ERROR_CODE_HEADER] == "csrf_rejected"
+        assert not refused.headers.get_list("set-cookie")
+
+        allowed = client.post("/auth/refresh", json={"refresh_token": token}, headers=_SAME_ORIGIN)
+
+        assert allowed.status_code == 200  # the refused attempt did not spend the token
 
     def test_declared_opt_out_is_honoured(self) -> None:
         state = MockState()
