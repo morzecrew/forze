@@ -44,12 +44,15 @@ from forze_mock.adapters.search._facets_highlights import (
 )
 from forze_mock.adapters.search._unsupported import MockOffsetOnlySearchMixin
 from forze_mock.adapters.search.query import (
+    _MOCK_RANK,  # pyright: ignore[reportPrivateUsage]
     MockSearchAdapter,
+    _without_mock_rank,  # pyright: ignore[reportPrivateUsage]
     check_mock_search_aggregate,
     filter_predicate,
     mock_aggregate_page,
 )
 from forze_mock.query.matching import (
+    _project,  # pyright: ignore[reportPrivateUsage]
     _sort_docs,  # pyright: ignore[reportPrivateUsage]
 )
 
@@ -196,8 +199,9 @@ class MockHubSearchAdapter[M: BaseModel](
             )
             for rank, doc in enumerate(ordered, start=1):
                 key = str(doc.get("id", rank))
-                leg_score = 1.0 / float(rank)
-                contrib = w * leg_score
+                # The leg's own relevance, as the Postgres hub merges its engines' raw scores:
+                # rows that tie in a leg tie in the hub, and the sort then orders them.
+                contrib = w * float(doc[_MOCK_RANK])
                 if key not in scores:
                     scores[key] = contrib
                     docs[key] = doc
@@ -275,6 +279,44 @@ class MockHubSearchAdapter[M: BaseModel](
 
     # ....................... #
 
+    async def _offset_page(
+        self,
+        query: str | Sequence[str],
+        filters: QueryFilterExpression | None,
+        pagination: PaginationExpression | None,
+        sorts: QuerySortExpression | None,
+        options: SearchOptions | None,
+        snapshot: SearchResultSnapshotOptions | None,
+        *,
+        fields: Sequence[str] | None,
+        return_count: bool,
+    ) -> Any:
+        """One merged offset page: typed hits, or the *fields* projection of each row."""
+
+        refuse_unknown_keys(snapshot, SearchResultSnapshotOptions)
+        ordered = await self._merged_docs(query, filters, sorts, options)
+        window = self._window(ordered, pagination)
+        page_docs = [doc for doc, _ in window]
+        scores = [score for _, score in window] if normalize_search_queries(query) else None
+        facets, highlights = self._facets_and_highlights(
+            query, options, all_docs=[doc for doc, _ in ordered], page_docs=page_docs
+        )
+        hits: list[Any] = (
+            [_project(_without_mock_rank(doc), fields) for doc in page_docs]
+            if fields is not None
+            else self._decode_hits(page_docs)
+        )
+        return search_page_from_limit_offset(
+            hits,
+            pagination or {},
+            total=len(ordered) if return_count else None,
+            facets=facets,
+            highlights=highlights,
+            scores=scores,
+        )
+
+    # ....................... #
+
     async def search(
         self,
         query: str | Sequence[str],
@@ -285,21 +327,8 @@ class MockHubSearchAdapter[M: BaseModel](
         options: SearchOptions | None = None,
         snapshot: SearchResultSnapshotOptions | None = None,
     ) -> SearchCountlessPage[M]:
-        refuse_unknown_keys(snapshot, SearchResultSnapshotOptions)
-        ordered = await self._merged_docs(query, filters, sorts, options)
-        window = self._window(ordered, pagination)
-        page_docs = [doc for doc, _ in window]
-        scores = [score for _, score in window] if normalize_search_queries(query) else None
-        facets, highlights = self._facets_and_highlights(
-            query, options, all_docs=[doc for doc, _ in ordered], page_docs=page_docs
-        )
-        return search_page_from_limit_offset(
-            self._decode_hits(page_docs),
-            pagination or {},
-            total=None,
-            facets=facets,
-            highlights=highlights,
-            scores=scores,
+        return await self._offset_page(
+            query, filters, pagination, sorts, options, snapshot, fields=None, return_count=False
         )
 
     async def search_page(
@@ -312,19 +341,36 @@ class MockHubSearchAdapter[M: BaseModel](
         options: SearchOptions | None = None,
         snapshot: SearchResultSnapshotOptions | None = None,
     ) -> SearchPage[M]:
-        refuse_unknown_keys(snapshot, SearchResultSnapshotOptions)
-        ordered = await self._merged_docs(query, filters, sorts, options)
-        window = self._window(ordered, pagination)
-        page_docs = [doc for doc, _ in window]
-        scores = [score for _, score in window] if normalize_search_queries(query) else None
-        facets, highlights = self._facets_and_highlights(
-            query, options, all_docs=[doc for doc, _ in ordered], page_docs=page_docs
+        return await self._offset_page(
+            query, filters, pagination, sorts, options, snapshot, fields=None, return_count=True
         )
-        return search_page_from_limit_offset(
-            self._decode_hits(page_docs),
-            pagination or {},
-            total=len(ordered),
-            facets=facets,
-            highlights=highlights,
-            scores=scores,
+
+    async def project_search(
+        self,
+        fields: Sequence[str],
+        query: str | Sequence[str],
+        filters: QueryFilterExpression | None = None,
+        pagination: PaginationExpression | None = None,
+        sorts: QuerySortExpression | None = None,
+        *,
+        options: SearchOptions | None = None,
+        snapshot: SearchResultSnapshotOptions | None = None,
+    ) -> SearchCountlessPage[JsonDict]:
+        return await self._offset_page(
+            query, filters, pagination, sorts, options, snapshot, fields=fields, return_count=False
+        )
+
+    async def project_search_page(
+        self,
+        fields: Sequence[str],
+        query: str | Sequence[str],
+        filters: QueryFilterExpression | None = None,
+        pagination: PaginationExpression | None = None,
+        sorts: QuerySortExpression | None = None,
+        *,
+        options: SearchOptions | None = None,
+        snapshot: SearchResultSnapshotOptions | None = None,
+    ) -> SearchPage[JsonDict]:
+        return await self._offset_page(
+            query, filters, pagination, sorts, options, snapshot, fields=fields, return_count=True
         )
