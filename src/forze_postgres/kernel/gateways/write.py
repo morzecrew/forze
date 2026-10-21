@@ -1037,14 +1037,14 @@ class PostgresWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
         patched, and one this tenant cannot see is ``not_found``, as on the domain path. The
         caller has refused a spec whose updates need the stored row or the domain model
         (:meth:`~forze.application.contracts.document.DocumentSpec.require_set_based_upsert`);
-        a relation keyed by more than the id (and tenant), or a patched column SQL cannot
-        compare, takes :meth:`upsert_many` instead.
+        a relation keyed by more than the id (and tenant), or a column an update can write
+        that SQL cannot compare, takes :meth:`upsert_many` instead.
         """
 
         self._require_update_cmd()
         column_types = await self.column_types()
 
-        if not await self.__fits_set_based(column_types):
+        if not await self.__fits_set_based(column_types, updates):
             await self.upsert_many(ids, creates, updates, batch_size=batch_size)
             return
 
@@ -1090,16 +1090,17 @@ class PostgresWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
 
     # ....................... #
 
-    async def __fits_set_based(self, column_types: PostgresColumnTypes) -> bool:
-        """Whether a set-based upsert can key and compare every row as the domain path does."""
+    async def __fits_set_based(
+        self, column_types: PostgresColumnTypes, updates: Sequence[U]
+    ) -> bool:
+        """Whether a set-based upsert can key and compare every row as the domain path does:
+        every column *updates* can write, a mirrored create payload's included."""
 
         keys = set(await self._resolved_conflict_target())
         keyed = keys == {ID_FIELD} or (self.tenant_aware and keys == {ID_FIELD, TENANT_ID_FIELD})
-        update_cmd = cast(type[BaseDTO], self.update_cmd_type)
+        written = {name for dto in {type(u) for u in updates} for name in dto.model_fields}
 
-        return keyed and all(
-            _comparable(column_types.get(name)) for name in update_cmd.model_fields
-        )
+        return keyed and all(_comparable(column_types.get(name)) for name in written)
 
     # ....................... #
 

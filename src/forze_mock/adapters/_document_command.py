@@ -824,7 +824,7 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
                     code="set_based_upsert_unsupported",
                 )
 
-            self.spec.require_set_based_upsert()
+            self.spec.require_set_based_upsert({type(it.update) for it in items} or None)
 
         if not items:
             if not return_new:

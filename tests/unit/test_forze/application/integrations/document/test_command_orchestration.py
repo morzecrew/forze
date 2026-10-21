@@ -242,7 +242,7 @@ class CommandHarness(DocumentCommandMixin[_Row, _Domain, _Dto, _Dto]):
             require_hard_delete = DocumentSpec.require_hard_delete
             set_based_refusal: CoreException | None = None
 
-            def require_set_based_upsert(self) -> None:
+            def require_set_based_upsert(self, updates: Any = None) -> None:
                 if self.set_based_refusal is not None:
                     raise self.set_based_refusal
 

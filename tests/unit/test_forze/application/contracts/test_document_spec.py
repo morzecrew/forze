@@ -1115,3 +1115,30 @@ def test_a_spec_whose_updates_need_the_domain_refuses_a_set_based_upsert(
 
     assert refused.value.code == "set_based_upsert_unsupported"
     assert refused.value.details["reasons"] == [reason]
+
+
+class _TaggedCreate(CreateDocumentCmd):
+    name: str
+    tags: dict[str, str] = Field(default_factory=dict)
+
+
+def test_a_set_based_upsert_is_judged_on_the_update_types_it_writes() -> None:
+    """A mirrored item updates with its create payload: a mapping the create carries is merged
+    on the domain path, so it refuses set-based though the narrower update command does not."""
+
+    spec = DocumentSpec(
+        name="doc",
+        read=_Read,
+        write=DocumentWriteTypes(
+            domain=_TaggedDomain, create_cmd=_TaggedCreate, update_cmd=_PydanticUpdate
+        ),
+    )
+    spec.require_set_based_upsert()
+    spec.require_set_based_upsert([_PydanticUpdate])
+
+    with pytest.raises(CoreException) as refused:
+        spec.require_set_based_upsert([_PydanticUpdate, _TaggedCreate])
+
+    assert refused.value.details["reasons"] == [
+        "update fields the domain derives, merges or refuses (tags)"
+    ]
