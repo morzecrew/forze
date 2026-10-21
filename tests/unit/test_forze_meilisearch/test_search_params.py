@@ -8,7 +8,7 @@ import pytest
 from pydantic import BaseModel
 
 from forze.application.contracts.search import SearchSpec
-from forze.base.exceptions import CoreException, ExceptionKind
+from forze.base.exceptions import CoreException, ExceptionKind, error_envelope
 from forze_meilisearch.adapters.search._offset_run import _MeilisearchOffsetHooks, page_order
 from forze_meilisearch.adapters.search._search_params import (
     attributes_to_search_on,
@@ -145,6 +145,11 @@ def test_an_unsortable_attribute_the_request_named_is_the_callers_error() -> Non
     refusal = _hooks(("id",))._unsortable(_refusal("title"))  # pyright: ignore[reportPrivateUsage]
 
     assert refusal is not None and refusal.kind is ExceptionKind.PRECONDITION
+    # The engine's text names the index and its sortable attributes: kept for the server,
+    # out of the summary a client sees and out of the details shown beside it.
+    assert "Available sortable attributes" not in str(refusal)
+    assert refusal.details == {"error": _refusal("title").message}
+    assert error_envelope(refusal).context is None
 
 
 def test_an_unsortable_attribute_the_spec_added_is_a_configuration_error() -> None:
@@ -152,6 +157,8 @@ def test_an_unsortable_attribute_the_spec_added_is_a_configuration_error() -> No
 
     assert refusal is not None and refusal.kind is ExceptionKind.CONFIGURATION
     assert "ensure_index" in str(refusal)
+    assert "Available sortable attributes" not in str(refusal)
+    assert refusal.details == {"error": _refusal("rank").message}
 
 
 def test_a_malformed_null_placement_keeps_the_canonical_error() -> None:

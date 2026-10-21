@@ -149,8 +149,9 @@ class InferenceHttpClient(InferenceHttpClientPort):
 
         except httpx.TransportError as e:
             raise exc.infrastructure(
-                f"Inference endpoint unreachable: {e}",
+                "Inference endpoint unreachable.",
                 code="inference_endpoint_unavailable",
+                details={"error": str(e)},
             ) from e
 
         if response.status_code >= 400:

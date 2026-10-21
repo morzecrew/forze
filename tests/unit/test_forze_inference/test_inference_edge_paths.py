@@ -240,7 +240,7 @@ class TestHttpClientRefusals:
     @pytest.mark.asyncio
     async def test_transport_failure_maps_to_unavailable(self) -> None:
         def handler(request: httpx.Request) -> httpx.Response:
-            raise httpx.ConnectError("refused", request=request)
+            raise httpx.ConnectError("refused by model-server", request=request)
 
         port = await _port(handler)
 
@@ -248,6 +248,10 @@ class TestHttpClientRefusals:
             await port.predict(_Features(x=1.0))
 
         assert ei.value.code == "inference_endpoint_unavailable"
+        # The transport's text rides in details only: the summary is what run stores record.
+        assert "refused by model-server" not in str(ei.value)
+        assert ei.value.details is not None
+        assert ei.value.details["error"] == "refused by model-server"
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(

@@ -843,7 +843,10 @@ class GCSClient(GCSClientPort):
 
         except ValueError as e:
             # Defensive: the library enforces the same 7-day V4 cap.
-            raise exc.validation(str(e)) from e
+            raise exc.validation(
+                "GCS refused to sign the presigned URL.",
+                details={"error": str(e)},
+            ) from e
 
         except TypeError as e:
             raise exc.configuration(

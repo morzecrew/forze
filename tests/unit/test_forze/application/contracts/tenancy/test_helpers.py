@@ -80,6 +80,29 @@ class TestTenantSecretResolverStr:
         assert await resolver.resolve_str(_TID) == "redis://localhost:6379/0"
 
 
+class TestTenantSecretResolverFailures:
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("structured", [False, True], ids=["str", "structured"])
+    async def test_the_lookup_text_stays_out_of_the_summary(self, structured: bool) -> None:
+        def _failing_ref(tid: UUID) -> SecretRef:
+            raise RuntimeError("boom alice@example.test")
+
+        resolver = TenantSecretResolver(
+            secrets=_MemSecrets(), ref_for_tenant=_failing_ref, backend="Redis"
+        )
+
+        with pytest.raises(CoreException, match="Failed to resolve Redis secret") as ei:
+            if structured:
+                await resolver.resolve_structured(_Creds, _TID)
+
+            else:
+                await resolver.resolve_str(_TID)
+
+        # The summary is what run stores record: the error's text rides in details only.
+        assert "alice@example.test" not in str(ei.value)
+        assert ei.value.details == {"error": "boom alice@example.test"}
+
+
 class TestEnsureDsnFingerprint:
     @pytest.mark.asyncio
     async def test_caches_fingerprint(self) -> None:

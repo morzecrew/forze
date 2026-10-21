@@ -67,14 +67,14 @@ def _neo4j_eh(  # skipcq: PY-R1000
 
         case ClientError():
             return CoreException.infrastructure(
-                f"Neo4j client error during {site}: {exc}",
-                details=details,
+                f"Neo4j client error during {site}.",
+                details={**(details or {}), "error": str(exc)},
             )
 
         case Neo4jError() | DriverError():
             return CoreException.infrastructure(
-                f"Neo4j error during {site}: {exc}",
-                details=details,
+                f"Neo4j error during {site}.",
+                details={**(details or {}), "error": str(exc)},
             )
 
         case _:

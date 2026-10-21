@@ -81,6 +81,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **`saga.step_failed` no longer shows the failed step's error text to API callers** (**behaviour change**): its `cause` detail is now the cause's `code` and `kind`, and only when the cause is a `CoreException`. The original error stays chained as `__cause__`.
 
+- **An error translated from a backend keeps a fixed summary** (**behaviour change**): the backend's message moves to `details["error"]` in the Neo4j, Mongo, Firestore, Vault, inference, Meilisearch, GCS and container-sandbox integrations, secret resolution and credential rotation, so `str()` no longer includes it.
+
 ## [0.15.1] - 2026-10-19
 
 ### Fixed

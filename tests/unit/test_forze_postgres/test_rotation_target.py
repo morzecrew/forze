@@ -272,6 +272,9 @@ class TestVerify:
             await target.verify(None, _PENDING)
 
         assert excinfo.value.code == "rotation_verify_failed"
+        # The driver's text rides in details only: the summary is what run stores record.
+        assert "password authentication failed" not in str(excinfo.value)
+        assert excinfo.value.details == {"error": "password authentication failed"}
 
 
 class TestConfig:

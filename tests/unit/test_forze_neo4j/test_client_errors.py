@@ -4,7 +4,14 @@ import pytest
 
 pytest.importorskip("neo4j")
 
-from neo4j.exceptions import ConstraintError, ServiceUnavailable, TransientError
+from neo4j.exceptions import (
+    ClientError,
+    ConstraintError,
+    DriverError,
+    Neo4jError,
+    ServiceUnavailable,
+    TransientError,
+)
 
 from forze.base.exceptions import CoreException, ExceptionKind, exc
 from forze_neo4j.kernel.client.errors import _neo4j_eh, exc_interceptor
@@ -31,6 +38,15 @@ class TestNeo4jErrorHandler:
         out = _neo4j_eh(ServiceUnavailable("down"), site="connect")
         assert isinstance(out, CoreException)
         assert out.kind == ExceptionKind.INFRASTRUCTURE
+
+    @pytest.mark.parametrize("error_type", [ClientError, Neo4jError, DriverError])
+    def test_the_driver_text_stays_out_of_the_summary(self, error_type: type[Exception]) -> None:
+        # The summary is what ``str()`` renders and what run stores record; the driver's
+        # text can echo stored values, so it rides in details only.
+        out = _neo4j_eh(error_type("value alice@example.test"), site="run")
+        assert isinstance(out, CoreException)
+        assert "alice@example.test" not in str(out)
+        assert out.details == {"error": "value alice@example.test"}
 
 
 class TestAssembledChain:
