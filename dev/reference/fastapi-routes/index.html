@@ -7130,6 +7130,12 @@ every authn route under that prefix, and only refresh and logout read it.
 <code>runtime_lifespan</code> refuses to start an app whose cookie-mode logout route the
 refresh cookie's path does not cover (<code>check_authn_cookie_paths</code>; routes inside a
 mounted sub-application are not checked).</p>
+<p>Every tab and window shares the refresh cookie, so two of them can refresh with the
+same token at once. With a <a href="../../integrations/authn/#notes">reuse grace</a> the losing
+refresh answers 401 <code>refresh_superseded</code> instead of revoking the session as reuse. The
+client refreshes again once the winner's response has set the new cookie: a retry sent
+before then gets <code>refresh_superseded</code> again, so wait for the other refresh or retry after
+a short delay.</p>
 <p>Point the inbound <code>CookieTokenAuthn</code>'s <code>cookie_name</code> at the same
 <code>access_cookie</code>, and list the login, refresh and logout paths in the security
 middleware's <a href="../../integrations/fastapi/#bind-request-context"><code>anonymous_paths</code></a> —

@@ -9878,6 +9878,9 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <li>
 <p><strong><code>attach_authn_routes</code> no longer needs <code>ns=</code>.</strong> Without <code>ns=</code> or <code>resource=</code> it uses the one namespace in the registry holding its <code>password_login</code> or <code>refresh_tokens</code> operation, <code>spec.default_namespace</code> for <code>build_authn_registry(spec)</code>, and refuses to guess.</p>
 </li>
+<li>
+<p><strong>Overlapping refreshes need not revoke a session.</strong> <code>RefreshTokenConfig(reuse_grace=...)</code> refuses a token rotated within the grace, its successor unused, or one losing a concurrent rotation, as <code>refresh_superseded</code> (event <code>REFRESH_SUPERSEDED</code>), revoking nothing. The default <code>0</code> keeps strict reuse detection.</p>
+</li>
 </ul>
 <h3 id="changed">Changed<a class="headerlink" href="#changed" title="Permanent link">&para;</a></h3>
 <ul>
