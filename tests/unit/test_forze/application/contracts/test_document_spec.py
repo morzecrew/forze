@@ -942,6 +942,20 @@ class _ItemConstrainedDomain(Document):
     scores: list[Annotated[int, Field(gt=0)]] = []
 
 
+type _Score = Annotated[int, Field(gt=0)]
+type _Tree = list[_Tree] | Annotated[str, PlainSerializer(str.upper)]
+
+
+class _AliasConstrainedDomain(Document):
+    name: str
+    scores: list[_Score] = []
+
+
+class _RecursiveAliasDomain(Document):
+    name: str
+    tree: _Tree = ""
+
+
 class _DumpedDomain(Document):
     name: str
 
@@ -1115,6 +1129,15 @@ def test_a_list_of_mappings_is_replaced_whole_so_set_based_is_allowed() -> None:
         (
             DocumentSpec(name="doc", read=_Read, write=_named_write(_ItemConstrainedDomain)),
             "fields the domain validates (scores)",
+        ),
+        # Behind a named alias, recursive ones included.
+        (
+            DocumentSpec(name="doc", read=_Read, write=_named_write(_AliasConstrainedDomain)),
+            "fields the domain validates (scores)",
+        ),
+        (
+            DocumentSpec(name="doc", read=_Read, write=_named_write(_RecursiveAliasDomain)),
+            "fields the domain serializes (tree)",
         ),
         # The update touches only ``name``; the validator on ``slug`` still reruns.
         (

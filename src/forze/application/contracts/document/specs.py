@@ -2,7 +2,7 @@
 
 from collections.abc import Iterable, Iterator, Mapping
 from types import UnionType
-from typing import Annotated, Any, Generic, TypeVar, Union, get_args, get_origin
+from typing import Annotated, Any, Generic, TypeAliasType, TypeVar, Union, get_args, get_origin
 
 import attrs
 from pydantic import BaseModel, PlainSerializer, WrapSerializer
@@ -139,18 +139,27 @@ def _own_decorators(domain: type[Document], kind: str) -> list[Any]:
 
 def _field_metadata(field: Any) -> Iterator[Any]:
     """A field's ``Annotated`` metadata at every level: its own (``field.metadata``) and any
-    nested in its type, as in ``list[Annotated[int, Field(gt=0)]]``, which pydantic applies
-    to each item."""
+    nested in its type, as in ``list[Annotated[int, Field(gt=0)]]`` or behind a ``type``
+    alias, which pydantic applies to each item."""
 
     yield from field.metadata
 
+    seen: set[int] = set()
+
     def _nested(tp: Any) -> Iterator[Any]:
+        origin = get_origin(tp)
         args = get_args(tp)
 
-        if get_origin(tp) is Annotated:
+        if origin is Annotated:
             yield from args[1:]
             yield from _nested(args[0])
             return
+
+        # A named alias hides its value from get_args; unwrap it once (aliases may recurse).
+        alias = tp if isinstance(tp, TypeAliasType) else origin
+        if isinstance(alias, TypeAliasType) and id(alias) not in seen:
+            seen.add(id(alias))
+            yield from _nested(alias.__value__)
 
         for arg in args:
             yield from _nested(arg)
