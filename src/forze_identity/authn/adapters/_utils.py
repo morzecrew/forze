@@ -149,7 +149,7 @@ _STALE_RETRIES = 3
 """Consecutive batches a concurrent write may make stale before the revocation gives up."""
 
 
-def _detected_stale(error: CoreException) -> bool:
+def detected_stale(error: CoreException) -> bool:
     """Whether *error* is a stale batch the store detected itself, its transaction usable.
 
     Stale shows up as a revision mismatch when the read for the write sees the new revision,
@@ -238,7 +238,7 @@ async def revoke_sessions_matching(
             await session_cmd.update_many(upds, return_new=False)
 
         except CoreException as error:
-            if not _detected_stale(error) or stale >= _STALE_RETRIES:
+            if not detected_stale(error) or stale >= _STALE_RETRIES:
                 raise
 
             stale += 1

@@ -46,6 +46,10 @@ class AuthnEventKind(StrEnum):
     REFRESH_REUSE_DETECTED = "refresh_reuse_detected"
     """An already-rotated refresh token was presented; its family was revoked."""
 
+    REFRESH_SUPERSEDED = "refresh_superseded"
+    """A refresh token rotated within the reuse grace was presented, or lost a concurrent
+    rotation; refused as ``refresh_superseded``, nothing revoked."""
+
     LOGOUT = "logout"
     """All sessions of a principal were revoked on request."""
 

@@ -103,6 +103,21 @@ class _RefreshReuse(Exception):
 # ....................... #
 
 
+class _RefreshSuperseded(Exception):
+    """Internal marker: a token rotated within the reuse grace was presented (nothing revoked).
+
+    Raised under the state lock; the caller emits ``REFRESH_SUPERSEDED`` outside it and
+    converts the marker into the ``refresh_superseded`` authentication error.
+    """
+
+    def __init__(self, session: dict[str, Any]) -> None:
+        super().__init__("refresh token superseded")
+        self.session = session
+
+
+# ....................... #
+
+
 def _assertion_from_store(entry: dict[str, Any]) -> VerifiedAssertion:
     return VerifiedAssertion(
         issuer=str(entry.get("issuer", "mock")),
@@ -434,13 +449,28 @@ class MockTokenLifecyclePort(TokenLifecyclePort):
 
     events: AuthnEventEmitter | None = None
     """Optional authn event emitter (mirrors the real adapter): ``TOKEN_REFRESHED``
-    on rotation, ``REFRESH_REUSE_DETECTED`` on reuse, ``LOGOUT`` on revoke."""
+    on rotation, ``REFRESH_REUSE_DETECTED`` on reuse, ``REFRESH_SUPERSEDED`` within the
+    reuse grace, ``LOGOUT`` on revoke."""
 
     access_expires_in: timedelta = timedelta(minutes=15)
     """Access token lifetime."""
 
     refresh_expires_in: timedelta = timedelta(days=7)
     """Refresh token (session) lifetime."""
+
+    refresh_reuse_grace: timedelta = timedelta(0)
+    """Mirrors ``RefreshTokenConfig.reuse_grace``: a token rotated this recently, its
+    successor unused, is refused as ``refresh_superseded`` instead of revoking the family."""
+
+    # ....................... #
+
+    def __attrs_post_init__(self) -> None:
+        # The bounds RefreshTokenConfig refuses, so a mock never runs a grace production can't;
+        # with no grace, a lifetime of zero or less still lets a test expire tokens at once.
+        grace = self.refresh_reuse_grace
+
+        if grace < timedelta(0) or (grace > timedelta(0) and grace >= self.refresh_expires_in):
+            raise exc.configuration("Reuse grace must be non-negative and shorter than expires in")
 
     # ....................... #
 
@@ -494,6 +524,9 @@ class MockTokenLifecyclePort(TokenLifecyclePort):
             with self.state.lock:
                 store = _route_store(self.state, self.route)
                 old_session = self._validate_refresh(store, refresh_token.token, now)
+
+        except _RefreshSuperseded as superseded:
+            raise await self._superseded(superseded.session) from None
 
         except _RefreshReuse as reuse:
             # The family was revoked under the lock, released by now: emit (best-effort)
@@ -617,6 +650,17 @@ class MockTokenLifecyclePort(TokenLifecyclePort):
             raise exc.authentication("Invalid refresh token")
 
         if session.get("rotated_at") is not None:
+            successor = _sessions(store).get(session.get("replaced_by") or "")
+
+            if (
+                self.refresh_reuse_grace > timedelta(0)
+                and now - session["rotated_at"] <= self.refresh_reuse_grace
+                and successor is not None
+                and successor.get("rotated_at") is None
+                and successor.get("revoked_at") is None
+            ):
+                raise _RefreshSuperseded(session)
+
             # Refresh token reuse: revoke the whole rotation family, mirroring
             # the real adapter's revoke_chain_of_tokens semantics. The caller
             # turns this marker into the uniform error (and an event) — the
@@ -633,6 +677,23 @@ class MockTokenLifecyclePort(TokenLifecyclePort):
             raise exc.authentication("Refresh token expired")
 
         return session
+
+    # ....................... #
+
+    async def _superseded(self, session: dict[str, Any]) -> CoreException:
+        """The refusal of an overlapping refresh, its event emitted (best-effort)."""
+
+        if self.events is not None:
+            await self.events.emit(
+                AuthnEventKind.REFRESH_SUPERSEDED,
+                principal_id=UUID(str(session["principal_id"])),
+                tenant_id=_tenant_uuid(session.get("tenant_id")),
+            )
+
+        return exc.authentication(
+            "Refresh token superseded by a concurrent refresh; refresh again",
+            code="refresh_superseded",
+        )
 
     # ....................... #
 

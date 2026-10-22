@@ -289,6 +289,13 @@ every authn route under that prefix, and only refresh and logout read it.
 refresh cookie's path does not cover (`check_authn_cookie_paths`; routes inside a
 mounted sub-application are not checked).
 
+Every tab and window shares the refresh cookie, so two of them can refresh with the
+same token at once. With a [reuse grace](../integrations/authn.md#notes) the losing
+refresh answers 401 `refresh_superseded` instead of revoking the session as reuse. The
+client refreshes again once the winner's response has set the new cookie: a retry sent
+before then gets `refresh_superseded` again, so wait for the other refresh or retry after
+a short delay.
+
 Point the inbound `CookieTokenAuthn`'s `cookie_name` at the same
 `access_cookie`, and list the login, refresh and logout paths in the security
 middleware's [`anonymous_paths`](../integrations/fastapi.md#bind-request-context) —

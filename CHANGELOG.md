@@ -27,6 +27,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **`attach_authn_routes` no longer needs `ns=`.** Without `ns=` or `resource=` it uses the one namespace in the registry holding its `password_login` or `refresh_tokens` operation, `spec.default_namespace` for `build_authn_registry(spec)`, and refuses to guess.
 
+- **Overlapping refreshes need not revoke a session.** `RefreshTokenConfig(reuse_grace=...)` refuses a token rotated within the grace, its successor unused, or one losing a concurrent rotation, as `refresh_superseded` (event `REFRESH_SUPERSEDED`), revoking nothing. The default `0` keeps strict reuse detection.
+
 ### Changed
 
 - **Until structlog is configured (`configure_logging` or your own `structlog.configure`), forze no longer prints to stdout itself** (behaviour change): its events go to the same-named stdlib logger at its level, so they reach only your stdlib handlers, or stderr from warnings up by default. Call `configure_logging` to keep info output.
