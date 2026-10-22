@@ -166,8 +166,8 @@ def _mongo_eh(  # skipcq: PY-R1000
                 )
 
             return CoreException.infrastructure(
-                f"Mongo operation failure during {site}: {exc}",
-                details=details,
+                f"Mongo operation failure during {site}.",
+                details={**(details or {}), "error": str(exc)},
             )
 
         case _:

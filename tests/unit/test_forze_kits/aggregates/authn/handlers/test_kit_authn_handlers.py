@@ -24,6 +24,7 @@ from forze_kits.aggregates.authn import (
     AuthnChangePasswordRequestDTO,
     AuthnLoginRequestDTO,
     AuthnLogout,
+    AuthnLogoutByRefreshToken,
     AuthnPasswordLogin,
     AuthnRefreshRequestDTO,
     AuthnRefreshTokens,
@@ -101,6 +102,19 @@ class TestAuthnLogout:
 
         with pytest.raises(CoreException, match="Authentication required"):
             await handler(None)
+
+
+class TestAuthnLogoutByRefreshToken:
+    @pytest.mark.asyncio
+    async def test_revokes_by_the_refresh_token(self) -> None:
+        token_lifecycle = AsyncMock()
+        handler = AuthnLogoutByRefreshToken(token_lifecycle=token_lifecycle)
+
+        await handler(AuthnRefreshRequestDTO(refresh_token="r-1"))
+
+        token_lifecycle.revoke_tokens_by_refresh_token.assert_awaited_once_with(
+            RefreshTokenCredentials(token="r-1")
+        )
 
 
 class TestAuthnChangePassword:

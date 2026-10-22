@@ -264,8 +264,9 @@ class PostgresRotationTarget(RotationTargetPort):
 
         except Exception as e:
             raise exc.infrastructure(
-                f"Pending Postgres credential failed verification; halting before promote: {e}",
+                "Pending Postgres credential failed verification; halting before promote.",
                 code="rotation_verify_failed",
+                details={"error": str(e)},
             ) from e
 
         try:

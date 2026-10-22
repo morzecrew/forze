@@ -133,6 +133,18 @@ def _sessions(store: dict[str, Any]) -> dict[str, dict[str, Any]]:
 # ....................... #
 
 
+def _find_session(store: dict[str, Any], token: str) -> dict[str, Any] | None:
+    """The session record *token* was issued for (mirrors the real digest lookup)."""
+
+    return next(
+        (session for session in _sessions(store).values() if session.get("refresh_token") == token),
+        None,
+    )
+
+
+# ....................... #
+
+
 def _access_tokens(store: dict[str, Any]) -> dict[str, dict[str, Any]]:
     """Access tokens issued by :class:`MockTokenLifecyclePort` (token → record)."""
 
@@ -554,6 +566,24 @@ class MockTokenLifecyclePort(TokenLifecyclePort):
 
     # ....................... #
 
+    async def revoke_tokens_by_refresh_token(self, refresh_token: RefreshTokenCredentials) -> None:
+        with self.state.lock:
+            session = _find_session(_route_store(self.state, self.route), refresh_token.token)
+
+            if (
+                session is None
+                or session.get("revoked_at") is not None
+                or session.get("rotated_at") is not None
+                or session["expires_at"] <= utcnow()
+            ):
+                return
+
+            principal_id = UUID(str(session["principal_id"]))
+
+        await self.revoke_tokens(AuthnIdentity(principal_id=principal_id))
+
+    # ....................... #
+
     async def revoke_chain_of_tokens(self, principal_id: UUID, family_id: UUID) -> None:
         ensure_mock_tx_writable(store=f"identity:authn:{self.route}")
 
@@ -576,14 +606,7 @@ class MockTokenLifecyclePort(TokenLifecyclePort):
     ) -> dict[str, Any]:
         """Locate and validate the session for *token* (reuse revokes the family)."""
 
-        session = next(
-            (
-                session
-                for session in _sessions(store).values()
-                if session.get("refresh_token") == token
-            ),
-            None,
-        )
+        session = _find_session(store, token)
 
         if session is None:
             raise exc.authentication("Invalid refresh token")

@@ -224,6 +224,20 @@ class TestExcess:
 
         assert view.excess("d", load="load", settle=self._SETTLE) == 10
 
+    @pytest.mark.parametrize("negative", [-1, -1000, -0.5])
+    def test_a_negative_peer_load_counts_as_absent(self, negative: float) -> None:
+        # Loads are counts. Averaged in, a negative one drags the mean below zero.
+        absent = _view(_member("a", load=10), _member("b", load=30), _member("c"))
+        view = self._fleet(("a", 10), ("b", 30), ("c", negative))
+
+        assert absent.excess("b", load="load", settle=self._SETTLE) == 10
+        assert view.excess("b", load="load", settle=self._SETTLE) == 10
+
+    def test_a_negative_own_load_gets_nothing(self) -> None:
+        view = self._fleet(("a", -10), ("b", -1))  # averaged, the mean would be -5.5
+
+        assert view.excess("b", load="load", settle=self._SETTLE) == 0
+
     def test_a_bool_load_is_not_a_number(self) -> None:
         # Built by hand: backends refuse a bool before it is ever stored.
         view = _view(_member("a", load=0), _member("b", load=True), _member("c", load=1))

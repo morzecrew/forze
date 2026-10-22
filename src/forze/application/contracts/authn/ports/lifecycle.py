@@ -103,6 +103,17 @@ class TokenLifecyclePort(Protocol):  # pragma: no cover
         identity: AuthnIdentity,
     ) -> Awaitable[None]: ...
 
+    def revoke_tokens_by_refresh_token(
+        self,
+        refresh_token: RefreshTokenCredentials,
+    ) -> Awaitable[None]:
+        """Revoke what :meth:`revoke_tokens` revokes, for the principal of a live refresh token.
+
+        Logout for a caller holding a refresh token but no usable access token. An unknown,
+        revoked, rotated or expired refresh token revokes nothing and raises nothing.
+        """
+        ...
+
     def revoke_chain_of_tokens(
         self,
         principal_id: UUID,

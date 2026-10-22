@@ -58,6 +58,27 @@ def _provisioner(**overrides: Any) -> MongoDatabaseTenantProvisioner:
 # ....................... #
 
 
+class TestStuckLock:
+    @pytest.mark.asyncio
+    async def test_the_release_error_text_stays_out_of_the_summary(self) -> None:
+        client = AsyncMock(name="client")
+        client.delete_one.side_effect = RuntimeError("write refused for alice@example.test")
+        provisioner = _provisioner(client=client)
+
+        with pytest.raises(CoreException) as caught:
+            await provisioner._release(  # pyright: ignore[reportPrivateUsage]
+                MagicMock(), database="tenant_x", owner="o", failed=False, lock="locks"
+            )
+
+        assert caught.value.code == "tenant_offboarding_lock_stuck"
+        assert "alice@example.test" not in str(caught.value)
+        assert caught.value.details is not None
+        assert caught.value.details["error"] == "write refused for alice@example.test"
+
+
+# ....................... #
+
+
 class TestRefusedWiring:
     def test_a_routed_client_is_refused(self) -> None:
         """A routed client picks its connection from the ambient tenant, and the tenant being

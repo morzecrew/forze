@@ -415,10 +415,10 @@ class MongoDatabaseTenantProvisioner(TenantProvisionerPort):
             if not failed:
                 raise exc.infrastructure(
                     f"Database {database!r} was dropped, but the offboarding lock could not be "
-                    f"released: {error}. Until {{_id: {database!r}}} is removed from {lock}, "
+                    f"released. Until {{_id: {database!r}}} is removed from {lock}, "
                     "provisioning and offboarding that database both refuse.",
                     code="tenant_offboarding_lock_stuck",
-                    details={"database": database, "lock": lock},
+                    details={"database": database, "lock": lock, "error": str(error)},
                 ) from error
 
             log.warning(

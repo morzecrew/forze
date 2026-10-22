@@ -325,3 +325,29 @@ async def test_presign_maps_unsupported_token_type_to_configuration(
 
     assert ei.value.kind is ExceptionKind.CONFIGURATION
     assert "AUTHORIZED_USER" in str(ei.value)
+
+
+@pytest.mark.asyncio
+async def test_presign_keeps_the_library_refusal_text_out_of_the_summary(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class _RefusingBlob(_FakeBlob):
+        async def get_signed_url(self, expiration: int, **kwargs: Any) -> str:
+            raise ValueError("refused for alice@example.test")
+
+    monkeypatch.setattr(gcs_client_module, "Blob", _RefusingBlob)
+
+    client = _client_with_storage(
+        _FakeStorage(service_data={}),
+        config=GCSConfig(
+            signing_service_account_email="signer@proj.iam.gserviceaccount.com",
+        ),
+    )
+
+    with pytest.raises(CoreException) as ei:
+        await client.presign_download_url("bkt", "k", expires_in=timedelta(minutes=5))
+
+    assert ei.value.kind is ExceptionKind.VALIDATION
+    assert "alice@example.test" not in str(ei.value)
+    assert ei.value.details == {"error": "refused for alice@example.test"}
+    assert ei.value.expose_details is False

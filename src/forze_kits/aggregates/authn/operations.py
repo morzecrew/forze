@@ -19,6 +19,10 @@ class AuthnKernelOp(StrEnum):
     LOGOUT = "logout"
     """Revoke all sessions for the currently authenticated identity."""
 
+    LOGOUT_BY_REFRESH_TOKEN = "logout_by_refresh_token"  # nosec B105 # skipcq: SCT-A000
+    """Revoke what :attr:`LOGOUT` revokes, for the principal of a live refresh token (cookie-mode
+    logout without a usable access cookie)."""
+
     CHANGE_PASSWORD = "change_password"  # nosec B105 # skipcq: SCT-A000
     """Change the password of the currently authenticated identity."""
 

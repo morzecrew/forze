@@ -222,8 +222,9 @@ class SageMakerRuntimeClient(SageMakerRuntimeClientPort):
 
         except BotoCoreError as e:
             raise exc.infrastructure(
-                f"SageMaker endpoint unreachable: {e}",
+                "SageMaker endpoint unreachable.",
                 code="inference_endpoint_unavailable",
+                details={"error": str(e)},
             ) from e
 
         raw = await response["Body"].read()

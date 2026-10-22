@@ -1,7 +1,7 @@
 """Tests for :class:`~forze.application.contracts.document.DocumentSpec`."""
 
 from datetime import datetime
-from typing import Any, Literal, TypedDict
+from typing import Annotated, Any, Literal, TypedDict
 from uuid import UUID
 
 import pytest
@@ -9,9 +9,13 @@ import structlog
 from pydantic import (
     BaseModel,
     Field,
+    PlainSerializer,
+    SerializerFunctionWrapHandler,
     ValidationInfo,
     computed_field,
+    field_serializer,
     field_validator,
+    model_serializer,
     model_validator,
 )
 
@@ -916,6 +920,63 @@ class _CheckedDomain(Document):
         return self
 
 
+class _ShoutedDomain(Document):
+    name: str
+
+    @field_serializer("name")
+    def _shout(self, value: str) -> str:
+        return value.upper()
+
+
+class _AnnotatedShoutedDomain(Document):
+    name: Annotated[str, PlainSerializer(str.upper)]
+
+
+class _ItemShoutedDomain(Document):
+    name: str
+    tags: list[Annotated[str, PlainSerializer(str.upper)]] = []
+
+
+class _ItemConstrainedDomain(Document):
+    name: str
+    scores: list[Annotated[int, Field(gt=0)]] = []
+
+
+type _Score = Annotated[int, Field(gt=0)]
+type _Tree = list[_Tree] | Annotated[str, PlainSerializer(str.upper)]
+
+
+class _AliasConstrainedDomain(Document):
+    name: str
+    scores: list[_Score] = []
+
+
+class _RecursiveAliasDomain(Document):
+    name: str
+    tree: _Tree = ""
+
+
+class _DumpedDomain(Document):
+    name: str
+
+    @model_serializer(mode="wrap")
+    def _dump(self, handler: SerializerFunctionWrapHandler) -> dict[str, Any]:
+        return {**handler(self), "name": self.name.upper()}
+
+
+class _JsonShoutedDomain(Document):
+    name: str
+    title: Annotated[str, PlainSerializer(str.upper, when_used="json")] = ""
+
+    @field_serializer("name", when_used="json")
+    def _shout(self, value: str) -> str:
+        return value.upper()
+
+    @model_serializer(mode="wrap", when_used="json")
+    def _dump(self, handler: SerializerFunctionWrapHandler) -> dict[str, Any]:
+        return handler(self)
+
+
 class _SlugDomain(Document):
     name: str
     slug: str = ""
@@ -986,6 +1047,13 @@ def test_a_plain_spec_allows_a_set_based_upsert() -> None:
     DocumentSpec(name="doc", read=_Read, write=_named_write(_Domain)).require_set_based_upsert()
 
 
+def test_json_only_serializers_allow_a_set_based_upsert() -> None:
+    # The domain path diffs python-mode dumps, where these never run.
+    DocumentSpec(
+        name="doc", read=_Read, write=_named_write(_JsonShoutedDomain)
+    ).require_set_based_upsert()
+
+
 def test_a_list_of_mappings_is_replaced_whole_so_set_based_is_allowed() -> None:
     DocumentSpec(
         name="doc",
@@ -1039,6 +1107,37 @@ def test_a_list_of_mappings_is_replaced_whole_so_set_based_is_allowed() -> None:
         (
             DocumentSpec(name="doc", read=_Read, write=_named_write(_CheckedDomain)),
             "model validators",
+        ),
+        # The domain path diffs serialized dumps; the set-based one writes the DTO's encoding.
+        (
+            DocumentSpec(name="doc", read=_Read, write=_named_write(_ShoutedDomain)),
+            "fields the domain serializes (name)",
+        ),
+        (
+            DocumentSpec(name="doc", read=_Read, write=_named_write(_AnnotatedShoutedDomain)),
+            "fields the domain serializes (name)",
+        ),
+        (
+            DocumentSpec(name="doc", read=_Read, write=_named_write(_DumpedDomain)),
+            "model serializers",
+        ),
+        # Nested in the type, pydantic still applies them to each item.
+        (
+            DocumentSpec(name="doc", read=_Read, write=_named_write(_ItemShoutedDomain)),
+            "fields the domain serializes (tags)",
+        ),
+        (
+            DocumentSpec(name="doc", read=_Read, write=_named_write(_ItemConstrainedDomain)),
+            "fields the domain validates (scores)",
+        ),
+        # Behind a named alias, recursive ones included.
+        (
+            DocumentSpec(name="doc", read=_Read, write=_named_write(_AliasConstrainedDomain)),
+            "fields the domain validates (scores)",
+        ),
+        (
+            DocumentSpec(name="doc", read=_Read, write=_named_write(_RecursiveAliasDomain)),
+            "fields the domain serializes (tree)",
         ),
         # The update touches only ``name``; the validator on ``slug`` still reruns.
         (
