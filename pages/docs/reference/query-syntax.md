@@ -95,7 +95,9 @@ The **root** segment must be a real column / read-model field; deeper segments
 traverse a JSON/JSONB column. A few rules to know (Postgres):
 
 - When the leaf type can't be inferred statically (a dynamic mapping, an `Any`),
-  declare it via the adapter's `nested_field_hints={"address.geo.lat": float}`.
+  declare it via the adapter's `nested_field_hints={"address.geo.lat": float}`. A
+  field inside a quantified array is keyed by its full path too
+  (`{"offers.price": int}`); a hint on the array itself (`offers`) is not read.
 - Set operators (`$superset` / `$subset` / `$overlaps` / `$disjoint` / `$empty`)
   are **not** supported on nested JSON paths — use a top-level array column for
   those.
@@ -336,3 +338,20 @@ Semantics are shared; rendering is backend-specific. Text-pattern support varies
 Leading-`%` patterns may need a trigram index (Postgres `pg_trgm`) to stay fast on
 large tables. On MongoDB, `$null: true` matches both explicit null and missing
 fields; object-array quantifiers render as `$elemMatch`.
+
+On Postgres, a field of an object-array element takes its type from the read model
+(`list[OfferModel]`) or a `nested_field_hints` entry. A field neither types, as in
+`list[dict]`, compares by the operand, which differs from the in-memory mock in places:
+
+- A string compares as text, so a stored `6` matches `"6"`; the mock does not match it.
+- A boolean or a number compares as a JSON value. A range orders only values of the
+  operand's JSON type, so a stored `true` never satisfies `{"$gt": 0}`; the mock
+  compares it as `1`.
+- A boolean never equals a number: `{"$eq": true}` or `{"$in": [true]}` misses a
+  stored `1`, which the mock matches, since Python's `True == 1`.
+- A `None` member of `$in` / `$nin` matches a stored JSON null, not a missing field.
+- A `Decimal`, date, time, UUID or non-finite float operand is refused with
+  `query_feature_unsupported`.
+
+A decimal stored as a JSON string is not a number to such a field: annotate the
+element type to compare it.

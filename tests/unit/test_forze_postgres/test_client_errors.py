@@ -373,6 +373,27 @@ class TestSchemaErrorsAreNotTerminal:
         assert not exception_egress_policy(out.kind).retryable
 
 
+class TestUndefinedFunction:
+    """SQLSTATE 42883 is a function or operator with no match for its argument types —
+    ``text = boolean`` as often as a missing extension — so it says that, not that an
+    object does not exist."""
+
+    def test_it_names_the_argument_types(self) -> None:
+        out = client_errors._psycopg_eh(errors.UndefinedFunction(), site="op")
+
+        assert out is not None
+        assert out.kind == ExceptionKind.INTERNAL
+        assert out.code == client_errors.SCHEMA_MISMATCH_CODE
+        assert "argument types" in out.summary
+        assert "does not exist" not in out.summary
+
+    def test_a_missing_table_still_reads_as_a_missing_object(self) -> None:
+        out = client_errors._psycopg_eh(errors.UndefinedTable(), site="op")
+
+        assert out is not None
+        assert "does not exist" in out.summary
+
+
 class TestSchemaErrorsUnderResilience:
     """A schema error is a bug or a missing migration: the ``transient`` policy must not retry
     it, and a circuit breaker must not read it as the database failing."""

@@ -41,7 +41,8 @@ it; this code is what remains when the answer is "a busy pool"."""
 
 SCHEMA_MISMATCH_CODE: Final[str] = "postgres_schema_mismatch"
 """Code for a statement naming a relation, column, function, operator, type, schema or
-database that does not exist: a migration not applied (perhaps for one tenant only), or a bug."""
+database that does not exist: a migration not applied (perhaps for one tenant only), or a bug.
+A function or operator with no match for its argument types (SQLSTATE 42883) carries it too."""
 
 PRIVILEGE_DENIED_CODE: Final[str] = "postgres_privilege_denied"
 """Code for SQLSTATE 42501: a missing grant, a row-level security ``WITH CHECK`` refusal, or a
@@ -209,15 +210,23 @@ def _psycopg_eh(  # skipcq: PY-R1000
         # `internal` rather than `configuration`, which supervised loops treat as terminal:
         # one tenant's schema not migrated yet must not stop the loop for every tenant.
 
+        case errors.UndefinedFunction():
+            # 42883: a missing extension, or an operator such as ``text = boolean`` that
+            # needs a cast — "an object that does not exist" misleads for the second.
+            return CoreException.internal(
+                "Database schema mismatch: no function or operator matches the name and "
+                "argument types; check the casts, or a missing extension.",
+                code=SCHEMA_MISMATCH_CODE,
+                details=details,
+            )
+
         case (
             errors.UndefinedTable()
             | errors.UndefinedColumn()
-            | errors.UndefinedFunction()
             | errors.UndefinedObject()
             | errors.InvalidSchemaName()
             | errors.InvalidCatalogName()
         ):
-            # 42883 is also an operator with no match for its argument types.
             return CoreException.internal(
                 "Database schema mismatch: the statement names an object that does not exist.",
                 code=SCHEMA_MISMATCH_CODE,
