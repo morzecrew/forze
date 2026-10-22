@@ -220,6 +220,25 @@ class TestRetryAfter:
         assert counter.calls == 1
         assert sleeps == []
 
+    async def test_a_retry_given_up_at_the_deadline_spends_no_budget(self) -> None:
+        policy = _retry_policy(
+            backoff=BackoffStrategy(
+                base=timedelta(milliseconds=1), max=timedelta(seconds=10), jitter="none"
+            ),
+            retry_on=frozenset({ExceptionKind.THROTTLED}),
+            budget=RetryBudget(ratio=1.0, min_throughput=0),
+        )
+        executor = _executor(policy)
+
+        async def fn() -> str:
+            raise exc.throttled("slow down", details={"retry_after": 5})
+
+        with bind_deadline(2.0), pytest.raises(CoreException):
+            await executor.run(fn, policy="p")
+
+        budgets = list(executor._budgets.values())  # pyright: ignore[reportPrivateUsage]
+        assert [b.tokens for b in budgets] == [1.0]  # earned by the call, not spent
+
 
 # ....................... #
 

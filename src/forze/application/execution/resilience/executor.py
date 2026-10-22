@@ -967,10 +967,6 @@ class InProcessResilienceExecutor:
                     self._emit("retry_after_exceeds_max", pol, route)
                     raise
 
-                if budget is not None and not budget.try_spend():
-                    self._emit("retry_budget_exhausted", pol, route)
-                    raise
-
                 delay = compute_delay(
                     strat.backoff,
                     attempt,
@@ -989,6 +985,11 @@ class InProcessResilienceExecutor:
 
                 if deadline_left is not None and delay >= deadline_left:
                     self._emit("retry_deadline_exhausted", pol, route)
+                    raise
+
+                # Spent last: a retry given up above must not drain the shared budget.
+                if budget is not None and not budget.try_spend():
+                    self._emit("retry_budget_exhausted", pol, route)
                     raise
 
                 prev_delay = delay
