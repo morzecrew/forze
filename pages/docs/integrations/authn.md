@@ -353,9 +353,9 @@ issued before is then refused by its epoch, so the eligibility read has nothing 
   [cookie mode](../reference/fastapi-routes.md#cookie-mode). Logout revokes the
   sessions from the access cookie's identity or, without one, the refresh cookie (the
   `logout_by_refresh_token` operation, through
-  `TokenLifecyclePort.revoke_tokens_by_refresh_token`). So one of the two cookies'
-  paths must cover the logout route, the refresh cookie's to outlive an expired access
-  cookie; `runtime_lifespan` refuses to start otherwise.
+  `TokenLifecyclePort.revoke_tokens_by_refresh_token`). The access cookie expires
+  first, so the refresh cookie's path must cover the logout route; `runtime_lifespan`
+  refuses to start otherwise.
 - Authorization is a sibling plane — `forze_identity.authz` (`AuthzDepsModule`).
 - The conceptual model (verify → resolve, resolver flavors) is in
   [Identity & access](../identity-tenancy-enc/identity.md); this page is the wiring.
