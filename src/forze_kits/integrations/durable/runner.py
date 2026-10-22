@@ -26,7 +26,7 @@ from forze.application.contracts.durable.function import (
 from forze.application.contracts.resilience import RetryStrategy
 from forze.application.contracts.saga import SAGA_CANCELLED_CODE, SAGA_STEP_AMBIGUOUS_CODE
 from forze.application.contracts.tenancy import TenantIdentity
-from forze.application.execution.resilience.backoff import compute_delay
+from forze.application.execution.resilience.backoff import compute_delay, retry_after
 from forze.base.exceptions import CoreException, exc, exception_egress_policy
 from forze.base.primitives import current_entropy_source, utcnow
 
@@ -721,7 +721,14 @@ class DurableFunctionRunner:
         )
         delay = compute_delay(strategy.backoff, record.attempts, previous, rng)
 
-        return utcnow() + timedelta(seconds=delay)
+        # A throttled upstream named the soonest a retry can succeed; the run waits in the
+        # store, not in a worker, so no backoff cap applies to that wait.
+        try:
+            return utcnow() + timedelta(seconds=max(delay, retry_after(error) or 0.0))
+
+        except OverflowError:
+            # A hint no datetime can hold means never: the run lands FAILED.
+            return None
 
     # ....................... #
 
