@@ -127,7 +127,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **A container sandbox error summary no longer names the daemon host** (**behaviour change**): the host, which can carry credentials, stays in `details["docker_host"]`.
 
-- **Cookie-mode `/login`, `/logout` and `/refresh` apply the cookie CSRF gate to every request** (**behaviour change**): each proves its origin under the access cookie's `CookieTokenAuthn(csrf=...)` gate, cookie or not, and `/refresh` wherever its token is. A client sending no `Origin` needs `allow_missing_origin=True`.
+- **Cookie-mode `/login`, `/logout` and `/refresh` apply the cookie CSRF gate to every request** (**behaviour change**), with or without a cookie and wherever the refresh token rides, under the access cookie's `CookieTokenAuthn(csrf=...)`. A client sending neither `Origin` nor `Referer` needs `allow_missing_origin=True`.
 
 - **Cookie-mode logout revokes from the refresh cookie without a live access cookie** (`logout_by_refresh_token`). `runtime_lifespan` refuses an app whose refresh cookie path misses logout (`check_authn_cookie_paths`). **Breaking** for own token lifecycle ports: add `revoke_tokens_by_refresh_token`.
 
