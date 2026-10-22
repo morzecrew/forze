@@ -76,9 +76,24 @@ async def test_start_conflict_suppressed_when_flag_false() -> None:
     second = await cmd.start(
         _In(n=2), workflow_id="dup", raise_on_already_started=False
     )
-    # No conflict; the second start replaces the run under the same id.
-    assert second.workflow_id == "dup"
-    assert first.workflow_id == "dup"
+    # No conflict, and the running run stands: Temporal hands back a handle on the id alone.
+    assert second == DurableWorkflowHandle(workflow_id="dup")
+    run = state.durable_workflows["wf"]["dup"]
+    assert run["run_id"] == first.run_id
+    assert run["args"] == {"n": 1}
+
+
+@pytest.mark.parametrize("close", ["cancel", "terminate"])
+async def test_start_over_a_closed_run_starts_a_new_one(close: str) -> None:
+    state = MockState()
+    cmd = _cmd(state)
+    first = await cmd.start(_In(n=1), workflow_id="wf-1")
+    await getattr(cmd, close)(first)
+    second = await cmd.start(_In(n=2), workflow_id="wf-1")
+    assert second.run_id != first.run_id
+    run = state.durable_workflows["wf"]["wf-1"]
+    assert run["run_id"] == second.run_id
+    assert run["status"] == DurableWorkflowRunStatus.RUNNING
 
 
 async def test_signal_not_found() -> None:
@@ -139,11 +154,50 @@ async def test_update_raises_not_implemented() -> None:
         await cmd.update(handle, update=upd, args=_In(n=1))
 
 
-async def test_cancel_missing_is_noop() -> None:
+@pytest.mark.parametrize("close", ["cancel", "terminate"])
+@pytest.mark.parametrize("run_id", [None, "r"])
+async def test_cancel_and_terminate_missing_are_not_found(close: str, run_id: str | None) -> None:
     state = MockState()
     cmd = _cmd(state)
-    handle = DurableWorkflowHandle(workflow_id="nope", run_id="r")
-    await cmd.cancel(handle)  # no raise
+    handle = DurableWorkflowHandle(workflow_id="nope", run_id=run_id)
+    with pytest.raises(CoreException) as caught:
+        await getattr(cmd, close)(handle)
+    assert caught.value.code == WORKFLOW_NOT_FOUND_CODE
+
+
+@pytest.mark.parametrize("close", ["cancel", "terminate"])
+async def test_cancel_and_terminate_of_another_run_are_not_found(close: str) -> None:
+    state = MockState()
+    cmd = _cmd(state)
+    await cmd.start(_In(n=1), workflow_id="wf-1")
+    with pytest.raises(CoreException) as caught:
+        await getattr(cmd, close)(DurableWorkflowHandle(workflow_id="wf-1", run_id="other"))
+    assert caught.value.code == WORKFLOW_NOT_FOUND_CODE
+    assert state.durable_workflows["wf"]["wf-1"]["status"] == DurableWorkflowRunStatus.RUNNING
+
+
+async def test_cancel_of_a_closed_run_changes_nothing() -> None:
+    state = MockState()
+    cmd = _cmd(state)
+    handle = await cmd.start(_In(n=1), workflow_id="wf-1")
+    await cmd.terminate(handle)
+    await cmd.cancel(handle)  # Temporal accepts it and leaves the run as it closed.
+    assert state.durable_workflows["wf"]["wf-1"]["status"] == (
+        DurableWorkflowRunStatus.TERMINATED
+    )
+
+
+async def test_terminate_of_a_closed_run_is_not_found() -> None:
+    state = MockState()
+    cmd = _cmd(state)
+    handle = await cmd.start(_In(n=1), workflow_id="wf-1")
+    await cmd.cancel(handle)
+    with pytest.raises(CoreException) as caught:
+        await cmd.terminate(handle)
+    assert caught.value.code == WORKFLOW_NOT_FOUND_CODE
+    assert state.durable_workflows["wf"]["wf-1"]["status"] == (
+        DurableWorkflowRunStatus.CANCELLED
+    )
 
 
 async def test_cancel_existing_sets_status() -> None:
@@ -154,13 +208,6 @@ async def test_cancel_existing_sets_status() -> None:
     assert state.durable_workflows["wf"]["wf-1"]["status"] == (
         DurableWorkflowRunStatus.CANCELLED
     )
-
-
-async def test_terminate_missing_is_noop_with_reason() -> None:
-    state = MockState()
-    cmd = _cmd(state)
-    handle = DurableWorkflowHandle(workflow_id="nope", run_id="r")
-    await cmd.terminate(handle, reason="because")  # no raise
 
 
 async def test_terminate_existing_sets_status() -> None:
@@ -222,6 +269,24 @@ async def test_result_no_return_type() -> None:
     state.durable_workflows["wf"]["wf-1"]["result"] = {"n": 1}
     with pytest.raises(CoreException):
         await qry.result(handle)
+
+
+async def test_a_replaced_run_s_handle_reads_nothing() -> None:
+    state = MockState()
+    cmd = _cmd(state)
+    qry = _qry(state)
+    first = await cmd.start(_In(n=1), workflow_id="wf-1")
+    await cmd.terminate(first)
+    second = await cmd.start(_In(n=2), workflow_id="wf-1")
+    state.durable_workflows["wf"]["wf-1"]["result"] = {"n": 2}
+
+    for read in (qry.describe, qry.result):
+        with pytest.raises(CoreException) as caught:
+            await read(first)
+        assert caught.value.code == WORKFLOW_NOT_FOUND_CODE
+
+    assert (await qry.describe(second)).run_id == second.run_id
+    assert (await qry.describe(DurableWorkflowHandle(workflow_id="wf-1"))).run_id == second.run_id
 
 
 async def test_describe_not_found() -> None:

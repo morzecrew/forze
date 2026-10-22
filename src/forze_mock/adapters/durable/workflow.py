@@ -47,6 +47,32 @@ class MockDurableWorkflowCommandAdapter[In: BaseModel, Out: BaseModel](
         # fails closed when tenant_aware with no bound tenant.
         return _workflow_runs(self.state, self._partitioned_namespace(str(self.spec.name)))
 
+    def _run(self, handle: DurableWorkflowHandle, *, running: bool = True) -> dict[str, Any]:
+        """Return the run *handle* targets; call under the state lock.
+
+        A handle's run id targets that run, not a later one started under the same id, and
+        the store keeps only the latest run per id. Temporal answers a missing run and, when
+        *running* is set, a closed one alike.
+
+        :param handle: The handle naming the workflow id and, optionally, the run.
+        :param running: Whether a closed run counts as missing.
+        :returns: The stored run.
+        """
+
+        run = self._runs().get(handle.workflow_id)
+
+        if (
+            run is None
+            or (handle.run_id is not None and run["run_id"] != handle.run_id)
+            or (running and run["status"] != DurableWorkflowRunStatus.RUNNING)
+        ):
+            raise exc.not_found(
+                f"Workflow {handle.workflow_id!r} not found or already closed",
+                code=WORKFLOW_NOT_FOUND_CODE,
+            )
+
+        return run
+
     async def start(
         self,
         args: In,
@@ -58,10 +84,15 @@ class MockDurableWorkflowCommandAdapter[In: BaseModel, Out: BaseModel](
         run_id = str(uuid7())
         with self.state.lock:
             runs = self._runs()
-            if wid in runs and raise_on_already_started:
-                raise exc.conflict(
-                    f"Workflow {wid!r} already started", code=WORKFLOW_ALREADY_EXISTS_CODE
-                )
+            current = runs.get(wid)
+            # Temporal's default id reuse policy starts a new run over a closed one.
+            if current is not None and current["status"] == DurableWorkflowRunStatus.RUNNING:
+                if raise_on_already_started:
+                    raise exc.conflict(
+                        f"Workflow {wid!r} already started", code=WORKFLOW_ALREADY_EXISTS_CODE
+                    )
+                # The running run stands; Temporal hands back a handle on the id alone.
+                return DurableWorkflowHandle(workflow_id=wid)
             runs[wid] = {
                 "run_id": run_id,
                 "args": args.model_dump(mode="json"),
@@ -79,19 +110,7 @@ class MockDurableWorkflowCommandAdapter[In: BaseModel, Out: BaseModel](
         args: S,
     ) -> None:
         with self.state.lock:
-            run = self._runs().get(handle.workflow_id)
-            # A closed run takes no signal: Temporal answers it as it answers a missing id. A
-            # handle's run id targets that run, not a later one started under the same id.
-            if (
-                run is None
-                or (handle.run_id is not None and run["run_id"] != handle.run_id)
-                or run["status"] != DurableWorkflowRunStatus.RUNNING
-            ):
-                raise exc.not_found(
-                    f"Workflow {handle.workflow_id!r} not found or already closed",
-                    code=WORKFLOW_NOT_FOUND_CODE,
-                )
-            run["signals"].append((signal.name, args.model_dump(mode="json")))
+            self._run(handle)["signals"].append((signal.name, args.model_dump(mode="json")))
 
     async def update[U: BaseModel, Res: BaseModel](
         self,
@@ -105,10 +124,10 @@ class MockDurableWorkflowCommandAdapter[In: BaseModel, Out: BaseModel](
 
     async def cancel(self, handle: DurableWorkflowHandle) -> None:
         with self.state.lock:
-            run = self._runs().get(handle.workflow_id)
-            if run is None:
-                return
-            run["status"] = DurableWorkflowRunStatus.CANCELLED
+            run = self._run(handle, running=False)
+            # Temporal accepts a cancel of a closed run and leaves the run as it closed.
+            if run["status"] == DurableWorkflowRunStatus.RUNNING:
+                run["status"] = DurableWorkflowRunStatus.CANCELLED
 
     async def terminate(
         self,
@@ -118,10 +137,7 @@ class MockDurableWorkflowCommandAdapter[In: BaseModel, Out: BaseModel](
     ) -> None:
         _ = reason
         with self.state.lock:
-            run = self._runs().get(handle.workflow_id)
-            if run is None:
-                return
-            run["status"] = DurableWorkflowRunStatus.TERMINATED
+            self._run(handle)["status"] = DurableWorkflowRunStatus.TERMINATED
 
 
 @final
@@ -149,7 +165,8 @@ class MockDurableWorkflowQueryAdapter[In: BaseModel, Out: BaseModel](
     async def result(self, handle: DurableWorkflowHandle) -> Out:
         with self.state.lock:
             run = self._runs().get(handle.workflow_id)
-            if run is None:
+            # A handle's run id targets that run; the store keeps only the latest per id.
+            if run is None or (handle.run_id is not None and run["run_id"] != handle.run_id):
                 raise exc.not_found(
                     f"Workflow {handle.workflow_id!r} not found", code=WORKFLOW_NOT_FOUND_CODE
                 )
@@ -167,7 +184,8 @@ class MockDurableWorkflowQueryAdapter[In: BaseModel, Out: BaseModel](
     ) -> DurableWorkflowRunDescription:
         with self.state.lock:
             run = self._runs().get(handle.workflow_id)
-            if run is None:
+            # A handle's run id targets that run; the store keeps only the latest per id.
+            if run is None or (handle.run_id is not None and run["run_id"] != handle.run_id):
                 raise exc.not_found(
                     f"Workflow {handle.workflow_id!r} not found", code=WORKFLOW_NOT_FOUND_CODE
                 )

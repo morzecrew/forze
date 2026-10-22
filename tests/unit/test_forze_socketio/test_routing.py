@@ -15,7 +15,7 @@ from forze.application.contracts.authn import AuthnIdentity
 from forze.application.contracts.execution import Handler
 from forze.application.execution import Deps, ExecutionContext
 from forze.application.execution.operations.registry import OperationRegistry
-from forze.base.exceptions import CoreException, exc
+from forze.base.exceptions import CoreException, DenialPosture, exc
 from forze_socketio.exceptions import GENERIC_INTERNAL_DETAIL
 from forze_socketio.routing import (
     IDENTITY_SESSION_KEY,
@@ -374,7 +374,34 @@ class TestSocketIOIdentity:
         with pytest.raises(SocketIOConnectionRefusedError) as excinfo:
             await connect("sid-1", {"REQUEST_METHOD": "GET"}, None)
 
-        assert excinfo.value.error_args == {"message": "Invalid token"}
+        assert excinfo.value.error_args == {
+            "message": "Invalid token",
+            "data": {
+                "detail": "Invalid token",
+                "code": "core.authentication",
+                "kind": "authentication",
+            },
+        }
+
+    @pytest.mark.asyncio
+    async def test_connect_refused_as_not_found_for_a_covered_resource(
+        self, denial_posture: Any
+    ) -> None:
+        denial_posture(DenialPosture(mode="non_disclosing", resource_types={"notes"}))
+
+        async def resolver(connect: SocketIOConnect) -> AuthnIdentity | None:
+            raise exc.not_found("Note 7 not found", details={"id": "7"}, resource_type="notes")
+
+        sio = _whoami_setup(resolver)
+        connect = sio.handlers[("/chat", "connect")]
+
+        with pytest.raises(SocketIOConnectionRefusedError) as excinfo:
+            await connect("sid-1", {"REQUEST_METHOD": "GET"}, None)
+
+        assert excinfo.value.error_args == {
+            "message": "Not found",
+            "data": {"detail": "Not found", "code": "core.not_found", "kind": "not_found"},
+        }
 
     @pytest.mark.asyncio
     async def test_connect_refused_generic_when_resolver_fails_unexpectedly(

@@ -98,6 +98,28 @@ class TestWhenTheDaemonAnswersSomethingElse:
         assert raised.value.details is not None
         assert raised.value.details["error"] == "refused by the socket"
 
+    async def test_an_unreachable_daemon_keeps_its_host_out_of_the_summary(self) -> None:
+        # An https:// host may carry credentials in its URL.
+        engine = ContainerEngine("https://user:secret@daemon.example", timeout=1.0)
+
+        def refuse(request: httpx.Request) -> httpx.Response:
+            raise httpx.ConnectError("refused", request=request)
+
+        engine._client = httpx.AsyncClient(transport=httpx.MockTransport(refuse))  # pyright: ignore[reportPrivateUsage]
+
+        with pytest.raises(CoreException) as raised:
+            await engine._call("GET", "http://daemon/_ping")  # pyright: ignore[reportPrivateUsage]
+
+        assert "secret" not in str(raised.value)
+        assert raised.value.details is not None
+        assert raised.value.details["docker_host"] == "https://user:secret@daemon.example"
+
+        with pytest.raises(CoreException) as refused:
+            engine._expect(httpx.Response(500, json={"message": "boom"}), "start it", (204,))  # pyright: ignore[reportPrivateUsage]
+
+        assert "secret" not in str(refused.value)
+        assert "boom" in str(refused.value)
+
     def test_an_allowed_status_passes_quietly(self) -> None:
         engine = ContainerEngine("unix:///var/run/docker.sock", timeout=1.0)
 

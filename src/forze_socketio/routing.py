@@ -49,7 +49,7 @@ from forze.base.scrubbing import sanitize_pydantic_errors
 
 from .exceptions import (
     GENERIC_INTERNAL_DETAIL,
-    is_server_error_kind,
+    build_core_exception_refusal,
     log_server_error,
     render_error_ack,
 )
@@ -477,12 +477,7 @@ def _build_connect_handler(
             raise
 
         except CoreException as error:
-            if is_server_error_kind(error.kind):
-                log_server_error(error, core=error)
-
-                raise SocketIOConnectionRefusedError(GENERIC_INTERNAL_DETAIL) from error
-
-            raise SocketIOConnectionRefusedError(error.summary) from error
+            raise build_core_exception_refusal(error) from error
 
         except Exception as error:
             log_server_error(error)
