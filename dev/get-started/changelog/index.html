@@ -9979,7 +9979,7 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <p><strong>Cookie-mode <code>/login</code>, <code>/logout</code> and <code>/refresh</code> apply the cookie CSRF gate to every request</strong> (<strong>behaviour change</strong>): each must prove its origin, with or without a cookie, and <code>/refresh</code> also when its token is in the body. A non-browser client sends <code>Origin</code> or is let in by <code>allow_missing_origin=True</code>.</p>
 </li>
 <li>
-<p><strong>Cookie-mode logout revokes from the refresh cookie without a live access cookie</strong> (<code>logout_by_refresh_token</code>). <code>runtime_lifespan</code> refuses an app whose access and refresh cookie paths both miss logout (<code>check_authn_cookie_paths</code>). <strong>Breaking</strong> for own token lifecycle ports: add <code>revoke_tokens_by_refresh_token</code>.</p>
+<p><strong>Cookie-mode logout revokes from the refresh cookie without a live access cookie</strong> (<code>logout_by_refresh_token</code>). <code>runtime_lifespan</code> refuses an app whose refresh cookie path misses logout (<code>check_authn_cookie_paths</code>). <strong>Breaking</strong> for own token lifecycle ports: add <code>revoke_tokens_by_refresh_token</code>.</p>
 </li>
 </ul>
 <h2 id="0151-2026-10-19"><a href="https://github.com/morzecrew/forze/compare/v0.15.0...v0.15.1">0.15.1</a> - 2026-10-19<a class="headerlink" href="#0151-2026-10-19" title="Permanent link">&para;</a></h2>

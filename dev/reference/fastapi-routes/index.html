@@ -7127,8 +7127,9 @@ operation has no route of its own. So scope <code>refresh_path</code> to cover b
 and the logout route, as above. No single cookie path covers only <code>/refresh</code> and
 <code>/logout</code>: with <code>refresh_path="/api/auth"</code> the browser sends the refresh cookie to
 every authn route under that prefix, and only refresh and logout read it.
-<code>runtime_lifespan</code> refuses to start an app whose cookie-mode logout route neither
-cookie's path covers (<code>check_authn_cookie_paths</code>).</p>
+<code>runtime_lifespan</code> refuses to start an app whose cookie-mode logout route the
+refresh cookie's path does not cover (<code>check_authn_cookie_paths</code>; routes inside a
+mounted sub-application are not checked).</p>
 <p>Point the inbound <code>CookieTokenAuthn</code>'s <code>cookie_name</code> at the same
 <code>access_cookie</code>, and list the login, refresh and logout paths in the security
 middleware's <a href="../../integrations/fastapi/#bind-request-context"><code>anonymous_paths</code></a> —
