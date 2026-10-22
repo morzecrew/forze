@@ -290,6 +290,14 @@ class PostgresRankedPipelineSearchAdapter[M: BaseModel](
 
     # ....................... #
 
+    @property
+    def _snapshots_enabled(self) -> bool:
+        """Whether a result snapshot can be read or written (so a fingerprint is consumed)."""
+
+        return self.result_snapshot is not None and self.spec.snapshot is not None
+
+    # ....................... #
+
     def _read_heap_relation_specs(self) -> tuple[RelationSpec, RelationSpec]:
         read = getattr(self, "read_relation", None)
         heap = getattr(self, "heap_relation_spec", None)
@@ -461,10 +469,19 @@ class PostgresRankedPipelineSearchAdapter[M: BaseModel](
             from_outer_param_count=pipeline_sql.from_outer_param_count,
         )
 
-        fp_extras = self._fingerprint_extras(
-            options,
-            resolved_plan=getattr(pipeline_sql, "resolved_plan", None),
-            candidate_limit=getattr(pipeline_sql, "candidate_limit", None),
+        # Only a snapshot read or write consumes the fingerprint; skip building its extras
+        # (a vector engine's digests the whole query vector) when snapshots are off, which
+        # facets and highlights also force (``execute_simple_ranked_offset_search``).
+        fp_extras = (
+            self._fingerprint_extras(
+                options,
+                resolved_plan=getattr(pipeline_sql, "resolved_plan", None),
+                candidate_limit=getattr(pipeline_sql, "candidate_limit", None),
+            )
+            if self._snapshots_enabled
+            and pipeline_sql.highlight is None
+            and not resolve_facet_fields(self.spec, options)
+            else None
         )
 
         # Late materialization: when the read relation is a distinct projection
@@ -536,16 +553,20 @@ class PostgresRankedPipelineSearchAdapter[M: BaseModel](
             model=self.model_type,
             spec_name=self.spec.name,
         )
-        fp_fingerprint = SearchResultSnapshot.simple_search_fingerprint(
-            query,
-            filters,
-            order,
-            spec_name=self.spec.name,
-            variant=self.search_variant,
-            extras=self._fingerprint_extras(options),
+        fp_fingerprint = (
+            SearchResultSnapshot.simple_search_fingerprint(
+                query,
+                filters,
+                order,
+                spec_name=self.spec.name,
+                variant=self.search_variant,
+                extras=self._fingerprint_extras(options),
+            )
+            if self._snapshots_enabled and not facet_fields
+            else ""
         )
 
-        if self.result_snapshot is not None and rs_spec is not None and not facet_fields:
+        if self._snapshots_enabled and self.result_snapshot is not None and not facet_fields:
             maybe_snap: Any = await self.result_snapshot.read_simple_result_snapshot(
                 rs_spec=rs_spec,
                 snap_opt=snapshot,
@@ -637,7 +658,8 @@ class PostgresRankedPipelineSearchAdapter[M: BaseModel](
         u_ = int(pagination.get("offset") or 0)
 
         want_sn = (
-            self.result_snapshot is not None
+            self._snapshots_enabled
+            and self.result_snapshot is not None
             and rs_spec is not None
             and not facet_fields
             and self.result_snapshot.should_write_result_snapshot(snapshot, rs_spec)

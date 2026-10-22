@@ -13,7 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- ...
+- **A Postgres vector search no longer formats its query vector for the fingerprint**: without result snapshots the fingerprint is skipped, and with them a `query_vector` is keyed by a digest, saving about 0.25 ms per 1536-wide search. Snapshots taken for a `query_vector` before the upgrade miss once.
 
 ### Fixed
 

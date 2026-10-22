@@ -156,3 +156,42 @@ def test_the_snapshot_fingerprint_tells_query_vectors_apart() -> None:
 
     assert one != other
     assert "query_vector" not in (port._fingerprint_extras(None) or {})
+
+
+@pytest.mark.asyncio
+async def test_a_search_without_snapshots_formats_the_query_vector_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The SQL parameter is the one formatting a search needs; nothing else re-formats it."""
+
+    from forze_postgres.adapters.search import _leg_vector
+
+    calls: list[int] = []
+
+    def counting(values: list[float]) -> str:
+        calls.append(len(values))
+        return vector_param_literal(values)
+
+    monkeypatch.setattr(_leg_vector, "vector_param_literal", counting)
+
+    port = _minimal_vector_port()
+    port.client.fetch_all = AsyncMock(return_value=[])
+
+    await port.search("", options={"query_vector": [0.5, 0.25, 0.125]})
+
+    assert calls == [3]
+
+
+def test_the_snapshot_fingerprint_digests_the_query_vector() -> None:
+    port = _minimal_vector_port()
+
+    extras = port._fingerprint_extras({"query_vector": [0.5, 0.25, 0.125]}) or {}
+    same = port._fingerprint_extras({"query_vector": (0.5, 0.25, 0.125)}) or {}
+
+    other = port._fingerprint_extras({"query_vector": [0.5, 0.25, 0.126]}) or {}
+
+    assert extras["query_vector"] == same["query_vector"]
+    assert extras["query_vector"] != other["query_vector"]
+    # A fixed-size digest, not the vector's text: a 1536-wide vector must not cost a 20 KB key.
+    assert len(str(extras["query_vector"])) == 32
+    assert vector_param_literal([0.5, 0.25, 0.125]) not in str(extras["query_vector"])
