@@ -114,6 +114,21 @@ def _normalize_code(code: str) -> str:
 # ....................... #
 
 
+def _rebuild[E: CoreException](
+    cls: type[E],
+    fields: Mapping[str, Any],
+    state: Mapping[str, Any],
+) -> E:
+    """Rebuild an exception from :meth:`CoreException.__reduce__`."""
+
+    rebuilt = cls(**fields)
+    rebuilt.__dict__.update(state)
+    return rebuilt
+
+
+# ....................... #
+
+
 @attrs.define(slots=True, eq=False)
 class CoreException(Exception):
     """Base exception class for all forze exceptions."""
@@ -148,6 +163,14 @@ class CoreException(Exception):
 
     def __str__(self) -> str:
         return f"{str(self.kind).capitalize()} exception occurred ({self.code}): {self.summary}"
+
+    # ....................... #
+
+    def __reduce__(self) -> tuple[Any, ...]:
+        # BaseException rebuilds from ``args``: positional, and frozen at construction, so a
+        # field changed in place (``expose_details``) would revert. Rebuild from the fields.
+        fields = {f.alias: getattr(self, f.name) for f in attrs.fields(type(self)) if f.init}
+        return _rebuild, (type(self), fields, self.__dict__)
 
     # ....................... #
 
