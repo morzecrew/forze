@@ -9906,6 +9906,9 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <p><strong>Firestore raises a stale write's preconditions as Postgres and Mongo do</strong> (<strong>behaviour change</strong>). A future revision is <code>precondition</code> with <code>revision_mismatch</code>, and a revision whose history snapshot is missing is <code>precondition</code> with <code>history_not_found_retry</code>, not <code>not_found</code>.</p>
 </li>
 <li>
+<p><strong>A set-based <code>upsert_many</code> is refused for a domain with serializers of its own</strong> (<strong>behaviour change</strong>), as for validators: a <code>field_serializer</code>, <code>model_serializer</code>, <code>PlainSerializer</code> or <code>WrapSerializer</code> that runs in python mode now raises <code>set_based_upsert_unsupported</code>.</p>
+</li>
+<li>
 <p>A circuit breaker whose half-open probes recorded no outcome (an ignored error kind, a cancelled call) no longer rejects every call until restart: after <code>break_duration</code> it admits a new probe round.</p>
 </li>
 <li><strong>A logout everywhere followed by a deactivation in one transaction no longer deadlocks with a concurrent login</strong> (revocation states, policy principal on Postgres; deactivation through SQL or its document port).</li>
