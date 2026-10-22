@@ -165,7 +165,8 @@ class MockDurableWorkflowQueryAdapter[In: BaseModel, Out: BaseModel](
     async def result(self, handle: DurableWorkflowHandle) -> Out:
         with self.state.lock:
             run = self._runs().get(handle.workflow_id)
-            if run is None:
+            # A handle's run id targets that run; the store keeps only the latest per id.
+            if run is None or (handle.run_id is not None and run["run_id"] != handle.run_id):
                 raise exc.not_found(
                     f"Workflow {handle.workflow_id!r} not found", code=WORKFLOW_NOT_FOUND_CODE
                 )
@@ -183,7 +184,8 @@ class MockDurableWorkflowQueryAdapter[In: BaseModel, Out: BaseModel](
     ) -> DurableWorkflowRunDescription:
         with self.state.lock:
             run = self._runs().get(handle.workflow_id)
-            if run is None:
+            # A handle's run id targets that run; the store keeps only the latest per id.
+            if run is None or (handle.run_id is not None and run["run_id"] != handle.run_id):
                 raise exc.not_found(
                     f"Workflow {handle.workflow_id!r} not found", code=WORKFLOW_NOT_FOUND_CODE
                 )

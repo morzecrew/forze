@@ -271,6 +271,24 @@ async def test_result_no_return_type() -> None:
         await qry.result(handle)
 
 
+async def test_a_replaced_run_s_handle_reads_nothing() -> None:
+    state = MockState()
+    cmd = _cmd(state)
+    qry = _qry(state)
+    first = await cmd.start(_In(n=1), workflow_id="wf-1")
+    await cmd.terminate(first)
+    second = await cmd.start(_In(n=2), workflow_id="wf-1")
+    state.durable_workflows["wf"]["wf-1"]["result"] = {"n": 2}
+
+    for read in (qry.describe, qry.result):
+        with pytest.raises(CoreException) as caught:
+            await read(first)
+        assert caught.value.code == WORKFLOW_NOT_FOUND_CODE
+
+    assert (await qry.describe(second)).run_id == second.run_id
+    assert (await qry.describe(DurableWorkflowHandle(workflow_id="wf-1"))).run_id == second.run_id
+
+
 async def test_describe_not_found() -> None:
     state = MockState()
     qry = _qry(state)
