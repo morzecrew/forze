@@ -411,7 +411,7 @@ async def test_hub_score_merge_sum_and_offset() -> None:
 async def test_hub_score_merge_max_replaces_on_higher_contrib() -> None:
     state = MockState()
     leg_a, leg_b, legs = _hub_legs(state)
-    # In leg a, id 1 is rank 2 (contrib 0.5); in leg b it's rank 1 (contrib 1.0).
+    # For "hit best", id 1 matches half the terms in leg a (0.5) and all of them in leg b (1.0).
     # max-merge must replace the stored doc/score with the higher contribution.
     await _seed(
         state,
@@ -421,7 +421,7 @@ async def test_hub_score_merge_max_replaces_on_higher_contrib() -> None:
     await _seed(state, leg_b, [_Item(id="1", title="hit best b")])
     hub = HubSearchSpec(name="hubmax", model_type=_Item, members=[leg_a, leg_b])
     adapter = MockHubSearchAdapter(hub_spec=hub, legs=legs, score_merge="max")
-    page = await adapter.search("hit", pagination={"limit": 10})
+    page = await adapter.search("hit best", pagination={"limit": 10})
     by_id = {h.id: h for h in page.hits}
     assert by_id["1"].title == "hit best b"  # replaced by the higher-scoring leg
 
@@ -480,10 +480,6 @@ async def test_hub_offset_only_methods_reject() -> None:
 
     with pytest.raises(CoreException, match="offset pagination only"):
         await adapter.search_cursor("x")
-    with pytest.raises(CoreException, match="offset pagination only"):
-        await adapter.project_search(["title"], "x")
-    with pytest.raises(CoreException, match="offset pagination only"):
-        await adapter.project_search_page(["title"], "x")
     with pytest.raises(CoreException, match="offset pagination only"):
         await adapter.project_search_cursor(["title"], "x")
     with pytest.raises(CoreException, match="offset pagination only"):

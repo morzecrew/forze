@@ -4,7 +4,7 @@ With ``lazy_transaction`` enabled, opening a transaction scope acquires no serve
 session and starts no transaction until the first operation runs — so pre-op
 compute does not count against MongoDB's ``transactionLifetimeLimitSeconds``.
 
-Requires a replica set (``mongo_replica_container``): MongoDB transactions only
+Requires a replica set (``mongo_replica_uri``): MongoDB transactions only
 work on replica set members. Once materialized the scope must behave like one
 transaction — writes commit on clean exit and abort on error or cancellation,
 nested scopes reuse it — all while never starting a transaction for a scope that
@@ -27,10 +27,10 @@ from forze_mongo.kernel.client.value_objects import MongoConfig
 
 
 @pytest_asyncio.fixture(scope="function")
-async def lazy_mongo_replica(mongo_replica_container) -> MongoClient:
+async def lazy_mongo_replica(mongo_replica_uri: str) -> MongoClient:
     """Lazy Mongo client against the replica set (transactions enabled)."""
 
-    uri = "mongodb://localhost:27017/?replicaSet=rs0"
+    uri = mongo_replica_uri
     db_name = f"forze_lazy_{uuid4().hex[:8]}"
 
     client = MongoClient()

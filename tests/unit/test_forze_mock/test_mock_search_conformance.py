@@ -42,9 +42,6 @@ from tests.support.search_conformance import (
     SearchHarness,
     SearchWriteHarness,
     WriteCheck,
-    check_a_null_group_takes_the_canonical_place,
-    check_an_aggregate_reads_what_the_page_counts,
-    check_the_aggregate_gate_matches_the_declaration,
     searchable_fields,
 )
 
@@ -143,17 +140,9 @@ async def test_search_battery(check: Check, harness: SearchHarness) -> None:
     await check(harness)
 
 
-@pytest.mark.parametrize(
-    "check",
-    [
-        check_the_aggregate_gate_matches_the_declaration,
-        check_an_aggregate_reads_what_the_page_counts,
-        check_a_null_group_takes_the_canonical_place,
-    ],
-    ids=lambda check: check.__name__,
-)
-async def test_hub_aggregates_as_the_battery_asks(check: Check) -> None:
-    """The mock hub over one leg aggregates as the Postgres hub does in the battery."""
+@pytest_asyncio.fixture
+async def hub_harness() -> SearchHarness:
+    """The mock hub over one leg, as the Postgres hub runs the battery."""
 
     state = await _corpus_state()
     leg = SearchSpec(name="rows", model_type=_Row, fields=searchable_fields())
@@ -164,14 +153,18 @@ async def test_hub_aggregates_as_the_battery_asks(check: Check) -> None:
         legs=[("rows", MockSearchAdapter(state=state, spec=leg))],
     )
 
-    # The checks branch on the declaration; pin it, so they measure rather than refuse.
+    # The aggregate checks branch on the declaration; pin it, so they measure, not refuse.
     assert hub.search_capabilities.supports_aggregates
 
-    await check(
-        SearchHarness(
-            query=hub, backend="mock_hub", blank_query_matches_all=True, supports_cursor=False
-        )
+    return SearchHarness(
+        query=hub, backend="mock_hub", blank_query_matches_all=True, supports_cursor=False
     )
+
+
+@pytest.mark.conformance(plane="search", engine="mock")
+@pytest.mark.parametrize("check", SEARCH_BATTERY, ids=lambda check: check.__name__)
+async def test_hub_search_battery(check: Check, hub_harness: SearchHarness) -> None:
+    await check(hub_harness)
 
 
 async def test_relevance_orders_before_the_sort(harness: SearchHarness) -> None:

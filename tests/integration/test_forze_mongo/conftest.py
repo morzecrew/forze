@@ -19,6 +19,7 @@ from testcontainers.redis import RedisContainer
 
 from forze_mongo.kernel.client import MongoClient
 from forze_redis.kernel.client import RedisClient, RedisConfig
+from tests.support.ports import free_port
 
 
 def _ensure_docker() -> None:
@@ -60,15 +61,18 @@ def mongo_rotation_container() -> MongoDbContainer:
 
 
 @pytest.fixture(scope="session")
-def mongo_replica_container() -> DockerContainer:
-    """Start a MongoDB replica set container for transaction tests."""
+def mongo_replica_uri() -> str:
+    """Start a MongoDB replica set container for transaction tests and yield its URI."""
 
     _ensure_docker()
 
+    # A client reconnects to the address the member advertises, so mongod listens inside on the
+    # same free port it is published on: a fixed one collides with another run's container.
+    port = free_port()
     mongo = (
         DockerContainer(image="mongo:7.0-jammy")
-        .with_command(["--replSet", "rs0"])
-        .with_bind_ports(27017, 27017)
+        .with_command(["--replSet", "rs0", "--port", str(port)])
+        .with_bind_ports(port, port)
     )
     mongo.start()
 
@@ -77,12 +81,13 @@ def mongo_replica_container() -> DockerContainer:
 
     wait_for_logs(mongo, ready)
 
-    # Use localhost:27017 so both the node and the client use the same address
+    # Use localhost:<port> so both the node and the client use the same address
     host = "localhost"
-    port = 27017
     init_cmd = [
         "mongosh",
         "--quiet",
+        "--port",
+        str(port),
         "--eval",
         f"rs.initiate({{_id:'rs0',members:[{{_id:0,host:'{host}:{port}'}}]}})",
     ]
@@ -94,7 +99,7 @@ def mongo_replica_container() -> DockerContainer:
             f"output={result.output.decode()!r}"
         )
 
-    yield mongo
+    yield f"mongodb://{host}:{port}/?replicaSet=rs0"
 
     mongo.stop()
 
@@ -114,9 +119,9 @@ async def mongo_client(mongo_container: MongoDbContainer) -> MongoClient:
 
 
 @pytest_asyncio.fixture(scope="function")
-async def mongo_client_replica(mongo_replica_container: DockerContainer) -> MongoClient:
+async def mongo_client_replica(mongo_replica_uri: str) -> MongoClient:
     """Provide an initialized Mongo client connected to replica set (for transactions)."""
-    uri = "mongodb://localhost:27017/?replicaSet=rs0"
+    uri = mongo_replica_uri
     db_name = f"forze_test_{uuid4().hex[:8]}"
 
     client = MongoClient()

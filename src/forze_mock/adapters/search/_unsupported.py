@@ -23,6 +23,7 @@ from forze.application.contracts.search import (
     SearchPage,
     SearchResultSnapshotOptions,
     validate_aggregates_supported,
+    validate_stream_supported,
 )
 from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict
@@ -136,7 +137,7 @@ class MockOffsetOnlySearchMixin(Generic[M]):
 
     # ....................... #
     # Streaming rides the keyset cursor, which these offset-only adapters do not serve,
-    # so it fails closed too (they also advertise ``supports_stream=False``).
+    # so it fails closed as a capability gate (they advertise ``supports_stream=False``).
 
     async def search_stream(
         self,
@@ -148,7 +149,7 @@ class MockOffsetOnlySearchMixin(Generic[M]):
         chunk_size: int = 500,
     ) -> AsyncGenerator[Sequence[M]]:
         _ = query, filters, sorts, options, chunk_size
-        _unsupported_cursor()
+        validate_stream_supported(DEFAULT_SEARCH_CAPABILITIES, backend=type(self).__name__)
         yield []  # pragma: no cover — unreachable; marks this an async generator
 
     async def project_search_stream(
@@ -162,7 +163,7 @@ class MockOffsetOnlySearchMixin(Generic[M]):
         chunk_size: int = 500,
     ) -> AsyncGenerator[Sequence[JsonDict]]:
         _ = fields, query, filters, sorts, options, chunk_size
-        _unsupported_cursor()
+        validate_stream_supported(DEFAULT_SEARCH_CAPABILITIES, backend=type(self).__name__)
         yield []  # pragma: no cover — unreachable; marks this an async generator
 
     async def select_search_stream(
@@ -176,7 +177,7 @@ class MockOffsetOnlySearchMixin(Generic[M]):
         chunk_size: int = 500,
     ) -> AsyncGenerator[Sequence[T]]:
         _ = return_type, query, filters, sorts, options, chunk_size
-        _unsupported_cursor()
+        validate_stream_supported(DEFAULT_SEARCH_CAPABILITIES, backend=type(self).__name__)
         yield []  # pragma: no cover — unreachable; marks this an async generator
 
     async def aggregate_search(

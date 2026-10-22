@@ -13,7 +13,7 @@ from uuid import UUID
 import attrs
 from google.cloud.firestore_v1.base_query import And, FieldFilter
 
-from forze.base.exceptions import CoreException, ExceptionKind, exc
+from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict, OnceCell
 from forze.base.serialization import ModelCodec
 from forze.domain.constants import (
@@ -73,7 +73,13 @@ class FirestoreHistoryGateway[D: Document](FirestoreGateway[D]):
 
     # ....................... #
 
-    async def read(self, pk: UUID, rev: int) -> D:
+    async def _find(self, pk: UUID, rev: int) -> D | None:
+        """The snapshot of *pk* at *rev*, or ``None`` when no row holds one.
+
+        A failed query raises: the API's ``NotFound`` (a missing database, say) maps to the
+        ``not_found`` kind too, so callers must not tell a missing snapshot apart by kind.
+        """
+
         flt = And(
             filters=[
                 FieldFilter(
@@ -88,15 +94,22 @@ class FirestoreHistoryGateway[D: Document](FirestoreGateway[D]):
         flt = self._add_tenant_filter(flt)  # type: ignore[assignment]
         rows = await self.client.query_stream(await self.coll(), filters=flt, limit=1)
 
-        if not rows:
-            raise exc.not_found(f"History not found: {pk}, {rev}")
-
-        payload = rows[0].get(HISTORY_DATA_FIELD)
+        payload = rows[0].get(HISTORY_DATA_FIELD) if rows else None
 
         if payload is None:
-            raise exc.not_found(f"History payload not found: {pk}, {rev}")
+            return None
 
         return self._decode_row(payload)
+
+    # ....................... #
+
+    async def read(self, pk: UUID, rev: int) -> D:
+        found = await self._find(pk, rev)
+
+        if found is None:
+            raise exc.not_found(f"History not found: {pk}, {rev}")
+
+        return found
 
     # ....................... #
 
@@ -111,14 +124,10 @@ class FirestoreHistoryGateway[D: Document](FirestoreGateway[D]):
         ordered: list[D] = []
 
         for pk, rev in zip(pks, revs, strict=True):
-            try:
-                ordered.append(await self.read(pk, rev))
+            found = await self._find(pk, rev)
 
-            except CoreException as err:
-                if err.kind is ExceptionKind.NOT_FOUND:
-                    continue
-
-                raise
+            if found is not None:
+                ordered.append(found)
 
         return ordered
 
