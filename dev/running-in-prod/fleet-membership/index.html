@@ -6871,7 +6871,8 @@ was read. Its policies are pure functions of the view:</p>
 <p><code>rank(key)[0]</code> owns the unit, and removing a member moves only the units it owned. The order
 comes from a stable hash, so it is the same in every process. Pass
 <code>states=("serving", "starting")</code> to make a joining replica a candidate.</p>
-<p><code>excess</code> takes its mean over the serving members that report a numeric <code>load</code>, returns 0
+<p><code>excess</code> takes its mean over the serving members that report a <code>load</code> of 0 or more (a load
+is a count, so a negative one counts as absent, as a non-numeric one does), returns 0
 until the fleet is <code>settled(settle)</code> and the load is above <code>mean × (1 + tolerance)</code>, then
 returns <code>ceil(load − mean)</code>, capped by the floor of the member's <code>movable</code> report when one
 is named. A result below <code>smallest</code> is 0. Use it to decide how many connections, tables or

@@ -9950,6 +9950,9 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <li>
 <p><strong>A missing or closed Temporal workflow, or a missing schedule, is <code>not_found</code>; a taken workflow id <code>conflict</code></strong> (<strong>behaviour change</strong>), not <code>RPCError</code> or <code>WorkflowAlreadyStartedError</code>. A taken schedule kept <code>conflict</code>, now coded. New <code>WORKFLOW_NOT_FOUND_CODE</code> etc.; the mock raises them and refuses a taken schedule.</p>
 </li>
+<li>
+<p><strong><code>FleetView.excess</code> leaves a negative load out of the mean</strong> (<strong>behaviour change</strong>), as it does a non-numeric one: a load is a count. A negative peer load no longer inflates a member's excess, and a member whose own load is negative gets 0.</p>
+</li>
 </ul>
 <h3 id="security">Security<a class="headerlink" href="#security" title="Permanent link">&para;</a></h3>
 <ul>
