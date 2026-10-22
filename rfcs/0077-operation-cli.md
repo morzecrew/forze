@@ -63,8 +63,9 @@
   - an optional allowlist;
   - sensitive read models refused.
 - **A published machine contract:**
-  - the result as JSON on stdout;
-  - one masked error object on stderr for any failure after the declaration loads;
+  - after the declaration loads, exactly one JSON document on stdout: the result, or a
+    masked error object carrying the invocation ids. Everything else the application writes
+    goes to stderr;
   - an exit-code table derived from the error envelope's kind. Exit 75, "retry", is reserved
     for failures that are safe to repeat.
 - **An interrupt never hides a possible commit.** The first signal waits a grace period for
@@ -252,8 +253,9 @@ class OpsApp:
   open a pool or need credentials. They read only the catalog.
 - **Profile check.** The runtime a factory returns must have
   `deployment is DeploymentProfile.SERVERLESS`; otherwise `call` exits 78 naming the
-  profile. Assembly then guarantees that no step declared `requires_long_running` is in the
-  plan, and that the drain window is zero.
+  profile. Assembly then refuses any step *declared* `requires_long_running`, and the drain
+  window is zero. The check is only as good as that declaration. A poller whose author did not
+  declare it still starts, and §9 keeps that risk; nothing attests to the whole plan.
 
 ### 5.2 Exposure
 
@@ -310,8 +312,10 @@ The command name is the operation key verbatim, dots included: `orders.get`.
 **Anonymous.** `--tenant` is refused (exit 2). There is no principal to validate it against.
 
 **Static identity.**
-- **The acknowledgement.** `acknowledge_unverified_identity` is a required keyword with no
-  default. The constructor raises `configuration` when it is omitted or `False`. This is the
+- **The acknowledgement.** `acknowledge_unverified_identity` defaults to `False`, and the
+  constructor raises `configuration` unless it is `True`. A default, rather than a required
+  keyword, makes omission fail as `configuration` too; a required keyword would fail as a
+  `TypeError` before validation runs. This is the
   RFC 0022 acknowledgement shape: the dangerous choice can still be spelled, but never by
   accident.
 - **What it gives up.** The docs state the costs plainly:
@@ -351,22 +355,31 @@ The command name is the operation key verbatim, dots included: `orders.get`.
 
 ### 5.5 Output and exit codes
 
-**Stdout.**
-- `call` writes the result as one JSON document and nothing else. `None` is written as
-  `null`. `--pretty` indents it.
+**One document on stdout.** After the declaration loads, `call` writes exactly one JSON
+document to stdout and nothing else: the result when it exits 0, the error object otherwise.
+A script reads stdout and the exit code, and never has to parse stderr.
+
 - The result is encoded with `TypeAdapter(descriptor.output_type)` when the descriptor
   declares one, and with the pydantic/`JsonCodec` fallback agent tools use when it does not.
+  `None` is written as `null`, and `--pretty` indents it.
+- **The CLI keeps stdout clean itself.** An application's logging may well write to stdout,
+  and the application module configures it, so the CLI cannot rely on it. For the duration
+  of a call, the CLI duplicates the original stdout descriptor and points descriptor 1 at
+  stderr (`os.dup2`). Logs, prints and a library's stray output all land on stderr. The one
+  document is written to the saved descriptor.
 - `list` and `describe` write text by default and JSON with `--json`.
 
-**Stderr, on failure.** What stderr carries depends on when the failure happens.
+**Stderr** carries everything else: the application's logs, and a server error logged through
+the scrubbed logger as at the HTTP edge. Two failures happen before there is anything to put on
+stdout:
 
-| When | Stderr | Exit |
+| When | Output | Exit |
 |---|---|---|
-| Argument parsing | Click's usage text | 2 |
-| Loading the declaration: an import error, or a declaration that refuses itself | the traceback, without locals, as `forze dst` and `forze mock` print today. The operator needs it to fix their own module | 78 |
-| Anything after that, through the end of the call | exactly one JSON object | the table below |
+| Argument parsing, including a malformed `--correlation-id` or `--timeout` | Click's usage text on stderr | 2 |
+| Loading the declaration: an import error, or a declaration that refuses itself | the traceback on stderr, without locals, as `forze dst` and `forze mock` print today. The operator needs it to fix their own module | 78 |
+| Anything after that, through the end of the call | the error object on stdout | the table below |
 
-The JSON object is built from `error_envelope` (masked, denial posture applied). A
+The error object is built from `error_envelope` (masked, denial posture applied). A
 non-`CoreException` gets `unhandled_error_envelope()` instead. A top-level handler around the
 whole call guarantees one of the two:
 
@@ -375,7 +388,14 @@ whole call guarantees one of the two:
  "execution_id": "…", "correlation_id": "…"}
 ```
 
-A server error is also logged through the scrubbed logger, as at the HTTP edge.
+`execution_id` and `correlation_id` are always present, because metadata is minted before the
+first step that can fail (§5.6).
+
+**An interrupt** is not an exception, so no envelope describes it. The CLI writes its own
+object, with `kind: "interrupted"`, the one kind the CLI adds; `code: "interrupted"`;
+`detail` naming the signal; and `retryable: false`, because an operation may have side effects
+outside its transaction. Its exit code comes from the signal, 128 plus the signal number, not
+from the kind table.
 
 **Exit codes** are derived from the *envelope's* kind, not the raised one. A non-disclosing
 denial posture (RFC 0059) collapses a denial about a covered resource type into not-found
@@ -394,7 +414,7 @@ posture does not cover still exits 5.
 | 69 | temporary failure; a write may have landed | a retryable kind, raised by a command called without an idempotency key |
 | 75 | temporary failure; safe to retry as is | a retryable kind, raised by a query, or by a command called with an idempotency key |
 | 78 | configuration | `configuration`; a declaration, runtime or profile refused before the operation ran |
-| 130 / 143 | interrupted | SIGINT / SIGTERM, when no commit had started (§5.6) |
+| 130 / 143 | interrupted | SIGINT / SIGTERM (128 + signal number), when no commit had started (§5.6); the object's kind is the CLI-only `interrupted` |
 
 **Why there are two retry codes.**
 - Retry rules match on exit codes: Kubernetes `podFailurePolicy`, systemd's
@@ -404,7 +424,7 @@ posture does not cover still exits 5.
   stored result.
 - A command without a key can fail `infrastructure` after its write landed. The classic case
   is a connection lost during `COMMIT`, which the driver reports as an infrastructure error.
-  That gets 69 (`EX_UNAVAILABLE`), so it stays outside a "retry on 75" rule. The stderr object
+  That gets 69 (`EX_UNAVAILABLE`), so it stays outside a "retry on 75" rule. The error object
   still says `retryable: true`, from the egress policy. The exit code adds what the policy
   cannot know: whether this call can be repeated safely.
 - Retryability is read from the egress policy before the kind's row is consulted. If a policy
@@ -415,16 +435,17 @@ posture does not cover still exits 5.
 
 ### 5.6 Running a call
 
-1. Load the declaration and check that the operation is exposed. Neither step builds a
-   runtime.
-2. Read and validate the input, and check the options against the catalog entry.
-3. Build the runtime from the factory and check its profile.
-4. Under `asyncio.run`, enter `runtime.scope()`, then:
+1. Load the declaration. Its failures are the traceback case above.
+2. Mint the invocation metadata, keeping a supplied `--correlation-id` and `--causation-id`.
+   From here on, every failure writes the error object carrying both ids.
+3. Check that the operation is exposed. Read and validate the input, and check the options
+   against the catalog entry. None of this builds a runtime.
+4. Build the runtime from the factory and check its profile.
+5. Under `asyncio.run`, enter `runtime.scope()`, then:
    - resolve the identity;
-   - mint metadata;
    - bind identity, metadata, idempotency and deadline;
    - call `run_operation(registry, op, args, runtime.get_context())`.
-5. Encode the result or the error, then leave the scope. Shutdown runs whether the call
+6. Encode the result or the error, then leave the scope. Shutdown runs whether the call
    succeeded or not.
 
 **Signals.** `asyncio.run` handles only SIGINT, and SIGTERM's default action kills the
@@ -440,7 +461,7 @@ process with no shutdown at all. The command therefore installs handlers for bot
    scope: a lifecycle shutdown hook that runs an operation would clear the flag. Then the
    scope shuts down, and the CLI reports one of two outcomes:
    - the commit point had been reached: `internal` / `commit_ambiguous`, exit 1;
-   - it had not: code `interrupted`, exit 130 or 143.
+   - it had not: the `interrupted` object (§5.5), exit 130 or 143.
 
 The deadline path cannot do this for us. The flag's own docstring says a deadline *or a
 cancellation* after the commit point is ambiguous
@@ -456,15 +477,25 @@ below that layer and cannot import it.
 
 | Function | Replaces |
 |---|---|
-| `select_operations(catalog, *, include_writes, operations, surface)` | `forze_mcp.projection.exposed_operations` and the sensitive refusal in `register_tools` |
-| `validate_operation_input(entry, raw, *, code, forbid_unknown)`: both keywords required, no defaults | `forze_mcp.dispatch.build_args`, which passes `forbid_unknown=False` to keep its current behaviour; the CLI passes `True`; agent tools' `_validated_args` later |
+| `select_operations(catalog, *, include_writes, operations, surface)` | the body of `forze_mcp.projection.exposed_operations` |
+| `refuse_sensitive(catalog, ops, *, surface)` | the sensitive refusal in `register_tools` |
+| `validate_operation_input(descriptor, raw, *, code, forbid_unknown)`: both keywords required, no defaults | the body of `forze_mcp.dispatch.build_args`, which passes `forbid_unknown=False` to keep its current behaviour; the CLI passes `True`; agent tools' `_validated_args` later |
 | `invoke_at_ingress(registry, ctx, op, args, *, authn, tenant, metadata, idempotency_key=None, deadline=None)` | `forze_mcp.dispatch.invoke_operation`'s bind-and-run |
 | `mint_invocation_metadata(*, correlation_id=None, causation_id=None)` | the fresh-`uuid7` blocks in MCP and FastAPI |
 | `IngressIdentityResolver` (protocol), `StaticIdentityResolver` | `forze_mcp.identity.MCPIdentityResolver` and its static resolver, which have no fastmcp dependency today |
 | `authenticate_api_key(ctx, spec, raw)`, `resolve_principal_tenant(ctx, result, route, requested)` | `forze_mcp.auth._split_api_key` and `_resolve_tenant`; FastAPI's copies later |
 
-- **MCP keeps its public names** as aliases, so P1 changes no import and no behaviour.
-  `forze_mcp`'s existing suite is the regression net.
+- **MCP keeps its names and signatures.**
+  - The two classes, `MCPIdentityResolver` and `StaticIdentityResolver`, are re-exported
+    as the ingress ones; their shapes are identical.
+  - Every function keeps its current signature as a thin wrapper over `ingress`:
+    `exposed_operations`, `build_args`, `invoke_operation`, and the private auth helpers. For
+    example, `build_args(descriptor, arguments)` calls `validate_operation_input` with
+    `code="mcp_invalid_arguments"` and `forbid_unknown=False`.
+  - `exposed_operations` keeps leaving the sensitive refusal to `register_tools`, so a direct
+    caller sees no change.
+  - P1 therefore changes no import, no signature and no behaviour, and `forze_mcp`'s existing
+    suite is the regression net.
 - **Error codes stay per surface:** `code` and `surface` are parameters, so clients see the
   same codes as before.
 - **Later moves.** FastAPI, Socket.IO and the WS route move onto `ingress` in later changes,
@@ -524,7 +555,7 @@ forze ops call      [--app REF] OP [--input JSON|@PATH|-] [--tenant UUID]
   mapping, and a partial mapping would make the contract depend on each DTO's shape. The
   flat-scalar case is demand-gated (§12).
 - **One exit code for every failure, or HTTP statuses as exit codes.** With one code, a
-  script must parse stderr to decide anything. HTTP statuses do not fit in an exit code, which
+  script must parse the error object to decide anything. HTTP statuses do not fit in an exit code, which
   stops at 255, and the range above 128 already means "killed by a signal".
 - **A remote mode.** See §8.
 
@@ -568,12 +599,16 @@ The battery lives under `tests/unit/test_forze_cli/test_ops_*.py` and uses Typer
    - A collapsed denial exits 3, and a denial the posture does not cover exits 5.
    - A retryable kind exits 75 from a query and from a keyed command, and 69 from a command
      without a key.
-7. **Stderr shape.**
-   - A parse error prints Click's usage text and exits 2.
-   - An import error in the application module prints a traceback without locals and
-     exits 78.
-   - Every failure after loading prints exactly one JSON object, an unhandled exception
-     included.
+7. **Output shape.**
+   - A parse error prints Click's usage text on stderr and exits 2.
+   - An import error in the application module prints a traceback without locals on stderr
+     and exits 78.
+   - Every failure after loading writes exactly one JSON object to stdout, an unhandled
+     exception included. The object carries `execution_id` and `correlation_id`, even when the
+     input or the API key is what failed.
+   - An application that logs and prints to stdout during a call still leaves exactly one
+     JSON document there, and its output appears on stderr.
+   - An interrupt before the commit point writes the `interrupted` object.
 8. **Runtime and signals.**
    - A runtime that is not `SERVERLESS` exits 78.
    - Shutdown hooks run after success and after failure.
@@ -595,7 +630,7 @@ The battery lives under `tests/unit/test_forze_cli/test_ops_*.py` and uses Typer
   `OpsApp`, building a `SERVERLESS` runtime, choosing an identity, Kubernetes Job and cron
   examples, and what a static identity gives up.
 - A reference page: `pages/docs/reference/ops-cli.md`. It holds the output contract, the
-  stderr object and the exit-code table, and links to [errors](../pages/docs/reference/errors.md).
+  error object, the interrupt object and the exit-code table, and links to [errors](../pages/docs/reference/errors.md).
 - `integrations/index.md`: extend the `cli` extra's line.
 - `app.py`: rewrite the root help, which today speaks only of DST.
 - A test-backed example under `examples/`, exercised from `tests/unit/test_examples/`.
@@ -641,7 +676,7 @@ The battery lives under `tests/unit/test_forze_cli/test_ops_*.py` and uses Typer
 - **Import side effects.** Loading `module:attr` runs the application module's top level.
   Keeping it cheap is the application's responsibility, as it already is for `forze dst` and
   `forze mock`.
-- **The contract becomes semver surface.** Exit codes, the stderr object and the stdout shape
+- **The contract becomes semver surface.** Exit codes, the error object and the stdout shape
   are breaking to change once released. That is why they are fixed here, before code.
 - **Startup per call.** Each `call` opens and closes its runtime. That is fine for admin work
   and wrong for loops, which the batch mode in §12 would answer.
@@ -675,11 +710,11 @@ answer took the recorded lean.
 | 1 | `ASSUMED` | A `forze ops` group in `forze_cli` under the existing `cli` extra, not a new package. |
 | 2 | `LOCKED` | Every call goes through `run_operation` on the runtime's scope context, after validation and identity binding. There is no direct handler path. |
 | 3 | `ASSUMED` | The boundary sequence moves to `forze.application.execution.ingress` before the CLI is built, and `forze_mcp` moves onto it in the same phase with no behaviour change. |
-| 4 | `ASSUMED` | The identity choice is a required declaration field with no default: a verified API key, anonymous, or a static identity whose acknowledgement is a required keyword. |
+| 4 | `ASSUMED` | The identity choice is a required declaration field with no default: a verified API key, anonymous, or a static identity that is refused unless its acknowledgement is `True`. |
 | 5 | `LOCKED` | No run-time choice of principal (`--as`), and no API key on argv. |
 | 6 | `LOCKED` | `--tenant` is a requested tenant validated by the resolver, never trusted raw, and refused wherever there is nothing to validate it against. |
 | 7 | `ASSUMED` | Exposure is MCP's policy: queries by default, `include_writes` opt-in, an optional allowlist checked like a grant, sensitive operations refused. |
-| 8 | `ASSUMED` | Stdout carries only the result JSON. After loading, stderr carries exactly one masked error object. Exit codes follow §5.5 and are derived from the envelope. |
+| 8 | `ASSUMED` | After loading, stdout carries exactly one JSON document, the result or the masked error object, and the CLI redirects everything else the application writes to stderr. Metadata is minted before the first fallible step. Exit codes follow §5.5 and are derived from the envelope, except an interrupt's, which comes from the signal. |
 | 9 | `LOCKED` | Exit 75 means safe to repeat as is. A retryable failure of a command called without an idempotency key exits 69 instead. |
 | 10 | `LOCKED` | An interrupted call is never reported as safe when its commit may have landed. The first signal waits up to `--grace`; a cancel after the commit point reports `commit_ambiguous`. |
 | 11 | `ASSUMED` | A command runs only on a `SERVERLESS` runtime, the profile that hosts no long-running step. The runtime is built lazily, so `list` and `describe` never build one. |

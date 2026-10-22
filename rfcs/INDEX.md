@@ -96,7 +96,7 @@ only in the code, which is the failure this log exists to prevent.
 | [0074](0074-drain-announcement-and-readiness-checks.md) | Drain announcement and readiness checks | ✅ Complete | Announce a drain before refusing work: readiness fails first, registered drain phases run before teardown, embedded uvicorn routes SIGTERM into that order, and probes check dependencies. |
 | [0075](0075-realtime-connection-drain.md) | Realtime connection drain | ✅ Complete | Close a leaving replica's socket.io, WebSocket and SSE connections spread over a window, refuse connects while draining, count connections, and let apps admit connects. |
 | [0076](0076-connection-rebalancing-step.md) | Connection rebalancing step | ✅ Complete | A socket.io step that sheds movable connections from a replica well above the fleet's mean once the fleet has settled. |
-| [0077](0077-operation-cli.md) | Operation CLI: governed operations from the command line | 📝 Draft | A `forze ops` group that invokes registry operations in process through `run_operation`, with a verified identity, a stable exit-code contract, and the boundary code MCP and FastAPI each copy lifted into core first. |
+| [0077](0077-operation-cli.md) | Operation CLI: governed operations from the command line | 📝 Draft | A `forze ops` group that invokes registry operations in process through `run_operation`, with a verified identity, a stable exit-code contract, and the boundary code each surface copies lifted into core first, with MCP moved onto it. |
 
 ## Status legend
 
