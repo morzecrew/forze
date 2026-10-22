@@ -10,6 +10,7 @@ from .handlers import (
     AuthnChangePassword,
     AuthnListPrincipalApiKeys,
     AuthnLogout,
+    AuthnLogoutByRefreshToken,
     AuthnPasswordLogin,
     AuthnRefreshTokens,
     AuthnRequestPasswordReset,
@@ -44,6 +45,12 @@ class AuthnFacade(OperationFacade):
         uc=AuthnLogout,
     )
     """Logout (revoke session tokens) usecase."""
+
+    logout_by_refresh_token = facade_op(
+        AuthnKernelOp.LOGOUT_BY_REFRESH_TOKEN,
+        uc=AuthnLogoutByRefreshToken,
+    )
+    """Logout by a refresh token (no usable access token) usecase."""
 
     change_password = facade_op(
         AuthnKernelOp.CHANGE_PASSWORD,

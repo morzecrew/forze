@@ -13,6 +13,7 @@ from fastapi import FastAPI
 
 from forze.application.execution import ExecutionRuntime
 
+from .middlewares.authn_cookies import check_authn_cookie_paths
 from .middlewares.bypass import check_bypass_paths
 from .middlewares.raw_websocket import check_websocket_allowlist
 
@@ -48,6 +49,9 @@ def runtime_lifespan(
         # And on a bypass that names a governed operation route, disagrees between the
         # middlewares, or matches no route at all; a no-op without bypass_paths.
         check_bypass_paths(app)
+
+        # And on a cookie-mode logout route its access cookie never reaches.
+        check_authn_cookie_paths(app)
 
         async with runtime.scope():
             yield

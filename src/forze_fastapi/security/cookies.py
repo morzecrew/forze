@@ -10,9 +10,13 @@ so cookie clients still learn how long the credential is valid — exactly the s
 Wire it into :func:`~forze_fastapi.routes.attach_authn_routes` via ``cookies=`` and
 point :class:`CookieTokenAuthn`'s ``cookie_name`` at :attr:`access_cookie`. Scope
 the two cookies with :attr:`access_path` / :attr:`refresh_path` (e.g. access →
-``/api``, refresh → ``/auth/refresh``) so the refresh token never rides ordinary
-API requests — and pair the login/refresh paths with the security middleware's
+``/api``, refresh → ``/api/auth``, every authn route) so the refresh token never rides
+ordinary API requests — and pair the login/refresh paths with the security middleware's
 ``anonymous_paths``, or a stale access cookie 401s the very route that replaces it.
+Logout revokes the session from the access cookie or, without one, the refresh
+cookie, so one of the two paths must cover the logout route;
+:func:`~forze_fastapi.middlewares.check_authn_cookie_paths` refuses it at startup
+otherwise.
 """
 
 from forze_fastapi._compat import require_fastapi
@@ -48,14 +52,16 @@ class AuthnCookieCarrier:
     cookies to cross-site requests. Inbound, a
     :class:`~forze_fastapi.security.CookieCsrf` gate (on by default) requires an
     unsafe request using either cookie to prove a same-host or allowlisted origin:
-    :class:`CookieTokenAuthn` applies it when the access cookie is read, and
-    ``/refresh`` applies the same ingress's gate when it reads the refresh cookie
-    (the default gate when no ``CookieTokenAuthn`` reads :attr:`access_cookie`).
+    :class:`CookieTokenAuthn` applies it when the access cookie is read,
+    and ``/login``, ``/logout`` and ``/refresh`` apply the same ingress's gate to
+    every request (the default gate when no ``CookieTokenAuthn`` reads
+    :attr:`access_cookie`).
     It is the server-side check that still holds when a proxy strips ``SameSite``
     or a ``samesite="none"`` deployment relies on it; list your cross-origin
-    frontends in its ``allowed_origins``, and ``csrf=None`` on the ingress opts out
-    of both. The carrier still ships no double-submit token: a token needs an
-    issuance surface (a page or bootstrap route) that the authn routes do not own.
+    frontends in its ``allowed_origins``. ``csrf=None`` opts out of all of them only
+    when every ``CookieTokenAuthn`` reading the access cookie declares it. The carrier
+    still ships no double-submit token: a token needs an issuance surface (a page or
+    bootstrap route) that the authn routes do not own.
     """
 
     access_cookie: str = "forze_access"
@@ -68,8 +74,10 @@ class AuthnCookieCarrier:
     """Path scope of the access cookie (e.g. ``/api``)."""
 
     refresh_path: str = "/"
-    """Path scope of the refresh cookie. Scope it to the refresh route (e.g.
-    ``/auth/refresh``) so the long-lived credential rides exactly one request shape."""
+    """Path scope of the refresh cookie. Scope it to the authn routes (e.g. ``/auth``) so
+    the long-lived credential never rides ordinary API calls, and covers logout, which
+    revokes from it once the access cookie has expired. The browser then sends it to every
+    authn route under that path; only refresh and logout read it."""
 
     domain: str | None = None
     """Cookie ``Domain``; ``None`` = host-only."""

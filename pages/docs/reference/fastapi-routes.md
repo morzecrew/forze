@@ -262,19 +262,31 @@ set and rotate two `HttpOnly` cookies instead of returning token strings; the
 body keeps the scheme and the `*_expires_in` lifetimes, so a cookie client still
 learns how long its credential is valid. Refresh reads the refresh cookie when
 the request has no body or an empty JSON object (`{}`, as fetch wrappers and
-generated clients send); a token in the body takes precedence. Logout expires
-both cookies idempotently.
+generated clients send); a token in the body takes precedence. Logout revokes
+the session and expires both cookies idempotently.
 
 ```python
+from fastapi import APIRouter
 from forze_fastapi.security import AuthnCookieCarrier
 
+router = APIRouter(prefix="/api/auth")
 cookies = AuthnCookieCarrier(
-    access_path="/api",              # the access cookie rides ordinary API calls
-    refresh_path="/auth/refresh",    # the long-lived one rides exactly one route
+    access_path="/api",          # API calls carry the access cookie
+    refresh_path="/api/auth",    # the long-lived one: every authn route, no other API call
 )
 
 attach_authn_routes(router, registry=registry, ctx_dep=ctx_dep, cookies=cookies)
 ```
+
+Logout revokes what a logout by access token revokes (every session of the
+principal). With no identity bound, which is the case once the access cookie has
+expired, it runs `logout_by_refresh_token` with the refresh cookie instead. That
+operation has no route of its own. So scope `refresh_path` to cover both the refresh
+and the logout route, as above. No single cookie path covers only `/refresh` and
+`/logout`: with `refresh_path="/api/auth"` the browser sends the refresh cookie to
+every authn route under that prefix, and only refresh and logout read it.
+`runtime_lifespan` refuses to start an app whose cookie-mode logout route neither
+cookie's path covers (`check_authn_cookie_paths`).
 
 Point the inbound `CookieTokenAuthn`'s `cookie_name` at the same
 `access_cookie`, and list the login, refresh and logout paths in the security
@@ -287,9 +299,9 @@ server-side CSRF gate **on by default** (`CookieCsrf`): a request using either
 cookie on an unsafe method must prove a same-host origin via `Origin` (or
 `Referer`), so the defense holds even when a proxy strips `SameSite` or a
 `samesite="none"` deployment relies on it. The middleware applies it to the
-access cookie; refresh applies the same ingress's gate when it reads the refresh
-cookie (the default gate if no `CookieTokenAuthn` reads the carrier's
-`access_cookie`), so the settings below cover both. A cross-origin frontend (a SPA on
+access cookie. Login, logout and refresh apply the same ingress's gate to every
+request, with or without a cookie (the default gate if no `CookieTokenAuthn` reads
+the carrier's `access_cookie`), so the settings below cover all three. A cross-origin frontend (a SPA on
 another host) lists itself in `CookieCsrf(allowed_origins={...})` — a dev server
 that picks a free port may be named as a range on a loopback host
 (`http://localhost:5173-5199`, or `http://localhost:*`); non-browser
