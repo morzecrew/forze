@@ -15,6 +15,7 @@ from forze.application.contracts.embeddings import (
 from forze.application.contracts.querying import QueryFilterExpression
 from forze.application.contracts.search import SearchQueryDepKey, SearchSpec
 from forze.application.execution import Deps, ExecutionContext
+from forze.base.exceptions import CoreException, ExceptionKind
 from forze_mock import MockHashEmbeddingsProvider
 from forze_postgres.adapters.search import PostgresVectorSearchAdapter
 from forze_postgres.adapters.search._vector_sql import vector_param_literal
@@ -997,3 +998,62 @@ async def test_a_query_vector_finds_what_its_text_finds(pgvector_client: Postgre
     assert by_vector.scores == by_text.scores
     assert [hit.id for hit in by_cursor.hits] == [hit.id for hit in by_text.hits]
     assert by_vector.hits[0].label == "beta"
+
+
+@pytest.mark.asyncio
+async def test_a_search_without_embeddings_ranks_by_query_vector_only(
+    pgvector_client: PostgresClient,
+) -> None:
+    """No ``embeddings_name`` and no embeddings provider: a ``query_vector`` ranks, a blank
+    query browses, and a text query is refused before any SQL runs."""
+    await _ensure_vector_extension(pgvector_client)
+
+    suffix = uuid4().hex[:12]
+    table = f"vec_stored_{suffix}"
+    prov = MockHashEmbeddingsProvider(dimensions=3)
+    await pgvector_client.execute(
+        f"CREATE TABLE {table} (id uuid PRIMARY KEY, label text NOT NULL, emb vector(3) NOT NULL)"
+    )
+
+    for label in ["alpha", "beta", "gamma"]:
+        literal = vector_param_literal(await prov.embed_one(label))
+        await pgvector_client.execute(
+            f"INSERT INTO {table} (id, label, emb) VALUES (%(id)s, %(label)s, '{literal}'::vector)",
+            {"id": uuid4(), "label": label},
+        )
+
+    ctx = context_from_deps(
+        Deps.plain(
+            {
+                PostgresClientDepKey: pgvector_client,
+                PostgresIntrospectorDepKey: PostgresIntrospector(client=pgvector_client),
+                SearchQueryDepKey: ConfigurablePostgresSearch(
+                    config=PostgresSearchConfig(
+                        index=("public", f"idx_vec_stored_{suffix}"),
+                        read=("public", table),
+                        heap=("public", table),
+                        engine=VectorEngine(column="emb", dimensions=3),
+                    )
+                ),
+            }
+        )
+    )
+    assert not ctx.deps.exists(EmbeddingsProviderDepKey)
+    port = ctx.search.query(
+        SearchSpec(name="vec_stored", model_type=VecDoc, fields=["id", "label"])
+    )
+    vector = list(await prov.embed_one("beta", input_kind="query"))
+
+    ranked = await port.search_page("", options={"query_vector": vector})
+    assert ranked.hits[0].label == "beta"
+    assert ranked.scores is not None
+
+    browsed = await port.search_page("")
+    assert browsed.count == 3
+    assert browsed.scores is None
+
+    with pytest.raises(CoreException) as caught:
+        await port.search("beta")
+
+    assert caught.value.kind is ExceptionKind.PRECONDITION
+    assert caught.value.code == "search_query_vector_required"

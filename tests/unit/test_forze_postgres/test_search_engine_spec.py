@@ -142,6 +142,17 @@ class TestPerVariantValidation:
         with pytest.raises(CoreException, match="embedding_dimensions"):
             VectorEngine(column="emb", dimensions=0, embeddings_name="e")
 
+    def test_vector_without_embeddings_ranks_by_stored_vectors(self) -> None:
+        cfg = _cfg(VectorEngine(column="emb", dimensions=3))
+
+        assert cfg.engine_spec.embeddings_name is None  # type: ignore[union-attr]
+        assert cfg.embeddings_name is None
+        assert cfg.embedding_dimensions == 3
+
+    def test_vector_empty_embeddings_name_rejected(self) -> None:
+        with pytest.raises(CoreException, match="embeddings_name"):
+            VectorEngine(column="emb", dimensions=3, embeddings_name="")
+
     def test_pgroonga_bad_score_version_rejected(self) -> None:
         with pytest.raises(CoreException, match="pgroonga_score_version"):
             PgroongaEngine(score_version="v3")  # type: ignore[arg-type]

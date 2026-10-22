@@ -144,19 +144,21 @@ def postgres_search_port_for_config(
             ed = c.embedding_dimensions
             vcol = c.vector_column
 
-            if en is None or ed is None or vcol is None:
+            if ed is None or vcol is None:
                 raise exc.internal(
-                    "vector engine requires embeddings_name, embedding_dimensions, and vector_column.",
+                    "vector engine requires embedding_dimensions and vector_column.",
                 )
 
+            # Without embeddings_name the spec only carries the query_vector length.
             es = EmbeddingsSpec(
-                name=str(en),
+                name=str(en or ""),
                 dimensions=int(ed),
             )
 
             return PostgresVectorSearchAdapter[Any](
                 **common,  # type: ignore[arg-type]
-                embedder=context.embeddings.provider(es),
+                # Resolved here, so a missing provider fails at port build, not mid-search.
+                embedder=context.embeddings.provider(es) if en is not None else None,
                 embeddings_spec=es,
                 vector_column=str(vcol),
                 vector_distance=c.vector_distance,

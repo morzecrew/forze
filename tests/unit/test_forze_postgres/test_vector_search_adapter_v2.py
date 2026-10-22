@@ -26,6 +26,7 @@ class _M(BaseModel):
 def _minimal_vector_port(
     *,
     join_pairs: tuple[tuple[str, str], ...] | None = None,
+    with_embedder: bool = True,
 ) -> PostgresVectorSearchAdapter[_M]:
     intro = MagicMock()
     intro.get_column_types = AsyncMock(return_value={})
@@ -36,7 +37,7 @@ def _minimal_vector_port(
         index_relation=("public", "idx"),
         relation=("public", "heap"),
         index_heap_relation=("public", "heap"),
-        embedder=MagicMock(),
+        embedder=MagicMock() if with_embedder else None,
         embeddings_spec=EmbeddingsSpec(name="e", dimensions=3),
         vector_column="emb",
         client=MagicMock(),
@@ -195,3 +196,44 @@ def test_the_snapshot_fingerprint_digests_the_query_vector() -> None:
     # A fixed-size digest, not the vector's text: a 1536-wide vector must not cost a 20 KB key.
     assert len(str(extras["query_vector"])) == 32
     assert vector_param_literal([0.5, 0.25, 0.125]) not in str(extras["query_vector"])
+
+
+@pytest.mark.asyncio
+async def test_without_an_embedder_a_query_vector_still_ranks() -> None:
+    port = _minimal_vector_port(with_embedder=False)
+    port.client.fetch_all = AsyncMock(return_value=[])
+    qvec = [0.5, 0.25, 0.125]
+
+    await port.search("", options={"query_vector": qvec})
+    await port.search_cursor("", cursor={"limit": 3}, options={"query_vector": qvec})
+    await port.search("")
+
+    assert port.client.fetch_all.await_count == 3
+
+    for call in port.client.fetch_all.call_args_list[:2]:
+        assert vector_param_literal(qvec) in call[0][1]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("query", ["text", ["one", "two"]])
+async def test_without_an_embedder_a_text_query_is_refused_before_any_sql(
+    query: str | list[str],
+) -> None:
+    port = _minimal_vector_port(with_embedder=False)
+    port.client.fetch_all = AsyncMock()
+    port.client.fetch_one = AsyncMock()
+
+    for call in (
+        lambda: port.search(query),
+        lambda: port.search_page(query, pagination={"limit": 3}),
+        lambda: port.search_cursor(query, cursor={"limit": 3}),
+    ):
+        with pytest.raises(CoreException) as caught:
+            await call()
+
+        assert caught.value.kind.value == "precondition"
+        assert caught.value.code == "search_query_vector_required"
+
+    port.client.fetch_all.assert_not_awaited()
+    port.client.fetch_one.assert_not_awaited()
+    port.introspector.get_column_types.assert_not_awaited()

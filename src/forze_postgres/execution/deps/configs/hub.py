@@ -154,6 +154,13 @@ class PostgresHubSearchConfig(TenantAwareIntegrationConfig):
             if leg.engine == "fts" and not leg.fts_groups:
                 raise exc.internal(f"Hub search leg {i} with engine 'fts' requires fts_groups.")
 
+            # A hub takes no query_vector, so a leg with no embedder could never rank.
+            if leg.engine == "vector" and leg.embeddings_name is None:
+                raise exc.configuration(
+                    f"Hub search leg {i} with engine 'vector' requires embeddings_name: "
+                    "hub search takes no query_vector.",
+                )
+
             if leg.same_heap_as_hub:
                 _validate_same_heap_as_hub(leg, i, self)
 
