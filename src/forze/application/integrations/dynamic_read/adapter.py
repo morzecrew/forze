@@ -35,6 +35,7 @@ from forze.application.contracts.querying import refuse_unknown_keys
 from forze.application.contracts.tenancy import TenancyMixin
 from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict
+from forze.base.scrubbing import sanitize_pydantic_errors
 
 from ..tenancy_sql import TENANT_PARAM, sql_references_param
 from .errors import row_cap_exceeded, statement_too_large
@@ -160,7 +161,8 @@ class DynamicReadAdapter(DynamicReadPort, TenancyMixin):
             #
             # ``include_input=False`` is the second belt: redundant while this stays a
             # projection of ``loc`` and ``msg``, and the thing that keeps it safe if someone
-            # later widens it back to the raw error list.
+            # later widens it back to the raw error list. ``msg`` itself goes through the
+            # sanitizer: a validator's ``ValueError`` can carry the row's value in it.
             raise exc.validation(
                 f"Dynamic read rows do not match {return_type.__name__}.",
                 code="dynamic_read_row_type_mismatch",
@@ -168,10 +170,12 @@ class DynamicReadAdapter(DynamicReadPort, TenancyMixin):
                     "route": str(self.spec.name),
                     "fields": [
                         f"{'.'.join(str(part) for part in item['loc'])}: {item['msg']}"
-                        for item in error.errors(
-                            include_url=False,
-                            include_input=False,
-                            include_context=False,
+                        for item in sanitize_pydantic_errors(
+                            error.errors(
+                                include_url=False,
+                                include_input=False,
+                                include_context=False,
+                            )
                         )
                     ],
                 },

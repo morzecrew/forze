@@ -18,6 +18,7 @@ from forze.base.exceptions import (
     unhandled_error_envelope,
 )
 from forze.base.logging import Logger, log_server_error, log_withheld_details
+from forze.base.scrubbing import sanitize_pydantic_errors
 
 # ----------------------- #
 
@@ -95,7 +96,8 @@ async def _request_validation_handler(_: Request, exc_: RequestValidationError) 
     returns the Forze envelope — two incompatible 422 schemas on one API. Converting it to a
     ``validation`` :class:`CoreException` unifies both on the same envelope + ``X-Error-Code``. The
     per-error ``loc`` / ``msg`` / ``type`` are kept (JSON-safe); the raw ``ctx`` / ``input`` are
-    dropped so a non-serializable cause or echoed request input can't leak or break rendering.
+    dropped so a non-serializable cause or echoed request input can't leak or break rendering,
+    and a ``msg`` that can quote the input is replaced (:func:`sanitize_pydantic_errors`).
     """
 
     errors = [
@@ -104,7 +106,7 @@ async def _request_validation_handler(_: Request, exc_: RequestValidationError) 
             "msg": err.get("msg", ""),
             "type": err.get("type", ""),
         }
-        for err in exc_.errors()
+        for err in sanitize_pydantic_errors(list(exc_.errors()))
     ]
     core = exc.validation(
         "Request validation failed",

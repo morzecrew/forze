@@ -77,6 +77,7 @@ from forze.application.execution.operations import (
 )
 from forze.base.exceptions import exc
 from forze.base.primitives import StrKeyNamespace
+from forze.base.scrubbing import sanitize_pydantic_errors
 from forze_fastapi.middlewares.bypass import GOVERNED_OPERATION_ATTR
 from forze_fastapi.middlewares.invocation import IDEMPOTENCY_KEY_HEADER
 
@@ -275,10 +276,12 @@ def validate_payload(
         raise exc.validation(
             f"Invalid input for operation '{op}'",
             details={
-                "errors": error.errors(
-                    include_url=False,
-                    include_input=False,
-                    include_context=False,
+                "errors": sanitize_pydantic_errors(
+                    error.errors(
+                        include_url=False,
+                        include_input=False,
+                        include_context=False,
+                    )
                 )
             },
         ) from error

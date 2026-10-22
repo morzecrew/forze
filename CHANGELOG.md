@@ -19,6 +19,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - ...
 
+### Security
+
+- **A validation error no longer echoes the caller's input**: FastAPI request validation, assembled route payloads and dynamic-read row checks scrub validator messages, and an invalid Inngest event no longer sends its payload to the platform. A filter refusal still names the bad key, as type `query_expression_invalid`.
+
 ## [0.16.0] - 2026-10-22
 
 ### Added

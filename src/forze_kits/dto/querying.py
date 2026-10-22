@@ -6,6 +6,7 @@ from collections.abc import Callable
 from typing import Annotated, Any
 
 from pydantic import BeforeValidator, ValidationError, ValidatorFunctionWrapHandler, WrapValidator
+from pydantic_core import PydanticCustomError
 
 from forze.application.contracts.querying import (
     AggregatesExpression,
@@ -43,6 +44,11 @@ def _named_by(parse: Callable[[Any], Any]) -> WrapValidator:
     An expression is a union of closed shapes, so a validation error lists every shape it did
     not fit. The parser that reads it behind the port names the one key or value at fault, and
     a request is refused with that instead.
+
+    The refusal carries its own error type rather than ``value_error``: an edge scrubs a
+    ``value_error`` message, since a validator may write the rejected value into it. The
+    parser's summaries name the caller's own keys and operators and an operand's type, never an
+    operand's value, so they can reach the caller.
     """
 
     def validate(value: Any, handler: ValidatorFunctionWrapHandler) -> Any:
@@ -54,7 +60,11 @@ def _named_by(parse: Callable[[Any], Any]) -> WrapValidator:
                 parse(value)
 
             except CoreException as error:
-                raise ValueError(error.summary) from None
+                raise PydanticCustomError(
+                    "query_expression_invalid",
+                    "{summary}",
+                    {"summary": error.summary},
+                ) from None
 
             # Whatever else the parser makes of it, the type's refusal stands.
             except Exception:

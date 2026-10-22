@@ -237,6 +237,31 @@ async def test_a_row_type_mismatch_reports_the_fields_and_not_the_row() -> None:
     assert "missing_column" in rendered
 
 
+async def test_a_row_type_mismatch_does_not_echo_a_validator_message() -> None:
+    """A validator that writes the value into its ``ValueError`` must not carry the row out."""
+
+    from pydantic import BaseModel, field_validator
+
+    class Expected(BaseModel):
+        customer_email: str
+
+        @field_validator("customer_email")
+        @classmethod
+        def _reject(cls, value: str) -> str:
+            raise ValueError(f"unexpected email {value!r}")
+
+    adapter = _adapter(rows=1, rows_payload={"customer_email": "nadia@example.com"})
+
+    with pytest.raises(CoreException) as ei:
+        await adapter.select(Expected, "SELECT * FROM gold")
+
+    assert ei.value.code == "dynamic_read_row_type_mismatch"
+    rendered = repr(ei.value.details)
+
+    assert "nadia@example.com" not in rendered
+    assert "customer_email" in rendered
+
+
 async def test_a_backend_that_overshoots_the_probe_still_gets_refused() -> None:
     """Defence in depth: the cap check compares against ``row_cap``, not against the probe."""
 
