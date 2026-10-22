@@ -38,6 +38,7 @@ from forze.application.execution.context.commit_state import (
     commit_started,
     reset_commit_started,
 )
+from forze.application.execution.resilience.backoff import retry_after
 from forze.base.asyncio import run_to_completion
 from forze.base.exceptions import CoreException, exc, exception_egress_policy
 
@@ -106,10 +107,13 @@ class DurableSagaExecutor:
     A step action (or compensation) that fails with a *retryable* kind — infrastructure,
     throttled, concurrency — is retried in place with exponential backoff before its failure
     is journaled, so a one-off blip never triggers the compensation chain (an irreversible
-    business action). The failed attempt's transaction rolled back, so a retry re-runs the
-    action fresh — the same at-least-once caveat the journal already carries for a body
-    interrupted before its result is recorded. A step with an explicit ``retry_policy``
-    (or ``compensation_policy``) uses that named policy instead of these defaults.
+    business action). A throttled failure waits at least its ``retry_after``, and one asking
+    for longer than the schedule's last backoff is not retried. A step with a ``tx_route``
+    rolled its failed attempt back, so a retry re-runs it fresh; a step without one runs
+    outside a transaction and must tolerate a repeat of partial effects — the same
+    at-least-once caveat the journal already carries for a body interrupted before its
+    result is recorded. A step with an explicit ``retry_policy`` (or
+    ``compensation_policy``) uses that named policy instead of these defaults.
 
     Wire it in via ``SagaDepsModule(executor=DurableSagaExecutor())`` and drive the saga as
     a durable function (see :func:`durable_saga_handler`).
@@ -548,6 +552,25 @@ class DurableSagaExecutor:
                 if not exception_egress_policy(error.kind).retryable:
                     raise
 
+                # ``ldexp`` scales by 2**attempt without an int-to-float conversion, which
+                # overflows past 1024 attempts even for the legitimate zero delay.
+                delay = math.ldexp(self.retry_base_delay, attempt)
+                wait = retry_after(error)
+
+                if wait is not None:
+                    # A throttle names the soonest a retry can succeed: one later than the
+                    # longest backoff this schedule sleeps is given up now, not retried early.
+                    try:
+                        longest = math.ldexp(self.retry_base_delay, self.retry_attempts - 1)
+
+                    except OverflowError:
+                        longest = math.inf
+
+                    if wait > longest or math.isinf(wait):
+                        raise
+
+                    delay = max(delay, wait)
+
                 logger.warning(
                     "Durable saga step %s failed with a transient %s error; "
                     "retrying in place (%d/%d)",
@@ -557,9 +580,7 @@ class DurableSagaExecutor:
                     self.retry_attempts,
                     exc_info=True,
                 )
-                # ``ldexp`` scales by 2**attempt without an int-to-float conversion, which
-                # overflows past 1024 attempts even for the legitimate zero delay.
-                await asyncio.sleep(math.ldexp(self.retry_base_delay, attempt))
+                await asyncio.sleep(delay)
 
         return await fn()
 

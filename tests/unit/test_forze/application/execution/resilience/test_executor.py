@@ -141,6 +141,108 @@ class TestRetry:
 # ....................... #
 
 
+class TestRetryAfter:
+    """A throttle's ``retry_after`` is the soonest the next attempt may run."""
+
+    @staticmethod
+    def _executor(kind: ExceptionKind, sleeps: list[float]) -> InProcessResilienceExecutor:
+        async def record_sleep(delay: float) -> None:
+            sleeps.append(delay)
+
+        policy = _retry_policy(
+            backoff=BackoffStrategy(
+                base=timedelta(milliseconds=1),
+                max=timedelta(seconds=10),
+                jitter="none",
+            ),
+            retry_on=frozenset({kind}),
+        )
+
+        return InProcessResilienceExecutor(policies={policy.name: policy}, sleep=record_sleep)
+
+    async def test_a_throttle_waits_its_retry_after_over_a_shorter_backoff(self) -> None:
+        sleeps: list[float] = []
+        executor = self._executor(ExceptionKind.THROTTLED, sleeps)
+        counter = _Counter()
+
+        async def fn() -> str:
+            counter.calls += 1
+            if counter.calls == 1:
+                raise exc.throttled("slow down", details={"retry_after": 5})
+            return "ok"
+
+        assert await executor.run(fn, policy="p") == "ok"
+        assert sleeps == [5.0]
+
+    async def test_a_retry_after_past_the_max_backoff_gives_up_at_once(self) -> None:
+        sleeps: list[float] = []
+        executor = self._executor(ExceptionKind.THROTTLED, sleeps)
+        counter = _Counter()
+
+        async def fn() -> str:
+            counter.calls += 1
+            raise exc.throttled("slow down", details={"retry_after": 30})
+
+        with pytest.raises(CoreException) as ei:
+            await executor.run(fn, policy="p")
+
+        assert ei.value.kind is ExceptionKind.THROTTLED
+        assert counter.calls == 1
+        assert sleeps == []
+
+    async def test_a_retry_after_on_another_kind_is_ignored(self) -> None:
+        sleeps: list[float] = []
+        executor = self._executor(ExceptionKind.INFRASTRUCTURE, sleeps)
+        counter = _Counter()
+
+        async def fn() -> str:
+            counter.calls += 1
+            if counter.calls == 1:
+                raise exc.infrastructure("down", details={"retry_after": 5})
+            return "ok"
+
+        assert await executor.run(fn, policy="p") == "ok"
+        assert sleeps == [0.001]
+
+    async def test_a_retry_after_past_the_deadline_gives_up_at_once(self) -> None:
+        sleeps: list[float] = []
+        executor = self._executor(ExceptionKind.THROTTLED, sleeps)
+        counter = _Counter()
+
+        async def fn() -> str:
+            counter.calls += 1
+            raise exc.throttled("slow down", details={"retry_after": 5})
+
+        with bind_deadline(2.0), pytest.raises(CoreException) as ei:
+            await executor.run(fn, policy="p")
+
+        assert ei.value.kind is ExceptionKind.THROTTLED
+        assert counter.calls == 1
+        assert sleeps == []
+
+    async def test_a_retry_given_up_at_the_deadline_spends_no_budget(self) -> None:
+        policy = _retry_policy(
+            backoff=BackoffStrategy(
+                base=timedelta(milliseconds=1), max=timedelta(seconds=10), jitter="none"
+            ),
+            retry_on=frozenset({ExceptionKind.THROTTLED}),
+            budget=RetryBudget(ratio=1.0, min_throughput=0),
+        )
+        executor = _executor(policy)
+
+        async def fn() -> str:
+            raise exc.throttled("slow down", details={"retry_after": 5})
+
+        with bind_deadline(2.0), pytest.raises(CoreException):
+            await executor.run(fn, policy="p")
+
+        budgets = list(executor._budgets.values())  # pyright: ignore[reportPrivateUsage]
+        assert [b.tokens for b in budgets] == [1.0]  # earned by the call, not spent
+
+
+# ....................... #
+
+
 class TestBudget:
     async def test_budget_caps_retries(self) -> None:
         policy = _retry_policy(
