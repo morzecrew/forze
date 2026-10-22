@@ -1,7 +1,7 @@
 # RFC 0077 — Operation CLI: governed operations from the command line
 
-- **Status:** 📝 Draft. The design is proposed and three questions are open (§10). Nothing
-  gates it. P1 is worth shipping on its own, because it removes duplication that exists today.
+- **Status:** 📝 Draft. The design is proposed. Its three questions were answered on
+  2026-10-22 (§10, decisions 14, 16 and 17). Nothing gates it. P1 is worth shipping on its own, because it removes duplication that exists today.
 - **Scope:** A `forze ops` command group in the existing `forze_cli` package. It lists,
   describes and invokes the operations of an application's frozen registry, in process,
   through the same governed path HTTP and MCP use. The RFC also covers the transport-agnostic
@@ -69,10 +69,10 @@
     for failures that are safe to repeat.
 - **An interrupt never hides a possible commit.** The first signal waits a grace period for
   the call to finish. A cancel after the commit point reports `commit_ambiguous`.
-- **A command runs only on a runtime that hosts no long-running step.** Today that means a
+- **A command runs only on a runtime that hosts no long-running step.** That means a
   `SERVERLESS`-profiled runtime: assembly refuses steps declared `requires_long_running`,
   and the drain window is zero. The guard is that declared marker, which steps set themselves;
-  it is not detected. §10 asks whether the profile deserves its own name.
+  it is not detected. The profile keeps its name (§10).
 - **P1 lifts the boundary sequence into `forze.application.execution.ingress`:**
   - input validation;
   - exposure selection;
@@ -615,7 +615,7 @@ The battery lives under `tests/unit/test_forze_cli/test_ops_*.py` and uses Typer
 - **JSONL batch mode** (many inputs, one scope), for backfills. Demand-gated in §12.
 - **A field naming the calling surface** in `InvocationMetadata`, the log fields and
   `AuditEntry`. It changes RFC 0060's entry for every surface, so it is worth its own RFC.
-  §10 asks whether this RFC should wait for it.
+  This RFC does not wait for it (§10).
 - **Confirmation prompts for commands.** Writes are gated at declaration
   (`include_writes`) and by permission. A prompt adds nothing for cron and little for humans.
 
@@ -648,21 +648,25 @@ The battery lives under `tests/unit/test_forze_cli/test_ops_*.py` and uses Typer
 
 ## 10. Unresolved questions
 
+None open. The three this draft asked were answered by the maintainer on 2026-10-22, and each
+answer took the recorded lean.
+
 1. **Reuse `SERVERLESS`, or add a `ONE_SHOT` profile?** The checks and defaults are
-   identical, but "serverless" reads oddly on a Kubernetes Job. *Lean: reuse it, and say in
-   the docstring that it means "a process that hosts no long-running step and has no drain
-   window". A new member is cheap later, while a second profile with identical semantics is
-   not cheap to remove.*
+   identical, but "serverless" reads oddly on a Kubernetes Job. **Answer: reuse it.** P2 adds
+   a sentence to the docstring: it also covers "a process that hosts no long-running step and
+   has no drain window". A new member stays cheap to add later, while a second profile with
+   identical semantics would not be cheap to remove. (Decision 14.)
 2. **Should P2 wait for a surface field in audit and logs?** Without one, an audit row
-   written by a cron job looks like one written over HTTP. *Lean: no. With an API-key
+   written by a cron job looks like one written over HTTP. **Answer: no.** With an API-key
    identity the actor already names the job or the operator, and the correlation id ties the
    row to the command's logs. The field changes RFC 0060's locked entry for every surface, so
    it is its own RFC, not a prerequisite. A static identity loses this attribution, and §5.3
-   says so.*
+   says so. (Decision 16.)
 3. **Should a static identity also raise a production-posture finding?** The acknowledgement
    already makes it deliberate. A posture finding would refuse it in production unless the
-   posture opts out. *Lean: no. Break-glass in the production cluster is the main legitimate
-   use, and refusing it there pushes operators back to raw scripts.*
+   posture opts out. **Answer: no.** Break-glass in the production cluster is the main
+   legitimate use, and refusing it there pushes operators back to raw scripts.
+   (Decision 17.)
 
 ## 11. Decisions
 
@@ -678,11 +682,13 @@ The battery lives under `tests/unit/test_forze_cli/test_ops_*.py` and uses Typer
 | 8 | `ASSUMED` | Stdout carries only the result JSON. After loading, stderr carries exactly one masked error object. Exit codes follow §5.5 and are derived from the envelope. |
 | 9 | `LOCKED` | Exit 75 means safe to repeat as is. A retryable failure of a command called without an idempotency key exits 69 instead. |
 | 10 | `LOCKED` | An interrupted call is never reported as safe when its commit may have landed. The first signal waits up to `--grace`; a cancel after the commit point reports `commit_ambiguous`. |
-| 11 | `ASSUMED` | A command runs only on a runtime that hosts no long-running step, `SERVERLESS` today. The runtime is built lazily, so `list` and `describe` never build one. |
+| 11 | `ASSUMED` | A command runs only on a `SERVERLESS` runtime, the profile that hosts no long-running step. The runtime is built lazily, so `list` and `describe` never build one. |
 | 12 | `LOCKED` | An idempotency key is refused for an operation that does not support one. |
 | 13 | `ASSUMED` | Inline `--input` is refused for a DTO declaring `SecretStr` or `SecretBytes` fields. |
-| 14 | `OPEN` | Whether the one-shot profile gets its own name (§10 Q1). |
+| 14 | `LOCKED` | One-shot processes reuse `DeploymentProfile.SERVERLESS`, and no new profile is added. Its docstring is extended to cover them (§10 Q1). |
 | 15 | `ASSUMED` | No typed flags, JSONL batch, remote mode, or surface field in this RFC. |
+| 16 | `LOCKED` | P2 does not wait for a surface field in `InvocationMetadata`, the log fields or `AuditEntry`. That field is its own RFC (§10 Q2). |
+| 17 | `LOCKED` | A static identity raises no production-posture finding. The required acknowledgement is the whole gate (§10 Q3). |
 
 ## 12. Phasing
 
@@ -691,7 +697,8 @@ The battery lives under `tests/unit/test_forze_cli/test_ops_*.py` and uses Typer
   change. No changelog entry either, because nothing user-facing changes.
 - **P2: `forze ops`.** The declaration, the three commands, the identities, the envelope,
   the exit-code contract, `build_ops_cli`, the test battery (§6), the docs and example (§7),
-  and the skills census move. Changelog: Added.
+  the skills census move, and the `SERVERLESS` docstring extension (decision 14).
+  Changelog: Added.
 - **P3: demand-gated, each on a named consumer:**
   - typed flags for flat scalar DTOs;
   - JSONL batch in one scope;
