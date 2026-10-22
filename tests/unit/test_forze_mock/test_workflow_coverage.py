@@ -72,14 +72,15 @@ async def test_start_conflict_raises_when_flag_true() -> None:
 async def test_start_conflict_suppressed_when_flag_false() -> None:
     state = MockState()
     cmd = _cmd(state)
-    first = await cmd.start(_In(n=1), workflow_id="dup")
+    await cmd.start(_In(n=1), workflow_id="dup")
+    first_run = state.durable_workflows["wf"]["dup"]["run_id"]
     second = await cmd.start(
         _In(n=2), workflow_id="dup", raise_on_already_started=False
     )
     # No conflict, and the running run stands: Temporal hands back a handle on the id alone.
     assert second == DurableWorkflowHandle(workflow_id="dup")
     run = state.durable_workflows["wf"]["dup"]
-    assert run["run_id"] == first.run_id
+    assert run["run_id"] == first_run
     assert run["args"] == {"n": 1}
 
 
@@ -88,11 +89,11 @@ async def test_start_over_a_closed_run_starts_a_new_one(close: str) -> None:
     state = MockState()
     cmd = _cmd(state)
     first = await cmd.start(_In(n=1), workflow_id="wf-1")
+    first_run = state.durable_workflows["wf"]["wf-1"]["run_id"]
     await getattr(cmd, close)(first)
-    second = await cmd.start(_In(n=2), workflow_id="wf-1")
-    assert second.run_id != first.run_id
+    await cmd.start(_In(n=2), workflow_id="wf-1")
     run = state.durable_workflows["wf"]["wf-1"]
-    assert run["run_id"] == second.run_id
+    assert run["run_id"] != first_run
     assert run["status"] == DurableWorkflowRunStatus.RUNNING
 
 
@@ -123,11 +124,14 @@ async def test_signal_to_a_replaced_run_is_not_found() -> None:
     state = MockState()
     cmd = _cmd(state)
     first = await cmd.start(_In(n=1), workflow_id="wf-1")
+    pinned = DurableWorkflowHandle(
+        workflow_id="wf-1", run_id=state.durable_workflows["wf"]["wf-1"]["run_id"]
+    )
     await cmd.terminate(first)
     await cmd.start(_In(n=2), workflow_id="wf-1", raise_on_already_started=False)
     sig = DurableWorkflowSignalSpec(name="ping", args_type=_Sig)
     with pytest.raises(CoreException) as caught:
-        await cmd.signal(first, signal=sig, args=_Sig(k="x"))
+        await cmd.signal(pinned, signal=sig, args=_Sig(k="x"))
     assert caught.value.code == WORKFLOW_NOT_FOUND_CODE
     assert state.durable_workflows["wf"]["wf-1"]["signals"] == []
     # Without a run id, the handle reaches the current run.
@@ -271,22 +275,28 @@ async def test_result_no_return_type() -> None:
         await qry.result(handle)
 
 
-async def test_a_replaced_run_s_handle_reads_nothing() -> None:
+async def test_a_handle_pinned_to_a_replaced_run_reaches_nothing() -> None:
     state = MockState()
     cmd = _cmd(state)
     qry = _qry(state)
     first = await cmd.start(_In(n=1), workflow_id="wf-1")
+    pinned = DurableWorkflowHandle(workflow_id="wf-1", run_id=(await qry.describe(first)).run_id)
     await cmd.terminate(first)
-    second = await cmd.start(_In(n=2), workflow_id="wf-1")
+    await cmd.start(_In(n=2), workflow_id="wf-1")
     state.durable_workflows["wf"]["wf-1"]["result"] = {"n": 2}
+    latest = state.durable_workflows["wf"]["wf-1"]["run_id"]
 
-    for read in (qry.describe, qry.result):
+    for call in (qry.describe, qry.result, cmd.cancel, cmd.terminate):
         with pytest.raises(CoreException) as caught:
-            await read(first)
+            await call(pinned)
         assert caught.value.code == WORKFLOW_NOT_FOUND_CODE
 
-    assert (await qry.describe(second)).run_id == second.run_id
-    assert (await qry.describe(DurableWorkflowHandle(workflow_id="wf-1"))).run_id == second.run_id
+    assert state.durable_workflows["wf"]["wf-1"]["status"] == DurableWorkflowRunStatus.RUNNING
+
+    # A start handle is unpinned, as Temporal's: it follows the id to its latest run.
+    assert first.run_id is None
+    assert (await qry.describe(first)).run_id == latest
+    assert await qry.result(first) == _Out(n=2)
 
 
 async def test_describe_not_found() -> None:

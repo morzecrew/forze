@@ -87,6 +87,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Mock workflows and schedules answer as Temporal does** (**behaviour change**): cancel or terminate of a missing run, terminate of a closed one, and delete, pause or unpause of a missing schedule are `not_found`. A start conflicts only with a running run, which `raise_on_already_started=False` keeps.
 
+- **A mock workflow `start` returns an unpinned handle** (**behaviour change**): its `run_id` is `None`, as Temporal's, so it follows the workflow id's latest run. Once the run is replaced, a signal, cancel or terminate through it reaches the new run instead of `not_found`.
+
 - **The isolation battery's predicate cases no longer count another case's rows on a reused store**, so `forze_dst.conformance.collect_verdicts` over one store no longer reports a false `predicate_write_skew` divergence.
 
 ### Security

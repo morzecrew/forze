@@ -100,7 +100,8 @@ class DurableWorkflowHandle:
     """The id of the workflow."""
 
     run_id: str | None = attrs.field(default=None)
-    """The id of the run."""
+    """The id of the run the handle is pinned to; ``None``, as ``start`` returns, follows
+    the workflow id's latest run."""
 
 
 # ....................... #

@@ -33,7 +33,9 @@ Resolve the two ports by dep key:
 | `DurableWorkflowCommandDepKey` | `start`, `signal`, `update`, `cancel`, `terminate` |
 | `DurableWorkflowQueryDepKey` | `query`, `result`, `describe` (a `DurableWorkflowRunDescription` with the `DurableWorkflowRunStatus`) |
 
-A start returns a `DurableWorkflowHandle` (`workflow_id`, optional `run_id`).
+A start returns a `DurableWorkflowHandle` (`workflow_id`, optional `run_id`). Temporal and
+the mock leave `run_id` unset, so the handle follows its workflow id's latest run; a handle
+with a `run_id` (one read from `describe`) is pinned to that run.
 
 ## Schedules
 
