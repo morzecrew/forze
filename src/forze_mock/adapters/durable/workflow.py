@@ -100,7 +100,8 @@ class MockDurableWorkflowCommandAdapter[In: BaseModel, Out: BaseModel](
                 "result": None,
                 "signals": [],
             }
-        return DurableWorkflowHandle(workflow_id=wid, run_id=run_id)
+        # As Temporal's start handle: unpinned, it follows the id's latest run.
+        return DurableWorkflowHandle(workflow_id=wid)
 
     async def signal[S: BaseModel](
         self,
