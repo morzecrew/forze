@@ -891,8 +891,8 @@ class _NativeJsonRow(BaseModel):
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "inner",
-    [{"jb": {"k": {"$neq": 1}}}, {"js": {"k": {"$neq": "a"}}}],
-    ids=["jsonb[]", "json[]"],
+    [{"jb": {"k": {"$neq": 1}}}, {"js": {"k": {"$neq": "a"}}}, {"js": {"k": {"$neq": 2}}}],
+    ids=["jsonb[]", "json[]", "json[]-number"],
 )
 @pytest.mark.parametrize("quantifier", _QUANTIFIERS)
 async def test_a_native_json_array_matches_the_mock_on_scalar_elements(

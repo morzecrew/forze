@@ -1440,6 +1440,11 @@ class PsycopgQueryRenderer:
 
             if pg_t is None and self._untyped_compares_as_jsonb(f.op, f.value, path):
                 json_expr = sql.SQL("({} {} {})").format(alias, sql.SQL(arrows[0]), key)
+
+                # A native json[] element yields json, which has no jsonb comparisons.
+                if elem_typeof == "json_typeof":
+                    json_expr = sql.SQL("({})::jsonb").format(json_expr)
+
                 parts.append(
                     self._render_jsonb_scalar_field(json_expr, f.op, f.value, decimal_elem=False)
                 )
@@ -1757,7 +1762,7 @@ class PsycopgQueryRenderer:
         if op not in _JSONB_COMPARE_OPS:
             return False
 
-        members = value if isinstance(value, list) else [value]  # pyright: ignore[reportUnknownVariableType]
+        members = list(value) if isinstance(value, (list, tuple, set)) else [value]  # type: ignore[arg-type]  # pyright: ignore[reportUnknownVariableType, reportUnknownArgumentType]
 
         if all(isinstance(v, str) for v in members):  # pyright: ignore[reportUnknownVariableType]
             return False

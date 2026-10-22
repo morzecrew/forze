@@ -1639,6 +1639,13 @@ class TestUntypedObjectElementFields:
         assert "IN (to_jsonb(%s::text), to_jsonb(%s::numeric))" in s, s
         assert params == ["M", 40]
 
+    @pytest.mark.parametrize("members", [("M", "L"), ("M", 40)], ids=["strings", "mixed"])
+    def test_a_tuple_operand_reads_as_its_members(self, members: tuple[Any, ...]) -> None:
+        # A rewritten node (field encryption) can carry a tuple where the parser gives a list.
+        s, params = self._render(QueryField("size", "$in", members))
+
+        assert params in ([list(members)], list(members)), (s, params)
+
     def test_an_integer_past_int64_binds_without_overflow(self) -> None:
         s, params = self._render(QueryField("price", "$gte", 2**70))
 
