@@ -108,11 +108,12 @@ class DurableSagaExecutor:
     throttled, concurrency — is retried in place with exponential backoff before its failure
     is journaled, so a one-off blip never triggers the compensation chain (an irreversible
     business action). A throttled failure waits at least its ``retry_after``, and one asking
-    for longer than the schedule's last backoff is not retried. The failed attempt's
-    transaction rolled back, so a retry re-runs the action fresh — the same at-least-once
-    caveat the journal already carries for a body interrupted before its result is
-    recorded. A step with an explicit ``retry_policy`` (or ``compensation_policy``) uses
-    that named policy instead of these defaults.
+    for longer than the schedule's last backoff is not retried. A step with a ``tx_route``
+    rolled its failed attempt back, so a retry re-runs it fresh; a step without one runs
+    outside a transaction and must tolerate a repeat of partial effects — the same
+    at-least-once caveat the journal already carries for a body interrupted before its
+    result is recorded. A step with an explicit ``retry_policy`` (or
+    ``compensation_policy``) uses that named policy instead of these defaults.
 
     Wire it in via ``SagaDepsModule(executor=DurableSagaExecutor())`` and drive the saga as
     a durable function (see :func:`durable_saga_handler`).
