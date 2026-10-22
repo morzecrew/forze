@@ -9913,6 +9913,9 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <p><strong>A set-based <code>upsert_many</code> is refused for a domain with serializers of its own</strong> (<strong>behaviour change</strong>), as for validators: a <code>field_serializer</code>, <code>model_serializer</code>, <code>PlainSerializer</code> or <code>WrapSerializer</code> that runs in python mode now raises <code>set_based_upsert_unsupported</code>.</p>
 </li>
 <li>
+<p><strong>The mock hub search sorts and projects as the Postgres hub does</strong> (<strong>behaviour change</strong>). It merges its legs' relevance, not their row positions, so ties follow the sort or <code>default_sort</code>; <code>project_search</code> and <code>project_search_page</code> work. Mock hub and federated streams refuse with <code>query_feature_unsupported</code>.</p>
+</li>
+<li>
 <p>A circuit breaker whose half-open probes recorded no outcome (an ignored error kind, a cancelled call) no longer rejects every call until restart: after <code>break_duration</code> it admits a new probe round.</p>
 </li>
 <li><strong>A logout everywhere followed by a deactivation in one transaction no longer deadlocks with a concurrent login</strong> (revocation states, policy principal on Postgres; deactivation through SQL or its document port).</li>
@@ -9957,6 +9960,15 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <li>
 <p><strong><code>FleetView.excess</code> leaves a negative load out of the mean</strong> (<strong>behaviour change</strong>), as it does a non-numeric one: a load is a count. A negative peer load no longer inflates a member's excess, and a member whose own load is negative gets 0.</p>
 </li>
+<li>
+<p><strong>A retry waits out a throttle's <code>retry_after</code></strong> (<strong>behaviour change</strong>). Resilience policies, durable runs and durable saga steps retry a <code>throttled</code> error no sooner than its <code>details["retry_after"]</code>; a policy or saga whose longest backoff is shorter gives up at once.</p>
+</li>
+<li>
+<p><strong>Mock workflows and schedules answer as Temporal does</strong> (<strong>behaviour change</strong>): cancel or terminate of a missing run, terminate of a closed one, and delete, pause or unpause of a missing schedule are <code>not_found</code>. A start conflicts only with a running run, which <code>raise_on_already_started=False</code> keeps.</p>
+</li>
+<li>
+<p><strong>The isolation battery's predicate cases no longer count another case's rows on a reused store</strong>, so <code>forze_dst.conformance.collect_verdicts</code> over one store no longer reports a false <code>predicate_write_skew</code> divergence.</p>
+</li>
 </ul>
 <h3 id="security">Security<a class="headerlink" href="#security" title="Permanent link">&para;</a></h3>
 <ul>
@@ -9974,6 +9986,9 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 </li>
 <li>
 <p><strong>An error translated from a backend keeps a fixed summary</strong> (<strong>behaviour change</strong>): the backend's message moves to <code>details["error"]</code> in the Neo4j, Mongo, Firestore, Vault, inference, Meilisearch, GCS and container-sandbox integrations, secret resolution and credential rotation, so <code>str()</code> no longer includes it.</p>
+</li>
+<li>
+<p><strong>A container sandbox error summary no longer names the daemon host</strong> (<strong>behaviour change</strong>): the host, which can carry credentials, stays in <code>details["docker_host"]</code>.</p>
 </li>
 <li>
 <p><strong>Cookie-mode <code>/login</code>, <code>/logout</code> and <code>/refresh</code> apply the cookie CSRF gate to every request</strong> (<strong>behaviour change</strong>): each must prove its origin, with or without a cookie, and <code>/refresh</code> also when its token is in the body. A non-browser client sends <code>Origin</code> or is let in by <code>allow_missing_origin=True</code>.</p>

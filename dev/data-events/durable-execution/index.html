@@ -6869,7 +6869,8 @@ again. <code>registry.register(name, body, retry=...)</code> gives one function 
   asked of a waiting run is stamped and lands when the retry comes due, without running the
   body (a saga runs again and decides by its pivot); that claim spends an attempt.</li>
 <li><strong>When it is due</strong> it keeps its <code>created_at</code>, so the scan, oldest first, claims it ahead of
-  fresh runs.</li>
+  fresh runs. A <code>throttled</code> failure with a <code>retry_after</code> (an upstream <code>429</code>'s <code>Retry-After</code>)
+  is due no sooner than that, even past the backoff's <code>max</code>.</li>
 </ul>
 <p>An attempt that sends its run back counts under the <code>retrying</code> outcome, and the last one
 under <code>failed</code>: alert on <code>failed</code>.</p>
@@ -6996,7 +6997,8 @@ leaving committed steps un-compensated:</p>
 <p>The saga context must be a serializable <code>pydantic.BaseModel</code> (it is journaled between
 steps). A step failure classified retryable (infrastructure, throttled, concurrency) is
 retried in place with backoff before it is journaled — compensation only runs on genuine
-failures or exhausted retries, never a one-off blip. This tier is self-hosted only
+failures or exhausted retries, never a one-off blip. A throttled failure waits at least its
+<code>retry_after</code>; one longer than the schedule's last backoff is journaled at once. This tier is self-hosted only
 (Postgres or MongoDB); a full workflow engine (timers, signals, versioning) is still
 Temporal/Inngest. The relations come from your migrations; their schema, indexes and
 migrations — and the one index the Mongo run store needs — are in the

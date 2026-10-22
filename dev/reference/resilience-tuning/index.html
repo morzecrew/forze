@@ -6833,6 +6833,11 @@ immediately (no queuing) with <code>exc.throttled(code="rate_limited")</code>. S
 </tr>
 </tbody>
 </table>
+<p>A <code>throttled</code> error carrying <code>details["retry_after"]</code> (an upstream <code>429</code>'s <code>Retry-After</code>,
+in seconds) waits at least that long before the next attempt. One longer than
+<code>backoff.max</code>, or one that would outlive the invocation deadline, is not retried: the
+throttled error is raised at once (event <code>retry_after_exceeds_max</code> or
+<code>retry_deadline_exhausted</code>).</p>
 <h2 id="timeout">Timeout<a class="headerlink" href="#timeout" title="Permanent link">&para;</a></h2>
 <p><code>TimeoutStrategy(timeout=…)</code> — a per-attempt timeout; cancellation on expiry.</p>
 <h2 id="circuit-breaker">Circuit breaker<a class="headerlink" href="#circuit-breaker" title="Permanent link">&para;</a></h2>

@@ -6820,8 +6820,11 @@ rejection into waiting:</p>
 <span class="p">)</span>
 </code></pre></div>
 <p>The same <code>retry_on</code> also waits out backend-raised throttles (an upstream 429
-mapped to <code>throttled</code>) — your limiter and the backend reject the same way. At
-the FastAPI edge, an uncaught <code>throttled</code> becomes a <strong>429</strong>.</p>
+mapped to <code>throttled</code>) — your limiter and the backend reject the same way. When
+the upstream sends a <code>Retry-After</code>, the retry waits at least that long, and
+gives up at once if it is longer than <code>backoff.max</code>: size <code>max</code> to the longest
+wait you will accept. At the FastAPI edge, an uncaught <code>throttled</code> becomes a
+<strong>429</strong>.</p>
 <h2 id="bulkheads">Bulkheads<a class="headerlink" href="#bulkheads" title="Permanent link">&para;</a></h2>
 <p>A bulkhead caps how many calls may be in flight at once, so one slow
 dependency can't absorb every task in the process. The fixed form is one
