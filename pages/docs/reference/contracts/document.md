@@ -344,7 +344,7 @@ Like `update_matching`, it skips the domain model's update, so a spec whose upda
 refuses `set_based` with a `configuration` error (`set_based_upsert_unsupported`): one with
 revision history, materialized fields, a `SerializedBy` guarantee or randomized field
 encryption; a domain with update validators, invariants, domain events, or pydantic validators,
-constraints or serializers of its own (model-level, or on any field); or an update field the domain lacks, freezes, merges
+constraints or serializers of its own (model-level, or on any field; a JSON-only serializer does not count); or an update field the domain lacks, freezes, merges
 (a model or mapping) or derives from the other fields. A table
 keyed by more than the id (and tenant), or a column an update can write that Postgres cannot
 compare, takes the usual path instead. Mongo, Firestore and the mock apply the same refusals

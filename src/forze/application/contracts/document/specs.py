@@ -114,6 +114,9 @@ def require_whole_update_matching(dto: BaseModel, *, document: str) -> None:
 # Annotation metadata that changes how a field dumps, not what it accepts.
 _SERIALIZERS = (PlainSerializer, WrapSerializer)
 
+# The domain path diffs python-mode dumps, where a JSON-only serializer never runs.
+_PYTHON_MODE_USES = frozenset({"always", "unless-none"})
+
 
 def _own_decorators(domain: type[Document], kind: str) -> list[Any]:
     """The pydantic decorators of *kind* *domain* declares or overrides beyond :class:`Document`'s.
@@ -153,18 +156,22 @@ def _validated_fields(domain: type[Document]) -> frozenset[str]:
 
 
 def _serialized_fields(domain: type[Document]) -> frozenset[str]:
-    """The fields *domain* dumps other than as their type does: a field serializer of its own
-    (``"*"`` for every field) or a ``PlainSerializer``/``WrapSerializer`` annotation."""
+    """The fields *domain* dumps other than as their type does in python mode: a field
+    serializer of its own (``"*"`` for every field) or a ``PlainSerializer``/``WrapSerializer``
+    annotation, unless it runs for JSON only."""
 
     names: set[str] = set()
 
     for decorator in _own_decorators(domain, "field_serializers"):
-        names.update(decorator.info.fields)
+        if decorator.info.when_used in _PYTHON_MODE_USES:
+            names.update(decorator.info.fields)
 
     names.update(
         name
         for name, field in domain.model_fields.items()
-        if any(isinstance(m, _SERIALIZERS) for m in field.metadata)
+        if any(
+            isinstance(m, _SERIALIZERS) and m.when_used in _PYTHON_MODE_USES for m in field.metadata
+        )
     )
 
     return frozenset(names)
@@ -885,7 +892,10 @@ class DocumentSpec(BaseSpec, Generic[R, D, C, U]):
             if _own_decorators(domain, "model_validators"):
                 reasons.append("model validators")
 
-            if _own_decorators(domain, "model_serializers"):
+            if any(
+                d.info.when_used in _PYTHON_MODE_USES
+                for d in _own_decorators(domain, "model_serializers")
+            ):
                 reasons.append("model serializers")
 
             update_cmd = self.write.get("update_cmd")

@@ -940,6 +940,19 @@ class _DumpedDomain(Document):
         return {**handler(self), "name": self.name.upper()}
 
 
+class _JsonShoutedDomain(Document):
+    name: str
+    title: Annotated[str, PlainSerializer(str.upper, when_used="json")] = ""
+
+    @field_serializer("name", when_used="json")
+    def _shout(self, value: str) -> str:
+        return value.upper()
+
+    @model_serializer(mode="wrap", when_used="json")
+    def _dump(self, handler: SerializerFunctionWrapHandler) -> dict[str, Any]:
+        return handler(self)
+
+
 class _SlugDomain(Document):
     name: str
     slug: str = ""
@@ -1008,6 +1021,13 @@ def _named_write(domain: type[Document]) -> DocumentWriteTypes:
 
 def test_a_plain_spec_allows_a_set_based_upsert() -> None:
     DocumentSpec(name="doc", read=_Read, write=_named_write(_Domain)).require_set_based_upsert()
+
+
+def test_json_only_serializers_allow_a_set_based_upsert() -> None:
+    # The domain path diffs python-mode dumps, where these never run.
+    DocumentSpec(
+        name="doc", read=_Read, write=_named_write(_JsonShoutedDomain)
+    ).require_set_based_upsert()
 
 
 def test_a_list_of_mappings_is_replaced_whole_so_set_based_is_allowed() -> None:

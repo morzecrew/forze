@@ -43,7 +43,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Firestore raises a stale write's preconditions as Postgres and Mongo do** (**behaviour change**). A future revision is `precondition` with `revision_mismatch`, and a revision whose history snapshot is missing is `precondition` with `history_not_found_retry`, not `not_found`.
 
-- **A set-based `upsert_many` is refused for a domain with serializers of its own** (**behaviour change**), as for validators: a `field_serializer`, `model_serializer`, `PlainSerializer` or `WrapSerializer` now raises `set_based_upsert_unsupported`.
+- **A set-based `upsert_many` is refused for a domain with serializers of its own** (**behaviour change**), as for validators: a `field_serializer`, `model_serializer`, `PlainSerializer` or `WrapSerializer` that runs in python mode now raises `set_based_upsert_unsupported`.
 
 - A circuit breaker whose half-open probes recorded no outcome (an ignored error kind, a cancelled call) no longer rejects every call until restart: after `break_duration` it admits a new probe round.
 - **A logout everywhere followed by a deactivation in one transaction no longer deadlocks with a concurrent login** (revocation states, policy principal on Postgres; deactivation through SQL or its document port).
