@@ -69,11 +69,12 @@ class MongoVectorEngine:
     vector_path: str
     """Document field holding the embedding array."""
 
-    embeddings_name: str
-    """Embeddings spec name for query embedding."""
+    embeddings_name: str | None = None
+    """Embeddings spec name, resolved when the port is built. ``None`` ranks by a caller's
+    ``query_vector`` only and refuses a text query, so no embeddings provider is needed."""
 
     dimensions: int
-    """Expected query embedding size."""
+    """Expected query embedding size; a caller's ``query_vector`` must have this many values."""
 
     # ....................... #
 
@@ -84,8 +85,10 @@ class MongoVectorEngine:
         if not self.vector_path:
             raise exc.configuration("vector_path is required for vector engine.")
 
-        if not self.embeddings_name:
-            raise exc.configuration("embeddings_name is required for vector engine.")
+        if self.embeddings_name is not None and not self.embeddings_name:
+            raise exc.configuration(
+                "embeddings_name must not be empty; omit it to rank by query_vector only."
+            )
 
         if self.dimensions < 1:
             raise exc.configuration("embedding_dimensions must be at least 1.")
@@ -122,7 +125,7 @@ def _coerce_mongo_engine_spec(
     if value == "vector":
         raise exc.configuration(
             "engine='vector' requires fields; pass engine=MongoVectorEngine("
-            "index_name=..., vector_path=..., embeddings_name=..., dimensions=...).",
+            "index_name=..., vector_path=..., dimensions=...).",
         )
 
     raise exc.configuration(f"Unknown Mongo search engine: {value!r}")

@@ -144,13 +144,10 @@ def _mongo_search_port_for_config(
             vpath = c.vector_path
             index_name = c.index_name
 
-            if en is None or ed is None or vpath is None or index_name is None:
+            if ed is None or vpath is None or index_name is None:
                 raise exc.configuration(
-                    "vector engine requires embeddings_name, embedding_dimensions, "
-                    "vector_path, and index_name.",
+                    "vector engine requires embedding_dimensions, vector_path, and index_name.",
                 )
-
-            es = EmbeddingsSpec(name=en, dimensions=ed)
 
             return MongoVectorSearchAdapter(
                 spec=member_spec,
@@ -164,7 +161,12 @@ def _mongo_search_port_for_config(
                 tenant_provider=context.inv_ctx.get_tenant,
                 tenant_aware=tenant_aware,
                 result_snapshot=result_snapshot,
-                embedder=context.embeddings.provider(es),
+                # Resolved here, so a missing provider fails at port build, not mid-search.
+                embedder=(
+                    context.embeddings.provider(EmbeddingsSpec(name=en, dimensions=ed))
+                    if en is not None
+                    else None
+                ),
                 embedding_dimensions=ed,
                 vector_path=vpath,
                 index_name=index_name,

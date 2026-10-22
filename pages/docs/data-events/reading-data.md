@@ -144,7 +144,7 @@ search ranks by **embeddings** — vectors produced by an embeddings provider
 you already hold (cached, or reused across searches) can rank in place of the text:
 `search("", options={"query_vector": vector})`. It must come from the same embedding model as
 the indexed documents. A search that only ever ranks by such vectors needs no embeddings
-provider at all; on Postgres, leave out `embeddings_name`. Keeping
+provider at all; on Postgres and Mongo, leave out `embeddings_name`. Keeping
 the index current — upsert and delete — is the separate **search command port**;
 querying and index maintenance never mix.
 

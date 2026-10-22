@@ -125,6 +125,7 @@ def test_thin_ranked_pipeline_is_none_without_sort() -> None:
 # `max_candidates` -> Mongo `$vectorSearch.numCandidates`
 
 
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 from uuid import UUID
 
@@ -154,26 +155,30 @@ def _embeddings_factory(
     return MockHashEmbeddingsProvider(dimensions=spec.dimensions)
 
 
-def _vector_adapter() -> MongoVectorSearchAdapter[_VecDoc]:
-    ctx = context_from_deps(
-        Deps.plain(
-            {
-                MongoClientDepKey: MagicMock(),
-                SearchQueryDepKey: ConfigurableMongoSearch(
-                    config=MongoSearchConfig(
-                        read=("db", "coll"),
-                        engine=MongoVectorEngine(
-                            index_name="vec_idx",
-                            vector_path="emb",
-                            embeddings_name="vt",
-                            dimensions=3,
-                        ),
-                    )
+def _vector_adapter(
+    *,
+    embeddings_name: str | None = "vt",
+    with_provider: bool = True,
+) -> MongoVectorSearchAdapter[_VecDoc]:
+    deps: dict[Any, Any] = {
+        MongoClientDepKey: MagicMock(),
+        SearchQueryDepKey: ConfigurableMongoSearch(
+            config=MongoSearchConfig(
+                read=("db", "coll"),
+                engine=MongoVectorEngine(
+                    index_name="vec_idx",
+                    vector_path="emb",
+                    embeddings_name=embeddings_name,
+                    dimensions=3,
                 ),
-                EmbeddingsProviderDepKey: _embeddings_factory,
-            }
-        )
-    )
+            )
+        ),
+    }
+
+    if with_provider:
+        deps[EmbeddingsProviderDepKey] = _embeddings_factory
+
+    ctx = context_from_deps(Deps.plain(deps))
     adapter = ctx.search.query(SearchSpec(name="vn", model_type=_VecDoc, fields=("label",)))
     assert isinstance(adapter, MongoVectorSearchAdapter)
     return adapter
@@ -306,3 +311,61 @@ async def test_mongo_vector_fingerprints_tell_query_vectors_apart(
 
     assert one["query_vector"] == [0.1, 0.2, 0.3]
     assert one != other
+
+
+# ----------------------- #
+# No ``embeddings_name``: rank by a caller's ``query_vector`` only
+
+
+def test_mongo_vector_without_embeddings_needs_no_provider() -> None:
+    adapter = _vector_adapter(embeddings_name=None, with_provider=False)
+
+    assert adapter.embedder is None
+    assert adapter.embedding_dimensions == 3
+
+
+def test_mongo_vector_with_embeddings_resolves_the_provider_at_build() -> None:
+    with pytest.raises(CoreException, match="embeddings_provider") as caught:
+        _vector_adapter(with_provider=False)
+
+    assert caught.value.kind.value == "configuration"
+
+
+@pytest.mark.asyncio
+async def test_mongo_vector_without_an_embedder_a_query_vector_still_ranks() -> None:
+    adapter = _vector_adapter(embeddings_name=None, with_provider=False)
+    aggregate = _answering(adapter, UUID("00000000-0000-4000-8000-000000000003"))
+    qvec = [0.5, 0.25, 0.125]
+
+    ranked = await adapter.search("", options={"query_vector": qvec})
+    await adapter.search_cursor("", cursor={"limit": 3}, options={"query_vector": qvec})
+    browsed = await adapter.search("")
+
+    assert ranked.scores == [0.9]
+    assert browsed.scores is None
+
+    # The two ranked calls vector-search; the browse does not, whatever else it aggregates.
+    first_stages = [call[0][1][0] for call in aggregate.call_args_list]
+    vector_stages = [stage["$vectorSearch"] for stage in first_stages if "$vectorSearch" in stage]
+    assert [stage["queryVector"] for stage in vector_stages] == [qvec, qvec]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("query", ["text", ["one", "two"]])
+async def test_mongo_vector_without_an_embedder_refuses_a_text_query_before_any_call(
+    query: str | list[str],
+) -> None:
+    adapter = _vector_adapter(embeddings_name=None, with_provider=False)
+
+    for call in (
+        lambda: adapter.search(query),
+        lambda: adapter.search_page(query, pagination={"limit": 3}),
+        lambda: adapter.search_cursor(query, cursor={"limit": 3}),
+    ):
+        with pytest.raises(CoreException) as caught:
+            await call()
+
+        assert caught.value.kind.value == "precondition"
+        assert caught.value.code == "search_query_vector_required"
+
+    assert adapter.client.mock_calls == []  # type: ignore[attr-defined]
