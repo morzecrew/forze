@@ -285,8 +285,9 @@ operation has no route of its own. So scope `refresh_path` to cover both the ref
 and the logout route, as above. No single cookie path covers only `/refresh` and
 `/logout`: with `refresh_path="/api/auth"` the browser sends the refresh cookie to
 every authn route under that prefix, and only refresh and logout read it.
-`runtime_lifespan` refuses to start an app whose cookie-mode logout route neither
-cookie's path covers (`check_authn_cookie_paths`).
+`runtime_lifespan` refuses to start an app whose cookie-mode logout route the
+refresh cookie's path does not cover (`check_authn_cookie_paths`; routes inside a
+mounted sub-application are not checked).
 
 Point the inbound `CookieTokenAuthn`'s `cookie_name` at the same
 `access_cookie`, and list the login, refresh and logout paths in the security

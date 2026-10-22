@@ -814,14 +814,21 @@ class TestDrainingRefusal:
 
     # ....................... #
 
-    async def test_existing_refusals_stay_message_only(self) -> None:
+    async def test_a_core_refusal_carries_its_code_beside_the_draining_one(self) -> None:
         server = _server()
         attach_realtime_connection(server, resolve=_resolve)
 
         with pytest.raises(SocketIOConnectionRefusedError) as caught:
             await _connect(server, "eio-1", auth={"token": "bad"})
 
-        assert caught.value.error_args == {"message": "Invalid access token"}
+        assert caught.value.error_args == {
+            "message": "Invalid access token",
+            "data": {
+                "detail": "Invalid access token",
+                "code": "core.authentication",
+                "kind": "authentication",
+            },
+        }
 
     # ....................... #
 

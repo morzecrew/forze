@@ -28,6 +28,8 @@ require_socketio()
 
 from functools import partial
 
+from socketio.exceptions import ConnectionRefusedError as SocketIOConnectionRefusedError
+
 from forze.application.integrations.realtime import jsonable_frame
 from forze.base.exceptions import (
     GENERIC_INTERNAL_DETAIL,
@@ -55,6 +57,7 @@ __all__ = [
     "log_server_error",
     "render_error_ack",
     "build_core_exception_ack",
+    "build_core_exception_refusal",
     "build_unhandled_exception_ack",
 ]
 
@@ -110,6 +113,22 @@ def build_core_exception_ack(exc: CoreException) -> JsonDict:
     log_withheld_details(error_logger, exc)
 
     return render_error_ack(envelope)
+
+
+# ....................... #
+
+
+def build_core_exception_refusal(exc: CoreException) -> SocketIOConnectionRefusedError:
+    """Build the connect refusal for a :class:`CoreException`.
+
+    Its message is the client-safe detail and its ``data`` the error ack's payload, so a
+    refused connect renders as an event's error does: denial posture applied, server-side
+    errors masked and logged.
+    """
+
+    payload = build_core_exception_ack(exc)["error"]
+
+    return SocketIOConnectionRefusedError(payload["detail"], payload)
 
 
 # ....................... #

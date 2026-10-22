@@ -126,7 +126,8 @@ to the in-flight bound) — sequence-dependent commands must wait for their acks
 ## Errors
 
 - **Connect refusal** (bad credentials, unsupported protocol, ungranted topics):
-  Socket.IO refuses the connection with a client-safe message; SSE responds with
+  Socket.IO refuses the connection with the client-safe detail as its message and
+  the command-error envelope below as its data; SSE responds with
   the standard error envelope and the `X-Error-Code` header; WebSocket accepts and
   immediately closes with code 1008, the client-safe summary in the close reason.
 - **Draining** (the replica is leaving): a connection it closes, and a connect it turns

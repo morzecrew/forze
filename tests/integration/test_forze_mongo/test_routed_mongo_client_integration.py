@@ -422,11 +422,10 @@ async def test_routed_mongo_secret_resolve_failure_wrapped(
 @pytest.mark.integration
 @pytest.mark.asyncio
 async def test_routed_mongo_transaction_require_transaction_replica(
-    mongo_replica_container,
+    mongo_replica_uri: str,
 ) -> None:
     pytest.importorskip("docker")
-    _ = mongo_replica_container
-    uri = "mongodb://localhost:27017/?replicaSet=rs0"
+    uri = mongo_replica_uri
     t1 = uuid4()
     secrets = _MemSecrets({t1: uri})
     tenant_get, tenant_set = _tenant_holder()

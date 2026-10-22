@@ -122,12 +122,27 @@ async def test_pause_and_unpause_existing() -> None:
     assert desc.paused is False
 
 
-async def test_pause_missing_is_noop() -> None:
+@pytest.mark.parametrize("operation", ["delete", "pause", "unpause"])
+async def test_delete_pause_unpause_missing_are_not_found(operation: str) -> None:
     state = MockState()
     cmd = _cmd(state)
     handle = DurableWorkflowScheduleHandle(schedule_id="missing")
-    await cmd.pause(handle)  # no raise
-    await cmd.unpause(handle)  # no raise
+    with pytest.raises(CoreException) as caught:
+        await getattr(cmd, operation)(handle)
+    assert caught.value.code == SCHEDULE_NOT_FOUND_CODE
+
+
+async def test_upsert_keeps_a_paused_schedule_paused() -> None:
+    state = MockState()
+    cmd = _cmd(state)
+    qry = _qry(state)
+    await cmd.create("daily", _In(n=1), _timing())
+    handle = DurableWorkflowScheduleHandle(schedule_id="daily")
+    await cmd.pause(handle)
+    await cmd.upsert("daily", _In(n=2), _timing(hours=12))
+    desc = await qry.describe(handle)
+    assert desc.paused is True
+    assert desc.timing == _timing(hours=12)
 
 
 async def test_describe_not_found() -> None:

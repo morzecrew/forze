@@ -6,6 +6,8 @@
 from __future__ import annotations
 
 import asyncio
+import io
+import json
 from datetime import timedelta
 from types import SimpleNamespace
 from typing import Any
@@ -17,7 +19,7 @@ from socketio.exceptions import ConnectionRefusedError as SocketIOConnectionRefu
 
 from forze.application.contracts.authn import AuthnIdentity
 from forze.application.execution import build_runtime
-from forze.base.exceptions import GENERIC_INTERNAL_DETAIL, exc
+from forze.base.exceptions import GENERIC_INTERNAL_DETAIL, DenialPosture, exc
 from forze_socketio import (
     RealtimeConnection,
     RealtimeConnectionStats,
@@ -95,14 +97,23 @@ class TestAdmission:
             # An unsupported protocol too: admission runs before negotiation.
             await _connect(server, {"protocol": 99})
 
-        assert caught.value.error_args == {"message": "Too many connects, try again shortly"}
+        assert caught.value.error_args == {
+            "message": "Too many connects, try again shortly",
+            "data": {
+                "detail": "Too many connects, try again shortly",
+                "code": "core.throttled",
+                "kind": "throttled",
+            },
+        }
         assert recorder.calls == []
         assert stats.connect_refused == {("/", "admission"): 1}
         assert stats.connections == {}
 
     # ....................... #
 
-    async def test_a_server_side_refusal_shows_only_the_generic_detail(self) -> None:
+    async def test_a_server_side_refusal_shows_only_the_generic_detail(
+        self, error_log_buf: io.StringIO
+    ) -> None:
         server, recorder = AsyncServer(), _Recorder()
 
         async def admission(_connect: SocketIOConnect) -> None:
@@ -113,7 +124,40 @@ class TestAdmission:
         with pytest.raises(SocketIOConnectionRefusedError) as caught:
             await _connect(server)
 
-        assert caught.value.error_args == {"message": GENERIC_INTERNAL_DETAIL}
+        assert caught.value.error_args == {
+            "message": GENERIC_INTERNAL_DETAIL,
+            "data": {
+                "detail": GENERIC_INTERNAL_DETAIL,
+                "code": "core.infrastructure",
+                "kind": "infrastructure",
+            },
+        }
+        assert stats.connect_refused == {("/", "admission"): 1}
+
+        (row,) = [json.loads(line) for line in error_log_buf.getvalue().splitlines()]
+        assert row["error_kind"] == "infrastructure"
+        assert "10.0.0.9" in row["detail"]
+
+    # ....................... #
+
+    async def test_a_denial_about_a_covered_resource_is_refused_as_not_found(
+        self, denial_posture: Any
+    ) -> None:
+        server, recorder = AsyncServer(), _Recorder()
+        denial_posture(DenialPosture(mode="non_disclosing", resource_types={"notes"}))
+
+        async def admission(_connect: SocketIOConnect) -> None:
+            raise exc.authorization("Not yours", code="permission_denied", resource_type="notes")
+
+        stats = _attach(server, recorder, admission)
+
+        with pytest.raises(SocketIOConnectionRefusedError) as caught:
+            await _connect(server)
+
+        assert caught.value.error_args == {
+            "message": "Not found",
+            "data": {"detail": "Not found", "code": "core.not_found", "kind": "not_found"},
+        }
         assert stats.connect_refused == {("/", "admission"): 1}
 
     # ....................... #
