@@ -49,6 +49,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **A failed Firestore history query is raised, not skipped.** A `NotFound` from the API, such as for a missing database, was taken for a missing snapshot, so `read_many` returned fewer snapshots or none.
 - **A set-based `upsert_many` is refused for a domain with serializers of its own** (**behaviour change**), as for validators: a `field_serializer`, `model_serializer`, `PlainSerializer` or `WrapSerializer` that runs in python mode now raises `set_based_upsert_unsupported`.
 
+- **The mock hub search sorts and projects as the Postgres hub does** (**behaviour change**). It merges its legs' relevance, not their row positions, so ties follow the sort or `default_sort`; `project_search` and `project_search_page` work. Mock hub and federated streams refuse with `query_feature_unsupported`.
+
 - A circuit breaker whose half-open probes recorded no outcome (an ignored error kind, a cancelled call) no longer rejects every call until restart: after `break_duration` it admits a new probe round.
 - **A logout everywhere followed by a deactivation in one transaction no longer deadlocks with a concurrent login** (revocation states, policy principal on Postgres; deactivation through SQL or its document port).
 - **`PostgresConfig` session options no longer empty the pool.** With `application_name`, `statement_timeout`, `lock_timeout` or `idle_in_transaction_session_timeout` set, every new connection was discarded, and queries failed as a busy pool. They now take effect on every pooled connection.
