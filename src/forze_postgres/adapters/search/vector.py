@@ -39,7 +39,7 @@ from ._pipeline_sql import (
 from ._ranked_pipeline import build_filter_first_ranked_pipeline, ranked_parts_to_sql
 from ._search_count import effective_search_count
 from ._simple_base import PostgresRankedPipelineSearchAdapter
-from ._vector_sql import VectorDistanceKind, vector_param_literal
+from ._vector_sql import VectorDistanceKind, vector_fingerprint
 
 # ----------------------- #
 
@@ -140,7 +140,7 @@ class PostgresVectorSearchAdapter[M: BaseModel](PostgresRankedPipelineSearchAdap
         }
         vector = (options or {}).get("query_vector")
         if vector is not None:
-            extras["query_vector"] = vector_param_literal(vector)
+            extras["query_vector"] = vector_fingerprint(vector)
         cap = kwargs.get("candidate_limit")
         if cap is not None:
             extras["candidate_limit"] = cap

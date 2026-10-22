@@ -240,3 +240,86 @@ async def test_vector_v2_result_snapshot_reread(
     )
     assert p2.hits[0].label == p1.hits[0].label
     assert p2.count == 1
+
+
+async def test_vector_result_snapshot_keyed_on_a_query_vector_replays(
+    pgvector_client: PostgresClient,
+    redis_client: RedisClient,
+) -> None:
+    """A snapshot written for one ``query_vector`` replays for it, and not for another.
+
+    The row changes after the first page: a replay serves the snapshot's record, a live run
+    the new one, so the label tells which path served the page.
+    """
+
+    await pgvector_client.execute("CREATE EXTENSION IF NOT EXISTS vector")
+    suffix = uuid4().hex[:12]
+    table = f"vec_qv_{suffix}"
+    row_id = uuid4()
+    await pgvector_client.execute(
+        f"""
+        CREATE TABLE {table} (
+            id uuid PRIMARY KEY,
+            label text NOT NULL,
+            emb vector(3) NOT NULL
+        );
+        """
+    )
+    await pgvector_client.execute(
+        f"INSERT INTO {table} (id, label, emb) VALUES (%(id)s, 'before', '[1,0,0]'::vector)",
+        {"id": row_id},
+    )
+    ctx = context_from_deps(
+        Deps.plain(
+            {
+                PostgresClientDepKey: pgvector_client,
+                PostgresIntrospectorDepKey: PostgresIntrospector(client=pgvector_client),
+                RedisClientDepKey: redis_client,
+                SearchResultSnapshotDepKey: ConfigurableRedisSearchResultSnapshot(
+                    config=RedisSearchResultSnapshotConfig(namespace=f"it:rss:qv:{suffix}"),
+                ),
+                EmbeddingsProviderDepKey: _embeddings_factory,
+                SearchQueryDepKey: ConfigurablePostgresSearch(
+                    config=PostgresSearchConfig(
+                        index=("public", table),
+                        read=("public", table),
+                        heap=("public", table),
+                        engine=VectorEngine(
+                            column="emb",
+                            dimensions=3,
+                            embeddings_name="vec_qv",
+                            distance="cosine",
+                        ),
+                    )
+                ),
+            }
+        )
+    )
+    spec = SearchSpec(
+        name="vec_qv",
+        model_type=VecRow,
+        fields=["id", "label"],
+        snapshot=SearchResultSnapshotSpec(name="snap", enabled=True, ttl=timedelta(minutes=5)),
+    )
+    adapter = ctx.search.query(spec)
+    qv = [0.9, 0.1, 0.0]
+
+    first = await adapter.search_page(
+        "", pagination={"limit": 3}, options={"query_vector": qv}
+    )
+    assert first.snapshot is not None
+    handle = {"id": first.snapshot.id, "fingerprint": first.snapshot.fingerprint}
+
+    await pgvector_client.execute(
+        f"UPDATE {table} SET label = 'after' WHERE id = %(id)s", {"id": row_id}
+    )
+
+    replayed = await adapter.search_page(
+        "", pagination={"limit": 3}, options={"query_vector": qv}, snapshot=handle
+    )
+    other = await adapter.search_page(
+        "", pagination={"limit": 3}, options={"query_vector": [0.8, 0.2, 0.0]}, snapshot=handle
+    )
+
+    assert [hit.label for hit in replayed.hits] == ["before"]
+    assert [hit.label for hit in other.hits] == ["after"]

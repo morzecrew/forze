@@ -6,6 +6,8 @@ require_psycopg()
 
 # ....................... #
 
+import hashlib
+from array import array
 from collections.abc import Sequence
 from typing import Literal
 
@@ -46,6 +48,19 @@ def vector_param_literal(values: Sequence[float]) -> str:
     parts = [f"{float(x):.9g}" for x in values]
 
     return "[" + ",".join(parts) + "]"
+
+
+# ....................... #
+
+
+def vector_fingerprint(values: Sequence[float]) -> str:
+    """Return an exact, fixed-size key for a query vector (snapshot fingerprints).
+
+    A digest of the packed doubles rather than :func:`vector_param_literal`: the text of a
+    1536-wide vector is about 20 KB and costs as much to format as the SQL parameter itself.
+    """
+
+    return hashlib.blake2b(array("d", values).tobytes(), digest_size=16).hexdigest()
 
 
 # ....................... #
