@@ -9,12 +9,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- ...
+
+### Changed
+
+- ...
+
+### Fixed
+
+- ...
+
+## [0.16.0] - 2026-10-22
+
+### Added
+
 - **`CoreException.expose_details`** withholds an error's details from the client envelope, whatever its kind.
 
 - `CircuitBreakerStrategy` takes `failure_on` and `ignore_on`: which error kinds count as breaker failures and which are not recorded. The defaults keep the previous classification: infrastructure and timeout fail, throttled and concurrency are ignored.
+
 - **A durable run can retry a retryable failure.** `retry=RetryStrategy(...)` on `DurableFunctionRunner`, `durable_kits_deps` or one registered function sends a run raising a `retry_on` kind back to `PENDING` after the backoff, counted as `retrying`; its journal replays. **Breaking** for own run stores (`mark_retry`).
+
 - **Failed durable runs can be requeued.** `DurableRunAdminPort.requeue_failed(run_ids=, name=)` returns the named `FAILED` and `TIMED_OUT` runs in scope to `PENDING` under their own id, so their journaled steps replay, on Postgres, Mongo and the mock. **Breaking** for own admin ports.
+
 - **A warm API key skips the eligibility read too.** With revocation states on the authn and authz kernels, a key whose cached state recorded its principal's current epoch is admitted without reading Postgres, as a token is. New `ApiKeyEligibilitySkip`.
+
 - **Vector search can rank by a vector you already hold.** `SearchOptions(query_vector=...)` ranks pgvector or Atlas Vector Search with a blank query; other searches refuse it. A custom vector adapter passes `capabilities=`, `backend=` and `vector_dimensions=` to `search_options_for_simple_adapter` to accept it.
 
 - **Durable schema reference.** A new page lists the Postgres tables and Mongo collections the durable stores use, with their required and recommended indexes and the migrations between releases. The concurrency page now states that a stale-revision precondition is not retried for you.
@@ -31,7 +49,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- **Until structlog is configured (`configure_logging` or your own `structlog.configure`), forze no longer prints to stdout itself** (behaviour change): its events go to the same-named stdlib logger at its level, so they reach only your stdlib handlers, or stderr from warnings up by default. Call `configure_logging` to keep info output.
+- **forze prints nothing to stdout until structlog is configured** (**behaviour change**): until `configure_logging` or your own `structlog.configure`, its events go to the same-named stdlib logger at its level, reaching only stdlib handlers, or stderr from warnings up by default. `configure_logging` keeps info output.
 
 - **A Temporal schedule describes and lists with its cron expressions as written** (**behaviour change**), not the equivalent ones rebuilt from its calendars. Each is kept as its calendar's comment (`forze:cron=…`); schedules from earlier versions or rewritten outside forze still report the rebuilt cron.
 
@@ -48,15 +66,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Firestore raises a stale write's preconditions as Postgres and Mongo do** (**behaviour change**). A future revision is `precondition` with `revision_mismatch`, and a revision whose history snapshot is missing is `precondition` with `history_not_found_retry`, not `not_found`.
 
 - **A refused Socket.IO connect renders its error as an error ack does** (**behaviour change**). Its data is now `{"detail", "code", "kind"}`, with `context` when exposed, and a non-disclosing denial posture applies: a denial or not-found about a covered resource type is refused as `Not found`.
+
 - **A failed Firestore history query is raised, not skipped.** A `NotFound` from the API, such as for a missing database, was taken for a missing snapshot, so `read_many` returned fewer snapshots or none.
+
 - **A set-based `upsert_many` is refused for a domain with serializers of its own** (**behaviour change**), as for validators: a `field_serializer`, `model_serializer`, `PlainSerializer` or `WrapSerializer` that runs in python mode now raises `set_based_upsert_unsupported`.
 
 - **The mock hub search sorts and projects as the Postgres hub does** (**behaviour change**). It merges its legs' relevance, not their row positions, so ties follow the sort or `default_sort`; `project_search` and `project_search_page` work. Mock hub and federated streams refuse with `query_feature_unsupported`.
 
 - A circuit breaker whose half-open probes recorded no outcome (an ignored error kind, a cancelled call) no longer rejects every call until restart: after `break_duration` it admits a new probe round.
+
 - **A logout everywhere followed by a deactivation in one transaction no longer deadlocks with a concurrent login** (revocation states, policy principal on Postgres; deactivation through SQL or its document port).
+
 - **`PostgresConfig` session options no longer empty the pool.** With `application_name`, `statement_timeout`, `lock_timeout` or `idle_in_transaction_session_timeout` set, every new connection was discarded, and queries failed as a busy pool. They now take effect on every pooled connection.
+
 - **Postgres schema and programming errors are no longer retried** (**behaviour change**). A missing object (`postgres_schema_mismatch`), a refused privilege (`postgres_privilege_denied`), a syntax error or a PL/pgSQL `RAISE EXCEPTION` is now `internal`, not retryable `infrastructure`.
+
 - **Upstream throttles are `throttled`, rejections `internal`** (**behaviour change**). `forze_http`: 429 `throttled` (`retry_after` in `details`), 401/403 `infrastructure` (now retried), 3xx, other 4xx, bad bodies `internal`. GCS, BigQuery, ClickHouse, S3, SQS, KMS throttles too; `transient` retries none.
 
 - **A bulk update or upsert mixing patch types no longer drops fields.** Each patch in an `update_many` or `upsert_many` was encoded as the first one's type, so the fields a subclass or other type adds were silently not written, on Postgres and Mongo.
@@ -65,7 +89,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Resending an unchanged instant no longer bumps `rev`.** A document `update`, `upsert` or `upsert_many` compares a naive `datetime` with an aware one as UTC, either way round; on Mongo, finer than a millisecond is no change either.
 
-- **A stale-revision update no longer reverts a concurrent change** (**behaviour change**, revision history on). A field it resends with the value it read is not written; only what it changes lands. New `Document.historical_update`.
+- **A stale-revision update no longer reverts a concurrent change** (**behaviour change**). With revision history on, a field it resends with the value it read is not written; only what it changes lands. New `Document.historical_update`.
 
 - **`update_many` with revision history no longer fails on a row it leaves unchanged.** Postgres raised a unique violation and rolled the batch back; Mongo wrote a duplicate snapshot.
 
@@ -95,8 +119,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **An error an integration translates from its backend no longer shows the failed call's context to API callers** (**behaviour change**): such an error carries no `context`, whatever its kind. The details stay on the exception and are logged at debug. A stream's failure between items is now translated too.
 
-- **Cookie-mode `/refresh` applies the cookie CSRF gate to the refresh cookie** (**behaviour change**): a refresh taking its token from the cookie must prove its origin as access-cookie requests do, under the same `CookieTokenAuthn(csrf=...)` gate (its `allowed_origins`, or `None`). A body token is unaffected.
-
 - **A cookie read by several `CookieTokenAuthn` ingresses keeps every CSRF gate they declare**: one ingress's `csrf=None` no longer lets the cookie through ungated.
 
 - **`saga.step_failed` no longer shows the failed step's error text to API callers** (**behaviour change**): its `cause` detail is now the cause's `code` and `kind`, and only when the cause is a `CoreException`. The original error stays chained as `__cause__`.
@@ -105,7 +127,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **A container sandbox error summary no longer names the daemon host** (**behaviour change**): the host, which can carry credentials, stays in `details["docker_host"]`.
 
-- **Cookie-mode `/login`, `/logout` and `/refresh` apply the cookie CSRF gate to every request** (**behaviour change**): each must prove its origin, with or without a cookie, and `/refresh` also when its token is in the body. A non-browser client sends `Origin` or is let in by `allow_missing_origin=True`.
+- **Cookie-mode `/login`, `/logout` and `/refresh` apply the cookie CSRF gate to every request** (**behaviour change**): each proves its origin under the access cookie's `CookieTokenAuthn(csrf=...)` gate, cookie or not, and `/refresh` wherever its token is. A client sending no `Origin` needs `allow_missing_origin=True`.
 
 - **Cookie-mode logout revokes from the refresh cookie without a live access cookie** (`logout_by_refresh_token`). `runtime_lifespan` refuses an app whose refresh cookie path misses logout (`check_authn_cookie_paths`). **Breaking** for own token lifecycle ports: add `revoke_tokens_by_refresh_token`.
 
@@ -2426,7 +2448,8 @@ Execution and mapping refactor, middleware-first usecases, split search/cache/do
 
 - Packaging metadata for PyOCI classifiers.
 
-[unreleased]: https://github.com/morzecrew/forze/compare/v0.15.1...HEAD
+[unreleased]: https://github.com/morzecrew/forze/compare/v0.16.0...HEAD
+[0.16.0]: https://github.com/morzecrew/forze/compare/v0.15.1...v0.16.0
 [0.15.1]: https://github.com/morzecrew/forze/compare/v0.15.0...v0.15.1
 [0.15.0]: https://github.com/morzecrew/forze/compare/v0.14.0...v0.15.0
 [0.14.0]: https://github.com/morzecrew/forze/compare/v0.13.0...v0.14.0
