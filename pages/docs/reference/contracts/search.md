@@ -102,7 +102,8 @@ a margin of 50 rows (`offset + limit + 50`). The pool is the
 first rows of the page order itself, so a capped offset page holds the rows the uncapped cursor
 puts there; a cursor walk is uncapped, except on a vector index, whose cap bounds it too. Where
 FTS or a PGroonga `filter_first` plan applies its filters before the cap, the pool is cut to
-exactly `offset + limit` rows, since the page cannot reach further. That does not happen when
+exactly `offset + limit` rows (the spec's `max_results` stands in for a missing limit), since the
+page cannot reach further. That does not happen when
 the page writes a snapshot or asks for an `approximate` total, which counts the pool. A vector
 search keeps its cap as its top-k bound.
 

@@ -129,8 +129,12 @@ def page_candidate_cap(
     snapshot: SearchResultSnapshotOptions | None,
     result_snapshot: SearchResultSnapshot | None,
     rs_spec: Any | None,
+    fallback_limit: int | None = None,
 ) -> int | None:
     """The ranked rows an offset page can reach (``offset + limit``), or ``None`` to keep the cap.
+
+    *fallback_limit* stands in for a page with no limit: the spec's ``max_results``, which
+    bounds that page's fetch.
 
     For a filter-first text pipeline only: there the capped CTE orders as the page does, so its
     first ``offset + limit`` rows are exactly the page's candidates. These keep the configured
@@ -138,7 +142,7 @@ def page_candidate_cap(
 
     * a snapshot write, which streams up to its ``max_ids`` from the same CTE;
     * an ``approximate`` total, which counts the capped pool itself;
-    * a page with no limit, which reaches every candidate.
+    * a page with no limit and no *fallback_limit*, which reaches every candidate.
 
     Not for vector search: a small ``LIMIT`` can tip the planner onto an ANN index, which
     filters after its scan and can return a short page where the capped CTE did not.
@@ -157,7 +161,8 @@ def page_candidate_cap(
         return None
 
     pag = dict(pagination or {})
-    limit = int(pag.get("limit") or 0)
+    raw = pag.get("limit")
+    limit = int(raw) if raw is not None else (fallback_limit or 0)
 
     if limit <= 0:
         return None

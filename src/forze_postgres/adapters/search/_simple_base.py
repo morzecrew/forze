@@ -63,7 +63,7 @@ from ._engine import RankedPipelineSql
 from ._facets import fetch_pg_facets
 from ._materialize_hits import materialize_search_page, search_trust_source
 from ._offset_run import RankedOffsetPlan, execute_simple_ranked_offset_search
-from ._pgroonga_plan import is_coalesced_read_heap
+from ._pgroonga_plan import is_coalesced_read_heap, page_candidate_cap
 from ._pipeline_sql import (
     PipelineAliases,
     build_rank_first_order,
@@ -295,6 +295,33 @@ class PostgresRankedPipelineSearchAdapter[M: BaseModel](
         """Whether a result snapshot can be read or written (so a fingerprint is consumed)."""
 
         return self.result_snapshot is not None and self.spec.snapshot is not None
+
+    # ....................... #
+
+    def _page_cap(
+        self,
+        *,
+        options: SearchOptions | None,
+        pagination: Any,
+        snapshot: Any,
+        highlight: Any,
+    ) -> int | None:
+        """The offset page's candidate cap for a filter-first text pipeline (``page_candidate_cap``).
+
+        Facets and highlights run the page live and write no snapshot
+        (``execute_simple_ranked_offset_search``), so they keep the page cap too.
+        """
+
+        live = highlight is not None or bool(resolve_facet_fields(self.spec, options))
+
+        return page_candidate_cap(
+            options=options,
+            pagination=pagination,
+            snapshot=snapshot,
+            result_snapshot=None if live else self.result_snapshot,
+            rs_spec=self.spec.snapshot,
+            fallback_limit=self.spec.max_results,
+        )
 
     # ....................... #
 

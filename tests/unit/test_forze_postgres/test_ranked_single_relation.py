@@ -8,6 +8,7 @@ the rows the page can reach.
 
 from __future__ import annotations
 
+from datetime import timedelta
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 from uuid import UUID
@@ -19,7 +20,7 @@ from pydantic import BaseModel
 pytest.importorskip("psycopg")
 
 from forze.application.contracts.embeddings import EmbeddingsSpec
-from forze.application.contracts.search import SearchSpec
+from forze.application.contracts.search import SearchResultSnapshotSpec, SearchSpec
 from forze_postgres.adapters.search import PostgresFTSSearchAdapter, PostgresVectorSearchAdapter
 
 pytestmark = pytest.mark.unit
@@ -92,7 +93,14 @@ class TestOneRelation:
         assert "INNER JOIN" in stmt
 
 
-def _fts(*, highlightable: bool = False) -> PostgresFTSSearchAdapter[_M]:
+def _fts(
+    *,
+    highlightable: bool = False,
+    facetable: bool = False,
+    cap: int | None = 5000,
+    max_results: int | None = None,
+    snapshot_writer: bool = False,
+) -> PostgresFTSSearchAdapter[_M]:
     intro = MagicMock()
     intro.get_column_types = AsyncMock(return_value={})
     intro.get_index_info = AsyncMock(return_value=MagicMock(expr="to_tsvector('simple', label)"))
@@ -101,7 +109,18 @@ def _fts(*, highlightable: bool = False) -> PostgresFTSSearchAdapter[_M]:
         model_type=_M,
         fields=["id", "label"],
         highlightable_fields=frozenset({"label"}) if highlightable else None,
+        facetable_fields=frozenset({"label"}) if facetable else frozenset(),
+        max_results=max_results,
+        snapshot=SearchResultSnapshotSpec(name="snap", enabled=True, ttl=timedelta(minutes=5))
+        if snapshot_writer
+        else None,
     )
+    result_snapshot: Any = None
+
+    if snapshot_writer:
+        result_snapshot = MagicMock()
+        result_snapshot.should_write_result_snapshot = MagicMock(return_value=True)
+        result_snapshot.effective_snapshot_max_ids = MagicMock(return_value=1000)
     port = PostgresFTSSearchAdapter(
         spec=spec,
         codec=spec.resolved_read_codec,
@@ -109,6 +128,8 @@ def _fts(*, highlightable: bool = False) -> PostgresFTSSearchAdapter[_M]:
         relation=("public", "heap"),
         index_heap_relation=("public", "heap"),
         fts_groups={"A": ("label",)},
+        ranked_candidate_limit=cap,
+        result_snapshot=result_snapshot,
         client=MagicMock(),
         model_type=_M,
         introspector=intro,
@@ -184,3 +205,38 @@ class TestPageCap:
 
         # A snapshot written for page one must still match page two's fingerprint.
         assert pipeline.candidate_limit == 5000
+
+
+async def _data_cte(port: PostgresFTSSearchAdapter[_M], **kwargs: Any) -> str:
+    pipeline = await port._build_ranked_pipeline_sql(  # pyright: ignore[reportPrivateUsage]
+        query="blue", filters=None, fw=sql.SQL("TRUE"), fp=[], terms=("blue",), **kwargs
+    )
+    return pipeline.with_clause.as_string()
+
+
+class TestPageCapEdges:
+    async def test_a_faceted_page_writes_no_snapshot_so_it_keeps_the_page_cap(self) -> None:
+        port = _fts(facetable=True, snapshot_writer=True)
+
+        plain = await _data_cte(port, options=None, pagination={"limit": 3})
+        faceted = await _data_cte(port, options={"facets": ["label"]}, pagination={"limit": 3})
+
+        # A snapshot write streams up to max_ids from the CTE; a faceted page runs live.
+        assert "LIMIT 5000" in plain
+        assert "LIMIT 3" in faceted
+
+    async def test_a_page_is_capped_with_no_configured_cap(self) -> None:
+        port = _fts(cap=None)
+
+        await port.search_page("blue", pagination={"limit": 3})
+
+        (stmt,) = _statements(port)
+        assert "LIMIT 3" in stmt
+        # The exact total still counts every match.
+        counted = port.client.fetch_value.call_args[0][0].as_string()
+        assert "LIMIT" not in counted
+
+    async def test_max_results_stands_in_for_a_missing_limit(self) -> None:
+        port = _fts(max_results=7)
+
+        assert "LIMIT 9" in await _data_cte(port, options=None, pagination={"offset": 2})

@@ -38,7 +38,6 @@ from ._pgroonga_plan import (
     index_first_heap_limit,
     is_coalesced_read_heap,
     is_trivial_filter,
-    page_candidate_cap,
     resolve_pgroonga_plan,
 )
 from ._pgroonga_sql import pgroonga_match_query_text, pgroonga_score_call
@@ -374,10 +373,17 @@ class PostgresPGroongaSearchAdapter[M: BaseModel](
                 from_outer_param_count=len(fp),
             )
 
+        page_cap = (
+            None
+            if for_cursor
+            else self._page_cap(
+                options=options, pagination=pagination, snapshot=snapshot, highlight=highlight
+            )
+        )
         cap_kw: dict[str, Any] = {}
         filtered_extra: sql.Composable | None = None
 
-        if candidate_cap is not None:
+        if candidate_cap is not None or page_cap is not None:
             cap_kw = {
                 "candidate_limit": candidate_cap,
                 "scored_order": scored_order,
@@ -411,15 +417,7 @@ class PostgresPGroongaSearchAdapter[M: BaseModel](
             carry_columns=self._carried_read_columns(join)
             if coalesced and not for_cursor and highlight is None
             else None,
-            page_cap=None
-            if for_cursor
-            else page_candidate_cap(
-                options=options,
-                pagination=pagination,
-                snapshot=snapshot,
-                result_snapshot=self.result_snapshot,
-                rs_spec=rs_spec,
-            ),
+            page_cap=page_cap,
         )
 
         return ranked_parts_to_sql(

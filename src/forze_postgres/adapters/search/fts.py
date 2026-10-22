@@ -25,7 +25,7 @@ from ._engine import RankedPipelineSql
 from ._fts_sql import FtsGroupLetter
 from ._highlights import build_fts_highlight
 from ._leg_fts import build_fts_leg
-from ._pgroonga_plan import effective_ranked_candidate_limit, page_candidate_cap
+from ._pgroonga_plan import effective_ranked_candidate_limit
 from ._pipeline_sql import (
     PipelineAliases,
     scored_key_columns,
@@ -158,9 +158,22 @@ class PostgresFTSSearchAdapter[M: BaseModel](PostgresRankedPipelineSearchAdapter
             rs_spec=rs_spec,
         )
 
+        highlight = build_fts_highlight(
+            spec=self.spec,
+            options=options,
+            terms=terms,
+            alias=self.projection_alias,
+        )
+        page_cap = (
+            None
+            if for_cursor
+            else self._page_cap(
+                options=options, pagination=pagination, snapshot=snapshot, highlight=highlight
+            )
+        )
         cap_kw: dict[str, Any] = {}
 
-        if candidate_cap is not None:
+        if candidate_cap is not None or page_cap is not None:
             cap_kw = {
                 "candidate_limit": candidate_cap,
                 "scored_order": scored_order_by_rank_alias(self.search_rank_column),
@@ -175,12 +188,6 @@ class PostgresFTSSearchAdapter[M: BaseModel](PostgresRankedPipelineSearchAdapter
             )
         heap_fw, heap_fp = await self._coalesced_heap_where(
             filters, parsed=parsed_filters, coalesced=coalesced
-        )
-        highlight = build_fts_highlight(
-            spec=self.spec,
-            options=options,
-            terms=terms,
-            alias=self.projection_alias,
         )
         # Snippets read the projection row itself, so a highlighted page keeps the join.
         one_relation = coalesced and not for_cursor and highlight is None
@@ -203,15 +210,7 @@ class PostgresFTSSearchAdapter[M: BaseModel](PostgresRankedPipelineSearchAdapter
             cap_kw=cap_kw,
             filtered_extra=filtered_extra,
             carry_columns=self._carried_read_columns(join) if one_relation else None,
-            page_cap=None
-            if for_cursor
-            else page_candidate_cap(
-                options=options,
-                pagination=pagination,
-                snapshot=snapshot,
-                result_snapshot=self.result_snapshot,
-                rs_spec=rs_spec,
-            ),
+            page_cap=page_cap,
         )
 
         return ranked_parts_to_sql(

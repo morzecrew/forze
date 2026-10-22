@@ -84,11 +84,13 @@ def build_filter_first_ranked_pipeline(
         projection_alias=aliases.projection,
         scored_alias=aliases.scored,
     )
-    has_cap = "candidate_limit" in cap_kw and cap_kw.get("candidate_limit") is not None
+    configured = cap_kw.get("candidate_limit")
     data_cap_kw = dict(cap_kw)
-
-    if has_cap and page_cap is not None:
-        data_cap_kw["candidate_limit"] = min(int(cap_kw["candidate_limit"]), page_cap)
+    data_limit = min((int(c) for c in (configured, page_cap) if c is not None), default=None)
+    data_cap_kw["candidate_limit"] = data_limit
+    # The exact count needs its own uncapped CTE whenever the data CTE is capped, by the
+    # configured cap or by the page alone.
+    has_cap = data_limit is not None and cap_kw.get("scored_order") is not None
 
     if coalesced:
         scored_data = build_scored_cte(
