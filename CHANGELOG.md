@@ -45,6 +45,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Firestore raises a stale write's preconditions as Postgres and Mongo do** (**behaviour change**). A future revision is `precondition` with `revision_mismatch`, and a revision whose history snapshot is missing is `precondition` with `history_not_found_retry`, not `not_found`.
 
+- **A refused Socket.IO connect renders its error as an error ack does** (**behaviour change**). Its data is now `{"detail", "code", "kind"}`, with `context` when exposed, and a non-disclosing denial posture applies: a denial or not-found about a covered resource type is refused as `Not found`.
 - **A failed Firestore history query is raised, not skipped.** A `NotFound` from the API, such as for a missing database, was taken for a missing snapshot, so `read_many` returned fewer snapshots or none.
 - **A set-based `upsert_many` is refused for a domain with serializers of its own** (**behaviour change**), as for validators: a `field_serializer`, `model_serializer`, `PlainSerializer` or `WrapSerializer` that runs in python mode now raises `set_based_upsert_unsupported`.
 

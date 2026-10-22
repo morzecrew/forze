@@ -69,9 +69,9 @@ from .drain import close_transport, require_close_internals
 from .exceptions import (
     GENERIC_INTERNAL_DETAIL,
     build_core_exception_ack,
+    build_core_exception_refusal,
     build_unhandled_exception_ack,
     error_logger,
-    is_server_error_kind,
     log_server_error,
 )
 from .gateway import room_for
@@ -267,17 +267,6 @@ def _draining_refusal() -> SocketIOConnectionRefusedError:
     ``data`` names the code, and reaches the client only if that close failed."""
 
     return SocketIOConnectionRefusedError("Server is draining", {"code": REALTIME_DRAINING_CODE})
-
-
-def _core_refusal(error: CoreException) -> SocketIOConnectionRefusedError:
-    """The client-safe summary, or — for a server-side kind — the generic detail, logged."""
-
-    if is_server_error_kind(error.kind):
-        log_server_error(error, core=error)
-
-        return SocketIOConnectionRefusedError(GENERIC_INTERNAL_DETAIL)
-
-    return SocketIOConnectionRefusedError(error.summary)
 
 
 async def _best_effort[**P](
@@ -750,7 +739,7 @@ class _ConnectionLifecycle:
             raise
 
         except CoreException as error:
-            raise self._refused(stage, _core_refusal(error)) from error
+            raise self._refused(stage, build_core_exception_refusal(error)) from error
 
         except Exception as error:
             log_server_error(error)

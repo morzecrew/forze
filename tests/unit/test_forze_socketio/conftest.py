@@ -1,11 +1,12 @@
 """Shared fixtures for forze_socketio unit tests."""
 
 import io
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable, Iterator
 
 import pytest
 
 from forze.application.execution import DepsRegistry, ExecutionRuntime
+from forze.base.exceptions import DenialPosture, configure_denial_posture, current_denial_posture
 from forze.base.logging import configure_logging
 from forze_mock import MockDepsModule
 
@@ -24,6 +25,17 @@ def error_log_buf() -> io.StringIO:
         render_mode="json",
     )
     return buf
+
+
+@pytest.fixture
+def denial_posture() -> Iterator[Callable[[DenialPosture], DenialPosture]]:
+    """Set the process-wide denial posture; the previous one is restored after the test."""
+
+    previous = current_denial_posture()
+
+    yield configure_denial_posture
+
+    configure_denial_posture(previous)
 
 
 @pytest.fixture(autouse=True)
