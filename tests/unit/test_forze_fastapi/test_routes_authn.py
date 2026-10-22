@@ -1150,9 +1150,9 @@ class TestRefreshCookieCsrf:
 
 
 class TestCookieLogoutPathCheck:
-    """Cookie-mode logout revokes the session from the access cookie or the refresh cookie,
-    so one of their paths must cover the mounted logout route. The boot check refuses a
-    carrier whose paths both miss it."""
+    """Cookie-mode logout revokes the session from the access cookie or the refresh cookie.
+    The access cookie expires first, so the boot check refuses a carrier whose refresh path
+    misses the mounted logout route, whatever the access path."""
 
     def _app(
         self,
@@ -1192,14 +1192,21 @@ class TestCookieLogoutPathCheck:
         ],
         ids=["root", "api", "trailing-slash", "root-path"],
     )
-    def test_a_covering_access_path_passes(
+    def test_a_covering_access_path_alone_is_refused(
         self, access_path: str, prefix: str, root_path: str
     ) -> None:
+        # Once the access cookie expires, only the refresh cookie could reach logout.
         from forze_fastapi.middlewares import check_authn_cookie_paths
 
-        check_authn_cookie_paths(
-            self._app(access_path=access_path, prefix=prefix, root_path=root_path)
-        )
+        app = self._app(access_path=access_path, prefix=prefix, root_path=root_path)
+
+        with pytest.raises(CoreException, match="refresh cookie"):
+            check_authn_cookie_paths(app)
+
+    def test_the_default_paths_pass(self) -> None:
+        from forze_fastapi.middlewares import check_authn_cookie_paths
+
+        check_authn_cookie_paths(self._app(access_path="/", refresh_path="/"))
 
     @pytest.mark.parametrize(
         ("refresh_path", "root_path"),
@@ -1214,16 +1221,16 @@ class TestCookieLogoutPathCheck:
         )
 
     @pytest.mark.parametrize(
-        ("access_path", "root_path"),
-        [("/au", ""), ("/auth", "/v1")],
-        ids=["not-a-segment", "outside-the-root-path"],
+        ("refresh_path", "root_path"),
+        [("/au", ""), ("/auth", "/v1"), ("", "")],
+        ids=["not-a-segment", "outside-the-root-path", "empty"],
     )
-    def test_paths_missing_logout_are_refused(
-        self, access_path: str, root_path: str
+    def test_refresh_paths_missing_logout_are_refused(
+        self, refresh_path: str, root_path: str
     ) -> None:
         from forze_fastapi.middlewares import check_authn_cookie_paths
 
-        app = self._app(access_path=access_path, root_path=root_path)
+        app = self._app(access_path="/", refresh_path=refresh_path, root_path=root_path)
 
         with pytest.raises(CoreException, match="/auth/logout"):
             check_authn_cookie_paths(app)

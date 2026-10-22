@@ -567,6 +567,8 @@ class MockTokenLifecyclePort(TokenLifecyclePort):
     # ....................... #
 
     async def revoke_tokens_by_refresh_token(self, refresh_token: RefreshTokenCredentials) -> None:
+        ensure_mock_tx_writable(store=f"identity:authn:{self.route}")
+
         with self.state.lock:
             session = _find_session(_route_store(self.state, self.route), refresh_token.token)
 
