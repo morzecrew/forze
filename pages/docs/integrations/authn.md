@@ -345,6 +345,16 @@ issued before is then refused by its epoch, so the eligibility read has nothing 
   Refresh refuses to run inside a transaction the caller already opened: a reused refresh
   token's family is revoked in a transaction of its own, which an enclosing one would roll
   back.
+- **Overlapping refreshes:** presenting a rotated refresh token again is reuse, and its
+  whole family is revoked. Tabs sharing one refresh cookie hit that on a benign race.
+  `AuthnKernelConfig(refresh_token=RefreshTokenConfig(reuse_grace=timedelta(seconds=10)))`
+  refuses a token rotated within the grace, while its successor is unused, with the
+  authentication error `refresh_superseded` and revokes nothing; a refresh whose rotation
+  loses a race on its session gets the same error. Either way the client refreshes again
+  with the token it now holds. A stolen token replayed within the grace mints nothing, and
+  its holder learns only that it was just rotated, but it raises `REFRESH_SUPERSEDED`, not
+  the `REFRESH_REUSE_DETECTED` theft signal, so keep the grace to seconds. It must be
+  shorter than the refresh lifetime; the default `0` keeps strict reuse detection.
 - **Issued API keys:** `issue_api_key` returns an `IssuedApiKey`; its raw key, shown only
   at issuance, is `issued.secret`. It stays out of `repr()` and `str()`, so logging the
   result does not log the key.

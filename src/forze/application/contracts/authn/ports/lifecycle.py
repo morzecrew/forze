@@ -83,7 +83,10 @@ class TokenLifecyclePort(Protocol):  # pragma: no cover
     new session and revokes it, or commits first and the issue is refused.
     ``refresh_tokens`` must raise :class:`RefreshTokenReuseError` for a reused token, after
     revoking its family: a caller refreshing in a transaction relies on it to commit that
-    revocation once its own has rolled back.
+    revocation once its own has rolled back. Within a configured reuse grace it instead
+    refuses a just-rotated token, or one losing a concurrent rotation, with the
+    ``refresh_superseded`` authentication error and revokes nothing: the caller refreshes
+    again with the successor (in cookie mode, already in the shared cookie jar).
     """
 
     def issue_tokens(

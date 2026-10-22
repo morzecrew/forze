@@ -39,11 +39,12 @@ def _token_services(
     ctx,
     *,
     pepper: bytes,
+    reuse_grace: timedelta = timedelta(0),
 ) -> tuple[TokenLifecycleAdapter, AccessTokenService]:
     access_svc = AccessTokenService(signer=Hs256Signer(secret=secrets.token_bytes(32)))
     refresh_svc = RefreshTokenService(
         pepper=pepper,
-        config=RefreshTokenConfig(expires_in=timedelta(days=30)),
+        config=RefreshTokenConfig(expires_in=timedelta(days=30), reuse_grace=reuse_grace),
     )
     adapter = TokenLifecycleAdapter(
         access_svc=access_svc,
@@ -228,3 +229,39 @@ async def test_refresh_reuse_revokes_token_family(pg_client: PostgresClient) -> 
     assert len(sessions.hits) == 2
     assert len(live) == 1
     assert live[0].revoked_at is not None
+
+
+async def test_refresh_within_the_reuse_grace_is_superseded(pg_client: PostgresClient) -> None:
+    suffix = uuid4().hex[:12]
+    ctx = await _authn_pg_setup(pg_client, suffix=suffix)
+    pid = uuid4()
+    await insert_policy_principal_row(
+        pg_client,
+        table=f"authz_pri_{suffix}",
+        principal_id=pid,
+    )
+
+    adapter, _access_svc = _token_services(
+        ctx,
+        pepper=secrets.token_bytes(32),
+        reuse_grace=timedelta(seconds=10),
+    )
+
+    with ctx.inv_ctx.bind(metadata=_invocation_metadata()):
+        issued = await adapter.issue_tokens(AuthnIdentity(principal_id=pid))
+        assert issued.refresh is not None
+        rotated = await adapter.refresh_tokens(issued.refresh.token)
+
+        with pytest.raises(CoreException) as exc_info:
+            await adapter.refresh_tokens(issued.refresh.token)
+
+        sessions = await ctx.document.query(session_spec).find_many(
+            filters={"$values": {"principal_id": pid}},
+        )
+
+    assert exc_info.value.code == "refresh_superseded"
+    assert all(s.revoked_at is None for s in sessions.hits)
+    assert rotated.refresh is not None
+
+    with ctx.inv_ctx.bind(metadata=_invocation_metadata()):
+        assert (await adapter.refresh_tokens(rotated.refresh.token)).refresh is not None

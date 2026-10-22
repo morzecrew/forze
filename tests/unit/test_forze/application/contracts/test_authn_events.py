@@ -61,6 +61,7 @@ class TestAuthnEventKind:
             "login_locked",
             "token_refreshed",
             "refresh_reuse_detected",
+            "refresh_superseded",
             "logout",
             "password_changed",
             "password_reset_requested",

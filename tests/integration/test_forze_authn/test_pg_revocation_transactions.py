@@ -63,7 +63,7 @@ BLOCKED_FOR = 0.3
 
 
 class _Stack:
-    def __init__(self, ctx: ExecutionContext) -> None:
+    def __init__(self, ctx: ExecutionContext, *, grace: timedelta = timedelta(0)) -> None:
         self.ctx = ctx
         eligibility = PolicyPrincipalEligibilityAdapter(
             principal_qry=ctx.document.query(policy_principal_spec),
@@ -73,7 +73,7 @@ class _Stack:
             access_svc=AccessTokenService(signer=Hs256Signer(secret=secrets.token_bytes(32))),
             refresh_svc=RefreshTokenService(
                 pepper=secrets.token_bytes(32),
-                config=RefreshTokenConfig(expires_in=timedelta(days=1)),
+                config=RefreshTokenConfig(expires_in=timedelta(days=1), reuse_grace=grace),
             ),
             session_qry=ctx.document.query(session_spec),
             session_cmd=ctx.document.command(session_spec),
@@ -118,7 +118,9 @@ class _Stack:
         return list(page.hits)
 
 
-async def _stack(pg_client: PostgresClient) -> tuple[_Stack, UUID]:
+async def _stack(
+    pg_client: PostgresClient, *, grace: timedelta = timedelta(0)
+) -> tuple[_Stack, UUID]:
     suffix = uuid4().hex[:12]
     await create_authn_tables(pg_client, suffix=suffix)
     deps = _authn_pg_deps(pg_client, suffix=suffix).merge(
@@ -131,7 +133,7 @@ async def _stack(pg_client: PostgresClient) -> tuple[_Stack, UUID]:
         principal_id=principal,
     )
 
-    return _Stack(context_from_deps(deps)), principal
+    return _Stack(context_from_deps(deps), grace=grace), principal
 
 
 async def _issuer(stack: _Stack, principal: UUID, flow: str) -> Callable[[], Awaitable[Any]]:
@@ -339,3 +341,48 @@ async def test_a_deactivation_and_a_password_change_do_not_deadlock(
 
     assert [r for r in results if isinstance(r, BaseException)] == []
     assert _live(await stack.sessions(principal)) == []
+
+
+@pytest.mark.parametrize(
+    ("grace", "code"),
+    [(timedelta(seconds=10), "refresh_superseded"), (timedelta(0), "revision_mismatch")],
+    ids=["grace", "no-grace"],
+)
+async def test_two_refreshes_of_one_token_in_flight_rotate_it_once(
+    pg_client: PostgresClient,
+    grace: timedelta,
+    code: str,
+) -> None:
+    # Two tabs send one refresh cookie: the second reads the session before the first
+    # commits its rotation, then waits on the principal's row and loses the revision check.
+    stack, principal = await _stack(pg_client, grace=grace)
+    issuer = await _issuer(stack, principal, "refresh")
+    entered, release = asyncio.Event(), asyncio.Event()
+
+    async with asyncio.timeout(10):
+        winner = asyncio.create_task(stack.held(issuer, entered, release))
+        await entered.wait()
+
+        loser = asyncio.create_task(stack.in_tx(issuer))
+        await asyncio.sleep(BLOCKED_FOR)
+
+        assert not loser.done()
+
+        release.set()
+        issued = await winner
+
+        with pytest.raises(CoreException) as caught:
+            await loser
+
+    assert caught.value.code == code
+
+    sessions = await stack.sessions(principal)
+
+    # The loser's successor rolled back with its transaction: one rotation, one live session.
+    assert len(sessions) == 2
+    assert len(_live(sessions)) == 1
+    assert issued.refresh is not None
+
+    rotated = await stack.in_tx(lambda: stack.tokens.refresh_tokens(issued.refresh.token))
+
+    assert rotated.refresh is not None

@@ -19,7 +19,7 @@ from forze.application.contracts.authn import (
     TokenLifecyclePort,
 )
 from forze.application.contracts.document import DocumentCommandPort, DocumentQueryPort
-from forze.base.exceptions import CoreException, exc
+from forze.base.exceptions import CoreException, ExceptionKind, exc
 from forze.base.primitives import utcnow
 from forze_identity._secure_spec import forbid_cache_and_history
 
@@ -70,7 +70,8 @@ class TokenLifecycleAdapter(TokenLifecyclePort):
     """Optional authn event emitter (best-effort; ``None`` disables emission).
 
     Emits ``TOKEN_REFRESHED`` on successful rotation, ``REFRESH_REUSE_DETECTED``
-    when an already-rotated refresh token triggers family revocation, and
+    when an already-rotated refresh token triggers family revocation,
+    ``REFRESH_SUPERSEDED`` when one is refused within the reuse grace instead, and
     ``LOGOUT`` on :meth:`revoke_tokens`."""
 
     revocation: SessionRevocation | None = None
@@ -261,6 +262,46 @@ class TokenLifecycleAdapter(TokenLifecyclePort):
 
     # ....................... #
 
+    async def _within_reuse_grace(self, session: ReadSession) -> bool:
+        """Whether rotated *session* was presented within the grace, its successor unused."""
+
+        grace = self.refresh_svc.config.reuse_grace
+
+        if (
+            grace <= timedelta(0)
+            or session.rotated_at is None
+            or session.replaced_by is None
+            or utcnow() - session.rotated_at > grace
+        ):
+            return False
+
+        successor = await self.session_qry.find(
+            filters={"$values": {"id": session.replaced_by}},
+        )
+
+        return (
+            successor is not None and successor.rotated_at is None and successor.revoked_at is None
+        )
+
+    # ....................... #
+
+    async def _superseded(self, session: ReadSession) -> CoreException:
+        """The refusal of an overlapping refresh, its event emitted (best-effort)."""
+
+        if self.events is not None:
+            await self.events.emit(
+                AuthnEventKind.REFRESH_SUPERSEDED,
+                principal_id=session.principal_id,
+                tenant_id=session.tenant_id,
+            )
+
+        return exc.authentication(
+            "Refresh token superseded by a concurrent refresh; refresh again",
+            code="refresh_superseded",
+        )
+
+    # ....................... #
+
     async def refresh_tokens(
         self,
         refresh_token: RefreshTokenCredentials,
@@ -274,6 +315,9 @@ class TokenLifecycleAdapter(TokenLifecyclePort):
             raise exc.authentication("Invalid refresh token")
 
         if old_session.rotated_at is not None:
+            if await self._within_reuse_grace(old_session):
+                raise await self._superseded(old_session)
+
             reuse = RefreshTokenReuseError.detected(
                 old_session.principal_id,
                 old_session.family_id,
@@ -340,12 +384,23 @@ class TokenLifecycleAdapter(TokenLifecyclePort):
             replaced_by=res.id,
         )
 
-        await self.session_cmd.update(
-            old_session.id,
-            old_session.rev,
-            old_session_cmd,
-            return_new=False,
-        )
+        try:
+            await self.session_cmd.update(
+                old_session.id,
+                old_session.rev,
+                old_session_cmd,
+                return_new=False,
+            )
+
+        except CoreException as error:
+            # A refresh that rotated this session after it was read wins; with a grace, the
+            # loser is the same overlapping refresh as one that read the rotated row.
+            stale = error.code == "revision_mismatch" or error.kind is ExceptionKind.CONCURRENCY
+
+            if not stale or self.refresh_svc.config.reuse_grace <= timedelta(0):
+                raise
+
+            raise await self._superseded(old_session) from error
 
         if self.revocation is not None:
             await self.revocation.rotated(old_session.principal_id, old_session.id)
