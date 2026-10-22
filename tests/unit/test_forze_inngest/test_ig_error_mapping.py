@@ -2,6 +2,7 @@
 non-retryable ``CoreException``) to ``inngest.NonRetriableError`` so Inngest stops retrying;
 retryable kinds (infrastructure/throttled/concurrency) propagate for Inngest's own retry."""
 
+import traceback
 from typing import Any
 
 import inngest
@@ -83,3 +84,23 @@ async def test_invalid_event_payload_is_non_retriable() -> None:
     with pytest.raises(inngest.NonRetriableError):
         # Missing required ``value`` -> pydantic ValidationError -> NonRetriableError.
         await fn._handler(_FakeContext({}))  # pyright: ignore[reportPrivateUsage]
+
+
+async def test_invalid_event_payload_error_carries_no_payload() -> None:
+    """The SDK ships the error and its formatted traceback to the platform, so neither may
+    carry the event: ``str(ValidationError)`` embeds it whole as ``input_value``."""
+
+    async def _h(_args: _In) -> _Out:
+        return _Out()
+
+    needle = "card-4111-1111"
+    fn = _register(_h)
+
+    with pytest.raises(inngest.NonRetriableError) as ei:
+        await fn._handler(_FakeContext({"value": {"pan": needle}}))  # pyright: ignore[reportPrivateUsage]
+
+    shipped = "".join(traceback.format_exception(ei.value))
+
+    assert needle not in shipped
+    # Still actionable: the field that failed.
+    assert "value:" in str(ei.value)

@@ -26,6 +26,10 @@ than assumed:
   ``'…'`` found using …").
 
 All are caller-supplied data heading for a client-visible error, so none can be forwarded.
+
+``uuid_parsing`` is left out on purpose: it quotes only the single character where parsing
+stopped ("found ``s`` at 0"), and replacing it would lose the expected-format guidance for every
+malformed UUID.
 """
 
 _ECHOING_MSG = "Value is not valid for this field"

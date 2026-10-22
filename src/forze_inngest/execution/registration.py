@@ -30,6 +30,7 @@ from forze.application.execution.operations.registry import FrozenOperationRegis
 from forze.application.execution.operations.run import handler_for_registry_operation
 from forze.application.integrations.crypto import is_encrypted_payload
 from forze.base.exceptions import CoreException, exc, exception_egress_policy
+from forze.base.scrubbing import sanitize_pydantic_errors
 
 from ..adapters.context import (
     InngestDecodedContext,
@@ -288,8 +289,18 @@ def _register_one(
             args = binding.spec.run.args_type.model_validate(payload)
         except ValidationError as e:
             # A malformed event is deterministic — retrying it forever never converges, so tell
-            # Inngest to stop.
-            raise inngest.NonRetriableError(f"Invalid event payload for {spec.name!r}: {e}") from e
+            # Inngest to stop. The SDK ships the message and the formatted traceback to the
+            # platform, and str(ValidationError) embeds the whole event as ``input_value``, so
+            # the message carries field paths and scrubbed messages only, and the chain is cut.
+            problems = "; ".join(
+                f"{'.'.join(map(str, err['loc']))}: {err['msg']}"
+                for err in sanitize_pydantic_errors(
+                    e.errors(include_url=False, include_input=False, include_context=False)
+                )
+            )
+            raise inngest.NonRetriableError(
+                f"Invalid event payload for {spec.name!r}: {problems}"
+            ) from None
 
         step_token = bind_inngest_step(ctx.step)
 
