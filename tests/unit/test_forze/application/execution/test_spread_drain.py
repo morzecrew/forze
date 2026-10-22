@@ -1,7 +1,7 @@
 """Closing many connections over a window, and the drain phase that fits it to its budget.
 
-Every test runs on the simulation loop, so the window, the tail and the allowance are measured
-in virtual time: a slow runner cannot push a start or a close past its bound.
+Every timed test runs on the simulation loop, so the window, the tail and the allowance are
+measured in virtual time: a slow runner cannot push a start or a close past its bound.
 """
 
 from __future__ import annotations
