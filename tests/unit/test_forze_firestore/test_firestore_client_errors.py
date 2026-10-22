@@ -57,7 +57,7 @@ class TestFirestoreErrorHandler:
         mapped = _firestore_eh(gax_exceptions.FailedPrecondition(message), site="query")
         assert isinstance(mapped, CoreException)
         assert mapped.kind == ExceptionKind.CONFIGURATION
-        # The API's text names the project; it rides in details, never in the summary.
+        # The API's text (an index link, say) rides in details, never in the summary.
         assert message not in str(mapped)
         assert mapped.details is not None and message in mapped.details["error"]
 

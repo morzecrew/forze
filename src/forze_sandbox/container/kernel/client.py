@@ -453,7 +453,8 @@ class ContainerEngine:
 
         except httpx.HTTPError as error:
             raise exc.infrastructure(
-                f"Could not reach the container daemon at {self._docker_host!r}. "
+                # The host can carry credentials; it rides in details, which stay hidden.
+                "Could not reach the container daemon. "
                 "The sandbox route cannot run anything without it.",
                 code=DAEMON_ERROR_CODE,
                 details={
@@ -469,8 +470,7 @@ class ContainerEngine:
             return
 
         raise exc.infrastructure(
-            f"The container daemon at {self._docker_host!r} refused to {doing}: "
-            f"{response.status_code} {_message(response)}",
+            f"The container daemon refused to {doing}: {response.status_code} {_message(response)}",
             code=DAEMON_ERROR_CODE,
             details={"docker_host": self._docker_host, "status": response.status_code},
         )
