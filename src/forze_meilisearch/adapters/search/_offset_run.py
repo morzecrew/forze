@@ -246,12 +246,19 @@ def unsortable_refusal(
     named = _UNSORTABLE.search(error.message)
 
     if named is None or named.group(1) not in spec_sort:
-        return exc.precondition(f"Meilisearch refused the sort: {error.message}")
+        refusal = exc.precondition(
+            "Meilisearch refused the sort.",
+            details={"error": error.message},
+        )
+        # The engine's message names the index and its sortable attributes: server context.
+        refusal.expose_details = False
+
+        return refusal
 
     return exc.configuration(
         f"The Meilisearch index cannot sort by {named.group(1)!r}, which the search spec "
-        "orders an unsorted page by: re-run ensure_index, or add it to sortable_attributes. "
-        f"{error.message}",
+        "orders an unsorted page by: re-run ensure_index, or add it to sortable_attributes.",
+        details={"error": error.message},
     )
 
 

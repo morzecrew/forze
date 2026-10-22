@@ -52,7 +52,8 @@ async def resolve_str_for_tenant(
 
     except Exception as e:
         raise exc.internal(
-            f"Failed to resolve {backend} secret for tenant {tenant_id}: {e}",
+            f"Failed to resolve {backend} secret for tenant {tenant_id}.",
+            details={"error": str(e)},
         ) from e
 
 
@@ -138,7 +139,8 @@ class TenantSecretResolver:
 
         except Exception as e:
             raise exc.internal(
-                f"Failed to resolve {self.backend} secret for tenant {tenant_id}: {e}",
+                f"Failed to resolve {self.backend} secret for tenant {tenant_id}.",
+                details={"error": str(e)},
             ) from e
 
     # ....................... #
@@ -160,5 +162,6 @@ class TenantSecretResolver:
 
         except Exception as e:
             raise exc.internal(
-                f"Failed to resolve {self.backend} secret for tenant {tenant_id}: {e}",
+                f"Failed to resolve {self.backend} secret for tenant {tenant_id}.",
+                details={"error": str(e)},
             ) from e

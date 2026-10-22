@@ -10,7 +10,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
-from uuid import UUID, uuid4
+from uuid import uuid4
 
 import pytest
 
@@ -20,14 +20,10 @@ from forze.application.contracts.authn import (
     IssuedTokens,
     PasswordCredentials,
 )
-from forze.application.contracts.authz import PrincipalRegistryDepKey
-from forze.application.contracts.document import DocumentCommandDepKey, DocumentQueryDepKey
 from forze.application.contracts.execution import BeforeStep
-from forze.application.contracts.transaction import TransactionManagerDepKey
-from forze.application.execution import Deps, ExecutionContext
+from forze.application.execution import ExecutionContext
 from forze.application.execution.operations import run_operation
 from forze.base.exceptions import CoreException, ExceptionKind, exc
-from forze_identity.authn import AuthnDepsModule, AuthnKernelConfig
 from forze_identity.authn.adapters import _utils as authn_utils
 from forze_identity.authn.adapters import password_lifecycle, password_reset, token_lifecycle
 from forze_identity.authn.application.specs import (
@@ -37,10 +33,7 @@ from forze_identity.authn.application.specs import (
     session_spec,
 )
 from forze_identity.authn.domain.models.account import CreateApiKeyAccountCmd
-from forze_identity.authn.services import PasswordConfig
 from forze_identity.authz.application.specs import policy_principal_spec
-from forze_identity.authz.domain.models.policy_principal import CreatePolicyPrincipalCmd
-from forze_identity.authz.execution.deps.deps import ConfigurablePrincipalRegistry
 from forze_kits.aggregates.authn import (
     AuthnChangePasswordRequestDTO,
     AuthnKernelOp,
@@ -52,12 +45,15 @@ from forze_kits.aggregates.authn import (
 )
 from forze_kits.aggregates.tenancy import TenancyKernelOp, build_tenancy_registry
 from forze_kits.aggregates.tenancy.dto import TenantSwitchRequestDTO
-from forze_mock import MockDepsModule, MockStateDepKey
+from forze_mock import MockStateDepKey
 from forze_mock.adapters.document import MockDocumentAdapter
 from forze_mock.adapters.identity import seed_password_account
 from forze_mock.adapters.identity.authn import MockTokenLifecyclePort
-from forze_mock.execution.factories import ConfigurableMockDocument, mock_journal_txmanager
-from tests.support.execution_context import context_from_deps, context_from_modules
+from tests.support.authn_stacks import (
+    identity_authn_context,
+    mock_authn_context,
+    stack_principal,
+)
 
 pytest.importorskip("jwt")
 pytest.importorskip("argon2")
@@ -67,13 +63,6 @@ pytestmark = pytest.mark.unit
 ROUTE = "main"
 SPEC = AuthnSpec(name=ROUTE, enabled_methods=frozenset({"token", "password"}))
 NS = SPEC.default_namespace
-KERNEL = AuthnKernelConfig(
-    access_token_secret=b"k" * 32,
-    refresh_token_pepper=b"p" * 32,
-    api_key_pepper=b"a" * 32,
-    reset_token_pepper=b"r" * 32,
-    password=PasswordConfig(time_cost=1, memory_cost=8, parallelism=1),
-)
 
 
 async def _allow(args: Any) -> None:
@@ -89,64 +78,6 @@ def _registry(**kwargs: Any) -> Any:
         trust_admin_guards=True,
         **kwargs,
     ).freeze()
-
-
-def _real_ctx(*, tx: bool = True) -> ExecutionContext:
-    """The identity plane's adapters over mock documents and the journal transaction manager."""
-
-    mock = MockDepsModule()
-    document = ConfigurableMockDocument(module=mock)
-    names = {
-        spec.name
-        for spec in (
-            session_spec,
-            policy_principal_spec,
-            api_key_account_spec,
-            password_account_spec,
-            password_reset_spec,
-        )
-    }
-    deps = (
-        AuthnDepsModule(
-            kernel=KERNEL,
-            authn={ROUTE: frozenset({"token", "api_key", "password"})},
-            authz_route=ROUTE,
-            principal_deactivation={ROUTE},
-            token_lifecycle={ROUTE},
-            password_lifecycle={ROUTE},
-            password_account_provisioning={ROUTE},
-            password_reset={ROUTE},
-        )()
-        .merge(
-            Deps.routed(
-                {
-                    DocumentQueryDepKey: dict.fromkeys(names, document),
-                    DocumentCommandDepKey: dict.fromkeys(names, document),
-                    PrincipalRegistryDepKey: {ROUTE: ConfigurablePrincipalRegistry()},
-                }
-            )
-        )
-        .merge(Deps.plain({MockStateDepKey: mock.state}))
-    )
-
-    if tx:
-        deps = deps.merge(Deps.plain({TransactionManagerDepKey: mock_journal_txmanager}))
-
-    return context_from_deps(deps)
-
-
-def _mock_ctx() -> ExecutionContext:
-    return context_from_modules(MockDepsModule())
-
-
-async def _principal(ctx: ExecutionContext) -> UUID:
-    if ctx.deps.exists(PrincipalRegistryDepKey, route=ROUTE):
-        created = await ctx.doc.command(policy_principal_spec).create(
-            CreatePolicyPrincipalCmd(kind="user")
-        )
-        return created.id
-
-    return uuid4()
 
 
 def _refresh_token(issued: IssuedTokens) -> str:
@@ -168,7 +99,9 @@ async def _refresh(ctx: ExecutionContext, registry: Any, token: str) -> Any:
 # ----------------------- #
 
 
-@pytest.mark.parametrize("build", [_real_ctx, _mock_ctx], ids=["identity", "mock"])
+@pytest.mark.parametrize(
+    "build", [identity_authn_context, mock_authn_context], ids=["identity", "mock"]
+)
 @pytest.mark.parametrize("tx_route", ["default", None], ids=["tx", "no-tx"])
 async def test_a_reused_refresh_token_revokes_its_family(
     build: Callable[[], ExecutionContext],
@@ -178,7 +111,7 @@ async def test_a_reused_refresh_token_revokes_its_family(
     # back. The live session of the family must still be revoked once the refresh has failed.
     ctx = build()
     registry = _registry(tx_route=tx_route)
-    principal = await _principal(ctx)
+    principal = await stack_principal(ctx)
     first = await ctx.authn.token_lifecycle(SPEC).issue_tokens(
         AuthnIdentity(principal_id=principal)
     )
@@ -197,11 +130,70 @@ async def test_a_reused_refresh_token_revokes_its_family(
         await _refresh(ctx, registry, second.refresh_token)
 
 
+async def _logout_by_refresh_token(ctx: ExecutionContext, registry: Any, token: str) -> None:
+    # No identity bound: the refresh token alone names the session, as in cookie-mode logout.
+    await run_operation(
+        registry,
+        NS.key(AuthnKernelOp.LOGOUT_BY_REFRESH_TOKEN),
+        AuthnRefreshRequestDTO(refresh_token=token),
+        ctx,
+    )
+
+
+@pytest.mark.parametrize(
+    "build", [identity_authn_context, mock_authn_context], ids=["identity", "mock"]
+)
+async def test_logout_by_refresh_token_revokes_what_logout_by_identity_does(
+    build: Callable[[], ExecutionContext],
+) -> None:
+    ctx = build()
+    registry = _registry()
+    principal = await stack_principal(ctx)
+    lifecycle = ctx.authn.token_lifecycle(SPEC)
+    issued = [await lifecycle.issue_tokens(AuthnIdentity(principal_id=principal)) for _ in "ab"]
+    verifier = ctx.authn.authn(SPEC)
+
+    for session in issued:
+        await verifier.authenticate_with_token(session.access.token)
+
+    await _logout_by_refresh_token(ctx, registry, _refresh_token(issued[0]))
+
+    # Every session of the principal, as revoke_tokens does: refresh and access both refused.
+    for session in issued:
+        with pytest.raises(CoreException, match="Invalid refresh token"):
+            await _refresh(ctx, registry, _refresh_token(session))
+
+        with pytest.raises(CoreException) as refused:
+            await verifier.authenticate_with_token(session.access.token)
+
+        assert refused.value.kind is ExceptionKind.AUTHENTICATION
+
+
+@pytest.mark.parametrize(
+    "build", [identity_authn_context, mock_authn_context], ids=["identity", "mock"]
+)
+async def test_logout_by_an_unknown_or_rotated_refresh_token_revokes_nothing(
+    build: Callable[[], ExecutionContext],
+) -> None:
+    ctx = build()
+    registry = _registry()
+    principal = await stack_principal(ctx)
+    first = await ctx.authn.token_lifecycle(SPEC).issue_tokens(
+        AuthnIdentity(principal_id=principal)
+    )
+    live = await _refresh(ctx, registry, _refresh_token(first))
+
+    await _logout_by_refresh_token(ctx, registry, "not-a-refresh-token")
+    await _logout_by_refresh_token(ctx, registry, _refresh_token(first))
+
+    await _refresh(ctx, registry, live.refresh_token)
+
+
 async def test_a_failed_deactivation_leaves_the_principal_and_its_sessions_as_they_were(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    ctx = _real_ctx()
-    principal = await _principal(ctx)
+    ctx = identity_authn_context()
+    principal = await stack_principal(ctx)
     issued = await ctx.authn.token_lifecycle(SPEC).issue_tokens(
         AuthnIdentity(principal_id=principal)
     )
@@ -248,8 +240,8 @@ async def test_a_failed_password_flow_keeps_the_old_password(
     monkeypatch: pytest.MonkeyPatch,
     flow: str,
 ) -> None:
-    ctx = _real_ctx()
-    principal = await _principal(ctx)
+    ctx = identity_authn_context()
+    principal = await stack_principal(ctx)
     await ctx.authn.password_account_provisioning(SPEC).register_with_password(
         principal,
         PasswordCredentials(login="alice", password="pw-1"),
@@ -293,7 +285,7 @@ async def test_a_failed_password_flow_keeps_the_old_password(
 
 
 async def test_deactivating_a_principal_on_the_mock_revokes_its_sessions() -> None:
-    ctx = _mock_ctx()
+    ctx = mock_authn_context()
     principal = uuid4()
     issued = await ctx.authn.token_lifecycle(SPEC).issue_tokens(
         AuthnIdentity(principal_id=principal)
@@ -318,7 +310,7 @@ async def test_every_session_operation_calls_its_lifecycle_inside_a_transaction(
 ) -> None:
     # The eligibility lock is held only as long as the issuing transaction, so a flow that
     # issues outside one does not serialize with a deactivation. Logout revokes inside one.
-    ctx = _mock_ctx()
+    ctx = mock_authn_context()
     principal = uuid4()
     identity = AuthnIdentity(principal_id=principal)
     depths: list[int] = []
@@ -373,8 +365,8 @@ async def test_the_wired_eligibility_locks_the_principal_only_inside_a_transacti
 ) -> None:
     # The deps module gives the policy-principal adapter its transaction probe: a backend
     # refuses a locking read outside a transaction, so outside one the read is plain.
-    ctx = _real_ctx()
-    principal = await _principal(ctx)
+    ctx = identity_authn_context()
+    principal = await stack_principal(ctx)
     locks: list[object] = []
     original = MockDocumentAdapter.find
 
@@ -396,7 +388,7 @@ async def test_the_wired_eligibility_locks_the_principal_only_inside_a_transacti
 async def test_a_refresh_inside_an_open_transaction_is_refused() -> None:
     # Both of its scopes would be savepoints, and the reuse revocation would roll back with
     # the enclosing transaction.
-    ctx = _mock_ctx()
+    ctx = mock_authn_context()
     issued = await ctx.authn.token_lifecycle(SPEC).issue_tokens(AuthnIdentity(principal_id=uuid4()))
 
     async with ctx.tx_ctx.scope("default"):
@@ -411,7 +403,7 @@ async def test_a_refresh_inside_an_open_transaction_is_refused() -> None:
 
 
 async def test_a_registry_without_a_transaction_manager_fails_when_built() -> None:
-    ctx = _real_ctx(tx=False)
+    ctx = identity_authn_context(tx=False)
 
     with pytest.raises(CoreException) as caught:
         _registry().resolve(NS.key(AuthnKernelOp.LOGOUT), ctx)
@@ -424,8 +416,8 @@ async def test_logout_revokes_more_live_sessions_than_one_batch(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(authn_utils, "_REVOKE_BATCH", 2)
-    ctx = _real_ctx()
-    principal = await _principal(ctx)
+    ctx = identity_authn_context()
+    principal = await stack_principal(ctx)
     identity = AuthnIdentity(principal_id=principal)
 
     for _ in range(5):
@@ -499,9 +491,9 @@ async def test_a_reuse_revocation_that_conflicts_still_revokes_the_family(
     # A concurrent refresh can make the revocation conflict, and on Mongo a conflict aborts
     # the transaction, so no retry inside it can recover. The reuse must still be reported,
     # and the family revoked in a fresh transaction.
-    ctx = _real_ctx()
+    ctx = identity_authn_context()
     registry = _registry()
-    principal = await _principal(ctx)
+    principal = await stack_principal(ctx)
     first = await ctx.authn.token_lifecycle(SPEC).issue_tokens(
         AuthnIdentity(principal_id=principal)
     )
@@ -542,9 +534,9 @@ async def test_a_family_revocation_that_keeps_failing_raises_its_failure(
 ) -> None:
     # The in-line attempt and then the handler's: a conflict gets three fresh transactions,
     # anything else none, and the failure surfaces rather than a refusal that hides it.
-    ctx = _real_ctx()
+    ctx = identity_authn_context()
     registry = _registry()
-    principal = await _principal(ctx)
+    principal = await stack_principal(ctx)
     first = await ctx.authn.token_lifecycle(SPEC).issue_tokens(
         AuthnIdentity(principal_id=principal)
     )

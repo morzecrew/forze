@@ -82,6 +82,22 @@ class TestWhenTheDaemonAnswersSomethingElse:
         assert "start the container" in str(raised.value)
         assert "no space left on device" in str(raised.value)
 
+    async def test_an_unreachable_daemon_keeps_the_transport_text_in_details(self) -> None:
+        engine = ContainerEngine("unix:///var/run/docker.sock", timeout=1.0)
+
+        def refuse(request: httpx.Request) -> httpx.Response:
+            raise httpx.ConnectError("refused by the socket", request=request)
+
+        engine._client = httpx.AsyncClient(transport=httpx.MockTransport(refuse))  # pyright: ignore[reportPrivateUsage]
+
+        with pytest.raises(CoreException) as raised:
+            await engine._call("GET", "http://daemon/_ping")  # pyright: ignore[reportPrivateUsage]
+
+        assert raised.value.code == "sandbox_container_daemon_error"
+        assert "refused by the socket" not in str(raised.value)
+        assert raised.value.details is not None
+        assert raised.value.details["error"] == "refused by the socket"
+
     def test_an_allowed_status_passes_quietly(self) -> None:
         engine = ContainerEngine("unix:///var/run/docker.sock", timeout=1.0)
 

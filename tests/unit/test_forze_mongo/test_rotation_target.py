@@ -177,6 +177,36 @@ class TestApply:
         assert client.database.commands == []
 
 
+class TestVerify:
+    async def test_failure_halts_with_the_driver_text_in_details_only(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from forze_mongo.adapters import rotation_target
+
+        class _RefusingAdmin:
+            async def command(self, *args: Any, **kwargs: Any) -> Any:
+                raise RuntimeError("Authentication failed for app_b")
+
+        class _RefusingClient:
+            def __init__(self, *args: Any, **kwargs: Any) -> None:
+                self.admin = _RefusingAdmin()
+
+            async def close(self) -> None:
+                return None
+
+        monkeypatch.setattr(rotation_target, "AsyncMongoClient", _RefusingClient)
+        secrets = MappingSecrets(data={"db/uri.pending": "mongodb://app_b:bad@db/app"})
+        target, _ = _target(secrets)
+
+        with pytest.raises(CoreException, match="halting before") as excinfo:
+            await target.verify(None, _PENDING)
+
+        assert excinfo.value.code == "rotation_verify_failed"
+        # The summary is what run stores record: the driver's text rides in details only.
+        assert "Authentication failed" not in str(excinfo.value)
+        assert excinfo.value.details == {"error": "Authentication failed for app_b"}
+
+
 class TestConfig:
     def test_requires_a_mode(self) -> None:
         with pytest.raises(CoreException, match="single_user_degraded"):

@@ -41,9 +41,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A `CoreException` can be copied and pickled.** `copy.copy`, `copy.deepcopy` and a `pickle` round-trip raised `TypeError`; they now keep every field, a subclass's own fields, `expose_details` set after construction, and the notes.
+
 - **Firestore raises a stale write's preconditions as Postgres and Mongo do** (**behaviour change**). A future revision is `precondition` with `revision_mismatch`, and a revision whose history snapshot is missing is `precondition` with `history_not_found_retry`, not `not_found`.
 
 - **A refused Socket.IO connect renders its error as an error ack does** (**behaviour change**). Its data is now `{"detail", "code", "kind"}`, with `context` when exposed, and a non-disclosing denial posture applies: a denial or not-found about a covered resource type is refused as `Not found`.
+- **A failed Firestore history query is raised, not skipped.** A `NotFound` from the API, such as for a missing database, was taken for a missing snapshot, so `read_many` returned fewer snapshots or none.
+- **A set-based `upsert_many` is refused for a domain with serializers of its own** (**behaviour change**), as for validators: a `field_serializer`, `model_serializer`, `PlainSerializer` or `WrapSerializer` that runs in python mode now raises `set_based_upsert_unsupported`.
 
 - A circuit breaker whose half-open probes recorded no outcome (an ignored error kind, a cancelled call) no longer rejects every call until restart: after `break_duration` it admits a new probe round.
 - **A logout everywhere followed by a deactivation in one transaction no longer deadlocks with a concurrent login** (revocation states, policy principal on Postgres; deactivation through SQL or its document port).
@@ -73,6 +77,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **A missing or closed Temporal workflow, or a missing schedule, is `not_found`; a taken workflow id `conflict`** (**behaviour change**), not `RPCError` or `WorkflowAlreadyStartedError`. A taken schedule kept `conflict`, now coded. New `WORKFLOW_NOT_FOUND_CODE` etc.; the mock raises them and refuses a taken schedule.
 
+- **`FleetView.excess` leaves a negative load out of the mean** (**behaviour change**), as it does a non-numeric one: a load is a count. A negative peer load no longer inflates a member's excess, and a member whose own load is negative gets 0.
+
 ### Security
 
 - **An error an integration translates from its backend no longer shows the failed call's context to API callers** (**behaviour change**): such an error carries no `context`, whatever its kind. The details stay on the exception and are logged at debug. A stream's failure between items is now translated too.
@@ -83,7 +89,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **`saga.step_failed` no longer shows the failed step's error text to API callers** (**behaviour change**): its `cause` detail is now the cause's `code` and `kind`, and only when the cause is a `CoreException`. The original error stays chained as `__cause__`.
 
+- **An error translated from a backend keeps a fixed summary** (**behaviour change**): the backend's message moves to `details["error"]` in the Neo4j, Mongo, Firestore, Vault, inference, Meilisearch, GCS and container-sandbox integrations, secret resolution and credential rotation, so `str()` no longer includes it.
+
 - **Cookie-mode `/login`, `/logout` and `/refresh` apply the cookie CSRF gate to every request** (**behaviour change**): each must prove its origin, with or without a cookie, and `/refresh` also when its token is in the body. A non-browser client sends `Origin` or is let in by `allow_missing_origin=True`.
+
+- **Cookie-mode logout revokes from the refresh cookie without a live access cookie** (`logout_by_refresh_token`). `runtime_lifespan` refuses an app whose access and refresh cookie paths both miss logout (`check_authn_cookie_paths`). **Breaking** for own token lifecycle ports: add `revoke_tokens_by_refresh_token`.
 
 ## [0.15.1] - 2026-10-19
 

@@ -121,7 +121,8 @@ was read. Its policies are pure functions of the view:
 comes from a stable hash, so it is the same in every process. Pass
 `states=("serving", "starting")` to make a joining replica a candidate.
 
-`excess` takes its mean over the serving members that report a numeric `load`, returns 0
+`excess` takes its mean over the serving members that report a `load` of 0 or more (a load
+is a count, so a negative one counts as absent, as a non-numeric one does), returns 0
 until the fleet is `settled(settle)` and the load is above `mean × (1 + tolerance)`, then
 returns `ceil(load − mean)`, capped by the floor of the member's `movable` report when one
 is named. A result below `smallest` is 0. Use it to decide how many connections, tables or

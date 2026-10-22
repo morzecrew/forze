@@ -238,8 +238,9 @@ class MongoRotationTarget(RotationTargetPort):
 
         except Exception as e:
             raise exc.infrastructure(
-                f"Pending MongoDB credential failed verification; halting before promote: {e}",
+                "Pending MongoDB credential failed verification; halting before promote.",
                 code="rotation_verify_failed",
+                details={"error": str(e)},
             ) from e
 
         finally:

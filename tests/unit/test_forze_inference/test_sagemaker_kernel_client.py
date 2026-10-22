@@ -433,10 +433,8 @@ class TestRuntimeClient:
     async def test_transport_failure_is_infrastructure(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        _fake_aws(
-            monkeypatch,
-            _FakeRuntime(raises=EndpointConnectionError(endpoint_url="http://nope")),
-        )
+        failure = EndpointConnectionError(endpoint_url="http://nope")
+        _fake_aws(monkeypatch, _FakeRuntime(raises=failure))
         client = SageMakerRuntimeClient()
         await client.initialize()
 
@@ -447,6 +445,9 @@ class TestRuntimeClient:
             await client.close()
 
         assert ei.value.code == "inference_endpoint_unavailable"
+        # The botocore text rides in details only: the summary is what run stores record.
+        assert "http://nope" not in str(ei.value)
+        assert ei.value.details == {"error": str(failure)}
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("raw", [b"not json at all", b"[1, 2, 3]"])

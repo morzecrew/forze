@@ -6,16 +6,20 @@ import pytest
 
 pytest.importorskip("fastapi")
 
+import asyncio
 import io
+import time
+from datetime import timedelta
 from typing import Any
 from uuid import uuid4
 
 from fastapi import APIRouter, FastAPI
 from fastapi.testclient import TestClient
 
-from forze.application.contracts.authn import AuthnSpec
+from forze.application.contracts.authn import AuthnIdentity, AuthnSpec, IssuedTokens
 from forze.application.contracts.execution import BeforeStep
 from forze.application.contracts.outbox import OutboxSpec
+from forze.application.execution import ExecutionContext
 from forze.application.execution.operations import OperationDescriptor
 from forze.application.execution.operations.registry import (
     FrozenOperationRegistry,
@@ -24,7 +28,7 @@ from forze.application.execution.operations.registry import (
 from forze.application.hooks.authn import AuthnRequired
 from forze.base.exceptions import CoreException
 from forze.base.logging import configure_logging
-from forze.base.primitives import StrKeyNamespace
+from forze.base.primitives import StrKeyNamespace, utcnow
 from forze.base.serialization import PydanticModelCodec
 from forze_fastapi.exceptions import ERROR_CODE_HEADER, register_exception_handlers
 from forze_fastapi.middlewares import (
@@ -41,8 +45,15 @@ from forze_kits.aggregates.authn import (
     AuthnTokenResponseDTO,
     build_authn_registry,
 )
-from forze_mock import MockDepsModule, MockState
+from forze_mock import MockDepsModule, MockState, MockStateDepKey
 from forze_mock.adapters.identity import seed_password_account
+from tests.support.authn_stacks import (
+    AUTHN_KERNEL,
+    AUTHN_ROUTE,
+    identity_authn_context,
+    mock_authn_context,
+    stack_principal,
+)
 from tests.support.execution_context import context_from_modules
 
 # ----------------------- #
@@ -70,6 +81,9 @@ _ADMIN_OPS = frozenset(
         AuthnKernelOp.LIST_PRINCIPAL_API_KEYS,
     }
 )
+
+# Run by cookie-mode logout from the refresh cookie; no route of its own.
+_UNROUTED_OPS = frozenset({AuthnKernelOp.LOGOUT_BY_REFRESH_TOKEN})
 
 # Auth-flow action routes are all POST; the self-service API-key collection uses
 # resource verbs (POST create + GET list on the collection, DELETE on the item).
@@ -246,10 +260,10 @@ class TestAuthnRouteSurface:
 
     def test_operation_ids_are_registry_keys_verbatim(self) -> None:
         assert _operation_ids(_build_app()) == {
-            f"main.{op.value}" for op in AuthnKernelOp if op not in _ADMIN_OPS
+            f"main.{op.value}" for op in AuthnKernelOp if op not in _ADMIN_OPS | _UNROUTED_OPS
         }
         assert _operation_ids(_build_app(registry=_guarded())) == {
-            f"main.{op.value}" for op in AuthnKernelOp
+            f"main.{op.value}" for op in AuthnKernelOp if op not in _UNROUTED_OPS
         }
 
     @pytest.mark.parametrize(
@@ -898,7 +912,7 @@ class TestCookieMode:
         async def runner(_payload: object) -> object:
             raise exc.infrastructure("session store down")
 
-        endpoint = _cookie_logout_endpoint(AuthnCookieCarrier())(runner, None, "logout")
+        endpoint = _cookie_logout_endpoint(AuthnCookieCarrier(), runner)(runner, None, "logout")
         same_origin = Request(
             {
                 "type": "http",
@@ -1122,6 +1136,333 @@ class TestRefreshCookieCsrf:
         assert refused.status_code == 403
         assert refused.headers[ERROR_CODE_HEADER] == "csrf_rejected"
         assert client.post("/auth/refresh", headers=_SAME_ORIGIN).status_code == 200
+
+    def test_this_access_path_fails_the_logout_path_check(self) -> None:
+        # The access cookie rides /api only, so /auth/logout never sees it.
+        from forze_fastapi.middlewares import check_authn_cookie_paths
+
+        state = MockState()
+        _seed(state)
+        client = self._client(state)
+
+        with pytest.raises(CoreException, match="/auth/logout"):
+            check_authn_cookie_paths(client.app)
+
+
+class TestCookieLogoutPathCheck:
+    """Cookie-mode logout revokes the session from the access cookie or the refresh cookie,
+    so one of their paths must cover the mounted logout route. The boot check refuses a
+    carrier whose paths both miss it."""
+
+    def _app(
+        self,
+        *,
+        access_path: str,
+        refresh_path: str = "/auth/refresh",
+        prefix: str = "/auth",
+        root_path: str = "",
+        lifespan: Any = None,
+    ) -> FastAPI:
+        from forze_fastapi.security import AuthnCookieCarrier
+
+        ctx = context_from_modules(MockDepsModule(state=MockState()))
+        router = APIRouter(prefix=prefix)
+        attach_authn_routes(
+            router,
+            registry=build_authn_registry(AUTHN_SPEC).freeze(),
+            ns=_NS,
+            ctx_dep=lambda: ctx,
+            cookies=AuthnCookieCarrier(
+                secure=False, access_path=access_path, refresh_path=refresh_path
+            ),
+        )
+
+        app = FastAPI(root_path=root_path, lifespan=lifespan)
+        app.include_router(router)
+
+        return app
+
+    @pytest.mark.parametrize(
+        ("access_path", "prefix", "root_path"),
+        [
+            ("/", "/auth", ""),
+            ("/api", "/api/auth", ""),
+            ("/api/", "/api/auth", ""),
+            ("/v1", "/auth", "/v1"),
+        ],
+        ids=["root", "api", "trailing-slash", "root-path"],
+    )
+    def test_a_covering_access_path_passes(
+        self, access_path: str, prefix: str, root_path: str
+    ) -> None:
+        from forze_fastapi.middlewares import check_authn_cookie_paths
+
+        check_authn_cookie_paths(
+            self._app(access_path=access_path, prefix=prefix, root_path=root_path)
+        )
+
+    @pytest.mark.parametrize(
+        ("refresh_path", "root_path"),
+        [("/auth", ""), ("/auth/", ""), ("/v1/auth", "/v1")],
+        ids=["prefix", "trailing-slash", "root-path"],
+    )
+    def test_a_covering_refresh_path_passes(self, refresh_path: str, root_path: str) -> None:
+        from forze_fastapi.middlewares import check_authn_cookie_paths
+
+        check_authn_cookie_paths(
+            self._app(access_path="/api", refresh_path=refresh_path, root_path=root_path)
+        )
+
+    @pytest.mark.parametrize(
+        ("access_path", "root_path"),
+        [("/au", ""), ("/auth", "/v1")],
+        ids=["not-a-segment", "outside-the-root-path"],
+    )
+    def test_paths_missing_logout_are_refused(
+        self, access_path: str, root_path: str
+    ) -> None:
+        from forze_fastapi.middlewares import check_authn_cookie_paths
+
+        app = self._app(access_path=access_path, root_path=root_path)
+
+        with pytest.raises(CoreException, match="/auth/logout"):
+            check_authn_cookie_paths(app)
+
+    def test_the_check_runs_at_boot(self) -> None:
+        from forze.application.execution import build_runtime
+        from forze_fastapi import runtime_lifespan
+
+        app = self._app(
+            access_path="/api", lifespan=runtime_lifespan(build_runtime(MockDepsModule()))
+        )
+
+        with pytest.raises(CoreException, match="/auth/logout"), TestClient(app):
+            pass
+
+    def test_header_mode_logout_is_not_checked(self) -> None:
+        from forze_fastapi.middlewares import check_authn_cookie_paths
+
+        check_authn_cookie_paths(_build_app())
+
+    def test_cookie_mode_needs_logout_by_refresh_token_beside_logout(self) -> None:
+        from forze_fastapi.security import AuthnCookieCarrier
+
+        async def _noop(args: Any) -> None:
+            _ = args
+
+        registry = (
+            OperationRegistry(handlers={_NS.key(AuthnKernelOp.LOGOUT): lambda _ctx: _noop})
+            .set_descriptors({AuthnKernelOp.LOGOUT: OperationDescriptor()}, namespace=_NS)
+            .freeze()
+        )
+
+        with pytest.raises(CoreException, match="logout_by_refresh_token"):
+            attach_authn_routes(
+                APIRouter(prefix="/auth"),
+                registry=registry,
+                ns=_NS,
+                ctx_dep=lambda: context_from_modules(MockDepsModule()),
+                cookies=AuthnCookieCarrier(secure=False),
+            )
+
+
+def _expire_identity_access(ctx: ExecutionContext, token: str) -> str:
+    """The same access token, re-signed with an ``exp`` in the past."""
+
+    import jwt
+
+    _ = ctx
+    claims = jwt.decode(token, options={"verify_signature": False})
+    claims["exp"] = int(time.time()) - 60
+
+    return jwt.encode(claims, AUTHN_KERNEL.access_token_secret, algorithm="HS256")
+
+
+def _expire_mock_access(ctx: ExecutionContext, token: str) -> str:
+    """The same access token, its mock record expired."""
+
+    state = ctx.deps.provide(MockStateDepKey)
+
+    with state.lock:
+        state.identity["authn"][AUTHN_ROUTE]["access_tokens"][token]["expires_at"] = (
+            utcnow() - timedelta(minutes=1)
+        )
+
+    return token
+
+
+_STACKS = [
+    pytest.param(identity_authn_context, _expire_identity_access, id="identity"),
+    pytest.param(mock_authn_context, _expire_mock_access, id="mock"),
+]
+
+
+class TestCookieLogoutRevokes:
+    """Cookie-mode logout revokes the session from whichever cookie reaches it: the identity
+    the access cookie binds or, without one, the refresh cookie. On the identity plane's
+    adapters and on the mock."""
+
+    def _client(self, ctx: ExecutionContext, carrier: Any) -> TestClient:
+        from forze_fastapi.security import CookieTokenAuthn
+
+        router = APIRouter(prefix="/auth")
+        attach_authn_routes(
+            router,
+            registry=build_authn_registry(AUTHN_SPEC).freeze(),
+            ns=_NS,
+            ctx_dep=lambda: ctx,
+            cookies=carrier,
+        )
+
+        app = FastAPI()
+        app.include_router(router)
+        register_exception_handlers(app)
+        app.add_middleware(
+            SecurityContextMiddleware,  # type: ignore[arg-type]
+            ctx_dep=lambda: ctx,
+            authn=AuthnRequirement(
+                ingress=(
+                    CookieTokenAuthn(authn_spec=AUTHN_SPEC, cookie_name=carrier.access_cookie),
+                ),
+            ),
+            when_multiple_credentials="first_in_order",
+            anonymous_paths={"/auth/login", "/auth/refresh", "/auth/logout"},
+        )
+
+        return TestClient(app)
+
+    def _issue(self, ctx: ExecutionContext) -> IssuedTokens:
+        async def issue() -> IssuedTokens:
+            principal = await stack_principal(ctx)
+            identity = AuthnIdentity(principal_id=principal)
+
+            return await ctx.authn.token_lifecycle(AUTHN_SPEC).issue_tokens(identity)
+
+        return asyncio.run(issue())
+
+    def _assert_revoked(self, client: TestClient, ctx: ExecutionContext, issued: Any) -> None:
+        refresh = client.post(
+            "/auth/refresh", json={"refresh_token": issued.refresh.token.token}, headers=_SAME_ORIGIN
+        )
+        assert refresh.status_code == 401
+
+        verifier = ctx.authn.authn(AUTHN_SPEC)
+
+        with pytest.raises(CoreException):
+            asyncio.run(verifier.authenticate_with_token(issued.access.token))
+
+    def _assert_live(self, client: TestClient, ctx: ExecutionContext, issued: Any) -> None:
+        # The access token first: the refresh below rotates its session.
+        asyncio.run(ctx.authn.authn(AUTHN_SPEC).authenticate_with_token(issued.access.token))
+
+        refresh = client.post(
+            "/auth/refresh", json={"refresh_token": issued.refresh.token.token}, headers=_SAME_ORIGIN
+        )
+        assert refresh.status_code == 200
+
+    @pytest.mark.parametrize(("build", "expire"), _STACKS)
+    def test_a_cross_site_logout_never_reads_the_refresh_cookie(
+        self, build: Any, expire: Any
+    ) -> None:
+        from forze_fastapi.security import AuthnCookieCarrier
+
+        _ = expire
+        ctx = build()
+        carrier = AuthnCookieCarrier(secure=False, access_path="/api", refresh_path="/auth")
+        client = self._client(ctx, carrier)
+        issued = self._issue(ctx)
+        client.cookies.set("forze_refresh", issued.refresh.token.token, path="/auth")
+
+        refused = client.post("/auth/logout", headers=_CROSS_SITE)
+
+        assert refused.status_code == 403
+        assert refused.headers[ERROR_CODE_HEADER] == "csrf_rejected"
+        self._assert_live(client, ctx, issued)
+
+    @pytest.mark.parametrize(("build", "expire"), _STACKS)
+    def test_header_mode_logout_ignores_a_refresh_token_in_the_body(
+        self, build: Any, expire: Any
+    ) -> None:
+        _ = expire
+        ctx = build()
+        router = APIRouter(prefix="/auth")
+        attach_authn_routes(
+            router,
+            registry=build_authn_registry(AUTHN_SPEC).freeze(),
+            ns=_NS,
+            ctx_dep=lambda: ctx,
+        )
+        app = FastAPI()
+        app.include_router(router)
+        register_exception_handlers(app)
+        app.add_middleware(
+            SecurityContextMiddleware,  # type: ignore[arg-type]
+            ctx_dep=lambda: ctx,
+            authn=AuthnRequirement(
+                ingress=(HeaderTokenAuthn(authn_spec=AUTHN_SPEC, header_name="Authorization"),),
+            ),
+            when_multiple_credentials="first_in_order",
+            # Listed, so the request reaches the route rather than the middleware's refusal.
+            anonymous_paths={"/auth/refresh", "/auth/logout"},
+        )
+        client = TestClient(app)
+        issued = self._issue(ctx)
+
+        refused = client.post("/auth/logout", json={"refresh_token": issued.refresh.token.token})
+
+        assert refused.status_code == 401
+        self._assert_live(client, ctx, issued)
+
+    @pytest.mark.parametrize(("build", "expire"), _STACKS)
+    def test_logout_with_only_the_refresh_cookie_revokes(self, build: Any, expire: Any) -> None:
+        from forze_fastapi.security import AuthnCookieCarrier
+
+        _ = expire
+        ctx = build()
+        # The access cookie rides /api only; the refresh cookie covers /auth, logout included.
+        carrier = AuthnCookieCarrier(secure=False, access_path="/api", refresh_path="/auth")
+        client = self._client(ctx, carrier)
+        issued = self._issue(ctx)
+        client.cookies.set("forze_access", issued.access.token.token, path="/api")
+        client.cookies.set("forze_refresh", issued.refresh.token.token, path="/auth")
+
+        response = client.post("/auth/logout", headers=_SAME_ORIGIN)
+
+        assert response.status_code == 204
+        self._assert_revoked(client, ctx, issued)
+
+    @pytest.mark.parametrize(("build", "expire"), _STACKS)
+    def test_logout_with_an_expired_access_cookie_revokes_from_the_refresh_cookie(
+        self, build: Any, expire: Any
+    ) -> None:
+        from forze_fastapi.security import AuthnCookieCarrier
+
+        ctx = build()
+        carrier = AuthnCookieCarrier(secure=False, refresh_path="/auth")
+        client = self._client(ctx, carrier)
+        issued = self._issue(ctx)
+        client.cookies.set("forze_access", expire(ctx, issued.access.token.token))
+        client.cookies.set("forze_refresh", issued.refresh.token.token, path="/auth")
+
+        response = client.post("/auth/logout", headers=_SAME_ORIGIN)
+
+        assert response.status_code == 204
+        self._assert_revoked(client, ctx, issued)
+
+    @pytest.mark.parametrize(("build", "expire"), _STACKS)
+    def test_logout_with_a_live_access_cookie_still_revokes(self, build: Any, expire: Any) -> None:
+        from forze_fastapi.security import AuthnCookieCarrier
+
+        _ = expire
+        ctx = build()
+        client = self._client(ctx, AuthnCookieCarrier(secure=False))
+        issued = self._issue(ctx)
+        client.cookies.set("forze_access", issued.access.token.token)
+
+        response = client.post("/auth/logout", headers=_SAME_ORIGIN)
+
+        assert response.status_code == 204
+        self._assert_revoked(client, ctx, issued)
 
 
 class TestAuthnCookieCarrier:
