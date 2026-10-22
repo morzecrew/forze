@@ -7107,17 +7107,28 @@ set and rotate two <code>HttpOnly</code> cookies instead of returning token stri
 body keeps the scheme and the <code>*_expires_in</code> lifetimes, so a cookie client still
 learns how long its credential is valid. Refresh reads the refresh cookie when
 the request has no body or an empty JSON object (<code>{}</code>, as fetch wrappers and
-generated clients send); a token in the body takes precedence. Logout expires
-both cookies idempotently.</p>
-<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">forze_fastapi.security</span><span class="w"> </span><span class="kn">import</span> <span class="n">AuthnCookieCarrier</span>
+generated clients send); a token in the body takes precedence. Logout revokes
+the session and expires both cookies idempotently.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">fastapi</span><span class="w"> </span><span class="kn">import</span> <span class="n">APIRouter</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">forze_fastapi.security</span><span class="w"> </span><span class="kn">import</span> <span class="n">AuthnCookieCarrier</span>
 
+<span class="n">router</span> <span class="o">=</span> <span class="n">APIRouter</span><span class="p">(</span><span class="n">prefix</span><span class="o">=</span><span class="s2">"/api/auth"</span><span class="p">)</span>
 <span class="n">cookies</span> <span class="o">=</span> <span class="n">AuthnCookieCarrier</span><span class="p">(</span>
-    <span class="n">access_path</span><span class="o">=</span><span class="s2">"/api"</span><span class="p">,</span>              <span class="c1"># the access cookie rides ordinary API calls</span>
-    <span class="n">refresh_path</span><span class="o">=</span><span class="s2">"/auth/refresh"</span><span class="p">,</span>    <span class="c1"># the long-lived one rides exactly one route</span>
+    <span class="n">access_path</span><span class="o">=</span><span class="s2">"/api"</span><span class="p">,</span>          <span class="c1"># API calls carry the access cookie</span>
+    <span class="n">refresh_path</span><span class="o">=</span><span class="s2">"/api/auth"</span><span class="p">,</span>    <span class="c1"># the long-lived one: every authn route, no other API call</span>
 <span class="p">)</span>
 
 <span class="n">attach_authn_routes</span><span class="p">(</span><span class="n">router</span><span class="p">,</span> <span class="n">registry</span><span class="o">=</span><span class="n">registry</span><span class="p">,</span> <span class="n">ctx_dep</span><span class="o">=</span><span class="n">ctx_dep</span><span class="p">,</span> <span class="n">cookies</span><span class="o">=</span><span class="n">cookies</span><span class="p">)</span>
 </code></pre></div>
+<p>Logout revokes what a logout by access token revokes (every session of the
+principal). With no identity bound, which is the case once the access cookie has
+expired, it runs <code>logout_by_refresh_token</code> with the refresh cookie instead. That
+operation has no route of its own. So scope <code>refresh_path</code> to cover both the refresh
+and the logout route, as above. No single cookie path covers only <code>/refresh</code> and
+<code>/logout</code>: with <code>refresh_path="/api/auth"</code> the browser sends the refresh cookie to
+every authn route under that prefix, and only refresh and logout read it.
+<code>runtime_lifespan</code> refuses to start an app whose cookie-mode logout route neither
+cookie's path covers (<code>check_authn_cookie_paths</code>).</p>
 <p>Point the inbound <code>CookieTokenAuthn</code>'s <code>cookie_name</code> at the same
 <code>access_cookie</code>, and list the login, refresh and logout paths in the security
 middleware's <a href="../../integrations/fastapi/#bind-request-context"><code>anonymous_paths</code></a> —
@@ -7129,9 +7140,9 @@ server-side CSRF gate <strong>on by default</strong> (<code>CookieCsrf</code>): 
 cookie on an unsafe method must prove a same-host origin via <code>Origin</code> (or
 <code>Referer</code>), so the defense holds even when a proxy strips <code>SameSite</code> or a
 <code>samesite="none"</code> deployment relies on it. The middleware applies it to the
-access cookie; refresh applies the same ingress's gate when it reads the refresh
-cookie (the default gate if no <code>CookieTokenAuthn</code> reads the carrier's
-<code>access_cookie</code>), so the settings below cover both. A cross-origin frontend (a SPA on
+access cookie. Login, logout and refresh apply the same ingress's gate to every
+request, with or without a cookie (the default gate if no <code>CookieTokenAuthn</code> reads
+the carrier's <code>access_cookie</code>), so the settings below cover all three. A cross-origin frontend (a SPA on
 another host) lists itself in <code>CookieCsrf(allowed_origins={...})</code> — a dev server
 that picks a free port may be named as a range on a loopback host
 (<code>http://localhost:5173-5199</code>, or <code>http://localhost:*</code>); non-browser

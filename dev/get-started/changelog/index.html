@@ -9893,9 +9893,15 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <li>
 <p><strong><code>anonymous_paths</code> entries may be relative to the mount.</strong> With <code>SecurityContextMiddleware</code> on an application mounted under a prefix or served with a <code>root_path</code>, <code>/auth/login</code> now matches <code>/v1/auth/login</code>; full paths keep working.</p>
 </li>
+<li>
+<p><strong>A set-based <code>upsert_many</code> on Postgres takes less time</strong>: about 13% for calls of a few dozen rows and 30% for calls of thousands, on a fresh load or a reload. The rows written are unchanged.</p>
+</li>
 </ul>
 <h3 id="fixed">Fixed<a class="headerlink" href="#fixed" title="Permanent link">&para;</a></h3>
 <ul>
+<li>
+<p><strong>A <code>CoreException</code> can be copied and pickled.</strong> <code>copy.copy</code>, <code>copy.deepcopy</code> and a <code>pickle</code> round-trip raised <code>TypeError</code>; they now keep every field, a subclass's own fields, <code>expose_details</code> set after construction, and the notes.</p>
+</li>
 <li>
 <p><strong>Firestore raises a stale write's preconditions as Postgres and Mongo do</strong> (<strong>behaviour change</strong>). A future revision is <code>precondition</code> with <code>revision_mismatch</code>, and a revision whose history snapshot is missing is <code>precondition</code> with <code>history_not_found_retry</code>, not <code>not_found</code>.</p>
 </li>
@@ -9952,6 +9958,15 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 </li>
 <li>
 <p><strong>A cookie read by several <code>CookieTokenAuthn</code> ingresses keeps every CSRF gate they declare</strong>: one ingress's <code>csrf=None</code> no longer lets the cookie through ungated.</p>
+</li>
+<li>
+<p><strong><code>saga.step_failed</code> no longer shows the failed step's error text to API callers</strong> (<strong>behaviour change</strong>): its <code>cause</code> detail is now the cause's <code>code</code> and <code>kind</code>, and only when the cause is a <code>CoreException</code>. The original error stays chained as <code>__cause__</code>.</p>
+</li>
+<li>
+<p><strong>Cookie-mode <code>/login</code>, <code>/logout</code> and <code>/refresh</code> apply the cookie CSRF gate to every request</strong> (<strong>behaviour change</strong>): each must prove its origin, with or without a cookie, and <code>/refresh</code> also when its token is in the body. A non-browser client sends <code>Origin</code> or is let in by <code>allow_missing_origin=True</code>.</p>
+</li>
+<li>
+<p><strong>Cookie-mode logout revokes from the refresh cookie without a live access cookie</strong> (<code>logout_by_refresh_token</code>). <code>runtime_lifespan</code> refuses an app whose access and refresh cookie paths both miss logout (<code>check_authn_cookie_paths</code>). <strong>Breaking</strong> for own token lifecycle ports: add <code>revoke_tokens_by_refresh_token</code>.</p>
 </li>
 </ul>
 <h2 id="0151-2026-10-19"><a href="https://github.com/morzecrew/forze/compare/v0.15.0...v0.15.1">0.15.1</a> - 2026-10-19<a class="headerlink" href="#0151-2026-10-19" title="Permanent link">&para;</a></h2>
