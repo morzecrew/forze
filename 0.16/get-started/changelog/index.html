@@ -10121,7 +10121,7 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <p><strong>A container sandbox error summary no longer names the daemon host</strong> (<strong>behaviour change</strong>): the host, which can carry credentials, stays in <code>details["docker_host"]</code>.</p>
 </li>
 <li>
-<p><strong>Cookie-mode <code>/login</code>, <code>/logout</code> and <code>/refresh</code> apply the cookie CSRF gate to every request</strong> (<strong>behaviour change</strong>): each proves its origin under the access cookie's <code>CookieTokenAuthn(csrf=...)</code> gate, cookie or not, and <code>/refresh</code> wherever its token is. A client sending no <code>Origin</code> needs <code>allow_missing_origin=True</code>.</p>
+<p><strong>Cookie-mode <code>/login</code>, <code>/logout</code> and <code>/refresh</code> apply the cookie CSRF gate to every request</strong> (<strong>behaviour change</strong>), with or without a cookie and wherever the refresh token rides, under the access cookie's <code>CookieTokenAuthn(csrf=...)</code>. A client sending neither <code>Origin</code> nor <code>Referer</code> needs <code>allow_missing_origin=True</code>.</p>
 </li>
 <li>
 <p><strong>Cookie-mode logout revokes from the refresh cookie without a live access cookie</strong> (<code>logout_by_refresh_token</code>). <code>runtime_lifespan</code> refuses an app whose refresh cookie path misses logout (<code>check_authn_cookie_paths</code>). <strong>Breaking</strong> for own token lifecycle ports: add <code>revoke_tokens_by_refresh_token</code>.</p>
