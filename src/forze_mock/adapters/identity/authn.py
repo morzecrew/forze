@@ -464,6 +464,16 @@ class MockTokenLifecyclePort(TokenLifecyclePort):
 
     # ....................... #
 
+    def __attrs_post_init__(self) -> None:
+        # The bounds RefreshTokenConfig refuses, so a mock never runs a grace production can't;
+        # with no grace, a lifetime of zero or less still lets a test expire tokens at once.
+        grace = self.refresh_reuse_grace
+
+        if grace < timedelta(0) or (grace > timedelta(0) and grace >= self.refresh_expires_in):
+            raise exc.configuration("Reuse grace must be non-negative and shorter than expires in")
+
+    # ....................... #
+
     async def issue_tokens(
         self,
         identity: AuthnIdentity,

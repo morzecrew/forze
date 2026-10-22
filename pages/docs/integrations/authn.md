@@ -349,9 +349,11 @@ issued before is then refused by its epoch, so the eligibility read has nothing 
   whole family is revoked. Tabs sharing one refresh cookie hit that on a benign race.
   `AuthnKernelConfig(refresh_token=RefreshTokenConfig(reuse_grace=timedelta(seconds=10)))`
   refuses a token rotated within the grace, while its successor is unused, with the
-  authentication error `refresh_superseded` and revokes nothing; a refresh whose rotation
-  loses a race on its session gets the same error. Either way the client refreshes again
-  with the token it now holds. A stolen token replayed within the grace mints nothing, and
+  authentication error `refresh_superseded` and revokes nothing. A refresh that loses the
+  rotation to a concurrent one gets the same error where the store detects the stale write
+  itself, as Postgres does; a backend that aborts the transaction on the conflict, as Mongo
+  does, still answers with the conflict. Either way the client refreshes again with the
+  token it now holds. A stolen token replayed within the grace mints nothing, and
   its holder learns only that it was just rotated, but it raises `REFRESH_SUPERSEDED`, not
   the `REFRESH_REUSE_DETECTED` theft signal, so keep the grace to seconds. It must be
   shorter than the refresh lifetime; the default `0` keeps strict reuse detection.

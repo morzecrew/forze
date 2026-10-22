@@ -19,7 +19,7 @@ from forze.application.contracts.authn import (
     TokenLifecyclePort,
 )
 from forze.application.contracts.document import DocumentCommandPort, DocumentQueryPort
-from forze.base.exceptions import CoreException, ExceptionKind, exc
+from forze.base.exceptions import CoreException, exc
 from forze.base.primitives import utcnow
 from forze_identity._secure_spec import forbid_cache_and_history
 
@@ -36,7 +36,7 @@ from ..services import (
     RefreshTokenService,
     SessionRevocation,
 )
-from ._utils import revoke_sessions_matching
+from ._utils import detected_stale, revoke_sessions_matching
 
 # ----------------------- #
 
@@ -269,6 +269,7 @@ class TokenLifecycleAdapter(TokenLifecyclePort):
 
         if (
             grace <= timedelta(0)
+            or session.revoked_at is not None
             or session.rotated_at is None
             or session.replaced_by is None
             or utcnow() - session.rotated_at > grace
@@ -393,14 +394,21 @@ class TokenLifecycleAdapter(TokenLifecyclePort):
             )
 
         except CoreException as error:
-            # A refresh that rotated this session after it was read wins; with a grace, the
-            # loser is the same overlapping refresh as one that read the rotated row.
-            stale = error.code == "revision_mismatch" or error.kind is ExceptionKind.CONCURRENCY
-
-            if not stale or self.refresh_svc.config.reuse_grace <= timedelta(0):
+            # Another write to this session since it was read wins. Only a stale write the
+            # store detected leaves the transaction usable to read what won: a refresh within
+            # the grace makes this the same overlapping refresh as one that read the rotated
+            # row; anything else (a revocation, an aborting backend) keeps the conflict.
+            if not detected_stale(error):
                 raise
 
-            raise await self._superseded(old_session) from error
+            current = await self.session_qry.find(
+                filters={"$values": {"id": old_session.id}},
+            )
+
+            if current is None or not await self._within_reuse_grace(current):
+                raise
+
+            raise await self._superseded(current) from error
 
         if self.revocation is not None:
             await self.revocation.rotated(old_session.principal_id, old_session.id)

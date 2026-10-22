@@ -197,6 +197,26 @@ async def test_a_refresh_losing_a_concurrent_rotation(grace: timedelta, code: st
     assert (await adapter.refresh_tokens(successor)).refresh is not None
 
 
+async def test_a_refresh_losing_to_a_concurrent_logout_keeps_its_conflict() -> None:
+    # The write that won revoked the session rather than rotating it: nothing to supersede.
+    gate = _Gate()
+    adapter, _, _ = _real(GRACE, gate=gate)
+    identity = AuthnIdentity(principal_id=uuid4())
+    old = _refresh(await adapter.issue_tokens(identity))
+    gate.armed = True
+
+    async with asyncio.timeout(5):
+        loser = asyncio.create_task(adapter.refresh_tokens(old))
+        await gate.entered.wait()
+        await adapter.revoke_tokens(identity)
+        gate.release.set()
+
+        with pytest.raises(CoreException) as caught:
+            await loser
+
+    assert caught.value.code == "revision_mismatch"
+
+
 async def test_within_the_grace_a_token_whose_successor_was_revoked_is_reuse() -> None:
     adapter, sink, _ = _real(GRACE)
     identity = AuthnIdentity(principal_id=uuid4())
@@ -232,6 +252,15 @@ async def test_within_the_grace_a_rotation_failing_otherwise_is_not_superseded()
 def test_a_grace_outside_the_refresh_lifetime_is_refused(grace: timedelta) -> None:
     with pytest.raises(CoreException) as caught:
         RefreshTokenConfig(expires_in=timedelta(days=7), reuse_grace=grace)
+
+    assert caught.value.code == "core.configuration"
+
+    with pytest.raises(CoreException) as caught:
+        MockTokenLifecyclePort(
+            state=MockState(),
+            refresh_expires_in=timedelta(days=7),
+            refresh_reuse_grace=grace,
+        )
 
     assert caught.value.code == "core.configuration"
 
