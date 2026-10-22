@@ -1,6 +1,6 @@
 """Specifications for document models and storage layout."""
 
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable, Iterator, Mapping
 from types import UnionType
 from typing import Annotated, Any, Generic, TypeVar, Union, get_args, get_origin
 
@@ -137,9 +137,31 @@ def _own_decorators(domain: type[Document], kind: str) -> list[Any]:
     ]
 
 
+def _field_metadata(field: Any) -> Iterator[Any]:
+    """A field's ``Annotated`` metadata at every level: its own (``field.metadata``) and any
+    nested in its type, as in ``list[Annotated[int, Field(gt=0)]]``, which pydantic applies
+    to each item."""
+
+    yield from field.metadata
+
+    def _nested(tp: Any) -> Iterator[Any]:
+        args = get_args(tp)
+
+        if get_origin(tp) is Annotated:
+            yield from args[1:]
+            yield from _nested(args[0])
+            return
+
+        for arg in args:
+            yield from _nested(arg)
+
+    yield from _nested(field.annotation)
+
+
 def _validated_fields(domain: type[Document]) -> frozenset[str]:
     """The fields *domain* checks or rewrites beyond their type: a field validator of its own
-    (``"*"`` for every field) or a constraint (``Field(gt=0)``, ``AfterValidator``, …)."""
+    (``"*"`` for every field) or a constraint (``Field(gt=0)``, ``AfterValidator``, …) at any
+    level of its annotation."""
 
     names: set[str] = set()
 
@@ -149,7 +171,7 @@ def _validated_fields(domain: type[Document]) -> frozenset[str]:
     names.update(
         name
         for name, field in domain.model_fields.items()
-        if any(not isinstance(m, _SERIALIZERS) for m in field.metadata)
+        if any(not isinstance(m, _SERIALIZERS) for m in _field_metadata(field))
     )
 
     return frozenset(names)
@@ -158,7 +180,7 @@ def _validated_fields(domain: type[Document]) -> frozenset[str]:
 def _serialized_fields(domain: type[Document]) -> frozenset[str]:
     """The fields *domain* dumps other than as their type does in python mode: a field
     serializer of its own (``"*"`` for every field) or a ``PlainSerializer``/``WrapSerializer``
-    annotation, unless it runs for JSON only."""
+    annotation at any level of its type, unless it runs for JSON only."""
 
     names: set[str] = set()
 
@@ -170,7 +192,8 @@ def _serialized_fields(domain: type[Document]) -> frozenset[str]:
         name
         for name, field in domain.model_fields.items()
         if any(
-            isinstance(m, _SERIALIZERS) and m.when_used in _PYTHON_MODE_USES for m in field.metadata
+            isinstance(m, _SERIALIZERS) and m.when_used in _PYTHON_MODE_USES
+            for m in _field_metadata(field)
         )
     )
 

@@ -932,6 +932,16 @@ class _AnnotatedShoutedDomain(Document):
     name: Annotated[str, PlainSerializer(str.upper)]
 
 
+class _ItemShoutedDomain(Document):
+    name: str
+    tags: list[Annotated[str, PlainSerializer(str.upper)]] = []
+
+
+class _ItemConstrainedDomain(Document):
+    name: str
+    scores: list[Annotated[int, Field(gt=0)]] = []
+
+
 class _DumpedDomain(Document):
     name: str
 
@@ -1096,6 +1106,15 @@ def test_a_list_of_mappings_is_replaced_whole_so_set_based_is_allowed() -> None:
         (
             DocumentSpec(name="doc", read=_Read, write=_named_write(_DumpedDomain)),
             "model serializers",
+        ),
+        # Nested in the type, pydantic still applies them to each item.
+        (
+            DocumentSpec(name="doc", read=_Read, write=_named_write(_ItemShoutedDomain)),
+            "fields the domain serializes (tags)",
+        ),
+        (
+            DocumentSpec(name="doc", read=_Read, write=_named_write(_ItemConstrainedDomain)),
+            "fields the domain validates (scores)",
         ),
         # The update touches only ``name``; the validator on ``slug`` still reruns.
         (
