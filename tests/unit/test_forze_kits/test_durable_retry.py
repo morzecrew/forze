@@ -219,6 +219,31 @@ class TestRunRetry:
         assert first.available_at - before >= timedelta(minutes=10)
         assert await runner.recover(ctx) == 0
 
+    async def test_a_retry_after_no_datetime_can_hold_fails_the_run(self) -> None:
+        ctx = context_from_modules(MockDepsModule())
+
+        async def throttled(ctx: ExecutionContext, input_json: dict | None) -> dict:
+            raise exc.throttled("slow down", details={"retry_after": 10**400})
+
+        registry = DurableFunctionRegistry()
+        registry.register("throttled", throttled)
+        runner = DurableFunctionRunner(
+            registry=registry,
+            retry=_strategy(3, retry_on=frozenset({ExceptionKind.THROTTLED})),
+        )
+
+        store = resolve_durable_run_store(ctx)
+        record = await store.enqueue("throttled", input_json=None, idempotency_key="k")
+
+        # The throttle itself, not an OverflowError from scheduling the retry.
+        with pytest.raises(CoreException) as ei:
+            await runner.run_now(ctx, "throttled", idempotency_key="k")
+
+        assert ei.value.kind is ExceptionKind.THROTTLED
+        landed = await store.load(record.run_id)
+        assert landed is not None
+        assert landed.status is DurableRunStatus.FAILED
+
     async def test_a_function_registered_with_a_strategy_uses_it(self) -> None:
         ctx = context_from_modules(MockDepsModule())
 

@@ -565,7 +565,7 @@ class DurableSagaExecutor:
                     except OverflowError:
                         longest = math.inf
 
-                    if wait > longest:
+                    if wait > longest or math.isinf(wait):
                         raise
 
                     delay = max(delay, wait)

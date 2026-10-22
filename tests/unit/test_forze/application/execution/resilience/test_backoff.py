@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import random
 from datetime import timedelta
 
@@ -82,7 +83,8 @@ def test_cap_holds_for_any_attempt(jitter: str, attempt: int) -> None:
         (exc.throttled("slow", details={"retry_after": -1}), None),
         (exc.throttled("slow", details={"retry_after": "5"}), None),
         (exc.throttled("slow", details={"retry_after": float("nan")}), None),
-        (exc.throttled("slow", details={"retry_after": float("inf")}), None),
+        (exc.throttled("slow", details={"retry_after": float("inf")}), math.inf),
+        (exc.throttled("slow", details={"retry_after": 10**400}), math.inf),
         (exc.infrastructure("down", details={"retry_after": 5}), None),
     ],
 )

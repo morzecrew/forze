@@ -723,7 +723,12 @@ class DurableFunctionRunner:
 
         # A throttled upstream named the soonest a retry can succeed; the run waits in the
         # store, not in a worker, so no backoff cap applies to that wait.
-        return utcnow() + timedelta(seconds=max(delay, retry_after(error) or 0.0))
+        try:
+            return utcnow() + timedelta(seconds=max(delay, retry_after(error) or 0.0))
+
+        except OverflowError:
+            # A hint no datetime can hold means never: the run lands FAILED.
+            return None
 
     # ....................... #
 

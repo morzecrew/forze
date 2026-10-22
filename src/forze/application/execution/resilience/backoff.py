@@ -54,7 +54,8 @@ def retry_after(error: CoreException) -> float | None:
 
     Reads ``details["retry_after"]`` — the upstream's ``Retry-After``, as the HTTP client
     maps a ``429`` — and returns ``None`` for any other kind, a missing value, or one that is
-    not a finite non-negative number.
+    not a non-negative number. An infinite hint, or one too large for a float, is
+    ``math.inf``: no retry waits it out.
     """
 
     if error.kind is not ExceptionKind.THROTTLED or not error.details:
@@ -65,4 +66,10 @@ def retry_after(error: CoreException) -> float | None:
     if isinstance(value, bool) or not isinstance(value, int | float):
         return None
 
-    return float(value) if math.isfinite(value) and value >= 0 else None
+    try:
+        seconds = float(value)
+
+    except OverflowError:
+        seconds = math.inf
+
+    return None if math.isnan(seconds) or seconds < 0 else seconds

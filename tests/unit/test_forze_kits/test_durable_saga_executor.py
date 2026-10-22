@@ -996,6 +996,25 @@ class TestDurableSagaTransientFailures:
         assert fn.await_count == 1
         assert sleeps == []
 
+    async def test_an_endless_retry_after_gives_up_even_on_an_unbounded_schedule(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        sleeps: list[float] = []
+
+        async def record_sleep(delay: float) -> None:
+            sleeps.append(delay)
+
+        monkeypatch.setattr(saga_executor_mod.asyncio, "sleep", record_sleep)
+        fn = AsyncMock(side_effect=exc.throttled("never", details={"retry_after": float("inf")}))
+        # The longest backoff overflows to no cap; an infinite hint must still give up.
+        executor = DurableSagaExecutor(retry_attempts=5000, retry_base_delay=1.0)
+
+        with pytest.raises(CoreException):
+            await executor._retry_transient("a", fn)
+
+        assert fn.await_count == 1
+        assert sleeps == []
+
     async def test_non_retryable_step_failure_compensates_without_retrying(self) -> None:
         ctx = context_from_modules(MockDepsModule())
         effects: list[str] = []
