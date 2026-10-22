@@ -15,6 +15,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **A Postgres vector search no longer formats its query vector for the fingerprint**: without result snapshots the fingerprint is skipped, and with them a `query_vector` is keyed by a digest, saving about 0.25 ms per 1536-wide search. Snapshots taken for a `query_vector` before the upgrade miss once.
 
+- **A Postgres ranked search reads its relation once**: when it is both read relation and heap and no highlights are asked for, the ranked CTE carries the page's columns instead of a join back, so a view is planned once. A filter-first text search with no snapshot to write keeps only `offset + limit` candidates.
+
 ### Fixed
 
 - ...

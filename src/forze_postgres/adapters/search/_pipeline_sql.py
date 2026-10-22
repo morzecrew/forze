@@ -209,8 +209,12 @@ def build_scored_cte(
     scored_order: sql.Composable | None = None,
     scored_tiebreak: sql.Composable | None = None,
     first_in_with: bool = False,
+    carry: Sequence[sql.Composable] | None = None,
 ) -> sql.Composable:
-    """``, scored AS (SELECT keys, rank FROM heap [JOIN filtered] WHERE match)``."""
+    """``, scored AS (SELECT keys, [carry,] rank FROM heap [JOIN filtered] WHERE match)``.
+
+    *carry* adds heap columns beside the keys, for an outer query that reads the CTE alone
+    (:func:`build_single_relation_from`)."""
 
     prefix = sql.SQL("") if first_in_with else sql.SQL(",")
 
@@ -264,7 +268,7 @@ def build_scored_cte(
     ).format(
         prefix=prefix,
         scored=sql.Identifier(aliases.scored),
-        scored_keys=scored_keys,
+        scored_keys=scored_keys if not carry else sql.SQL(", ").join([scored_keys, *carry]),
         scored_rank=scored_rank,
         from_sql=from_sql,
         where_sql=where_sql,
@@ -367,6 +371,22 @@ def build_outer_from(
         scored=sql.Identifier(aliases.scored),
         sa=sql.Identifier(aliases.scored),
         join_vs=join_vs,
+    )
+
+
+# ....................... #
+
+
+def build_single_relation_from(*, aliases: PipelineAliases) -> sql.Composable:
+    """``FROM scored AS projection``: the outer query of a CTE that carries the page's columns.
+
+    The projection alias names the CTE, so the outer select list, its order and its facets
+    read the carried columns where they would have read the joined relation's.
+    """
+
+    return sql.SQL(" FROM {scored} {pa} ").format(
+        scored=sql.Identifier(aliases.scored),
+        pa=sql.Identifier(aliases.projection),
     )
 
 

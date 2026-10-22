@@ -122,6 +122,52 @@ def effective_ranked_candidate_limit(
     return max(cap, 1)
 
 
+def page_candidate_cap(
+    *,
+    options: SearchOptions | None,
+    pagination: Mapping[str, Any] | None,
+    snapshot: SearchResultSnapshotOptions | None,
+    result_snapshot: SearchResultSnapshot | None,
+    rs_spec: Any | None,
+) -> int | None:
+    """The ranked rows an offset page can reach (``offset + limit``), or ``None`` to keep the cap.
+
+    For a filter-first text pipeline only: there the capped CTE orders as the page does, so its
+    first ``offset + limit`` rows are exactly the page's candidates. These keep the configured
+    cap:
+
+    * a snapshot write, which streams up to its ``max_ids`` from the same CTE;
+    * an ``approximate`` total, which counts the capped pool itself;
+    * a page with no limit, which reaches every candidate.
+
+    Not for vector search: a small ``LIMIT`` can tip the planner onto an ANN index, which
+    filters after its scan and can return a short page where the capped CTE did not.
+    """
+
+    from ._search_count import effective_search_count
+
+    if effective_search_count(options) == "approximate":
+        return None
+
+    if (
+        result_snapshot is not None
+        and rs_spec is not None
+        and result_snapshot.should_write_result_snapshot(snapshot, rs_spec)
+    ):
+        return None
+
+    pag = dict(pagination or {})
+    limit = int(pag.get("limit") or 0)
+
+    if limit <= 0:
+        return None
+
+    return limit + int(pag.get("offset") or 0)
+
+
+# ....................... #
+
+
 def effective_candidate_limit(
     *,
     config_limit: int | None,

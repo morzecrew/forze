@@ -25,7 +25,7 @@ from ._engine import RankedPipelineSql
 from ._fts_sql import FtsGroupLetter
 from ._highlights import build_fts_highlight
 from ._leg_fts import build_fts_leg
-from ._pgroonga_plan import effective_ranked_candidate_limit
+from ._pgroonga_plan import effective_ranked_candidate_limit, page_candidate_cap
 from ._pipeline_sql import (
     PipelineAliases,
     scored_key_columns,
@@ -176,6 +176,14 @@ class PostgresFTSSearchAdapter[M: BaseModel](PostgresRankedPipelineSearchAdapter
         heap_fw, heap_fp = await self._coalesced_heap_where(
             filters, parsed=parsed_filters, coalesced=coalesced
         )
+        highlight = build_fts_highlight(
+            spec=self.spec,
+            options=options,
+            terms=terms,
+            alias=self.projection_alias,
+        )
+        # Snippets read the projection row itself, so a highlighted page keeps the join.
+        one_relation = coalesced and not for_cursor and highlight is None
 
         parts = build_filter_first_ranked_pipeline(
             aliases=self.pipeline,
@@ -194,6 +202,16 @@ class PostgresFTSSearchAdapter[M: BaseModel](PostgresRankedPipelineSearchAdapter
             heap_fp=heap_fp,
             cap_kw=cap_kw,
             filtered_extra=filtered_extra,
+            carry_columns=self._carried_read_columns(join) if one_relation else None,
+            page_cap=None
+            if for_cursor
+            else page_candidate_cap(
+                options=options,
+                pagination=pagination,
+                snapshot=snapshot,
+                result_snapshot=self.result_snapshot,
+                rs_spec=rs_spec,
+            ),
         )
 
         return ranked_parts_to_sql(
@@ -201,10 +219,5 @@ class PostgresFTSSearchAdapter[M: BaseModel](PostgresRankedPipelineSearchAdapter
             pipeline=self.pipeline,
             rank_column=self.search_rank_column,
             projection_alias=self.projection_alias,
-            highlight=build_fts_highlight(
-                spec=self.spec,
-                options=options,
-                terms=terms,
-                alias=self.projection_alias,
-            ),
+            highlight=highlight,
         )

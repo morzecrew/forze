@@ -44,6 +44,9 @@ class RankedPipelineSql:
     """Effective ranked-row cap when applicable."""
     highlight: "HighlightSelect | None" = None
     """Synthetic highlight columns for the ranked data SELECT; ``None`` if unrequested."""
+    single_relation: bool = False
+    """The outer query reads the scored CTE alone, aliased as the projection, so the rank is
+    qualified by the projection alias rather than the scored one."""
     from_outer_param_count: int = 0
     """Trailing params of :attr:`params_body` that belong to :attr:`from_outer` (vs the
     ``WITH`` clause). Highlight column params are spliced in *before* these so positional
