@@ -114,8 +114,11 @@ result = await ctx.resilience().run(
 ```
 
 The same `retry_on` also waits out backend-raised throttles (an upstream 429
-mapped to `throttled`) — your limiter and the backend reject the same way. At
-the FastAPI edge, an uncaught `throttled` becomes a **429**.
+mapped to `throttled`) — your limiter and the backend reject the same way. When
+the upstream sends a `Retry-After`, the retry waits at least that long, and
+gives up at once if it is longer than `backoff.max`: size `max` to the longest
+wait you will accept. At the FastAPI edge, an uncaught `throttled` becomes a
+**429**.
 
 ## Bulkheads
 

@@ -1,8 +1,10 @@
 """Backoff delay computation with jitter modes."""
 
+import math
 import random
 
 from forze.application.contracts.resilience import BackoffStrategy
+from forze.base.exceptions import CoreException, ExceptionKind
 
 # ----------------------- #
 
@@ -42,3 +44,32 @@ def compute_delay(
     prev = prev_delay if prev_delay > 0 else base
 
     return min(cap, rng.uniform(base, prev * 3))
+
+
+# ....................... #
+
+
+def retry_after(error: CoreException) -> float | None:
+    """Return the soonest a retry of a throttled *error* can succeed, in seconds.
+
+    Reads ``details["retry_after"]`` — the upstream's ``Retry-After``, as the HTTP client
+    maps a ``429`` — and returns ``None`` for any other kind, a missing value, or one that is
+    not a non-negative number. An infinite hint, or one too large for a float, is
+    ``math.inf``: no retry waits it out.
+    """
+
+    if error.kind is not ExceptionKind.THROTTLED or not error.details:
+        return None
+
+    value = error.details.get("retry_after")
+
+    if isinstance(value, bool) or not isinstance(value, int | float):
+        return None
+
+    try:
+        seconds = float(value)
+
+    except OverflowError:
+        seconds = math.inf
+
+    return None if math.isnan(seconds) or seconds < 0 else seconds
