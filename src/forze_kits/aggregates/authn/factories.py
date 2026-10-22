@@ -44,6 +44,7 @@ from .handlers import (
     AuthnListApiKeys,
     AuthnListPrincipalApiKeys,
     AuthnLogout,
+    AuthnLogoutByRefreshToken,
     AuthnPasswordLogin,
     AuthnRefreshTokens,
     AuthnRequestPasswordReset,
@@ -178,6 +179,17 @@ def build_authn_registry(
             tx=tx_scope(ctx, tx_route),
         )
 
+    def _logout_by_refresh_token(ctx: ExecutionContext) -> AuthnLogoutByRefreshToken:
+        return AuthnLogoutByRefreshToken(
+            token_lifecycle=ctx.deps.resolve_configurable(
+                ctx,
+                TokenLifecycleDepKey,
+                spec,
+                route=spec.name,
+            ),
+            tx=tx_scope(ctx, tx_route),
+        )
+
     def _change_password(ctx: ExecutionContext) -> AuthnChangePassword:
         return AuthnChangePassword(
             resolver=ctx.inv_ctx.get_authn,
@@ -267,6 +279,7 @@ def build_authn_registry(
             ns.key(AuthnKernelOp.PASSWORD_LOGIN): _password_login,
             ns.key(AuthnKernelOp.REFRESH_TOKENS): _refresh_tokens,
             ns.key(AuthnKernelOp.LOGOUT): _logout,
+            ns.key(AuthnKernelOp.LOGOUT_BY_REFRESH_TOKEN): _logout_by_refresh_token,
             ns.key(AuthnKernelOp.CHANGE_PASSWORD): _change_password,
             ns.key(AuthnKernelOp.REQUEST_PASSWORD_RESET): _request_password_reset,
             ns.key(AuthnKernelOp.RESET_PASSWORD): _reset_password,
@@ -291,6 +304,13 @@ def build_authn_registry(
             ),
             AuthnKernelOp.LOGOUT: OperationDescriptor(
                 description="Revoke all sessions for the authenticated identity.",
+            ),
+            AuthnKernelOp.LOGOUT_BY_REFRESH_TOKEN: OperationDescriptor(
+                input_type=AuthnRefreshRequestDTO,
+                description=(
+                    "Revoke all sessions for the principal of a refresh token, as logout "
+                    "does for the authenticated identity."
+                ),
             ),
             AuthnKernelOp.CHANGE_PASSWORD: OperationDescriptor(
                 input_type=AuthnChangePasswordRequestDTO,
