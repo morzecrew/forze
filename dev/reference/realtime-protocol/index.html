@@ -6823,7 +6823,8 @@ to the in-flight bound) — sequence-dependent commands must wait for their acks
 <h2 id="errors">Errors<a class="headerlink" href="#errors" title="Permanent link">&para;</a></h2>
 <ul>
 <li><strong>Connect refusal</strong> (bad credentials, unsupported protocol, ungranted topics):
-  Socket.IO refuses the connection with a client-safe message; <abbr title="Server-Side Encryption">SSE</abbr> responds with
+  Socket.IO refuses the connection with the client-safe detail as its message and
+  the command-error envelope below as its data; <abbr title="Server-Side Encryption">SSE</abbr> responds with
   the standard error envelope and the <code>X-Error-Code</code> header; WebSocket accepts and
   immediately closes with code 1008, the client-safe summary in the close reason.</li>
 <li><strong>Draining</strong> (the replica is leaving): a connection it closes, and a connect it turns

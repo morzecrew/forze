@@ -6934,7 +6934,7 @@ operation, and returns the (validated) result as the Socket.IO ack.</p>
 <code>{"error": {"detail", "code", "kind", ...}}</code> honoring the same egress policy as
 the HTTP boundary, so internals never leak to clients. An optional <code>identity_resolver</code>
 on the adapter authenticates connections at connect time (refusing them via
-<code>ConnectionRefusedError</code>) and binds the resolved <code>AuthnIdentity</code> onto each event;
+<code>ConnectionRefusedError</code>, whose data is that same error payload) and binds the resolved <code>AuthnIdentity</code> onto each event;
 without one, handlers run unauthenticated. Tenant resolution stays in the
 <code>context_factory</code>.</p>
 <h2 id="push-to-clients-realtime-egress">Push to clients (realtime egress)<a class="headerlink" href="#push-to-clients-realtime-egress" title="Permanent link">&para;</a></h2>
@@ -7230,8 +7230,9 @@ or by hash, so the reconnects fill the replicas with room.</p>
 <code>SocketIOConnect</code> (sid, namespace, environ, auth) before the protocol is negotiated or the
 connection authenticated. Return to admit it; awaiting delays the connect, so an app can
 pace admissions by its own rules — priority lanes, a per-tenant budget. Raise a
-<code>CoreException</code> to refuse it: a client-safe error's summary reaches the client, a
-server-side kind shows the generic detail and is logged.</p>
+<code>CoreException</code> to refuse it: the refusal renders as an error ack does, its message the
+detail and its data <code>{"detail", "code", "kind", ...}</code>; a server-side kind shows the generic
+detail and is logged.</p>
 <h3 id="count-connections">Count connections<a class="headerlink" href="#count-connections" title="Permanent link">&para;</a></h3>
 <p><code>instrument_realtime_connections(stats)</code> exports <code>forze.realtime.connections</code> (open
 connections per namespace), <code>forze.realtime.connect_refused</code> (by reason: <code>protocol</code>,

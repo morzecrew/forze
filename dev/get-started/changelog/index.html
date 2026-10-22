@@ -9906,6 +9906,10 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <p><strong>Firestore raises a stale write's preconditions as Postgres and Mongo do</strong> (<strong>behaviour change</strong>). A future revision is <code>precondition</code> with <code>revision_mismatch</code>, and a revision whose history snapshot is missing is <code>precondition</code> with <code>history_not_found_retry</code>, not <code>not_found</code>.</p>
 </li>
 <li>
+<p><strong>A refused Socket.IO connect renders its error as an error ack does</strong> (<strong>behaviour change</strong>). Its data is now <code>{"detail", "code", "kind"}</code>, with <code>context</code> when exposed, and a non-disclosing denial posture applies: a denial or not-found about a covered resource type is refused as <code>Not found</code>.</p>
+</li>
+<li><strong>A failed Firestore history query is raised, not skipped.</strong> A <code>NotFound</code> from the API, such as for a missing database, was taken for a missing snapshot, so <code>read_many</code> returned fewer snapshots or none.</li>
+<li>
 <p><strong>A set-based <code>upsert_many</code> is refused for a domain with serializers of its own</strong> (<strong>behaviour change</strong>), as for validators: a <code>field_serializer</code>, <code>model_serializer</code>, <code>PlainSerializer</code> or <code>WrapSerializer</code> that runs in python mode now raises <code>set_based_upsert_unsupported</code>.</p>
 </li>
 <li>
@@ -9967,6 +9971,9 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 </li>
 <li>
 <p><strong><code>saga.step_failed</code> no longer shows the failed step's error text to API callers</strong> (<strong>behaviour change</strong>): its <code>cause</code> detail is now the cause's <code>code</code> and <code>kind</code>, and only when the cause is a <code>CoreException</code>. The original error stays chained as <code>__cause__</code>.</p>
+</li>
+<li>
+<p><strong>An error translated from a backend keeps a fixed summary</strong> (<strong>behaviour change</strong>): the backend's message moves to <code>details["error"]</code> in the Neo4j, Mongo, Firestore, Vault, inference, Meilisearch, GCS and container-sandbox integrations, secret resolution and credential rotation, so <code>str()</code> no longer includes it.</p>
 </li>
 <li>
 <p><strong>Cookie-mode <code>/login</code>, <code>/logout</code> and <code>/refresh</code> apply the cookie CSRF gate to every request</strong> (<strong>behaviour change</strong>): each must prove its origin, with or without a cookie, and <code>/refresh</code> also when its token is in the body. A non-browser client sends <code>Origin</code> or is let in by <code>allow_missing_origin=True</code>.</p>
