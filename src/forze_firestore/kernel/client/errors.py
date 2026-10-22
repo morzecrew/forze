@@ -61,8 +61,8 @@ def _firestore_eh(  # skipcq: PY-R1000
             # A retry fails the same way: the query needs an index, or has a shape Firestore
             # does not serve. Not contention, so not a conflict to retry.
             return CoreException.configuration(
-                f"Firestore cannot run this query: {exc.message}",
-                details=details,
+                "Firestore cannot run this query.",
+                details={**(details or {}), "error": str(exc)},
             )
 
         case gax_exceptions.Aborted() | gax_exceptions.FailedPrecondition():

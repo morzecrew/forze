@@ -57,6 +57,9 @@ class TestFirestoreErrorHandler:
         mapped = _firestore_eh(gax_exceptions.FailedPrecondition(message), site="query")
         assert isinstance(mapped, CoreException)
         assert mapped.kind == ExceptionKind.CONFIGURATION
+        # The API's text names the project; it rides in details, never in the summary.
+        assert message not in str(mapped)
+        assert mapped.details is not None and message in mapped.details["error"]
 
     def test_an_expired_transaction_stays_a_conflict(self) -> None:
         mapped = _firestore_eh(

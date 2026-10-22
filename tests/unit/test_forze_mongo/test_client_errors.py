@@ -166,6 +166,17 @@ class TestMongoErrorHandler:
         assert isinstance(result, CoreException) and result.kind == ExceptionKind.INFRASTRUCTURE
         assert "my_op" in result.summary
 
+    def test_operation_failure_text_stays_out_of_the_summary(self) -> None:
+        from pymongo.errors import OperationFailure
+
+        # The summary is what ``str()`` renders and what run stores record; the server's
+        # text can echo stored values, so it rides in details only.
+        e = OperationFailure("value alice@example.test", code=999)
+        result = _mongo_eh(e, site="my_op")
+        assert isinstance(result, CoreException)
+        assert "alice@example.test" not in str(result)
+        assert result.details == {"error": "value alice@example.test"}
+
 
 class TestAssembledChain:
     """Drive the actual chain wired into ``exc_interceptor``.

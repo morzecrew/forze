@@ -453,10 +453,15 @@ class ContainerEngine:
 
         except httpx.HTTPError as error:
             raise exc.infrastructure(
-                f"Could not reach the container daemon at {self._docker_host!r}: {error}. "
+                f"Could not reach the container daemon at {self._docker_host!r}. "
                 "The sandbox route cannot run anything without it.",
                 code=DAEMON_ERROR_CODE,
-                details={"docker_host": self._docker_host, "method": method, "url": url},
+                details={
+                    "docker_host": self._docker_host,
+                    "method": method,
+                    "url": url,
+                    "error": str(error),
+                },
             ) from error
 
     def _expect(self, response: httpx.Response, doing: str, allowed: tuple[int, ...]) -> None:

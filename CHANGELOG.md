@@ -87,6 +87,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **`saga.step_failed` no longer shows the failed step's error text to API callers** (**behaviour change**): its `cause` detail is now the cause's `code` and `kind`, and only when the cause is a `CoreException`. The original error stays chained as `__cause__`.
 
+- **An error translated from a backend keeps a fixed summary** (**behaviour change**): the backend's message moves to `details["error"]` in the Neo4j, Mongo, Firestore, Vault, inference, Meilisearch, GCS and container-sandbox integrations, secret resolution and credential rotation, so `str()` no longer includes it.
+
 - **Cookie-mode `/login`, `/logout` and `/refresh` apply the cookie CSRF gate to every request** (**behaviour change**): each must prove its origin, with or without a cookie, and `/refresh` also when its token is in the body. A non-browser client sends `Origin` or is let in by `allow_missing_origin=True`.
 
 - **Cookie-mode logout revokes from the refresh cookie without a live access cookie** (`logout_by_refresh_token`). `runtime_lifespan` refuses an app whose access and refresh cookie paths both miss logout (`check_authn_cookie_paths`). **Breaking** for own token lifecycle ports: add `revoke_tokens_by_refresh_token`.

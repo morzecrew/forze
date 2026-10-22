@@ -68,18 +68,22 @@ class TestResolveStrForTenant:
     async def test_wraps_other_errors(self) -> None:
         class _Secrets:
             async def resolve_str(self, ref: SecretRef) -> str:
-                raise RuntimeError("boom")
+                raise RuntimeError("boom alice@example.test")
 
             async def exists(self, ref: SecretRef) -> bool:
                 return False
 
-        with pytest.raises(CoreException, match="Failed to resolve Mongo secret"):
+        with pytest.raises(CoreException, match="Failed to resolve Mongo secret") as ei:
             await resolve_str_for_tenant(
                 _Secrets(),
                 _REF,
                 tenant_id=_TID,
                 backend="Mongo",
             )
+
+        # The backend's text rides in details only: the summary is what run stores record.
+        assert "alice@example.test" not in str(ei.value)
+        assert ei.value.details == {"error": "boom alice@example.test"}
 
 
 class TestResolveStructured:

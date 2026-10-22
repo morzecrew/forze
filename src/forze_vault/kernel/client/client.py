@@ -231,10 +231,16 @@ class VaultClient(VaultClientPort):
             ) from e
 
         except VaultError as e:
-            raise exc.infrastructure(f"Vault read failed for {path!r}: {e}") from e
+            raise exc.infrastructure(
+                f"Vault read failed for {path!r}.",
+                details={"error": str(e)},
+            ) from e
 
         except Exception as e:
-            raise exc.infrastructure(f"Vault read failed for {path!r}: {e}") from e
+            raise exc.infrastructure(
+                f"Vault read failed for {path!r}.",
+                details={"error": str(e)},
+            ) from e
 
         data = response.get("data", {}).get("data")
 
@@ -268,10 +274,16 @@ class VaultClient(VaultClientPort):
             ) from e
 
         except VaultError as e:
-            raise exc.infrastructure(f"Vault read failed for {path!r}: {e}") from e
+            raise exc.infrastructure(
+                f"Vault read failed for {path!r}.",
+                details={"error": str(e)},
+            ) from e
 
         except Exception as e:
-            raise exc.infrastructure(f"Vault read failed for {path!r}: {e}") from e
+            raise exc.infrastructure(
+                f"Vault read failed for {path!r}.",
+                details={"error": str(e)},
+            ) from e
 
         envelope = response.get("data", {})
         data = envelope.get("data")
@@ -309,10 +321,16 @@ class VaultClient(VaultClientPort):
             ) from e
 
         except VaultError as e:
-            raise exc.infrastructure(f"Vault metadata read failed for {path!r}: {e}") from e
+            raise exc.infrastructure(
+                f"Vault metadata read failed for {path!r}.",
+                details={"error": str(e)},
+            ) from e
 
         except Exception as e:
-            raise exc.infrastructure(f"Vault metadata read failed for {path!r}: {e}") from e
+            raise exc.infrastructure(
+                f"Vault metadata read failed for {path!r}.",
+                details={"error": str(e)},
+            ) from e
 
         metadata = response.get("data")
 
@@ -359,10 +377,16 @@ class VaultClient(VaultClientPort):
                     details={"ref": path},
                 ) from e
 
-            raise exc.infrastructure(f"Vault write failed for {path!r}: {e}") from e
+            raise exc.infrastructure(
+                f"Vault write failed for {path!r}.",
+                details={"error": str(e)},
+            ) from e
 
         except Exception as e:
-            raise exc.infrastructure(f"Vault write failed for {path!r}: {e}") from e
+            raise exc.infrastructure(
+                f"Vault write failed for {path!r}.",
+                details={"error": str(e)},
+            ) from e
 
         version = response.get("data", {}).get("version")
 
@@ -399,10 +423,16 @@ class VaultClient(VaultClientPort):
             return False
 
         except VaultError as e:
-            raise exc.infrastructure(f"Vault exists check failed for {path!r}: {e}") from e
+            raise exc.infrastructure(
+                f"Vault exists check failed for {path!r}.",
+                details={"error": str(e)},
+            ) from e
 
         except Exception as e:
-            raise exc.infrastructure(f"Vault exists check failed for {path!r}: {e}") from e
+            raise exc.infrastructure(
+                f"Vault exists check failed for {path!r}.",
+                details={"error": str(e)},
+            ) from e
 
     # ....................... #
 
@@ -434,12 +464,14 @@ class VaultClient(VaultClientPort):
 
         except VaultError as e:
             raise exc.infrastructure(
-                f"Vault transit generate-data-key failed for {key_name!r}: {e}"
+                f"Vault transit generate-data-key failed for {key_name!r}.",
+                details={"error": str(e)},
             ) from e
 
         except Exception as e:
             raise exc.infrastructure(
-                f"Vault transit generate-data-key failed for {key_name!r}: {e}"
+                f"Vault transit generate-data-key failed for {key_name!r}.",
+                details={"error": str(e)},
             ) from e
 
         data = response.get("data", {})
@@ -477,10 +509,16 @@ class VaultClient(VaultClientPort):
             ) from e
 
         except VaultError as e:
-            raise exc.infrastructure(f"Vault transit decrypt failed for {key_name!r}: {e}") from e
+            raise exc.infrastructure(
+                f"Vault transit decrypt failed for {key_name!r}.",
+                details={"error": str(e)},
+            ) from e
 
         except Exception as e:
-            raise exc.infrastructure(f"Vault transit decrypt failed for {key_name!r}: {e}") from e
+            raise exc.infrastructure(
+                f"Vault transit decrypt failed for {key_name!r}.",
+                details={"error": str(e)},
+            ) from e
 
         plaintext_b64 = response.get("data", {}).get("plaintext")
 
@@ -533,10 +571,16 @@ class VaultClient(VaultClientPort):
             ) from e
 
         except VaultError as e:
-            raise exc.infrastructure(f"Vault transit sign failed for {key_name!r}: {e}") from e
+            raise exc.infrastructure(
+                f"Vault transit sign failed for {key_name!r}.",
+                details={"error": str(e)},
+            ) from e
 
         except Exception as e:
-            raise exc.infrastructure(f"Vault transit sign failed for {key_name!r}: {e}") from e
+            raise exc.infrastructure(
+                f"Vault transit sign failed for {key_name!r}.",
+                details={"error": str(e)},
+            ) from e
 
         signature = response.get("data", {}).get("signature")
 
@@ -598,10 +642,16 @@ class VaultClient(VaultClientPort):
             ) from e
 
         except VaultError as e:
-            raise exc.infrastructure(f"Vault transit read-key failed for {key_name!r}: {e}") from e
+            raise exc.infrastructure(
+                f"Vault transit read-key failed for {key_name!r}.",
+                details={"error": str(e)},
+            ) from e
 
         except Exception as e:
-            raise exc.infrastructure(f"Vault transit read-key failed for {key_name!r}: {e}") from e
+            raise exc.infrastructure(
+                f"Vault transit read-key failed for {key_name!r}.",
+                details={"error": str(e)},
+            ) from e
 
         data = response.get("data", {})
         keys = data.get("keys", {})
@@ -651,10 +701,16 @@ class VaultClient(VaultClientPort):
             ) from e
 
         except VaultError as e:
-            raise exc.infrastructure(f"Vault transit rewrap failed for {key_name!r}: {e}") from e
+            raise exc.infrastructure(
+                f"Vault transit rewrap failed for {key_name!r}.",
+                details={"error": str(e)},
+            ) from e
 
         except Exception as e:
-            raise exc.infrastructure(f"Vault transit rewrap failed for {key_name!r}: {e}") from e
+            raise exc.infrastructure(
+                f"Vault transit rewrap failed for {key_name!r}.",
+                details={"error": str(e)},
+            ) from e
 
         rewrapped = response.get("data", {}).get("ciphertext")
 
@@ -694,12 +750,14 @@ class VaultClient(VaultClientPort):
 
         except VaultError as e:
             raise exc.infrastructure(
-                f"Vault transit create-key failed for {key_name!r}: {e}"
+                f"Vault transit create-key failed for {key_name!r}.",
+                details={"error": str(e)},
             ) from e
 
         except Exception as e:
             raise exc.infrastructure(
-                f"Vault transit create-key failed for {key_name!r}: {e}"
+                f"Vault transit create-key failed for {key_name!r}.",
+                details={"error": str(e)},
             ) from e
 
     # ....................... #
@@ -743,12 +801,14 @@ class VaultClient(VaultClientPort):
 
         except VaultError as e:
             raise exc.infrastructure(
-                f"Vault transit delete-key failed for {key_name!r}: {e}"
+                f"Vault transit delete-key failed for {key_name!r}.",
+                details={"error": str(e)},
             ) from e
 
         except Exception as e:
             raise exc.infrastructure(
-                f"Vault transit delete-key failed for {key_name!r}: {e}"
+                f"Vault transit delete-key failed for {key_name!r}.",
+                details={"error": str(e)},
             ) from e
 
     # ....................... #
@@ -780,12 +840,14 @@ class VaultClient(VaultClientPort):
 
         except VaultError as e:
             raise exc.infrastructure(
-                f"Vault database credential mint failed for {role!r}: {e}"
+                f"Vault database credential mint failed for {role!r}.",
+                details={"error": str(e)},
             ) from e
 
         except Exception as e:
             raise exc.infrastructure(
-                f"Vault database credential mint failed for {role!r}: {e}"
+                f"Vault database credential mint failed for {role!r}.",
+                details={"error": str(e)},
             ) from e
 
         data = response.get("data", {})
@@ -817,10 +879,16 @@ class VaultClient(VaultClientPort):
             )
 
         except VaultError as e:
-            raise exc.infrastructure(f"Vault lease renewal failed for {lease_id!r}: {e}") from e
+            raise exc.infrastructure(
+                f"Vault lease renewal failed for {lease_id!r}.",
+                details={"error": str(e)},
+            ) from e
 
         except Exception as e:
-            raise exc.infrastructure(f"Vault lease renewal failed for {lease_id!r}: {e}") from e
+            raise exc.infrastructure(
+                f"Vault lease renewal failed for {lease_id!r}.",
+                details={"error": str(e)},
+            ) from e
 
         duration = response.get("lease_duration")
 
@@ -847,10 +915,16 @@ class VaultClient(VaultClientPort):
             client.sys.revoke_lease(lease_id=lease_id)
 
         except VaultError as e:
-            raise exc.infrastructure(f"Vault lease revoke failed for {lease_id!r}: {e}") from e
+            raise exc.infrastructure(
+                f"Vault lease revoke failed for {lease_id!r}.",
+                details={"error": str(e)},
+            ) from e
 
         except Exception as e:
-            raise exc.infrastructure(f"Vault lease revoke failed for {lease_id!r}: {e}") from e
+            raise exc.infrastructure(
+                f"Vault lease revoke failed for {lease_id!r}.",
+                details={"error": str(e)},
+            ) from e
 
     # ....................... #
 
