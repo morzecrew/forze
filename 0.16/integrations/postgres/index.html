@@ -6858,6 +6858,12 @@ until then, a row indexed earlier with <code>ё</code> matches neither spelling.
   vacuum is running, or reindex them afterwards
   (<a href="https://github.com/pgroonga/pgroonga/issues/1013">pgroonga/pgroonga#1013</a>).</p>
 </li>
+<li><strong>Vector search from stored vectors.</strong> <code>VectorEngine(column=..., dimensions=...)</code> with no
+  <code>embeddings_name</code> resolves no embeddings provider, so none has to be registered. It ranks by
+  a caller's <code>query_vector</code> (cached embeddings, or vectors from another pipeline) and browses a
+  blank query; a text query is refused as a <code>precondition</code> error with code
+  <code>search_query_vector_required</code>, before any SQL runs. Hub and federated searches take no
+  <code>query_vector</code>, so their vector legs still require <code>embeddings_name</code>.</li>
 </ul>
 
 
