@@ -1,6 +1,7 @@
 """Unit tests for :mod:`forze.base.exceptions.envelope`."""
 
 import asyncio
+from collections.abc import Iterator
 
 import pytest
 import structlog
@@ -18,8 +19,21 @@ from forze.base.exceptions import (
     unhandled_error_envelope,
 )
 from forze.base.logging import Logger, log_withheld_details
+from tests.support.logging import reset_forze_stdlib_loggers
 
 # ----------------------- #
+
+
+@pytest.fixture
+def _default_logging() -> Iterator[None]:
+    # A ``configure_logging(level="info")`` another test left in force drops debug
+    # before ``capture_logs`` sees it; start from the defaults and leave them behind.
+    reset_forze_stdlib_loggers()
+    yield
+    reset_forze_stdlib_loggers()
+
+
+# ....................... #
 
 
 def test_is_server_error_kind() -> None:
@@ -137,6 +151,7 @@ def test_a_chain_mapper_withholds_what_it_translates() -> None:
 # ....................... #
 
 
+@pytest.mark.usefixtures("_default_logging")
 def test_withheld_details_are_logged_scrubbed_at_debug() -> None:
     error = exc.not_found(
         "Object not found.", details={"bucket": "internal", "password": "hunter2"}
