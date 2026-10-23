@@ -436,7 +436,11 @@ every outlier, would flag *more* false positives, not fewer. The comparator is
 tunable via `PERF_GATE_ROUNDS` (default 3 — higher is more robust but slower). Only
 benchmarks ≥ `--min-floor-ms` (default 1 ms) can fail the gate — sub-millisecond ones
 are below a shared runner's timing-noise floor and are reported for trend only, so a new
-micro-benchmark won't make the gate flaky.
+micro-benchmark won't make the gate flaky. A benchmark that crosses the threshold is re-run
+alone for another `PERF_GATE_ROUNDS` interleaved rounds, and the gate fails only if it
+regresses there too: a slowdown spanning a whole run (a co-tenant burst over the benchmark's
+one-second window, an unlucky memory layout) lifts even that run's `min`, and two such runs
+out of three carry a median.
 
 If it fires: fix the regression, or justify it in the PR and apply the
 `skip-perf-gate` label. Comparisons match benchmarks by name — new benchmarks
