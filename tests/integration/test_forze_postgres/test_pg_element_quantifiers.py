@@ -919,3 +919,210 @@ async def test_a_native_json_array_matches_the_mock_on_scalar_elements(
     expected = await _mock_matching(pg_client, t, "label", filters)
 
     assert await _matching(pg_client, gateway, t, "label", filters) == expected
+
+
+class _ScalarArraysRow(BaseModel):
+    label: str
+    words: list[str] | None = None
+    counts: list[int] | None = None
+    loose: list[Any] | None = None
+    tags: list[str] | None = None
+    nums: list[int] | None = None
+
+
+async def _scalar_array_rows(client: PostgresClient) -> str:
+    """Scalar arrays stored as JSON (``words``, ``counts``, ``loose``) and natively
+    (``tags``, ``nums``), with NULL, JSON null, non-array, empty and mixed values."""
+
+    t = f"elem_scalars_{uuid4().hex[:10]}"
+    await client.execute(
+        f"""
+        CREATE TABLE {t} (
+            label text PRIMARY KEY, words jsonb, counts jsonb, loose jsonb, tags text[], nums int[]
+        );
+        INSERT INTO {t} VALUES
+            ('sql_null', NULL, NULL, NULL, NULL, NULL),
+            ('json_null', 'null', 'null', 'null', '{{}}', '{{}}'),
+            ('scalar', '"a"', '5', 'true', '{{NULL}}', '{{NULL}}'),
+            ('object', '{{"a": 1}}', '{{"a": 1}}', '{{"a": 1}}', '{{a,NULL}}', '{{1,NULL}}'),
+            ('empty', '[]', '[]', '[]', '{{}}', '{{}}'),
+            ('a_and_b', '["a", "b"]', '[1, 5]', '["a", 5]', '{{a,b}}', '{{1,5}}'),
+            ('b_only', '["b"]', '[7]', '[false]', '{{b}}', '{{7}}'),
+            ('mixed', '["a", 5, null, {{"k": 1}}, true]', '[5, "5", null, 2.5]',
+                      '["a", 5, null, true, 1.0]', '{{a,NULL,b}}', '{{5,NULL,1}}');
+        """
+    )
+
+    return t
+
+
+_SCALAR_ARRAY_FILTERS: tuple[dict[str, Any], ...] = (
+    {"words": "a"},
+    {"words": {"$neq": "a"}},
+    {"words": {"$in": ["a", None]}},
+    {"words": {"$nin": ["a", None]}},
+    {"words": {"$like": "a%"}},
+    {"counts": 5},
+    {"counts": {"$gte": 5}},
+    {"counts": {"$lt": 3}},
+    {"counts": {"$neq": 1}},
+    {"counts": {"$in": [1, None]}},
+    {"counts": {"$nin": [1]}},
+    {"counts": {"$eq": 2.5}},
+    {"loose": True},
+    {"loose": 5},
+    {"loose": "a"},
+    {"loose": {"$in": [None]}},
+    {"loose": {"$gt": 1}},
+    {"tags": {"$in": [None, "a"]}},
+    {"tags": {"$nin": [None]}},
+    {"tags": {"$nin": [None, "a"]}},
+    {"nums": {"$in": [None, 1]}},
+    {"nums": {"$nin": [None, 1]}},
+    {"tags": {"$neq": "a"}},
+    {"tags": {"$nin": ["a"]}},
+    {"nums": {"$neq": 1}},
+    {"nums": {"$nin": [1]}},
+)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("inner", _SCALAR_ARRAY_FILTERS, ids=lambda f: str(f))
+@pytest.mark.parametrize("quantifier", _QUANTIFIERS)
+async def test_scalar_arrays_match_the_mock(
+    pg_client: PostgresClient,
+    quantifier: str,
+    inner: dict[str, Any],
+) -> None:
+    t = await _scalar_array_rows(pg_client)
+    gateway = _read_gateway(pg_client, t, _ScalarArraysRow)
+    ((path, predicate),) = inner.items()
+    filters = {"$values": {path: {quantifier: predicate}}}
+
+    expected = await _mock_matching(pg_client, t, "label", filters)
+
+    assert await _matching(pg_client, gateway, t, "label", filters) == expected
+
+
+class _DecimalArrayRow(BaseModel):
+    label: str
+    prices: list[Decimal] | None = None
+
+
+@pytest.mark.asyncio
+async def test_a_decimal_array_never_fails_on_odd_elements(pg_client: PostgresClient) -> None:
+    t = f"elem_dec_odd_{uuid4().hex[:10]}"
+    await pg_client.execute(
+        f"""
+        CREATE TABLE {t} (label text PRIMARY KEY, prices jsonb);
+        INSERT INTO {t} VALUES
+            ('string_decimal', '["10.5"]'),
+            ('number', '[11]'),
+            ('low', '["9.5", 2]'),
+            ('odd', '["abc", {{"k": 1}}, "1e999999", "1e-20000", "NaN", "0x1A", "1_0", null, true]'),
+            ('long', '["{"1" * 300}", "0.{"1" * 300}"]'),
+            ('exponent', '["1e10000", "1E+99999", "1e-14999"]'),
+            ('none', NULL);
+        """
+    )
+    gateway = _read_gateway(pg_client, t, _DecimalArrayRow)
+
+    for quantifier, expected in (
+        ("$any", {"string_decimal", "number", "long", "exponent"}),
+        ("$all", {"string_decimal", "number", "none"}),
+        ("$none", {"low", "odd", "none"}),
+    ):
+        filters = {"$values": {"prices": {quantifier: {"$gte": Decimal("10")}}}}
+
+        assert await _matching(pg_client, gateway, t, "label", filters) == expected, quantifier
+
+
+_DECIMAL_MEMBERSHIP_FILTERS: tuple[dict[str, Any], ...] = (
+    {"$nin": [Decimal("1")]},
+    {"$in": [Decimal("1"), None]},
+    {"$nin": [Decimal("1"), None]},
+    {"$neq": Decimal("1")},
+    {"$gte": Decimal("5")},
+)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("inner", _DECIMAL_MEMBERSHIP_FILTERS, ids=lambda f: str(f))
+@pytest.mark.parametrize("quantifier", _QUANTIFIERS)
+async def test_a_decimal_array_matches_the_mock_on_unreadable_elements(
+    pg_client: PostgresClient,
+    quantifier: str,
+    inner: dict[str, Any],
+) -> None:
+    # JSON numbers and elements with no numeric value only: the mock reads a numeric
+    # *string* as a string, where Postgres reads it as the decimal it stores.
+    t = f"elem_dec_members_{uuid4().hex[:10]}"
+    await pg_client.execute(
+        f"""
+        CREATE TABLE {t} (label text PRIMARY KEY, prices jsonb);
+        INSERT INTO {t} VALUES
+            ('numbers', '[1, 11]'),
+            ('one', '[1]'),
+            ('odd', '["abc", null, {{"k": 1}}, "NaN"]'),
+            ('mixed', '[1, "abc"]'),
+            ('json_null', '[null]'),
+            ('empty', '[]'),
+            ('none', NULL);
+        """
+    )
+    gateway = _read_gateway(pg_client, t, _DecimalArrayRow)
+    filters = {"$values": {"prices": {quantifier: inner}}}
+
+    expected = await _mock_matching(pg_client, t, "label", filters)
+
+    assert await _matching(pg_client, gateway, t, "label", filters) == expected
+
+
+@pytest.mark.asyncio
+async def test_a_decimal_array_reads_numeric_strings_whatever_else_the_operand_holds(
+    pg_client: PostgresClient,
+) -> None:
+    # Postgres-only: the mock reads these rows as JSON text, where a document the mock
+    # stored itself holds Decimals. A None member keeps the numeric path an int takes,
+    # and a non-ASCII digit is no number to cast (never a cast error).
+    t = f"elem_dec_strings_{uuid4().hex[:10]}"
+    await pg_client.execute(
+        f"""
+        CREATE TABLE {t} (label text PRIMARY KEY, prices jsonb);
+        INSERT INTO {t} VALUES
+            ('one_text', '["1"]'),
+            ('json_null', '[null]'),
+            ('unicode_digits', '["١", "１"]'),
+            ('two', '[2]');
+        """
+    )
+    gateway = _read_gateway(pg_client, t, _DecimalArrayRow)
+
+    async def matching(inner: dict[str, Any]) -> set[Any]:
+        return await _matching(
+            pg_client, gateway, t, "label", {"$values": {"prices": {"$any": inner}}}
+        )
+
+    assert await matching({"$in": [1]}) == {"one_text"}
+    assert await matching({"$in": [None, 1]}) == {"one_text", "json_null"}
+    assert await matching({"$gte": Decimal("0")}) == {"one_text", "two"}
+
+
+@pytest.mark.asyncio
+async def test_a_boolean_never_equals_a_stored_number(pg_client: PostgresClient) -> None:
+    # A documented divergence: the mock matches, since Python's True == 1.
+    t = f"elem_bool_num_{uuid4().hex[:10]}"
+    await pg_client.execute(
+        f"""
+        CREATE TABLE {t} (label text PRIMARY KEY, words jsonb, counts jsonb, loose jsonb,
+                          tags text[], nums int[]);
+        INSERT INTO {t} VALUES ('one', NULL, NULL, '[1]', NULL, NULL),
+                               ('true', NULL, NULL, '[true]', NULL, NULL);
+        """
+    )
+    gateway = _read_gateway(pg_client, t, _ScalarArraysRow)
+
+    for inner in ({"$eq": True}, {"$in": [True]}):
+        filters = {"$values": {"loose": {"$any": inner}}}
+
+        assert await _matching(pg_client, gateway, t, "label", filters) == {"true"}

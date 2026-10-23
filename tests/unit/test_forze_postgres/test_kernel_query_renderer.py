@@ -526,7 +526,9 @@ class TestPsycopgQueryRenderer:
         sql_out, _params = r.render(
             QueryElem("counts", "$any", QueryField(ELEM_SCALAR_FIELD, "$gte", 5)),
         )
-        assert "::numeric" not in sql_out.as_string(None)
+        s = sql_out.as_string(None)
+        # jsonb space (``to_jsonb``), not the extract-and-cast numeric path (``#>>``).
+        assert "to_jsonb" in s and "#>>" not in s
 
     def test_nested_scalar_subarray_decimal_typed_int_operand_compares_numerically(
         self,
@@ -571,7 +573,7 @@ class TestPsycopgQueryRenderer:
         sql_out, _params = r2.render(
             QueryElem("prices", "$any", QueryField(ELEM_SCALAR_FIELD, "$in", [5, "n/a"])),
         )
-        assert "::numeric" not in sql_out.as_string(None)
+        assert "#>>" not in sql_out.as_string(None)
 
     def test_nested_scalar_subarray_or_inner_routes_each_arm(self) -> None:
         class _Item(BaseModel):
@@ -1670,7 +1672,9 @@ class TestUntypedObjectElementFields:
         # The parser refuses it; a hand-built field still renders what the evaluator
         # gives (None orders against nothing), not a range over every string.
         r = PsycopgQueryRenderer()
-        out = r._render_jsonb_scalar_field(psql.Identifier("e"), op, None, decimal_elem=False)
+        out = r._render_jsonb_scalar_field(
+            psql.Identifier("e"), op, None, decimal_elem=False, path="offers.price"
+        )
 
         assert out.as_string(None) == "FALSE"
         assert r.binder.values() == []
@@ -1720,6 +1724,173 @@ class TestUntypedObjectElementFields:
         out, _params = r.render(QueryElem("offers", "$any", QueryField("available", "$eq", True)))
 
         assert "->> 'available'))::boolean = %s" in out.as_string(None)
+
+
+class TestJsonbScalarArrays:
+    """A scalar array stored as JSON compares each element as jsonb, by operand type."""
+
+    class _Row(BaseModel):
+        words: list[str]
+        counts: list[int]
+        loose: list[Any]
+        prices: list[Decimal]
+        days: list[date]
+        stamps: list[datetime]
+        native: list[Any]
+
+    def _render(self, path: str, inner: QueryExpr, quantifier: str = "$any") -> tuple[str, list[Any]]:
+        r = PsycopgQueryRenderer(
+            types={
+                "words": _t("jsonb"),
+                "counts": _t("jsonb"),
+                "loose": _t("jsonb"),
+                "prices": _t("jsonb"),
+                "days": _t("jsonb"),
+                "stamps": _t("jsonb"),
+                "native": _t("jsonb", is_array=True),
+            },
+            model_type=self._Row,
+        )
+        out, params = r.render(QueryElem(path, quantifier, inner))
+
+        return out.as_string(None), params
+
+    def test_a_string_compares_as_jsonb(self) -> None:
+        s, params = self._render("words", QueryField(ELEM_SCALAR_FIELD, "$eq", "x"))
+
+        assert s.endswith('WHERE "_fz_elem" = to_jsonb(%s::text))'), s
+        assert params == ["x"]
+
+    def test_a_number_range_orders_only_numbers(self) -> None:
+        s, params = self._render("counts", QueryField(ELEM_SCALAR_FIELD, "$gte", 5))
+
+        assert "(jsonb_typeof(\"_fz_elem\") = 'number' AND \"_fz_elem\" >= to_jsonb(%s::numeric))" in s
+        assert params == [5]
+
+    def test_an_untyped_element_compares_by_operand(self) -> None:
+        s, params = self._render("loose", QueryField(ELEM_SCALAR_FIELD, "$eq", True))
+
+        assert '"_fz_elem" = to_jsonb(%s::boolean)' in s, s
+        assert params == [True]
+
+    def test_a_text_operator_reads_the_element_text(self) -> None:
+        s, params = self._render("words", QueryField(ELEM_SCALAR_FIELD, "$like", "a%"))
+
+        assert "(\"_fz_elem\" #>> '{}') LIKE %s" in s, s
+        assert params == ["a%"]
+
+    def test_a_date_binds_its_iso_text(self) -> None:
+        # Not ``$1::text`` of a date parameter: that text follows the session's DateStyle.
+        s, params = self._render("days", QueryField(ELEM_SCALAR_FIELD, "$eq", date(2026, 1, 2)))
+
+        assert "to_jsonb(%s::text)" in s, s
+        assert params == ["2026-01-02"]
+
+    def test_a_native_jsonb_array_compares_as_jsonb(self) -> None:
+        s, params = self._render("native", QueryField(ELEM_SCALAR_FIELD, "$eq", 5))
+
+        assert 'unnest("native")' in s and '"_fz_elem" = to_jsonb(%s::numeric)' in s, s
+        assert params == [5]
+
+    @pytest.mark.parametrize(
+        ("path", "operand"),
+        [("stamps", datetime(2026, 1, 2, 3, 4)), ("counts", float("nan")), ("loose", float("inf"))],
+        ids=["datetime", "nan", "inf"],
+    )
+    def test_an_operand_without_a_stable_json_form_is_refused(self, path: str, operand: Any) -> None:
+        with pytest.raises(CoreException) as caught:
+            self._render(path, QueryField(ELEM_SCALAR_FIELD, "$eq", operand))
+
+        assert caught.value.code == "query_feature_unsupported"
+        assert f"{path!r}" in caught.value.summary
+
+    def test_a_tuple_member_without_a_json_form_is_refused(self) -> None:
+        # A rewritten node (field encryption) can carry a tuple where the parser gives a list.
+        with pytest.raises(CoreException, match="'counts'"):
+            self._render("counts", QueryField(ELEM_SCALAR_FIELD, "$in", (1, float("nan"))))
+
+    def test_a_decimal_casts_only_what_parses(self) -> None:
+        # A non-numeric string or an object element yields NULL, never a cast error.
+        s, params = self._render("prices", QueryField(ELEM_SCALAR_FIELD, "$gte", Decimal("10.5")))
+
+        assert "CASE WHEN jsonb_typeof(\"_fz_elem\") = 'number' THEN (\"_fz_elem\")::numeric" in s, s
+        assert "(\"_fz_elem\" #>> '{}') ~ " in s, s
+        assert params == [Decimal("10.5")]
+
+
+class TestJsonbDecimalMembership:
+    """The numeric path's $in / $nin: a NULL numeric value is not in a list, and a None
+    member is JSON null."""
+
+    class _Row(BaseModel):
+        prices: list[Decimal]
+
+    def _render(self, op: str, value: list[Any]) -> tuple[str, list[Any]]:
+        r = PsycopgQueryRenderer(types={"prices": _t("jsonb")}, model_type=self._Row)
+        out, params = r.render(QueryElem("prices", "$any", QueryField(ELEM_SCALAR_FIELD, op, value)))
+
+        return out.as_string(None), params
+
+    def test_nin_keeps_an_element_with_no_numeric_value(self) -> None:
+        s, params = self._render("$nin", [Decimal("1")])
+
+        assert " END) IS NULL OR NOT ((CASE WHEN " in s, s
+        assert params == [Decimal("1")]
+
+    def test_a_none_member_is_json_null(self) -> None:
+        s, params = self._render("$in", [Decimal("1"), None])
+
+        assert " END) IN (%s) OR \"_fz_elem\" = 'null'::jsonb)" in s, s
+        assert params == [Decimal("1")]
+
+    def test_nin_with_a_none_member_excludes_json_null(self) -> None:
+        s, params = self._render("$nin", [None, Decimal("1")])
+
+        assert s.endswith(" END) IN (%s)))))"), s
+        assert "(\"_fz_elem\" IS DISTINCT FROM 'null'::jsonb AND (" in s, s
+        assert params == [Decimal("1")]
+
+    def test_a_lone_none_member_binds_nothing(self) -> None:
+        # No Decimal member, so it takes the jsonb path; JSON null either way.
+        s, params = self._render("$in", [None])
+
+        assert s.endswith("WHERE \"_fz_elem\" IN ('null'::jsonb))"), s
+        assert params == []
+
+
+class TestNativeArrayNoneMember:
+    """A None member of $in / $nin matches a NULL element of a native array, as in the
+    in-memory evaluator; ``= ANY`` alone never matches NULL."""
+
+    def _render(self, op: str, value: list[Any]) -> tuple[str, list[Any]]:
+        r = PsycopgQueryRenderer(types={"tags": _t("text", is_array=True)})
+        out, params = r.render(QueryElem("tags", "$any", QueryField(ELEM_SCALAR_FIELD, op, value)))
+
+        return out.as_string(None), params
+
+    def test_in_matches_a_null_element(self) -> None:
+        s, params = self._render("$in", ["a", None])
+
+        assert 'WHERE ("_fz_elem" IS NULL OR "_fz_elem" = ANY(%s)))' in s, s
+        assert params == [["a"]]
+
+    def test_nin_excludes_a_null_element(self) -> None:
+        s, params = self._render("$nin", [None, "a"])
+
+        assert 'WHERE ("_fz_elem" IS NOT NULL AND NOT ("_fz_elem" = ANY(%s))))' in s, s
+        assert params == [["a"]]
+
+    def test_a_tuple_operand_matches_a_null_element_too(self) -> None:
+        s, params = self._render("$in", ("a", None))  # type: ignore[arg-type]
+
+        assert 'WHERE ("_fz_elem" IS NULL OR "_fz_elem" = ANY(%s)))' in s, s
+        assert params == [["a"]]
+
+    def test_without_none_the_rendering_is_unchanged(self) -> None:
+        s, params = self._render("$in", ["a"])
+
+        assert 'WHERE "_fz_elem" = ANY(%s))' in s, s
+        assert params == [["a"]]
 
 
 class TestPythonAnnToPostgresType:

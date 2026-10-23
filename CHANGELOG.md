@@ -29,6 +29,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - On an untyped JSON array element, a `None` member of `$in` / `$nin` matches a stored JSON null and an integer past int64 compares instead of failing; a NaN or infinite float is refused with `query_feature_unsupported`.
 
+- **Postgres filters a scalar array stored as JSON.** A quantifier on a `jsonb` column holding `["a", "b"]` compares each element as JSON by the operand's type instead of failing with invalid json or `jsonb = smallint`. A `Decimal` array no longer fails on a non-numeric element, and a datetime operand is refused.
+
+- **Postgres native arrays treat a NULL element as the in-memory evaluator does.** A `None` member of an element `$in` now matches it, and one of `$nin` now excludes it.
+
 - A Postgres `undefined_function` error (SQLSTATE 42883) now says no function or operator matches the argument types, not that the statement names an object that does not exist. It keeps the `postgres_schema_mismatch` code.
 
 ### Security
