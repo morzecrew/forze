@@ -7277,6 +7277,17 @@ fields; object-array quantifiers render as <code>$elemMatch</code>.</p>
 </ul>
 <p>A decimal stored as a JSON string is not a number to such a field: annotate the
 element type to compare it.</p>
+<p>A scalar array stored as JSON (a <code>jsonb</code> column holding <code>["a", "b"]</code>, typed <code>list[str]</code>,
+<code>list[int]</code> or <code>list[Any]</code>) compares each element as a JSON value by the operand's type,
+so a stored <code>"6"</code> misses <code>6</code>, as in the mock; text operators read the element's text. A
+boolean never equals a number here either: <code>true</code> misses a stored <code>1</code>, which the mock
+matches. A <code>Decimal</code> operand, or a <code>list[Decimal]</code> element, compares numbers and numeric
+strings numerically. Each <code>$in</code> / <code>$nin</code> member compares as it would under <code>$eq</code>, so a
+string beside a <code>Decimal</code> stays a string. A date or time operand compares as its ISO text, which the mock
+matches only on an element typed <code>list[date]</code> or <code>list[time]</code>, not on strings in a
+<code>list[Any]</code>. A datetime or non-finite float operand is refused with
+<code>query_feature_unsupported</code>; keep datetimes in a <code>timestamptz[]</code> column. On a native
+array with a <code>None</code> member, <code>$in</code> matches a NULL element and <code>$nin</code> excludes it.</p>
 
 
 
