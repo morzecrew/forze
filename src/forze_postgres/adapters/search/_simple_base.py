@@ -63,7 +63,7 @@ from ._engine import RankedPipelineSql
 from ._facets import fetch_pg_facets
 from ._materialize_hits import materialize_search_page, search_trust_source
 from ._offset_run import RankedOffsetPlan, execute_simple_ranked_offset_search
-from ._pgroonga_plan import is_coalesced_read_heap
+from ._pgroonga_plan import is_coalesced_read_heap, page_candidate_cap
 from ._pipeline_sql import (
     PipelineAliases,
     build_rank_first_order,
@@ -298,6 +298,53 @@ class PostgresRankedPipelineSearchAdapter[M: BaseModel](
 
     # ....................... #
 
+    def _page_cap(
+        self,
+        *,
+        options: SearchOptions | None,
+        pagination: Any,
+        snapshot: Any,
+        highlight: Any,
+    ) -> int | None:
+        """The offset page's candidate cap for a filter-first text pipeline (``page_candidate_cap``).
+
+        Facets and highlights run the page live and write no snapshot
+        (``execute_simple_ranked_offset_search``), so they keep the page cap too.
+        """
+
+        live = highlight is not None or bool(resolve_facet_fields(self.spec, options))
+
+        return page_candidate_cap(
+            options=options,
+            pagination=pagination,
+            snapshot=snapshot,
+            result_snapshot=None if live else self.result_snapshot,
+            rs_spec=self.spec.snapshot,
+            fallback_limit=self.spec.max_results,
+        )
+
+    # ....................... #
+
+    def _carried_read_columns(
+        self,
+        join_pairs: Sequence[tuple[str, str]],
+    ) -> list[sql.Composable]:
+        """The read model's heap columns a coalesced scored CTE carries beside its keys.
+
+        Read and heap are one relation there, so carrying them lets the outer query read the
+        CTE instead of joining the relation back to itself by key.
+        """
+
+        keys = {projection for projection, _ in join_pairs}
+
+        return [
+            sql.Identifier(self.pipeline.index, column)
+            for column in self.return_columns(None)
+            if column not in keys
+        ]
+
+    # ....................... #
+
     def _read_heap_relation_specs(self) -> tuple[RelationSpec, RelationSpec]:
         read = getattr(self, "read_relation", None)
         heap = getattr(self, "heap_relation_spec", None)
@@ -449,8 +496,14 @@ class PostgresRankedPipelineSearchAdapter[M: BaseModel](
             sorts=page_order,
         )
         extra_ob = await self._projection_order_by_clause(page_order)
+        # A single-relation pipeline reads the scored CTE under the projection alias.
+        rank_aliases = (
+            attrs.evolve(self.pipeline, scored=self.projection_alias)
+            if pipeline_sql.single_relation
+            else self.pipeline
+        )
         order_sql = build_rank_first_order(
-            aliases=self.pipeline,
+            aliases=rank_aliases,
             extra_order=extra_ob,
         )
 
@@ -464,7 +517,7 @@ class PostgresRankedPipelineSearchAdapter[M: BaseModel](
             count_from_outer=pipeline_sql.count_from_outer,
             approximate_total=None,
             select_table_alias=self.projection_alias,
-            rank_select=build_rank_select(self.pipeline),
+            rank_select=build_rank_select(rank_aliases),
             highlight=pipeline_sql.highlight,
             from_outer_param_count=pipeline_sql.from_outer_param_count,
         )

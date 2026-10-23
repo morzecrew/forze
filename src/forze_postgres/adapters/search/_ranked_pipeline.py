@@ -18,6 +18,7 @@ from ._pipeline_sql import (
     build_outer_from,
     build_pipeline_with_clause,
     build_scored_cte,
+    build_single_relation_from,
     filtered_select_list,
     outer_join_on_scored,
     scored_join_on_filtered,
@@ -37,6 +38,8 @@ class RankedPipelineParts:
     count_from_outer: sql.Composable | None = None
     count_params: list[Any] | None = None
     candidate_limit: int | None = None
+    single_relation: bool = False
+    """The outer query reads the scored CTE alone (:func:`build_single_relation_from`)."""
 
 
 # ....................... #
@@ -61,18 +64,33 @@ def build_filter_first_ranked_pipeline(
     cap_kw: dict[str, Any],
     emit_exact_count_sql: bool = True,
     filtered_extra: sql.Composable | None = None,
+    carry_columns: Sequence[sql.Composable] | None = None,
+    page_cap: int | None = None,
 ) -> RankedPipelineParts:
     """Build capped data pipeline plus uncapped ``scored`` for exact ``COUNT(*)``.
 
     *filtered_extra* adds projection columns to the filtered CTE, for a capped CTE that orders
-    by them."""
+    by them.
+
+    *carry_columns* (coalesced only) makes the scored CTEs carry the read model's columns and
+    the outer query read them there, so the relation is not joined back to itself by key.
+
+    *page_cap* tightens the data CTE's ``LIMIT`` to the rows the page can reach. It leaves the
+    count CTE uncapped and :attr:`RankedPipelineParts.candidate_limit` at the configured cap,
+    which a snapshot fingerprint keys on."""
 
     join_vs = outer_join_on_scored(
         join_pairs,
         projection_alias=aliases.projection,
         scored_alias=aliases.scored,
     )
-    has_cap = "candidate_limit" in cap_kw and cap_kw.get("candidate_limit") is not None
+    configured = cap_kw.get("candidate_limit")
+    data_cap_kw = dict(cap_kw)
+    data_limit = min((int(c) for c in (configured, page_cap) if c is not None), default=None)
+    data_cap_kw["candidate_limit"] = data_limit
+    # The exact count needs its own uncapped CTE whenever the data CTE is capped, by the
+    # configured cap or by the page alone.
+    has_cap = data_limit is not None and cap_kw.get("scored_order") is not None
 
     if coalesced:
         scored_data = build_scored_cte(
@@ -84,16 +102,21 @@ def build_filter_first_ranked_pipeline(
             sw=sw,
             heap_fw=heap_fw,
             first_in_with=True,
-            **cap_kw,
+            carry=carry_columns,
+            **data_cap_kw,
         )
         with_clause: sql.Composable = sql.SQL("WITH {}{}").format(
             scored_data,
             sql.SQL(""),
         )
-        from_outer: sql.Composable = build_outer_from(
-            aliases=aliases,
-            proj_ident=outer_proj_ident,
-            join_vs=join_vs,
+        from_outer: sql.Composable = (
+            build_single_relation_from(aliases=aliases)
+            if carry_columns is not None
+            else build_outer_from(
+                aliases=aliases,
+                proj_ident=outer_proj_ident,
+                join_vs=join_vs,
+            )
         )
         params_body = [*leg_params, *heap_fp]
 
@@ -111,6 +134,7 @@ def build_filter_first_ranked_pipeline(
                 sw=sw,
                 heap_fw=heap_fw,
                 first_in_with=True,
+                carry=carry_columns,
             )
             count_with = sql.SQL("WITH {}{}").format(scored_count, sql.SQL(""))
             count_from = from_outer
@@ -126,6 +150,7 @@ def build_filter_first_ranked_pipeline(
             count_from_outer=count_from,
             count_params=count_params,
             candidate_limit=int(cap) if cap is not None else None,
+            single_relation=carry_columns is not None,
         )
 
     key_sel = filtered_select_list(
@@ -153,7 +178,7 @@ def build_filter_first_ranked_pipeline(
         heap_ident=heap_ident,
         join_sf=join_sf,
         sw=sw,
-        **cap_kw,
+        **data_cap_kw,
     )
     with_clause = build_pipeline_with_clause(filtered_cte, scored_data)
     filtered_from: sql.Composable = build_outer_from(
@@ -219,4 +244,5 @@ def ranked_parts_to_sql(
         resolved_plan=resolved_plan,
         candidate_limit=parts.candidate_limit,
         highlight=highlight,
+        single_relation=parts.single_relation,
     )

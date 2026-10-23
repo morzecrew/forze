@@ -173,7 +173,7 @@ class PostgresVectorSearchAdapter[M: BaseModel](PostgresRankedPipelineSearchAdap
     ) -> RankedPipelineSql:
         # Vector is top-k: its candidate cap is the retrieval bound, not an offset-page
         # optimization, so cursor pagination keeps it (unlike the keyword/text engines).
-        _ = filters, for_cursor
+        _ = filters
         join = self._safe_join_pairs
         proj_qname = await self._pipeline_read_qname()
         index_heap_qname = await self._pipeline_heap_qname()
@@ -240,6 +240,10 @@ class PostgresVectorSearchAdapter[M: BaseModel](PostgresRankedPipelineSearchAdap
             heap_fp=heap_fp,
             cap_kw=cap_kw,
             filtered_extra=filtered_extra,
+            carry_columns=self._carried_read_columns(join)
+            if coalesced and not for_cursor
+            else None,
+            # No page cap: the candidate cap is the top-k bound (see ``page_candidate_cap``).
         )
 
         return ranked_parts_to_sql(

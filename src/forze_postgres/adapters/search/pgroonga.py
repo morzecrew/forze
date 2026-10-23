@@ -373,10 +373,17 @@ class PostgresPGroongaSearchAdapter[M: BaseModel](
                 from_outer_param_count=len(fp),
             )
 
+        page_cap = (
+            None
+            if for_cursor
+            else self._page_cap(
+                options=options, pagination=pagination, snapshot=snapshot, highlight=highlight
+            )
+        )
         cap_kw: dict[str, Any] = {}
         filtered_extra: sql.Composable | None = None
 
-        if candidate_cap is not None:
+        if candidate_cap is not None or page_cap is not None:
             cap_kw = {
                 "candidate_limit": candidate_cap,
                 "scored_order": scored_order,
@@ -406,6 +413,11 @@ class PostgresPGroongaSearchAdapter[M: BaseModel](
             heap_fp=heap_fp,
             cap_kw=cap_kw,
             filtered_extra=filtered_extra,
+            # Snippets read the projection row itself, so a highlighted page keeps the join.
+            carry_columns=self._carried_read_columns(join)
+            if coalesced and not for_cursor and highlight is None
+            else None,
+            page_cap=page_cap,
         )
 
         return ranked_parts_to_sql(
