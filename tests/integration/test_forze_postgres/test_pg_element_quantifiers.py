@@ -1041,6 +1041,8 @@ _DECIMAL_MEMBERSHIP_FILTERS: tuple[dict[str, Any], ...] = (
     {"$nin": [Decimal("1")]},
     {"$in": [Decimal("1"), None]},
     {"$nin": [Decimal("1"), None]},
+    {"$in": [Decimal("1"), "abc"]},
+    {"$nin": [Decimal("1"), "abc"]},
     {"$neq": Decimal("1")},
     {"$gte": Decimal("5")},
 )
@@ -1105,6 +1107,8 @@ async def test_a_decimal_array_reads_numeric_strings_whatever_else_the_operand_h
 
     assert await matching({"$in": [1]}) == {"one_text"}
     assert await matching({"$in": [None, 1]}) == {"one_text", "json_null"}
+    # A string beside the int compares as itself and leaves the int numeric.
+    assert await matching({"$in": [1, "n/a"]}) == {"one_text"}
     assert await matching({"$gte": Decimal("0")}) == {"one_text", "two"}
 
 

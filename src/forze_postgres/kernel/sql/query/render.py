@@ -121,32 +121,17 @@ _COMPARE_COMPAT_BASE_GROUPS: tuple[frozenset[str], ...] = (
 )
 
 
-def _has_decimal_operand(op: str, value: Any) -> bool:
-    """Whether a scalar-element predicate carries a ``Decimal`` (directly or in its list)."""
+def _compares_numerically(value: Any, *, decimal_elem: bool) -> bool:
+    """Whether one scalar operand compares by numeric value with a ``jsonb`` element.
 
-    if op in ("$in", "$nin") and isinstance(value, (list, tuple, set)):
-        return any(isinstance(v, Decimal) for v in value)  # pyright: ignore[reportUnknownVariableType]
+    A ``Decimal`` always does; an int or float does on an element annotated to hold
+    ``Decimal`` (*decimal_elem*), whose stored values are JSON strings.
+    """
 
-    return isinstance(value, Decimal)
+    if isinstance(value, Decimal):
+        return True
 
-
-# ....................... #
-
-
-def _is_numeric_operand_value(v: Any) -> bool:
-    return isinstance(v, (int, float, Decimal)) and not isinstance(v, bool)
-
-
-def _has_numeric_operand(op: str, value: Any) -> bool:
-    """Whether a scalar-element predicate carries only numeric operands (int/float/Decimal)."""
-
-    if op in ("$in", "$nin") and isinstance(value, (list, tuple, set)):
-        # A None member is JSON null, which the numeric path matches on its own.
-        known = [v for v in value if v is not None]  # pyright: ignore[reportUnknownVariableType]
-
-        return bool(known) and all(_is_numeric_operand_value(v) for v in known)  # pyright: ignore[reportUnknownVariableType]
-
-    return _is_numeric_operand_value(value)
+    return decimal_elem and isinstance(value, (int, float)) and not isinstance(value, bool)
 
 
 # ....................... #
@@ -1677,7 +1662,7 @@ class PsycopgQueryRenderer:
 
         self._refuse_without_json_form(value, path)
 
-        if _has_decimal_operand(op, value) or (decimal_elem and _has_numeric_operand(op, value)):
+        if op not in ("$in", "$nin") and _compares_numerically(value, decimal_elem=decimal_elem):
             return self._render_jsonb_scalar_numeric(elem, op, value)
 
         if op in ("$eq", "$neq"):
@@ -1708,14 +1693,45 @@ class PsycopgQueryRenderer:
             if not values:
                 return sql.SQL("FALSE") if op == "$in" else sql.SQL("TRUE")
 
-            members = sql.SQL(", ").join(self._jsonb_bound(v) for v in values)  # type: ignore[arg-type]
-            in_expr = sql.SQL("{} IN ({})").format(elem, members)
+            # Each member compares as it would under $eq: a numeric one by value, any other
+            # (a string, a boolean, None as JSON null) as itself in jsonb space.
+            numeric = [v for v in values if _compares_numerically(v, decimal_elem=decimal_elem)]  # pyright: ignore[reportUnknownVariableType]
+            plain = [v for v in values if not _compares_numerically(v, decimal_elem=decimal_elem)]  # pyright: ignore[reportUnknownVariableType]
+            parts: list[sql.Composable] = []
+
+            if numeric:
+                parts.append(
+                    sql.SQL("{} IN ({})").format(
+                        self._jsonb_numeric_value(elem),
+                        sql.SQL(", ").join(
+                            self.binder.add(self.coercer.caster.as_decimal(v))
+                            for v in numeric  # pyright: ignore[reportUnknownVariableType]
+                        ),
+                    )
+                )
+
+            if plain:
+                parts.append(
+                    sql.SQL("{} IN ({})").format(
+                        elem,
+                        sql.SQL(", ").join(self._jsonb_bound(v) for v in plain),  # pyright: ignore[reportUnknownVariableType]
+                    )
+                )
+
+            in_expr = (
+                parts[0] if len(parts) == 1 else sql.SQL("({})").format(sql.SQL(" OR ").join(parts))
+            )
 
             if op == "$in":
                 return in_expr
 
-            # A missing object field is SQL NULL here, and satisfies $nin as it does $neq.
-            return sql.SQL("({} IS NULL OR NOT ({}))").format(elem, in_expr)
+            if not numeric:
+                # A missing object field is SQL NULL here, and satisfies $nin as it does $neq.
+                return sql.SQL("({} IS NULL OR NOT ({}))").format(elem, in_expr)
+
+            # An element with no numeric value (a non-numeric string, an object) is in no
+            # numeric list, so its NULL there holds $nin.
+            return sql.SQL("({}) IS NOT TRUE").format(in_expr)
 
         if op in ("$like", "$ilike", "$regex"):
             text_map = {"$like": "LIKE", "$ilike": "ILIKE", "$regex": "~"}
@@ -1745,16 +1761,7 @@ class PsycopgQueryRenderer:
         would treat ``"10.5"`` and ``10.5`` as different JSON types and never match.
         """
 
-        # Cast only what parses, so a non-numeric string or an object is NULL, not an error.
-        num_elem = sql.SQL(
-            "(CASE WHEN jsonb_typeof({e}) = 'number' THEN ({e})::numeric "
-            "WHEN jsonb_typeof({e}) = 'string' AND length({e} #>> '{{}}') <= {max_length} "
-            "AND ({e} #>> '{{}}') ~ {pattern} THEN ({e} #>> '{{}}')::numeric END)"
-        ).format(
-            e=elem,
-            max_length=sql.Literal(_NUMERIC_TEXT_MAX_LENGTH),
-            pattern=sql.Literal(_NUMERIC_TEXT_PATTERN),
-        )
+        num_elem = self._jsonb_numeric_value(elem)
         caster = self.coercer.caster
 
         if op in ("$eq", "$neq"):
@@ -1775,51 +1782,28 @@ class PsycopgQueryRenderer:
                 self.binder.add(caster.as_decimal(value)),
             )
 
-        if op in ("$in", "$nin"):
-            values = list(value) if isinstance(value, (list, tuple, set)) else [value]  # type: ignore[arg-type]
-
-            if not values:
-                return sql.SQL("FALSE") if op == "$in" else sql.SQL("TRUE")
-
-            # A None member is JSON null, which has no numeric value to list.
-            known = [v for v in values if v is not None]  # pyright: ignore[reportUnknownVariableType]
-            json_null = sql.SQL("{} = 'null'::jsonb").format(elem)
-            in_expr = (
-                sql.SQL("{} IN ({})").format(
-                    num_elem,
-                    sql.SQL(", ").join(self.binder.add(caster.as_decimal(v)) for v in known),  # pyright: ignore[reportUnknownVariableType]
-                )
-                if known
-                else None
-            )
-
-            if op == "$in":
-                if in_expr is None:
-                    return json_null
-
-                if len(known) == len(values):
-                    return in_expr
-
-                return sql.SQL("({} OR {})").format(in_expr, json_null)
-
-            # No numeric value (a non-numeric string, an object) is in no list: $nin holds.
-            not_in = (
-                sql.SQL("({} IS NULL OR NOT ({}))").format(num_elem, in_expr)
-                if in_expr is not None
-                else None
-            )
-
-            if len(known) == len(values):
-                return not_in  # type: ignore[return-value]
-
-            not_null = sql.SQL("{} IS DISTINCT FROM 'null'::jsonb").format(elem)
-
-            if not_in is None:
-                return not_null
-
-            return sql.SQL("({} AND {})").format(not_null, not_in)
-
         raise exc.internal(f"Unsupported nested scalar element operator: {op!r}")
+
+    # ....................... #
+
+    @staticmethod
+    def _jsonb_numeric_value(elem: sql.Composable) -> sql.Composable:
+        """*elem*'s numeric value: a JSON number, or a string ``::numeric`` accepts; else NULL.
+
+        Stored decimals are JSON strings, so both forms are read. Only text that matches
+        :data:`_NUMERIC_TEXT_PATTERN` is cast, so a non-numeric string or an object is
+        NULL, never a cast error.
+        """
+
+        return sql.SQL(
+            "(CASE WHEN jsonb_typeof({e}) = 'number' THEN ({e})::numeric "
+            "WHEN jsonb_typeof({e}) = 'string' AND length({e} #>> '{{}}') <= {max_length} "
+            "AND ({e} #>> '{{}}') ~ {pattern} THEN ({e} #>> '{{}}')::numeric END)"
+        ).format(
+            e=elem,
+            max_length=sql.Literal(_NUMERIC_TEXT_MAX_LENGTH),
+            pattern=sql.Literal(_NUMERIC_TEXT_PATTERN),
+        )
 
     # ....................... #
 
