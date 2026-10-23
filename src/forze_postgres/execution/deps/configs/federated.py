@@ -72,6 +72,13 @@ class PostgresFederatedSearchConfig(TenantAwareIntegrationConfig):
         if len(self.members) < 2:
             raise exc.internal("Federated search requires at least two member configurations.")
 
-        for leg in self.members.values():
+        for name, leg in self.members.items():
             if isinstance(leg, PostgresFederatedSearchLegHub):
                 leg.hub.validate()
+
+            # Federated search takes no query_vector, so a leg with no embedder could never rank.
+            elif leg.search.engine == "vector" and leg.search.embeddings_name is None:
+                raise exc.configuration(
+                    f"Federated search member {name!r} with engine 'vector' requires "
+                    "embeddings_name: federated search takes no query_vector.",
+                )

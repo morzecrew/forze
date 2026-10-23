@@ -482,6 +482,44 @@ class TestConfigurablePostgresSearch:
 
         assert isinstance(out, PostgresVectorSearchAdapter)
 
+    def _vector_factory(self, embeddings_name: str | None) -> ConfigurablePostgresSearch:
+        return ConfigurablePostgresSearch(
+            config=PostgresSearchConfig(
+                engine=VectorEngine(
+                    column="vector_column",
+                    dimensions=3,
+                    embeddings_name=embeddings_name,
+                ),
+                index=("public", "vi"),
+                read=("public", "vs"),
+            )
+        )
+
+    def _ctx_without_embeddings(self) -> ExecutionContext:
+        return context_from_deps(
+            Deps.plain(
+                {
+                    PostgresClientDepKey: MagicMock(spec=PostgresClient),
+                    PostgresIntrospectorDepKey: MagicMock(spec=PostgresIntrospector),
+                }
+            )
+        )
+
+    def test_vector_without_embeddings_needs_no_provider(self) -> None:
+        out = self._vector_factory(None)(self._ctx_without_embeddings(), self._search_spec())
+
+        assert isinstance(out, PostgresVectorSearchAdapter)
+        assert out.embedder is None
+        assert out.embeddings_spec.dimensions == 3
+
+    def test_vector_with_embeddings_resolves_the_provider_at_build(self) -> None:
+        factory = self._vector_factory("embeddings_name")
+
+        with pytest.raises(CoreException, match="embeddings_provider") as caught:
+            factory(self._ctx_without_embeddings(), self._search_spec())
+
+        assert caught.value.kind.value == "configuration"
+
     def test_fts_missing_groups_in_call_raises(self) -> None:
         with pytest.raises(CoreException, match="FTS groups are required"):
             ConfigurablePostgresSearch(

@@ -185,3 +185,9 @@ lifecycle = LifecyclePlan.from_modules(
   `object isn't found: <Sources…>`, until you `REINDEX` it. Build PGroonga indexes when no
   vacuum is running, or reindex them afterwards
   ([pgroonga/pgroonga#1013](https://github.com/pgroonga/pgroonga/issues/1013)).
+- **Vector search from stored vectors.** `VectorEngine(column=..., dimensions=...)` with no
+  `embeddings_name` resolves no embeddings provider, so none has to be registered. It ranks by
+  a caller's `query_vector` (cached embeddings, or vectors from another pipeline) and browses a
+  blank query; a text query is refused as a `precondition` error with code
+  `search_query_vector_required`, before any SQL runs. Hub and federated searches take no
+  `query_vector`, so their vector legs still require `embeddings_name`.

@@ -123,6 +123,22 @@ def test_build_hub_leg_runtimes_vector_resolves_embedder() -> None:
     ctx.embeddings.provider.assert_called_once()
 
 
+def test_a_vector_hub_leg_without_embeddings_is_refused() -> None:
+    # Hub search takes no query_vector, so such a leg could never rank. The engine and the
+    # member build on their own; only the hub refuses them.
+    member = PostgresHubSearchMemberConfig(
+        index=("public", "idx_v"),
+        read=("public", "heap_v"),
+        engine=VectorEngine(column="emb", dimensions=8),
+        hub_fk="hub_id",
+    )
+
+    with pytest.raises(CoreException, match="hub search takes no query_vector") as caught:
+        PostgresHubSearchConfig(hub=("public", "hub_tbl"), members={"vleg": member})
+
+    assert caught.value.kind.value == "configuration"
+
+
 def test_build_hub_leg_runtimes_fts_requires_groups() -> None:
     spec = HubSearchSpec(
         name="hf",

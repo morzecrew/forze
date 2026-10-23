@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- ...
+- **A Postgres vector search can rank by stored vectors alone**: `VectorEngine.embeddings_name` is now optional. Without it no embeddings provider is resolved, and the search ranks by a `query_vector` and refuses a text query with code `search_query_vector_required`.
 
 ### Changed
 
