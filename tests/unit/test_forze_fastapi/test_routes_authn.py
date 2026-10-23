@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+
 import pytest
 
 pytest.importorskip("fastapi")
@@ -55,8 +57,18 @@ from tests.support.authn_stacks import (
     stack_principal,
 )
 from tests.support.execution_context import context_from_modules
+from tests.support.logging import reset_forze_stdlib_loggers
 
 # ----------------------- #
+
+
+@pytest.fixture(autouse=True)
+def _reset_logging() -> Iterator[None]:
+    yield
+    # A test here calls configure_logging; left in force, its level and handlers
+    # leak into later tests (a debug record never reaches capture_logs).
+    reset_forze_stdlib_loggers("fastapi.access")
+
 
 AUTHN_SPEC = AuthnSpec(name="main", enabled_methods=frozenset({"password", "token"}))
 

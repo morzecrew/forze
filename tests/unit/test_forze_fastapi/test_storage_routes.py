@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import inspect
+from collections.abc import Iterator
 from typing import Any
 
 import pytest
@@ -26,8 +27,18 @@ from forze_kits.aggregates.storage import StorageKernelOp, build_storage_registr
 from forze_mock import MockDepsModule, MockState
 from forze_mock.adapters import MockStorageAdapter
 from tests.support.execution_context import context_from_modules
+from tests.support.logging import reset_forze_stdlib_loggers
 
 # ----------------------- #
+
+
+@pytest.fixture(autouse=True)
+def _reset_logging() -> Iterator[None]:
+    yield
+    # A test here calls configure_logging; left in force, its level and handlers
+    # leak into later tests (a debug record never reaches capture_logs).
+    reset_forze_stdlib_loggers("fastapi.access")
+
 
 _UNSET: Any = object()
 

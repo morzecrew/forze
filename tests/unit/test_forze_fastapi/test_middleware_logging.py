@@ -2,6 +2,7 @@
 
 import io
 import json
+from collections.abc import Iterator
 from unittest.mock import AsyncMock
 
 import pytest
@@ -11,8 +12,17 @@ from forze.base.exceptions import exc
 from forze.base.logging import configure_logging
 from forze_fastapi.exceptions import ERROR_CODE_HEADER
 from forze_fastapi.middlewares.logging import LoggingMiddleware
+from tests.support.logging import reset_forze_stdlib_loggers
 
 # ----------------------- #
+
+
+@pytest.fixture(autouse=True)
+def _reset_logging() -> Iterator[None]:
+    yield
+    # A test here calls configure_logging; left in force, its level and handlers
+    # leak into later tests (a debug record never reaches capture_logs).
+    reset_forze_stdlib_loggers("fastapi.access")
 
 
 def _json_records(stream: io.StringIO) -> list[dict]:
