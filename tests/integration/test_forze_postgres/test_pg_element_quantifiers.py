@@ -928,28 +928,39 @@ class _ScalarArraysRow(BaseModel):
     loose: list[Any] | None = None
     tags: list[str] | None = None
     nums: list[int] | None = None
+    jb: list[Any] | None = None
+    js: list[Any] | None = None
 
 
 async def _scalar_array_rows(client: PostgresClient) -> str:
     """Scalar arrays stored as JSON (``words``, ``counts``, ``loose``) and natively
-    (``tags``, ``nums``), with NULL, JSON null, non-array, empty and mixed values."""
+    (``tags``, ``nums``, ``jb``, ``js``), with NULL, JSON null, non-array, empty and mixed
+    values; a native ``jsonb[]`` / ``json[]`` element is SQL NULL or JSON null."""
 
     t = f"elem_scalars_{uuid4().hex[:10]}"
     await client.execute(
         f"""
         CREATE TABLE {t} (
-            label text PRIMARY KEY, words jsonb, counts jsonb, loose jsonb, tags text[], nums int[]
+            label text PRIMARY KEY, words jsonb, counts jsonb, loose jsonb, tags text[], nums int[],
+            jb jsonb[], js json[]
         );
         INSERT INTO {t} VALUES
-            ('sql_null', NULL, NULL, NULL, NULL, NULL),
-            ('json_null', 'null', 'null', 'null', '{{}}', '{{}}'),
-            ('scalar', '"a"', '5', 'true', '{{NULL}}', '{{NULL}}'),
-            ('object', '{{"a": 1}}', '{{"a": 1}}', '{{"a": 1}}', '{{a,NULL}}', '{{1,NULL}}'),
-            ('empty', '[]', '[]', '[]', '{{}}', '{{}}'),
-            ('a_and_b', '["a", "b"]', '[1, 5]', '["a", 5]', '{{a,b}}', '{{1,5}}'),
-            ('b_only', '["b"]', '[7]', '[false]', '{{b}}', '{{7}}'),
+            ('sql_null', NULL, NULL, NULL, NULL, NULL, NULL, NULL),
+            ('json_null', 'null', 'null', 'null', '{{}}', '{{}}',
+                          ARRAY['null']::jsonb[], ARRAY['null']::json[]),
+            ('scalar', '"a"', '5', 'true', '{{NULL}}', '{{NULL}}',
+                       ARRAY[NULL]::jsonb[], ARRAY[NULL]::json[]),
+            ('object', '{{"a": 1}}', '{{"a": 1}}', '{{"a": 1}}', '{{a,NULL}}', '{{1,NULL}}',
+                       ARRAY['"a"', NULL]::jsonb[], ARRAY['"a"', NULL]::json[]),
+            ('empty', '[]', '[]', '[]', '{{}}', '{{}}', '{{}}', '{{}}'),
+            ('a_and_b', '["a", "b"]', '[1, 5]', '["a", 5]', '{{a,b}}', '{{1,5}}',
+                        ARRAY['"a"', '"b"']::jsonb[], ARRAY['"a"', '"b"']::json[]),
+            ('b_only', '["b"]', '[7]', '[false]', '{{b}}', '{{7}}',
+                       ARRAY['"b"', 'null']::jsonb[], ARRAY['"b"', 'null']::json[]),
             ('mixed', '["a", 5, null, {{"k": 1}}, true]', '[5, "5", null, 2.5]',
-                      '["a", 5, null, true, 1.0]', '{{a,NULL,b}}', '{{5,NULL,1}}');
+                      '["a", 5, null, true, 1.0]', '{{a,NULL,b}}', '{{5,NULL,1}}',
+                      ARRAY['"a"', NULL, 'null', '5', '{{"k": 1}}']::jsonb[],
+                      ARRAY['"a"', NULL, 'null', '5', '{{"k": 1}}']::json[]);
         """
     )
 
@@ -983,6 +994,19 @@ _SCALAR_ARRAY_FILTERS: tuple[dict[str, Any], ...] = (
     {"tags": {"$nin": ["a"]}},
     {"nums": {"$neq": 1}},
     {"nums": {"$nin": [1]}},
+    {"jb": {"$in": [None, "a"]}},
+    {"jb": {"$in": [None]}},
+    {"jb": {"$nin": [None]}},
+    {"jb": {"$nin": [None, "a"]}},
+    {"jb": {"$nin": ["a"]}},
+    {"jb": {"$neq": "a"}},
+    {"jb": {"$in": [Decimal("5"), None]}},
+    {"jb": {"$nin": [Decimal("5"), None]}},
+    {"jb": {"$gt": "a"}},
+    {"jb": {"$lt": 5}},
+    {"js": {"$in": [None, "a"]}},
+    {"js": {"$nin": [None, "a"]}},
+    {"js": {"$neq": "a"}},
 )
 
 
@@ -1119,9 +1143,9 @@ async def test_a_boolean_never_equals_a_stored_number(pg_client: PostgresClient)
     await pg_client.execute(
         f"""
         CREATE TABLE {t} (label text PRIMARY KEY, words jsonb, counts jsonb, loose jsonb,
-                          tags text[], nums int[]);
-        INSERT INTO {t} VALUES ('one', NULL, NULL, '[1]', NULL, NULL),
-                               ('true', NULL, NULL, '[true]', NULL, NULL);
+                          tags text[], nums int[], jb jsonb[], js json[]);
+        INSERT INTO {t} VALUES ('one', NULL, NULL, '[1]', NULL, NULL, NULL, NULL),
+                               ('true', NULL, NULL, '[true]', NULL, NULL, NULL, NULL);
         """
     )
     gateway = _read_gateway(pg_client, t, _ScalarArraysRow)

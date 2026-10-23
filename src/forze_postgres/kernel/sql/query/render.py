@@ -1354,6 +1354,12 @@ class PsycopgQueryRenderer:
                 if t is not None and t.is_array and t.base == "json"
                 else elem
             )
+
+            if t is not None and t.is_array:
+                # A native element can be SQL NULL as well as JSON null; the evaluator reads
+                # both as None, so SQL NULL compares as JSON null, not as a missing field.
+                jsonb = sql.SQL("COALESCE({}, 'null'::jsonb)").format(jsonb)
+
             parts = [
                 self._render_jsonb_scalar_field(
                     jsonb, f.op, f.value, decimal_elem=decimal_elem, path=path

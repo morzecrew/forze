@@ -1792,7 +1792,8 @@ class TestJsonbScalarArrays:
     def test_a_native_jsonb_array_compares_as_jsonb(self) -> None:
         s, params = self._render("native", QueryField(ELEM_SCALAR_FIELD, "$eq", 5))
 
-        assert 'unnest("native")' in s and '"_fz_elem" = to_jsonb(%s::numeric)' in s, s
+        assert 'unnest("native")' in s, s
+        assert "COALESCE(\"_fz_elem\", 'null'::jsonb) = to_jsonb(%s::numeric)" in s, s
         assert params == [5]
 
     @pytest.mark.parametrize(
@@ -1901,6 +1902,18 @@ class TestNativeArrayNoneMember:
 
         assert 'WHERE "_fz_elem" = ANY(%s))' in s, s
         assert params == [["a"]]
+
+    @pytest.mark.parametrize(("base", "elem"), [("jsonb", '"_fz_elem"'), ("json", '("_fz_elem")::jsonb')])
+    def test_a_null_json_element_compares_as_json_null(self, base: str, elem: str) -> None:
+        # A jsonb[] / json[] element is SQL NULL or JSON null; the evaluator reads both as None.
+        r = PsycopgQueryRenderer(types={"docs": _t(base, is_array=True)})
+        out, params = r.render(
+            QueryElem("docs", "$any", QueryField(ELEM_SCALAR_FIELD, "$in", [None, "a"]))
+        )
+        s = out.as_string(None)
+
+        assert f"WHERE COALESCE({elem}, 'null'::jsonb) IN ('null'::jsonb, to_jsonb(%s::text)))" in s, s
+        assert params == ["a"]
 
 
 class TestPythonAnnToPostgresType:
