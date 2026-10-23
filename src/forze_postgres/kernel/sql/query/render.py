@@ -6,6 +6,7 @@ require_psycopg()
 
 # ....................... #
 
+import math
 from collections.abc import Mapping
 from datetime import date, datetime, timedelta
 from decimal import Decimal
@@ -164,6 +165,30 @@ def _scalar_ann_may_hold_decimal(ann: Any) -> bool:
         return any(_scalar_ann_may_hold_decimal(a) for a in get_args(ann))
 
     return isinstance(ann, type) and issubclass(ann, Decimal)
+
+
+# ....................... #
+
+_JSONB_COMPARE_OPS: frozenset[str] = frozenset(
+    {"$eq", "$neq", "$gt", "$gte", "$lt", "$lte", "$in", "$nin"},
+)
+"""Operators an element field with no resolved type compares in ``jsonb`` space."""
+
+
+def _jsonb_operand_type(value: Any) -> tuple[str, str]:
+    """The cast that binds *value* for ``to_jsonb``, and the ``jsonb_typeof`` it yields."""
+
+    if isinstance(value, bool):
+        return "boolean", "boolean"
+
+    if isinstance(value, int):
+        # ``numeric``, not ``bigint``: an int past int64 would overflow at execute time.
+        return "numeric", "number"
+
+    if isinstance(value, float):
+        return "double precision", "number"
+
+    return "text", "string"
 
 
 # ....................... #
@@ -1103,27 +1128,76 @@ class PsycopgQueryRenderer:
 
     # ....................... #
 
-    def _elem_vacuous_sql(self, quantifier: str) -> sql.Composable:
-        if quantifier in ("$all", "$none"):
-            return sql.SQL("TRUE")
-
-        return sql.SQL("FALSE")
-
-    # ....................... #
-
-    def _elem_has_array_sql(
+    def _elem_source(
         self,
         col: sql.Composable,
         t: PostgresType | None,
+        depth: int,
     ) -> sql.Composable:
-        if t is not None and t.is_array:
-            return sql.SQL("{} IS NOT NULL").format(col)
+        """``FROM`` items yielding the elements of array *col* as ``_fz_elem[_depth]``.
 
-        j = sql.SQL("({})::jsonb").format(col)
+        *col* is named once: a view column computed by a correlated subquery runs that
+        subquery once per name. A JSON value goes through an ``OFFSET 0`` subquery, which
+        the planner cannot pull up, so the ``CASE`` reads its one evaluation twice.
+        ``jsonb_array_elements`` and ``unnest`` are strict, so a NULL, a non-array JSON
+        value and an empty array yield no rows and the quantifiers need no guard.
+        """
+
+        elem = sql.Identifier(self._elem_alias(depth))
+
+        if t is not None and t.is_array:
+            return sql.SQL("unnest({}) AS {}").format(col, elem)
+
+        src = sql.Identifier("_fz_src" if depth == 0 else f"_fz_src_{depth}")
+        value = sql.SQL("{}.{}").format(src, sql.Identifier("v"))
 
         return sql.SQL(
-            "({col} IS NOT NULL AND jsonb_typeof({j}) = 'array' AND jsonb_array_length({j}) > 0)",
-        ).format(col=col, j=j)
+            "(SELECT ({col})::jsonb AS {v} OFFSET 0) AS {src}, jsonb_array_elements("
+            "CASE WHEN jsonb_typeof({value}) = 'array' THEN {value} END) AS {elem}"
+        ).format(col=col, v=sql.Identifier("v"), src=src, value=value, elem=elem)
+
+    # ....................... #
+
+    @staticmethod
+    def _quantify(quantifier: str, source: sql.Composable, pred: sql.Composable) -> sql.Composable:
+        """``$any`` / ``$all`` / ``$none`` of *pred* over the elements *source* yields.
+
+        Over no rows ``$any`` is false and ``$all`` / ``$none`` are true, which is the
+        vacuous reading of a missing, null, non-array or empty array. An element whose
+        predicate is NULL (a missing key, a NULL element) has not matched: it fails
+        ``$all`` and is no match for ``$any`` / ``$none``, as in the in-memory evaluator.
+        """
+
+        if quantifier == "$any":
+            return sql.SQL("EXISTS (SELECT 1 FROM {} WHERE {})").format(source, pred)
+
+        if quantifier == "$all":
+            return sql.SQL("NOT EXISTS (SELECT 1 FROM {} WHERE ({}) IS NOT TRUE)").format(
+                source, pred
+            )
+
+        return sql.SQL("NOT (EXISTS (SELECT 1 FROM {} WHERE {}))").format(source, pred)
+
+    # ....................... #
+
+    def _object_elements_only(
+        self,
+        pred: sql.Composable,
+        depth: int,
+        typeof: str,
+    ) -> sql.Composable:
+        """Gate an object predicate on a JSON element: a scalar or null never matches.
+
+        Without it ``$neq`` / ``$nin`` and a nested ``$all`` / ``$none`` hold on a scalar
+        (its fields read as NULL), where the in-memory evaluator matches no field of
+        anything that is not an object. *typeof* is ``jsonb_typeof`` or ``json_typeof``.
+        """
+
+        return sql.SQL("({}({}) = 'object' AND {})").format(
+            sql.SQL(typeof),
+            sql.Identifier(self._elem_alias(depth)),
+            pred,
+        )
 
     # ....................... #
 
@@ -1142,7 +1216,6 @@ class PsycopgQueryRenderer:
         inner: QueryExpr,
     ) -> sql.Composable:
         col, t = self._resolve_column_and_type(path)
-        vacuous = self._elem_vacuous_sql(quantifier)
 
         if t is not None and not t.is_array and t.base not in ("jsonb", "json"):
             raise exc.precondition(
@@ -1151,49 +1224,9 @@ class PsycopgQueryRenderer:
                 code=UNSUPPORTED_QUERY_FEATURE_CODE,
             )
 
-        alias = sql.Identifier(self._elem_alias(0))
         elem_pred = self._render_elem_inner(inner, col, t, path.split("."), depth=0)
-        has_array = self._elem_has_array_sql(col, t)
 
-        if t is not None and t.is_array:
-            exists = sql.SQL(
-                "EXISTS (SELECT 1 FROM unnest({col}) AS {a} WHERE {pred})",
-            ).format(col=col, a=alias, pred=elem_pred)
-
-            forall = sql.SQL(
-                "NOT EXISTS (SELECT 1 FROM unnest({col}) AS {a} WHERE NOT ({pred}))",
-            ).format(col=col, a=alias, pred=elem_pred)
-
-        else:
-            arr = sql.SQL(
-                "CASE WHEN jsonb_typeof({col}::jsonb) = 'array' THEN {col}::jsonb ELSE '[]'::jsonb END",
-            ).format(col=col)
-
-            exists = sql.SQL(
-                "EXISTS (SELECT 1 FROM jsonb_array_elements({arr}) AS {a} WHERE {pred})",
-            ).format(arr=arr, a=alias, pred=elem_pred)
-
-            forall = sql.SQL(
-                "NOT EXISTS (SELECT 1 FROM jsonb_array_elements({arr}) AS {a} WHERE NOT ({pred}))",
-            ).format(arr=arr, a=alias, pred=elem_pred)
-
-        if quantifier == "$any":
-            match = exists
-
-        elif quantifier == "$all":
-            match = forall
-
-        else:
-            match = sql.SQL("NOT ({})").format(exists)
-
-        return sql.SQL(
-            "(({not_has} AND {vac}) OR ({has} AND {match}))",
-        ).format(
-            not_has=sql.SQL("NOT ({})").format(has_array),
-            vac=vacuous,
-            has=has_array,
-            match=match,
-        )
+        return self._quantify(quantifier, self._elem_source(col, t, 0), elem_pred)
 
     # ....................... #
 
@@ -1250,7 +1283,17 @@ class PsycopgQueryRenderer:
                 decimal_elem=self._elem_may_hold_decimal(model_path),
             )
 
-        return self._render_elem_object_inner(inner, model_path, depth=depth)
+        return self._render_elem_object_inner(
+            inner,
+            model_path,
+            depth=depth,
+            # A native jsonb[] / json[] element can be a scalar too; other arrays cannot.
+            elem_typeof=(
+                {"jsonb": "jsonb_typeof", "json": "json_typeof"}.get(t.base)
+                if t is not None and t.is_array
+                else "jsonb_typeof"
+            ),
+        )
 
     # ....................... #
 
@@ -1327,6 +1370,7 @@ class PsycopgQueryRenderer:
         model_path: list[str],
         *,
         depth: int,
+        elem_typeof: str | None = "jsonb_typeof",
     ) -> sql.Composable:
         alias = sql.Identifier(self._elem_alias(depth))
 
@@ -1351,7 +1395,10 @@ class PsycopgQueryRenderer:
 
             case QueryOr(items):
                 or_parts = [
-                    self._render_elem_object_inner(i, model_path, depth=depth) for i in items
+                    self._render_elem_object_inner(
+                        i, model_path, depth=depth, elem_typeof=elem_typeof
+                    )
+                    for i in items
                 ]
 
                 if len(or_parts) == 1:
@@ -1367,33 +1414,43 @@ class PsycopgQueryRenderer:
         for f in fields:
             segments = f.name.split(".")
             full_segments = [*model_path, *segments]
+            path = ".".join(full_segments)
             leaf_t = None
 
             if self.model_type is not None:
-                ann = walk_pydantic_path(self.model_type, full_segments)
-
-                if ann is not None:
-                    try:
-                        leaf_t = resolve_leaf_python_type(
-                            model_type=self.model_type,
-                            path=".".join(full_segments),
-                            segments=full_segments,
-                            nested_field_hints=self.nested_field_hints,
-                        )
-                    except exc:
-                        leaf_t = None
+                # Read model first, then ``nested_field_hints[path]`` — the hint is what
+                # types a field the model leaves untyped (``list[dict]``).
+                try:
+                    leaf_t = resolve_leaf_python_type(
+                        model_type=self.model_type,
+                        path=path,
+                        segments=full_segments,
+                        nested_field_hints=self.nested_field_hints,
+                    )
+                except exc:
+                    leaf_t = None
 
             pg_t = self._python_ann_to_postgres_type(leaf_t) if leaf_t else None
 
             if len(segments) == 1:
-                key = segments[0]
-                field_expr = sql.SQL("({} ->> {})").format(alias, sql.Literal(key))
+                arrows, key = ("->", "->>"), sql.Literal(segments[0])
 
             else:
-                field_expr = sql.SQL("({} #>> {})").format(
-                    alias,
-                    sql.Literal("{" + ",".join(segments) + "}"),
+                arrows, key = ("#>", "#>>"), sql.Literal("{" + ",".join(segments) + "}")
+
+            if pg_t is None and self._untyped_compares_as_jsonb(f.op, f.value, path):
+                json_expr = sql.SQL("({} {} {})").format(alias, sql.SQL(arrows[0]), key)
+
+                # A native json[] element yields json, which has no jsonb comparisons.
+                if elem_typeof == "json_typeof":
+                    json_expr = sql.SQL("({})::jsonb").format(json_expr)
+
+                parts.append(
+                    self._render_jsonb_scalar_field(json_expr, f.op, f.value, decimal_elem=False)
                 )
+                continue
+
+            field_expr = sql.SQL("({} {} {})").format(alias, sql.SQL(arrows[1]), key)
 
             if pg_t is not None:
                 cast = cast_sql_for_column_type(pg_t)
@@ -1403,9 +1460,31 @@ class PsycopgQueryRenderer:
 
             parts.append(self._render_field(field_expr, f.op, f.value, t=pg_t))
 
-        for qe in nested:
-            parts.append(self._render_nested_elem(qe, model_path, depth=depth))
+        # A quantifier over the element itself (an array of arrays) reads no field of it.
+        arrays = [qe for qe in nested if qe.path == ELEM_SCALAR_FIELD]
+        parts.extend(
+            self._render_nested_elem(qe, model_path, depth=depth)
+            for qe in nested
+            if qe.path != ELEM_SCALAR_FIELD
+        )
 
+        # A field of a scalar or null element reads as NULL. Only $neq, $nin and a nested
+        # $all / $none can hold on that, so only they pay for the per-element gate.
+        holds_on_null = any(f.op in ("$neq", "$nin") for f in fields) or any(
+            qe.quantifier in ("$all", "$none") for qe in nested if qe.path != ELEM_SCALAR_FIELD
+        )
+
+        if parts and elem_typeof is not None and holds_on_null:
+            parts = [self._object_elements_only(self._and(parts), depth, elem_typeof)]
+
+        parts.extend(self._render_nested_elem(qe, model_path, depth=depth) for qe in arrays)
+
+        return self._and(parts)
+
+    # ....................... #
+
+    @staticmethod
+    def _and(parts: list[sql.Composable]) -> sql.Composable:
         if len(parts) == 1:
             return parts[0]
 
@@ -1431,7 +1510,6 @@ class PsycopgQueryRenderer:
 
         outer = sql.Identifier(self._elem_alias(depth))
         next_depth = depth + 1
-        inner_alias = sql.Identifier(self._elem_alias(next_depth))
 
         if node.path == ELEM_SCALAR_FIELD:
             # Scalar array-of-arrays: the outer element is itself the sub-array.
@@ -1452,10 +1530,6 @@ class PsycopgQueryRenderer:
 
             sub_model_path = [*model_path, *sub_segments]
 
-        arr = sql.SQL(
-            "CASE WHEN jsonb_typeof({b}) = 'array' THEN {b} ELSE '[]'::jsonb END",
-        ).format(b=base)
-
         if elem_inner_is_scalar(node.inner):
             elem_pred = self._render_jsonb_scalar_inner(
                 node.inner,
@@ -1464,38 +1538,9 @@ class PsycopgQueryRenderer:
             )
 
         else:
-            elem_pred = self._render_elem_object_inner(
-                node.inner,
-                sub_model_path,
-                depth=next_depth,
-            )
+            elem_pred = self._render_elem_object_inner(node.inner, sub_model_path, depth=next_depth)
 
-        has_array = sql.SQL(
-            "(jsonb_typeof({b}) = 'array' AND jsonb_array_length({b}) > 0)",
-        ).format(b=base)
-
-        exists = sql.SQL(
-            "EXISTS (SELECT 1 FROM jsonb_array_elements({arr}) AS {a} WHERE {pred})",
-        ).format(arr=arr, a=inner_alias, pred=elem_pred)
-
-        forall = sql.SQL(
-            "NOT EXISTS (SELECT 1 FROM jsonb_array_elements({arr}) AS {a} WHERE NOT ({pred}))",
-        ).format(arr=arr, a=inner_alias, pred=elem_pred)
-
-        vacuous = self._elem_vacuous_sql(node.quantifier)
-
-        if node.quantifier == "$any":
-            match = exists
-
-        elif node.quantifier == "$all":
-            match = forall
-
-        else:
-            match = sql.SQL("NOT ({})").format(exists)
-
-        return sql.SQL(
-            "(((NOT {has}) AND {vac}) OR ({has} AND {match}))",
-        ).format(has=has_array, vac=vacuous, match=match)
+        return self._quantify(node.quantifier, self._elem_source(base, None, next_depth), elem_pred)
 
     # ....................... #
 
@@ -1556,14 +1601,15 @@ class PsycopgQueryRenderer:
         *,
         decimal_elem: bool,
     ) -> sql.Composable:
-        """Compare a single ``jsonb`` scalar element to *value* without a typed cast.
+        """Compare a single ``jsonb`` scalar — a sub-array element, or an untyped object
+        element's field — to *value* without a typed cast.
 
         Equality / ordering / membership compare in ``jsonb`` space via ``to_jsonb`` on
-        the bound value (correct for same-typed scalars); text operators extract the
-        element text with ``#>> '{}'`` first. Numeric operands go through the numeric
-        extract-and-cast path when the operand is a Decimal or the element annotation
-        can hold one (*decimal_elem*) — stored decimals are JSON strings, so ``jsonb``
-        space would rank them above every number.
+        the bound value (ordering only a value of the operand's JSON type); text operators
+        extract the element text with ``#>> '{}'`` first. Numeric operands go through the
+        numeric extract-and-cast path when the operand is a Decimal or the element
+        annotation can hold one (*decimal_elem*) — stored decimals are JSON strings, so
+        ``jsonb`` space would rank them above every number.
         """
 
         if _has_decimal_operand(op, value) or (decimal_elem and _has_numeric_operand(op, value)):
@@ -1575,12 +1621,20 @@ class PsycopgQueryRenderer:
             return sql.SQL("{} {} {}").format(elem, sql_op, self._jsonb_bound(value))
 
         if op in ("$gt", "$gte", "$lt", "$lte"):
+            if value is None:
+                # The parser refuses it; the evaluator orders None against nothing.
+                return sql.SQL("FALSE")
+
             ord_map = {"$gt": ">", "$gte": ">=", "$lt": "<", "$lte": "<="}
 
-            return sql.SQL("{} {} {}").format(
-                elem,
-                sql.SQL(ord_map[op]),  # pyright: ignore[reportArgumentType]
-                self._jsonb_bound(value),
+            # jsonb orders across types (a string below every number, a boolean above), so
+            # a range orders only values of the operand's own JSON type. The evaluator would
+            # still order a bool against a number (Python's True > 0); here that never matches.
+            return sql.SQL("(jsonb_typeof({e}) = {jt} AND {e} {op} {b})").format(
+                e=elem,
+                jt=sql.Literal(_jsonb_operand_type(value)[1]),
+                op=sql.SQL(ord_map[op]),  # pyright: ignore[reportArgumentType]
+                b=self._jsonb_bound(value),
             )
 
         if op in ("$in", "$nin"):
@@ -1592,7 +1646,11 @@ class PsycopgQueryRenderer:
             members = sql.SQL(", ").join(self._jsonb_bound(v) for v in values)  # type: ignore[arg-type]
             in_expr = sql.SQL("{} IN ({})").format(elem, members)
 
-            return in_expr if op == "$in" else sql.SQL("NOT ({})").format(in_expr)
+            if op == "$in":
+                return in_expr
+
+            # A missing object field is SQL NULL here, and satisfies $nin as it does $neq.
+            return sql.SQL("({} IS NULL OR NOT ({}))").format(elem, in_expr)
 
         if op in ("$like", "$ilike", "$regex"):
             text_map = {"$like": "LIKE", "$ilike": "ILIKE", "$regex": "~"}
@@ -1669,25 +1727,65 @@ class PsycopgQueryRenderer:
         is cast to a concrete type chosen from the Python value first.
         """
 
-        if isinstance(value, bool):
-            cast = "boolean"
-
-        elif isinstance(value, int):
-            cast = "bigint"
-
-        elif isinstance(value, float):
-            cast = "double precision"
-
-        else:
-            # Decimal never lands here: stored decimals are JSON strings, so a
-            # ``to_jsonb`` comparison cannot represent them — those operands are
-            # routed through :meth:`_render_jsonb_scalar_numeric` instead.
-            cast = "text"
+        # Decimal never lands here: stored decimals are JSON strings, so a ``to_jsonb``
+        # comparison cannot represent them — those operands are routed through
+        # :meth:`_render_jsonb_scalar_numeric`, or refused on an untyped object field.
+        if value is None:
+            # A ``$in`` / ``$nin`` member: the evaluator matches it against a stored null.
+            return sql.SQL("'null'::jsonb")
 
         return sql.SQL("to_jsonb({}::{})").format(
             self.binder.add(value),
-            sql.SQL(cast),
+            sql.SQL(_jsonb_operand_type(value)[0]),
         )
+
+    # ....................... #
+
+    @staticmethod
+    def _untyped_compares_as_jsonb(op: str, value: Any, path: str) -> bool:
+        """Whether an element field with no resolved type compares in ``jsonb`` space.
+
+        ``->>`` yields text, which has no operator for a boolean or a number, so those
+        operands compare against their JSON encoding instead, and a ``None`` list member
+        against JSON null; an all-string operand keeps its text comparison. An operand
+        JSON has no type for (a ``Decimal``, a date or time, a UUID) is refused: such a
+        value is stored as a JSON string, which the in-memory evaluator compares as the
+        typed value, so no SQL comparison agrees. So is a non-finite float.
+
+        :param op: The field operator.
+        :param value: The operand, a list for ``$in`` / ``$nin``.
+        :param path: The field's full dotted path, named in a refusal.
+        :returns: ``True`` to compare in ``jsonb`` space, ``False`` to keep the text path.
+        :raises CoreException: ``query_feature_unsupported`` for an operand JSON cannot hold.
+        """
+
+        if op not in _JSONB_COMPARE_OPS:
+            return False
+
+        members = list(value) if isinstance(value, (list, tuple, set)) else [value]  # type: ignore[arg-type]  # pyright: ignore[reportUnknownVariableType, reportUnknownArgumentType]
+
+        if all(isinstance(v, str) for v in members):  # pyright: ignore[reportUnknownVariableType]
+            return False
+
+        if any(isinstance(v, float) and not math.isfinite(v) for v in members):  # pyright: ignore[reportUnknownVariableType]
+            raise exc.precondition(
+                f"Filter on {path!r}: a non-finite float has no JSON form to compare with an "
+                "untyped element field on the 'postgres' backend.",
+                code=UNSUPPORTED_QUERY_FEATURE_CODE,
+            )
+
+        odd = [v for v in members if v is not None and not isinstance(v, (str, int, float))]  # pyright: ignore[reportUnknownVariableType]
+
+        if odd:
+            raise exc.precondition(
+                f"Filter on {path!r}: the read model gives this element field no type, so a "
+                f"{type(odd[0]).__name__} operand cannot be compared with it on the 'postgres' "
+                "backend. Annotate the array's element type on the read model (for example "
+                f"list[ItemModel]) or set nested_field_hints[{path!r}].",
+                code=UNSUPPORTED_QUERY_FEATURE_CODE,
+            )
+
+        return True
 
     # ....................... #
 
