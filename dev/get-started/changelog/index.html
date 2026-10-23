@@ -9981,6 +9981,9 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <p><strong>A Postgres vector search no longer formats its query vector for the fingerprint</strong>: without result snapshots the fingerprint is skipped, and with them a <code>query_vector</code> is keyed by a digest, saving about 0.25 ms per 1536-wide search. Snapshots taken for a <code>query_vector</code> before the upgrade miss once.</p>
 </li>
 <li>
+<p><strong>A Postgres ranked search reads its relation once</strong>: when it is both read relation and heap and no highlights are asked for, the ranked CTE carries the page's columns instead of a join back, so a view is planned once. A filter-first text search with no snapshot to write keeps only <code>offset + limit</code> candidates.</p>
+</li>
+<li>
 <p><strong>Postgres element quantifiers read their array once.</strong> <code>$any</code>, <code>$all</code> and <code>$none</code> name the array column a single time, so a view column computed by a correlated subquery runs once per row, not once per reference. <code>$any</code> on a JSON value that is not an array no longer fails with <code>cannot get array length of a scalar</code>.</p>
 </li>
 </ul>

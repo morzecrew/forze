@@ -6934,7 +6934,12 @@ included. On Postgres, a ranked page reads a capped pool of candidates (<code>ma
 the route's <code>candidate_limit</code>; on a hub, its merge cap), always widened to cover the page plus
 a margin of 50 rows (<code>offset + limit + 50</code>). The pool is the
 first rows of the page order itself, so a capped offset page holds the rows the uncapped cursor
-puts there; a cursor walk is uncapped, except on a vector index, whose cap bounds it too.</p>
+puts there; a cursor walk is uncapped, except on a vector index, whose cap bounds it too. Where
+FTS or a PGroonga <code>filter_first</code> plan applies its filters before the cap, the pool is cut to
+exactly <code>offset + limit</code> rows (the spec's <code>max_results</code> stands in for a missing limit), since the
+page cannot reach further. That does not happen when
+the page writes a snapshot or asks for an <code>approximate</code> total, which counts the pool. A vector
+search keeps its cap as its top-k bound.</p>
 <h3 id="page-totals">Page totals<a class="headerlink" href="#page-totals" title="Permanent link">&para;</a></h3>
 <p>On Postgres, <code>search_count</code> (or the spec's <code>default_search_count</code>) picks how a <code>_page</code> call
 counts its total:</p>
