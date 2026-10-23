@@ -1,14 +1,15 @@
 """Exposure policy: which catalog operations become MCP tools.
 
 The read-only MVP exposes only ``QUERY`` operations; ``include_writes`` opts into command
-(mutating) operations as well, and ``operations`` narrows the surface to a named set. *Which*
-operations a surface exposes is an interface decision and lives here, not in the engine.
+(mutating) operations as well, and ``operations`` narrows the surface to a named set. The
+policy itself is shared by every generated surface
+(:func:`~forze.application.execution.ingress.select_operations`).
 """
 
 from collections.abc import Iterable
 
+from forze.application.execution.ingress import select_operations
 from forze.application.execution.operations import OperationCatalogEntry
-from forze.base.exceptions import exc
 from forze.base.primitives import StrKey, StrKeyMapping
 
 # ----------------------- #
@@ -33,31 +34,9 @@ def exposed_operations(
         a command operation while *include_writes* is off.
     """
 
-    if operations is None:
-        return {
-            str(entry.op): entry.op
-            for entry in catalog.values()
-            if include_writes or entry.is_read_only
-        }
-
-    selected = (operations,) if isinstance(operations, str) else tuple(operations)
-
-    if not selected:
-        raise exc.configuration("An MCP tool allowlist must name at least one operation")
-
-    unknown = sorted(str(op) for op in selected if catalog.get(op) is None)
-
-    if unknown:
-        raise exc.configuration(
-            f"Unknown operations in the MCP tool allowlist: {', '.join(unknown)}"
-        )
-
-    commands = sorted(str(op) for op in selected if not catalog[op].is_read_only)
-
-    if commands and not include_writes:
-        raise exc.configuration(
-            f"Command operations in the MCP tool allowlist need include_writes=True: "
-            f"{', '.join(commands)}"
-        )
-
-    return {str(catalog[op].op): catalog[op].op for op in selected}
+    return select_operations(
+        catalog,
+        include_writes=include_writes,
+        operations=operations,
+        surface="MCP tool",
+    )

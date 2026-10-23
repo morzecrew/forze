@@ -19,6 +19,7 @@ from typing import Any
 from pydantic import BaseModel, ValidationError
 
 from forze.application.execution.context import ExecutionContext
+from forze.application.execution.ingress import accepted_input_names
 from forze.application.execution.operations import (
     OperationCatalogEntry,
     run_operation,
@@ -79,76 +80,6 @@ def _refuse_unknown(unknown: list[str]) -> None:
 # ....................... #
 
 
-def _alias_names(alias: object) -> set[str]:
-    """Top-level names a single ``validation_alias`` accepts.
-
-    Pydantic offers three shapes. A plain string is itself. An ``AliasPath`` reaches into a
-    nested structure, so the name a caller sends is the *head* of the path. An
-    ``AliasChoices`` is a list of either, and accepts all of them. Read structurally rather
-    than by importing the classes: a shape this does not recognise contributes nothing, and
-    the caller decides what that means.
-    """
-
-    if isinstance(alias, str):
-        return {alias}
-
-    choices = getattr(alias, "choices", None)
-
-    if choices is not None:
-        return {name for choice in choices for name in _alias_names(choice)}
-
-    path = getattr(alias, "path", None)
-
-    if path:
-        head = path[0]
-
-        return {head} if isinstance(head, str) else set()
-
-    return set()
-
-
-# ....................... #
-
-
-def _accepted_names(input_type: type[BaseModel]) -> set[str] | None:
-    """Every name the input DTO accepts, or ``None`` when it accepts names not listed here.
-
-    Field names plus every inbound spelling, because refusing a name the DTO would have
-    accepted is the one way this check can do harm. ``Field(alias=...)`` sets
-    ``validation_alias`` too, so reading that one covers both.
-
-    ``None`` means "do not check": a DTO configured ``extra="allow"`` takes extension
-    fields on purpose, and enumerating what it accepts is impossible by construction. The
-    same answer covers an alias shape a future pydantic introduces that
-    :func:`_alias_names` cannot read — declining to refuse is the safe direction, and
-    declining to accept is not.
-    """
-
-    if input_type.model_config.get("extra") == "allow":
-        return None
-
-    accepted: set[str] = set()
-
-    for name, field in input_type.model_fields.items():
-        accepted.add(name)
-        alias = field.validation_alias
-
-        if alias is None:
-            continue
-
-        names = _alias_names(alias)
-
-        if not names:
-            return None
-
-        accepted |= names
-
-    return accepted
-
-
-# ....................... #
-
-
 def _validated_args(entry: OperationCatalogEntry, raw: JsonDict) -> Any:
     """Validate the agent's arguments into the operation's input DTO (``None`` if it has no input).
 
@@ -170,7 +101,7 @@ def _validated_args(entry: OperationCatalogEntry, raw: JsonDict) -> Any:
 
         return None
 
-    accepted = _accepted_names(descriptor.input_type)
+    accepted = accepted_input_names(descriptor.input_type)
 
     if accepted is not None:
         _refuse_unknown(sorted(set(raw) - accepted))

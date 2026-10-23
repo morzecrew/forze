@@ -25,12 +25,13 @@ from pydantic.json_schema import PydanticJsonSchemaWarning
 
 from forze.application.contracts.querying import QueryFilterExpression, describe_query_discovery
 from forze.application.execution.context import ExecutionContextFactory
+from forze.application.execution.ingress import refuse_sensitive
 from forze.application.execution.operations import (
     FrozenOperationRegistry,
     OperationCatalogEntry,
     OperationDescriptor,
 )
-from forze.base.exceptions import CoreException, exc
+from forze.base.exceptions import CoreException
 from forze.base.primitives import StrKey
 
 # ----------------------- #
@@ -358,16 +359,7 @@ def register_tools(
 
     # Refuse sensitive operations up front (before any tool is added) so a
     # credential-bearing read model can never leak through a generated tool.
-    for op in exposed.values():
-        descriptor = catalog[op].descriptor
-
-        if descriptor is not None and descriptor.sensitive:
-            raise exc.configuration(
-                f"Refusing to register MCP tools: operation '{op}' projects a "
-                "sensitive read model (its spec is marked sensitive=True; "
-                "credential/secret material must not be exposed on generated "
-                "external surfaces)"
-            )
+    refuse_sensitive(catalog, exposed.values(), surface="MCP tool")
 
     tools: list[FunctionTool] = []
     shared = False

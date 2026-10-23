@@ -15,48 +15,27 @@ extracting a verified token from the MCP session and mapping it through
 """
 
 from collections.abc import Awaitable, Callable
-from typing import Protocol, final, runtime_checkable
+from typing import final
 
 import attrs
 
 from forze.application.contracts.authn import AuthnIdentity
 from forze.application.contracts.tenancy import TenantIdentity
+from forze.application.execution.ingress import (
+    IngressIdentityResolver,
+    StaticIdentityResolver,
+)
 
 # ----------------------- #
 
+MCPIdentityResolver = IngressIdentityResolver
+"""Resolve the principal/tenant to bind for an MCP tool call (the ingress protocol)."""
 
-@runtime_checkable
-class MCPIdentityResolver(Protocol):
-    """Resolve the principal/tenant to bind for an MCP tool call."""
-
-    async def resolve(self) -> tuple[AuthnIdentity | None, TenantIdentity | None]:
-        """Return the ``(authn, tenant)`` to bind for the current call."""
-        ...
-
-
-# ....................... #
-
-
-@final
-@attrs.define(slots=True, kw_only=True, frozen=True)
-class StaticIdentityResolver(MCPIdentityResolver):
-    """Resolve a fixed identity for every call (dev / single-tenant / service principal).
-
-    Defaults to binding nothing — useful for local, unauthenticated read-only servers.
-    Supply ``authn`` / ``tenant`` to run every call as a fixed service principal in a
-    fixed tenant.
-    """
-
-    authn: AuthnIdentity | None = None
-    tenant: TenantIdentity | None = None
-
-    # ....................... #
-
-    async def resolve(self) -> tuple[AuthnIdentity | None, TenantIdentity | None]:
-        """Return the configured identity pair."""
-
-        return self.authn, self.tenant
-
+__all__ = [
+    "DelegatedIdentityResolver",
+    "MCPIdentityResolver",
+    "StaticIdentityResolver",
+]
 
 # ....................... #
 
