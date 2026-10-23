@@ -2,7 +2,7 @@
 
 import math
 from collections.abc import Mapping, Sequence
-from typing import Any, Literal, cast
+from typing import Any, Literal, NoReturn, cast
 
 from forze.application.contracts.search.capabilities import (
     DEFAULT_SEARCH_CAPABILITIES,
@@ -215,6 +215,20 @@ def requested_query_vector(
         )
 
     return vector
+
+
+def refuse_text_query_without_embedder() -> NoReturn:
+    """Refuse a text query on a vector search configured without an embedder.
+
+    :raises exc.precondition: always, with code ``search_query_vector_required`` — the same
+        kind as the other refusals of a request the search cannot serve.
+    """
+
+    raise exc.precondition(
+        "This search ranks by query_vector only: it has no embeddings provider to embed a "
+        "text query.",
+        code="search_query_vector_required",
+    )
 
 
 def _checked_query_vector(raw: object, *, dimensions: int | None) -> list[float]:

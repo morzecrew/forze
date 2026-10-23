@@ -96,3 +96,15 @@ class TestPerVariantValidation:
             MongoVectorEngine(
                 index_name="ix", vector_path="emb", embeddings_name="m", dimensions=0
             )
+
+    def test_vector_without_embeddings_ranks_by_stored_vectors(self) -> None:
+        cfg = _cfg(MongoVectorEngine(index_name="ix", vector_path="emb", dimensions=3))
+
+        assert cfg.embeddings_name is None
+        assert cfg.embedding_dimensions == 3
+
+    def test_vector_empty_embeddings_name_rejected(self) -> None:
+        with pytest.raises(CoreException, match="omit it"):
+            MongoVectorEngine(
+                index_name="ix", vector_path="emb", embeddings_name="", dimensions=3
+            )

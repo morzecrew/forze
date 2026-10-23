@@ -15,6 +15,7 @@ pytest.importorskip("psycopg")
 from forze.application.contracts.embeddings import EmbeddingsSpec
 from forze.application.contracts.search import SearchSpec
 from forze_postgres.adapters.search import PostgresVectorSearchAdapter
+from forze_postgres.adapters.search._leg_vector import build_vector_leg
 from forze_postgres.adapters.search._vector_sql import vector_param_literal
 
 
@@ -237,3 +238,23 @@ async def test_without_an_embedder_a_text_query_is_refused_before_any_sql(
     port.client.fetch_all.assert_not_awaited()
     port.client.fetch_one.assert_not_awaited()
     port.introspector.get_column_types.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_the_vector_leg_refuses_queries_to_embed_without_an_embedder() -> None:
+    """Hub and federated legs build through ``build_vector_leg`` directly, past the adapter."""
+
+    with pytest.raises(CoreException) as caught:
+        await build_vector_leg(
+            embedder=None,
+            introspector=MagicMock(),
+            index_alias="i",
+            vector_column="emb",
+            vector_distance="l2",
+            embedding_dimensions=3,
+            queries=("text",),
+            options=None,
+            score_column="_vector_rank",
+        )
+
+    assert caught.value.code == "search_query_vector_required"

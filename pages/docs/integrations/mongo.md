@@ -174,5 +174,10 @@ lifecycle = LifecyclePlan.from_steps(
   [credential rotation](../running-in-prod/credential-rotation.md).
 - `MongoSearchConfig` is imported from `forze_mongo.execution.deps` (not the
   top-level package).
+- **Vector search from stored vectors.** `MongoVectorEngine(index_name=..., vector_path=...,
+  dimensions=...)` with no `embeddings_name` resolves no embeddings provider, so none has to be
+  registered. It ranks by a caller's `query_vector` (cached embeddings, or vectors from another
+  pipeline) and browses a blank query; a text query is refused as a `precondition` error with
+  code `search_query_vector_required`, before any database call.
 - Relations accept a static `(database, collection)` tuple or a per-tenant
   resolver; routed clients handle database-per-tenant.

@@ -23,12 +23,15 @@ from forze.application.contracts.search import (
     SearchSpec,
     effective_phrase_combine,
 )
-from forze.application.contracts.search.search_options import requested_query_vector
+from forze.application.contracts.search.search_options import (
+    refuse_text_query_without_embedder,
+    requested_query_vector,
+)
 from forze.domain.constants import ID_FIELD
 from forze_postgres.kernel.relation import RelationSpec
 
 from ._engine import RankedPipelineSql
-from ._leg_vector import build_vector_leg, refuse_text_query_without_embedder
+from ._leg_vector import build_vector_leg
 from ._pgroonga_plan import effective_ranked_candidate_limit
 from ._pipeline_sql import (
     PipelineAliases,

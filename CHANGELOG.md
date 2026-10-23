@@ -11,6 +11,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **A Postgres vector search can rank by stored vectors alone**: `VectorEngine.embeddings_name` is now optional. Without it no embeddings provider is resolved, and the search ranks by a `query_vector` and refuses a text query with code `search_query_vector_required`.
 
+- **A Mongo vector search can rank by stored vectors alone**: `MongoVectorEngine.embeddings_name` is now optional. Without it no embeddings provider is resolved, and the search ranks by a `query_vector` and refuses a text query with code `search_query_vector_required`.
+
 ### Changed
 
 - **A Postgres vector search no longer formats its query vector for the fingerprint**: without result snapshots the fingerprint is skipped, and with them a `query_vector` is keyed by a digest, saving about 0.25 ms per 1536-wide search. Snapshots taken for a `query_vector` before the upgrade miss once.

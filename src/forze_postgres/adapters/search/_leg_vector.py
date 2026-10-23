@@ -7,13 +7,15 @@ require_psycopg()
 # ....................... #
 
 from collections.abc import Sequence
-from typing import Any, NoReturn
+from typing import Any
 
 from psycopg import sql
 
 from forze.application.contracts.embeddings import EmbeddingsProviderPort
 from forze.application.contracts.search import SearchOptions, effective_phrase_combine
-from forze.base.exceptions import exc
+from forze.application.contracts.search.search_options import (
+    refuse_text_query_without_embedder,
+)
 
 from ...kernel.catalog.introspect import PostgresIntrospector
 from ._vector_sql import (
@@ -25,23 +27,6 @@ from ._vector_sql import (
 )
 
 # ----------------------- #
-
-
-def refuse_text_query_without_embedder() -> NoReturn:
-    """Refuse a text query on a vector search configured without an embedder.
-
-    :raises exc.precondition: always, with code ``search_query_vector_required`` — the same
-        kind as the other refusals of a request the search cannot serve.
-    """
-
-    raise exc.precondition(
-        "This search ranks by query_vector only: it has no embeddings provider to embed a "
-        "text query.",
-        code="search_query_vector_required",
-    )
-
-
-# ....................... #
 
 
 async def build_vector_leg(

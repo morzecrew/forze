@@ -11,6 +11,7 @@ from pydantic import BaseModel
 from forze.application.contracts.embeddings import EmbeddingsProviderDepKey, EmbeddingsSpec
 from forze.application.contracts.search import SearchQueryDepKey, SearchSpec
 from forze.application.execution import Deps, ExecutionContext
+from forze.base.exceptions import CoreException, ExceptionKind
 from forze_mock import MockHashEmbeddingsProvider
 from forze_mongo.adapters.search import MongoVectorSearchAdapter
 from forze_mongo.execution.deps import ConfigurableMongoSearch
@@ -117,3 +118,74 @@ async def test_mongo_vector_search_knn(mongo_atlas_client: MongoClient) -> None:
     by_vector = await adapter.search_page("", options={"query_vector": list(v_alpha)})
     assert [hit.id for hit in by_vector.hits] == [hit.id for hit in page.hits]
     assert by_vector.scores == page.scores
+
+
+@pytest.mark.mongo_atlas_search
+@pytest.mark.asyncio
+async def test_a_search_without_embeddings_ranks_by_query_vector_only(
+    mongo_atlas_client: MongoClient,
+) -> None:
+    """No ``embeddings_name`` and no embeddings provider: a ``query_vector`` ranks, a blank
+    query browses, and a text query is refused before any database call."""
+    db_name = (await mongo_atlas_client.db()).name
+    collection = f"search_vec_stored_{uuid4().hex[:10]}"
+    index_name = "vec_stored"
+    path = "embedding"
+    coll = await mongo_atlas_client.collection(collection, db_name=db_name)
+    prov = MockHashEmbeddingsProvider(dimensions=3)
+
+    docs = []
+
+    for label in ["alpha", "beta", "gamma"]:
+        doc_id = str(uuid4())
+        emb = await prov.embed_one(label)
+        docs.append({"_id": doc_id, "id": doc_id, "label": label, path: emb})
+
+    await coll.insert_many(docs)
+    await coll.create_search_index(
+        {
+            "name": index_name,
+            "type": "vectorSearch",
+            "definition": {
+                "fields": [
+                    {"type": "vector", "path": path, "numDimensions": 3, "similarity": "euclidean"}
+                ]
+            },
+        }
+    )
+    await wait_vector_index(mongo_atlas_client, coll, index_name=index_name, path=path)
+
+    ctx = context_from_deps(
+        Deps.plain(
+            {
+                MongoClientDepKey: mongo_atlas_client,
+                SearchQueryDepKey: ConfigurableMongoSearch(
+                    config=MongoSearchConfig(
+                        read=(db_name, collection),
+                        engine=MongoVectorEngine(
+                            index_name=index_name,
+                            vector_path=path,
+                            dimensions=3,
+                        ),
+                    )
+                ),
+            }
+        )
+    )
+    assert not ctx.deps.exists(EmbeddingsProviderDepKey)
+    port = ctx.search.query(SearchSpec(name="vec_stored", model_type=VecDoc, fields=("label",)))
+    vector = list(await prov.embed_one("beta", input_kind="query"))
+
+    ranked = await port.search_page("", options={"query_vector": vector})
+    assert ranked.hits[0].label == "beta"
+    assert ranked.scores is not None
+
+    browsed = await port.search_page("")
+    assert browsed.count == 3
+    assert browsed.scores is None
+
+    with pytest.raises(CoreException) as caught:
+        await port.search("beta")
+
+    assert caught.value.kind is ExceptionKind.PRECONDITION
+    assert caught.value.code == "search_query_vector_required"

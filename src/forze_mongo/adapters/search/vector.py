@@ -15,7 +15,10 @@ from forze.application.contracts.resolution import (
     resolve_scoped_namespace,
 )
 from forze.application.contracts.search import SearchCapabilities, SearchOptions
-from forze.application.contracts.search.search_options import requested_query_vector
+from forze.application.contracts.search.search_options import (
+    refuse_text_query_without_embedder,
+    requested_query_vector,
+)
 from forze.base.primitives import OnceCell
 from forze_mongo.adapters._logger import logger
 from forze_mongo.kernel.relation import resolve_mongo_named_resource
@@ -44,8 +47,9 @@ def _embedding_query_text(terms: tuple[str, ...], *, combine: str) -> str:
 class MongoVectorSearchAdapter[M: BaseModel](MongoSimpleSearchAdapter[M]):
     """Semantic search using ``$vectorSearch`` (Atlas Vector Search)."""
 
-    embedder: EmbeddingsProviderPort
-    """Text-to-vector encoder for query strings."""
+    embedder: EmbeddingsProviderPort | None = None
+    """Text-to-vector encoder for query strings. ``None`` ranks by a caller's ``query_vector``
+    only and refuses a text query."""
 
     embedding_dimensions: int
     """Expected embedding vector length."""
@@ -140,6 +144,10 @@ class MongoVectorSearchAdapter[M: BaseModel](MongoSimpleSearchAdapter[M]):
     # ....................... #
 
     async def _embed(self, terms: tuple[str, ...], *, combine: str) -> Sequence[float]:
+        # Refused while the pipeline is built, before anything reaches the database.
+        if self.embedder is None:
+            refuse_text_query_without_embedder()
+
         text = _embedding_query_text(terms, combine=combine)
 
         if len(terms) > 1 and combine == "any":
