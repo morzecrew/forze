@@ -28,7 +28,7 @@ from forze.domain.constants import ID_FIELD
 from forze_postgres.kernel.relation import RelationSpec
 
 from ._engine import RankedPipelineSql
-from ._leg_vector import build_vector_leg
+from ._leg_vector import build_vector_leg, refuse_text_query_without_embedder
 from ._pgroonga_plan import effective_ranked_candidate_limit
 from ._pipeline_sql import (
     PipelineAliases,
@@ -59,8 +59,9 @@ class PostgresVectorSearchAdapter[M: BaseModel](PostgresRankedPipelineSearchAdap
     spec: SearchSpec[M]
     """Search specification."""
 
-    embedder: EmbeddingsProviderPort
-    """Text-to-vector (query string encoding)."""
+    embedder: EmbeddingsProviderPort | None = None
+    """Text-to-vector (query string encoding). ``None`` ranks by a caller's ``query_vector``
+    only and refuses a text query."""
 
     embeddings_spec: EmbeddingsSpec
     """Expected vector dimension; must match the ``vector`` column and embedder output."""
@@ -120,8 +121,15 @@ class PostgresVectorSearchAdapter[M: BaseModel](PostgresRankedPipelineSearchAdap
         return self.embeddings_spec.dimensions
 
     def _ranks(self, query: str | Sequence[str], options: SearchOptions | None) -> bool:
+        vector = (options or {}).get("query_vector")
+        ranks_text = super()._ranks(query, options)
+
+        # Refused here, before the filters or the pipeline reach the database.
+        if ranks_text and vector is None and self.embedder is None:
+            refuse_text_query_without_embedder()
+
         # A caller's vector ranks a blank query instead of browsing.
-        return super()._ranks(query, options) or (options or {}).get("query_vector") is not None
+        return ranks_text or vector is not None
 
     # ....................... #
 

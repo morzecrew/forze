@@ -31,6 +31,7 @@ from forze_postgres.execution.deps.configs import (
     PostgresHubSearchConfig,
     PostgresHubSearchMemberConfig,
     PostgresSearchConfig,
+    VectorEngine,
 )
 
 # ----------------------- #
@@ -142,6 +143,25 @@ def test_postgres_federated_search_config_accepts_embedded_hub_member() -> None:
         },
     )
 
+
+def test_a_vector_federated_leg_without_embeddings_is_refused() -> None:
+    # Federated search takes no query_vector, so such a leg could never rank.
+    def leg(engine: object) -> PostgresFederatedSearchLegSearch:
+        return PostgresFederatedSearchLegSearch(
+            search=PostgresSearchConfig(
+                index=("public", "i"),
+                read=("public", "r"),
+                engine=engine,  # type: ignore[arg-type]
+            ),
+        )
+
+    # The legs build on their own; only the federated config refuses the vector one.
+    members = {"vec": leg(VectorEngine(column="emb", dimensions=3)), "kw": leg("pgroonga")}
+
+    with pytest.raises(CoreException, match="federated search takes no query_vector") as caught:
+        PostgresFederatedSearchConfig(members=members)
+
+    assert caught.value.kind.value == "configuration"
 
 
 def test_a_plain_leg_keeps_its_own_tenant_aware_flag() -> None:

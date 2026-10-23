@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- ...
+- **A Postgres vector search can rank by stored vectors alone**: `VectorEngine.embeddings_name` is now optional. Without it no embeddings provider is resolved, and the search ranks by a `query_vector` and refuses a text query with code `search_query_vector_required`.
 
 ### Changed
 
@@ -17,9 +17,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **A Postgres ranked search reads its relation once**: when it is both read relation and heap and no highlights are asked for, the ranked CTE carries the page's columns instead of a join back, so a view is planned once. A filter-first text search with no snapshot to write keeps only `offset + limit` candidates.
 
+- **Postgres element quantifiers read their array once.** `$any`, `$all` and `$none` name the array column a single time, so a view column computed by a correlated subquery runs once per row, not once per reference. `$any` on a JSON value that is not an array no longer fails with `cannot get array length of a scalar`.
+
 ### Fixed
 
-- ...
+- **Postgres compares a boolean or a number in an untyped JSON array.** A quantifier field the read model leaves untyped (`list[dict]`) compares it as JSON instead of failing on `text = boolean`, and refuses a `Decimal`, date or UUID operand; `nested_field_hints` types such a field by its full path (`offers.price`).
+
+- **Postgres element quantifiers agree with the in-memory evaluator on missing keys and non-object elements.** `$all` now fails an element whose predicate is NULL (a missing field, a null element), and `$neq`, `$nin` or a nested `$all` / `$none` no longer match a scalar or null element.
+
+- On an untyped JSON array element, a `None` member of `$in` / `$nin` matches a stored JSON null and an integer past int64 compares instead of failing; a NaN or infinite float is refused with `query_feature_unsupported`.
+
+- A Postgres `undefined_function` error (SQLSTATE 42883) now says no function or operator matches the argument types, not that the statement names an object that does not exist. It keeps the `postgres_schema_mismatch` code.
 
 ### Security
 

@@ -147,11 +147,12 @@ class VectorEngine:
     column: str
     """Heap ``vector`` column."""
 
-    embeddings_name: StrKey
-    """Embeddings spec name."""
+    embeddings_name: StrKey | None = None
+    """Embeddings spec name, resolved when the port is built. ``None`` ranks by a caller's
+    ``query_vector`` only and refuses a text query, so no embeddings provider is needed."""
 
     dimensions: int
-    """Query embedding size."""
+    """Query embedding size; a caller's ``query_vector`` must have this many values."""
 
     distance: VectorEngineDistance = "l2"
     """pgvector distance operator family."""
@@ -162,8 +163,10 @@ class VectorEngine:
         if not self.column:
             raise exc.configuration("vector_column is required for vector engine.")
 
-        if not self.embeddings_name:
-            raise exc.configuration("embeddings_name is required for vector engine.")
+        if self.embeddings_name is not None and not self.embeddings_name:
+            raise exc.configuration(
+                "embeddings_name must not be empty; omit it to rank by query_vector only."
+            )
 
         if self.dimensions < 1:
             raise exc.configuration("embedding_dimensions must be at least 1.")

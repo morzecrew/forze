@@ -322,7 +322,8 @@ class TestPsycopgQueryRenderer:
         )
         r = PsycopgQueryRenderer(types=types)
         sql_out, _params = r.render(expr)
-        assert b"TRUE" in sql_out.as_bytes()
+        # ``unnest`` of an empty array yields no rows, so ``NOT EXISTS`` holds vacuously.
+        assert sql_out.as_bytes().startswith(b"NOT EXISTS (SELECT 1 FROM unnest(")
 
     def test_element_any_object_jsonb(self) -> None:
         class _Item(BaseModel):
@@ -1402,7 +1403,7 @@ class TestNestedQuantifierRendering:
         node = self._nested("scores", QueryField(ELEM_SCALAR_FIELD, "$gte", 5))
         _sql, params = r.render(node)
         s = _sql.as_string(None)
-        assert "::bigint" in s  # _jsonb_bound int cast
+        assert "::numeric" in s  # _jsonb_bound int cast: no int64 bound to overflow
         assert params == [5]
 
     def test_nested_scalar_subarray_membership_and_text(self) -> None:
@@ -1451,8 +1452,274 @@ class TestNestedQuantifierRendering:
             QueryElem(ELEM_SCALAR_FIELD, "$any", QueryField(ELEM_SCALAR_FIELD, "$eq", "x")),
         )
         _sql, params = r.render(node)
-        assert "jsonb_array_elements" in _sql.as_string(None)
+        s = _sql.as_string(None)
+        assert "jsonb_array_elements" in s
+        # The element is an array here, not an object: no object gate on it.
+        assert "= 'object'" not in s, s
         assert params == ["x"]
+
+
+class TestElementQuantifierReadsTheArrayOnce:
+    """A quantified array is named once, so a view column computed by a correlated
+    subquery runs that subquery once per row, not once per reference."""
+
+    class _Offer(BaseModel):
+        size: str
+
+    class _Row(BaseModel):
+        offers: list[TestElementQuantifierReadsTheArrayOnce._Offer]
+        tags: list[str]
+
+    def _render(self, path: str, quantifier: str, inner: QueryExpr) -> str:
+        r = PsycopgQueryRenderer(
+            types={"offers": _t("jsonb"), "tags": _t("text", is_array=True)},
+            model_type=self._Row,
+        )
+        out, _params = r.render(QueryElem(path, quantifier, inner))
+
+        return out.as_string(None)
+
+    @pytest.mark.parametrize(
+        ("quantifier", "prefix"),
+        [("$any", "EXISTS ("), ("$all", "NOT EXISTS ("), ("$none", "NOT (EXISTS (")],
+    )
+    def test_a_jsonb_column_is_named_once(self, quantifier: str, prefix: str) -> None:
+        s = self._render("offers", quantifier, QueryField("size", "$eq", "M"))
+
+        assert s.count('"offers"') == 1, s
+        assert s.startswith(prefix), s
+        # OFFSET 0 keeps the planner from inlining the column into both CASE arms.
+        assert (
+            'FROM (SELECT ("offers")::jsonb AS "v" OFFSET 0) AS "_fz_src", '
+            "jsonb_array_elements(CASE WHEN jsonb_typeof(\"_fz_src\".\"v\") = 'array' "
+            'THEN "_fz_src"."v" END) AS "_fz_elem"'
+        ) in s, s
+        # No constant vacuous branch: ``(NOT has AND FALSE) OR …`` is gone.
+        assert "jsonb_array_length" not in s and "AND FALSE" not in s and "AND TRUE" not in s
+
+    @pytest.mark.parametrize("quantifier", ["$any", "$all", "$none"])
+    def test_a_native_array_column_is_named_once(self, quantifier: str) -> None:
+        s = self._render("tags", quantifier, QueryField(ELEM_SCALAR_FIELD, "$eq", "x"))
+
+        assert s.count('"tags"') == 1, s
+        assert 'unnest("tags")' in s and "IS NOT NULL" not in s
+
+    def test_all_fails_an_element_whose_predicate_is_unknown(self) -> None:
+        # A missing key makes the predicate NULL; the evaluator counts that element as failing.
+        s = self._render("tags", "$all", QueryField(ELEM_SCALAR_FIELD, "$eq", "x"))
+
+        assert s.endswith('WHERE ("_fz_elem" = %s) IS NOT TRUE)'), s
+
+    @pytest.mark.parametrize("quantifier", ["$any", "$all", "$none"])
+    def test_an_object_predicate_reads_only_object_elements(self, quantifier: str) -> None:
+        s = self._render("offers", quantifier, QueryField("size", "$neq", "M"))
+
+        assert "(jsonb_typeof(\"_fz_elem\") = 'object' AND " in s, s
+
+    def test_a_predicate_null_cannot_satisfy_is_not_gated(self) -> None:
+        # A scalar element's field reads as NULL, which an equality never matches; the gate
+        # would cost a jsonb_typeof per element for nothing.
+        s = self._render("offers", "$any", QueryField("size", "$eq", "M"))
+
+        assert "jsonb_typeof(\"_fz_elem\")" not in s, s
+
+    @pytest.mark.parametrize(("base", "typeof"), [("jsonb", "jsonb_typeof"), ("json", "json_typeof")])
+    def test_a_native_json_array_gates_its_elements(self, base: str, typeof: str) -> None:
+        # A jsonb[] / json[] element can be a scalar too; unnest does not unwrap it.
+        r = PsycopgQueryRenderer(types={"offers": _t(base, is_array=True)}, model_type=self._Row)
+        out, _params = r.render(QueryElem("offers", "$all", QueryField("size", "$neq", "M")))
+        s = out.as_string(None)
+
+        assert 'unnest("offers")' in s, s
+        assert f"({typeof}(\"_fz_elem\") = 'object' AND " in s, s
+
+    def test_a_native_array_element_is_not_typed_as_jsonb(self) -> None:
+        s = self._render("tags", "$any", QueryField(ELEM_SCALAR_FIELD, "$eq", "x"))
+
+        assert "jsonb_typeof" not in s, s
+
+    @pytest.mark.parametrize("quantifier", ["$any", "$all", "$none"])
+    def test_a_nested_sub_array_is_named_once(self, quantifier: str) -> None:
+        class _Item(BaseModel):
+            tags: list[str]
+
+        class _Doc(BaseModel):
+            items: list[_Item]
+
+        r = PsycopgQueryRenderer(types={"items": _t("jsonb")}, model_type=_Doc)
+        out, _params = r.render(
+            QueryElem(
+                "items",
+                "$any",
+                QueryElem("tags", quantifier, QueryField(ELEM_SCALAR_FIELD, "$eq", "x")),
+            ),
+        )
+        s = out.as_string(None)
+
+        assert s.count("-> 'tags'") == 1, s
+        assert 'OFFSET 0) AS "_fz_src_1"' in s and 'AS "_fz_elem_1"' in s, s
+        assert "jsonb_array_length" not in s
+
+
+class TestUntypedObjectElementFields:
+    """An element field the read model does not type (``list[dict]``) compares by the
+    operand's JSON type; a string operand keeps comparing as text."""
+
+    class _Row(BaseModel):
+        offers: list[dict]  # type: ignore[type-arg]
+
+    def _render(
+        self,
+        inner: QueryExpr,
+        *,
+        quantifier: str = "$any",
+        hints: dict[str, Any] | None = None,
+    ) -> tuple[str, list[Any]]:
+        r = PsycopgQueryRenderer(
+            types={"offers": _t("jsonb")},
+            model_type=self._Row,
+            nested_field_hints=hints,
+        )
+        out, params = r.render(QueryElem("offers", quantifier, inner))
+
+        return out.as_string(None), params
+
+    def test_a_boolean_compares_as_jsonb(self) -> None:
+        s, params = self._render(QueryField("available", "$eq", True))
+
+        assert "(\"_fz_elem\" -> 'available') = to_jsonb(%s::boolean)" in s, s
+        assert params == [True]
+
+    def test_a_number_range_only_orders_numbers(self) -> None:
+        s, params = self._render(QueryField("price", "$lte", 20000))
+
+        assert (
+            "(jsonb_typeof((\"_fz_elem\" -> 'price')) = 'number' "
+            "AND (\"_fz_elem\" -> 'price') <= to_jsonb(%s::numeric))"
+        ) in s, s
+        assert params == [20000]
+
+    def test_a_float_equality_compares_as_jsonb(self) -> None:
+        s, params = self._render(QueryField("price", "$eq", 1.5))
+
+        assert "to_jsonb(%s::double precision)" in s, s
+        assert params == [1.5]
+
+    def test_a_dotted_field_reads_its_path(self) -> None:
+        s, _params = self._render(QueryField("stock.count", "$gt", 0))
+
+        assert "(\"_fz_elem\" #> '{stock,count}')" in s, s
+
+    def test_a_missing_field_is_not_in_a_list(self) -> None:
+        s, params = self._render(QueryField("price", "$nin", [100, 200]))
+
+        assert "(\"_fz_elem\" -> 'price') IS NULL OR NOT (" in s, s
+        assert params == [100, 200]
+
+    def test_a_missing_field_differs_from_a_value(self) -> None:
+        s, _params = self._render(QueryField("price", "$neq", 100))
+
+        assert "IS DISTINCT FROM to_jsonb(%s::numeric)" in s, s
+
+    def test_a_string_still_compares_as_text(self) -> None:
+        s, params = self._render(QueryField("size", "$eq", "M"))
+
+        assert "(\"_fz_elem\" ->> 'size') = %s" in s, s
+        assert params == ["M"]
+
+    def test_a_string_list_still_compares_as_text(self) -> None:
+        s, params = self._render(QueryField("size", "$in", ["M", "L"]))
+
+        assert "(\"_fz_elem\" ->> 'size') = ANY(%s)" in s, s
+        assert params == [["M", "L"]]
+
+    def test_a_mixed_list_compares_as_jsonb(self) -> None:
+        s, params = self._render(QueryField("size", "$in", ["M", 40]))
+
+        assert "IN (to_jsonb(%s::text), to_jsonb(%s::numeric))" in s, s
+        assert params == ["M", 40]
+
+    @pytest.mark.parametrize("members", [("M", "L"), ("M", 40)], ids=["strings", "mixed"])
+    def test_a_tuple_operand_reads_as_its_members(self, members: tuple[Any, ...]) -> None:
+        # A rewritten node (field encryption) can carry a tuple where the parser gives a list.
+        s, params = self._render(QueryField("size", "$in", members))
+
+        assert params in ([list(members)], list(members)), (s, params)
+
+    def test_an_integer_past_int64_binds_without_overflow(self) -> None:
+        s, params = self._render(QueryField("price", "$gte", 2**70))
+
+        assert "to_jsonb(%s::numeric)" in s and "bigint" not in s, s
+        assert params == [2**70]
+
+    @pytest.mark.parametrize("operand", [float("nan"), float("inf"), float("-inf")])
+    def test_a_non_finite_float_is_refused_naming_the_path(self, operand: float) -> None:
+        with pytest.raises(CoreException) as caught:
+            self._render(QueryField("price", "$eq", operand))
+
+        assert caught.value.code == "query_feature_unsupported"
+        assert "'offers.price'" in caught.value.summary
+        assert str(operand) not in caught.value.summary.lower()
+
+    def test_a_non_finite_list_member_is_refused(self) -> None:
+        with pytest.raises(CoreException, match=r"'offers\.price'"):
+            self._render(QueryField("price", "$in", [1, float("nan")]))
+
+    @pytest.mark.parametrize("op", ["$gt", "$gte", "$lt", "$lte"])
+    def test_a_range_with_no_bound_matches_nothing(self, op: str) -> None:
+        # The parser refuses it; a hand-built field still renders what the evaluator
+        # gives (None orders against nothing), not a range over every string.
+        r = PsycopgQueryRenderer()
+        out = r._render_jsonb_scalar_field(psql.Identifier("e"), op, None, decimal_elem=False)
+
+        assert out.as_string(None) == "FALSE"
+        assert r.binder.values() == []
+
+    @pytest.mark.parametrize("op", ["$in", "$nin"])
+    def test_a_none_member_matches_json_null(self, op: str) -> None:
+        # The evaluator matches a stored null against a None member, and a missing key not.
+        s, params = self._render(QueryField("size", op, ["M", None]))
+
+        assert "IN (to_jsonb(%s::text), 'null'::jsonb)" in s, s
+        assert params == ["M"]
+
+    @pytest.mark.parametrize(
+        "operand",
+        [Decimal("20000"), datetime(2026, 1, 1), date(2026, 1, 1), uuid4()],
+        ids=["decimal", "datetime", "date", "uuid"],
+    )
+    def test_an_operand_json_cannot_hold_is_refused_naming_the_path(self, operand: Any) -> None:
+        with pytest.raises(CoreException) as caught:
+            self._render(QueryField("price", "$lte", operand))
+
+        assert caught.value.code == "query_feature_unsupported"
+        assert "'offers.price'" in caught.value.summary
+        assert str(operand) not in caught.value.summary
+
+    def test_a_list_member_json_cannot_hold_is_refused(self) -> None:
+        with pytest.raises(CoreException, match=r"'offers\.price'"):
+            self._render(QueryField("price", "$in", [1, Decimal("2")]))
+
+    def test_a_hint_types_an_element_relative_path(self) -> None:
+        s, params = self._render(
+            QueryField("available", "$eq", "true"),
+            hints={"offers.available": bool},
+        )
+
+        assert "::boolean" in s, s
+        assert params == [True]
+
+    def test_a_typed_element_field_keeps_its_cast(self) -> None:
+        class _Offer(BaseModel):
+            available: bool
+
+        class _Typed(BaseModel):
+            offers: list[_Offer]
+
+        r = PsycopgQueryRenderer(types={"offers": _t("jsonb")}, model_type=_Typed)
+        out, _params = r.render(QueryElem("offers", "$any", QueryField("available", "$eq", True)))
+
+        assert "->> 'available'))::boolean = %s" in out.as_string(None)
 
 
 class TestPythonAnnToPostgresType:
