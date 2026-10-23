@@ -6679,7 +6679,9 @@ nested <code>DurableWorkflowInvokeSpec</code>):</p>
 </tr>
 </tbody>
 </table>
-<p>A start returns a <code>DurableWorkflowHandle</code> (<code>workflow_id</code>, optional <code>run_id</code>).</p>
+<p>A start returns a <code>DurableWorkflowHandle</code> (<code>workflow_id</code>, optional <code>run_id</code>). Temporal and
+the mock leave <code>run_id</code> unset, so the handle follows its workflow id's latest run; a handle
+with a <code>run_id</code> (one read from <code>describe</code>) is pinned to that run.</p>
 <h2 id="schedules">Schedules<a class="headerlink" href="#schedules" title="Permanent link">&para;</a></h2>
 <p><code>DurableWorkflowScheduleCommandDepKey</code> / <code>DurableWorkflowScheduleQueryDepKey</code> create, pause,
 and inspect cron / interval schedules that start a workflow — the durable counterpart to a

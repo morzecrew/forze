@@ -6997,7 +6997,9 @@ each segment walks one level deeper:</p>
 traverse a JSON/JSONB column. A few rules to know (Postgres):</p>
 <ul>
 <li>When the leaf type can't be inferred statically (a dynamic mapping, an <code>Any</code>),
-  declare it via the adapter's <code>nested_field_hints={"address.geo.lat": float}</code>.</li>
+  declare it via the adapter's <code>nested_field_hints={"address.geo.lat": float}</code>. A
+  field inside a quantified array is keyed by its full path too
+  (<code>{"offers.price": int}</code>); a hint on the array itself (<code>offers</code>) is not read.</li>
 <li>Set operators (<code>$superset</code> / <code>$subset</code> / <code>$overlaps</code> / <code>$disjoint</code> / <code>$empty</code>)
   are <strong>not</strong> supported on nested JSON paths — use a top-level array column for
   those.</li>
@@ -7259,6 +7261,22 @@ before the query is sent.</p>
 <p>Leading-<code>%</code> patterns may need a trigram index (Postgres <code>pg_trgm</code>) to stay fast on
 large tables. On MongoDB, <code>$null: true</code> matches both explicit null and missing
 fields; object-array quantifiers render as <code>$elemMatch</code>.</p>
+<p>On Postgres, a field of an object-array element takes its type from the read model
+(<code>list[OfferModel]</code>) or a <code>nested_field_hints</code> entry. A field neither types, as in
+<code>list[dict]</code>, compares by the operand, which differs from the in-memory mock in places:</p>
+<ul>
+<li>A string compares as text, so a stored <code>6</code> matches <code>"6"</code>; the mock does not match it.</li>
+<li>A boolean or a number compares as a JSON value. A range orders only values of the
+  operand's JSON type, so a stored <code>true</code> never satisfies <code>{"$gt": 0}</code>; the mock
+  compares it as <code>1</code>.</li>
+<li>A boolean never equals a number: <code>{"$eq": true}</code> or <code>{"$in": [true]}</code> misses a
+  stored <code>1</code>, which the mock matches, since Python's <code>True == 1</code>.</li>
+<li>A <code>None</code> member of <code>$in</code> / <code>$nin</code> matches a stored JSON null, not a missing field.</li>
+<li>A <code>Decimal</code>, date, time, UUID or non-finite float operand is refused with
+  <code>query_feature_unsupported</code>.</li>
+</ul>
+<p>A decimal stored as a JSON string is not a number to such a field: annotate the
+element type to compare it.</p>
 
 
 
