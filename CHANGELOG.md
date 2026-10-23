@@ -19,6 +19,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Postgres `jsonb[]` and `json[]` arrays treat a SQL NULL element as JSON null.** A `None` member of an element `$in` now matches it, and one of `$nin` now excludes it, as in the in-memory evaluator.
 
+- **MCP reads an API key and its tenant as the HTTP edge does.** A bearer ending in `:` is a prefix with an empty secret, not the bare key before it, and a verified key's tenant is bound when the tenancy resolver has no binding for the principal.
+
 ## [0.16.1] - 2026-10-23
 
 ### Added

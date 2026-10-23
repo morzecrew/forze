@@ -511,10 +511,12 @@ below that layer and cannot import it.
   - `api_key_credentials(raw)` is public, for FastAPI's later move. MCP's private
     `_split_api_key` and `_resolve_tenant` were deleted instead of wrapped: nothing called
     them once the verifier called `ingress`.
-  - `resolve_principal_tenant` refuses a `requested` tenant when no resolver can validate it,
-    as `precondition` with code `tenant_request_unverifiable`. It also refuses one the resolver
-    finds no tenant for, as `authentication` with code `tenant_mismatch`, so the call never
-    runs tenant-less instead. MCP never passes one.
+  - `resolve_principal_tenant` refuses a `requested` tenant that neither a resolver nor the
+    credential vouches for. With no resolver, that is `precondition` with code
+    `tenant_request_unverifiable`; when the resolver finds no tenant for the principal, it is
+    `authentication` with code `tenant_mismatch`. The call never runs tenant-less instead. A
+    `requested` tenant equal to the key's own tenant is bound, as over HTTP. MCP never passes
+    one.
 
 ### 5.8 Commands
 

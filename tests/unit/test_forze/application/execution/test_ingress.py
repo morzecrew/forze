@@ -409,6 +409,23 @@ class TestApiKeyCredentials:
     def test_a_bare_key_is_the_secret(self) -> None:
         assert api_key_credentials("secret") == ApiKeyCredentials(key="secret")
 
+    def test_a_trailing_separator_is_a_prefix_with_an_empty_secret(self) -> None:
+        # As over HTTP: ``pfx:`` is not the bare key ``pfx``.
+        assert api_key_credentials("pfx:") == ApiKeyCredentials(key="", prefix="pfx")
+
+    @pytest.mark.parametrize(
+        ("raw", "expected"),
+        [
+            (":secret", ApiKeyCredentials(key="secret", prefix="")),
+            ("a:b:c", ApiKeyCredentials(key="b:c", prefix="a")),
+            ("pfx : s", ApiKeyCredentials(key=" s", prefix="pfx ")),
+        ],
+    )
+    def test_the_first_separator_splits_as_over_http(
+        self, raw: str, expected: ApiKeyCredentials
+    ) -> None:
+        assert api_key_credentials(raw) == expected
+
 
 class TestAuthenticateApiKey:
     async def test_the_split_key_reaches_the_port(self) -> None:
@@ -427,6 +444,17 @@ class TestAuthenticateApiKey:
             await authenticate_api_key(ctx, _SPEC, "wrong")
 
         assert caught.value.kind is ExceptionKind.AUTHENTICATION
+
+    @pytest.mark.parametrize("raw", ["", "  "])
+    async def test_a_blank_key_never_reaches_the_port(self, raw: str) -> None:
+        port = _ApiKeyPort()
+        ctx = context_from_deps(Deps.plain({AuthnDepKey: lambda _c, _s: port}))
+
+        with pytest.raises(CoreException) as caught:
+            await authenticate_api_key(ctx, _SPEC, raw)
+
+        assert caught.value.kind is ExceptionKind.AUTHENTICATION
+        assert port.seen is None
 
 
 class TestResolvePrincipalTenant:
@@ -476,9 +504,33 @@ class TestResolvePrincipalTenant:
         assert caught.value.kind is ExceptionKind.AUTHENTICATION
         assert caught.value.code == "tenant_mismatch"
 
+    async def test_the_credential_tenant_is_kept_when_the_resolver_has_no_binding(
+        self,
+    ) -> None:
+        tid = uuid4()
+
+        tenant = await resolve_principal_tenant(
+            _ctx(resolver=_TenantResolver(bound=False)), _result(str(tid))
+        )
+
+        assert tenant == TenantIdentity(tenant_id=tid)
+
     async def test_a_requested_tenant_without_a_resolver_is_refused(self) -> None:
         with pytest.raises(CoreException) as caught:
             await resolve_principal_tenant(_ctx(), _result(), requested=uuid4())
 
         assert caught.value.kind is ExceptionKind.PRECONDITION
         assert caught.value.code == "tenant_request_unverifiable"
+
+    @pytest.mark.parametrize("resolver", [None, _TenantResolver(bound=False)])
+    async def test_a_requested_tenant_matching_the_credential_is_bound(
+        self, resolver: _TenantResolver | None
+    ) -> None:
+        # As over HTTP: the verified credential vouches for its own tenant.
+        tid = uuid4()
+
+        tenant = await resolve_principal_tenant(
+            _ctx(resolver=resolver), _result(str(tid)), requested=tid
+        )
+
+        assert tenant == TenantIdentity(tenant_id=tid)
