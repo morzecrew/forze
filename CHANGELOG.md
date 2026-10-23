@@ -9,6 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- ...
+
+### Changed
+
+- ...
+
+### Fixed
+
+- ...
+
+## [0.16.1] - 2026-10-23
+
+### Added
+
 - **A Postgres vector search can rank by stored vectors alone**: `VectorEngine.embeddings_name` is now optional. Without it no embeddings provider is resolved, and the search ranks by a `query_vector` and refuses a text query with code `search_query_vector_required`.
 
 - **A Mongo vector search can rank by stored vectors alone**: `MongoVectorEngine.embeddings_name` is now optional. Without it no embeddings provider is resolved, and the search ranks by a `query_vector` and refuses a text query with code `search_query_vector_required`.
@@ -2468,7 +2482,8 @@ Execution and mapping refactor, middleware-first usecases, split search/cache/do
 
 - Packaging metadata for PyOCI classifiers.
 
-[unreleased]: https://github.com/morzecrew/forze/compare/v0.16.0...HEAD
+[unreleased]: https://github.com/morzecrew/forze/compare/v0.16.1...HEAD
+[0.16.1]: https://github.com/morzecrew/forze/compare/v0.16.0...v0.16.1
 [0.16.0]: https://github.com/morzecrew/forze/compare/v0.15.1...v0.16.0
 [0.15.1]: https://github.com/morzecrew/forze/compare/v0.15.0...v0.15.1
 [0.15.0]: https://github.com/morzecrew/forze/compare/v0.14.0...v0.15.0
