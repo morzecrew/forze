@@ -9973,7 +9973,7 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <h2 id="unreleased"><a href="https://github.com/morzecrew/forze/compare/v0.16.0...HEAD">Unreleased</a><a class="headerlink" href="#unreleased" title="Permanent link">&para;</a></h2>
 <h3 id="added">Added<a class="headerlink" href="#added" title="Permanent link">&para;</a></h3>
 <ul>
-<li>...</li>
+<li><strong>A Postgres vector search can rank by stored vectors alone</strong>: <code>VectorEngine.embeddings_name</code> is now optional. Without it no embeddings provider is resolved, and the search ranks by a <code>query_vector</code> and refuses a text query with code <code>search_query_vector_required</code>.</li>
 </ul>
 <h3 id="changed">Changed<a class="headerlink" href="#changed" title="Permanent link">&para;</a></h3>
 <ul>
