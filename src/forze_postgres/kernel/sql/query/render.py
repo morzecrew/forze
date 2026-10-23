@@ -121,32 +121,17 @@ _COMPARE_COMPAT_BASE_GROUPS: tuple[frozenset[str], ...] = (
 )
 
 
-def _has_decimal_operand(op: str, value: Any) -> bool:
-    """Whether a scalar-element predicate carries a ``Decimal`` (directly or in its list)."""
+def _compares_numerically(value: Any, *, decimal_elem: bool) -> bool:
+    """Whether one scalar operand compares by numeric value with a ``jsonb`` element.
 
-    if op in ("$in", "$nin") and isinstance(value, (list, tuple, set)):
-        return any(isinstance(v, Decimal) for v in value)  # pyright: ignore[reportUnknownVariableType]
+    A ``Decimal`` always does; an int or float does on an element annotated to hold
+    ``Decimal`` (*decimal_elem*), whose stored values are JSON strings.
+    """
 
-    return isinstance(value, Decimal)
+    if isinstance(value, Decimal):
+        return True
 
-
-# ....................... #
-
-
-def _is_numeric_operand_value(v: Any) -> bool:
-    return isinstance(v, (int, float, Decimal)) and not isinstance(v, bool)
-
-
-def _has_numeric_operand(op: str, value: Any) -> bool:
-    """Whether a scalar-element predicate carries only numeric operands (int/float/Decimal)."""
-
-    if op in ("$in", "$nin") and isinstance(value, (list, tuple, set)):
-        return bool(value) and all(  # pyright: ignore[reportUnknownArgumentType]
-            _is_numeric_operand_value(v)
-            for v in value  # pyright: ignore[reportUnknownVariableType]
-        )
-
-    return _is_numeric_operand_value(value)
+    return decimal_elem and isinstance(value, (int, float)) and not isinstance(value, bool)
 
 
 # ....................... #
@@ -173,6 +158,23 @@ _JSONB_COMPARE_OPS: frozenset[str] = frozenset(
     {"$eq", "$neq", "$gt", "$gte", "$lt", "$lte", "$in", "$nin"},
 )
 """Operators an element field with no resolved type compares in ``jsonb`` space."""
+
+
+_NUMERIC_TEXT_PATTERN = (
+    r"^[ \t\n\r\f\v]*[-+]?([0-9]+(\.[0-9]*)?|\.[0-9]+)"
+    r"([eE](\+?0*[0-9]{1,5}|-0*([0-9]{1,4}|1[0-4][0-9]{3})))?[ \t\n\r\f\v]*$"
+)
+"""Decimal text ``::numeric`` always accepts, read with :data:`_NUMERIC_TEXT_MAX_LENGTH`.
+
+ASCII classes, not ``\\d`` / ``\\s``: under an ICU or builtin locale those match any Unicode
+digit or space, which ``::numeric`` refuses.
+
+``numeric`` holds 131072 digits before the point and 16383 after. With at most 1000
+characters of digits, an exponent up to ``e99999`` or down to ``e-14999`` stays inside
+both, so nothing that matches can overflow. The ``NaN`` / ``Infinity`` / hex / underscore
+forms (PG 16+ accepts the last two) match no evaluator decimal and stay out."""
+
+_NUMERIC_TEXT_MAX_LENGTH = 1000
 
 
 def _jsonb_operand_type(value: Any) -> tuple[str, str]:
@@ -1281,6 +1283,7 @@ class PsycopgQueryRenderer:
                 t,
                 depth=depth,
                 decimal_elem=self._elem_may_hold_decimal(model_path),
+                path=".".join(model_path),
             )
 
         return self._render_elem_object_inner(
@@ -1316,6 +1319,7 @@ class PsycopgQueryRenderer:
         *,
         depth: int,
         decimal_elem: bool,
+        path: str,
     ) -> sql.Composable:
         match inner:
             case QueryField(name, _, _) if name == ELEM_SCALAR_FIELD:
@@ -1326,7 +1330,9 @@ class PsycopgQueryRenderer:
 
             case QueryOr(items):
                 parts = [
-                    self._render_elem_scalar_inner(i, t, depth=depth, decimal_elem=decimal_elem)
+                    self._render_elem_scalar_inner(
+                        i, t, depth=depth, decimal_elem=decimal_elem, path=path
+                    )
                     for i in items
                 ]
 
@@ -1337,30 +1343,63 @@ class PsycopgQueryRenderer:
             case _:
                 raise exc.internal(f"Invalid scalar element inner: {inner!r}")
 
-        elem_t = PostgresType(base=t.base, is_array=False, not_null=True) if t and t.is_array else t
-
         elem = sql.Identifier(self._elem_alias(depth))
-        # Anything not a native Postgres array iterates via ``jsonb_array_elements``, so
-        # the element is a jsonb value; stored decimals are JSON *strings*, so a numeric
-        # operand must extract-and-cast to compare numerically. That holds for a Decimal
-        # operand, and equally for an int/float operand when the element annotation can
-        # hold Decimal — jsonb type ordering would rank every string above every number.
-        jsonb_elem = not (t is not None and t.is_array)
-        parts = [
-            self._render_jsonb_scalar_numeric(elem, f.op, f.value)
-            if jsonb_elem
-            and (
-                _has_decimal_operand(f.op, f.value)
-                or (decimal_elem and _has_numeric_operand(f.op, f.value))
+
+        if t is None or t.base in ("json", "jsonb"):
+            # A JSON array, or a native jsonb[] / json[], yields jsonb elements of any JSON
+            # type; compare each in jsonb space by the operand's type, as a nested scalar
+            # sub-array does (Decimal operands and elements take the numeric path there).
+            jsonb = (
+                sql.SQL("({})::jsonb").format(elem)
+                if t is not None and t.is_array and t.base == "json"
+                else elem
             )
-            else self._render_field(elem, f.op, f.value, t=elem_t)  # type: ignore[arg-type]
-            for f in fields
-        ]
+            parts = [
+                self._render_jsonb_scalar_field(
+                    jsonb, f.op, f.value, decimal_elem=decimal_elem, path=path
+                )  # type: ignore[arg-type]
+                for f in fields
+            ]
+
+        else:
+            elem_t = PostgresType(base=t.base, is_array=False, not_null=True)
+            parts = [self._render_native_elem_field(elem, f.op, f.value, t=elem_t) for f in fields]  # type: ignore[arg-type]
 
         if len(parts) == 1:
             return parts[0]
 
         return sql.SQL("(") + sql.SQL(" AND ").join(parts) + sql.SQL(")")
+
+    # ....................... #
+
+    def _render_native_elem_field(
+        self,
+        elem: sql.Composable,
+        op: str,
+        value: Any,
+        *,
+        t: PostgresType,
+    ) -> sql.Composable:
+        """Compare a native array element; a ``None`` ``$in`` / ``$nin`` member is its NULL.
+
+        ``= ANY`` never matches NULL, where the in-memory evaluator matches a NULL element
+        to a ``None`` member, so the member is taken out and tested with ``IS NULL``.
+        """
+
+        if op in ("$in", "$nin") and isinstance(value, (list, tuple, set)) and None in value:
+            known = self._render_memb(
+                elem,
+                "$in",
+                [v for v in value if v is not None],  # pyright: ignore[reportUnknownVariableType]
+                t=t,
+            )
+
+            if op == "$in":
+                return sql.SQL("({} IS NULL OR {})").format(elem, known)
+
+            return sql.SQL("({} IS NOT NULL AND NOT ({}))").format(elem, known)
+
+        return self._render_field(elem, op, value, t=t)  # type: ignore[arg-type]
 
     # ....................... #
 
@@ -1446,7 +1485,9 @@ class PsycopgQueryRenderer:
                     json_expr = sql.SQL("({})::jsonb").format(json_expr)
 
                 parts.append(
-                    self._render_jsonb_scalar_field(json_expr, f.op, f.value, decimal_elem=False)
+                    self._render_jsonb_scalar_field(
+                        json_expr, f.op, f.value, decimal_elem=False, path=path
+                    )
                 )
                 continue
 
@@ -1535,6 +1576,7 @@ class PsycopgQueryRenderer:
                 node.inner,
                 depth=next_depth,
                 decimal_elem=self._elem_may_hold_decimal(sub_model_path),
+                path=".".join(sub_model_path),
             )
 
         else:
@@ -1550,6 +1592,7 @@ class PsycopgQueryRenderer:
         *,
         depth: int,
         decimal_elem: bool,
+        path: str,
     ) -> sql.Composable:
         """Element predicate for a *nested* scalar sub-array (``jsonb`` elements).
 
@@ -1569,7 +1612,9 @@ class PsycopgQueryRenderer:
 
             case QueryOr(items):
                 parts = [
-                    self._render_jsonb_scalar_inner(i, depth=depth, decimal_elem=decimal_elem)
+                    self._render_jsonb_scalar_inner(
+                        i, depth=depth, decimal_elem=decimal_elem, path=path
+                    )
                     for i in items
                 ]
 
@@ -1582,7 +1627,9 @@ class PsycopgQueryRenderer:
 
         alias = sql.Identifier(self._elem_alias(depth))
         parts = [
-            self._render_jsonb_scalar_field(alias, f.op, f.value, decimal_elem=decimal_elem)  # type: ignore[arg-type]
+            self._render_jsonb_scalar_field(  # type: ignore[arg-type]
+                alias, f.op, f.value, decimal_elem=decimal_elem, path=path
+            )
             for f in fields
         ]
 
@@ -1600,6 +1647,7 @@ class PsycopgQueryRenderer:
         value: Any,
         *,
         decimal_elem: bool,
+        path: str,
     ) -> sql.Composable:
         """Compare a single ``jsonb`` scalar — a sub-array element, or an untyped object
         element's field — to *value* without a typed cast.
@@ -1612,7 +1660,9 @@ class PsycopgQueryRenderer:
         ``jsonb`` space would rank them above every number.
         """
 
-        if _has_decimal_operand(op, value) or (decimal_elem and _has_numeric_operand(op, value)):
+        self._refuse_without_json_form(value, path)
+
+        if op not in ("$in", "$nin") and _compares_numerically(value, decimal_elem=decimal_elem):
             return self._render_jsonb_scalar_numeric(elem, op, value)
 
         if op in ("$eq", "$neq"):
@@ -1643,14 +1693,45 @@ class PsycopgQueryRenderer:
             if not values:
                 return sql.SQL("FALSE") if op == "$in" else sql.SQL("TRUE")
 
-            members = sql.SQL(", ").join(self._jsonb_bound(v) for v in values)  # type: ignore[arg-type]
-            in_expr = sql.SQL("{} IN ({})").format(elem, members)
+            # Each member compares as it would under $eq: a numeric one by value, any other
+            # (a string, a boolean, None as JSON null) as itself in jsonb space.
+            numeric = [v for v in values if _compares_numerically(v, decimal_elem=decimal_elem)]  # pyright: ignore[reportUnknownVariableType]
+            plain = [v for v in values if not _compares_numerically(v, decimal_elem=decimal_elem)]  # pyright: ignore[reportUnknownVariableType]
+            parts: list[sql.Composable] = []
+
+            if numeric:
+                parts.append(
+                    sql.SQL("{} IN ({})").format(
+                        self._jsonb_numeric_value(elem),
+                        sql.SQL(", ").join(
+                            self.binder.add(self.coercer.caster.as_decimal(v))
+                            for v in numeric  # pyright: ignore[reportUnknownVariableType]
+                        ),
+                    )
+                )
+
+            if plain:
+                parts.append(
+                    sql.SQL("{} IN ({})").format(
+                        elem,
+                        sql.SQL(", ").join(self._jsonb_bound(v) for v in plain),  # pyright: ignore[reportUnknownVariableType]
+                    )
+                )
+
+            in_expr = (
+                parts[0] if len(parts) == 1 else sql.SQL("({})").format(sql.SQL(" OR ").join(parts))
+            )
 
             if op == "$in":
                 return in_expr
 
-            # A missing object field is SQL NULL here, and satisfies $nin as it does $neq.
-            return sql.SQL("({} IS NULL OR NOT ({}))").format(elem, in_expr)
+            if not numeric:
+                # A missing object field is SQL NULL here, and satisfies $nin as it does $neq.
+                return sql.SQL("({} IS NULL OR NOT ({}))").format(elem, in_expr)
+
+            # An element with no numeric value (a non-numeric string, an object) is in no
+            # numeric list, so its NULL there holds $nin.
+            return sql.SQL("({}) IS NOT TRUE").format(in_expr)
 
         if op in ("$like", "$ilike", "$regex"):
             text_map = {"$like": "LIKE", "$ilike": "ILIKE", "$regex": "~"}
@@ -1680,7 +1761,7 @@ class PsycopgQueryRenderer:
         would treat ``"10.5"`` and ``10.5`` as different JSON types and never match.
         """
 
-        num_elem = sql.SQL("(({} #>> '{{}}')::numeric)").format(elem)
+        num_elem = self._jsonb_numeric_value(elem)
         caster = self.coercer.caster
 
         if op in ("$eq", "$neq"):
@@ -1701,21 +1782,28 @@ class PsycopgQueryRenderer:
                 self.binder.add(caster.as_decimal(value)),
             )
 
-        if op in ("$in", "$nin"):
-            values = list(value) if isinstance(value, (list, tuple, set)) else [value]  # type: ignore[arg-type]
-
-            if not values:
-                return sql.SQL("FALSE") if op == "$in" else sql.SQL("TRUE")
-
-            members = sql.SQL(", ").join(
-                self.binder.add(caster.as_decimal(v))
-                for v in values  # type: ignore[arg-type]
-            )
-            in_expr = sql.SQL("{} IN ({})").format(num_elem, members)
-
-            return in_expr if op == "$in" else sql.SQL("NOT ({})").format(in_expr)
-
         raise exc.internal(f"Unsupported nested scalar element operator: {op!r}")
+
+    # ....................... #
+
+    @staticmethod
+    def _jsonb_numeric_value(elem: sql.Composable) -> sql.Composable:
+        """*elem*'s numeric value: a JSON number, or a string ``::numeric`` accepts; else NULL.
+
+        Stored decimals are JSON strings, so both forms are read. Only text that matches
+        :data:`_NUMERIC_TEXT_PATTERN` is cast, so a non-numeric string or an object is
+        NULL, never a cast error.
+        """
+
+        return sql.SQL(
+            "(CASE WHEN jsonb_typeof({e}) = 'number' THEN ({e})::numeric "
+            "WHEN jsonb_typeof({e}) = 'string' AND length({e} #>> '{{}}') <= {max_length} "
+            "AND ({e} #>> '{{}}') ~ {pattern} THEN ({e} #>> '{{}}')::numeric END)"
+        ).format(
+            e=elem,
+            max_length=sql.Literal(_NUMERIC_TEXT_MAX_LENGTH),
+            pattern=sql.Literal(_NUMERIC_TEXT_PATTERN),
+        )
 
     # ....................... #
 
@@ -1734,10 +1822,39 @@ class PsycopgQueryRenderer:
             # A ``$in`` / ``$nin`` member: the evaluator matches it against a stored null.
             return sql.SQL("'null'::jsonb")
 
-        return sql.SQL("to_jsonb({}::{})").format(
-            self.binder.add(value),
-            sql.SQL(_jsonb_operand_type(value)[0]),
-        )
+        cast = _jsonb_operand_type(value)[0]
+        # A date or UUID binds its own text: ``$1::text`` of a date follows DateStyle.
+        bound = str(value) if cast == "text" and not isinstance(value, str) else value
+
+        return sql.SQL("to_jsonb({}::{})").format(self.binder.add(bound), sql.SQL(cast))
+
+    # ....................... #
+
+    @staticmethod
+    def _refuse_without_json_form(value: Any, path: str) -> None:
+        """Refuse an operand with no single JSON form to compare a jsonb value with.
+
+        A non-finite float has none, and a datetime's text depends on who wrote it
+        (``Z`` or ``+00:00``, with or without microseconds), so neither can match the
+        in-memory evaluator, which compares the typed values.
+        """
+
+        members = list(value) if isinstance(value, (list, tuple, set)) else [value]  # type: ignore[arg-type]  # pyright: ignore[reportUnknownVariableType, reportUnknownArgumentType]
+
+        if any(isinstance(v, float) and not math.isfinite(v) for v in members):  # pyright: ignore[reportUnknownVariableType]
+            raise exc.precondition(
+                f"Filter on {path!r}: a non-finite float has no JSON form to compare with a "
+                "JSON element on the 'postgres' backend.",
+                code=UNSUPPORTED_QUERY_FEATURE_CODE,
+            )
+
+        if any(isinstance(v, datetime) for v in members):  # pyright: ignore[reportUnknownVariableType]
+            raise exc.precondition(
+                f"Filter on {path!r}: a datetime has no single JSON text to compare with a "
+                "JSON array element on the 'postgres' backend; store it in a timestamptz "
+                "column or array.",
+                code=UNSUPPORTED_QUERY_FEATURE_CODE,
+            )
 
     # ....................... #
 
@@ -1766,13 +1883,6 @@ class PsycopgQueryRenderer:
 
         if all(isinstance(v, str) for v in members):  # pyright: ignore[reportUnknownVariableType]
             return False
-
-        if any(isinstance(v, float) and not math.isfinite(v) for v in members):  # pyright: ignore[reportUnknownVariableType]
-            raise exc.precondition(
-                f"Filter on {path!r}: a non-finite float has no JSON form to compare with an "
-                "untyped element field on the 'postgres' backend.",
-                code=UNSUPPORTED_QUERY_FEATURE_CODE,
-            )
 
         odd = [v for v in members if v is not None and not isinstance(v, (str, int, float))]  # pyright: ignore[reportUnknownVariableType]
 

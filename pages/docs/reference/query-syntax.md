@@ -355,3 +355,15 @@ On Postgres, a field of an object-array element takes its type from the read mod
 
 A decimal stored as a JSON string is not a number to such a field: annotate the
 element type to compare it.
+
+A scalar array stored as JSON (a `jsonb` column holding `["a", "b"]`, typed `list[str]`,
+`list[int]` or `list[Any]`) compares each element as a JSON value by the operand's type,
+so a stored `"6"` misses `6`, as in the mock; text operators read the element's text. A
+boolean never equals a number here either: `true` misses a stored `1`, which the mock
+matches. A `Decimal` operand, or a `list[Decimal]` element, compares numbers and numeric
+strings numerically. Each `$in` / `$nin` member compares as it would under `$eq`, so a
+string beside a `Decimal` stays a string. A date or time operand compares as its ISO text, which the mock
+matches only on an element typed `list[date]` or `list[time]`, not on strings in a
+`list[Any]`. A datetime or non-finite float operand is refused with
+`query_feature_unsupported`; keep datetimes in a `timestamptz[]` column. On a native
+array with a `None` member, `$in` matches a NULL element and `$nin` excludes it.
