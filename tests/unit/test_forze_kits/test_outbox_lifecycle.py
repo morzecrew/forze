@@ -20,8 +20,9 @@ from forze.application.contracts.outbox import (
 )
 from forze.application.contracts.pubsub import PubSubSpec
 from forze.application.contracts.queue import QueueSpec
+from forze.application.contracts.stream import StreamSpec
 from forze.application.execution import DepsRegistry, ExecutionRuntime
-from forze.base.exceptions import CoreException, exc
+from forze.base.exceptions import CoreException, ExceptionKind, exc
 from forze.base.serialization import PydanticModelCodec
 from forze_kits.integrations.outbox import (
     OutboxRelay,
@@ -311,6 +312,59 @@ async def test_a_wiring_error_stops_the_relay_loop(shard: list[UUID] | None) -> 
 
     assert await _run_relay(startup, _relay, settle=0.5)
     assert len(calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_a_relay_wired_to_no_destination_stops_its_loop() -> None:
+    # Built past the factory's wiring check, the relay meets the same refusal on its first
+    # pass, and it is a wiring error: the loop stops instead of retrying every batch.
+    codec = PydanticModelCodec(_Payload)
+    startup = _startup(
+        transport="pubsub",
+        queue_spec=None,
+        pubsub_spec=PubSubSpec(name="topic", codec=codec),
+        interval=timedelta(milliseconds=10),
+        max_batches_per_tick=3,
+    )
+
+    async def _never(*_args: Any, **_kwargs: Any) -> OutboxRelayResult:
+        raise AssertionError("a pubsub relay never publishes to a queue")
+
+    assert await _run_relay(startup, _never, settle=0.5)
+
+
+_TOPIC = "topic"
+
+
+@pytest.mark.parametrize(
+    ("transport", "destination", "fragment"),
+    [
+        ("pubsub", None, "destination is required"),
+        ("pubsub", OutboxDestination.pubsub(route="elsewhere", channel="t"), "must match"),
+        ("queue", OutboxDestination.stream(route="jobs", channel="t"), "kind must be 'queue'"),
+        ("queue", OutboxDestination.queue(route="elsewhere", channel="t"), "must match"),
+        ("stream", OutboxDestination.pubsub(route=_TOPIC, channel="t"), "pubsub_spec is required"),
+    ],
+)
+def test_a_misconfigured_destination_is_refused_at_wiring(
+    transport: str, destination: OutboxDestination | None, fragment: str
+) -> None:
+    # Refused when the step is built: a loop that only stopped on it later would leave
+    # startup green and the outbox silently undelivered.
+    codec = PydanticModelCodec(_Payload)
+
+    with pytest.raises(CoreException, match=fragment) as caught:
+        outbox_relay_background_lifecycle_step(
+            outbox_spec=OutboxSpec(name="events", codec=codec, destination=destination),
+            transport=transport,  # type: ignore[arg-type]
+            queue_spec=QueueSpec(name="jobs", codec=codec),
+            stream_spec=StreamSpec(name="feed", codec=codec),
+            pubsub_spec=PubSubSpec(name=_TOPIC, codec=codec) if transport == "pubsub" else None,
+            interval=timedelta(hours=1),
+        )
+
+    assert caught.value.kind is ExceptionKind.CONFIGURATION
+    assert caught.value.code == "outbox_relay_misconfigured"
 
 
 @pytest.mark.asyncio
@@ -623,7 +677,11 @@ def test_drain_is_rejected_for_a_pubsub_destination() -> None:
 
     with pytest.raises(CoreException, match="pubsub"):
         outbox_relay_background_lifecycle_step(
-            outbox_spec=OutboxSpec(name="events", codec=codec),
+            outbox_spec=OutboxSpec(
+                name="events",
+                codec=codec,
+                destination=OutboxDestination.pubsub(route="topic", channel="topic"),
+            ),
             transport="pubsub",
             pubsub_spec=PubSubSpec(name="topic", codec=codec),
             drain_on_shutdown=True,

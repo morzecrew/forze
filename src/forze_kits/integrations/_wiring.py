@@ -8,10 +8,14 @@ from forze.base.exceptions import CoreException, ExceptionKind
 
 # ----------------------- #
 
+OUTBOX_RELAY_MISCONFIGURED_CODE: Final[str] = "outbox_relay_misconfigured"
+"""An outbox relay wired to no destination, a mismatched one, or no transport spec for it."""
+
 WIRING_ERROR_CODES: Final[frozenset[str]] = frozenset(
     {
         TENANT_GLOBAL_REQUIRED_CODE,
         "outbox_relay_tenant_unbound",
+        OUTBOX_RELAY_MISCONFIGURED_CODE,
         PAYLOAD_CIPHER_MISSING_CODE,
     }
 )

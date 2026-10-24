@@ -1,7 +1,7 @@
 """Relay staged outbox rows to queue, stream, or pubsub backends."""
 
 from datetime import timedelta
-from typing import TYPE_CHECKING, Any, final
+from typing import TYPE_CHECKING, Any, cast, final
 
 import attrs
 
@@ -27,6 +27,7 @@ from forze.application.contracts.queue import QueueCommandDepKey, QueueSpec
 from forze.application.contracts.stream import StreamCommandDepKey, StreamSpec
 from forze.base.exceptions import exc
 from forze_kits.integrations._logger import logger
+from forze_kits.integrations._wiring import OUTBOX_RELAY_MISCONFIGURED_CODE as _MISCONFIGURED
 
 from ._relay_core import relay_outbox_claims, validate_retry_options
 
@@ -38,6 +39,7 @@ if TYPE_CHECKING:
 
 _PUBSUB_DOWNGRADE_WARNED: set[str] = set()
 """Outbox routes already warned about the pubsub delivery downgrade (once per process)."""
+
 
 # ....................... #
 
@@ -76,11 +78,14 @@ def _require_destination(
     expected_kind: OutboxDestinationKind,
 ) -> "OutboxDestination":
     if destination is None:
-        raise exc.precondition(f"outbox_spec.destination is required for {expected_kind} relay")
+        raise exc.configuration(
+            f"outbox_spec.destination is required for {expected_kind} relay", code=_MISCONFIGURED
+        )
 
     if destination.kind != expected_kind:
-        raise exc.precondition(
-            f"outbox_spec.destination.kind must be {expected_kind!r}, got {destination.kind!r}"
+        raise exc.configuration(
+            f"outbox_spec.destination.kind must be {expected_kind!r}, got {destination.kind!r}",
+            code=_MISCONFIGURED,
         )
 
     return destination
@@ -91,9 +96,10 @@ def _require_destination(
 
 def _assert_route_matches(destination: "OutboxDestination", spec_name: str) -> None:
     if str(destination.route) != str(spec_name):
-        raise exc.precondition(
+        raise exc.configuration(
             f"spec.name must match OutboxSpec.destination.route for relay "
-            f"(expected {destination.route!r}, got {spec_name!r})"
+            f"(expected {destination.route!r}, got {spec_name!r})",
+            code=_MISCONFIGURED,
         )
 
 
@@ -122,6 +128,88 @@ def _resolve_channel(
     _assert_route_matches(dest, spec_name)
 
     return dest.channel
+
+
+# ....................... #
+
+
+def _run_target(
+    outbox_spec: OutboxSpec[Any],
+    *,
+    queue_spec: QueueSpec[Any] | None,
+    stream_spec: StreamSpec[Any] | None,
+    pubsub_spec: PubSubSpec[Any] | None,
+) -> tuple[OutboxDestinationKind, BaseSpec]:
+    """The destination kind :meth:`OutboxRelay.run` dispatches to, and its transport spec."""
+
+    destination = outbox_spec.destination
+
+    if destination is None:
+        raise exc.configuration(
+            "outbox_spec.destination is required for run()", code=_MISCONFIGURED
+        )
+
+    specs: dict[str, BaseSpec | None] = {
+        "queue": queue_spec,
+        "stream": stream_spec,
+        "pubsub": pubsub_spec,
+    }
+
+    if destination.kind not in specs:
+        raise exc.configuration(
+            f"unsupported outbox destination kind: {destination.kind!r}", code=_MISCONFIGURED
+        )
+
+    spec = specs[destination.kind]
+
+    if spec is None:
+        raise exc.configuration(
+            f"{destination.kind}_spec is required when destination.kind is {destination.kind}",
+            code=_MISCONFIGURED,
+        )
+
+    return destination.kind, spec
+
+
+# ....................... #
+
+
+def validate_relay_wiring(
+    outbox_spec: OutboxSpec[Any],
+    *,
+    transport: OutboxDestinationKind,
+    queue_spec: QueueSpec[Any] | None,
+    stream_spec: StreamSpec[Any] | None,
+    pubsub_spec: PubSubSpec[Any] | None,
+) -> None:
+    """Check, before any pass runs, the destination a relay over *transport* would resolve.
+
+    A ``queue`` transport relays with :meth:`OutboxRelay.to_queue`, whose destination may be
+    unset; any other dispatches through :meth:`OutboxRelay.run` on the destination's kind.
+
+    :raises CoreException: ``configuration`` with code ``outbox_relay_misconfigured``, the
+        same refusal the first pass would raise.
+    """
+
+    if transport == "queue":
+        if queue_spec is None:
+            raise exc.configuration(
+                "queue_spec is required when transport is queue", code=_MISCONFIGURED
+            )
+
+        kind: OutboxDestinationKind = "queue"
+        spec: BaseSpec = queue_spec
+        allow_unset = True
+
+    else:
+        kind, spec = _run_target(
+            outbox_spec, queue_spec=queue_spec, stream_spec=stream_spec, pubsub_spec=pubsub_spec
+        )
+        allow_unset = False
+
+    _resolve_channel(
+        outbox_spec, spec_name=str(spec.name), expected_kind=kind, allow_unset=allow_unset
+    )
 
 
 # ....................... #
@@ -308,7 +396,7 @@ class OutboxRelay:
         destination = self.outbox_spec.destination
 
         if destination is not None and destination.kind == "pubsub":
-            # Missing/mismatched destinations fall through to the precondition error
+            # Missing/mismatched destinations fall through to the configuration error
             # inside ``_relay`` without a spurious warning.
             _warn_pubsub_downgrade_once(str(self.outbox_spec.name), destination.channel)
 
@@ -338,33 +426,22 @@ class OutboxRelay:
         destination kind; the matching transport spec must be supplied.
         """
 
-        destination = self.outbox_spec.destination
+        kind, spec = _run_target(
+            self.outbox_spec,
+            queue_spec=queue_spec,
+            stream_spec=stream_spec,
+            pubsub_spec=pubsub_spec,
+        )
 
-        if destination is None:
-            raise exc.precondition("outbox_spec.destination is required for run()")
-
-        match destination.kind:
+        match kind:
             case "queue":
-                if queue_spec is None:
-                    raise exc.precondition("queue_spec is required when destination.kind is queue")
-                return await self.to_queue(ctx, queue_spec, limit=limit)
+                return await self.to_queue(ctx, cast(QueueSpec[Any], spec), limit=limit)
 
             case "stream":
-                if stream_spec is None:
-                    raise exc.precondition(
-                        "stream_spec is required when destination.kind is stream"
-                    )
-                return await self.to_stream(ctx, stream_spec, limit=limit)
+                return await self.to_stream(ctx, cast(StreamSpec[Any], spec), limit=limit)
 
             case "pubsub":
-                if pubsub_spec is None:
-                    raise exc.precondition(
-                        "pubsub_spec is required when destination.kind is pubsub"
-                    )
-                return await self.to_pubsub(ctx, pubsub_spec, limit=limit)
-
-            case _:  # pyright: ignore[reportUnnecessaryComparison]
-                raise exc.precondition(f"unsupported outbox destination kind: {destination.kind!r}")
+                return await self.to_pubsub(ctx, cast(PubSubSpec[Any], spec), limit=limit)
 
     # ....................... #
 
