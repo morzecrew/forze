@@ -17,7 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- ...
+- **Postgres `jsonb[]` and `json[]` arrays treat a SQL NULL element as JSON null.** A `None` member of an element `$in` now matches it, and one of `$nin` now excludes it, as in the in-memory evaluator.
 
 ## [0.16.1] - 2026-10-23
 

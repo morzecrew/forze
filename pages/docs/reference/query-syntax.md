@@ -366,4 +366,5 @@ string beside a `Decimal` stays a string. A date or time operand compares as its
 matches only on an element typed `list[date]` or `list[time]`, not on strings in a
 `list[Any]`. A datetime or non-finite float operand is refused with
 `query_feature_unsupported`; keep datetimes in a `timestamptz[]` column. On a native
-array with a `None` member, `$in` matches a NULL element and `$nin` excludes it.
+array with a `None` member, `$in` matches a NULL element and `$nin` excludes it; in a
+`jsonb[]` or `json[]` column that holds for SQL NULL and JSON null alike.
