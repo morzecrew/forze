@@ -11,6 +11,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+import click
 import pytest
 import typer
 from typer.testing import CliRunner
@@ -239,10 +240,12 @@ class TestEmbedding:
         assert json.loads(result.stdout) == {"text": "hi"}
 
     def test_the_bound_group_has_no_app_option(self) -> None:
-        help_text = runner.invoke(self._cli(), ["ops", "list", "--help"]).stdout
+        group = typer.main.get_command(self._cli()).commands["ops"]  # type: ignore[attr-defined]
         refused = runner.invoke(self._cli(), ["ops", "list", "--app", f"{_MODULE}:API"])
 
-        assert "--app" not in help_text
+        for command in group.commands.values():
+            assert all("--app" not in param.opts for param in command.params)
+
         assert refused.exit_code == 2
 
     def test_the_docstring_warns_about_locals(self) -> None:
@@ -253,11 +256,11 @@ def test_the_ops_help_renders_without_a_declaration() -> None:
     result = runner.invoke(app, ["ops", "--help"], env={"FORZE_OPS_APP": None})
 
     assert result.exit_code == 0
-    assert "call" in result.stdout
+    assert "call" in click.unstyle(result.stdout)
 
 
 def test_the_root_help_names_ops() -> None:
     result = runner.invoke(app, ["--help"])
 
-    assert "ops" in result.stdout
-    assert "OpsApp" in result.stdout
+    assert "ops" in click.unstyle(result.stdout)
+    assert "OpsApp" in click.unstyle(result.stdout)

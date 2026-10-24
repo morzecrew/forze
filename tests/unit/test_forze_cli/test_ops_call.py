@@ -13,6 +13,7 @@ from typing import Any
 from uuid import UUID, uuid4
 
 import pytest
+import typer
 from typer.testing import CliRunner, Result
 
 from forze.base.exceptions import ExceptionKind, exception_egress_policy
@@ -175,10 +176,12 @@ class TestIdentity:
         assert _error(_call("probe.bound", key=None), 5)["code"] == "cli_api_key_missing"
 
     def test_no_option_takes_a_key_on_argv(self) -> None:
-        result = runner.invoke(app, ["ops", "call", "--help"])
+        # Read off the command, not its help: rich styles the help on CI and splits names.
+        call = typer.main.get_command(app).commands["ops"].commands["call"]  # type: ignore[attr-defined]
+        names = {name for param in call.params for name in param.opts}
 
-        assert "--api-key " not in result.stdout
-        assert "--api-key-file" in result.stdout
+        # The key is read from a file or the environment; no option carries it.
+        assert {name for name in names if "key" in name} == {"--api-key-file", "--idempotency-key"}
 
     def test_anonymous_fails_an_authn_requirement(self) -> None:
         error = _error(_call("probe.secure", app_name="ANONYMOUS"), 5)
