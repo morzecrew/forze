@@ -205,6 +205,15 @@ def validate_relay_wiring(
         kind, spec = _run_target(
             outbox_spec, queue_spec=queue_spec, stream_spec=stream_spec, pubsub_spec=pubsub_spec
         )
+
+        # The loop's drain and flush guards read *transport*; ``run`` dispatches on the
+        # destination, so the two must agree or a pubsub relay slips past the pubsub guards.
+        if kind != transport:
+            raise exc.configuration(
+                f"transport is {transport} but outbox_spec.destination.kind is {kind}",
+                code=_MISCONFIGURED,
+            )
+
         allow_unset = False
 
     _resolve_channel(

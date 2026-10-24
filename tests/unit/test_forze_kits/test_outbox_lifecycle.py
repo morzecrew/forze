@@ -367,6 +367,28 @@ def test_a_misconfigured_destination_is_refused_at_wiring(
     assert caught.value.code == "outbox_relay_misconfigured"
 
 
+def test_a_transport_other_than_the_destination_kind_is_refused_at_wiring() -> None:
+    # Both specs wired, so only the kind check stands between a "stream" step and a relay
+    # that publishes to pubsub past the pubsub drain refusal.
+    codec = PydanticModelCodec(_Payload)
+
+    with pytest.raises(CoreException, match="transport is stream") as caught:
+        outbox_relay_background_lifecycle_step(
+            outbox_spec=OutboxSpec(
+                name="events",
+                codec=codec,
+                destination=OutboxDestination.pubsub(route=_TOPIC, channel="t"),
+            ),
+            transport="stream",
+            stream_spec=StreamSpec(name="feed", codec=codec),
+            pubsub_spec=PubSubSpec(name=_TOPIC, codec=codec),
+            drain_on_shutdown=True,
+            interval=timedelta(hours=1),
+        )
+
+    assert caught.value.code == "outbox_relay_misconfigured"
+
+
 @pytest.mark.asyncio
 async def test_one_tenants_configuration_error_leaves_the_rest_of_the_shard_running() -> None:
     # A tenant's own key, disabled or pending deletion, is a configuration error too. It is
