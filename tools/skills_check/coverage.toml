@@ -121,6 +121,7 @@ names = ["observability", "zstd"]
 
 # Integrations already reached by an executable import.
 "forze_bigquery" = { doctrine = "D1" }
+"forze_cli" = { doctrine = "D1" }
 "forze_clickhouse" = { doctrine = "D1" }
 "forze_dst" = { doctrine = "D1" }
 "forze_fastapi" = { doctrine = "D1" }
@@ -157,5 +158,3 @@ names = ["observability", "zstd"]
 "forze_mock.server" = { doctrine = "D2" }
 "forze_sandbox" = { doctrine = "D1" }
 "forze_sandbox.container" = { doctrine = "D1" }
-
-"forze_cli" = { doctrine = "D3", rationale = "Maintainer tooling. Skills target engineers building applications on Forze; nothing here is reached from an application." }
