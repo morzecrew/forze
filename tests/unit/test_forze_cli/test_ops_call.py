@@ -112,12 +112,12 @@ class TestInput:
         assert _error(_call("probe.bound", "--input", "{}"), 2)["code"] == "cli_input_not_accepted"
 
     def test_an_inline_secret_is_refused_and_stdin_accepted(self) -> None:
-        inline = _call("probe.secret", "--input", '{"token": "hunter2"}')
+        inline = _call("probe.secret", "--input", '{"token": "fx-7chr"}')
 
         assert _error(inline, 2)["code"] == "cli_inline_secret"
-        assert "hunter2" not in inline.stdout + inline.stderr
+        assert "fx-7chr" not in inline.stdout + inline.stderr
 
-        piped = _call("probe.secret", "--input", "-", stdin='{"token": "hunter2"}')
+        piped = _call("probe.secret", "--input", "-", stdin='{"token": "fx-7chr"}')
 
         assert _doc(piped) == {"text": "7 characters"}
 
@@ -128,10 +128,10 @@ class TestInput:
         assert error["context"] == {"unknown": ["txet"]}
 
     def test_a_value_in_the_wrong_field_is_never_echoed(self) -> None:
-        result = _call("probe.echo", "--input", '{"text": {"password": "s3cr3t-value"}}')
+        result = _call("probe.echo", "--input", '{"text": {"misplaced": "echo-marker-7f3a"}}')
 
         assert _error(result, 4)["code"] == "cli_invalid_input"
-        assert "s3cr3t-value" not in result.stdout + result.stderr
+        assert "echo-marker-7f3a" not in result.stdout + result.stderr
 
 
 class TestExposure:

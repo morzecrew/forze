@@ -81,7 +81,7 @@ async def test_upsert_seals_encrypted_field_keeps_searchable_plaintext() -> None
     client = _client()
     adapter = _encrypting_adapter(client)
 
-    await adapter.upsert([_Doc(id="1", title="hello", secret="hunter2")])
+    await adapter.upsert([_Doc(id="1", title="hello", secret="fixture-7chr")])
 
     [chunk] = client.index.return_value.add_documents.call_args.args
     doc = chunk[0]
@@ -89,7 +89,7 @@ async def test_upsert_seals_encrypted_field_keeps_searchable_plaintext() -> None
     # Searchable field stays plaintext (so Meilisearch can index it)...
     assert doc["title"] == "hello"
     # ...the confidential field is a sealed envelope, not the plaintext.
-    assert doc["secret"] != "hunter2"
+    assert doc["secret"] != "fixture-7chr"
     assert is_envelope(base64.b64decode(doc["secret"]))
 
 
@@ -101,14 +101,14 @@ async def test_encrypted_route_still_indexes_computed_fields() -> None:
     client = _client()
     adapter = _encrypting_adapter(client)
 
-    await adapter.upsert([_Doc(id="1", title="hello", secret="hunter2")])
+    await adapter.upsert([_Doc(id="1", title="hello", secret="fixture-7chr")])
 
     [chunk] = client.index.return_value.add_documents.call_args.args
     doc = chunk[0]
 
     assert doc["title_upper"] == "HELLO"
     # ...and the encrypted field is still sealed.
-    assert doc["secret"] != "hunter2"
+    assert doc["secret"] != "fixture-7chr"
 
 
 @pytest.mark.asyncio
@@ -116,7 +116,7 @@ async def test_read_round_trip_decrypts_sealed_field() -> None:
     client = _client()
     adapter = _encrypting_adapter(client)
 
-    await adapter.upsert([_Doc(id="1", title="hello", secret="hunter2")])
+    await adapter.upsert([_Doc(id="1", title="hello", secret="fixture-7chr")])
     [chunk] = client.index.return_value.add_documents.call_args.args
     index_doc = chunk[0]
 
@@ -126,7 +126,7 @@ async def test_read_round_trip_decrypts_sealed_field() -> None:
     await adapter.spec.resolved_read_codec.prepare_decrypt([row])
     model = adapter.spec.resolved_read_codec.decode_mapping(row)
 
-    assert model == _Doc(id="1", title="hello", secret="hunter2")
+    assert model == _Doc(id="1", title="hello", secret="fixture-7chr")
 
 
 def test_sealed_field_cannot_be_declared_searchable() -> None:

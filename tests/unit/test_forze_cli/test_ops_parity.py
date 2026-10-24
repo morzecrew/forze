@@ -77,7 +77,7 @@ def test_an_equal_denial_code() -> None:
 
 
 def test_an_equally_masked_validation_error() -> None:
-    wrong = {"text": {"password": "s3cr3t-value"}}
+    wrong = {"text": {"misplaced": "echo-marker-7f3a"}}
 
     with pytest.raises(CoreException) as caught:
         _mcp("probe.echo", wrong)
@@ -87,4 +87,4 @@ def test_an_equally_masked_validation_error() -> None:
     assert caught.value.details is not None
     # Compared as JSON: the document is JSON, the exception holds tuples.
     assert cli["context"]["errors"] == json.loads(json.dumps(caught.value.details["errors"]))
-    assert "s3cr3t-value" not in json.dumps(cli)
+    assert "echo-marker-7f3a" not in json.dumps(cli)

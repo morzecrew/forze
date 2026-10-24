@@ -13,7 +13,7 @@ from forze.base.exceptions import (
 def test_maps_to_static_infrastructure_summary() -> None:
     mapper = fallback_exception_mapper("Acme")
     mapped = mapper(
-        RuntimeError("driver internals: token=hunter2"),
+        RuntimeError("driver internals: token=fixture-7chr"),
         site="acme.test",
     )
 
@@ -22,7 +22,7 @@ def test_maps_to_static_infrastructure_summary() -> None:
     assert mapped.summary == "An error occurred during Acme operation acme.test."
     assert "driver internals" not in mapped.summary
     assert mapped.details is not None
-    assert mapped.details["error"] == "driver internals: token=hunter2"
+    assert mapped.details["error"] == "driver internals: token=fixture-7chr"
 
 
 def test_preserves_existing_details() -> None:

@@ -51,12 +51,12 @@ class TestConfig:
             security_protocol="SASL_SSL",
             sasl_mechanism="SCRAM-SHA-256",
             sasl_plain_username="app",
-            sasl_plain_password=SecretStr("hunter2"),
+            sasl_plain_password=SecretStr("fixture-7chr"),
         ).config
 
         assert (config.security_protocol, config.sasl_mechanism) == ("SASL_SSL", "SCRAM-SHA-256")
         assert config.sasl_plain_password is not None
-        assert config.sasl_plain_password.get_secret_value() == "hunter2"
+        assert config.sasl_plain_password.get_secret_value() == "fixture-7chr"
 
     # ....................... #
 

@@ -248,15 +248,15 @@ class TestConfigureLogging:
 
         logger = Logger("forze.test")
         try:
-            raise RuntimeError("password=hunter2")
+            raise RuntimeError("password=fixture-7chr")
         except RuntimeError:
             logger.exception("failed")
 
         row = _json_records(stream)[-1]
         assert SECRET_PLACEHOLDER in row["error.message"]
-        assert "hunter2" not in row["error.message"]
+        assert "fixture-7chr" not in row["error.message"]
         assert SECRET_PLACEHOLDER in row["error.stack"]
-        assert "hunter2" not in row["error.stack"]
+        assert "fixture-7chr" not in row["error.stack"]
 
     def test_configure_logging_omits_stack_when_disabled(self) -> None:
         stream = io.StringIO()
@@ -294,12 +294,12 @@ class TestConfigureLogging:
 
         logger = Logger("forze.test")
         try:
-            raise RuntimeError("password=hunter2")
+            raise RuntimeError("password=fixture-7chr")
         except RuntimeError:
             logger.exception("failed")
 
         row = _json_records(stream)[-1]
-        assert row["error.message"] == "password=hunter2"
+        assert row["error.message"] == "password=fixture-7chr"
 
     def test_event_sanitizer_includes_exception_fields_scrubber(self) -> None:
         from forze.base.logging.configure import _event_sanitizer_processors
@@ -318,7 +318,7 @@ class TestConfigureLogging:
         )
 
         logger = Logger("forze.test")
-        logger.info("login", password="hunter2")
+        logger.info("login", password="fixture-7chr")
 
         row = _json_records(stream)[-1]
         assert row["event"] == "login"
@@ -352,10 +352,10 @@ class TestConfigureLogging:
         )
 
         logger = Logger("forze.test")
-        logger.info("connecting to postgresql://user:hunter2@db.host/app")
+        logger.info("connecting to postgresql://user:fixture-7chr@db.host/app")
 
         row = _json_records(stream)[-1]
-        assert "hunter2" not in str(row["event"])
+        assert "fixture-7chr" not in str(row["event"])
         assert SECRET_PLACEHOLDER in str(row["event"])
 
     def test_configure_logging_scrubs_positional_args_in_event_message(self) -> None:
@@ -389,10 +389,10 @@ class TestConfigureLogging:
         )
 
         logger = Logger("forze.test")
-        logger.info("token=hunter2 via Bearer abc.def.ghi")
+        logger.info("token=fixture-7chr via Bearer abc.def.ghi")
 
         row = _json_records(stream)[-1]
-        assert row["event"] == "token=hunter2 via Bearer abc.def.ghi"
+        assert row["event"] == "token=fixture-7chr via Bearer abc.def.ghi"
 
     def test_configure_logging_event_message_untouched_when_text_scrub_disabled(
         self,
@@ -408,7 +408,7 @@ class TestConfigureLogging:
         )
 
         logger = Logger("forze.test")
-        logger.info("connecting via Bearer abc.def.ghi", password="hunter2")
+        logger.info("connecting via Bearer abc.def.ghi", password="fixture-7chr")
 
         row = _json_records(stream)[-1]
         # Message text is left alone without text scrubbing...
@@ -428,7 +428,7 @@ class TestConfigureLogging:
         )
 
         logger = Logger("forze.test")
-        logger.info("login", password="hunter2")
+        logger.info("login", password="fixture-7chr")
 
         row = _json_records(stream)[-1]
-        assert row["password"] == "hunter2"
+        assert row["password"] == "fixture-7chr"

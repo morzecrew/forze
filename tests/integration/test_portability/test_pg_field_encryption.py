@@ -249,8 +249,8 @@ async def _archive_rows(archive: Path) -> dict[str, Any]:
 
 
 _ROWS = [
-    (uuid4(), "ada", "hunter2-ada"),
-    (uuid4(), "grace", "hunter2-grace"),
+    (uuid4(), "ada", "fixture-7chr-ada"),
+    (uuid4(), "grace", "fixture-7chr-grace"),
 ]
 
 

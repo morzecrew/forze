@@ -82,20 +82,20 @@ class TestSecretsCapabilities:
 
 class TestValueHygiene:
     def test_secret_value_repr_hides_the_text(self) -> None:
-        value = SecretValue(text="postgres://user:hunter2@db/x", version=SecretVersion("v1"))
+        value = SecretValue(text="postgres://user:fixture-7chr@db/x", version=SecretVersion("v1"))
 
-        assert "hunter2" not in repr(value)
+        assert "fixture-7chr" not in repr(value)
         assert "v1" in repr(value)
 
     def test_leased_secret_repr_hides_the_text(self) -> None:
         leased = LeasedSecret(
-            text='{"password": "hunter2"}',
+            text='{"password": "fixture-7chr"}',
             lease_id="db/creds/abc",
             ttl=timedelta(seconds=60),
             renewable=True,
         )
 
-        assert "hunter2" not in repr(leased)
+        assert "fixture-7chr" not in repr(leased)
         assert "db/creds/abc" in repr(leased)
 
     def test_content_version_is_deterministic_and_content_bound(self) -> None:

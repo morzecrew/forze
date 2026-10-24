@@ -193,7 +193,7 @@ class TestReadinessProbes:
         # bug — and lose the breakdown. The type, not the message: driver errors carry
         # the DSN, and this body is served to anything that can reach the probe.
         runtime, client = _probed(
-            {"postgres": _FakeClient(raises=ValueError("dsn=postgres://user:hunter2@db"))}
+            {"postgres": _FakeClient(raises=ValueError("dsn=postgres://user:fixture-7chr@db"))}
         )
 
         async with runtime.scope():

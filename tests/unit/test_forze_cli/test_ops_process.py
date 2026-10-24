@@ -173,7 +173,7 @@ class TestCrashOutput:
 
         assert process.returncode == 1
         assert json.loads(stdout)["error"]["code"] == "core.internal"
-        assert "hunter2-in-a-factory-local" not in stdout + stderr
+        assert "marker-in-a-factory-local" not in stdout + stderr
 
     def test_a_refusing_declaration_prints_no_locals(self) -> None:
         process = _spawn("probe.echo", app_name="unbuildable")
@@ -182,4 +182,4 @@ class TestCrashOutput:
         assert process.returncode == 78
         assert stdout == ""
         assert "the declaration refuses itself" in stderr
-        assert "hunter2-in-a-local" not in stderr
+        assert "marker-in-a-local" not in stderr

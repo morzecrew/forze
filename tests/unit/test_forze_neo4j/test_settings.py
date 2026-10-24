@@ -60,15 +60,15 @@ class TestAuth:
     # ....................... #
 
     def test_the_pair_when_both_are_set(self) -> None:
-        settings = Neo4jSettings(host="g", user="neo4j", password=SecretStr("hunter2"))
+        settings = Neo4jSettings(host="g", user="neo4j", password=SecretStr("fixture-7chr"))
 
-        assert settings.auth == ("neo4j", "hunter2")
+        assert settings.auth == ("neo4j", "fixture-7chr")
 
     # ....................... #
 
     @pytest.mark.parametrize(
         "kwargs",
-        [{"user": "neo4j"}, {"password": SecretStr("hunter2")}],
+        [{"user": "neo4j"}, {"password": SecretStr("fixture-7chr")}],
     )
     def test_half_set_is_refused(self, kwargs: dict[str, object]) -> None:
         """A user with no password authenticates as nobody, reported as a bad credential."""

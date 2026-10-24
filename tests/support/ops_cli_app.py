@@ -367,7 +367,7 @@ NON_DISCLOSING = OpsApp(
 
 
 def _broken_runtime() -> ExecutionRuntime:
-    credential = "hunter2-in-a-factory-local"  # what a crash that printed locals would leak
+    credential = "marker-in-a-factory-local"  # what a crash that printed locals would leak
 
     raise RuntimeError(f"factory bug ({len(credential)})")
 
@@ -388,7 +388,7 @@ def lazy() -> OpsApp:
 
 
 def unbuildable() -> OpsApp:
-    credential = "hunter2-in-a-local"  # what a crash that printed locals would leak
+    credential = "marker-in-a-local"  # what a crash that printed locals would leak
 
     raise RuntimeError(f"the declaration refuses itself ({len(credential)})")
 
