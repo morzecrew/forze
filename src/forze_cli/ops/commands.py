@@ -106,9 +106,9 @@ def _positive(value: float | None) -> float | None:
 
 
 def _non_negative(value: float) -> float:
-    # ``not value >= 0`` also refuses NaN, which every comparison answers False.
-    if not value >= 0:
-        raise typer.BadParameter("must be zero or more seconds")
+    # A chained comparison refuses NaN too, which every comparison answers False.
+    if not 0 <= value < math.inf:
+        raise typer.BadParameter("must be a finite number of seconds, zero or more")
 
     return value
 

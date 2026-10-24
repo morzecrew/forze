@@ -185,6 +185,11 @@ async def _ok(_args: None) -> None:
     return None
 
 
+async def _cancelled(_args: None) -> None:
+    # A task the operation awaited was cancelled by someone other than the CLI.
+    raise asyncio.CancelledError
+
+
 # ....................... #
 
 
@@ -206,6 +211,7 @@ def build_registry(*, sensitive: bool = False) -> FrozenOperationRegistry:
             "probe.chatty": lambda _c: _chatty,
             "probe.secret": lambda _c: _secret,
             "probe.deny": lambda _c: _deny,
+            "probe.cancelled": lambda _c: _cancelled,
             "notes.add": lambda _c: _add,
         },
         descriptors={
@@ -220,6 +226,7 @@ def build_registry(*, sensitive: bool = False) -> FrozenOperationRegistry:
             "probe.chatty": _descriptor(output_type=Text),
             "probe.secret": _descriptor(Secret, Text),
             "probe.deny": _descriptor(Deny),
+            "probe.cancelled": _descriptor(),
             "notes.add": _descriptor(Text, Count, title="Add a note"),
         },
     )
@@ -231,6 +238,7 @@ def build_registry(*, sensitive: bool = False) -> FrozenOperationRegistry:
         "probe.chatty",
         "probe.secret",
         "probe.deny",
+        "probe.cancelled",
     ):
         reg = reg.bind(op).as_query().finish()
 

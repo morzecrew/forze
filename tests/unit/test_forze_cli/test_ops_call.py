@@ -101,7 +101,7 @@ class TestInput:
 
         assert error["code"] == "cli_input_unreadable"
 
-    @pytest.mark.parametrize("raw", ["{not json", "[1, 2]"])
+    @pytest.mark.parametrize("raw", ["{not json", "[1, 2]", '{"text": NaN}', '{"n": Infinity}'])
     def test_malformed_json_is_usage_and_never_echoed(self, raw: str) -> None:
         result = _call("probe.echo", "--input", raw)
 
@@ -299,6 +299,7 @@ class TestEnvelope:
             ["--timeout", "-1"],
             ["--grace", "-1"],
             ["--grace", "nan"],
+            ["--grace", "inf"],
             ["--timeout", "nan"],
             ["--timeout", "inf"],
             ["--correlation-id", "not-a-uuid"],
@@ -365,6 +366,9 @@ class TestRuntime:
         error = _error(_call("probe.bound", app_name="NOT_SERVERLESS"), 78)
 
         assert error["code"] == "cli_runtime_not_serverless"
+
+    def test_a_cancellation_the_cli_did_not_request_is_still_one_document(self) -> None:
+        assert _error(_call("probe.cancelled", app_name="ANONYMOUS"), 1)["code"] == "core.internal"
 
     def test_an_unhandled_failure_is_still_one_document(self) -> None:
         result = _call("probe.bound", app_name="BROKEN_RUNTIME")

@@ -199,7 +199,9 @@ def execute(
             interrupted_exit_code(signal.SIGINT),
         )
 
-    except Exception as error:
+    # A cancellation the CLI did not request (a task the operation awaited was cancelled) is
+    # a failure like any other, and still owes its one document.
+    except (asyncio.CancelledError, Exception) as error:
         return _crash(error, metadata)
 
 
@@ -217,7 +219,7 @@ def _failure(error: CoreException, metadata: InvocationMetadata, *, repeatable: 
     return error_document(envelope, metadata), exit_code(envelope, repeatable=repeatable)
 
 
-def _crash(error: Exception, metadata: InvocationMetadata) -> _Outcome:
+def _crash(error: BaseException, metadata: InvocationMetadata) -> _Outcome:
     log_server_error(_logger, error)
 
     return error_document(unhandled_error_envelope(), metadata), EXIT_INTERNAL
@@ -306,7 +308,8 @@ def _read_input(raw_input: str | None, entry: OperationCatalogEntry) -> dict[str
 
     # The text is never echoed: it may hold the secret the caller meant to protect.
     try:
-        value = json.loads(text)
+        # ``NaN`` and ``Infinity`` are not JSON, though Python's decoder accepts them.
+        value = json.loads(text, parse_constant=_refuse_constant)
 
     except ValueError as error:
         raise _usage("--input is not valid JSON", "cli_malformed_input") from error
@@ -315,6 +318,10 @@ def _read_input(raw_input: str | None, entry: OperationCatalogEntry) -> dict[str
         raise _usage("--input must be a JSON object", "cli_malformed_input")
 
     return value  # pyright: ignore[reportUnknownVariableType]
+
+
+def _refuse_constant(name: str) -> Any:
+    raise ValueError(f"{name} is not JSON")
 
 
 def _declares_secret(schema: Any) -> bool:

@@ -32,11 +32,11 @@ JSON Schemas.
 
 | Option | Effect | Refused when |
 |---|---|---|
-| `--input JSON` / `@PATH` / `-` | the input object, inline, from a file, or from stdin; validated into the operation's input DTO, unknown keys refused | the operation takes no input; the JSON does not parse or is not an object; the file cannot be read; the input is inline and the DTO declares a `SecretStr` or `SecretBytes` field |
+| `--input JSON` / `@PATH` / `-` | the input object, inline, from a file, or from stdin; validated into the operation's input DTO, unknown keys refused | the operation takes no input; the JSON does not parse (`NaN` and `Infinity` included) or is not an object; the file cannot be read; the input is inline and the DTO declares a `SecretStr` or `SecretBytes` field |
 | `--tenant UUID` | a requested tenant, validated against the principal's membership, or matching the key's own tenant | the identity is not an API key; nothing can validate it |
 | `--idempotency-key KEY` | binds the key: a repeat with the same input replays the stored result | the operation does not support one |
-| `--timeout SECONDS` | bounds the operation; only ever tightens its declared deadline | not positive |
-| `--grace SECONDS` | how long a first SIGINT or SIGTERM waits for the call to finish; default 10 | negative |
+| `--timeout SECONDS` | bounds the operation; only ever tightens its declared deadline | not a positive, finite number |
+| `--grace SECONDS` | how long a first SIGINT or SIGTERM waits for the call to finish; default 10 | negative, or not finite |
 | `--correlation-id UUID`, `--causation-id UUID` | carried into the invocation metadata | malformed |
 | `--api-key-file PATH` | reads the API key from a file instead of the environment | the identity is not an API key; the file cannot be read |
 | `--pretty` | indents the result | |
