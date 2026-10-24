@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- ...
+- **`forze ops` runs your operations from a terminal, cron or a Kubernetes Job, governed as over HTTP.** Declare an `OpsApp` with a registry, a `SERVERLESS` runtime factory and an identity. `call` verifies an API key, resolves the tenant, and prints one JSON document with a stable exit code.
 
 ### Changed
 

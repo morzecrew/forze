@@ -89,6 +89,7 @@ nav = [
             "running-in-prod/credential-rotation.md",
             "running-in-prod/portability.md",
             "running-in-prod/operation-progress.md",
+            "running-in-prod/operations-cli.md",
             "running-in-prod/observability.md",
             "running-in-prod/grafana-stack.md",
         ] },
@@ -221,6 +222,7 @@ nav = [
             "reference/durable-schema.md",
             "reference/fastapi-routes.md",
             "reference/realtime-protocol.md",
+            "reference/ops-cli.md",
         ] },
         { "Operations" = [
             "reference/errors.md",

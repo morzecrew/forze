@@ -394,3 +394,43 @@ class TestCancellationThroughOperationBoundary:
         assert ei.value.code == "commit_ambiguous"
         assert task.cancelled() is False  # converted, not cancelled
         assert manager.committed is False  # torn mid-commit: outcome unknown
+
+    @pytest.mark.asyncio
+    async def test_cancel_after_the_scope_leaves_the_mark_for_the_canceller(
+        self, ctx: ExecutionContext
+    ) -> None:
+        # The transaction committed and its scope is gone, so nothing converts the cancel;
+        # the boundary that cancelled reads the mark instead of a plain interruption.
+        reset_commit_started()
+        manager = _RecordingTxManager()
+        tx = _tx_with(manager)
+        parked = asyncio.Event()
+
+        @attrs.define(slots=True, kw_only=True, frozen=True)
+        class CommitThenWait(Handler[str, str]):
+            async def __call__(self, args: str) -> str:
+                async with tx.scope("rec"):
+                    pass
+
+                parked.set()
+                await asyncio.sleep(10)
+                return args
+
+        reg = OperationRegistry(handlers={"op": lambda _c: CommitThenWait()}).freeze()
+        resolved = reg.resolve("op", ctx)
+
+        async def _canceller_view() -> bool:
+            try:
+                await resolved("x")
+
+            except asyncio.CancelledError:
+                return commit_started()
+
+            return False
+
+        task = asyncio.create_task(_canceller_view())
+        await parked.wait()
+        task.cancel()
+
+        assert manager.committed is True
+        assert await task is True

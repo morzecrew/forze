@@ -59,6 +59,8 @@ class DeploymentProfile(StrEnum):
     since there is no drain window between a response and a freeze. For warm
     containers, hold one ``scope()`` open across invocations (module-level, like
     the FastAPI/MCP ``runtime_lifespan``) so the per-scope caches stay warm.
+    It also covers any one-shot process that hosts no long-running step and has
+    no drain window, such as a ``forze ops call`` or a Kubernetes Job.
 
     Advisory by design: both markers are declared by the step author, not
     detected structurally.
