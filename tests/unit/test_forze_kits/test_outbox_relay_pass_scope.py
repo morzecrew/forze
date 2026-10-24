@@ -102,17 +102,24 @@ def _budget_scope(deadline_in: float, entered: list[str] | None = None) -> Any:
 def _scoped(scope: Any) -> Iterator[None]:
     """Give the mock store the pass extension, with *scope* as its pass scope."""
 
-    with (
-        patch.object(MockOutboxStore, "pass_scope", scope, create=True),
-        patch.object(
-            MockOutboxStore,
-            "transactional_passes",
-            new_callable=PropertyMock,
-            return_value=True,
-            create=True,
-        ),
-    ):
-        yield
+    try:
+        with (
+            patch.object(MockOutboxStore, "pass_scope", scope, create=True),
+            patch.object(
+                MockOutboxStore,
+                "transactional_passes",
+                new_callable=PropertyMock,
+                return_value=True,
+                create=True,
+            ),
+        ):
+            yield
+
+    finally:
+        # A runtime protocol caches a positive isinstance per class, so without this the
+        # patched-in members would leave MockOutboxStore "implementing" it for every
+        # later test on this worker, after the members themselves are gone.
+        TransactionalOutboxPasses._abc_caches_clear()  # pyright: ignore[reportAttributeAccessIssue]
 
 
 async def _relay(ctx: ExecutionContext, publish_one: Any, **kwargs: Any) -> Any:
