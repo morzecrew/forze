@@ -19,6 +19,10 @@ runner's timing noise floor (a 15% swing there is jitter, not signal, even after
 median-of-mins) and are reported for trend only. New benchmarks (head-only) and
 dropped ones (base-only) are reported but never fail the gate.
 
+``--flagged-out`` writes the node ids of the benchmarks that failed, so the gate script
+can re-run just those on fresh interleaved rounds and fail only if the regression
+reproduces there.
+
 Usage::
 
     python tests/perf/gate_compare.py --storage .benchmarks --threshold 15
@@ -72,6 +76,11 @@ def main() -> int:
         "15%% swing there is jitter, not signal, even after median-of-mins — so they are "
         "reported for trend but never fail the gate (default: 1.0).",
     )
+    parser.add_argument(
+        "--flagged-out",
+        help="Write the pytest node ids of the benchmarks that failed the gate to this "
+        "file, one per line (empty when none did), for a confirmation re-run.",
+    )
     args = parser.parse_args()
     floor_s = args.min_floor_ms / _MS
 
@@ -107,6 +116,11 @@ def main() -> int:
     # Only benchmarks at or above the floor can fail — sub-ms ones are below the runner's
     # noise floor and are reported for trend only.
     regressed = [r for r in rows if r[0] > args.threshold and r[2] >= floor_s]
+
+    if args.flagged_out:
+        # pytest-benchmark's ``fullname`` is the node id, so the file feeds pytest as-is.
+        with open(args.flagged_out, "w", encoding="utf-8") as fh:
+            fh.writelines(f"{r[1]}\n" for r in regressed)
 
     print(
         f"perf-gate: median of per-run min over {rounds_base}×base / {rounds_head}×head "

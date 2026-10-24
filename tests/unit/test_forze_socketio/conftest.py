@@ -9,12 +9,13 @@ from forze.application.execution import DepsRegistry, ExecutionRuntime
 from forze.base.exceptions import DenialPosture, configure_denial_posture, current_denial_posture
 from forze.base.logging import configure_logging
 from forze_mock import MockDepsModule
+from tests.support.logging import reset_forze_stdlib_loggers
 
 # ----------------------- #
 
 
 @pytest.fixture
-def error_log_buf() -> io.StringIO:
+def error_log_buf() -> Iterator[io.StringIO]:
     """Capture ``socketio.errors`` logger output as JSON records."""
 
     buf = io.StringIO()
@@ -24,7 +25,8 @@ def error_log_buf() -> io.StringIO:
         stream=buf,
         render_mode="json",
     )
-    return buf
+    yield buf
+    reset_forze_stdlib_loggers("socketio.errors")
 
 
 @pytest.fixture

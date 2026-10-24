@@ -2,6 +2,7 @@
 
 import io
 import json
+from collections.abc import Iterator
 
 import pytest
 from fastapi import FastAPI
@@ -16,6 +17,7 @@ from forze_fastapi.exceptions import (
     _forze_exception_handler,
     register_exception_handlers,
 )
+from tests.support.logging import reset_forze_stdlib_loggers
 
 # ----------------------- #
 
@@ -30,7 +32,7 @@ def _json_records(stream: io.StringIO) -> list[dict]:
 
 
 @pytest.fixture
-def error_log_buf() -> io.StringIO:
+def error_log_buf() -> Iterator[io.StringIO]:
     buf = io.StringIO()
     configure_logging(
         level="info",
@@ -38,7 +40,8 @@ def error_log_buf() -> io.StringIO:
         stream=buf,
         render_mode="json",
     )
-    return buf
+    yield buf
+    reset_forze_stdlib_loggers("fastapi.errors")
 
 
 # ----------------------- #
