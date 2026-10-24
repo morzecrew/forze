@@ -37,19 +37,13 @@ import attrs
 from fastmcp.server.auth import AccessToken, TokenVerifier
 from fastmcp.server.dependencies import get_access_token
 
-from forze.application.contracts.authn import (
-    ApiKeyCredentials,
-    AuthnResult,
-    AuthnSpec,
-)
+from forze.application.contracts.authn import AuthnSpec
 from forze.application.contracts.authn.value_objects import AuthnIdentity
-from forze.application.contracts.tenancy import (
-    TenantIdentity,
-    parse_tenant_hint,
-)
-from forze.application.execution.context import (
-    ExecutionContext,
-    ExecutionContextFactory,
+from forze.application.contracts.tenancy import TenantIdentity
+from forze.application.execution.context import ExecutionContextFactory
+from forze.application.execution.ingress import (
+    authenticate_api_key,
+    resolve_principal_tenant,
 )
 from forze.base.exceptions import CoreException, ExceptionKind
 
@@ -67,51 +61,6 @@ _AGENT_CLAIM = "agent"
 """AccessToken claim carrying the delegation agent principal id (string UUID), when
 the verified key is a user→agent delegation. Bridges the agent the orchestrator
 resolved (from the key) to the resolver, which prefers it over any fixed agent."""
-
-# ....................... #
-
-
-def _split_api_key(raw: str) -> ApiKeyCredentials:
-    """Split a ``prefix:secret`` bearer into credentials (mirrors the HTTP edge).
-
-    A key with no ``:`` separator is taken whole as the secret (no prefix), so the
-    same key authenticates over FastAPI and MCP.
-    """
-
-    head, _, tail = raw.strip().partition(":")
-
-    if not tail:
-        return ApiKeyCredentials(key=head)
-
-    return ApiKeyCredentials(key=tail, prefix=head)
-
-
-# ....................... #
-
-
-async def _resolve_tenant(
-    ctx: ExecutionContext,
-    result: AuthnResult,
-    route: str | None = None,
-) -> TenantIdentity | None:
-    """Resolve the tenant for an authenticated principal (mirrors the HTTP edge).
-
-    Prefers a tenancy resolver (principal→tenant, validating any issuer hint); falls
-    back to a tenant carried on the verified credential. No untrusted header path —
-    MCP clients present only the bearer.
-    """
-
-    requested = parse_tenant_hint(result.issuer_tenant_hint)
-    resolver = ctx.tenancy.resolver(route)
-
-    if resolver is not None:
-        return await resolver.resolve_from_principal(
-            result.identity.principal_id,
-            requested_tenant_id=requested,
-        )
-
-    return TenantIdentity(tenant_id=requested) if requested is not None else None
-
 
 # ....................... #
 
@@ -147,16 +96,14 @@ class ForzeApiKeyVerifier(TokenVerifier):
     async def verify_token(self, token: str) -> AccessToken | None:
         ctx = self.ctx_factory()
 
-        # Port resolution outside the catch: a misconfigured spec/route is a
-        # deployment error, not a bad credential — it must fail loud, not 401.
-        authn = ctx.authn.authn(self.authn_spec)
-
         try:
-            result = await authn.authenticate_with_api_key(_split_api_key(token))
+            result = await authenticate_api_key(ctx, self.authn_spec, token)
 
         except CoreException as error:
             # Reject only on an authentication failure (unknown/expired/inactive
-            # key); let infrastructure/config errors propagate.
+            # key); let infrastructure/config errors propagate: a misconfigured
+            # spec/route is a deployment error, not a bad credential — it must fail
+            # loud, not 401.
             if error.kind is ExceptionKind.AUTHENTICATION:
                 return None
 
@@ -165,7 +112,8 @@ class ForzeApiKeyVerifier(TokenVerifier):
         if result is None:  # pyright: ignore[reportUnnecessaryComparison]
             return None
 
-        tenant = await _resolve_tenant(ctx, result, str(self.authn_spec.name))
+        # No untrusted header path: MCP clients present only the bearer.
+        tenant = await resolve_principal_tenant(ctx, result, route=str(self.authn_spec.name))
         claims: dict[str, object] = {}
 
         if tenant is not None:

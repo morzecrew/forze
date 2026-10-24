@@ -32,8 +32,9 @@ def _split_authorization(raw: str, sep: str = " ") -> tuple[str, str | None]:
 
     The default whitespace separator collapses runs (so ``Bearer  tok`` yields a
     clean token); a non-whitespace *sep* (e.g. ``":"`` for ``prefix:key`` API
-    keys) splits on the first occurrence, mirroring ``forze_mcp``'s
-    ``_split_api_key`` so the same key authenticates over FastAPI and MCP.
+    keys) splits on the first occurrence, mirroring
+    :func:`~forze.application.execution.ingress.api_key_credentials` so the same key
+    authenticates over FastAPI and MCP.
     """
 
     raw = raw.strip()

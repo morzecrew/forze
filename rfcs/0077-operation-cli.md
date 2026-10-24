@@ -1,7 +1,8 @@
 # RFC 0077 — Operation CLI: governed operations from the command line
 
-- **Status:** 📝 Draft. The design is proposed. Its three questions were answered on
-  2026-10-22 (§10, decisions 14, 16 and 17). Nothing gates it. P1 is worth shipping on its own, because it removes duplication that exists today.
+- **Status:** 🚧 In progress. P1, the shared ingress core, landed on 2026-10-23 (§5.7 "As
+  built" records where it departs from the plan). P2, `forze ops`, is next. The three questions
+  were answered on 2026-10-22 (§10, decisions 14, 16 and 17).
 - **Scope:** A `forze ops` command group in the existing `forze_cli` package. It lists,
   describes and invokes the operations of an application's frozen registry, in process,
   through the same governed path HTTP and MCP use. The RFC also covers the transport-agnostic
@@ -500,6 +501,20 @@ below that layer and cannot import it.
   same codes as before.
 - **Later moves.** FastAPI, Socket.IO and the WS route move onto `ingress` in later changes,
   each against its own tests. That is recorded in §12 and not scheduled here.
+- **As built (P1).** Four departures from the plan above:
+  - `validate_operation_input` also takes `summary`, the rejection's message (default
+    `"Invalid input"`), so MCP keeps `Invalid tool arguments`. With `forbid_unknown`, an
+    unknown name is refused under the same `code`, with `details={"unknown": [...]}`.
+  - The accepted-names check moved from agent tools into `ingress` as
+    `accepted_input_names`, and agent tools call it, so there is one copy before agent tools
+    move onto `validate_operation_input`.
+  - `api_key_credentials(raw)` is public, for FastAPI's later move. MCP's private
+    `_split_api_key` and `_resolve_tenant` were deleted instead of wrapped: nothing called
+    them once the verifier called `ingress`.
+  - `resolve_principal_tenant` refuses a `requested` tenant when no resolver can validate it,
+    as `precondition` with code `tenant_request_unverifiable`. It also refuses one the resolver
+    finds no tenant for, as `authentication` with code `tenant_mismatch`, so the call never
+    runs tenant-less instead. MCP never passes one.
 
 ### 5.8 Commands
 
