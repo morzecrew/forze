@@ -7287,7 +7287,8 @@ string beside a <code>Decimal</code> stays a string. A date or time operand comp
 matches only on an element typed <code>list[date]</code> or <code>list[time]</code>, not on strings in a
 <code>list[Any]</code>. A datetime or non-finite float operand is refused with
 <code>query_feature_unsupported</code>; keep datetimes in a <code>timestamptz[]</code> column. On a native
-array with a <code>None</code> member, <code>$in</code> matches a NULL element and <code>$nin</code> excludes it.</p>
+array with a <code>None</code> member, <code>$in</code> matches a NULL element and <code>$nin</code> excludes it; in a
+<code>jsonb[]</code> or <code>json[]</code> column that holds for SQL NULL and JSON null alike.</p>
 
 
 
