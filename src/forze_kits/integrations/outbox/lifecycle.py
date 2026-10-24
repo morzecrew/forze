@@ -1122,18 +1122,6 @@ def outbox_relay_background_lifecycle_step(
     external cron or workflow schedulers instead of in-process polling.
     """
 
-    if transport == "stream" and stream_spec is None:
-        raise exc.configuration(
-            "stream_spec is required when transport is stream",
-            code=OUTBOX_RELAY_MISCONFIGURED_CODE,
-        )
-
-    if transport == "pubsub" and pubsub_spec is None:
-        raise exc.configuration(
-            "pubsub_spec is required when transport is pubsub",
-            code=OUTBOX_RELAY_MISCONFIGURED_CODE,
-        )
-
     # What the first pass would refuse, refused at wiring: a relay loop that stopped on it
     # later would leave startup green and the outbox silently undelivered.
     validate_relay_wiring(

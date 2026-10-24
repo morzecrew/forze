@@ -315,12 +315,13 @@ async def test_a_wiring_error_stops_the_relay_loop(shard: list[UUID] | None) -> 
 
 
 @pytest.mark.asyncio
-async def test_a_relay_wired_to_no_destination_stops_its_loop() -> None:
+@pytest.mark.parametrize("transport", ["pubsub", "queue"])
+async def test_a_relay_wired_to_no_destination_stops_its_loop(transport: str) -> None:
     # Built past the factory's wiring check, the relay meets the same refusal on its first
     # pass, and it is a wiring error: the loop stops instead of retrying every batch.
     codec = PydanticModelCodec(_Payload)
     startup = _startup(
-        transport="pubsub",
+        transport=transport,
         queue_spec=None,
         pubsub_spec=PubSubSpec(name="topic", codec=codec),
         interval=timedelta(milliseconds=10),
@@ -328,7 +329,7 @@ async def test_a_relay_wired_to_no_destination_stops_its_loop() -> None:
     )
 
     async def _never(*_args: Any, **_kwargs: Any) -> OutboxRelayResult:
-        raise AssertionError("a pubsub relay never publishes to a queue")
+        raise AssertionError("a relay with no destination never publishes to a queue")
 
     assert await _run_relay(startup, _never, settle=0.5)
 
@@ -364,6 +365,24 @@ def test_a_misconfigured_destination_is_refused_at_wiring(
         )
 
     assert caught.value.kind is ExceptionKind.CONFIGURATION
+    assert caught.value.code == "outbox_relay_misconfigured"
+
+
+@pytest.mark.parametrize("transport", ["queue", "stream"])
+def test_a_transport_with_no_spec_is_refused_at_wiring(transport: str) -> None:
+    codec = PydanticModelCodec(_Payload)
+
+    with pytest.raises(CoreException, match=f"{transport}_spec is required") as caught:
+        outbox_relay_background_lifecycle_step(
+            outbox_spec=OutboxSpec(
+                name="events",
+                codec=codec,
+                destination=OutboxDestination.stream(route="feed", channel="t"),
+            ),
+            transport=transport,  # type: ignore[arg-type]
+            interval=timedelta(hours=1),
+        )
+
     assert caught.value.code == "outbox_relay_misconfigured"
 
 

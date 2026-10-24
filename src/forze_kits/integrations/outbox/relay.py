@@ -155,7 +155,7 @@ def _run_target(
         "pubsub": pubsub_spec,
     }
 
-    if destination.kind not in specs:
+    if destination.kind not in specs:  # pragma: no cover - the destination kinds are exhaustive
         raise exc.configuration(
             f"unsupported outbox destination kind: {destination.kind!r}", code=_MISCONFIGURED
         )
