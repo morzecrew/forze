@@ -13,6 +13,7 @@ from pydantic import BaseModel
 
 from forze.application.contracts.execution import LifecycleStep
 from forze.application.contracts.outbox import (
+    OutboxDestination,
     OutboxRelayResult,
     OutboxSpec,
     OutboxStatus,
@@ -698,6 +699,13 @@ async def test_flush_skips_a_pubsub_destination() -> None:
     # reports residual honestly instead of losing a delayed delivery.
     codec = PydanticModelCodec(_Payload)
     startup = _startup(
+        # A destination, so the background tick before the rows land claims nothing rather
+        # than failing every batch it tries.
+        outbox_spec=OutboxSpec(
+            name="events",
+            codec=codec,
+            destination=OutboxDestination.pubsub(route="topic", channel="topic"),
+        ),
         transport="pubsub",
         queue_spec=None,
         pubsub_spec=PubSubSpec(name="topic", codec=codec),

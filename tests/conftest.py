@@ -18,13 +18,36 @@ from __future__ import annotations
 
 import json
 from collections import defaultdict
+from collections.abc import Iterator
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
-if TYPE_CHECKING:
-    import pytest
+import pytest
+import structlog
 
 # ----------------------- #
+
+
+@pytest.fixture(autouse=True)
+def _structlog_left_as_found() -> Iterator[None]:
+    """Reset structlog after a test that left it configured from the unconfigured default.
+
+    ``structlog.testing.capture_logs`` restores its processors through ``structlog.configure``,
+    which marks structlog configured. From the default state that leaves every later test
+    logging through structlog's built-in processors: stdout, and a rich traceback that renders
+    each frame's locals. A background loop failing in a loop then prints thousands of lines
+    per error, slow enough to time the whole run out.
+    """
+
+    configured = structlog.is_configured()
+
+    yield
+
+    if not configured and structlog.is_configured():
+        structlog.reset_defaults()
+
+
+# ....................... #
 
 _CENSUS_OPTION = "--conformance-census"
 _EXECUTED_OPTION = "--conformance-executed"
