@@ -18,7 +18,12 @@ from uuid import UUID, uuid4
 import pytest
 from pydantic import BaseModel
 
-from forze.application.contracts.outbox import OutboxRelayResult, OutboxSpec, OutboxStatus
+from forze.application.contracts.outbox import (
+    OutboxRelayResult,
+    OutboxSpec,
+    OutboxStatus,
+    TransactionalOutboxPasses,
+)
 from forze.application.contracts.queue import QueueSpec
 from forze.application.execution import DepsRegistry, ExecutionRuntime
 from forze.application.execution.background import BackgroundLoopControl
@@ -349,17 +354,24 @@ class TestRollingBackDrain:
 def _extension(transactional: Any) -> Iterator[None]:
     """Give the mock store the pass extension, reporting *transactional*."""
 
-    with (
-        patch.object(MockOutboxStore, "pass_scope", lambda _self: nullcontext(None), create=True),
-        patch.object(
-            MockOutboxStore,
-            "transactional_passes",
-            new_callable=PropertyMock,
-            return_value=transactional,
-            create=True,
-        ),
-    ):
-        yield
+    try:
+        with (
+            patch.object(MockOutboxStore, "pass_scope", lambda _self: nullcontext(None), create=True),
+            patch.object(
+                MockOutboxStore,
+                "transactional_passes",
+                new_callable=PropertyMock,
+                return_value=transactional,
+                create=True,
+            ),
+        ):
+            yield
+
+    finally:
+        # A runtime protocol caches a positive isinstance per class, so without this the
+        # patched-in members would leave MockOutboxStore "implementing" it for every
+        # later test on this worker, after the members themselves are gone.
+        TransactionalOutboxPasses._abc_caches_clear()  # pyright: ignore[reportAttributeAccessIssue]
 
 
 class TestRollbackModeAtStartup:

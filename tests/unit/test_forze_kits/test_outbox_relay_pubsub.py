@@ -9,7 +9,9 @@ from pydantic import BaseModel
 from forze.application.contracts.outbox import OutboxDestination, OutboxSpec
 from forze.application.contracts.pubsub import PubSubSpec
 from forze.application.execution import DepsRegistry, ExecutionRuntime
+from forze.base.exceptions import CoreException, ExceptionKind
 from forze.base.serialization import PydanticModelCodec
+from forze_kits.integrations._wiring import is_wiring_error
 from forze_kits.integrations.outbox import OutboxRelay
 from forze_kits.integrations.outbox import relay as relay_module
 from forze_mock import MockDepsModule, MockStateDepKey
@@ -58,8 +60,13 @@ async def test_relay_pubsub_missing_destination_raises() -> None:
     runtime = ExecutionRuntime(deps=DepsRegistry.from_modules(module).freeze())
     async with runtime.scope():
         ctx = runtime.get_context()
-        with pytest.raises(Exception, match="destination is required"):
+        with pytest.raises(CoreException, match="destination is required") as caught:
             await OutboxRelay(outbox_spec=outbox_spec, reclaim_stale_after=None).to_pubsub(ctx, pubsub_spec)
+
+    # Wiring no retry clears: the background relay stops on it instead of logging every batch.
+    assert caught.value.kind is ExceptionKind.CONFIGURATION
+    assert caught.value.code == "outbox_relay_misconfigured"
+    assert is_wiring_error(caught.value)
 
 
 # ....................... #

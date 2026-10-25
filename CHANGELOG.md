@@ -21,6 +21,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **MCP reads an API key and its tenant as the HTTP edge does.** A bearer ending in `:` is a prefix with an empty secret, not the bare key before it, and a verified key's tenant is bound when the tenancy resolver has no binding for the principal.
 
+- **An outbox relay wired to a missing or mismatched destination fails at wiring.** The background relay step checks its destination when built, and the refusal is now a `configuration` error coded `outbox_relay_misconfigured` (HTTP 500) for direct `OutboxRelay` callers too. It was a `precondition`, logged every batch.
+
 ## [0.16.1] - 2026-10-23
 
 ### Added

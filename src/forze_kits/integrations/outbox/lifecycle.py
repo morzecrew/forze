@@ -32,10 +32,10 @@ from forze.application.execution.resilience.backoff import compute_delay
 from forze.base.exceptions import exc
 from forze.base.primitives import StrKey, current_entropy_source
 from forze_kits.integrations._logger import logger
-from forze_kits.integrations._wiring import is_wiring_error
+from forze_kits.integrations._wiring import OUTBOX_RELAY_MISCONFIGURED_CODE, is_wiring_error
 
 from ._relay_core import validate_retry_options
-from .relay import OutboxRelay
+from .relay import OutboxRelay, validate_relay_wiring
 
 # ----------------------- #
 
@@ -351,7 +351,10 @@ class _OutboxRelayBackgroundStartup(LifecycleHook):
 
         if self.transport == "queue":
             if self.queue_spec is None:
-                raise exc.precondition("queue_spec is required for queue background relay")
+                raise exc.configuration(
+                    "queue_spec is required for queue background relay",
+                    code=OUTBOX_RELAY_MISCONFIGURED_CODE,
+                )
 
             return await relay.to_queue(ctx, self.queue_spec, limit=self.limit)
 
@@ -1119,14 +1122,15 @@ def outbox_relay_background_lifecycle_step(
     external cron or workflow schedulers instead of in-process polling.
     """
 
-    if transport == "queue" and queue_spec is None:
-        raise exc.precondition("queue_spec is required when transport is queue")
-
-    if transport == "stream" and stream_spec is None:
-        raise exc.precondition("stream_spec is required when transport is stream")
-
-    if transport == "pubsub" and pubsub_spec is None:
-        raise exc.precondition("pubsub_spec is required when transport is pubsub")
+    # What the first pass would refuse, refused at wiring: a relay loop that stopped on it
+    # later would leave startup green and the outbox silently undelivered.
+    validate_relay_wiring(
+        outbox_spec,
+        transport=transport,
+        queue_spec=queue_spec,
+        stream_spec=stream_spec,
+        pubsub_spec=pubsub_spec,
+    )
 
     if drain_on_shutdown:
         _validate_drain_wiring(transport=transport)
