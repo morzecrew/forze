@@ -68,10 +68,17 @@ _TENANCY_BINDINGS: Mapping[str, RouteBinding] = {
         method="GET", path="/tenants", build=_no_body_endpoint
     ),
     TenancyKernelOp.SWITCH_TENANT: RouteBinding(
-        method="POST", path="/tenants/{id}/activate", build=id_endpoint
+        method="POST",
+        path="/tenants/{id}/activate",
+        build=id_endpoint,
+        param_descriptions={"id": "The tenant to switch to; one of your active memberships."},
     ),
     TenancyKernelOp.LEAVE_TENANT: RouteBinding(
-        method="DELETE", path="/tenants/{id}", build=id_endpoint, status_code=204
+        method="DELETE",
+        path="/tenants/{id}",
+        build=id_endpoint,
+        status_code=204,
+        param_descriptions={"id": "The tenant whose membership you leave."},
     ),
 }
 

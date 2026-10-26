@@ -47,10 +47,17 @@ _TENANCY_ADMIN_BINDINGS: Mapping[str, RouteBinding] = {
         method="POST", path="/tenants", build=body_endpoint, status_code=201
     ),
     TenancyAdminKernelOp.LIST_MEMBERS: RouteBinding(
-        method="GET", path="/tenants/{id}/members", build=id_endpoint
+        method="GET",
+        path="/tenants/{id}/members",
+        build=id_endpoint,
+        param_descriptions={"id": "The tenant whose members to list."},
     ),
     TenancyAdminKernelOp.DEACTIVATE_TENANT: RouteBinding(
-        method="POST", path="/tenants/{id}/deactivate", build=id_endpoint, status_code=204
+        method="POST",
+        path="/tenants/{id}/deactivate",
+        build=id_endpoint,
+        status_code=204,
+        param_descriptions={"id": "The tenant to deactivate."},
     ),
     TenancyAdminKernelOp.INVITE_MEMBER: RouteBinding(
         method="POST", path="/memberships", build=body_endpoint, status_code=204

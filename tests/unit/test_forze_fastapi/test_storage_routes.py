@@ -247,6 +247,23 @@ class TestStorageRoutes:
 
         assert _operation_ids(_build_app(style)) == expected
 
+    @pytest.mark.parametrize("style", ["rest", "rpc"])
+    def test_the_key_is_described(self, style: str) -> None:
+        params = [
+            param
+            for methods in _build_app(style).openapi()["paths"].values()
+            for operation in methods.values()
+            for param in operation.get("parameters", [])
+        ]
+
+        assert {(p["name"], p["in"], p["description"]) for p in params} == {
+            (
+                "key",
+                "path",
+                "The object's key, as the upload or listing returned it; it may contain slashes.",
+            )
+        }
+
     def test_include_narrows_to_subset(self) -> None:
         app = _build_app("rest", include={StorageKernelOp.LIST})
 

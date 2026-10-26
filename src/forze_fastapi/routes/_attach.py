@@ -45,8 +45,9 @@ from typing import (
 from uuid import UUID
 
 import attrs
-from fastapi import APIRouter, Query, Request
+from fastapi import APIRouter, Path, Query, Request
 from fastapi.encoders import jsonable_encoder
+from fastapi.params import Depends
 from fastapi.utils import is_body_allowed_for_status_code
 from pydantic import (
     AnyUrl,
@@ -140,6 +141,9 @@ class RouteBinding:
 
     status_code: int = 200
     """Success status code."""
+
+    param_descriptions: Mapping[str, str] = attrs.field(factory=dict)
+    """OpenAPI descriptions of the endpoint's parameters, by name (``{"id": "..."}``)."""
 
 
 # ....................... #
@@ -580,6 +584,79 @@ def _signed(endpoint: Callable[..., Awaitable[Any]], *params: inspect.Parameter)
     endpoint.__annotations__ = {param.name: param.annotation for param in params}
 
 
+def _has_fastapi_metadata(param: inspect.Parameter) -> bool:
+    """Whether *param* names how FastAPI reads it (a ``Query``, ``Body``, ``Depends``, …), in
+    its annotation or its default."""
+
+    annotation = param.annotation
+
+    # FastAPI unwraps one ``type`` alias and reads the metadata it names.
+    if isinstance(annotation, TypeAliasType):
+        annotation = annotation.__value__
+
+    metadata = get_args(annotation)[1:] if get_origin(annotation) is Annotated else ()
+
+    return any(isinstance(item, FieldInfo | Depends) for item in (*metadata, param.default))
+
+
+def _describe(
+    endpoint: Callable[..., Awaitable[Any]],
+    descriptions: Mapping[str, str],
+    in_path: AbstractSet[str],
+    op: str,
+) -> None:
+    """Give *endpoint*'s parameters their *descriptions*, each through FastAPI's own ``Path``
+    where *in_path* names it and ``Query`` otherwise.
+
+    Only a plain path or query parameter can take one: FastAPI would read the added ``Path`` or
+    ``Query`` in place of metadata the parameter has, and a body or a dependency would become a
+    query parameter.
+    """
+
+    signature = inspect.signature(endpoint, eval_str=True)
+
+    if unknown := set(descriptions) - set(signature.parameters):
+        raise exc.configuration(
+            f"Parameter descriptions for operation '{op}' name {sorted(unknown)}, which its "
+            f"endpoint does not take (it takes {sorted(signature.parameters)})"
+        )
+
+    if blank := sorted(name for name, text in descriptions.items() if not text.strip()):
+        raise exc.configuration(f"Parameter descriptions for operation '{op}' leave {blank} empty")
+
+    params: list[inspect.Parameter] = []
+
+    for param in signature.parameters.values():
+        if (description := descriptions.get(param.name)) is None:
+            params.append(param)
+            continue
+
+        located = param.name in in_path
+
+        if _has_fastapi_metadata(param) or not _query_carries(
+            param.annotation, in_sequence=located
+        ):
+            raise exc.configuration(
+                f"Parameter '{param.name}' of operation '{op}' cannot be described: only a plain "
+                "path or query parameter can, not one with FastAPI metadata of its own (a Query, "
+                "a Body, a Depends, …) or one FastAPI reads from elsewhere (a body, the request)"
+            )
+
+        location = (Path if located else Query)(description=description)
+        # Built at runtime from the endpoint, so no static checker can read it as a type.
+        annotation = Annotated[param.annotation, location]  # type: ignore[name-defined]
+        # FastAPI ignores a path parameter's default, and refuses one beside ``Path``.
+        default = inspect.Parameter.empty if located else param.default
+        params.append(param.replace(annotation=annotation, default=default))
+
+    endpoint.__signature__ = signature.replace(parameters=params)  # type: ignore[attr-defined]
+    endpoint.__annotations__ = {
+        # A callable instance may have none of its own.
+        **getattr(endpoint, "__annotations__", {}),
+        **{param.name: param.annotation for param in params},
+    }
+
+
 # ....................... #
 
 
@@ -816,6 +893,12 @@ def attach_operation_routes(
     builder does) has the binding's path checked against it: a ``{placeholder}`` the
     builder does not fill is refused. A builder of your own without it is not checked.
 
+    A binding's ``param_descriptions`` document its endpoint's parameters in the OpenAPI
+    schema, each as FastAPI's ``Path`` where the path binds it and ``Query`` otherwise. An empty
+    one is refused, and so is one naming a parameter the endpoint does not take or one that is
+    not a plain path or query parameter: a body, the request, or one with a ``Query``, ``Body``,
+    ``Depends``, … of its own.
+
     *path_overrides* maps an operation (the same kernel-op/str key accepted by
     *include*) to a replacement route path. Only the path changes — method,
     status, builder, and the verbatim ``operation_id`` are untouched, so the
@@ -856,8 +939,8 @@ def attach_operation_routes(
 
     Raises:
         CoreException: On an unknown *include*/override operation, a sensitive read
-            model, or a path override that drops or adds a path parameter (all
-            configuration errors).
+            model, a path override that drops or adds a path parameter, or a parameter
+            description refused as above (all configuration errors).
     """
 
     known = set(bindings)
@@ -942,6 +1025,12 @@ def attach_operation_routes(
             input_type,
             op,
         )
+
+        if binding.param_descriptions:
+            # FastAPI routes ``router.prefix + path``: a placeholder in the prefix is a path
+            # parameter too.
+            in_path = _path_params(router.prefix + path)
+            _describe(endpoint, binding.param_descriptions, in_path, op)
 
         # Descriptor tags project onto OpenAPI route tags (additive to any
         # router-level tags). MCP attachers have no tag concept — this mapping

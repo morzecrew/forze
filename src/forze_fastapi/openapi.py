@@ -17,7 +17,7 @@ require_fastapi()
 import json
 import re
 import textwrap
-from collections.abc import Callable
+from collections.abc import Callable, Mapping, Sequence
 from copy import deepcopy
 from typing import Any, Final, cast
 
@@ -25,10 +25,13 @@ from fastapi import FastAPI
 from fastapi.routing import APIRoute, iter_route_contexts
 
 from forze.base.exceptions import exc
+from forze.base.logging import Logger
 
 from .exceptions import ERROR_CODE_HEADER
 
 # ----------------------- #
+
+_logger = Logger("fastapi.openapi")
 
 _HTTP_METHODS: Final = frozenset(
     {"get", "put", "post", "delete", "options", "head", "patch", "trace"}
@@ -467,8 +470,78 @@ def _require_sent_fields(schema: dict[str, Any], app: FastAPI) -> None:
 
 # ....................... #
 
+_UNGROUPED: Final = "Other"
+"""The ``x-tagGroups`` group the tags no group lists join, last unless the app lists it."""
 
-def apply_openapi_conventions(app: FastAPI, *, require_sent_fields: bool = False) -> None:
+
+def _checked_tag_groups(tag_groups: Mapping[str, Sequence[str]]) -> dict[str, list[str]]:
+    """A copy of *tag_groups*, refused when a group has no name, its tags are one string, or a
+    tag is listed twice."""
+
+    seen: set[str] = set()
+
+    for name, tags in tag_groups.items():
+        if not name.strip():
+            raise exc.configuration("An OpenAPI tag group needs a name.")
+
+        if isinstance(tags, str):
+            raise exc.configuration(
+                f"OpenAPI tag group {name!r} gives its tags as one string, {tags!r}; "
+                f"list them instead, e.g. [{tags!r}]."
+            )
+
+        for tag in tags:
+            if tag in seen:
+                raise exc.configuration(
+                    f"OpenAPI tag {tag!r} is listed twice in the tag groups; list it once."
+                )
+
+            seen.add(tag)
+
+    return {name: list(tags) for name, tags in tag_groups.items()}
+
+
+def _group_tags(schema: dict[str, Any], tag_groups: Mapping[str, Sequence[str]]) -> None:
+    # The operations' tags, webhooks' included, in the order they first appear.
+    used = {
+        tag: None
+        for section in ("paths", "webhooks")
+        for path_item in schema.get(section, {}).values()
+        for method, operation in path_item.items()
+        if method in _HTTP_METHODS
+        for tag in operation.get("tags", ())
+    }
+
+    if unknown := [tag for tags in tag_groups.values() for tag in tags if tag not in used]:
+        _logger.warning(
+            "OpenAPI tag groups list %s, which no operation is tagged with; leaving them out",
+            unknown,
+        )
+
+    groups = {name: [tag for tag in tags if tag in used] for name, tags in tag_groups.items()}
+    listed = {tag for tags in groups.values() for tag in tags}
+
+    # Both renderers show only the grouped tags. Redoc: "a tag that is not in a group is not
+    # displayed" (redocly.com/docs-legacy/api-reference-docs/specification-extensions/
+    # x-tag-groups); Scalar walks only x-tagGroups' tags (scalar/scalar, packages/
+    # workspace-store/src/navigation/helpers/traverse-tags.ts). An untagged operation Scalar
+    # lists at the top level (traverse-document.ts there); Redoc files it under the tag "",
+    # which no group holds (Redocly/redoc, src/adapters/openapi/utils/operation.ts).
+    if ungrouped := [tag for tag in used if tag not in listed]:
+        groups.setdefault(_UNGROUPED, []).extend(ungrouped)
+
+    schema["x-tagGroups"] = [{"name": name, "tags": tags} for name, tags in groups.items() if tags]
+
+
+# ....................... #
+
+
+def apply_openapi_conventions(
+    app: FastAPI,
+    *,
+    require_sent_fields: bool = False,
+    tag_groups: Mapping[str, Sequence[str]] | None = None,
+) -> None:
     """Document the Forze error envelope and render reST descriptions as Markdown.
 
     In *app*'s OpenAPI: FastAPI's default 422 (``HTTPValidationError``) becomes the
@@ -494,13 +567,27 @@ def apply_openapi_conventions(app: FastAPI, *, require_sent_fields: bool = False
     schema a request also uses, or that a route trims otherwise (``exclude_unset``,
     ``include``, …), is left as it is. It can be asked for in a later call.
 
+    With *tag_groups*, group names mapped to the tags each holds, the schema gains the
+    top-level ``x-tagGroups`` that Scalar and Redoc render as sidebar groups, in the order
+    given. A group without a name, tags given as one string, or a tag listed twice is a
+    configuration error raised by this call. A listed tag no operation is tagged with is left
+    out of its group with a warning, and a group left with no tags is dropped. Neither renderer
+    shows a tag no group lists, so such tags join a group named ``Other``, in the order
+    operations first use them: last, unless *tag_groups* places ``Other`` itself. An operation
+    with no tags is in no group: Scalar still lists it, Redoc does not. A later call with
+    *tag_groups* replaces these groups; one without leaves them as they are.
+
     :param app: The FastAPI application whose schema to adjust.
     :param require_sent_fields: Mark always-sent response fields required.
+    :param tag_groups: Sidebar groups, each name mapped to its tags in order.
     """
 
+    groups = _checked_tag_groups(tag_groups) if tag_groups is not None else None
     original: Callable[[], dict[str, Any]] = app.openapi
+    grouped: dict[str, Any] | None = None
 
     def _openapi() -> dict[str, Any]:
+        nonlocal grouped
         schema = original()
 
         if not schema.get(_APPLIED_MARKER):
@@ -511,6 +598,11 @@ def apply_openapi_conventions(app: FastAPI, *, require_sent_fields: bool = False
         if require_sent_fields and not schema.get(_REQUIRED_MARKER):
             _require_sent_fields(schema, app)
             schema[_REQUIRED_MARKER] = True
+
+        # Once per schema FastAPI builds, so a stale tag warns once rather than on every request.
+        if groups is not None and schema is not grouped:
+            _group_tags(schema, groups)
+            grouped = schema
 
         return schema
 

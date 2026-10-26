@@ -8,7 +8,9 @@ The `attach_*_routes` helpers project a frozen operation registry onto a FastAPI
 router: request and response schemas come from the operation descriptors, and
 each route's `operationId` is the registry operation key verbatim (`notes.get`),
 so the HTTP surface, MCP tool names, and the operation catalog share one
-identity. Setup (lifespan, middleware, error mapping) lives on the
+identity. Each path or query parameter a generated route declares, such as a
+document's `id` and `rev` or a storage `key`, carries its own description in the
+schema. Setup (lifespan, middleware, error mapping) lives on the
 [FastAPI integration](../integrations/fastapi.md) page; this is the catalog of
 what each generator produces.
 
@@ -460,7 +462,12 @@ attach_operation_routes(
     bindings={
         "levels": RouteBinding(method="GET", path="/levels", build=query_endpoint),
         "add": RouteBinding(method="POST", path="/add", build=body_endpoint, status_code=201),
-        "get": RouteBinding(method="GET", path="/{id}", build=id_endpoint),
+        "get": RouteBinding(
+            method="GET",
+            path="/{id}",
+            build=id_endpoint,
+            param_descriptions={"id": "The stock item's ID."},
+        ),
     },
 )
 ```
@@ -488,6 +495,14 @@ declares them. Each
 shipped builder names the placeholders it fills, and a path with any other placeholder is
 refused. An `EndpointBuilder` of your own takes `(runner, input_type, op)`; give it a
 `path_params` frozenset to have its paths checked the same way.
+
+A binding's `param_descriptions` describe its endpoint's parameters by name. Each becomes
+FastAPI's own `Path` where the path has the placeholder and `Query` otherwise, so `id`
+reads the same in both route styles. Only a plain path or query parameter takes one. When
+the route is attached, an empty description is refused, and so is a name the endpoint does
+not take. A body, the request, or a parameter with its own `Query`, `Depends`, … is refused
+too: describe that one in its own metadata. A `query_endpoint` parameter takes its
+description from the DTO field.
 
 The operation's output type is the route's response model. It need not be a bare model: an
 operation that may find nothing declares `output_type=Model | None` and answers `200` with
@@ -611,3 +626,26 @@ without a default. A schema is one component shared by all the routes that retur
 a route that keeps nulls and one that drops them return the same model, its nullable fields
 are optional for both. A schema a request also uses is left as it is, and so is one a route
 trims some other way (`response_model_exclude_unset`, `include`, `exclude`).
+
+`tag_groups` groups the sidebar that Scalar and Redoc render, through the top-level
+`x-tagGroups` extension. Groups and their tags keep the order you give:
+
+```python
+from forze_fastapi import apply_openapi_conventions
+
+apply_openapi_conventions(
+    app,
+    tag_groups={"Content": ["notes", "files"], "Access": ["auth"]},
+)
+```
+
+A group without a name, tags given as one string (`"notes"` for `["notes"]`), or a tag
+listed twice is a configuration error raised by the call itself. A listed tag that no
+operation is tagged with, a typo or a renamed router, is left out of its group with a
+warning, and a group left with no tags is dropped. Neither renderer shows a tag that no
+group lists, nor the operations under it. The tags you leave out therefore join a group
+named `Other`, in the order operations first use them: last, or where you list `Other`
+yourself. An operation with no tags is in no group: Scalar still lists it, Redoc does not,
+so tag every route. A later call with `tag_groups` replaces the groups; one without leaves
+them as they are. `register_scalar_docs` needs no setting, since Scalar reads the groups
+from the schema.

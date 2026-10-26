@@ -801,6 +801,11 @@ def _delete_endpoint(
 
 # ....................... #
 
+_KEY: Mapping[str, str] = {
+    "key": "The object's key, as the upload or listing returned it; it may contain slashes."
+}
+"""Parameter description of the key-addressed routes."""
+
 _REST_BINDINGS: Mapping[str, RouteBinding] = {
     StorageKernelOp.UPLOAD: RouteBinding(
         method="POST",
@@ -814,18 +819,21 @@ _REST_BINDINGS: Mapping[str, RouteBinding] = {
         method="GET",
         path="/{key:path}",
         build=_download_endpoint,
+        param_descriptions=_KEY,
     ),
     # HEAD mirrors the GET download resource (same path) — metadata headers, no body.
     StorageKernelOp.HEAD: RouteBinding(
         method="HEAD",
         path="/{key:path}",
         build=_head_endpoint,
+        param_descriptions=_KEY,
     ),
     StorageKernelOp.DELETE: RouteBinding(
         method="DELETE",
         path="/{key:path}",
         build=_delete_endpoint,
         status_code=204,
+        param_descriptions=_KEY,
     ),
     # Presigned & multipart ops are all JSON-body POSTs (the key/session ride
     # the body, not the path, so they never collide with the ``/{key:path}``
@@ -873,18 +881,21 @@ _RPC_BINDINGS: Mapping[str, RouteBinding] = {
         method="GET",
         path=f"/{StorageKernelOp.DOWNLOAD.value}/{{key:path}}",
         build=_download_endpoint,
+        param_descriptions=_KEY,
     ),
     # HEAD mirrors the GET download resource (same path) — metadata headers, no body.
     StorageKernelOp.HEAD: RouteBinding(
         method="HEAD",
         path=f"/{StorageKernelOp.DOWNLOAD.value}/{{key:path}}",
         build=_head_endpoint,
+        param_descriptions=_KEY,
     ),
     StorageKernelOp.DELETE: RouteBinding(
         method="DELETE",
         path=f"/{StorageKernelOp.DELETE.value}/{{key:path}}",
         build=_delete_endpoint,
         status_code=204,
+        param_descriptions=_KEY,
     ),
     # JSON-body POSTs named after their operation; the key/session ride the body.
     StorageKernelOp.PRESIGN_DOWNLOAD: RouteBinding(

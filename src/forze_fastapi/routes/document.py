@@ -47,10 +47,21 @@ def _rpc_path(op: object) -> str:
     return f"/{op.value}"  # type: ignore[attr-defined]
 
 
+_ID: Mapping[str, str] = {"id": "The document's ID."}
+_ID_REV: Mapping[str, str] = {
+    **_ID,
+    "rev": "The revision you last read. A stale one is refused; with document history on, "
+    "your change is merged with those made since, unless they conflict or the revision "
+    "predates the history.",
+}
+"""Parameter descriptions of the id- and id/rev-addressed routes."""
+
 # ----------------------- #
 
 _REST_BINDINGS: Mapping[str, RouteBinding] = {
-    DocumentKernelOp.GET: RouteBinding(method="GET", path="/{id}", build=id_endpoint),
+    DocumentKernelOp.GET: RouteBinding(
+        method="GET", path="/{id}", build=id_endpoint, param_descriptions=_ID
+    ),
     DocumentKernelOp.LIST: RouteBinding(method="POST", path="/list", build=body_endpoint),
     DocumentKernelOp.RAW_LIST: RouteBinding(method="POST", path="/raw_list", build=body_endpoint),
     DocumentKernelOp.LIST_CURSOR: RouteBinding(
@@ -63,17 +74,19 @@ _REST_BINDINGS: Mapping[str, RouteBinding] = {
     DocumentKernelOp.CREATE: RouteBinding(
         method="POST", path="", build=body_endpoint, status_code=201
     ),
-    DocumentKernelOp.UPDATE: RouteBinding(method="PATCH", path="/{id}", build=id_rev_body_endpoint),
+    DocumentKernelOp.UPDATE: RouteBinding(
+        method="PATCH", path="/{id}", build=id_rev_body_endpoint, param_descriptions=_ID_REV
+    ),
     DocumentKernelOp.KILL: RouteBinding(
-        method="DELETE", path="/{id}", build=id_endpoint, status_code=204
+        method="DELETE", path="/{id}", build=id_endpoint, status_code=204, param_descriptions=_ID
     ),
     # Soft-deletion ops are state transitions, not removals — they surface as
     # action sub-paths so the hard delete keeps ``DELETE /{id}``.
     SoftDeletionKernelOp.DELETE: RouteBinding(
-        method="POST", path="/{id}/delete", build=id_rev_endpoint
+        method="POST", path="/{id}/delete", build=id_rev_endpoint, param_descriptions=_ID_REV
     ),
     SoftDeletionKernelOp.RESTORE: RouteBinding(
-        method="POST", path="/{id}/restore", build=id_rev_endpoint
+        method="POST", path="/{id}/restore", build=id_rev_endpoint, param_descriptions=_ID_REV
     ),
 }
 """Resource-style bindings per kernel operation."""
@@ -92,7 +105,10 @@ _RPC_BINDINGS: Mapping[str, RouteBinding] = {
     # rev) as query parameters on the operation-named path, so the surface is
     # linkable/cacheable instead of an opaque POST body.
     DocumentKernelOp.GET: RouteBinding(
-        method="GET", path=_rpc_path(DocumentKernelOp.GET), build=id_endpoint
+        method="GET",
+        path=_rpc_path(DocumentKernelOp.GET),
+        build=id_endpoint,
+        param_descriptions=_ID,
     ),
     DocumentKernelOp.CREATE: RouteBinding(
         method="POST",
@@ -104,12 +120,14 @@ _RPC_BINDINGS: Mapping[str, RouteBinding] = {
         method="PATCH",
         path=_rpc_path(DocumentKernelOp.UPDATE),
         build=id_rev_body_endpoint,
+        param_descriptions=_ID_REV,
     ),
     DocumentKernelOp.KILL: RouteBinding(
         method="DELETE",
         path=_rpc_path(DocumentKernelOp.KILL),
         build=id_endpoint,
         status_code=204,
+        param_descriptions=_ID,
     ),
     # Soft-delete and restore are reversible state transitions, not removals —
     # PATCH the resource (id + rev as query params, no body).
@@ -117,11 +135,13 @@ _RPC_BINDINGS: Mapping[str, RouteBinding] = {
         method="PATCH",
         path=_rpc_path(SoftDeletionKernelOp.DELETE),
         build=id_rev_endpoint,
+        param_descriptions=_ID_REV,
     ),
     SoftDeletionKernelOp.RESTORE: RouteBinding(
         method="PATCH",
         path=_rpc_path(SoftDeletionKernelOp.RESTORE),
         build=id_rev_endpoint,
+        param_descriptions=_ID_REV,
     ),
     # List/aggregate operations carry filter/sort/pagination bodies that do not
     # map onto query parameters — POST with the input DTO as body.

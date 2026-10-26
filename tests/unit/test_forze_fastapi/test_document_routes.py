@@ -215,9 +215,18 @@ class TestRestStyle:
         update = {p["name"]: p for p in paths["/notes/{id}"]["patch"]["parameters"]}
 
         assert update["id"]["in"] == "path"
-        assert update["id"]["schema"] == {"type": "string", "format": "uuid", "title": "Id"}
+        assert update["id"]["schema"] == {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id",
+            "description": update["id"]["description"],
+        }
         assert update["rev"]["in"] == "query"
-        assert update["rev"]["schema"] == {"type": "integer", "title": "Rev"}
+        assert update["rev"]["schema"] == {
+            "type": "integer",
+            "title": "Rev",
+            "description": update["rev"]["description"],
+        }
 
     def test_soft_delete_and_restore(self) -> None:
         client = TestClient(_build_app("rest"))
@@ -318,6 +327,27 @@ class TestCatalogProjection:
     @pytest.mark.parametrize("style", ["rest", "rpc"])
     def test_operation_ids_are_registry_keys_verbatim(self, style: str) -> None:
         assert _operation_ids(_build_app(style)) == _ALL_OP_IDS
+
+    @pytest.mark.parametrize("style", ["rest", "rpc"])
+    def test_the_id_and_rev_are_described(self, style: str) -> None:
+        params = [
+            param
+            for methods in _build_app(style).openapi()["paths"].values()
+            for operation in methods.values()
+            for param in operation.get("parameters", [])
+        ]
+
+        assert {(p["name"], p["description"]) for p in params} == {
+            ("id", "The document's ID."),
+            (
+                "rev",
+                (
+                    "The revision you last read. A stale one is refused; with document history "
+                    "on, your change is merged with those made since, unless they conflict or "
+                    "the revision predates the history."
+                ),
+            ),
+        }
 
     def test_read_only_spec_attaches_only_reads(self) -> None:
         assert _operation_ids(_build_app("rest", writable=False)) == _READ_OP_IDS

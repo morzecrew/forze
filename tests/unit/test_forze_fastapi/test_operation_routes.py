@@ -7,9 +7,13 @@ the catalog. ``query_endpoint`` covers the GET whose input arrives as query para
 
 from __future__ import annotations
 
+import importlib
+import inspect
+import pkgutil
+from collections.abc import Mapping
 from datetime import date
 from enum import StrEnum
-from typing import Annotated, Any, Literal, NewType
+from typing import Annotated, Any, Final, Literal, NewType
 from uuid import UUID, uuid4
 
 import attrs
@@ -17,7 +21,7 @@ import pytest
 
 pytest.importorskip("fastapi")
 
-from fastapi import APIRouter, FastAPI
+from fastapi import APIRouter, Depends, FastAPI, Query, Request
 from httpx import ASGITransport, AsyncClient
 from pydantic import AwareDatetime as PydanticAwareDatetime
 from pydantic import (
@@ -43,6 +47,7 @@ from forze.application.execution.operations import OperationDescriptor, Operatio
 from forze.base.exceptions import CoreException
 from forze.base.primitives import AwareDatetime, StrKeyNamespace
 from forze.domain.models import BaseDTO, ReadDocument
+from forze_fastapi import routes as routes_package
 from forze_fastapi.exceptions import ERROR_CODE_HEADER, register_exception_handlers
 from forze_fastapi.routes import (
     EndpointBuilder,
@@ -56,6 +61,10 @@ from forze_fastapi.routes import (
     id_rev_body_endpoint,
     id_rev_endpoint,
     query_endpoint,
+)
+from forze_fastapi.routes._attach import (
+    PATH_PARAMS_ATTR,
+    _path_params,  # pyright: ignore[reportPrivateUsage]
 )
 from forze_kits.aggregates.search import build_search_registry
 from forze_kits.aggregates.tenancy import build_tenancy_registry
@@ -238,11 +247,12 @@ def _one(
     path: str,
     method: str = "GET",
     bindings: dict[str, RouteBinding] | None = None,
+    prefix: str = "/stock",
     **attach: Any,
 ) -> FastAPI:
     """One operation, ``stock.one``, echoing what reached it."""
 
-    router = APIRouter(prefix="/stock")
+    router = APIRouter(prefix=prefix)
     attach_operation_routes(
         router,
         registry=OperationRegistry(
@@ -622,6 +632,177 @@ class TestTheIdRoutes:
         ]["parameters"]
 
         assert [(p["name"], p["in"]) for p in params] == [("id", "query")]
+
+
+# ....................... #
+
+
+type _AliasedQuery = Annotated[int, Query(ge=1, alias="x")]
+
+
+class TestTheParameterDescriptions:
+    @pytest.mark.parametrize(
+        ("path", "where", "url"),
+        [("/{id}", "path", "/stock/5"), ("/one", "query", "/stock/one?id=5")],
+        ids=["id-in-the-path", "id-in-the-query"],
+    )
+    async def test_each_is_described_where_the_parameter_is(
+        self, path: str, where: str, url: str
+    ) -> None:
+        described = RouteBinding(
+            method="GET",
+            path=path,
+            build=id_rev_endpoint,
+            param_descriptions={"id": "The item.", "rev": "Its revision."},
+        )
+        app = _one(_OptionalRev, build=id_rev_endpoint, path=path, bindings={"one": described})
+        (operation,) = app.openapi()["paths"][f"/stock{path}"].values()
+        params = {p["name"]: p for p in operation["parameters"]}
+
+        assert (params["id"]["in"], params["id"]["required"]) == (where, True)
+        assert (params["rev"]["in"], params["rev"]["required"]) == ("query", False)
+        assert params["id"]["description"] == "The item."
+        assert params["rev"]["description"] == "Its revision."
+
+        # The optional rev keeps its default.
+        async with _client(app) as client:
+            response = await client.get(url)
+
+        assert response.json()["dump"] == {"id": 5, "rev": None}
+
+    def test_one_for_a_parameter_the_endpoint_lacks_is_refused(self) -> None:
+        described = RouteBinding(
+            method="GET", path="/{id}", build=id_endpoint, param_descriptions={"key": "The key."}
+        )
+
+        with pytest.raises(CoreException, match=r"\['key'\]") as caught:
+            _one(_ById, build=id_endpoint, path="/{id}", bindings={"one": described})
+
+        assert caught.value.kind.value == "configuration"
+
+    @pytest.mark.parametrize(
+        "annotation",
+        [
+            # FastAPI would read the added Query in place of this one, losing ``ge`` and the alias.
+            Annotated[int, Query(ge=1, alias="x")],
+            Annotated[int, Depends(lambda: 1)],
+            # FastAPI unwraps the alias and reads the Query it names.
+            _AliasedQuery,
+            # A body, which the added Query would turn into query parameters.
+            _Filter,
+            Request,
+        ],
+        ids=["own-query", "dependency", "aliased-query", "body", "request"],
+    )
+    def test_one_for_a_parameter_that_is_not_plain_is_refused(self, annotation: Any) -> None:
+        def build(runner: Any, input_type: Any, op: str) -> Any:
+            async def endpoint(n: Any) -> Any:
+                return await runner(n)
+
+            endpoint.__signature__ = inspect.Signature(  # type: ignore[attr-defined]
+                [inspect.Parameter("n", inspect.Parameter.KEYWORD_ONLY, annotation=annotation)]
+            )
+
+            return endpoint
+
+        described = RouteBinding(
+            method="POST", path="/n", build=build, param_descriptions={"n": "The n."}
+        )
+
+        with pytest.raises(CoreException, match=r"'n'.*cannot be described") as caught:
+            _one(_Filter, build=build, path="/n", bindings={"one": described})
+
+        assert caught.value.kind.value == "configuration"
+
+    def test_a_placeholder_in_the_router_prefix_is_described_as_a_path_parameter(self) -> None:
+        described = RouteBinding(
+            method="GET", path="/details", build=id_endpoint, param_descriptions={"id": "The item."}
+        )
+        app = _one(
+            _ById,
+            build=id_endpoint,
+            path="/details",
+            bindings={"one": described},
+            prefix="/stock/{id}",
+        )
+        (param,) = app.openapi()["paths"]["/stock/{id}/details"]["get"]["parameters"]
+
+        assert (param["name"], param["in"], param["description"]) == ("id", "path", "The item.")
+
+    def test_a_callable_instance_endpoint_can_be_described(self) -> None:
+        class _Endpoint:
+            async def __call__(self, id: UUID) -> Any:
+                return None
+
+        described = RouteBinding(
+            method="GET",
+            path="/{id}",
+            build=lambda runner, input_type, op: _Endpoint(),
+            param_descriptions={"id": "The item."},
+        )
+        app = _one(_ById, build=id_endpoint, path="/{id}", bindings={"one": described})
+        (param,) = app.openapi()["paths"]["/stock/{id}"]["get"]["parameters"]
+
+        assert param["description"] == "The item."
+
+    def test_an_empty_one_is_refused(self) -> None:
+        described = RouteBinding(
+            method="GET", path="/{id}", build=id_endpoint, param_descriptions={"id": " "}
+        )
+
+        with pytest.raises(CoreException, match=r"\['id'\] empty") as caught:
+            _one(_ById, build=id_endpoint, path="/{id}", bindings={"one": described})
+
+        assert caught.value.kind.value == "configuration"
+
+    # Bindings each route module holds today: a table the scan stops seeing (built inside a
+    # function, say) drops its module below this and fails rather than passing unchecked.
+    _BINDINGS_AT_LEAST: Final = {
+        "authn": 12,
+        "document": 22,
+        "search": 4,
+        "storage": 24,
+        "tenancy": 3,
+        "tenancy_admin": 5,
+    }
+
+    def test_every_shipped_binding_describes_its_path_placeholders_and_builder_params(
+        self,
+    ) -> None:
+        # The parameters a binding declares: its path's placeholders, and the ones its builder
+        # fills from the path or the query (``path_params``).
+        checked: dict[str, int] = {}
+        undescribed: list[tuple[str, str]] = []
+
+        for info in pkgutil.iter_modules(routes_package.__path__):
+            module = importlib.import_module(f"{routes_package.__name__}.{info.name}")
+
+            for name, table in vars(module).items():
+                if not isinstance(table, Mapping):
+                    continue
+
+                if not any(isinstance(b, RouteBinding) for b in table.values()):  # pyright: ignore[reportUnknownVariableType]
+                    continue
+
+                for suffix, binding in table.items():  # pyright: ignore[reportUnknownVariableType]
+                    assert isinstance(binding, RouteBinding), (info.name, name, suffix)
+
+                    declared = _path_params(binding.path) | getattr(
+                        binding.build, PATH_PARAMS_ATTR, frozenset()
+                    )
+                    texts = binding.param_descriptions
+                    described = {k for k, text in texts.items() if text.strip()}
+                    undescribed += [(f"{info.name}:{suffix}", k) for k in declared - described]
+                    checked[info.name] = checked.get(info.name, 0) + 1
+
+        short = {
+            module: checked.get(module, 0)
+            for module, least in self._BINDINGS_AT_LEAST.items()
+            if checked.get(module, 0) < least
+        }
+
+        assert short == {}
+        assert undescribed == []
 
 
 # ....................... #

@@ -68,6 +68,12 @@ app.include_router(router)
   plan's `AuthnRequired`/authz hooks). Call once after attaching routers; token-
   minting routes (`/login`, `/refresh`) stay open. Documents auth, does not enforce
   it — `exclude={op, ...}` leaves a flagged op open.
+- Generated routes describe their own parameters (`id`, `rev`, a storage `key`); a
+  `RouteBinding` of yours takes `param_descriptions={"id": "..."}`. For sidebar groups in
+  Scalar or Redoc, call `apply_openapi_conventions(app, tag_groups={"Content": ["notes"]})`
+  (from `forze_fastapi`) last: a listed tag no operation uses is left out with a warning,
+  tags you leave out join a trailing `Other` group, and an untagged route shows in Scalar
+  but not in Redoc.
 
 ## Hand-written routes
 
@@ -167,6 +173,7 @@ Run it with `FORZE_OPS_APP=myapp.ops:ops forze ops call projects.get --input '{"
 
 - **Importing the removed `forze_fastapi.endpoints.*` helpers** — use `forze_fastapi.routes.attach_*_routes`, or define your own routes that dispatch through the registry/facade.
 - **Reaching for `StaticIdentity` because it is easy** — it binds an identity nothing verifies, so every operator shares one audit actor and one idempotency namespace, and nothing can be revoked. Issue a key per operator or job and use `ApiKeyIdentity`; keep `StaticIdentity` for break-glass inside the cluster.
+- **Patching `app.openapi` to describe generated parameters or add `x-tagGroups`** — it breaks when a parameter is renamed and must run before `apply_openapi_conventions`. The generated routes describe their parameters already, and `tag_groups` writes the groups.
 - **`include_writes=True` with no allowlist on `OpsApp`** — every command in the registry becomes callable from a shell, including ones whose only guard was their route. Name the operations.
 
 ## Reference
