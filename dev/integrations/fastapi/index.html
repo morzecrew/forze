@@ -6976,7 +6976,13 @@ non-empty set matching <strong>no route at all</strong> — the prefix mistake a
 is fine and expected: <code>DEFAULT_HEALTH_PATHS</code> names ten paths and most apps serve
 three. In <a href="../../reference/fastapi-routes/#cookie-mode">cookie mode</a>,
 <code>check_authn_cookie_paths</code> (also run by <code>runtime_lifespan</code>) fails the boot when
-neither the access nor the refresh cookie's path covers the logout route. An app
+the refresh cookie's path does not cover the logout route, or when
+<code>anonymous_paths</code> leaves out the login, refresh or logout route. Under a root path,
+list those paths relative to it: behind a proxy that strips the prefix the middleware
+never sees it, so a full-path entry is refused, and so is a <code>root_path</code> declared with a
+trailing slash. The check knows only the app's own <code>root_path</code>. It finds the
+security middleware by its <code>anonymous_paths</code> field, so one wrapped in your own
+middleware or factory is not checked, and neither is a mounted sub-application. An app
 that supplies its own lifespan instead of <code>runtime_lifespan</code> has to call
 <code>check_bypass_paths(app)</code>,
 <code>check_websocket_allowlist(app)</code> and <code>check_authn_cookie_paths(app)</code> itself — all
