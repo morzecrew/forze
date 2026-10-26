@@ -247,11 +247,12 @@ def _one(
     path: str,
     method: str = "GET",
     bindings: dict[str, RouteBinding] | None = None,
+    prefix: str = "/stock",
     **attach: Any,
 ) -> FastAPI:
     """One operation, ``stock.one``, echoing what reached it."""
 
-    router = APIRouter(prefix="/stock")
+    router = APIRouter(prefix=prefix)
     attach_operation_routes(
         router,
         registry=OperationRegistry(
@@ -636,6 +637,9 @@ class TestTheIdRoutes:
 # ....................... #
 
 
+type _AliasedQuery = Annotated[int, Query(ge=1, alias="x")]
+
+
 class TestTheParameterDescriptions:
     @pytest.mark.parametrize(
         ("path", "where", "url"),
@@ -682,11 +686,13 @@ class TestTheParameterDescriptions:
             # FastAPI would read the added Query in place of this one, losing ``ge`` and the alias.
             Annotated[int, Query(ge=1, alias="x")],
             Annotated[int, Depends(lambda: 1)],
+            # FastAPI unwraps the alias and reads the Query it names.
+            _AliasedQuery,
             # A body, which the added Query would turn into query parameters.
             _Filter,
             Request,
         ],
-        ids=["own-query", "dependency", "body", "request"],
+        ids=["own-query", "dependency", "aliased-query", "body", "request"],
     )
     def test_one_for_a_parameter_that_is_not_plain_is_refused(self, annotation: Any) -> None:
         def build(runner: Any, input_type: Any, op: str) -> Any:
@@ -707,6 +713,37 @@ class TestTheParameterDescriptions:
             _one(_Filter, build=build, path="/n", bindings={"one": described})
 
         assert caught.value.kind.value == "configuration"
+
+    def test_a_placeholder_in_the_router_prefix_is_described_as_a_path_parameter(self) -> None:
+        described = RouteBinding(
+            method="GET", path="/details", build=id_endpoint, param_descriptions={"id": "The item."}
+        )
+        app = _one(
+            _ById,
+            build=id_endpoint,
+            path="/details",
+            bindings={"one": described},
+            prefix="/stock/{id}",
+        )
+        (param,) = app.openapi()["paths"]["/stock/{id}/details"]["get"]["parameters"]
+
+        assert (param["name"], param["in"], param["description"]) == ("id", "path", "The item.")
+
+    def test_a_callable_instance_endpoint_can_be_described(self) -> None:
+        class _Endpoint:
+            async def __call__(self, id: UUID) -> Any:
+                return None
+
+        described = RouteBinding(
+            method="GET",
+            path="/{id}",
+            build=lambda runner, input_type, op: _Endpoint(),
+            param_descriptions={"id": "The item."},
+        )
+        app = _one(_ById, build=id_endpoint, path="/{id}", bindings={"one": described})
+        (param,) = app.openapi()["paths"]["/stock/{id}"]["get"]["parameters"]
+
+        assert param["description"] == "The item."
 
     def test_an_empty_one_is_refused(self) -> None:
         described = RouteBinding(

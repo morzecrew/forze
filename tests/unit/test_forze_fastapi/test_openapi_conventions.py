@@ -447,6 +447,19 @@ class TestTagGroups:
             {"name": "Other", "tags": ["notes", "files"]},
         ]
 
+    def test_a_webhook_tag_is_grouped(self) -> None:
+        app = _tagged_app()
+
+        @app.webhooks.post("note-created", tags=["events"])
+        async def note_created() -> None: ...
+
+        apply_openapi_conventions(app, tag_groups={"Events": ["events"]})
+
+        assert app.openapi()["x-tagGroups"] == [
+            {"name": "Events", "tags": ["events"]},
+            {"name": "Other", "tags": ["notes", "files", "auth"]},
+        ]
+
     def test_ungrouped_tags_join_a_trailing_group(self) -> None:
         # In the order operations first use them: Scalar and Redoc would hide them otherwise.
         assert _tag_groups({"Content": ["files"]}) == [

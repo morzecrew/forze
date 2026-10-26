@@ -588,7 +588,13 @@ def _has_fastapi_metadata(param: inspect.Parameter) -> bool:
     """Whether *param* names how FastAPI reads it (a ``Query``, ``Body``, ``Depends``, …), in
     its annotation or its default."""
 
-    metadata = get_args(param.annotation)[1:] if get_origin(param.annotation) is Annotated else ()
+    annotation = param.annotation
+
+    # FastAPI unwraps one ``type`` alias and reads the metadata it names.
+    if isinstance(annotation, TypeAliasType):
+        annotation = annotation.__value__
+
+    metadata = get_args(annotation)[1:] if get_origin(annotation) is Annotated else ()
 
     return any(isinstance(item, FieldInfo | Depends) for item in (*metadata, param.default))
 
@@ -645,7 +651,8 @@ def _describe(
 
     endpoint.__signature__ = signature.replace(parameters=params)  # type: ignore[attr-defined]
     endpoint.__annotations__ = {
-        **endpoint.__annotations__,
+        # A callable instance may have none of its own.
+        **getattr(endpoint, "__annotations__", {}),
         **{param.name: param.annotation for param in params},
     }
 
@@ -1020,7 +1027,10 @@ def attach_operation_routes(
         )
 
         if binding.param_descriptions:
-            _describe(endpoint, binding.param_descriptions, override_params, op)
+            # FastAPI routes ``router.prefix + path``: a placeholder in the prefix is a path
+            # parameter too.
+            in_path = _path_params(router.prefix + path)
+            _describe(endpoint, binding.param_descriptions, in_path, op)
 
         # Descriptor tags project onto OpenAPI route tags (additive to any
         # router-level tags). MCP attachers have no tag concept — this mapping

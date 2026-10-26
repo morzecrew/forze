@@ -502,10 +502,11 @@ def _checked_tag_groups(tag_groups: Mapping[str, Sequence[str]]) -> dict[str, li
 
 
 def _group_tags(schema: dict[str, Any], tag_groups: Mapping[str, Sequence[str]]) -> None:
-    # The operations' tags, in the order they first appear.
+    # The operations' tags, webhooks' included, in the order they first appear.
     used = {
         tag: None
-        for path_item in schema.get("paths", {}).values()
+        for section in ("paths", "webhooks")
+        for path_item in schema.get(section, {}).values()
         for method, operation in path_item.items()
         if method in _HTTP_METHODS
         for tag in operation.get("tags", ())
