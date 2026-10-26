@@ -358,6 +358,9 @@
         <loc>https://morzecrew.github.io/forze/0.16/reference/metrics/</loc>
       </url>
       <url>
+        <loc>https://morzecrew.github.io/forze/0.16/reference/ops-cli/</loc>
+      </url>
+      <url>
         <loc>https://morzecrew.github.io/forze/0.16/reference/outbox-schema/</loc>
       </url>
       <url>
@@ -395,6 +398,9 @@
       </url>
       <url>
         <loc>https://morzecrew.github.io/forze/0.16/running-in-prod/operation-progress/</loc>
+      </url>
+      <url>
+        <loc>https://morzecrew.github.io/forze/0.16/running-in-prod/operations-cli/</loc>
       </url>
       <url>
         <loc>https://morzecrew.github.io/forze/0.16/running-in-prod/portability/</loc>
