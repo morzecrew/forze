@@ -49,24 +49,41 @@ def provider_safe_tool_name(op: str) -> str:
 # ....................... #
 
 
-def _refuse_unsafe_names(claimed: Mapping[str, list[str]]) -> None:
-    """Refuse a tool name a provider would reject, and one that two operations share.
+def _checked_names(names: Mapping[str, object]) -> dict[str, str]:
+    """*names* (operation key → what the naming policy returned), once each is a tool name
+    a provider accepts and no two operations reach the same one.
 
     Found here, at wiring, rather than by the provider refusing the whole palette on the
     first request — or, for a shared name, by one operation silently shadowing another.
     """
 
-    invalid = {name: ops for name, ops in claimed.items() if not _TOOL_NAME.fullmatch(name)}
+    invalid = {
+        op: name
+        for op, name in names.items()
+        if not isinstance(name, str) or not _TOOL_NAME.fullmatch(name)
+    }
 
     if invalid:
         raise exc.configuration(
             "Tool name(s) a provider would refuse (each must match ^[A-Za-z0-9_-]{1,64}$): "
-            + ", ".join(f"{name!r} ({', '.join(ops)})" for name, ops in invalid.items()),
+            + ", ".join(f"{name!r} ({op})" for op, name in invalid.items()),
             code="agent_tools_invalid_tool_name",
-            details={"names": invalid},
+            details={"ops": list(invalid)},
         )
 
-    collisions = {name: ops for name, ops in claimed.items() if len(ops) > 1}
+    checked = {op: name for op, name in names.items() if isinstance(name, str)}
+    reached: dict[str, set[str]] = {}
+
+    for op, name in checked.items():
+        reached.setdefault(name, set()).add(op)
+
+    # An operation's key still dispatches as a legacy name, so a tool name equal to another
+    # operation's key reaches that operation too.
+    for name, ops in reached.items():
+        if name in checked:
+            ops.add(name)
+
+    collisions = {name: sorted(ops) for name, ops in reached.items() if len(ops) > 1}
 
     if collisions:
         raise exc.configuration(
@@ -75,6 +92,8 @@ def _refuse_unsafe_names(claimed: Mapping[str, list[str]]) -> None:
             code="agent_tools_tool_name_collision",
             details={"names": collisions},
         )
+
+    return checked
 
 
 # ....................... #
@@ -149,7 +168,8 @@ def operation_tools(
     :raises CoreException: When *include* is empty, names an operation the registry does
         not have, names a command operation in a read-only toolset, or names an operation
         that projects a sensitive read model; or, as a ``configuration`` error, when a
-        tool name falls outside ``^[A-Za-z0-9_-]{1,64}$`` or two operations share one.
+        tool name is not a string matching ``^[A-Za-z0-9_-]{1,64}$``, or two operations
+        share one — an operation's own key counting as one of its names.
     """
 
     catalog = registry.catalog()
@@ -161,9 +181,7 @@ def operation_tools(
             code="agent_tools_empty_allowlist",
         )
 
-    defs: list[ToolDef] = []
-    bindings: dict[str, OperationCatalogEntry] = {}
-    claimed: dict[str, list[str]] = {}
+    entries: dict[str, OperationCatalogEntry] = {}
 
     for op in selected:
         # A name may legitimately be listed twice when a palette is assembled from
@@ -171,7 +189,7 @@ def operation_tools(
         # first position and drops the repeat: two identical defs would be rejected by
         # the SDKs downstream, and refusing would make composition awkward for a mistake
         # that is never ambiguous.
-        if any(str(op) in ops for ops in claimed.values()):
+        if str(op) in entries:
             continue
 
         entry = catalog.get(op)
@@ -204,18 +222,21 @@ def operation_tools(
                 details={"op": str(op)},
             )
 
-        tool_name = name(str(entry.op))
-        claimed.setdefault(tool_name, []).append(str(entry.op))
+        entries[str(op)] = entry
 
-        defs.append(
-            ToolDef(
-                name=tool_name,
-                description=_description(entry),
-                input_schema=_input_schema(entry),
-            )
+    # Widened to object: the policy is the app's code, and a non-str return must reach the
+    # configuration error rather than fail on hashing.
+    policy_names: dict[str, object] = {op: name(op) for op in entries}
+    names = _checked_names(policy_names)
+
+    defs = tuple(
+        ToolDef(
+            name=names[op],
+            description=_description(entry),
+            input_schema=_input_schema(entry),
         )
-        bindings[tool_name] = entry
+        for op, entry in entries.items()
+    )
+    bindings = {names[op]: entry for op, entry in entries.items()}
 
-    _refuse_unsafe_names(claimed)
-
-    return OperationToolset(registry=registry, defs=tuple(defs), bindings=bindings)
+    return OperationToolset(registry=registry, defs=defs, bindings=bindings)

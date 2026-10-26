@@ -139,6 +139,17 @@ class OperationToolset:
     # ....................... #
 
     def entry_for(self, name: str) -> OperationCatalogEntry | None:
-        """The catalog entry bound to *name*, or ``None`` when it is not in this palette."""
+        """The catalog entry bound to *name*, or ``None`` when it is not in this palette.
 
-        return self.bindings.get(name)
+        A palette operation's own key resolves too: tools were named by their key before the
+        naming policy, and a run or history that journaled one still replays it.
+        :func:`~forze_kits.integrations.agent_tools.operation_tools` refuses a tool name equal
+        to another operation's key, so the two lookups never disagree.
+        """
+
+        entry = self.bindings.get(name)
+
+        if entry is None:
+            entry = next((e for e in self.bindings.values() if str(e.op) == name), None)
+
+        return entry

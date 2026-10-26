@@ -53,9 +53,13 @@ A tool is named after its operation, spelled the way providers accept it: OpenAI
 function calling and Anthropic both take only `^[A-Za-z0-9_-]{1,64}$`, so `notes.list`
 becomes `notes__list`, and any other character outside that set becomes `_`. Pass
 `name=` — a function from operation key to tool name — to choose another spelling. The
-toolset keeps each name's operation, so dispatch never has to reverse the spelling. A
-palette with a name outside that pattern, or one name for two operations, is refused
-when it is built rather than by the provider on the first request.
+toolset keeps each name's operation, so dispatch never has to reverse the spelling.
+
+The operation key still dispatches too. It was the tool's name in 0.16.2 and earlier, so
+a durable run or a conversation history that journaled `notes.list` replays after an
+upgrade. A palette with a name outside that pattern, or one name for two operations —
+an operation's key counts as one of its names — is refused when it is built rather than
+by the provider on the first request.
 
 When the model asks for a tool, hand the call back:
 

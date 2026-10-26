@@ -114,7 +114,6 @@ class TestToolNames:
 
         assert tools.names == ("calc__double",)
         assert tools.entry_for("calc__double") is not None
-        assert tools.entry_for("calc.double") is None
 
     def test_the_binding_keeps_the_operation_key(self) -> None:
         tools = operation_tools(_registry(), include=["calc.double"])
@@ -144,6 +143,36 @@ class TestToolNames:
         assert _kind_of(caught) is ExceptionKind.CONFIGURATION
         assert caught.value.code == "agent_tools_tool_name_collision"
         assert "'a__b' (a.b, a__b)" in str(caught.value)
+
+    def test_a_tool_name_equal_to_another_operations_key_is_refused(self) -> None:
+        # The key `y` still dispatches as a legacy name; naming `x` "y" would leave two
+        # operations answering to it. The default policy cannot do this (a key it leaves
+        # unchanged maps to itself, so it collides above), a custom one can.
+        renamed = {"x": "y", "y": "z"}
+
+        with pytest.raises(CoreException) as caught:
+            operation_tools(_keyed("x", "y"), include=["x", "y"], name=lambda op: renamed[op])
+
+        assert caught.value.code == "agent_tools_tool_name_collision"
+        assert "'y' (x, y)" in str(caught.value)
+
+    def test_an_operation_may_be_named_its_own_key(self) -> None:
+        tools = operation_tools(_keyed("x", "y.z"), include=["x", "y.z"])
+
+        assert tools.names == ("x", "y__z")
+        assert tools.entry_for("x") is not None
+
+    @pytest.mark.parametrize("returned", [42, None, ["calc"]])
+    def test_a_policy_returning_a_non_string_is_refused(self, returned: object) -> None:
+        def policy(_op: str) -> str:
+            return returned  # type: ignore[return-value]
+
+        with pytest.raises(CoreException) as caught:
+            operation_tools(_registry(), include=["calc.double"], name=policy)
+
+        assert _kind_of(caught) is ExceptionKind.CONFIGURATION
+        assert caught.value.code == "agent_tools_invalid_tool_name"
+        assert "(calc.double)" in str(caught.value)
 
     def test_a_name_over_64_characters_is_refused(self) -> None:
         op = "orders." + "x" * 57  # 65 characters once the dot is spelled "__"

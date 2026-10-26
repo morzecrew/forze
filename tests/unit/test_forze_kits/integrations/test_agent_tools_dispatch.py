@@ -352,9 +352,23 @@ class TestTheNameRoundTrips:
         assert tools.names == ("double",)
         assert result.content == {"doubled": 42}
 
-    async def test_the_operation_key_is_not_a_tool_name(self) -> None:
+    async def test_a_journaled_operation_key_dispatches_to_the_same_operation(self) -> None:
+        # Tools were named by their key before the naming policy; a run or history that
+        # journaled `calc.double` must replay after the upgrade, not turn into a refusal.
         ctx = _ctx()
         tools = operation_tools(_registry(), include=["calc.double"])
+
+        with _bound(ctx):
+            result = await dispatch_tool_use(
+                ToolUse(id="tu-1", name="calc.double", input={"n": 21}), ctx=ctx, tools=tools
+            )
+
+        assert result.content == {"doubled": 42}
+        assert tools.entry_for("calc.double") is tools.entry_for("calc__double")
+
+    async def test_an_operation_key_outside_the_palette_is_still_unknown(self) -> None:
+        ctx = _ctx()
+        tools = operation_tools(_registry(), include=["calc.void"])
 
         with _bound(ctx):
             result = await dispatch_tool_use(

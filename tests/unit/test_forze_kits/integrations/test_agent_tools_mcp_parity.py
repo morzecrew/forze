@@ -112,6 +112,31 @@ class TestTheTwoSurfacesAgree:
         assert bridged.names == ("calc__double",)
         assert [str(entry.op) for entry in bridged.bindings.values()] == names
 
+    async def test_a_journaled_mcp_name_still_dispatches_through_the_bridge(self) -> None:
+        # The MCP name is the operation key, which is also what the bridge named its tools
+        # before the naming policy: a run that journaled it replays on either surface.
+        from uuid import uuid4
+
+        from forze.application.contracts.authn import AuthnIdentity
+        from forze.application.execution import Deps, InvocationMetadata
+        from forze.testing import context_from_deps
+        from forze_kits.integrations.agent_tools import ToolUse, dispatch_tool_use
+
+        (journaled,) = register_tools(FastMCP("calc"), _registry(), _ctx_factory)
+        ctx = context_from_deps(Deps())
+
+        with ctx.inv_ctx.bind(
+            metadata=InvocationMetadata(execution_id=uuid4(), correlation_id=uuid4()),
+            authn=AuthnIdentity(principal_id=uuid4()),
+        ):
+            result = await dispatch_tool_use(
+                ToolUse(id="t", name=journaled, input={"n": 21}),
+                ctx=ctx,
+                tools=operation_tools(_registry(), include=["calc.double"]),
+            )
+
+        assert result.content == {"doubled": 42}
+
     async def test_the_descriptions_come_from_the_same_place(self) -> None:
         server = FastMCP("calc")
         register_tools(server, _registry(), _ctx_factory)
