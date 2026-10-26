@@ -6936,7 +6936,9 @@
 router: request and response schemas come from the operation descriptors, and
 each route's <code>operationId</code> is the registry operation key verbatim (<code>notes.get</code>),
 so the HTTP surface, <abbr title="Model Context Protocol">MCP</abbr> tool names, and the operation catalog share one
-identity. Setup (lifespan, middleware, error mapping) lives on the
+identity. Each path or query parameter a generated route declares, such as a
+document's <code>id</code> and <code>rev</code> or a storage <code>key</code>, carries its own description in the
+schema. Setup (lifespan, middleware, error mapping) lives on the
 <a href="../../integrations/fastapi/">FastAPI integration</a> page; this is the catalog of
 what each generator produces.</p>
 <h2 id="document-routes">Document routes<a class="headerlink" href="#document-routes" title="Permanent link">&para;</a></h2>
@@ -7359,7 +7361,12 @@ come from the catalog, as for the generated routes.</p>
     <span class="n">bindings</span><span class="o">=</span><span class="p">{</span>
         <span class="s2">"levels"</span><span class="p">:</span> <span class="n">RouteBinding</span><span class="p">(</span><span class="n">method</span><span class="o">=</span><span class="s2">"GET"</span><span class="p">,</span> <span class="n">path</span><span class="o">=</span><span class="s2">"/levels"</span><span class="p">,</span> <span class="n">build</span><span class="o">=</span><span class="n">query_endpoint</span><span class="p">),</span>
         <span class="s2">"add"</span><span class="p">:</span> <span class="n">RouteBinding</span><span class="p">(</span><span class="n">method</span><span class="o">=</span><span class="s2">"POST"</span><span class="p">,</span> <span class="n">path</span><span class="o">=</span><span class="s2">"/add"</span><span class="p">,</span> <span class="n">build</span><span class="o">=</span><span class="n">body_endpoint</span><span class="p">,</span> <span class="n">status_code</span><span class="o">=</span><span class="mi">201</span><span class="p">),</span>
-        <span class="s2">"get"</span><span class="p">:</span> <span class="n">RouteBinding</span><span class="p">(</span><span class="n">method</span><span class="o">=</span><span class="s2">"GET"</span><span class="p">,</span> <span class="n">path</span><span class="o">=</span><span class="s2">"/</span><span class="si">{id}</span><span class="s2">"</span><span class="p">,</span> <span class="n">build</span><span class="o">=</span><span class="n">id_endpoint</span><span class="p">),</span>
+        <span class="s2">"get"</span><span class="p">:</span> <span class="n">RouteBinding</span><span class="p">(</span>
+            <span class="n">method</span><span class="o">=</span><span class="s2">"GET"</span><span class="p">,</span>
+            <span class="n">path</span><span class="o">=</span><span class="s2">"/</span><span class="si">{id}</span><span class="s2">"</span><span class="p">,</span>
+            <span class="n">build</span><span class="o">=</span><span class="n">id_endpoint</span><span class="p">,</span>
+            <span class="n">param_descriptions</span><span class="o">=</span><span class="p">{</span><span class="s2">"id"</span><span class="p">:</span> <span class="s2">"The stock item's ID."</span><span class="p">},</span>
+        <span class="p">),</span>
     <span class="p">},</span>
 <span class="p">)</span>
 </code></pre></div>
@@ -7383,6 +7390,13 @@ declares them. Each
 shipped builder names the placeholders it fills, and a path with any other placeholder is
 refused. An <code>EndpointBuilder</code> of your own takes <code>(runner, input_type, op)</code>; give it a
 <code>path_params</code> frozenset to have its paths checked the same way.</p>
+<p>A binding's <code>param_descriptions</code> describe its endpoint's parameters by name. Each becomes
+FastAPI's own <code>Path</code> where the path has the placeholder and <code>Query</code> otherwise, so <code>id</code>
+reads the same in both route styles. Only a plain path or query parameter takes one. When
+the route is attached, an empty description is refused, and so is a name the endpoint does
+not take. A body, the request, or a parameter with its own <code>Query</code>, <code>Depends</code>, … is refused
+too: describe that one in its own metadata. A <code>query_endpoint</code> parameter takes its
+description from the DTO field.</p>
 <p>The operation's output type is the route's response model. It need not be a bare model: an
 operation that may find nothing declares <code>output_type=Model | None</code> and answers <code>200</code> with
 <code>null</code>, and <abbr title="Model Context Protocol">MCP</abbr> returns it as <code>{"result": null}</code>. An operation without one, such as
@@ -7492,6 +7506,25 @@ without a default. A schema is one component shared by all the routes that retur
 a route that keeps nulls and one that drops them return the same model, its nullable fields
 are optional for both. A schema a request also uses is left as it is, and so is one a route
 trims some other way (<code>response_model_exclude_unset</code>, <code>include</code>, <code>exclude</code>).</p>
+<p><code>tag_groups</code> groups the sidebar that Scalar and Redoc render, through the top-level
+<code>x-tagGroups</code> extension. Groups and their tags keep the order you give:</p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">forze_fastapi</span><span class="w"> </span><span class="kn">import</span> <span class="n">apply_openapi_conventions</span>
+
+<span class="n">apply_openapi_conventions</span><span class="p">(</span>
+    <span class="n">app</span><span class="p">,</span>
+    <span class="n">tag_groups</span><span class="o">=</span><span class="p">{</span><span class="s2">"Content"</span><span class="p">:</span> <span class="p">[</span><span class="s2">"notes"</span><span class="p">,</span> <span class="s2">"files"</span><span class="p">],</span> <span class="s2">"Access"</span><span class="p">:</span> <span class="p">[</span><span class="s2">"auth"</span><span class="p">]},</span>
+<span class="p">)</span>
+</code></pre></div>
+<p>A group without a name, tags given as one string (<code>"notes"</code> for <code>["notes"]</code>), or a tag
+listed twice is a configuration error raised by the call itself. A listed tag that no
+operation is tagged with, a typo or a renamed router, is left out of its group with a
+warning, and a group left with no tags is dropped. Neither renderer shows a tag that no
+group lists, nor the operations under it. The tags you leave out therefore join a group
+named <code>Other</code>, in the order operations first use them: last, or where you list <code>Other</code>
+yourself. An operation with no tags is in no group: Scalar still lists it, Redoc does not,
+so tag every route. A later call with <code>tag_groups</code> replaces the groups; one without leaves
+them as they are. <code>register_scalar_docs</code> needs no setting, since Scalar reads the groups
+from the schema.</p>
 
 
 

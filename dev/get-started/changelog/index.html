@@ -10244,6 +10244,12 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <li>
 <p><strong><code>serve_runtime</code> drains a process that serves no HTTP on <code>SIGTERM</code>.</strong> The counterpart of <code>serve_uvicorn</code> for relays, consumers and workers holds the runtime's scope open, runs <code>runtime.drain()</code> on the first <code>SIGTERM</code> or <code>SIGINT</code>, or when <code>stop</code> is set, then tears down.</p>
 </li>
+<li>
+<p><strong>Generated routes describe the parameters they declare in OpenAPI.</strong> A document's <code>id</code> and <code>rev</code>, a storage <code>key</code>, and the tenancy and API-key <code>id</code>s need no <code>app.openapi</code> patch. A <code>RouteBinding</code> of yours takes <code>param_descriptions</code>.</p>
+</li>
+<li>
+<p><strong><code>apply_openapi_conventions(app, tag_groups=...)</code> writes <code>x-tagGroups</code>, the sidebar groups Scalar and Redoc render.</strong> A listed tag no operation uses is left out with a warning, and tags no group lists join a trailing <code>Other</code> group.</p>
+</li>
 </ul>
 <h3 id="changed">Changed<a class="headerlink" href="#changed" title="Permanent link">&para;</a></h3>
 <ul>
