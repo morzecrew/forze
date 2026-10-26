@@ -23,7 +23,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **A declared HTTP service can stream a response.** `HttpServicePort.stream(op, args)` yields the body as it arrives, governed as `invoke` is, and raises a rejection before the first chunk. `HttpClient.stream` and `RoutedHttpClient.stream` do the same at the client.
 
-- **An agent toolset can state the filter grammar once.** `operation_tools(..., shared_filter_grammar=True)` strips it from each tool's schema as MCP does and exposes it as `OperationToolset.filter_grammar` for the system prompt. New `filter_grammar` and `without_filter_grammar` in `forze.application.contracts.querying`.
+- **Agent tools can state the filter grammar once.** `operation_tools(shared_filter_grammar=True)` strips it from tool schemas as MCP does; `OperationToolset.filter_grammar` holds it for the system prompt. `forze.application.contracts.querying` gains `filter_grammar`, `without_filter_grammar`, `takes_filter_expression`.
 
 ### Changed
 

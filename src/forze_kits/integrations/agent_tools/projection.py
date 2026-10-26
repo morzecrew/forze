@@ -17,6 +17,7 @@ from collections.abc import Callable, Iterable, Mapping
 from forze.application.contracts.querying import (
     describe_query_discovery,
     filter_grammar,
+    takes_filter_expression,
     without_filter_grammar,
 )
 from forze.application.execution.operations import (
@@ -110,8 +111,8 @@ def _grammar_note() -> str:
     """The filter grammar as a palette states it once, worded for a system prompt."""
 
     return (
-        "Filter expressions (the `filters` argument of list and search tools, and `$having` "
-        f"in aggregates) follow this JSON schema:\n{filter_grammar()}"
+        "Every filter expression a tool takes (each `filters` argument and `$having` clause) "
+        f"follows this JSON schema:\n{filter_grammar()}"
     )
 
 
@@ -254,15 +255,15 @@ def operation_tools(
     policy_names: dict[str, object] = {op: name(op) for op in entries}
     names = _checked_names(policy_names)
     schemas = {op: _input_schema(entry) for op, entry in entries.items()}
-    shared = False
+    # Only a tool that takes a filter changes; the grammar is stated when one does.
+    filtered = [
+        op
+        for op, schema in schemas.items()
+        if shared_filter_grammar and takes_filter_expression(schema)
+    ]
 
-    if shared_filter_grammar:
-        stripped = {
-            op: without_filter_grammar(schema, pointer=_GRAMMAR_POINTER)
-            for op, schema in schemas.items()
-        }
-        shared = stripped != schemas
-        schemas = stripped
+    for op in filtered:
+        schemas[op] = without_filter_grammar(schemas[op], pointer=_GRAMMAR_POINTER)
 
     defs = tuple(
         ToolDef(
@@ -278,5 +279,5 @@ def operation_tools(
         registry=registry,
         defs=defs,
         bindings=bindings,
-        filter_grammar=_grammar_note() if shared else None,
+        filter_grammar=_grammar_note() if filtered else None,
     )

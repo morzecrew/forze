@@ -50,6 +50,49 @@ def _refs(node: Any) -> set[str]:
 # ....................... #
 
 
+def _is_filter_expression(node: dict[str, Any], roots: set[str]) -> bool:
+    """Whether *node* is a filter expression: an ``anyOf`` of every grammar root."""
+
+    options = node.get("anyOf")
+
+    if not isinstance(options, list):
+        return False
+
+    return roots <= {option.get("$ref") for option in options if isinstance(option, dict)}  # pyright: ignore[reportUnknownVariableType]
+
+
+def _grammar_roots() -> set[str]:
+    return {option["$ref"] for option in json.loads(filter_grammar())["anyOf"]}
+
+
+# ....................... #
+
+
+def takes_filter_expression(schema: dict[str, Any]) -> bool:
+    """Whether *schema* takes a filter expression anywhere — what
+    :func:`without_filter_grammar` would replace.
+
+    :param schema: A tool's input JSON schema.
+    :returns: ``True`` when stripping it would leave a pointer at the grammar.
+    """
+
+    roots = _grammar_roots()
+
+    def walk(node: Any) -> bool:
+        if isinstance(node, list):
+            return any(walk(item) for item in node)  # pyright: ignore[reportUnknownVariableType]
+
+        if not isinstance(node, dict):
+            return False
+
+        return _is_filter_expression(node, roots) or any(walk(v) for v in node.values())  # pyright: ignore[reportUnknownArgumentType, reportUnknownVariableType]
+
+    return walk(schema)
+
+
+# ....................... #
+
+
 def without_filter_grammar(schema: dict[str, Any], *, pointer: str) -> dict[str, Any]:
     """*schema* with each filter expression a plain object pointing at the shared grammar,
     and the definitions nothing references any more dropped.
@@ -65,7 +108,7 @@ def without_filter_grammar(schema: dict[str, Any], *, pointer: str) -> dict[str,
     :returns: The stripped schema; equal to *schema* when it takes no filter expression.
     """
 
-    roots = {option["$ref"] for option in json.loads(filter_grammar())["anyOf"]}
+    roots = _grammar_roots()
 
     def strip(node: Any) -> Any:
         if isinstance(node, list):
@@ -75,22 +118,17 @@ def without_filter_grammar(schema: dict[str, Any], *, pointer: str) -> dict[str,
             return node
 
         out: dict[str, Any] = {key: strip(value) for key, value in node.items()}  # pyright: ignore[reportUnknownVariableType]
-        options = out.get("anyOf")
 
-        if isinstance(options, list):
-            refs = {option.get("$ref") for option in options if isinstance(option, dict)}  # pyright: ignore[reportUnknownVariableType]
+        if _is_filter_expression(out, roots):
+            rest = [option for option in out.pop("anyOf") if option.get("$ref") not in roots]
+            plain = {"type": "object", "description": f"A filter expression. {pointer}"}
 
-            if roots <= refs:
-                rest = [option for option in options if option.get("$ref") not in roots]  # pyright: ignore[reportUnknownVariableType]
-                del out["anyOf"]
-                plain = {"type": "object", "description": f"A filter expression. {pointer}"}
+            if rest:
+                return {**out, "anyOf": [plain, *rest]}
 
-                if rest:
-                    return {**out, "anyOf": [plain, *rest]}
+            own = out.get("description")
 
-                own = out.get("description")
-
-                return {**out, **plain, **({"description": f"{own} {pointer}"} if own else {})}
+            return {**out, **plain, **({"description": f"{own} {pointer}"} if own else {})}
 
         return out
 

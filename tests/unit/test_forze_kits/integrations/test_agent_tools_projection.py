@@ -301,3 +301,32 @@ class TestThePaletteIsNotEditableAfterProjection:
         allowlist.append("calc.write")
 
         assert tools.names == ("calc__double",)
+
+
+# ....................... #
+
+
+class _WithDeadDefs(BaseModel):
+    n: int
+
+    @classmethod
+    def model_json_schema(cls, *args: Any, **kwargs: Any) -> dict[str, Any]:
+        # A definition nothing references: stripping drops it, without any filter present.
+        return {**super().model_json_schema(*args, **kwargs), "$defs": {"Unused": {"type": "string"}}}
+
+
+class TestSharedFilterGrammarWithoutAFilter:
+    def test_a_dead_definition_is_not_a_filter(self) -> None:
+        registry = (
+            OperationRegistry(handlers={"calc.dead": lambda _c: _Doubler()})
+            .set_descriptor("calc.dead", OperationDescriptor(input_type=_WithDeadDefs))
+            .bind("calc.dead")
+            .as_query()
+            .finish()
+            .freeze()
+        )
+
+        tools = operation_tools(registry, include=["calc.dead"], shared_filter_grammar=True)
+
+        assert tools.filter_grammar is None
+        assert tools.defs[0].input_schema == _WithDeadDefs.model_json_schema()
