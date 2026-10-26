@@ -62,6 +62,38 @@ announced (see [Graceful deploys](#graceful-deploys)), or when shutdown closes t
 gate. Point your orchestrator's readiness check here and the rollout sequence
 takes care of itself: routing stops, in-flight work drains, teardown runs.
 
+An app that builds its runtime inside the FastAPI lifespan has no runtime yet when
+its factory attaches routes. Pass a zero-argument callable instead: it is asked on
+every request, and returning `None` answers `503 unavailable`, as a runtime with no
+open scope does:
+
+```python
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+
+from fastapi import APIRouter, FastAPI
+from forze.application.execution import build_runtime
+from forze_fastapi import runtime_lifespan
+from forze_fastapi.routes import attach_readiness_route
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+    app.state.runtime = runtime = build_runtime(...)
+
+    async with runtime_lifespan(runtime)(app):
+        yield
+
+
+app = FastAPI(lifespan=lifespan)
+router = APIRouter()
+attach_readiness_route(router, lambda: getattr(app.state, "runtime", None))
+app.include_router(router)
+```
+
+A callable that raises answers `unavailable` too. Its exception is logged and never
+served to the probe.
+
 Point *liveness* somewhere else — at `attach_liveness_route(router)`, which answers
 `200` unconditionally. A draining pod is alive but not ready; one endpoint answering
 both questions gets the pod killed mid-drain instead of letting it finish.

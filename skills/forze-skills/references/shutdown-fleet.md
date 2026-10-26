@@ -12,6 +12,8 @@ from forze_fastapi.routes import attach_readiness_route
 attach_readiness_route(router, runtime)   # GET /readyz → 200 / 503 draining
 ```
 
+Runtime built inside the FastAPI lifespan, so the app factory has none yet? Pass a zero-argument callable instead, asked per request: `attach_readiness_route(router, lambda: getattr(app.state, "runtime", None))` with the lifespan storing `app.state.runtime`. `None`, or a callable that raises, answers `503 unavailable`.
+
 The drain gate says nothing about whether dependencies are reachable — an un-drained process whose database is gone still answers `ready`. Name the clients you cannot serve without and each is asked its `health()`:
 
 ```python

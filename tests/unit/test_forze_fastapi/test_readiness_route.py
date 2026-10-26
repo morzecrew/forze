@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Callable
 from datetime import timedelta
 from typing import Any, cast
 from unittest.mock import MagicMock
@@ -10,6 +11,7 @@ from unittest.mock import MagicMock
 import attrs
 import httpx
 import pytest
+import structlog.testing
 from fastapi import APIRouter, FastAPI
 from starlette.testclient import TestClient
 
@@ -25,7 +27,7 @@ from tests.support.ports import free_port
 # ----------------------- #
 
 
-def _client(runtime: ExecutionRuntime) -> TestClient:
+def _client(runtime: ExecutionRuntime | Callable[[], ExecutionRuntime | None]) -> TestClient:
     router = APIRouter()
     attach_readiness_route(router, runtime)
     app = FastAPI()
@@ -53,6 +55,53 @@ class TestReadinessRoute:
             response = client.get("/readyz")
             assert response.status_code == 503
             assert response.json() == {"status": "draining"}
+
+
+class TestReadinessRuntimeProvider:
+    """The route attached before the runtime exists, as an app factory does it."""
+
+    def test_no_runtime_yet_answers_unavailable(self) -> None:
+        response = _client(lambda: None).get("/readyz")
+
+        assert response.status_code == 503
+        assert response.json() == {"status": "unavailable"}
+
+    @pytest.mark.asyncio
+    async def test_asked_on_every_request(self) -> None:
+        holder: dict[str, ExecutionRuntime] = {}
+        client = _client(lambda: holder.get("runtime"))
+
+        assert client.get("/readyz").json() == {"status": "unavailable"}
+
+        runtime = holder["runtime"] = ExecutionRuntime()
+
+        # Built, but its scope not open yet.
+        assert client.get("/readyz").json() == {"status": "unavailable"}
+
+        async with runtime.scope():
+            response = client.get("/readyz")
+            assert response.status_code == 200
+            assert response.json() == {"status": "ready"}
+
+            runtime.begin_draining()
+
+            response = client.get("/readyz")
+            assert response.status_code == 503
+            assert response.json() == {"status": "draining"}
+
+    def test_a_raising_provider_answers_unavailable_and_keeps_its_message_out(self) -> None:
+        # The provider's failure is usually the app's own settings or secrets failing to
+        # load, and its text says which: logged for the operator, not served to the probe.
+        def provider() -> ExecutionRuntime:
+            raise RuntimeError("dsn=postgres://user:fixture-7chr@db")
+
+        with structlog.testing.capture_logs() as logs:
+            response = _client(provider).get("/readyz")
+
+        assert response.status_code == 503
+        assert response.json() == {"status": "unavailable"}
+        assert "fixture-7chr" not in response.text
+        assert any("runtime provider failed" in str(one.get("event")) for one in logs)
 
 
 # ----------------------- #
