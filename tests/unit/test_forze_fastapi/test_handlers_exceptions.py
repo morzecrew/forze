@@ -133,7 +133,7 @@ class TestForzeExceptionHandler:
         error_log_buf: io.StringIO,
     ) -> None:
         try:
-            raise ValueError("password=hunter2")
+            raise ValueError("password=fixture-7chr")
         except ValueError as cause:
             err = exc.internal("Something went wrong", code="internal")
             err.__cause__ = cause
@@ -149,8 +149,8 @@ class TestForzeExceptionHandler:
         assert row["error_code"] == "internal"
         assert "ValueError" in row["error.stack"]
         assert SECRET_PLACEHOLDER in row["error.message"]
-        assert "hunter2" not in row["error.message"]
-        assert "hunter2" not in row["error.stack"]
+        assert "fixture-7chr" not in row["error.message"]
+        assert "fixture-7chr" not in row["error.stack"]
 
     @pytest.mark.asyncio
     async def test_includes_context_when_error_has_details(self) -> None:
@@ -175,7 +175,7 @@ class TestForzeExceptionHandler:
     async def test_redacts_sensitive_keys_in_context(self) -> None:
         err = exc.validation(
             "Invalid input",
-            details={"password": "hunter2", "field": "email"},
+            details={"password": "fixture-7chr", "field": "email"},
         )
         request = Request(scope={"type": "http", "path": "/", "method": "GET"})
         response = await _forze_exception_handler(request, err)

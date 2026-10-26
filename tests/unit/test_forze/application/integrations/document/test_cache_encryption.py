@@ -57,13 +57,13 @@ async def test_distributed_cache_body_is_sealed_then_read_back() -> None:
     cache = MockCacheAdapter(state=state, namespace="docs")
     keyring = _keyring()
 
-    doc = _Doc(id=uuid4(), rev=1, secret="hunter2")
+    doc = _Doc(id=uuid4(), rev=1, secret="fixture-7chr")
     await _doc_cache(cache, keyring).set_one(doc)
 
     # Ciphertext at rest: the backend cache holds the envelope wrapper, not the model.
     raw = await cache.get(str(doc.id))
     assert is_encrypted_payload(raw)
-    assert "hunter2" not in str(raw)
+    assert "fixture-7chr" not in str(raw)
 
     # A fresh reader (cold L1) decrypts it back to the plaintext model.
     got = await _doc_cache(cache, keyring).get_read_through(
@@ -71,7 +71,7 @@ async def test_distributed_cache_body_is_sealed_then_read_back() -> None:
         fetch_on_cache_fault=_no_fault,
         fetch_on_miss_without_lock=_no_fault,
     )
-    assert got.secret == "hunter2"
+    assert got.secret == "fixture-7chr"
 
 
 @pytest.mark.asyncio

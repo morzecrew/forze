@@ -39,7 +39,7 @@ from tests.support.execution_context import context_from_modules
 
 # ----------------------- #
 
-SECRET = "hunter2-SECRET-9f3c"
+SECRET = "fixture-7chr-SECRET-9f3c"
 
 
 class _Db(BaseModel):

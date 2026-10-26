@@ -20,13 +20,13 @@ class TestDsn:
     def test_builds_the_full_endpoint(self) -> None:
         settings = PostgresSettings(
             user="app",
-            password=SecretStr("hunter2"),
+            password=SecretStr("fixture-7chr"),
             database="orders",
             host="db.internal",
             port=5432,
         )
 
-        assert settings.dsn.get_secret_value() == "postgresql://app:hunter2@db.internal:5432/orders"
+        assert settings.dsn.get_secret_value() == "postgresql://app:fixture-7chr@db.internal:5432/orders"
 
     # ....................... #
 

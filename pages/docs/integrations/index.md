@@ -33,7 +33,8 @@ on each integration's page. Two key backends need no extra at all: the
 
 The remaining extras are not backend integrations: `dst` and `cli` are tooling
 ([deterministic simulation testing](../dst/overview.md) and the `forze`
-command-line tool), `mock-server` serves the in-memory mock over HTTP,
+command-line tool, whose [`ops` group](../running-in-prod/operations-cli.md) runs your
+operations from a terminal or a Job), `mock-server` serves the in-memory mock over HTTP,
 `sandbox-container` is the container tier of the
 [sandbox execution plane](../data-events/sandbox.md), `observability` adds the OTLP
 exporter for [telemetry](../running-in-prod/observability.md), and `zstd` adds the zstd

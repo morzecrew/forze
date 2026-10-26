@@ -1,8 +1,9 @@
 # RFC 0077 — Operation CLI: governed operations from the command line
 
-- **Status:** 🚧 In progress. P1, the shared ingress core, landed on 2026-10-23 (§5.7 "As
-  built" records where it departs from the plan). P2, `forze ops`, is next. The three questions
-  were answered on 2026-10-22 (§10, decisions 14, 16 and 17).
+- **Status:** ✅ Complete (P1, P2). P1, the shared ingress core, landed on 2026-10-23, and
+  P2, `forze ops`, on 2026-10-24; the "As built" notes in §5.7 and §5.8 record where each
+  departs from the plan. P3 stays demand-gated (§12). The three questions were answered on
+  2026-10-22 (§10, decisions 14, 16 and 17).
 - **Scope:** A `forze ops` command group in the existing `forze_cli` package. It lists,
   describes and invokes the operations of an application's frozen registry, in process,
   through the same governed path HTTP and MCP use. The RFC also covers the transport-agnostic
@@ -545,6 +546,27 @@ forze ops call      [--app REF] OP [--input JSON|@PATH|-] [--tenant UUID]
   application that mounts the group in its own CLI controls this through its own root, and
   `build_ops_cli` cannot set it for them. The docs therefore say to set it, and a test asserts
   the warning is in the docstring.
+- **As built (P2).** Departures from §5.1–§5.8:
+  - **The commit flag survives a cancellation.** §5.6 assumed the CLI could read
+    `commit_started()` where the cancellation reaches its frame. `run_operation`'s top-level
+    boundary cleared the flag in its `finally` first. It now leaves the flag set when the call
+    is cancelled; every reader resets it on entry. A cancel that lands inside a transaction's
+    commit was already converted to `commit_ambiguous` by the transaction scope. The flag
+    covers a cancel after the scope has gone, or after an earlier root transaction committed.
+  - **Signals cover the whole call.** The first signal arms the grace timer in any phase. A
+    signal during startup skips the operation and reports `interrupted`, and a failed shutdown
+    after the call keeps the call's outcome and logs the failure to stderr.
+  - **Error codes** carry a `cli_` prefix. Usage refusals are `validation` errors that exit 2;
+    the reference page lists them. A `--tenant` nothing can validate keeps the ingress code
+    `tenant_request_unverifiable` and exits 2. A `--tenant` equal to the key's own tenant is
+    bound without a resolver, as over HTTP.
+  - **The exit-code table** maps the non-retryable kinds only, since retryability is read
+    first. A test fails when a non-retryable kind has no row.
+  - **`--app`** also accepts a zero-argument callable returning an `OpsApp`, as `forze mock`
+    does. Naming none exits 2.
+  - **Skills.** No reference file was added. A section with an import block went into
+    `fastapi-generated-routes`, the route RFC 0041 §6.1 sets for content without a file, and
+    `forze_cli` moved from D3 to D1.
 
 ### 5.9 Alternatives considered
 

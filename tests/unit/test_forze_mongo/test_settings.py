@@ -25,10 +25,10 @@ class TestUri:
             host="m.internal",
             port=27017,
             user="app",
-            password=SecretStr("hunter2"),
+            password=SecretStr("fixture-7chr"),
         )
 
-        assert settings.uri.get_secret_value() == "mongodb://app:hunter2@m.internal:27017"
+        assert settings.uri.get_secret_value() == "mongodb://app:fixture-7chr@m.internal:27017"
 
     # ....................... #
 

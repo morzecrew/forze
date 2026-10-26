@@ -190,6 +190,7 @@ class ResolvedOperation[Args, R](Handler[Args, R]):
             reset_commit_started()
 
         marker_token = active_operation_var.set(current_task if current_task is not None else True)
+        cancelled = False
 
         try:
             if self.plan.kind is OperationKind.QUERY:
@@ -203,6 +204,10 @@ class ResolvedOperation[Args, R](Handler[Args, R]):
 
             return await self._run(args)
 
+        except asyncio.CancelledError:
+            cancelled = True
+            raise
+
         finally:
             active_operation_var.reset(marker_token)
 
@@ -212,8 +217,13 @@ class ResolvedOperation[Args, R](Handler[Args, R]):
                 # committed operation cannot leak a false ``commit_ambiguous`` onto a
                 # later top-level operation sharing this task's context. Nested
                 # invocations leave it set so a nested commit still reaches the
-                # top-level boundary.
-                reset_commit_started()
+                # top-level boundary. A cancellation leaves it set too, so whatever
+                # cancelled the call can tell a commit that may have landed (one the
+                # transaction scope no longer covers, or an earlier root transaction)
+                # from none. The next top-level invocation resets it on entry, and the
+                # saga runners reset it per step.
+                if not cancelled:
+                    reset_commit_started()
 
 
 # ....................... #

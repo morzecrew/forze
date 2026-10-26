@@ -55,8 +55,8 @@ def test_api_key_prefix_tuple() -> None:
 
 def test_password_hash_and_verify_fast_config() -> None:
     pwd = PasswordService(config=_slow_password_config())
-    h = pwd.hash_password_sync("hunter2")
-    assert pwd.verify_password_sync(h, "hunter2")
+    h = pwd.hash_password_sync("fixture-7chr")
+    assert pwd.verify_password_sync(h, "fixture-7chr")
     assert not pwd.verify_password_sync(h, "hunter3")
     assert not pwd.verify_password_sync("$invalid", "x")
 
@@ -65,10 +65,10 @@ async def test_password_async_offload_round_trip() -> None:
     # The async methods run Argon2 on the service's bounded executor; results
     # must round-trip with the blocking variants (same hasher underneath).
     pwd = PasswordService(config=_slow_password_config())
-    h = await pwd.hash_password("hunter2")
-    assert await pwd.verify_password(h, "hunter2")
+    h = await pwd.hash_password("fixture-7chr")
+    assert await pwd.verify_password(h, "fixture-7chr")
     assert not await pwd.verify_password(h, "hunter3")
-    assert pwd.verify_password_sync(h, "hunter2")
+    assert pwd.verify_password_sync(h, "fixture-7chr")
 
 @pytest.mark.asyncio
 async def test_password_timing_dummy_hash_is_cached_and_verifiable() -> None:

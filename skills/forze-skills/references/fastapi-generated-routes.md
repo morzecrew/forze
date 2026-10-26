@@ -134,11 +134,41 @@ For a FastMCP server you build yourself, `register_tools(server, registry, ctx_f
 
 `register_tools(...)` + `exposed_operations(...)` project operation keys as tool names, `runtime_lifespan` scopes the runtime, and auth is **API-key-as-bearer** — `ForzeApiKeyVerifier` validates the inbound bearer through the same `AuthnSpec`/authn brain as your HTTP routes (pass both `auth=` and the identity binder). See [MCP integration](https://morzecrew.github.io/forze/latest/integrations/mcp/) and [Expose an aggregate over MCP](https://morzecrew.github.io/forze/latest/recipes/expose-an-aggregate-over-mcp/).
 
+## Running operations from the command line
+
+The same registry runs from a terminal, a cron job or a Kubernetes Job through `forze ops` (extra `cli`), governed exactly as over HTTP: input validated, API key verified, tenant resolved, authz and audit applied. Declare an `OpsApp` in a module the web process can import too, since `forze_cli.ops` needs no Typer:
+
+```python
+from forze.application.contracts.authn import AuthnSpec
+from forze.application.execution import DeploymentProfile, ExecutionRuntime, build_runtime
+from forze_cli.ops import ApiKeyIdentity, OpsApp
+
+
+def build_ops_runtime() -> ExecutionRuntime:
+    # One call per process: no long-running steps, no drain window. Wire only what the
+    # exposed operations need; a poller nobody declared long-running would still start.
+    return build_runtime(deps_modules, deployment=DeploymentProfile.SERVERLESS)
+
+
+ops = OpsApp(
+    registry=registry,              # the same frozen registry the routes use
+    runtime=build_ops_runtime,      # built once per `call`, never by `list` / `describe`
+    identity=ApiKeyIdentity(AuthnSpec(name="main", enabled_methods=frozenset({"api_key"}))),
+    include_writes=True,
+    operations=["projects.create", "projects.get"],  # an allowlist, reviewed like a grant
+)
+```
+
+Run it with `FORZE_OPS_APP=myapp.ops:ops forze ops call projects.get --input '{"id": "..."}'`, the key in `FORZE_API_KEY` (never argv). `call` prints exactly one JSON document — the result or a masked error object with `execution_id` / `correlation_id` — and exits with a stable code: 0 ok, 2 usage, 3 not found, 4 rejected, 5 denied, 6 timeout, 75 safe to retry, 69 retryable but a write may have landed, 78 configuration. `build_ops_cli(ops)` mounts the same group in your own Typer CLI; set `pretty_exceptions_show_locals=False` on its root.
+
 ## Anti-patterns
 
 - **Importing the removed `forze_fastapi.endpoints.*` helpers** — use `forze_fastapi.routes.attach_*_routes`, or define your own routes that dispatch through the registry/facade.
+- **Reaching for `StaticIdentity` because it is easy** — it binds an identity nothing verifies, so every operator shares one audit actor and one idempotency namespace, and nothing can be revoked. Issue a key per operator or job and use `ApiKeyIdentity`; keep `StaticIdentity` for break-glass inside the cluster.
+- **`include_writes=True` with no allowlist on `OpsApp`** — every command in the registry becomes callable from a shell, including ones whose only guard was their route. Name the operations.
 
 ## Reference
 
 - [Generated routes reference](https://morzecrew.github.io/forze/latest/reference/fastapi-routes/)
 - [MCP integration](https://morzecrew.github.io/forze/latest/integrations/mcp/)
+- [Operations CLI](https://morzecrew.github.io/forze/latest/running-in-prod/operations-cli/) and its [reference](https://morzecrew.github.io/forze/latest/reference/ops-cli/)

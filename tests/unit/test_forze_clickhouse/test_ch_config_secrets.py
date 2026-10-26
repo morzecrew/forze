@@ -15,7 +15,7 @@ from forze_clickhouse.kernel.client.value_objects import ClickHouseConfig
 
 # ----------------------- #
 
-_PASSWORD = "hunter2-super-secret"
+_PASSWORD = "fixture-7chr-super-secret"
 
 
 class TestClickHouseConfigPassword:

@@ -38,6 +38,7 @@ reaches for the wrong things. Start from the table below and read the whole row.
 | Add a governed aggregate | `aggregate-models` → `document-spec` → `aggregate-kit` → `spec-to-backend-config` → `testing-with-mock` |
 | Write a custom handler | `execution-context` → `handlers` → `query-dsl` |
 | Expose it over HTTP | `fastapi-setup` → `fastapi-generated-routes` → `fastapi-identity` |
+| Run operations from a shell, cron or a Job | `fastapi-generated-routes` → `runtime-lifecycle` → `authn` |
 | Encrypt a field | `field-encryption` → `kms-backends` → `spec-to-backend-config` |
 | Simulate my service under faults | `dst-simulation` → `dst-invariants` → `testing-with-mock` |
 
@@ -106,7 +107,7 @@ a row first.
 | Reference | Covers |
 |---|---|
 | [fastapi-setup](references/fastapi-setup.md) | Context dependency, lifespan, middleware, error handlers |
-| [fastapi-generated-routes](references/fastapi-generated-routes.md) | `attach_*_routes`, hand-written routes, deadline headers, MCP projection |
+| [fastapi-generated-routes](references/fastapi-generated-routes.md) | `attach_*_routes`, hand-written routes, deadline headers, MCP projection, the `forze ops` CLI |
 | [fastapi-identity](references/fastapi-identity.md) | Binding identity at the boundary, cookie mode, principal eligibility |
 
 ### Identity, tenancy and secrets

@@ -135,7 +135,7 @@ def test_maps_404_to_not_found() -> None:
 
 def test_catch_all_keeps_driver_error_out_of_summary() -> None:
     mapped = exc_interceptor.mapper(
-        RuntimeError("driver internals: token=hunter2"),
+        RuntimeError("driver internals: token=fixture-7chr"),
         site="http.test",
     )
 
@@ -143,7 +143,7 @@ def test_catch_all_keeps_driver_error_out_of_summary() -> None:
     assert mapped.summary == "An error occurred during HTTP operation http.test."
     assert "driver internals" not in mapped.summary
     assert mapped.details is not None
-    assert mapped.details["error"] == "driver internals: token=hunter2"
+    assert mapped.details["error"] == "driver internals: token=fixture-7chr"
 
 
 def test_catch_all_preserves_existing_details() -> None:

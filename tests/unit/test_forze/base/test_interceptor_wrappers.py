@@ -384,7 +384,7 @@ class TestLazySuccessPath:
 
 class _Payload(BaseModel):
     name: str = "order"
-    password: SecretStr = SecretStr("hunter2")
+    password: SecretStr = SecretStr("fixture-7chr")
     api_key: str = "sk-123"
 
 

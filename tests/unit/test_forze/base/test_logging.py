@@ -540,11 +540,11 @@ class TestForzeConsoleRenderer:
         )
         log = Logger("forze.test")
         try:
-            raise ValueError("connect failed: postgresql://admin:hunter2@db/app")
+            raise ValueError("connect failed: postgresql://admin:fixture-7chr@db/app")
         except ValueError as e:
             log.critical_exception("boom", exc=e)
         out = buf.getvalue()
-        assert "hunter2" not in out
+        assert "fixture-7chr" not in out
         assert "boom" in out
         # A (scrubbed) traceback is still rendered from error.stack.
         assert "Traceback" in out
@@ -591,7 +591,7 @@ def test_unconfigured_process_writes_only_warnings_and_never_to_stdout() -> None
         "log.trace('trace-firehose', n=1)\n"
         "log.debug('debug-line')\n"
         "log.info('info-line')\n"
-        "log.warning('warning-line', password='hunter2')\n"
+        "log.warning('warning-line', password='fixture-7chr')\n"
     )
     result = subprocess.run(
         [sys.executable, "-c", code],
@@ -604,7 +604,7 @@ def test_unconfigured_process_writes_only_warnings_and_never_to_stdout() -> None
     assert "debug-line" not in result.stderr
     assert "info-line" not in result.stderr
     assert "warning-line" in result.stderr
-    assert "hunter2" not in result.stderr
+    assert "fixture-7chr" not in result.stderr
 
 
 @pytest.fixture
@@ -660,7 +660,7 @@ def test_unconfigured_logging_scrubs_the_traceback(
     _, records = stdlib_records
 
     try:
-        raise ValueError("connect postgresql://admin:hunter2@db:5432/app failed")
+        raise ValueError("connect postgresql://admin:fixture-7chr@db:5432/app failed")
     except ValueError:
         Logger("forze.test").exception("connect failed")
 
@@ -668,7 +668,7 @@ def test_unconfigured_logging_scrubs_the_traceback(
     message = record.getMessage()
 
     assert "Traceback" in message
-    assert "hunter2" not in message
+    assert "fixture-7chr" not in message
 
 
 def test_unconfigured_logging_follows_the_stdlib_level(

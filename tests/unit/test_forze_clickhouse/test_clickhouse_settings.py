@@ -20,14 +20,14 @@ class TestConfig:
             host="ch.internal",
             port=8443,
             username="app",
-            password=SecretStr("hunter2"),
+            password=SecretStr("fixture-7chr"),
             database="events",
             secure=True,
         ).config
 
         assert (config.host, config.port) == ("ch.internal", 8443)
         assert (config.username, config.database, config.secure) == ("app", "events", True)
-        assert config.password.get_secret_value() == "hunter2"
+        assert config.password.get_secret_value() == "fixture-7chr"
 
     # ....................... #
 

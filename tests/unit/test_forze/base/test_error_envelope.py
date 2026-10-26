@@ -154,7 +154,7 @@ def test_a_chain_mapper_withholds_what_it_translates() -> None:
 @pytest.mark.usefixtures("_default_logging")
 def test_withheld_details_are_logged_scrubbed_at_debug() -> None:
     error = exc.not_found(
-        "Object not found.", details={"bucket": "internal", "password": "hunter2"}
+        "Object not found.", details={"bucket": "internal", "password": "fixture-7chr"}
     )
     error.expose_details = False
 
@@ -166,7 +166,7 @@ def test_withheld_details_are_logged_scrubbed_at_debug() -> None:
     assert record["log_level"] == "debug"
     assert record["error_code"] == error.code
     assert record["details"]["bucket"] == "internal"
-    assert record["details"]["password"] != "hunter2"
+    assert record["details"]["password"] != "fixture-7chr"
 
 
 # ....................... #
@@ -266,7 +266,7 @@ def test_arbitrary_object_leaves_drop_the_context_instead_of_stringifying() -> N
     # whole context (the error itself still reaches the client).
     class _Conn:
         def __repr__(self) -> str:
-            return "Conn(dsn=postgres://user:hunter2@db.internal)"
+            return "Conn(dsn=postgres://user:fixture-7chr@db.internal)"
 
     envelope = error_envelope(exc.validation("bad", details={"conn": _Conn()}))
 

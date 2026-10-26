@@ -38,10 +38,10 @@ class _SecretModel(BaseModel):
 
 class TestSanitizeEgress:
     def test_secret_str_masked(self) -> None:
-        assert sanitize(SecretStr("hunter2"), context="egress") == SECRET_PLACEHOLDER
+        assert sanitize(SecretStr("fixture-7chr"), context="egress") == SECRET_PLACEHOLDER
 
     def test_nested_mapping_sensitive_key(self) -> None:
-        data = {"user": {"password": "hunter2"}, "id": "1"}
+        data = {"user": {"password": "fixture-7chr"}, "id": "1"}
         assert sanitize(data, context="egress") == {
             "user": {"password": SECRET_PLACEHOLDER},
             "id": "1",
@@ -54,7 +54,7 @@ class TestSanitizeEgress:
 
 class TestSanitizeLog:
     def test_masks_sensitive_keys(self) -> None:
-        data = {"password": "hunter2", "id": "1"}
+        data = {"password": "fixture-7chr", "id": "1"}
         assert sanitize(data, context="log") == {
             "password": SECRET_PLACEHOLDER,
             "id": "1",
@@ -73,9 +73,9 @@ class TestSanitizeLog:
         assert SECRET_PLACEHOLDER in result["note"]
 
     def test_scrubs_password_substring_in_note(self) -> None:
-        data = {"note": "failed: password=hunter2"}
+        data = {"note": "failed: password=fixture-7chr"}
         result = sanitize(data, context="log", text_scrub=True)
-        assert "hunter2" not in result["note"]
+        assert "fixture-7chr" not in result["note"]
         assert SECRET_PLACEHOLDER in result["note"]
 
     def test_session_in_key_masks_whole_value(self) -> None:
@@ -157,7 +157,7 @@ class TestSeparatorlessNaming:
     @pytest.mark.parametrize(
         "text,secret",
         [
-            ("dbPwd=hunter2", "hunter2"),
+            ("dbPwd=fixture-7chr", "fixture-7chr"),
             ("secretKey=abc123", "abc123"),
             ("tokenValue=xyz789", "xyz789"),
             ("csrfValue=deadbeef", "deadbeef"),
@@ -236,7 +236,7 @@ class TestScrubAssignmentSuffixLeak:
     @pytest.mark.parametrize(
         ("text", "secret"),
         [
-            ("olap clickhouse://user:hunter2@ch:9000/db", "hunter2"),
+            ("olap clickhouse://user:fixture-7chr@ch:9000/db", "fixture-7chr"),
             ("store mongodb://admin:s3cr3t@mongo:27017/app", "s3cr3t"),
             ("fetch https://alice:topsecret@api.example.com/v1", "topsecret"),
             ("srv mongodb+srv://u:p4ss@cluster0.mongodb.net", "p4ss"),
@@ -356,7 +356,7 @@ class TestCredentialFragmentCoverage:
         [
             ("loading private_key=abc for signing", "abc"),
             ("login with pwd=zzz failed", "zzz"),
-            ("db_pwd=hunter2 in env", "hunter2"),
+            ("db_pwd=fixture-7chr in env", "fixture-7chr"),
             ("stored pwd_hash=deadbeef for audit", "deadbeef"),
             ("wallet passphrase=correcthorse rejected", "correcthorse"),
             ("wallet passphrase: correcthorse rejected", "correcthorse"),
@@ -418,11 +418,11 @@ class TestCredentialFragmentCoverage:
 
         event_dict = {
             ERR_MESSAGE_KEY: "connect failed: private_key=abc pwd=zzz",
-            ERR_STACK_KEY: "  File x, line 1\n    conn(db_pwd=hunter2)",
+            ERR_STACK_KEY: "  File x, line 1\n    conn(db_pwd=fixture-7chr)",
         }
         result = ExceptionFieldsSanitizer()(None, "", event_dict)
 
-        for leaked in ("abc", "zzz", "hunter2"):
+        for leaked in ("abc", "zzz", "fixture-7chr"):
             assert leaked not in result[ERR_MESSAGE_KEY] + result[ERR_STACK_KEY]
 
     def test_masks_rendered_event_message_path(self) -> None:
@@ -453,7 +453,7 @@ class TestScrubSerializedBodyLeak:
         [
             ('{"api_key":"sk_live_abc123"}', "sk_live_abc123"),
             ('{"secret": "shh"}', "shh"),
-            ('{"password": "hunter2"}', "hunter2"),
+            ('{"password": "fixture-7chr"}', "fixture-7chr"),
             ('{"client_secret":"cs_abc"}', "cs_abc"),
             ('{"session_token":"deadbeef"}', "deadbeef"),
             ('{"private_key":"-----BEGIN PRIVATE KEY-----"}', "BEGIN PRIVATE KEY"),
@@ -664,7 +664,7 @@ class TestSanitizeNonStrKey:
         assert result == {"stats": {1: 2, 3: 4}}
 
     def test_mixed_keys_with_sensitive(self) -> None:
-        data = {1: "a", "password": "hunter2", (2, 3): "b"}
+        data = {1: "a", "password": "fixture-7chr", (2, 3): "b"}
         result = sanitize(data, context="log")
         assert result[1] == "a"
         assert result["password"] == SECRET_PLACEHOLDER
@@ -993,11 +993,11 @@ class TestScrubPrefilterBehaviorIdentical:
         "order 12345 fulfilled for customer 9876 in region eu-west-1",
         "call back at +1 (555) 010-2030 tomorrow",  # phone: no pattern, untouched
         "Authorization: Bearer eyJhbGciOiJIUzI1NiJ9.payload.sig",
-        "connect failed: postgresql://user:hunter2@db.example.com:5432/app",
+        "connect failed: postgresql://user:fixture-7chr@db.example.com:5432/app",
         "cache: redis://:p4ss@cache.internal:6379/2",
         "broker amqp://guest:guest@mq:5672/vhost",
         "notify alice@example.com and bob.smith+tag@sub.example.org",
-        "login failed: password=hunter2 attempt=3",
+        "login failed: password=fixture-7chr attempt=3",
         'loaded {"private_key": "-----BEGIN PRIVATE KEY-----"}',
         "the jwt expired; csrf token mismatch",
         "plain message with no sensitive content at all",
@@ -1143,7 +1143,7 @@ class TestShortTermsAreAnchored:
     def test_a_uri_keyed_value_is_masked(self, key: str) -> None:
         from forze.base.scrubbing import sanitize
 
-        out = sanitize({key: "mongodb://admin:hunter2@db.internal/app"}, text_scrub=False)
+        out = sanitize({key: "mongodb://admin:fixture-7chr@db.internal/app"}, text_scrub=False)
 
         assert out == {key: SECRET_PLACEHOLDER}
 
@@ -1169,8 +1169,8 @@ class TestShortTermsAreAnchored:
             ("connectionuri_string: sig-0f9a8b7c", "sig-0f9a8b7c"),
             ('{"dburi_value": "sig-0f9a8b7c"}', "sig-0f9a8b7c"),
             (
-                "webhookuri_prod=https://hooks.slack.com/services/T0/B0/hunter2SECRET",
-                "hunter2SECRET",
+                "webhookuri_prod=https://hooks.slack.com/services/T0/B0/fixture-7chrSECRET",
+                "fixture-7chrSECRET",
             ),
             ("dburis=sig-0f9a8b7c", "sig-0f9a8b7c"),
             ("dburi2=sig-0f9a8b7c", "sig-0f9a8b7c"),

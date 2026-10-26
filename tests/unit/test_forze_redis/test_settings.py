@@ -18,9 +18,9 @@ from forze_redis.settings import CLIENT_FIELDS, RedisSettings
 
 class TestDsn:
     def test_builds_the_full_endpoint(self) -> None:
-        settings = RedisSettings(password=SecretStr("hunter2"), host="cache.internal", port=6379)
+        settings = RedisSettings(password=SecretStr("fixture-7chr"), host="cache.internal", port=6379)
 
-        assert settings.dsn.get_secret_value() == "redis://:hunter2@cache.internal:6379"
+        assert settings.dsn.get_secret_value() == "redis://:fixture-7chr@cache.internal:6379"
 
     # ....................... #
 
