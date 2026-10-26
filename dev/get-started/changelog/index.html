@@ -10232,7 +10232,12 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <h2 id="unreleased"><a href="https://github.com/morzecrew/forze/compare/v0.16.2...HEAD">Unreleased</a><a class="headerlink" href="#unreleased" title="Permanent link">&para;</a></h2>
 <h3 id="added">Added<a class="headerlink" href="#added" title="Permanent link">&para;</a></h3>
 <ul>
-<li><strong><code>attach_readiness_route</code> takes a runtime provider.</strong> Pass a zero-argument callable returning the runtime, or <code>None</code> before it exists; it is asked on every request. No runtime, or a provider that raises, answers <code>503 unavailable</code>.</li>
+<li>
+<p><strong><code>attach_readiness_route</code> takes a runtime provider.</strong> Pass a zero-argument callable returning the runtime, or <code>None</code> before it exists; it is asked on every request. No runtime, or a provider that raises, answers <code>503 unavailable</code>.</p>
+</li>
+<li>
+<p><strong><code>bind_max_in_size</code> raises the <code>$in</code> size limit for one block of trusted code.</strong> Application code matching an id list it built itself no longer chunks it under the spec's limit, which still bounds every caller-supplied filter. A backend's own cap, such as Firestore's 30, still applies.</p>
+</li>
 </ul>
 <h3 id="changed">Changed<a class="headerlink" href="#changed" title="Permanent link">&para;</a></h3>
 <ul>

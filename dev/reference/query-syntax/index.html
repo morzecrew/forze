@@ -7223,10 +7223,10 @@ text:</p>
 The defaults below apply unless a <code>DocumentSpec</code> or <code>SearchSpec</code> sets
 <code>filter_limits=QueryFilterLimits(...)</code>. Every backend serving the spec uses those
 limits for its filters, aggregate metric filters and <code>$having</code>, the mock included,
-and so does a generated route or tool that passes a caller's filter through.
-Raising <code>max_in_size</code> for internal reads that match long id lists raises it for
-those callers too. A <code>HubSearchSpec</code> has no <code>filter_limits</code>: hub search filters
-always use the defaults.</p>
+and so does a generated route or tool that passes a caller's filter through, so
+raising a spec's <code>max_in_size</code> raises it for those callers too. A <code>HubSearchSpec</code> takes
+its own <code>filter_limits</code>, applied once to the hub rows; its members' limits don't apply
+to a hub filter.</p>
 <table>
 <thead>
 <tr>
@@ -7263,6 +7263,26 @@ always use the defaults.</p>
 </tr>
 </tbody>
 </table>
+<p>To match a long id list your own code built, such as every article in a report, raise
+<code>max_in_size</code> around that read instead of on the spec:</p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">forze.application.contracts.querying</span><span class="w"> </span><span class="kn">import</span> <span class="n">bind_max_in_size</span>
+
+<span class="k">with</span> <span class="n">bind_max_in_size</span><span class="p">(</span><span class="mi">50_000</span><span class="p">):</span>
+    <span class="n">page</span> <span class="o">=</span> <span class="k">await</span> <span class="n">doc</span><span class="o">.</span><span class="n">find_many</span><span class="p">(</span><span class="n">filters</span><span class="o">=</span><span class="p">{</span><span class="s2">"$values"</span><span class="p">:</span> <span class="p">{</span><span class="s2">"id"</span><span class="p">:</span> <span class="p">{</span><span class="s2">"$in"</span><span class="p">:</span> <span class="n">article_ids</span><span class="p">}}})</span>
+</code></pre></div>
+<p>The raised limit holds for the current task, never for a concurrent request. It only
+raises: a spec's higher limit still applies. Generated routes never bind it. A backend's
+own cap still refuses inside the block (Firestore's, below). On Postgres an <code>$in</code> is
+bound as one array parameter, so a long list never nears the server's parameter cap.</p>
+<p>The limit is what bounds a caller's filter, so keep the block to your own reads:</p>
+<ul>
+<li>Take the limit from a literal or your application's config, never from a request.</li>
+<li>Wrap plain awaited reads, never a caller-supplied filter, a server or a worker.</li>
+<li>Do not <code>yield</code> inside the block. A generator's consumer runs at the raised limit
+  between yields, and an async generator resumed from another task fails to restore it.</li>
+<li>Work queued and tasks started inside the block run at the raised limit, so a caller's
+  filter carried into a job, an export or an outbox payload there is parsed under it.</li>
+</ul>
 <p>A violation — or an empty operator map, an unknown operator or key, a type mismatch, or a
 regex with unsafe nesting/repetition — raises a <code>precondition</code> <code>CoreException</code>
 (HTTP 400; the caller supplied a bad query) before the query runs. A request DTO built on
