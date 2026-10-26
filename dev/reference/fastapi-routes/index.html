@@ -6231,6 +6231,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#uploads-the-size-cap" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Uploads: the size cap
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#downloads-streaming-ranges-caching" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -6682,6 +6693,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#uploads-the-size-cap" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Uploads: the size cap
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#downloads-streaming-ranges-caching" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -7016,6 +7038,42 @@ contain slashes. The style only decides paths and verbs:</p>
     <span class="n">style</span><span class="o">=</span><span class="s2">"rest"</span><span class="p">,</span>
 <span class="p">)</span>
 </code></pre></div>
+<h3 id="uploads-the-size-cap">Uploads: the size cap<a class="headerlink" href="#uploads-the-size-cap" title="Permanent link">&para;</a></h3>
+<p>The upload route refuses a file over <code>max_upload_size</code> (default <strong>64 MiB</strong>,
+<code>DEFAULT_MAX_UPLOAD_SIZE</code>; <code>None</code> disables it) with a 422 coded
+<code>upload_too_large</code>, before the operation runs. A <code>Content-Length</code> over the cap is
+rejected early, as a shortcut; the guard is the reader, which counts bytes as it
+reads the file, 1 MiB at a time, so at most one chunk past the cap is held in
+memory. That bounds memory, not disk: before the route runs, the multipart
+parser keeps the first 1 MiB of the file in memory and rolls everything past
+1 MiB to a temporary file on disk, with no cap — so cap the request body at your
+proxy too.</p>
+<p>When an upload takes parameters the generated route doesn't — which record the
+file attaches to, say — write the route by hand and read the file with
+<code>read_upload_capped</code>, the generated route's reader. It refuses with the same 422
+status and <code>upload_too_large</code> code:</p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">Any</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">fastapi</span><span class="w"> </span><span class="kn">import</span> <span class="n">APIRouter</span><span class="p">,</span> <span class="n">Depends</span><span class="p">,</span> <span class="n">UploadFile</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">forze.application.execution.operations</span><span class="w"> </span><span class="kn">import</span> <span class="n">run_operation</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">forze_fastapi.routes</span><span class="w"> </span><span class="kn">import</span> <span class="n">DEFAULT_MAX_UPLOAD_SIZE</span><span class="p">,</span> <span class="n">read_upload_capped</span>
+
+<span class="n">records_router</span> <span class="o">=</span> <span class="n">APIRouter</span><span class="p">(</span><span class="n">prefix</span><span class="o">=</span><span class="s2">"/records"</span><span class="p">,</span> <span class="n">tags</span><span class="o">=</span><span class="p">[</span><span class="s2">"records"</span><span class="p">])</span>
+
+
+<span class="nd">@records_router</span><span class="o">.</span><span class="n">post</span><span class="p">(</span><span class="s2">"/</span><span class="si">{record_id}</span><span class="s2">/attachments"</span><span class="p">,</span> <span class="n">status_code</span><span class="o">=</span><span class="mi">201</span><span class="p">)</span>
+<span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">attach_file</span><span class="p">(</span><span class="n">record_id</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">file</span><span class="p">:</span> <span class="n">UploadFile</span><span class="p">,</span> <span class="n">ctx</span><span class="o">=</span><span class="n">Depends</span><span class="p">(</span><span class="n">ctx_dep</span><span class="p">))</span> <span class="o">-&gt;</span> <span class="n">Any</span><span class="p">:</span>
+    <span class="n">data</span> <span class="o">=</span> <span class="k">await</span> <span class="n">read_upload_capped</span><span class="p">(</span><span class="n">file</span><span class="p">,</span> <span class="n">DEFAULT_MAX_UPLOAD_SIZE</span><span class="p">)</span>
+    <span class="n">args</span> <span class="o">=</span> <span class="n">AttachFile</span><span class="p">(</span><span class="n">record_id</span><span class="o">=</span><span class="n">record_id</span><span class="p">,</span> <span class="n">filename</span><span class="o">=</span><span class="n">file</span><span class="o">.</span><span class="n">filename</span> <span class="ow">or</span> <span class="s2">"upload"</span><span class="p">,</span> <span class="n">data</span><span class="o">=</span><span class="n">data</span><span class="p">)</span>
+
+    <span class="k">return</span> <span class="k">await</span> <span class="n">run_operation</span><span class="p">(</span><span class="n">registry</span><span class="p">,</span> <span class="s2">"records.attach_file"</span><span class="p">,</span> <span class="n">args</span><span class="p">,</span> <span class="n">ctx</span><span class="p">)</span>
+</code></pre></div>
+<p>The refusal answers 422 only once the app has called
+<code>register_exception_handlers(app)</code> (from <code>forze_fastapi.exceptions</code>); without it
+the error surfaces as a 500.</p>
+<p>A stored-file kit's <code>max_bytes</code> is a backstop, not a memory guard: it is checked
+once the whole upload is in memory, so keep the read capped at the route.</p>
 <h3 id="downloads-streaming-ranges-caching">Downloads: streaming, ranges &amp; caching<a class="headerlink" href="#downloads-streaming-ranges-caching" title="Permanent link">&para;</a></h3>
 <p>The <code>GET</code> download route <strong>streams by default</strong> (<code>stream=True</code>): the body is a
 <code>StreamingResponse</code> consumed chunk by chunk, so the process never buffers a

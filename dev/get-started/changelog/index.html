@@ -10238,6 +10238,9 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <li>
 <p><strong><code>bind_max_in_size</code> raises the <code>$in</code> size limit for one block of trusted code.</strong> Application code matching an id list it built itself no longer chunks it under the spec's limit, which still bounds every caller-supplied filter. A backend's own cap, such as Firestore's 30, still applies.</p>
 </li>
+<li>
+<p><strong>A hand-written upload route can cap its read like the generated one.</strong> <code>forze_fastapi.routes.read_upload_capped(file, max_size)</code> returns the multipart file's bytes, or refuses a file over the cap with the generated route's 422 <code>upload_too_large</code>.</p>
+</li>
 </ul>
 <h3 id="changed">Changed<a class="headerlink" href="#changed" title="Permanent link">&para;</a></h3>
 <ul>
