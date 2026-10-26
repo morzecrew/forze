@@ -188,6 +188,55 @@ class TestValidateOperationInput:
 
         assert args.n == 3
 
+    @pytest.mark.parametrize(
+        ("config", "accepted"),
+        [
+            (ConfigDict(), {"count"}),
+            (ConfigDict(validate_by_name=True), {"n", "count"}),
+            (ConfigDict(populate_by_name=True), {"n", "count"}),
+            (ConfigDict(validate_by_name=True, validate_by_alias=False), {"n"}),
+            # Pydantic's back-compat rule turns alias reading back on here.
+            (ConfigDict(populate_by_name=True, validate_by_alias=False), {"n", "count"}),
+            (ConfigDict(populate_by_name=True, validate_by_name=False), {"count"}),
+        ],
+    )
+    def test_only_the_names_the_config_reads_are_accepted(
+        self, config: ConfigDict, accepted: set[str]
+    ) -> None:
+        # Pydantic drops a name its config does not read, so accepting it would run the
+        # operation on the default rather than the caller's value.
+        class _Configured(BaseModel):
+            model_config = config
+            n: int = Field(default=1, alias="count")
+
+        assert accepted_input_names(_Configured) == accepted
+
+        # Pydantic itself is the oracle: a name is accepted exactly when it is read.
+        for name in ("n", "count"):
+            assert (name in accepted) == (_Configured.model_validate({name: 5}).n == 5)
+
+        for name in {"n", "count"} - accepted:
+            with pytest.raises(CoreException) as caught:
+                validate_operation_input(
+                    OperationDescriptor(input_type=_Configured),
+                    {name: 5},
+                    code="c",
+                    forbid_unknown=True,
+                )
+
+            assert caught.value.details == {"unknown": [name]}
+
+    def test_by_name_reads_an_aliased_field_by_its_own_name(self) -> None:
+        args = validate_operation_input(
+            OperationDescriptor(input_type=_AliasIn),
+            {"n": 3},
+            code="c",
+            forbid_unknown=True,
+            by_name=True,
+        )
+
+        assert args.n == 3
+
     def test_an_open_dto_takes_extension_fields(self) -> None:
         args = validate_operation_input(
             OperationDescriptor(input_type=_OpenIn), {"n": 1, "x": 2}, code="c", forbid_unknown=True
@@ -238,7 +287,7 @@ class TestTheUnreadableAliasFallback:
 
     def test_a_readable_dto_is_still_checked(self) -> None:
         # The contrast that makes the step-aside meaningful rather than a blanket skip.
-        assert accepted_input_names(_AliasIn) == {"n", "count"}
+        assert accepted_input_names(_AliasIn) == {"count"}
 
 
 # ....................... #
