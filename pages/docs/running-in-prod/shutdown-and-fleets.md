@@ -112,7 +112,9 @@ Stdlib `asyncio`, no HTTP framework. The step reads the scope's state from the
 `ctx` its startup hook receives, so it takes no runtime and sits in the plan of the
 runtime it reports on. It answers through the same evaluator as the FastAPI route,
 reports `draining` for the whole window, and closes only after. See
-[The Grafana stack](grafana-stack.md#probes) for the Kubernetes mapping.
+[The Grafana stack](grafana-stack.md#probes) for the Kubernetes mapping. To drain
+such a process on `SIGTERM`, hold its scope with
+[`serve_runtime`](#graceful-deploys).
 
 ### Are the dependencies reachable?
 
@@ -235,6 +237,35 @@ means operations are refused, stays false until shutdown closes the gate.
 An HTTP server needs its signal handling to call `drain()` before it stops
 accepting. For uvicorn that is `serve_uvicorn` — see
 [Graceful shutdown under uvicorn](../integrations/fastapi.md#graceful-shutdown-under-uvicorn).
+
+A process that serves no HTTP — the outbox relay, a consumer, a durable runner —
+needs the same, and has no server to provide it. Hold its scope with
+`serve_runtime`, beside the [probe listener](#readiness):
+
+```python
+import asyncio
+from datetime import timedelta
+
+from forze.application.execution import build_runtime, serve_runtime
+from forze.application.execution.background import probe_listener_step
+
+runtime = build_runtime(..., lifecycle_steps=[relay_step, probe_listener_step(port=8079)])
+
+asyncio.run(
+    serve_runtime(runtime, drain_budget=timedelta(seconds=5), announce_delay=timedelta(seconds=3))
+)
+```
+
+On the first `SIGTERM` or `SIGINT` it runs `runtime.drain()` — the probe listener
+reports `draining` from the announcement on — then leaves the scope, which tears
+down, and returns. A bare `async with runtime.scope()` that waits forever has no
+handler: as PID 1 in a container it ignores `SIGTERM` and is killed when the grace
+period ends. The signals behave as under `serve_uvicorn`: a drain that fails still
+tears down, a `SIGINT` during the drain cancels it and gives the phases up, and a
+repeated `SIGTERM` is logged and ignored. A signal during startup waits for it to
+finish, and the drain phases then run in the shutdown instead. Off the main thread,
+pass `stop=asyncio.Event()` and set it to drain, as a first signal would. From another
+thread, set it on the runtime's loop: `loop.call_soon_threadsafe(stop.set)`.
 
 ### Drain phases
 

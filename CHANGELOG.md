@@ -15,11 +15,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **A hand-written upload route can cap its read like the generated one.** `forze_fastapi.routes.read_upload_capped(file, max_size)` returns the multipart file's bytes, or refuses a file over the cap with the generated route's 422 `upload_too_large`.
 
+- **`serve_runtime` drains a process that serves no HTTP on `SIGTERM`.** The counterpart of `serve_uvicorn` for relays, consumers and workers holds the runtime's scope open, runs `runtime.drain()` on the first `SIGTERM` or `SIGINT`, or when `stop` is set, then tears down.
+
 ### Changed
 
 - ...
 
 ### Fixed
+
+- **Two quick `SIGINT`s to `serve_uvicorn` now give the drain phases up.** A second one handled in the same loop turn as the first cancelled the drain before it started, so the forced exit still ran every phase at length in teardown.
 
 - **An aliased input field no longer loses the caller's value.** `forze ops call` and agent tools refuse a name the DTO's config does not read, which pydantic dropped, running the operation on the default. MCP reads each field by the name its tool signature advertises, so an aliased field is no longer dropped there.
 
