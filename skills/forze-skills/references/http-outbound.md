@@ -107,6 +107,20 @@ class ListOrders(Handler[ListOrdersCmd, OrdersListResponse]):
 #     orders=OrdersClient(port=ctx.http.service(orders_spec), spec=orders_spec))
 ```
 
+## Streaming a response
+
+`port.stream(op, args)` sends the request `invoke` sends — same route, auth, deadline header, egress gate and tag — and yields the body as `bytes` chunks as they arrive. Use it for a streamed completion (server-sent events) instead of handing a bare client to a vendor SDK, which leaves the declared service behind. A rejected response raises before the first chunk with the exception `invoke` raises; the body is not validated against `return_type`. Close it with `aclosing`:
+
+```python
+from contextlib import aclosing
+
+async with aclosing(ctx.http.service(spec).stream("complete", args)) as chunks:
+    async for chunk in chunks:
+        ...  # split lines from a buffer: a chunk can end mid-line
+```
+
+A port policy covering `stream` applies the breaker only — never retry, since the caller has already read part of the body.
+
 ## Tenant-routed services
 
 For per-tenant base URLs / credentials, use `RoutedHttpClient` and set `tenant_aware=True` on the service config. It opens in `routed_client_lifecycle_step`, which takes the step name explicitly:
@@ -132,7 +146,7 @@ When the caller has an invocation deadline bound, the adapter automatically forw
 
 ## Testing
 
-Inject a stub `HttpServicePort` (any object with a `spec` attribute and an async `invoke`) in unit tests, or construct the facade with that port — no real network calls. Keep request/response model assertions in the test rather than asserting on raw HTTP.
+Inject a stub `HttpServicePort` (any object with a `spec` attribute, an async `invoke` and an async-generator `stream`) in unit tests, or construct the facade with that port — no real network calls. Keep request/response model assertions in the test rather than asserting on raw HTTP.
 
 ## Logging
 

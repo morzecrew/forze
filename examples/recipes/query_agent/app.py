@@ -6,7 +6,7 @@ Runs in-process on the mock. Three things are worth separating when you read it:
   a read-only palette. The agent cannot write, because no write operation is in the palette.
 * The **model call** is an ordinary outbound HTTP service, declared `egress_sensitive` and
   acknowledged, so the hop that carries the question and the retrieved rows out of the
-  trust boundary is a reviewed wiring fact.
+  trust boundary is a reviewed wiring fact. Its streamed answer takes the same route.
 * The **loop** is this file's own code. The framework projects tools and dispatches one
   call; deciding to take another turn is the application's business.
 
@@ -21,6 +21,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import AsyncGenerator
+from contextlib import aclosing
 from typing import Any
 
 from pydantic import BaseModel
@@ -111,6 +113,7 @@ def answering_tools(registry: FrozenOperationRegistry) -> OperationToolset:
 class ModelArgs(BaseModel):
     question: str
     tools: list[dict[str, Any]]
+    stream: bool = False
 
 
 class ModelToolCall(BaseModel):
@@ -214,6 +217,33 @@ def _render(result: ToolResult) -> str:
 # --8<-- [end:loop]
 
 
+# --8<-- [start:stream]
+async def stream_answer(question: str, *, ctx: ExecutionContext) -> AsyncGenerator[str]:
+    """The model's prose answer as it is generated, over the same declared route.
+
+    `stream` sends the request `invoke` would send and yields the body as it arrives. The
+    events are lines and a network splits them wherever it likes, so lines are cut from a
+    buffer rather than from each chunk.
+    """
+
+    chunks = ctx.http.service(model_service).stream(
+        model_messages,
+        ModelArgs(question=question, tools=[], stream=True),
+    )
+    buffer = b""
+
+    async with aclosing(chunks):
+        async for chunk in chunks:
+            *lines, buffer = (buffer + chunk).split(b"\n")
+
+            for line in lines:
+                if line.startswith(b"data: ") and line != b"data: [DONE]":
+                    yield line.removeprefix(b"data: ").decode()
+
+
+# --8<-- [end:stream]
+
+
 # --8<-- [start:stub]
 def canned_model(args: ModelArgs | None) -> ModelReply:
     """Stands in for the provider: picks a tool from the palette it was given.
@@ -250,7 +280,29 @@ def canned_model(args: ModelArgs | None) -> ModelReply:
     )
 
 
+def canned_stream() -> list[bytes]:
+    """Stands in for the provider's streamed answer: server-sent events, a token per event.
+
+    The second chunk starts mid-event, as a network is free to cut it.
+    """
+
+    return [
+        b"data: Two\n\ndata:  no",
+        b"tes\n\ndata:  mention postgres.\n\ndata: [DONE]\n\n",
+    ]
+
+
 # --8<-- [end:stub]
+
+
+def provider() -> MockHttpRegistry:
+    """One handler for the one operation: the request's `stream` flag picks the answer."""
+
+    return MockHttpRegistry().on(
+        "model",
+        model_messages,
+        lambda args: canned_stream() if args is not None and args.stream else canned_model(args),
+    )
 
 
 SEED: tuple[tuple[str, str, str], ...] = (
@@ -270,10 +322,10 @@ async def seed(ctx: ExecutionContext, registry: FrozenOperationRegistry) -> None
         )
 
 
-async def run() -> tuple[str, str]:
-    """Seed three notes, then ask two questions that need two different tools."""
+async def run() -> tuple[str, str, str]:
+    """Seed three notes, ask two questions that need two different tools, then stream one."""
 
-    module = MockDepsModule(http=MockHttpRegistry().on("model", "messages", canned_model))
+    module = MockDepsModule(http=provider())
     runtime = ExecutionRuntime(deps=DepsRegistry.from_modules(module).freeze())
     registry = notes_registry()
 
@@ -284,6 +336,7 @@ async def run() -> tuple[str, str]:
         return (
             await answer("what do we know about postgres?", ctx=ctx, registry=registry),
             await answer("how many notes per category?", ctx=ctx, registry=registry),
+            "".join([token async for token in stream_answer("summarize", ctx=ctx)]),
         )
 
 
@@ -293,10 +346,11 @@ def _setup_logging() -> None:
 
 async def main() -> None:
     _setup_logging()
-    listed, counted = await run()
+    listed, counted, streamed = await run()
 
-    logging.info("listed:  %s", listed)
-    logging.info("counted: %s", counted)
+    logging.info("listed:   %s", listed)
+    logging.info("counted:  %s", counted)
+    logging.info("streamed: %s", streamed)
 
 
 if __name__ == "__main__":

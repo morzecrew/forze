@@ -29,7 +29,8 @@ class HttpConfig:
     previous unbounded behaviour. When set, a response whose ``Content-Length``
     exceeds the cap is refused before the body is read, and a chunked/unsized
     response is aborted once the accumulated body crosses the cap — so a large or
-    attacker-influenced upstream cannot blow up app memory (×concurrent calls)."""
+    attacker-influenced upstream cannot blow up app memory (×concurrent calls). A
+    ``stream`` holds only a rejected body to it: an accepted one is never buffered."""
 
     # ....................... #
 

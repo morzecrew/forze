@@ -1,6 +1,7 @@
 """HTTP client that resolves base URL and headers per tenant via secrets."""
 
-from collections.abc import Callable, Mapping
+from collections.abc import AsyncGenerator, Callable, Mapping
+from contextlib import asynccontextmanager
 from typing import Any, cast, final
 from uuid import UUID
 
@@ -126,3 +127,35 @@ class RoutedHttpClient(
             timeout=timeout,
             raise_for_status=raise_for_status,
         )
+
+    # ....................... #
+
+    @asynccontextmanager
+    async def stream(
+        self,
+        method: str,
+        url: str,
+        *,
+        params: Mapping[str, Any] | None = None,
+        json: JsonDict | None = None,
+        data: Mapping[str, str] | None = None,
+        headers: Mapping[str, str] | None = None,
+        timeout: float | None = None,
+        raise_for_status: bool = True,
+    ) -> AsyncGenerator[Any]:
+        # The scope rather than `_get_client`: a stream outlives the call that opens it, and
+        # a guarded pool's lease keeps an eviction from closing the client mid-body.
+        async with (
+            self.client_scope() as inner,
+            inner.stream(
+                method,
+                url,
+                params=params,
+                json=json,
+                data=data,
+                headers=headers,
+                timeout=timeout,
+                raise_for_status=raise_for_status,
+            ) as response,
+        ):
+            yield response

@@ -10,7 +10,7 @@ hand, both turn into parallel machinery — a table of tool schemas mirroring yo
 operations, and an outbound call nobody reviewed. This recipe assembles them out of
 what is already there: the [agent-tool bridge](../data-events/agent-tools.md) for the
 first, a declared [egress route](../integrations/http.md) for the second. The loop that
-joins them stays yours.
+joins them stays yours, and the answer can stream back over the same route.
 
 The runnable version lives at `examples/recipes/query_agent/` and runs fully in-process
 on the mock — the provider is answered by a registered handler, so there is no API key
@@ -108,9 +108,27 @@ the policy — comes back as `is_error` with the code, which is something the mo
 on. An infrastructure failure propagates to your loop instead, because retrying a dropped
 connection is not the model's job.
 
+## The answer streams over the same hop
+
+A model that answers in prose usually streams it, a token at a time. `stream` takes the
+operation `invoke` takes and yields the response body as it arrives, so the streamed
+answer leaves through the declared route like everything else:
+
+```python
+--8<-- "recipes/query_agent/app.py:stream"
+```
+
+The request is the one `invoke` sends: the acknowledgement gates it, the credential and
+the deadline budget ride on it, and its span carries `forze.egress.sensitive`. A rejected
+request raises before the first token, with the error `invoke` would raise. Server-sent
+events are lines, and a network cuts chunks wherever it likes, so lines come out of a
+buffer rather than out of each chunk. `aclosing` closes the connection as soon as you stop
+reading — on an early return as much as at the end.
+
 ## What stands in for the provider
 
-The example registers a handler for the model service and keyword-matches the question:
+The example registers a handler for the model service. It keyword-matches the question, and
+answers a streaming request with events cut mid-line:
 
 ```python
 --8<-- "recipes/query_agent/app.py:stub"
@@ -125,13 +143,12 @@ uv run python -m examples.recipes.query_agent.app
 uv run pytest tests/unit/test_examples/test_query_agent.py
 ```
 
-Swapping in a real provider is a choice about which of the two things above you keep.
-Point the service at the provider's real base URL and describe its endpoint as an
-`HttpOperationSpec`, and the loop, the palette and the egress declaration all stay as they
-are — you write the request and response models instead of importing an SDK. Reach for the
-vendor's SDK instead and you own the transport: adapt its tool-call type to a `ToolUse` the
-same way, but the hop is no longer a declared service, so the marker no longer covers it.
-That is the trade, stated where it is made rather than discovered later in a review.
+Swapping in a real provider means pointing the service at the provider's real base URL and
+describing its endpoint as an `HttpOperationSpec`. The loop, the palette, the egress
+declaration and the streamed answer all stay as they are — you write the request and
+response models and parse the provider's events instead of importing an SDK. A vendor's
+SDK brings its own transport, and a hop made through it is not a declared service, so the
+marker does not cover it.
 
 ## Notes
 
@@ -143,10 +160,10 @@ That is the trade, stated where it is made rather than discovered later in a rev
 - **A read-only palette is the default.** `operation_tools` refuses a command operation
   unless you ask for a command-capable toolset, so an agent that must act is a visible
   decision in the diff.
-- **Streaming the answer** is a transport concern, not an agent one. The realtime
-  recipes — [delivery to offline users](realtime-offline-delivery.md),
-  [tenant-sharded realtime](tenant-sharded-realtime.md) — apply unchanged to an answer
-  arriving a token at a time.
+- **Delivering the streamed answer to a user** is a transport concern, not an agent one.
+  The realtime recipes — [delivery to offline users](realtime-offline-delivery.md),
+  [tenant-sharded realtime](tenant-sharded-realtime.md) — apply unchanged to the tokens
+  `stream_answer` yields.
 - **An operation whose read model is marked `sensitive` cannot be projected at all**, so
   credential material has no path into a tool palette.
 

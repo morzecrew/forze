@@ -56,6 +56,33 @@ resolved via `ctx.http.service(spec)`.
 |----------|----------|
 | Outbound HTTP service (typed operations) | `HttpServiceSpec.name` (`services`) |
 
+## Stream a response
+
+`invoke` reads the whole body and validates it. For a body you read as it arrives — a
+streamed completion, a large export — `stream` takes the same operation and yields the
+body in chunks:
+
+```python
+async with aclosing(ctx.http.service(spec).stream(op, args)) as chunks:
+    async for chunk in chunks:
+        ...
+```
+
+It is a call through the same service, so the request is the one `invoke` sends: the
+wiring gate, the credential, the deadline budget, the trace context and the egress tag all
+apply. What changes is when things happen:
+
+- A rejected response is read under `max_response_bytes` and raised before the first
+  chunk, as the exception `invoke` raises. An accepted body is never buffered, so the cap
+  does not apply to it and nothing validates it against `return_type`.
+- The timeout bounds the connect and each wait for the next chunk, not the whole stream.
+- Under a [resilience](../running-in-prod/resilience.md) port policy that covers `stream`,
+  the breaker gates the open and records the outcome. Nothing retries: a body you have
+  started reading cannot be replayed. No per-port client span is opened over a stream, so
+  the egress tag lands on the enclosing span.
+- Closing the generator closes the connection. A bare `break` leaves that to Python's
+  finalizer; `contextlib.aclosing` closes it where you leave.
+
 ## Errors
 
 A failed call raises a `CoreException` whose kind follows the counterparty's answer:
@@ -130,7 +157,8 @@ The details stay on the exception for your code; a client sees none of them.
   review. Both halves cover the services you declare: a bare `HttpClient` you point at
   a provider yourself — handing it to their SDK, say — has no service config and
   therefore no declaration to gate, because a shared transport carries no destination
-  of its own. Declare the hop as a service if you want it governed. Routes that leave
+  of its own. Declare the hop as a service if you want it governed — a streamed answer
+  included, through [`stream`](#stream-a-response). Routes that leave
   both fields alone are unaffected, and an inference route is always sensitive and
   always requires the acknowledgement, which is the same gate. [Build a question-answering
   agent](../recipes/query-agent.md) declares such a route for a model call.

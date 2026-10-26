@@ -13,7 +13,7 @@ injection (raise / delay / malformed response) without touching call sites.
 from __future__ import annotations
 
 import inspect
-from collections.abc import Callable
+from collections.abc import AsyncGenerator, AsyncIterable, Callable
 from typing import Any, final, overload
 
 import attrs
@@ -169,6 +169,35 @@ class MockHttpServiceAdapter(HttpServicePort):
         args: BaseModel | None = None,
     ) -> Any:
         operation = self.spec.operation(op)
+
+        return self._coerce(operation, await self._call(operation, args))
+
+    # ....................... #
+
+    async def stream(
+        self,
+        op: StrKey | HttpOperationSpec[Any, Any],
+        args: BaseModel | None = None,
+    ) -> AsyncGenerator[bytes]:
+        """Yield the handler's answer as body chunks: ``bytes``, or an iterable or async
+        iterable of them."""
+
+        result = await self._call(self.spec.operation(op), args)
+
+        if isinstance(result, bytes):
+            result = [result]
+
+        if isinstance(result, AsyncIterable):
+            async for chunk in result:
+                yield chunk
+
+        else:
+            for chunk in result:
+                yield chunk
+
+    # ....................... #
+
+    async def _call(self, operation: HttpOperationSpec[Any, Any], args: BaseModel | None) -> Any:
         self._validate_args(operation, args)
 
         handler = self.registry.handler_for(str(self.spec.name), str(operation.name))
@@ -195,7 +224,7 @@ class MockHttpServiceAdapter(HttpServicePort):
         if inspect.isawaitable(result):
             result = await result
 
-        return self._coerce(operation, result)
+        return result
 
     # ....................... #
 
