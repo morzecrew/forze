@@ -80,6 +80,7 @@ from .field_types import (
     is_quantifiable_field,
     validate_query_field_types,
 )
+from .grammar import filter_grammar, without_filter_grammar
 from .internal import (
     ELEM_SCALAR_FIELD,
     AggregateComputedField,
@@ -206,6 +207,8 @@ __all__ = [
     "QueryDiscovery",
     "build_query_discovery",
     "describe_query_discovery",
+    "filter_grammar",
+    "without_filter_grammar",
     "QueryFilterExpression",
     "QueryNegation",
     "ElementOp",
