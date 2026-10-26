@@ -36,6 +36,37 @@ def _is_cors_preflight(request: Request) -> bool:
     )
 
 
+def is_anonymous_path(anonymous_paths: frozenset[str], scope: Scope) -> bool:
+    """Whether the request path is listed in *anonymous_paths*, as
+    :attr:`SecurityContextMiddleware.anonymous_paths` reads them.
+
+    Reads the percent-decoded ``scope["path"]`` routing reads, never ``request.url``:
+    that is re-split from it, so an encoded ``?`` or ``#`` would end its path early and
+    borrow an anonymous one.
+    """
+
+    path: str = scope.get("path", "")
+
+    if path in anonymous_paths:
+        return True
+
+    # Strip the mount exactly as Starlette's router does, so the relative path is
+    # the one the request is routed by — never a different route.
+    root: str = scope.get("root_path", "")
+
+    if not root or not path.startswith(root) or path[len(root) : len(root) + 1] != "/":
+        return False
+
+    relative = path[len(root) :]
+
+    # Led by the prefix's path segments, it could also be another route's full path:
+    # an entry that reads both ways only ever counts as full (checked above).
+    if relative == root or relative.startswith(root + "/"):
+        return False
+
+    return relative in anonymous_paths
+
+
 # ....................... #
 
 
@@ -128,37 +159,6 @@ class SecurityContextMiddleware:
 
     # ....................... #
 
-    def _is_anonymous(self, scope: Scope) -> bool:
-        """Whether the request path is listed in :attr:`anonymous_paths`.
-
-        Reads the percent-decoded ``scope["path"]`` routing reads, never ``request.url``:
-        that is re-split from it, so an encoded ``?`` or ``#`` would end its path early and
-        borrow an anonymous one.
-        """
-
-        path: str = scope.get("path", "")
-
-        if path in self.anonymous_paths:
-            return True
-
-        # Strip the mount exactly as Starlette's router does, so the relative path is
-        # the one the request is routed by — never a different route.
-        root: str = scope.get("root_path", "")
-
-        if not root or not path.startswith(root) or path[len(root) : len(root) + 1] != "/":
-            return False
-
-        relative = path[len(root) :]
-
-        # Led by the prefix's path segments, it could also be another route's full path:
-        # an entry that reads both ways only ever counts as full (checked above).
-        if relative == root or relative.startswith(root + "/"):
-            return False
-
-        return relative in self.anonymous_paths
-
-    # ....................... #
-
     async def _resolve_authn(
         self,
         request: Request,
@@ -221,7 +221,7 @@ class SecurityContextMiddleware:
 
         request = Request(scope, receive)
         ctx = self.ctx_dep()
-        anonymous = self._is_anonymous(scope)
+        anonymous = is_anonymous_path(self.anonymous_paths, scope)
 
         try:
             # A preflight carries no credential, so an ingress's own `required` must not

@@ -1033,7 +1033,7 @@ class TestRefreshCookieCsrf:
                     ),
                 ),
                 when_multiple_credentials="first_in_order",
-                anonymous_paths={"/auth/login", "/auth/refresh"},
+                anonymous_paths={"/auth/login", "/auth/refresh", "/auth/logout"},
             )
 
         client = TestClient(app)
@@ -1164,7 +1164,8 @@ class TestRefreshCookieCsrf:
 class TestCookieLogoutPathCheck:
     """Cookie-mode logout revokes the session from the access cookie or the refresh cookie.
     The access cookie expires first, so the boot check refuses a carrier whose refresh path
-    misses the mounted logout route, whatever the access path."""
+    misses the mounted logout route, whatever the access path, and a security middleware
+    whose anonymous_paths would let a stale access cookie 401 login, refresh or logout."""
 
     def _app(
         self,
@@ -1174,8 +1175,9 @@ class TestCookieLogoutPathCheck:
         prefix: str = "/auth",
         root_path: str = "",
         lifespan: Any = None,
+        anonymous: set[str] | None = None,
     ) -> FastAPI:
-        from forze_fastapi.security import AuthnCookieCarrier
+        from forze_fastapi.security import AuthnCookieCarrier, CookieTokenAuthn
 
         ctx = context_from_modules(MockDepsModule(state=MockState()))
         router = APIRouter(prefix=prefix)
@@ -1191,6 +1193,17 @@ class TestCookieLogoutPathCheck:
 
         app = FastAPI(root_path=root_path, lifespan=lifespan)
         app.include_router(router)
+
+        if anonymous is not None:
+            app.add_middleware(
+                SecurityContextMiddleware,  # type: ignore[arg-type]
+                ctx_dep=lambda: ctx,
+                authn=AuthnRequirement(
+                    ingress=(CookieTokenAuthn(authn_spec=AUTHN_SPEC, cookie_name="forze_access"),),
+                ),
+                when_multiple_credentials="first_in_order",
+                anonymous_paths=anonymous,
+            )
 
         return app
 
@@ -1216,9 +1229,43 @@ class TestCookieLogoutPathCheck:
             check_authn_cookie_paths(app)
 
     def test_the_default_paths_pass(self) -> None:
+        # No security middleware either: nothing can 401 the cookie-mode routes.
         from forze_fastapi.middlewares import check_authn_cookie_paths
 
         check_authn_cookie_paths(self._app(access_path="/", refresh_path="/"))
+
+    @pytest.mark.parametrize("missing", ["/auth/login", "/auth/refresh", "/auth/logout"])
+    def test_a_cookie_route_missing_from_anonymous_paths_is_refused(self, missing: str) -> None:
+        from forze_fastapi.middlewares import check_authn_cookie_paths
+
+        listed = {"/auth/login", "/auth/refresh", "/auth/logout"} - {missing}
+        app = self._app(access_path="/", refresh_path="/auth", anonymous=listed)
+
+        with pytest.raises(CoreException, match=f"{missing}.*anonymous_paths"):
+            check_authn_cookie_paths(app)
+
+    @pytest.mark.parametrize(
+        ("root_path", "anonymous"),
+        [
+            ("", {"/auth/login", "/auth/refresh", "/auth/logout"}),
+            ("/v1", {"/auth/login", "/auth/refresh", "/auth/logout"}),
+            ("/v1", {"/v1/auth/login", "/v1/auth/refresh", "/v1/auth/logout"}),
+        ],
+        ids=["plain", "relative-to-root-path", "full-under-root-path"],
+    )
+    def test_cookie_routes_in_anonymous_paths_pass(
+        self, root_path: str, anonymous: set[str]
+    ) -> None:
+        from forze_fastapi.middlewares import check_authn_cookie_paths
+
+        check_authn_cookie_paths(
+            self._app(
+                access_path="/",
+                refresh_path=f"{root_path}/auth",
+                root_path=root_path,
+                anonymous=anonymous,
+            )
+        )
 
     @pytest.mark.parametrize(
         ("refresh_path", "root_path"),
@@ -1322,6 +1369,7 @@ class TestCookieLogoutRevokes:
     adapters and on the mock."""
 
     def _client(self, ctx: ExecutionContext, carrier: Any) -> TestClient:
+        from forze_fastapi.middlewares import check_authn_cookie_paths
         from forze_fastapi.security import CookieTokenAuthn
 
         router = APIRouter(prefix="/auth")
@@ -1347,6 +1395,8 @@ class TestCookieLogoutRevokes:
             when_multiple_credentials="first_in_order",
             anonymous_paths={"/auth/login", "/auth/refresh", "/auth/logout"},
         )
+        # Wired as the docs say, so the boot check passes.
+        check_authn_cookie_paths(app)
 
         return TestClient(app)
 
@@ -1450,9 +1500,10 @@ class TestCookieLogoutRevokes:
         assert response.status_code == 204
         self._assert_revoked(client, ctx, issued)
 
+    @pytest.mark.parametrize("garbage", [False, True], ids=["expired", "garbage"])
     @pytest.mark.parametrize(("build", "expire"), _STACKS)
-    def test_logout_with_an_expired_access_cookie_revokes_from_the_refresh_cookie(
-        self, build: Any, expire: Any
+    def test_logout_with_a_stale_access_cookie_revokes_from_the_refresh_cookie(
+        self, build: Any, expire: Any, garbage: bool
     ) -> None:
         from forze_fastapi.security import AuthnCookieCarrier
 
@@ -1460,12 +1511,16 @@ class TestCookieLogoutRevokes:
         carrier = AuthnCookieCarrier(secure=False, refresh_path="/auth")
         client = self._client(ctx, carrier)
         issued = self._issue(ctx)
-        client.cookies.set("forze_access", expire(ctx, issued.access.token.token))
+        stale = "not-a-token" if garbage else expire(ctx, issued.access.token.token)
+        client.cookies.set("forze_access", stale)
         client.cookies.set("forze_refresh", issued.refresh.token.token, path="/auth")
 
         response = client.post("/auth/logout", headers=_SAME_ORIGIN)
 
         assert response.status_code == 204
+        cleared = response.headers.get_list("set-cookie")
+        assert any(c.startswith("forze_access=") and "Max-Age=0" in c for c in cleared)
+        assert any(c.startswith("forze_refresh=") and "Max-Age=0" in c for c in cleared)
         self._assert_revoked(client, ctx, issued)
 
     @pytest.mark.parametrize(("build", "expire"), _STACKS)

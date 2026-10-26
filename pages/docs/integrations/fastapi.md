@@ -134,7 +134,8 @@ non-empty set matching **no route at all** — the prefix mistake above. A super
 is fine and expected: `DEFAULT_HEALTH_PATHS` names ten paths and most apps serve
 three. In [cookie mode](../reference/fastapi-routes.md#cookie-mode),
 `check_authn_cookie_paths` (also run by `runtime_lifespan`) fails the boot when
-neither the access nor the refresh cookie's path covers the logout route. An app
+the refresh cookie's path does not cover the logout route, or when
+`anonymous_paths` leaves out the login, refresh or logout route. An app
 that supplies its own lifespan instead of `runtime_lifespan` has to call
 `check_bypass_paths(app)`,
 `check_websocket_allowlist(app)` and `check_authn_cookie_paths(app)` itself — all

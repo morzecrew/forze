@@ -11,12 +11,12 @@ Wire it into :func:`~forze_fastapi.routes.attach_authn_routes` via ``cookies=`` 
 point :class:`CookieTokenAuthn`'s ``cookie_name`` at :attr:`access_cookie`. Scope
 the two cookies with :attr:`access_path` / :attr:`refresh_path` (e.g. access →
 ``/api``, refresh → ``/api/auth``, every authn route) so the refresh token never rides
-ordinary API requests — and pair the login/refresh paths with the security middleware's
-``anonymous_paths``, or a stale access cookie 401s the very route that replaces it.
-Logout revokes the session from the access cookie or, without one, the refresh
-cookie, so one of the two paths must cover the logout route;
-:func:`~forze_fastapi.middlewares.check_authn_cookie_paths` refuses it at startup
-otherwise.
+ordinary API requests — and pair the login, refresh and logout paths with the security
+middleware's ``anonymous_paths``, or a stale access cookie 401s the very route that
+replaces or ends it. Logout revokes the session from the access cookie or, without one,
+the refresh cookie, so the refresh cookie's path must cover the logout route;
+:func:`~forze_fastapi.middlewares.check_authn_cookie_paths` refuses either mistake at
+startup.
 """
 
 from forze_fastapi._compat import require_fastapi
