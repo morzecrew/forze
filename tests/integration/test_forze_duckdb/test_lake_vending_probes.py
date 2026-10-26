@@ -23,6 +23,7 @@ import boto3
 import botocore
 import duckdb
 import httpx
+import pyarrow as pa
 import pytest
 from botocore.config import Config
 from botocore.exceptions import ClientError
@@ -102,6 +103,24 @@ def _refused(fn: Callable[[], object]) -> str:
 
 # ----------------------- #
 
+_PROBED_DUCKDB = "1.5.6"
+_PROBED_ICEBERG = "890b78a9c"
+
+
+def test_the_engine_is_the_build_the_probes_ran_on() -> None:
+    """Every other test here pins a fact about this build; a bump has to re-run P0's probes."""
+
+    con = duckdb.connect(":memory:")
+    con.execute("INSTALL iceberg")
+    con.execute("LOAD iceberg")
+    (iceberg,) = con.execute(
+        "SELECT extension_version FROM duckdb_extensions() WHERE extension_name = 'iceberg'"
+    ).fetchone()
+
+    rerun = "re-run the RFC 0078 P0 probes and update EXECUTION-LOG unit 5 before re-pinning"
+    assert duckdb.__version__ == _PROBED_DUCKDB, rerun
+    assert iceberg == _PROBED_ICEBERG, rerun
+
 
 class TestFixtureSelfTest:
     """Battery 1 — the negative control. If any of this fails, every later pass is meaningless."""
@@ -109,15 +128,15 @@ class TestFixtureSelfTest:
     def test_the_store_refuses_anonymous_reads(
         self, lake: LakeVendingStack, tenant_a: LakeTenant
     ) -> None:
-        key = lake.load_table(tenant_a.principal, tenant_a.warehouse).json()["metadata-location"]
+        location = lake.load_table(tenant_a.principal, tenant_a.warehouse).json()
+        key = location["metadata-location"].removeprefix(f"s3://{BUCKET}/")
+        root = _s3(
+            lake, aws_access_key_id=lake.root_access_key, aws_secret_access_key=lake.root_secret_key
+        )
         anonymous = _s3(lake, signature="unsigned")
 
-        assert (
-            _refused(
-                lambda: anonymous.get_object(Bucket=BUCKET, Key=key.removeprefix(f"s3://{BUCKET}/"))
-            )
-            == "AccessDenied"
-        )
+        assert _refused(lambda: root.get_object(Bucket=BUCKET, Key=key)) == "ALLOWED"  # it exists
+        assert _refused(lambda: anonymous.get_object(Bucket=BUCKET, Key=key)) == "AccessDenied"
 
     def test_the_catalog_refuses_anonymous_requests(
         self, lake: LakeVendingStack, tenant_a: LakeTenant
@@ -260,7 +279,7 @@ class TestCrossTenantByPath:
         ):
             with pytest.raises(duckdb.PermissionException):
                 con.execute(sql).fetchall()
-        assert not [r for r in _http_log(con) if "/catalog/" not in r["url"]]
+        assert _http_log(con) == []  # logging starts after ATTACH: not even a catalog request
 
 
 def _refusing_proxy() -> tuple[int, list[str]]:
@@ -341,6 +360,29 @@ class TestRevocation:
         assert _http_log(con) == []
         fresh = lake.session(tenant_a.principal, tenant_a.warehouse)
         assert fresh.execute("SELECT count(*) FROM lake.gold.orders").fetchone() == (3,)
+
+    def test_a_namespace_created_after_a_miss_stays_missing_but_a_new_table_appears(
+        self, lake: LakeVendingStack, tenant_a: LakeTenant
+    ) -> None:
+        """EXECUTION-LOG D-026, the other two cases: no revocation involved."""
+
+        con = lake.session(tenant_a.principal, tenant_a.warehouse)
+        with pytest.raises(duckdb.CatalogException):
+            con.execute("SELECT * FROM lake.later_ns.t").fetchall()
+        with pytest.raises(duckdb.CatalogException):
+            con.execute("SELECT * FROM lake.gold.later_table").fetchall()
+        catalog = lake.admin_catalog(tenant_a)
+        catalog.create_namespace_if_not_exists("later_ns")
+        data = pa.table({"i": pa.array([1], pa.int64())})
+        for ident in (("later_ns", "t"), ("gold", "later_table")):
+            if not catalog.table_exists(ident):
+                catalog.create_table(ident, schema=data.schema).append(data)
+
+        with pytest.raises(duckdb.CatalogException, match='schema "later_ns" does not exist'):
+            con.execute("SELECT * FROM lake.later_ns.t").fetchall()
+        assert con.execute("SELECT * FROM lake.gold.later_table").fetchall() == [(1,)]
+        fresh = lake.session(tenant_a.principal, tenant_a.warehouse)
+        assert fresh.execute("SELECT * FROM lake.later_ns.t").fetchall() == [(1,)]
 
     def test_max_table_staleness_hides_a_revocation(
         self, lake: LakeVendingStack, tenant_a: LakeTenant
@@ -535,6 +577,8 @@ class TestRefusalTaxonomy:
     def test_a_describe_only_principal_gets_metadata_and_no_credentials(
         self, lake: LakeVendingStack, tenant_a: LakeTenant, monkeypatch: pytest.MonkeyPatch
     ) -> None:
+        # With a region in the environment the scan would carry on, unsigned, to the default AWS
+        # endpoint (D-027); without one it stops in the engine. Either way: no credentials, no rows.
         monkeypatch.delenv("AWS_REGION", raising=False)
         monkeypatch.delenv("AWS_DEFAULT_REGION", raising=False)
         lake.set_grant(tenant_a, lake.ungranted, granted=True, privilege="describe")
@@ -544,9 +588,7 @@ class TestRefusalTaxonomy:
 
             assert loaded.status_code == 200
             assert "storage-credentials" not in loaded.json()
-            with pytest.raises(
-                duckdb.Error, match="No region was provided via the vended credentials"
-            ) as caught:
+            with pytest.raises(duckdb.Error) as caught:
                 con.execute("SELECT * FROM lake.gold.orders").fetchall()
             assert type(caught.value) is duckdb.Error
         finally:

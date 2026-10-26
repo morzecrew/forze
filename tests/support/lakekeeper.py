@@ -19,7 +19,14 @@ their tenant.
 containers and the test process must reach: Lakekeeper hands the storage-profile endpoint to the
 client verbatim, and validates the token issuer against the URL it discovered. Both are
 therefore addressed through the network's gateway IP and the host-published port, which works
-on a Linux Docker host (and on CI runners), not on Docker Desktop.
+on a Linux Docker host (and on CI runners), not on Docker Desktop. The stack probes the gateway
+once and skips when the host cannot reach it.
+
+**Exposure.** Every credential here is a throwaway constant: the store's root key, Keycloak's
+``admin``/``admin`` console, the client secrets. RustFS, Keycloak and Lakekeeper publish their
+ports on all host interfaces, as testcontainers does by default, so for the module's lifetime
+anyone on the host's network can reach them with those constants. OpenFGA (no authn) and
+Postgres publish nothing. Do not run this on a host whose network you do not trust.
 """
 
 from __future__ import annotations
@@ -37,7 +44,9 @@ from pathlib import Path
 from typing import Any
 
 import docker
+import duckdb
 import httpx
+import pytest
 from testcontainers.core.container import DockerContainer
 from testcontainers.core.network import Network
 
@@ -113,6 +122,19 @@ class LakeVendingStack:
             timeout=30,
         )
 
+    def admin_catalog(self, tenant: LakeTenant) -> Any:
+        """A PyIceberg REST catalog on ``tenant``'s warehouse, acting as the operator."""
+
+        from pyiceberg.catalog.rest import RestCatalog
+
+        return RestCatalog(
+            "admin",
+            uri=self.catalog_uri,
+            warehouse=tenant.warehouse,
+            credential=f"{self.admin.client_id}:{self.admin.client_secret}",
+            **{"oauth2-server-uri": self.token_uri, "scope": OAUTH2_SCOPE},
+        )
+
     def set_grant(
         self,
         tenant: LakeTenant,
@@ -157,8 +179,6 @@ class LakeVendingStack:
 
         Steps 5-8 are left to the caller, so a probe can place them where it needs them.
         """
-
-        import duckdb
 
         con = duckdb.connect(
             ":memory:",
@@ -283,15 +303,8 @@ def _seed_table(stack: LakeVendingStack, tenant: LakeTenant) -> None:
     """Create ``gold.orders`` in the tenant's warehouse as the operator, through the REST catalog."""
 
     import pyarrow as pa
-    from pyiceberg.catalog.rest import RestCatalog
 
-    catalog = RestCatalog(
-        "seed",
-        uri=stack.catalog_uri,
-        warehouse=tenant.warehouse,
-        credential=f"{stack.admin.client_id}:{stack.admin.client_secret}",
-        **{"oauth2-server-uri": stack.token_uri, "scope": OAUTH2_SCOPE},
-    )
+    catalog = stack.admin_catalog(tenant)
     catalog.create_namespace_if_not_exists(TABLE[0])
     data = pa.table(
         {
@@ -303,6 +316,30 @@ def _seed_table(stack: LakeVendingStack, tenant: LakeTenant) -> None:
     table.append(data)
 
 
+def _install_extensions() -> None:
+    """Install ``httpfs`` and ``iceberg`` into the default extension directory.
+
+    Sessions load them with autoinstall off (RFC 0078 §3.4), so a cold runner needs this once.
+    """
+
+    con = duckdb.connect(":memory:")
+    try:
+        con.execute("INSTALL httpfs")
+        con.execute("INSTALL iceberg")
+    finally:
+        con.close()
+
+
+def _skip_unless_gateway_reachable(url: str) -> None:
+    try:
+        with urllib.request.urlopen(url, timeout=5) as resp:
+            if resp.status == 200:
+                return
+    except (urllib.error.URLError, TimeoutError, OSError):
+        pass
+    pytest.skip(f"the Docker network gateway is not reachable from this host ({url})")
+
+
 # ----------------------- #
 
 
@@ -311,6 +348,7 @@ def lake_vending_stack() -> Iterator[LakeVendingStack]:
     """Start the whole stack, bootstrap it, seed both tenants, and yield its addresses."""
 
     secrets = {name: f"{name}-secret" for name in (_ADMIN, *_TENANTS, _UNGRANTED)}
+    _install_extensions()
 
     with ExitStack() as stack, tempfile.TemporaryDirectory() as realm_dir:
         Path(realm_dir, "realm.json").write_text(json.dumps(_realm(secrets)))
@@ -325,8 +363,10 @@ def lake_vending_stack() -> Iterator[LakeVendingStack]:
             .with_network(network)
             .with_network_aliases("s3")
         )
-        s3_endpoint = f"http://{gateway}:{s3.get_exposed_port(9000)}"
-        _wait_http(f"{s3_endpoint}/minio/health/live")
+        s3_port = s3.get_exposed_port(9000)
+        _wait_http(f"http://{s3.get_container_host_ip()}:{s3_port}/minio/health/live")
+        s3_endpoint = f"http://{gateway}:{s3_port}"
+        _skip_unless_gateway_reachable(f"{s3_endpoint}/minio/health/live")
         s3.get_client().make_bucket(BUCKET)
 
         keycloak = stack.enter_context(
@@ -348,17 +388,18 @@ def lake_vending_stack() -> Iterator[LakeVendingStack]:
             .with_network_aliases("lk-db")
             .with_env("POSTGRES_PASSWORD", "postgres")
         )
-        openfga = stack.enter_context(
+        # Publishes no port; the migrate loop below waits for it. The check caches are pinned
+        # off, so a revoked grant is refused on the next check (EXECUTION-LOG D-032).
+        stack.enter_context(
             DockerContainer(OPENFGA_IMAGE)
             .with_network(network)
             .with_network_aliases("openfga")
-            .with_exposed_ports(8080)
             .with_env("OPENFGA_DATASTORE_ENGINE", "memory")
             .with_env("OPENFGA_PLAYGROUND_ENABLED", "false")
+            .with_env("OPENFGA_CHECK_QUERY_CACHE_ENABLED", "false")
+            .with_env("OPENFGA_CHECK_ITERATOR_CACHE_ENABLED", "false")
+            .with_env("OPENFGA_CACHE_CONTROLLER_ENABLED", "false")
             .with_command("run")
-        )
-        _wait_http(
-            f"http://{openfga.get_container_host_ip()}:{openfga.get_exposed_port(8080)}/healthz"
         )
 
         lk_env = {
@@ -375,7 +416,7 @@ def lake_vending_stack() -> Iterator[LakeVendingStack]:
             migrate.with_env(k, v)
         stack.callback(migrate.stop)
         deadline = time.monotonic() + 60
-        while True:  # Postgres takes a moment to accept connections; migrate does not retry.
+        while True:  # Postgres and OpenFGA take a moment to come up; migrate does not retry.
             try:
                 _run_to_completion(migrate)
                 break
