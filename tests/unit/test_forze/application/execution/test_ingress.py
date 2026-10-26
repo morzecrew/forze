@@ -195,6 +195,8 @@ class TestValidateOperationInput:
             (ConfigDict(validate_by_name=True), {"n", "count"}),
             (ConfigDict(populate_by_name=True), {"n", "count"}),
             (ConfigDict(validate_by_name=True, validate_by_alias=False), {"n"}),
+            # With alias reading off, pydantic reads by name without being told to.
+            (ConfigDict(validate_by_alias=False), {"n"}),
             # Pydantic's back-compat rule turns alias reading back on here.
             (ConfigDict(populate_by_name=True, validate_by_alias=False), {"n", "count"}),
             (ConfigDict(populate_by_name=True, validate_by_name=False), {"count"}),
@@ -236,6 +238,22 @@ class TestValidateOperationInput:
         )
 
         assert args.n == 3
+
+    def test_by_name_keeps_an_alias_off_another_fields_name(self) -> None:
+        # ``a``'s alias is ``b``'s name: read by alias too, ``a`` would take ``b``'s value.
+        class _Clash(BaseModel):
+            a: int = Field(default=0, validation_alias="b")
+            b: int = 0
+
+        args = validate_operation_input(
+            OperationDescriptor(input_type=_Clash),
+            {"a": 1, "b": 2},
+            code="c",
+            forbid_unknown=True,
+            by_name=True,
+        )
+
+        assert (args.a, args.b) == (1, 2)
 
     def test_an_open_dto_takes_extension_fields(self) -> None:
         args = validate_operation_input(

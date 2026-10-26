@@ -35,8 +35,9 @@ def validate_operation_input(
     :param forbid_unknown: Refuse an argument the DTO does not accept, naming it, instead
         of letting Pydantic drop it. An operation with no input then refuses any argument.
     :param summary: The rejection's message.
-    :param by_name: Read every field by its own name too, whatever the DTO's config says,
-        for a surface whose schema advertises field names rather than aliases.
+    :param by_name: Read every field by its own name and by no alias, whatever the DTO's
+        config says, for a surface whose schema advertises field names. An alias that is
+        another field's name would otherwise take that field's value.
     :raises CoreException: When *raw* does not validate, or names an unknown argument while
         *forbid_unknown* is on.
     """
@@ -52,12 +53,14 @@ def validate_operation_input(
 
         if accepted is not None:
             if by_name:
-                accepted |= set(descriptor.input_type.model_fields)
+                accepted = set(descriptor.input_type.model_fields)
 
             _refuse_unknown(sorted(set(raw) - accepted), code=code, summary=summary)
 
     try:
-        return descriptor.input_type.model_validate(dict(raw), by_name=by_name or None)
+        return descriptor.input_type.model_validate(
+            dict(raw), by_name=by_name or None, by_alias=False if by_name else None
+        )
 
     except ValidationError as error:
         raise exc.validation(
@@ -73,9 +76,10 @@ def validate_operation_input(
 def accepted_input_names(input_type: type[BaseModel]) -> set[str] | None:
     """Every name the input DTO accepts, or ``None`` when it accepts names not listed here.
 
-    The names the DTO's config lets validation read: an aliased field's own name only under
-    ``validate_by_name`` (or ``populate_by_name``), its aliases unless ``validate_by_alias``
-    is off and ``populate_by_name`` does not turn it back on. A name the DTO would not read
+    The names the DTO's config lets validation read: an aliased field's own name under
+    ``validate_by_name`` (or ``populate_by_name``) or once ``validate_by_alias`` is off, its
+    aliases unless ``validate_by_alias`` is off and ``populate_by_name`` does not turn it
+    back on. A name the DTO would not read
     is dropped by pydantic without a word, so listing it would run the operation without
     the caller's value. ``Field(alias=...)`` sets ``validation_alias`` too, so reading that
     one covers both.
@@ -100,8 +104,9 @@ def accepted_input_names(input_type: type[BaseModel]) -> set[str] | None:
     if by_name is None and config.get("populate_by_name") is not None:
         by_name, by_alias = config.get("populate_by_name"), True
 
-    by_name = bool(by_name)
     by_alias = by_alias is not False
+    # One of the two is always on: with alias reading off, pydantic reads by name.
+    by_name = bool(by_name) or not by_alias
     accepted: set[str] = set()
 
     for name, field in input_type.model_fields.items():
