@@ -9,11 +9,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **`forze ops` runs your operations from a terminal, cron or a Kubernetes Job, governed as over HTTP.** Declare an `OpsApp` with a registry, a `SERVERLESS` runtime factory and an identity. `call` verifies an API key, resolves the tenant, and prints one JSON document with a stable exit code.
+- ...
 
 ### Changed
 
 - ...
+
+### Fixed
+
+- ...
+
+## [0.16.2] - 2026-10-26
+
+### Added
+
+- **`forze ops` runs your operations from a terminal, cron or a Kubernetes Job, governed as over HTTP.** Declare an `OpsApp` with a registry, a `SERVERLESS` runtime factory and an identity. `call` verifies an API key, resolves the tenant, and prints one JSON document with a stable exit code.
 
 ### Fixed
 
@@ -2486,7 +2496,8 @@ Execution and mapping refactor, middleware-first usecases, split search/cache/do
 
 - Packaging metadata for PyOCI classifiers.
 
-[unreleased]: https://github.com/morzecrew/forze/compare/v0.16.1...HEAD
+[unreleased]: https://github.com/morzecrew/forze/compare/v0.16.2...HEAD
+[0.16.2]: https://github.com/morzecrew/forze/compare/v0.16.1...v0.16.2
 [0.16.1]: https://github.com/morzecrew/forze/compare/v0.16.0...v0.16.1
 [0.16.0]: https://github.com/morzecrew/forze/compare/v0.15.1...v0.16.0
 [0.15.1]: https://github.com/morzecrew/forze/compare/v0.15.0...v0.15.1
