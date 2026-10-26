@@ -6699,8 +6699,9 @@ crash restart, and a drain that lets in-flight activities land before teardown.<
 <p>A worker process is the client step, the worker step, and a probe listener so
 Kubernetes can see it:</p>
 <div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">asyncio</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">datetime</span><span class="w"> </span><span class="kn">import</span> <span class="n">timedelta</span>
 
-<span class="kn">from</span><span class="w"> </span><span class="nn">forze.application.execution</span><span class="w"> </span><span class="kn">import</span> <span class="n">build_runtime</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">forze.application.execution</span><span class="w"> </span><span class="kn">import</span> <span class="n">build_runtime</span><span class="p">,</span> <span class="n">serve_runtime</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">forze_temporal</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
     <span class="n">TemporalClient</span><span class="p">,</span>
     <span class="n">TemporalConfig</span><span class="p">,</span>
@@ -6727,13 +6728,9 @@ Kubernetes can see it:</p>
 <span class="p">)</span>
 
 
-<span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">main</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
-    <span class="k">async</span> <span class="k">with</span> <span class="n">runtime</span><span class="o">.</span><span class="n">scope</span><span class="p">():</span>
-        <span class="k">await</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">Event</span><span class="p">()</span><span class="o">.</span><span class="n">wait</span><span class="p">()</span>  <span class="c1"># run until the process is signalled</span>
-
-
 <span class="k">if</span> <span class="vm">__name__</span> <span class="o">==</span> <span class="s2">"__main__"</span><span class="p">:</span>
-    <span class="n">asyncio</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">main</span><span class="p">())</span>
+    <span class="c1"># Until SIGTERM, which drains the runtime, then tears it down.</span>
+    <span class="n">asyncio</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">serve_runtime</span><span class="p">(</span><span class="n">runtime</span><span class="p">,</span> <span class="n">drain_budget</span><span class="o">=</span><span class="n">timedelta</span><span class="p">(</span><span class="n">seconds</span><span class="o">=</span><span class="mi">5</span><span class="p">)))</span>
 </code></pre></div>
 <p>Order matters: the worker step reaches for the client's live connection at startup,
 so it must come <strong>after</strong> the step that connects it. Wired the other way round, the

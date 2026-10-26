@@ -7040,7 +7040,9 @@ lifecycle step:</p>
 <code>ctx</code> its startup hook receives, so it takes no runtime and sits in the plan of the
 runtime it reports on. It answers through the same evaluator as the FastAPI route,
 reports <code>draining</code> for the whole window, and closes only after. See
-<a href="../grafana-stack/#probes">The Grafana stack</a> for the Kubernetes mapping.</p>
+<a href="../grafana-stack/#probes">The Grafana stack</a> for the Kubernetes mapping. To drain
+such a process on <code>SIGTERM</code>, hold its scope with
+<a href="#graceful-deploys"><code>serve_runtime</code></a>.</p>
 <h3 id="are-the-dependencies-reachable">Are the dependencies reachable?<a class="headerlink" href="#are-the-dependencies-reachable" title="Permanent link">&para;</a></h3>
 <p>The drain gate answers whether the process is <em>willing</em> to take traffic. It says
 nothing about whether it can serve one: an un-drained process whose database is gone
@@ -7140,6 +7142,31 @@ means operations are refused, stays false until shutdown closes the gate.</p>
 <p>An HTTP server needs its signal handling to call <code>drain()</code> before it stops
 accepting. For uvicorn that is <code>serve_uvicorn</code> — see
 <a href="../../integrations/fastapi/#graceful-shutdown-under-uvicorn">Graceful shutdown under uvicorn</a>.</p>
+<p>A process that serves no HTTP — the outbox relay, a consumer, a durable runner —
+needs the same, and has no server to provide it. Hold its scope with
+<code>serve_runtime</code>, beside the <a href="#readiness">probe listener</a>:</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">asyncio</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">datetime</span><span class="w"> </span><span class="kn">import</span> <span class="n">timedelta</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">forze.application.execution</span><span class="w"> </span><span class="kn">import</span> <span class="n">build_runtime</span><span class="p">,</span> <span class="n">serve_runtime</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">forze.application.execution.background</span><span class="w"> </span><span class="kn">import</span> <span class="n">probe_listener_step</span>
+
+<span class="n">runtime</span> <span class="o">=</span> <span class="n">build_runtime</span><span class="p">(</span><span class="o">...</span><span class="p">,</span> <span class="n">lifecycle_steps</span><span class="o">=</span><span class="p">[</span><span class="n">relay_step</span><span class="p">,</span> <span class="n">probe_listener_step</span><span class="p">(</span><span class="n">port</span><span class="o">=</span><span class="mi">8079</span><span class="p">)])</span>
+
+<span class="n">asyncio</span><span class="o">.</span><span class="n">run</span><span class="p">(</span>
+    <span class="n">serve_runtime</span><span class="p">(</span><span class="n">runtime</span><span class="p">,</span> <span class="n">drain_budget</span><span class="o">=</span><span class="n">timedelta</span><span class="p">(</span><span class="n">seconds</span><span class="o">=</span><span class="mi">5</span><span class="p">),</span> <span class="n">announce_delay</span><span class="o">=</span><span class="n">timedelta</span><span class="p">(</span><span class="n">seconds</span><span class="o">=</span><span class="mi">3</span><span class="p">))</span>
+<span class="p">)</span>
+</code></pre></div>
+<p>On the first <code>SIGTERM</code> or <code>SIGINT</code> it runs <code>runtime.drain()</code> — the probe listener
+reports <code>draining</code> from the announcement on — then leaves the scope, which tears
+down, and returns. A bare <code>async with runtime.scope()</code> that waits forever has no
+handler: as PID 1 in a container it ignores <code>SIGTERM</code> and is killed when the grace
+period ends. The signals behave as under <code>serve_uvicorn</code>: a drain that fails still
+tears down, a <code>SIGINT</code> during the drain cancels it and gives the phases up, and a
+repeated <code>SIGTERM</code> is logged and ignored. A signal during startup waits for it to
+finish, and the drain phases then run in the shutdown instead. Off the main thread,
+pass <code>stop=asyncio.Event()</code> and set it to drain, as a first signal would. From another
+thread, set it on the runtime's loop: <code>loop.call_soon_threadsafe(stop.set)</code>.</p>
 <h3 id="drain-phases">Drain phases<a class="headerlink" href="#drain-phases" title="Permanent link">&para;</a></h3>
 <p>A lifecycle step registers its phase at startup, on the <code>ctx</code> its hook receives:</p>
 <div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">datetime</span><span class="w"> </span><span class="kn">import</span> <span class="n">timedelta</span>

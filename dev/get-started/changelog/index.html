@@ -10241,6 +10241,9 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <li>
 <p><strong>A hand-written upload route can cap its read like the generated one.</strong> <code>forze_fastapi.routes.read_upload_capped(file, max_size)</code> returns the multipart file's bytes, or refuses a file over the cap with the generated route's 422 <code>upload_too_large</code>.</p>
 </li>
+<li>
+<p><strong><code>serve_runtime</code> drains a process that serves no HTTP on <code>SIGTERM</code>.</strong> The counterpart of <code>serve_uvicorn</code> for relays, consumers and workers holds the runtime's scope open, runs <code>runtime.drain()</code> on the first <code>SIGTERM</code> or <code>SIGINT</code>, or when <code>stop</code> is set, then tears down.</p>
+</li>
 </ul>
 <h3 id="changed">Changed<a class="headerlink" href="#changed" title="Permanent link">&para;</a></h3>
 <ul>
@@ -10248,7 +10251,12 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 </ul>
 <h3 id="fixed">Fixed<a class="headerlink" href="#fixed" title="Permanent link">&para;</a></h3>
 <ul>
-<li><strong>An aliased input field no longer loses the caller's value.</strong> <code>forze ops call</code> and agent tools refuse a name the DTO's config does not read, which pydantic dropped, running the operation on the default. <abbr title="Model Context Protocol">MCP</abbr> reads each field by the name its tool signature advertises, so an aliased field is no longer dropped there.</li>
+<li>
+<p><strong>Two quick <code>SIGINT</code>s to <code>serve_uvicorn</code> now give the drain phases up.</strong> A second one handled in the same loop turn as the first cancelled the drain before it started, so the forced exit still ran every phase at length in teardown.</p>
+</li>
+<li>
+<p><strong>An aliased input field no longer loses the caller's value.</strong> <code>forze ops call</code> and agent tools refuse a name the DTO's config does not read, which pydantic dropped, running the operation on the default. <abbr title="Model Context Protocol">MCP</abbr> reads each field by the name its tool signature advertises, so an aliased field is no longer dropped there.</p>
+</li>
 </ul>
 <h3 id="security">Security<a class="headerlink" href="#security" title="Permanent link">&para;</a></h3>
 <ul>
