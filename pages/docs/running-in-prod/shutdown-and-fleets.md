@@ -71,9 +71,10 @@ open scope does:
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import APIRouter, FastAPI
 from forze.application.execution import build_runtime
 from forze_fastapi import runtime_lifespan
+from forze_fastapi.routes import attach_readiness_route
 
 
 @asynccontextmanager
@@ -85,7 +86,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 
 app = FastAPI(lifespan=lifespan)
+router = APIRouter()
 attach_readiness_route(router, lambda: getattr(app.state, "runtime", None))
+app.include_router(router)
 ```
 
 A callable that raises answers `unavailable` too. Its exception is logged and never
