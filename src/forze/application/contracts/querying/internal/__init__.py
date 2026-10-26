@@ -22,7 +22,7 @@ from .nodes import (
     QueryOr,
     elem_inner_is_scalar,
 )
-from .parse import QueryFilterExpressionParser, QueryFilterLimits
+from .parse import QueryFilterExpressionParser, QueryFilterLimits, bind_max_in_size
 from .text_pattern import like_pattern_to_regex, validate_text_pattern
 
 # ----------------------- #
@@ -37,6 +37,7 @@ __all__ = [
     "ParsedAggregates",
     "QueryFilterExpressionParser",
     "QueryFilterLimits",
+    "bind_max_in_size",
     "QueryValueCaster",
     "evaluate_filter",
     "compile_filter",

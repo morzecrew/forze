@@ -5,7 +5,7 @@ from uuid import UUID, uuid4
 import pytest
 from pydantic import BaseModel
 
-from forze.application.contracts.querying import encode_keyset_v1
+from forze.application.contracts.querying import bind_max_in_size, encode_keyset_v1
 from forze.application.execution import Deps
 from forze.base.exceptions import CoreException
 from forze.domain.constants import ID_FIELD
@@ -635,3 +635,53 @@ async def test_postgres_read_gateway_get_missing_raises(
     )
     with pytest.raises(CoreException, match="not found"):
         await gw.get(uuid4())
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_postgres_read_gateway_in_past_the_bind_parameter_cap(
+    pg_client: PostgresClient,
+) -> None:
+    # 70,000 members are past Postgres's 65,535 bind parameters: `$in` binds one array.
+    table = f"pg_rd_in_{uuid4().hex[:10]}"
+    await pg_client.execute(
+        f"""
+        CREATE TABLE public.{table} (
+            id uuid PRIMARY KEY,
+            rev integer NOT NULL,
+            created_at timestamptz NOT NULL,
+            last_update_at timestamptz NOT NULL,
+            name text NOT NULL
+        );
+        """,
+    )
+    id_a = uuid4()
+    await pg_client.execute(
+        f"""
+        INSERT INTO public.{table}
+        (id, rev, created_at, last_update_at, name)
+        VALUES (%(a)s, 1, now(), now(), 'alpha'), (%(b)s, 1, now(), now(), 'beta');
+        """,
+        {"a": id_a, "b": uuid4()},
+    )
+    ctx = context_from_deps(Deps.plain(
+            {
+                PostgresClientDepKey: pg_client,
+                PostgresIntrospectorDepKey: PostgresIntrospector(client=pg_client),
+            },
+        ),
+    )
+    gw = read_gw(
+        ctx,
+        read_type=RdDoc,
+        read_relation=("public", table),
+        tenant_aware=False,
+    )
+    filters = {"$values": {"id": {"$in": [id_a, *(uuid4() for _ in range(69_999))]}}}
+
+    with pytest.raises(CoreException, match="maximum size of 1000"):
+        await gw.find_many(filters, limit=10, offset=0, return_fields=["name"])  # type: ignore[arg-type]
+
+    with bind_max_in_size(70_000):
+        rows = await gw.find_many(filters, limit=10, offset=0, return_fields=["name"])  # type: ignore[arg-type]
+
+    assert [r["name"] for r in rows] == ["alpha"]

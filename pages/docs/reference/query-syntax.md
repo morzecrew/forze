@@ -286,10 +286,10 @@ Filters are validated at parse time, before any query reaches the database.
 The defaults below apply unless a `DocumentSpec` or `SearchSpec` sets
 `filter_limits=QueryFilterLimits(...)`. Every backend serving the spec uses those
 limits for its filters, aggregate metric filters and `$having`, the mock included,
-and so does a generated route or tool that passes a caller's filter through.
-Raising `max_in_size` for internal reads that match long id lists raises it for
-those callers too. A `HubSearchSpec` has no `filter_limits`: hub search filters
-always use the defaults.
+and so does a generated route or tool that passes a caller's filter through, so
+raising a spec's `max_in_size` raises it for those callers too. A `HubSearchSpec` takes
+its own `filter_limits`, applied once to the hub rows; its members' limits don't apply
+to a hub filter.
 
 | Limit | Default | Applies to |
 |-------|---------|------------|
@@ -298,6 +298,23 @@ always use the defaults.
 | `max_in_size` | 1000 | `$in` / `$nin`, array shortcuts, set-relation operands |
 | `max_pattern_length` | 256 | each `$like` / `$ilike` / `$regex` pattern |
 | `max_pattern_or_branches` | 32 | patterns when a text operand is a sequence |
+
+To match a long id list your own code built, such as every article in a report, raise
+`max_in_size` around that read instead of on the spec:
+
+```python
+from forze.application.contracts.querying import bind_max_in_size
+
+with bind_max_in_size(50_000):
+    page = await doc.find_many(filters={"$values": {"id": {"$in": article_ids}}})
+```
+
+The raised limit holds for the current task and for tasks it starts inside the block,
+never for a concurrent request. It only raises: a spec's higher limit still applies.
+Generated routes never bind it. Never wrap a caller-supplied filter in it, or bind it
+around a server or a worker: the limit is what bounds that filter. A backend's own cap
+still refuses inside the block (Firestore's, below). On Postgres an `$in` is bound as
+one array parameter, so a long list never nears the server's parameter cap.
 
 A violation — or an empty operator map, an unknown operator or key, a type mismatch, or a
 regex with unsafe nesting/repetition — raises a `precondition` `CoreException`
