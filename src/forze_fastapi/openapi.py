@@ -17,7 +17,7 @@ require_fastapi()
 import json
 import re
 import textwrap
-from collections.abc import Callable
+from collections.abc import Callable, Mapping, Sequence
 from copy import deepcopy
 from typing import Any, Final, cast
 
@@ -467,8 +467,45 @@ def _require_sent_fields(schema: dict[str, Any], app: FastAPI) -> None:
 
 # ....................... #
 
+_UNGROUPED: Final = "Other"
+"""The ``x-tagGroups`` group the tags no group lists join, last unless the app lists it."""
 
-def apply_openapi_conventions(app: FastAPI, *, require_sent_fields: bool = False) -> None:
+
+def _group_tags(schema: dict[str, Any], tag_groups: Mapping[str, Sequence[str]]) -> None:
+    # The operations' tags, in the order they first appear.
+    used = {
+        tag: None
+        for path_item in schema.get("paths", {}).values()
+        for method, operation in path_item.items()
+        if method in _HTTP_METHODS
+        for tag in operation.get("tags", ())
+    }
+    groups = {name: list(tags) for name, tags in tag_groups.items()}
+    listed = {tag for tags in groups.values() for tag in tags}
+
+    if unknown := sorted(listed - used.keys()):
+        raise exc.configuration(
+            f"The OpenAPI tag groups list {unknown}, which no operation is tagged with; "
+            "fix the tag name or drop it from its group.",
+            code="openapi_unknown_tag",
+        )
+
+    # Scalar and Redoc hide a tag no group lists, and every operation under it.
+    if ungrouped := [tag for tag in used if tag not in listed]:
+        groups.setdefault(_UNGROUPED, []).extend(ungrouped)
+
+    schema["x-tagGroups"] = [{"name": name, "tags": tags} for name, tags in groups.items()]
+
+
+# ....................... #
+
+
+def apply_openapi_conventions(
+    app: FastAPI,
+    *,
+    require_sent_fields: bool = False,
+    tag_groups: Mapping[str, Sequence[str]] | None = None,
+) -> None:
     """Document the Forze error envelope and render reST descriptions as Markdown.
 
     In *app*'s OpenAPI: FastAPI's default 422 (``HTTPValidationError``) becomes the
@@ -494,8 +531,17 @@ def apply_openapi_conventions(app: FastAPI, *, require_sent_fields: bool = False
     schema a request also uses, or that a route trims otherwise (``exclude_unset``,
     ``include``, …), is left as it is. It can be asked for in a later call.
 
+    With *tag_groups*, group names mapped to the tags each holds, the schema gains the
+    top-level ``x-tagGroups`` that Scalar and Redoc render as sidebar groups, in the order
+    given. A listed tag no operation is tagged with is a configuration error
+    (``openapi_unknown_tag``) raised by the schema request. Both renderers hide a tag no group
+    lists, operations included, so such tags join a group named ``Other``, in the order
+    operations first use them: last, unless *tag_groups* places ``Other`` itself. A later call's
+    groups replace an earlier call's.
+
     :param app: The FastAPI application whose schema to adjust.
     :param require_sent_fields: Mark always-sent response fields required.
+    :param tag_groups: Sidebar groups, each name mapped to its tags in order.
     """
 
     original: Callable[[], dict[str, Any]] = app.openapi
@@ -511,6 +557,9 @@ def apply_openapi_conventions(app: FastAPI, *, require_sent_fields: bool = False
         if require_sent_fields and not schema.get(_REQUIRED_MARKER):
             _require_sent_fields(schema, app)
             schema[_REQUIRED_MARKER] = True
+
+        if tag_groups is not None:
+            _group_tags(schema, tag_groups)
 
         return schema
 

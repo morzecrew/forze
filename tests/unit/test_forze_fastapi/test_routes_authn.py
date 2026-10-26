@@ -349,6 +349,19 @@ class TestAuthnRouteSurface:
         )
         assert "204" in guarded["responses"]
 
+    def test_the_key_and_principal_ids_are_described(self) -> None:
+        paths = _build_app(registry=_guarded()).openapi()["paths"]
+
+        for path, method, opening in (
+            ("/auth/api-keys/{id}", "delete", "One of your API keys"),
+            ("/auth/admin/api-keys/{id}", "delete", "The API key to revoke"),
+            ("/auth/admin/principals/{id}/api-keys", "get", "The principal"),
+        ):
+            (param,) = paths[path][method]["parameters"]
+
+            assert (param["name"], param["in"]) == ("id", "path")
+            assert param["description"].startswith(opening)
+
     def test_include_narrows_to_subset(self) -> None:
         app = _build_app(
             include={AuthnKernelOp.PASSWORD_LOGIN, AuthnKernelOp.REFRESH_TOKENS},

@@ -60,6 +60,18 @@ class TestTenancyAdminRouteSurface:
             f"main.{op.value}" for op in TenancyAdminKernelOp
         }
 
+    def test_the_tenant_id_is_described(self) -> None:
+        paths = _build_app().openapi()["paths"]
+
+        for path, method in (
+            ("/admin/tenants/{id}/members", "get"),
+            ("/admin/tenants/{id}/deactivate", "post"),
+        ):
+            (param,) = paths[path][method]["parameters"]
+
+            assert (param["name"], param["in"]) == ("id", "path")
+            assert param["description"].startswith("The tenant ")
+
     def test_ships_unguarded_no_requires_authn_flag(self) -> None:
         # Admin ops are guarded by the app, not the framework — none are pre-flagged.
         paths = _build_app().openapi()["paths"]

@@ -7,6 +7,9 @@ the catalog. ``query_endpoint`` covers the GET whose input arrives as query para
 
 from __future__ import annotations
 
+import importlib
+import pkgutil
+from collections.abc import Mapping
 from datetime import date
 from enum import StrEnum
 from typing import Annotated, Any, Literal, NewType
@@ -43,6 +46,7 @@ from forze.application.execution.operations import OperationDescriptor, Operatio
 from forze.base.exceptions import CoreException
 from forze.base.primitives import AwareDatetime, StrKeyNamespace
 from forze.domain.models import BaseDTO, ReadDocument
+from forze_fastapi import routes as routes_package
 from forze_fastapi.exceptions import ERROR_CODE_HEADER, register_exception_handlers
 from forze_fastapi.routes import (
     EndpointBuilder,
@@ -56,6 +60,10 @@ from forze_fastapi.routes import (
     id_rev_body_endpoint,
     id_rev_endpoint,
     query_endpoint,
+)
+from forze_fastapi.routes._attach import (
+    PATH_PARAMS_ATTR,
+    _path_params,  # pyright: ignore[reportPrivateUsage]
 )
 from forze_kits.aggregates.search import build_search_registry
 from forze_kits.aggregates.tenancy import build_tenancy_registry
@@ -622,6 +630,76 @@ class TestTheIdRoutes:
         ]["parameters"]
 
         assert [(p["name"], p["in"]) for p in params] == [("id", "query")]
+
+
+# ....................... #
+
+
+class TestTheParameterDescriptions:
+    @pytest.mark.parametrize(
+        ("path", "where", "url"),
+        [("/{id}", "path", "/stock/5"), ("/one", "query", "/stock/one?id=5")],
+        ids=["id-in-the-path", "id-in-the-query"],
+    )
+    async def test_each_is_described_where_the_parameter_is(
+        self, path: str, where: str, url: str
+    ) -> None:
+        described = RouteBinding(
+            method="GET",
+            path=path,
+            build=id_rev_endpoint,
+            param_descriptions={"id": "The item.", "rev": "Its revision."},
+        )
+        app = _one(_OptionalRev, build=id_rev_endpoint, path=path, bindings={"one": described})
+        (operation,) = app.openapi()["paths"][f"/stock{path}"].values()
+        params = {p["name"]: p for p in operation["parameters"]}
+
+        assert (params["id"]["in"], params["id"]["required"]) == (where, True)
+        assert (params["rev"]["in"], params["rev"]["required"]) == ("query", False)
+        assert params["id"]["description"] == "The item."
+        assert params["rev"]["description"] == "Its revision."
+
+        # The optional rev keeps its default.
+        async with _client(app) as client:
+            response = await client.get(url)
+
+        assert response.json()["dump"] == {"id": 5, "rev": None}
+
+    def test_one_for_a_parameter_the_endpoint_lacks_is_refused(self) -> None:
+        described = RouteBinding(
+            method="GET", path="/{id}", build=id_endpoint, param_descriptions={"key": "The key."}
+        )
+
+        with pytest.raises(CoreException, match=r"\['key'\]") as caught:
+            _one(_ById, build=id_endpoint, path="/{id}", bindings={"one": described})
+
+        assert caught.value.kind.value == "configuration"
+
+    def test_every_shipped_binding_describes_its_parameters(self) -> None:
+        # Every binding table of every route module, so a new route or family is held to it.
+        checked = 0
+        undescribed: list[tuple[str, str]] = []
+
+        for info in pkgutil.iter_modules(routes_package.__path__):
+            module = importlib.import_module(f"{routes_package.__name__}.{info.name}")
+
+            for table in vars(module).values():
+                if not isinstance(table, Mapping) or not table:
+                    continue
+
+                if not all(isinstance(b, RouteBinding) for b in table.values()):  # pyright: ignore[reportUnknownVariableType]
+                    continue
+
+                for suffix, binding in table.items():  # pyright: ignore[reportUnknownVariableType]
+                    declared = _path_params(binding.path) | getattr(
+                        binding.build, PATH_PARAMS_ATTR, frozenset()
+                    )
+                    described = {k for k, text in binding.param_descriptions.items() if text}
+                    undescribed += [(f"{info.name}:{suffix}", k) for k in declared - described]
+                    checked += 1
+
+        assert checked
+        assert undescribed == []
 
 
 # ....................... #

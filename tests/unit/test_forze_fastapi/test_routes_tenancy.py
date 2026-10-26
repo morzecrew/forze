@@ -54,6 +54,18 @@ class TestTenancyRouteSurface:
     def test_operation_ids_are_registry_keys_verbatim(self) -> None:
         assert _op_ids(_build_app()) == {f"main.{op.value}" for op in TenancyKernelOp}
 
+    def test_the_tenant_id_is_described(self) -> None:
+        paths = _build_app().openapi()["paths"]
+
+        for path, method in (
+            ("/auth/tenants/{id}/activate", "post"),
+            ("/auth/tenants/{id}", "delete"),
+        ):
+            (param,) = paths[path][method]["parameters"]
+
+            assert (param["name"], param["in"]) == ("id", "path")
+            assert param["description"].startswith("The tenant ")
+
     def test_both_routes_flagged_requires_authn(self) -> None:
         paths = _build_app().openapi()["paths"]
 

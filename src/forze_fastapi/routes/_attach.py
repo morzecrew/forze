@@ -45,7 +45,7 @@ from typing import (
 from uuid import UUID
 
 import attrs
-from fastapi import APIRouter, Query, Request
+from fastapi import APIRouter, Path, Query, Request
 from fastapi.encoders import jsonable_encoder
 from fastapi.utils import is_body_allowed_for_status_code
 from pydantic import (
@@ -140,6 +140,9 @@ class RouteBinding:
 
     status_code: int = 200
     """Success status code."""
+
+    param_descriptions: Mapping[str, str] = attrs.field(factory=dict)
+    """OpenAPI descriptions of the endpoint's parameters, by name (``{"id": "..."}``)."""
 
 
 # ....................... #
@@ -580,6 +583,45 @@ def _signed(endpoint: Callable[..., Awaitable[Any]], *params: inspect.Parameter)
     endpoint.__annotations__ = {param.name: param.annotation for param in params}
 
 
+def _describe(
+    endpoint: Callable[..., Awaitable[Any]],
+    descriptions: Mapping[str, str],
+    in_path: AbstractSet[str],
+    op: str,
+) -> None:
+    """Give *endpoint*'s parameters their *descriptions*, each through FastAPI's own ``Path``
+    where *in_path* names it and ``Query`` otherwise."""
+
+    signature = inspect.signature(endpoint, eval_str=True)
+
+    if unknown := set(descriptions) - set(signature.parameters):
+        raise exc.configuration(
+            f"Parameter descriptions for operation '{op}' name {sorted(unknown)}, which its "
+            f"endpoint does not take (it takes {sorted(signature.parameters)})"
+        )
+
+    params: list[inspect.Parameter] = []
+
+    for param in signature.parameters.values():
+        if (description := descriptions.get(param.name)) is None:
+            params.append(param)
+            continue
+
+        located = param.name in in_path
+        location = (Path if located else Query)(description=description)
+        # Built at runtime from the endpoint, so no static checker can read it as a type.
+        annotation = Annotated[param.annotation, location]  # type: ignore[name-defined]
+        # FastAPI ignores a path parameter's default, and refuses one beside ``Path``.
+        default = inspect.Parameter.empty if located else param.default
+        params.append(param.replace(annotation=annotation, default=default))
+
+    endpoint.__signature__ = signature.replace(parameters=params)  # type: ignore[attr-defined]
+    endpoint.__annotations__ = {
+        **endpoint.__annotations__,
+        **{param.name: param.annotation for param in params},
+    }
+
+
 # ....................... #
 
 
@@ -816,6 +858,10 @@ def attach_operation_routes(
     builder does) has the binding's path checked against it: a ``{placeholder}`` the
     builder does not fill is refused. A builder of your own without it is not checked.
 
+    A binding's ``param_descriptions`` document its endpoint's parameters in the OpenAPI
+    schema, each as FastAPI's ``Path`` where the path binds it and ``Query`` otherwise; one
+    naming a parameter the endpoint does not take is refused.
+
     *path_overrides* maps an operation (the same kernel-op/str key accepted by
     *include*) to a replacement route path. Only the path changes — method,
     status, builder, and the verbatim ``operation_id`` are untouched, so the
@@ -856,8 +902,8 @@ def attach_operation_routes(
 
     Raises:
         CoreException: On an unknown *include*/override operation, a sensitive read
-            model, or a path override that drops or adds a path parameter (all
-            configuration errors).
+            model, a path override that drops or adds a path parameter, or a description
+            of a parameter the endpoint does not take (all configuration errors).
     """
 
     known = set(bindings)
@@ -942,6 +988,9 @@ def attach_operation_routes(
             input_type,
             op,
         )
+
+        if binding.param_descriptions:
+            _describe(endpoint, binding.param_descriptions, override_params, op)
 
         # Descriptor tags project onto OpenAPI route tags (additive to any
         # router-level tags). MCP attachers have no tag concept — this mapping

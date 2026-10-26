@@ -355,14 +355,27 @@ _AUTHN_BINDINGS: Mapping[str, RouteBinding] = {
         method="GET", path="/api-keys", build=_no_body_endpoint
     ),
     AuthnKernelOp.REVOKE_API_KEY: RouteBinding(
-        method="DELETE", path="/api-keys/{id}", build=id_endpoint, status_code=204
+        method="DELETE",
+        path="/api-keys/{id}",
+        build=id_endpoint,
+        status_code=204,
+        param_descriptions={
+            "id": "One of your API keys, by the `key_id` issuing or listing it returned."
+        },
     ),
     # Registered only when the registry was built with ``admin_guards``.
     AuthnKernelOp.LIST_PRINCIPAL_API_KEYS: RouteBinding(
-        method="GET", path="/admin/principals/{id}/api-keys", build=id_endpoint
+        method="GET",
+        path="/admin/principals/{id}/api-keys",
+        build=id_endpoint,
+        param_descriptions={"id": "The principal whose API keys to list."},
     ),
     AuthnKernelOp.REVOKE_PRINCIPAL_API_KEY: RouteBinding(
-        method="DELETE", path="/admin/api-keys/{id}", build=id_endpoint, status_code=204
+        method="DELETE",
+        path="/admin/api-keys/{id}",
+        build=id_endpoint,
+        status_code=204,
+        param_descriptions={"id": "The API key to revoke, by the `key_id` the listing returned."},
     ),
 }
 """Fixed action-path bindings per authn kernel operation.

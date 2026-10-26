@@ -357,6 +357,62 @@ class TestMarkupInTheSchema:
 # ....................... #
 
 
+def _tagged_app() -> FastAPI:
+    app = FastAPI()
+
+    @app.get("/notes", tags=["notes"])
+    async def notes() -> int:
+        return 0
+
+    @app.get("/files", tags=["files"])
+    async def files() -> int:
+        return 0
+
+    @app.get("/me", tags=["auth"])
+    async def me() -> int:
+        return 0
+
+    return app
+
+
+def _tag_groups(tag_groups: dict[str, list[str]]) -> list[dict[str, Any]]:
+    app = _tagged_app()
+    apply_openapi_conventions(app, tag_groups=tag_groups)
+
+    return app.openapi()["x-tagGroups"]
+
+
+class TestTagGroups:
+    def test_groups_are_written_in_order(self) -> None:
+        assert _tag_groups({"Content": ["files", "notes"], "Access": ["auth"]}) == [
+            {"name": "Content", "tags": ["files", "notes"]},
+            {"name": "Access", "tags": ["auth"]},
+        ]
+
+    def test_a_tag_no_operation_uses_is_refused(self) -> None:
+        with pytest.raises(CoreException, match=r"\['nots'\]") as caught:
+            _tag_groups({"Content": ["notes", "nots"], "Access": ["auth", "files"]})
+
+        assert caught.value.kind.value == "configuration"
+        assert caught.value.code == "openapi_unknown_tag"
+
+    def test_ungrouped_tags_join_a_trailing_group(self) -> None:
+        # In the order operations first use them: Scalar and Redoc would hide them otherwise.
+        assert _tag_groups({"Content": ["files"]}) == [
+            {"name": "Content", "tags": ["files"]},
+            {"name": "Other", "tags": ["notes", "auth"]},
+        ]
+
+    def test_ungrouped_tags_join_the_apps_own_other_group(self) -> None:
+        assert _tag_groups({"Other": [], "Content": ["files"]}) == [
+            {"name": "Other", "tags": ["notes", "auth"]},
+            {"name": "Content", "tags": ["files"]},
+        ]
+
+
+# ....................... #
+
+
 class TestMarkdown:
     @pytest.mark.parametrize(
         ("text", "expected"),
