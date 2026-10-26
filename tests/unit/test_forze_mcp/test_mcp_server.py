@@ -153,6 +153,17 @@ class TestDispatch:
         assert isinstance(args, _In)
         assert args.n == 3
 
+    def test_an_aliased_field_is_read_by_the_name_the_signature_advertises(self) -> None:
+        # The tool's signature names fields by their own names; validating by alias alone
+        # would drop the argument and run on the default (or fail a required field).
+        class _Aliased(BaseModel):
+            n: int = Field(alias="count")
+            label: str = Field(default="x", alias="tag")
+
+        args = build_args(OperationDescriptor(input_type=_Aliased), {"n": 3, "label": "y"})
+
+        assert (args.n, args.label) == (3, "y")
+
     def test_rejected_arguments_never_echo_the_offending_value(self) -> None:
         # Pydantic's own error text embeds the input it rejected, so letting a
         # ValidationError propagate hands the caller's value back to the agent. Whether that

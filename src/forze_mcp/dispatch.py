@@ -47,7 +47,9 @@ def build_args(
     So the boundary masks at its own edge, like the realtime WS route: a fixed summary plus
     field-level errors with the raw values stripped. The result is a ``CoreException``, so
     the registering surface's translation renders it through the egress-masked envelope.
-    An unknown argument is left to the tool's synthesized signature, which rejects it.
+    An unknown argument is left to the tool's synthesized signature, which rejects it. That
+    signature names each field by its own name, so validation reads fields by name: an
+    aliased field would otherwise drop the argument and run on its default.
     """
 
     return validate_operation_input(
@@ -56,6 +58,7 @@ def build_args(
         code="mcp_invalid_arguments",
         forbid_unknown=False,
         summary="Invalid tool arguments",
+        by_name=True,
     )
 
 

@@ -20,6 +20,7 @@ def validate_operation_input(
     code: str,
     forbid_unknown: bool,
     summary: str = "Invalid input",
+    by_name: bool = False,
 ) -> Any:
     """Validate *raw* into the operation's input DTO (``None`` if it has no DTO).
 
@@ -34,6 +35,9 @@ def validate_operation_input(
     :param forbid_unknown: Refuse an argument the DTO does not accept, naming it, instead
         of letting Pydantic drop it. An operation with no input then refuses any argument.
     :param summary: The rejection's message.
+    :param by_name: Read every field by its own name and by no alias, whatever the DTO's
+        config says, for a surface whose schema advertises field names. An alias that is
+        another field's name would otherwise take that field's value.
     :raises CoreException: When *raw* does not validate, or names an unknown argument while
         *forbid_unknown* is on.
     """
@@ -48,10 +52,15 @@ def validate_operation_input(
         accepted = accepted_input_names(descriptor.input_type)
 
         if accepted is not None:
+            if by_name:
+                accepted = set(descriptor.input_type.model_fields)
+
             _refuse_unknown(sorted(set(raw) - accepted), code=code, summary=summary)
 
     try:
-        return descriptor.input_type.model_validate(dict(raw))
+        return descriptor.input_type.model_validate(
+            dict(raw), by_name=by_name or None, by_alias=False if by_name else None
+        )
 
     except ValidationError as error:
         raise exc.validation(
@@ -67,9 +76,13 @@ def validate_operation_input(
 def accepted_input_names(input_type: type[BaseModel]) -> set[str] | None:
     """Every name the input DTO accepts, or ``None`` when it accepts names not listed here.
 
-    Field names plus every inbound spelling, because refusing a name the DTO would have
-    accepted is the one way an unknown-name check can do harm. ``Field(alias=...)`` sets
-    ``validation_alias`` too, so reading that one covers both.
+    The names the DTO's config lets validation read: an aliased field's own name under
+    ``validate_by_name`` (or ``populate_by_name``) or once ``validate_by_alias`` is off, its
+    aliases unless ``validate_by_alias`` is off and ``populate_by_name`` does not turn it
+    back on. A name the DTO would not read
+    is dropped by pydantic without a word, so listing it would run the operation without
+    the caller's value. ``Field(alias=...)`` sets ``validation_alias`` too, so reading that
+    one covers both.
 
     ``None`` means "do not check": a DTO configured ``extra="allow"`` takes extension
     fields on purpose, and enumerating what it accepts is impossible by construction. The
@@ -78,16 +91,29 @@ def accepted_input_names(input_type: type[BaseModel]) -> set[str] | None:
     declining to accept is not.
     """
 
-    if input_type.model_config.get("extra") == "allow":
+    config = input_type.model_config
+
+    if config.get("extra") == "allow":
         return None
 
+    by_name = config.get("validate_by_name")
+    by_alias = config.get("validate_by_alias")
+
+    # Pydantic's own back-compat rule: ``populate_by_name`` with ``validate_by_name`` unset
+    # reads both spellings, whatever ``validate_by_alias`` says.
+    if by_name is None and config.get("populate_by_name") is not None:
+        by_name, by_alias = config.get("populate_by_name"), True
+
+    by_alias = by_alias is not False
+    # One of the two is always on: with alias reading off, pydantic reads by name.
+    by_name = bool(by_name) or not by_alias
     accepted: set[str] = set()
 
     for name, field in input_type.model_fields.items():
-        accepted.add(name)
         alias = field.validation_alias
 
         if alias is None:
+            accepted.add(name)
             continue
 
         names = _alias_names(alias)
@@ -95,7 +121,11 @@ def accepted_input_names(input_type: type[BaseModel]) -> set[str] | None:
         if not names:
             return None
 
-        accepted |= names
+        if by_name:
+            accepted.add(name)
+
+        if by_alias:
+            accepted |= names
 
     return accepted
 
