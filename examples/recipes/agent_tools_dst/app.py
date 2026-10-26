@@ -57,6 +57,7 @@ from forze_kits.integrations.agent_tools import (
     ToolUse,
     dispatch_tool_use,
     operation_tools,
+    provider_safe_tool_name,
 )
 from forze_mock import MockDepsModule
 
@@ -110,6 +111,11 @@ TICKETS = AggregateKit(spec=TICKET_SPEC, invariants=(SPRINT_CAPACITY,))
 
 CREATE_OP = str(TICKET_SPEC.default_namespace.key("create"))
 LIST_OP = str(TICKET_SPEC.default_namespace.key("list"))
+
+# What the model sees and sends: the palette's default naming policy spells `tickets.create`
+# as `tickets__create`, because providers refuse a `.` in a tool name.
+CREATE_TOOL = provider_safe_tool_name(CREATE_OP)
+LIST_TOOL = provider_safe_tool_name(LIST_OP)
 
 TURN_OP = "agent.turn"
 """One turn of an agent's loop, as an operation — see :class:`AgentTurn`."""
@@ -203,9 +209,9 @@ def _turn(state: ModelState, rng: random.Random) -> AgentTurnInput:
     """
 
     if rng.random() < 0.75:
-        return AgentTurnInput(tool=CREATE_OP, input={"points": rng.randint(1, 4)})
+        return AgentTurnInput(tool=CREATE_TOOL, input={"points": rng.randint(1, 4)})
 
-    return AgentTurnInput(tool=LIST_OP, input={})
+    return AgentTurnInput(tool=LIST_TOOL, input={})
 
 
 def agent_scenario() -> Scenario:

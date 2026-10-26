@@ -11,7 +11,8 @@ re-deriving schemas — so the tool an agent sees and the operation it invokes c
 apart: they read the same type.
 """
 
-from collections.abc import Iterable
+import re
+from collections.abc import Callable, Iterable, Mapping
 
 from forze.application.contracts.querying import describe_query_discovery
 from forze.application.execution.operations import (
@@ -24,6 +25,59 @@ from forze.base.primitives import JsonDict, StrKey
 from .value_objects import OperationToolset, ToolDef
 
 # ----------------------- #
+
+_TOOL_NAME = re.compile(r"[A-Za-z0-9_-]{1,64}")
+"""A tool name OpenAI-style function calling and Anthropic's Messages API both accept."""
+
+# ....................... #
+
+
+def provider_safe_tool_name(op: str) -> str:
+    """The default naming policy: *op* with ``.`` spelled ``__`` and any other character a
+    provider refuses spelled ``_``, so ``orders.list`` becomes ``orders__list``.
+
+    It need not be reversible: dispatch resolves a name through the toolset's bindings,
+    never by undoing the spelling.
+
+    :param op: The operation key.
+    :returns: The tool name.
+    """
+
+    return re.sub(r"[^A-Za-z0-9_-]", "_", op.replace(".", "__"))
+
+
+# ....................... #
+
+
+def _refuse_unsafe_names(claimed: Mapping[str, list[str]]) -> None:
+    """Refuse a tool name a provider would reject, and one that two operations share.
+
+    Found here, at wiring, rather than by the provider refusing the whole palette on the
+    first request — or, for a shared name, by one operation silently shadowing another.
+    """
+
+    invalid = {name: ops for name, ops in claimed.items() if not _TOOL_NAME.fullmatch(name)}
+
+    if invalid:
+        raise exc.configuration(
+            "Tool name(s) a provider would refuse (each must match ^[A-Za-z0-9_-]{1,64}$): "
+            + ", ".join(f"{name!r} ({', '.join(ops)})" for name, ops in invalid.items()),
+            code="agent_tools_invalid_tool_name",
+            details={"names": invalid},
+        )
+
+    collisions = {name: ops for name, ops in claimed.items() if len(ops) > 1}
+
+    if collisions:
+        raise exc.configuration(
+            "Operations share a tool name: "
+            + "; ".join(f"{name!r} ({', '.join(ops)})" for name, ops in collisions.items()),
+            code="agent_tools_tool_name_collision",
+            details={"names": collisions},
+        )
+
+
+# ....................... #
 
 
 def _input_schema(entry: OperationCatalogEntry) -> JsonDict:
@@ -78,6 +132,7 @@ def operation_tools(
     *,
     include: Iterable[StrKey],
     read_only: bool = True,
+    name: Callable[[str], str] = provider_safe_tool_name,
 ) -> OperationToolset:
     """Project the allowlisted operations of *registry* into a tool palette.
 
@@ -87,11 +142,14 @@ def operation_tools(
     :param read_only: Project only ``QUERY``-plane operations (the default). A read-only
         toolset cannot mutate because the write operations are *absent from the palette*,
         not merely denied at dispatch — an agent's tools are its capabilities.
+    :param name: The naming policy, operation key → tool name. The default,
+        :func:`provider_safe_tool_name`, spells ``orders.list`` as ``orders__list``.
     :returns: The palette: :attr:`~.value_objects.OperationToolset.defs` for the agent's
         SDK, and the bindings dispatch resolves names against.
     :raises CoreException: When *include* is empty, names an operation the registry does
         not have, names a command operation in a read-only toolset, or names an operation
-        that projects a sensitive read model.
+        that projects a sensitive read model; or, as a ``configuration`` error, when a
+        tool name falls outside ``^[A-Za-z0-9_-]{1,64}$`` or two operations share one.
     """
 
     catalog = registry.catalog()
@@ -105,6 +163,7 @@ def operation_tools(
 
     defs: list[ToolDef] = []
     bindings: dict[str, OperationCatalogEntry] = {}
+    claimed: dict[str, list[str]] = {}
 
     for op in selected:
         # A name may legitimately be listed twice when a palette is assembled from
@@ -112,7 +171,7 @@ def operation_tools(
         # first position and drops the repeat: two identical defs would be rejected by
         # the SDKs downstream, and refusing would make composition awkward for a mistake
         # that is never ambiguous.
-        if str(op) in bindings:
+        if any(str(op) in ops for ops in claimed.values()):
             continue
 
         entry = catalog.get(op)
@@ -145,15 +204,18 @@ def operation_tools(
                 details={"op": str(op)},
             )
 
-        name = str(entry.op)
+        tool_name = name(str(entry.op))
+        claimed.setdefault(tool_name, []).append(str(entry.op))
 
         defs.append(
             ToolDef(
-                name=name,
+                name=tool_name,
                 description=_description(entry),
                 input_schema=_input_schema(entry),
             )
         )
-        bindings[name] = entry
+        bindings[tool_name] = entry
+
+    _refuse_unsafe_names(claimed)
 
     return OperationToolset(registry=registry, defs=tuple(defs), bindings=bindings)

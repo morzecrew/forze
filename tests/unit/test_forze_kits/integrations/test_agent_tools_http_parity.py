@@ -47,6 +47,7 @@ from forze_kits.integrations.agent_tools import (
     ToolUse,
     dispatch_tool_use,
     operation_tools,
+    provider_safe_tool_name,
 )
 from forze_mock import MockDepsModule, MockState
 
@@ -156,7 +157,7 @@ async def _rows(ctx: ExecutionContext, registry: FrozenOperationRegistry) -> str
     """
 
     listing = await dispatch_tool_use(
-        ToolUse(id="rows", name=_LIST_OP, input={}),
+        ToolUse(id="rows", name=provider_safe_tool_name(_LIST_OP), input={}),
         ctx=ctx,
         tools=operation_tools(registry, include=[_LIST_OP]),
     )
@@ -183,7 +184,7 @@ async def _bridged_create(ctx: ExecutionContext, registry: FrozenOperationRegist
     tools = operation_tools(registry, include=[_CREATE_OP], read_only=False)
 
     return await dispatch_tool_use(
-        ToolUse(id="t", name=_CREATE_OP, input={"title": "through-the-bridge"}),
+        ToolUse(id="t", name=tools.names[0], input={"title": "through-the-bridge"}),
         ctx=ctx,
         tools=tools,
     )
@@ -297,7 +298,7 @@ class TestTheGuardIsVisibleToBothSurfaces:
             rows = await _rows(ctx, registry)
 
             listing = await dispatch_tool_use(
-                ToolUse(id="l", name=_LIST_OP, input={}),
+                ToolUse(id="l", name=provider_safe_tool_name(_LIST_OP), input={}),
                 ctx=ctx,
                 tools=operation_tools(registry, include=[_LIST_OP]),
             )

@@ -269,7 +269,7 @@ def canned_model(args: ModelArgs | None) -> ModelReply:
         return ModelReply(
             tool_call=ModelToolCall(
                 id="call-1",
-                name=next(name for name in names if name.endswith(".agg_list")),
+                name=next(name for name in names if name.endswith("__agg_list")),
                 input={
                     "aggregates": {
                         "$groups": {"category": "category"},
@@ -282,7 +282,7 @@ def canned_model(args: ModelArgs | None) -> ModelReply:
     return ModelReply(
         tool_call=ModelToolCall(
             id="call-2",
-            name=next(name for name in names if name.endswith(".list")),
+            name=next(name for name in names if name.endswith("__list")),
             input={"filters": {"$values": {"category": "postgres"}}, "sorts": {"title": "asc"}},
         )
     )

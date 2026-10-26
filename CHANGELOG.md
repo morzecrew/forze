@@ -31,6 +31,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Two quick `SIGINT`s to `serve_uvicorn` now give the drain phases up.** A second one handled in the same loop turn as the first cancelled the drain before it started, so the forced exit still ran every phase at length in teardown.
 
+- **Agent tool names are ones model providers accept** (**behaviour change**). `operation_tools` names `orders.list` as `orders__list`, any other refused character as `_` (`provider_safe_tool_name`), or as `name=` says. A name outside `^[A-Za-z0-9_-]{1,64}$`, or one two operations share, is refused at build time.
+
 - **An aliased input field no longer loses the caller's value.** `forze ops call` and agent tools refuse a name the DTO's config does not read, which pydantic dropped, running the operation on the default. MCP reads each field by the name its tool signature advertises, so an aliased field is no longer dropped there.
 
 ### Security

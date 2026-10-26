@@ -30,6 +30,7 @@ from forze_kits.integrations.agent_tools import (
     ToolUse,
     dispatch_tool_use,
     operation_tools,
+    provider_safe_tool_name,
 )
 
 pytestmark = pytest.mark.unit
@@ -178,8 +179,8 @@ def _bound(ctx: ExecutionContext):
     )
 
 
-def _use(name: str, **payload: Any) -> ToolUse:
-    return ToolUse(id="tu-1", name=name, input=dict(payload))
+def _use(op: str, **payload: Any) -> ToolUse:
+    return ToolUse(id="tu-1", name=provider_safe_tool_name(op), input=dict(payload))
 
 
 @pytest.fixture(autouse=True)
@@ -329,6 +330,40 @@ class TestThePaletteBoundsTheAgent:
             result = await dispatch_tool_use(_use("calc.nope"), ctx=ctx, tools=tools)
 
         assert "calc.void" not in str(result.content)
+
+
+# ....................... #
+
+
+class TestTheNameRoundTrips:
+    async def test_a_custom_name_dispatches_to_its_operation(self) -> None:
+        # Resolved through the palette's bindings: nothing tries to turn "double" back into
+        # an operation key.
+        ctx = _ctx()
+        tools = operation_tools(
+            _registry(), include=["calc.double"], name=lambda op: op.rsplit(".", 1)[-1]
+        )
+
+        with _bound(ctx):
+            result = await dispatch_tool_use(
+                ToolUse(id="tu-1", name=tools.names[0], input={"n": 21}), ctx=ctx, tools=tools
+            )
+
+        assert tools.names == ("double",)
+        assert result.content == {"doubled": 42}
+
+    async def test_the_operation_key_is_not_a_tool_name(self) -> None:
+        ctx = _ctx()
+        tools = operation_tools(_registry(), include=["calc.double"])
+
+        with _bound(ctx):
+            result = await dispatch_tool_use(
+                ToolUse(id="tu-1", name="calc.double", input={"n": 21}), ctx=ctx, tools=tools
+            )
+
+        assert isinstance(result.content, dict)
+        assert result.content["code"] == "agent_tools_unknown_tool"
+        assert _CALLS == []
 
 
 # ....................... #

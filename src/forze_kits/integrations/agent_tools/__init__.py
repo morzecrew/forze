@@ -19,7 +19,7 @@ them one at a time; it is not an orchestrator, not a tool runtime, and not a cha
 """
 
 from .dispatch import dispatch_tool_use
-from .projection import operation_tools
+from .projection import operation_tools, provider_safe_tool_name
 from .value_objects import OperationToolset, ToolDef, ToolResult, ToolUse
 
 # ----------------------- #
@@ -31,4 +31,5 @@ __all__ = [
     "ToolUse",
     "dispatch_tool_use",
     "operation_tools",
+    "provider_safe_tool_name",
 ]

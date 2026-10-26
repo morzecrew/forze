@@ -49,6 +49,14 @@ tools = operation_tools(registry, include=["notes.list", "notes.get"])
 tool. Adapt them to whichever tool type your provider uses; that adapter is a few
 lines and it stays yours.
 
+A tool is named after its operation, spelled the way providers accept it: OpenAI-style
+function calling and Anthropic both take only `^[A-Za-z0-9_-]{1,64}$`, so `notes.list`
+becomes `notes__list`, and any other character outside that set becomes `_`. Pass
+`name=` — a function from operation key to tool name — to choose another spelling. The
+toolset keeps each name's operation, so dispatch never has to reverse the spelling. A
+palette with a name outside that pattern, or one name for two operations, is refused
+when it is built rather than by the provider on the first request.
+
 When the model asks for a tool, hand the call back:
 
 ```python

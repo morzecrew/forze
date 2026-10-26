@@ -164,10 +164,12 @@ class AgentToolsQueryHarness:
     async def ask(self, op: str, payload: JsonDict) -> ToolResult:
         """Dispatch *payload* at *op* the way a model's tool call arrives."""
 
+        tools = self.palette(op)
+
         return await dispatch_tool_use(
-            ToolUse(id=f"q-{op}", name=str(QUERY_NS.key(op)), input=payload),
+            ToolUse(id=f"q-{op}", name=tools.names[0], input=payload),
             ctx=self.ctx,
-            tools=self.palette(op),
+            tools=tools,
         )
 
     # ....................... #

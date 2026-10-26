@@ -99,15 +99,18 @@ class TestTheTwoSurfacesAgree:
             mcp_tool.input_schema.get("required", ())
         )
 
-    async def test_the_tool_names_match(self) -> None:
-        # Same name on both surfaces: an operation is one thing with one id, and a durable
-        # agent run that journals a tool name stays readable across either.
+    async def test_the_tools_bind_the_same_operation(self) -> None:
+        # One operation, one id: MCP names the tool by its key, and the bridge spells that
+        # key the way a model provider accepts (`.` is refused there) while binding the same
+        # operation, so a durable agent run that journals a tool name stays traceable.
         server = FastMCP("calc")
         names = register_tools(server, _registry(), _ctx_factory)
 
         bridged = operation_tools(_registry(), include=["calc.double"])
 
-        assert tuple(names) == bridged.names
+        assert names == ["calc.double"]
+        assert bridged.names == ("calc__double",)
+        assert [str(entry.op) for entry in bridged.bindings.values()] == names
 
     async def test_the_descriptions_come_from_the_same_place(self) -> None:
         server = FastMCP("calc")
@@ -131,7 +134,7 @@ class TestTheTwoSurfacesAgree:
         exposed = exposed_operations(registry.catalog())
         bridged = operation_tools(registry, include=["calc.double"])
 
-        assert set(exposed) == set(bridged.names)
+        assert set(exposed) == {str(entry.op) for entry in bridged.bindings.values()}
 
 
 # ....................... #
@@ -164,7 +167,7 @@ class TestBothSurfacesRejectAHallucinatedArgument:
             authn=AuthnIdentity(principal_id=uuid4()),
         ):
             bridged = await dispatch_tool_use(
-                ToolUse(id="t", name="calc.double", input={"n": 21, "invented": 1}),
+                ToolUse(id="t", name="calc__double", input={"n": 21, "invented": 1}),
                 ctx=ctx,
                 tools=tools,
             )

@@ -46,7 +46,8 @@ class ToolDef:
     """One operation, projected as a tool an agent may be offered."""
 
     name: str
-    """Tool name: the operation key, so it is stable across restarts and legible to a model."""
+    """Tool name: the operation key under the palette's naming policy (``orders.list`` is
+    ``orders__list`` by default), so it is stable across restarts and legible to a model."""
 
     description: str | None = None
     """What the operation does, taken from its descriptor — not authored here."""
@@ -117,8 +118,9 @@ class OperationToolset:
         factory=dict[str, OperationCatalogEntry],
         converter=_read_only,
     )
-    """Tool name → the catalog entry it dispatches to. Keyed by the *name* the agent sends,
-    which is ``str(entry.op)`` — the same projection the MCP surface exposes.
+    """Tool name → the catalog entry it dispatches to. Keyed by the *name* the agent sends —
+    the operation key under the naming policy — so dispatch never has to undo the policy;
+    ``entry.op`` is the key it came from.
 
     Copied into a read-only view at construction, so the palette a reviewer approved is the
     palette that dispatches: the mapping cannot be written through afterwards, and it does
