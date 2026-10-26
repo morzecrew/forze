@@ -54,7 +54,6 @@ async def phase(_allowed: timedelta) -> None:
 
 async def startup(ctx: ExecutionContext) -> None:
     ctx.drain_phases.register("record", phase)
-    record("started")
 
 
 async def teardown(_ctx: ExecutionContext) -> None:
@@ -82,7 +81,19 @@ runtime = build_runtime(
 
 
 async def main() -> None:
-    await serve_runtime(runtime, drain_budget=timedelta(seconds=30), announce_delay=ANNOUNCE_DELAY)
+    serving = asyncio.create_task(
+        serve_runtime(runtime, drain_budget=timedelta(seconds=30), announce_delay=ANNOUNCE_DELAY)
+    )
+
+    # Ready, not just past the startup hook: a signal before that finds nothing to drain.
+    for _ in range(3_000):  # thirty seconds at most, whatever happens to startup
+        if runtime.ready:
+            break
+
+        await asyncio.sleep(0.01)
+
+    record("ready")
+    await serving
 
     record("served")
 

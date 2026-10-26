@@ -478,6 +478,32 @@ class TestSignalCapture:
     # ....................... #
 
     @pytest.mark.asyncio
+    async def test_a_sigint_after_the_drain_still_forces_the_exit(self) -> None:
+        """The drain is over, but uvicorn may still be waiting for open connections."""
+
+        runtime = _FakeRuntime()
+        runtime.release.set()
+        server = _server(runtime)
+
+        with server.capture_signals():
+            server._on_signal(signal.SIGTERM, None)  # pyright: ignore[reportPrivateUsage]
+            await _settled(server)
+            await asyncio.wait_for(server._drain_task, timeout=5.0)  # type: ignore[arg-type]  # pyright: ignore[reportPrivateUsage]
+            assert (server.should_exit, server.force_exit) == (True, False)
+
+            server._on_signal(signal.SIGINT, None)  # pyright: ignore[reportPrivateUsage]
+
+            for _ in range(100):  # bounded: the callback runs within a few loop turns
+                if server.force_exit:
+                    break
+
+                await asyncio.sleep(0.01)
+
+        assert (server.should_exit, server.force_exit) == (True, True)
+
+    # ....................... #
+
+    @pytest.mark.asyncio
     async def test_the_server_returning_cancels_a_drain_still_running(self) -> None:
         runtime = _FakeRuntime()
         server = _server(runtime)

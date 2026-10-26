@@ -81,16 +81,25 @@ class SignalDrain:
 
         finally:
             for sig, handler in previous.items():
-                signal.signal(sig, handler)
+                # ``None``: installed from C, which Python cannot put back, so ours stays.
+                if handler is not None:
+                    signal.signal(sig, handler)
 
             if watch is not None:
                 watch.cancel()
 
-            if self._drain_task is not None and not self._drain_task.done():
-                self._drain_task.cancel()
+            self.cancel_drain()
 
         # Unlike uvicorn's own handler, the signal is not raised again on the way out: the
         # process decides how it exits.
+
+    # ....................... #
+
+    def cancel_drain(self) -> None:
+        """Cancel the drain, if one is running."""
+
+        if self._drain_task is not None and not self._drain_task.done():
+            self._drain_task.cancel()
 
     # ....................... #
 
@@ -118,6 +127,15 @@ class SignalDrain:
         if self._drain_task is None:
             self.log.info("%s received: draining before shutdown", name)
             self._drain_task = asyncio.ensure_future(self._drain())
+
+            return
+
+        if self.drained.is_set():
+            self.log.warning("%s received after the drain: teardown in progress", name)
+
+            # A SIGINT still forces the exit, for a server still waiting on connections.
+            if sig == signal.SIGINT:
+                self._forced()
 
             return
 
@@ -182,7 +200,8 @@ async def serve_runtime(
     returns. A drain that fails still tears down. A SIGINT during the drain cancels it and
     gives the drain phases up, and teardown follows at once; a repeated SIGTERM is logged
     and ignored, so a signal delivered twice cannot cut a deploy's drain short. The handlers
-    stay installed through teardown.
+    stay installed through teardown. Cancelling the call cancels a drain in flight, as that
+    SIGINT does; the scope still tears down, and the cancellation is raised.
 
     Setting *stop* does what the first signal does, from any thread of the process — set it
     on the runtime's loop (``loop.call_soon_threadsafe(stop.set)``). Off the main thread it
@@ -208,4 +227,9 @@ async def serve_runtime(
 
     with signals.capture_signals():
         async with runtime.scope():
-            await signals.drained.wait()
+            try:
+                await signals.drained.wait()
+
+            finally:
+                # Cancelled from outside mid-drain: the scope's shutdown would wait it out.
+                signals.cancel_drain()

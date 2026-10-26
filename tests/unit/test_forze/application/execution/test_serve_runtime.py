@@ -12,11 +12,15 @@ from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from datetime import timedelta
 from pathlib import Path
+from typing import Any
+from unittest.mock import MagicMock
 
 import pytest
 
 from forze.application.contracts.execution import LifecycleStep
 from forze.application.execution import ExecutionContext, build_runtime, serve_runtime
+from forze.application.execution.lifecycle.serving import SignalDrain
+from forze.application.execution.runtime import ExecutionRuntime
 
 # ----------------------- #
 
@@ -41,6 +45,14 @@ def _wait_for(condition: str, check: Callable[[], bool], *, within: float) -> No
     raise AssertionError(f"timed out after {within}s waiting for {condition}")
 
 
+async def _until_ready(runtime: ExecutionRuntime) -> None:
+    for _ in range(200):  # bounded wait for startup to finish
+        if runtime.ready:
+            return
+
+        await asyncio.sleep(0.01)
+
+
 @contextmanager
 def _running(tmp_path: Path, mode: str) -> Iterator[tuple[subprocess.Popen[bytes], Path]]:
     record = tmp_path / "events"
@@ -54,7 +66,7 @@ def _running(tmp_path: Path, mode: str) -> Iterator[tuple[subprocess.Popen[bytes
         )
 
         try:
-            _wait_for("startup", lambda: "started" in _events(record), within=30.0)
+            _wait_for("readiness", lambda: "ready" in _events(record), within=30.0)
 
             yield process, record
 
@@ -81,7 +93,7 @@ class TestServeRuntime:
             elapsed = time.monotonic() - started
 
         assert code == 0
-        assert _events(record) == ["started", "phase-started", "phase-done", "teardown", "served"]
+        assert _events(record) == ["ready", "phase-started", "phase-done", "teardown", "served"]
         # The phase waited for the announcement: the drain ran, not shutdown's own.
         assert elapsed >= ANNOUNCE_DELAY
 
@@ -106,7 +118,7 @@ class TestServeRuntime:
 
         assert code == 0
         assert _events(record) == [
-            "started",
+            "ready",
             "phase-started",
             "phase-cancelled",
             "teardown",
@@ -129,7 +141,7 @@ class TestServeRuntime:
             code = process.wait(timeout=10.0)
 
         assert code == 0
-        assert _events(record) == ["started", "phase-started", "phase-done", "teardown", "served"]
+        assert _events(record) == ["ready", "phase-started", "phase-done", "teardown", "served"]
 
     # ....................... #
 
@@ -139,7 +151,7 @@ class TestServeRuntime:
             code = process.wait(timeout=10.0)
 
         assert code == 0
-        assert _events(record)[:2] == ["started", "drain-raised"]
+        assert _events(record)[:2] == ["ready", "drain-raised"]
         assert _events(record)[-2:] == ["teardown", "served"]
 
 
@@ -157,12 +169,7 @@ class TestStopAndHandlers:
             serve_runtime(runtime, drain_budget=timedelta(seconds=1), stop=stop)
         )
 
-        for _ in range(200):  # bounded wait for startup to finish
-            if runtime.ready:
-                break
-
-            await asyncio.sleep(0.01)
-
+        await _until_ready(runtime)
         during = {sig: signal.getsignal(sig) for sig in handled}
         stop.set()
         await asyncio.wait_for(serving, timeout=10.0)
@@ -199,12 +206,7 @@ class TestStopAndHandlers:
                 serve_runtime(runtime, drain_budget=timedelta(seconds=1), stop=stop)
             )
 
-            for _ in range(200):  # bounded wait for startup to finish
-                if runtime.ready:
-                    break
-
-                await asyncio.sleep(0.01)
-
+            await _until_ready(runtime)
             assert runtime.ready
             stop.set()
 
@@ -227,3 +229,123 @@ class TestStopAndHandlers:
         assert not thread.is_alive()
         assert failures == []
         assert events == ["handler-installed=False", "phase", "teardown", "served"]
+
+    # ....................... #
+
+    @pytest.mark.asyncio
+    async def test_cancelling_it_mid_drain_cancels_the_drain_and_tears_down_at_once(
+        self,
+    ) -> None:
+        handled = (signal.SIGINT, signal.SIGTERM)
+        before = {sig: signal.getsignal(sig) for sig in handled}
+        events: list[str] = []
+        phase_started = asyncio.Event()
+
+        async def phase(_allowed: timedelta) -> None:
+            events.append("phase-started")
+            phase_started.set()
+
+            try:
+                await asyncio.sleep(60)
+
+            except asyncio.CancelledError:
+                events.append("phase-cancelled")
+                raise
+
+        async def startup(ctx: ExecutionContext) -> None:
+            ctx.drain_phases.register("slow", phase)
+
+        async def teardown(_ctx: ExecutionContext) -> None:
+            events.append("teardown")
+
+        runtime = build_runtime(
+            lifecycle_steps=LifecycleStep(id="step", startup=startup, shutdown=teardown),
+            drain_timeout=timedelta(0),
+        )
+        stop = asyncio.Event()
+        serving = asyncio.create_task(
+            serve_runtime(runtime, drain_budget=timedelta(seconds=30), stop=stop)
+        )
+
+        await _until_ready(runtime)
+        stop.set()
+        await asyncio.wait_for(phase_started.wait(), timeout=5.0)
+
+        started = time.monotonic()
+        serving.cancel()
+        await asyncio.wait({serving}, timeout=10.0)
+
+        # Not after the 30 s budget: the scope's shutdown did not wait the drain out.
+        assert serving.cancelled()
+        assert time.monotonic() - started < 3.0
+        assert events == ["phase-started", "phase-cancelled", "teardown"]
+        assert {sig: signal.getsignal(sig) for sig in handled} == before
+
+
+# ----------------------- #
+
+
+def _signal_drain() -> SignalDrain:
+    return SignalDrain(
+        build_runtime(),
+        drain_budget=timedelta(seconds=1),
+        announce_delay=timedelta(0),
+    )
+
+
+class TestSignalDrain:
+    @pytest.mark.asyncio
+    async def test_a_previous_handler_installed_from_c_is_left_alone(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Python reports such a handler as ``None``, and ``signal.signal`` refuses ``None``."""
+
+        handled = (signal.SIGINT, signal.SIGTERM)
+        before = {sig: signal.getsignal(sig) for sig in handled}
+        install = signal.signal
+
+        def installed_from_c(sig: int, handler: Any) -> None:
+            install(sig, handler)
+
+        monkeypatch.setattr(signal, "signal", installed_from_c)
+        drain = _signal_drain()
+
+        try:
+            with drain.capture_signals():
+                pass
+
+            assert signal.getsignal(signal.SIGTERM) == drain._on_signal  # pyright: ignore[reportPrivateUsage]
+
+        finally:
+            for sig, handler in before.items():
+                install(sig, handler)
+
+    # ....................... #
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("again", [signal.SIGTERM, signal.SIGINT])
+    async def test_a_signal_after_the_drain_reports_the_teardown(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        again: int,
+    ) -> None:
+        log = MagicMock()
+        monkeypatch.setattr(SignalDrain, "log", log)
+        drain = _signal_drain()
+
+        with drain.capture_signals():
+            drain._on_signal(signal.SIGTERM, None)  # pyright: ignore[reportPrivateUsage]
+            await asyncio.wait_for(drain.drained.wait(), timeout=5.0)
+            drain._on_signal(again, None)  # pyright: ignore[reportPrivateUsage]
+
+            for _ in range(100):  # bounded: the callback runs within a few loop turns
+                if log.warning.called:
+                    break
+
+                await asyncio.sleep(0.01)
+
+        log.warning.assert_called_once_with(
+            "%s received after the drain: teardown in progress",
+            signal.Signals(again).name,
+        )
