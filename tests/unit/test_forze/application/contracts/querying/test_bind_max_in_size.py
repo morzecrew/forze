@@ -5,6 +5,7 @@ import asyncio
 import pytest
 
 from forze.application.contracts.querying import (
+    AggregatesExpressionParser,
     QueryFilterExpressionParser,
     QueryFilterLimits,
     bind_max_in_size,
@@ -42,6 +43,15 @@ class TestBindMaxInSize:
 
         with bind_max_in_size(3):
             parser.parse_filter(_in(10))  # type: ignore[arg-type]
+
+    def test_reaches_aggregate_metric_filters(self) -> None:
+        aggregates = {"$computed": {"n": {"$count": {"filter": _in(5)}}}}
+
+        with pytest.raises(CoreException, match="maximum size of 2"):
+            AggregatesExpressionParser.parse(aggregates, filter_parser=_capped)  # type: ignore[arg-type]
+
+        with bind_max_in_size(5):
+            AggregatesExpressionParser.parse(aggregates, filter_parser=_capped)  # type: ignore[arg-type]
 
     def test_nests_and_restores(self) -> None:
         with bind_max_in_size(5):

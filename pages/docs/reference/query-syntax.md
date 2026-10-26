@@ -309,12 +309,19 @@ with bind_max_in_size(50_000):
     page = await doc.find_many(filters={"$values": {"id": {"$in": article_ids}}})
 ```
 
-The raised limit holds for the current task and for tasks it starts inside the block,
-never for a concurrent request. It only raises: a spec's higher limit still applies.
-Generated routes never bind it. Never wrap a caller-supplied filter in it, or bind it
-around a server or a worker: the limit is what bounds that filter. A backend's own cap
-still refuses inside the block (Firestore's, below). On Postgres an `$in` is bound as
-one array parameter, so a long list never nears the server's parameter cap.
+The raised limit holds for the current task, never for a concurrent request. It only
+raises: a spec's higher limit still applies. Generated routes never bind it. A backend's
+own cap still refuses inside the block (Firestore's, below). On Postgres an `$in` is
+bound as one array parameter, so a long list never nears the server's parameter cap.
+
+The limit is what bounds a caller's filter, so keep the block to your own reads:
+
+- Take the limit from a literal or your application's config, never from a request.
+- Wrap plain awaited reads, never a caller-supplied filter, a server or a worker.
+- Do not `yield` inside the block. A generator's consumer runs at the raised limit
+  between yields, and an async generator resumed from another task fails to restore it.
+- Work queued and tasks started inside the block run at the raised limit, so a caller's
+  filter carried into a job, an export or an outbox payload there is parsed under it.
 
 A violation — or an empty operator map, an unknown operator or key, a type mismatch, or a
 regex with unsafe nesting/repetition — raises a `precondition` `CoreException`

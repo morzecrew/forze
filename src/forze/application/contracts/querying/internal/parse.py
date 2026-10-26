@@ -167,13 +167,22 @@ def bind_max_in_size(limit: int) -> Iterator[None]:
     For application code matching against an id list it built from its own data. A spec's
     :class:`QueryFilterLimits` bound every caller, a generated route's included, so raising
     the spec's limit would raise it for caller-supplied filters too; this raises it for one
-    block of trusted code. Never wrap a caller-supplied filter in it.
+    block of trusted code.
 
-    Context-scoped (a :class:`~contextvars.ContextVar`): it holds for this task and for tasks
-    started inside the block, never for a concurrent one. It only raises, so a spec's higher
-    limit still applies, and the innermost block wins. A backend's own cap
+    Context-scoped (a :class:`~contextvars.ContextVar`): it holds for this task, never for a
+    concurrent one. It only raises, so a spec's higher limit still applies, and the innermost
+    block wins. A backend's own cap
     (:attr:`~forze.application.contracts.querying.QueryCapabilities.max_in_size`, Firestore's
     30) still refuses past it.
+
+    The limit is what bounds a caller's filter, so keep the block to trusted reads:
+
+    - Take *limit* from a literal or the application's config, never from a request.
+    - Wrap plain awaited reads, never a caller-supplied filter, a server or a worker.
+    - Do not ``yield`` inside the block. A generator's consumer runs at the raised limit
+      between yields, and an async generator resumed from another task fails its reset.
+    - Work queued and tasks started inside the block run at the raised limit, so a caller's
+      filter carried into a job, an export or an outbox payload there is parsed under it.
 
     :param limit: The most values a membership or set operand may carry inside the block.
     :raises CoreException: ``configuration`` when *limit* is not a positive integer.
