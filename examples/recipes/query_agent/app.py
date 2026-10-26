@@ -236,7 +236,9 @@ async def stream_answer(question: str, *, ctx: ExecutionContext) -> AsyncGenerat
         async for chunk in chunks:
             *lines, buffer = (buffer + chunk).split(b"\n")
 
-            for line in lines:
+            for raw in lines:
+                line = raw.removesuffix(b"\r")  # a provider may end lines with CRLF
+
                 if line.startswith(b"data: ") and line != b"data: [DONE]":
                     yield line.removeprefix(b"data: ").decode()
 

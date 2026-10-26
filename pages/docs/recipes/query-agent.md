@@ -119,7 +119,7 @@ answer leaves through the declared route like everything else:
 ```
 
 The request is the one `invoke` sends: the acknowledgement gates it, the credential and
-the deadline budget ride on it, and its span carries `forze.egress.sensitive`. A rejected
+the deadline budget ride on it as it opens, and its span carries `forze.egress.sensitive`. A rejected
 request raises before the first token, with the error `invoke` would raise. Server-sent
 events are lines, and a network cuts chunks wherever it likes, so lines come out of a
 buffer rather than out of each chunk. `aclosing` closes the connection as soon as you stop

@@ -314,3 +314,15 @@ class TestMockHttpStreams:
 
         with pytest.raises(CoreException, match="no handler registered"):
             [chunk async for chunk in port.stream("ping")]
+
+    @pytest.mark.parametrize(
+        "answer",
+        [None, "pong", Pong(), [b"ok", "not bytes"], {"ok": True}],
+        ids=["none", "str", "model", "mixed", "dict"],
+    )
+    async def test_an_answer_that_is_not_bytes_is_refused(self, answer: object) -> None:
+        registry = MockHttpRegistry().on("pricing", "ping", lambda _a: answer)
+        port = _ctx(registry).http.service(SPEC)
+
+        with pytest.raises(CoreException, match="must return bytes"):
+            [chunk async for chunk in port.stream("ping")]

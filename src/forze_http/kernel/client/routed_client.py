@@ -143,8 +143,9 @@ class RoutedHttpClient(
         timeout: float | None = None,
         raise_for_status: bool = True,
     ) -> AsyncGenerator[Any]:
-        # The scope rather than `_get_client`: a stream outlives the call that opens it, and
-        # a guarded pool's lease keeps an eviction from closing the client mid-body.
+        # The scope rather than `_get_client`: a stream outlives the call that opens it. With
+        # `guarded=True` the scope's lease defers an eviction until the stream ends; unguarded
+        # (the default), an eviction closes the client and the stream fails mid-body.
         async with (
             self.client_scope() as inner,
             inner.stream(

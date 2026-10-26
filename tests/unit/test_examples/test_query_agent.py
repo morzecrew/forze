@@ -120,6 +120,17 @@ class TestTheStreamedAnswer:
 
         assert tokens == ["Two", " notes", " mention postgres."]
 
+    async def test_crlf_line_endings_read_the_same(self) -> None:
+        registry = MockHttpRegistry().on(
+            "model",
+            "messages",
+            lambda _args: [b"data: Two\r\n\r\ndata:  notes\r", b"\n\r\ndata: [DONE]\r\n\r\n"],
+        )
+
+        tokens = [token async for token in stream_answer("q", ctx=_ctx(registry))]
+
+        assert tokens == ["Two", " notes"]
+
     async def test_it_asks_the_provider_to_stream(self) -> None:
         # The same operation as the unary call; the request body's flag is the difference.
         asked: list[ModelArgs | None] = []

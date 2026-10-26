@@ -63,7 +63,8 @@ class HttpServicePort(Protocol):
         export. The request is built and governed exactly as :meth:`invoke` builds it, and a
         rejected response raises before the first chunk with the exception :meth:`invoke`
         would raise. Nothing is validated against ``return_type``: the bytes are the caller's
-        to parse.
+        to parse. The invocation deadline travels as a header when the stream opens and does
+        not bound the body.
 
         Closing the generator abandons the call and releases its connection; wrap it in
         ``contextlib.aclosing`` to choose that moment rather than leave it to finalization.

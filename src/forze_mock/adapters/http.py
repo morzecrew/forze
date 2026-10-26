@@ -13,7 +13,7 @@ injection (raise / delay / malformed response) without touching call sites.
 from __future__ import annotations
 
 import inspect
-from collections.abc import AsyncGenerator, AsyncIterable, Callable
+from collections.abc import AsyncGenerator, AsyncIterable, Callable, Iterable
 from typing import Any, final, overload
 
 import attrs
@@ -182,18 +182,34 @@ class MockHttpServiceAdapter(HttpServicePort):
         """Yield the handler's answer as body chunks: ``bytes``, or an iterable or async
         iterable of them."""
 
-        result = await self._call(self.spec.operation(op), args)
+        operation = self.spec.operation(op)
+        result = await self._call(operation, args)
 
-        if isinstance(result, bytes):
+        # One value is one chunk. A string and a model iterate too, into characters and
+        # fields, so they count as one value and are refused as one.
+        if isinstance(result, bytes | str | BaseModel) or not isinstance(
+            result, Iterable | AsyncIterable
+        ):
             result = [result]
 
         if isinstance(result, AsyncIterable):
             async for chunk in result:
-                yield chunk
+                yield self._chunk(operation, chunk)
 
         else:
             for chunk in result:
-                yield chunk
+                yield self._chunk(operation, chunk)
+
+    # ....................... #
+
+    def _chunk(self, operation: HttpOperationSpec[Any, Any], chunk: Any) -> bytes:
+        if not isinstance(chunk, bytes):
+            raise exc.validation(
+                f"HTTP operation {operation.name!r}: a streaming handler must return bytes "
+                f"or an iterable or async iterable of bytes, got {type(chunk).__name__}"
+            )
+
+        return chunk
 
     # ....................... #
 

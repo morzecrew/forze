@@ -51,10 +51,10 @@ class HttpClientPort(Protocol):
 
         Read the body incrementally inside the block (``aiter_bytes``, ``aiter_lines``);
         leaving the block closes the response, read or not. A rejected response is read
-        whole under ``max_response_bytes`` before anything is yielded, so it raises exactly
-        as :meth:`request` would — or, with *raise_for_status* false, is yielded already
-        read. ``max_response_bytes`` does not apply to an accepted body, which is never
-        buffered.
+        whole — held to ``max_response_bytes`` when it is set — before anything is yielded,
+        so it raises exactly as :meth:`request` would, or, with *raise_for_status* false, is
+        yielded already read. ``max_response_bytes`` does not apply to an accepted body,
+        which is never buffered.
         """
         ...  # pragma: no cover
 

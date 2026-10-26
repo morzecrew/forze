@@ -1,6 +1,7 @@
 """Tracing wrapper for configurable dependency ports, with port-metadata inference."""
 
 from collections.abc import Callable, Mapping
+from contextlib import aclosing
 from functools import wraps
 from typing import TYPE_CHECKING, Any, cast
 from uuid import UUID
@@ -352,8 +353,11 @@ class TracingPortProxy(PortProxy):
         @wraps(attr)
         async def traced_async_gen(*args: Any, **kwargs: Any) -> Any:
             self._record_call(name, args, kwargs)
-            async for item in attr(*args, **kwargs):
-                yield item
+
+            # A consumer's `aclose` reaches the backend generator now, not at GC time.
+            async with aclosing(attr(*args, **kwargs)) as agen:
+                async for item in agen:
+                    yield item
 
         return traced_async_gen
 

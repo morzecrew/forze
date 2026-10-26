@@ -72,16 +72,24 @@ It is a call through the same service, so the request is the one `invoke` sends:
 wiring gate, the credential, the deadline budget, the trace context and the egress tag all
 apply. What changes is when things happen:
 
-- A rejected response is read under `max_response_bytes` and raised before the first
-  chunk, as the exception `invoke` raises. An accepted body is never buffered, so the cap
-  does not apply to it and nothing validates it against `return_type`.
+- A rejected response is read — held to `max_response_bytes` when one is configured —
+  and raised before the first chunk, as the exception `invoke` raises. An accepted body is
+  never buffered, so the cap does not apply to it and nothing validates it against
+  `return_type`.
 - The timeout bounds the connect and each wait for the next chunk, not the whole stream.
+  The [deadline](../running-in-prod/deadlines.md) budget travels as a header when the
+  stream opens and does not bound the body.
 - Under a [resilience](../running-in-prod/resilience.md) port policy that covers `stream`,
   the breaker gates the open and records the outcome. Nothing retries: a body you have
   started reading cannot be replayed. No per-port client span is opened over a stream, so
   the egress tag lands on the enclosing span.
 - Closing the generator closes the connection. A bare `break` leaves that to Python's
   finalizer; `contextlib.aclosing` closes it where you leave.
+- On a tenant-routed service, evicting a tenant's client — a rotation, or overflow past
+  `max_cached_tenants` — fails a stream still open on it. A `RoutedHttpClient` you build
+  with `guarded=True` and register as the client defers the eviction until open streams
+  end; the one a service config builds from `secret_ref_for_tenant` is unguarded. See
+  [routed clients](../identity-tenancy-enc/multi-tenancy.md#routed-clients-dedicated).
 
 ## Errors
 

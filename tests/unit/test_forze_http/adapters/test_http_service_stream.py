@@ -81,16 +81,26 @@ def _spec(*, error_type: type[BaseModel] | None = None) -> HttpServiceSpec:
 
 
 class _Body(httpx.AsyncByteStream):
-    """A response body sent chunk by chunk, that can fail after its chunks and records its close."""
+    """A response body sent chunk by chunk, that can stall or fail after its chunks and records
+    its close."""
 
-    def __init__(self, *chunks: bytes, fail: Exception | None = None) -> None:
+    def __init__(
+        self,
+        *chunks: bytes,
+        fail: Exception | None = None,
+        stall: asyncio.Event | None = None,
+    ) -> None:
         self.chunks = chunks
         self.fail = fail
+        self.stall = stall
         self.closed = False
 
     async def __aiter__(self) -> AsyncIterator[bytes]:
         for chunk in self.chunks:
             yield chunk
+
+        if self.stall is not None:
+            await self.stall.wait()
 
         if self.fail is not None:
             raise self.fail
@@ -381,6 +391,49 @@ class TestUnderAPortPolicy:
             await client.close()
 
         assert len(seen) == 1
+
+    async def test_a_cancelled_consumer_closes_the_response_and_spares_the_breaker(
+        self,
+    ) -> None:
+        stalled = _Body(b"one", stall=asyncio.Event())
+        bodies = iter([stalled, _Body(b"again")])
+        adapter, client = await _adapter(lambda _r: httpx.Response(200, stream=next(bodies)))
+        # Trips on a single failure, so a cancellation counted as one would refuse the
+        # next stream outright.
+        breaker = CircuitBreakerStrategy(
+            failure_ratio=1.0,
+            sampling_window=timedelta(seconds=100),
+            min_throughput=1,
+            break_duration=timedelta(seconds=10),
+        )
+        port = wrap_port_policy(
+            adapter,
+            ctx=_policy_ctx(breaker),
+            port_policy=PortPolicy(key=HttpServiceDepKey, policy="p"),
+            resolved_route="model",
+        )
+        first = asyncio.Event()
+
+        async def consume() -> None:
+            async for _chunk in port.stream("complete", Prompt(text="q")):
+                first.set()
+
+        try:
+            task = asyncio.create_task(consume())
+            await asyncio.wait_for(first.wait(), 2)
+            task.cancel()
+
+            with pytest.raises(asyncio.CancelledError):
+                await task
+
+            closed = stalled.closed
+            again = [chunk async for chunk in port.stream("complete", Prompt(text="q"))]
+
+        finally:
+            await client.close()
+
+        assert closed is True
+        assert again == [b"again"]
 
 
 # ....................... #
