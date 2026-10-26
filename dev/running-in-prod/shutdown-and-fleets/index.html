@@ -15,6 +15,7 @@
         <link rel="canonical" href="https://morzecrew.github.io/forze/dev/running-in-prod/shutdown-and-fleets/">
       
       
+      
         <link rel="prev" href="../load-shedding/">
       
       
@@ -25,7 +26,7 @@
       
       
       <link rel="icon" href="../../_images/forze-multicolor.png">
-      <meta name="generator" content="zensical-0.0.69">
+      <meta name="generator" content="zensical-0.0.71">
     
     
       
@@ -36,12 +37,12 @@
       
         
       
-      <link rel="stylesheet" href="../../assets/stylesheets/modern/main.e15858d4.min.css">
+      <link rel="stylesheet" href="../../assets/stylesheets/modern/main.e442bf79.min.css">
       
         
           
         
-        <link rel="stylesheet" href="../../assets/stylesheets/modern/palette.b27955a4.min.css">
+        <link rel="stylesheet" href="../../assets/stylesheets/modern/palette.b60ce83d.min.css">
       
       
 
@@ -6997,6 +6998,34 @@ steps are still running, so a pod is never routed to with half its clients open.
 announced (see <a href="#graceful-deploys">Graceful deploys</a>), or when shutdown closes the
 gate. Point your orchestrator's readiness check here and the rollout sequence
 takes care of itself: routing stops, in-flight work drains, teardown runs.</p>
+<p>An app that builds its runtime inside the FastAPI lifespan has no runtime yet when
+its factory attaches routes. Pass a zero-argument callable instead: it is asked on
+every request, and returning <code>None</code> answers <code>503 unavailable</code>, as a runtime with no
+open scope does:</p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">collections.abc</span><span class="w"> </span><span class="kn">import</span> <span class="n">AsyncIterator</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">contextlib</span><span class="w"> </span><span class="kn">import</span> <span class="n">asynccontextmanager</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">fastapi</span><span class="w"> </span><span class="kn">import</span> <span class="n">APIRouter</span><span class="p">,</span> <span class="n">FastAPI</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">forze.application.execution</span><span class="w"> </span><span class="kn">import</span> <span class="n">build_runtime</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">forze_fastapi</span><span class="w"> </span><span class="kn">import</span> <span class="n">runtime_lifespan</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">forze_fastapi.routes</span><span class="w"> </span><span class="kn">import</span> <span class="n">attach_readiness_route</span>
+
+
+<span class="nd">@asynccontextmanager</span>
+<span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">lifespan</span><span class="p">(</span><span class="n">app</span><span class="p">:</span> <span class="n">FastAPI</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">AsyncIterator</span><span class="p">[</span><span class="kc">None</span><span class="p">]:</span>
+    <span class="n">app</span><span class="o">.</span><span class="n">state</span><span class="o">.</span><span class="n">runtime</span> <span class="o">=</span> <span class="n">runtime</span> <span class="o">=</span> <span class="n">build_runtime</span><span class="p">(</span><span class="o">...</span><span class="p">)</span>
+
+    <span class="k">async</span> <span class="k">with</span> <span class="n">runtime_lifespan</span><span class="p">(</span><span class="n">runtime</span><span class="p">)(</span><span class="n">app</span><span class="p">):</span>
+        <span class="k">yield</span>
+
+
+<span class="n">app</span> <span class="o">=</span> <span class="n">FastAPI</span><span class="p">(</span><span class="n">lifespan</span><span class="o">=</span><span class="n">lifespan</span><span class="p">)</span>
+<span class="n">router</span> <span class="o">=</span> <span class="n">APIRouter</span><span class="p">()</span>
+<span class="n">attach_readiness_route</span><span class="p">(</span><span class="n">router</span><span class="p">,</span> <span class="k">lambda</span><span class="p">:</span> <span class="nb">getattr</span><span class="p">(</span><span class="n">app</span><span class="o">.</span><span class="n">state</span><span class="p">,</span> <span class="s2">"runtime"</span><span class="p">,</span> <span class="kc">None</span><span class="p">))</span>
+<span class="n">app</span><span class="o">.</span><span class="n">include_router</span><span class="p">(</span><span class="n">router</span><span class="p">)</span>
+</code></pre></div>
+<p>A callable that raises answers <code>unavailable</code> too. Its exception is logged and never
+served to the probe.</p>
 <p>Point <em>liveness</em> somewhere else — at <code>attach_liveness_route(router)</code>, which answers
 <code>200</code> unconditionally. A draining pod is alive but not ready; one endpoint answering
 both questions gets the pod killed mid-drain instead of letting it finish.</p>
@@ -7580,10 +7609,10 @@ is something you confirm by watching it; that's <a href="../observability/">Obse
       
         
         
-      <script id="__config" type="application/json">{"annotate":null,"base":"../..","features":["search.highlight","navigation.footer","navigation.instant","navigation.instant.progress","navigation.tabs","navigation.sections","navigation.path","navigation.top","toc.follow","content.code.copy","content.code.select","content.code.annotate","content.tooltips"],"redirect":null,"search":"../../assets/javascripts/workers/search.7d14d953.min.js","tags":null,"translations":{"clipboard.copied":"Copied to clipboard","clipboard.copy":"Copy to clipboard","clipboard.error":"Could not copy to clipboard","search.result.more.one":"1 more on this page","search.result.more.other":"# more on this page","search.result.none":"No matching documents","search.result.one":"1 matching document","search.result.other":"# matching documents","search.result.placeholder":"Type to start searching","search.result.term.missing":"Missing","select.version":"Select version"},"version":{"alias":true,"default":"latest","provider":"mike"}}</script>
+      <script id="__config" type="application/json">{"annotate":null,"base":"../..","features":["search.highlight","navigation.footer","navigation.instant","navigation.instant.progress","navigation.tabs","navigation.sections","navigation.path","navigation.top","toc.follow","content.code.copy","content.code.select","content.code.annotate","content.tooltips"],"redirect":null,"search":"../../assets/javascripts/workers/search.c47bb847.min.js","tags":null,"translations":{"clipboard.copied":"Copied to clipboard","clipboard.copy":"Copy to clipboard","clipboard.error":"Could not copy to clipboard","search.result.more.one":"1 more on this page","search.result.more.other":"# more on this page","search.result.none":"No matching documents","search.result.one":"1 matching document","search.result.other":"# matching documents","search.result.placeholder":"Type to start searching","search.result.term.missing":"Missing","select.version":"Select version"},"version":{"alias":true,"default":"latest","provider":"mike"}}</script>
     
     
-      <script src="../../assets/javascripts/bundle.8b1c90bd.min.js"></script>
+      <script src="../../assets/javascripts/bundle.a2388154.min.js"></script>
       
         <script src="../../_javascripts/theme.js"></script>
       
