@@ -43,8 +43,9 @@ class StoredFileKitSpec:
 
     max_bytes: int | None = attrs.field(default=None)
     """Largest upload accepted, in bytes; ``None`` (default) sets no limit. A larger upload is
-    refused with ``upload_too_large`` before a row is written. The kit still receives the whole
-    upload in memory, so cap the request body at the transport too."""
+    refused with ``upload_too_large`` before a row is written. A backstop, not a memory guard: it
+    is checked once the whole upload is in memory, so cap the read at the transport too (over
+    FastAPI, ``forze_fastapi.routes.read_upload_capped``)."""
 
     # ....................... #
 

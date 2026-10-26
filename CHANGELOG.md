@@ -13,6 +13,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **`bind_max_in_size` raises the `$in` size limit for one block of trusted code.** Application code matching an id list it built itself no longer chunks it under the spec's limit, which still bounds every caller-supplied filter. A backend's own cap, such as Firestore's 30, still applies.
 
+- **A hand-written upload route can cap its read like the generated one.** `forze_fastapi.routes.read_upload_capped(file, max_size)` returns the multipart file's bytes, or refuses a file over the cap with the generated route's 422 `upload_too_large`.
+
 ### Changed
 
 - ...

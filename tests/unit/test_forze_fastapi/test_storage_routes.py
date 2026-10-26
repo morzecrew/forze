@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import inspect
+import io
 from collections.abc import Iterator
 from typing import Any
 
@@ -11,7 +12,7 @@ import pytest
 pytest.importorskip("fastapi")
 
 import starlette.datastructures
-from fastapi import APIRouter, FastAPI
+from fastapi import APIRouter, FastAPI, UploadFile
 from fastapi.testclient import TestClient
 
 from forze.application.contracts.storage import (
@@ -20,9 +21,13 @@ from forze.application.contracts.storage import (
     StorageUploadSessionDepKey,
 )
 from forze.application.execution.operations import OperationRegistry
-from forze.base.exceptions import CoreException, exc
+from forze.base.exceptions import CoreException, ExceptionKind, exc
 from forze_fastapi.exceptions import ERROR_CODE_HEADER, register_exception_handlers
-from forze_fastapi.routes import DEFAULT_MAX_UPLOAD_SIZE, attach_storage_routes
+from forze_fastapi.routes import (
+    DEFAULT_MAX_UPLOAD_SIZE,
+    attach_storage_routes,
+    read_upload_capped,
+)
 from forze_kits.aggregates.storage import StorageKernelOp, build_storage_registry
 from forze_mock import MockDepsModule, MockState
 from forze_mock.adapters import MockStorageAdapter
@@ -577,6 +582,83 @@ class TestStorageUploadCap:
 
         assert rejected.status_code == 422
         assert rejected.headers[ERROR_CODE_HEADER] == "upload_too_large"
+
+
+# ....................... #
+
+_MIB = 1024 * 1024
+
+
+class TestReadUploadCapped:
+    """The public reader a hand-written multipart route shares with the generated one."""
+
+    @pytest.mark.parametrize(
+        ("size", "cap"),
+        [
+            (0, 0),
+            (0, 10),
+            (5, 10),
+            (10, 10),
+            (2 * _MIB, 2 * _MIB),  # exactly at the cap, on a chunk boundary
+            (_MIB + 1, 2 * _MIB),  # crosses a chunk boundary, under the cap
+        ],
+    )
+    async def test_reads_a_file_within_the_cap(self, size: int, cap: int) -> None:
+        data = b"x" * size
+
+        assert await read_upload_capped(UploadFile(io.BytesIO(data)), cap) == data
+
+    @pytest.mark.parametrize(
+        ("size", "cap"),
+        [(1, 0), (11, 10), (_MIB + 1, _MIB), (2 * _MIB + 1, 2 * _MIB), (8 * _MIB, 10)],
+    )
+    async def test_refuses_one_byte_over_without_reading_the_rest(
+        self, size: int, cap: int
+    ) -> None:
+        upload = UploadFile(io.BytesIO(b"x" * size), size=1)  # the declared size is a lie
+
+        with pytest.raises(CoreException) as ei:
+            await read_upload_capped(upload, cap)
+
+        assert (ei.value.kind, ei.value.code) == (ExceptionKind.VALIDATION, "upload_too_large")
+        assert ei.value.details == {"max_upload_size": cap}
+        assert upload.file.tell() <= cap + _MIB
+
+    async def test_negative_cap_is_refused(self) -> None:
+        with pytest.raises(CoreException, match="max_size") as ei:
+            await read_upload_capped(UploadFile(io.BytesIO(b"")), -1)
+
+        assert ei.value.kind == ExceptionKind.CONFIGURATION
+
+    def test_negative_route_cap_rejected_at_wiring(self) -> None:
+        with pytest.raises(CoreException, match="max_upload_size"):
+            _build_app("rest", max_upload_size=-1)
+
+    async def test_none_reads_the_whole_file(self) -> None:
+        data = b"x" * (3 * _MIB + 7)
+
+        assert await read_upload_capped(UploadFile(io.BytesIO(data)), None) == data
+
+    def test_hand_written_route_refuses_like_the_generated_one(self) -> None:
+        router = APIRouter()
+
+        @router.post("/records/{record_id}/attachments")
+        async def attach(record_id: str, file: UploadFile) -> int:
+            return len(await read_upload_capped(file, 10))
+
+        app = FastAPI()
+        app.include_router(router)
+        register_exception_handlers(app)
+
+        files = {"file": ("big.bin", b"x" * 11, "application/octet-stream")}
+        hand = TestClient(app).post("/records/r1/attachments", files=files)
+        generated = TestClient(_build_app("rest", max_upload_size=10)).post(
+            "/files", files=files
+        )
+
+        assert hand.status_code == generated.status_code == 422
+        assert hand.headers[ERROR_CODE_HEADER] == generated.headers[ERROR_CODE_HEADER]
+        assert hand.json() == generated.json()
 
 
 # ....................... #

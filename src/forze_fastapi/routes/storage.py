@@ -91,11 +91,28 @@ def _upload_too_large(max_size: int) -> Exception:
 # ....................... #
 
 
-async def _read_capped(file: UploadFile, max_size: int | None) -> bytes:
-    """Read *file* in chunks, refusing to buffer more than *max_size* bytes."""
+async def read_upload_capped(file: UploadFile, max_size: int | None) -> bytes:
+    """Read an uploaded *file* into memory, refusing to buffer more than *max_size* bytes.
+
+    The reader the generated upload route uses, for a hand-written multipart route (one whose
+    upload takes extra parameters). Bytes are counted as they are read, 1 MiB at a time, so the
+    client-declared size is never the guard and at most one chunk past the cap is held. It bounds
+    memory, not disk: the multipart parser has already spooled the file (to disk past 1 MiB).
+
+    :param file: The uploaded file.
+    :param max_size: Cap in bytes; ``None`` reads the whole file uncapped.
+    :returns: The file's bytes.
+    :raises CoreException: A ``validation`` error coded ``upload_too_large``, with ``details``
+        ``{"max_upload_size": max_size}``, when the file is larger than *max_size* (HTTP 422 under
+        :func:`~forze_fastapi.register_exception_handlers`); a ``configuration`` error when
+        *max_size* is negative.
+    """
 
     if max_size is None:
         return await file.read()
+
+    if max_size < 0:
+        raise exc.configuration(f"max_size must be at least 0, got {max_size}")
 
     chunks: list[bytes] = []
     total = 0
@@ -147,7 +164,7 @@ def _upload_endpoint(
             dto_type,
             {
                 "filename": file.filename or "upload",
-                "data": await _read_capped(file, max_upload_size),
+                "data": await read_upload_capped(file, max_upload_size),
                 "description": description,
                 "prefix": prefix,
             },
@@ -1105,6 +1122,9 @@ def attach_storage_routes(
         raise exc.configuration(
             f"max_range_bytes must be at least 1, got {max_range_bytes}",
         )
+
+    if max_upload_size is not None and max_upload_size < 0:
+        raise exc.configuration(f"max_upload_size must be at least 0, got {max_upload_size}")
 
     resolved_ns = resolve_namespace(ns, resource)
     bindings = _bindings(style, max_upload_size)

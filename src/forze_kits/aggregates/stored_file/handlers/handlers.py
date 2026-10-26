@@ -52,7 +52,8 @@ class UploadStoredFile(Handler[UploadStoredFileRequestDTO, StoredFileRead]):
     ]
     outbox: OutboxCommandPort[StoredFileOutboxPayload] | None = attrs.field(default=None)
     max_bytes: int | None = attrs.field(default=None)
-    """Largest upload accepted, in bytes; ``None`` sets no limit."""
+    """Largest upload accepted, in bytes; ``None`` sets no limit. A backstop checked on the
+    already-buffered ``data``, not a memory guard."""
 
     # ....................... #
 
