@@ -20,6 +20,7 @@ from forze.application.contracts.deps import DepKey
 from forze.application.execution import ExecutionContext, ExecutionRuntime
 from forze.application.execution.background import evaluate_readiness
 from forze.base.exceptions import CoreException, exc
+from forze.base.logging import Logger
 
 if TYPE_CHECKING:
     from opentelemetry.sdk.metrics.export import MetricReader
@@ -29,12 +30,14 @@ if TYPE_CHECKING:
 
 PROMETHEUS_CONTENT_TYPE = "text/plain; version=0.0.4; charset=utf-8"
 
+_logger = Logger("fastapi.errors")
+
 # ....................... #
 
 
 def attach_readiness_route(
     router: APIRouter,
-    runtime: ExecutionRuntime,
+    runtime: ExecutionRuntime | Callable[[], ExecutionRuntime | None],
     *,
     path: str = "/readyz",
     probes: Mapping[str, DepKey[Any]] | None = None,
@@ -50,6 +53,16 @@ def attach_readiness_route(
     from the OpenAPI schema. The answer comes from
     :func:`~forze.application.execution.background.evaluate_readiness`, which the stdlib
     probe listener uses too, so both answer the same from the same probes.
+
+    *runtime* may also be a zero-argument callable returning the runtime, or ``None`` while
+    there is none yet, asked on every request. An app that builds its runtime inside the
+    FastAPI lifespan can then attach the probe in its factory, before that runtime exists —
+    say the lifespan stores it on ``app.state.runtime``::
+
+        attach_readiness_route(router, lambda: getattr(app.state, "runtime", None))
+
+    ``None`` answers ``unavailable``, as a runtime with no open scope does; so does a
+    callable that raises, whose exception is logged and never served to the probe.
 
     The scope's state answers "is this process *willing* to take traffic?". *probes* adds the
     other half — "can it *reach* what it needs?" — because an un-drained process whose
@@ -96,10 +109,25 @@ def attach_readiness_route(
 
     @router.get(path, include_in_schema=False)
     async def readyz() -> JSONResponse:  # pyright: ignore[reportUnusedFunction]
+        current: ExecutionRuntime | None
         ctx: ExecutionContext | None
 
+        # By type, not by callability: a runtime (or a stand-in for one) is never asked to
+        # provide itself.
+        if isinstance(runtime, ExecutionRuntime) or not callable(runtime):
+            current = runtime
+
+        else:
+            try:
+                current = runtime()
+
+            except Exception:
+                # The text may name the very settings the app could not load: log it only.
+                _logger.exception("Readiness route's runtime provider failed")
+                current = None
+
         try:
-            ctx = runtime.get_context()
+            ctx = current.get_context() if current is not None else None
 
         except CoreException:
             ctx = None

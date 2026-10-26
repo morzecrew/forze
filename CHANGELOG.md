@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- ...
+- **`attach_readiness_route` takes a runtime provider.** Pass a zero-argument callable returning the runtime, or `None` before it exists, so an app that builds its runtime in the FastAPI lifespan keeps a draining-aware `/readyz`. No runtime, or a provider that raises, answers `503 unavailable`.
 
 ### Changed
 

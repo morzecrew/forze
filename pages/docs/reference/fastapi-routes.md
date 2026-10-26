@@ -460,7 +460,9 @@ writes a route without a response model. Either way an infinite or NaN float is 
   OpenAPI schema.
 - `attach_readiness_route(router, runtime, *, path="/readyz", probes=None,
   probe_timeout=timedelta(seconds=2))` — 200 while the runtime is active and not
-  draining, 503 otherwise; excluded from the schema. `probes` maps a name to the
+  draining, 503 otherwise; excluded from the schema. `runtime` may also be a
+  zero-argument callable returning the runtime or `None`, asked per request, for an
+  app that builds its runtime in the lifespan. `probes` maps a name to the
   deps key of a client to ask `health()`, adding a `checks` breakdown and a
   `degraded` 503 when a dependency is unreachable — see [Readiness](../running-in-prod/shutdown-and-fleets.md#readiness).
 - `attach_liveness_route(router, *, path="/livez")` — 200 unconditionally; reaching
