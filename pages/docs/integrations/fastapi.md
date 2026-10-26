@@ -135,7 +135,11 @@ is fine and expected: `DEFAULT_HEALTH_PATHS` names ten paths and most apps serve
 three. In [cookie mode](../reference/fastapi-routes.md#cookie-mode),
 `check_authn_cookie_paths` (also run by `runtime_lifespan`) fails the boot when
 the refresh cookie's path does not cover the logout route, or when
-`anonymous_paths` leaves out the login, refresh or logout route. An app
+`anonymous_paths` leaves out the login, refresh or logout route. It knows only the
+app's own `root_path`: behind a server-level `--root-path`, list paths relative to it
+or declare `FastAPI(root_path=...)`, since a full-path entry is refused. It finds the
+security middleware by its `anonymous_paths` field, so one wrapped in your own
+middleware or factory is not checked, and neither is a mounted sub-application. An app
 that supplies its own lifespan instead of `runtime_lifespan` has to call
 `check_bypass_paths(app)`,
 `check_websocket_allowlist(app)` and `check_authn_cookie_paths(app)` itself — all

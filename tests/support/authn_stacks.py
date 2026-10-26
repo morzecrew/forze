@@ -13,7 +13,7 @@ from forze.application.contracts.authz import PrincipalRegistryDepKey
 from forze.application.contracts.document import DocumentCommandDepKey, DocumentQueryDepKey
 from forze.application.contracts.transaction import TransactionManagerDepKey
 from forze.application.execution import Deps, ExecutionContext
-from forze.testing import context_from_deps, context_from_modules
+from forze.testing import context_from_deps
 from forze_identity.authn import AuthnDepsModule, AuthnKernelConfig
 from forze_identity.authn.application.specs import (
     api_key_account_spec,
@@ -43,8 +43,9 @@ AUTHN_KERNEL = AuthnKernelConfig(
 """The identity stack's kernel: HS256 access tokens signed with ``b"k" * 32``."""
 
 
-def identity_authn_context(*, tx: bool = True) -> ExecutionContext:
-    """The identity plane's adapters over mock documents and the journal transaction manager."""
+def identity_authn_context(*extra: Deps, tx: bool = True) -> ExecutionContext:
+    """The identity plane's adapters over mock documents and the journal transaction manager,
+    plus *extra*."""
 
     mock = MockDepsModule()
     document = ConfigurableMockDocument(module=mock)
@@ -84,13 +85,13 @@ def identity_authn_context(*, tx: bool = True) -> ExecutionContext:
     if tx:
         deps = deps.merge(Deps.plain({TransactionManagerDepKey: mock_journal_txmanager}))
 
-    return context_from_deps(deps)
+    return context_from_deps(deps, *extra)
 
 
-def mock_authn_context() -> ExecutionContext:
-    """The mock token lifecycle."""
+def mock_authn_context(*extra: Deps) -> ExecutionContext:
+    """The mock token lifecycle, plus *extra* (winning over the mock's own registrations)."""
 
-    return context_from_modules(MockDepsModule())
+    return context_from_deps(MockDepsModule()(), *extra)
 
 
 async def stack_principal(ctx: ExecutionContext) -> UUID:

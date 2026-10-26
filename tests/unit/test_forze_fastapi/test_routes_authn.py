@@ -13,7 +13,7 @@ import io
 import time
 from datetime import timedelta
 from typing import Any
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from fastapi import APIRouter, FastAPI
 from fastapi.testclient import TestClient
@@ -21,14 +21,15 @@ from fastapi.testclient import TestClient
 from forze.application.contracts.authn import AuthnIdentity, AuthnSpec, IssuedTokens
 from forze.application.contracts.execution import BeforeStep
 from forze.application.contracts.outbox import OutboxSpec
-from forze.application.execution import ExecutionContext
+from forze.application.contracts.tenancy import TenantIdentity, TenantResolverDepKey
+from forze.application.execution import Deps, ExecutionContext
 from forze.application.execution.operations import OperationDescriptor
 from forze.application.execution.operations.registry import (
     FrozenOperationRegistry,
     OperationRegistry,
 )
 from forze.application.hooks.authn import AuthnRequired
-from forze.base.exceptions import CoreException
+from forze.base.exceptions import CoreException, exc
 from forze.base.logging import configure_logging
 from forze.base.primitives import StrKeyNamespace, utcnow
 from forze.base.serialization import PydanticModelCodec
@@ -1175,8 +1176,10 @@ class TestCookieLogoutPathCheck:
         prefix: str = "/auth",
         root_path: str = "",
         lifespan: Any = None,
-        anonymous: set[str] | None = None,
+        anonymous: tuple[set[str], ...] = (),
     ) -> FastAPI:
+        """One security middleware per entry of *anonymous* (its ``anonymous_paths``)."""
+
         from forze_fastapi.security import AuthnCookieCarrier, CookieTokenAuthn
 
         ctx = context_from_modules(MockDepsModule(state=MockState()))
@@ -1194,7 +1197,7 @@ class TestCookieLogoutPathCheck:
         app = FastAPI(root_path=root_path, lifespan=lifespan)
         app.include_router(router)
 
-        if anonymous is not None:
+        for paths in anonymous:
             app.add_middleware(
                 SecurityContextMiddleware,  # type: ignore[arg-type]
                 ctx_dep=lambda: ctx,
@@ -1202,7 +1205,7 @@ class TestCookieLogoutPathCheck:
                     ingress=(CookieTokenAuthn(authn_spec=AUTHN_SPEC, cookie_name="forze_access"),),
                 ),
                 when_multiple_credentials="first_in_order",
-                anonymous_paths=anonymous,
+                anonymous_paths=paths,
             )
 
         return app
@@ -1239,9 +1242,23 @@ class TestCookieLogoutPathCheck:
         from forze_fastapi.middlewares import check_authn_cookie_paths
 
         listed = {"/auth/login", "/auth/refresh", "/auth/logout"} - {missing}
-        app = self._app(access_path="/", refresh_path="/auth", anonymous=listed)
+        app = self._app(access_path="/", refresh_path="/auth", anonymous=(listed,))
 
         with pytest.raises(CoreException, match=f"{missing}.*anonymous_paths"):
+            check_authn_cookie_paths(app)
+
+    def test_every_security_middleware_must_list_the_cookie_routes(self) -> None:
+        # Each one 401s on its own, so one listing all three does not cover the other.
+        from forze_fastapi.middlewares import check_authn_cookie_paths
+
+        listed = {"/auth/login", "/auth/refresh", "/auth/logout"}
+        app = self._app(
+            access_path="/",
+            refresh_path="/auth",
+            anonymous=(listed, listed - {"/auth/logout"}),
+        )
+
+        with pytest.raises(CoreException, match="/auth/logout.*anonymous_paths"):
             check_authn_cookie_paths(app)
 
     @pytest.mark.parametrize(
@@ -1263,7 +1280,7 @@ class TestCookieLogoutPathCheck:
                 access_path="/",
                 refresh_path=f"{root_path}/auth",
                 root_path=root_path,
-                anonymous=anonymous,
+                anonymous=(anonymous,),
             )
         )
 
@@ -1363,13 +1380,34 @@ _STACKS = [
 ]
 
 
+class _MemberOf:
+    """A tenancy resolver placing every principal in one tenant."""
+
+    def __init__(self, tenant_id: UUID) -> None:
+        self.tenant_id = tenant_id
+
+    async def resolve_from_principal(
+        self, principal_id: UUID, *, requested_tenant_id: UUID | None = None
+    ) -> TenantIdentity:
+        _ = principal_id
+
+        if requested_tenant_id not in (None, self.tenant_id):
+            raise exc.authentication("Not a member of the requested tenant", code="tenant_mismatch")
+
+        return TenantIdentity(tenant_id=self.tenant_id)
+
+
 class TestCookieLogoutRevokes:
     """Cookie-mode logout revokes the session from whichever cookie reaches it: the identity
     the access cookie binds or, without one, the refresh cookie. On the identity plane's
     adapters and on the mock."""
 
-    def _client(self, ctx: ExecutionContext, carrier: Any) -> TestClient:
-        from forze_fastapi.middlewares import check_authn_cookie_paths
+    def _app(
+        self,
+        ctx: ExecutionContext,
+        carrier: Any,
+        anonymous: frozenset[str] = frozenset({"/auth/login", "/auth/refresh", "/auth/logout"}),
+    ) -> FastAPI:
         from forze_fastapi.security import CookieTokenAuthn
 
         router = APIRouter(prefix="/auth")
@@ -1393,19 +1431,28 @@ class TestCookieLogoutRevokes:
                 ),
             ),
             when_multiple_credentials="first_in_order",
-            anonymous_paths={"/auth/login", "/auth/refresh", "/auth/logout"},
+            anonymous_paths=anonymous,
         )
+
+        return app
+
+    def _client(self, ctx: ExecutionContext, carrier: Any) -> TestClient:
+        from forze_fastapi.middlewares import check_authn_cookie_paths
+
+        app = self._app(ctx, carrier)
         # Wired as the docs say, so the boot check passes.
         check_authn_cookie_paths(app)
 
         return TestClient(app)
 
-    def _issue(self, ctx: ExecutionContext) -> IssuedTokens:
+    def _issue(self, ctx: ExecutionContext, tenant_id: UUID | None = None) -> IssuedTokens:
         async def issue() -> IssuedTokens:
             principal = await stack_principal(ctx)
             identity = AuthnIdentity(principal_id=principal)
 
-            return await ctx.authn.token_lifecycle(AUTHN_SPEC).issue_tokens(identity)
+            return await ctx.authn.token_lifecycle(AUTHN_SPEC).issue_tokens(
+                identity, tenant_id=tenant_id
+            )
 
         return asyncio.run(issue())
 
@@ -1522,6 +1569,68 @@ class TestCookieLogoutRevokes:
         assert any(c.startswith("forze_access=") and "Max-Age=0" in c for c in cleared)
         assert any(c.startswith("forze_refresh=") and "Max-Age=0" in c for c in cleared)
         self._assert_revoked(client, ctx, issued)
+
+    @pytest.mark.parametrize(("build", "expire"), _STACKS)
+    def test_a_tenant_bound_session_ends_on_a_stale_cookie_logout(
+        self, build: Any, expire: Any
+    ) -> None:
+        # The stale cookie binds no tenant on logout, as on refresh, and both read the
+        # session by its refresh token alone: logout revokes what refresh would accept.
+        from forze_fastapi.security import AuthnCookieCarrier
+
+        tenant = uuid4()
+        ctx = build(
+            Deps.routed({TenantResolverDepKey: {AUTHN_ROUTE: lambda _ctx: _MemberOf(tenant)}})
+        )
+        assert isinstance(ctx.tenancy.resolver(AUTHN_ROUTE), _MemberOf)
+        client = self._client(ctx, AuthnCookieCarrier(secure=False, refresh_path="/auth"))
+        issued = self._issue(ctx, tenant_id=tenant)
+        other = self._issue(ctx, tenant_id=tenant)
+        client.cookies.set("forze_access", expire(ctx, issued.access.token.token))
+        client.cookies.set("forze_refresh", issued.refresh.token.token, path="/auth")
+
+        response = client.post("/auth/logout", headers=_SAME_ORIGIN)
+
+        assert response.status_code == 204
+        cleared = response.headers.get_list("set-cookie")
+        assert any(c.startswith("forze_access=") and "Max-Age=0" in c for c in cleared)
+        assert any(c.startswith("forze_refresh=") and "Max-Age=0" in c for c in cleared)
+        self._assert_revoked(client, ctx, issued)
+        # Another principal's tenant-bound session still refreshes on this app.
+        refresh = client.post(
+            "/auth/refresh", json={"refresh_token": other.refresh.token.token}, headers=_SAME_ORIGIN
+        )
+        assert refresh.status_code == 200
+
+    @pytest.mark.parametrize(("build", "expire"), _STACKS)
+    def test_an_unlisted_logout_is_401d_and_the_session_survives(
+        self, build: Any, expire: Any
+    ) -> None:
+        # What check_authn_cookie_paths refuses at boot: without logout in anonymous_paths,
+        # the stale cookie 401s it before it runs.
+        from forze_fastapi.middlewares import check_authn_cookie_paths
+        from forze_fastapi.security import AuthnCookieCarrier
+
+        ctx = build()
+        carrier = AuthnCookieCarrier(secure=False, refresh_path="/auth")
+        app = self._app(ctx, carrier, anonymous=frozenset({"/auth/login", "/auth/refresh"}))
+
+        with pytest.raises(CoreException, match="/auth/logout.*anonymous_paths"):
+            check_authn_cookie_paths(app)
+
+        client = TestClient(app)
+        issued = self._issue(ctx)
+        client.cookies.set("forze_access", expire(ctx, issued.access.token.token))
+        client.cookies.set("forze_refresh", issued.refresh.token.token, path="/auth")
+
+        response = client.post("/auth/logout", headers=_SAME_ORIGIN)
+
+        assert response.status_code == 401
+        assert not response.headers.get_list("set-cookie")
+        refresh = client.post(
+            "/auth/refresh", json={"refresh_token": issued.refresh.token.token}, headers=_SAME_ORIGIN
+        )
+        assert refresh.status_code == 200
 
     @pytest.mark.parametrize(("build", "expire"), _STACKS)
     def test_logout_with_a_live_access_cookie_still_revokes(self, build: Any, expire: Any) -> None:

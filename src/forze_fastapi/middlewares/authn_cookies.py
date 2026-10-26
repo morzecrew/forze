@@ -42,9 +42,15 @@ def check_authn_cookie_paths(app: Any) -> None:
     the middleware reads the list; an app without one has nothing that 401s them.
 
     The path is the effective one, every router prefix applied, under the app's own
-    ``root_path``. A route inside a mounted sub-application is not seen from here, as
-    for :func:`~forze_fastapi.middlewares.check_bypass_paths`. ``runtime_lifespan`` runs
-    it at startup; an app with its own lifespan calls it itself.
+    ``root_path`` — the only root path known here: behind a server-level one
+    (``--root-path``) a full-path ``anonymous_paths`` entry is refused, so list the path
+    relative to it or declare it as ``FastAPI(root_path=...)``. A route inside a mounted
+    sub-application is not seen from here, as for
+    :func:`~forze_fastapi.middlewares.check_bypass_paths`, and neither is a security
+    middleware on one. The middleware is found by its ``anonymous_paths`` field among the
+    app's own middlewares, so one wrapped in a custom middleware or factory is not seen
+    either. ``runtime_lifespan`` runs it at startup; an app with its own lifespan calls it
+    itself.
 
     :raises CoreException: ``configuration`` when the refresh cookie's path does not
         cover a cookie-mode logout route, or a security middleware's ``anonymous_paths``
@@ -66,7 +72,8 @@ def check_authn_cookie_paths(app: Any) -> None:
                 "middleware's anonymous_paths, so a stale access cookie 401s it before it "
                 "runs: logout would neither revoke the session from the refresh cookie nor "
                 "clear the cookies. List the mounted login, refresh and logout paths in "
-                "SecurityContextMiddleware(anonymous_paths=...)."
+                "SecurityContextMiddleware(anonymous_paths=...). Behind a proxy that strips "
+                "a prefix, declare it as FastAPI(root_path=...)."
             )
 
         cookie_paths = getattr(endpoint, AUTHN_COOKIE_LOGOUT_ATTR, ())

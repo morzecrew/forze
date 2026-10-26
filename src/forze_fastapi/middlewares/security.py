@@ -107,7 +107,10 @@ class SecurityContextMiddleware:
 
     A browser holding a stale access cookie would otherwise be refused on the very
     routes that exist without an identity — ``/auth/login`` (which replaces the
-    credential), ``/auth/refresh``, a public health page. On these paths an
+    credential), ``/auth/refresh``, cookie-mode ``/auth/logout`` (which revokes from the
+    refresh cookie then), a public health page;
+    :func:`~forze_fastapi.middlewares.check_authn_cookie_paths` refuses a cookie-mode
+    login, refresh or logout route missing here at startup. On these paths an
     **authentication-kind** failure (expired/invalid credential, ambiguous
     credentials, a tenant mismatch) downgrades to an **anonymous** request: no
     authn, no tenant bound — the route authenticates from its body or serves
