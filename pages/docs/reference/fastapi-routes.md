@@ -125,6 +125,42 @@ attach_storage_routes(
 )
 ```
 
+### Uploads: the size cap
+
+The upload route refuses a file over `max_upload_size` (default **64 MiB**,
+`DEFAULT_MAX_UPLOAD_SIZE`; `None` disables it) with a 422 coded
+`upload_too_large`, before the operation runs. It counts bytes as it reads the
+file, 1 MiB at a time, so a client-declared size is never the guard and at most
+one chunk past the cap is held in memory. That bounds memory, not disk: the
+multipart parser has already spooled the file to a temporary file when the route
+runs, so cap the request body at your proxy too.
+
+When an upload takes parameters the generated route doesn't — which record the
+file attaches to, say — write the route by hand and read the file with
+`read_upload_capped`, the same reader with the same refusal:
+
+```python
+from typing import Any
+
+from fastapi import APIRouter, Depends, UploadFile
+
+from forze.application.execution.operations import run_operation
+from forze_fastapi.routes import DEFAULT_MAX_UPLOAD_SIZE, read_upload_capped
+
+records_router = APIRouter(prefix="/records", tags=["records"])
+
+
+@records_router.post("/{record_id}/attachments", status_code=201)
+async def attach_file(record_id: str, file: UploadFile, ctx=Depends(ctx_dep)) -> Any:
+    data = await read_upload_capped(file, DEFAULT_MAX_UPLOAD_SIZE)
+    args = AttachFile(record_id=record_id, filename=file.filename or "upload", data=data)
+
+    return await run_operation(registry, "records.attach_file", args, ctx)
+```
+
+A stored-file kit's `max_bytes` is a backstop, not a memory guard: it is checked
+once the whole upload is in memory, so keep the read capped at the route.
+
 ### Downloads: streaming, ranges & caching
 
 The `GET` download route **streams by default** (`stream=True`): the body is a

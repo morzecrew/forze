@@ -91,8 +91,20 @@ def _upload_too_large(max_size: int) -> Exception:
 # ....................... #
 
 
-async def _read_capped(file: UploadFile, max_size: int | None) -> bytes:
-    """Read *file* in chunks, refusing to buffer more than *max_size* bytes."""
+async def read_upload_capped(file: UploadFile, max_size: int | None) -> bytes:
+    """Read an uploaded *file* into memory, refusing to buffer more than *max_size* bytes.
+
+    The reader the generated upload route uses, for a hand-written multipart route (one whose
+    upload takes extra parameters). Bytes are counted as they are read, 1 MiB at a time, so the
+    client-declared size is never the guard and at most one chunk past the cap is held. It bounds
+    memory, not disk: the multipart parser has already spooled the file before the route runs.
+
+    :param file: The uploaded file.
+    :param max_size: Cap in bytes; ``None`` reads the whole file uncapped.
+    :returns: The file's bytes.
+    :raises CoreException: A ``validation`` error coded ``upload_too_large`` (HTTP 422), with
+        ``details`` ``{"max_upload_size": max_size}``, when the file is larger than *max_size*.
+    """
 
     if max_size is None:
         return await file.read()
@@ -147,7 +159,7 @@ def _upload_endpoint(
             dto_type,
             {
                 "filename": file.filename or "upload",
-                "data": await _read_capped(file, max_upload_size),
+                "data": await read_upload_capped(file, max_upload_size),
                 "description": description,
                 "prefix": prefix,
             },
