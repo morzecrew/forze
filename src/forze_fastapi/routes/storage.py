@@ -102,12 +102,17 @@ async def read_upload_capped(file: UploadFile, max_size: int | None) -> bytes:
     :param file: The uploaded file.
     :param max_size: Cap in bytes; ``None`` reads the whole file uncapped.
     :returns: The file's bytes.
-    :raises CoreException: A ``validation`` error coded ``upload_too_large`` (HTTP 422), with
-        ``details`` ``{"max_upload_size": max_size}``, when the file is larger than *max_size*.
+    :raises CoreException: A ``validation`` error coded ``upload_too_large``, with ``details``
+        ``{"max_upload_size": max_size}``, when the file is larger than *max_size* (HTTP 422 under
+        :func:`~forze_fastapi.register_exception_handlers`); a ``configuration`` error when
+        *max_size* is negative.
     """
 
     if max_size is None:
         return await file.read()
+
+    if max_size < 0:
+        raise exc.configuration(f"max_size must be at least 0, got {max_size}")
 
     chunks: list[bytes] = []
     total = 0
@@ -1117,6 +1122,9 @@ def attach_storage_routes(
         raise exc.configuration(
             f"max_range_bytes must be at least 1, got {max_range_bytes}",
         )
+
+    if max_upload_size is not None and max_upload_size < 0:
+        raise exc.configuration(f"max_upload_size must be at least 0, got {max_upload_size}")
 
     resolved_ns = resolve_namespace(ns, resource)
     bindings = _bindings(style, max_upload_size)

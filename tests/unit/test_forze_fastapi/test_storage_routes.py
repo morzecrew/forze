@@ -624,6 +624,16 @@ class TestReadUploadCapped:
         assert ei.value.details == {"max_upload_size": cap}
         assert upload.file.tell() <= cap + _MIB
 
+    async def test_negative_cap_is_refused(self) -> None:
+        with pytest.raises(CoreException, match="max_size") as ei:
+            await read_upload_capped(UploadFile(io.BytesIO(b"")), -1)
+
+        assert ei.value.kind == ExceptionKind.CONFIGURATION
+
+    def test_negative_route_cap_rejected_at_wiring(self) -> None:
+        with pytest.raises(CoreException, match="max_upload_size"):
+            _build_app("rest", max_upload_size=-1)
+
     async def test_none_reads_the_whole_file(self) -> None:
         data = b"x" * (3 * _MIB + 7)
 
