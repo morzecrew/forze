@@ -19,7 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Generated routes describe the parameters they declare in OpenAPI.** A document's `id` and `rev`, a storage `key`, and the tenancy and API-key `id`s need no `app.openapi` patch. A `RouteBinding` of yours takes `param_descriptions`.
 
-- **`apply_openapi_conventions(app, tag_groups=...)` writes `x-tagGroups`, the sidebar groups Scalar and Redoc render.** A listed tag no operation uses fails the schema request (`openapi_unknown_tag`). Tags no group lists join a trailing `Other` group rather than being hidden.
+- **`apply_openapi_conventions(app, tag_groups=...)` writes `x-tagGroups`, the sidebar groups Scalar and Redoc render.** A listed tag no operation uses is left out with a warning, and tags no group lists join a trailing `Other` group.
 
 ### Changed
 

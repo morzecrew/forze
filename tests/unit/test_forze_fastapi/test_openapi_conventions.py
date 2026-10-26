@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 from typing import Annotated, Any
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -17,6 +18,7 @@ pytest.importorskip("fastapi")
 from fastapi import Body, FastAPI, Query
 from pydantic import BaseModel, Field
 
+import forze_fastapi.openapi as openapi_module
 from forze.application.contracts.authn import AuthnSpec
 from forze.base.exceptions import CoreException
 from forze.domain.models import BaseDTO
@@ -389,12 +391,61 @@ class TestTagGroups:
             {"name": "Access", "tags": ["auth"]},
         ]
 
-    def test_a_tag_no_operation_uses_is_refused(self) -> None:
-        with pytest.raises(CoreException, match=r"\['nots'\]") as caught:
-            _tag_groups({"Content": ["notes", "nots"], "Access": ["auth", "files"]})
+    def test_a_tag_no_operation_uses_is_left_out_with_one_warning(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # The forze logger is structlog-backed and writes past caplog, so it is patched.
+        logger = MagicMock()
+        monkeypatch.setattr(openapi_module, "_logger", logger)
+        app = _tagged_app()
+        apply_openapi_conventions(
+            app, tag_groups={"Content": ["notes", "nots"], "Gone": ["fils"], "Access": ["auth"]}
+        )
+
+        app.openapi()
+        groups = app.openapi()["x-tagGroups"]
+
+        # The emptied group goes; the tag it misses is still shown, in the trailing group.
+        assert groups == [
+            {"name": "Content", "tags": ["notes"]},
+            {"name": "Access", "tags": ["auth"]},
+            {"name": "Other", "tags": ["files"]},
+        ]
+        logger.warning.assert_called_once()
+        assert logger.warning.call_args.args[1] == ["nots", "fils"]
+
+    @pytest.mark.parametrize(
+        "tag_groups",
+        [
+            {"Content": "notes"},
+            {"Content": ["notes", "notes"]},
+            {"Content": ["notes"], "More": ["notes"]},
+            {"": ["notes"]},
+            {" ": ["notes"]},
+        ],
+        ids=["one-string", "twice-in-a-group", "twice-across-groups", "no-name", "blank-name"],
+    )
+    def test_a_malformed_group_is_refused_by_the_call(self, tag_groups: Any) -> None:
+        with pytest.raises(CoreException) as caught:
+            apply_openapi_conventions(FastAPI(), tag_groups=tag_groups)
 
         assert caught.value.kind.value == "configuration"
-        assert caught.value.code == "openapi_unknown_tag"
+
+    def test_a_later_call_replaces_the_groups_only_with_its_own(self) -> None:
+        app = _tagged_app()
+        apply_openapi_conventions(app, tag_groups={"Content": ["notes", "files", "auth"]})
+        apply_openapi_conventions(app)
+
+        assert app.openapi()["x-tagGroups"] == [
+            {"name": "Content", "tags": ["notes", "files", "auth"]}
+        ]
+
+        apply_openapi_conventions(app, tag_groups={"Access": ["auth"]})
+
+        assert app.openapi()["x-tagGroups"] == [
+            {"name": "Access", "tags": ["auth"]},
+            {"name": "Other", "tags": ["notes", "files"]},
+        ]
 
     def test_ungrouped_tags_join_a_trailing_group(self) -> None:
         # In the order operations first use them: Scalar and Redoc would hide them otherwise.

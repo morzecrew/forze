@@ -47,6 +47,7 @@ from uuid import UUID
 import attrs
 from fastapi import APIRouter, Path, Query, Request
 from fastapi.encoders import jsonable_encoder
+from fastapi.params import Depends
 from fastapi.utils import is_body_allowed_for_status_code
 from pydantic import (
     AnyUrl,
@@ -583,6 +584,15 @@ def _signed(endpoint: Callable[..., Awaitable[Any]], *params: inspect.Parameter)
     endpoint.__annotations__ = {param.name: param.annotation for param in params}
 
 
+def _has_fastapi_metadata(param: inspect.Parameter) -> bool:
+    """Whether *param* names how FastAPI reads it (a ``Query``, ``Body``, ``Depends``, …), in
+    its annotation or its default."""
+
+    metadata = get_args(param.annotation)[1:] if get_origin(param.annotation) is Annotated else ()
+
+    return any(isinstance(item, FieldInfo | Depends) for item in (*metadata, param.default))
+
+
 def _describe(
     endpoint: Callable[..., Awaitable[Any]],
     descriptions: Mapping[str, str],
@@ -590,7 +600,12 @@ def _describe(
     op: str,
 ) -> None:
     """Give *endpoint*'s parameters their *descriptions*, each through FastAPI's own ``Path``
-    where *in_path* names it and ``Query`` otherwise."""
+    where *in_path* names it and ``Query`` otherwise.
+
+    Only a plain path or query parameter can take one: FastAPI would read the added ``Path`` or
+    ``Query`` in place of metadata the parameter has, and a body or a dependency would become a
+    query parameter.
+    """
 
     signature = inspect.signature(endpoint, eval_str=True)
 
@@ -600,6 +615,9 @@ def _describe(
             f"endpoint does not take (it takes {sorted(signature.parameters)})"
         )
 
+    if blank := sorted(name for name, text in descriptions.items() if not text.strip()):
+        raise exc.configuration(f"Parameter descriptions for operation '{op}' leave {blank} empty")
+
     params: list[inspect.Parameter] = []
 
     for param in signature.parameters.values():
@@ -608,6 +626,16 @@ def _describe(
             continue
 
         located = param.name in in_path
+
+        if _has_fastapi_metadata(param) or not _query_carries(
+            param.annotation, in_sequence=located
+        ):
+            raise exc.configuration(
+                f"Parameter '{param.name}' of operation '{op}' cannot be described: only a plain "
+                "path or query parameter can, not one with FastAPI metadata of its own (a Query, "
+                "a Body, a Depends, …) or one FastAPI reads from elsewhere (a body, the request)"
+            )
+
         location = (Path if located else Query)(description=description)
         # Built at runtime from the endpoint, so no static checker can read it as a type.
         annotation = Annotated[param.annotation, location]  # type: ignore[name-defined]
@@ -859,8 +887,10 @@ def attach_operation_routes(
     builder does not fill is refused. A builder of your own without it is not checked.
 
     A binding's ``param_descriptions`` document its endpoint's parameters in the OpenAPI
-    schema, each as FastAPI's ``Path`` where the path binds it and ``Query`` otherwise; one
-    naming a parameter the endpoint does not take is refused.
+    schema, each as FastAPI's ``Path`` where the path binds it and ``Query`` otherwise. An empty
+    one is refused, and so is one naming a parameter the endpoint does not take or one that is
+    not a plain path or query parameter: a body, the request, or one with a ``Query``, ``Body``,
+    ``Depends``, … of its own.
 
     *path_overrides* maps an operation (the same kernel-op/str key accepted by
     *include*) to a replacement route path. Only the path changes — method,
@@ -902,8 +932,8 @@ def attach_operation_routes(
 
     Raises:
         CoreException: On an unknown *include*/override operation, a sensitive read
-            model, a path override that drops or adds a path parameter, or a description
-            of a parameter the endpoint does not take (all configuration errors).
+            model, a path override that drops or adds a path parameter, or a parameter
+            description refused as above (all configuration errors).
     """
 
     known = set(bindings)

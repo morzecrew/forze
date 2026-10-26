@@ -71,8 +71,9 @@ app.include_router(router)
 - Generated routes describe their own parameters (`id`, `rev`, a storage `key`); a
   `RouteBinding` of yours takes `param_descriptions={"id": "..."}`. For sidebar groups in
   Scalar or Redoc, call `apply_openapi_conventions(app, tag_groups={"Content": ["notes"]})`
-  (from `forze_fastapi`) last: a listed tag no operation uses fails the schema request, and
-  tags you leave out join a trailing `Other` group.
+  (from `forze_fastapi`) last: a listed tag no operation uses is left out with a warning,
+  tags you leave out join a trailing `Other` group, and an untagged route shows in Scalar
+  but not in Redoc.
 
 ## Hand-written routes
 

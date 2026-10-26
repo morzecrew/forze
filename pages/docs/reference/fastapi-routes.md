@@ -498,8 +498,11 @@ refused. An `EndpointBuilder` of your own takes `(runner, input_type, op)`; give
 
 A binding's `param_descriptions` describe its endpoint's parameters by name. Each becomes
 FastAPI's own `Path` where the path has the placeholder and `Query` otherwise, so `id`
-reads the same in both route styles. A name the endpoint does not take is refused when the
-route is attached. A `query_endpoint` parameter takes its description from the DTO field.
+reads the same in both route styles. Only a plain path or query parameter takes one. When
+the route is attached, an empty description is refused, and so is a name the endpoint does
+not take. A body, the request, or a parameter with its own `Query`, `Depends`, … is refused
+too: describe that one in its own metadata. A `query_endpoint` parameter takes its
+description from the DTO field.
 
 The operation's output type is the route's response model. It need not be a bare model: an
 operation that may find nothing declares `output_type=Model | None` and answers `200` with
@@ -636,9 +639,13 @@ apply_openapi_conventions(
 )
 ```
 
-A listed tag that no operation is tagged with is a typo or a stale name, so the schema
-request fails with a configuration error (`openapi_unknown_tag`) instead of showing an empty
-entry. Both renderers hide a tag that no group lists, with every operation under it. The
-tags you leave out therefore join a group named `Other`, in the order operations first use
-them: last, or where you list `Other` yourself. `register_scalar_docs` renders the groups
-with no extra setting.
+A group without a name, tags given as one string (`"notes"` for `["notes"]`), or a tag
+listed twice is a configuration error raised by the call itself. A listed tag that no
+operation is tagged with, a typo or a renamed router, is left out of its group with a
+warning, and a group left with no tags is dropped. Neither renderer shows a tag that no
+group lists, nor the operations under it. The tags you leave out therefore join a group
+named `Other`, in the order operations first use them: last, or where you list `Other`
+yourself. An operation with no tags is in no group: Scalar still lists it, Redoc does not,
+so tag every route. A later call with `tag_groups` replaces the groups; one without leaves
+them as they are. `register_scalar_docs` needs no setting, since Scalar reads the groups
+from the schema.

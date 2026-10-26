@@ -50,8 +50,9 @@ def _rpc_path(op: object) -> str:
 _ID: Mapping[str, str] = {"id": "The document's ID."}
 _ID_REV: Mapping[str, str] = {
     **_ID,
-    "rev": "The revision you last read; a stale one is refused unless your change merges "
-    "with those made since.",
+    "rev": "The revision you last read. A stale one is refused; with document history on, "
+    "your change is merged with those made since, unless they conflict or the revision "
+    "predates the history.",
 }
 """Parameter descriptions of the id- and id/rev-addressed routes."""
 

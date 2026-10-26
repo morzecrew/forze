@@ -342,8 +342,9 @@ class TestCatalogProjection:
             (
                 "rev",
                 (
-                    "The revision you last read; a stale one is refused unless your change "
-                    "merges with those made since."
+                    "The revision you last read. A stale one is refused; with document history "
+                    "on, your change is merged with those made since, unless they conflict or "
+                    "the revision predates the history."
                 ),
             ),
         }
