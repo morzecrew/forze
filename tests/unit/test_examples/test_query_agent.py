@@ -131,6 +131,15 @@ class TestTheStreamedAnswer:
 
         assert tokens == ["Two", " notes"]
 
+    async def test_a_data_line_without_the_space_reads_the_same(self) -> None:
+        registry = MockHttpRegistry().on(
+            "model", "messages", lambda _args: [b"data:Two\n\ndata:  notes\n\ndata:[DONE]\n\n"]
+        )
+
+        tokens = [token async for token in stream_answer("q", ctx=_ctx(registry))]
+
+        assert tokens == ["Two", " notes"]
+
     async def test_it_asks_the_provider_to_stream(self) -> None:
         # The same operation as the unary call; the request body's flag is the difference.
         asked: list[ModelArgs | None] = []

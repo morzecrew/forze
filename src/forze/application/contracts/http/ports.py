@@ -52,6 +52,20 @@ class HttpServicePort(Protocol):
 
         ...  # pragma: no cover
 
+    @overload
+    def stream[In: BaseModel](
+        self,
+        op: HttpOperationSpec[In, Any],
+        args: In | None = None,
+    ) -> AsyncGenerator[bytes]: ...
+
+    @overload
+    def stream(
+        self,
+        op: StrKey,
+        args: BaseModel | None = None,
+    ) -> AsyncGenerator[bytes]: ...
+
     def stream(
         self,
         op: StrKey | HttpOperationSpec[Any, Any],

@@ -239,8 +239,14 @@ async def stream_answer(question: str, *, ctx: ExecutionContext) -> AsyncGenerat
             for raw in lines:
                 line = raw.removesuffix(b"\r")  # a provider may end lines with CRLF
 
-                if line.startswith(b"data: ") and line != b"data: [DONE]":
-                    yield line.removeprefix(b"data: ").decode()
+                if not line.startswith(b"data:"):
+                    continue
+
+                # The space after the colon is optional, and only one is stripped.
+                data = line.removeprefix(b"data:").removeprefix(b" ")
+
+                if data != b"[DONE]":
+                    yield data.decode()
 
 
 # --8<-- [end:stream]

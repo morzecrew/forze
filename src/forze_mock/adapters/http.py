@@ -193,8 +193,15 @@ class MockHttpServiceAdapter(HttpServicePort):
             result = [result]
 
         if isinstance(result, AsyncIterable):
-            async for chunk in result:
-                yield self._chunk(operation, chunk)
+            try:
+                async for chunk in result:
+                    yield self._chunk(operation, chunk)
+
+            finally:
+                # A consumer that stops early closes the handler's generator now, as the real
+                # adapter releases its connection, not at finalization.
+                if (aclose := getattr(result, "aclose", None)) is not None:
+                    await aclose()
 
         else:
             for chunk in result:

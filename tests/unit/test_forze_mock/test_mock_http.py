@@ -309,6 +309,25 @@ class TestMockHttpStreams:
 
         assert [chunk async for chunk in port.stream("ping")] == [b"a", b"b"]
 
+    async def test_closing_the_stream_early_closes_the_handlers_generator(self) -> None:
+        closed: list[bool] = []
+
+        async def chunks(_args: object):
+            try:
+                yield b"a"
+                yield b"b"
+
+            finally:
+                closed.append(True)
+
+        registry = MockHttpRegistry().on("pricing", "ping", chunks)
+        stream = _ctx(registry).http.service(SPEC).stream("ping")
+
+        assert await anext(stream) == b"a"
+        await stream.aclose()
+
+        assert closed == [True]
+
     async def test_an_unprogrammed_stream_raises(self) -> None:
         port = _ctx(MockHttpRegistry()).http.service(SPEC)
 
