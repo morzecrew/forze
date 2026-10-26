@@ -99,7 +99,7 @@ app.include_router(router)
 
 The facade runs each operation through the pipeline (mapping, hooks, transaction). Reach a raw `ctx.<port>` only inside a custom handler that a facade operation can't express.
 
-A hand-written upload route reads the file with `await read_upload_capped(file, max_size)` (from `forze_fastapi.routes`), never a bare `await file.read()`: it is the generated upload route's reader, refusing a file over the cap with the same 422 `upload_too_large` before buffering it all. A stored-file kit's `max_bytes` checks only after the whole body is in memory.
+A hand-written upload route reads the file with `await read_upload_capped(file, max_size)` (from `forze_fastapi.routes`), never a bare `await file.read()`: it is the generated upload route's reader, refusing a file over the cap, without buffering it all, with the same 422 status and `upload_too_large` code. A stored-file kit's `max_bytes` checks only after the whole body is in memory.
 
 ## Readiness and deadline headers
 

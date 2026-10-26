@@ -595,6 +595,7 @@ class TestReadUploadCapped:
     @pytest.mark.parametrize(
         ("size", "cap"),
         [
+            (0, 0),
             (0, 10),
             (5, 10),
             (10, 10),
@@ -609,7 +610,7 @@ class TestReadUploadCapped:
 
     @pytest.mark.parametrize(
         ("size", "cap"),
-        [(11, 10), (_MIB + 1, _MIB), (2 * _MIB + 1, 2 * _MIB), (8 * _MIB, 10)],
+        [(1, 0), (11, 10), (_MIB + 1, _MIB), (2 * _MIB + 1, 2 * _MIB), (8 * _MIB, 10)],
     )
     async def test_refuses_one_byte_over_without_reading_the_rest(
         self, size: int, cap: int

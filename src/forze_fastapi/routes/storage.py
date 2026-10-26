@@ -97,7 +97,7 @@ async def read_upload_capped(file: UploadFile, max_size: int | None) -> bytes:
     The reader the generated upload route uses, for a hand-written multipart route (one whose
     upload takes extra parameters). Bytes are counted as they are read, 1 MiB at a time, so the
     client-declared size is never the guard and at most one chunk past the cap is held. It bounds
-    memory, not disk: the multipart parser has already spooled the file before the route runs.
+    memory, not disk: the multipart parser has already spooled the file (to disk past 1 MiB).
 
     :param file: The uploaded file.
     :param max_size: Cap in bytes; ``None`` reads the whole file uncapped.

@@ -129,15 +129,18 @@ attach_storage_routes(
 
 The upload route refuses a file over `max_upload_size` (default **64 MiB**,
 `DEFAULT_MAX_UPLOAD_SIZE`; `None` disables it) with a 422 coded
-`upload_too_large`, before the operation runs. It counts bytes as it reads the
-file, 1 MiB at a time, so a client-declared size is never the guard and at most
-one chunk past the cap is held in memory. That bounds memory, not disk: the
-multipart parser has already spooled the file to a temporary file when the route
-runs, so cap the request body at your proxy too.
+`upload_too_large`, before the operation runs. A `Content-Length` over the cap is
+rejected early, as a shortcut; the guard is the reader, which counts bytes as it
+reads the file, 1 MiB at a time, so at most one chunk past the cap is held in
+memory. That bounds memory, not disk: before the route runs, the multipart
+parser keeps the first 1 MiB of the file in memory and rolls everything past
+1 MiB to a temporary file on disk, with no cap — so cap the request body at your
+proxy too.
 
 When an upload takes parameters the generated route doesn't — which record the
 file attaches to, say — write the route by hand and read the file with
-`read_upload_capped`, the same reader with the same refusal:
+`read_upload_capped`, the generated route's reader. It refuses with the same 422
+status and `upload_too_large` code:
 
 ```python
 from typing import Any
@@ -157,6 +160,10 @@ async def attach_file(record_id: str, file: UploadFile, ctx=Depends(ctx_dep)) ->
 
     return await run_operation(registry, "records.attach_file", args, ctx)
 ```
+
+The refusal answers 422 only once the app has called
+`register_exception_handlers(app)` (from `forze_fastapi.exceptions`); without it
+the error surfaces as a 500.
 
 A stored-file kit's `max_bytes` is a backstop, not a memory guard: it is checked
 once the whole upload is in memory, so keep the read capped at the route.
