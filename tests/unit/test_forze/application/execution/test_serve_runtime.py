@@ -295,7 +295,7 @@ def _signal_drain() -> SignalDrain:
 
 class TestSignalDrain:
     @pytest.mark.asyncio
-    async def test_a_previous_handler_installed_from_c_is_left_alone(
+    async def test_a_previous_handler_installed_from_c_gives_way_to_the_default(
         self,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
@@ -315,7 +315,7 @@ class TestSignalDrain:
             with drain.capture_signals():
                 pass
 
-            assert signal.getsignal(signal.SIGTERM) == drain._on_signal  # pyright: ignore[reportPrivateUsage]
+            assert [signal.getsignal(sig) for sig in handled] == [signal.SIG_DFL] * 2
 
         finally:
             for sig, handler in before.items():

@@ -81,9 +81,9 @@ class SignalDrain:
 
         finally:
             for sig, handler in previous.items():
-                # ``None``: installed from C, which Python cannot put back, so ours stays.
-                if handler is not None:
-                    signal.signal(sig, handler)
+                # ``None``: installed from C, which Python cannot put back. The default, not
+                # ours left pointing at a closed loop, so a later SIGTERM still terminates.
+                signal.signal(sig, signal.SIG_DFL if handler is None else handler)
 
             if watch is not None:
                 watch.cancel()
