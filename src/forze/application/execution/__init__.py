@@ -29,6 +29,7 @@ from .domain import (
     outbox_event_handler,
 )
 from .lifecycle import LifecyclePlan
+from .lifecycle.serving import serve_runtime
 from .observability import (
     BREAKER_STATE_GAUGE,
     BULKHEAD_LIMIT_GAUGE,
@@ -140,6 +141,7 @@ __all__ = [
     "InProcessResilienceExecutor",
     "outbox_event_handler",
     "LifecyclePlan",
+    "serve_runtime",
     "OperationCatalogEntry",
     "OperationDescriptor",
     "OperationKind",

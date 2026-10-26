@@ -17,34 +17,28 @@ require_fastapi()
 
 import asyncio
 import math
-import signal
-import threading
-from collections.abc import Generator
-from contextlib import contextmanager, suppress
-from contextvars import Context, copy_context
 from datetime import timedelta
-from types import FrameType
-from typing import Any, Final
 
 import uvicorn
 
 from forze.application.execution import ExecutionRuntime
 from forze.application.execution.lifecycle.run import DRAIN_PHASE_CANCEL_GRACE_SECONDS
-from forze.base.exceptions import CoreException, exc
+from forze.application.execution.lifecycle.serving import SignalDrain
+from forze.base.exceptions import exc
 from forze.base.logging import Logger
 
 # ----------------------- #
 
 _logger = Logger("fastapi.server")
 
-_HANDLED_SIGNALS: Final[tuple[signal.Signals, ...]] = (signal.SIGINT, signal.SIGTERM)
-
 
 # ....................... #
 
 
-class _DrainingServer(uvicorn.Server):
+class _DrainingServer(SignalDrain, uvicorn.Server):
     """A uvicorn server whose first SIGTERM/SIGINT drains the runtime before it exits."""
+
+    log = _logger
 
     def __init__(
         self,
@@ -55,110 +49,31 @@ class _DrainingServer(uvicorn.Server):
         announce_delay: timedelta,
         stop: asyncio.Event | None = None,
     ) -> None:
-        super().__init__(config)
-
-        self._runtime = runtime
-        self._drain_budget = drain_budget
-        self._announce_delay = announce_delay
-        self._stop = stop
+        uvicorn.Server.__init__(self, config)
         # Built by ``serve_uvicorn`` on the loop and in the task that serves: the loop the
         # signal handler hands over to, and the context — the server's own, no request's —
         # its callback runs in.
-        self._loop = asyncio.get_running_loop()
-        self._context: Context = copy_context()
-        self._drain_task: asyncio.Task[None] | None = None
+        SignalDrain.__init__(
+            self,
+            runtime,
+            drain_budget=drain_budget,
+            announce_delay=announce_delay,
+            stop=stop,
+        )
 
     # ....................... #
 
-    @contextmanager
-    def capture_signals(self) -> Generator[None]:
-        watch = None if self._stop is None else self._loop.create_task(self._watch(self._stop))
-        previous: dict[int, Any] = {}
-
-        # Only the main thread can install signal handlers. Off it none are installed, as
-        # uvicorn does, and the stop event is the way in. ``signal.signal`` rather than the
-        # loop's handlers, as uvicorn does, so the previous handlers can be put back.
-        if threading.current_thread() is threading.main_thread():
-            previous = {sig: signal.signal(sig, self._on_signal) for sig in _HANDLED_SIGNALS}
-
-        try:
-            yield
-
-        finally:
-            for sig, handler in previous.items():
-                signal.signal(sig, handler)
-
-            if watch is not None:
-                watch.cancel()
-
-            if self._drain_task is not None and not self._drain_task.done():
-                self._drain_task.cancel()
-
-        # Unlike uvicorn's own handler, the signal is not raised again once the server has
-        # returned: the process that embeds the server decides how it exits.
+    def _drain_ended(self) -> None:
+        super()._drain_ended()
+        self.should_exit = True
 
     # ....................... #
 
-    def _on_signal(self, sig: int, _frame: FrameType | None) -> None:
-        # Runs on the main thread between two bytecodes, possibly while the loop sleeps in
-        # its selector: hand over to the loop, which ``call_soon_threadsafe`` wakes. In the
-        # server's own context — by default the callback would copy the context of whatever
-        # the signal interrupted, a request handler's bindings included.
-        self._loop.call_soon_threadsafe(self._on_signal_in_loop, sig, context=self._context.copy())
-
-    # ....................... #
-
-    async def _watch(self, stop: asyncio.Event) -> None:
-        await stop.wait()
-
-        if self._drain_task is None:
-            _logger.info("Stop requested: draining before the server stops")
-            self._drain_task = asyncio.ensure_future(self._drain())
-
-    # ....................... #
-
-    def _on_signal_in_loop(self, sig: int) -> None:
-        name = signal.Signals(sig).name
-
-        if self._drain_task is None:
-            _logger.info("%s received: draining before the server stops", name)
-            self._drain_task = asyncio.ensure_future(self._drain())
-
-            return
-
-        if sig != signal.SIGINT:
-            # Only a SIGINT forces the exit, as with uvicorn. A SIGTERM sent twice — to the
-            # process group and again by a wrapper forwarding it — must not cut the drain.
-            _logger.warning("%s received again: still draining; a SIGINT forces the exit", name)
-
-            return
-
+    def _forced(self) -> None:
         # ``force_exit`` alone would not stop a drain in progress, and ``should_exit`` alone
         # would still wait for open connections.
-        _logger.warning("%s received during the drain: exiting without waiting for it", name)
-        self._drain_task.cancel()
         self.should_exit = True
         self.force_exit = True
-
-    # ....................... #
-
-    async def _drain(self) -> None:
-        try:
-            await self._runtime.drain(self._drain_budget, announce_delay=self._announce_delay)
-
-        except asyncio.CancelledError:
-            # A forced exit. A drain cut short before its phases started gives its claim
-            # back, and the scope's teardown would then run them at length: give them up.
-            with suppress(CoreException):
-                self._runtime.get_context().drain_phases.forgo()
-
-            raise
-
-        except Exception:
-            _logger.exception("Drain failed; stopping the server anyway")
-
-        finally:
-            self.should_exit = True
 
 
 # ....................... #

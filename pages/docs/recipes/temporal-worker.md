@@ -19,8 +19,9 @@ Kubernetes can see it:
 
 ```python
 import asyncio
+from datetime import timedelta
 
-from forze.application.execution import build_runtime
+from forze.application.execution import build_runtime, serve_runtime
 from forze_temporal import (
     TemporalClient,
     TemporalConfig,
@@ -47,13 +48,9 @@ runtime = build_runtime(
 )
 
 
-async def main() -> None:
-    async with runtime.scope():
-        await asyncio.Event().wait()  # run until the process is signalled
-
-
 if __name__ == "__main__":
-    asyncio.run(main())
+    # Until SIGTERM, which drains the runtime, then tears it down.
+    asyncio.run(serve_runtime(runtime, drain_budget=timedelta(seconds=5)))
 ```
 
 Order matters: the worker step reaches for the client's live connection at startup,
