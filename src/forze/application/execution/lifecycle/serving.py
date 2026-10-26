@@ -117,7 +117,7 @@ class SignalDrain:
 
         if self._drain_task is None:
             self.log.info("Stop requested: draining before shutdown")
-            self._drain_task = asyncio.ensure_future(self._drain())
+            self._start_drain()
 
     # ....................... #
 
@@ -126,7 +126,7 @@ class SignalDrain:
 
         if self._drain_task is None:
             self.log.info("%s received: draining before shutdown", name)
-            self._drain_task = asyncio.ensure_future(self._drain())
+            self._start_drain()
 
             return
 
@@ -152,23 +152,31 @@ class SignalDrain:
 
     # ....................... #
 
+    def _start_drain(self) -> None:
+        self._drain_task = asyncio.ensure_future(self._drain())
+        # A done callback, not a ``finally`` in the coroutine: a task cancelled before its
+        # first step — a second signal handled in the same loop turn — never runs its body.
+        self._drain_task.add_done_callback(self._drain_done)
+
+    # ....................... #
+
     async def _drain(self) -> None:
         try:
             await self._runtime.drain(self._drain_budget, announce_delay=self._announce_delay)
 
-        except asyncio.CancelledError:
+        except Exception:
+            self.log.exception("Drain failed; shutting down anyway")
+
+    # ....................... #
+
+    def _drain_done(self, task: "asyncio.Task[None]") -> None:
+        if task.cancelled():
             # A forced exit. A drain cut short before its phases started gives its claim
             # back, and the scope's teardown would then run them at length: give them up.
             with suppress(CoreException):
                 self._runtime.get_context().drain_phases.forgo()
 
-            raise
-
-        except Exception:
-            self.log.exception("Drain failed; shutting down anyway")
-
-        finally:
-            self._drain_ended()
+        self._drain_ended()
 
     # ....................... #
 

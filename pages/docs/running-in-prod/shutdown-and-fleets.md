@@ -264,7 +264,8 @@ period ends. The signals behave as under `serve_uvicorn`: a drain that fails sti
 tears down, a `SIGINT` during the drain cancels it and gives the phases up, and a
 repeated `SIGTERM` is logged and ignored. A signal during startup waits for it to
 finish, and the drain phases then run in the shutdown instead. Off the main thread,
-pass `stop=asyncio.Event()` and set it to drain, as a first signal would.
+pass `stop=asyncio.Event()` and set it to drain, as a first signal would. From another
+thread, set it on the runtime's loop: `loop.call_soon_threadsafe(stop.set)`.
 
 ### Drain phases
 

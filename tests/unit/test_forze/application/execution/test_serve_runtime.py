@@ -324,6 +324,20 @@ class TestSignalDrain:
     # ....................... #
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize("first", [signal.SIGTERM, signal.SIGINT])
+    async def test_a_sigint_in_the_same_loop_turn_still_ends_the_drain(self, first: int) -> None:
+        """The second signal cancels the drain before its first step, so its body never runs."""
+
+        drain = _signal_drain()
+
+        drain._on_signal_in_loop(first)  # pyright: ignore[reportPrivateUsage]
+        drain._on_signal_in_loop(signal.SIGINT)  # pyright: ignore[reportPrivateUsage]
+
+        await asyncio.wait_for(drain.drained.wait(), timeout=5.0)
+
+    # ....................... #
+
+    @pytest.mark.asyncio
     @pytest.mark.parametrize("again", [signal.SIGTERM, signal.SIGINT])
     async def test_a_signal_after_the_drain_reports_the_teardown(
         self,
