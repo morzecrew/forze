@@ -384,9 +384,10 @@ class DocumentSpec(BaseSpec, Generic[R, D, C, U]):
     """Bounds on the filters this document's queries accept; ``None`` keeps the parser's defaults.
 
     Every backend serving the spec parses filters under these limits, the mock included, and
-    so does a generated route or tool that passes a caller's filter through. Raise
-    ``max_in_size`` for internal reads that match against long id lists; a backend with a lower
-    hard cap of its own (Firestore's ``in``) still refuses past it."""
+    so does a generated route or tool that passes a caller's filter through. For an internal
+    read that matches a long id list, raise ``max_in_size`` around that read with
+    :func:`~forze.application.contracts.querying.bind_max_in_size` instead of here. A backend
+    with a lower hard cap of its own (Firestore's ``in``) refuses past it either way."""
 
     query_params: type[BaseModel] | None = None
     """Optional **query-parameter contract** — a Pydantic model whose fields are typed values a

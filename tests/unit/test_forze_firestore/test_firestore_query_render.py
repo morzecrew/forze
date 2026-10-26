@@ -15,6 +15,7 @@ from forze.application.contracts.querying import (
     QueryField,
     QueryFilterExpressionParser,
     QueryOr,
+    bind_max_in_size,
 )
 from forze.base.exceptions import CoreException, ExceptionKind
 from forze_firestore.kernel.query.render import FirestoreQueryRenderer
@@ -155,6 +156,16 @@ class TestFirestoreQueryRenderer:
         r = FirestoreQueryRenderer()
         assert isinstance(r.render(QueryField("n", "$gt", 1)), FieldFilter)
         assert isinstance(r.render(QueryField("n", "$gte", 1)), FieldFilter)
+
+    def test_bound_max_in_size_does_not_lift_the_in_cap(self) -> None:
+        # Firestore's 30-value `in` is a backend fact, not the spec's policy limit.
+        with bind_max_in_size(1_000):
+            expr = QueryFilterExpressionParser.parse({"$values": {"a": {"$in": list(range(31))}}})
+
+            with pytest.raises(CoreException, match="more than 30 values") as ei:
+                FirestoreQueryRenderer().render(expr)
+
+        assert ei.value.code == UNSUPPORTED_QUERY_FEATURE_CODE
 
     def test_in_scalar_raises(self) -> None:
         r = FirestoreQueryRenderer()

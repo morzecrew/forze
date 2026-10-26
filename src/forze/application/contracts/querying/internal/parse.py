@@ -1,4 +1,6 @@
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Iterable, Iterator, Mapping, Sequence
+from contextlib import contextmanager
+from contextvars import ContextVar
 from typing import Any, cast, get_args
 
 import attrs
@@ -142,13 +144,60 @@ class QueryFilterLimits:
     """Maximum number of clauses (combinator children, field keys, and per-field ops)."""
 
     max_in_size: int = 1_000
-    """Maximum length of membership and set-relation operand lists."""
+    """Maximum length of membership, set-relation and hierarchy operand lists;
+    :func:`bind_max_in_size` raises it for one block of trusted code."""
 
     max_pattern_length: int = 256
     """Maximum length of each ``$like`` / ``$ilike`` / ``$regex`` pattern string."""
 
     max_pattern_or_branches: int = 32
     """Maximum number of patterns when a text operator operand is a sequence (OR)."""
+
+
+# ....................... #
+
+_bound_max_in_size: ContextVar[int] = ContextVar("forze_query_max_in_size", default=0)
+"""The ``max_in_size`` :func:`bind_max_in_size` binds in the current context; ``0`` when unbound."""
+
+
+@contextmanager
+def bind_max_in_size(limit: int) -> Iterator[None]:
+    """Raise ``max_in_size`` to *limit* for filters parsed inside the block, then restore.
+
+    For application code matching against an id list it built from its own data. A spec's
+    :class:`QueryFilterLimits` bound every caller, a generated route's included, so raising
+    the spec's limit would raise it for caller-supplied filters too; this raises it for one
+    block of trusted code.
+
+    Context-scoped (a :class:`~contextvars.ContextVar`): it holds for this task, never for a
+    concurrent one. It only raises, so a spec's higher limit still applies, and the innermost
+    block wins. A backend's own cap
+    (:attr:`~forze.application.contracts.querying.QueryCapabilities.max_in_size`, Firestore's
+    30) still refuses past it.
+
+    The limit is what bounds a caller's filter, so keep the block to trusted reads:
+
+    - Take *limit* from a literal or the application's config, never from a request.
+    - Wrap plain awaited reads, never a caller-supplied filter, a server or a worker.
+    - Do not ``yield`` inside the block. A generator's consumer runs at the raised limit
+      between yields, and an async generator resumed from another task fails its reset.
+    - Work queued and tasks started inside the block run at the raised limit, so a caller's
+      filter carried into a job, an export or an outbox payload there is parsed under it.
+
+    :param limit: The most values a membership or set operand may carry inside the block.
+    :raises CoreException: ``configuration`` when *limit* is not a positive integer.
+    """
+
+    if not isinstance(limit, int) or isinstance(limit, bool) or limit < 1:  # pyright: ignore[reportUnnecessaryIsInstance]
+        raise exc.configuration(f"bind_max_in_size takes a positive integer, not {limit!r}.")
+
+    token = _bound_max_in_size.set(limit)
+
+    try:
+        yield
+
+    finally:
+        _bound_max_in_size.reset(token)
 
 
 # ....................... #
@@ -719,11 +768,11 @@ class QueryFilterExpressionParser:
             return
 
         size = len(value)  # type: ignore[arg-type]
+        limit = max(self.limits.max_in_size, _bound_max_in_size.get())
 
-        if size > self.limits.max_in_size:
+        if size > limit:
             raise exc.precondition(
-                f"Field {field} {op} operand exceeds maximum size of "
-                f"{self.limits.max_in_size} (got {size})",
+                f"Field {field} {op} operand exceeds maximum size of {limit} (got {size})",
             )
 
     # ....................... #
