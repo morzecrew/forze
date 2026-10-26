@@ -42,9 +42,10 @@ def check_authn_cookie_paths(app: Any) -> None:
     the middleware reads the list; an app without one has nothing that 401s them.
 
     The path is the effective one, every router prefix applied, under the app's own
-    ``root_path`` — the only root path known here: behind a server-level one
-    (``--root-path``) a full-path ``anonymous_paths`` entry is refused, so list the path
-    relative to it or declare it as ``FastAPI(root_path=...)``. A route inside a mounted
+    ``root_path`` — the only root path known here. Under it the middleware receives the
+    path with the root path, or without it behind a proxy that strips it, so an
+    ``anonymous_paths`` entry must match both: list it relative to the root path, as you
+    would behind a server-level one (``--root-path``). A route inside a mounted
     sub-application is not seen from here, as for
     :func:`~forze_fastapi.middlewares.check_bypass_paths`, and neither is a security
     middleware on one. The middleware is found by its ``anonymous_paths`` field among the
@@ -57,23 +58,29 @@ def check_authn_cookie_paths(app: Any) -> None:
         misses a cookie-mode login, refresh or logout route.
     """
 
-    root = (getattr(app, "root_path", "") or "").rstrip("/")
+    raw_root = getattr(app, "root_path", "") or ""
+    root = raw_root.rstrip("/")
     gates = _anonymous_path_sets(app)
 
     for path, route in iter_effective_routes(app):
         endpoint = getattr(route, "endpoint", None)
-        scope = {"path": root + path, "root_path": root}
+        # Under a root path the middleware sees the path with it, or without it behind a
+        # proxy that strips it; the entry must match both, read as the middleware reads it.
+        scopes = [{"path": root + path, "root_path": raw_root}]
+
+        if raw_root:
+            scopes.append({"path": path, "root_path": raw_root})
 
         if getattr(endpoint, AUTHN_COOKIE_ANONYMOUS_ATTR, False) and not all(
-            is_anonymous_path(paths, scope) for paths in gates
+            is_anonymous_path(paths, scope) for paths in gates for scope in scopes
         ):
             raise exc.configuration(
                 f"The cookie-mode authn route {root + path!r} is not in the security "
                 "middleware's anonymous_paths, so a stale access cookie 401s it before it "
                 "runs: logout would neither revoke the session from the refresh cookie nor "
                 "clear the cookies. List the mounted login, refresh and logout paths in "
-                "SecurityContextMiddleware(anonymous_paths=...). Behind a proxy that strips "
-                "a prefix, declare it as FastAPI(root_path=...)."
+                "SecurityContextMiddleware(anonymous_paths=...). Under FastAPI(root_path=...) "
+                "list them relative to it, and declare it without a trailing slash."
             )
 
         cookie_paths = getattr(endpoint, AUTHN_COOKIE_LOGOUT_ATTR, ())

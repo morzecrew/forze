@@ -1266,9 +1266,8 @@ class TestCookieLogoutPathCheck:
         [
             ("", {"/auth/login", "/auth/refresh", "/auth/logout"}),
             ("/v1", {"/auth/login", "/auth/refresh", "/auth/logout"}),
-            ("/v1", {"/v1/auth/login", "/v1/auth/refresh", "/v1/auth/logout"}),
         ],
-        ids=["plain", "relative-to-root-path", "full-under-root-path"],
+        ids=["plain", "relative-to-root-path"],
     )
     def test_cookie_routes_in_anonymous_paths_pass(
         self, root_path: str, anonymous: set[str]
@@ -1283,6 +1282,32 @@ class TestCookieLogoutPathCheck:
                 anonymous=(anonymous,),
             )
         )
+
+    @pytest.mark.parametrize(
+        ("root_path", "anonymous"),
+        [
+            # Behind a proxy that strips /v1 the middleware sees /auth/logout, which a
+            # full-path entry does not match.
+            ("/v1", {"/v1/auth/login", "/v1/auth/refresh", "/v1/auth/logout"}),
+            # The middleware compares the raw root path, so a trailing slash never matches.
+            ("/v1/", {"/auth/login", "/auth/refresh", "/auth/logout"}),
+        ],
+        ids=["full-under-root-path", "root-path-trailing-slash"],
+    )
+    def test_entries_the_middleware_would_miss_under_a_root_path_are_refused(
+        self, root_path: str, anonymous: set[str]
+    ) -> None:
+        from forze_fastapi.middlewares import check_authn_cookie_paths
+
+        app = self._app(
+            access_path="/",
+            refresh_path="/v1/auth",
+            root_path=root_path,
+            anonymous=(anonymous,),
+        )
+
+        with pytest.raises(CoreException, match="anonymous_paths"):
+            check_authn_cookie_paths(app)
 
     @pytest.mark.parametrize(
         ("refresh_path", "root_path"),
