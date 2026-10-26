@@ -1374,3 +1374,74 @@ by-path read inside the revoked table still succeeds until the vended credential
   construction, as a configuration error. Battery 17 is deferred to the 2.0 bump, and the
   one-credential fact is pinned in its place
   (`test_a_vended_credential_reads_its_own_table_only_and_writes_nowhere`).
+
+## D-031 — Corrections to this unit's own record
+
+Appended rather than edited, per the rule that an entry is never revised. A review of the branch
+raised these, and each was checked against the probes before it was written here.
+
+- **D-025's "3600 s by default" has no source in this unit.** The 3600 s is Lakekeeper's
+  default for `sts-token-validity-seconds`, from its storage-s3 docs, which RFC 0078 §3.2 also
+  cites. The 900 s floor is this unit's own measurement (unit header).
+- **D-026's two cases without a revocation are now pinned, not only probed.** Those are a
+  namespace created after a miss, and a table created later.
+  `test_a_namespace_created_after_a_miss_stays_missing_but_a_new_table_appears` covers both.
+- **D-028's arithmetic was off.** 30 s × 4 attempts is 120 s, not 120.5 s. The observed
+  120.5 s is about 120 s plus retry waits, and I did not break those waits down. On a plain
+  `TYPE s3` secret I counted the attempts: four connections reached the blackhole listener. On
+  the iceberg path I did not count them, so "four attempts of 30 s" there is inferred from the
+  total.
+- **D-029's describe-only row.** The test no longer asserts the "No region was provided"
+  message, which depends on `AWS_REGION` being unset. With a region set, the scan carries on
+  unsigned to the default AWS endpoint (D-027), so the test still unsets it. The class
+  assertion, the bare `Error`, stays.
+
+  A review proposed mapping that message to a configuration error rather than
+  `dynamic_read_permission_denied`. The row stays as proposed, because D-032 shows the same
+  message is what a revocation in progress looks like under OpenFGA caching. The message is
+  ambiguous, though: a warehouse with no region and no STS produces it too. So the mapping must
+  carry the message into the error details, where a misconfigured profile stays diagnosable.
+- **Two fixture claims were weaker than written.**
+  - The fixture never installed the extensions. The module passed only because the user cache
+    already held them. The fixture now installs them, and the module passes against an empty
+    extension directory (30.4 s, including the downloads).
+  - D-024 documented the gateway addressing but nothing detected a host that cannot use it. The
+    stack now probes the gateway once and skips.
+- **The cost, measured.** The header said "about 30 s". With images already pulled, three runs
+  measured 18.2–19.0 s of stack setup and 24.5–25.2 s for the whole module (26 tests). The
+  duckdb CI shard already pulls RustFS. On a cold runner it would add these pulls, compressed:
+  Lakekeeper 76 MB, OpenFGA 28 MB, Keycloak 265 MB and Postgres 195 MB, about 0.56 GB in all.
+  The module stays in the duckdb shard, which runs alone on its own runner with a 30-minute
+  budget.
+- **Drift count: 0.** The unit holds nine entries, not seven: D-031 and D-032 were appended
+  after the header. Classes: six `discovery`, two `spec-gap`, plus this record.
+
+## D-032 — With OpenFGA's check cache on, a revocation lands about 10 s late
+
+- **Touches:** RFC 0078 §3.2 ("Revocation takes effect at the next statement, without
+  eviction") and battery 11a. Unlisted: the authorizer's own caching.
+- **RFC said:** the next statement re-loads the table with the principal's current grants.
+- **Found:** that holds only while OpenFGA answers every check fresh. Under OpenFGA, Lakekeeper
+  keeps no authorization cache of its own: its docs say its user-assignment and role-ancestor
+  caches are never populated there. OpenFGA does cache, and Lakekeeper's production guidance
+  recommends turning that on, with `OPENFGA_CHECK_QUERY_CACHE_ENABLED`,
+  `OPENFGA_CHECK_ITERATOR_CACHE_ENABLED` and `OPENFGA_CACHE_CONTROLLER_ENABLED`. Probed on this
+  stack, three trials each, one statement every 0.25 s:
+  - With the check-query cache on, the refusal came 10.0–10.2 s after the revoke, and 38–40
+    statements were served in between. The cache's default TTL is 10 s.
+  - With all three of the recommended settings on, the refusal came 8.0–8.5 s after the revoke,
+    and 31–33 statements were served in between. The first refusal was sometimes a
+    `CatalogException`. Other times it was the bare `Error` "No region was provided via the
+    vended credentials": a half-expired cache let `LoadTable` answer without credentials.
+
+  OpenFGA ships with all three off, and the fixture now pins them off. So the battery's "next
+  statement" assertion holds for the fixture, not for every deployment.
+- **Because:** OpenFGA caches `Check` results for `--check-query-cache-ttl`, 10 s by default,
+  and Lakekeeper's docs say it sends most checks with `MINIMIZE_LATENCY` consistency.
+- **Class:** `discovery`.
+- **Consequence:** in a deployment that follows Lakekeeper's advice, the check-cache TTL bounds
+  revocation, not the next statement. `evict_tenant` does not help, because the stale answer
+  lives in OpenFGA, not in DuckDB.
+- **Proposed row (RFC 0078):** `ASSUMED` — revocation latency is the longer of "the next
+  statement" and the OpenFGA check-cache TTL. The deployment contract (§3.1) names the TTL.
+  Battery 11a runs with caching off, and a second leg asserts the TTL bound with caching on.
