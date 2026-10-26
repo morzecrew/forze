@@ -144,8 +144,8 @@ class QueryFilterLimits:
     """Maximum number of clauses (combinator children, field keys, and per-field ops)."""
 
     max_in_size: int = 1_000
-    """Maximum length of membership and set-relation operand lists; :func:`bind_max_in_size`
-    raises it for one block of trusted code."""
+    """Maximum length of membership, set-relation and hierarchy operand lists;
+    :func:`bind_max_in_size` raises it for one block of trusted code."""
 
     max_pattern_length: int = 256
     """Maximum length of each ``$like`` / ``$ilike`` / ``$regex`` pattern string."""
