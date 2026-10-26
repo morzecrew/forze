@@ -36,6 +36,37 @@ def _is_cors_preflight(request: Request) -> bool:
     )
 
 
+def is_anonymous_path(anonymous_paths: frozenset[str], scope: Scope) -> bool:
+    """Whether the request path is listed in *anonymous_paths*, as
+    :attr:`SecurityContextMiddleware.anonymous_paths` reads them.
+
+    Reads the percent-decoded ``scope["path"]`` routing reads, never ``request.url``:
+    that is re-split from it, so an encoded ``?`` or ``#`` would end its path early and
+    borrow an anonymous one.
+    """
+
+    path: str = scope.get("path", "")
+
+    if path in anonymous_paths:
+        return True
+
+    # Strip the mount exactly as Starlette's router does, so the relative path is
+    # the one the request is routed by — never a different route.
+    root: str = scope.get("root_path", "")
+
+    if not root or not path.startswith(root) or path[len(root) : len(root) + 1] != "/":
+        return False
+
+    relative = path[len(root) :]
+
+    # Led by the prefix's path segments, it could also be another route's full path:
+    # an entry that reads both ways only ever counts as full (checked above).
+    if relative == root or relative.startswith(root + "/"):
+        return False
+
+    return relative in anonymous_paths
+
+
 # ....................... #
 
 
@@ -76,7 +107,10 @@ class SecurityContextMiddleware:
 
     A browser holding a stale access cookie would otherwise be refused on the very
     routes that exist without an identity — ``/auth/login`` (which replaces the
-    credential), ``/auth/refresh``, a public health page. On these paths an
+    credential), ``/auth/refresh``, cookie-mode ``/auth/logout`` (which revokes from the
+    refresh cookie then), a public health page;
+    :func:`~forze_fastapi.middlewares.check_authn_cookie_paths` refuses a cookie-mode
+    login, refresh or logout route missing here at startup. On these paths an
     **authentication-kind** failure (expired/invalid credential, ambiguous
     credentials, a tenant mismatch) downgrades to an **anonymous** request: no
     authn, no tenant bound — the route authenticates from its body or serves
@@ -125,37 +159,6 @@ class SecurityContextMiddleware:
     :func:`~forze_fastapi.middlewares.check_bypass_paths` (run by ``runtime_lifespan``)
     fails the boot on that, on a bypassed path that serves a generated operation route,
     and on the two middlewares carrying different sets."""
-
-    # ....................... #
-
-    def _is_anonymous(self, scope: Scope) -> bool:
-        """Whether the request path is listed in :attr:`anonymous_paths`.
-
-        Reads the percent-decoded ``scope["path"]`` routing reads, never ``request.url``:
-        that is re-split from it, so an encoded ``?`` or ``#`` would end its path early and
-        borrow an anonymous one.
-        """
-
-        path: str = scope.get("path", "")
-
-        if path in self.anonymous_paths:
-            return True
-
-        # Strip the mount exactly as Starlette's router does, so the relative path is
-        # the one the request is routed by — never a different route.
-        root: str = scope.get("root_path", "")
-
-        if not root or not path.startswith(root) or path[len(root) : len(root) + 1] != "/":
-            return False
-
-        relative = path[len(root) :]
-
-        # Led by the prefix's path segments, it could also be another route's full path:
-        # an entry that reads both ways only ever counts as full (checked above).
-        if relative == root or relative.startswith(root + "/"):
-            return False
-
-        return relative in self.anonymous_paths
 
     # ....................... #
 
@@ -221,7 +224,7 @@ class SecurityContextMiddleware:
 
         request = Request(scope, receive)
         ctx = self.ctx_dep()
-        anonymous = self._is_anonymous(scope)
+        anonymous = is_anonymous_path(self.anonymous_paths, scope)
 
         try:
             # A preflight carries no credential, so an ingress's own `required` must not

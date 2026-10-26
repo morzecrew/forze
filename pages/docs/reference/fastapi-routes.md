@@ -299,8 +299,10 @@ a short delay.
 Point the inbound `CookieTokenAuthn`'s `cookie_name` at the same
 `access_cookie`, and list the login, refresh and logout paths in the security
 middleware's [`anonymous_paths`](../integrations/fastapi.md#bind-request-context) —
-otherwise a stale access cookie 401s the very route that would replace it, and a
-logout arriving with no cookie gets a 401 instead of having the cookies expired.
+otherwise a stale access cookie 401s the very route that would replace it. A 401'd
+logout never runs, so the session stays live and the cookies stay set.
+`check_authn_cookie_paths` also refuses to start an app whose security middleware
+leaves one of the three cookie-mode routes out of `anonymous_paths`.
 Cookies are always `HttpOnly` and `Secure` by default, with `samesite="lax"` as
 the outbound browser-side default. Inbound, `CookieTokenAuthn` ships a
 server-side CSRF gate **on by default** (`CookieCsrf`): a request using either

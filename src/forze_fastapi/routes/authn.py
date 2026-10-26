@@ -75,7 +75,7 @@ from forze.base.exceptions import exc
 from forze.base.primitives import StrKeyNamespace
 from forze_kits.aggregates.authn import AuthnKernelOp, AuthnRefreshRequestDTO
 
-from ..middlewares.authn_cookies import AUTHN_COOKIE_LOGOUT_ATTR
+from ..middlewares.authn_cookies import AUTHN_COOKIE_ANONYMOUS_ATTR, AUTHN_COOKIE_LOGOUT_ATTR
 from ..security.cookies import AuthnCookieCarrier
 from ..security.resolvers import enforce_published_cookie_csrf
 from ._attach import (
@@ -142,6 +142,8 @@ def _cookie_token_endpoint(cookies: AuthnCookieCarrier) -> Any:
             "payload": dto_type,
             "response": Response,
         }
+        # check_authn_cookie_paths requires the route's mounted path in anonymous_paths.
+        setattr(endpoint, AUTHN_COOKIE_ANONYMOUS_ATTR, True)
 
         return endpoint
 
@@ -221,6 +223,8 @@ def _cookie_refresh_endpoint(cookies: AuthnCookieCarrier) -> Any:
             "response": Response,
             "payload": payload_type,
         }
+        # check_authn_cookie_paths requires the route's mounted path in anonymous_paths.
+        setattr(endpoint, AUTHN_COOKIE_ANONYMOUS_ATTR, True)
 
         return endpoint
 
@@ -277,8 +281,10 @@ def _cookie_logout_endpoint(
             ]
         )
         endpoint.__annotations__ = {"request": Request, "response": Response}
-        # check_authn_cookie_paths holds the route's mounted path against these at startup.
+        # check_authn_cookie_paths holds the route's mounted path against these, and
+        # against anonymous_paths, at startup.
         setattr(endpoint, AUTHN_COOKIE_LOGOUT_ATTR, (cookies.access_path, cookies.refresh_path))
+        setattr(endpoint, AUTHN_COOKIE_ANONYMOUS_ATTR, True)
 
         return endpoint
 
@@ -491,13 +497,13 @@ def attach_authn_routes(
             precedence); ``/logout`` revokes the session the access cookie's identity
             or, without one, the refresh cookie names (``logout_by_refresh_token``,
             which gets no route of its own), and expires both cookies.
-            ``/login`` and ``/logout`` apply the same gate on every request. The path
-            of the access cookie or of the refresh cookie must cover the logout route,
-            checked at startup by
-            :func:`~forze_fastapi.middlewares.check_authn_cookie_paths`. Point
+            ``/login`` and ``/logout`` apply the same gate on every request. Point
             ``CookieTokenAuthn`` at the carrier's access cookie, and list the
-            login/refresh paths in the security middleware's ``anonymous_paths`` so a
-            stale access cookie cannot 401 them.
+            login, refresh and logout paths in the security middleware's
+            ``anonymous_paths`` so a stale access cookie cannot 401 them (a 401'd
+            logout revokes nothing and leaves the cookies set). The path of the
+            refresh cookie must cover the logout route. Both are checked at startup by
+            :func:`~forze_fastapi.middlewares.check_authn_cookie_paths`.
 
     Returns:
         APIRouter: The same *router*, for chaining.

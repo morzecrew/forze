@@ -4,11 +4,13 @@ require_fastapi()
 
 # ....................... #
 
-from typing import Any, Final
+from collections.abc import Iterable, Mapping
+from typing import Any, Final, cast
 
 from forze.base.exceptions import exc
 
 from ._routes import iter_effective_routes
+from .security import is_anonymous_path
 
 # ----------------------- #
 
@@ -17,9 +19,15 @@ AUTHN_COOKIE_LOGOUT_ATTR: Final[str] = "__forze_authn_cookie_logout__"
 carrier's ``(access_path, refresh_path)``, which :func:`check_authn_cookie_paths` holds
 against the route."""
 
+AUTHN_COOKIE_ANONYMOUS_ATTR: Final[str] = "__forze_authn_cookie_anonymous__"
+"""Marker the cookie-mode login, refresh and logout endpoints carry (set by
+``attach_authn_routes``): the routes :func:`check_authn_cookie_paths` requires in every
+security middleware's ``anonymous_paths``."""
+
 
 def check_authn_cookie_paths(app: Any) -> None:
-    """Refuse a cookie-mode logout route the refresh cookie's path does not cover.
+    """Refuse a cookie-mode logout route the refresh cookie's path does not cover, and a
+    cookie-mode login, refresh or logout route missing from ``anonymous_paths``.
 
     Cookie-mode logout revokes the session the access cookie's identity or, without one,
     the refresh cookie names. The access cookie expires first, so only the refresh cookie
@@ -27,19 +35,55 @@ def check_authn_cookie_paths(app: Any) -> None:
     logout path (``/auth/refresh`` with logout at ``/auth/logout``) would answer a logout
     after the access cookie expires with 204 and revoke nothing.
 
+    The browser keeps sending a stale access cookie to login, refresh and logout, so a
+    :class:`~forze_fastapi.middlewares.SecurityContextMiddleware` 401s each one its
+    ``anonymous_paths`` misses before the route runs: logout then neither revokes from the
+    refresh cookie nor clears the cookies. Each must be listed on every such middleware, as
+    the middleware reads the list; an app without one has nothing that 401s them.
+
     The path is the effective one, every router prefix applied, under the app's own
-    ``root_path``. A route inside a mounted sub-application is not seen from here, as
-    for :func:`~forze_fastapi.middlewares.check_bypass_paths`. ``runtime_lifespan`` runs
-    it at startup; an app with its own lifespan calls it itself.
+    ``root_path`` — the only root path known here. Under it the middleware receives the
+    path with the root path, or without it behind a proxy that strips it, so an
+    ``anonymous_paths`` entry must match both: list it relative to the root path, as you
+    would behind a server-level one (``--root-path``). A route inside a mounted
+    sub-application is not seen from here, as for
+    :func:`~forze_fastapi.middlewares.check_bypass_paths`, and neither is a security
+    middleware on one. The middleware is found by its ``anonymous_paths`` field among the
+    app's own middlewares, so one wrapped in a custom middleware or factory is not seen
+    either. ``runtime_lifespan`` runs it at startup; an app with its own lifespan calls it
+    itself.
 
     :raises CoreException: ``configuration`` when the refresh cookie's path does not
-        cover a cookie-mode logout route.
+        cover a cookie-mode logout route, or a security middleware's ``anonymous_paths``
+        misses a cookie-mode login, refresh or logout route.
     """
 
-    root = (getattr(app, "root_path", "") or "").rstrip("/")
+    raw_root = getattr(app, "root_path", "") or ""
+    root = raw_root.rstrip("/")
+    gates = _anonymous_path_sets(app)
 
     for path, route in iter_effective_routes(app):
-        cookie_paths = getattr(getattr(route, "endpoint", None), AUTHN_COOKIE_LOGOUT_ATTR, ())
+        endpoint = getattr(route, "endpoint", None)
+        # Under a root path the middleware sees the path with it, or without it behind a
+        # proxy that strips it; the entry must match both, read as the middleware reads it.
+        scopes = [{"path": root + path, "root_path": raw_root}]
+
+        if raw_root:
+            scopes.append({"path": path, "root_path": raw_root})
+
+        if getattr(endpoint, AUTHN_COOKIE_ANONYMOUS_ATTR, False) and not all(
+            is_anonymous_path(paths, scope) for paths in gates for scope in scopes
+        ):
+            raise exc.configuration(
+                f"The cookie-mode authn route {root + path!r} is not in the security "
+                "middleware's anonymous_paths, so a stale access cookie 401s it before it "
+                "runs: logout would neither revoke the session from the refresh cookie nor "
+                "clear the cookies. List the mounted login, refresh and logout paths in "
+                "SecurityContextMiddleware(anonymous_paths=...). Under FastAPI(root_path=...) "
+                "list them relative to it, and declare it without a trailing slash."
+            )
+
+        cookie_paths = getattr(endpoint, AUTHN_COOKIE_LOGOUT_ATTR, ())
 
         if not cookie_paths:
             continue
@@ -57,6 +101,28 @@ def check_authn_cookie_paths(app: Any) -> None:
             "routes' prefix). Behind a proxy that strips a prefix, declare it as "
             "FastAPI(root_path=...)."
         )
+
+
+def _anonymous_path_sets(app: Any) -> list[frozenset[str]]:
+    """The ``anonymous_paths`` of each middleware declaring the field.
+
+    Detected structurally, as ``check_bypass_paths`` finds its gates: a middleware added
+    without the kwarg still 401s every path.
+    """
+
+    sets: list[frozenset[str]] = []
+
+    for middleware in getattr(app, "user_middleware", ()):
+        cls = getattr(middleware, "cls", None)
+        fields = getattr(cls, "__attrs_attrs__", ())
+
+        if not any(getattr(field, "name", "") == "anonymous_paths" for field in fields):
+            continue
+
+        kwargs = cast("Mapping[str, Any]", getattr(middleware, "kwargs", None) or {})
+        sets.append(frozenset(cast("Iterable[str]", kwargs.get("anonymous_paths") or ())))
+
+    return sets
 
 
 def _path_matches(cookie_path: str, path: str) -> bool:
