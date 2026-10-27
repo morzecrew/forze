@@ -10284,6 +10284,9 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <h3 id="fixed">Fixed<a class="headerlink" href="#fixed" title="Permanent link">&para;</a></h3>
 <ul>
 <li>
+<p><strong><code>register_scalar_docs</code> loads the document the app actually serves</strong> (<strong>behaviour change</strong>). It fetched <code>/openapi.json</code> whatever <code>openapi_url</code> said, so a versioned app got an empty <code>/docs</code>. It now defaults to <code>app.openapi_url</code> and takes <code>openapi_url=</code>; an app serving no document fails at startup unless it passes one.</p>
+</li>
+<li>
 <p><strong><code>forze[duckdb]</code> no longer installs DuckDB 2.0.</strong> The extra now requires <code>duckdb&gt;=1.1.0,&lt;2</code>: 2.0 removed <code>fetch_arrow_table</code>, so every <code>DuckDbClient</code> query failed on a fresh install. An environment that already installed 2.0 outside the lock must reinstall the extra or pin <code>duckdb&lt;2</code>.</p>
 </li>
 <li>
