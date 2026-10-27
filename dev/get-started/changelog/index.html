@@ -10337,6 +10337,9 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <li>
 <p><strong>A Socket.IO command event runs under its connection's tenant</strong> (<strong>behaviour change</strong>). On a connection <code>attach_realtime_connection</code> admitted, an event bound the principal but no tenant, so a tenant-aware operation failed <code>tenant_required</code>. It now binds the tenant resolved at connect, as the WS route does.</p>
 </li>
+<li>
+<p><strong>A Postgres update with a changed <code>jsonb</code> field no longer answers <code>500</code> on the generated update route</strong> (<strong>behaviour change</strong>). Its diff holds the values the caller set, as on the other backends: no <code>Jsonb</code> wrapper, a <code>StrEnum</code> stays a member and a datetime is as given, not coerced to the column type.</p>
+</li>
 </ul>
 <h3 id="security">Security<a class="headerlink" href="#security" title="Permanent link">&para;</a></h3>
 <ul>

@@ -7503,7 +7503,7 @@ value, a mirror's too. On the domain path, a mirror whose create sets a frozen f
 <tr>
 <td><code>update</code></td>
 <td><code>update(pk, rev, dto, *, return_new=True, return_diff=False)</code></td>
-<td>optimistic — a stale <code>rev</code> raises <code>conflict</code>; <code>return_diff</code> adds the change <code>JsonDict</code></td>
+<td>optimistic — a stale <code>rev</code> raises <code>conflict</code>; <code>return_diff</code> adds the change <code>JsonDict</code>, a merge patch holding the values the caller set on every backend (a <code>StrEnum</code> stays a member, a datetime is as given), not the store's column coercion</td>
 </tr>
 <tr>
 <td><code>update_many</code></td>
