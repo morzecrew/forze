@@ -611,6 +611,15 @@ class TestShell:
         secrets = await _inner_rows(routed, _A, "SELECT name FROM duckdb_secrets()")
         assert secrets == [{"name": "lake_cat"}]  # D-025: only the catalog principal
 
+    async def test_an_analytics_read_keeps_no_vended_secret_either(
+        self, routed: RoutedDuckDbClient
+    ) -> None:
+        _tenant.set(_A)
+        await routed.run_query("SELECT count(*) AS n FROM lake.gold.orders")
+
+        secrets = await _inner_rows(routed, _A, "SELECT name FROM duckdb_secrets()")
+        assert secrets == [{"name": "lake_cat"}]  # D-047: kept, it fails reads once expired
+
 
 class TestPool:
     """Battery 13 — eviction, rotation, the D-026 rebuild rule, the process-wide bound."""

@@ -187,8 +187,10 @@ refuses) raises `duckdb_session_setup_failed`. Both are `configuration` errors, 
 the instance is closed. Each statement then runs on a fresh cursor:
 `USE lake.<namespace>`, DuckDB's own parser checks that the text is exactly one
 `SELECT`, the classified statement runs unmodified, and a result with two columns
-of the same name is refused. Once no statement is running on the instance, the
-per-table S3 secrets the catalog vended are dropped.
+of the same name is refused. After every read, dynamic or analytics, the
+per-table S3 secrets the catalog vended for it are dropped. A kept secret
+outranks the next statement's fresh one, so once it expired every later read of
+that table would fail.
 
 What the route promises, and who keeps each promise:
 

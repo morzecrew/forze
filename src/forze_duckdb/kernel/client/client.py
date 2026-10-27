@@ -158,27 +158,31 @@ def _single_select(cursor: Any, statement: str) -> Any:
 # ....................... #
 
 
-def _drop_vended_secrets(conn: Any) -> None:
+def _drop_vended_secrets(conn: Any, lock: threading.Lock) -> None:
     """Drop every temporary S3 secret the ``iceberg`` extension vended.
 
     The extension creates one per ``LoadTable`` and keeps it once the statement's transaction
-    commits, so without this a revoked principal keeps reading by path until the credential
-    expires (RFC 0078 EXECUTION-LOG D-025).
+    commits. Kept, it lets a revoked principal read by path until the credential expires
+    (RFC 0078 EXECUTION-LOG D-025), and once expired it outranks the fresh secret of the next
+    statement on the same table, which then fails (D-047). A running statement's own secret is
+    uncommitted, so this drop cannot see it (D-048). *lock* serializes drops: two transactions
+    dropping one secret conflict.
     """
 
-    cursor = conn.cursor()
+    with lock:
+        cursor = conn.cursor()
 
-    try:
-        rows = cursor.execute(
-            "SELECT name FROM duckdb_secrets() WHERE starts_with(name, $prefix)",
-            {"prefix": _VENDED_SECRET_PREFIX},
-        ).fetchall()
+        try:
+            rows = cursor.execute(
+                "SELECT name FROM duckdb_secrets() WHERE starts_with(name, $prefix)",
+                {"prefix": _VENDED_SECRET_PREFIX},
+            ).fetchall()
 
-        for (name,) in rows:
-            cursor.execute(f"DROP TEMPORARY SECRET {_quote_identifier(name)}")
+            for (name,) in rows:
+                cursor.execute(f"DROP TEMPORARY SECRET {_quote_identifier(name)}")
 
-    finally:
-        cursor.close()
+        finally:
+            cursor.close()
 
 
 # ....................... #
@@ -269,8 +273,7 @@ class DuckDbClient(DuckDbDynamicReadClientPort):
     __executor: ThreadPoolExecutor | None = attrs.field(default=None, init=False)
     __admission: asyncio.Semaphore | None = attrs.field(default=None, init=False)
     __init_lock: asyncio.Lock = attrs.field(factory=asyncio.Lock, init=False)
-    __dynamic_lock: threading.Lock = attrs.field(factory=threading.Lock, init=False)
-    __dynamic_running: int = attrs.field(default=0, init=False)
+    __drop_lock: threading.Lock = attrs.field(factory=threading.Lock, init=False)
 
     # ....................... #
     # Lifecycle
@@ -492,6 +495,7 @@ class DuckDbClient(DuckDbDynamicReadClientPort):
             finally:
                 holder.pop("cursor", None)
                 cursor.close()
+                _drop_vended_secrets(conn, self.__drop_lock)
 
         return await self.__submit(_exec, holder, timeout)
 
@@ -642,28 +646,16 @@ class DuckDbClient(DuckDbDynamicReadClientPort):
             return [dict(zip(columns, row, strict=True)) for row in cursor.fetchmany(row_probe)]
 
         def _exec() -> list[JsonDict]:
-            with self.__dynamic_lock:
-                self.__dynamic_running += 1
+            cursor = _open_cursor(conn, holder)
 
             try:
-                cursor = _open_cursor(conn, holder)
-
-                try:
-                    return _run(cursor)
-
-                finally:
-                    holder.pop("cursor", None)
-                    # An unexhausted stream rolls back here, discarding its own vended secret.
-                    cursor.close()
+                return _run(cursor)
 
             finally:
-                # Drop only when no other statement is running: a concurrent one may be reading
-                # with a secret it was just vended. Held across the drop, so none starts meanwhile.
-                with self.__dynamic_lock:
-                    self.__dynamic_running -= 1
-
-                    if self.__dynamic_running == 0:
-                        _drop_vended_secrets(conn)
+                holder.pop("cursor", None)
+                # An unexhausted stream rolls back here, discarding its own vended secret.
+                cursor.close()
+                _drop_vended_secrets(conn, self.__drop_lock)
 
         return await self.__submit(_exec, holder, timeout)
 

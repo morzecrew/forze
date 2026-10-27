@@ -11,6 +11,7 @@ import asyncio
 import os
 import re
 import secrets
+import threading
 import time
 import typing
 from collections.abc import AsyncIterator
@@ -357,21 +358,43 @@ async def test_an_interrupt_that_lands_before_execute_is_sent_again(
     assert time.monotonic() - started < 5  # _SPIN alone runs for minutes
 
 
-async def test_a_vended_secret_outlives_a_statement_while_another_runs(
+async def test_a_committed_leftover_is_dropped_while_another_statement_runs(
     lake_client: DuckDbClient,
 ) -> None:
     running = asyncio.create_task(
         lake_client.run_dynamic(_HEAVY_SQL, row_probe=2, timeout=timedelta(seconds=30))
     )
     await asyncio.sleep(0.1)
-    # Stands in for the secret the running statement was vended for its scan.
+    # A secret an earlier statement was vended and committed: a leftover, whatever else runs.
     await lake_client.run_command(f"CREATE TEMPORARY SECRET __internal_ic_a ({_S3_SECRET})")
 
     await lake_client.run_dynamic("SELECT 1 AS one", row_probe=2, timeout=_TIMEOUT)
 
-    assert await _secret_names(lake_client) == ["__internal_ic_a"]
-    await running
+    assert not running.done()
     assert await _secret_names(lake_client) == []
+    await running
+
+
+async def test_an_analytics_read_drops_the_vended_secrets_too(lake_client: DuckDbClient) -> None:
+    await lake_client.run_command(f"CREATE TEMPORARY SECRET __internal_ic_t ({_S3_SECRET})")
+
+    await lake_client.run_query("SELECT n FROM lake.gold.t")
+
+    assert await _secret_names(lake_client) == []
+
+
+def test_a_drop_cannot_see_a_running_statements_secret() -> None:
+    """A statement's vended secret is uncommitted until it ends, so a concurrent drop skips it."""
+
+    conn = duckdb.connect(":memory:")
+    running = conn.cursor()
+    running.execute("BEGIN")
+    running.execute(f"CREATE TEMPORARY SECRET __internal_ic_live ({_S3_SECRET})")
+
+    client_module._drop_vended_secrets(conn, threading.Lock())
+
+    running.execute("COMMIT")
+    assert conn.execute("SELECT name FROM duckdb_secrets()").fetchall() == [("__internal_ic_live",)]
 
 
 async def test_duplicate_column_names_are_refused(lake_client: DuckDbClient) -> None:

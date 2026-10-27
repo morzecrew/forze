@@ -466,6 +466,20 @@ class TestCredentialLifetime:
             == 0
         )
 
+    def test_a_running_statements_secret_is_invisible_to_another_cursor(
+        self, lake: LakeVendingStack, tenant_a: LakeTenant
+    ) -> None:
+        """Uncommitted until the statement ends, so a drop elsewhere cannot take it (D-048)."""
+
+        con = lake.session(tenant_a.principal, tenant_a.warehouse)
+        vended = "SELECT count(*) FROM duckdb_secrets() WHERE name LIKE '__internal_ic_%'"
+        running = con.cursor()
+        running.execute("SELECT * FROM lake.gold.orders").fetchmany(1)
+
+        assert con.cursor().execute(vended).fetchone() == (0,)
+        running.fetchall()  # exhausted: the statement commits, and its secret with it
+        assert con.cursor().execute(vended).fetchone() == (1,)
+
     def test_a_vended_secret_can_be_dropped_under_lock_configuration(
         self, lake: LakeVendingStack, tenant_a: LakeTenant
     ) -> None:

@@ -284,8 +284,8 @@ class RoutedDuckDbClient(
     attestation, and serves nothing if a step or the attestation fails (both configuration
     errors, never a statement's). It has no field for static
     object-store credentials, raw secrets, sources or bootstrap statements. An instance holds
-    the tenant's catalog principal for its life, and the S3 credentials vended for a statement
-    until no statement is running.
+    the tenant's catalog principal for its life, and the S3 credentials vended for a read
+    statement until that statement ends.
 
     Register it under :data:`~forze_duckdb.execution.deps.DuckDbClientDepKey` and use
     :func:`~forze.application.execution.lifecycle.builtin.routed_client_lifecycle_step`, not
