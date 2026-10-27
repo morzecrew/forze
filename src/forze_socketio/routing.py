@@ -19,8 +19,9 @@ is stored in the Socket.IO session, and each dispatched event binds it onto the
 invocation context (``ctx.inv_ctx.bind_identity(authn=...)``) around handler
 execution. Tenant resolution stays the ``context_factory``'s job, except on a
 connection ``attach_realtime_connection`` admitted, whose events also bind the
-tenant it resolved at connect. Without a resolver nothing changes: no connect
-handler is registered and no identity is bound.
+tenant it resolved at connect; such a connection's identity is bound the same way, with or
+without an ``identity_resolver``. A connection admitted by neither path binds no identity,
+and without a resolver no connect handler is registered here.
 """
 
 from ._compat import require_socketio
