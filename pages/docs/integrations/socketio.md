@@ -121,7 +121,9 @@ lifecycle = [
     ),
     realtime_gateway_lifecycle_step(gateway),
 ]
-attach_realtime_connection(sio, resolve=resolve_connection, presence=presence)  # the single connect path
+attach_realtime_connection(  # the single connect path
+    sio, resolve=resolve_connection, presence=presence, ctx_dep=runtime.get_context,
+)
 ```
 
 `attach_realtime_connection` is the **single** connect path — it authenticates *and*
@@ -130,6 +132,13 @@ auto-joins the principal room, so do not also give `ForzeSocketIOAdapter` an
 resolver must return the identity with its `actor` chain intact, not normalized to its
 subject. The publish-side `Audience.principal(id)` must
 use the same id the gateway joins with (`str(authn.principal_id)`).
+
+Pass `ctx_dep` (or the serving `runtime`) so the connect can ask whether the deployment is
+tenanted. Once it registers a tenant resolver, an anonymous connect and a connection
+without a tenant are refused (`auth_required`, `tenant_required`), at connect and at
+`realtime.reauth`, whatever the resolver returned. Anonymous connects are accepted only
+where no tenancy is wired. `tenant_required` asks the client to select a tenant; a token
+refresh does not clear it.
 
 A client that opens several namespaces over one connection is authenticated once per
 namespace. Pass `share_identity=True` to each of them to authenticate once per Engine.IO
@@ -302,6 +311,7 @@ attach_realtime_connection(
     resolve=resolve_connection,
     draining=lambda: runtime.draining,  # turn connects away while leaving
     stats=stats,
+    ctx_dep=runtime.get_context,
 )
 instrument_realtime_connections(stats)
 

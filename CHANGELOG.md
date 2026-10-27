@@ -33,6 +33,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **`HttpServicePort` requires `stream`** (**behaviour change**). A hand-written implementation or test stub must add it, or it fails type checks and `isinstance` against the runtime-checkable port.
 
+- **`local_identity_deps` wires no tenant resolver for a config that maps no tenant** (**behaviour change**). There, `forze ops call --tenant` now gets `400 tenant_request_unverifiable` instead of `401 tenant_mismatch`.
+
 ### Fixed
 
 - **`forze[duckdb]` no longer installs DuckDB 2.0.** The extra now requires `duckdb>=1.1.0,<2`: 2.0 removed `fetch_arrow_table`, so every `DuckDbClient` query failed on a fresh install. An environment that already installed 2.0 outside the lock must reinstall the extra or pin `duckdb<2`.
@@ -55,7 +57,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
-- **A realtime connection needs a tenant once tenancy is wired** (**behaviour change**). A Socket.IO, WebSocket or SSE connection that resolves none is refused with `tenant_required` instead of joining the untenanted rooms. `local_identity_deps` wires no tenant resolver for a config that maps no tenant.
+- **A realtime connection needs a tenant once tenancy is wired** (**behaviour change**). Socket.IO, WebSocket and SSE refuse one without a tenant (`tenant_required`), and Socket.IO an anonymous one, instead of admitting it to the untenanted rooms. Socket.IO checks this at the connect when given the new `ctx_dep`.
 
 - **A stale access cookie could keep a cookie-mode logout from ending the session.** `runtime_lifespan` now refuses an app whose `anonymous_paths` misses a cookie-mode login, refresh or logout route (`check_authn_cookie_paths`, **behaviour change**).
 

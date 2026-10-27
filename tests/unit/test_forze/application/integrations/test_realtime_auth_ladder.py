@@ -34,6 +34,7 @@ from forze.application.integrations.realtime import (
     RealtimeHandshake,
     client_identity,
     present_credential,
+    require_connection_tenant,
     resolve_realtime_identity,
     tenancy_wired,
 )
@@ -385,24 +386,12 @@ class TestMapping:
         assert identity.tenant == _TENANT
 
     @pytest.mark.asyncio
-    async def test_a_wired_resolver_that_binds_no_tenant_refuses_the_connection(self) -> None:
-        # A principal in several tenants (or none) with no `tid`: once tenancy is wired, an
-        # untenanted connection would join the global rooms, so it is refused instead.
-        with pytest.raises(CoreException) as caught:
-            await _resolve(
-                RealtimeCredentialSources(),
-                _handshake(headers={"Authorization": "Bearer tok"}),
-                tenants=_Tenants(None),
-            )
-
-        assert caught.value.kind is ExceptionKind.AUTHENTICATION
-        assert caught.value.code == "tenant_required"
-
-    @pytest.mark.asyncio
-    async def test_without_a_resolver_an_untenanted_connection_still_resolves(self) -> None:
+    async def test_a_resolver_with_no_binding_and_no_hint_resolves_no_tenant(self) -> None:
+        # Whether that is acceptable is require_connection_tenant's call, made with a ctx.
         identity = await _resolve(
             RealtimeCredentialSources(),
             _handshake(headers={"Authorization": "Bearer tok"}),
+            tenants=_Tenants(None),
         )
 
         assert identity is not None
@@ -426,23 +415,39 @@ class TestTenancyWired:
 
         assert ctx.tenancy.resolver("main") is not None
         assert not tenancy_wired(ctx)
-        assert not tenancy_wired(ctx, "main")
 
-    def test_a_routed_registration_counts_on_its_own_route(self) -> None:
+    def test_a_real_route_beside_the_mocks_fallback_makes_it_tenanted(self) -> None:
+        # Real tenancy on "api", the mock's fallback on "main": tenanted on every route.
         ctx = context_from_deps(
             MockDepsModule()(),
             Deps.routed({TenantResolverDepKey: {"api": lambda _ctx: _Tenants(None)}}),
         )
 
         assert tenancy_wired(ctx)
-        assert tenancy_wired(ctx, "api")
-        assert not tenancy_wired(ctx, "main")
 
-    def test_a_plain_registration_answers_every_route(self) -> None:
+    def test_a_plain_registration_counts(self) -> None:
         ctx = context_from_deps(Deps.plain({TenantResolverDepKey: lambda _ctx: _Tenants(None)}))
 
         assert tenancy_wired(ctx)
-        assert tenancy_wired(ctx, "any")
+
+
+class TestRequireConnectionTenant:
+    def test_an_untenanted_connection_is_refused_once_tenanted(self) -> None:
+        ctx = context_from_deps(
+            MockDepsModule()(),
+            Deps.routed({TenantResolverDepKey: {"api": lambda _ctx: _Tenants(None)}}),
+        )
+
+        with pytest.raises(CoreException) as caught:
+            require_connection_tenant(ctx, None)
+
+        assert caught.value.kind is ExceptionKind.AUTHENTICATION
+        assert caught.value.code == "tenant_required"
+
+        require_connection_tenant(ctx, _TENANT)
+
+    def test_without_tenancy_an_untenanted_connection_stands(self) -> None:
+        require_connection_tenant(context_from_deps(MockDepsModule()()), None)
 
 
 class TestClientIdentity:

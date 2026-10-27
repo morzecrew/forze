@@ -63,8 +63,8 @@ from forze.application.integrations.realtime import (
     iter_backlog,
     negotiate_realtime_protocol,
     refuse_delegated_identity,
+    require_connection_tenant,
     resolve_client_key,
-    tenancy_wired,
 )
 from forze.base.exceptions import exc
 from forze.base.logging import Logger
@@ -509,11 +509,7 @@ def attach_realtime_sse_route(
         tenant_identity = ctx.inv_ctx.get_tenant()
         tenant = tenant_identity.tenant_id if tenant_identity is not None else None
 
-        if tenant is None and tenancy_wired(ctx):
-            # Untenanted, the stream would match the global rooms' signals: in a tenanted
-            # deployment those are misrouted ones. Picking a tenant is the client's move.
-            raise exc.authentication("Tenant identity is required", code="tenant_required")
-
+        require_connection_tenant(ctx, tenant)
         client_key = _client_key(principal, device_id)
         mailbox = mailbox_factory(ctx)
         cursors = cursors_factory(ctx)

@@ -40,6 +40,7 @@ from forze.application.contracts.authn import (
 from forze.application.contracts.realtime import Audience
 from forze.application.contracts.tenancy import TenantIdentity, require_tenant_global
 from forze.application.execution import ExecutionContext, ExecutionRuntime
+from forze.application.execution.context import ExecutionContextFactory
 from forze.application.integrations.realtime import (
     REALTIME_ACK_EVENT,
     REALTIME_DRAINING_CODE,
@@ -49,7 +50,9 @@ from forze.application.integrations.realtime import (
     iter_backlog,
     negotiate_realtime_protocol,
     refuse_delegated_identity,
+    require_connection_tenant,
     resolve_client_key,
+    tenancy_wired,
 )
 from forze.application.integrations.realtime import (
     InMemoryRealtimePresence as InMemoryRealtimePresence,  # re-export: established home
@@ -163,7 +166,9 @@ ConnectionResolver = Callable[
 (no principal room joined), or raise a client-safe :class:`CoreException`
 (e.g. ``exc.authentication``) to refuse the connection. Return the identity with its
 ``actor`` chain intact: a delegated identity is refused from it, and one normalized to its
-subject would join the subject's room as the subject."""
+subject would join the subject's room as the subject. Once the deployment registers a tenant
+resolver, an anonymous connection or one without a tenant is refused, at connect and at
+reauth (when the layer has a context to ask: ``ctx_dep`` or ``runtime``)."""
 
 
 # ....................... #
@@ -364,6 +369,7 @@ class _ConnectionLifecycle:
     draining: Callable[[], bool] | None = None
     admission: ConnectionAdmission | None = None
     stats: RealtimeConnectionStats | None = None
+    ctx_dep: ExecutionContextFactory | None = None
 
     _replay_progress: dict[str, _ReplayProgress] = attrs.field(factory=dict, init=False)
     """Per-sid replay progress on this node, created at connect, dropped at disconnect."""
@@ -445,6 +451,40 @@ class _ConnectionLifecycle:
 
     # ....................... #
 
+    def _require_tenancy(self, connection: "RealtimeConnection | None") -> None:
+        """Refuse what an untenanted connection would get in a tenanted deployment.
+
+        Run on every identity this layer accepts, whoever wrote the resolver: an anonymous
+        connection (``auth_required``, as the WebSocket route always refuses it) or one
+        without a tenant (``tenant_required``). With no context to ask whether tenancy is
+        wired — neither ``ctx_dep`` nor an open ``runtime`` scope — the resolver alone
+        decides.
+        """
+
+        if self.ctx_dep is not None:
+            ctx = self.ctx_dep()
+
+        elif self.runtime is not None:
+            try:
+                ctx = self.runtime.get_context()
+
+            except CoreException:
+                return  # a closed serving scope: replay reports it (realtime_replay_scope_closed)
+
+        else:
+            return
+
+        if connection is not None:
+            require_connection_tenant(ctx, connection.tenant)
+
+        elif tenancy_wired(ctx):
+            raise exc.authentication(
+                "A realtime connection requires an authenticated principal once tenancy is wired",
+                code="auth_required",
+            )
+
+    # ....................... #
+
     async def on_reauth(self, sid: str, data: Any = None) -> dict[str, Any]:
         """``realtime.reauth {token, ...}``: re-verify credentials in place.
 
@@ -473,6 +513,7 @@ class _ConnectionLifecycle:
 
         try:
             refreshed, authn_admission = await _resolve(self.resolve, connect)
+            self._require_tenancy(refreshed)
 
         except CoreException as error:
             # the ack builder logs server-side kinds itself — no second log here
@@ -858,15 +899,23 @@ class _ConnectionLifecycle:
             # lifetime (missing = 1); an unsupported one is refused before any auth work.
             negotiate_realtime_protocol(auth.get("protocol") if isinstance(auth, Mapping) else None)  # pyright: ignore[reportUnknownMemberType, reportUnknownArgumentType]
 
+        async def authenticate() -> _Resolved:
+            resolved = await self._identify(connect)
+            self._require_tenancy(resolved[0])
+
+            return resolved
+
         await self._staged("protocol", negotiate)
-        connection, authn_admission = await self._staged("auth", lambda: self._identify(connect))
+        connection, authn_admission = await self._staged("auth", authenticate)
 
         if not await self._goes_on(sid):
             return
 
         if connection is None:
             await self._accepted(sid)
-            return  # anonymous: no principal room, may still join topics later
+            # anonymous (only where tenancy is not wired, see _require_tenancy): no
+            # principal room, may still join topics later
+            return
 
         session = await self.sio.get_session(sid, namespace=self.namespace)
         session[IDENTITY_SESSION_KEY] = connection.authn
@@ -948,6 +997,7 @@ def attach_realtime_connection(
     draining: Callable[[], bool] | None = None,
     admission: ConnectionAdmission | None = None,
     stats: RealtimeConnectionStats | None = None,
+    ctx_dep: ExecutionContextFactory | None = None,
 ) -> None:
     """Register connect/disconnect handlers that auto-join the principal room.
 
@@ -1007,6 +1057,13 @@ def attach_realtime_connection(
     raises refuses the connect like a resolver's: its client-safe summary, or for a
     server-side kind the generic detail, logged.
 
+    *ctx_dep* (else *runtime*'s live context) is what the layer asks whether the deployment
+    is tenanted. Once it registers a tenant resolver, this layer refuses an anonymous connect
+    (``auth_required``) and a connection without a tenant (``tenant_required``), at connect
+    and at reauth, whatever *resolve* returned. Without either it cannot ask, and leaves the
+    decision to *resolve* (the shipped one refuses an untenanted connection itself): pass
+    *ctx_dep* whenever a hand-written resolver serves a tenanted deployment.
+
     *stats* counts this namespace's open connections and its refused connects by reason
     (``protocol``, ``auth``, ``draining``, ``admission``, ``internal``); export it with
     :func:`~forze_socketio.instrument_realtime_connections`.
@@ -1057,6 +1114,7 @@ def attach_realtime_connection(
         draining=draining,
         admission=admission,
         stats=stats,
+        ctx_dep=ctx_dep,
     )
 
     sio.on("connect", handler=lifecycle.on_connect, namespace=namespace)
