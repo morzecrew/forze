@@ -160,9 +160,9 @@ def _bind_invocation(
 
     metadata = mint_invocation_metadata(
         correlation_id=(
-            producer.correlation_id
-            if producer is not None
-            else uuid5(_RUN_CORRELATION_NAMESPACE, run_id)
+            envelope.correlation_id
+            or (producer.correlation_id if producer is not None else None)
+            or uuid5(_RUN_CORRELATION_NAMESPACE, run_id)
         ),
         causation_id=producer.execution_id if producer is not None else None,
     )

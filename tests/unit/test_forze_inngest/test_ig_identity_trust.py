@@ -267,3 +267,17 @@ def test_a_malformed_correlation_id_falls_back_to_the_execution_id() -> None:
 
     assert decoded.metadata is not None
     assert decoded.metadata.correlation_id == producer
+
+
+async def test_a_malformed_execution_id_keeps_a_valid_correlation_id() -> None:
+    captured: dict[str, Any] = {}
+    fn = _register(captured, bind_identity_from_event=False)
+    correlation = uuid4()
+    envelope = {"execution_id": "not-a-uuid", "correlation_id": str(correlation)}
+    event = {"_forze": envelope, "value": "ok"}
+
+    await fn._handler(_FakeContext(event))  # pyright: ignore[reportPrivateUsage]
+
+    metadata = captured["metadata"]
+    assert metadata.correlation_id == correlation
+    assert metadata.causation_id is None
