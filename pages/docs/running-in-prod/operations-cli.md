@@ -90,6 +90,17 @@ $ forze ops call notes.create --input '{"title": "hi"}'
 an operation whose input declares a `SecretStr` or `SecretBytes` field; pipe it instead. An
 unknown input key is refused, not dropped, so a typo in a script fails loudly.
 
+An operation whose input is flat scalars (strings, numbers, booleans, ids, dates, enums) also
+takes typed flags instead of `--input`:
+
+```console
+$ forze ops call notes.create --title hi
+```
+
+Each field is a flag named after it, a boolean is `--name` or `--no-name`, and the values are
+validated exactly as `--input` is. `forze ops describe` lists an operation's flags, or says why
+it has none; the [reference](../reference/ops-cli.md#typed-flags) has the rules.
+
 `call` writes exactly one JSON document to stdout: the result, or an error object carrying the
 invocation's `execution_id` and `correlation_id`. Everything else the application writes,
 logs and prints included, goes to stderr. Branch on the exit code: 0 is success, 4 a rejected

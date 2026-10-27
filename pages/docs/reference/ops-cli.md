@@ -13,8 +13,8 @@ across releases.
 ```text
 forze ops list      [--app REF] [--json]
 forze ops describe  [--app REF] OP [--json]
-forze ops call      [--app REF] OP [--input JSON|@PATH|-] [--tenant UUID]
-                    [--idempotency-key KEY] [--timeout SECONDS] [--grace SECONDS]
+forze ops call      [--app REF] OP [--input JSON|@PATH|- | --FIELD VALUE ...]
+                    [--tenant UUID] [--idempotency-key KEY] [--timeout SECONDS] [--grace SECONDS]
                     [--correlation-id UUID] [--causation-id UUID]
                     [--api-key-file PATH] [--pretty]
 ```
@@ -25,8 +25,8 @@ forze ops call      [--app REF] OP [--input JSON|@PATH|-] [--tenant UUID]
 
 `list` and `describe` never build the runtime. They write text, or JSON with `--json`.
 `describe` shows the title and description, the kind, the declared authn requirement and
-permissions, idempotency support, the deadline, the query surface, and the input and output
-JSON Schemas.
+permissions, idempotency support, the deadline, the typed flags, the query surface, and the
+input and output JSON Schemas.
 
 ## `call` options
 
@@ -42,7 +42,35 @@ JSON Schemas.
 | `--pretty` | indents the result | |
 
 A malformed `--timeout`, `--grace`, `--tenant` or id is a parse error: Click's usage text on
-stderr, exit 2, nothing on stdout. Every other refusal is an error object.
+stderr, exit 2, nothing on stdout. Every other refusal is an error object, an option `call`
+does not have included: it is read as a typed flag.
+
+## Typed flags
+
+An operation whose input is flat scalars also takes that input as flags after `OP`, instead of
+`--input`:
+
+```console
+$ forze ops call notes.create --title "Quarterly report"
+```
+
+| Field type | Flag |
+|---|---|
+| `str`, `int`, `float`, `Decimal`, `UUID`, `date`, `datetime`, an `Enum`, a `Literal` of strings; optional or constrained ones too | `--field-name VALUE`, or `--field-name=VALUE` |
+| `bool` | `--field-name` sets it, `--no-field-name` clears it |
+
+- **Spelling.** A field's flag is its name with `-` for `_`. An alias never is.
+- **Validation.** The flags build the object `--input` would carry, and it is validated the same
+  way: each value is the string you typed, coerced by the DTO; an omitted flag takes the
+  field's default; a missing required field or a bad value exits 4 and is never echoed.
+- **A value that is a `call` option.** `--title --pretty` gives `--pretty` to `call`. Write
+  `--title=--pretty`.
+- **All or none.** An input takes no flags when one of its fields is anything else (a list, a
+  model, a union), when it declares a `SecretStr` or `SecretBytes` field, or when a flag would
+  be spelled like a `call` option (`--timeout`, `--input`, …) or like another field's. A `call`
+  option means the same for every operation. `describe` lists the flags, or says why there are
+  none.
+- **Exclusive.** Typed flags and `--input` cannot be combined.
 
 ## Output
 
@@ -104,10 +132,13 @@ retryable kinds are `concurrency`, `throttled` and `infrastructure`.
 | Code | Kind | Exit | Raised when |
 |---|---|---|---|
 | `cli_unknown_operation` | `validation` | 2 | the operation is unknown, or not exposed |
-| `cli_input_not_accepted` | `validation` | 2 | `--input` is given to an operation that takes none |
+| `cli_input_not_accepted` | `validation` | 2 | `--input` or typed flags given to an operation that takes none |
+| `cli_option_conflict` | `validation` | 2 | typed flags given with `--input` |
+| `cli_flags_unsupported` | `validation` | 2 | typed flags given to an operation whose input takes none; the detail says why |
+| `cli_malformed_flags` | `validation` | 2 | the typed flags do not parse: an unknown flag, a missing value, a value to a switch, a field given twice, or an argument that is not a flag |
 | `cli_input_unreadable` | `validation` | 2 | the `@PATH` file cannot be read |
 | `cli_malformed_input` | `validation` | 2 | the input is not JSON, or not an object |
-| `cli_inline_secret` | `validation` | 2 | the input declares a secret and was given inline |
+| `cli_inline_secret` | `validation` | 2 | the input declares a secret and was given inline or as typed flags |
 | `cli_idempotency_unsupported` | `validation` | 2 | `--idempotency-key` on an operation that does not support one |
 | `cli_tenant_unverifiable` | `validation` | 2 | `--tenant` with an anonymous or static identity |
 | `tenant_request_unverifiable` | `precondition` | 2 | `--tenant` that neither a resolver nor the key's own tenant can validate |

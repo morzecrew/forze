@@ -51,6 +51,12 @@ class TestOpsCliExample:
         assert code == 0
         assert json.loads(out)["title"] == "hi"
 
+    def test_creates_with_typed_flags(self) -> None:
+        code, out = _ops("call", "notes.create", "--title", "hi")
+
+        assert code == 0
+        assert json.loads(out)["title"] == "hi"
+
     def test_an_unknown_key_is_denied(self) -> None:
         code, out = _ops("call", "notes.list", key="not-a-key")
 

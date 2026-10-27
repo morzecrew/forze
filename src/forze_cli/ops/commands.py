@@ -23,6 +23,7 @@ from forze.application.execution.operations import OperationCatalogEntry
 from .call import document_stream, execute
 from .contract import EXIT_CONFIG, EXIT_USAGE
 from .declaration import OpsApp
+from .flags import describe_flags, flag_table
 
 # ----------------------- #
 
@@ -125,7 +126,20 @@ def _summary(entry: OperationCatalogEntry) -> str:
     return descriptor.title or (descriptor.description or "").strip().split("\n", 1)[0]
 
 
-def _description(entry: OperationCatalogEntry) -> dict[str, Any]:
+def _typed_flags(entry: OperationCatalogEntry) -> tuple[list[str] | None, str]:
+    """The operation's typed flags, or ``None`` and the reason it takes none."""
+
+    input_type = entry.descriptor.input_type if entry.descriptor is not None else None
+
+    if input_type is None:
+        return None, "it takes no input"
+
+    table, reason = flag_table(input_type)
+
+    return (None, reason) if reason is not None else (describe_flags(table), "")
+
+
+def _description(entry: OperationCatalogEntry, typed_flags: list[str] | None) -> dict[str, Any]:
     descriptor = entry.descriptor
     discovery = descriptor.query_discovery if descriptor is not None else None
 
@@ -138,6 +152,7 @@ def _description(entry: OperationCatalogEntry) -> dict[str, Any]:
         "required_permissions": list(entry.required_permissions),
         "supports_idempotency_key": entry.supports_idempotency_key,
         "deadline_seconds": entry.deadline.total_seconds() if entry.deadline else None,
+        "typed_flags": typed_flags,
         # A policy that withholds every field describes to an empty sentence.
         "query_discovery": (
             (describe_query_discovery(discovery) or None) if discovery is not None else None
@@ -147,7 +162,7 @@ def _description(entry: OperationCatalogEntry) -> dict[str, Any]:
     }
 
 
-def _render(description: dict[str, Any]) -> str:
+def _render(description: dict[str, Any], no_flags_reason: str) -> str:
     lines = [f"{description['op']} ({description['kind']})"]
 
     for key in ("title", "description"):
@@ -156,6 +171,7 @@ def _render(description: dict[str, Any]) -> str:
 
     permissions = ", ".join(description["required_permissions"]) or "none declared"
     deadline = description["deadline_seconds"]
+    flags = description["typed_flags"]
     lines += [
         "",
         f"Requires authentication: {'yes' if description['requires_authn'] else 'no'}",
@@ -163,6 +179,7 @@ def _render(description: dict[str, Any]) -> str:
         "Idempotency key: "
         + ("supported" if description["supports_idempotency_key"] else "not supported"),
         f"Deadline: {f'{deadline:g}s' if deadline is not None else 'none'}",
+        f"Typed flags: {', '.join(flags) if flags else f'none ({no_flags_reason})'}",
     ]
 
     if description["query_discovery"]:
@@ -184,9 +201,11 @@ def _group(bound: OpsApp | None, *, name: str) -> typer.Typer:
     def declaration(ref: str | None) -> OpsApp:
         return bound if bound is not None else _load(ref)
 
-    def command(command_name: str) -> Callable[[Callable[..., None]], Any]:
+    def command(command_name: str, **settings: Any) -> Callable[[Callable[..., None]], Any]:
         def register(fn: Callable[..., None]) -> Any:
-            return group.command(command_name)(_without(fn, "app") if bound is not None else fn)
+            return group.command(command_name, **settings)(
+                _without(fn, "app") if bound is not None else fn
+            )
 
         return register
 
@@ -233,13 +252,20 @@ def _group(bound: OpsApp | None, *, name: str) -> typer.Typer:
             typer.echo(f"No exposed operation {op!r}; 'list' shows them.", err=True)
             raise typer.Exit(EXIT_USAGE)
 
-        description = _description(ops.registry.catalog()[key])
-        typer.echo(json.dumps(description, indent=2) if as_json else _render(description))
+        entry = ops.registry.catalog()[key]
+        flags, no_flags_reason = _typed_flags(entry)
+        description = _description(entry, flags)
+        typer.echo(
+            json.dumps(description, indent=2) if as_json else _render(description, no_flags_reason)
+        )
 
     # ....................... #
 
-    @command("call")
+    # Typed flags depend on the operation, which Click has not read when it parses: they reach
+    # the command unparsed, and only flags no call option claims ever do.
+    @command("call", context_settings={"allow_extra_args": True, "ignore_unknown_options": True})
     def call(
+        ctx: typer.Context,
         op: str = typer.Argument(..., metavar="OP", help="The operation key, e.g. 'orders.get'."),
         app: str | None = _APP_OPTION,
         raw_input: str | None = typer.Option(
@@ -284,7 +310,11 @@ def _group(bound: OpsApp | None, *, name: str) -> typer.Typer:
         ),
         pretty: bool = typer.Option(False, "--pretty", help="Indent the result."),
     ) -> None:
-        """Call one exposed operation and write its result, or the error, as one JSON document."""
+        """Call one exposed operation and write its result, or the error, as one JSON document.
+
+        An input of flat scalars also takes typed flags after OP, '--field VALUE' per field
+        and '--name/--no-name' per boolean, instead of --input; 'describe' lists them.
+        """
 
         with document_stream() as out:
             ops = declaration(app)
@@ -292,6 +322,7 @@ def _group(bound: OpsApp | None, *, name: str) -> typer.Typer:
                 ops,
                 op=op,
                 raw_input=raw_input,
+                flags=ctx.args,
                 tenant=tenant,
                 idempotency_key=idempotency_key,
                 timeout=timeout,

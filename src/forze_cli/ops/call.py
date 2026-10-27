@@ -17,6 +17,8 @@ from pathlib import Path
 from typing import Any, TextIO, cast
 from uuid import UUID
 
+from pydantic import BaseModel
+
 from forze.application.contracts.authn import AuthnIdentity
 from forze.application.contracts.tenancy import TenantIdentity
 from forze.application.contracts.transaction import COMMIT_AMBIGUOUS_CODE
@@ -53,6 +55,7 @@ from .contract import (
     result_document,
 )
 from .declaration import ApiKeyIdentity, OpsApp, OpsIdentity, StaticIdentity
+from .flags import declares_secret, flag_table, parse_flags
 
 # ----------------------- #
 
@@ -134,6 +137,7 @@ def execute(
     *,
     op: str,
     raw_input: str | None,
+    flags: list[str],
     tenant: UUID | None,
     idempotency_key: str | None,
     timeout: float | None,
@@ -143,7 +147,10 @@ def execute(
     api_key_file: Path | None,
     pretty: bool,
 ) -> _Outcome:
-    """Run *op* on *ops* and return the one stdout document with its exit code."""
+    """Run *op* on *ops* and return the one stdout document with its exit code.
+
+    :param flags: The typed flags after the operation, unparsed.
+    """
 
     # Minted before anything can fail, so every error object carries both ids.
     metadata = mint_invocation_metadata(correlation_id=correlation_id, causation_id=causation_id)
@@ -153,11 +160,10 @@ def execute(
         entry = _exposed_entry(ops, op)
         repeatable = entry.is_read_only or idempotency_key is not None
         _check_options(ops.identity, entry, tenant, idempotency_key, api_key_file)
+        raw, by_name = _read_input(raw_input, flags, entry)
+        # Typed flags spell field names, so no alias reads them.
         args = validate_operation_input(
-            entry.descriptor,
-            _read_input(raw_input, entry),
-            code="cli_invalid_input",
-            forbid_unknown=True,
+            entry.descriptor, raw, code="cli_invalid_input", forbid_unknown=True, by_name=by_name
         )
         api_key = _read_api_key(ops.identity, api_key_file)
 
@@ -270,17 +276,39 @@ def _check_options(
         )
 
 
-def _read_input(raw_input: str | None, entry: OperationCatalogEntry) -> dict[str, Any]:
+def _read_input(
+    raw_input: str | None, flags: list[str], entry: OperationCatalogEntry
+) -> tuple[dict[str, Any], bool]:
+    """The raw input object, and whether it is keyed by field name (typed flags are)."""
+
     input_type = entry.descriptor.input_type if entry.descriptor is not None else None
 
-    if raw_input is None:
-        return {}
+    if raw_input is None and not flags:
+        return {}, False
+
+    if raw_input is not None and flags:
+        raise _usage(
+            "Pass the input with --input or as typed flags, not both", "cli_option_conflict"
+        )
 
     if input_type is None:
         raise _usage(
             f"Operation {str(entry.op)!r} takes no input",
             "cli_input_not_accepted",
         )
+
+    # Typed flags and inline JSON are on argv, which ``ps`` and shell history show.
+    on_argv = raw_input is None or not (raw_input == "-" or raw_input.startswith("@"))
+
+    if on_argv and declares_secret(input_type.model_json_schema()):
+        raise _usage(
+            f"Operation {str(entry.op)!r} takes a secret: pass its input on stdin "
+            "(--input -) or from a file (--input @PATH), not on the command line",
+            "cli_inline_secret",
+        )
+
+    if raw_input is None:
+        return _read_flags(flags, input_type, op=str(entry.op)), True
 
     if raw_input == "-":
         text = sys.stdin.read()
@@ -294,14 +322,6 @@ def _read_input(raw_input: str | None, entry: OperationCatalogEntry) -> dict[str
                 f"Cannot read --input file {raw_input[1:]!r}: {error.strerror}",
                 "cli_input_unreadable",
             ) from error
-
-    # argv is visible in ``ps`` and shell history.
-    elif _declares_secret(input_type.model_json_schema()):
-        raise _usage(
-            f"Operation {str(entry.op)!r} takes a secret: pass its input on stdin "
-            "(--input -) or from a file (--input @PATH), not inline",
-            "cli_inline_secret",
-        )
 
     else:
         text = raw_input
@@ -317,26 +337,27 @@ def _read_input(raw_input: str | None, entry: OperationCatalogEntry) -> dict[str
     if not isinstance(value, dict):
         raise _usage("--input must be a JSON object", "cli_malformed_input")
 
-    return value  # pyright: ignore[reportUnknownVariableType]
+    return value, False  # pyright: ignore[reportUnknownVariableType]
 
 
 def _refuse_constant(name: str) -> Any:
     raise ValueError(f"{name} is not JSON")
 
 
-def _declares_secret(schema: Any) -> bool:
-    """Whether a JSON Schema declares a ``SecretStr`` or ``SecretBytes`` anywhere in it."""
+def _read_flags(flags: list[str], input_type: type[BaseModel], *, op: str) -> dict[str, Any]:
+    table, reason = flag_table(input_type)
 
-    if isinstance(schema, dict):
-        return schema.get("format") == "password" or any(  # pyright: ignore[reportUnknownMemberType]
-            _declares_secret(value)
-            for value in schema.values()  # pyright: ignore[reportUnknownVariableType]
+    if reason is not None:
+        raise _usage(
+            f"Operation {op!r} takes no typed flags: {reason}; pass its input with --input",
+            "cli_flags_unsupported",
         )
 
-    if isinstance(schema, list):
-        return any(_declares_secret(value) for value in schema)  # pyright: ignore[reportUnknownVariableType]
+    try:
+        return parse_flags(flags, table)
 
-    return False
+    except ValueError as error:
+        raise _usage(f"Typed flags do not parse: {error}", "cli_malformed_flags") from error
 
 
 def _read_api_key(identity: OpsIdentity, api_key_file: Path | None) -> str | None:

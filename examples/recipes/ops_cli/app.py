@@ -12,6 +12,7 @@ Run it (the in-memory mock keeps no state between processes, so each call starts
     forze ops list
     forze ops describe notes.create
     FORZE_API_KEY=demo-operator-key forze ops call notes.create --input '{"title": "hi"}'
+    FORZE_API_KEY=demo-operator-key forze ops call notes.create --title hi   # typed flags
 
 Exercised by tests/unit/test_examples/test_ops_cli.py.
 """

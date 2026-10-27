@@ -14,10 +14,12 @@ import logging
 import os
 import sys
 from collections.abc import Awaitable, Callable
-from typing import Any
+from datetime import date
+from enum import StrEnum
+from typing import Annotated, Any, Literal
 from uuid import UUID
 
-from pydantic import SecretStr
+from pydantic import Field, SecretStr
 
 from forze.application.contracts.authn import AuthnIdentity, AuthnSpec
 from forze.application.contracts.execution import LifecycleStep
@@ -117,6 +119,41 @@ class Deny(BaseDTO):
     resource_type: str
 
 
+class Mode(StrEnum):
+    PLAIN = "plain"
+    LOUD = "loud"
+
+
+class Flags(BaseDTO):
+    """Flat scalars only: ``forze ops call`` takes typed flags for it."""
+
+    text: str
+    count: int = 1
+    ratio: float | None = None
+    loud: bool = False
+    day: date | None = None
+    ref: UUID | None = None
+    mode: Mode = Mode.PLAIN
+    level: Literal["low", "high"] = "low"
+    retry_after: Annotated[int, Field(ge=0)] | None = None
+
+
+class Nested(BaseDTO):
+    tags: list[str]
+
+
+class Collides(BaseDTO):
+    """A field spelled like a ``call`` option: no typed flags."""
+
+    timeout: float = 1.0
+
+
+class Aliased(BaseDTO):
+    """Read by alias only; a typed flag spells the field's own name."""
+
+    display_name: str = Field(alias="displayName")
+
+
 # ....................... #
 
 
@@ -142,6 +179,10 @@ def _bound(ctx: ExecutionContext) -> Callable[[None], Awaitable[Bound]]:
 
 
 async def _echo(args: Text) -> Text:
+    return args
+
+
+async def _returned(args: Any) -> Any:
     return args
 
 
@@ -212,6 +253,10 @@ def build_registry(*, sensitive: bool = False) -> FrozenOperationRegistry:
             "probe.secret": lambda _c: _secret,
             "probe.deny": lambda _c: _deny,
             "probe.cancelled": lambda _c: _cancelled,
+            "probe.flags": lambda _c: _returned,
+            "probe.nested": lambda _c: _ok,
+            "probe.collides": lambda _c: _returned,
+            "probe.aliased": lambda _c: _returned,
             "notes.add": lambda _c: _add,
         },
         descriptors={
@@ -227,6 +272,10 @@ def build_registry(*, sensitive: bool = False) -> FrozenOperationRegistry:
             "probe.secret": _descriptor(Secret, Text),
             "probe.deny": _descriptor(Deny),
             "probe.cancelled": _descriptor(),
+            "probe.flags": _descriptor(Flags, Flags),
+            "probe.nested": _descriptor(Nested),
+            "probe.collides": _descriptor(Collides, Collides),
+            "probe.aliased": _descriptor(Aliased),
             "notes.add": _descriptor(Text, Count, title="Add a note"),
         },
     )
@@ -239,6 +288,10 @@ def build_registry(*, sensitive: bool = False) -> FrozenOperationRegistry:
         "probe.secret",
         "probe.deny",
         "probe.cancelled",
+        "probe.flags",
+        "probe.nested",
+        "probe.collides",
+        "probe.aliased",
     ):
         reg = reg.bind(op).as_query().finish()
 
