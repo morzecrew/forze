@@ -1470,17 +1470,19 @@ taken as the design: `oauth2_scope` required (D-024), vended secrets dropped aft
 empty `client_id` refused and battery 17 deferred (D-030), revocation at the next statement or
 the authorizer's cache TTL (D-032). D-028 is `OPEN`. P1 works under option (a): the docs state the
 ~120 s bound for a hung request and size `max_concurrent_queries_total` from it. The DuckDbClient
-early return is the last commit on the branch, on its own, so it can be dropped (D-042).
+early return is the last commit on the branch, on its own, so it can be dropped (D-042). D-047
+widens D-025's drop from dynamic reads to every read, and D-048 withdraws D-044's idle rule.
 
-**Drift count: 0.** Fourteen entries, D-033 to D-046: five `discovery`, nine `spec-gap`. Most
+**Drift count: 0.** Sixteen entries, D-033 to D-048: seven `discovery`, nine `spec-gap`. Most
 were forced by a probe result or by a sketch that did not fit the shipped code. Five were not.
 D-039, D-042, D-043 and D-045 are design choices that follow from working assumption (a) of
-D-028, and D-044 closes a concurrency gap in D-025's row. D-043 to D-046 came out of a review of the branch,
-before it was published.
+D-028, and D-044 set out to close a concurrency gap in D-025's row; D-048 withdraws it, because
+the gap does not exist. D-043 to D-046 came out of a review of the branch, and D-047 and D-048
+out of P2's run of battery 11b, all before the branch was published.
 
 **Where each battery item lives.** The real leg is
 [`test_lake_routed_reads.py`](../tests/integration/test_forze_duckdb/test_lake_routed_reads.py):
-72 tests on one module-scoped stack, about 29 s including the stack. It starts its own stack
+73 tests on one module-scoped stack, about 29 s including the stack. It starts its own stack
 rather than share the P0 module's, which costs one more stack start (about 20 s) in the duckdb
 shard. Items 3–10, 12–14 and 16 are classes there, named by number. Item 1 is P0's
 `TestFixtureSelfTest`, imported so it runs first against this module's stack. Item 2 is in the
@@ -1843,3 +1845,62 @@ and a rotate-and-evict race. With guarded eviction sabotaged, all 20 seeds fail.
   checks that the statement still stops.
 - **Proposed row (RFC 0078):** `ASSUMED` — a timeout dequeues a queued statement and repeats
   the interrupt until the worker returns.
+
+## D-047 — An analytics read kept its vended secret, and once expired it broke the table
+
+- **Touches:** D-025's proposed row ("after every statement, `run_dynamic` drops the vended
+  `__internal_ic_%` secrets"), RFC 0078 §2.5's "Named-query analytics routes keep working on the
+  routed client", §3.2, and battery 11b, which P2 runs (Unit 7).
+- **RFC said:** every statement starts from a fresh `LoadTable`, so an expired credential is
+  never reused. D-025 added the drop to the dynamic path only.
+- **Found:** P2's first real run of battery 11b, before this branch was published, found it.
+  An analytics read on the routed client (`run_query`) kept the secret it was vended,
+  as D-025 describes for any committed statement. After that credential expired, the next
+  analytics read of the same table on the same instance loaded the table again and was vended a
+  fresh secret, then signed its store requests with the old one. It failed with
+  `HTTPException` "HTTP 400 Bad Request … InvalidRequest: check key failed", and so did every
+  read after it. Only the old secret was left afterwards: the failed statement rolled back and
+  took the fresh one with it. A dynamic read on the same instance succeeded, because its drop
+  had left no old secret to choose. A plain session that kept its secret did not fail with the
+  external file cache on, probably because its read never reached the store. With the cache
+  off, it fails the same way (11b's kept-secret leg, Unit 7).
+- **Because:** the engine picks between two secrets of the same scope without regard to
+  expiry, and here it picked the older one. duckdb-iceberg#1352 reports the same symptom.
+- **Class:** `discovery`. It shows only after a credential expires, 900 s at the store's floor.
+- **Consequence:** with the routed client as first built, an instance's analytics reads of a
+  table stopped working one credential lifetime after the first of them, until `evict_tenant`.
+  The fix is the drop D-025 proposed, on every read: `DuckDbClient.run_query` now drops the
+  vended secrets after each statement, as `run_dynamic` does. The drop is in `DuckDbClient`, so
+  a plain client drops them too. There nothing matches the prefix unless a bootstrap statement
+  attached a vending catalog, and such a client had the same defect. `run_command` is not a
+  read path and is left alone. Pinned here by `test_an_analytics_read_keeps_no_vended_secret_either`
+  in the battery and a unit test in `test_duckdb_run_dynamic.py`. The expiry itself takes 15
+  minutes to show, so it is pinned in P2's `lake_slow` module.
+- **Proposed row (RFC 0078):** `ASSUMED` — every read statement on an instance, dynamic or
+  analytics, drops the vended secrets when it ends. This widens D-025's row, which stays as
+  written.
+
+## D-048 — A running statement's vended secret is invisible to another cursor; D-044's rule is withdrawn
+
+- **Touches:** D-044 ("Dropping every `__internal_ic_` secret when one statement ends can drop
+  the secret another statement was just vended") and its proposed row.
+- **RFC said:** nothing. D-044 reasoned the race from the drop matching by prefix, and drops only
+  when no dynamic statement is running.
+- **Found:** a secret vended inside a statement is part of that statement's transaction. Until the
+  statement ends, `duckdb_secrets()` on any other cursor does not list it, so a drop issued
+  elsewhere cannot see it. Probed with a real `LoadTable` (another cursor counts no new
+  `__internal_ic_` secret while the stream is open, and one after it is exhausted) and with a
+  plain `BEGIN; CREATE TEMPORARY SECRET` (the drop leaves it, and it is there after `COMMIT`).
+  Thirty-one dynamic statements dropping secrets while an analytics scan of 24 files ran left
+  the scan intact. Two drops of the same secret from two connections do conflict: the second
+  raises `TransactionException: Catalog write-write conflict`.
+- **Because:** DuckDB's secret catalog is transactional, like the rest of its catalog.
+- **Class:** `discovery`. It corrects D-044's premise, which was not probed.
+- **Consequence:** the race D-044 guards against cannot happen. Its rule has a cost D-047
+  exposes. Under sustained concurrent load the instance is never idle, so committed secrets
+  pile up, and once the oldest expires the next statement on that table fails as in D-047. The
+  counter is gone. Each read drops the committed vended secrets when it ends, and a per-instance
+  lock serializes the drops, since two would conflict. P0's
+  `test_a_running_statements_secret_is_invisible_to_another_cursor` and two unit tests pin it.
+- **Proposed row (RFC 0078):** `ASSUMED` — the drop runs after every read statement, serialized
+  per instance. This withdraws D-044's row, which stays as written.
