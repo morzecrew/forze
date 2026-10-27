@@ -179,6 +179,13 @@ class TestWithoutTypedFlags:
         assert error["code"] == "cli_flags_unsupported"
         assert "'tags'" in error["detail"]
 
+    def test_a_misspelt_call_option_is_named(self) -> None:
+        nested = _error(_call("probe.nested", "--timout=5"), 2)
+        no_input = _error(_call("probe.secure", "--timout", "5"), 2)
+
+        assert "--timout is no call option" in nested["detail"]
+        assert "--timout is no call option" in no_input["detail"]
+
     def test_a_field_spelled_like_a_call_option_takes_none(self) -> None:
         error = _error(_call("probe.collides", "--seconds", "1"), 2)
 

@@ -349,7 +349,9 @@ def _read_input(
             "Pass the input with --input or as typed flags, not both", "cli_option_conflict"
         )
 
-    input_type = _input_type(entry)
+    # Flags reach here only when no call option claimed them, a misspelt one included.
+    flag = next((t.partition("=")[0] for t in flags if t.startswith("--")), "an extra argument")
+    input_type = _input_type(entry, why=f": {flag} is no call option either" if flags else "")
     # Typed flags and inline JSON are on argv, which ``ps`` and shell history show.
     on_argv = raw_input is None or not (raw_input == "-" or raw_input.startswith("@"))
 
@@ -361,17 +363,17 @@ def _read_input(
         )
 
     if raw_input is None:
-        return _read_flags(flags, input_type, op=str(entry.op)), True
+        return _read_flags(flags, input_type, op=str(entry.op), flag=flag), True
 
     text = raw_input if on_argv else _read_source(raw_input, option="--input")
 
     return _parse_object(text, what="--input"), False
 
 
-def _input_type(entry: OperationCatalogEntry) -> type[BaseModel]:
+def _input_type(entry: OperationCatalogEntry, *, why: str = "") -> type[BaseModel]:
     if entry.descriptor is None or entry.descriptor.input_type is None:
         raise _usage(
-            f"Operation {str(entry.op)!r} takes no input",
+            f"Operation {str(entry.op)!r} takes no input{why}",
             "cli_input_not_accepted",
         )
 
@@ -455,12 +457,15 @@ def _batch_calls(
     return calls
 
 
-def _read_flags(flags: list[str], input_type: type[BaseModel], *, op: str) -> dict[str, Any]:
+def _read_flags(
+    flags: list[str], input_type: type[BaseModel], *, op: str, flag: str
+) -> dict[str, Any]:
     table, reason = flag_table(input_type)
 
     if reason is not None:
         raise _usage(
-            f"Operation {op!r} takes no typed flags: {reason}; pass its input with --input",
+            f"Operation {op!r} takes no typed flags ({reason}), and {flag} is no call "
+            "option; pass its input with --input",
             "cli_flags_unsupported",
         )
 
