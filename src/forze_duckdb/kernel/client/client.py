@@ -7,10 +7,11 @@ require_duckdb()
 # ....................... #
 
 import asyncio
+import json
 import re
 import threading
 import warnings
-from collections.abc import AsyncGenerator, Callable, Mapping, Sequence
+from collections.abc import AsyncGenerator, Callable, Iterator, Mapping, Sequence
 from concurrent.futures import Future, ThreadPoolExecutor
 from datetime import timedelta
 from decimal import Decimal
@@ -175,7 +176,62 @@ def _single_select(cursor: Any, statement: str) -> Any:
             details={"statement_type": single.type.name},
         )
 
+    _refuse_unattached_catalogs(cursor, single.query)
+
     return single
+
+
+def _base_tables(tree: Any) -> Iterator[dict[str, Any]]:
+    """Every table reference in a ``json_serialize_sql`` tree, subqueries and CTEs included."""
+
+    pending = [tree]
+
+    while pending:
+        node = pending.pop()
+
+        if isinstance(node, dict):
+            if node.get("type") == "BASE_TABLE":  # pyright: ignore[reportUnknownMemberType]
+                yield node  # pyright: ignore[reportReturnType]
+
+            pending.extend(node.values())  # pyright: ignore[reportUnknownArgumentType]
+
+        elif isinstance(node, list):
+            pending.extend(node)  # pyright: ignore[reportUnknownArgumentType]
+
+
+def _refuse_unattached_catalogs(cursor: Any, statement: str) -> None:
+    """Refuse a table named through a catalog the instance has not attached, or nested deeper.
+
+    DuckDB 2 reads such a name as a nested namespace, and its ``iceberg`` extension resolves only
+    the last level: under ``USE lake.gold``, ``zzz.gold.orders`` and ``lake.zzz.gold.orders``
+    both read ``lake.gold.orders`` (RFC 0078 EXECUTION-LOG D-058). DuckDB 1.x refuses both at
+    bind or parse. Refusing them here gives every version the same answer, before any request.
+    """
+
+    serialized, attached = cursor.execute(
+        "SELECT json_serialize_sql($statement), "
+        "(SELECT list(database_name) FROM duckdb_databases())",
+        {"statement": statement},
+    ).fetchone()
+    tree = json.loads(serialized)
+
+    if tree.get("error"):
+        return  # executing it raises the parser's own error
+
+    known = {name.lower() for name in attached}  # DuckDB looks catalogs up case-insensitively
+
+    for table in _base_tables(tree):
+        catalog = table["catalog_name"]
+        path = (table.get("qualified_name") or {}).get("path") or [
+            part for part in (catalog, table["schema_name"], table["table_name"]) if part
+        ]
+
+        if len(path) > 3 or (catalog and catalog.lower() not in known):
+            raise exc.validation(
+                "DuckDB dynamic read names a table through a catalog it has not attached.",
+                code=STATEMENT_INVALID_CODE,
+                details={"detail": f"unknown catalog in table name {'.'.join(path)}"},
+            )
 
 
 # ....................... #

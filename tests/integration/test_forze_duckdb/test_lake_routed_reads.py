@@ -307,8 +307,31 @@ class TestCrossTenantThroughTheCatalog:
     ) -> None:
         port = _port(routed)
 
-        for sql in ("SELECT * FROM wh_tenant_b.gold.orders", "SELECT * FROM tenant_b.orders"):
+        for sql in (
+            "SELECT * FROM wh_tenant_b.gold.orders",
+            "SELECT * FROM tenant_b.orders",
+            "SELECT * FROM zzz.gold.orders",
+            "SELECT * FROM lake.zzz.gold.orders",
+        ):
             assert (await _refused(port, _A, sql)).code == STATEMENT_INVALID_CODE
+
+    async def test_with_classification_stubbed_an_unknown_first_part_never_reads_b(
+        self, routed: RoutedDuckDbClient, stub_classification: None
+    ) -> None:
+        """D-058, what the refusal above is for: DuckDB 2 reads an unknown first part as a
+        nested namespace and resolves its last level in A's own warehouse. Never B's rows."""
+
+        port = _port(routed)
+
+        for sql in (
+            "SELECT tenant FROM wh_tenant_b.gold.orders",
+            "SELECT tenant FROM zzz.gold.orders",
+        ):
+            if _ON_DUCKDB_2:
+                assert {row["tenant"] for row in await _run(port, _A, sql)} == {"tenant-a"}
+
+            else:
+                assert (await _refused(port, _A, sql)).code == STATEMENT_INVALID_CODE
 
     async def test_attaching_the_other_warehouse_is_refused(
         self, routed: RoutedDuckDbClient, tenant_b: LakeTenant, lake: LakeVendingStack

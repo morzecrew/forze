@@ -203,6 +203,52 @@ async def test_pragma_and_pivot_classify_by_engine_version(lake_client: DuckDbCl
         assert ei.value.details == {"statement_type": statement_type}
 
 
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "SELECT * FROM zzz.gold.t",
+        "SELECT * FROM lake.gold.t WHERE n IN (SELECT n FROM zzz.gold.t)",
+        "WITH c AS (FROM zzz.gold.t) SELECT * FROM c",
+        "SELECT * FROM lake.gold.t JOIN zzz.gold.t USING (n)",
+    ],
+)
+async def test_a_table_named_through_an_unattached_catalog_is_refused(
+    lake_client: DuckDbClient, sql: str
+) -> None:
+    """D-058: DuckDB 2 would read ``zzz.gold.t`` as a nested namespace; refused on every version
+    before it runs, as the statement's own fault."""
+
+    with pytest.raises(CoreException) as ei:
+        await lake_client.run_dynamic(sql, row_probe=10, timeout=_TIMEOUT, use="lake.gold")
+
+    assert ei.value.code == STATEMENT_INVALID_CODE
+    assert ei.value.details == {"detail": "unknown catalog in table name zzz.gold.t"}
+
+
+async def test_a_four_part_table_name_is_refused(lake_client: DuckDbClient) -> None:
+    sql = "SELECT * FROM lake.zzz.gold.t"
+
+    if not _ON_DUCKDB_2:  # not a name on 1.x: the parser refuses it
+        with pytest.raises(duckdb.ParserException):
+            await lake_client.run_dynamic(sql, row_probe=10, timeout=_TIMEOUT)
+        return
+
+    with pytest.raises(CoreException) as ei:
+        await lake_client.run_dynamic(sql, row_probe=10, timeout=_TIMEOUT)
+
+    assert ei.value.code == STATEMENT_INVALID_CODE
+    assert ei.value.details == {"detail": "unknown catalog in table name lake.zzz.gold.t"}
+
+
+async def test_attached_catalogs_and_cte_names_pass(lake_client: DuckDbClient) -> None:
+    for sql in (
+        "SELECT count(*) AS c FROM LAKE.gold.t",
+        "SELECT count(*) AS c FROM system.information_schema.schemata",
+        "WITH t AS (FROM lake.gold.t) SELECT count(*) AS c FROM t",
+    ):
+        assert await lake_client.run_dynamic(sql, row_probe=10, timeout=_TIMEOUT, use="lake.gold")
+
+
 async def test_vended_secrets_are_dropped_after_each_statement(
     lake_client: DuckDbClient,
 ) -> None:

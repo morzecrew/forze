@@ -839,3 +839,23 @@ class TestRefusalTaxonomy:
         # On 2 the catalog's refusal is an HTTPException (D-060).
         assert type(caught.value) is (duckdb.HTTPException if _ON_DUCKDB_2 else duckdb.Error)
         assert con.execute("SELECT count(*) FROM lake.gold.orders").fetchone() == (3,)
+
+    def test_an_unknown_first_part_is_a_nested_namespace_on_2(
+        self, lake: LakeVendingStack, tenant_a: LakeTenant
+    ) -> None:
+        """D-058, the engine's half: 1.5 refuses an unknown catalog at bind; 2 reads it as a
+        nested namespace and resolves only its last level, in the tenant's own warehouse. The
+        dynamic-read classification refuses such names on both (D-066)."""
+
+        con = lake.session(tenant_a.principal, tenant_a.warehouse)
+        con.execute("USE lake.gold")
+
+        for sql in (
+            "SELECT DISTINCT tenant FROM zzz.gold.orders",
+            "SELECT DISTINCT tenant FROM wh_tenant_b.gold.orders",
+        ):
+            if _ON_DUCKDB_2:
+                assert con.execute(sql).fetchall() == [("tenant-a",)]
+            else:
+                with pytest.raises(duckdb.BinderException, match="does not exist"):
+                    con.execute(sql).fetchall()
