@@ -1065,3 +1065,390 @@ Appended after review, which found what the audit did not: three defects, all in
 - **Proposed row (RFC 0046):** `ASSUMED` — where a store expresses tenancy in its key, any
   caller that both reads and writes must settle the tenant once, before the read. Enforcing
   it only at the write leaves every early return unguarded.
+
+---
+
+# Unit 5 · RFC 0078 P0 — pickup probes
+
+Branch `feat/rfc-0078-p0-probes`. RFC 0078 (routed DuckDB lake reads, Draft) §8 P0: every 🔎
+in the RFC, run against `duckdb==1.5.6` with the `iceberg` build the core repository serves
+for it (`890b78a9c`) and `httpfs` `4bc690d`, and against a vending stack P0 had to build
+first (D-024). The stable facts are pinned in
+[`test_lake_vending_probes.py`](../tests/integration/test_forze_duckdb/test_lake_vending_probes.py)
+— 24 tests on one module-scoped stack that starts in about 30 s. Facts that take minutes to
+show (D-028) and the memory footprint were measured with one-off scripts and live here only.
+
+**Drift count: 0.** Seven entries: five `discovery`, two `spec-gap`. Nothing was built against
+the RFC, so nothing could drift. Every entry is a fact that came back different from what the
+RFC assumed or left open.
+
+**Gate (§8 P0): items 1, 5 and 11a pass by hand, two of them with a caveat the RFC did not
+expect.** Battery 1 passes outright. Battery 5 passes, but in the §3.4 profile the refusal comes
+from public AWS, not from the store (D-027). Battery 11a passes for the catalog path. A
+by-path read inside the revoked table still succeeds until the vended credential expires
+(D-025).
+
+**Confirmed, so no entry.** These 🔎s came back as the RFC expected:
+
+- RustFS 1.0.0 honours STS `AssumeRole` session-policy downscoping, and so does the MinIO
+  mirror (`RELEASE.2025-09-07`). A vended credential reads its own table and nothing else: not
+  tenant B's prefix, not another table in A's own warehouse, and no bucket listing.
+- §9 q2 / §3.5: credentials vended to a `select`-only principal are read-only. The store
+  refuses `PUT` and `DELETE` from boto3, and it refuses the data-file `PUT` of a DuckDB `INSERT`.
+- §3.4 step 4: `READ_ONLY` on the iceberg `ATTACH` is honoured. `duckdb_databases()` reports it,
+  and writes fail with `InvalidInputException` before any request goes out.
+- §9 q1: the REST catalog's traffic does not go through the filesystem layer. This covers the
+  per-statement `LoadTable` and the OAuth2 token request. It survives
+  `disabled_filesystems='LocalFileSystem,HTTPFileSystem'` set before or after `ATTACH`. It
+  also survives the P2 profile (`allowed_directories` + `enable_external_access=false`) set
+  before `CREATE SECRET`, with neither the catalog nor the IdP allow-listed. One ordering rule
+  applies: `allowed_directories` must come first. Setting it afterwards raises
+  `Cannot change allowed_directories when enable_external_access is disabled`.
+- §3.2: every autocommit statement re-issues `LoadTable`, so a revocation reaches the
+  catalog path at the next statement. With `MAX_TABLE_STALENESS '1 hour'`, the second
+  statement is served from the cached load, and a revocation inside that window goes unseen.
+  The reason §3.2 gives for never setting it holds.
+- §2.3: the external file cache belongs to one `DatabaseInstance`. A second instance in the
+  same process shows zero entries and goes to the network.
+- §2.2 / §9 q4: idle RSS per `:memory:` instance with `httpfs` and `iceberg` loaded is about
+  3.4–3.8 MiB, the same as a bare instance, because the extensions' code is shared. After
+  attaching and running one read with the file cache off, it is about 7.1 MiB. Measured with
+  `threads=2`, `memory_limit=1GB`, N=30–50, after `malloc_trim`.
+- §4.3: in this build `cursor.execute()` returns a streaming result, and `fetchmany(n)` pulls
+  only what it needs. The first 11 rows of a 4.8 s query arrived in 12 ms, with 0.2 MB held.
+- §3.2: the catalog token refreshes with a non-empty `CLIENT_ID`. With an 8 s token lifespan,
+  the next statement refreshed ahead of expiry and saw no 401.
+- §3.2: duckdb-iceberg#1352 is still open. The bundled build carries the re-vend-on-expiry
+  path (`refresh_info`) in its source, but it was not exercised live, because 11b runs nightly.
+- Battery 11b: the shortest vended-credential life the chain produces is 900 s. Requests for
+  1 s and for 30 s both came back as 900 s.
+- The RFC's ✅ [probe] claims touched here all reproduce, with one nuance. A connect-time
+  `enable_global_s3_configuration` is refused only under `autoload_known_extensions=false`,
+  which §3.4 sets. With autoload on, connect loads `httpfs` itself and accepts the option.
+
+## D-024 — RFC 0018 P3's vended-credential fixture does not exist; P0 built a minimal one
+
+- **Touches:** RFC 0078 §7 ("extending RFC 0018 §7's fixture") and §8. P0's gate runs
+  "against … the fixture", and P1 "needs RFC 0018 P3's vended-credential fixture".
+- **RFC said:** the fixture is consumed, not specified: Lakekeeper with OpenFGA or Cedar, an
+  OAuth2 IdP, and an STS-capable store.
+- **Found:** RFC 0018 has not started. Nothing under `tests/` runs Lakekeeper, OpenFGA, Cedar
+  or an OAuth2 IdP, and no fixture uses STS. P0 built
+  [`tests/support/lakekeeper.py`](../tests/support/lakekeeper.py) from four parts:
+  - Lakekeeper `v0.14.2` on `ghcr.io/morzecrew/postgres:18`.
+  - OpenFGA `v1.22.0` with its in-memory datastore and no authn. The authorizer is real; only
+    its storage is not.
+  - Keycloak `26.8.1` in `start-dev`, with one confidential client per principal and an
+    audience mapper for `lakekeeper`.
+  - RustFS `1.0.0`, the store the repository already uses, chosen after a probe showed it
+    honours session-policy downscoping.
+
+  The fixture sets up two tenants, each with one warehouse and `select` on its own warehouse
+  only. A third principal holds no grant. Each warehouse has one `gold.orders` table, seeded
+  through the REST catalog by the operator.
+- **Because:** the P0 gate cannot run by hand without a fixture, and three of the RFC's 🔎s can
+  only be answered against a real catalog.
+- **Class:** `spec-gap`. RFC 0018's status was knowable when RFC 0078 was written.
+- **Consequence:** P1 inherits three choices.
+  1. Addressing. Lakekeeper hands the storage profile's endpoint to the client as it is, and
+     it checks the token issuer against the URL it discovered. So the store and the IdP each
+     need one address that both the containers and the test process can reach: the Docker
+     network's gateway IP plus the published port. That works on a Linux host and on CI
+     runners, but not on Docker Desktop.
+  2. `OAUTH2_SCOPE` is `profile`. Keycloak rejects unknown scopes with `invalid_scope`, and
+     the realm defines no `lakekeeper` scope, so a mapper on each client supplies the
+     audience. Leaving the option out does not help: duckdb-iceberg then sends its own
+     default, `PRINCIPAL_ROLE:ALL` (a Polaris role), and Keycloak refuses that at
+     `CREATE SECRET`. So `LakeTenantCatalog.oauth2_scope=None` (§2.1) cannot mean "send no
+     scope". It can only mean "send duckdb's default".
+  3. OpenFGA keeps its store in memory, so a restarted container loses every grant. The
+     fixture lives for one test module, so this never shows.
+- **Proposed row (RFC 0078):** `ASSUMED` — P1's battery runs on `tests/support/lakekeeper.py`
+  until RFC 0018 P3 ships its fixture, then moves onto that one. The gateway-IP addressing is a
+  property of the fixture, not of a deployment. `oauth2_scope` is required, not optional,
+  because a missing scope sends duckdb-iceberg's Polaris default.
+
+## D-025 — Vended secrets outlive their statement, so revocation does not reach a by-path read
+
+- **Touches:** RFC 0078 §3.2: the 🔎 that vended secrets are "scoped to the transaction and
+  discarded after it", and the consequence "Revocation takes effect at the next statement,
+  without eviction". Also §2.4's last bullet, decision 14, and battery 11a.
+- **RFC said:** each statement starts from a fresh `LoadTable`, and the previous statement's
+  credentials are gone.
+- **Found:** half of that holds. Every autocommit statement does re-issue `LoadTable`. But the
+  S3 secret it vends is an ordinary temporary catalog entry. It is named
+  `__internal_ic_<table>__<schema>__<name>__<txid>_…` and scoped to the table location. The
+  secret is kept when the statement's transaction commits, and dropped only when the
+  transaction rolls back:
+  - A fully consumed result commits. That includes `fetchall`, and a `fetchmany(n)` that
+    exhausts the stream, which is what the shell's cap+1 probe does on any result inside the cap.
+  - A stream closed before it is exhausted rolls back, and so does an explicit `ROLLBACK`. Either
+    one discards the secret.
+
+  In normal operation the instance therefore gains one secret per statement per table: three
+  statements leave three secrets. After A's grant is revoked, the next catalog statement is
+  refused (`CatalogException`, D-029). But in the same instance,
+  `read_parquet('s3://lake/tenant-a/<table>/data/…')` still returns rows: a real request,
+  signed with a leftover secret and answered 200. The window lasts as long as the vended
+  credential: 3600 s by default, 900 s at the floor (unit header).
+- **Because:** duckdb-iceberg names the secret per transaction but never drops it. The
+  maintainer's description in #1352 matches only the rollback case.
+- **Class:** `discovery`.
+- **Consequence:** two effects follow.
+  - The secret list grows without bound in a long-lived tenant instance. It grows slowly, but it
+    has no ceiling.
+  - Revocation is total for the catalog path only. A statement that names an `s3://` path
+    inside a table A could read keeps working until the credential expires. This is not a
+    cross-tenant hole: the leftover secret is scoped to A's own table, and a trusted compiler
+    never emits paths.
+
+  The fix is cheap and was probed. `DROP TEMPORARY SECRET "<name>"` still works after
+  `lock_configuration=true`, so the client can drop every `__internal_ic_%` secret after each
+  statement. The same probe shows that `lock_configuration` does not cover secret DDL; only
+  classification stops a caller from issuing it. Battery 11a should assert both legs, and
+  `test_lake_vending_probes.py` pins today's behaviour.
+- **Proposed row (RFC 0078):** `ASSUMED` — after every statement, `run_dynamic` drops the
+  vended `__internal_ic_%` secrets. Revocation then reaches by-path reads at the next
+  statement, and the instance never holds more than one statement's credentials. This
+  overrides §3.2's "discarded after it", which stays as written.
+
+## D-026 — A namespace the session found missing stays missing for the instance's life
+
+- **Touches:** RFC 0078 §2.4, which forces eviction "on … a grant revocation the app learns
+  about" and says "Revocation does not depend on eviction". Unlisted: how a restored grant, or a
+  namespace created later, looks to a live instance.
+- **RFC said:** nothing. The RFC treats the catalog as re-read on every statement.
+- **Found:** after a 404, the attached iceberg catalog caches the namespace as absent. A session
+  that saw the 404 keeps refusing with `schema "gold" does not exist`, and sends no HTTP
+  request at all. That stays true after A's grant is restored. It also holds for a namespace
+  created after the session first asked for it. A fresh instance sees the change at once.
+  Tables behave differently: a table created later, inside a namespace the session already
+  resolved, is visible to the next statement.
+- **Because:** duckdb-iceberg loads the schema set once per attached catalog, but re-reads the
+  table set on every lookup.
+- **Class:** `discovery`.
+- **Consequence:** the failure is closed, so confinement is not at risk. The problem is
+  operational. A grant or namespace change reaches a tenant only after `evict_tenant` or a
+  `fingerprint_ttl` rotation, and a transient 404 sticks.
+- **Proposed row (RFC 0078):** `ASSUMED` — every grant restoration or namespace creation is
+  followed by `evict_tenant(tenant_id)`. The routed client documents the rule, and battery 13
+  asserts that a rebuilt instance sees the change.
+
+## D-027 — With step 2, an unmatched `s3://` path goes to public AWS, unsigned — not to the store
+
+- **Touches:** RFC 0078 §3.3, which says "the request goes out unsigned" and "The last link is
+  outside DuckDB: the store must refuse unsigned requests". Also §3.4's P2 paragraph, §8's P2
+  bullet, decision 8, and battery 5.
+- **RFC said:** after `SET enable_global_s3_configuration=false`, an unmatched read goes out
+  unsigned, and a store that refuses anonymous access closes it.
+- **Found:** the first half reproduces. With the store's root key in `AWS_*`, no request is
+  signed with it. But "out" means the default AWS endpoint. With global configuration off, the
+  `s3_endpoint` setting is ignored as well. So tenant B's paths, named from A's session, went to
+  `https://lake.s3.amazonaws.com/tenant-b/…`, and AWS refused them. The fixture's store never
+  saw those requests, so the store refusal §3.3 relies on was never exercised. The requests
+  carried the bucket name and B's path names onto the public internet.
+
+  The leak is real, and step 2 does close it. Without step 2, and with `s3_endpoint` pointed at
+  the store as an operator's environment would set it, the same read succeeds, signed with the
+  root key. The P2 profile is stronger again: `allowed_directories=['s3://lake/tenant-a/']`, set
+  before `enable_external_access=false`, refuses the same reads inside the engine with a
+  `PermissionException` and sends no request. §9 q1 resolved in that profile's favour (unit header).
+- **Because:** the RFC's probe stood a local listener in for S3. A listener cannot show where an
+  unmatched path is sent once the endpoint setting is ignored.
+- **Class:** `spec-gap`.
+- **Consequence:** in the §3.4 profile, the outside control for this row is the network egress
+  policy, not the store. A deployment without one sends tenant path names to AWS. If a public
+  bucket with the same name exists there, the read returns someone else's objects. The test
+  keeps this leg offline with a local `http_proxy` that refuses every request, and asserts that
+  the `CONNECT` target is the AWS host.
+- **Proposed row (RFC 0078):** `ASSUMED` — P1 adopts the allowlist profile instead of leaving it
+  to P2. It sets `allowed_directories` to the tenant's warehouse prefix and then
+  `enable_external_access=false`, both before `CREATE SECRET`. `disabled_filesystems` stays as a
+  second layer, and step 8 reads back both settings. This overrides §3.4's "not the P1 default"
+  and §8's P2 bullet, which stay as written.
+
+## D-028 — Neither `http_timeout` nor `cursor.interrupt()` bounds a hung catalog or store request
+
+- **Touches:** RFC 0078 §4.3's timeout cell ("A blocking HTTP read is bounded by
+  `http_timeout` (whether interrupt cuts it short is 🔎) … Worst case ≈ timeout +
+  `http_timeout`"). Also §3.4 step 6, decision 10, decision 14's formula, and battery 12's
+  timeout case.
+- **RFC said:** step 6 sets `http_timeout` no higher than the route ceiling, so a hung read
+  ends by then even if interrupt cannot cut it.
+- **Found:** pausing the store or the catalog container mid-session makes the next statement
+  hang for **120.5 s**. It then fails with `IOException: … Timeout was reached`. That happens
+  with `SET http_timeout=2; SET http_retries=0` applied after `ATTACH`, where step 6 puts it,
+  and again before `CREATE SECRET`. 120.5 s is httpfs's default: 30 s × (1 + 3 retries).
+
+  Calling `cursor.interrupt()` one second in changes nothing. The statement returns 119.5 s
+  later with the same `IOException`, not `InterruptException`. A CPU-bound statement stops at
+  once on interrupt, so interrupt itself works, just not inside a blocking HTTP call.
+
+  The settings do take effect elsewhere. A plain `TYPE s3` secret honours them, but only when
+  they are set before the secret is created; an `http://` read honours them too. The iceberg
+  extension's catalog requests and vended secrets never pick them up.
+- **Because:** the iceberg path builds its HTTP parameters without the session's
+  `http_timeout`/`http_retries`, and neither the iceberg secret nor `ATTACH` exposes a timeout.
+- **Class:** `discovery`.
+- **Consequence:** the honest worst case for one hung request is about 120 s, and a statement
+  that makes several requests in sequence can take longer. The caller sees the timeout late as
+  well: after interrupting, `DuckDbClient.__submit` awaits the worker before it raises
+  (`client.py:276`), so `dynamic_read_timeout` lands about 120 s after the statement started,
+  not at `statement_timeout`. Each hung tenant holds an executor thread and a slot of
+  `max_concurrent_queries_total` for that whole time. Decision 14's validity formula still
+  holds at the default 3600 s, since 10 × (5 + 120) = 1250 s, but it fails at the 900 s floor.
+- **Proposed row (RFC 0078):** `OPEN` — choose one of three options:
+  - (a) state the ~120 s bound in the capability row, and size `max_concurrent_queries_total`
+    for it;
+  - (b) get the iceberg extension to honour `http_timeout` upstream before P1 ships;
+  - (c) move the engine out of process (RFC 0021).
+
+  Until one is chosen, step 6 bounds nothing on this path, and the §4.3 cell overstates the
+  guarantee.
+
+## D-029 — Catalog refusals arrive as the bare `duckdb.Error`, and Lakekeeper never answers 403 to `LoadTable`
+
+- **Touches:** RFC 0078 §4.5: the row that maps "`HTTPException` 401/403 from the store or the
+  catalog" to `dynamic_read_permission_denied`, the row that defers `IOException` to
+  infrastructure, and the 🔎 on how a Lakekeeper 403 or 404 on `LoadTable` surfaces. Also
+  battery 16.
+- **RFC said:** a catalog refusal surfaces as `CatalogException`, `HTTPException` or
+  `IOException`.
+- **Found:** observed with Lakekeeper v0.14.2 under OpenFGA. Every class below is in `duckdb`:
+
+  | Refusal | Lakekeeper answers | DuckDB raises |
+  |---|---|---|
+  | `ATTACH` by a principal with no grant, or of another tenant's warehouse | 404 `NoSuchWarehouseException` on `/v1/config` | `Error` itself, not a subclass; the message carries `NotFound_404` |
+  | `ATTACH` with a wrong client secret | Keycloak 401 | `Error`, `Unauthorized_401` |
+  | the next statement after a revocation | 404 on `LoadTable`, then 404 on the namespace | `CatalogException` ("schema … does not exist") |
+  | a `describe`-only principal | **200** on `LoadTable`, with metadata and no credentials | `Error`, "No region was provided via the vended credentials" |
+  | `CREATE TABLE` by a `select`-only principal | 403 | `Error`, `Forbidden_403` in the message |
+  | `INSERT` by a `select`-only principal | store 403 on the data-file `PUT` | `HTTPException` |
+  | a hung catalog or store (D-028) | none | `IOException` |
+
+  No probe produced a 403 on `LoadTable`. Lakekeeper hides what a principal cannot describe
+  (404), and withholds credentials from what it cannot read (200 with none).
+- **Because:** duckdb-iceberg raises its own catalog-request failures as the plain `Error`. And
+  `HTTPException` is a subclass of `IOException`.
+- **Class:** `discovery`.
+- **Consequence:** three of the refusals the battery cares about fall under no §4.5 row.
+  Mapping by class alone would send them to infrastructure, which is the one wrong answer.
+  "Never rows" still holds, but a confinement refusal would be retried as if it were an outage.
+  Because `HTTPException` is an `IOException`, the HTTP row must be matched before the
+  infrastructure row. The `describe`-only case also shows that `describe` discloses table
+  metadata, file paths included, to a principal who cannot read the data. That is Lakekeeper's
+  model, and worth knowing when grants are handed out.
+- **Proposed row (RFC 0078):** `ASSUMED` — `_fetch_rows` maps the bare `duckdb.Error` by its
+  message: `NotFound_404`, `Unauthorized_401`, `Forbidden_403` and "No region was provided via
+  the vended credentials" all become `dynamic_read_permission_denied`. An `HTTPException` with
+  401 or 403 is checked before the `IOException` row, and battery 16 pins the table above.
+
+## D-030 — The 1.5.6 iceberg build has neither credential fix the RFC asked about
+
+- **Touches:** RFC 0078 §3.2. One bullet says "The fix for the empty-`CLIENT_ID` case is
+  duckdb-iceberg#1378 … The build that contains it is 🔎". Another asks whether the pinned
+  build has #1536, the fix for #1390, and adds "Battery item 17 pins it either way". Also
+  decision 6 and battery 17.
+- **RFC said:** both builds are open questions for P0.
+- **Found:** for v1.5.6 the core repository serves iceberg `890b78a9c` (2026-09-14). That is
+  what `FORCE INSTALL` fetches today, and what is installed. #1378 was fixed by PR #1379,
+  merged to `main` on 2026-09-11. #1390 was fixed by #1536, merged to `main` on 2026-10-10.
+  Neither merge commit is an ancestor of `890b78a9c`, and neither is on the current head of
+  `v1.5-variegata`. The source agrees: `CanRefreshUnlocked` still requires a non-empty
+  `client_id`, and `GetVendedCredentials` still adds the table location to a nested
+  credential's scope.
+
+  Neither bug bites here. With a non-empty `CLIENT_ID`, the token refreshes (probed, unit
+  header). The broadening needs two or more credentials for one table. Lakekeeper vends
+  exactly one, and with one the build ignores the prefix and scopes the secret to the table
+  location.
+- **Because:** both fixes landed on `main` after the 1.5 line was cut, and neither was
+  backported.
+- **Class:** `discovery`.
+- **Consequence:** two of the RFC's assumptions become hard requirements on this build.
+  - `CLIENT_ID` must be non-empty. Otherwise the token never refreshes, and the instance fails
+    at expiry with `Unauthorized_401`.
+  - Battery 17 cannot be produced against Lakekeeper, which never returns nested credentials.
+    It needs a catalog that does, or it waits for the DuckDB 2.0 re-probe.
+- **Proposed row (RFC 0078):** `ASSUMED` — the routed client refuses an empty `client_id` at
+  construction, as a configuration error. Battery 17 is deferred to the 2.0 bump, and the
+  one-credential fact is pinned in its place
+  (`test_a_vended_credential_reads_its_own_table_only_and_writes_nowhere`).
+
+## D-031 — Corrections to this unit's own record
+
+Appended rather than edited, per the rule that an entry is never revised. A review of the branch
+raised these, and each was checked against the probes before it was written here.
+
+- **D-025's "3600 s by default" has no source in this unit.** The 3600 s is Lakekeeper's
+  default for `sts-token-validity-seconds`, from its storage-s3 docs, which RFC 0078 §3.2 also
+  cites. The 900 s floor is this unit's own measurement (unit header).
+- **D-026's two cases without a revocation are now pinned, not only probed.** Those are a
+  namespace created after a miss, and a table created later.
+  `test_a_namespace_created_after_a_miss_stays_missing_but_a_new_table_appears` covers both.
+- **D-028's arithmetic was off.** 30 s × 4 attempts is 120 s, not 120.5 s. The observed
+  120.5 s is about 120 s plus retry waits, and I did not break those waits down. On a plain
+  `TYPE s3` secret I counted the attempts: four connections reached the blackhole listener. On
+  the iceberg path I did not count them, so "four attempts of 30 s" there is inferred from the
+  total.
+- **D-029's describe-only row.** The test no longer asserts the "No region was provided"
+  message, which depends on `AWS_REGION` being unset. With a region set, the scan carries on
+  unsigned to the default AWS endpoint (D-027), so the test still unsets it. The class
+  assertion, the bare `Error`, stays.
+
+  A review proposed mapping that message to a configuration error rather than
+  `dynamic_read_permission_denied`. The row stays as proposed, because D-032 shows the same
+  message is what a revocation in progress looks like under OpenFGA caching. The message is
+  ambiguous, though: a warehouse with no region and no STS produces it too. So the mapping must
+  carry the message into the error details, where a misconfigured profile stays diagnosable.
+- **Two fixture claims were weaker than written.**
+  - The fixture never installed the extensions. The module passed only because the user cache
+    already held them. The fixture now installs them, and the module passes against an empty
+    extension directory (30.4 s, including the downloads).
+  - D-024 documented the gateway addressing but nothing detected a host that cannot use it. The
+    stack now probes the gateway once and skips.
+- **The cost, measured.** The header said "about 30 s". With images already pulled, three runs
+  measured 18.2–19.0 s of stack setup and 24.5–25.2 s for the whole module (26 tests). The
+  duckdb CI shard already pulls RustFS. On a cold runner it would add these pulls, compressed:
+  Lakekeeper 76 MB, OpenFGA 28 MB, Keycloak 265 MB and Postgres 195 MB, about 0.56 GB in all.
+  The module stays in the duckdb shard, which runs alone on its own runner with a 30-minute
+  budget.
+- **The header's "24 tests" is the count before review.** The fixes above added two tests,
+  the version pin and the pin for D-026's two cases, so the module holds 26. Every count
+  in this entry is the module's, at 26.
+- **D-027's "step 2 does close it" overstates step 2.** What step 2 closes is the signed read:
+  no request carries the ambient key, so the read fails. It does not stop the request leaving.
+  Unsigned, it still carries the bucket name and tenant path names to public AWS. Only the
+  network egress policy or the allowlist profile D-027 proposes keeps those names in.
+- **Drift count: 0.** The unit holds nine entries, not seven: D-031 and D-032 were appended
+  after the header. Classes: six `discovery`, two `spec-gap`, plus this record.
+
+## D-032 — With OpenFGA's check cache on, a revocation lands about 10 s late
+
+- **Touches:** RFC 0078 §3.2 ("Revocation takes effect at the next statement, without
+  eviction") and battery 11a. Unlisted: the authorizer's own caching.
+- **RFC said:** the next statement re-loads the table with the principal's current grants.
+- **Found:** that holds only while OpenFGA answers every check fresh. Under OpenFGA, Lakekeeper
+  keeps no authorization cache of its own: its docs say its user-assignment and role-ancestor
+  caches are never populated there. OpenFGA does cache, and Lakekeeper's production guidance
+  recommends turning that on, with `OPENFGA_CHECK_QUERY_CACHE_ENABLED`,
+  `OPENFGA_CHECK_ITERATOR_CACHE_ENABLED` and `OPENFGA_CACHE_CONTROLLER_ENABLED`. Probed on this
+  stack, three trials each, one statement every 0.25 s:
+  - With the check-query cache on, the refusal came 10.0–10.2 s after the revoke, and 38–40
+    statements were served in between. The cache's default TTL is 10 s.
+  - With all three of the recommended settings on, the refusal came 8.0–8.5 s after the revoke,
+    and 31–33 statements were served in between. The first refusal was sometimes a
+    `CatalogException`. Other times it was the bare `Error` "No region was provided via the
+    vended credentials": a half-expired cache let `LoadTable` answer without credentials.
+
+  OpenFGA ships with all three off, and the fixture now pins them off. So the battery's "next
+  statement" assertion holds for the fixture, not for every deployment.
+- **Because:** OpenFGA caches `Check` results for `--check-query-cache-ttl`, 10 s by default,
+  and Lakekeeper's docs say it sends most checks with `MINIMIZE_LATENCY` consistency.
+- **Class:** `discovery`.
+- **Consequence:** in a deployment that follows Lakekeeper's advice, the check-cache TTL bounds
+  revocation, not the next statement. `evict_tenant` does not help, because the stale answer
+  lives in OpenFGA, not in DuckDB.
+- **Proposed row (RFC 0078):** `ASSUMED` — revocation latency is the longer of "the next
+  statement" and the OpenFGA check-cache TTL. The deployment contract (§3.1) names the TTL.
+  Battery 11a runs with caching off, and a second leg asserts the TTL bound with caching on.
