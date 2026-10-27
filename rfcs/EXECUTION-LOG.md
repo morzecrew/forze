@@ -1993,3 +1993,228 @@ about quoting, and that entry stays as written.
 
 Each fix was checked against its own removal. R-5 has a battery test as well,
 `test_a_nested_namespace_is_one_schema_to_use`, which brings the battery to 76 tests.
+
+# Unit ? · RFC 0077 P3 — surfaces onto ingress
+
+Branch `refactor/ingress-fastapi-socketio-ws`. RFC 0077 §12 P3's bullet "moving FastAPI,
+Socket.IO and the WS route onto `ingress`", against §5.7 and the P1 core in
+[`execution/ingress/`](../src/forze/application/execution/ingress/). Each surface's copy of a
+boundary step was set beside the `ingress` function, and a step moved only where the two
+agree on every input the surface can send.
+
+**Drift count: 0.** Ten entries: six `spec-gap`, four `discovery`. Two steps moved with no
+behaviour change (D-ING-1, D-ING-2). One moved with a behaviour change, in a commit and a
+changelog entry of its own (D-ING-7). Seven stayed, each for the reason its entry gives.
+
+**Socket.IO moved nothing.** Every step it has is either shared with the WS route below the
+execution layer (D-ING-8, D-ING-9) or runs through a port that has no registry (D-ING-10).
+
+| Id | Surface | Step | Decision |
+|---|---|---|---|
+| D-ING-1 | FastAPI | invocation-metadata minting | moved, no change |
+| D-ING-2 | FastAPI | API-key split and verification | moved, no change |
+| D-ING-3 | FastAPI | principal → tenant resolution | stays: the HTTP ladder differs |
+| D-ING-4 | FastAPI | route input validation | stays: the 422 body would change |
+| D-ING-5 | FastAPI | exposure and the sensitive refusal | stays: same rule, other wording |
+| D-ING-6 | FastAPI | bind-and-run | stays: the envelope is bound by middleware |
+| D-ING-7 | WS route | bind-and-run | moved, **behaviour change** |
+| D-ING-8 | WS route, Socket.IO | payload validation | stays: route-typed, not descriptor-typed |
+| D-ING-9 | WS route, Socket.IO | identity and tenant ladder | stays: below the execution layer |
+| D-ING-10 | Socket.IO | bind-and-run | stays: the adapter holds no registry |
+
+## D-ING-1 — FastAPI's metadata minting is `mint_invocation_metadata`; only parsing differs
+
+- **Touches:** RFC 0077 §5.7, the `mint_invocation_metadata` row ("the fresh-`uuid7` blocks
+  in MCP and FastAPI").
+- **RFC said:** the function replaces FastAPI's block.
+- **Found:** it does, exactly.
+  [`InvocationMetadataMiddleware._decode_metadata`](../src/forze_fastapi/middlewares/invocation.py)
+  minted a `uuid7` execution id, took `X-Correlation-ID` or a fresh `uuid7`, and took
+  `X-Causation-ID` or nothing. Even the minting order matches, execution id first. What
+  differs is parsing, which the function leaves to its caller: HTTP ignores a malformed
+  header and falls back, while `forze ops` refuses a malformed `--correlation-id` (§5.4).
+- **Because:** a header is advisory client input, and a script's argument is a bug when it
+  is wrong. Both readings are the surface's, not the core's.
+- **Class:** `discovery`. The parsing split only shows once the second consumer exists.
+- **Consequence:** `_decode_metadata` keeps its name and its header parsing, and calls
+  `mint_invocation_metadata`. No behaviour change.
+
+## D-ING-2 — FastAPI's API-key path keeps its blank check, then calls `authenticate_api_key`
+
+- **Touches:** RFC 0077 §5.7, the `authenticate_api_key` row ("FastAPI's copies later"), and
+  "As built (P1)", which made `api_key_credentials` public for this move.
+- **RFC said:** the function replaces FastAPI's copy.
+- **Found:** the split agrees: `_split_authorization(raw, sep=":")` and
+  `api_key_credentials` strip, then split on the first colon, and take a key with no colon
+  whole. The order differs. `authenticate_api_key` resolves the authn port and then refuses a
+  blank key. FastAPI checks for a blank header first, and returns no identity when the
+  ingress is not `required`, an outcome the core function does not have.
+- **Because:** an optional header is an HTTP notion. The CLI and MCP always hold a key.
+- **Class:** `spec-gap`. Knowable from
+  [`resolvers.py`](../src/forze_fastapi/security/resolvers.py).
+- **Consequence:** `_resolve_header_api_key_authn` keeps its blank and `required` check and
+  then calls `authenticate_api_key`. A key past that check is never blank, so the two orders
+  cannot be told apart. `_split_authorization` lost its `sep` parameter, since only the
+  bearer split is left. Its colon cases left `test_authorization_split.py`, and
+  `TestApiKeyCredentials` in `test_ingress.py` covers them. No behaviour change.
+
+## D-ING-3 — FastAPI's tenant ladder stays: it drops a tenant the ingress refuses
+
+- **Touches:** RFC 0077 §5.7, the `resolve_principal_tenant` row ("FastAPI's copies later"),
+  and "As built (P1)" (`tenant_request_unverifiable`, `tenant_mismatch`).
+- **RFC said:** FastAPI's `resolve_tenant_identity` moves later.
+- **Found:** the two agree only on the resolver call. Past it,
+  [`resolve_tenant_identity`](../src/forze_fastapi/security/resolvers.py) does four things
+  the ingress function does not:
+  - it runs for an anonymous request, which has no principal;
+  - it honours `trust_tenant_header`, the gateway fallback;
+  - it drops an `X-Tenant-Id` that nothing vouches for, and the request runs with no tenant.
+    The ingress function refuses the same request, with `tenant_request_unverifiable` when
+    there is no resolver and `tenant_mismatch` when the resolver finds no tenant;
+  - it ignores a malformed header, where the ingress takes a parsed `UUID`.
+- **Because:** the ingress refusal was written for a caller who names a tenant on purpose,
+  the CLI's `--tenant`. An HTTP client may send the header out of habit, and today that
+  request succeeds.
+- **Class:** `spec-gap`. §5.7 listed FastAPI's copy as a later move without comparing it.
+- **Consequence:** left as is. Adopting the ingress function would turn requests that run
+  with no tenant today into 401s and 400s, and close no gap: a dropped header binds nothing.
+  Issue #666, where an ambiguous multi-membership principal resolves to no tenant, changes
+  what the resolver returns and reaches both ladders unchanged. Nothing here touches
+  `forze_identity/tenancy/`.
+- **Proposed row (RFC 0077):** `ASSUMED` — HTTP keeps its own tenant ladder. The ingress
+  refusal of an unverifiable requested tenant applies where the caller names the tenant
+  explicitly, and an advisory `X-Tenant-Id` stays dropped, not refused.
+
+## D-ING-4 — FastAPI's route validation stays: moving it changes every 422 body
+
+- **Touches:** RFC 0077 §2's first table row. It lists the MCP, Socket.IO, WS and agent-tool
+  copies, but not FastAPI's
+  [`validate_payload`](../src/forze_fastapi/routes/_attach.py).
+- **RFC said:** nothing about FastAPI's copy.
+- **Found:** `validate_payload(dto_type, data, op)` validates the DTOs that path, query and
+  multipart endpoints assemble by hand; FastAPI validates a request body itself. It differs
+  from `validate_operation_input` in three ways:
+  - it takes a DTO type, because an endpoint builder holds no descriptor;
+  - its rejection is `Invalid input for operation '<op>'`, with the default code
+    `core.validation`;
+  - it asks pydantic for no `url`, `input` or `ctx` before sanitizing. The ingress keeps
+    each row's `url`.
+
+  On unknown names they agree: FastAPI leaves them to the DTO's `extra` policy, which is
+  `forbid_unknown=False`.
+- **Because:** the copy predates the core and was shaped by the endpoint builders.
+- **Class:** `discovery`. The `url` difference only shows when the two are compared.
+- **Consequence:** left as is. Moving it would add a `url` to every error row of these 422s
+  and close no gap, since both drop the input and the echoing messages.
+
+## D-ING-5 — FastAPI's sensitive refusal stays: the same rule, worded for routes
+
+- **Touches:** RFC 0077 §2's second table row (`_attach.py:926`) and §5.2 ("now in one
+  place").
+- **RFC said:** a sensitive operation is refused on every generated surface, and the rule
+  lives in one place.
+- **Found:** `attach_operation_routes` already applies the same predicate as
+  `refuse_sensitive` (`descriptor is not None and descriptor.sensitive`), at attach time.
+  It runs inside the per-binding loop, after the path checks, and names the namespace.
+  `refuse_sensitive` words its message `Refusing to register <surface>s`. Exposure itself does
+  not map at all: routes are chosen by binding tables and an `include` set, not by
+  `include_writes`.
+- **Because:** HTTP has its own projection, so `select_operations` has nothing to select.
+- **Class:** `spec-gap`.
+- **Consequence:** left as is. Calling `refuse_sensitive` per binding would change only the
+  refusal's text and drop the namespace from it. P1 made the same call for MCP's schema and
+  resource-template refusals (`forze_mcp/schemas.py`, `resource_templates.py`), which keep
+  their own wording.
+
+## D-ING-6 — FastAPI's bind-and-run does not map onto `invoke_at_ingress`
+
+- **Touches:** RFC 0077 §2's third table row ("FastAPI middleware plus `_operation_runner`").
+- **RFC said:** the route's bind-and-run is a copy of `invoke_at_ingress`.
+- **Found:** HTTP binds the envelope in two middlewares, around the whole ASGI app. The
+  invocation middleware binds metadata, idempotency and deadline, and echoes the ids in the
+  response headers. The security middleware binds identity. `_operation_runner` only calls
+  `run_operation`. `invoke_at_ingress` binds everything around one call, and it binds a
+  `None` idempotency key on purpose, which would mask the key the middleware bound.
+- **Because:** the envelope belongs to the whole request, not to one call: the ids go back in
+  the response headers and sit in the log fields of everything the request runs.
+- **Class:** `spec-gap`.
+- **Consequence:** left as is.
+
+## D-ING-7 — The WS route ran commands with no invocation metadata; it now uses `invoke_at_ingress`
+
+- **Touches:** RFC 0077 §2. It names Socket.IO for "binds identity but no
+  `InvocationMetadata`", and lists the WS route's bind-and-run (`ws.py:780`) as a copy.
+- **RFC said:** nothing about WS metadata.
+- **Found:** a `cmd` frame bound identity, the connection's admission, the idempotency key
+  and the deadline, then called `run_operation`, but bound no `InvocationMetadata`. The
+  middlewares pass the socket's scope through, so nothing ambient had one. Its logs and
+  spans carried no execution or correlation id, and its integration events had none
+  (`execution/outbox/enrichment.py`). That contradicts two docstrings: the module's ("the
+  same frozen-registry discipline as HTTP") and the invocation middleware's, whose
+  `allowed_websocket_paths` lists routes "which bind their own per-frame envelope".
+- **Because:** the route was written without the metadata step, and nothing failed without
+  it, because the readers treat missing metadata as `None`.
+- **Class:** `spec-gap`. Knowable by reading the route, as §2 did for Socket.IO.
+- **Consequence:** adopted, as a **behaviour change** in its own commit, with a `Fixed`
+  entry and a test that failed first (`test_realtime_ws_metadata.py`). The frame calls
+  `invoke_at_ingress` with `mint_invocation_metadata()`, the connection's identity, its
+  idempotency key and its deadline. The admission stays bound around the call, because the
+  ingress has no parameter for it. It is not a security fix: no check depended on the
+  metadata. A frame-supplied correlation id was not added.
+- **Proposed row (RFC 0077):** `ASSUMED` — every governed invocation runs with its own
+  `InvocationMetadata`, a duplex command frame included. A connection is not an invocation.
+
+## D-ING-8 — Realtime payload validation is typed by the route, not by the descriptor
+
+- **Touches:** RFC 0077 §2's first table row (Socket.IO `_parse_payload`, the realtime WS
+  route).
+- **RFC said:** both are copies of `validate_operation_input`.
+- **Found:** both call `RealtimeCommandRoute.parse_payload`, which validates against the
+  route's own `payload_type` through a `TypeAdapter`. Any JSON value can arrive there, not
+  only an object. The ingress function takes a descriptor and a mapping. Sanitizing is
+  already shared: both use `sanitize_pydantic_errors` and keep their own codes
+  (`realtime_invalid_payload`, `socketio.invalid_payload`).
+- **Because:** a realtime route declares its wire type separately from the operation's input
+  type, so one shared declaration serves both duplex transports.
+- **Class:** `spec-gap`.
+- **Consequence:** left as is on both surfaces.
+
+## D-ING-9 — The realtime identity and tenant ladder sits below the execution layer
+
+- **Touches:** RFC 0077 §5.7 ("Integrations sit below that layer and cannot import it").
+- **RFC said:** `ingress` lives in the execution layer.
+- **Found:** both duplex transports authenticate through `resolve_realtime_identity` and
+  `_tenant` in
+  [`integrations/realtime/auth.py`](../src/forze/application/integrations/realtime/auth.py).
+  The import-linter contract "Layered `forze.application` module architecture" puts that
+  module below `execution`, so it cannot import `ingress`. The ladder is token-only and never
+  takes a requested tenant. With none requested, `_tenant` answers what
+  `resolve_principal_tenant` would.
+- **Because:** the ladder is shared by the Socket.IO and WS resolvers, which is the reason it
+  lives in the kernel.
+- **Class:** `discovery`.
+- **Consequence:** left as is. The two answers agree today, so no parity work is owed.
+
+## D-ING-10 — Socket.IO's event path cannot reach `invoke_at_ingress` without a registry
+
+- **Touches:** RFC 0077 §2 ("Socket.IO's event path … calls the resolved operation
+  directly, not through `run_operation`") and §12 P3.
+- **RFC said:** Socket.IO moves onto `ingress` later.
+- **Found:** `ForzeSocketIOAdapter` takes an `operation_resolver`, documented as
+  `registry.resolve`, and calls the handler it returns. That handler runs the full plan:
+  authz, tenancy, read-only enforcement and deadline. It skips `run_operation`'s trace
+  records and binds no metadata. The adapter never holds a registry, and
+  `invoke_at_ingress` needs one.
+- **Because:** the adapter's public shape predates the registry entry point.
+- **Class:** `discovery`.
+- **Consequence:** left as is. Moving it needs a public API decision, such as a `registry=`
+  on the adapter, which is not a refactor. Minting metadata there alone would be half that
+  move. After D-ING-7 the two duplex twins differ on metadata, and this entry records that
+  the difference is deliberate.
+- **Proposed row (RFC 0077):** `ASSUMED` — Socket.IO moves onto `invoke_at_ingress` only
+  with a registry-backed adapter, on a named consumer, as the rest of P3 is.
+
+**Out of scope, noted.** Neither duplex transport checks its command table against the
+catalog at attach time, so an unknown operation raises `internal` at the first call. Neither
+refuses a sensitive operation. These are hand-declared routes, which the sensitive rule (§5.2,
+generated surfaces) does not cover, and no copy of a boundary step is involved.
