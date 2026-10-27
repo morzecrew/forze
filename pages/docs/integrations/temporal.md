@@ -203,9 +203,5 @@ expression.
   the same `workflow_configs` to the lifecycle step to bootstrap them.
 - Worker-side helpers (`ExecutionContextInterceptor`, `sandboxed_workflow_runner`,
   `TemporalSaga`) are exported for the worker process.
-- **The namespace is the trust boundary.** `ExecutionContextInterceptor` binds the
-  principal, its actor chain and the tenant from `Forze-*` headers as sent, so anyone with
-  write access to the Temporal namespace — able to start, signal or update a workflow — can
-  run it under any identity. Grant that access accordingly. Execution and correlation ids
-  are tracing context: the worker mints its own execution id, records the caller's as the
-  causation, and drops a malformed one.
+- The interceptor binds principal, actor chain and tenant from headers as sent; who can
+  start, signal or update workflows in the namespace decides who can set them.

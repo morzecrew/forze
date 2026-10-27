@@ -16,6 +16,8 @@ from forze.application.contracts.tenancy import TenantIdentity
 from forze.application.execution import InvocationMetadata
 from forze.base.primitives import uuid7
 
+from ._logger import logger
+
 # ----------------------- #
 
 _EXEC_HEADER: Final[str] = "Forze-Execution-ID"
@@ -28,20 +30,22 @@ _ENCODING: Final[str] = "utf-8"
 # ....................... #
 
 
-def _tracing_id(raw: Payload | None) -> UUID | None:
-    """Decode a tracing id header, or ``None`` when it is absent or malformed.
+def _tracing_id(headers: Mapping[str, Payload], name: str) -> UUID | None:
+    """Decode the tracing id header *name*, or ``None`` when it is absent or malformed.
 
     Tracing context, not an authority: a malformed id is dropped rather than failing the
     workflow or activity task, and the binder mints fresh metadata in its place.
     """
 
-    if not raw:
+    if not (raw := headers.get(name)):
         return None
 
     try:
         return UUID(raw.data.decode(_ENCODING))
 
     except ValueError:  # UnicodeDecodeError included
+        # The header name only: the value is caller-controlled text.
+        logger.debug("Dropped a malformed Temporal tracing header", header=name)
         return None
 
 
@@ -105,15 +109,13 @@ class TemporalContextCodec:
         self,
         headers: Mapping[str, Payload],
     ) -> TemporalDecodedContext:
-        exec_raw = headers.get(_EXEC_HEADER)
-        corr_raw = headers.get(_CORR_HEADER)
         tenant_raw = headers.get(_TENANT_HEADER)
         principal_raw = headers.get(_PRINCIPAL_HEADER)
         actor_raw = headers.get(_ACTOR_HEADER)
 
         return TemporalDecodedContext(
-            execution_id=_tracing_id(exec_raw),
-            correlation_id=_tracing_id(corr_raw),
+            execution_id=_tracing_id(headers, _EXEC_HEADER),
+            correlation_id=_tracing_id(headers, _CORR_HEADER),
             tenant_id=UUID(tenant_raw.data.decode(_ENCODING)) if tenant_raw else None,
             principal_id=(UUID(principal_raw.data.decode(_ENCODING)) if principal_raw else None),
             actor_ids=(
