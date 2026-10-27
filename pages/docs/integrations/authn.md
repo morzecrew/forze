@@ -39,7 +39,9 @@ deps = DepsRegistry.from_modules(
 A route's [`AuthnSpec`](../identity-tenancy-enc/identity.md) selects verifiers and a resolver
 by profile name; override the defaults via `token_verifiers`, `resolvers`, etc. Each override
 must name a route in `authn`, and a verifier override a method that route enables; any
-other is refused when the module is built.
+other is refused when the module is built. A `token_verifiers` override also needs a
+`resolvers` override on its route: the default resolver would take an external token's
+subject as an internal principal id.
 
 By default every wired route checks the authenticating principal against an
 active `policy_principal` document — the posture for deployments running the
