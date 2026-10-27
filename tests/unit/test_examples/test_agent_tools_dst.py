@@ -20,7 +20,9 @@ import pytest
 
 from examples.recipes.agent_tools_dst.app import (
     CREATE_OP,
+    CREATE_TOOL,
     LIST_OP,
+    LIST_TOOL,
     SPRINT_CAPACITY,
     TICKET_SPEC,
     TICKETS,
@@ -128,9 +130,9 @@ class TestTheWorkloadReallyGoesThroughTheBridge:
         palette = operation_tools(
             TICKETS.registry(tx_route="mock"), include=[CREATE_OP, LIST_OP], read_only=False
         )
-        create = palette.entry_for(CREATE_OP)
+        create = palette.entry_for(CREATE_TOOL)
 
-        assert set(palette.names) == {CREATE_OP, LIST_OP}
+        assert set(palette.names) == {CREATE_TOOL, LIST_TOOL}
         assert create is not None
         assert create.is_read_only is False
 
@@ -140,7 +142,7 @@ class TestTheWorkloadReallyGoesThroughTheBridge:
         # that only ever listed would never contend.
         chosen = {_turn(ModelState(), random.Random(seed)).tool for seed in range(40)}
 
-        assert chosen == {CREATE_OP, LIST_OP}
+        assert chosen == {CREATE_TOOL, LIST_TOOL}
 
 
 class TestATurnAnswersRatherThanRaises:
@@ -174,7 +176,7 @@ class TestATurnAnswersRatherThanRaises:
         # Content, not just the verdict: an agent loop feeds the result back to the model, so
         # a turn that returned only `is_error` would leave it unable to read what it just did
         # — and the refusal above indistinguishable from any other refusal.
-        (created,) = await self._turns(AgentTurnInput(tool=CREATE_OP, input={"points": 3}))
+        (created,) = await self._turns(AgentTurnInput(tool=CREATE_TOOL, input={"points": 3}))
         (refused,) = await self._turns(AgentTurnInput(tool="tickets.kill", input={}))
 
         assert created["is_error"] is False
@@ -185,8 +187,8 @@ class TestATurnAnswersRatherThanRaises:
         # Two identical calls, two ids: the id is what correlates a result to the call that
         # produced it, so a shared one would make the loop's two results indistinguishable.
         first, second = await self._turns(
-            AgentTurnInput(tool=CREATE_OP, input={"points": 1}),
-            AgentTurnInput(tool=CREATE_OP, input={"points": 1}),
+            AgentTurnInput(tool=CREATE_TOOL, input={"points": 1}),
+            AgentTurnInput(tool=CREATE_TOOL, input={"points": 1}),
         )
 
         assert first["tool_use_id"] != second["tool_use_id"]

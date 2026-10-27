@@ -25,7 +25,7 @@ from examples.recipes.query_agent.app import (
 from forze.base.exceptions import CoreException
 from forze_http.execution.deps.configs import HttpServiceConfig
 from forze_kits.aggregates.document import DocumentKernelOp
-from forze_kits.integrations.agent_tools import ToolUse, dispatch_tool_use
+from forze_kits.integrations.agent_tools import ToolUse, dispatch_tool_use, provider_safe_tool_name
 from forze_mock import MockDepsModule, MockHttpRegistry
 from tests.support.execution_context import context_from_modules
 
@@ -54,8 +54,8 @@ class TestThePaletteIsACapabilityGrant:
         tools = answering_tools(notes_registry())
 
         assert set(tools.names) == {
-            str(NOTES.key(DocumentKernelOp.LIST)),
-            str(NOTES.key(DocumentKernelOp.AGG_LIST)),
+            provider_safe_tool_name(NOTES.key(DocumentKernelOp.LIST)),
+            provider_safe_tool_name(NOTES.key(DocumentKernelOp.AGG_LIST)),
         }
 
     async def test_a_write_the_model_invents_is_not_dispatchable(self) -> None:
@@ -68,7 +68,7 @@ class TestThePaletteIsACapabilityGrant:
         result = await dispatch_tool_use(
             ToolUse(
                 id="x",
-                name=str(NOTES.key(DocumentKernelOp.CREATE)),
+                name=provider_safe_tool_name(NOTES.key(DocumentKernelOp.CREATE)),
                 input={"title": "t", "category": "c", "body": "b"},
             ),
             ctx=_ctx(),
@@ -85,7 +85,7 @@ class TestThePaletteIsACapabilityGrant:
         listed = next(
             tool
             for tool in answering_tools(notes_registry()).defs
-            if tool.name == str(NOTES.key(DocumentKernelOp.LIST))
+            if tool.name == provider_safe_tool_name(NOTES.key(DocumentKernelOp.LIST))
         )
 
         assert listed.description is not None
@@ -161,15 +161,15 @@ class TestTheStubIsOnlyChoosingATool:
     def test_it_picks_from_the_names_it_was_given(self) -> None:
         # If the stub hardcoded an operation key, the example would keep "working" while
         # the palette it claims to read from changed underneath it.
-        names = [{"name": name} for name in ("other.list", "other.agg_list")]
+        names = [{"name": name} for name in ("other__list", "other__agg_list")]
 
         listing = canned_model(ModelArgs(question="anything", tools=names)).tool_call
         counting = canned_model(ModelArgs(question="how many?", tools=names)).tool_call
 
         assert listing is not None
         assert counting is not None
-        assert listing.name == "other.list"
-        assert counting.name == "other.agg_list"
+        assert listing.name == "other__list"
+        assert counting.name == "other__agg_list"
 
 
 def _ctx(http: MockHttpRegistry | None = None):

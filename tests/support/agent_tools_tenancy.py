@@ -83,7 +83,7 @@ class AgentToolsTenancyHarness:
 
         with self.bound(tenant):
             return await dispatch_tool_use(
-                ToolUse(id=f"w-{title}", name=str(self.ns.key("create")), input={"title": title}),
+                ToolUse(id=f"w-{title}", name=tools.names[0], input={"title": title}),
                 ctx=self.ctx,
                 tools=tools,
             )
@@ -97,7 +97,7 @@ class AgentToolsTenancyHarness:
 
         with self.bound(tenant):
             return await dispatch_tool_use(
-                ToolUse(id="r", name=str(self.ns.key("list")), input={}),
+                ToolUse(id="r", name=tools.names[0], input={}),
                 ctx=self.ctx,
                 tools=tools,
             )

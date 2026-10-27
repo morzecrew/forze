@@ -43,8 +43,8 @@ Two read tools, and no write tool anywhere. An agent that only answers questions
 create, update or delete a note — not because a check denies it, but because there is
 nothing in the palette to call.
 
-Each definition carries a name, a JSON Schema taken from the operation's own input DTO,
-and a description. For a filter-accepting operation that description also spells out the
+Each definition carries a name (`notes__list`: providers refuse the `.` in `notes.list`), a
+JSON Schema taken from the operation's own input DTO, and a description. For a filter-accepting operation that description also spells out the
 filter surface:
 
 > List documents by filters and sorts (offset pagination). Filterable fields — category

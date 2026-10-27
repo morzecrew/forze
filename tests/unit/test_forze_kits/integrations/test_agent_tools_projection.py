@@ -13,7 +13,7 @@ from forze.application.execution.operations.registry import (
     OperationRegistry,
 )
 from forze.base.exceptions import CoreException, ExceptionKind
-from forze_kits.integrations.agent_tools import operation_tools
+from forze_kits.integrations.agent_tools import operation_tools, provider_safe_tool_name
 
 pytestmark = pytest.mark.unit
 
@@ -90,11 +90,113 @@ class TestSchemaFidelity:
 
         assert tools.defs[0].description == "double n"
 
-    def test_the_name_is_the_operation_key(self) -> None:
+
+# ....................... #
+
+
+def _keyed(*ops: str) -> FrozenOperationRegistry:
+    """Query operations under arbitrary keys, for what a naming policy makes of them."""
+
+    reg = OperationRegistry(handlers={op: lambda _c: _Doubler() for op in ops})
+
+    for op in ops:
+        reg = reg.set_descriptor(op, OperationDescriptor(input_type=_In, output_type=_Out))
+        reg = reg.bind(op).as_query().finish()
+
+    return reg.freeze()
+
+
+class TestToolNames:
+    def test_the_default_name_spells_the_dots_a_provider_refuses(self) -> None:
+        # OpenAI-style function calling and Anthropic both take only ^[A-Za-z0-9_-]{1,64}$,
+        # so the dotted key itself would get the whole palette refused.
         tools = operation_tools(_registry(), include=["calc.double"])
 
-        assert tools.names == ("calc.double",)
-        assert tools.entry_for("calc.double") is not None
+        assert tools.names == ("calc__double",)
+        assert tools.entry_for("calc__double") is not None
+
+    def test_the_binding_keeps_the_operation_key(self) -> None:
+        tools = operation_tools(_registry(), include=["calc.double"])
+
+        entry = tools.entry_for("calc__double")
+
+        assert entry is not None
+        assert entry.op == "calc.double"
+
+    def test_any_other_refused_character_becomes_an_underscore(self) -> None:
+        tools = operation_tools(_keyed("billing:refund v2.list"), include=["billing:refund v2.list"])
+
+        assert tools.names == ("billing_refund_v2__list",)
+
+    def test_a_custom_policy_names_the_tools(self) -> None:
+        tools = operation_tools(
+            _registry(), include=["calc.double", "calc.void"], name=lambda op: op.split(".")[-1]
+        )
+
+        assert tools.names == ("double", "void")
+        assert tools.entry_for("void") is not None
+
+    def test_names_two_operations_share_are_refused_naming_both(self) -> None:
+        with pytest.raises(CoreException) as caught:
+            operation_tools(_keyed("a.b", "a__b"), include=["a.b", "a__b"])
+
+        assert _kind_of(caught) is ExceptionKind.CONFIGURATION
+        assert caught.value.code == "agent_tools_tool_name_collision"
+        assert "'a__b' (a.b, a__b)" in str(caught.value)
+
+    def test_a_tool_name_equal_to_another_operations_key_is_refused(self) -> None:
+        # The key `y` still dispatches as a legacy name; naming `x` "y" would leave two
+        # operations answering to it. The default policy cannot do this (a key it leaves
+        # unchanged maps to itself, so it collides above), a custom one can.
+        renamed = {"x": "y", "y": "z"}
+
+        with pytest.raises(CoreException) as caught:
+            operation_tools(_keyed("x", "y"), include=["x", "y"], name=lambda op: renamed[op])
+
+        assert caught.value.code == "agent_tools_tool_name_collision"
+        assert "'y' (x, y)" in str(caught.value)
+
+    def test_an_operation_may_be_named_its_own_key(self) -> None:
+        tools = operation_tools(_keyed("x", "y.z"), include=["x", "y.z"])
+
+        assert tools.names == ("x", "y__z")
+        assert tools.entry_for("x") is not None
+
+    @pytest.mark.parametrize("returned", [42, None, ["calc"]])
+    def test_a_policy_returning_a_non_string_is_refused(self, returned: object) -> None:
+        def policy(_op: str) -> str:
+            return returned  # type: ignore[return-value]
+
+        with pytest.raises(CoreException) as caught:
+            operation_tools(_registry(), include=["calc.double"], name=policy)
+
+        assert _kind_of(caught) is ExceptionKind.CONFIGURATION
+        assert caught.value.code == "agent_tools_invalid_tool_name"
+        assert "(calc.double)" in str(caught.value)
+
+    def test_a_name_over_64_characters_is_refused(self) -> None:
+        op = "orders." + "x" * 57  # 65 characters once the dot is spelled "__"
+
+        with pytest.raises(CoreException) as caught:
+            operation_tools(_keyed(op), include=[op])
+
+        assert _kind_of(caught) is ExceptionKind.CONFIGURATION
+        assert caught.value.code == "agent_tools_invalid_tool_name"
+        assert op in str(caught.value)
+
+    def test_a_name_of_exactly_64_characters_is_accepted(self) -> None:
+        op = "orders." + "x" * 56
+
+        assert len(operation_tools(_keyed(op), include=[op]).names[0]) == 64
+
+    @pytest.mark.parametrize("policy_name", ["calc.double", "", "dóuble"])
+    def test_a_policy_name_outside_the_charset_is_refused(self, policy_name: str) -> None:
+        with pytest.raises(CoreException) as caught:
+            operation_tools(_registry(), include=["calc.double"], name=lambda _op: policy_name)
+
+        assert _kind_of(caught) is ExceptionKind.CONFIGURATION
+        assert caught.value.code == "agent_tools_invalid_tool_name"
+        assert repr(policy_name) in str(caught.value)
 
 
 # ....................... #
@@ -112,14 +214,14 @@ class TestTheReadCommandSplit:
     def test_a_command_palette_includes_it(self) -> None:
         tools = operation_tools(_registry(), include=["calc.write"], read_only=False)
 
-        assert tools.names == ("calc.write",)
+        assert tools.names == ("calc__write",)
 
     def test_a_command_palette_still_takes_reads(self) -> None:
         # An agent that must act needs both halves; opting into commands must not turn
         # into a write-only palette.
         tools = operation_tools(_registry(), include=["calc.write", "calc.double"], read_only=False)
 
-        assert tools.names == ("calc.write", "calc.double")
+        assert tools.names == ("calc__write", "calc__double")
 
     def test_read_only_is_the_default(self) -> None:
         # The dangerous direction is never the one you get by omission.
@@ -146,7 +248,7 @@ class TestTheAllowlistIsMandatory:
     def test_a_repeated_name_projects_once(self) -> None:
         tools = operation_tools(_registry(), include=["calc.double", "calc.double"])
 
-        assert tools.names == ("calc.double",)
+        assert tools.names == ("calc__double",)
 
     @pytest.mark.parametrize(
         "include",
@@ -157,7 +259,7 @@ class TestTheAllowlistIsMandatory:
         # implementation that sorted the selection would satisfy a single case by luck.
         tools = operation_tools(_registry(), include=list(include), read_only=True)
 
-        assert tools.names == include
+        assert tools.names == tuple(provider_safe_tool_name(op) for op in include)
 
 
 # ....................... #
@@ -198,4 +300,4 @@ class TestThePaletteIsNotEditableAfterProjection:
 
         allowlist.append("calc.write")
 
-        assert tools.names == ("calc.double",)
+        assert tools.names == ("calc__double",)

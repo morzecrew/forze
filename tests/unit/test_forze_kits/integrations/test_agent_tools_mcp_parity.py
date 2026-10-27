@@ -99,15 +99,43 @@ class TestTheTwoSurfacesAgree:
             mcp_tool.input_schema.get("required", ())
         )
 
-    async def test_the_tool_names_match(self) -> None:
-        # Same name on both surfaces: an operation is one thing with one id, and a durable
-        # agent run that journals a tool name stays readable across either.
+    async def test_the_tools_bind_the_same_operation(self) -> None:
+        # One operation, one id: MCP names the tool by its key, and the bridge spells that
+        # key the way a model provider accepts (`.` is refused there) while binding the same
+        # operation, so a durable agent run that journals a tool name stays traceable.
         server = FastMCP("calc")
         names = register_tools(server, _registry(), _ctx_factory)
 
         bridged = operation_tools(_registry(), include=["calc.double"])
 
-        assert tuple(names) == bridged.names
+        assert names == ["calc.double"]
+        assert bridged.names == ("calc__double",)
+        assert [str(entry.op) for entry in bridged.bindings.values()] == names
+
+    async def test_a_journaled_mcp_name_still_dispatches_through_the_bridge(self) -> None:
+        # The MCP name is the operation key, which is also what the bridge named its tools
+        # before the naming policy: a run that journaled it replays on either surface.
+        from uuid import uuid4
+
+        from forze.application.contracts.authn import AuthnIdentity
+        from forze.application.execution import Deps, InvocationMetadata
+        from forze.testing import context_from_deps
+        from forze_kits.integrations.agent_tools import ToolUse, dispatch_tool_use
+
+        (journaled,) = register_tools(FastMCP("calc"), _registry(), _ctx_factory)
+        ctx = context_from_deps(Deps())
+
+        with ctx.inv_ctx.bind(
+            metadata=InvocationMetadata(execution_id=uuid4(), correlation_id=uuid4()),
+            authn=AuthnIdentity(principal_id=uuid4()),
+        ):
+            result = await dispatch_tool_use(
+                ToolUse(id="t", name=journaled, input={"n": 21}),
+                ctx=ctx,
+                tools=operation_tools(_registry(), include=["calc.double"]),
+            )
+
+        assert result.content == {"doubled": 42}
 
     async def test_the_descriptions_come_from_the_same_place(self) -> None:
         server = FastMCP("calc")
@@ -131,7 +159,7 @@ class TestTheTwoSurfacesAgree:
         exposed = exposed_operations(registry.catalog())
         bridged = operation_tools(registry, include=["calc.double"])
 
-        assert set(exposed) == set(bridged.names)
+        assert set(exposed) == {str(entry.op) for entry in bridged.bindings.values()}
 
 
 # ....................... #
@@ -164,7 +192,7 @@ class TestBothSurfacesRejectAHallucinatedArgument:
             authn=AuthnIdentity(principal_id=uuid4()),
         ):
             bridged = await dispatch_tool_use(
-                ToolUse(id="t", name="calc.double", input={"n": 21, "invented": 1}),
+                ToolUse(id="t", name="calc__double", input={"n": 21, "invented": 1}),
                 ctx=ctx,
                 tools=tools,
             )
