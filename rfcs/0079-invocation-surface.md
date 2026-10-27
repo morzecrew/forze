@@ -2,13 +2,13 @@
 
 - **Status:** 📝 Draft. This is the surface field RFC 0077 deferred to its own RFC (§8,
   §10 Q2, decision 16, §12 P3). Four questions wait for the maintainer (§10). It builds on
-  the RFC 0077 P3 ingress change (branch `refactor/ingress-fastapi-socketio-ws`, unpublished), which lands
-  first.
+  two changes already on main: the RFC 0077 P3 ingress change (#686) and Inngest's per-call
+  metadata (#683).
 - **Scope:** One field, `InvocationMetadata.surface`, naming the framework boundary an
   invocation entered through: `http`, `mcp`, `cli`, and so on. It settles:
   - the vocabulary, and who may set it: the boundary, never the caller;
-  - where each framework boundary mints it, including the three that still bind no metadata
-    in some case after the RFC 0077 P3 ingress change;
+  - where each framework boundary mints it, including the two that still bind no metadata
+    in some case;
   - what happens across a hop: nothing is carried, and each hop names itself;
   - its log field and span attribute;
   - its field in `AuditEntry`, what each audit store needs, and the RFC 0060 amendment;
@@ -42,8 +42,8 @@
     [`forze_kits/integrations/durable/runner.py`](../src/forze_kits/integrations/durable/runner.py);
   - [RFC 0060](0060-audit-spec.md) (the audit entry this RFC amends);
   - [RFC 0077](0077-operation-cli.md) (the CLI, the shared ingress core, and the question this
-    RFC answers), and its P3 ingress change on branch `refactor/ingress-fastapi-socketio-ws`, which gives WS
-    command frames and Socket.IO events their metadata;
+    RFC answers), and its P3 ingress change (#686), which gave WS command frames and Socket.IO
+    events their metadata;
   - [RFC 0052](0052-versioned-facts-correction-lineage.md) (corrections, which record an actor
     the same way, §8).
 - **Origin:** RFC 0077 §10 Q2. Without a surface field, an audit row written by a cron job
@@ -64,14 +64,13 @@
   attribution, never authority: nothing branches on it.
 - **Each hop names itself.** An activity started from an HTTP request records `temporal`.
   The request is found through the shared `correlation_id`. There is no `origin_surface`.
-- **P1 mints it at the nine framework boundaries.** WS command frames and Socket.IO events
-  bind no metadata on main; the RFC 0077 P3 ingress change (branch
-  `refactor/ingress-fastapi-socketio-ws`) makes them mint it, and P1 only adds their constant.
-  Three cases still bind none after that change: the self-hosted durable runner, the inbox when
-  a message has no correlation header, and Inngest when its envelope has no metadata. P1 makes
-  them bind it. Log lines gain `invocation_surface` and operation spans gain
-  `forze.invocation_surface`, because bare `surface` is already the port-call log key. Both
-  read `unknown` when no metadata is bound at all.
+- **P1 mints it at the nine framework boundaries.** Seven always mint metadata on main,
+  including WS command frames and Socket.IO events since #686 and every Inngest call since
+  #683, so P1 only adds their constant. Two cases still bind none: the self-hosted durable
+  runner, and the inbox when a message has no correlation header. P1 makes them bind it.
+  Log lines gain `invocation_surface` and operation spans gain `forze.invocation_surface`,
+  because bare `surface` is already the port-call log key. Both read `unknown` when no
+  metadata is bound at all.
 - **P2 adds `surface` to `AuditEntry` and the audit collection.** It proposes adding
   `execution_id` and `correlation_id` in the same migration, because today the audit row has
   no correlation id at all (§2). The columns are nullable, but Postgres refuses to start
@@ -82,7 +81,7 @@
 ## 2. Motivation
 
 **An audit row does not say how its operation was reached.** RFC 0077 §10 Q2 named the case
-and accepted the gap on two grounds (`rfcs/0077-operation-cli.md:733-738`):
+and accepted the gap on two grounds (`rfcs/0077-operation-cli.md:748-753`):
 - with an API-key identity, the actor names the job or the operator;
 - "the correlation id ties the row to the command's logs".
 
@@ -101,10 +100,10 @@ timestamp and its actor. So today:
 | Boundary | Where the identity comes from |
 |---|---|
 | HTTP | the security middleware's verified credential |
-| WebSocket, Socket.IO | an identity stored on the connection at connect time (`forze_fastapi/realtime/ws.py:272-276`, `forze_socketio/routing.py:384-386`) |
+| WebSocket, Socket.IO | an identity and tenant stored on the connection at connect time (`forze_fastapi/realtime/ws.py:280-287`, `forze_socketio/routing.py:395-404`) |
 | MCP, CLI | the ingress identity resolver; the CLI may run a static identity behind an acknowledgement |
-| Temporal | principal and actor chain from workflow headers, bound whenever a principal header is present, with no trust gate (`forze_temporal/interceptors/codecs.py:118-140`) |
-| Inngest | the `_forze` envelope, and only with `bind_identity_from_event=True` (`forze_inngest/execution/registration.py:143-148`) |
+| Temporal | principal and actor chain from workflow headers, bound whenever a principal header is present, with no trust gate (`forze_temporal/interceptors/codecs.py:140-166`) |
+| Inngest | the `_forze` envelope, and only with `bind_identity_from_event=True` (`forze_inngest/execution/registration.py:149-152`) |
 | inbox | a tenant from a broker header, behind an opt-in; no principal |
 | self-hosted durable runner | a tenant, no principal (`forze_kits/integrations/durable/operation_bridge.py:12-16`, `runner.py:391-400`) |
 
@@ -117,9 +116,7 @@ the same ids plus tenant and principal (`src/forze/application/execution/observa
 
 ## 3. Current state
 
-All of this was verified against the tree at `24fb3e228`, and every `path:line` points
-there. The WS and Socket.IO citations predate the RFC 0077 P3 ingress change on branch
-`refactor/ingress-fastapi-socketio-ws`, which is described where it changes them.
+All of this was verified against main at `1e03f15ea`, and every `path:line` points there.
 
 **The metadata.**
 - `InvocationMetadata` is a frozen, keyword-only attrs class with `execution_id`,
@@ -128,44 +125,32 @@ there. The WS and Socket.IO citations predate the RFC 0077 P3 ingress change on 
   files under `tests/` construct it.
 - `get_execution_id`'s docstring draws a trust line: the execution id is minted server-side,
   while the correlation id "arrives in a client header and could be forged"
-  (`invocation.py:95-104`). That holds at every boundary except Inngest, which decodes the
-  execution id from its event envelope along with the correlation id
-  (`forze_inngest/adapters/context.py:111-122`).
+  (`invocation.py:95-104`). It now holds at every framework boundary. Since #683, Inngest
+  mints its own execution id for each handler call and records the envelope's as the
+  causation (`forze_inngest/execution/registration.py:161-168`).
 
 **Where metadata is minted and bound.**
 
 | Boundary | Mint | Bind |
 |---|---|---|
-| HTTP | `InvocationMetadataMiddleware._decode_metadata` (`forze_fastapi/middlewares/invocation.py:117-131`) | `bind_metadata` for every HTTP scope (`:209`) |
+| HTTP | `InvocationMetadataMiddleware._decode_metadata`, through `mint_invocation_metadata` (`forze_fastapi/middlewares/invocation.py:117-123`) | `bind_metadata` for every HTTP scope (`:201`) |
 | MCP | `mint_invocation_metadata()` (`forze_mcp/dispatch.py:91`) | `invoke_at_ingress` (`ingress/invoke.py:66`) |
 | CLI | `mint_invocation_metadata(correlation_id=, causation_id=)` (`forze_cli/ops/call.py:149`) | the same |
 | inbox | from the correlation and event-id headers, **only when a correlation header is present** (`forze_kits/integrations/inbox/consumer.py:175-190`) | `bind_metadata` |
-| Temporal | `TemporalContextBinder.bind`: a fresh execution id, the correlation id from the headers, the upstream execution id as causation (`codecs.py:118-130`) | `bind` (`forze_temporal/interceptors/context.py:262`, `:275`) |
-| Inngest | decoded from the `_forze` envelope, keeping the upstream execution id verbatim (`forze_inngest/adapters/context.py:111-122`) | `bind`, or identity only when the envelope has no metadata (`registration.py:150-163`) |
-| WS command frames | none | `bind_identity` only (`ws.py:272-276`, `:773-784`) |
-| Socket.IO events | none | `bind_identity` only; the operation is called directly, not through `run_operation` (`routing.py:384-390`) |
+| Temporal | `TemporalContextBinder.bind`: a fresh execution id, the correlation id from the headers, the upstream execution id as causation (`codecs.py:140-151`). A malformed tracing header is dropped, and the binder mints in its place (`:33-49`) | `bind` (`forze_temporal/interceptors/context.py:262`, `:275`) |
+| Inngest | `mint_invocation_metadata` per handler call: a fresh execution id, the envelope's correlation id or one derived from the Inngest run id, the envelope's execution id as causation (`forze_inngest/execution/registration.py:161-168`). The envelope's ids are decoded one by one, a malformed one dropped (`adapters/context.py:135-142`) | `bind`, every call (`registration.py:170`) |
+| WS command frames | `mint_invocation_metadata()` per frame (`forze_fastapi/realtime/ws.py:793`) | `invoke_at_ingress`, with the connection's identity and tenant (`:786-796`) |
+| Socket.IO events | `mint_invocation_metadata()` per event (`forze_socketio/routing.py:408`) | `bind_metadata` with the connection's identity and tenant (`:395-410`); the operation is called directly, not through `run_operation` (`:412-413`) |
 | self-hosted durable runner | none | the tenant only (`runner.py:391-400`) |
 | agent tools | none, by design | the context "already bound by whichever boundary is running the agent loop" (`forze_kits/integrations/agent_tools/dispatch.py:171-172`) |
 
 The HTTP middleware binds metadata for HTTP scopes only. It refuses a raw websocket scope
 unless the app allows it, and lets an allowed one through without binding anything
-(`middlewares/invocation.py:168-178`). So on main, WS frames get no metadata from it.
+(`middlewares/invocation.py:160-170`). That is why WS frames mint their own, since #686.
 
-**The RFC 0077 P3 ingress change** (branch `refactor/ingress-fastapi-socketio-ws`, unpublished, landing
-before this RFC is accepted) changes three rows of that table:
-- WS command frames run through `invoke_at_ingress` with `mint_invocation_metadata()`
-  (`ws.py:779-786` on that branch);
-- Socket.IO's `_dispatch_event` binds fresh metadata from `mint_invocation_metadata()` and the
-  connection's tenant around each event (`routing.py:400-407` on that branch);
-- the HTTP middleware's `_decode_metadata` mints through `mint_invocation_metadata`, keeping
-  its advisory header parsing.
-
-After it, three framework cases still run operations without metadata:
+Two framework cases still run operations without metadata:
 - the self-hosted durable runner;
-- the inbox, for a message without a correlation header;
-- Inngest, for an event whose envelope has no metadata. It binds identity only, so the
-  operation runs with whatever metadata was bound around it, or with none
-  (`registration.py:160-163`).
+- the inbox, for a message without a correlation header.
 
 Two harnesses also run operations with none: the DST engine (`forze_dst/engines/context.py:276`,
 `:304`) and `run_traced_operation` (`execution/tracing/harness.py:103`). They are not
@@ -215,7 +200,7 @@ replaced by the port's surface on every port-call line.
   validation the insert fails, and the audited operation fails closed (`audit.md:159-161`).
 - **Precedent.** `actor_ids` was added after RFC 0060 shipped (#488). It took a column with a
   default, an `ALTER TABLE … ADD COLUMN`, a MongoDB note that legacy rows lack the field, and a
-  changelog entry marked **Required migration** (`CHANGELOG.md:678`, `audit.md:159-173`).
+  changelog entry marked **Required migration** (`CHANGELOG.md:722`, `audit.md:159-173`).
   RFC 0060's decision table got no row for it.
 
 **Envelopes that carry metadata across a hop.**
@@ -226,10 +211,11 @@ replaced by the port's surface on every port-call line.
 - Broker headers: `forze_correlation_id` and its siblings (`contracts/envelope.py:35-47`). Their
   trust model: "any producer with broker access can forge them" (`:24-28`).
 - Temporal headers: `Forze-Execution-ID`, `Forze-Correlation-ID`, `Forze-Tenant-ID`,
-  `Forze-Principal-ID`, `Forze-Actor-IDs` (`codecs.py:21-25`). The causation id is not encoded
-  (`:61`).
-- The Inngest `_forze` envelope is "plaintext, attacker-controllable event data". Its metadata
-  "is tracing context, not an authority, so it always propagates" (`registration.py:143-148`).
+  `Forze-Principal-ID`, `Forze-Actor-IDs` (`codecs.py:23-27`). The causation id is not encoded
+  (`:85`). A malformed execution or correlation header is dropped (`:33-49`).
+- The Inngest `_forze` envelope is "plaintext, attacker-controllable event data". The receiver
+  keeps its correlation id and records its execution id as the causation, both "tracing
+  context, not an authority" (`registration.py:149-156`).
 - `DurableRunRecord` persists `tenant_id` and no invocation metadata
   (`contracts/durable/function/run_store.py:100-133`). A self-hosted durable run loses the
   correlation id of whatever enqueued it.
@@ -339,20 +325,19 @@ def mint_invocation_metadata(
 
 | Boundary | Value | Change |
 |---|---|---|
-| `InvocationMetadataMiddleware` | `http` | `_decode_metadata` passes it (`middlewares/invocation.py:127` on main; a `mint_invocation_metadata` call after the RFC 0077 P3 ingress change). This covers generated routes and SSE |
-| WS command frame | `websocket` | pass it to the `mint_invocation_metadata()` call the RFC 0077 P3 ingress change adds (`ws.py:786` on branch `refactor/ingress-fastapi-socketio-ws`; `ws.py:773-784` on main binds none) |
-| Socket.IO event | `socketio` | pass it to the `mint_invocation_metadata()` call the RFC 0077 P3 ingress change adds (`routing.py:407` on that branch; `routing.py:384-390` on main binds none) |
+| `InvocationMetadataMiddleware` | `http` | `_decode_metadata` passes it to its `mint_invocation_metadata` call (`middlewares/invocation.py:120`). This covers generated routes and SSE |
+| WS command frame | `websocket` | pass it to the frame's `mint_invocation_metadata()` call (`ws.py:793`) |
+| Socket.IO event | `socketio` | pass it to the event's `mint_invocation_metadata()` call (`routing.py:408`) |
 | MCP | `mcp` | `dispatch.py:91` |
 | `forze ops call` | `cli` | `call.py:149` |
 | `process_with_inbox` | `inbox` | always bind metadata: the correlation id from the header or a fresh one, the event id as causation (`consumer.py:175-190`). Today nothing is bound when the correlation header is missing |
-| Temporal interceptors | `temporal` | `TemporalContextBinder.bind` (`codecs.py:125-129`) |
-| Inngest function | `inngest` | the envelope decode passes it when it builds the metadata (`adapters/context.py:115`); the envelope is never read for it. `_bind_invocation` mints fresh metadata with it when the envelope has none (`registration.py:150-163`). Today that case keeps whatever metadata was bound around it, whichever boundary bound it |
+| Temporal interceptors | `temporal` | `TemporalContextBinder.bind` (`codecs.py:147-151`) |
+| Inngest function | `inngest` | pass it to `_bind_invocation`'s `mint_invocation_metadata` call (`registration.py:161`); the envelope is never read for it |
 | self-hosted durable runner | `durable` | mint per execution attempt, next to the tenant binding (`runner.py:391-400`). Today nothing is bound. Which ids an attempt gets is §10 Q4 |
 
-Three rows, the durable runner, the inbox and Inngest without envelope metadata, bind metadata
-where none was bound before, even after the RFC 0077 P3 ingress change. That has effects beyond
-the surface, listed in §9. The same effects for WS and Socket.IO belong to that change, which
-records them.
+Two rows, the durable runner and the inbox, bind metadata where none was bound before. That
+has effects beyond the surface, listed in §9. #686 and #683 made the same change for WS,
+Socket.IO and Inngest, and record its effects there.
 
 ### 5.4 Hops: each boundary names itself
 
@@ -362,15 +347,16 @@ HTTP request is found through its correlation id, which the hop carries.
 | Hop | Correlation id | Surface |
 |---|---|---|
 | HTTP → outbox → broker → inbox | carried (`enrichment.py:53`, the broker header, `consumer.py:175`) | not carried; the consumer records `inbox` |
-| caller → Temporal | carried (`codecs.py:59`, `:123`) | not carried; records `temporal` |
-| caller → Inngest | carried in `_forze` | not carried; records `inngest` |
+| caller → Temporal | carried (`codecs.py:83`, `:145`) | not carried; records `temporal` |
+| caller → Inngest | carried in `_forze`, or derived from the Inngest run id when absent (`registration.py:161-166`) | not carried; records `inngest` |
 | caller → self-hosted durable run | **not carried** (`run_store.py:100-133`) | not carried; records `durable` |
 | agent loop → tool call | the same invocation | the same; the agent appears in `actor_ids` |
 
 There is no `origin_surface`, for three reasons:
 - **No hop offers a channel the receiver can trust for it.** Broker headers
-  (`envelope.py:24-28`) and the Inngest envelope (`registration.py:143-148`) are
-  producer-controlled, and the Temporal codec binds its headers as sent (`codecs.py:118-140`).
+  (`envelope.py:24-28`) and the Inngest envelope (`registration.py:149-152`) are
+  producer-controlled, and the Temporal codec binds its identity headers as sent
+  (`codecs.py:140-166`).
   An origin read from any of them is the caller-chosen attribution decision 1 refuses.
 - **One field cannot hold a chain.** HTTP → Temporal → outbox → inbox has three hops before the
   row. `origin_surface` would keep the first and drop the rest. The correlation id already
@@ -425,12 +411,13 @@ class AuditEntry:
 - **What `None` means.** The row was written before the field existed, or by an `AuditPort`
   writer that does not set it. `unknown` means a row written later, by an invocation no
   boundary named. A reader can tell the legacy gap from a live one.
-- **The ids are tracing context, not evidence.** They join the row to the log lines that
-  carry the same values, and prove nothing about the caller. Over HTTP the client chooses the
-  correlation id (`middlewares/invocation.py:122-125`). On an `inngest` row both ids come from
-  the event envelope, not from the server (`forze_inngest/adapters/context.py:111-122`). The
-  audit records them as they were bound, on every surface; `surface` tells a reader where they
-  came from. This RFC does not change how Inngest derives them.
+- **The execution id is the server's; the correlation id is tracing context.** Every framework
+  boundary mints the execution id itself (§3). The correlation and causation ids come from the
+  caller or the hop: over HTTP the client chooses them (`middlewares/invocation.py:118-122`),
+  and on an `inngest` row they come from the event envelope, or from the run id when the
+  envelope has none (`forze_inngest/execution/registration.py:161-168`). They join the row to
+  the log lines that carry the same values, and prove nothing about the caller. The audit
+  records them as they were bound, and `surface` tells a reader where they came from.
 - **The collection.** `AuditDoc`, `AuditCreate` and `AuditRecord` gain the fields
   (`record.py:28-81`). `DocumentAuditPort.record` copies them (`port.py:38-48`). They join
   `_QUERIED_FIELDS`, so sealing one is refused (`record.py:89-112`). A trail is filtered with
@@ -449,7 +436,7 @@ class AuditEntry:
   into it would be invented.
 - **Additive, with a required migration.** The columns are nullable, so no API breaks and no
   row changes. What breaks is startup: a Postgres trail refuses to start until the migration
-  runs. That is the `actor_ids` shape (`CHANGELOG.md:678`), and P2 ships the same way: a
+  runs. That is the `actor_ids` shape (`CHANGELOG.md:722`), and P2 ships the same way: a
   **Required migration** marker and the SQL in its changelog entry and in the docs (§10 Q3).
 
 **The RFC 0060 amendment.** RFC 0060's prose stays as written (INDEX policy). When P2 lands,
@@ -493,7 +480,7 @@ RFC 0060 §5.6's field list then stands superseded by that row.
 | `InvocationMetadata.surface`, default `unknown` | nothing; the 48 test files keep constructing it as before |
 | `mint_invocation_metadata(surface=…)`, default `unknown` | nothing |
 | the new log key and span attribute | nothing, unless a strict log schema rejects unknown keys |
-| metadata bound at the durable runner, the inbox and Inngest without envelope metadata | nothing in the API; the behaviour changes are in §9 |
+| metadata bound at the durable runner and the inbox | nothing in the API; the behaviour changes are in §9 |
 | the new `AuditEntry` fields, default `None` | nothing for constructors |
 | the `audit_events` columns | nothing in the API; **a Postgres trail refuses to start until it is migrated** |
 | persisted metadata: outbox rows, Temporal headers, the Inngest envelope, broker headers | nothing; none gains the field (§5.4, §5.7), and `DurableRunRecord` persists no metadata |
@@ -550,8 +537,10 @@ An application boundary that constructs `InvocationMetadata` itself keeps workin
 2. **Each boundary names itself.** One test per row of §5.3 asserts
    `get_metadata().surface` inside an operation that boundary runs. A sweep test fails when a
    framework call site of `mint_invocation_metadata` or `InvocationMetadata(` passes no
-   `surface`. That includes the Inngest envelope decode (`forze_inngest/adapters/context.py:115`),
-   which passes `surface="inngest"`. The sweep exempts nothing in `src/`.
+   `surface`. Inngest's binding site is `_bind_invocation`'s `mint_invocation_metadata` call
+   (`forze_inngest/execution/registration.py:161`), which passes `surface="inngest"`. The sweep
+   exempts one site: the envelope decode (`forze_inngest/adapters/context.py:138`). It builds the
+   producer's ids for `_bind_invocation` to read, and is never bound.
 3. **Forgeries are ignored.**
    - HTTP with `X-Forze-Surface: cli`, `Forze-Surface: cli` or `X-Invocation-Surface: cli`
      records `http`.
@@ -569,11 +558,11 @@ An application boundary that constructs `InvocationMetadata` itself keeps workin
    no metadata bound, through `run_traced_operation`, logs `invocation_surface="unknown"`.
 7. **Spans.** The operation span carries `forze.invocation_surface`, and `unknown` when no
    metadata is bound.
-8. **The new bindings.** Durable runs, inbox messages without a correlation header, and
-   Inngest events without envelope metadata now carry `execution_id` and `correlation_id` in
-   their log lines and in the events they publish. The durable-attempt idempotency test from
-   §10 Q4 runs here. WS frames and Socket.IO events already gain metadata, with tests, in the
-   RFC 0077 P3 ingress change; test 2 covers their surface value.
+8. **The new bindings.** Durable runs and inbox messages without a correlation header now
+   carry `execution_id` and `correlation_id` in their log lines and in the events they
+   publish. The durable-attempt idempotency test from §10 Q4 runs here. WS frames, Socket.IO
+   events and Inngest calls already have metadata, with tests, from #686 and #683; test 2
+   covers their surface value.
 
 **P2**
 
@@ -618,14 +607,14 @@ applications, and the docs carry it.
 - **A configurable value on the HTTP middleware.** One process serving a public API and an
   internal admin API may want two values. Demand-gated; the field already accepts any valid
   token.
-- **Moving FastAPI, Socket.IO and the WS route onto `ingress`** (RFC 0077 §12 P3). That is the
-  RFC 0077 P3 ingress change on branch `refactor/ingress-fastapi-socketio-ws`. This RFC depends on it for
-  WS and Socket.IO metadata, and does not re-specify it.
+- **The rest of the move onto `ingress`** (RFC 0077 §12 P3). #686 moved FastAPI and the WS
+  route where a step agrees, and gave Socket.IO its metadata. What remains, Socket.IO's
+  bind-and-run, belongs to RFC 0077, not to this RFC.
 
 ## 9. Risks
 
-- **The new bindings change behaviour.** Three cases gain metadata: the durable runner, the
-  inbox without a correlation header, and Inngest without envelope metadata (§5.3):
+- **The new bindings change behaviour.** Two cases gain metadata: the durable runner, and the
+  inbox without a correlation header (§5.3):
   - their log lines and spans gain ids;
   - the events they publish gain `execution_id` and `correlation_id`;
   - their idempotency claims gain an owner, because the Postgres, MongoDB, Redis and mock
@@ -678,7 +667,13 @@ applications, and the docs carry it.
    - **Correlation id.** A fresh one per attempt, or the run id (a uuid7), so every attempt of
      one run shares it.
 
-   *Lean: a fresh execution id per attempt and the run id as the correlation id. The docs say
+   #683 already made this choice for Inngest. Each handler call mints its own execution id,
+   because the execution id owns idempotency claims, and a correlation id derived from the
+   Inngest run id gives "every step and retry of the run one correlation id"
+   (`forze_inngest/execution/registration.py:149-168`).
+
+   *Lean: the same for the self-hosted runner, a fresh execution id per attempt and the run id
+   as the correlation id. The docs say
    a claim must begin and end within one attempt.* P1 adds the test: a durable body begins a
    claim in one step, the run is recovered, and the next attempt's commit gets the documented
    outcome; and a superseded attempt's late commit does not replace its successor's claim.
@@ -695,10 +690,10 @@ applications, and the docs carry it.
 | 6 | `ASSUMED` | Each hop's boundary names itself, and no envelope carries the surface. There is no `origin_surface`; the origin is reached through `correlation_id`. Adding one later is additive, but it would read from forgeable envelopes (§5.4). |
 | 7 | `ASSUMED` | A nested call keeps the enclosing invocation's surface: agent tools, an operation that calls another, a saga step inside a run. An agent is attributed by `actor_ids`, not by the surface. |
 | 8 | `ASSUMED` | The log key is `invocation_surface` and the span attribute is `forze.invocation_surface`. Both are emitted on every operation: from the metadata, or as `unknown` when none is bound (a top-level operation's entry binds the log key; `_span_attributes` falls back). Bare `surface` is the port-call log key, and structlog lets the event's key win over a bound one. Subject to §10 Q2. |
-| 9 | `ASSUMED` | P1 binds metadata in the three framework cases that still run operations without it after the RFC 0077 P3 ingress change: the self-hosted durable runner, inbox messages without a correlation header, and Inngest events whose envelope has no metadata (Inngest stops inheriting whatever was bound around it). WS command frames and Socket.IO events get their metadata from that change (branch `refactor/ingress-fastapi-socketio-ws`), and P1 only adds their constant. Which ids a durable attempt binds is §10 Q4. |
+| 9 | `ASSUMED` | P1 binds metadata in the two framework cases that still run operations without it: the self-hosted durable runner, and inbox messages without a correlation header. WS command frames and Socket.IO events (#686) and Inngest calls (#683) already mint metadata, so P1 only adds their constant. Which ids a durable attempt binds is §10 Q4. |
 | 10 | `ASSUMED` | The token is validated when `InvocationMetadata` is constructed, by a set lookup for the well-known values and the pattern otherwise. P1 measures it with the perf suite (CONTRIBUTING → Performance regression gate). If it regresses the gate, validation moves to `mint_invocation_metadata` and the framework's own call sites, and direct construction goes unchecked. |
 | 11 | `ASSUMED` | `AuditEntry` gains an optional `surface` string, `None` by default. The audit hook fills it from the bound metadata, never from the arguments, and records `unknown` when no metadata is bound. `None` is left for legacy rows and for writers that do not set it. This extends RFC 0060 decision 2's rule. |
-| 12 | `ASSUMED` | `AuditEntry` also gains `execution_id` and `correlation_id` in the same change, unless the answer to §10 Q1 is no. The audit records them as tracing context, not evidence: over HTTP the client chooses the correlation id, and on an `inngest` row both come from the event envelope. |
+| 12 | `ASSUMED` | `AuditEntry` also gains `execution_id` and `correlation_id` in the same change, unless the answer to §10 Q1 is no. The audit records them as tracing context, not evidence: the execution id is minted by the server at every framework boundary, but the correlation and causation ids come from the caller or the hop: the client over HTTP, the event envelope or the run id on Inngest. |
 | 13 | `ASSUMED` | The audit collection stores the new fields as nullable, queryable fields that cannot be sealed. The change is additive, but a Postgres trail refuses to start until a required migration runs (`ALTER TABLE … ADD COLUMN`, no backfill, an optional index on `surface`); MongoDB and the mock need none. P2 ships with a **Required migration** marker and the SQL, unless the answer to §10 Q3 is the opt-in flag. |
 | 14 | `ASSUMED` | Integration events and the outbox do not carry the surface. The consumer records `inbox`, and the publisher's surface is reached through the event's correlation id. |
 | 15 | `ASSUMED` | RFC 0060's prose stays. When P2 lands, its decision table gets one appended row that cites this RFC (§5.6). |
@@ -707,9 +702,9 @@ applications, and the docs carry it.
 ## 12. Phasing
 
 - **P1: the field, the minting, logs and spans.** §5.1–§5.5, tests 1–8, and the observability
-  and integration docs. It lands after the RFC 0077 P3 ingress change. Changelog: Added (the
-  field, the vocabulary, the log key, the span attribute) and Changed (the durable runner, the
-  inbox and Inngest now bind metadata where they bound none). It needs the answer to §10 Q4.
+  and integration docs. Changelog: Added (the field, the vocabulary, the log key, the span
+  attribute) and Changed (the durable runner and the inbox now bind metadata where they bound
+  none). It needs the answer to §10 Q4.
 - **P2: the audit trail.** §5.6, tests 9–12, the audit and CLI docs, and the appended RFC 0060
   row. Changelog: Added, with a **Required migration** marker and the SQL. It waits for the
   answers to §10 Q1–Q3.
