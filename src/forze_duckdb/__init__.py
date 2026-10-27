@@ -24,6 +24,9 @@ from .kernel.client import (
     DuckDbClientPort,
     DuckDbConfig,
     DuckDbQueryResult,
+    LakeCatalogCredentials,
+    LakeTenantCatalog,
+    RoutedDuckDbClient,
 )
 from .kernel.credentials import (
     GcsCredentials,
@@ -51,6 +54,9 @@ __all__ = [
     "DuckDbConfig",
     "DuckDbSettings",
     "DuckDbQueryResult",
+    "RoutedDuckDbClient",
+    "LakeTenantCatalog",
+    "LakeCatalogCredentials",
     "DuckDbClientDepKey",
     "duckdb_lifecycle_step",
     "DuckDbAnalyticsConfig",

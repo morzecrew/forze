@@ -17,6 +17,10 @@ import attrs
 import duckdb
 from pydantic import BaseModel
 
+from forze.application.integrations.dynamic_read import (
+    MULTI_STATEMENT_CODE,
+    WRITE_REFUSED_CODE,
+)
 from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict
 
@@ -30,6 +34,12 @@ from .value_objects import DuckDbConfig, DuckDbQueryResult
 T = TypeVar("T")
 
 _DEFAULT_EXTENSIONS: tuple[str, ...] = ("httpfs",)
+
+QUERY_TIMEOUT_CODE = "duckdb_query_timeout"
+"""Code of the infrastructure error a statement raises when its timeout fires."""
+
+_VENDED_SECRET_PREFIX = "__internal_ic_"  # nosec B105 - a secret-name prefix, not a secret
+"""Name prefix of the temporary S3 secrets the ``iceberg`` extension creates per ``LoadTable``."""
 
 # ....................... #
 
@@ -103,6 +113,72 @@ def _params_dict(params: BaseModel | JsonDict | None) -> dict[str, Any] | None:
 # ....................... #
 
 
+def _quote_identifier(name: str) -> str:
+    return '"' + name.replace('"', '""') + '"'
+
+
+# ....................... #
+
+
+def _single_select(cursor: Any, statement: str) -> Any:
+    """Classify *statement* with the engine's own parser and return the one ``SELECT`` in it.
+
+    Raises when the text holds anything but exactly one statement, or a statement that is not a
+    ``SELECT``. The caller executes the returned object rather than the string, so the text that
+    runs is the text that was classified. A belt, not the read-only boundary: a ``SELECT`` can
+    still call a side-effecting table function.
+    """
+
+    statements = cursor.extract_statements(statement)
+
+    if len(statements) != 1:
+        raise exc.validation(
+            "DuckDB dynamic read executes exactly one statement per call.",
+            code=MULTI_STATEMENT_CODE,
+            details={"statement_count": len(statements)},
+        )
+
+    (single,) = statements
+
+    if single.type != duckdb.StatementType.SELECT:
+        raise exc.precondition(
+            "DuckDB dynamic read executes SELECT statements only.",
+            code=WRITE_REFUSED_CODE,
+            details={"statement_type": single.type.name},
+        )
+
+    return single
+
+
+# ....................... #
+
+
+def _drop_vended_secrets(conn: Any) -> None:
+    """Drop every temporary S3 secret the ``iceberg`` extension vended.
+
+    The extension creates one per ``LoadTable`` and keeps it once the statement's transaction
+    commits, so without this a revoked principal keeps reading by path until the credential
+    expires (RFC 0078 EXECUTION-LOG D-025).
+    """
+
+    cursor = conn.cursor()
+
+    try:
+        rows = cursor.execute(
+            "SELECT name FROM duckdb_secrets() WHERE starts_with(name, $prefix)",
+            {"prefix": _VENDED_SECRET_PREFIX},
+        ).fetchall()
+
+        for (name,) in rows:
+            cursor.execute(f"DROP TEMPORARY SECRET {_quote_identifier(name)}")
+
+    finally:
+        cursor.close()
+
+
+# ....................... #
+
+
 def _effective_limit(limit: int | None, max_rows: int | None) -> int | None:
     """Combine an explicit window ``limit`` with an options ``max_rows`` cap."""
 
@@ -130,6 +206,7 @@ class DuckDbClient(DuckDbClientPort):
     __conn: Any = attrs.field(default=None, init=False)
     __config: DuckDbConfig | None = attrs.field(default=None, init=False)
     __executor: ThreadPoolExecutor | None = attrs.field(default=None, init=False)
+    __admission: asyncio.Semaphore | None = attrs.field(default=None, init=False)
     __init_lock: asyncio.Lock = attrs.field(factory=asyncio.Lock, init=False)
 
     # ....................... #
@@ -141,6 +218,9 @@ class DuckDbClient(DuckDbClientPort):
         *,
         config: DuckDbConfig | None = None,
         extensions: Sequence[str] = _DEFAULT_EXTENSIONS,
+        install_extensions: bool = True,
+        connect_config: Mapping[str, Any] | None = None,
+        admission: asyncio.Semaphore | None = None,
         secrets: Sequence[str] = (),
         sources: Mapping[str, str] | None = None,
         bootstrap_sql: Sequence[str] = (),
@@ -153,6 +233,13 @@ class DuckDbClient(DuckDbClientPort):
         :param database: DuckDB database path, or ``:memory:`` for an ephemeral db.
         :param config: Engine/executor configuration.
         :param extensions: Extensions to ``INSTALL`` + ``LOAD`` (e.g. ``httpfs``, ``iceberg``).
+        :param install_extensions: ``False`` loads *extensions* without installing them, for an
+            image that ships them pre-installed and an engine that must not download at runtime.
+        :param connect_config: Options passed to ``duckdb.connect``, for the settings that
+            only take effect at connect time (``allow_persistent_secrets``, autoloading).
+        :param admission: A semaphore shared with other clients. Each statement holds a slot
+            from submission until its worker thread returns, so it bounds statements across
+            every client that shares it.
         :param secrets: Raw ``CREATE SECRET ...`` statements (object-storage credentials).
         :param sources: Optional ``name -> scan expression`` map registered as
             ``CREATE OR REPLACE VIEW name AS SELECT * FROM <expr>`` (the "view" source style).
@@ -167,7 +254,11 @@ class DuckDbClient(DuckDbClientPort):
             self.__config = cfg
 
             def _open() -> Any:
-                conn = duckdb.connect(database, read_only=cfg.read_only)
+                conn = duckdb.connect(
+                    database,
+                    read_only=cfg.read_only,
+                    config=dict(connect_config or {}),
+                )
 
                 if cfg.threads is not None:
                     conn.execute(f"PRAGMA threads={int(cfg.threads)}")
@@ -176,7 +267,9 @@ class DuckDbClient(DuckDbClientPort):
                     conn.execute(f"SET memory_limit='{cfg.memory_limit}'")
 
                 for ext in extensions:
-                    conn.execute(f"INSTALL {ext}")
+                    if install_extensions:
+                        conn.execute(f"INSTALL {ext}")
+
                     conn.execute(f"LOAD {ext}")
 
                 for secret_sql in secrets:
@@ -195,6 +288,7 @@ class DuckDbClient(DuckDbClientPort):
                 return conn
 
             self.__conn = await asyncio.to_thread(_open)
+            self.__admission = admission
             self.__executor = ThreadPoolExecutor(
                 max_workers=cfg.max_concurrent_queries,
                 thread_name_prefix="forze-duckdb",
@@ -217,6 +311,7 @@ class DuckDbClient(DuckDbClientPort):
             self.__executor = None
             self.__conn = None
             self.__config = None
+            self.__admission = None
 
             if executor is not None:
                 await asyncio.to_thread(executor.shutdown, wait=True)
@@ -255,7 +350,23 @@ class DuckDbClient(DuckDbClientPort):
         """Run *fn* on the dedicated executor, honoring *timeout* via cursor interrupt."""
 
         loop = asyncio.get_running_loop()
-        fut = loop.run_in_executor(self.__require_executor(), fn)
+        executor = self.__require_executor()
+        admission = self.__admission
+
+        if admission is not None:
+            await admission.acquire()
+
+        try:
+            fut = loop.run_in_executor(executor, fn)
+
+        except BaseException:
+            if admission is not None:
+                admission.release()
+
+            raise
+
+        if admission is not None:
+            fut.add_done_callback(lambda _fut: admission.release())
 
         if timeout is None:
             return await fut
@@ -277,7 +388,10 @@ class DuckDbClient(DuckDbClientPort):
             # Infrastructure (not internal): timeouts are transient backend
             # conditions, mirroring how Postgres/ClickHouse classify query
             # timeouts for retry purposes.
-            raise exc.infrastructure(f"DuckDB query exceeded timeout of {timeout_sec}s")
+            raise exc.infrastructure(
+                f"DuckDB query exceeded timeout of {timeout_sec}s",
+                code=QUERY_TIMEOUT_CODE,
+            )
 
         return fut.result()
 
@@ -406,6 +520,67 @@ class DuckDbClient(DuckDbClientPort):
                 cursor.close()
 
         await self.__submit(_exec, holder, timeout)
+
+    # ....................... #
+
+    async def run_dynamic(
+        self,
+        statement: str,
+        params: JsonDict | None = None,
+        *,
+        row_probe: int,
+        timeout: timedelta,
+        use: str | None = None,
+    ) -> list[JsonDict]:
+        """Run one runtime-authored ``SELECT`` and return at most *row_probe* rows.
+
+        On a fresh cursor: ``USE`` *use* when given, classify *statement* with the engine's
+        parser (exactly one ``SELECT``, else a ``dynamic_read_multi_statement`` /
+        ``dynamic_read_write_refused`` error without a route), execute the classified statement
+        unmodified, and fetch *row_probe* rows. The vended secrets the statement left behind
+        are dropped afterwards, whatever the outcome.
+
+        :param statement: The statement text, never rewritten.
+        :param params: ``$name`` bindings.
+        :param row_probe: Rows to fetch; the caller's cap plus one.
+        :param timeout: Statement timeout, enforced by cursor interrupt.
+        :param use: Dotted ``catalog.schema`` path issued as ``USE`` first; each part is quoted.
+        :returns: The fetched rows as dictionaries.
+        """
+
+        conn = self.__require_conn()
+        bind = _params_dict(params)
+        holder: dict[str, Any] = {}
+
+        def _exec() -> list[JsonDict]:
+            cursor = conn.cursor()
+            holder["cursor"] = cursor
+
+            try:
+                if use is not None:
+                    cursor.execute(
+                        "USE " + ".".join(_quote_identifier(part) for part in use.split("."))
+                    )
+
+                single = _single_select(cursor, statement)
+
+                if bind is not None:
+                    cursor.execute(single, bind)
+
+                else:
+                    cursor.execute(single)
+
+                columns = [column[0] for column in cursor.description]
+
+                return [dict(zip(columns, row, strict=True)) for row in cursor.fetchmany(row_probe)]
+
+            finally:
+                holder.pop("cursor", None)
+                # An unexhausted stream rolls back here, discarding its own vended secret.
+                cursor.close()
+                _drop_vended_secrets(conn)
+
+        return await self.__submit(_exec, holder, timeout)
 
     # ....................... #
 

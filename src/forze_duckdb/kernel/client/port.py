@@ -58,3 +58,13 @@ class DuckDbClientPort(Protocol):
         *,
         timeout: timedelta | None = None,
     ) -> Awaitable[None]: ...  # pragma: no cover
+
+    def run_dynamic(
+        self,
+        statement: str,
+        params: JsonDict | None = None,
+        *,
+        row_probe: int,
+        timeout: timedelta,
+        use: str | None = None,
+    ) -> Awaitable[list[JsonDict]]: ...  # pragma: no cover
