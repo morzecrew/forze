@@ -6,6 +6,7 @@ require_fastapi()
 
 import re
 from typing import Literal
+from urllib.parse import quote, urlsplit
 
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse
@@ -15,6 +16,8 @@ from scalar_fastapi import (
     Theme,
     get_scalar_api_reference,  # pyright: ignore[reportUnknownVariableType]
 )
+
+from forze.base.exceptions import exc
 
 # ----------------------- #
 
@@ -88,6 +91,25 @@ def _scalar_servers_from_request(
 
 # ....................... #
 
+
+def _document_url(openapi_url: str, root_path: str) -> str:
+    """Where the page fetches the document: an absolute URL as given, a path under *root_path*.
+
+    Percent-encoded, since the value lands in a ``<script>`` block and ``root_path`` can
+    come from proxy headers.
+    """
+
+    if urlsplit(openapi_url).scheme or openapi_url.startswith("//"):
+        url = openapi_url
+
+    else:
+        url = f"{root_path.rstrip('/')}/{openapi_url.lstrip('/')}"
+
+    return quote(url, safe="/:?&=#%@+,;~!$'()*[]")
+
+
+# ....................... #
+
 DownloadType = Literal["json", "yaml", "both", "none"]
 ThemeType = Literal[
     "default",
@@ -117,8 +139,13 @@ def scalar_docs(
     *,
     persist_auth: bool = False,
     trust_forwarded_host: bool = False,
+    openapi_url: str = "/openapi.json",
 ) -> HTMLResponse:
-    """Return a Scalar API reference HTML page for the current OpenAPI spec."""
+    """Return a Scalar API reference HTML page for the current OpenAPI spec.
+
+    :param openapi_url: Where Scalar fetches the document. A path is prefixed with the
+        request's ``root_path``; an absolute URL is used as given.
+    """
 
     root_path = request.scope.get("root_path")
     servers = _scalar_servers_from_request(
@@ -136,7 +163,7 @@ def scalar_docs(
 
     res = get_scalar_api_reference(
         title=title,
-        openapi_url=f"{root_path}/openapi.json",
+        openapi_url=_document_url(openapi_url, root_path or ""),
         hide_download_button=hide_download_button,
         hide_models=True,
         document_download_type=document_download_type,
@@ -174,8 +201,24 @@ def register_scalar_docs(
     theme: ThemeType = "purple",
     persist_auth: bool = False,
     trust_forwarded_host: bool = False,
+    openapi_url: str | None = None,
 ) -> None:
-    """Register a Scalar docs route on *app* at *path*."""
+    """Register a Scalar docs route on *app* at *path*.
+
+    :param openapi_url: Where Scalar fetches the document; defaults to the URL *app* serves
+        it at (``app.openapi_url``). A path is prefixed with the request's ``root_path``.
+    :raises CoreException: ``configuration`` when *app* serves no document (a falsy
+        ``openapi_url``, which FastAPI reads as "serve none") and none is given.
+    """
+
+    document_url = openapi_url if openapi_url is not None else app.openapi_url
+
+    if not document_url:
+        raise exc.configuration(
+            "register_scalar_docs needs an OpenAPI document, but the app serves none "
+            "(openapi_url=None); pass openapi_url= the URL that serves it.",
+            code="scalar_docs_no_openapi",
+        )
 
     @app.get(path, include_in_schema=False)
     def docs_route(  # pyright: ignore[reportUnusedFunction]
@@ -194,4 +237,5 @@ def register_scalar_docs(
             theme=theme,
             persist_auth=persist_auth,
             trust_forwarded_host=trust_forwarded_host,
+            openapi_url=document_url,
         )
