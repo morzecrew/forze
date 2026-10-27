@@ -180,6 +180,7 @@ lake-slow *args='tests/integration/test_forze_duckdb':
 test-duckdb-1x *args='tests/unit/test_forze_duckdb tests/integration/test_forze_duckdb':
     {{ _uv_sync }}
 
+    uv run --with 'duckdb==1.5.6' python -c "import duckdb; v = duckdb.__version__; assert v.startswith('1.5.'), f'overlay gave DuckDB {v}'"
     uv run --with 'duckdb==1.5.6' pytest -m "not perf and not fuzz and not lake_slow" {{ args }}
 
 
