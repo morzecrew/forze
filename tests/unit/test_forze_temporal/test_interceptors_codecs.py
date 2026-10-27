@@ -140,6 +140,37 @@ class TestTemporalContextCodecDecode:
         assert metadata_out.causation_id == eid
 
 
+class TestMalformedTracingHeaders:
+    """A malformed tracing id is dropped, so the task runs under freshly minted metadata."""
+
+    @pytest.mark.parametrize("header", [_EXEC_HEADER, _CORR_HEADER])
+    @pytest.mark.parametrize("raw", [b"not-a-uuid", b"", b"\xff\xfe"])
+    def test_a_malformed_id_is_dropped(self, header: str, raw: bytes) -> None:
+        decoded = TemporalContextCodec().decode({header: Payload(data=raw)})
+        metadata, _, _ = TemporalContextBinder().bind(decoded)
+
+        assert decoded.execution_id is None and decoded.correlation_id is None
+        assert metadata.causation_id is None
+        assert metadata.correlation_id == metadata.execution_id
+
+    def test_a_valid_correlation_survives_a_malformed_execution_id(self) -> None:
+        cid = uuid7()
+        headers = {
+            _EXEC_HEADER: Payload(data=b"not-a-uuid"),
+            _CORR_HEADER: Payload(data=str(cid).encode("utf-8")),
+        }
+
+        metadata, _, _ = TemporalContextBinder().bind(TemporalContextCodec().decode(headers))
+
+        assert metadata.correlation_id == cid
+        assert metadata.causation_id is None
+
+    @pytest.mark.parametrize("header", [_PRINCIPAL_HEADER, _TENANT_HEADER])
+    def test_a_malformed_identity_header_still_raises(self, header: str) -> None:
+        with pytest.raises(ValueError):
+            TemporalContextCodec().decode({header: Payload(data=b"not-a-uuid")})
+
+
 class TestTheActorChain:
     """A workflow started by an agent acting for a user runs as that delegation, not as the user."""
 

@@ -28,6 +28,26 @@ _ENCODING: Final[str] = "utf-8"
 # ....................... #
 
 
+def _tracing_id(raw: Payload | None) -> UUID | None:
+    """Decode a tracing id header, or ``None`` when it is absent or malformed.
+
+    Tracing context, not an authority: a malformed id is dropped rather than failing the
+    workflow or activity task, and the binder mints fresh metadata in its place.
+    """
+
+    if not raw:
+        return None
+
+    try:
+        return UUID(raw.data.decode(_ENCODING))
+
+    except ValueError:  # UnicodeDecodeError included
+        return None
+
+
+# ....................... #
+
+
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class TemporalDecodedContext:
     execution_id: UUID | None = attrs.field(default=None)
@@ -92,8 +112,8 @@ class TemporalContextCodec:
         actor_raw = headers.get(_ACTOR_HEADER)
 
         return TemporalDecodedContext(
-            execution_id=UUID(exec_raw.data.decode(_ENCODING)) if exec_raw else None,
-            correlation_id=UUID(corr_raw.data.decode(_ENCODING)) if corr_raw else None,
+            execution_id=_tracing_id(exec_raw),
+            correlation_id=_tracing_id(corr_raw),
             tenant_id=UUID(tenant_raw.data.decode(_ENCODING)) if tenant_raw else None,
             principal_id=(UUID(principal_raw.data.decode(_ENCODING)) if principal_raw else None),
             actor_ids=(

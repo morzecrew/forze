@@ -63,6 +63,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **An Inngest function call mints its own execution id** (**behaviour change**), so fan-out events, retries and the producer no longer share one idempotency claim owner. The producer's execution id becomes the causation and the correlation id is kept; a run without a `_forze` envelope now gets metadata too.
 
+- **A malformed Forze id header no longer fails a Temporal task.** An execution or correlation id header that is not a UUID is dropped, and the workflow or activity runs under freshly minted metadata. Principal, actor and tenant headers decode as strictly as before.
+
 ### Security
 
 - **A realtime connection needs a tenant once tenancy is wired** (**behaviour change**). Socket.IO, WebSocket and SSE refuse one without a tenant (`tenant_required`), and Socket.IO an anonymous one, instead of admitting it to the untenanted rooms. Socket.IO checks this at the connect when given the new `ctx_dep`.
