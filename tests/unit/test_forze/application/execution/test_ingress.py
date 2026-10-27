@@ -483,6 +483,7 @@ class TestApiKeyCredentials:
     @pytest.mark.parametrize(
         ("raw", "expected"),
         [
+            (":", ApiKeyCredentials(key="", prefix="")),
             (":secret", ApiKeyCredentials(key="secret", prefix="")),
             ("a:b:c", ApiKeyCredentials(key="b:c", prefix="a")),
             ("pfx : s", ApiKeyCredentials(key=" s", prefix="pfx ")),
