@@ -22,7 +22,7 @@ So the answer is `dedicated`. It costs one unnamed `:memory:` instance per activ
 
 ### 2.1 Shape: reuse, don't fork
 
-`RoutedDuckDbClient(StructuredSecretRoutedTenantClientBase[DuckDbClient], DuckDbClientPort)` in `forze_duckdb/kernel/client/routed_client.py`. The routed integrations build on `src/forze/application/contracts/tenancy/routed_client_base.py` (e.g. `RoutedPostgresClient(DsnRoutedTenantClientBase[…])`, `src/forze_postgres/kernel/client/routed_client.py:47`). That base supplies the LRU pool (`max_cached_tenants`, `:80`), the guarded drain (`:52-54`), credential-fingerprint refresh (`fingerprint_ttl`, `:89`), `evict_tenant` (`:126`), `client_scope` (`:201`) and `pool_stats`. The inner client is the shipped `DuckDbClient`, unchanged except for one method (§4.2). `initialize_client(tenant_id, creds)` runs §3.4 on a fresh instance.
+`RoutedDuckDbClient(StructuredSecretRoutedTenantClientBase[DuckDbClient], DuckDbClientPort)` in `forze_duckdb/kernel/client/routed_client.py`. The routed integrations build on `src/forze/application/contracts/tenancy/routed_client_base.py` (e.g. `RoutedPostgresClient(DsnRoutedTenantClientBase[…])`, `src/forze_postgres/kernel/client/routed_client.py:47`). That base supplies the LRU pool (`max_cached_tenants`, `:80`), the guarded drain (`:52-54`), credential-fingerprint refresh (`fingerprint_ttl`, `:89`), `evict_tenant` (`:126`), `client_scope` (`:201`) and `pool_stats`. The inner client is the shipped `DuckDbClient` with two changes. One is `run_dynamic` (§4.2). The other is in `initialize`, which today opens with no connect-time options (`client.py:170`) and runs `INSTALL` for every extension (`client.py:179`). §3.4 needs connect-time options and no `INSTALL`, so `initialize` gains a connect-time config mapping and a load-only mode. The routed client never passes `secrets`, `sources` or `bootstrap_sql`. `initialize_client(tenant_id, creds)` runs §3.4 on a fresh instance.
 
 ```python
 @attrs.define(slots=True, frozen=True, kw_only=True)
@@ -66,6 +66,8 @@ A routed client must declare a partition key (`wiring.py:591-598`). Here the key
 `DuckDbDepsModule` gains `dynamic_reads: StrKeyMapping[DuckDbDynamicReadConfig] | None`, bound to `DynamicReadDepKey` (`"dynamic_read_query"`). Validation becomes:
 
 ```python
+if any(c.provenance == "untrusted" for c in (self.dynamic_reads or {}).values()):
+    raise exc.configuration(..., code="duckdb_dynamic_read_untrusted_refused")   # §4.4
 routed = isinstance(self.client, RoutedDuckDbClient)
 validate_module_tenancy(
     integration="DuckDB", client_is_routed=routed,
@@ -95,7 +97,7 @@ validate_module_tenancy(
 `ACCESS_DELEGATION_MODE` defaults to `vended_credentials` ✅ (duckdb.org/docs/1.5/core_extensions/iceberg/iceberg_options). The session sets it explicitly anyway, so a changed default cannot silently change the posture. On `LoadTable` the catalog returns `storage-credentials` scoped to the table prefix, and duckdb-iceberg turns them into a temporary S3 secret with that scope. According to the extension maintainer, those secrets are **scoped to the transaction and discarded after it**, so the next scan re-loads (duckdb-iceberg#1352 thread). That is 🔎, and P0 checks it on 1.5.6. forze opens no explicit transaction (one autocommit cursor per statement, `client.py:303-317`), so in the design every statement starts from a fresh `LoadTable`. Consequences:
 
 - **Revocation** takes effect at the next statement, without eviction. Battery 11a.
-- **Storage-credential expiry inside a statement:** the maintainer says re-`LoadTable` *"should be available … in v1.5.6"*, and #1352 itself is still open (🔎). The design does not rely on it. It requires Lakekeeper's `sts-token-validity-seconds` (default 3600 ✅, storage-s3) to be ≥ 10 × (route `statement_timeout` + `http_timeout`). Then a statement cannot outlive its credentials. The session never sets `MAX_TABLE_STALENESS`, because cached table state is where an expired credential gets reused (🔎 semantics).
+- **Storage-credential expiry inside a statement:** the maintainer says re-`LoadTable` *"should be available … in v1.5.6"*, and #1352 itself is still open (🔎). The design does not rely on it. It requires Lakekeeper's `sts-token-validity-seconds` (default 3600 ✅, storage-s3) to be ≥ 10 × (the largest `statement_timeout` among the client's routes + `http_timeout`). Then a statement cannot outlive its credentials. The session never sets `MAX_TABLE_STALENESS`, because cached table state is where an expired credential gets reused (🔎 semantics).
 - **Catalog token expiry:** the extension refreshes client-credentials tokens on its own (proactive and on a 401). The fix for the empty-`CLIENT_ID` case is duckdb-iceberg#1378 (closed). The build that contains it is 🔎.
 - **Scope broadening:** nested-prefix credentials used to be widened to the table root (duckdb-iceberg#1390, fixed by #1536). Whether the pinned build has the fix is 🔎. Battery item 17 pins it either way.
 
@@ -117,7 +119,7 @@ connect(":memory:", config={allow_persistent_secrets: false, autoinstall_known_e
 4  ATTACH '<warehouse>' AS lake (TYPE iceberg, URI …, SECRET lake_cat,
           ACCESS_DELEGATION_MODE 'vended_credentials')          -- + READ_ONLY if the extension honours it 🔎
 5  SET disabled_filesystems='LocalFileSystem,HTTPFileSystem'
-6  SET http_timeout=<≤ route timeout ceiling>; SET enable_http_metadata_cache=false; SET enable_external_file_cache=false
+6  SET http_timeout=<≤ the smallest statement_timeout among the client's routes, checked at freeze>; SET enable_http_metadata_cache=false; SET enable_external_file_cache=false
 7  SET lock_configuration=true
 8  attest: duckdb_settings() has every value above; duckdb_secrets() types ⊆ {iceberg};
           duckdb_databases() = {memory, system, temp, lake}  — else duckdb_session_attestation_failed
@@ -160,6 +162,8 @@ class DuckDbDynamicReadConfig(TenantAwareIntegrationConfig):
     statement_timeout: timedelta = timedelta(seconds=5)  # Postgres's default; clamp-down only
 ```
 
+A `statement_timeout` of zero or less is refused at construction with `dynamic_read_timeout_invalid` (configuration), as `PostgresDynamicReadConfig` refuses it (`src/forze_postgres/execution/deps/configs/dynamic_read.py:81-89`).
+
 There is no `query_schema` and no `role`. DuckDB has no analogue of either, and the container is the instance. `DuckDbDynamicReadAdapter(DynamicReadAdapter)` sets `tenant_placeholder_pattern=r"\$tenant\b"` (the analytics spelling, `src/forze_duckdb/execution/deps/configs.py`). Merging the tenant into the parameters is advisory, as on Postgres.
 
 ### 4.2 Execution (`_fetch_rows`, plus one client method)
@@ -176,7 +180,7 @@ Classification is a belt and not the read-only boundary. A `SELECT`-typed call c
 
 | Read-only | Single statement | Timeout | Row cap | Container | Untrusted tier? |
 |---|---|---|---|---|---|
-| catalog `select`-only grant + store (external); engine-parser classification (belt) | `extract_statements` count, engine parser, client-invoked | **client-side `cursor.interrupt()`, cooperative.** No server-side timeout exists. A blocking HTTP read is bounded by `http_timeout` (whether interrupt cuts it short is 🔎), and the executor thread is held until DuckDB unwinds (`client.py:276`). Worst case ≈ timeout + `http_timeout` | client cap+1 via `fetchmany`. Whether that streams or materializes first is 🔎; either way the cap bounds the *result*, and `memory_limit` + timeout bound the *work* | per-tenant instance + per-tenant principal + vended credentials → `dedicated` | ❌ (§4.4) |
+| catalog `select`-only grant + store (external); engine-parser classification (belt) | `extract_statements` count, engine parser, client-invoked | **client-side `cursor.interrupt()`, cooperative.** No server-side timeout exists. A blocking HTTP read is bounded by `http_timeout` (whether interrupt cuts it short is 🔎), and the executor thread is held until DuckDB unwinds (`client.py:276`). Worst case ≈ timeout + `http_timeout` | client cap+1 via `fetchmany`. Whether that streams or materializes first is 🔎; either way the cap bounds the *result*. Nothing bounds the total *work*: `memory_limit` caps memory, not CPU or I/O, and the timeout is cooperative | per-tenant instance + per-tenant principal + vended credentials → `dedicated` | ❌ (§4.4) |
 
 ### 4.4 Provenance: trusted only
 
