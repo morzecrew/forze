@@ -75,6 +75,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **A malformed Forze id header no longer fails a Temporal task.** An execution or correlation id header that is not a UUID is dropped, and the workflow or activity runs under freshly minted metadata. Principal, actor and tenant headers decode as strictly as before.
 
+- **A raw-WebSocket command runs with invocation metadata of its own** (**behaviour change**). `attach_realtime_ws_route` mints a fresh execution and correlation id per `cmd` frame, as HTTP does per request, so the operation's logs, spans and integration events carry them instead of none.
+
 ### Security
 
 - **A realtime connection needs a tenant once tenancy is wired** (**behaviour change**). Socket.IO, WebSocket and SSE refuse one without a tenant (`tenant_required`), and Socket.IO an anonymous one, instead of admitting it to the untenanted rooms. Socket.IO checks this at the connect when given the new `ctx_dep`.
