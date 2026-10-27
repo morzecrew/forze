@@ -81,6 +81,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **A stale access cookie could keep a cookie-mode logout from ending the session.** `runtime_lifespan` now refuses an app whose `anonymous_paths` misses a cookie-mode login, refresh or logout route (`check_authn_cookie_paths`, **behaviour change**).
 
+- **Postgres dynamic-read routes refuse an unknown `provenance` value** (**Breaking**). `PostgresDynamicReadConfig` accepts only `"trusted"` or `"untrusted"` (`postgres_dynamic_read_provenance_invalid`); a config with any other value now fails at startup. New `validate_dynamic_read_provenance`.
+
 ## [0.16.2] - 2026-10-26
 
 ### Added

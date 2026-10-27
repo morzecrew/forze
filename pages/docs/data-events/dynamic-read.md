@@ -81,7 +81,8 @@ SQL invites exactly the fan-out costs the caps exist to surface.
 This is the design input everything else follows from, and the wiring author has
 to answer it because the framework cannot: it never sees the statement until it
 is time to run it. `provenance` has no default, so a route cannot be wired
-without naming its threat tier.
+without naming its threat tier. Only `"trusted"` and `"untrusted"` are accepted;
+any other value is refused when the config is built.
 
 | Tier | Statement author | Example | Required confinement |
 | --- | --- | --- | --- |

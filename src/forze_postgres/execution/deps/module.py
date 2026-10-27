@@ -156,7 +156,8 @@ def _validate_dynamic_read_route(
             details={"route": route},
         )
 
-    if config.provenance == "untrusted" and not (config.role is not None or client_is_routed):
+    # Anything but the exact "trusted" takes the untrusted guard; the config refuses other values.
+    if config.provenance != "trusted" and not (config.role is not None or client_is_routed):
         raise exc.configuration(
             f"Postgres dynamic-read route {route!r} declares untrusted provenance with no "
             "confinement. Statements produced by a program nobody reviews per-statement need "

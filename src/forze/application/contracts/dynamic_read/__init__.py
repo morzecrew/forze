@@ -15,7 +15,7 @@ from .specs import (
     validate_dynamic_read_spec,
 )
 from .types import DynamicReadOptions
-from .value_objects import DynamicReadProvenance
+from .value_objects import DynamicReadProvenance, validate_dynamic_read_provenance
 
 # ----------------------- #
 
@@ -29,5 +29,6 @@ __all__ = [
     "DynamicReadPort",
     "DynamicReadProvenance",
     "DynamicReadSpec",
+    "validate_dynamic_read_provenance",
     "validate_dynamic_read_spec",
 ]

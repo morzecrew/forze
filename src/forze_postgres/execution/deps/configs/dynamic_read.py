@@ -4,7 +4,10 @@ from datetime import timedelta
 
 import attrs
 
-from forze.application.contracts.dynamic_read import DynamicReadProvenance
+from forze.application.contracts.dynamic_read import (
+    DynamicReadProvenance,
+    validate_dynamic_read_provenance,
+)
 from forze.application.contracts.resolution import (
     NamedResourceSpec,
     coerce_optional_named_resource_spec,
@@ -79,6 +82,12 @@ class PostgresDynamicReadConfig(TenantAwareIntegrationConfig):
     # ....................... #
 
     def __attrs_post_init__(self) -> None:
+        validate_dynamic_read_provenance(
+            self.provenance,
+            integration="Postgres",
+            code="postgres_dynamic_read_provenance_invalid",
+        )
+
         if self.statement_timeout.total_seconds() <= 0:
             raise exc.configuration(
                 "Postgres dynamic-read statement_timeout must be positive.",

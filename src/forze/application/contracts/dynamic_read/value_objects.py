@@ -1,6 +1,8 @@
 """Value objects for the governed dynamic-read plane."""
 
-from typing import Literal
+from typing import Final, Literal, get_args
+
+from forze.base.exceptions import exc
 
 # ----------------------- #
 
@@ -26,3 +28,35 @@ statement cannot forge from inside the session is the connection's login identit
 framework has the right not to know a better answer; it does not have the right to imply one
 exists.
 """
+
+_PROVENANCES: Final = frozenset(get_args(DynamicReadProvenance))
+
+# ....................... #
+
+
+def validate_dynamic_read_provenance(provenance: object, *, integration: str, code: str) -> None:
+    """Refuse a provenance outside :data:`DynamicReadProvenance`.
+
+    The ``Literal`` is checked by type checkers, not at runtime, so a misspelt tier would
+    otherwise reach a wiring guard as an ordinary string. Engines call this when their route
+    config is built.
+
+    :param provenance: The configured value.
+    :param integration: Integration name for the message, e.g. ``"Postgres"``.
+    :param code: The calling package's error code.
+    :raises CoreException: ``configuration`` when *provenance* is not a listed value.
+    """
+
+    # A string is checked first, so an unhashable value is refused rather than raising TypeError.
+    if isinstance(provenance, str) and provenance in _PROVENANCES:
+        return
+
+    # The value is left out of the error: a mis-wired one may be a credential.
+    given = "" if isinstance(provenance, str) else f" (got {type(provenance).__name__})"
+    accepted = sorted(_PROVENANCES)
+
+    raise exc.configuration(
+        f"{integration} dynamic-read provenance must be one of {', '.join(accepted)}{given}.",
+        code=code,
+        details={"accepted": accepted},
+    )
