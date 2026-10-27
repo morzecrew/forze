@@ -45,6 +45,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **HTTP error bodies carry the error's `code` and `kind`** (**behaviour change**). The body is `{"detail", "code", "kind", "context"}`, so a client tells `revision_mismatch` from other 400s; a whole-body comparison breaks. An unhandled 500 now also sends `X-Error-Code: core.internal`.
 
+- **The `duckdb` extra takes DuckDB 1.5 or 2** (**behaviour change**). It now requires `duckdb>=1.5.6,<3`, so releases before 1.5.6 no longer install with it. `DuckDbClient` and `RoutedDuckDbClient` run on both majors with the same code.
+
 - **`HttpServicePort` requires `stream`** (**behaviour change**). A hand-written implementation or test stub must add it, or it fails type checks and `isinstance` against the runtime-checkable port.
 
 - **`local_identity_deps` wires no tenant resolver for a config that maps no tenant** (**behaviour change**). There, `forze ops call --tenant` gets `400 tenant_request_unverifiable`, not `401 tenant_mismatch`. A tenant on an API key counts and resolves, also in a config built directly.
