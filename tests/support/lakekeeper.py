@@ -22,22 +22,25 @@ therefore addressed through the network's gateway IP and the host-published port
 on a Linux Docker host (and on CI runners), not on Docker Desktop. The stack probes the gateway
 once and skips when the host cannot reach it.
 
-**Exposure.** Every credential here is a throwaway constant: the store's root key, Keycloak's
-``admin``/``admin`` console, the client secrets. RustFS, Keycloak and Lakekeeper publish their
-ports on all host interfaces, as testcontainers does by default, so for the module's lifetime
-anyone on the host's network can reach them with those constants. OpenFGA (no authn) and
-Postgres publish nothing. Do not run this on a host whose network you do not trust.
+**Exposure.** Every secret here is generated per run and lives only in this process and the
+containers' environment: the store's root key, Keycloak's admin password, the client secrets
+(the realm file names them as ``${ENV}`` placeholders), Postgres's password. RustFS, Keycloak
+and Lakekeeper publish their ports on all host interfaces, as testcontainers does by default,
+so for the module's lifetime anyone on the host's network can reach their unauthenticated
+endpoints. OpenFGA (no authn) and Postgres publish nothing. Do not run this on a host whose
+network you do not trust.
 """
 
 from __future__ import annotations
 
 import base64
 import json
+import secrets
 import tempfile
 import time
 import urllib.error
 import urllib.request
-from collections.abc import Iterator
+from collections.abc import Iterable, Iterator
 from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -63,7 +66,6 @@ OAUTH2_SCOPE = "profile"
 BUCKET = "lake"
 TABLE = ("gold", "orders")
 ROOT_ACCESS_KEY = "lakeroot"
-ROOT_SECRET_KEY = "lakeroot-secret"
 
 _ADMIN = "lake-admin"
 _TENANTS = ("tenant-a", "tenant-b")
@@ -247,8 +249,16 @@ def _wait_http(url: str, *, timeout: float = 120.0) -> None:
     raise RuntimeError(f"{url} did not answer 200 within {timeout}s: {last!r}")
 
 
-def _realm(secrets: dict[str, str]) -> dict[str, Any]:
-    """A realm with one confidential service-account client per principal."""
+def _secret_env(client_id: str) -> str:
+    return "LAKE_CLIENT_SECRET_" + client_id.upper().replace("-", "_")
+
+
+def _realm(client_ids: Iterable[str]) -> dict[str, Any]:
+    """A realm with one confidential service-account client per principal.
+
+    Each secret is a placeholder Keycloak resolves from its own environment at import, so the
+    file on disk holds none.
+    """
 
     return {
         "realm": REALM,
@@ -257,7 +267,7 @@ def _realm(secrets: dict[str, str]) -> dict[str, Any]:
         "clients": [
             {
                 "clientId": client_id,
-                "secret": secret,
+                "secret": f"${{{_secret_env(client_id)}}}",
                 "enabled": True,
                 "publicClient": False,
                 "clientAuthenticatorType": "client-secret",
@@ -277,7 +287,7 @@ def _realm(secrets: dict[str, str]) -> dict[str, Any]:
                     }
                 ],
             }
-            for client_id, secret in secrets.items()
+            for client_id in client_ids
         ],
     }
 
@@ -347,11 +357,12 @@ def _skip_unless_gateway_reachable(url: str) -> None:
 def lake_vending_stack() -> Iterator[LakeVendingStack]:
     """Start the whole stack, bootstrap it, seed both tenants, and yield its addresses."""
 
-    secrets = {name: f"{name}-secret" for name in (_ADMIN, *_TENANTS, _UNGRANTED)}
+    client_secrets = {name: secrets.token_hex(16) for name in (_ADMIN, *_TENANTS, _UNGRANTED)}
+    root_secret_key, pg_password = secrets.token_hex(16), secrets.token_hex(16)
     _install_extensions()
 
     with ExitStack() as stack, tempfile.TemporaryDirectory() as realm_dir:
-        Path(realm_dir, "realm.json").write_text(json.dumps(_realm(secrets)))
+        Path(realm_dir, "realm.json").write_text(json.dumps(_realm(client_secrets)))
         Path(realm_dir).chmod(0o755)
         Path(realm_dir, "realm.json").chmod(0o644)
 
@@ -359,7 +370,7 @@ def lake_vending_stack() -> Iterator[LakeVendingStack]:
         gateway = _network_gateway(network)
 
         s3 = stack.enter_context(
-            RustfsContainer(access_key=ROOT_ACCESS_KEY, secret_key=ROOT_SECRET_KEY)
+            RustfsContainer(access_key=ROOT_ACCESS_KEY, secret_key=root_secret_key)
             .with_network(network)
             .with_network_aliases("s3")
         )
@@ -369,15 +380,18 @@ def lake_vending_stack() -> Iterator[LakeVendingStack]:
         _skip_unless_gateway_reachable(f"{s3_endpoint}/minio/health/live")
         s3.get_client().make_bucket(BUCKET)
 
-        keycloak = stack.enter_context(
+        keycloak = (
             DockerContainer(KEYCLOAK_IMAGE)
             .with_network(network)
             .with_exposed_ports(8080)
             .with_env("KC_BOOTSTRAP_ADMIN_USERNAME", "admin")
-            .with_env("KC_BOOTSTRAP_ADMIN_PASSWORD", "admin")
+            .with_env("KC_BOOTSTRAP_ADMIN_PASSWORD", secrets.token_hex(16))
             .with_volume_mapping(realm_dir, "/opt/keycloak/data/import", "ro")
             .with_command("start-dev --import-realm")
         )
+        for client_id, secret in client_secrets.items():
+            keycloak.with_env(_secret_env(client_id), secret)
+        stack.enter_context(keycloak)
         issuer = f"http://{gateway}:{keycloak.get_exposed_port(8080)}/realms/{REALM}"
         _wait_http(f"{issuer}/.well-known/openid-configuration", timeout=180)
         token_uri = f"{issuer}/protocol/openid-connect/token"
@@ -386,7 +400,7 @@ def lake_vending_stack() -> Iterator[LakeVendingStack]:
             DockerContainer(POSTGRES_IMAGE)
             .with_network(network)
             .with_network_aliases("lk-db")
-            .with_env("POSTGRES_PASSWORD", "postgres")
+            .with_env("POSTGRES_PASSWORD", pg_password)
         )
         # Publishes no port; the migrate loop below waits for it. The check caches are pinned
         # off, so a revoked grant is refused on the next check (EXECUTION-LOG D-032).
@@ -403,8 +417,10 @@ def lake_vending_stack() -> Iterator[LakeVendingStack]:
         )
 
         lk_env = {
-            "LAKEKEEPER__PG_DATABASE_URL_WRITE": "postgresql://postgres:postgres@lk-db:5432/postgres",
-            "LAKEKEEPER__PG_ENCRYPTION_KEY": "test-only-not-a-secret",
+            "LAKEKEEPER__PG_DATABASE_URL_WRITE": (
+                f"postgresql://postgres:{pg_password}@lk-db:5432/postgres"
+            ),
+            "LAKEKEEPER__PG_ENCRYPTION_KEY": secrets.token_hex(16),
             "LAKEKEEPER__AUTHZ_BACKEND": "openfga",
             "LAKEKEEPER__OPENFGA__ENDPOINT": "http://openfga:8081",
             "LAKEKEEPER__OPENID_PROVIDER_URI": issuer,
@@ -436,8 +452,8 @@ def lake_vending_stack() -> Iterator[LakeVendingStack]:
         _wait_http(f"{base}/health")
 
         def principal(client_id: str) -> LakePrincipal:
-            sub = _jwt_claims(fetch_token(token_uri, client_id, secrets[client_id]))["sub"]
-            return LakePrincipal(client_id, secrets[client_id], f"oidc~{sub}")
+            sub = _jwt_claims(fetch_token(token_uri, client_id, client_secrets[client_id]))["sub"]
+            return LakePrincipal(client_id, client_secrets[client_id], f"oidc~{sub}")
 
         admin = principal(_ADMIN)
         out = LakeVendingStack(
@@ -446,7 +462,7 @@ def lake_vending_stack() -> Iterator[LakeVendingStack]:
             token_uri=token_uri,
             s3_endpoint=s3_endpoint,
             root_access_key=ROOT_ACCESS_KEY,
-            root_secret_key=ROOT_SECRET_KEY,
+            root_secret_key=root_secret_key,
             admin=admin,
             tenants={},
             ungranted=principal(_UNGRANTED),
@@ -490,7 +506,7 @@ def lake_vending_stack() -> Iterator[LakeVendingStack]:
                             "type": "s3",
                             "credential-type": "access-key",
                             "aws-access-key-id": ROOT_ACCESS_KEY,
-                            "aws-secret-access-key": ROOT_SECRET_KEY,
+                            "aws-secret-access-key": root_secret_key,
                         },
                         "delete-profile": {"type": "hard"},
                     },

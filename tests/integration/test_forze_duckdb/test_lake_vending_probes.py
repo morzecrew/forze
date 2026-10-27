@@ -18,6 +18,7 @@ import socket
 import threading
 from collections.abc import Callable, Iterator
 from typing import Any
+from urllib.parse import urlsplit
 
 import boto3
 import botocore
@@ -254,9 +255,9 @@ class TestCrossTenantByPath:
                 con.execute(sql).fetchall()
 
         assert lake.root_access_key not in {r["key"] for r in _http_log(con)}
-        assert seen and all(
-            "s3.amazonaws.com" in line and lake.s3_endpoint.split("://")[1] not in line
-            for line in seen
+        hosts = [_target_host(line) for line in seen]
+        assert hosts and all(
+            host == "s3.amazonaws.com" or host.endswith(".s3.amazonaws.com") for host in hosts
         )
 
     def test_the_p2_allowlist_refuses_inside_the_engine_before_any_request(
@@ -280,6 +281,13 @@ class TestCrossTenantByPath:
             with pytest.raises(duckdb.PermissionException):
                 con.execute(sql).fetchall()
         assert _http_log(con) == []  # logging starts after ATTACH: not even a catalog request
+
+
+def _target_host(request_line: str) -> str:
+    """The host a proxy request line names: ``CONNECT host:443 …`` or ``GET http://host/… …``."""
+
+    target = request_line.split()[1]
+    return urlsplit(target if "://" in target else f"//{target}").hostname or ""
 
 
 def _refusing_proxy() -> tuple[int, list[str]]:
