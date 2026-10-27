@@ -7486,9 +7486,11 @@ call fixes both:</p>
 <span class="c1"># After every router is attached, and after apply_openapi_security:</span>
 <span class="n">apply_openapi_conventions</span><span class="p">(</span><span class="n">app</span><span class="p">)</span>
 </code></pre></div>
-<p>Each FastAPI 422 becomes the <code>ForzeErrorResponse</code> envelope (<code>detail</code>, optional
-<code>context</code>), and every operation without its own <code>default</code> response gains one in the same
-shape.
+<p>Each FastAPI 422 becomes the <code>ForzeErrorResponse</code> envelope (<code>detail</code>, <code>code</code>, <code>kind</code>,
+optional <code>context</code>), and every operation without its own <code>default</code> response gains one in
+the same shape. Only <code>detail</code> is listed as required: every error Forze raises carries <code>code</code>
+and <code>kind</code>, but an <code>HTTPException</code> from your code or a FastAPI dependency answers with
+<code>detail</code> alone.
 The <code>X-Error-Code</code> header accompanies the errors that carry a code, so it is
 documented as optional. FastAPI's validation schemas are dropped once nothing
 references them. A 422 your route declares with its own model is left alone. A

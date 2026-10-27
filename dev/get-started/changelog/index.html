@@ -10265,9 +10265,15 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <li>
 <p><strong><code>forze_identity.tenancy.application</code> exports <code>TenancyResourceName</code>.</strong> It matches <code>AuthnResourceName</code> in <code>forze_identity.authn.application</code>.</p>
 </li>
+<li>
+<p><strong>A throttled HTTP error tells the client when to come back.</strong> Its <code>retry_after</code> (seconds) or else <code>retry_at</code> (aware <code>datetime</code>) detail becomes a <code>Retry-After</code> header, which <code>AllowlistCORSMiddleware</code> exposes; other details stay withheld. No header when neither key is usable.</p>
+</li>
 </ul>
 <h3 id="changed">Changed<a class="headerlink" href="#changed" title="Permanent link">&para;</a></h3>
 <ul>
+<li>
+<p><strong>HTTP error bodies carry the error's <code>code</code> and <code>kind</code></strong> (<strong>behaviour change</strong>). The body is <code>{"detail", "code", "kind", "context"}</code>, so a client tells <code>revision_mismatch</code> from other 400s; a whole-body comparison breaks. An unhandled 500 now also sends <code>X-Error-Code: core.internal</code>.</p>
+</li>
 <li>
 <p><strong><code>HttpServicePort</code> requires <code>stream</code></strong> (<strong>behaviour change</strong>). A hand-written implementation or test stub must add it, or it fails type checks and <code>isinstance</code> against the runtime-checkable port.</p>
 </li>
