@@ -61,7 +61,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **An aliased input field no longer loses the caller's value.** `forze ops call` and agent tools refuse a name the DTO's config does not read, which pydantic dropped, running the operation on the default. MCP reads each field by the name its tool signature advertises, so an aliased field is no longer dropped there.
 
-- **An Inngest function call mints its own execution id** (**behaviour change**), so fan-out events, retries and the producer no longer share one idempotency claim owner. The producer's execution id becomes the causation and the correlation id is kept; a run without a `_forze` envelope now gets metadata too.
+- **Each Inngest function call mints its own execution id** (**behaviour change**). The producer's id becomes the causation; the correlation id is kept, or derived from the run. An idempotency claim belongs to one handler entry, so one a crashed entry left pending blocks a retry until its TTL, as on Temporal.
 
 - **A malformed Forze id header no longer fails a Temporal task.** An execution or correlation id header that is not a UUID is dropped, and the workflow or activity runs under freshly minted metadata. Principal, actor and tenant headers decode as strictly as before.
 

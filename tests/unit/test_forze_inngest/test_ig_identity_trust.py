@@ -35,9 +35,10 @@ class _FakeEvent:
 
 
 class _FakeContext:
-    def __init__(self, data: dict[str, Any]) -> None:
+    def __init__(self, data: dict[str, Any], *, run_id: str = "01JRUN000000000000000000") -> None:
         self.event = _FakeEvent(data)
         self.step = object()
+        self.run_id = run_id
 
 
 _PRINCIPAL = uuid4()
@@ -218,3 +219,51 @@ async def test_each_call_from_one_envelope_gets_a_distinct_execution_id() -> Non
 
     assert first.execution_id != second.execution_id
     assert first.causation_id == second.causation_id
+
+
+async def test_re_entries_of_one_run_without_an_envelope_share_a_correlation_id() -> None:
+    captured: dict[str, Any] = {}
+    fn = _register(captured, bind_identity_from_event=False)
+    run = _FakeContext({"value": "ok"}, run_id="01JRUNAAAAAAAAAAAAAAAAAAAA")
+    other_run = _FakeContext({"value": "ok"}, run_id="01JRUNBBBBBBBBBBBBBBBBBBBB")
+
+    await fn._handler(run)  # pyright: ignore[reportPrivateUsage]
+    first = captured["metadata"]
+    await fn._handler(run)  # pyright: ignore[reportPrivateUsage]
+    second = captured["metadata"]
+    await fn._handler(other_run)  # pyright: ignore[reportPrivateUsage]
+    other = captured["metadata"]
+
+    assert first.correlation_id == second.correlation_id
+    assert first.execution_id != second.execution_id
+    assert other.correlation_id != first.correlation_id
+
+
+def test_a_malformed_causation_id_drops_only_itself() -> None:
+    from forze_inngest.adapters.context import split_envelope
+
+    producer, correlation = uuid4(), uuid4()
+    envelope = {
+        "execution_id": str(producer),
+        "correlation_id": str(correlation),
+        "causation_id": "not-a-uuid",
+    }
+
+    decoded, _ = split_envelope({"_forze": envelope, "value": "ok"})
+
+    assert decoded.metadata is not None
+    assert decoded.metadata.execution_id == producer
+    assert decoded.metadata.correlation_id == correlation
+    assert decoded.metadata.causation_id is None
+
+
+def test_a_malformed_correlation_id_falls_back_to_the_execution_id() -> None:
+    from forze_inngest.adapters.context import split_envelope
+
+    producer = uuid4()
+    envelope = {"execution_id": str(producer), "correlation_id": "not-a-uuid"}
+
+    decoded, _ = split_envelope({"_forze": envelope, "value": "ok"})
+
+    assert decoded.metadata is not None
+    assert decoded.metadata.correlation_id == producer
