@@ -1996,6 +1996,362 @@ Each fix was checked against its own removal. R-5 has a battery test as well,
 
 ---
 
+# Unit 7 · RFC 0078 P2 — tightening
+
+Branch `feat/rfc-0078-p2-tightening`, after P1 (#685).
+RFC 0078 §8 P2 names three things. Same engine as Units 5 and 6 (`duckdb==1.5.6`, iceberg
+`890b78a9c`), same stack, which gains two knobs: the tenant principals' token lifespan and the
+warehouses' `sts-token-validity-seconds`.
+
+- **The allowlist profile.** Nothing to build. P1 adopted it (D-027, D-036): the routed client
+  sets `allowed_directories` to the tenant's prefix and then `enable_external_access=false`,
+  both before `CREATE SECRET`, and the attestation reads both back. Re-checked here, in place.
+- **Battery 11b and 11c, scheduled.** Built, run for real, and scheduled (D-051, D-052). The
+  first real run found a defect in P1's analytics path and a false premise in D-044. P1 was
+  not yet published, so the fix and both entries went there: D-047 and D-048, at the end of
+  Unit 6, with D-049 from a review of that fix. This unit starts at D-050.
+- **The DuckDB 2.0 re-probe.** Run against `duckdb==2.0.0` without touching the lock or
+  `pyproject.toml` (D-053 to D-060). 2.0 is not adopted. Adopting it is a separate change, and
+  as things stand it cannot happen by a lock bump alone (D-054, D-055).
+
+P3 (compiled read) stays out of scope: it waits on RFC 0038, which is parked.
+
+**Working assumptions.** The author has not answered Units 5 and 6. Every `ASSUMED` row there is
+taken as the design, as Unit 6 did, D-047 to D-049 included. D-028 stays `OPEN` and is worked
+under option (a), and D-042's `OPEN` row is kept as it stands. D-054 is decided: the extra is
+capped below 2, on a branch of its own that goes to `main` first.
+
+**Drift count: 0.** Eleven entries, D-050 to D-060: nine `discovery`, two `spec-gap`. None
+changes product code. Units 5 and 6 are not edited here.
+
+**Where each item lives.**
+
+- 11b and 11c:
+  [`test_lake_credential_expiry.py`](../tests/integration/test_forze_duckdb/test_lake_credential_expiry.py),
+  marked `lake_slow`. `just test` deselects it, `just lake-slow` runs it, and
+  [`lake-expiry.yml`](../.github/workflows/lake-expiry.yml) runs that recipe daily at
+  05:30 UTC. One stack, one scenario per item, each test asserting one outcome.
+- D-047's regression on the real leg: the 11b test
+  `test_routed_reads_after_expiry_load_afresh_on_the_same_instance`, and its mechanism in
+  `test_a_kept_secret_outranks_the_fresh_one_after_expiry`.
+- The 2.0 re-probe: one-off scripts and the existing suites run on an overlay environment
+  (`uv run --with duckdb==2.0.0`), recorded here only. Nothing pins 2.0 behaviour, because the
+  repository does not run 2.0.
+
+**11b and 11c, measured.** One run on 1.5.6 for the record: 6 passed in 1018.7 s, about 17
+minutes. The 11c scenario took 101.6 s, which includes the stack start and seeding the 24-file
+table. The 11b scenario took 914.2 s, almost all of it the wait for the 900 s credential. Every
+leg came out as pinned. Before the D-047 fix, the same scenario as a scratch probe had the
+analytics read after expiry fail. On 2.0, through the shim, every leg comes out the same except
+the kept-secret one, which cannot arise because nothing is kept (D-053).
+
+**Confirmed, so no entry.**
+
+- The store enforces the expiry of a vended credential. The credential vended at t0, used
+  directly with boto3, reads at t0 and gets `400 InvalidRequest: check key failed` from RustFS
+  after expiry. Without this control, every read after expiry would prove nothing.
+- Lakekeeper asked the store for a fresh credential on each `LoadTable`. Two loads two seconds
+  apart returned different access keys, each with its full 900 s, so no cache handed out an
+  older one.
+- With the routed client's drop, a read after expiry starts from a fresh `LoadTable` and
+  succeeds on the same instance, for dynamic and analytics reads alike (11b).
+- The catalog token refreshes without a rebuild (11c). With 1 s tokens and a 75 s wait, a token
+  fetched at the start is refused (`401`), and the instance built at the start reads again.
+- §3.2 and the RFC's docs line hold on 1.5.6: the engine does not re-vend mid-statement. A
+  statement held open across expiry makes one more store request, gets HTTP 400, and fails. It
+  sends no new `LoadTable` (D-051).
+
+## D-050 — The shortest catalog-token life the chain enforces is about 61 s
+
+- **Touches:** RFC 0078 §7 item 11c ("Catalog token expiry → auto-refresh") and §3.2's catalog
+  token bullet.
+- **RFC said:** nothing about how short a token can be made, or when it stops working.
+- **Found:** Keycloak issues a 1 s access token when a client's `access.token.lifespan` is 1, and
+  takes the value without complaint. Lakekeeper keeps accepting that token for 60 s past its
+  `exp`. Probed at 5 s steps: `200` up to 59.9 s past `exp`, `401` at 64.9 s, logged as
+  "Token rejected: token has expired".
+- **Because:** Lakekeeper validates the token with a 60 s leeway, the default of common JWT
+  libraries.
+- **Class:** `discovery`.
+- **Consequence:** 11c waits the lifespan plus 60 s plus a margin, 75 s in all, and checks that a
+  token fetched at the start is refused before it reads again. A principal disabled at the IdP
+  keeps catalog access for its token lifespan plus 60 s. Revoking its grant is what cuts it at
+  the next statement, within the authorizer's cache TTL (D-032).
+- **Proposed row (RFC 0078):** `ASSUMED` — the deployment contract (§3.1) states the 60 s leeway
+  next to the token lifespan, and points at grant revocation for an immediate cut.
+
+## D-051 — What battery 11b exercises once every read drops its secrets
+
+- **Touches:** RFC 0078 §7 item 11b, §3.2's mid-statement bullet, decision 14, D-025 and D-047.
+- **RFC said:** "A statement after expiry succeeds via a fresh `LoadTable`. A statement spanning
+  expiry either succeeds or fails loud, and the result is pinned as documented behavior."
+- **Found:** two things changed what each half can mean.
+  - With the drop, a routed read never finds an old secret, so "after expiry succeeds" holds by
+    construction. What the leg still proves is that the store enforces expiry, that the next
+    `LoadTable` vends a working credential, and that the instance needs no rebuild. It also pins
+    D-047's regression: the analytics read runs last at t0 and first after expiry.
+  - No forze path can hold a statement across expiry. `run_dynamic` fetches its probe and closes
+    the cursor, `run_query_streamed` materializes the result before it yields, and decision 14
+    sizes the credential at ten times the longest timeout. So the spanning half runs on a plain
+    session (§3.4 steps 1 to 4) with a streaming scan of a 24-file table, paused after one row.
+    On 1.5.6 the next fetch makes one store request, gets HTTP 400, and fails with
+    `InvalidInputException` naming the HTTP error. No `LoadTable` goes out. That is "fails loud".
+  - A third leg, also on a plain session with the file cache off, keeps its first secret and
+    reads after expiry. It fails with `HTTPException` 400: D-047's mechanism, pinned so the
+    reason for the drop is visible.
+- **Because:** D-025 and D-047 removed the case the RFC wrote the item for, and decision 14
+  already forbids the statement the second half describes.
+- **Class:** `spec-gap`.
+- **Consequence:** the module asserts six outcomes: two for 11c and four for 11b. The spanning
+  and kept-secret legs pin engine behaviour, so a bump that adds a mid-statement re-vend
+  (duckdb-iceberg#1352) fails them first. 2.0 does not add one, on this stack (D-053). RustFS
+  answers an expired key with `400 InvalidRequest: check key failed`. AWS answers with
+  `400 ExpiredToken`, and whether the extension's re-vend keys on that code was not tested.
+- **Proposed row (RFC 0078):** `ASSUMED` — §7 item 11b reads as built above. This overrides the
+  item's wording, which stays as written.
+
+## D-052 — 11b and 11c run in their own scheduled workflow, under a marker of their own
+
+- **Touches:** RFC 0078 §7 item 11 ("(b) and (c) are slow and run nightly") and §8's P2 bullet
+  ("Battery 11b/c in the nightly matrix").
+- **RFC said:** in the nightly matrix.
+- **Built:** a `lake_slow` marker, registered in `pyproject.toml` and excluded by `just test`
+  next to `perf` and `fuzz`. A `just lake-slow` recipe runs it. A new
+  [`lake-expiry.yml`](../.github/workflows/lake-expiry.yml), daily at 05:30 UTC and on
+  `workflow_dispatch`, runs that recipe with a 40-minute limit and the pinned actions of
+  `ci.yml`.
+- **Because:** `nightly.yml` is the DST matrix. A red nightly means "the simulator found an
+  interleaving", and D-006 already kept a different failure out of it for that reason. The CI
+  shards run `just test`, so excluding the marker there keeps the shards' 30-minute budget.
+- **Class:** `spec-gap`.
+- **Consequence:** one more workflow file, and about 20 runner-minutes a day. A cold runner also
+  pulls the stack's images, about 0.56 GB compressed (D-031). The module sets its own 30-minute
+  test timeout over `pyproject.toml`'s 300 s.
+- **Proposed row (RFC 0078):** `ASSUMED` — battery 11b and 11c run as `lake_slow` in
+  `lake-expiry.yml`. This overrides §8's "in the nightly matrix", which stays as written.
+
+## D-053 — The DuckDB 2.0.0 re-probe: method, builds, and the outcome per row
+
+- **Touches:** RFC 0078's fact-tag note ("every probe re-runs on a bump"), §6's last non-goal,
+  §8's P2 bullet, and every Unit 5 and 6 entry that names the engine.
+- **RFC said:** re-probe on DuckDB 2.0.
+- **Found:** `duckdb==2.0.0` (`v2.0.0`, `d54cbbe3df`) ran through an overlay environment,
+  `uv run --with duckdb==2.0.0`, which shadows the locked 1.5.6 and leaves the lock alone. The
+  core repository serves its extensions, and `INSTALL` then `LOAD` work with autoinstall off:
+  iceberg `4c0c0874c4`, httpfs `77392a7207`, and avro `345c3f4e82`, which iceberg pulls in.
+  The P0 module, the P1 battery and the duckdb unit suite ran unmodified first. They ran again
+  with a throwaway shim that prototypes adoption (D-054, D-055), so that the battery could get
+  past session setup.
+
+  | Row | On 2.0 |
+  |---|---|
+  | D-025 vended secrets outlive their statement | **changed**: discarded when it ends (D-056) |
+  | D-026 a missing namespace sticks | unchanged |
+  | D-027 an unmatched `s3://` path goes unsigned to public AWS | unchanged. Without step 2 the ambient key still signs; DuckDB's HTTP log no longer shows it (D-060) |
+  | D-027 the allowlist profile, §9 q1 | **changed**: the catalog's requests pass the external-access check (D-055) |
+  | D-028 nothing bounds a hung request | **changed**: `http_timeout` bounds it. Interrupt still does not (D-057) |
+  | D-029 catalog refusals as the bare `duckdb.Error` | partly changed: a `CREATE TABLE` 403 is now an `HTTPException` (D-060). `ATTACH` 404 and 401, describe-only and revocation are unchanged |
+  | D-030 neither credential fix is in the build | **changed**: both are (D-059) |
+  | D-033 a `SET` on a cursor stays on it | unchanged |
+  | D-034 `USE lake` fails | unchanged. `USE lake.gold` works |
+  | D-035 `disabled_filesystems` reads back empty, `memory_limit` reformatted | unchanged |
+  | D-046 an interrupt before `execute` is dropped | unchanged |
+  | §3.2 one `LoadTable` per statement | unchanged |
+  | §4.2 classification | partly changed: `PRAGMA version` and `PIVOT` (D-060) |
+  | §4.3 `fetchmany` streams | unchanged |
+  | 11b and 11c | unchanged: routed reads after expiry succeed, and a statement held open across expiry still fails with HTTP 400 and no new `LoadTable` (D-051) |
+  | D-047 a kept secret outranks a fresh one | not reachable: nothing is kept (D-056) |
+  | D-048 a running statement's secret is invisible elsewhere | not reachable, for the same reason |
+  | D-049 a failed drop retires the instance | not probed: on 2.0 the drop finds nothing, so it has little to fail on |
+
+  Two things are new on 2.0 and match no row: the client fails every query (D-054), and a name
+  with an unknown first part resolves inside the tenant's own warehouse (D-058). D-032
+  (OpenFGA's cache) belongs to the catalog and was not re-run. The idle footprint (§9 q4) was
+  not re-measured.
+- **Because:** 2.0 is a major release, and the fact tags say every probe re-runs on a bump.
+- **Class:** `discovery`.
+- **Consequence:** 2.0 fixes three things the design works around (D-025, D-028, D-030) and
+  breaks two it relies on (D-054, D-055). Adopting it would take one change carrying all of
+  these: the client fix (D-054); the allowlist naming the catalog and the IdP, with
+  `HTTPFileSystem` left on (D-055); the attestation reading the `s3_*` options and
+  `extension_directory` with `current_setting()` (D-060); the taxonomy matching a 403 inside an
+  `HTTPException` (D-060); re-pinning the P0 module, whose version pin fails on the bump as
+  designed; and a decision on nested namespaces (D-058). With the shim, fifteen tests of the
+  battery and the unit suite still fail. Each traces to an entry here or to a shortcut of the
+  shim itself.
+- **Proposed row (RFC 0078):** `ASSUMED` — P2 does not adopt 2.0. The lock stays at 1.5.6, and
+  adoption is its own change, carrying the list above.
+
+## D-054 — On 2.0 `DuckDbClient` fails every query, and the dependency floor admitted 2.0
+
+- **Touches:** `DuckDbClient.run_query`, every analytics adapter on top of it, and
+  `pyproject.toml`'s `duckdb>=1.1.0`. RFC 0078 treats 2.0 as a bump forze chooses.
+- **RFC said:** "DuckDB 2.0.0 shipped on 2026-10-21 and is **not** the pinned engine."
+- **Found:** 2.0's Python API has no `fetch_arrow_table` on a connection or a cursor. The error
+  suggests `to_arrow_table`, which 1.5.6 also has. `DuckDbClient.run_query` calls
+  `fetch_arrow_table`, so every query raises `AttributeError` on 2.0. This is not about the
+  lake: 39 tests fail for it in the unit suite alone, across the client, the analytics adapter
+  and the sources. The floor has no upper bound. A fresh `pip install 'forze[duckdb]'` without this
+  repository's lock resolves 2.0 today, and gets a client that fails every query.
+- **Because:** 2.0 removed the method, and forze's floor was written before 2.0 existed.
+- **Class:** `discovery`.
+- **Consequence:** users meet this now, not at adoption. The author chose the cap: branch
+  `fix/duckdb-below-2` sets the extra to `duckdb>=1.1.0,<2` with a docs note, and goes to `main`
+  ahead of this branch. P2 changes neither the client nor the extra. Its docs page carries the
+  same note, word for word. Switching to `to_arrow_table` belongs to the adoption change.
+  Whether `to_arrow_table` exists at the 1.1.0 floor was not checked.
+- **Proposed row (RFC 0078):** `ASSUMED` — capped below 2 until the adoption change (D-053).
+
+## D-055 — On 2.0 the catalog's own requests pass the external-access check, so the P1 profile never builds
+
+- **Touches:** D-027's proposed row (the allowlist profile, adopted in P1), Unit 5's confirmation
+  of §9 q1 ("the REST catalog's traffic does not go through the filesystem layer"), §3.4 steps
+  5 and 8, and battery 8.
+- **RFC said:** §9 q1 asked whether catalog traffic survives the hardening. On 1.5.6 it does,
+  with neither the catalog nor the IdP allow-listed.
+- **Found:** on 2.0 the iceberg extension's OAuth2 token request and its REST requests go through
+  the same access check as a file read. Probed on a plain session, one profile at a time:
+
+  | Profile | On 2.0 |
+  |---|---|
+  | `disabled_filesystems='LocalFileSystem,HTTPFileSystem'`, external access on, before or after `ATTACH` | reads |
+  | allowlist of the prefix only, external access off, before `CREATE SECRET` (P1's profile) | `CREATE SECRET` fails: "Could not get token … file system operations are disabled by configuration" |
+  | the same, set after `ATTACH` | the next `LoadTable` fails the same way |
+  | allowlist of the prefix, the catalog origin and the IdP origin | reads |
+  | that, plus `HTTPFileSystem` disabled | "File system HTTPFileSystem has been disabled" |
+  | `allowed_paths` naming the token endpoint only | the token passes; the catalog's `/v1/config` is refused |
+
+  So `RoutedDuckDbClient` cannot build a session on 2.0. Every tenant fails with
+  `duckdb_session_setup_failed`.
+- **Because:** on 2.0 the extension's HTTP requests pass the filesystem layer's access check. On
+  1.5.6 they did not.
+- **Class:** `discovery`.
+- **Consequence:** on 2.0 the session must give up one layer. Either the allowlist names the
+  catalog and IdP origins and `HTTPFileSystem` stays enabled, or external access stays on and
+  the allowlist goes. The first keeps more. A statement can then open `http://` URLs on those two
+  origins and nothing else: an `https://example.com` read is still refused, by the allowlist
+  rather than by the disabled filesystem. The second loses D-027's in-engine refusal. The shim
+  took the first. The battery's HTTP-egress test then fails only on the wording of the refusal.
+- **Proposed row (RFC 0078):** `OPEN` — for 2.0, choose between an allowlist that names the
+  catalog and IdP origins with `HTTPFileSystem` enabled, and external access on with no
+  allowlist. Either way, step 8 attests the HTTP refusal by effect.
+
+## D-056 — On 2.0 a vended secret ends with its statement
+
+- **Touches:** D-025 and its proposed row, D-044, D-047 and D-048.
+- **RFC said:** §3.2 relayed the maintainer: vended secrets are "scoped to the transaction and
+  discarded after it". D-025 found that false on 1.5.6.
+- **Found:** on 2.0 it is true. After three autocommit statements, a session lists no
+  `__internal_ic_` secret, and none is visible while a statement runs. A by-path read inside the
+  table after the statement gets HTTP 403, "No credentials are provided". P0's three pins of the
+  1.5.6 behaviour fail.
+- **Because:** the 2.0 iceberg build discards the secret when the transaction ends.
+- **Class:** `discovery`.
+- **Consequence:** on 2.0 the routed client's drop finds nothing, and the engine closes D-025's
+  by-path window itself. The drop still costs one query on `duckdb_secrets()` per statement.
+- **Proposed row (RFC 0078):** `ASSUMED` — the drop stays on 2.0 as a belt. The adoption change
+  re-pins P0's three tests to the 2.0 behaviour.
+
+## D-057 — On 2.0 `http_timeout` bounds a hung catalog or store request
+
+- **Touches:** D-028 and its `OPEN` row, D-042's `OPEN` row, the §4.3 timeout cell, and the docs
+  page's "about 120 s".
+- **RFC said:** a blocking HTTP read is bounded by `http_timeout`. D-028 found it is not, on
+  1.5.6.
+- **Found:** on 2.0 it is. The probe set `SET GLOBAL http_timeout=2` and `http_retries=0` after
+  `ATTACH`, with the external file cache off. Pausing the catalog container made the next
+  statement fail after 2.0 s, with `IOException: … Timeout was reached` on the `LoadTable`
+  request. Pausing the store did the same on the manifest-list GET. An interrupt sent at 1 s
+  still did not cut the request short: the statement ended at 2.0 s, by the timeout, not with
+  `InterruptException`.
+- **Because:** the 2.0 iceberg build takes the session's HTTP settings.
+- **Class:** `discovery`.
+- **Consequence:** on 2.0, option (b) of D-028 is delivered upstream. A hung request lasts
+  `http_timeout × (1 + http_retries)`, not about 120 s, and the §4.3 cell becomes true as
+  written. D-042's early return still matters, since interrupt still does not cut a request.
+- **Proposed row (RFC 0078):** `ASSUMED` — on adoption, D-028 resolves to (b) for 2.0, and the
+  docs restate the hung-request bound as `http_timeout × (1 + http_retries)`. Option (a) stays
+  the answer for 1.5.
+
+## D-058 — On 2.0 a name with an unknown first part resolves inside the tenant's own warehouse
+
+- **Touches:** battery 4 ("tenant A names B's namespace, or `ATTACH`es B's warehouse → refusal,
+  **never rows**"), D-041's adaptation of it, §5.1 and decision 12.
+- **RFC said:** a name that does not resolve fails at the catalog.
+- **Found:** on 1.5.6, `wh_tenant_b.gold.orders` fails at bind with `Catalog "wh_tenant_b" does
+  not exist!`. On 2.0 an unknown first part is read as one level of a nested namespace. A plain
+  DuckDB database then reports that schema `wh_tenant_b.gold` does not exist. The iceberg
+  extension instead sends only the last level to the catalog. With `USE lake.gold`,
+  `wh_tenant_b.gold.orders` and `zzz.gold.orders` both send `LoadTable` for
+  `namespaces/gold/tables/orders`, and both return tenant A's own rows. Without `USE`,
+  `lake.zzz.gold.orders` does the same.
+- **Because:** 2.0 resolves a multi-part name as a nested namespace, and the 2.0 iceberg build
+  drops all but the last level when it builds the request.
+- **Class:** `discovery`.
+- **Consequence:** confinement holds. The principal and the warehouse are the tenant's, so the
+  rows are A's own, never B's. Battery 4's first leg would see rows where it expects a refusal.
+  The real defect is inside one tenant. In a warehouse with nested namespaces, `a.gold.orders`
+  and `b.gold.orders` would both read `gold.orders`, so a statement can read a namespace it did
+  not name. This should be reported to duckdb-iceberg.
+- **Proposed row (RFC 0078):** `ASSUMED` — on adoption, battery 4 asserts "never B's rows" for
+  this leg instead of a refusal. The deployment contract forbids nested namespaces in a tenant
+  warehouse until the extension resolves them in full.
+
+## D-059 — On 2.0 both credential fixes are in, and battery 17 still cannot run against Lakekeeper
+
+- **Touches:** D-030 and its proposed row, and battery 17.
+- **RFC said:** whether the pinned build has #1378's fix and #1536 is 🔎, and "Battery item 17
+  pins it either way". D-030 deferred item 17 to the 2.0 re-probe.
+- **Found:** the 2.0 iceberg build, `4c0c0874c4` (2026-10-19), has both. GitHub's compare puts
+  it 688 commits ahead of #1379's merge (`28e62cb`, the fix for #1378) and 171 ahead of #1536's
+  (`6570418`), and behind neither. duckdb-iceberg#1390 is closed. Neither fix was exercised
+  live. The empty-`CLIENT_ID` case needs an IdP that issues a token without a client id, and
+  Keycloak does not.
+- **Because:** both fixes landed on `main` before the 2.0 line was cut.
+- **Class:** `discovery`.
+- **Consequence:** on 2.0 the build no longer needs a non-empty `client_id`, and refusing an
+  empty one stays harmless. Battery 17 still needs a catalog that vends two or more credentials
+  with nested prefixes for one table. Lakekeeper vends exactly one, on 2.0 as on 1.5.6. 2.0
+  puts the fix in the build. It does not make the case reachable.
+- **Proposed row (RFC 0078):** `ASSUMED` — battery 17 stays deferred until a catalog in the
+  fixture vends nested-prefix credentials. The empty-`client_id` refusal stays.
+
+## D-060 — Smaller 2.0 deltas the adoption change must carry
+
+- **Touches:** §4.2 (classification), §4.5, D-029 and D-038, §3.4 step 8, batteries 5 and 9, and
+  P0's battery 5 pin.
+- **RFC said:** the 1.5.6 behaviour, as Units 5 and 6 pin it.
+- **Found:**
+  - A catalog 403 on `CREATE TABLE` arrives as an `HTTPException` carrying `Forbidden_403`, not
+    as the bare `Error`. The adapter's HTTP pattern looks for `HTTP 403`, so this maps to
+    `infrastructure`. A store 403 still reads "(HTTP 403 Forbidden)" and still maps to
+    `dynamic_read_permission_denied`, because the adapter's pattern takes both its old wording
+    ("HTTP code 403") and its new one. Only a statement past classification can reach the
+    `CREATE TABLE` case.
+  - `PRAGMA version` classifies as `PRAGMA`, not `SELECT`, so it is refused. `PIVOT` comes back
+    as one statement of type `MULTI`, refused as `dynamic_read_write_refused` rather than as
+    `dynamic_read_multi_statement`. Both are still refused, and the compiler emits neither.
+  - `duckdb_settings()` no longer lists the `s3_*` options or `extension_directory`.
+    `current_setting()` still reads them, so step 8 must read them that way, or it attests
+    nothing for them.
+  - `lock_configuration` now refuses `CALL enable_logging(…)`. Battery 5 turns logging on after
+    the lock, so on 2.0 it must turn logging on first.
+  - DuckDB's HTTP log no longer carries the SigV4 `Credential=` field, which P0's ambient-key pin
+    reads. On 2.0 the read without step 2 still succeeds, and the store refuses unsigned reads,
+    so the ambient key signed it. The pin just cannot see that.
+  - The lock refusal quotes the option name twice (`""disabled_filesystems""`). The adapter
+    matches on "the configuration has been locked", which still holds.
+- **Because:** 2.0 changed each of these.
+- **Class:** `discovery`.
+- **Consequence:** none on 1.5.6.
+- **Proposed row (RFC 0078):** `ASSUMED` — the adoption change carries each item. A 403 inside an
+  `HTTPException` maps to `dynamic_read_permission_denied`. Step 8 reads the `s3_*` options and
+  `extension_directory` with `current_setting()`. Battery 5 turns logging on before the lock.
+  P0's ambient-key pin reads the store's request log. The classification tests follow the new
+  types.
+
+---
+
 # Unit 9 · RFC 0077 P3 — surfaces onto ingress
 
 Branch `refactor/ingress-fastapi-socketio-ws`. RFC 0077 §12 P3's bullet "moving FastAPI,
