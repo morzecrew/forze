@@ -474,7 +474,7 @@ the flag at the CLI boundary keeps the CLI correct without changing how cancella
 everywhere else. Whether the other boundaries need the same check is recorded in §12.
 
 **As built (P3).** The other boundaries record a late cancel; none of them converts it.
-Execution log, Unit "RFC 0077 P3", entries D-AMB-1 to D-AMB-3.
+Execution log, Unit "RFC 0077 P3", entries D-095 to D-097.
 
 - **The record lives in one place.** `ResolvedOperation.__call__` is the top-level boundary
   every surface reaches: `run_operation` and `invoke_at_ingress` go through it, and Socket.IO
@@ -488,14 +488,14 @@ Execution log, Unit "RFC 0077 P3", entries D-AMB-1 to D-AMB-3.
   | --- | --- | --- |
   | `forze ops call` | a second signal or the grace running out | converts (P2): the CLI owns its process and its stdout |
   | FastAPI routes, MCP, Socket.IO, WS commands | a client that left, or a server shutdown | record only: no one is left to read an error, and shutdown needs the cancel |
-  | Durable runner, Inngest, app-written Temporal activities | a drain, an operator cancel, `max_run_duration`, the engine's own cancel | record only: each reads the raw cancel to name its cause (D-AMB-2) |
+  | Durable runner, Inngest, app-written Temporal activities | a drain, an operator cancel, `max_run_duration`, the engine's own cancel | record only: each reads the raw cancel to name its cause (D-096) |
   | Saga executors | any of the above, per step | already convert, at their own boundary: they own the journal |
   | Inbox consumer, outbox relay | shutdown | unchanged: no operation at the top level; inbox dedup covers a redelivery |
 
 - **Audit is unchanged.** `AuditOutcome` has no ambiguous value. A command's audit row is
   written inside its transaction, so it commits with the operation.
 - **A read-only transaction marks the commit point unless its manager proves read-only**
-  (D-AMB-3). Every root used to mark it, so a query cancelled or timed out after its read
+  (D-097). Every root used to mark it, so a query cancelled or timed out after its read
   reported `commit_ambiguous`. A manager implementing `ReadOnlyAware` is now asked, just
   before the commit, whether the backend refused writes in the transaction it actually
   opened. Postgres answers yes only after a real `BEGIN … READ ONLY`, and the mock's

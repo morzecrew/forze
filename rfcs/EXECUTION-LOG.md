@@ -2270,6 +2270,10 @@ generated surfaces) does not cover, and no copy of a boundary step is involved.
 
 # Unit ? · RFC 0077 P3 — commit ambiguity at every boundary
 
+---
+
+# Unit 11 · RFC 0077 P3 — commit ambiguity at every boundary
+
 Branch `feat/commit-ambiguous-boundaries`. RFC 0077 §12 P3, the last code item: whether a
 cancellation after the commit point should report `commit_ambiguous` at every boundary, not
 only the CLI (§5.6). The decision is recorded in §5.6 "As built (P3)".
@@ -2283,7 +2287,7 @@ transaction scope on every surface (§5.8 P2 note). The open window was only a c
 the scope had exited: in an outer hook, a dispatched operation, or after a nested operation's
 root transaction committed.
 
-## D-AMB-1 — Every boundary records a late cancel; only the CLI converts it
+## D-095 — Every boundary records a late cancel; only the CLI converts it
 
 - **Touches:** RFC 0077 §5.6 (last paragraph), §12 P3, decision 10.
 - **RFC said:** reading the flag at the CLI boundary "keeps the CLI correct without changing
@@ -2313,7 +2317,7 @@ root transaction committed.
   or its journal (the saga executors). Every other boundary records it at the top-level
   operation boundary, with a warning log and a span event, and re-raises the cancel.
 
-## D-AMB-2 — The durable runner cannot read the commit flag; the record has to be emitted inside the body
+## D-096 — The durable runner cannot read the commit flag; the record has to be emitted inside the body
 
 - **Touches:** RFC 0077 §5.6. Unlisted: boundaries that run the operation on another task.
 - **RFC said:** nothing. The CLI pattern assumes the boundary reads `commit_started()` on the
@@ -2330,9 +2334,9 @@ root transaction committed.
 - **Consequence:** a reader at each surface, as the CLI does it, cannot work here. This is why
   the record lives at the operation boundary, which runs on the body's own task. Making the
   re-run safe stays the job of an idempotency key, an inbox, or a saga journal.
-- **Proposed row (RFC 0077):** none. D-AMB-1's row covers it.
+- **Proposed row (RFC 0077):** none. D-095's row covers it.
 
-## D-AMB-3 — A read-only root transaction marks the commit point too
+## D-097 — A read-only root transaction marks the commit point too
 
 - **Touches:** RFC 0077 §5.6 and decision 10. Also `TransactionContext.scope` and the
   deadline classification in `ResolvedOperation._run`.
