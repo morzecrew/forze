@@ -2,6 +2,7 @@ from .deps import (
     DuckDbAnalyticsConfig,
     DuckDbClientDepKey,
     DuckDbDepsModule,
+    DuckDbDynamicReadConfig,
     DuckDbQueryConfig,
 )
 from .lifecycle import duckdb_lifecycle_step
@@ -14,4 +15,5 @@ __all__ = [
     "duckdb_lifecycle_step",
     "DuckDbAnalyticsConfig",
     "DuckDbQueryConfig",
+    "DuckDbDynamicReadConfig",
 ]

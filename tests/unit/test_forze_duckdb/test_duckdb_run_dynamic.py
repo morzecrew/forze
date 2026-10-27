@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import os
 import re
+import secrets
 from collections.abc import AsyncIterator
 from datetime import timedelta
 from pathlib import Path
@@ -26,6 +27,7 @@ from forze_duckdb import DuckDbClient, DuckDbConfig
 from forze_duckdb.kernel.client import QUERY_TIMEOUT_CODE
 
 _TIMEOUT = timedelta(seconds=5)
+_S3_SECRET = f"TYPE s3, KEY_ID '{secrets.token_hex(4)}', SECRET '{secrets.token_hex(8)}'"
 _HEAVY_SQL = "SELECT count(*) AS n FROM range(100000) a, range(100000) b"
 
 # ----------------------- #
@@ -117,7 +119,7 @@ async def test_anything_but_one_statement_is_refused(
         ("SET threads=1", "SET"),
         ("ATTACH ':memory:' AS other", "ATTACH"),
         ("COPY (SELECT 1) TO 'x.csv'", "COPY"),
-        ("CREATE SECRET s (TYPE s3, KEY_ID 'k', SECRET 'v')", "CREATE"),
+        (f"CREATE SECRET s ({_S3_SECRET})", "CREATE"),
         ("EXPLAIN SELECT 1", "EXPLAIN"),
     ],
 )
@@ -145,7 +147,7 @@ async def test_vended_secrets_are_dropped_after_each_statement(
 ) -> None:
     for name in ("__internal_ic_orders_1", "__internal_ic_orders_2", "kept"):
         await lake_client.run_command(
-            f"CREATE TEMPORARY SECRET {name} (TYPE s3, KEY_ID 'k', SECRET 'v')"
+            f"CREATE TEMPORARY SECRET {name} ({_S3_SECRET})"
         )
 
     await lake_client.run_dynamic("SELECT 1 AS one", row_probe=2, timeout=_TIMEOUT)
@@ -157,7 +159,7 @@ async def test_vended_secrets_are_dropped_after_a_failed_statement(
     lake_client: DuckDbClient,
 ) -> None:
     await lake_client.run_command(
-        "CREATE TEMPORARY SECRET __internal_ic_t (TYPE s3, KEY_ID 'k', SECRET 'v')"
+        f"CREATE TEMPORARY SECRET __internal_ic_t ({_S3_SECRET})"
     )
 
     with pytest.raises(duckdb.CatalogException):

@@ -16,7 +16,7 @@ import random
 from collections.abc import Iterator
 from datetime import timedelta
 from typing import Any
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import pytest
 
@@ -38,10 +38,18 @@ _tenant: contextvars.ContextVar[UUID | None] = contextvars.ContextVar("tenant", 
 
 
 class _MemSecrets:
-    """Client-credential payloads by tenant; ``rotate`` swaps one tenant's secret."""
+    """Client-credential payloads by tenant; ``rotate`` swaps one tenant's secret.
+
+    Every secret is generated, so ``first`` records the one each tenant started with.
+    """
 
     def __init__(self, *tenants: UUID) -> None:
-        self.payloads = {t: {"client_id": f"id-{t.hex[:4]}", "client_secret": "s0"} for t in tenants}
+        self.payloads = {t: {"client_id": f"id-{t.hex[:4]}"} for t in tenants}
+
+        for tenant in tenants:
+            self.rotate(tenant, uuid4().hex)
+
+        self.first = {t: payload["client_secret"] for t, payload in self.payloads.items()}
 
     def rotate(self, tenant: UUID, secret: str) -> None:
         self.payloads[tenant] = {**self.payloads[tenant], "client_secret": secret}
@@ -232,19 +240,21 @@ class TestInstances:
         secrets = _MemSecrets(_A)
         routed = _routed(secrets)
         await routed.startup()
-        assert await _read(routed, _A) == [{"secret": "s0"}]
+        assert await _read(routed, _A) == [{"secret": secrets.first[_A]}]
 
-        secrets.rotate(_A, "s1")
+        rotated = uuid4().hex
+        secrets.rotate(_A, rotated)
         await routed.evict_tenant(_A)
 
-        assert await _read(routed, _A) == [{"secret": "s1"}]
+        assert await _read(routed, _A) == [{"secret": rotated}]
         assert [engine.closed for engine in fake_engine.built] == [True, False]
         await routed.close()
 
     async def test_lru_eviction_lets_a_running_statement_finish(
         self, fake_engine: type[_FakeEngine]
     ) -> None:
-        routed = _routed(_MemSecrets(_A, _B), max_cached_tenants=1)
+        secrets = _MemSecrets(_A, _B)
+        routed = _routed(secrets, max_cached_tenants=1)
         await routed.startup()
 
         running = asyncio.create_task(_read(routed, _A, 0.05))
@@ -253,7 +263,7 @@ class TestInstances:
 
         a_engine = fake_engine.built[0]
         assert not a_engine.closed  # draining, not closed
-        assert await running == [{"secret": "s0"}]
+        assert await running == [{"secret": secrets.first[_A]}]
         assert a_engine.closed  # closed once its last statement returned
         await routed.close()
 
@@ -303,12 +313,14 @@ def test_the_pool_holds_under_perturbed_schedules(
             asyncio.create_task(_read(routed, rng.choice((_A, _B, _C)), rng.random() / 10))
             for _ in range(24)
         ]
-        rotations = [asyncio.create_task(rotate(t, f"r-{t.hex[:2]}")) for t in (_A, _B)]
+        rotated = {t: f"{rng.getrandbits(64):016x}" for t in (_A, _B)}
+        rotations = [asyncio.create_task(rotate(t, rotated[t])) for t in (_A, _B)]
+        known = {*secrets.first.values(), *rotated.values()}
 
         results = await asyncio.gather(*reads, *rotations)
         await routed.close()
 
-        assert all(r[0]["secret"] in {"s0", "r-aa", "r-bb"} for r in results[: len(reads)])
+        assert all(r[0]["secret"] in known for r in results[: len(reads)])
         assert all(engine.closed for engine in _FakeEngine.built)
 
     run_simulation(scenario, seed=seed, scheduler=PCTReorderer(rng=random.Random(seed)))

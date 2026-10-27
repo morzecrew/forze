@@ -1,9 +1,11 @@
-"""DuckDB analytics execution configs."""
+"""DuckDB analytics and dynamic-read execution configs."""
 
+from datetime import timedelta
 from typing import TYPE_CHECKING, Any
 
 import attrs
 
+from forze.application.contracts.dynamic_read import DynamicReadProvenance
 from forze.application.contracts.tenancy import TenantAwareIntegrationConfig
 from forze.application.integrations.analytics import assert_tenant_param_referenced
 from forze.base.exceptions import exc
@@ -88,4 +90,47 @@ class DuckDbAnalyticsConfig(TenantAwareIntegrationConfig):
                 placeholder_hint="$tenant",
                 integration="DuckDB",
                 route=str(spec.name),
+            )
+
+
+# ....................... #
+
+
+@attrs.define(slots=True, kw_only=True, frozen=True)
+class DuckDbDynamicReadConfig(TenantAwareIntegrationConfig):
+    """Physical DuckDB mapping for one governed dynamic-read route, on a routed lake client.
+
+    The container is the tenant's own instance, so there is no schema or role to configure.
+    The route runs only on a :class:`~forze_duckdb.RoutedDuckDbClient`, and only trusted
+    statements: the deps module refuses anything else at wiring.
+    """
+
+    provenance: DynamicReadProvenance
+    """Who authored the statements this route executes. Mandatory; ``"untrusted"`` is refused
+    by :class:`~forze_duckdb.execution.deps.module.DuckDbDepsModule`, because neither the
+    timeout nor the read-only guarantee is enforced outside the process."""
+
+    namespace: str
+    """The lake namespace issued as ``USE lake.<namespace>`` before every statement, so a
+    plan's two-part ``gold.orders`` and a bare ``orders`` resolve in the tenant's warehouse.
+    An Iceberg catalog has no default schema, so ``USE lake`` alone is refused by DuckDB."""
+
+    statement_timeout: timedelta = attrs.field(default=timedelta(seconds=5))
+    """Statement timeout, enforced by cursor interrupt. A per-call option may clamp it down,
+    never up."""
+
+    # ....................... #
+
+    def __attrs_post_init__(self) -> None:
+        if self.statement_timeout.total_seconds() <= 0:
+            raise exc.configuration(
+                "DuckDB dynamic-read statement_timeout must be positive.",
+                code="dynamic_read_timeout_invalid",
+                details={"statement_timeout": str(self.statement_timeout)},
+            )
+
+        if not self.namespace.strip():
+            raise exc.configuration(
+                "DuckDB dynamic-read namespace must be non-empty.",
+                code="duckdb_dynamic_read_namespace_invalid",
             )

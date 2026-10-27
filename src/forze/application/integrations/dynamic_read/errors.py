@@ -20,7 +20,8 @@ from forze.base.exceptions import CoreException
 # ----------------------- #
 
 WRITE_REFUSED_CODE = "dynamic_read_write_refused"
-"""The statement attempted a write or DDL inside the read-only transaction (SQLSTATE 25006)."""
+"""The statement attempted a write or DDL: refused by Postgres's read-only transaction (SQLSTATE
+25006), or by DuckDB's parser classifying it as something other than a ``SELECT``."""
 
 STATEMENT_INVALID_CODE = "dynamic_read_statement_invalid"
 """Syntax error, undefined relation/column/function — the statement itself is wrong."""
@@ -62,14 +63,13 @@ def _details(route: str, **extra: Any) -> dict[str, Any]:
 # ....................... #
 
 
-def write_refused(route: str) -> CoreException:
-    """A write/DDL refused by the read-only transaction."""
+def write_refused(route: str, *, statement_type: str | None = None) -> CoreException:
+    """A write/DDL refused by the engine; *statement_type* is the engine's name for it."""
 
     return CoreException.precondition(
-        "Dynamic read refused a statement that attempts to write: the plane runs every "
-        "statement in a READ ONLY transaction.",
+        "Dynamic read refused a statement that attempts to write: the plane is read-only.",
         code=WRITE_REFUSED_CODE,
-        details=_details(route),
+        details=_details(route, **({"statement_type": statement_type} if statement_type else {})),
     )
 
 
