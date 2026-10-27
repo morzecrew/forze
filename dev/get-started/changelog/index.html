@@ -10331,6 +10331,12 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <li>
 <p><strong>A malformed Forze id header no longer fails a Temporal task.</strong> An execution or correlation id header that is not a UUID is dropped, and the workflow or activity runs under freshly minted metadata. Principal, actor and tenant headers decode as strictly as before.</p>
 </li>
+<li>
+<p><strong>Duplex realtime commands get their own invocation metadata</strong> (<strong>behaviour change</strong>). A <code>cmd</code> frame on <code>attach_realtime_ws_route</code> and a Socket.IO command event each mint a fresh execution id and, with no caller id to carry, a fresh correlation id, so the operation's logs, spans and integration events carry them.</p>
+</li>
+<li>
+<p><strong>A Socket.IO command event runs under its connection's tenant</strong> (<strong>behaviour change</strong>). On a connection <code>attach_realtime_connection</code> admitted, an event bound the principal but no tenant, so a tenant-aware operation failed <code>tenant_required</code>. It now binds the tenant resolved at connect, as the WS route does.</p>
+</li>
 </ul>
 <h3 id="security">Security<a class="headerlink" href="#security" title="Permanent link">&para;</a></h3>
 <ul>
@@ -10339,6 +10345,9 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 </li>
 <li>
 <p><strong>A stale access cookie could keep a cookie-mode logout from ending the session.</strong> <code>runtime_lifespan</code> now refuses an app whose <code>anonymous_paths</code> misses a cookie-mode login, refresh or logout route (<code>check_authn_cookie_paths</code>, <strong>behaviour change</strong>).</p>
+</li>
+<li>
+<p><strong>Postgres dynamic-read routes refuse an unknown <code>provenance</code> value</strong> (<strong>Breaking</strong>). <code>PostgresDynamicReadConfig</code> accepts only <code>"trusted"</code> or <code>"untrusted"</code> (<code>postgres_dynamic_read_provenance_invalid</code>); a config with any other value now fails at startup. New <code>validate_dynamic_read_provenance</code>.</p>
 </li>
 </ul>
 <h2 id="0162-2026-10-26"><a href="https://github.com/morzecrew/forze/compare/v0.16.1...v0.16.2">0.16.2</a> - 2026-10-26<a class="headerlink" href="#0162-2026-10-26" title="Permanent link">&para;</a></h2>

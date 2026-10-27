@@ -6886,7 +6886,8 @@ SQL invites exactly the fan-out costs the caps exist to surface.</p>
 <p>This is the design input everything else follows from, and the wiring author has
 to answer it because the framework cannot: it never sees the statement until it
 is time to run it. <code>provenance</code> has no default, so a route cannot be wired
-without naming its threat tier.</p>
+without naming its threat tier. Only <code>"trusted"</code> and <code>"untrusted"</code> are accepted;
+any other value is refused when the config is built.</p>
 <table>
 <thead>
 <tr>
