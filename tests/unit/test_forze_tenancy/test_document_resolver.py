@@ -142,7 +142,9 @@ async def test_resolver_uses_requested_tenant_when_present() -> None:
     assert got.tenant_id == tid
 
 @pytest.mark.asyncio
-async def test_resolver_raises_when_principal_membership_is_ambiguous() -> None:
+async def test_resolver_binds_no_tenant_when_principal_membership_is_ambiguous() -> None:
+    # Several memberships and no requested tenant is the state right after a password
+    # login: the principal must reach the selector, so no tenant is bound (#666).
     pid = uuid4()
     bind_a = _binding_row(pid=pid, tid=uuid4())
     bind_b = _binding_row(pid=pid, tid=uuid4())
@@ -155,5 +157,16 @@ async def test_resolver_raises_when_principal_membership_is_ambiguous() -> None:
 
     resolver = TenantResolverAdapter(binding_qry=binding_qry, tenant_qry=None)
 
-    with pytest.raises(CoreException, match="ambiguous"):
-        await resolver.resolve_from_principal(pid)
+    assert await resolver.resolve_from_principal(pid) is None
+
+@pytest.mark.asyncio
+async def test_resolver_binds_no_tenant_without_membership() -> None:
+    binding_qry = AsyncMock()
+    binding_qry.spec = principal_tenant_binding_spec
+    binding_qry.find_many = AsyncMock(
+        return_value=CountlessPage(hits=[], page=1, size=0),
+    )
+
+    resolver = TenantResolverAdapter(binding_qry=binding_qry, tenant_qry=None)
+
+    assert await resolver.resolve_from_principal(uuid4()) is None

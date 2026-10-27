@@ -71,10 +71,10 @@ class TenantResolverAdapter(TenantResolverPort):
             return None
 
         if requested_tenant_id is None and len(page.hits) > 1:
-            raise exc.authentication(
-                "Tenant identity is ambiguous for this principal",
-                code="tenant_ambiguous",
-            )
+            # Several memberships and nothing requested (a password login carries no ``tid``):
+            # bind none, as for no membership, so the selector stays reachable. Tenant-scoped
+            # work refuses an unbound caller on its own.
+            return None
 
         bind = page.hits[0]
         tid = bind.tenant_id

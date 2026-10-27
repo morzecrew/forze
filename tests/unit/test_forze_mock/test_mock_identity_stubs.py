@@ -357,7 +357,7 @@ async def test_tenant_resolver_inactive_tenant_raises() -> None:
     assert excinfo.value.code == "tenant_inactive"
 
 
-async def test_tenant_resolver_ambiguous_membership_raises() -> None:
+async def test_tenant_resolver_ambiguous_membership_binds_no_tenant() -> None:
     state = MockState()
     mgmt = MockTenantManagementPort(state=state)
     resolver = MockTenantResolverPort(state=state)
@@ -368,10 +368,13 @@ async def test_tenant_resolver_ambiguous_membership_raises() -> None:
     await mgmt.attach_principal(principal_id, t1.tenant_id)
     await mgmt.attach_principal(principal_id, t2.tenant_id)
 
-    with pytest.raises(CoreException) as excinfo:
-        await resolver.resolve_from_principal(principal_id)
+    assert await resolver.resolve_from_principal(principal_id) is None
 
-    assert excinfo.value.code == "tenant_ambiguous"
+    # A requested tenant still has to be one of the principal's own.
+    with pytest.raises(CoreException) as excinfo:
+        await resolver.resolve_from_principal(principal_id, requested_tenant_id=uuid4())
+
+    assert excinfo.value.code == "tenant_mismatch"
 
 
 async def test_tenant_resolver_no_membership_returns_none() -> None:
