@@ -27,6 +27,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **An `openai_chat` route can serve a host that refuses a schema constraint, such as DeepSeek.** `structured_output="json_object"` puts the output model's schema in the system message, asks for valid JSON, and refuses a reply that does not fit as `inference_output_mismatch`. `json_schema` stays the default.
 
+- **`forze_identity.tenancy.application` exports `TenancyResourceName`.** It matches `AuthnResourceName` in `forze_identity.authn.application`.
+
 ### Changed
 
 - **`HttpServicePort` requires `stream`** (**behaviour change**). A hand-written implementation or test stub must add it, or it fails type checks and `isinstance` against the runtime-checkable port.
