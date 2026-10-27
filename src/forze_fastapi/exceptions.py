@@ -6,7 +6,7 @@ require_fastapi()
 # ....................... #
 
 import math
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from email.utils import format_datetime
 from typing import Final
 
@@ -87,7 +87,13 @@ def _retry_after_header(exc: CoreException) -> str | None:
         return None
 
     try:
-        return format_datetime(at.astimezone(UTC), usegmt=True)
+        at = at.astimezone(UTC)
+
+        # An HTTP-date has whole seconds; rounding down would send the client back early.
+        if at.microsecond:
+            at = at.replace(microsecond=0) + timedelta(seconds=1)
+
+        return format_datetime(at, usegmt=True)
 
     except (OverflowError, ValueError):  # an instant UTC cannot represent
         return None

@@ -447,6 +447,15 @@ class TestRetryAfterHeader:
 
         assert header == "Wed, 21 Oct 2026 07:28:00 GMT"
 
+    def test_retry_at_rounds_up_to_the_next_second(self) -> None:
+        # The HTTP-date drops sub-seconds; truncating would send the client back early.
+        at = datetime(2026, 10, 21, 7, 28, 0, 500_000, tzinfo=UTC)
+        err = exc.throttled("Quota spent", details={"retry_at": at})
+
+        header = build_core_exception_response(err).headers["Retry-After"]
+
+        assert header == "Wed, 21 Oct 2026 07:28:01 GMT"
+
     def test_retry_after_wins_over_retry_at(self) -> None:
         at = datetime(2026, 10, 21, 7, 28, tzinfo=UTC)
         err = exc.throttled("Slow down", details={"retry_after": 5, "retry_at": at})

@@ -121,7 +121,8 @@ class TestTheErrorEnvelope:
             assert "X-Error-Code" in response["headers"]
 
         envelope = schema["components"]["schemas"]["ForzeErrorResponse"]
-        assert envelope["required"] == ["detail", "code", "kind"]
+        # An HTTPException raised by app code or a dependency carries `detail` alone.
+        assert envelope["required"] == ["detail"]
         assert set(envelope["properties"]) == {"detail", "code", "kind", "context"}
 
     def test_every_operation_gains_a_default_error(self) -> None:

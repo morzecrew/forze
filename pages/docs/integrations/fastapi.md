@@ -216,7 +216,7 @@ come back: the response carries a `Retry-After` header read from two `details` k
 | Key | Value | `Retry-After` |
 |-----|-------|---------------|
 | `retry_after` | non-negative seconds, `int` or `float` | the seconds, rounded up |
-| `retry_at` | an aware `datetime` | that instant as an HTTP-date |
+| `retry_at` | an aware `datetime` | that instant, rounded up to the second, as an HTTP-date |
 
 A usable `retry_after` wins when both are set; an unusable one — a negative or non-finite
 number, a string — falls through to `retry_at`. When neither is usable (a naive `datetime`
