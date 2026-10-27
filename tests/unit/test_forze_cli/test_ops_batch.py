@@ -95,6 +95,18 @@ class TestBatch:
         assert _batch("probe.fail", stdin=line).exit_code == 75
         assert _batch("probe.fail_write", stdin=line).exit_code == 69
 
+    def test_only_a_newline_ends_a_line(self) -> None:
+        # JSON allows a raw U+2028 or U+0085 in a string; str.splitlines() splits at both.
+        stdin = '{"text": "a\u2028b"}\r\n{"text": "c\x85d"}\n'
+
+        result = _batch("probe.echo", stdin=stdin)
+
+        assert result.exit_code == 0, result.stdout
+        assert [(d["line"], d["result"]["text"]) for d in _documents(result)] == [
+            (1, "a\u2028b"),
+            (2, "c\x85d"),
+        ]
+
     def test_an_empty_batch_runs_nothing(self) -> None:
         result = _batch("notes.add", stdin="\n")
 

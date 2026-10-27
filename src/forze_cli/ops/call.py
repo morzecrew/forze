@@ -433,7 +433,11 @@ def _batch_calls(
 
     # shortcut: the whole batch is held in memory before it runs; stream it if a backfill
     # outgrows that.
-    for number, line in enumerate(_read_source(batch, option="--batch").splitlines(), 1):
+    for number, raw_line in enumerate(_read_source(batch, option="--batch").split("\n"), 1):
+        # Only a newline ends a JSONL line: ``splitlines`` also splits at U+2028 and U+0085,
+        # which JSON allows raw inside a string.
+        line = raw_line.removesuffix("\r")
+
         if not line.strip():
             continue
 
