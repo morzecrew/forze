@@ -9,6 +9,9 @@ exception is logged and acked with a generic internal-error payload (see
 returned as the handler's return value, which python-socketio delivers as the
 event acknowledgement when the client requested one.
 
+Each event also binds fresh invocation metadata (execution and correlation ids)
+around its run, as an HTTP request and a raw-WebSocket command frame do.
+
 Identity is bound per event through an optional ``identity_resolver``: it runs
 once at connect time (receiving the connection ``environ`` and ``auth``
 payload), the resolved :class:`~forze.application.contracts.authn.AuthnIdentity`
@@ -42,6 +45,7 @@ from forze.application.contracts.authn import (
 )
 from forze.application.contracts.execution import Handler
 from forze.application.execution import ExecutionContext
+from forze.application.execution.ingress import mint_invocation_metadata
 from forze.application.integrations.realtime import RealtimeCommandRoute
 from forze.base.exceptions import CoreException, FrameErr, exc, guard_frame
 from forze.base.primitives import StrKey
@@ -385,7 +389,12 @@ async def _dispatch_event(
         identity: AuthnIdentity | None = session[IDENTITY_SESSION_KEY]
         binding = ctx.inv_ctx.bind_identity(authn=identity)
 
-    with binding, bind_authn_admission(session.get(AUTHN_ADMISSION_SESSION_KEY)):
+    # Each event is an invocation of its own, so it gets fresh metadata, as a WS frame does.
+    with (
+        ctx.inv_ctx.bind_metadata(metadata=mint_invocation_metadata()),
+        binding,
+        bind_authn_admission(session.get(AUTHN_ADMISSION_SESSION_KEY)),
+    ):
         op = operation_resolver(route.operation, ctx)
         result = await op(args)
 
