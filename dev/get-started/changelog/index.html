@@ -10310,6 +10310,12 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <li>
 <p><strong>An aliased input field no longer loses the caller's value.</strong> <code>forze ops call</code> and agent tools refuse a name the DTO's config does not read, which pydantic dropped, running the operation on the default. <abbr title="Model Context Protocol">MCP</abbr> reads each field by the name its tool signature advertises, so an aliased field is no longer dropped there.</p>
 </li>
+<li>
+<p><strong>Each Inngest function call mints its own execution id</strong> (<strong>behaviour change</strong>). The producer's id becomes the causation; the correlation id is kept, or derived from the run. An idempotency claim belongs to one handler entry, so one a crashed entry left pending blocks a retry until its TTL, as on Temporal.</p>
+</li>
+<li>
+<p><strong>A malformed Forze id header no longer fails a Temporal task.</strong> An execution or correlation id header that is not a UUID is dropped, and the workflow or activity runs under freshly minted metadata. Principal, actor and tenant headers decode as strictly as before.</p>
+</li>
 </ul>
 <h3 id="security">Security<a class="headerlink" href="#security" title="Permanent link">&para;</a></h3>
 <ul>

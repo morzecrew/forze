@@ -6817,11 +6817,17 @@ shutdown window.</p>
 <ul>
 <li>A function binding maps a <code>DurableFunctionSpec</code> to either an operation
   (<code>for_registry_operation</code>) or a handler factory — set exactly one.</li>
-<li>The execution-context metadata travels in a <code>_forze</code> envelope and is restored
-  in the worker. The identity and tenant it claims are bound only with
+<li>The execution-context metadata travels in a <code>_forze</code> envelope. The worker restores its
+  correlation id but mints its own execution id for every call, recording the producer's
+  execution id as the causation; an event without one correlates every step and retry of
+  its run under an id derived from the run id. An idempotency claim therefore belongs to
+  one handler entry: a claim left pending by a crashed entry blocks a retry until the
+  claim's TTL expires, as on Temporal. The identity and tenant it claims are bound only with
   <code>bind_identity_from_event=True</code>, for trusted producers; a delegated identity then keeps its
   actor chain. An identity that does not decode is ignored by a function that does not bind
   it, and stops one that does with a <code>NonRetriableError</code>; malformed tracing ids are dropped.</li>
+<li>In production, set <code>is_production=True</code> and a signing key: in dev mode the SDK skips
+  verifying that an invocation came from Inngest.</li>
 <li>Steps resolve only inside a running function.</li>
 </ul>
 

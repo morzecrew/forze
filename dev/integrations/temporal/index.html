@@ -6999,6 +6999,8 @@ expression.</p>
   the same <code>workflow_configs</code> to the lifecycle step to bootstrap them.</li>
 <li>Worker-side helpers (<code>ExecutionContextInterceptor</code>, <code>sandboxed_workflow_runner</code>,
   <code>TemporalSaga</code>) are exported for the worker process.</li>
+<li>The interceptor binds principal, actor chain and tenant from headers as sent; who can
+  start, signal or update workflows in the namespace decides who can set them.</li>
 </ul>
 
 
