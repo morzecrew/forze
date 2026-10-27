@@ -7051,11 +7051,14 @@ SDK brings its own transport, and a hop made through it is not a declared servic
 marker does not cover it.</p>
 <h2 id="notes">Notes<a class="headerlink" href="#notes" title="Permanent link">&para;</a></h2>
 <ul>
-<li>
-<p><strong>Without a query policy every read field is advertised</strong>, bookkeeping columns
+<li><strong>Without a query policy every read field is advertised</strong>, bookkeeping columns
   included — around 600 characters for a two-field model, in every tool the palette
   carries. A policy keeps the description small as well as the surface narrow, which is
-  the same reason to write one twice over.</p>
+  the same reason to write one twice over.</li>
+<li>
+<p><strong>The filter grammar is repeated in every filter tool's schema</strong> unless the palette is
+  built with <code>shared_filter_grammar=True</code>, which moves it to <code>tools.filter_grammar</code> for
+  the system prompt — see <a href="../../data-events/agent-tools/">Agent tools</a>.</p>
 </li>
 <li>
 <p><strong>A read-only palette is the default.</strong> <code>operation_tools</code> refuses a command operation

@@ -10253,6 +10253,9 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <li>
 <p><strong>A declared HTTP service can stream a response.</strong> <code>HttpServicePort.stream(op, args)</code> yields the body as it arrives, governed as <code>invoke</code> is, and raises a rejection before the first chunk. <code>HttpClient.stream</code> and <code>RoutedHttpClient.stream</code> do the same at the client.</p>
 </li>
+<li>
+<p><strong>Agent tools can state the filter grammar once.</strong> <code>operation_tools(shared_filter_grammar=True)</code> strips it from tool schemas as <abbr title="Model Context Protocol">MCP</abbr> does; <code>OperationToolset.filter_grammar</code> holds it for the system prompt. <code>forze.application.contracts.querying</code> gains <code>filter_grammar</code>, <code>without_filter_grammar</code>, <code>takes_filter_expression</code>.</p>
+</li>
 </ul>
 <h3 id="changed">Changed<a class="headerlink" href="#changed" title="Permanent link">&para;</a></h3>
 <ul>
@@ -10260,6 +10263,9 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 </ul>
 <h3 id="fixed">Fixed<a class="headerlink" href="#fixed" title="Permanent link">&para;</a></h3>
 <ul>
+<li>
+<p><strong>A Postgres dynamic read no longer collapses duplicate column names.</strong> <code>SELECT a.id, b.id</code> came back as one <code>id</code> holding the second value. A result with rows now fails with <code>dynamic_read_statement_invalid</code>, naming the duplicates; an empty one still returns no rows.</p>
+</li>
 <li>
 <p><strong>Two quick <code>SIGINT</code>s to <code>serve_uvicorn</code> now give the drain phases up.</strong> A second one handled in the same loop turn as the first cancelled the drain before it started, so the forced exit still ran every phase at length in teardown.</p>
 </li>

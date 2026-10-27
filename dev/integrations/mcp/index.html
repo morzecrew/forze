@@ -6735,7 +6735,8 @@ agent needs. Three options, on both <code>build_mcp_server</code> and <code>regi
   most of a list tool's schema, out of every tool: each <code>filters</code> (and an aggregate's
   <code>$having</code>) becomes a plain object, and the grammar is added once to the server's
   instructions and published at <code>forze://filter-grammar</code> (<code>FILTER_GRAMMAR_URI</code>). Calls
-  are validated against the full grammar either way.</li>
+  are validated against the full grammar either way. The
+  <a href="../../data-events/agent-tools/">agent-tool bridge</a> takes the same option.</li>
 <li><code>output_schemas=False</code> drops each tool's output schema. A call still returns its result
   as text, but a list or scalar result then carries no structured content, and an object
   comes back as a plain mapping rather than a typed model.</li>
