@@ -7,7 +7,9 @@ require_duckdb()
 # ....................... #
 
 import asyncio
+import re
 import threading
+import warnings
 from collections.abc import AsyncGenerator, Callable, Mapping, Sequence
 from concurrent.futures import Future, ThreadPoolExecutor
 from datetime import timedelta
@@ -48,6 +50,24 @@ _VENDED_SECRET_PREFIX = "__internal_ic_"  # nosec B105 - a secret-name prefix, n
 
 _REINTERRUPT_S = 0.1
 """How often a timed-out statement is interrupted again until its worker returns."""
+
+
+def _ignore_arrow_copy_warning() -> None:
+    """Silence DuckDB 2's warning on an Arrow fetch from an executed cursor, for this module only.
+
+    The warning points at ``sql(...)``, which binds a ``SELECT`` twice: one more catalog
+    ``LoadTable`` or file-footer read per statement. :meth:`DuckDbClient.run_query` keeps the
+    single bind. Installed at :meth:`DuckDbClient.initialize` rather than at import, so it
+    holds under a test runner that resets warning filters after collection; idempotent.
+    """
+
+    warnings.filterwarnings(
+        "ignore",
+        message="Arrow output on a DB-API result",
+        category=UserWarning,
+        module=re.escape(__name__) + r"\Z",
+    )
+
 
 # ....................... #
 
@@ -363,6 +383,7 @@ class DuckDbClient(DuckDbDynamicReadClientPort):
 
             cfg = config or DuckDbConfig()
             self.__config = cfg
+            _ignore_arrow_copy_warning()
 
             def _open() -> Any:
                 conn = duckdb.connect(
@@ -578,7 +599,7 @@ class DuckDbClient(DuckDbDynamicReadClientPort):
                 else:
                     cursor.execute(final_sql)
 
-                return DuckDbQueryResult(arrow=cursor.fetch_arrow_table())
+                return DuckDbQueryResult(arrow=cursor.to_arrow_table())
 
             finally:
                 holder.pop("cursor", None)

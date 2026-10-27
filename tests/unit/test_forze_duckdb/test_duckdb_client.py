@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import warnings
 from datetime import timedelta
 
 import pytest
@@ -32,6 +33,31 @@ async def test_run_query_returns_arrow_and_rows(client: DuckDbClient) -> None:
     # Native Arrow held internally; dict rows materialized lazily at the edge.
     assert result.arrow.num_rows == 1
     assert result.rows == [{"a": 1, "b": "x"}]
+
+
+# ....................... #
+
+
+async def test_run_query_does_not_warn_about_the_arrow_copy() -> None:
+    """DuckDB 2 warns on every Arrow fetch from a cursor; the client keeps that quiet.
+
+    Under a filter that shows every warning, as a strict test suite or ``-W error`` sets.
+    """
+
+    client = DuckDbClient()
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        await client.initialize(":memory:", extensions=())
+
+        try:
+            result = await client.run_query("SELECT 1 AS a")
+
+        finally:
+            await client.close()
+
+    assert result.rows == [{"a": 1}]
+    assert [str(w.message) for w in caught if issubclass(w.category, UserWarning)] == []
 
 
 # ....................... #
