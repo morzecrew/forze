@@ -1,6 +1,7 @@
 """Async HTTP client wrapper using httpx."""
 
-from collections.abc import Mapping
+from collections.abc import AsyncGenerator, Mapping
+from contextlib import asynccontextmanager
 from typing import Any, final
 from urllib.parse import urlsplit, urlunsplit
 
@@ -14,6 +15,7 @@ import attrs
 import httpx
 
 from forze.base.exceptions import exc
+from forze.base.exceptions._utils import reraise_mapped
 from forze.base.primitives import GuardedLifecycle, JsonDict
 
 from .._logger import logger
@@ -52,6 +54,36 @@ def _redact_url(url: str | None) -> str | None:
     netloc = f"{host}:{parts.port}" if parts.port else host
 
     return urlunsplit(parts._replace(netloc=netloc))
+
+
+# ....................... #
+
+
+async def _buffered(streaming: httpx.Response, max_bytes: int | None) -> httpx.Response:
+    """*streaming* read whole, refused once it crosses *max_bytes*, as an in-memory response."""
+
+    if max_bytes is not None:
+        declared = streaming.headers.get("content-length")
+
+        if declared is not None and int(declared) > max_bytes:
+            raise exc.infrastructure(
+                f"HTTP response Content-Length {declared} exceeds max_response_bytes {max_bytes}"
+            )
+
+    body = bytearray()
+
+    async for chunk in streaming.aiter_bytes():
+        body.extend(chunk)
+
+        if max_bytes is not None and len(body) > max_bytes:
+            raise exc.infrastructure(f"HTTP response body exceeded max_response_bytes {max_bytes}")
+
+    return httpx.Response(
+        status_code=streaming.status_code,
+        headers=streaming.headers,
+        content=bytes(body),
+        request=streaming.request,
+    )
 
 
 # ....................... #
@@ -170,33 +202,56 @@ class HttpClient(HttpClientPort):
             headers=headers,
             timeout=request_timeout,
         ) as streaming:
-            if max_bytes is not None:
-                declared = streaming.headers.get("content-length")
-
-                if declared is not None and int(declared) > max_bytes:
-                    raise exc.infrastructure(
-                        f"HTTP response Content-Length {declared} exceeds "
-                        f"max_response_bytes {max_bytes}"
-                    )
-
-            body = bytearray()
-
-            async for chunk in streaming.aiter_bytes():
-                body.extend(chunk)
-
-                if max_bytes is not None and len(body) > max_bytes:
-                    raise exc.infrastructure(
-                        f"HTTP response body exceeded max_response_bytes {max_bytes}"
-                    )
-
-            response = httpx.Response(
-                status_code=streaming.status_code,
-                headers=streaming.headers,
-                content=bytes(body),
-                request=streaming.request,
-            )
+            response = await _buffered(streaming, max_bytes)
 
         if raise_for_status:
             response.raise_for_status()
 
         return response
+
+    # ....................... #
+
+    @exc_interceptor.asynccontextmanager("httpx.stream")  # type: ignore[untyped-decorator]
+    @asynccontextmanager
+    async def stream(
+        self,
+        method: str,
+        url: str,
+        *,
+        params: Mapping[str, Any] | None = None,
+        json: JsonDict | None = None,
+        data: Mapping[str, str] | None = None,
+        headers: Mapping[str, str] | None = None,
+        timeout: float | None = None,
+        raise_for_status: bool = True,
+    ) -> AsyncGenerator[httpx.Response]:
+        client = self._require_client()
+        request_timeout = timeout if timeout is not None else httpx.USE_CLIENT_DEFAULT
+
+        async with client.stream(
+            method,
+            _merge_url(self.__base_url, url),
+            params=params,
+            json=json,
+            data=data,
+            headers=headers,
+            timeout=request_timeout,
+        ) as streaming:
+            # A rejected response is read whole under the same cap as `request`, so the
+            # error carries its body; only a success is handed over unread.
+            if not streaming.is_success:
+                response = await _buffered(streaming, self.__max_response_bytes)
+
+                if raise_for_status:
+                    response.raise_for_status()
+
+                yield response
+                return
+
+            try:
+                yield streaming
+
+            except httpx.HTTPError as error:
+                # A failed read surfaces in the caller's block, past the interceptor's
+                # enter, so it is mapped here the way `request` maps one.
+                reraise_mapped(exc_interceptor.mapper, error, site="httpx.stream")

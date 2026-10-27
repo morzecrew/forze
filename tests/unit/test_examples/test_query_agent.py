@@ -1,9 +1,10 @@
 """The query_agent recipe: the palette is read-only, the tools answer, the egress is gated.
 
-The example is the page's source, so these assertions are what keeps the page honest. Three
+The example is the page's source, so these assertions are what keeps the page honest. Four
 claims are worth holding it to: an agent asking a question cannot write, a tool call really
-reaches the aggregate's governed operations, and the provider hop the page calls declared
-egress would refuse to wire without the acknowledgement.
+reaches the aggregate's governed operations, the provider hop the page calls declared
+egress would refuse to wire without the acknowledgement, and the streamed answer takes that
+same hop.
 """
 
 from __future__ import annotations
@@ -17,13 +18,15 @@ from examples.recipes.query_agent.app import (
     canned_model,
     model_wiring,
     notes_registry,
+    provider,
     run,
+    stream_answer,
 )
 from forze.base.exceptions import CoreException
 from forze_http.execution.deps.configs import HttpServiceConfig
 from forze_kits.aggregates.document import DocumentKernelOp
 from forze_kits.integrations.agent_tools import ToolUse, dispatch_tool_use
-from forze_mock import MockDepsModule
+from forze_mock import MockDepsModule, MockHttpRegistry
 from tests.support.execution_context import context_from_modules
 
 pytestmark = pytest.mark.unit
@@ -33,7 +36,7 @@ pytestmark = pytest.mark.unit
 
 class TestTheRecipeRuns:
     async def test_both_questions_are_answered_by_the_tool_they_need(self) -> None:
-        listed, counted = await run()
+        listed, counted, streamed = await run()
 
         # The filtered question returns the two postgres notes and not the redis one; the
         # counting question returns per-category totals. A palette that answered both with
@@ -43,6 +46,7 @@ class TestTheRecipeRuns:
         assert "stream trimming" not in listed
         assert "'category': 'postgres', 'n': 2" in counted
         assert "'category': 'redis', 'n': 1" in counted
+        assert streamed == "Two notes mention postgres."
 
 
 class TestThePaletteIsACapabilityGrant:
@@ -108,6 +112,51 @@ class TestTheModelHopIsGoverned:
         assert raised.value.code == "http_egress_unacknowledged"
 
 
+class TestTheStreamedAnswer:
+    async def test_it_arrives_token_by_token_over_the_declared_service(self) -> None:
+        # The stub cuts its second chunk mid-event, so a reader splitting each chunk on its
+        # own would hand back "no" and lose "tes" — the buffer is what joins them.
+        tokens = [token async for token in stream_answer("q", ctx=_ctx(provider()))]
+
+        assert tokens == ["Two", " notes", " mention postgres."]
+
+    async def test_crlf_line_endings_read_the_same(self) -> None:
+        registry = MockHttpRegistry().on(
+            "model",
+            "messages",
+            lambda _args: [b"data: Two\r\n\r\ndata:  notes\r", b"\n\r\ndata: [DONE]\r\n\r\n"],
+        )
+
+        tokens = [token async for token in stream_answer("q", ctx=_ctx(registry))]
+
+        assert tokens == ["Two", " notes"]
+
+    async def test_a_data_line_without_the_space_reads_the_same(self) -> None:
+        registry = MockHttpRegistry().on(
+            "model", "messages", lambda _args: [b"data:Two\n\ndata:  notes\n\ndata:[DONE]\n\n"]
+        )
+
+        tokens = [token async for token in stream_answer("q", ctx=_ctx(registry))]
+
+        assert tokens == ["Two", " notes"]
+
+    async def test_it_asks_the_provider_to_stream(self) -> None:
+        # The same operation as the unary call; the request body's flag is the difference.
+        asked: list[ModelArgs | None] = []
+
+        def handler(args: ModelArgs | None) -> list[bytes]:
+            asked.append(args)
+
+            return [b"data: x\n"]
+
+        registry = MockHttpRegistry().on("model", "messages", handler)
+
+        [_ async for _ in stream_answer("q", ctx=_ctx(registry))]
+
+        assert asked[0] is not None
+        assert asked[0].stream is True
+
+
 class TestTheStubIsOnlyChoosingATool:
     def test_it_picks_from_the_names_it_was_given(self) -> None:
         # If the stub hardcoded an operation key, the example would keep "working" while
@@ -123,5 +172,5 @@ class TestTheStubIsOnlyChoosingATool:
         assert counting.name == "other.agg_list"
 
 
-def _ctx():
-    return context_from_modules(MockDepsModule())
+def _ctx(http: MockHttpRegistry | None = None):
+    return context_from_modules(MockDepsModule(http=http))

@@ -21,9 +21,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **`apply_openapi_conventions(app, tag_groups=...)` writes `x-tagGroups`, the sidebar groups Scalar and Redoc render.** A listed tag no operation uses is left out with a warning, and tags no group lists join a trailing `Other` group.
 
+- **A declared HTTP service can stream a response.** `HttpServicePort.stream(op, args)` yields the body as it arrives, governed as `invoke` is, and raises a rejection before the first chunk. `HttpClient.stream` and `RoutedHttpClient.stream` do the same at the client.
+
 ### Changed
 
-- ...
+- **`HttpServicePort` requires `stream`** (**behaviour change**). A hand-written implementation or test stub must add it, or it fails type checks and `isinstance` against the runtime-checkable port.
 
 ### Fixed
 

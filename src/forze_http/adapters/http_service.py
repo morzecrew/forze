@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import AsyncGenerator
 from typing import Any, final, overload
 
 import attrs
@@ -21,7 +22,7 @@ from forze.application.execution.context import remaining_time
 from forze.application.integrations.http import form_fields, request_parts
 from forze.base.exceptions import exc
 from forze.base.exceptions._utils import reraise_mapped
-from forze.base.primitives import StrKey
+from forze.base.primitives import JsonDict, StrKey
 from forze.base.scrubbing import sanitize_pydantic_errors
 from forze_http.adapters._logger import logger
 from forze_http.execution.deps.configs import HttpServiceConfig
@@ -122,52 +123,9 @@ class HttpServiceAdapter(HttpServicePort):
         }
 
         try:
-            url, headers = self._resolve_url_and_headers(path)
-            details["url"] = url
-
-            if self.config.propagate_deadline:
-                budget = remaining_time()
-
-                if budget is not None:
-                    headers = {
-                        **(headers or {}),
-                        HTTP_HEADER_DEADLINE_BUDGET: f"{budget:.3f}",
-                    }
-
-            # Continue the distributed trace into the downstream service: inject the active span's W3C
-            # context (traceparent + tracestate, via the global propagator so an app's choice is
-            # honoured) into the outgoing headers. A no-op when no span is active (uninstrumented app);
-            # if the app also instruments httpx, that instrumentation may overwrite with its own
-            # client-span id — the trace linkage is preserved either way. No flag needed (the messaging
-            # side gates on a column migration; HTTP carries no schema).
-            headers = dict(headers or {})
-            propagate.inject(headers)
-
-            # Mark the call as leaving the trust boundary, so sensitive egress is queryable
-            # rather than only reviewable in the wiring. The attribute lands on whichever
-            # span is current — the port's CLIENT span where per-port spans are enabled, the
-            # enclosing operation span otherwise — and on an uninstrumented app the
-            # non-recording span drops it. There is nothing for forze_http to create: it has
-            # never opened a span of its own.
-            #
-            # This marks the calls made through a declared service. A bare HttpClient an
-            # app points at a provider itself has no HttpServiceConfig behind it, so it
-            # carries neither the tag nor the wiring gate — and there is nowhere to put
-            # one, since HttpConfig configures a transport and names no destination. The
-            # governed unit is the service, which is what declares where data goes.
-            if self.config.egress_sensitive:
-                trace.get_current_span().set_attribute(EGRESS_SENSITIVE_ATTRIBUTE, True)
-
-            form = operation.body_encoding == "form"
             declares_errors = operation.error_type is not None
             response = await self.client.request(
-                operation.method,
-                url,
-                params=query,
-                json=None if form else body,
-                data=form_fields(operation, body) if form and body is not None else None,
-                headers=headers,
-                timeout=self.config.timeout.total_seconds(),
+                **self._outgoing(operation, path, query, body, details),
                 # An operation that declared an error model needs the response, and the
                 # client raises and maps a rejection before a caller can read one. So the
                 # refusal moves here for those operations only — every other operation
@@ -201,6 +159,51 @@ class HttpServiceAdapter(HttpServicePort):
 
     # ....................... #
 
+    async def stream(
+        self,
+        op: StrKey | HttpOperationSpec[Any, Any],
+        args: BaseModel | None = None,
+    ) -> AsyncGenerator[bytes]:
+        operation = self.spec.operation(op)
+        path, query, body = request_parts(operation, args)
+        site = operation.site or f"http.{self.spec.name}.{operation.name}"
+        details: dict[str, Any] = {
+            "op": str(operation.name),
+            "method": operation.method,
+            "service": str(self.spec.name),
+        }
+
+        try:
+            declares_errors = operation.error_type is not None
+
+            async with self.client.stream(
+                **self._outgoing(operation, path, query, body, details),
+                # The same split as `invoke`: an operation that declared an error model
+                # gets the rejected response back, read, and refuses it here.
+                raise_for_status=not declares_errors,
+            ) as response:
+                if declares_errors:
+                    response.raise_for_status()
+
+                async for chunk in response.aiter_bytes():
+                    yield chunk
+
+        except Exception as error:
+            logger.debug(
+                "http.stream.failed",
+                site=site,
+                op=str(operation.name),
+                method=operation.method,
+            )
+            reraise_mapped(
+                exc_interceptor.mapper,
+                error,
+                site=site,
+                details={**details, **(_declared_error(operation, error) or {})},
+            )
+
+    # ....................... #
+
     def _parse_response(self, operation: HttpOperationSpec[Any, Any], content: bytes) -> BaseModel:
         if content:
             try:
@@ -220,6 +223,67 @@ class HttpServiceAdapter(HttpServicePort):
         raise exc.internal(
             f"HTTP operation {operation.name!r} returned an empty body",
         )
+
+    # ....................... #
+
+    def _outgoing(
+        self,
+        operation: HttpOperationSpec[Any, Any],
+        path: str,
+        query: JsonDict | None,
+        body: JsonDict | None,
+        details: dict[str, Any],
+    ) -> dict[str, Any]:
+        """The client call for *operation*: its URL, headers, body and timeout."""
+
+        url, headers = self._resolve_url_and_headers(path)
+        details["url"] = url
+
+        if self.config.propagate_deadline:
+            budget = remaining_time()
+
+            if budget is not None:
+                headers = {
+                    **(headers or {}),
+                    HTTP_HEADER_DEADLINE_BUDGET: f"{budget:.3f}",
+                }
+
+        # Continue the distributed trace into the downstream service: inject the active span's W3C
+        # context (traceparent + tracestate, via the global propagator so an app's choice is
+        # honoured) into the outgoing headers. A no-op when no span is active (uninstrumented app);
+        # if the app also instruments httpx, that instrumentation may overwrite with its own
+        # client-span id — the trace linkage is preserved either way. No flag needed (the messaging
+        # side gates on a column migration; HTTP carries no schema).
+        headers = dict(headers or {})
+        propagate.inject(headers)
+
+        # Mark the call as leaving the trust boundary, so sensitive egress is queryable
+        # rather than only reviewable in the wiring. The attribute lands on whichever
+        # span is current — the port's CLIENT span where per-port spans are enabled, the
+        # enclosing operation span otherwise (and always for `stream`: the port proxy opens
+        # no span over a generator) — and on an uninstrumented app the non-recording span
+        # drops it. There is nothing for forze_http to create: it has never opened a span
+        # of its own.
+        #
+        # This marks the calls made through a declared service. A bare HttpClient an
+        # app points at a provider itself has no HttpServiceConfig behind it, so it
+        # carries neither the tag nor the wiring gate — and there is nowhere to put
+        # one, since HttpConfig configures a transport and names no destination. The
+        # governed unit is the service, which is what declares where data goes.
+        if self.config.egress_sensitive:
+            trace.get_current_span().set_attribute(EGRESS_SENSITIVE_ATTRIBUTE, True)
+
+        form = operation.body_encoding == "form"
+
+        return {
+            "method": operation.method,
+            "url": url,
+            "params": query,
+            "json": None if form else body,
+            "data": form_fields(operation, body) if form and body is not None else None,
+            "headers": headers,
+            "timeout": self.config.timeout.total_seconds(),
+        }
 
     # ....................... #
 

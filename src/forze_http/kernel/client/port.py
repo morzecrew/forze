@@ -1,6 +1,7 @@
 """Structural protocol for the httpx async client."""
 
 from collections.abc import Awaitable, Mapping
+from contextlib import AbstractAsyncContextManager
 from typing import Any, Protocol
 
 from forze.base.primitives import JsonDict
@@ -31,6 +32,29 @@ class HttpClientPort(Protocol):
         With *raise_for_status* false, a rejected response is **returned** instead of
         raised, so a caller that has something to say about the body can read it before
         deciding. The caller then owns the refusal — and owes one.
+        """
+        ...  # pragma: no cover
+
+    def stream(
+        self,
+        method: str,
+        url: str,
+        *,
+        params: Mapping[str, Any] | None = None,
+        json: JsonDict | None = None,
+        data: Mapping[str, str] | None = None,
+        headers: Mapping[str, str] | None = None,
+        timeout: float | None = None,
+        raise_for_status: bool = True,
+    ) -> AbstractAsyncContextManager[Any]:
+        """Perform an HTTP request and yield the httpx response with its body unread.
+
+        Read the body incrementally inside the block (``aiter_bytes``, ``aiter_lines``);
+        leaving the block closes the response, read or not. A rejected response is read
+        whole — held to ``max_response_bytes`` when it is set — before anything is yielded,
+        so it raises exactly as :meth:`request` would, or, with *raise_for_status* false, is
+        yielded already read. ``max_response_bytes`` does not apply to an accepted body,
+        which is never buffered.
         """
         ...  # pragma: no cover
 

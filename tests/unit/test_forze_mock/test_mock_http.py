@@ -277,3 +277,71 @@ class TestMockHttpTakesTheOperationSpec:
         result = await port.invoke(SPEC.operations["get_quote"], QuoteArgs(symbol="ABC"))
 
         assert result == QuoteResult(symbol="ABC", price=1.0)
+
+
+# ....................... #
+
+
+class TestMockHttpStreams:
+    """`stream` answers from the same registered handler, as body chunks."""
+
+    async def test_a_list_of_chunks_streams_in_order(self) -> None:
+        registry = MockHttpRegistry().on("pricing", "get_quote", lambda _a: [b"one", b"two"])
+        port = _ctx(registry).http.service(SPEC)
+
+        chunks = [chunk async for chunk in port.stream("get_quote", QuoteArgs(symbol="ABC"))]
+
+        assert chunks == [b"one", b"two"]
+
+    async def test_bytes_stream_as_one_chunk(self) -> None:
+        registry = MockHttpRegistry().on("pricing", "ping", lambda _a: b"pong")
+        port = _ctx(registry).http.service(SPEC)
+
+        assert [chunk async for chunk in port.stream("ping")] == [b"pong"]
+
+    async def test_an_async_iterable_streams_as_it_yields(self) -> None:
+        async def chunks(_args: object):
+            yield b"a"
+            yield b"b"
+
+        registry = MockHttpRegistry().on("pricing", "ping", chunks)
+        port = _ctx(registry).http.service(SPEC)
+
+        assert [chunk async for chunk in port.stream("ping")] == [b"a", b"b"]
+
+    async def test_closing_the_stream_early_closes_the_handlers_generator(self) -> None:
+        closed: list[bool] = []
+
+        async def chunks(_args: object):
+            try:
+                yield b"a"
+                yield b"b"
+
+            finally:
+                closed.append(True)
+
+        registry = MockHttpRegistry().on("pricing", "ping", chunks)
+        stream = _ctx(registry).http.service(SPEC).stream("ping")
+
+        assert await anext(stream) == b"a"
+        await stream.aclose()
+
+        assert closed == [True]
+
+    async def test_an_unprogrammed_stream_raises(self) -> None:
+        port = _ctx(MockHttpRegistry()).http.service(SPEC)
+
+        with pytest.raises(CoreException, match="no handler registered"):
+            [chunk async for chunk in port.stream("ping")]
+
+    @pytest.mark.parametrize(
+        "answer",
+        [None, "pong", Pong(), [b"ok", "not bytes"], {"ok": True}],
+        ids=["none", "str", "model", "mixed", "dict"],
+    )
+    async def test_an_answer_that_is_not_bytes_is_refused(self, answer: object) -> None:
+        registry = MockHttpRegistry().on("pricing", "ping", lambda _a: answer)
+        port = _ctx(registry).http.service(SPEC)
+
+        with pytest.raises(CoreException, match="must return bytes"):
+            [chunk async for chunk in port.stream("ping")]
