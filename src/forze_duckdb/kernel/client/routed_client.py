@@ -46,6 +46,7 @@ import re
 from collections.abc import AsyncGenerator, Callable, Sequence
 from contextlib import asynccontextmanager
 from datetime import timedelta
+from pathlib import Path
 from typing import Any, cast
 from urllib.parse import urlsplit
 from uuid import UUID
@@ -77,8 +78,7 @@ _DATABASES = frozenset({"memory", "system", "temp", LAKE_CATALOG})
 _STATEMENT_ECHO = re.compile(r"\n\s*LINE \d+:.*", re.DOTALL)
 """DuckDB's echo of a failing statement: a window of its text after ``LINE n:``, cut at either
 end, so a secret in it can show only in part."""
-_OUTSIDE_THE_ALLOWLIST = ("/forze-attest", "http://forze-attest.invalid/")
-"""A local path and a URL no allowlist names: attestation checks a statement cannot open them."""
+_PEM_CERTIFICATE = "-----BEGIN CERTIFICATE-----"
 
 # ....................... #
 
@@ -190,7 +190,14 @@ def _connect_config(extension_directory: str | None) -> dict[str, Any]:
 
 
 def _allowlist(catalog: LakeTenantCatalog, ca_cert_file: str | None) -> tuple[list[str], list[str]]:
-    """``allowed_directories`` and ``allowed_paths``, sorted as DuckDB reports them back."""
+    """``allowed_directories`` and ``allowed_paths``, sorted as DuckDB reports them back.
+
+    The allowlist bounds what the engine opens; it is not what keeps credentials in. A statement
+    that may open the catalog's tree could carry data out in a URL, if it could read a secret.
+    It cannot, and that is the exfiltration boundary: ``duckdb_secrets()`` stays redacted
+    (``allow_unredacted_secrets`` off), the ``s3_*`` options are cleared, no secret persists, and
+    ``lock_configuration`` keeps all of it so. Step 8 attests each one (EXECUTION-LOG D-075).
+    """
 
     directories = [catalog.storage_prefix, catalog.uri.rstrip("/") + "/"]
     paths = [catalog.oauth2_server_uri]
@@ -290,12 +297,66 @@ def _expected_settings(
     return expected
 
 
-async def _refused(client: DuckDbClient, path: str) -> bool:
-    try:
-        await client.run_query(f"SELECT 1 FROM read_text({_literal(path)})")  # nosec B608
+def _require_pem(path: str) -> None:
+    """Refuse a ``ca_cert_file`` that holds no PEM certificate: DuckDB 2 hands it to curl for
+    every request, plain HTTP included, and a wrong file fails each one obscurely (D-063)."""
 
-    except duckdb.PermissionException as error:
-        return "disabled by configuration" in str(error)
+    try:
+        text = Path(path).read_text(encoding="utf-8", errors="replace")
+
+    except OSError as error:
+        raise exc.configuration(
+            "RoutedDuckDbClient.ca_cert_file cannot be read.",
+            code="duckdb_routed_client_invalid",
+            details={"ca_cert_file": path, "error": str(error)},
+        ) from error
+
+    if _PEM_CERTIFICATE not in text:
+        raise exc.configuration(
+            f"RoutedDuckDbClient.ca_cert_file holds no PEM certificate ({_PEM_CERTIFICATE}).",
+            code="duckdb_routed_client_invalid",
+            details={"ca_cert_file": path},
+        )
+
+
+def _outside_the_allowlist(catalog: LakeTenantCatalog, ca_cert_file: str | None) -> list[str]:
+    """Paths next to each allowlist entry that a statement must not open (EXECUTION-LOG D-075).
+
+    A local path and an unlisted URL; the token endpoint with a path or a query added, since a
+    path entry must match exactly; a sibling of the prefix and of the catalog tree that shares
+    their spelling; and a file beside the CA bundle. No dot-segment probe: the engine resolves
+    none, and the classification refuses every path instead (D-073).
+    """
+
+    paths = [
+        "/forze-attest",
+        "http://forze-attest.invalid/",
+        f"{catalog.oauth2_server_uri}/forze-attest",
+        f"{catalog.oauth2_server_uri}?forze-attest",
+        f"{catalog.storage_prefix.rstrip('/')}-forze-attest/x",
+        f"{catalog.uri.rstrip('/')}-forze-attest/",
+    ]
+
+    if ca_cert_file is not None:
+        paths.append(os.path.join(os.path.dirname(ca_cert_file), "forze-attest"))
+
+    return paths
+
+
+async def _refused(client: DuckDbClient, sql: str, error: type[duckdb.Error], phrase: str) -> bool:
+    """Whether *sql* fails with *error*. The class decides; a message without *phrase* is only
+    logged, since DuckDB rewords its messages between releases (it did in 2.0, D-060)."""
+
+    try:
+        await client.run_query(sql)
+
+    except error as refusal:
+        if phrase not in str(refusal):
+            logger.warning(
+                "DuckDB refused an attestation probe in unexpected words", exc_info=refusal
+            )
+
+        return True
 
     except duckdb.Error:
         return False
@@ -321,17 +382,19 @@ async def _setting(client: DuckDbClient, name: str) -> object:
     return sorted(value) if isinstance(value, list) else value  # pyright: ignore[reportUnknownArgumentType]
 
 
-async def _attest(client: DuckDbClient, expected: dict[str, object]) -> list[str]:
+async def _attest(
+    client: DuckDbClient, expected: dict[str, object], outside: Sequence[str]
+) -> list[str]:
     """Read the session back from a fresh cursor, the view a statement gets; list what is off."""
 
-    problems: list[str] = []
+    actual = {name: await _setting(client, name) for name in sorted(expected)}
+    problems = [f"setting {name}" for name, value in actual.items() if value != expected[name]]
 
-    for name, value in sorted(expected.items()):
-        if await _setting(client, name) != value:
-            problems.append(f"setting {name}")
+    # Only with external access off: on, each probe would really go out (public AWS, the IdP).
+    for path in outside if actual.get("enable_external_access") is False else ():
+        read = f"SELECT 1 FROM read_text({_literal(path)})"  # nosec B608
 
-    for path in _OUTSIDE_THE_ALLOWLIST:
-        if not await _refused(client, path):
+        if not await _refused(client, read, duckdb.PermissionException, "by configuration"):
             problems.append(f"path {path} not refused")
 
     secrets = await client.run_query("SELECT DISTINCT type FROM duckdb_secrets()")
@@ -347,6 +410,15 @@ async def _attest(client: DuckDbClient, expected: dict[str, object]) -> list[str
 
     elif attached[LAKE_CATALOG] is not True:
         problems.append(f"{LAKE_CATALOG} attached writable")
+
+    # By effect too, and only once the flag says read-only: refused locally, it sends nothing.
+    elif not await _refused(
+        client,
+        f"CREATE SCHEMA {LAKE_CATALOG}.forze_attest",
+        duckdb.InvalidInputException,
+        "read-only mode",
+    ):
+        problems.append(f"{LAKE_CATALOG} accepted a write")
 
     return problems
 
@@ -416,8 +488,9 @@ class RoutedDuckDbClient(
     """CA bundle for HTTPS to the catalog, the IdP and the store, set as ``ca_cert_file`` and
     allow-listed as one path. Required on DuckDB 2 when any of them is HTTPS: it reads the
     bundle through the allowlist, and without it the session fails to build. Resolved to its
-    real path at construction, the form DuckDB reports back. ``None`` sets nothing
-    (EXECUTION-LOG D-063)."""
+    real path at construction, the form DuckDB reports back, and refused unless it holds a PEM
+    certificate. Every statement on the instance can then read the file: analytics SQL by path,
+    while dynamic reads refuse paths. ``None`` sets nothing (EXECUTION-LOG D-063, D-075)."""
 
     guarded: bool = True
     """Guarded LRU eviction: an evicted instance closes after its last statement. ``False`` is
@@ -458,6 +531,9 @@ class RoutedDuckDbClient(
                 code="duckdb_routed_client_invalid",
                 details={"http_timeout": str(self.http_timeout)},
             )
+
+        if self.ca_cert_file is not None:
+            _require_pem(self.ca_cert_file)
 
         super().__attrs_post_init__()
         self._admission = asyncio.Semaphore(self.max_concurrent_queries_total)
@@ -547,6 +623,7 @@ class RoutedDuckDbClient(
                         extension_directory=self.extension_directory,
                         ca_cert_file=ca_cert_file,
                     ),
+                    _outside_the_allowlist(catalog, ca_cert_file),
                 )
 
             except CoreException:

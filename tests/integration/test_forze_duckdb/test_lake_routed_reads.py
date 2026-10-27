@@ -242,7 +242,7 @@ def _fault(
 
     if not attest:
 
-        async def waived(client: Any, expected: dict[str, object]) -> list[str]:
+        async def waived(client: Any, *args: Any) -> list[str]:
             return []
 
         monkeypatch.setattr(routed_client, "_attest", waived)
@@ -916,9 +916,8 @@ class TestAttestation:
             (_without("s3_access_key_id"), ["setting s3_access_key_id"]),
             (_without("s3_secret_access_key"), ["setting s3_secret_access_key"]),
             (_without("s3_session_token"), ["setting s3_session_token"]),
-            (_without("enable_external_access"), ["setting enable_external_access",
-                                                  "path /forze-attest not refused",
-                                                  "path http://forze-attest.invalid/ not refused"]),
+            # The path probes run only with external access off: on, they would go out.
+            (_without("enable_external_access"), ["setting enable_external_access"]),
             (_without("http_timeout"), ["setting http_timeout"]),
             # Off by default, so removing the step changes nothing; turning it on does.
             (lambda ss: [s.replace("metadata_cache=false", "metadata_cache=true") for s in ss],
@@ -971,6 +970,38 @@ class TestAttestation:
 
             assert error.code == "duckdb_session_attestation_failed"
             assert error.details["problems"] == problems
+
+        finally:
+            await client.close()
+
+    async def test_a_widened_allowlist_is_refused_by_effect(
+        self,
+        build_routed: Callable[..., RoutedDuckDbClient],
+        monkeypatch: pytest.MonkeyPatch,
+        lake: LakeVendingStack,
+    ) -> None:
+        """D-075: the catalog's whole origin allow-listed lets a sibling of its tree open."""
+
+        origin = lake.catalog_uri.rsplit("/", 1)[0]
+
+        def widen(statements: list[str]) -> list[str]:
+            return [
+                s.replace("allowed_directories=[", f"allowed_directories=['{origin}/', ")
+                for s in statements
+            ]
+
+        _fault(monkeypatch, widen)
+        client = build_routed()
+        await client.startup()
+
+        try:
+            error = await _refused(_port(client), _A, _ORDERS)
+
+            assert error.code == "duckdb_session_attestation_failed"
+            assert error.details["problems"] == [
+                "setting allowed_directories",
+                f"path {lake.catalog_uri}-forze-attest/ not refused",
+            ]
 
         finally:
             await client.close()

@@ -132,7 +132,7 @@ def fake_engine(monkeypatch: pytest.MonkeyPatch) -> Iterator[type[_FakeEngine]]:
     yield _FakeEngine
 
 
-async def _attested(client: Any, expected: dict[str, object]) -> list[str]:
+async def _attested(client: Any, *args: Any) -> list[str]:
     return []
 
 
@@ -218,6 +218,29 @@ class TestConstruction:
         assert ei.value.code == "duckdb_lake_catalog_invalid"
         assert ei.value.details == {field: value}
 
+    @pytest.mark.parametrize(
+        "content", ["", "not a certificate\n", "-----BEGIN PRIVATE KEY-----\n"]
+    )
+    def test_a_ca_bundle_without_a_pem_certificate_is_refused(
+        self, tmp_path: Any, content: str
+    ) -> None:
+        """D-075: DuckDB 2 hands the file to curl for every request; a wrong one fails each."""
+
+        bundle = tmp_path / "ca.pem"
+        bundle.write_text(content)
+
+        with pytest.raises(CoreException) as ei:
+            _routed(_MemSecrets(_A), ca_cert_file=str(bundle))
+
+        assert ei.value.code == "duckdb_routed_client_invalid"
+        assert ei.value.details == {"ca_cert_file": str(bundle.resolve())}
+
+    def test_a_missing_ca_bundle_is_refused(self, tmp_path: Any) -> None:
+        with pytest.raises(CoreException) as ei:
+            _routed(_MemSecrets(_A), ca_cert_file=str(tmp_path / "absent.pem"))
+
+        assert ei.value.code == "duckdb_routed_client_invalid"
+
 
 # ....................... #
 
@@ -229,7 +252,7 @@ class TestInstances:
         """D-062, D-063: one allowlist bounds every path, and no filesystem is disabled."""
 
         bundle = tmp_path / "ca.pem"
-        bundle.write_text("")
+        bundle.write_text("-----BEGIN CERTIFICATE-----\n")
         link = tmp_path / "ca-link.pem"
         link.symlink_to(bundle)
         routed = _routed(_MemSecrets(_A), ca_cert_file=str(link))
@@ -287,7 +310,7 @@ class TestInstances:
     async def test_a_failed_attestation_closes_the_instance_and_serves_nothing(
         self, fake_engine: type[_FakeEngine], monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        async def unlocked(client: Any, expected: dict[str, str]) -> list[str]:
+        async def unlocked(client: Any, *args: Any) -> list[str]:
             return ["setting lock_configuration"]
 
         monkeypatch.setattr(routed_client, "_attest", unlocked)
