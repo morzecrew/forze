@@ -2377,10 +2377,13 @@ instruction, "the most reasonable choice for a production framework" (D-062, D-0
 and conflicts on the one `pyproject.toml` line this unit sets to `>=1.5.6,<3`. D-042's early
 return stays, and D-028 stays `OPEN` for 1.5 (D-068).
 
-**Drift count: 0.** Eleven entries, D-061 to D-071: seven `discovery`, four `spec-gap`. Product
+**Drift count: 0.** Sixteen entries, D-061 to D-076: ten `discovery`, six `spec-gap`. Product
 code changes in four places: the plain client's result fetch (D-061), the routed session
-profile and its attestation (D-062, D-063, D-065), the dynamic-read classification (D-066), and
-the taxonomy (D-067). Units 5 to 7 are not edited here.
+profile and its attestation (D-062, D-063, D-065, D-075), the dynamic-read classification
+(D-066, D-072, D-076), and the taxonomy (D-067). D-072 to D-076 came out of a review of the
+branch before it was published, each probed on both builds against the stack. D-072 was a
+defect: D-066's check walked table references only, and a table function went round it. Units
+5 to 7 are not edited here. D-054's cap is superseded by D-061.
 
 **Where each item lives.**
 
@@ -2393,8 +2396,11 @@ the taxonomy (D-067). Units 5 to 7 are not edited here.
 - HTTPS, which the stack does not serve: the P0 module's
   `test_on_2_https_needs_the_ca_bundle_on_the_allowlist`, against a local TLS server with a
   throwaway CA.
-- The D-058 refusal: `_refuse_unattached_catalogs` in `client.py`; the unit suite, battery 4,
-  and the P0 pin `test_an_unknown_first_part_is_a_nested_namespace_on_2`.
+- The classification: `_refuse_indirect_reads` in `client.py`, which refuses unattached
+  catalogs (D-066), table functions and paths (D-072) and `PRAGMA` (D-076). The unit suite,
+  batteries 4, 5 and 8, and the P0 pin `test_an_unknown_first_part_is_a_nested_namespace_on_2`.
+- What the engine's allowlist does not do: the P0 pins `test_the_allowlist_resolves_no_dot_segments`
+  and `test_a_redirect_is_followed_past_the_allowlist` (D-073, D-074).
 - Version-specific facts: the P0 module and the battery branch on the major. The P0 version
   pin admits exactly the two probed builds (`_PROBED`).
 - 1.5 in CI: `just test-duckdb-1x`, run by `ci.yml`'s duckdb shard after `just test` (D-070).
@@ -2405,23 +2411,23 @@ the taxonomy (D-067). Units 5 to 7 are not edited here.
 |---|---|---|
 | 1 fixture self-test | pass | pass |
 | 3 disjoint tenants | pass | pass |
-| 4 cross-tenant by name | refused, including `zzz.gold.orders` and `lake.zzz.gold.orders` (D-066). Stubbed: A's own rows (D-058) | refused. Stubbed: `BinderException` |
-| 5 cross-tenant by path | refused by the allowlist, no request logged | the same |
+| 4 cross-tenant by name | refused, including `zzz.gold.orders`, `lake.zzz.gold.orders` (D-066), `query(…)` and `query_table(…)` (D-072). Stubbed: A's own rows (D-058, D-072) | refused. Stubbed: `BinderException` |
+| 5 cross-tenant by path | refused by classification (D-072). Stubbed: refused by the allowlist, no request logged | the same |
 | 6 classification | pass | pass |
 | 7 local filesystem | refused by the allowlist ("file system operations are disabled by configuration"); the process control refuses with the session's layer gone | the same |
-| 8 HTTP egress | `https://example.com` and the catalog's and IdP's siblings refused; the catalog tree answers 401 (D-064) | the same |
+| 8 HTTP egress | every URL refused by classification (D-072). Stubbed: `https://example.com` and the catalog's and IdP's siblings refused; the catalog tree answers 401 (D-064) | the same |
 | 9 lock | pass, with the doubled quotes of D-060 | pass |
 | 10 read-only | pass. Without `READ_ONLY`, a CTAS is refused by the catalog (403) before it stages (D-067) | pass. A CTAS is refused by the allowlist where it stages |
 | 12 shell | pass | pass |
 | 13 pool | pass | pass |
-| 14 attestation | every step removed once is refused; an allowlist entry removed fails setup (the catalog or IdP is refused) | the same, except an allowlist entry removed builds and fails attestation |
+| 14 attestation | every step removed once is refused; an allowlist entry removed fails setup (the catalog or IdP is refused); the catalog's origin allow-listed fails by effect (D-075) | the same, except an allowlist entry removed builds and fails attestation |
 | 16 taxonomy | pass | pass |
-| 11b, 11c | 6 passed in 1014.8 s (`just lake-slow`). The kept-secret leg reads (D-056), and the held-open leg logs no status (D-067) | 6 passed in P2's run (Unit 7) |
+| 11b, 11c | 6 passed in 1014.8 s (`just lake-slow`), and in 1020.4 s after the review's changes. The kept-secret leg reads (D-056), and the held-open leg logs no status (D-067) | 6 passed in 1019.1 s through the overlay, after the review's changes (D-070) |
 | 17 | deferred (D-059) | deferred |
 
-**Counts.** The DuckDB unit and integration suites, `lake_slow` excluded: 361 passed on 2.0.0
-(`just test`) and 361 on 1.5.6 (`just test-duckdb-1x`), in about 85 s each with the stacks.
-The unit suite alone: 247 on each. On a 1.5.0 overlay the routed battery passes 75 of 79
+**Counts.** The DuckDB unit and integration suites, `lake_slow` excluded: 389 passed on 2.0.0
+(`just test`) and 389 on 1.5.6 (`just test-duckdb-1x`), in about 80 s each with the stacks; 270
+of them are the unit suite. Before the review's changes it was 361 on each. On a 1.5.0 overlay the routed battery passed 75 of 79
 (D-061).
 
 **Confirmed, so no entry.**
@@ -2432,13 +2438,19 @@ The unit suite alone: 247 on each. On a 1.5.0 overlay the routed battery passes 
   the profile on the parent connection and on cursors, on both builds.
 - `ca_cert_file` set to a CA a client trusts works on both builds; 1.5.6 reads it outside
   DuckDB's filesystem, so neither the allowlist nor `LocalFileSystem` matters there.
+- A path entry matches exactly, on both builds: the token endpoint with `/x`, `?q` or `#f`
+  added is refused, and so is a file beside the CA bundle or the bundle's path with `x` added.
+  A directory entry is a directory: `tenant-ab` and `catalogx` are refused, and an entry
+  written without its slash reads back with one, so its siblings are refused too.
+- `READ_ONLY` refuses `CREATE SCHEMA lake.…` on both builds before any request. `CREATE TABLE`
+  looks the table up in the catalog first.
 
 ## D-061 — The plain client fetches with `to_arrow_table`, which exists from 1.5.0 and is all 2.0 keeps
 
-- **Touches:** D-054 ("Switching to `to_arrow_table` belongs to the adoption change"; "Whether
-  `to_arrow_table` exists at the 1.1.0 floor was not checked"), `DuckDbClient.run_query`, and
-  the extra's range.
-- **RFC said:** nothing. D-054 capped the extra below 2.
+- **Touches:** D-054 and its row, which this entry supersedes ("Switching to `to_arrow_table`
+  belongs to the adoption change"; "Whether `to_arrow_table` exists at the 1.1.0 floor was not
+  checked"), `DuckDbClient.run_query`, and the extra's range.
+- **RFC said:** nothing. D-054 capped the extra below 2, until the adoption change.
 - **Found:**
   - A cursor's `to_arrow_table` is absent on 1.2.0, 1.3.0, 1.4.0 and 1.4.4, and present from
     1.5.0. On 1.5.6, `fetch_arrow_table` raises a `DeprecationWarning` naming it. On 2.0.0 it is
@@ -2463,8 +2475,9 @@ The unit suite alone: 247 on each. On a 1.5.0 overlay the routed battery passes 
   then fail every query on 2.0. The extra becomes `duckdb>=1.5.6,<3`: the plain client needs
   1.5.0, and 1.5.6 is the one 1.x build the routed client is verified on, so every admitted
   1.x build is a verified one. Users on 1.1 to 1.5.5 must upgrade, which the changelog marks.
+  D-054 is superseded: its cap below 2 was the stopgap until this change.
 - **Proposed row (RFC 0078):** `ASSUMED` — the extra is `duckdb>=1.5.6,<3`, and both clients run
-  on both majors with one code path. This supersedes D-054's cap.
+  on both majors with one code path. This supersedes D-054's row.
 
 ## D-062 — D-055 answered: one allowlist of the prefix, the catalog tree and the token endpoint, and no filesystem disabled
 
@@ -2534,8 +2547,10 @@ The unit suite alone: 247 on each. On a 1.5.0 overlay the routed battery passes 
 - **Because:** a directory entry matches by prefix, a path entry exactly.
 - **Class:** `discovery`.
 - **Consequence:** a statement can send unauthenticated GETs to two endpoints the deployment
-  already trusts, which is less than D-055 expected. Sending data out by URL needs control of
-  the catalog or the IdP. Battery 8 pins both halves. `LakeTenantCatalog` now refuses a `uri`
+  already trusts, which is less than D-055 expected. The catalog's tree is shared by every
+  tenant. Since D-072 a dynamic read cannot name a URL at all, so only analytics SQL, which is
+  code, can do this. Sending data out by URL needs control of the catalog or the IdP. Battery 8
+  pins both halves, with classification stubbed. `LakeTenantCatalog` now refuses a `uri`
   or `oauth2_server_uri` that is not an http(s) URL, since each widens the allowlist.
 - **Proposed row (RFC 0078):** `ASSUMED` — §3.5's HTTP row reads "egress policy; inside the
   engine, the allowlist bounds HTTP to the catalog's tree and the token endpoint".
@@ -2580,7 +2595,8 @@ The unit suite alone: 247 on each. On a 1.5.0 overlay the routed battery passes 
   query per dynamic read, with no I/O. Both builds give the same answer, so battery 4 keeps
   asserting a refusal. D-058's "never B's rows" becomes the stubbed leg's assertion on 2.0.
   Analytics reads are not checked, since their SQL is code. A view's body is resolved by the
-  engine, not by this check.
+  engine, not by this check. As built here the check walked table references only, and a table
+  function taking a name went round it: D-072 closes that.
 - **Proposed row (RFC 0078):** `ASSUMED` — this overrides D-058's row: classification refuses such
   names. The deployment rule against nested namespaces stays, as a second line.
 
@@ -2637,7 +2653,8 @@ The unit suite alone: 247 on each. On a 1.5.0 overlay the routed battery passes 
   0.13.6 keeps revision 5. `uv lock --upgrade-package duckdb` under 0.13.6 moves `duckdb` from
   1.5.6 to 2.0.0 (abi3 wheels) and updates its specifier. It also drops one wheel line,
   zensical 0.0.71's armv7l. 0.11.6 drops the same line, so it comes from the index, not the
-  tool. A direct query to PyPI timed out, so that was not confirmed. uv 0.10.10 then accepts the
+  tool. PyPI confirms it: `https://pypi.org/pypi/zensical/0.0.71/json` lists nine files and no
+  armv7l wheel (a first query timed out; the second answered). uv 0.10.10 then accepts the
   lock: `uv lock --check` passes and `uv sync` leaves it alone.
 - **Because:** revision 5 postdates uv 0.11, and the index no longer lists that wheel.
 - **Class:** `discovery`.
@@ -2652,9 +2669,10 @@ The unit suite alone: 247 on each. On a 1.5.0 overlay the routed battery passes 
 - **Touches:** CI and D-061.
 - **RFC said:** nothing. The fact tags say every probe re-runs on a bump.
 - **Built:** `just test-duckdb-1x`, which runs the unit and integration DuckDB suites under
-  `uv run --with duckdb==1.5.6` with `just test`'s markers. `ci.yml`'s duckdb shard runs it
-  after `just test`. `lake_slow` is not run on 1.5: P2's run on 1.5.6 stands, and the scheduled
-  workflow runs the lock's 2.0.
+  `uv run --with duckdb==1.5.6` with `just test`'s markers. It first asserts the overlay really
+  gives a 1.5 build, so a resolver change cannot run the suites on the lock's 2.0 unnoticed.
+  `ci.yml`'s duckdb shard runs it after `just test`. `lake_slow` ran once on 1.5.6 through the
+  overlay: 6 passed in 1019.1 s. The scheduled `lake-expiry` workflow covers the lock's 2.0 only.
 - **Because:** the range admits 1.5.6, and the lock no longer exercises it.
 - **Class:** `spec-gap`.
 - **Consequence:** the duckdb shard runs about twice as long, with no coverage upload from the
@@ -2679,6 +2697,123 @@ The unit suite alone: 247 on each. On a 1.5.0 overlay the routed battery passes 
   on the first tenant (`duckdb_session_setup_failed`), so it fails closed.
 - **Proposed row (RFC 0078):** `ASSUMED` — §3.4 step 1's pre-installed set is `httpfs`, `iceberg`
   and `avro`.
+
+## D-072 — A table function or a path went round D-066's check; classification now allows three table functions and no path
+
+- **Touches:** D-066, D-058, §4.2 ("Classification is a belt"), decision 9, and batteries 4, 5
+  and 8.
+- **RFC said:** §4.2 classifies by statement type, and notes that a `SELECT` can still reach a
+  side-effecting table function. D-066 added a check over table references.
+- **Found:** the check walked `BASE_TABLE` nodes only. On 2.0.0, through the shipped session,
+  `SELECT … FROM query('FROM zzz.gold.orders')`, `query_table('zzz.gold.orders')` and
+  `query_table('wh_tenant_b.gold.orders')` all return tenant A's rows. That is D-058 again,
+  through a table function. 1.5.6 refuses them at bind. `json_serialize_sql` shows every table
+  function as a `TABLE_FUNCTION` node with its name, on both builds. It shows a quoted path in
+  `FROM` (`FROM 's3://…'`, which DuckDB reads as a file) as a `BASE_TABLE` with no catalog.
+  `read_parquet`, `iceberg_scan`, `read_text`, `glob` and `duckdb_secrets()` passed the check
+  too, leaving only the allowlist and classification by type in their way.
+- **Because:** D-066 checked what a statement names as a table, not what else can open one.
+- **Class:** `spec-gap`.
+- **Consequence:** classification refuses, with `dynamic_read_statement_invalid`, any table
+  function but `range`, `generate_series` and `unnest`, and any table name that looks like a
+  path or a URL (it holds `/`, `:` or `.`). That covers nested positions too: subqueries, CTEs,
+  joins and `LATERAL`. A dynamic read can then open nothing but tables of an attached catalog,
+  by name. Batteries 5 and 8 assert the refusal, then stub classification to keep proving the
+  allowlist underneath. Widening the list is a code change, and a reviewed one.
+- **Proposed row (RFC 0078):** `ASSUMED` — §4.2's classification also refuses every table
+  function outside `{range, generate_series, unnest}` and every path-like table name. This
+  extends D-066's row.
+
+## D-073 — The engine's allowlist resolves no dot-segments
+
+- **Touches:** D-062, §3.5's path and HTTP rows, battery 5, and the attestation (D-075).
+- **RFC said:** nothing about path normalization.
+- **Found:** probed on both builds through the shipped session, with logging on:
+  - `<catalog>/../management/v1/info`, `%2e%2e` and `%2E%2E` pass the allowlist as inside the
+    catalog's tree. The request goes out, and Lakekeeper answers 401. `<catalog>//../management`
+    goes out too (404). `<origin>//catalog/…` is refused.
+  - `s3://lake/tenant-a/../tenant-b/<file>` passes as inside A's prefix, with `read_parquet`
+    and `iceberg_scan` alike. With no secret matching it, it goes unsigned to the public AWS
+    endpoint, which refuses it (403) or times out. `%2e%2e` is sent double-encoded, as a
+    literal key.
+  - `s3://lake/tenant-a/<A's table>/../../tenant-b/<file>` matches A's vended secret on 1.5.6
+    (in a raw session that keeps it) and is signed with it. The store refuses it (403). Used
+    directly, A's vended credential gets 403 on that key and on B's own.
+- **Because:** the allowlist compares spellings, and neither DuckDB nor its HTTP clients
+  resolve `..` before the check.
+- **Class:** `discovery`.
+- **Consequence:** inside the engine, the allowlist is not a bound against a crafted path.
+  Nothing crosses tenants: the store refuses, because the vended credential is scoped to the
+  table. For dynamic reads, D-072 means no statement can pass a path at all. Analytics SQL is
+  code. Step 8 cannot probe a `..` path, because it would go out. The P0 pin
+  `test_the_allowlist_resolves_no_dot_segments` shows a bump that starts resolving them.
+- **Proposed row (RFC 0078):** `ASSUMED` — §3.5 states that the in-engine allowlist matches
+  spellings, and that confinement by path rests on the store and the vended credential's scope.
+
+## D-074 — A redirect from an allow-listed origin is followed without being checked again
+
+- **Touches:** D-062, D-064, and §3.5's HTTP row.
+- **RFC said:** nothing about redirects.
+- **Found:** with a stub on an allow-listed path answering 302, both builds follow it: to an
+  off-list host, and to a path outside the allowed directory on the same host. Each target got
+  `HEAD` and `GET`, and the read returned its rows. No setting governs redirects: nothing in
+  `duckdb_settings()` matches `%redirect%` or `%follow%`, on either build.
+- **Because:** `httpfs` follows redirects in its HTTP client, below the allowlist check.
+- **Class:** `discovery`.
+- **Consequence:** there is no session setting to turn redirects off, so none is attested. A
+  dynamic read cannot name a URL (D-072). The engine's own requests go to the catalog, the IdP
+  and the store, and follow their redirects: those servers and the egress policy are the
+  controls. The P0 pin `test_a_redirect_is_followed_past_the_allowlist` shows a bump that
+  starts re-checking them.
+- **Proposed row (RFC 0078):** `ASSUMED` — §3.5's HTTP row adds that the engine follows a
+  redirect from an allow-listed origin unchecked, and that the egress policy bounds it.
+
+## D-075 — Step 8 checks more refusals by effect, the class decides, and the bundle must be PEM
+
+- **Touches:** §3.4 step 8, D-062, D-063, and battery 14.
+- **RFC said:** step 8 reads the settings and checks the filesystems by effect.
+- **Found:** on both builds, through the shipped session:
+  - a path entry matches exactly: the token endpoint with `/x`, `?q` or `#f` added is refused;
+  - a directory entry refuses its siblings (`tenant-ab`, `catalogx`). Written without its
+    slash, it reads back with one;
+  - only the CA bundle's exact path is readable, not a file beside it;
+  - `READ_ONLY` refuses `CREATE SCHEMA lake.…` with no request.
+
+  The message check on a refusal matched one English phrase, and 2.0 had already reworded
+  other messages (D-060).
+- **Because:** these are the edges of an allowlist and of a read-only attach, and none was
+  attested.
+- **Class:** `spec-gap`.
+- **Consequence:**
+  - Step 8 now also checks that these are refused: the token endpoint with a path or a query
+    added, a sibling of the prefix and of the catalog's tree, a file beside the CA bundle, and
+    `CREATE SCHEMA` on `lake`.
+  - The exception class decides each probe. A message without the expected phrase is logged.
+  - The path probes run only once external access reads back off, since on they would go out.
+    The write probe runs only once `lake` reads back read-only, so it cannot reach the catalog.
+  - A comment beside the allowlist records the exfiltration boundary: secrets are unreadable
+    (redacted `duckdb_secrets()`, cleared `s3_*`, none persistent, `lock_configuration`), and
+    each of those is attested.
+  - `ca_cert_file` must hold a PEM certificate at construction, and its docs say every
+    statement on the instance can read it.
+  - Battery 14 adds a widened allowlist (the catalog's whole origin), which fails by effect.
+- **Proposed row (RFC 0078):** `ASSUMED` — step 8 attests the allowlist's edges and the
+  read-only attach by effect, by exception class.
+
+## D-076 — `PRAGMA` and `PIVOT` get one answer on every build
+
+- **Touches:** D-060, D-067, §4.2, and the classification tests.
+- **RFC said:** `PRAGMA version` classifies as `SELECT` and passes (§4.2, on 1.5.6).
+- **Found:** 1.5.6 rewrites `PRAGMA version`, typing it `SELECT` with the text
+  `SELECT * FROM pragma_version();`. 2.0 keeps it as `PRAGMA`. A `PIVOT` is two statements on
+  1.5.6 and one `MULTI` statement on 2.0.
+- **Because:** the two builds' parsers differ.
+- **Class:** `discovery`.
+- **Consequence:** a `pragma_*` table function is refused as `PRAGMA` (`dynamic_read_write_refused`
+  with `statement_type: PRAGMA`), so `PRAGMA version` gets that answer on both. A `MULTI`
+  statement is refused as `dynamic_read_multi_statement`, so `PIVOT` gets that answer on both.
+- **Proposed row (RFC 0078):** `ASSUMED` — §4.2's `PRAGMA version` is refused, on every build.
+  This overrides that line of §4.2, which stays as written.
 
 ---
 
