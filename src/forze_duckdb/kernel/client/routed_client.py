@@ -11,11 +11,12 @@ that the sequence took:
             temp_directory '', extension_directory)
     LOAD httpfs; LOAD iceberg                                -- never INSTALL
     SET GLOBAL enable_global_s3_configuration=false; s3_* = ''  -- no ambient credentials
-    SET GLOBAL allowed_directories=[<storage_prefix>]
-    SET GLOBAL enable_external_access=false                  -- no path outside the prefix
+    SET GLOBAL ca_cert_file=<ca_cert_file>                   -- if configured
+    SET GLOBAL allowed_directories=[<storage_prefix>, <catalog uri>/]
+    SET GLOBAL allowed_paths=[<token endpoint>, <ca_cert_file>]
+    SET GLOBAL enable_external_access=false                  -- nothing outside the allowlist
     CREATE SECRET (TYPE iceberg, client credentials)
     ATTACH <warehouse> AS lake (TYPE iceberg, vended_credentials, READ_ONLY)
-    SET GLOBAL disabled_filesystems='LocalFileSystem,HTTPFileSystem'
     SET GLOBAL http_timeout, caches off
     SET GLOBAL lock_configuration=true
     attest
@@ -24,6 +25,13 @@ that the sequence took:
 an extension option set without it (``enable_global_s3_configuration``, ``s3_*``,
 ``http_timeout``) on the cursor that set it, so every later statement would run with ambient
 S3 credentials back on.
+
+The allowlist is the one in-engine bound on what a statement can open, local or remote. It
+names the catalog and the IdP because DuckDB 2 checks the ``iceberg`` extension's own requests
+against it, and the CA bundle because DuckDB 2 reads that bundle through the same check for
+every HTTPS request. No filesystem is disabled: DuckDB 2 cannot read the bundle with
+``LocalFileSystem`` off, nor reach the catalog with ``HTTPFileSystem`` off. The same profile
+runs on DuckDB 1.5 (RFC 0078 EXECUTION-LOG D-062, D-063).
 """
 
 from forze_duckdb._compat import require_duckdb
@@ -33,11 +41,13 @@ require_duckdb()
 # ....................... #
 
 import asyncio
+import os
 import re
 from collections.abc import AsyncGenerator, Callable, Sequence
 from contextlib import asynccontextmanager
 from datetime import timedelta
 from typing import Any, cast
+from urllib.parse import urlsplit
 from uuid import UUID
 
 import attrs
@@ -64,10 +74,11 @@ LAKE_CATALOG = "lake"
 _CATALOG_SECRET = "lake_cat"  # nosec B105 - the secret entry's name, not a secret
 _EXTENSIONS = ("httpfs", "iceberg")
 _DATABASES = frozenset({"memory", "system", "temp", LAKE_CATALOG})
-_DISABLED_FILESYSTEMS = ("LocalFileSystem", "HTTPFileSystem")
 _STATEMENT_ECHO = re.compile(r"\n\s*LINE \d+:.*", re.DOTALL)
 """DuckDB's echo of a failing statement: a window of its text after ``LINE n:``, cut at either
 end, so a secret in it can show only in part."""
+_OUTSIDE_THE_ALLOWLIST = ("/forze-attest", "http://forze-attest.invalid/")
+"""A local path and a URL no allowlist names: attestation checks a statement cannot open them."""
 
 # ....................... #
 
@@ -93,13 +104,15 @@ class LakeTenantCatalog:
     """Where a tenant's warehouse lives, resolved per tenant by ``catalog_for_tenant``."""
 
     uri: str
-    """The Iceberg REST catalog's base URI (e.g. ``http://lakekeeper:8181/catalog``)."""
+    """The Iceberg REST catalog's base URI (e.g. ``http://lakekeeper:8181/catalog``). The
+    session allow-lists the tree under it, so a statement can also send unauthenticated GETs
+    there (EXECUTION-LOG D-064)."""
 
     warehouse: str
     """The tenant's warehouse name."""
 
     oauth2_server_uri: str
-    """The IdP's token endpoint."""
+    """The IdP's token endpoint, allow-listed as one exact path."""
 
     oauth2_scope: str
     """Scope requested with the client credentials. Required: left out, the ``iceberg``
@@ -119,6 +132,18 @@ class LakeTenantCatalog:
                 code="duckdb_lake_catalog_invalid",
                 details={"storage_prefix": self.storage_prefix},
             )
+
+        for name in ("uri", "oauth2_server_uri"):
+            value = getattr(self, name)
+            parts = urlsplit(value)
+
+            if parts.scheme not in ("http", "https") or not parts.hostname:
+                raise exc.configuration(
+                    f"LakeTenantCatalog.{name} must be an http(s) URL: the session allow-lists "
+                    "it, and anything else would widen what a statement can open.",
+                    code="duckdb_lake_catalog_invalid",
+                    details={name: value},
+                )
 
 
 # ....................... #
@@ -164,21 +189,39 @@ def _connect_config(extension_directory: str | None) -> dict[str, Any]:
     return config
 
 
+def _allowlist(catalog: LakeTenantCatalog, ca_cert_file: str | None) -> tuple[list[str], list[str]]:
+    """``allowed_directories`` and ``allowed_paths``, sorted as DuckDB reports them back."""
+
+    directories = [catalog.storage_prefix, catalog.uri.rstrip("/") + "/"]
+    paths = [catalog.oauth2_server_uri]
+
+    if ca_cert_file is not None:
+        paths.append(ca_cert_file)
+
+    return sorted(directories), sorted(paths)
+
+
 def _session_statements(
     catalog: LakeTenantCatalog,
     creds: LakeCatalogCredentials,
     *,
     http_timeout_seconds: int,
+    ca_cert_file: str | None,
 ) -> list[str]:
     """The hardening sequence after ``LOAD``, in order (RFC 0078 §3.4 steps 2-7)."""
+
+    directories, paths = _allowlist(catalog, ca_cert_file)
+    ca = [] if ca_cert_file is None else [f"SET GLOBAL ca_cert_file={_literal(ca_cert_file)}"]
 
     return [
         "SET GLOBAL enable_global_s3_configuration=false",
         "SET GLOBAL s3_access_key_id=''",
         "SET GLOBAL s3_secret_access_key=''",
         "SET GLOBAL s3_session_token=''",
+        *ca,
         # Allowlist first: it cannot change once external access is off.
-        f"SET GLOBAL allowed_directories=[{_literal(catalog.storage_prefix)}]",
+        f"SET GLOBAL allowed_directories=[{', '.join(map(_literal, directories))}]",
+        f"SET GLOBAL allowed_paths=[{', '.join(map(_literal, paths))}]",
         "SET GLOBAL enable_external_access=false",
         (
             f"CREATE SECRET {_CATALOG_SECRET} (TYPE iceberg, "
@@ -192,7 +235,6 @@ def _session_statements(
             f"ENDPOINT {_literal(catalog.uri)}, SECRET {_CATALOG_SECRET}, "
             "ACCESS_DELEGATION_MODE 'vended_credentials', READ_ONLY)"
         ),
-        f"SET GLOBAL disabled_filesystems='{','.join(_DISABLED_FILESYSTEMS)}'",
         f"SET GLOBAL http_timeout={http_timeout_seconds}",
         "SET GLOBAL enable_http_metadata_cache=false",
         "SET GLOBAL enable_external_file_cache=false",
@@ -206,48 +248,54 @@ def _expected_settings(
     http_timeout_seconds: int,
     engine: DuckDbConfig,
     extension_directory: str | None,
-) -> dict[str, str]:
-    """What ``duckdb_settings()`` must report on a fresh cursor once the sequence ran.
+    ca_cert_file: str | None,
+) -> dict[str, object]:
+    """What ``current_setting()`` must return on a fresh cursor once the sequence ran.
 
-    Two settings are checked another way or not at all. ``disabled_filesystems`` always reads
-    back empty, so :func:`_attest` probes it by effect. ``memory_limit`` reads back reformatted
-    (``1GB`` as ``953.6 MiB``) and bounds resources, not reach.
+    ``current_setting()``, not ``duckdb_settings()``: DuckDB 2 no longer lists the ``s3_*``
+    options or ``extension_directory`` there (EXECUTION-LOG D-060). ``memory_limit`` is left
+    out: it reads back reformatted (``1GB`` as ``953.6 MiB``) and bounds resources, not reach.
     """
 
-    expected = {
-        "allow_persistent_secrets": "false",
-        "autoinstall_known_extensions": "false",
-        "autoload_known_extensions": "false",
-        "allow_community_extensions": "false",
-        "allow_unredacted_secrets": "false",
+    directories, paths = _allowlist(catalog, ca_cert_file)
+    expected: dict[str, object] = {
+        "allow_persistent_secrets": False,
+        "autoinstall_known_extensions": False,
+        "autoload_known_extensions": False,
+        "allow_community_extensions": False,
+        "allow_unredacted_secrets": False,
         "temp_directory": "",
-        "enable_global_s3_configuration": "false",
+        "enable_global_s3_configuration": False,
         "s3_access_key_id": "",
         "s3_secret_access_key": "",  # nosec B105 - the cleared setting the sequence asserts
         "s3_session_token": "",  # nosec B105 - likewise
-        "allowed_directories": f"[{_literal(catalog.storage_prefix)}]",
-        "enable_external_access": "false",
-        "http_timeout": str(http_timeout_seconds),
-        "enable_http_metadata_cache": "false",
-        "enable_external_file_cache": "false",
-        "lock_configuration": "true",
+        "allowed_directories": directories,
+        "allowed_paths": paths,
+        "enable_external_access": False,
+        "http_timeout": http_timeout_seconds,
+        "enable_http_metadata_cache": False,
+        "enable_external_file_cache": False,
+        "lock_configuration": True,
     }
 
     if engine.threads is not None:
-        expected["threads"] = str(engine.threads)
+        expected["threads"] = engine.threads
 
     if extension_directory is not None:
         expected["extension_directory"] = extension_directory
 
+    if ca_cert_file is not None:
+        expected["ca_cert_file"] = ca_cert_file
+
     return expected
 
 
-async def _filesystem_disabled(client: DuckDbClient, filesystem: str, path: str) -> bool:
+async def _refused(client: DuckDbClient, path: str) -> bool:
     try:
         await client.run_query(f"SELECT 1 FROM read_text({_literal(path)})")  # nosec B608
 
     except duckdb.PermissionException as error:
-        return f"{filesystem} has been disabled" in str(error)
+        return "disabled by configuration" in str(error)
 
     except duckdb.Error:
         return False
@@ -255,26 +303,36 @@ async def _filesystem_disabled(client: DuckDbClient, filesystem: str, path: str)
     return False
 
 
-async def _attest(client: DuckDbClient, expected: dict[str, str]) -> list[str]:
+async def _setting(client: DuckDbClient, name: str) -> object:
+    """``current_setting(name)`` on a fresh cursor, lists sorted; ``None`` if it cannot be read.
+
+    One query per setting: an extension option the session never set is not in a fresh
+    cursor's catalog, and reading it raises rather than returning ``NULL``.
+    """
+
+    try:
+        result = await client.run_query(f"SELECT current_setting({_literal(name)}) AS v")  # nosec B608
+
+    except duckdb.Error:
+        return None
+
+    value = result.rows[0]["v"]
+
+    return sorted(value) if isinstance(value, list) else value  # pyright: ignore[reportUnknownArgumentType]
+
+
+async def _attest(client: DuckDbClient, expected: dict[str, object]) -> list[str]:
     """Read the session back from a fresh cursor, the view a statement gets; list what is off."""
 
     problems: list[str] = []
 
-    settings = await client.run_query(
-        "SELECT name, value FROM duckdb_settings() WHERE list_contains($names, name)",
-        {"names": sorted(expected)},
-    )
-    actual = {row["name"]: row["value"] for row in settings.rows}
+    for name, value in sorted(expected.items()):
+        if await _setting(client, name) != value:
+            problems.append(f"setting {name}")
 
-    problems.extend(
-        f"setting {name}" for name, value in sorted(expected.items()) if actual.get(name) != value
-    )
-
-    for filesystem, path in zip(
-        _DISABLED_FILESYSTEMS, ("/forze-attest", "http://forze-attest.invalid/"), strict=True
-    ):
-        if not await _filesystem_disabled(client, filesystem, path):
-            problems.append(f"filesystem {filesystem} enabled")
+    for path in _OUTSIDE_THE_ALLOWLIST:
+        if not await _refused(client, path):
+            problems.append(f"path {path} not refused")
 
     secrets = await client.run_query("SELECT DISTINCT type FROM duckdb_secrets()")
     problems.extend(
@@ -322,8 +380,9 @@ class RoutedDuckDbClient(
     after restoring a grant or creating a namespace, as after rotating credentials.
 
     An evicted or drained instance closes in the background: closing waits for its workers, and
-    one stuck on a hung request takes about 120 s (D-028). Until then it parks a thread of the
-    loop's default executor. :meth:`close` waits for every such teardown.
+    one stuck on a hung request takes about 120 s on DuckDB 1.x (D-028), or ``http_timeout``
+    times one plus ``http_retries`` (default 3) on DuckDB 2 (D-057). Until then it parks a
+    thread of the loop's default executor. :meth:`close` waits for every such teardown.
     """
 
     catalog_for_tenant: Callable[[UUID], LakeTenantCatalog]
@@ -338,16 +397,27 @@ class RoutedDuckDbClient(
     """Statements running at once across every tenant instance in the process.
 
     Peak memory is about this times ``engine.memory_limit``. A statement whose catalog or store
-    request hangs holds its slot for about 120 s whatever ``http_timeout`` says
-    (EXECUTION-LOG D-028), so size this with hung requests counted in."""
+    request hangs holds its slot for about 120 s on DuckDB 1.x, whatever ``http_timeout`` says
+    (EXECUTION-LOG D-028), and for ``http_timeout`` times one plus ``http_retries`` on DuckDB 2
+    (D-057). Size this with hung requests counted in."""
 
     http_timeout: timedelta = timedelta(seconds=5)
     """``http_timeout`` for the store, in whole seconds. Must not exceed the smallest
     ``statement_timeout`` among the routes on this client (checked by the deps module)."""
 
     extension_directory: str | None = None
-    """Directory ``httpfs`` and ``iceberg`` are loaded from, pre-installed in the image.
-    ``None`` keeps DuckDB's default (``~/.duckdb/extensions``)."""
+    """Directory ``httpfs`` and ``iceberg`` are loaded from, pre-installed in the image with
+    ``avro``, which ``iceberg`` loads itself (EXECUTION-LOG D-071). ``None`` keeps DuckDB's
+    default (``~/.duckdb/extensions``)."""
+
+    ca_cert_file: str | None = attrs.field(
+        default=None, converter=attrs.converters.optional(os.path.realpath)
+    )
+    """CA bundle for HTTPS to the catalog, the IdP and the store, set as ``ca_cert_file`` and
+    allow-listed as one path. Required on DuckDB 2 when any of them is HTTPS: it reads the
+    bundle through the allowlist, and without it the session fails to build. Resolved to its
+    real path at construction, the form DuckDB reports back. ``None`` sets nothing
+    (EXECUTION-LOG D-063)."""
 
     guarded: bool = True
     """Guarded LRU eviction: an evicted instance closes after its last statement. ``False`` is
@@ -445,6 +515,7 @@ class RoutedDuckDbClient(
 
         catalog = self.catalog_for_tenant(tenant_id)
         http_timeout_seconds = int(self.http_timeout.total_seconds())
+        ca_cert_file = self.ca_cert_file
         client = DuckDbClient()
 
         try:
@@ -460,9 +531,23 @@ class RoutedDuckDbClient(
                 )
 
                 for statement in _session_statements(
-                    catalog, creds, http_timeout_seconds=http_timeout_seconds
+                    catalog,
+                    creds,
+                    http_timeout_seconds=http_timeout_seconds,
+                    ca_cert_file=ca_cert_file,
                 ):
                     await client.run_command(statement)
+
+                problems = await _attest(
+                    client,
+                    _expected_settings(
+                        catalog,
+                        http_timeout_seconds=http_timeout_seconds,
+                        engine=self.engine,
+                        extension_directory=self.extension_directory,
+                        ca_cert_file=ca_cert_file,
+                    ),
+                )
 
             except CoreException:
                 raise
@@ -480,16 +565,6 @@ class RoutedDuckDbClient(
                         "error": _redacted(str(error), creds.client_secret.get_secret_value()),
                     },
                 ) from None
-
-            problems = await _attest(
-                client,
-                _expected_settings(
-                    catalog,
-                    http_timeout_seconds=http_timeout_seconds,
-                    engine=self.engine,
-                    extension_directory=self.extension_directory,
-                ),
-            )
 
             if problems:
                 raise exc.configuration(

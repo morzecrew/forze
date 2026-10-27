@@ -35,6 +35,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **A throttled HTTP error tells the client when to come back.** Its `retry_after` (seconds) or else `retry_at` (aware `datetime`) detail becomes a `Retry-After` header, which `AllowlistCORSMiddleware` exposes; other details stay withheld. No header when neither key is usable.
 
+- **`RoutedDuckDbClient(ca_cert_file=...)` lets a lake session use HTTPS on DuckDB 2.** The session's allowlist now names the catalog, the IdP and that bundle instead of disabling filesystems.
+
 **`forze ops` for people at a shell and for backfills:**
 
 - **`forze ops` gains typed flags, JSONL batches and shell completion.** `call OP --field VALUE` takes a flat-scalar input as flags; `--batch @PATH|-` runs one call per line in one runtime, stopping at the first failure; `OP` completes in the shell. An unknown option after `OP` now exits 2 with an error object.

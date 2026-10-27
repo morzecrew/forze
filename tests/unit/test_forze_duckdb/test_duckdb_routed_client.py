@@ -132,7 +132,7 @@ def fake_engine(monkeypatch: pytest.MonkeyPatch) -> Iterator[type[_FakeEngine]]:
     yield _FakeEngine
 
 
-async def _attested(client: Any, expected: dict[str, str]) -> list[str]:
+async def _attested(client: Any, expected: dict[str, object]) -> list[str]:
     return []
 
 
@@ -202,11 +202,55 @@ class TestConstruction:
 
         assert ei.value.code == "duckdb_lake_catalog_invalid"
 
+    @pytest.mark.parametrize("field", ["uri", "oauth2_server_uri"])
+    @pytest.mark.parametrize("value", ["s3://lake/", "/catalog", "catalog.test/catalog", "http://"])
+    def test_the_catalog_and_the_idp_must_be_http_urls(self, field: str, value: str) -> None:
+        """Both go into the session's allowlist, where anything else would widen it."""
+
+        urls = {"uri": "https://catalog.test/catalog", "oauth2_server_uri": "https://idp.test/t"}
+
+        with pytest.raises(CoreException) as ei:
+            LakeTenantCatalog(
+                **{**urls, field: value}, warehouse="w", oauth2_scope="s",
+                storage_prefix="s3://lake/a/",
+            )
+
+        assert ei.value.code == "duckdb_lake_catalog_invalid"
+        assert ei.value.details == {field: value}
+
 
 # ....................... #
 
 
 class TestInstances:
+    async def test_the_session_allow_lists_the_prefix_the_catalog_the_idp_and_the_ca_bundle(
+        self, fake_engine: type[_FakeEngine], tmp_path: Any
+    ) -> None:
+        """D-062, D-063: one allowlist bounds every path, and no filesystem is disabled."""
+
+        bundle = tmp_path / "ca.pem"
+        bundle.write_text("")
+        link = tmp_path / "ca-link.pem"
+        link.symlink_to(bundle)
+        routed = _routed(_MemSecrets(_A), ca_cert_file=str(link))
+        await routed.startup()
+
+        await _read(routed, _A)
+
+        (engine,) = fake_engine.built
+        real = str(bundle.resolve())
+        assert f"SET GLOBAL ca_cert_file='{real}'" in engine.statements
+        assert (
+            "SET GLOBAL allowed_directories=['http://catalog.test/catalog/', "
+            f"'s3://lake/{_A.hex[:4]}/']"
+        ) in engine.statements
+        assert f"SET GLOBAL allowed_paths=['{real}', 'http://idp.test/token']" in engine.statements
+        assert engine.statements.index("SET GLOBAL enable_external_access=false") < next(
+            i for i, s in enumerate(engine.statements) if s.startswith("CREATE SECRET")
+        )
+        assert not any("disabled_filesystems" in s for s in engine.statements)
+        await routed.close()
+
     async def test_an_instance_is_built_load_only_with_the_shared_admission(
         self, fake_engine: type[_FakeEngine]
     ) -> None:

@@ -39,6 +39,7 @@ _TIMEOUT = timedelta(seconds=5)
 _S3_SECRET = f"TYPE s3, KEY_ID '{secrets.token_hex(4)}', SECRET '{secrets.token_hex(8)}'"
 _HEAVY_SQL = "SELECT count(*) AS n FROM range(100000) a, range(100000) b"
 _SPIN = "SELECT count(*) AS n FROM range(20000000000) t(i) WHERE i % 7 = 3"
+_ON_DUCKDB_2 = int(duckdb.__version__.split(".", 1)[0]) >= 2
 
 # ----------------------- #
 
@@ -175,8 +176,31 @@ async def test_a_non_select_is_refused_before_it_runs(
 
 
 async def test_select_shaped_forms_pass_classification(lake_client: DuckDbClient) -> None:
-    for sql in ("PRAGMA version", "FROM lake.gold.t", "VALUES (1)", "DESCRIBE lake.gold.t"):
+    for sql in ("FROM lake.gold.t", "VALUES (1)", "DESCRIBE lake.gold.t"):
         assert await lake_client.run_dynamic(sql, row_probe=10, timeout=_TIMEOUT)
+
+
+async def test_pragma_and_pivot_classify_by_engine_version(lake_client: DuckDbClient) -> None:
+    """DuckDB 2 types ``PRAGMA version`` as ``PRAGMA`` and ``PIVOT`` as one ``MULTI`` statement
+    (EXECUTION-LOG D-060). Both stay refused there; on 1.x ``PRAGMA`` passes as a ``SELECT``."""
+
+    pivot = "PIVOT (SELECT 1 AS a, 'x' AS b) ON b USING sum(a)"
+
+    if not _ON_DUCKDB_2:
+        assert await lake_client.run_dynamic("PRAGMA version", row_probe=10, timeout=_TIMEOUT)
+
+        with pytest.raises(CoreException) as multi:
+            await lake_client.run_dynamic(pivot, row_probe=10, timeout=_TIMEOUT)
+
+        assert multi.value.code == MULTI_STATEMENT_CODE
+        return
+
+    for sql, statement_type in (("PRAGMA version", "PRAGMA"), (pivot, "MULTI")):
+        with pytest.raises(CoreException) as ei:
+            await lake_client.run_dynamic(sql, row_probe=10, timeout=_TIMEOUT)
+
+        assert ei.value.code == WRITE_REFUSED_CODE
+        assert ei.value.details == {"statement_type": statement_type}
 
 
 async def test_vended_secrets_are_dropped_after_each_statement(

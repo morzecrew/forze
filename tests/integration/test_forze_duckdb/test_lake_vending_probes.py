@@ -2,10 +2,12 @@
 
 Every test here asserts a fact P0 observed on ``duckdb==1.5.6`` with the ``iceberg`` build the
 core repository serves for it (``890b78a9c``) and ``httpfs`` ``4bc690d``, against Lakekeeper
-v0.14.2 under OpenFGA with RustFS as the STS store (``tests/support/lakekeeper.py``). They pin
-behaviour, including behaviour the RFC did not expect, so that an engine or catalog bump which
-changes any of it fails here first. The findings themselves are recorded in
-``rfcs/EXECUTION-LOG.md`` (unit "RFC 0078 P0 — pickup probes").
+v0.14.2 under OpenFGA with RustFS as the STS store (``tests/support/lakekeeper.py``), and
+re-probed on ``duckdb==2.0.0`` (``iceberg`` ``4c0c0874c4``). Where the two builds differ, the
+test pins each. They pin behaviour, including behaviour the RFC did not expect, so that an
+engine or catalog bump which changes any of it fails here first. The findings themselves are
+recorded in ``rfcs/EXECUTION-LOG.md`` (units "RFC 0078 P0 — pickup probes", "P2 —
+tightening" and "DuckDB 2.0 adoption").
 
 The three P0 gate items are battery 1 (``TestFixtureSelfTest``), battery 5
 (``TestCrossTenantByPath``) and battery 11a (``TestRevocation``).
@@ -13,11 +15,16 @@ The three P0 gate items are battery 1 (``TestFixtureSelfTest``), battery 5
 
 from __future__ import annotations
 
+import datetime
+import http.server
+import ipaddress
 import os
 import re
 import socket
+import ssl
 import threading
 from collections.abc import Callable, Iterator
+from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
 
@@ -29,10 +36,17 @@ import pyarrow as pa
 import pytest
 from botocore.config import Config
 from botocore.exceptions import ClientError
+from cryptography import x509
+from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives.asymmetric import ec
+from cryptography.x509.oid import NameOID
 
+from forze_duckdb import LakeTenantCatalog
 from forze_duckdb.kernel.client import client as client_module
+from forze_duckdb.kernel.client import routed_client
 from tests.support.lakekeeper import (
     BUCKET,
+    OAUTH2_SCOPE,
     LakePrincipal,
     LakeTenant,
     LakeVendingStack,
@@ -51,6 +65,69 @@ def lake(docker_available: None) -> Iterator[LakeVendingStack]:
 @pytest.fixture
 def tenant_a(lake: LakeVendingStack) -> LakeTenant:
     return lake.tenants["tenant-a"]
+
+
+@pytest.fixture(scope="module")
+def tls_server(tmp_path_factory: pytest.TempPathFactory) -> Iterator[tuple[str, Path]]:
+    """A local HTTPS server with a throwaway self-signed CA: the CSV's URL and the CA's path."""
+
+    signer = ec.generate_private_key(ec.SECP256R1())
+    name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "127.0.0.1")])
+    now = datetime.datetime.now(datetime.UTC)
+    cert = (
+        x509.CertificateBuilder()
+        .subject_name(name)
+        .issuer_name(name)
+        .public_key(signer.public_key())
+        .serial_number(x509.random_serial_number())
+        .not_valid_before(now - datetime.timedelta(minutes=1))
+        .not_valid_after(now + datetime.timedelta(hours=1))
+        .add_extension(
+            x509.SubjectAlternativeName([x509.IPAddress(ipaddress.ip_address("127.0.0.1"))]),
+            critical=False,
+        )
+        .add_extension(x509.BasicConstraints(ca=True, path_length=None), critical=True)
+        .sign(signer, hashes.SHA256())
+    )
+    tmp = tmp_path_factory.mktemp("tls")
+    ca = tmp / "ca.pem"
+    ca.write_bytes(cert.public_bytes(serialization.Encoding.PEM))
+    chain = tmp / "server.pem"
+    chain.write_bytes(
+        ca.read_bytes()
+        + signer.private_bytes(
+            serialization.Encoding.PEM,
+            serialization.PrivateFormat.PKCS8,
+            serialization.NoEncryption(),
+        )
+    )
+
+    class _Csv(http.server.BaseHTTPRequestHandler):
+        def do_GET(self) -> None:  # noqa: N802
+            self.send_response(200)
+            self.send_header("Content-Length", "4")
+            self.end_headers()
+            self.wfile.write(b"a\n1\n")
+
+        def do_HEAD(self) -> None:  # noqa: N802
+            self.send_response(200)
+            self.send_header("Content-Length", "4")
+            self.end_headers()
+
+        def log_message(self, *args: Any) -> None:
+            pass
+
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), _Csv)
+    context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    context.load_cert_chain(chain)
+    server.socket = context.wrap_socket(server.socket, server_side=True)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+
+    try:
+        yield f"https://127.0.0.1:{server.server_address[1]}/x.csv", ca
+
+    finally:
+        server.shutdown()
 
 
 @pytest.fixture
@@ -104,14 +181,35 @@ def _refused(fn: Callable[[], object]) -> str:
     return "ALLOWED"
 
 
+def _shipped_allowlist(lake: LakeVendingStack, tenant: LakeTenant) -> tuple[str, ...]:
+    """The routed client's own allowlist statements, to set before ``ATTACH`` (D-062)."""
+
+    catalog = LakeTenantCatalog(
+        uri=lake.catalog_uri,
+        warehouse=tenant.warehouse,
+        oauth2_server_uri=lake.token_uri,
+        oauth2_scope=OAUTH2_SCOPE,
+        storage_prefix=f"s3://{BUCKET}/{tenant.key_prefix}/",
+    )
+    directories, paths = routed_client._allowlist(catalog, None)
+    return (
+        f"SET allowed_directories={directories!r}",
+        f"SET allowed_paths={paths!r}",
+        "SET enable_external_access=false",
+    )
+
+
 # ----------------------- #
 
-_PROBED_DUCKDB = "1.5.6"
-_PROBED_ICEBERG = "890b78a9c"
+_PROBED = {"1.5.6": "890b78a9c", "2.0.0": "4c0c0874c4"}
+"""The builds the probes ran on: ``duckdb`` version to its ``iceberg`` extension version."""
+
+_ON_DUCKDB_2 = int(duckdb.__version__.split(".", 1)[0]) >= 2
+_VENDED = "SELECT count(*) FROM duckdb_secrets() WHERE name LIKE '__internal_ic_%'"
 
 
 def test_the_engine_is_the_build_the_probes_ran_on() -> None:
-    """Every other test here pins a fact about this build; a bump has to re-run P0's probes."""
+    """Every other test here pins a fact about these builds; a bump has to re-run the probes."""
 
     con = duckdb.connect(":memory:")
     con.execute("INSTALL iceberg")
@@ -120,9 +218,9 @@ def test_the_engine_is_the_build_the_probes_ran_on() -> None:
         "SELECT extension_version FROM duckdb_extensions() WHERE extension_name = 'iceberg'"
     ).fetchone()
 
-    rerun = "re-run the RFC 0078 P0 probes and update EXECUTION-LOG unit 5 before re-pinning"
-    assert duckdb.__version__ == _PROBED_DUCKDB, rerun
-    assert iceberg == _PROBED_ICEBERG, rerun
+    rerun = "re-run the RFC 0078 probes and add an EXECUTION-LOG entry before re-pinning"
+    assert duckdb.__version__ in _PROBED, rerun
+    assert iceberg == _PROBED[duckdb.__version__], rerun
 
 
 class TestFixtureSelfTest:
@@ -235,7 +333,10 @@ class TestCrossTenantByPath:
         con.execute("CALL enable_logging('HTTP')")
 
         assert con.execute(f"SELECT count(*) FROM iceberg_scan('{meta}')").fetchone() == (3,)
-        assert lake.root_access_key in {r["key"] for r in _http_log(con)}
+        # DuckDB 2's HTTP log no longer carries the SigV4 key id (D-060). The store refuses
+        # unsigned reads (battery 1), so the read above was signed with the ambient key anyway.
+        if not _ON_DUCKDB_2:
+            assert lake.root_access_key in {r["key"] for r in _http_log(con)}
 
     def test_with_step_2_nothing_is_signed_with_the_root_key_and_b_is_refused(
         self, lake: LakeVendingStack, tenant_a: LakeTenant, tenant_b: LakeTenant
@@ -269,10 +370,7 @@ class TestCrossTenantByPath:
         con = lake.session(
             tenant_a.principal,
             tenant_a.warehouse,
-            before_attach=(
-                f"SET allowed_directories=['s3://{BUCKET}/{tenant_a.key_prefix}/']",
-                "SET enable_external_access=false",
-            ),
+            before_attach=_shipped_allowlist(lake, tenant_a),
         )
         con.execute("CALL enable_logging('HTTP')")
 
@@ -335,18 +433,25 @@ class TestRevocation:
     def test_a_by_path_read_inside_the_table_still_succeeds_on_the_residual_secret(
         self, lake: LakeVendingStack, tenant_a: LakeTenant
     ) -> None:
-        """EXECUTION-LOG D-025: vended secrets outlive their statement, so revocation is not total."""
+        """EXECUTION-LOG D-025: on 1.5 vended secrets outlive their statement, so revocation is
+        not total. On 2 the secret ends with its statement and the read has none (D-056)."""
 
         con = lake.session(tenant_a.principal, tenant_a.warehouse)
         # fetchall: the statement's transaction must commit for its vended secret to survive
         assert con.execute("SELECT count(*) FROM lake.gold.orders").fetchall() == [(3,)]
         path = _own_data_file(con)
+        by_path = f"SELECT count(*) FROM read_parquet('{path}')"
 
         lake.set_grant(tenant_a, tenant_a.principal, granted=False)
         try:
             con.execute("CALL enable_logging('HTTP')")
 
-            assert con.execute(f"SELECT count(*) FROM read_parquet('{path}')").fetchone() == (3,)
+            if _ON_DUCKDB_2:
+                with pytest.raises(duckdb.HTTPException, match="No credentials are provided"):
+                    con.execute(by_path).fetchall()
+                return
+
+            assert con.execute(by_path).fetchone() == (3,)
             assert any(r["status"] == "OK_200" and "/data/" in r["url"] for r in _http_log(con))
         finally:
             lake.set_grant(tenant_a, tenant_a.principal, granted=True)
@@ -421,6 +526,8 @@ class TestCredentialLifetime:
     def test_every_statement_reloads_and_every_vended_secret_stays(
         self, lake: LakeVendingStack, tenant_a: LakeTenant
     ) -> None:
+        """On 2 none stays: the secret ends with its statement (D-056)."""
+
         con = lake.session(tenant_a.principal, tenant_a.warehouse)
         con.execute("CALL enable_logging('HTTP')")
         for _ in range(3):
@@ -429,12 +536,13 @@ class TestCredentialLifetime:
         assert sum("/tables/orders" in r["url"] for r in _http_log(con)) == 3
         assert con.execute(
             "SELECT count(*) FROM duckdb_secrets() WHERE type = 's3' AND name LIKE '__internal_ic_%'"
-        ).fetchone() == (3,)
+        ).fetchone() == ((0,) if _ON_DUCKDB_2 else (3,))
 
     def test_a_vended_secret_survives_only_a_committed_statement(
         self, lake: LakeVendingStack, tenant_a: LakeTenant
     ) -> None:
-        """The secret is a transactional catalog entry: commit keeps it, rollback discards it."""
+        """On 1.5 the secret is a transactional catalog entry: commit keeps it, rollback
+        discards it. On 2 neither keeps it (D-056)."""
 
         def secrets_after(run: Callable[[Any], object]) -> int:
             con = lake.session(tenant_a.principal, tenant_a.warehouse)
@@ -455,7 +563,7 @@ class TestCredentialLifetime:
             cur.execute("SELECT * FROM lake.gold.orders").fetchmany(4)  # the shell's cap+1 probe
             cur.close()
 
-        assert secrets_after(exhausted) == 1
+        assert secrets_after(exhausted) == (0 if _ON_DUCKDB_2 else 1)
         assert secrets_after(partial) == 0
         assert (
             secrets_after(
@@ -477,13 +585,12 @@ class TestCredentialLifetime:
         statement's secret to other cursors fails here first."""
 
         con = lake.session(tenant_a.principal, tenant_a.warehouse)
-        vended = "SELECT count(*) FROM duckdb_secrets() WHERE name LIKE '__internal_ic_%'"
         running = con.cursor()
         running.execute("SELECT * FROM lake.gold.orders").fetchmany(1)
 
-        assert con.cursor().execute(vended).fetchone() == (0,)
-        running.fetchall()  # exhausted: the statement commits, and its secret with it
-        assert con.cursor().execute(vended).fetchone() == (1,)
+        assert con.cursor().execute(_VENDED).fetchone() == (0,)
+        running.fetchall()  # exhausted: the statement commits, and on 1.5 its secret with it
+        assert con.cursor().execute(_VENDED).fetchone() == ((0,) if _ON_DUCKDB_2 else (1,))
 
     def test_a_scan_keeps_reading_while_another_statements_drop_runs(
         self, lake: LakeVendingStack, tenant_a: LakeTenant
@@ -501,8 +608,7 @@ class TestCredentialLifetime:
         con.execute("SET threads=1")
         con.execute("SET enable_external_file_cache=false")
         con.execute("CALL enable_logging('HTTP')")
-        con.execute("SELECT count(*) FROM lake.gold.orders").fetchall()  # a committed leftover
-        vended = "SELECT count(*) FROM duckdb_secrets() WHERE name LIKE '__internal_ic_%'"
+        con.execute("SELECT count(*) FROM lake.gold.orders").fetchall()  # 1.5: a leftover
         scan = con.cursor()
         scan.execute("SELECT id, pad FROM lake.gold.scan_d048")
         scan.fetchmany(1)
@@ -510,17 +616,27 @@ class TestCredentialLifetime:
 
         client_module._drop_vended_secrets(con, threading.Lock())
 
-        assert con.cursor().execute(vended).fetchone() == (0,)  # the leftover went
+        assert con.cursor().execute(_VENDED).fetchone() == (0,)  # the leftover went
         assert len(scan.fetchall()) == 8 * 50_000 - 1
         assert sum("/data/" in r["url"] for r in _http_log(con)) > requests_before
-        assert con.cursor().execute(vended).fetchone() == (1,)  # the scan's own, now committed
+        # 1.5: the scan's own, now committed; 2: none (D-056)
+        assert con.cursor().execute(_VENDED).fetchone() == ((0,) if _ON_DUCKDB_2 else (1,))
 
     def test_a_vended_secret_can_be_dropped_under_lock_configuration(
         self, lake: LakeVendingStack, tenant_a: LakeTenant
     ) -> None:
+        """On 2 there is nothing to drop: the routed client's drop finds no secret (D-056)."""
+
         con = lake.session(tenant_a.principal, tenant_a.warehouse)
         con.execute("SET lock_configuration=true")
         con.execute("SELECT count(*) FROM lake.gold.orders").fetchall()
+
+        if _ON_DUCKDB_2:
+            assert con.execute(_VENDED).fetchone() == (0,)
+            client_module._drop_vended_secrets(con, threading.Lock())
+            assert con.execute("SELECT count(*) FROM lake.gold.orders").fetchone() == (3,)
+            return
+
         (name,) = con.execute(
             "SELECT name FROM duckdb_secrets() WHERE name LIKE '__internal_ic_%'"
         ).fetchone()
@@ -577,17 +693,77 @@ class TestSessionHardening:
         con = lake.session(
             tenant_a.principal,
             tenant_a.warehouse,
-            before_attach=(
-                f"SET allowed_directories=['s3://{BUCKET}/{tenant_a.key_prefix}/']",
-                "SET enable_external_access=false",
-            ),
+            before_attach=_shipped_allowlist(lake, tenant_a),
         )
+        by_path = f"SELECT count(*) FROM read_parquet('{_own_data_file(con)}')"
 
         assert con.execute("SELECT count(*) FROM lake.gold.orders").fetchall() == [(3,)]
         assert con.execute("SELECT count(*) FROM lake.gold.orders").fetchall() == [(3,)]
-        assert con.execute(
-            f"SELECT count(*) FROM read_parquet('{_own_data_file(con)}')"
-        ).fetchall() == [(3,)]
+
+        if _ON_DUCKDB_2:
+            # No vended secret is left to match the path (D-056), so it heads for the public
+            # AWS endpoint over HTTPS, and the allowlist holds no CA bundle (D-063).
+            with pytest.raises(duckdb.PermissionException, match="CA certificate bundle"):
+                con.execute(by_path).fetchall()
+            return
+
+        assert con.execute(by_path).fetchall() == [(3,)]
+
+    def test_on_2_the_catalog_and_the_idp_must_be_on_the_allowlist(
+        self, lake: LakeVendingStack, tenant_a: LakeTenant
+    ) -> None:
+        """D-055: P1's prefix-only allowlist. DuckDB 2 checks the extension's own token request
+        against it; 1.5 lets the catalog's traffic past the filesystem layer."""
+
+        prefix_only = (
+            f"SET allowed_directories=['s3://{BUCKET}/{tenant_a.key_prefix}/']",
+            "SET enable_external_access=false",
+        )
+
+        if not _ON_DUCKDB_2:
+            con = lake.session(tenant_a.principal, tenant_a.warehouse, before_attach=prefix_only)
+            assert con.execute("SELECT count(*) FROM lake.gold.orders").fetchall() == [(3,)]
+            return
+
+        with pytest.raises(duckdb.Error, match="Could not get token") as caught:
+            lake.session(tenant_a.principal, tenant_a.warehouse, before_attach=prefix_only)
+        assert "file system operations are disabled by configuration" in str(caught.value)
+
+    def test_on_2_https_needs_the_ca_bundle_on_the_allowlist(
+        self, tls_server: tuple[str, Path]
+    ) -> None:
+        """D-063: DuckDB 2 reads the CA bundle through the allowlist for every HTTPS request,
+        and cannot with ``LocalFileSystem`` disabled. 1.5 reads it outside DuckDB's filesystem."""
+
+        url, ca = tls_server
+        origin = url.rsplit("/", 1)[0] + "/"
+
+        def read(*, allow_ca: bool, disabled: str = "") -> object:
+            con = duckdb.connect(":memory:", config={"allow_persistent_secrets": False})
+            con.execute("LOAD httpfs")
+            con.execute(f"SET GLOBAL ca_cert_file='{ca}'")
+            con.execute(f"SET GLOBAL allowed_directories=['{origin}']")
+            if allow_ca:
+                con.execute(f"SET GLOBAL allowed_paths=['{ca}']")
+            con.execute("SET GLOBAL enable_external_access=false")
+            if disabled:
+                con.execute(f"SET GLOBAL disabled_filesystems='{disabled}'")
+            con.execute("SET GLOBAL lock_configuration=true")
+            try:
+                return con.execute(f"SELECT * FROM read_csv('{url}')").fetchall()
+            except duckdb.PermissionException as error:
+                return str(error)
+
+        assert read(allow_ca=True) == [(1,)]  # the routed client's profile
+        if not _ON_DUCKDB_2:
+            assert read(allow_ca=False) == read(allow_ca=True, disabled="LocalFileSystem")
+            assert read(allow_ca=False) == [(1,)]
+            return
+
+        assert "disabled by configuration" in str(read(allow_ca=False))
+        assert "LocalFileSystem has been disabled" in str(
+            read(allow_ca=True, disabled="LocalFileSystem")
+        )
 
     def test_the_p2_allowlist_must_be_set_before_external_access_goes_off(self) -> None:
         con = duckdb.connect(":memory:")
@@ -660,5 +836,6 @@ class TestRefusalTaxonomy:
             con.execute("INSERT INTO lake.gold.orders VALUES (99, 'x')")
         with pytest.raises(duckdb.Error, match="Forbidden_403") as caught:
             con.execute("CREATE TABLE lake.gold.t_new (i INT)")
-        assert type(caught.value) is duckdb.Error
+        # On 2 the catalog's refusal is an HTTPException (D-060).
+        assert type(caught.value) is (duckdb.HTTPException if _ON_DUCKDB_2 else duckdb.Error)
         assert con.execute("SELECT count(*) FROM lake.gold.orders").fetchone() == (3,)
