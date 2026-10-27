@@ -14,12 +14,14 @@ from forze.base.exceptions import exc
 from ...protocols import (
     AnthropicMessagesProtocol,
     InferenceOutputMode,
+    InferenceStructuredOutput,
     KserveV2Protocol,
     MlflowProtocol,
     OpenAiChatProtocol,
     PromptTemplate,
     WireProtocol,
     chat_output_schema,
+    json_object_instruction,
     messages_output_schema,
     validate_flat_scalar_fields,
     validate_prompt_template,
@@ -40,10 +42,12 @@ the check exists to prevent."""
 
 _PROTOCOL_NAMES = frozenset(get_args(InferenceWireProtocolName))
 _OUTPUT_MODES = frozenset(get_args(InferenceOutputMode))
-"""The closed sets behind the two literal annotations, read off the aliases so they cannot
-drift. `attrs` does not enforce a `Literal` at runtime, and neither value fails loudly on
-its own: an unknown protocol reaches `wire_protocol()` as an internal error, and an unknown
-output mode makes the encoder send no constraint while the decoder still expects JSON."""
+_STRUCTURED_OUTPUTS = frozenset(get_args(InferenceStructuredOutput))
+"""The closed sets behind the literal annotations, read off the aliases so they cannot
+drift. `attrs` does not enforce a `Literal` at runtime, and none of these values would fail
+loudly on its own if let through: an unknown protocol would reach `wire_protocol()` as an
+internal error, and an unknown output mode would make the encoder send no constraint while
+the decoder still expects JSON."""
 
 _TEMPERATURE_CEILINGS: dict[str, float] = {"openai_chat": 2.0, "anthropic_messages": 1.0}
 """The highest temperature each generation endpoint accepts.
@@ -52,10 +56,25 @@ A route names its dialect, so which ceiling applies is known at wiring — and a
 it is rejected by the provider on every request, which is a boot error wearing a runtime
 error's clothes."""
 
-_GENERATION_FIELDS = ("prompt", "output_mode", "temperature", "max_output_tokens")
+_GENERATION_FIELDS = (
+    "prompt",
+    "output_mode",
+    "structured_output",
+    "temperature",
+    "max_output_tokens",
+)
 """Fields only a generation dialect reads. Refused on the others rather than ignored: a
 prompt on a KServe route is a wiring mistake, and silently dropping it would send the model
 a request the operator believes was shaped by it."""
+
+# ....................... #
+
+
+def _in_closed_set(value: object, names: frozenset[str]) -> bool:
+    """Whether *value* is one of *names*, without hashing a non-string first."""
+
+    return isinstance(value, str) and value in names
+
 
 # ....................... #
 
@@ -109,6 +128,15 @@ class HttpInferenceConfig(TenantAwareIntegrationConfig):
     route answers with a validated ``Out``. ``text`` takes completion prose into a
     one-field ``str`` output model."""
 
+    structured_output: InferenceStructuredOutput | None = None
+    """How ``output_mode='structured'`` asks ``openai_chat`` for its output; refused anywhere
+    else. Defaults to ``json_schema``.
+
+    ``json_schema`` sends the output model's schema as a strict constraint. ``json_object``
+    serves a host that refuses that format (DeepSeek): the schema goes in the system
+    message, the host guarantees only valid JSON, and the shape is enforced by validating
+    the reply — so the strict constraint's wiring refusals do not apply."""
+
     temperature: float | None = None
     """Generation dialects only: sampling temperature, omitted when unset.
 
@@ -146,18 +174,31 @@ class HttpInferenceConfig(TenantAwareIntegrationConfig):
     # ....................... #
 
     def _validate_vocabulary(self) -> None:
-        """The two closed sets `attrs` does not enforce at runtime."""
+        """The closed sets `attrs` does not enforce at runtime.
 
-        if self.protocol not in _PROTOCOL_NAMES:
+        A value is checked as a string first: membership in a frozenset hashes it, so an
+        unhashable value such as a list would raise `TypeError` instead of the refusal.
+        """
+
+        if not _in_closed_set(self.protocol, _PROTOCOL_NAMES):
             raise exc.configuration(
                 f"HttpInferenceConfig.protocol={self.protocol!r} is not a wire dialect this "
                 f"plane speaks; choose one of {', '.join(sorted(_PROTOCOL_NAMES))}."
             )
 
-        if self.output_mode is not None and self.output_mode not in _OUTPUT_MODES:
+        if self.output_mode is not None and not _in_closed_set(self.output_mode, _OUTPUT_MODES):
             raise exc.configuration(
                 f"HttpInferenceConfig.output_mode={self.output_mode!r} is not a generation "
                 f"mode; choose one of {', '.join(sorted(_OUTPUT_MODES))}."
+            )
+
+        if self.structured_output is not None and not _in_closed_set(
+            self.structured_output, _STRUCTURED_OUTPUTS
+        ):
+            raise exc.configuration(
+                f"HttpInferenceConfig.structured_output={self.structured_output!r} is not a "
+                f"structured-output strategy; choose one of "
+                f"{', '.join(sorted(_STRUCTURED_OUTPUTS))}."
             )
 
     # ....................... #
@@ -270,6 +311,17 @@ class HttpInferenceConfig(TenantAwareIntegrationConfig):
                     "max_output_tokens=..., which the endpoint requires on every request."
                 )
 
+            # A strategy nothing reads is refused like any other unread field: the Messages
+            # API honours its constraint natively, and a text route sends none.
+            if self.structured_output is not None and (
+                self.protocol != "openai_chat" or self._output_mode != "structured"
+            ):
+                raise exc.configuration(
+                    f"HttpInferenceConfig(protocol={self.protocol!r}, "
+                    f"output_mode={self._output_mode!r}) does not read structured_output; it "
+                    "is read by the openai_chat dialect in output_mode='structured' only."
+                )
+
         else:
             offending = [field for field in _GENERATION_FIELDS if getattr(self, field) is not None]
 
@@ -298,7 +350,13 @@ class HttpInferenceConfig(TenantAwareIntegrationConfig):
                 # Derived here for its refusals only — the encoder derives it again per
                 # request from the same spec. A schema the constraint cannot express costs
                 # a resolve, not a production request that answers with unconstrained prose.
-                chat_output_schema(spec)
+                # `json_object` sends no constraint, so validating the reply enforces what the
+                # model declares; built here for its refusals, and cached for every request.
+                if self._structured_output == "json_schema":
+                    chat_output_schema(spec)
+
+                else:
+                    json_object_instruction(spec)
 
             else:
                 # The same check against the other dialect's own vocabulary, which is wider:
@@ -311,6 +369,10 @@ class HttpInferenceConfig(TenantAwareIntegrationConfig):
     @property
     def _output_mode(self) -> InferenceOutputMode:
         return self.output_mode if self.output_mode is not None else "structured"
+
+    @property
+    def _structured_output(self) -> InferenceStructuredOutput:
+        return self.structured_output if self.structured_output is not None else "json_schema"
 
     # ....................... #
 
@@ -331,6 +393,7 @@ class HttpInferenceConfig(TenantAwareIntegrationConfig):
             return OpenAiChatProtocol(
                 prompt=self.prompt,
                 output_mode=self._output_mode,
+                structured_output=self._structured_output,
                 temperature=self.temperature,
                 max_output_tokens=self.max_output_tokens,
             )

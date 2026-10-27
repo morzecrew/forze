@@ -35,6 +35,7 @@ from .kernel import (
 from .protocols import (
     AnthropicMessagesProtocol,
     InferenceOutputMode,
+    InferenceStructuredOutput,
     KserveV2Protocol,
     MlflowProtocol,
     OpenAiChatProtocol,
@@ -60,6 +61,7 @@ __all__ = [
     "InferenceHttpShutdownHook",
     "InferenceHttpStartupHook",
     "InferenceOutputMode",
+    "InferenceStructuredOutput",
     "InferenceWireProtocolName",
     "KserveV2Protocol",
     "MlflowProtocol",
