@@ -15,6 +15,7 @@ from forze.application.contracts.secrets import (
     TenantSecretResolver,
 )
 from forze.base.exceptions import exc
+from forze.base.primitives.fingerprint import stable_fingerprint
 
 from .fingerprint import ensure_dsn_fingerprint, ensure_structured_fingerprint
 from .registry import TenantClientRegistry, TenantPoolStats
@@ -104,7 +105,7 @@ class RoutedTenantClientBase(Generic[C]):
         self._pool = TenantClientRegistry(
             max_entries=self.max_cached_tenants,
             create=self._create_client,
-            dispose=lambda client: client.close(),
+            dispose=self._dispose_client,
             guarded=self.guarded,
         )
 
@@ -174,6 +175,13 @@ class RoutedTenantClientBase(Generic[C]):
         creds = await self.resolve_credentials(tenant_id)
 
         return await self.initialize_client(tenant_id, creds)
+
+    # ....................... #
+
+    async def _dispose_client(self, client: C) -> None:
+        """Close a client the pool evicted or drained. A subclass may defer the close."""
+
+        await client.close()
 
     # ....................... #
 
@@ -352,11 +360,25 @@ class StructuredSecretRoutedTenantClientBase(RoutedTenantClientBase[C]):
 
     # ....................... #
 
+    def access_fingerprint_extra_parts(self, tenant_id: UUID) -> Sequence[str]:
+        """Per-tenant facets the client captures at build time from outside the secret.
+
+        The structured counterpart of the DSN base's hook: override it, not
+        :meth:`ensure_access_fingerprint`, so a change to one of them evicts the client as a
+        credential rotation does. Default none, which leaves the fingerprint as it was.
+        """
+
+        return ()
+
+    # ....................... #
+
     async def ensure_access_fingerprint(self, tenant_id: UUID) -> None:
         async def _fingerprint() -> str:
             resolved = await self.resolve_credentials(tenant_id)
+            fingerprint = self.credential_fingerprint(resolved)
+            extra = self.access_fingerprint_extra_parts(tenant_id)
 
-            return self.credential_fingerprint(resolved)
+            return stable_fingerprint(fingerprint, *extra) if extra else fingerprint
 
         await ensure_structured_fingerprint(
             self._pool.get_fingerprint,

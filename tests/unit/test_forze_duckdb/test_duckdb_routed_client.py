@@ -18,6 +18,7 @@ from datetime import timedelta
 from typing import Any, ClassVar
 from uuid import UUID, uuid4
 
+import duckdb
 import pytest
 
 from forze.application.contracts.secrets import SecretRef
@@ -25,6 +26,7 @@ from forze.base.exceptions import CoreException, ExceptionKind
 from forze_dst.runtime import run_simulation
 from forze_dst.scheduler import PCTReorderer
 from forze_duckdb import LakeTenantCatalog, RoutedDuckDbClient
+from forze_duckdb.adapters import dynamic_read_error
 from forze_duckdb.kernel.client import routed_client
 
 # ----------------------- #
@@ -234,6 +236,34 @@ class TestInstances:
         assert instance.closed
         await routed.close()
 
+    async def test_a_failed_build_step_is_a_configuration_error_not_the_statements(
+        self, fake_engine: type[_FakeEngine], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A missing extension reaches the caller as the deployment's fault, never as a
+        statement taxonomy code."""
+
+        async def no_iceberg(engine: _FakeEngine, command: str, *args: Any, **kwargs: Any) -> None:
+            if command.startswith("CREATE SECRET"):
+                raise duckdb.InvalidInputException("Secret type 'iceberg' does not exist")
+
+        monkeypatch.setattr(_FakeEngine, "run_command", no_iceberg)
+        routed = _routed(_MemSecrets(_A))
+        await routed.startup()
+
+        with pytest.raises(CoreException) as ei:
+            await _read(routed, _A)
+
+        assert ei.value.code == "duckdb_session_setup_failed"
+        assert ei.value.kind is ExceptionKind.CONFIGURATION
+        assert ei.value.details == {
+            "tenant_id": str(_A),
+            "error": "Secret type 'iceberg' does not exist",
+        }
+        assert dynamic_read_error(ei.value, route="r") is ei.value  # no statement code
+        (instance,) = fake_engine.built
+        assert instance.closed
+        await routed.close()
+
     async def test_evict_tenant_rebuilds_with_rotated_credentials(
         self, fake_engine: type[_FakeEngine]
     ) -> None:
@@ -278,6 +308,91 @@ class TestInstances:
         await asyncio.gather(*(_read(routed, t, 0.05) for t in (_A, _B, _C)))
 
         assert loop.time() - started >= 0.1  # the third statement waited for a slot
+        await routed.close()
+
+
+class TestTeardownAndRemapping:
+    """A stuck close never holds a caller; a remapped catalog rebuilds the instance."""
+
+    @pytest.fixture
+    def stuck_close(
+        self, fake_engine: type[_FakeEngine], monkeypatch: pytest.MonkeyPatch
+    ) -> asyncio.Event:
+        """Every instance's close waits for the gate, as one with a hung worker does."""
+
+        gate = asyncio.Event()
+
+        async def close(engine: _FakeEngine) -> None:
+            await gate.wait()
+            engine.closed = True
+
+        monkeypatch.setattr(_FakeEngine, "close", close)
+        return gate
+
+    async def test_the_last_caller_of_a_drained_instance_is_not_held_by_its_close(
+        self, fake_engine: type[_FakeEngine], stuck_close: asyncio.Event
+    ) -> None:
+        routed = _routed(_MemSecrets(_A, _B), max_cached_tenants=1)
+        await routed.startup()
+        running = asyncio.create_task(_read(routed, _A, 0.05))
+        await asyncio.sleep(0.01)
+        await asyncio.wait_for(_read(routed, _B), 1)  # A drains while its statement runs
+
+        assert await asyncio.wait_for(running, 1)  # the scope exit does not await the close
+        assert not fake_engine.built[0].closed
+
+        stuck_close.set()
+        await routed.close()
+        assert all(engine.closed for engine in fake_engine.built)
+
+    async def test_an_overflow_eviction_does_not_stall_another_tenants_first_call(
+        self, fake_engine: type[_FakeEngine], stuck_close: asyncio.Event
+    ) -> None:
+        routed = _routed(_MemSecrets(_A, _B), max_cached_tenants=1)
+        await routed.startup()
+        await _read(routed, _A)
+
+        assert await asyncio.wait_for(_read(routed, _B), 1)  # evicts the idle A
+
+        close = asyncio.create_task(routed.close())
+        await asyncio.sleep(0.01)
+        assert not close.done()  # close waits for the outstanding teardown
+
+        stuck_close.set()
+        await close
+        assert all(engine.closed for engine in fake_engine.built)
+
+    async def test_a_remapped_catalog_rebuilds_the_instance(
+        self, fake_engine: type[_FakeEngine]
+    ) -> None:
+        warehouses = {_A: "wh-old"}
+
+        def catalog(tenant: UUID) -> LakeTenantCatalog:
+            return LakeTenantCatalog(
+                uri="http://catalog.test/catalog",
+                warehouse=warehouses[tenant],
+                oauth2_server_uri="http://idp.test/token",
+                oauth2_scope="profile",
+                storage_prefix="s3://lake/a/",
+            )
+
+        routed = RoutedDuckDbClient(
+            secrets=_MemSecrets(_A),
+            secret_ref_for_tenant=lambda tenant: SecretRef(path=str(tenant)),
+            tenant_provider=_tenant.get,
+            catalog_for_tenant=catalog,
+            fingerprint_ttl=timedelta(milliseconds=1),
+        )
+        await routed.startup()
+        await _read(routed, _A)
+        warehouses[_A] = "wh-new"
+        await asyncio.sleep(0.01)
+
+        await _read(routed, _A)
+
+        old, new = fake_engine.built
+        assert old.closed and not new.closed
+        assert any("ATTACH 'wh-new'" in statement for statement in new.statements)
         await routed.close()
 
 

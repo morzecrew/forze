@@ -7,8 +7,9 @@ require_duckdb()
 # ....................... #
 
 import asyncio
+import threading
 from collections.abc import AsyncGenerator, Callable, Mapping, Sequence
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import Future, ThreadPoolExecutor
 from datetime import timedelta
 from decimal import Decimal
 from typing import Any, TypeVar, final
@@ -19,13 +20,14 @@ from pydantic import BaseModel
 
 from forze.application.integrations.dynamic_read import (
     MULTI_STATEMENT_CODE,
+    STATEMENT_INVALID_CODE,
     WRITE_REFUSED_CODE,
 )
-from forze.base.exceptions import exc
+from forze.base.exceptions import CoreException, exc
 from forze.base.primitives import JsonDict
 
 from .._logger import logger
-from .port import DuckDbClientPort
+from .port import DuckDbDynamicReadClientPort
 from .sql import apply_limit_offset
 from .value_objects import DuckDbConfig, DuckDbQueryResult
 
@@ -40,6 +42,9 @@ QUERY_TIMEOUT_CODE = "duckdb_query_timeout"
 
 _VENDED_SECRET_PREFIX = "__internal_ic_"  # nosec B105 - a secret-name prefix, not a secret
 """Name prefix of the temporary S3 secrets the ``iceberg`` extension creates per ``LoadTable``."""
+
+_REINTERRUPT_S = 0.1
+"""How often a timed-out statement is interrupted again until its worker returns."""
 
 # ....................... #
 
@@ -179,6 +184,62 @@ def _drop_vended_secrets(conn: Any) -> None:
 # ....................... #
 
 
+def _timed_out(detail: str) -> CoreException:
+    # Infrastructure (not internal): timeouts are transient backend conditions, mirroring how
+    # Postgres/ClickHouse classify query timeouts for retry purposes.
+    return exc.infrastructure(f"DuckDB query exceeded timeout {detail}", code=QUERY_TIMEOUT_CODE)
+
+
+def _open_cursor(conn: Any, holder: dict[str, Any]) -> Any:
+    """Open a statement's cursor and publish it for interruption, unless its caller gave up.
+
+    Publish first, then check: the timed-out caller raises the flag first, then reads the cursor,
+    so one of the two always sees the other.
+    """
+
+    cursor = conn.cursor()
+    holder["cursor"] = cursor
+
+    if holder.get("expired"):
+        holder.pop("cursor", None)
+        cursor.close()
+        raise _timed_out("before it started")
+
+    return cursor
+
+
+def _keep_interrupting(loop: asyncio.AbstractEventLoop, fut: Any, cursor: Any) -> None:
+    """Interrupt *cursor* until *fut* settles.
+
+    DuckDB drops an interrupt that arrives before its statement starts executing, so a single
+    call can miss a worker that has published its cursor but not yet begun.
+    """
+
+    if cursor is None or fut.done():
+        return
+
+    try:
+        cursor.interrupt()
+
+    except Exception:  # nosec B110 - best-effort cancellation
+        logger.debug("DuckDB cursor interrupt failed", exc_info=True)
+
+    loop.call_later(_REINTERRUPT_S, _keep_interrupting, loop, fut, cursor)
+
+
+def _release_from_worker(loop: asyncio.AbstractEventLoop, admission: asyncio.Semaphore) -> None:
+    """Free an admission slot once the work that held it has finished, from any thread."""
+
+    try:
+        loop.call_soon_threadsafe(admission.release)
+
+    except RuntimeError:  # the loop is closed: no caller is left waiting for the slot
+        logger.debug("DuckDB admission slot released after its loop closed")
+
+
+# ....................... #
+
+
 def _effective_limit(limit: int | None, max_rows: int | None) -> int | None:
     """Combine an explicit window ``limit`` with an options ``max_rows`` cap."""
 
@@ -192,7 +253,7 @@ def _effective_limit(limit: int | None, max_rows: int | None) -> int | None:
 
 @final
 @attrs.define(slots=True)
-class DuckDbClient(DuckDbClientPort):
+class DuckDbClient(DuckDbDynamicReadClientPort):
     """In-process DuckDB client exposing an async, concurrency-safe query surface.
 
     DuckDB is synchronous and embedded; queries run on a dedicated bounded thread
@@ -208,6 +269,8 @@ class DuckDbClient(DuckDbClientPort):
     __executor: ThreadPoolExecutor | None = attrs.field(default=None, init=False)
     __admission: asyncio.Semaphore | None = attrs.field(default=None, init=False)
     __init_lock: asyncio.Lock = attrs.field(factory=asyncio.Lock, init=False)
+    __dynamic_lock: threading.Lock = attrs.field(factory=threading.Lock, init=False)
+    __dynamic_running: int = attrs.field(default=0, init=False)
 
     # ....................... #
     # Lifecycle
@@ -347,17 +410,29 @@ class DuckDbClient(DuckDbClientPort):
         holder: dict[str, Any],
         timeout: timedelta | None,
     ) -> T:
-        """Run *fn* on the dedicated executor, honoring *timeout* via cursor interrupt."""
+        """Run *fn* on the dedicated executor, honoring *timeout* via cursor interrupt.
+
+        One deadline covers the wait for an admission slot and the statement itself. The slot is
+        released when the worker returns, not when the caller stops waiting, so a cancelled or
+        timed-out caller never frees capacity its statement still uses.
+        """
 
         loop = asyncio.get_running_loop()
         executor = self.__require_executor()
         admission = self.__admission
+        timeout_sec = None if timeout is None else max(0.0, timeout.total_seconds())
+        deadline = None if timeout_sec is None else loop.time() + timeout_sec
 
         if admission is not None:
-            await admission.acquire()
+            try:
+                async with asyncio.timeout_at(deadline):
+                    await admission.acquire()
+
+            except TimeoutError:
+                raise _timed_out(f"of {timeout_sec}s waiting for a slot") from None
 
         try:
-            fut = loop.run_in_executor(executor, fn)
+            work: Future[T] = executor.submit(fn)
 
         except BaseException:
             if admission is not None:
@@ -366,32 +441,21 @@ class DuckDbClient(DuckDbClientPort):
             raise
 
         if admission is not None:
-            fut.add_done_callback(lambda _fut: admission.release())
+            work.add_done_callback(lambda _work: _release_from_worker(loop, admission))
 
-        if timeout is None:
+        fut = asyncio.wrap_future(work, loop=loop)
+
+        if deadline is None:
             return await fut
 
-        timeout_sec = max(0.0, timeout.total_seconds())
-        done, _pending = await asyncio.wait({fut}, timeout=timeout_sec)
+        done, _pending = await asyncio.wait({fut}, timeout=max(0.0, deadline - loop.time()))
 
         if fut not in done:
-            cursor = holder.get("cursor")
-
-            if cursor is not None:
-                try:
-                    cursor.interrupt()
-
-                except Exception:  # nosec B110 - best-effort cancellation
-                    logger.debug("DuckDB cursor interrupt failed", exc_info=True)
-
+            holder["expired"] = True
+            work.cancel()  # a statement still queued never starts
+            _keep_interrupting(loop, fut, holder.get("cursor"))
             await asyncio.gather(fut, return_exceptions=True)
-            # Infrastructure (not internal): timeouts are transient backend
-            # conditions, mirroring how Postgres/ClickHouse classify query
-            # timeouts for retry purposes.
-            raise exc.infrastructure(
-                f"DuckDB query exceeded timeout of {timeout_sec}s",
-                code=QUERY_TIMEOUT_CODE,
-            )
+            raise _timed_out(f"of {timeout_sec}s")
 
         return fut.result()
 
@@ -414,8 +478,7 @@ class DuckDbClient(DuckDbClientPort):
         holder: dict[str, Any] = {}
 
         def _exec() -> DuckDbQueryResult:
-            cursor = conn.cursor()
-            holder["cursor"] = cursor
+            cursor = _open_cursor(conn, holder)
 
             try:
                 if bind is not None:
@@ -505,8 +568,7 @@ class DuckDbClient(DuckDbClientPort):
         holder: dict[str, Any] = {}
 
         def _exec() -> None:
-            cursor = conn.cursor()
-            holder["cursor"] = cursor
+            cursor = _open_cursor(conn, holder)
 
             try:
                 if bind is not None:
@@ -552,33 +614,56 @@ class DuckDbClient(DuckDbClientPort):
         bind = _params_dict(params)
         holder: dict[str, Any] = {}
 
+        def _run(cursor: Any) -> list[JsonDict]:
+            if use is not None:
+                cursor.execute(
+                    "USE " + ".".join(_quote_identifier(part) for part in use.split("."))
+                )
+
+            single = _single_select(cursor, statement)
+
+            if bind is not None:
+                cursor.execute(single, bind)
+
+            else:
+                cursor.execute(single)
+
+            columns = [column[0] for column in cursor.description]
+            duplicates = sorted({name for name in columns if columns.count(name) > 1})
+
+            if duplicates:
+                # A row is a mapping: a second column of the same name would replace the first.
+                raise exc.validation(
+                    "DuckDB dynamic read refuses a result with duplicate column names.",
+                    code=STATEMENT_INVALID_CODE,
+                    details={"detail": f"duplicate column names: {', '.join(duplicates)}"},
+                )
+
+            return [dict(zip(columns, row, strict=True)) for row in cursor.fetchmany(row_probe)]
+
         def _exec() -> list[JsonDict]:
-            cursor = conn.cursor()
-            holder["cursor"] = cursor
+            with self.__dynamic_lock:
+                self.__dynamic_running += 1
 
             try:
-                if use is not None:
-                    cursor.execute(
-                        "USE " + ".".join(_quote_identifier(part) for part in use.split("."))
-                    )
+                cursor = _open_cursor(conn, holder)
 
-                single = _single_select(cursor, statement)
+                try:
+                    return _run(cursor)
 
-                if bind is not None:
-                    cursor.execute(single, bind)
-
-                else:
-                    cursor.execute(single)
-
-                columns = [column[0] for column in cursor.description]
-
-                return [dict(zip(columns, row, strict=True)) for row in cursor.fetchmany(row_probe)]
+                finally:
+                    holder.pop("cursor", None)
+                    # An unexhausted stream rolls back here, discarding its own vended secret.
+                    cursor.close()
 
             finally:
-                holder.pop("cursor", None)
-                # An unexhausted stream rolls back here, discarding its own vended secret.
-                cursor.close()
-                _drop_vended_secrets(conn)
+                # Drop only when no other statement is running: a concurrent one may be reading
+                # with a secret it was just vended. Held across the drop, so none starts meanwhile.
+                with self.__dynamic_lock:
+                    self.__dynamic_running -= 1
+
+                    if self.__dynamic_running == 0:
+                        _drop_vended_secrets(conn)
 
         return await self.__submit(_exec, holder, timeout)
 

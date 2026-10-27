@@ -236,6 +236,11 @@ def test_a_conversion_failure_does_not_echo_the_value() -> None:
             {"route": ROUTE, "statement_type": "COPY"},
         ),
         (exc.infrastructure("x", code=QUERY_TIMEOUT_CODE), TIMEOUT_CODE, {"route": ROUTE}),
+        (
+            exc.validation("x", code=STATEMENT_INVALID_CODE, details={"detail": "dup: id"}),
+            STATEMENT_INVALID_CODE,
+            {"route": ROUTE, "detail": "dup: id"},
+        ),
     ],
 )
 def test_the_client_refusals_gain_the_route(

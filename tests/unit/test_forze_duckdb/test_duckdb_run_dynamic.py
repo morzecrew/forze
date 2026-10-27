@@ -11,24 +11,30 @@ import asyncio
 import os
 import re
 import secrets
+import time
+import typing
 from collections.abc import AsyncIterator
 from datetime import timedelta
 from pathlib import Path
+from typing import Any
 
 import duckdb
 import pytest
 
 from forze.application.integrations.dynamic_read import (
     MULTI_STATEMENT_CODE,
+    STATEMENT_INVALID_CODE,
     WRITE_REFUSED_CODE,
 )
 from forze.base.exceptions import CoreException, ExceptionKind
-from forze_duckdb import DuckDbClient, DuckDbConfig
+from forze_duckdb import DuckDbClient, DuckDbClientPort, DuckDbConfig, DuckDbDynamicReadClientPort
 from forze_duckdb.kernel.client import QUERY_TIMEOUT_CODE
+from forze_duckdb.kernel.client import client as client_module
 
 _TIMEOUT = timedelta(seconds=5)
 _S3_SECRET = f"TYPE s3, KEY_ID '{secrets.token_hex(4)}', SECRET '{secrets.token_hex(8)}'"
 _HEAVY_SQL = "SELECT count(*) AS n FROM range(100000) a, range(100000) b"
+_SPIN = "SELECT count(*) AS n FROM range(20000000000) t(i) WHERE i % 7 = 3"
 
 # ----------------------- #
 
@@ -250,3 +256,136 @@ async def test_admission_is_held_until_the_worker_returns() -> None:
     finally:
         for c in (first, second):
             await c.close()
+
+
+# ....................... #
+# Review fixes: slots, queued statements, lost interrupts, concurrent drops, duplicates
+
+
+async def _wait_until(predicate: Any, *, within: float = 30.0) -> None:
+    deadline = asyncio.get_running_loop().time() + within
+
+    while not predicate():
+        assert asyncio.get_running_loop().time() < deadline, "condition never held"
+        await asyncio.sleep(0.02)
+
+
+async def test_a_cancelled_caller_leaves_the_slot_with_the_running_worker() -> None:
+    admission = asyncio.Semaphore(1)
+    c = DuckDbClient()
+    await c.initialize(":memory:", extensions=(), admission=admission)
+
+    try:
+        caller = asyncio.create_task(c.run_query(_HEAVY_SQL))
+        await asyncio.sleep(0.05)
+        caller.cancel()
+        await asyncio.gather(caller, return_exceptions=True)
+        await asyncio.sleep(0.05)
+
+        assert admission.locked()  # the thread is still inside DuckDB
+
+        await _wait_until(lambda: not admission.locked())
+
+    finally:
+        await c.close()
+
+
+async def test_the_timeout_covers_the_wait_for_a_slot() -> None:
+    admission = asyncio.Semaphore(1)
+    busy, waiting = DuckDbClient(), DuckDbClient()
+
+    for c in (busy, waiting):
+        await c.initialize(":memory:", extensions=(), admission=admission)
+
+    try:
+        running = asyncio.create_task(busy.run_query(_HEAVY_SQL))
+        await asyncio.sleep(0.05)
+
+        with pytest.raises(CoreException) as ei:
+            await waiting.run_query("SELECT 1", timeout=timedelta(milliseconds=100))
+
+        assert ei.value.code == QUERY_TIMEOUT_CODE
+        assert not running.done()  # it gave up behind the slot, not after it
+        await running
+
+    finally:
+        for c in (busy, waiting):
+            await c.close()
+
+
+async def test_a_statement_timed_out_in_the_queue_never_runs() -> None:
+    c = DuckDbClient()
+    await c.initialize(":memory:", config=DuckDbConfig(max_concurrent_queries=1), extensions=())
+
+    try:
+        running = asyncio.create_task(c.run_query(_HEAVY_SQL))
+        await asyncio.sleep(0.05)
+
+        with pytest.raises(CoreException) as ei:
+            await c.run_command(
+                "CREATE TABLE marker AS SELECT 1 AS i", timeout=timedelta(milliseconds=50)
+            )
+
+        assert ei.value.code == QUERY_TIMEOUT_CODE
+        await running
+        tables = await c.run_query("SELECT count(*) AS n FROM duckdb_tables()")
+        assert tables.rows == [{"n": 0}]
+
+    finally:
+        await c.close()
+
+
+async def test_an_interrupt_that_lands_before_execute_is_sent_again(
+    lake_client: DuckDbClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """DuckDB drops an interrupt sent before its statement starts, so one is not enough."""
+
+    real = client_module._open_cursor
+
+    def slow_to_start(conn: Any, holder: dict[str, Any]) -> Any:
+        cursor = real(conn, holder)
+        time.sleep(0.3)  # the caller's single interrupt lands here, and is dropped
+        return cursor
+
+    monkeypatch.setattr(client_module, "_open_cursor", slow_to_start)
+    started = time.monotonic()
+
+    with pytest.raises(CoreException) as ei:
+        await lake_client.run_query(_SPIN, timeout=timedelta(milliseconds=100))
+
+    assert ei.value.code == QUERY_TIMEOUT_CODE
+    assert time.monotonic() - started < 5  # _SPIN alone runs for minutes
+
+
+async def test_a_vended_secret_outlives_a_statement_while_another_runs(
+    lake_client: DuckDbClient,
+) -> None:
+    running = asyncio.create_task(
+        lake_client.run_dynamic(_HEAVY_SQL, row_probe=2, timeout=timedelta(seconds=30))
+    )
+    await asyncio.sleep(0.1)
+    # Stands in for the secret the running statement was vended for its scan.
+    await lake_client.run_command(f"CREATE TEMPORARY SECRET __internal_ic_a ({_S3_SECRET})")
+
+    await lake_client.run_dynamic("SELECT 1 AS one", row_probe=2, timeout=_TIMEOUT)
+
+    assert await _secret_names(lake_client) == ["__internal_ic_a"]
+    await running
+    assert await _secret_names(lake_client) == []
+
+
+async def test_duplicate_column_names_are_refused(lake_client: DuckDbClient) -> None:
+    with pytest.raises(CoreException) as ei:
+        await lake_client.run_dynamic(
+            "SELECT 1 AS id, 2 AS id, 3 AS n", row_probe=2, timeout=_TIMEOUT
+        )
+
+    assert ei.value.code == STATEMENT_INVALID_CODE
+    assert ei.value.details == {"detail": "duplicate column names: id"}
+
+
+def test_run_dynamic_is_not_part_of_the_base_port() -> None:
+    """An external DuckDbClientPort implementation keeps satisfying it without run_dynamic."""
+
+    assert "run_dynamic" not in typing.get_protocol_members(DuckDbClientPort)
+    assert "run_dynamic" in typing.get_protocol_members(DuckDbDynamicReadClientPort)

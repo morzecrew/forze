@@ -1,10 +1,11 @@
 """DuckDB governed dynamic-read dep factory."""
 
-from typing import TYPE_CHECKING, final
+from typing import TYPE_CHECKING, cast, final
 
 import attrs
 
 from ....adapters.dynamic_read import DuckDbDynamicReadAdapter
+from ....kernel.client import DuckDbDynamicReadClientPort
 from ..configs import DuckDbDynamicReadConfig
 from ..keys import DuckDbClientDepKey
 
@@ -30,8 +31,11 @@ class ConfigurableDuckDbDynamicRead:
         ctx: "ExecutionContext",
         spec: "DynamicReadSpec",
     ) -> DuckDbDynamicReadAdapter:
+        # The module wires dynamic reads on a RoutedDuckDbClient only (the origin floor).
+        client = cast(DuckDbDynamicReadClientPort, ctx.deps.provide(DuckDbClientDepKey))
+
         return DuckDbDynamicReadAdapter(
-            client=ctx.deps.provide(DuckDbClientDepKey),
+            client=client,
             spec=spec,
             config=self.config,
             statement_timeout=self.config.statement_timeout,

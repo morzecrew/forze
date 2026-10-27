@@ -45,12 +45,13 @@ from pydantic import BaseModel, SecretStr
 from forze.application.contracts.tenancy.routed_client_base import (
     StructuredSecretRoutedTenantClientBase,
 )
-from forze.base.exceptions import exc
+from forze.base.exceptions import CoreException, exc
 from forze.base.primitives import JsonDict
 from forze.base.primitives.fingerprint import build_routing_fingerprint
 
+from .._logger import logger
 from .client import DuckDbClient
-from .port import DuckDbClientPort
+from .port import DuckDbDynamicReadClientPort
 from .value_objects import DuckDbConfig, DuckDbQueryResult
 
 # ----------------------- #
@@ -274,15 +275,17 @@ async def _attest(client: DuckDbClient, expected: dict[str, str]) -> list[str]:
 @attrs.define(slots=True, kw_only=True)
 class RoutedDuckDbClient(
     StructuredSecretRoutedTenantClientBase[DuckDbClient],
-    DuckDbClientPort,
+    DuckDbDynamicReadClientPort,
 ):
     """Routes each call to a lazily built, locked-down :class:`DuckDbClient` for the tenant.
 
     The tenant's secret (:class:`LakeCatalogCredentials`) and its :class:`LakeTenantCatalog`
     are resolved on first use; the instance then runs the module's hardening sequence and an
-    attestation, and serves nothing if the attestation fails. It has no field for static
-    object-store credentials, raw secrets, sources or bootstrap statements: vended credentials
-    are the only ones an instance holds.
+    attestation, and serves nothing if a step or the attestation fails (both configuration
+    errors, never a statement's). It has no field for static
+    object-store credentials, raw secrets, sources or bootstrap statements. An instance holds
+    the tenant's catalog principal for its life, and the S3 credentials vended for a statement
+    until no statement is running.
 
     Register it under :data:`~forze_duckdb.execution.deps.DuckDbClientDepKey` and use
     :func:`~forze.application.execution.lifecycle.builtin.routed_client_lifecycle_step`, not
@@ -291,6 +294,10 @@ class RoutedDuckDbClient(
     An instance resolves a namespace once: a namespace it found missing stays missing, even
     after the grant or the namespace appears (EXECUTION-LOG D-026). Call :meth:`evict_tenant`
     after restoring a grant or creating a namespace, as after rotating credentials.
+
+    An evicted or drained instance closes in the background: closing waits for its workers, and
+    one stuck on a hung request takes about 120 s (D-028). Until then it parks a thread of the
+    loop's default executor. :meth:`close` waits for every such teardown.
     """
 
     catalog_for_tenant: Callable[[UUID], LakeTenantCatalog]
@@ -328,6 +335,7 @@ class RoutedDuckDbClient(
     )
 
     _admission: asyncio.Semaphore = attrs.field(init=False)
+    _teardowns: set[asyncio.Task[None]] = attrs.field(factory=set, init=False)
 
     # ....................... #
 
@@ -365,6 +373,35 @@ class RoutedDuckDbClient(
 
         return build_routing_fingerprint(public=[lake.client_id], secret=[lake.client_secret])
 
+    def access_fingerprint_extra_parts(self, tenant_id: UUID) -> Sequence[str]:
+        # Captured at build alongside the secret: a remapped catalog must rebuild the instance.
+        catalog = self.catalog_for_tenant(tenant_id)
+
+        return (
+            catalog.uri,
+            catalog.warehouse,
+            catalog.oauth2_server_uri,
+            catalog.oauth2_scope,
+            catalog.storage_prefix,
+        )
+
+    # ....................... #
+
+    async def _dispose_client(self, client: DuckDbClient) -> None:
+        task = asyncio.get_running_loop().create_task(client.close())
+        self._teardowns.add(task)
+        task.add_done_callback(self._teardown_done)
+
+    def _teardown_done(self, task: asyncio.Task[None]) -> None:
+        self._teardowns.discard(task)
+
+        if not task.cancelled() and task.exception() is not None:
+            logger.warning("A DuckDB tenant instance failed to close", exc_info=task.exception())
+
+    async def close(self) -> None:
+        await super().close()
+        await asyncio.gather(*self._teardowns, return_exceptions=True)
+
     # ....................... #
 
     async def initialize_client(
@@ -385,19 +422,32 @@ class RoutedDuckDbClient(
         client = DuckDbClient()
 
         try:
-            await client.initialize(
-                ":memory:",
-                config=self.engine,
-                extensions=_EXTENSIONS,
-                install_extensions=False,
-                connect_config=_connect_config(self.extension_directory),
-                admission=self._admission,
-            )
+            try:
+                await client.initialize(
+                    ":memory:",
+                    config=self.engine,
+                    extensions=_EXTENSIONS,
+                    install_extensions=False,
+                    connect_config=_connect_config(self.extension_directory),
+                    admission=self._admission,
+                )
 
-            for statement in _session_statements(
-                catalog, creds, http_timeout_seconds=http_timeout_seconds
-            ):
-                await client.run_command(statement)
+                for statement in _session_statements(
+                    catalog, creds, http_timeout_seconds=http_timeout_seconds
+                ):
+                    await client.run_command(statement)
+
+            except CoreException:
+                raise
+
+            except Exception as error:
+                # A failed step is the deployment's fault (an extension missing from the image,
+                # a principal the catalog refuses), never that of the statement waiting on it.
+                raise exc.configuration(
+                    "The tenant's DuckDB lake session could not be set up; it serves nothing.",
+                    code="duckdb_session_setup_failed",
+                    details={"tenant_id": str(tenant_id), "error": str(error)},
+                ) from error
 
             problems = await _attest(
                 client,

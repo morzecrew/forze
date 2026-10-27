@@ -1472,12 +1472,15 @@ the authorizer's cache TTL (D-032). D-028 is `OPEN`. P1 works under option (a): 
 ~120 s bound for a hung request and size `max_concurrent_queries_total` from it. The DuckDbClient
 early return is the last commit on the branch, on its own, so it can be dropped (D-042).
 
-**Drift count: 0.** Ten entries, D-033 to D-042: four `discovery`, six `spec-gap`. Every
-departure below was forced by a probe result or by a sketch that did not fit the shipped code.
+**Drift count: 0.** Fourteen entries, D-033 to D-046: five `discovery`, nine `spec-gap`. Most
+were forced by a probe result or by a sketch that did not fit the shipped code. Five were not.
+D-039, D-042, D-043 and D-045 are design choices that follow from working assumption (a) of
+D-028, and D-044 closes a concurrency gap in D-025's row. D-043 to D-046 came out of a review of the branch,
+before it was published.
 
 **Where each battery item lives.** The real leg is
 [`test_lake_routed_reads.py`](../tests/integration/test_forze_duckdb/test_lake_routed_reads.py):
-66 tests on one module-scoped stack, about 28 s including the stack. It starts its own stack
+72 tests on one module-scoped stack, about 29 s including the stack. It starts its own stack
 rather than share the P0 module's, which costs one more stack start (about 20 s) in the duckdb
 shard. Items 3–10, 12–14 and 16 are classes there, named by number. Item 1 is P0's
 `TestFixtureSelfTest`, imported so it runs first against this module's stack. Item 2 is in the
@@ -1598,13 +1601,22 @@ and a rotate-and-evict race. With guarded eviction sabotaged, all 20 seeds fail.
   - The client is built long before any secret is read, so the empty `client_id` is refused when
     the tenant's secret is first resolved, as `duckdb_lake_client_id_empty` (configuration).
   - `http_timeout` must be a whole number of seconds, at least 1, because DuckDB takes seconds.
+  - The catalog fields are captured at build alongside the secret, so they belong in the
+    instance's fingerprint, as the routed base's rotation contract says. The structured base
+    had no hook for facets outside the secret, so it gains `access_fingerprint_extra_parts`,
+    the DSN base's hook under the same name, empty by default. A remapped catalog then
+    rebuilds the instance after `evict_tenant` or a `fingerprint_ttl` refresh.
+  - §4.2 puts `run_dynamic` on `DuckDbClientPort`. Adding a method to a public `Protocol`
+    breaks every external implementation of it, so it lives on a sub-protocol,
+    `DuckDbDynamicReadClientPort`, which the adapter requires.
 - **Because:** the sketch predates D-024, D-027 and D-030, and was not checked against the
-  extension's option names.
+  extension's option names or the shipped base and port.
 - **Class:** `spec-gap`.
 - **Consequence:** none beyond the fields. `guarded` stays a field, as sketched, and `False` is
   refused with `duckdb_routed_client_unguarded`.
 - **Proposed row (RFC 0078):** `ASSUMED` — the catalog carries `storage_prefix`, the client
-  carries `extension_directory`, and `ATTACH` uses `ENDPOINT`.
+  carries `extension_directory`, `ATTACH` uses `ENDPOINT`, the fingerprint covers the catalog,
+  and `run_dynamic` is on a sub-protocol.
 
 ## D-037 — `duckdb_routed_client_static_credentials` has nothing to inspect
 
@@ -1638,6 +1650,14 @@ and a rotate-and-evict race. With guarded eviction sabotaged, all 20 seeds fail.
   - The client's own timeout is an `infrastructure` error, which the adapter could not tell
     apart from any other.
   - A comment-only string holds zero statements.
+  - A result with two columns of the same name (`SELECT a.id, b.id`) collapses into one key
+    when a row becomes a mapping, and the first value is lost without a word.
+  - A broken image fails while the instance is built. A missing `LOAD iceberg` or `LOAD httpfs`
+    raises `InvalidInputException` or `CatalogException`, and a missing catalog secret raises
+    the bare `Error`. Mapped like a statement's failure, the first two would blame the caller's
+    statement for a deployment fault. The same is true of D-029's build-time refusals: an
+    ungranted principal's `NotFound_404` and a wrong secret's `Unauthorized_401` arrive while
+    §3.4 runs, before any statement.
 - **Because:** these surfaced only once the adapter ran against the stack.
 - **Class:** `spec-gap`.
 - **Consequence:** the mapping follows these rules.
@@ -1650,6 +1670,14 @@ and a rotate-and-evict race. With guarded eviction sabotaged, all 20 seeds fail.
   - The client's timeout carries the code `duckdb_query_timeout`. That is a user-visible change
     to shipped code, recorded under `Changed`.
   - Zero statements is `dynamic_read_multi_statement`, by §4.2's "`len != 1`".
+  - Duplicate column names are refused as `dynamic_read_statement_invalid`, naming them.
+  - Anything a step of §3.4 raises before the attestation becomes
+    `duckdb_session_setup_failed` (configuration), with the engine's message in the details,
+    and the instance is closed. That covers the missing extensions and secret, and D-029's
+    `NotFound_404` and `Unauthorized_401` at build time. It overrides D-029's row for
+    refusals raised while an instance is built, which stays as written. The same refusals
+    raised by a statement still map as D-029 says. Battery 14 and 16 pin it. Nothing is served
+    either way.
   - Anything unmatched goes through `fallback_exception_mapper("DuckDB")` to `infrastructure`.
 - **Proposed row (RFC 0078):** `ASSUMED` — §4.5 gains the rows above, and battery 16 pins them.
 
@@ -1664,11 +1692,13 @@ and a rotate-and-evict race. With guarded eviction sabotaged, all 20 seeds fail.
 - **Because:** the semaphore exists to bound the work, and the caller's lifetime no longer
   bounds the work.
 - **Class:** `spec-gap`.
-- **Consequence:** `DuckDbClient.initialize(admission=…)` takes a shared semaphore. Each
-  statement holds a slot from submission until its worker future completes. The routed client
-  passes one semaphore to every instance, so instance creation counts against the bound too.
-  One gap remains. A caller cancelled outright, rather than timed out, releases the slot when
-  asyncio marks the executor future cancelled, which is before the thread returns.
+- **Consequence:** `DuckDbClient.initialize(admission=…)` takes a shared semaphore. A statement
+  takes a slot before it is submitted with `executor.submit`, and the concurrent future's own
+  done callback gives it back through `loop.call_soon_threadsafe`. So the slot is held until the
+  thread returns, whether the caller waits, times out or is cancelled. A cancelled caller
+  cancels only asyncio's wrapper, which settles before the thread does. A statement cancelled
+  while still queued gives its slot back at once, since it never runs. The routed client passes
+  one semaphore to every instance, so instance creation counts against the bound too.
 - **Proposed row (RFC 0078):** `ASSUMED` — the bound is held by the statement's worker. This
   overrides §2.2's placement, which stays as written.
 
@@ -1726,8 +1756,90 @@ and a rotate-and-evict race. With guarded eviction sabotaged, all 20 seeds fail.
 - **Consequence:** the caller sees `dynamic_read_timeout` at the statement timeout. The test,
   `test_duckdb_client_hung_request.py`, stands a local socket that never answers in for a hung
   catalog: a plain `http://` read the interrupt cannot cut short. It sits with the integration
-  tests because it needs `httpfs`, not Docker. `close()` and a guarded eviction still wait for
-  the worker. This is the branch's last commit, with its own test and changelog line, so it can
-  be dropped alone.
+  tests because it needs `httpfs`, not Docker. `DuckDbClient.close()` still waits for the
+  worker; the routed client runs that close in the background (D-043). This is the branch's last
+  commit, with its own test and changelog line, so it can be dropped alone.
 - **Proposed row (RFC 0078):** `OPEN` — keep the early return if D-028 resolves to (a), and
   drop the commit otherwise.
+
+## D-043 — An evicted tenant instance closes in the background
+
+- **Touches:** RFC 0078 §2.4 ("closes after its last in-flight statement. Close is the existing
+  `DuckDbClient.close`") and decision 4.
+- **RFC said:** the guarded drain closes the instance with `DuckDbClient.close`.
+- **Found:** the pool awaits that close in the caller's path. The last scope to leave a
+  draining instance awaits it, and so does an overflow eviction inside another tenant's first
+  `client_scope`. `DuckDbClient.close` waits for every worker, and a worker stuck on a hung
+  request takes about 120 s (D-028). So a timed-out caller, or a cancelled one, waits after all
+  when it leaves the scope, and an unrelated tenant's first call stalls behind the eviction.
+- **Because:** the shared pool treats dispose as cheap, and DuckDB's close is not cheap while a
+  worker is stuck.
+- **Class:** `spec-gap`.
+- **Consequence:** `DuckDbClient.close` keeps waiting, which is the analytics contract. The
+  routed base gains a `_dispose_client` hook whose default is the old close, so every other
+  integration is unchanged. `RoutedDuckDbClient` overrides it to start the close as a tracked
+  background task, and `RoutedDuckDbClient.close` waits for every outstanding teardown. A close
+  that fails is logged. Each hung teardown parks one thread of the loop's default executor,
+  because `DuckDbClient.close` shuts its executor down through `asyncio.to_thread`. A burst of
+  evictions of hung instances can therefore exhaust that executor.
+- **Proposed row (RFC 0078):** `ASSUMED` — the routed client disposes an instance in the
+  background and drains the teardowns on close.
+
+## D-044 — Vended secrets are dropped only when no statement is running on the instance
+
+- **Touches:** D-025's proposed row ("after every statement, `run_dynamic` drops the vended
+  `__internal_ic_%` secrets") and §2.2's "max_concurrent_queries" per instance.
+- **RFC said:** D-025 drops after every statement.
+- **Found:** an instance runs up to `engine.max_concurrent_queries` statements at once. Dropping
+  every `__internal_ic_` secret when one statement ends can drop the secret another statement
+  was just vended, while that statement is still reading with it.
+- **Because:** the drop matches by prefix, not by the statement that was vended the secret, and
+  DuckDB exposes no link between the two.
+- **Class:** `spec-gap`.
+- **Consequence:** each instance counts its running dynamic statements under a lock. A statement
+  increments the count before it opens its cursor. It decrements the count when it ends, and
+  drops the secrets if the count reaches zero, still under the lock, so no statement can start
+  between the two. Under sustained concurrent load the instance may never be idle. The by-path
+  revocation window of D-025 then extends to the next idle moment, still bounded by the vended
+  credential's STS validity.
+- **Proposed row (RFC 0078):** `ASSUMED` — vended secrets are dropped when the instance's last
+  running statement ends. This refines D-025's row, which stays as written.
+
+## D-045 — One deadline covers the wait for a slot and the statement
+
+- **Touches:** RFC 0078 §2.2 (the process-wide semaphore), §4.3's timeout cell, and decision 10.
+- **RFC said:** the timeout is the statement's, enforced by interrupt.
+- **Found:** a statement waited for its admission slot before its timeout started. With every
+  slot held by hung workers (D-039, D-028), a caller could wait without bound for a slot.
+- **Because:** the semaphore was added in front of an executor whose timeout covered only the
+  work.
+- **Class:** `spec-gap`.
+- **Consequence:** `__submit` computes one deadline from the statement's timeout. The wait for a
+  slot runs under `asyncio.timeout_at` of that deadline, and running out raises the same
+  `duckdb_query_timeout`, so the adapter reports `dynamic_read_timeout`. The statement gets
+  whatever is left. A statement without a timeout still waits as long as it takes.
+- **Proposed row (RFC 0078):** `ASSUMED` — a statement's timeout covers its wait for admission.
+
+## D-046 — A timed-out statement still queued was never stopped, and one interrupt is not enough
+
+- **Touches:** RFC 0078 §4.3's timeout cell ("client-side `cursor.interrupt()`, cooperative") and
+  battery 12.
+- **RFC said:** the client interrupts the statement's cursor when the timeout fires.
+- **Found:** two gaps.
+  - A statement still queued in the instance's executor has no cursor when its timeout fires.
+    It was not interrupted, and it ran later without a bound while holding a slot.
+  - DuckDB drops an interrupt that arrives before its statement starts. A probe interrupted a
+    fresh cursor and then ran a 10 s query on it, and the query ran to the end. So a worker that
+    has published its cursor but not yet begun executing misses a single interrupt.
+- **Because:** the first is how `run_in_executor` works. The second is DuckDB's: each query
+  clears the interrupt flag when it starts.
+- **Class:** `discovery`.
+- **Consequence:** on timeout the client cancels the executor future, which dequeues a statement
+  that never started. It sets an `expired` flag before reading the cursor, and each worker
+  checks that flag right after publishing its cursor, raising before it executes. Under the GIL
+  either the caller sees the cursor or the worker sees the flag. The caller then interrupts
+  again every 100 ms until the worker returns, which closes the window between the worker's
+  check and the start of its query. A test holds the worker in that window for 300 ms and
+  checks that the statement still stops.
+- **Proposed row (RFC 0078):** `ASSUMED` — a timeout dequeues a queued statement and repeats
+  the interrupt until the worker returns.

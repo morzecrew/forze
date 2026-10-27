@@ -18,11 +18,13 @@ import asyncio
 import contextvars
 import json
 import os
+import re
+import shutil
 import time
 from collections.abc import AsyncIterator, Callable, Iterator
 from datetime import timedelta
 from pathlib import Path
-from typing import Any
+from typing import Any, ClassVar
 from uuid import UUID
 
 import pytest
@@ -69,6 +71,7 @@ _C = UUID("cccccccc-0000-0000-0000-000000000003")
 """Tenant C holds the third, ungranted principal and points it at tenant A's warehouse."""
 
 _ROUTE = "lake_widgets"
+_SETUP_FAILED = "duckdb_session_setup_failed"
 _ORDERS = "SELECT id, tenant FROM gold.orders ORDER BY id"
 _SPIN = "SELECT count(*) AS n FROM range(20000000000) t(i) WHERE i % 7 = 3"
 """CPU-bound and long: stops only on interrupt."""
@@ -329,6 +332,11 @@ class TestCrossTenantByPath:
         async with routed.client_scope(_A) as inner:
             await inner.run_command("CALL enable_logging('HTTP')")
 
+        count = "SELECT count(*) AS n FROM duckdb_logs WHERE type = 'HTTP'"
+        await _run(port, _A, _ORDERS)  # the positive control: a permitted read is logged
+        (before,) = await _inner_rows(routed, _A, count)
+        assert before["n"] > 0
+
         for sql in (
             f"SELECT * FROM iceberg_scan('{meta}')",
             f"SELECT * FROM read_parquet('{data}/data/*.parquet')",
@@ -338,8 +346,8 @@ class TestCrossTenantByPath:
             assert error.code == PERMISSION_DENIED_CODE
             assert "file system operations are disabled" in error.details["detail"]
 
-        logged = await _inner_rows(routed, _A, "SELECT count(*) AS n FROM duckdb_logs")
-        assert logged == [{"n": 0}]  # not one request, so none signed with the root key
+        # Not one request more, so none was signed with the root key.
+        assert await _inner_rows(routed, _A, count) == [before]
 
 
 class TestClassification:
@@ -451,20 +459,29 @@ class TestHttpEgress:
 class TestLock:
     """Battery 9 — the locked session refuses reconfiguration, on the parent and on cursors."""
 
-    _ATTEMPTS = (
-        "SET disabled_filesystems=''",
-        "SET lock_configuration=false",
-        "LOAD aws",
-        "SELECT * FROM duckdb_secrets(redact=false)",
-    )
+    _ATTEMPTS: ClassVar[dict[str, str]] = {
+        "SET disabled_filesystems=''": (
+            'Cannot change configuration option "disabled_filesystems" - the configuration has '
+            "been locked"
+        ),
+        "SET lock_configuration=false": (
+            'Cannot change configuration option "lock_configuration" - the configuration has '
+            "been locked"
+        ),
+        "LOAD aws": "Loading external extensions is disabled through configuration",
+        "SELECT * FROM duckdb_secrets(redact=false)": "Displaying unredacted secrets is disabled",
+    }
 
     async def test_each_attempt_is_refused_on_a_cursor(
         self, routed: RoutedDuckDbClient, stub_classification: None
     ) -> None:
         port = _port(routed)
 
-        for sql in self._ATTEMPTS:
-            assert (await _refused(port, _A, sql)).code == PERMISSION_DENIED_CODE
+        for sql, refusal in self._ATTEMPTS.items():
+            error = await _refused(port, _A, sql)
+
+            assert error.code == PERMISSION_DENIED_CODE
+            assert refusal in error.details["detail"]
 
     async def test_each_attempt_is_refused_on_the_parent_connection(
         self, routed: RoutedDuckDbClient
@@ -476,8 +493,8 @@ class TestLock:
         async with routed.client_scope(_A) as inner:
             parent = inner._DuckDbClient__conn  # type: ignore[attr-defined]
 
-            for sql in self._ATTEMPTS:
-                with pytest.raises((duckdb.InvalidInputException, duckdb.PermissionException)):
+            for sql, refusal in self._ATTEMPTS.items():
+                with pytest.raises(duckdb.Error, match=re.escape(refusal)):
                     parent.execute(sql).fetchall()
 
 
@@ -632,8 +649,8 @@ class TestPool:
             await routed.evict_tenant(_A)
             error = await _refused(port, _A, _ORDERS)
 
-            assert error.code == PERMISSION_DENIED_CODE  # rebuilt, with the rotated secret
-            assert "Unauthorized_401" in error.details["detail"]
+            assert error.code == _SETUP_FAILED  # rebuilt, with the rotated secret
+            assert "Unauthorized_401" in error.details["error"]
 
         finally:
             secrets.principals[_A] = good
@@ -683,28 +700,45 @@ class TestPool:
 
 
 class TestAttestation:
-    """Battery 14 — a session missing any one step refuses to serve."""
+    """Battery 14 — a session missing any one step refuses to serve.
+
+    Every step of the sequence is removed or undone once: each `SET`, the `READ_ONLY` attach,
+    the `GLOBAL` scope, each connect option, the extension directory. Removing `ATTACH` or
+    adding a secret or a database fails the attestation. Removing a `LOAD` or the catalog
+    secret makes a later step fail outright, so no session exists to attest.
+    """
 
     @pytest.mark.parametrize(
-        "rewrite",
+        ("rewrite", "problems"),
         [
-            _without("enable_global_s3_configuration"),
-            _without("s3_access_key_id"),
-            _without("s3_secret_access_key"),
-            _without("s3_session_token"),
-            _without("allowed_directories"),
-            _without("enable_external_access"),
-            _without("disabled_filesystems"),
-            _without("http_timeout"),
+            (
+                _without("enable_global_s3_configuration"),
+                ["setting enable_global_s3_configuration"],
+            ),
+            (_without("s3_access_key_id"), ["setting s3_access_key_id"]),
+            (_without("s3_secret_access_key"), ["setting s3_secret_access_key"]),
+            (_without("s3_session_token"), ["setting s3_session_token"]),
+            (_without("allowed_directories"), ["setting allowed_directories"]),
+            (_without("enable_external_access"), ["setting enable_external_access"]),
+            (_without("disabled_filesystems"), ["filesystem LocalFileSystem enabled",
+                                                "filesystem HTTPFileSystem enabled"]),
+            (_without("http_timeout"), ["setting http_timeout"]),
             # Off by default, so removing the step changes nothing; turning it on does.
-            lambda ss: [s.replace("metadata_cache=false", "metadata_cache=true") for s in ss],
-            _without("enable_external_file_cache"),
-            _without("lock_configuration"),
-            lambda ss: [s.replace(", READ_ONLY)", ")") for s in ss],
-            lambda ss: [s.replace("SET GLOBAL s3_", "SET s3_") for s in ss],
-            lambda ss: [s.replace("SET GLOBAL enable_global", "SET enable_global") for s in ss],
-            lambda ss: [*ss[:-1], "CREATE SECRET x (TYPE s3, PROVIDER config)", ss[-1]],
-            lambda ss: [*ss[:-1], "ATTACH ':memory:' AS extra", ss[-1]],
+            (lambda ss: [s.replace("metadata_cache=false", "metadata_cache=true") for s in ss],
+             ["setting enable_http_metadata_cache"]),
+            (_without("enable_external_file_cache"), ["setting enable_external_file_cache"]),
+            (_without("lock_configuration"), ["setting lock_configuration"]),
+            (lambda ss: [s.replace(", READ_ONLY)", ")") for s in ss], ["lake attached writable"]),
+            (lambda ss: [s.replace("SET GLOBAL s3_", "SET s3_") for s in ss],
+             ["setting s3_access_key_id", "setting s3_secret_access_key",
+              "setting s3_session_token"]),
+            (lambda ss: [s.replace("SET GLOBAL enable_global", "SET enable_global") for s in ss],
+             ["setting enable_global_s3_configuration"]),
+            (lambda ss: [*ss[:-1], "CREATE SECRET x (TYPE s3, PROVIDER config)", ss[-1]],
+             ["secret type s3"]),
+            (lambda ss: [*ss[:-1], "ATTACH ':memory:' AS extra", ss[-1]],
+             ["databases ['extra', 'lake', 'memory', 'system', 'temp']"]),
+            (_without("ATTACH"), ["databases ['memory', 'system', 'temp']"]),
         ],
         ids=[
             "global_s3",
@@ -723,6 +757,7 @@ class TestAttestation:
             "session_scoped_global_s3",
             "extra_secret",
             "extra_database",
+            "no_attach",
         ],
     )
     async def test_a_session_missing_a_step_is_refused(
@@ -730,6 +765,7 @@ class TestAttestation:
         build_routed: Callable[..., RoutedDuckDbClient],
         monkeypatch: pytest.MonkeyPatch,
         rewrite: Callable[[list[str]], list[str]],
+        problems: list[str],
     ) -> None:
         _fault(monkeypatch, rewrite)
         client = build_routed()
@@ -739,7 +775,97 @@ class TestAttestation:
             error = await _refused(_port(client), _A, _ORDERS)
 
             assert error.code == "duckdb_session_attestation_failed"
-            assert error.details["problems"]
+            assert error.details["problems"] == problems
+
+        finally:
+            await client.close()
+
+    @pytest.mark.parametrize(
+        ("break_it", "fragment"),
+        [
+            (
+                lambda m: m.setattr(routed_client, "_EXTENSIONS", ("httpfs",)),
+                "Secret type 'iceberg' does not exist",
+            ),
+            (
+                lambda m: m.setattr(routed_client, "_EXTENSIONS", ("iceberg",)),
+                'Setting with name "enable_global_s3_configuration" is not in the catalog',
+            ),
+            (
+                lambda m: _fault(m, _without("CREATE SECRET")),
+                "No ICEBERG secret by the name of 'lake_cat' could be found",
+            ),
+        ],
+        ids=["no_load_iceberg", "no_load_httpfs", "no_catalog_secret"],
+    )
+    async def test_a_session_missing_a_prerequisite_never_builds(
+        self,
+        build_routed: Callable[..., RoutedDuckDbClient],
+        monkeypatch: pytest.MonkeyPatch,
+        break_it: Callable[[pytest.MonkeyPatch], None],
+        fragment: str,
+    ) -> None:
+        """Without an extension or the catalog secret a later step fails, so there is no
+        session to attest. It is the deployment's fault, never a statement code (D-038)."""
+
+        break_it(monkeypatch)
+        client = build_routed()
+        await client.startup()
+
+        try:
+            error = await _refused(_port(client), _A, _ORDERS)
+
+            assert error.code == _SETUP_FAILED
+            assert fragment in error.details["error"]
+
+        finally:
+            await client.close()
+
+    @pytest.fixture(scope="class")
+    def extension_directory(
+        self, lake: LakeVendingStack, tmp_path_factory: pytest.TempPathFactory
+    ) -> Path:
+        """A copy of the installed extensions, as an image would bake them in."""
+
+        installed = Path.home() / ".duckdb" / "extensions"
+
+        if not installed.is_dir():
+            pytest.skip("no installed DuckDB extensions to copy")
+
+        target = tmp_path_factory.mktemp("duckdb") / "extensions"
+        shutil.copytree(installed, target)
+        return target
+
+    @pytest.mark.parametrize("dropped", [False, True], ids=["shipped", "dropped"])
+    async def test_the_extension_directory_is_attested(
+        self,
+        build_routed: Callable[..., RoutedDuckDbClient],
+        monkeypatch: pytest.MonkeyPatch,
+        extension_directory: Path,
+        dropped: bool,
+    ) -> None:
+        if dropped:
+            real = routed_client._connect_config
+            monkeypatch.setattr(
+                routed_client,
+                "_connect_config",
+                lambda directory: {
+                    k: v for k, v in real(directory).items() if k != "extension_directory"
+                },
+            )
+
+        client = build_routed(extension_directory=str(extension_directory))
+        await client.startup()
+
+        try:
+            if not dropped:
+                assert len(await _run(_port(client), _A, _ORDERS)) == 3
+                return
+
+            error = await _refused(_port(client), _A, _ORDERS)
+
+            assert error.code == "duckdb_session_attestation_failed"
+            assert error.details["problems"] == ["setting extension_directory"]
 
         finally:
             await client.close()
@@ -795,8 +921,8 @@ class TestAttestation:
         try:
             error = await _refused(_port(client), _A, _ORDERS)
 
-            assert error.code == PERMISSION_DENIED_CODE
-            assert "stored_secrets" in error.details["detail"]
+            assert error.code == _SETUP_FAILED
+            assert "stored_secrets" in error.details["error"]
 
         finally:
             await client.close()
@@ -838,8 +964,8 @@ class TestTaxonomy:
     ) -> None:
         error = await _refused(_port(routed), _C, _ORDERS)
 
-        assert error.code == PERMISSION_DENIED_CODE
-        assert "NotFound_404" in error.details["detail"]
+        assert error.code == _SETUP_FAILED  # the tenant's wiring, not its statement
+        assert "NotFound_404" in error.details["error"]
 
     async def test_a_describe_only_principal_gets_no_rows(
         self,

@@ -1,5 +1,5 @@
 from .client import QUERY_TIMEOUT_CODE, DuckDbClient
-from .port import DuckDbClientPort
+from .port import DuckDbClientPort, DuckDbDynamicReadClientPort
 from .routed_client import (
     LAKE_CATALOG,
     LakeCatalogCredentials,
@@ -15,6 +15,7 @@ __all__ = [
     "QUERY_TIMEOUT_CODE",
     "DuckDbClient",
     "DuckDbClientPort",
+    "DuckDbDynamicReadClientPort",
     "LAKE_CATALOG",
     "LakeCatalogCredentials",
     "LakeTenantCatalog",

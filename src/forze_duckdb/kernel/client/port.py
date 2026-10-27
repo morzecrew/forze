@@ -59,6 +59,17 @@ class DuckDbClientPort(Protocol):
         timeout: timedelta | None = None,
     ) -> Awaitable[None]: ...  # pragma: no cover
 
+
+# ....................... #
+
+
+class DuckDbDynamicReadClientPort(DuckDbClientPort, Protocol):
+    """A :class:`DuckDbClientPort` that also runs governed dynamic reads.
+
+    Kept apart so a client implementing only :class:`DuckDbClientPort` keeps satisfying it;
+    the dynamic-read adapter is the one consumer that needs :meth:`run_dynamic`.
+    """
+
     def run_dynamic(
         self,
         statement: str,

@@ -116,8 +116,9 @@ One `DuckDbClient` is one engine for every tenant: whatever credentials it holds
 every statement can use. `RoutedDuckDbClient` instead builds an unnamed
 `:memory:` instance per tenant, attached to that tenant's own warehouse in an
 Iceberg REST catalog (Lakekeeper) with the tenant's own OAuth2 principal. The
-instance holds only the credentials the catalog vends to that principal, so a
-statement cannot reach another tenant's data. That is the `dedicated` tier, and
+instance holds that principal's client secret for its whole life, and the S3
+credentials the catalog vends for a statement until the statement ends. Neither
+reaches another tenant's data. That is the `dedicated` tier, and
 it is what lets a [dynamic-read](../data-events/dynamic-read.md) route run
 compiled statements here:
 
@@ -180,11 +181,14 @@ SET GLOBAL lock_configuration=true
 attest                                          -- settings, secrets, databases, filesystems
 ```
 
-A session that does not attest raises `duckdb_session_attestation_failed`
-(`configuration`) and is closed. Each statement then runs on a fresh cursor:
+A session that does not attest raises `duckdb_session_attestation_failed`, and one
+whose sequence fails (an extension missing from the image, a principal the catalog
+refuses) raises `duckdb_session_setup_failed`. Both are `configuration` errors, and
+the instance is closed. Each statement then runs on a fresh cursor:
 `USE lake.<namespace>`, DuckDB's own parser checks that the text is exactly one
-`SELECT`, the classified statement runs unmodified, and the per-table S3 secret
-the catalog vended for it is dropped afterwards.
+`SELECT`, the classified statement runs unmodified, and a result with two columns
+of the same name is refused. Once no statement is running on the instance, the
+per-table S3 secrets the catalog vended are dropped.
 
 What the route promises, and who keeps each promise:
 
@@ -207,10 +211,13 @@ Operating it:
 - **Size `max_concurrent_queries_total` for hung requests.** It bounds
   statements across all tenants (default 8), and peak memory is about that
   many times `engine.memory_limit`. A tenant whose catalog or store stops
-  answering holds a slot for about 120 s per stuck request.
+  answering holds a slot for about 120 s per stuck request. Waiting for a slot
+  counts against a statement's timeout.
 - **Call `evict_tenant` after a grant is restored or a namespace is created.**
   An instance that once found a namespace missing keeps it missing for its
-  life. Rotate credentials the same way, or set `fingerprint_ttl`.
+  life. Rotate credentials or remap a tenant's catalog the same way, or set
+  `fingerprint_ttl`. An evicted instance closes in the background, and
+  `close()` waits for those teardowns.
 - **A revocation lands at the next statement**, or after the authorizer's
   check cache expires: OpenFGA caches checks for 10 s when its cache is on.
 - **The deployment owns the outer controls.** The worker must hold no ambient

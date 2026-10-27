@@ -36,6 +36,7 @@ import duckdb
 
 from forze.application.integrations.dynamic_read import (
     MULTI_STATEMENT_CODE,
+    STATEMENT_INVALID_CODE,
     WRITE_REFUSED_CODE,
     DynamicReadAdapter,
     DynamicReadRequest,
@@ -48,7 +49,11 @@ from forze.application.integrations.dynamic_read import (
 from forze.base.exceptions import CoreException, exc, fallback_exception_mapper
 from forze.base.primitives import JsonDict
 from forze_duckdb.execution.deps.configs import DuckDbDynamicReadConfig
-from forze_duckdb.kernel.client import LAKE_CATALOG, QUERY_TIMEOUT_CODE, DuckDbClientPort
+from forze_duckdb.kernel.client import (
+    LAKE_CATALOG,
+    QUERY_TIMEOUT_CODE,
+    DuckDbDynamicReadClientPort,
+)
 
 # ----------------------- #
 
@@ -134,6 +139,9 @@ def _core_error(error: CoreException, *, route: str) -> CoreException:
     if error.code == QUERY_TIMEOUT_CODE:
         return timed_out(route)
 
+    if error.code == STATEMENT_INVALID_CODE:
+        return statement_invalid(route, detail=(error.details or {}).get("detail"))
+
     return error
 
 
@@ -155,7 +163,7 @@ def _invalid_input(message: str, *, route: str) -> CoreException:
 class DuckDbDynamicReadAdapter(DynamicReadAdapter):
     """One governed dynamic-read route over a tenant's lake warehouse."""
 
-    client: DuckDbClientPort
+    client: DuckDbDynamicReadClientPort
     config: DuckDbDynamicReadConfig
     """The route's wiring. Its ``statement_timeout`` must match the shell's."""
 
