@@ -2350,6 +2350,16 @@ the kept-secret one, which cannot arise because nothing is kept (D-053).
   P0's ambient-key pin reads the store's request log. The classification tests follow the new
   types.
 
+## Review findings — 2026-10-28
+
+PR #690, after it was published. Two findings from CodeRabbit and CodeAnt, both fixed. Neither
+changes a proposed row.
+
+| # | Severity | Finding | Status |
+|---|---|---|---|
+| R-1 | Low | D-054 describes the dependency as it stood when written: no upper bound, and the cap on its own branch. #679 has since merged, so `main` caps the extra at `duckdb>=1.1.0,<2` and the lock records 1.5.6; D-054 stays as written (CodeRabbit). | Recorded here |
+| R-2 | Medium | `just test -m integration` replaced the recipe's `not lake_slow`, since pytest keeps the last `-m`, so the expiry battery ran (CodeAnt). | Fixed: the duckdb integration conftest skips a `lake_slow` test unless the marker expression names it |
+
 ---
 
 # Unit 9 · RFC 0077 P3 — surfaces onto ingress
