@@ -76,13 +76,28 @@ def interrupted_exit_code(signum: int) -> int:
 # ....................... #
 
 
+def _ids(metadata: InvocationMetadata) -> dict[str, str]:
+    return {
+        "execution_id": str(metadata.execution_id),
+        "correlation_id": str(metadata.correlation_id),
+    }
+
+
 def _document(error: Mapping[str, Any], metadata: InvocationMetadata) -> str:
+    return json.dumps({"error": error, **_ids(metadata)})
+
+
+def batch_line(line: int, document: str, metadata: InvocationMetadata, *, ok: bool) -> str:
+    """One line of a batch's output: a call's *document*, numbered by its input *line*.
+
+    A result is nested under ``result`` beside the ids an error object already carries, so
+    every line says which it is.
+    """
+
+    value = json.loads(document)
+
     return json.dumps(
-        {
-            "error": error,
-            "execution_id": str(metadata.execution_id),
-            "correlation_id": str(metadata.correlation_id),
-        }
+        {"line": line, "result": value, **_ids(metadata)} if ok else {"line": line, **value}
     )
 
 

@@ -112,6 +112,22 @@ input returns the stored result; the same key with different input exits 4. An o
 does not support a key refuses the option, so a script never believes a retry is safe when it
 is not.
 
+## Run a backfill
+
+`--batch` calls an operation once per line of a JSONL file, or of stdin, inside one runtime,
+so a backfill pays for startup once rather than per row:
+
+```console
+$ forze ops call notes.create --batch @notes.jsonl > results.jsonl
+```
+
+Every line is validated before anything runs, so a typo on line 900 does not leave 899 rows
+applied. Stdout gets one JSON line per call, numbered by its input line, and the batch stops at
+the first failure: that line is the last one written, and its exit code is the batch's. To
+resume, fix that line and run the file from it on. `--idempotency-key` is refused with
+`--batch`, because one key would claim every line. The
+[reference](../reference/ops-cli.md#batches) has the output contract.
+
 ## Run it as a Job or from cron
 
 Run the command where the application's infrastructure credentials already live, in the

@@ -103,7 +103,8 @@ class Count(BaseDTO):
 
 
 class Fail(BaseDTO):
-    kind: ExceptionKind
+    kind: ExceptionKind | None = None
+    """No kind succeeds, so a batch can fail on one line of several."""
 
 
 class Slow(BaseDTO):
@@ -187,7 +188,8 @@ async def _returned(args: Any) -> Any:
 
 
 async def _fail(args: Fail) -> None:
-    raise CoreException(args.kind, f"failed as {args.kind}", code=f"probe_{args.kind}")
+    if args.kind is not None:
+        raise CoreException(args.kind, f"failed as {args.kind}", code=f"probe_{args.kind}")
 
 
 async def _deny(args: Deny) -> None:

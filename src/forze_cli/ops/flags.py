@@ -21,6 +21,7 @@ CALL_OPTIONS: Final = frozenset(
     {
         "--app",
         "--input",
+        "--batch",
         "--tenant",
         "--idempotency-key",
         "--timeout",

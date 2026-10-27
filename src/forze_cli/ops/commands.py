@@ -106,6 +106,13 @@ def _positive(value: float | None) -> float | None:
     return value
 
 
+def _batch_source(value: str | None) -> str | None:
+    if value is not None and value != "-" and not value.startswith("@"):
+        raise typer.BadParameter("must be @PATH or - (stdin)")
+
+    return value
+
+
 def _non_negative(value: float) -> float:
     # A chained comparison refuses NaN too, which every comparison answers False.
     if not 0 <= value < math.inf:
@@ -274,6 +281,14 @@ def _group(bound: OpsApp | None, *, name: str) -> typer.Typer:
             metavar="JSON|@PATH|-",
             help="The input object: inline JSON, @PATH to read a file, or - for stdin.",
         ),
+        batch: str | None = typer.Option(
+            None,
+            "--batch",
+            metavar="@PATH|-",
+            callback=_batch_source,
+            help="Call once per JSONL line of a file or stdin, in one runtime; one line out per "
+            "call, stopping at the first failure.",
+        ),
         tenant: UUID | None = typer.Option(
             None,
             "--tenant",
@@ -317,12 +332,19 @@ def _group(bound: OpsApp | None, *, name: str) -> typer.Typer:
         """
 
         with document_stream() as out:
+
+            def emit(line: str) -> None:
+                # A batch's lines are read as they come, not when the batch ends.
+                out.write(line + "\n")
+                out.flush()
+
             ops = declaration(app)
             document, code = execute(
                 ops,
                 op=op,
                 raw_input=raw_input,
                 flags=ctx.args,
+                batch=batch,
                 tenant=tenant,
                 idempotency_key=idempotency_key,
                 timeout=timeout,
@@ -331,8 +353,11 @@ def _group(bound: OpsApp | None, *, name: str) -> typer.Typer:
                 causation_id=causation_id,
                 api_key_file=api_key_file,
                 pretty=pretty,
+                emit=emit,
             )
-            out.write(document + "\n")
+
+            if document is not None:
+                out.write(document + "\n")
 
         raise typer.Exit(code)
 

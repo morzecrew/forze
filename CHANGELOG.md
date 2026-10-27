@@ -37,6 +37,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **`forze ops call` takes typed flags for an input of flat scalars.** `--field VALUE` per field and `--name/--no-name` per boolean replace `--input`, validated the same way; `describe` lists them. An unknown option after `OP` now exits 2 with an error object, not Click's usage text.
 
+- **`forze ops call --batch @PATH|-` runs one call per JSONL line in one runtime.** Every line is validated before any runs; each call writes a numbered JSON line, and the first failure stops the batch and sets its exit code.
+
 ### Changed
 
 - **HTTP error bodies carry the error's `code` and `kind`** (**behaviour change**). The body is `{"detail", "code", "kind", "context"}`, so a client tells `revision_mismatch` from other 400s; a whole-body comparison breaks. An unhandled 500 now also sends `X-Error-Code: core.internal`.

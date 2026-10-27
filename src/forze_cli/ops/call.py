@@ -7,11 +7,12 @@ traceback, so a script reads stdout and the exit code and nothing else.
 """
 
 import asyncio
+import functools
 import json
 import os
 import signal
 import sys
-from collections.abc import Iterator
+from collections.abc import Awaitable, Callable, Iterator
 from contextlib import contextmanager, suppress
 from pathlib import Path
 from typing import Any, TextIO, cast
@@ -48,6 +49,7 @@ from .contract import (
     EXIT_INTERNAL,
     EXIT_OK,
     EXIT_USAGE,
+    batch_line,
     error_document,
     exit_code,
     interrupted_document,
@@ -62,7 +64,16 @@ from .flags import declares_secret, flag_table, parse_flags
 _logger = Logger("cli.errors")
 
 type _Outcome = tuple[str, int]
-"""The one stdout document and the exit code."""
+"""One call's stdout document and its exit code."""
+
+type _Exit = tuple[str | None, int]
+"""The document left to write (a batch has written its lines already) and the exit code."""
+
+type _Call = tuple[int, Any, InvocationMetadata]
+"""One batch line: its number, its validated input, and its own metadata."""
+
+type _Body = Callable[[ExecutionContext, list[int]], Awaitable[_Exit]]
+"""What runs inside the runtime's scope, given its context and the signals received."""
 
 # ....................... #
 
@@ -77,6 +88,14 @@ class _Usage(Exception):
 
 def _usage(summary: str, code: str) -> _Usage:
     return _Usage(exc.validation(summary, code=code))
+
+
+class _Refused(Exception):
+    """A batch line refused before the batch runs, with its numbered document."""
+
+    def __init__(self, outcome: _Outcome) -> None:
+        super().__init__(outcome[0])
+        self.outcome = outcome
 
 
 # ....................... #
@@ -138,6 +157,7 @@ def execute(
     op: str,
     raw_input: str | None,
     flags: list[str],
+    batch: str | None,
     tenant: UUID | None,
     idempotency_key: str | None,
     timeout: float | None,
@@ -146,10 +166,13 @@ def execute(
     causation_id: UUID | None,
     api_key_file: Path | None,
     pretty: bool,
-) -> _Outcome:
+    emit: Callable[[str], None],
+) -> _Exit:
     """Run *op* on *ops* and return the one stdout document with its exit code.
 
     :param flags: The typed flags after the operation, unparsed.
+    :param batch: ``@PATH`` or ``-``: run one call per JSONL line in one runtime scope,
+        each line written with *emit* as it finishes, stopping at the first failure.
     """
 
     # Minted before anything can fail, so every error object carries both ids.
@@ -160,11 +183,37 @@ def execute(
         entry = _exposed_entry(ops, op)
         repeatable = entry.is_read_only or idempotency_key is not None
         _check_options(ops.identity, entry, tenant, idempotency_key, api_key_file)
-        raw, by_name = _read_input(raw_input, flags, entry)
-        # Typed flags spell field names, so no alias reads them.
-        args = validate_operation_input(
-            entry.descriptor, raw, code="cli_invalid_input", forbid_unknown=True, by_name=by_name
-        )
+
+        if batch is None:
+            raw, by_name = _read_input(raw_input, flags, entry)
+            # Typed flags spell field names, so no alias reads them.
+            args = validate_operation_input(
+                entry.descriptor,
+                raw,
+                code="cli_invalid_input",
+                forbid_unknown=True,
+                by_name=by_name,
+            )
+            calls = None
+
+        elif raw_input is not None or flags or idempotency_key is not None or pretty:
+            # One key for every line would replay or refuse all but the first.
+            raise _usage(
+                "--batch reads each input from its line and writes one line per call: it "
+                "takes no --input, typed flags, --idempotency-key or --pretty",
+                "cli_option_conflict",
+            )
+
+        else:
+            args = None
+            calls = _batch_calls(
+                batch,
+                entry,
+                correlation_id=metadata.correlation_id,
+                causation_id=causation_id,
+                repeatable=repeatable,
+            )
+
         api_key = _read_api_key(ops.identity, api_key_file)
 
         runtime = ops.runtime()
@@ -175,28 +224,30 @@ def execute(
                 code="cli_runtime_not_serverless",
             )
 
-        return asyncio.run(
-            _run(
-                ops,
-                runtime,
-                entry,
-                args,
-                metadata=metadata,
-                tenant=tenant,
-                api_key=api_key,
-                idempotency_key=idempotency_key,
-                timeout=timeout,
-                grace=grace,
-                pretty=pretty,
-                repeatable=repeatable,
+        call = functools.partial(
+            _attempt,
+            ops=ops,
+            entry=entry,
+            tenant=tenant,
+            api_key=api_key,
+            timeout=timeout,
+            repeatable=repeatable,
+        )
+        body: _Body = (
+            functools.partial(
+                call, args=args, metadata=metadata, idempotency_key=idempotency_key, pretty=pretty
             )
+            if calls is None
+            else functools.partial(_batch, call=call, calls=calls, emit=emit)
         )
 
-    except _Usage as usage:
-        return error_document(error_envelope(usage.error), metadata), EXIT_USAGE
+        return asyncio.run(_run(runtime, body, metadata=metadata, grace=grace))
 
-    except CoreException as error:
-        return _failure(error, metadata, repeatable=repeatable)
+    except _Refused as refused:
+        return refused.outcome
+
+    except (_Usage, CoreException) as error:
+        return _refusal(error, metadata, repeatable=repeatable)
 
     # Before the signal handlers are installed, or after they are removed.
     except KeyboardInterrupt:
@@ -212,6 +263,15 @@ def execute(
 
 
 # ....................... #
+
+
+def _refusal(
+    error: _Usage | CoreException, metadata: InvocationMetadata, *, repeatable: bool
+) -> _Outcome:
+    if isinstance(error, _Usage):
+        return error_document(error_envelope(error.error), metadata), EXIT_USAGE
+
+    return _failure(error, metadata, repeatable=repeatable)
 
 
 def _failure(error: CoreException, metadata: InvocationMetadata, *, repeatable: bool) -> _Outcome:
@@ -281,8 +341,6 @@ def _read_input(
 ) -> tuple[dict[str, Any], bool]:
     """The raw input object, and whether it is keyed by field name (typed flags are)."""
 
-    input_type = entry.descriptor.input_type if entry.descriptor is not None else None
-
     if raw_input is None and not flags:
         return {}, False
 
@@ -291,12 +349,7 @@ def _read_input(
             "Pass the input with --input or as typed flags, not both", "cli_option_conflict"
         )
 
-    if input_type is None:
-        raise _usage(
-            f"Operation {str(entry.op)!r} takes no input",
-            "cli_input_not_accepted",
-        )
-
+    input_type = _input_type(entry)
     # Typed flags and inline JSON are on argv, which ``ps`` and shell history show.
     on_argv = raw_input is None or not (raw_input == "-" or raw_input.startswith("@"))
 
@@ -310,38 +363,96 @@ def _read_input(
     if raw_input is None:
         return _read_flags(flags, input_type, op=str(entry.op)), True
 
-    if raw_input == "-":
-        text = sys.stdin.read()
+    text = raw_input if on_argv else _read_source(raw_input, option="--input")
 
-    elif raw_input.startswith("@"):
-        try:
-            text = Path(raw_input[1:]).read_text(encoding="utf-8")
+    return _parse_object(text, what="--input"), False
 
-        except OSError as error:
-            raise _usage(
-                f"Cannot read --input file {raw_input[1:]!r}: {error.strerror}",
-                "cli_input_unreadable",
-            ) from error
 
-    else:
-        text = raw_input
+def _input_type(entry: OperationCatalogEntry) -> type[BaseModel]:
+    if entry.descriptor is None or entry.descriptor.input_type is None:
+        raise _usage(
+            f"Operation {str(entry.op)!r} takes no input",
+            "cli_input_not_accepted",
+        )
 
+    return entry.descriptor.input_type
+
+
+def _read_source(source: str, *, option: str) -> str:
+    """The text of ``-`` (stdin) or ``@PATH``."""
+
+    if source == "-":
+        return sys.stdin.read()
+
+    try:
+        return Path(source[1:]).read_text(encoding="utf-8")
+
+    except OSError as error:
+        raise _usage(
+            f"Cannot read {option} file {source[1:]!r}: {error.strerror}",
+            "cli_input_unreadable",
+        ) from error
+
+
+def _parse_object(text: str, *, what: str) -> dict[str, Any]:
     # The text is never echoed: it may hold the secret the caller meant to protect.
     try:
         # ``NaN`` and ``Infinity`` are not JSON, though Python's decoder accepts them.
         value = json.loads(text, parse_constant=_refuse_constant)
 
     except ValueError as error:
-        raise _usage("--input is not valid JSON", "cli_malformed_input") from error
+        raise _usage(f"{what} is not valid JSON", "cli_malformed_input") from error
 
     if not isinstance(value, dict):
-        raise _usage("--input must be a JSON object", "cli_malformed_input")
+        raise _usage(f"{what} must be a JSON object", "cli_malformed_input")
 
-    return value, False  # pyright: ignore[reportUnknownVariableType]
+    return value  # pyright: ignore[reportUnknownVariableType]
 
 
 def _refuse_constant(name: str) -> Any:
     raise ValueError(f"{name} is not JSON")
+
+
+def _batch_calls(
+    batch: str,
+    entry: OperationCatalogEntry,
+    *,
+    correlation_id: UUID,
+    causation_id: UUID | None,
+    repeatable: bool,
+) -> list[_Call]:
+    """Every line of *batch*, validated and given its own metadata, before anything runs.
+
+    :raises _Refused: With the numbered document of the first line that does not validate.
+    """
+
+    _input_type(entry)
+    calls: list[_Call] = []
+
+    # shortcut: the whole batch is held in memory before it runs; stream it if a backfill
+    # outgrows that.
+    for number, line in enumerate(_read_source(batch, option="--batch").splitlines(), 1):
+        if not line.strip():
+            continue
+
+        metadata = mint_invocation_metadata(
+            correlation_id=correlation_id, causation_id=causation_id
+        )
+
+        try:
+            raw = _parse_object(line, what=f"--batch line {number}")
+            args = validate_operation_input(
+                entry.descriptor, raw, code="cli_invalid_input", forbid_unknown=True
+            )
+
+        except (_Usage, CoreException) as error:
+            document, code = _refusal(error, metadata, repeatable=repeatable)
+
+            raise _Refused((batch_line(number, document, metadata, ok=False), code)) from error
+
+        calls.append((number, args, metadata))
+
+    return calls
 
 
 def _read_flags(flags: list[str], input_type: type[BaseModel], *, op: str) -> dict[str, Any]:
@@ -393,25 +504,17 @@ def _read_api_key(identity: OpsIdentity, api_key_file: Path | None) -> str | Non
 
 
 async def _run(
-    ops: OpsApp,
     runtime: ExecutionRuntime,
-    entry: OperationCatalogEntry,
-    args: Any,
+    body: _Body,
     *,
     metadata: InvocationMetadata,
-    tenant: UUID | None,
-    api_key: str | None,
-    idempotency_key: str | None,
-    timeout: float | None,
     grace: float,
-    pretty: bool,
-    repeatable: bool,
-) -> _Outcome:
-    """Enter the runtime's scope and run the call, under the two-signal shape.
+) -> _Exit:
+    """Enter the runtime's scope and run *body* in it, under the two-signal shape.
 
-    The first SIGINT or SIGTERM waits up to *grace* for the call to finish, because
-    cancelling a commit leaves its outcome unknown; a second one, or the grace running out,
-    cancels it. Shutdown runs either way.
+    The first SIGINT or SIGTERM waits up to *grace* for the call in flight to finish,
+    because cancelling a commit leaves its outcome unknown; a second one, or the grace
+    running out, cancels it. Shutdown runs either way.
     """
 
     loop = asyncio.get_running_loop()
@@ -419,7 +522,7 @@ async def _run(
     task = cast(asyncio.Task[Any], asyncio.current_task())
     signals: list[int] = []
     grace_timer: asyncio.TimerHandle | None = None
-    outcome: _Outcome | None = None
+    outcome: _Exit | None = None
 
     def on_signal(signum: int) -> None:
         nonlocal grace_timer
@@ -443,20 +546,7 @@ async def _run(
                 outcome = _interrupted(signals[0], metadata)
 
             else:
-                outcome = await _attempt(
-                    ops,
-                    runtime.get_context(),
-                    entry,
-                    args,
-                    metadata=metadata,
-                    tenant=tenant,
-                    api_key=api_key,
-                    idempotency_key=idempotency_key,
-                    timeout=timeout,
-                    pretty=pretty,
-                    repeatable=repeatable,
-                    signals=signals,
-                )
+                outcome = await body(runtime.get_context(), signals)
 
             # The call is over: only a second signal may still cut the shutdown short.
             if grace_timer is not None:
@@ -486,12 +576,42 @@ async def _run(
     return outcome
 
 
-async def _attempt(
-    ops: OpsApp,
+async def _batch(
     ctx: ExecutionContext,
+    signals: list[int],
+    *,
+    call: Callable[..., Awaitable[_Outcome]],
+    calls: list[_Call],
+    emit: Callable[[str], None],
+) -> _Exit:
+    """Run each line in order, writing its document as it finishes; stop at the first failure.
+
+    After a signal, the line in flight finishes or is cancelled as one call would be, and no
+    other line starts.
+    """
+
+    for number, args, metadata in calls:
+        if signals:
+            return None, interrupted_exit_code(signals[0])
+
+        document, code = await call(
+            ctx, signals, args=args, metadata=metadata, idempotency_key=None, pretty=False
+        )
+        emit(batch_line(number, document, metadata, ok=code == EXIT_OK))
+
+        if code != EXIT_OK:
+            return None, code
+
+    return None, EXIT_OK
+
+
+async def _attempt(
+    ctx: ExecutionContext,
+    signals: list[int],
+    *,
+    ops: OpsApp,
     entry: OperationCatalogEntry,
     args: Any,
-    *,
     metadata: InvocationMetadata,
     tenant: UUID | None,
     api_key: str | None,
@@ -499,12 +619,11 @@ async def _attempt(
     timeout: float | None,
     pretty: bool,
     repeatable: bool,
-    signals: list[int],
 ) -> _Outcome:
     """Resolve the identity and run the operation; the outcome is built inside the scope,
     under its denial posture."""
 
-    # A transaction the startup committed must not read as this call's commit.
+    # A transaction the startup (or an earlier batch line) committed is not this call's.
     reset_commit_started()
 
     try:
@@ -545,11 +664,8 @@ async def _attempt(
 
         return _failure(error, metadata, repeatable=repeatable)
 
-    except _Usage as usage:
-        return error_document(error_envelope(usage.error), metadata), EXIT_USAGE
-
-    except CoreException as error:
-        return _failure(error, metadata, repeatable=repeatable)
+    except (_Usage, CoreException) as error:
+        return _refusal(error, metadata, repeatable=repeatable)
 
     except Exception as error:
         return _crash(error, metadata)

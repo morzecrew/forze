@@ -13,8 +13,10 @@ across releases.
 ```text
 forze ops list      [--app REF] [--json]
 forze ops describe  [--app REF] OP [--json]
-forze ops call      [--app REF] OP [--input JSON|@PATH|- | --FIELD VALUE ...]
-                    [--tenant UUID] [--idempotency-key KEY] [--timeout SECONDS] [--grace SECONDS]
+forze ops call      [--app REF] OP
+                    [--input JSON|@PATH|- | --FIELD VALUE ... | --batch @PATH|-]
+                    [--tenant UUID] [--idempotency-key KEY]
+                    [--timeout SECONDS] [--grace SECONDS]
                     [--correlation-id UUID] [--causation-id UUID]
                     [--api-key-file PATH] [--pretty]
 ```
@@ -33,6 +35,7 @@ input and output JSON Schemas.
 | Option | Effect | Refused when |
 |---|---|---|
 | `--input JSON` / `@PATH` / `-` | the input object, inline, from a file, or from stdin; validated into the operation's input DTO, unknown keys refused | the operation takes no input; the JSON does not parse (`NaN` and `Infinity` included) or is not an object; the file cannot be read; the input is inline and the DTO declares a `SecretStr` or `SecretBytes` field |
+| `--batch @PATH` / `-` | one call per line of a JSONL file or of stdin, in one runtime; see [Batches](#batches) | the value is neither `@PATH` nor `-`; combined with `--input`, typed flags, `--idempotency-key` or `--pretty` |
 | `--tenant UUID` | a requested tenant, validated against the principal's membership, or matching the key's own tenant | the identity is not an API key; nothing can validate it |
 | `--idempotency-key KEY` | binds the key: a repeat with the same input replays the stored result | the operation does not support one |
 | `--timeout SECONDS` | bounds the operation; only ever tightens its declared deadline | not a positive, finite number |
@@ -41,7 +44,7 @@ input and output JSON Schemas.
 | `--api-key-file PATH` | reads the API key from a file instead of the environment | the identity is not an API key; the file cannot be read |
 | `--pretty` | indents the result | |
 
-A malformed `--timeout`, `--grace`, `--tenant` or id is a parse error: Click's usage text on
+A malformed `--timeout`, `--grace`, `--tenant`, `--batch` or id is a parse error: Click's usage text on
 stderr, exit 2, nothing on stdout. Every other refusal is an error object, an option `call`
 does not have included: it is read as a typed flag.
 
@@ -71,6 +74,35 @@ $ forze ops call notes.create --title "Quarterly report"
   option means the same for every operation. `describe` lists the flags, or says why there are
   none.
 - **Exclusive.** Typed flags and `--input` cannot be combined.
+
+## Batches
+
+`--batch @PATH` or `--batch -` calls the operation once per line of a JSONL file, or of stdin,
+inside one runtime: one startup and one shutdown for the whole batch. Each line is an input
+object, as `--input` would carry; blank lines are skipped.
+
+```console
+$ forze ops call notes.create --batch @notes.jsonl
+{"line": 1, "result": {"id": "…", "title": "a", …}, "execution_id": "…", "correlation_id": "…"}
+{"line": 2, "result": {"id": "…", "title": "b", …}, "execution_id": "…", "correlation_id": "…"}
+```
+
+- **Validated first.** Every line is read and validated before the runtime is built. A line
+  that does not parse or validate is the only line written, and nothing runs. The whole input
+  is held in memory, so split a file too large for that.
+- **One line out per call.** Stdout holds one JSON document per line that ran, in order, each
+  written as its call finishes: `{"line": N, "result": …}` or the error object with
+  `"line": N`. Each carries its own `execution_id`; all share one `correlation_id`, the
+  `--correlation-id` given or one minted for the batch. Each line is a governed call: its
+  identity is verified and its tenant resolved again.
+- **Stops at the first failure.** The failed line is the last one written, and its exit code,
+  by the table below, is the batch's. Exit 0 means every line succeeded.
+- **No idempotency key.** One key would claim every line, so `--idempotency-key` is refused. A
+  retryable failure therefore exits 75 from a query and 69 from a command.
+- **Signals.** A signal stops the batch: the line in flight gets `--grace` as a single call
+  does, and no line starts after it. When lines remained, the batch exits 130 or 143.
+- **The batch as a whole.** A refusal before any line runs (a conflicting option, an unreadable
+  file, a runtime that does not start) is one error object without `line`.
 
 ## Output
 
@@ -132,12 +164,12 @@ retryable kinds are `concurrency`, `throttled` and `infrastructure`.
 | Code | Kind | Exit | Raised when |
 |---|---|---|---|
 | `cli_unknown_operation` | `validation` | 2 | the operation is unknown, or not exposed |
-| `cli_input_not_accepted` | `validation` | 2 | `--input` or typed flags given to an operation that takes none |
-| `cli_option_conflict` | `validation` | 2 | typed flags given with `--input` |
+| `cli_input_not_accepted` | `validation` | 2 | `--input`, typed flags or `--batch` given to an operation that takes none |
+| `cli_option_conflict` | `validation` | 2 | typed flags given with `--input`; `--batch` given with `--input`, typed flags, `--idempotency-key` or `--pretty` |
 | `cli_flags_unsupported` | `validation` | 2 | typed flags given to an operation whose input takes none; the detail says why |
 | `cli_malformed_flags` | `validation` | 2 | the typed flags do not parse: an unknown flag, a missing value, a value to a switch, a field given twice, or an argument that is not a flag |
-| `cli_input_unreadable` | `validation` | 2 | the `@PATH` file cannot be read |
-| `cli_malformed_input` | `validation` | 2 | the input is not JSON, or not an object |
+| `cli_input_unreadable` | `validation` | 2 | the `@PATH` file of `--input` or `--batch` cannot be read |
+| `cli_malformed_input` | `validation` | 2 | the input, or a batch line, is not JSON, or not an object |
 | `cli_inline_secret` | `validation` | 2 | the input declares a secret and was given inline or as typed flags |
 | `cli_idempotency_unsupported` | `validation` | 2 | `--idempotency-key` on an operation that does not support one |
 | `cli_tenant_unverifiable` | `validation` | 2 | `--tenant` with an anonymous or static identity |
