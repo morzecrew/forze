@@ -226,10 +226,11 @@ async def test_read_only_is_enforced_only_by_a_read_only_begin(
 async def test_a_write_outside_the_read_only_root_clears_its_claim(
     pg_client: PostgresClient, postgres_container: Any
 ) -> None:
-    """A detached statement, or another client's own transaction, commits outside the root.
+    """A write that commits outside the read-only root clears the root's claim.
 
-    Either one leaves the read-only root not the only thing that committed, so the manager
-    must stop claiming enforcement.
+    A detached statement, another client's transaction, and another client's autocommit
+    statement each leave the root not the only thing that committed, so the manager must
+    stop claiming enforcement.
     """
 
     await pg_client.execute(
@@ -255,8 +256,20 @@ async def test_a_write_outside_the_read_only_root_clears_its_claim(
 
             assert txmanager.read_only_enforced() is False
 
+        async with txmanager.transaction(read_only=True):
+            await other.execute(insert, {"val": 3})  # autocommit: outside any transaction
+
+            assert txmanager.read_only_enforced() is False
+
+        async with txmanager.transaction(read_only=True):
+            # Out of transaction, a batched scan commits a short-lived transaction of its own.
+            async for _chunk in other.fetch_all_batched("SELECT 1"):
+                pass
+
+            assert txmanager.read_only_enforced() is False
+
     finally:
         await other.close()
 
     count = await pg_client.fetch_value("SELECT count(*) FROM test_txmanager_ro_bypass")
-    assert count == 2
+    assert count == 3

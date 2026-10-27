@@ -2,9 +2,10 @@
 
 ``BEGIN … READ ONLY`` makes Postgres refuse writes to this database inside the transaction.
 It says nothing about writes the task commits elsewhere while the root is open: a
-:meth:`~forze_postgres.kernel.client.client.PostgresClient.detached` statement autocommits,
-and another client's root transaction commits on its own. Either one clears the record, so
-the root is reported as enforced only when it was the only thing that could commit.
+:meth:`~forze_postgres.kernel.client.client.PostgresClient.detached` statement or another
+client's statement outside a transaction autocommits, and another client's root transaction
+commits on its own. Each clears the record, so the root is reported as enforced only when
+it was the only thing that could commit; an autocommit read costs only that answer.
 
 Shared by every client in the process (one record per task), so a bypass on any client
 clears the open root's claim. It does not cover ``dblink`` or ``postgres_fdw``.

@@ -109,6 +109,49 @@ async def test_a_read_only_root_marks_the_commit_point_unless_enforced(
     reset_commit_started()
 
 
+class _FakeCursor:
+    rowcount = 0
+
+    async def __aenter__(self) -> "_FakeCursor":
+        return self
+
+    async def __aexit__(self, *_exc: object) -> None:
+        return None
+
+    async def execute(self, *_args: object) -> None:
+        return None
+
+
+class _FakeConnection:
+    async def set_autocommit(self, _on: bool) -> None:
+        return None
+
+    def cursor(self) -> _FakeCursor:
+        return _FakeCursor()
+
+
+async def test_an_autocommit_statement_on_another_client_keeps_the_mark(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A second client outside any transaction runs the statement in autocommit: it commits
+    # beside the read-only root, so the root is no longer the only thing that committed.
+    @asynccontextmanager
+    async def _pooled(_self: object) -> AsyncGenerator[_FakeConnection]:
+        yield _FakeConnection()
+
+    monkeypatch.setattr(PostgresClient, "_acquire", _pooled)
+    adapter, _client = _adapter()
+    tx = TransactionContext()
+    tx.lock(lambda _route: adapter)
+    reset_commit_started()
+
+    async with tx.scope("pg", read_only=True):
+        await PostgresClient().execute("SELECT 1")
+
+    assert commit_started() is True
+    reset_commit_started()
+
+
 async def test_a_detached_scope_clears_the_claim_even_from_a_nested_scope() -> None:
     adapter, _client = _adapter()
 

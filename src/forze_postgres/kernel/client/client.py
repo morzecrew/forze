@@ -585,6 +585,9 @@ class PostgresClient(PostgresClientPort):
             yield await self._materialize_pending()
             return
 
+        # Out of transaction, a batched scan commits its own short-lived transaction.
+        bypass_read_only_root()
+
         async with self._acquire() as pooled_conn:
             yield pooled_conn
 
@@ -623,6 +626,9 @@ class PostgresClient(PostgresClientPort):
         if self.__ctx_pending.get() is not None:
             yield await self._materialize_pending()
             return
+
+        # An autocommit statement commits on its own, outside any open read-only root.
+        bypass_read_only_root()
 
         async with self._acquire() as pooled_conn:
             await pooled_conn.set_autocommit(True)

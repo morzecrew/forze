@@ -2419,8 +2419,19 @@ root transaction committed.
     holds the root's own route alone.
   - **`detached()` statements.** `PostgresClient.detached()` resets the client's depth, so
     its statements autocommit beside the root. The fix: `detached()` clears the record on
-    entry (`client.py:687`). So does any write-capable root opened by any Postgres client
-    (`client.py:893`), which also covers the nested-route case for Postgres.
+    entry (`client.py:693`). So does any write-capable root opened by any Postgres client
+    (`client.py:899`), which also covers the nested-route case for Postgres.
+  - **Autocommit on another client.** A statement on another client outside any
+    transaction autocommits beside the root. The fix: both of the client's
+    out-of-transaction connection paths clear the record before they check out a pooled
+    connection.
+    - `_statement_conn` serves every single-statement method in autocommit
+      (`client.py:631`).
+    - `__acquire_conn` serves `fetch_all_batched`, which wraps an out-of-transaction scan
+      in a short-lived transaction of its own and commits it, and `health`
+      (`client.py:589`).
+
+    A query that also runs such a read loses only the skip.
   - **Shared record.** The record is one per task and shared by every client, so a bypass
     on any client, in a nested scope or a child task, clears the root's own claim.
 
@@ -2428,9 +2439,10 @@ root transaction committed.
   - a mock test that ties each mock's answer to whether a write in its read-only root is
     actually refused, at the root and nested in an outer transaction;
   - Postgres unit tests, with a fake client, for a root `BEGIN`, a savepoint, a read-write
-    root, and a `detached()` scope, at the root and from a nested scope;
+    root, a `detached()` scope (at the root and from a nested scope), and an autocommit
+    statement on a second client;
   - Postgres integration tests: a savepoint root lets a write land, and a `detached()`
-    insert or a second client's transaction clears the claim;
+    insert, a second client's transaction, or its autocommit insert clears the claim;
   - a core test where a nested scope on another route commits an independent transaction,
     and a cancel in the read-only root's commit window reports `commit_ambiguous`;
   - core and CLI tests that assert the reported code (`deadline_exceeded`, `interrupted`,
@@ -2441,16 +2453,16 @@ root transaction committed.
 
   Still outside the claim, as for any transaction:
   - a write to another store (Redis, a queue, a blob);
-  - a plain autocommit statement on another client outside any transaction of its own;
   - `dblink` or `postgres_fdw`.
 
-  None of these ever joined the transaction the commit mark covers.
+  Neither ever joined the transaction the commit mark covers.
 - **Proposed row (RFC 0077):** `ASSUMED` — a read-only root marks no commit point only
   when three things hold:
   - its manager implements `ReadOnlyAware` and answers exactly `True` for the transaction
     it actually opened;
   - no nested scope entered another route;
-  - for Postgres, no `detached()` statement or other write-capable root ran beside it.
+  - for Postgres, no `detached()` statement, autocommit statement or other write-capable
+    root ran beside it.
 
   Every other root marks one. A manager may answer `True` only if its own store refuses
   every write to that transaction on every path. Follow-up, not built: make the Mongo,

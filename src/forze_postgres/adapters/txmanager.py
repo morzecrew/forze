@@ -96,7 +96,8 @@ class PostgresTxManagerAdapter(TransactionManagerPort):
         ``dblink`` or ``postgres_fdw``. ``False`` for a scope opened inside an outer client
         transaction (a savepoint, which cannot be read-only, under a transaction that may
         write), and once a :meth:`~forze_postgres.kernel.client.client.PostgresClient.detached`
-        statement or another client's root transaction could have committed beside it.
+        statement, another client's autocommit statement, or another client's root
+        transaction could have committed beside it.
         """
 
         return read_only_root_enforced()

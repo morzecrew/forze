@@ -165,7 +165,7 @@ have let a write through it:
 | Postgres, and the mock's `journal` and `strict` managers, when the query's read-only transaction is the only one it entered | `deadline_exceeded` (CLI exit 6), or a plain cancellation (CLI exit 130 or 143): the store refused writes inside it |
 | The same managers, when the query's transaction is nested in one opened outside forze | `commit_ambiguous`: it became a savepoint, which cannot be read-only |
 | The same managers, when a nested scope entered another route | `commit_ambiguous`: that route opened, and may have committed, a transaction of its own |
-| Postgres, after a `detached()` statement or another client's transaction | `commit_ambiguous`: those commit outside the read-only transaction |
+| Postgres, after a `detached()` statement, or another client's transaction or statement outside a transaction | `commit_ambiguous`: those commit outside the read-only transaction, so even an autocommit read gives up the skip |
 | Mongo, Firestore, Neo4j, and the mock's `none` manager | `commit_ambiguous`: they accept `read_only` without enforcing it |
 
 The kernel asks the manager about the transaction it actually opened, through
