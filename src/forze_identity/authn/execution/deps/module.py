@@ -31,6 +31,7 @@ from forze.application.integrations.authn import LOCKOUT_COUNTER_ROUTE, LockoutC
 from forze.base.exceptions import exc
 from forze.base.primitives import MappingConverter, StrKey, StrKeyMapping
 from forze_identity._routes import normalize_route_set as _normalize_route_set
+from forze_identity._routes import refuse_undeclared_overrides
 
 from .configs import (
     AuthnKernelConfig,
@@ -69,7 +70,8 @@ class AuthnDepsModule(DepsModule):
     3. the orchestrator under :class:`AuthnDepKey`.
 
     External integrations override individual verifiers/resolvers by merging additional
-    :class:`Deps` after the module's output.
+    :class:`Deps` after the module's output, or through the per-route override mappings,
+    whose keys must be routes in ``authn``: any other key is refused at construction.
     """
 
     kernel: AuthnKernelConfig | None = attrs.field(default=None)
@@ -179,6 +181,30 @@ class AuthnDepsModule(DepsModule):
 
     lockout_counter_route: StrKey = attrs.field(default=LOCKOUT_COUNTER_ROUTE)
     """Counter route the lockout guard resolves its ``CounterPort`` from."""
+
+    # ....................... #
+
+    def __attrs_post_init__(self) -> None:
+        # Every method resolves its principal through the route's one resolver, so a
+        # resolver override needs only the route; a verifier override needs its method too.
+        refuse_undeclared_overrides(
+            self.resolvers, self.authn, field="resolvers", declared_field="authn"
+        )
+        verifiers: tuple[tuple[str, AuthnMethod, StrKeyMapping[object] | None], ...] = (
+            ("token_verifiers", "token", self.token_verifiers),
+            ("password_verifiers", "password", self.password_verifiers),
+            ("api_key_verifiers", "api_key", self.api_key_verifiers),
+        )
+
+        for field, method, routes in verifiers:
+            refuse_undeclared_overrides(routes, self.authn, field=field, declared_field="authn")
+            unused = sorted(r for r in routes or () if method not in (self.authn or {})[r])
+
+            if unused:
+                raise exc.configuration(
+                    f"{field} overrides routes {unused!r} whose authn methods do not include "
+                    f"{method!r}; add {method!r} there or the override is never registered.",
+                )
 
     # ....................... #
 

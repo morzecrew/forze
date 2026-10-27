@@ -51,7 +51,10 @@ deps = DepsRegistry.from_deps(local)
 ??? note "Wiring it by hand"
 
     `local_identity_deps` is a thin wrapper over the two planes — drop to this if
-    you want to mix local keys with other routes:
+    you want to mix local keys with other routes. An override applies only to a
+    route its module registers: `api_key_verifiers` to a route in `authn` that
+    enables `api_key`, `tenant_resolvers` to one in `tenant_resolver`. Any other
+    override is refused when the module is built:
 
     ```python
     from forze_identity.authn import AuthnDepsModule, AuthnKernelConfig
@@ -88,7 +91,8 @@ requirement = AuthnRequirement(
 ```
 
 A request carrying `X-API-Key: dev-service-key` is resolved to that principal and
-tenant — the same `ctx.inv_ctx` binding every authz/tenancy hook reads.
+tenant — the same `ctx.inv_ctx` binding every authz/tenancy hook reads. A config that
+maps no tenant wires no tenant resolver, so the app runs untenanted, realtime included.
 
 !!! warning "Demo trust model"
 

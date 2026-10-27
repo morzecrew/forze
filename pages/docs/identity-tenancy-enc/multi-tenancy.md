@@ -23,7 +23,8 @@ tenant resolved, and both bound to the execution context:
    `tid` claim).
 2. **Resolve** the `TenantIdentity`. A resolver validates any hints against the
    principal's actual memberships — it is authoritative, so a hint can never
-   grant access the principal doesn't have.
+   grant access the principal doesn't have. With no hint, a principal with no
+   membership, or with several, gets no tenant, and tenant-scoped work refuses it.
 3. **Bind** both with `ctx.inv_ctx.bind(...)`, so every adapter can call
    `ctx.inv_ctx.get_tenant()` on its own.
 

@@ -14,7 +14,7 @@ transport-neutral: the connection value objects belong to their transports.
 
 from collections.abc import Mapping
 from datetime import datetime
-from typing import Any, Final, Literal, final
+from typing import TYPE_CHECKING, Any, Final, Literal, final
 from uuid import UUID
 
 import attrs
@@ -26,8 +26,15 @@ from forze.application.contracts.authn import (
     AuthnResult,
     ClientIdentity,
 )
-from forze.application.contracts.tenancy import TenantResolverPort, parse_tenant_hint
+from forze.application.contracts.tenancy import (
+    TenantResolverDepKey,
+    TenantResolverPort,
+    parse_tenant_hint,
+)
 from forze.base.exceptions import exc
+
+if TYPE_CHECKING:
+    from forze.application.execution import ExecutionContext
 
 # ----------------------- #
 
@@ -42,7 +49,10 @@ __all__ = [
     "present_credential",
     "refuse_delegated_identity",
     "require_origin_attestation",
+    "require_authenticated_connection",
+    "require_connection_tenant",
     "resolve_realtime_identity",
+    "tenancy_wired",
 ]
 
 REALTIME_AUTH_TOKEN_KEY: Final[str] = "token"
@@ -383,6 +393,70 @@ def client_identity(
 # ....................... #
 
 
+def tenancy_wired(ctx: "ExecutionContext") -> bool:
+    """Whether the deployment registers a tenant resolver of its own, on any route.
+
+    Any route, not the connection's: one tenanted route makes the deployment tenanted, and
+    a transport cannot always tell which route a credential used. The mock's fallback
+    registrations do not count: a plane wired only by fallback is unwired (see
+    :class:`~forze.application.contracts.deps.FallbackReport`), so a mock-backed app without
+    tenancy keeps its untenanted connections.
+    """
+
+    store = ctx.deps.store
+    plain = (
+        TenantResolverDepKey in store.plain_deps
+        and TenantResolverDepKey not in store.fallback_plain
+    )
+    routed = frozenset(store.routed_deps.get(TenantResolverDepKey) or ())
+    fallback = store.fallback_routes.get(TenantResolverDepKey) or frozenset()
+
+    return plain or bool(routed - fallback)
+
+
+# ....................... #
+
+
+def require_connection_tenant(ctx: "ExecutionContext", tenant: UUID | None) -> None:
+    """Refuse an untenanted realtime connection once the deployment is tenanted.
+
+    An untenanted connection joins the global rooms
+    (:func:`~forze.application.integrations.realtime.rooms.room_for` with ``None``), which in
+    a tenanted deployment carry only misrouted signals. Every transport runs this on what it
+    accepts — at connect and at reauth, whoever wrote the resolver. The client's remedy is to
+    select a tenant; a token refresh does not change the answer.
+
+    :raises CoreException: ``authentication`` / ``tenant_required`` when *tenant* is ``None``
+        and :func:`tenancy_wired`.
+    """
+
+    if tenant is None and tenancy_wired(ctx):
+        raise exc.authentication("Tenant identity is required", code="tenant_required")
+
+
+# ....................... #
+
+
+def require_authenticated_connection(ctx: "ExecutionContext") -> None:
+    """Refuse an anonymous realtime connection once the deployment is tenanted.
+
+    An anonymous connection has no tenant either, so it would join the global topic rooms
+    the same way. The WebSocket route refuses anonymous connections outright; Socket.IO
+    admits them only where no tenancy is wired.
+
+    :raises CoreException: ``authentication`` / ``auth_required`` when :func:`tenancy_wired`.
+    """
+
+    if tenancy_wired(ctx):
+        raise exc.authentication(
+            "A realtime connection requires an authenticated principal once tenancy is wired",
+            code="auth_required",
+        )
+
+
+# ....................... #
+
+
 async def _tenant(
     result: AuthnResult,
     *,
@@ -394,7 +468,8 @@ async def _tenant(
     trusts a gateway header, and a WebSocket upgrade's headers are set by the client
     the route is authenticating. The issuer hint is kept because it rides a credential
     the authn plane just verified, and a resolver that has no binding for a principal
-    returns ``None`` (a genuine mismatch raises instead, inside the call).
+    returns ``None`` (a genuine mismatch raises instead, inside the call). Whether ``None``
+    is acceptable is :func:`require_connection_tenant`'s question, not this one's.
     """
 
     hint = parse_tenant_hint(result.issuer_tenant_hint)
@@ -448,7 +523,9 @@ async def resolve_realtime_identity(
     Returns ``None`` for an anonymous handshake (no enabled source presented a
     credential). Raises whatever the authn plane raises for an invalid one — a
     client-safe :class:`~forze.base.exceptions.CoreException` the transport turns
-    into its own refusal.
+    into its own refusal. The resolved tenant may be ``None``; the shipped transport
+    resolvers and the routes refuse that through :func:`require_connection_tenant` once
+    the deployment is tenanted.
 
     The client identity is read from the handshake's query parameters and auth payload
     under *device_id_key* / *session_id_key*.

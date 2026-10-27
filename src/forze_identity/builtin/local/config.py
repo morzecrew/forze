@@ -46,6 +46,41 @@ class LocalIdentityConfig:
 
     # ....................... #
 
+    def tenant_of(self, principal_id: UUID) -> UUID | None:
+        """The principal's tenant: its mapping, else one its API keys name, else the default.
+
+        :meth:`from_mapping` folds the keys' tenants into :attr:`principal_tenants`; a config
+        built directly may carry them on the keys alone, and they count the same.
+        """
+
+        tenant = self.principal_tenants.get(principal_id)
+
+        if tenant is None:
+            tenant = next(
+                (
+                    entry.tenant_id
+                    for entry in self.api_keys.values()
+                    if entry.principal_id == principal_id and entry.tenant_id is not None
+                ),
+                None,
+            )
+
+        return tenant if tenant is not None else self.default_tenant_id
+
+    # ....................... #
+
+    @property
+    def maps_a_tenant(self) -> bool:
+        """Whether any principal can resolve a tenant: by mapping, an API key, or default."""
+
+        return (
+            bool(self.principal_tenants)
+            or self.default_tenant_id is not None
+            or any(entry.tenant_id is not None for entry in self.api_keys.values())
+        )
+
+    # ....................... #
+
     @classmethod
     def from_mapping(cls, data: JsonDict) -> Self:
         """Build config from a plain mapping (tests and programmatic demos)."""

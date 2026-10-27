@@ -35,9 +35,9 @@ def resolve_policy_scope(
 
     if spec.tenancy_mode == "require_invocation_tenant":
         if invocation_tenant_id is None:
-            raise exc.internal(
-                "AuthzSpec requires a bound tenant on the invocation context",
-            )
+            # The caller has no tenant bound (e.g. signed in to several tenants, none picked
+            # yet): the same 401 ``TenantRequired`` and the tenant-aware gateways give.
+            raise exc.authentication("Tenant identity is required", code="tenant_required")
 
         if scope.tenant_id is None:
             raise exc.internal(

@@ -18,8 +18,11 @@ from .auth import (
     client_identity,
     present_credential,
     refuse_delegated_identity,
+    require_authenticated_connection,
+    require_connection_tenant,
     require_origin_attestation,
     resolve_realtime_identity,
+    tenancy_wired,
 )
 from .commands import RealtimeCommandRoute
 from .frames import FRAME_UNSERIALIZABLE_CODE, encode_frame, jsonable_frame
@@ -62,7 +65,10 @@ __all__ = [
     "present_credential",
     "refuse_delegated_identity",
     "require_origin_attestation",
+    "require_authenticated_connection",
+    "require_connection_tenant",
     "resolve_realtime_identity",
+    "tenancy_wired",
     "MailboxEntry",
     "RealtimeMailbox",
     "MailboxCursors",

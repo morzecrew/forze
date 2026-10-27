@@ -26,7 +26,8 @@ from starlette.websockets import WebSocketDisconnect
 
 from forze.application.contracts.authn import AuthnIdentity, ClientIdentity
 from forze.application.contracts.realtime import Audience, RealtimeSignal
-from forze.application.execution import ExecutionContext
+from forze.application.contracts.tenancy import TenantResolverDepKey
+from forze.application.execution import Deps, ExecutionContext
 from forze.application.execution.operations import OperationRegistry
 from forze.application.integrations.realtime import (
     InMemoryMailboxCursors,
@@ -160,9 +161,11 @@ def _build(
     hub: RealtimeSseHub | None = None,
     presence: Any = None,
     with_commands: bool = False,
+    resolve: Any = _resolver,
+    extra: tuple[Deps, ...] = (),
     **attach_kwargs: Any,
 ) -> tuple[TestClient, InMemoryRealtimeMailbox]:
-    ctx = context_from_deps(MockDepsModule(state=MockState())())
+    ctx = context_from_deps(MockDepsModule(state=MockState())(), *extra)
     mailbox = mailbox if mailbox is not None else InMemoryRealtimeMailbox()
     router = APIRouter()
     attach_kwargs.setdefault("cursors_factory", lambda _ctx: InMemoryMailboxCursors())
@@ -170,7 +173,7 @@ def _build(
     attach_realtime_ws_route(
         router,
         ctx_dep=lambda: ctx,
-        resolve=_resolver,
+        resolve=resolve,
         mailbox_factory=lambda _ctx: mailbox,
         hub=hub,
         presence=presence,
@@ -1302,3 +1305,74 @@ class TestMidReplayAckClamp:
         assert mailbox.trimmed == []  # the refused ack never reached the trim
         retained = asyncio.run(inner.read_since(principal=str(_PRINCIPAL), since=None))
         assert [e.event_id for e in retained] == ids  # backlog intact
+
+
+# ....................... #
+
+_ROUTE_TENANT = uuid4()
+
+# A tenant resolver of the deployment's own, beside the mock's fallback one on "main": the
+# real-on-one-route, fallback-on-another hybrid is tenanted on every route.
+_TENANCY = (
+    pytest.param(
+        Deps.routed({TenantResolverDepKey: {"api": lambda _ctx: object()}}), id="routed"
+    ),
+    pytest.param(Deps.plain({TenantResolverDepKey: lambda _ctx: object()}), id="plain"),
+)
+
+
+async def _hand_written(connect: WsConnect) -> WsConnection:
+    """An app's own resolver: no tenancy check of its own."""
+
+    auth = connect.auth or {}
+    token = auth.get("token") or connect.websocket.query_params.get("token")
+
+    return WsConnection(
+        authn=AuthnIdentity(principal_id=_PRINCIPAL),
+        tenant=None if token == "untenanted" else _ROUTE_TENANT,
+    )
+
+
+class TestTheRouteRequiresATenant:
+    """The route refuses an untenanted connection itself, whoever wrote the resolver."""
+
+    @pytest.mark.parametrize("tenancy", _TENANCY)
+    def test_an_untenanted_connection_is_refused(self, tenancy: Deps) -> None:
+        client, _ = _build(resolve=_hand_written, extra=(tenancy,))
+
+        with (
+            client.websocket_connect("/realtime/ws?token=untenanted") as ws,
+            pytest.raises(WebSocketDisconnect) as caught,
+        ):
+            ws.send_text(json.dumps({"type": "nope"}))
+            ws.receive_json()
+
+        assert caught.value.code == 1008
+        assert "Tenant identity is required" in str(caught.value.reason)
+
+    @pytest.mark.parametrize("tenancy", _TENANCY)
+    def test_a_reauth_resolving_no_tenant_is_refused_and_keeps_the_tenant(
+        self, tenancy: Deps
+    ) -> None:
+        client, _ = _build(resolve=_hand_written, extra=(tenancy,))
+
+        with client.websocket_connect("/realtime/ws?token=t") as ws:
+            ws.send_json(
+                {"type": "realtime.reauth", "cid": "r1", "auth": {"token": "untenanted"}}
+            )
+            refused = ws.receive_json()
+            # Still bound to its tenant: a reauth resolving that same tenant is accepted.
+            ws.send_json({"type": "realtime.reauth", "cid": "r2", "auth": {"token": "t"}})
+            kept = ws.receive_json()
+
+        assert refused["cid"] == "r1"
+        assert refused["error"]["code"] == "tenant_required"
+        assert kept == {"type": "ack", "cid": "r2", "data": {"ok": True}}
+
+    def test_without_tenancy_wired_an_untenanted_connection_is_served(self) -> None:
+        client, _ = _build(resolve=_hand_written)
+
+        with client.websocket_connect("/realtime/ws?token=untenanted") as ws:
+            ws.send_text(json.dumps({"type": "nope"}))
+
+            assert ws.receive_json()["type"] == "error"

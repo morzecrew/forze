@@ -26,16 +26,21 @@ from forze.application.contracts.authn import (
     PasswordCredentials,
     VerifiedAssertion,
 )
-from forze.application.contracts.tenancy import TenantIdentity
+from forze.application.contracts.tenancy import TenantIdentity, TenantResolverDepKey
+from forze.application.execution import Deps
 from forze.application.integrations.authn import AuthnOrchestrator
 from forze.application.integrations.realtime import (
     RealtimeCredentialSources,
     RealtimeHandshake,
     client_identity,
     present_credential,
+    require_connection_tenant,
     resolve_realtime_identity,
+    tenancy_wired,
 )
 from forze.base.exceptions import CoreException, ExceptionKind
+from forze.testing import context_from_deps
+from forze_mock import MockDepsModule
 
 pytestmark = pytest.mark.unit
 
@@ -381,6 +386,18 @@ class TestMapping:
         assert identity.tenant == _TENANT
 
     @pytest.mark.asyncio
+    async def test_a_resolver_with_no_binding_and_no_hint_resolves_no_tenant(self) -> None:
+        # Whether that is acceptable is require_connection_tenant's call, made with a ctx.
+        identity = await _resolve(
+            RealtimeCredentialSources(),
+            _handshake(headers={"Authorization": "Bearer tok"}),
+            tenants=_Tenants(None),
+        )
+
+        assert identity is not None
+        assert identity.tenant is None
+
+    @pytest.mark.asyncio
     async def test_an_unparseable_tenant_hint_is_no_tenant(self) -> None:
         identity = await _resolve(
             RealtimeCredentialSources(),
@@ -390,6 +407,47 @@ class TestMapping:
 
         assert identity is not None
         assert identity.tenant is None
+
+
+class TestTenancyWired:
+    def test_the_mocks_fallback_resolver_does_not_count(self) -> None:
+        ctx = context_from_deps(MockDepsModule()())
+
+        assert ctx.tenancy.resolver("main") is not None
+        assert not tenancy_wired(ctx)
+
+    def test_a_real_route_beside_the_mocks_fallback_makes_it_tenanted(self) -> None:
+        # Real tenancy on "api", the mock's fallback on "main": tenanted on every route.
+        ctx = context_from_deps(
+            MockDepsModule()(),
+            Deps.routed({TenantResolverDepKey: {"api": lambda _ctx: _Tenants(None)}}),
+        )
+
+        assert tenancy_wired(ctx)
+
+    def test_a_plain_registration_counts(self) -> None:
+        ctx = context_from_deps(Deps.plain({TenantResolverDepKey: lambda _ctx: _Tenants(None)}))
+
+        assert tenancy_wired(ctx)
+
+
+class TestRequireConnectionTenant:
+    def test_an_untenanted_connection_is_refused_once_tenanted(self) -> None:
+        ctx = context_from_deps(
+            MockDepsModule()(),
+            Deps.routed({TenantResolverDepKey: {"api": lambda _ctx: _Tenants(None)}}),
+        )
+
+        with pytest.raises(CoreException) as caught:
+            require_connection_tenant(ctx, None)
+
+        assert caught.value.kind is ExceptionKind.AUTHENTICATION
+        assert caught.value.code == "tenant_required"
+
+        require_connection_tenant(ctx, _TENANT)
+
+    def test_without_tenancy_an_untenanted_connection_stands(self) -> None:
+        require_connection_tenant(context_from_deps(MockDepsModule()()), None)
 
 
 class TestClientIdentity:

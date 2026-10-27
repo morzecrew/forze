@@ -6,7 +6,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from forze.base.exceptions import CoreException
+from forze.base.exceptions import CoreException, ExceptionKind
 from tests.support.execution_context import (
     context_from_deps,
 )
@@ -273,6 +273,57 @@ class TestAuthnDepsModule:
         )
 
         assert isinstance(resolver, JwtNativeUuidResolver)
+
+    @pytest.mark.parametrize(
+        "field", ["resolvers", "token_verifiers", "password_verifiers", "api_key_verifiers"]
+    )
+    @pytest.mark.parametrize("declared", [None, {"other": frozenset({"token"})}])
+    def test_an_override_for_a_route_authn_does_not_name_is_refused(
+        self, field: str, declared: dict[str, frozenset[str]] | None
+    ) -> None:
+        # It used to register nothing, so the route kept the default it was meant to replace.
+        with pytest.raises(CoreException, match="'main'") as excinfo:
+            AuthnDepsModule(  # type: ignore[misc]
+                kernel=_kernel_min_access(),
+                authn=declared,
+                **{field: {"main": MagicMock()}},
+            )
+
+        assert excinfo.value.kind is ExceptionKind.CONFIGURATION
+        assert field in excinfo.value.summary
+
+    @pytest.mark.parametrize(
+        ("field", "method"),
+        [
+            ("token_verifiers", "token"),
+            ("password_verifiers", "password"),
+            ("api_key_verifiers", "api_key"),
+        ],
+    )
+    def test_a_verifier_override_for_a_method_the_route_lacks_is_refused(
+        self, field: str, method: str
+    ) -> None:
+        others = frozenset({"token", "password", "api_key"} - {method})
+
+        with pytest.raises(CoreException, match=f"'{method}'") as excinfo:
+            AuthnDepsModule(  # type: ignore[misc]
+                kernel=_kernel_min_access(),
+                authn={"main": others},
+                **{field: {"main": MagicMock()}},
+            )
+
+        assert excinfo.value.kind is ExceptionKind.CONFIGURATION
+        assert field in excinfo.value.summary
+
+    def test_a_resolver_override_serves_every_method(self) -> None:
+        # Every credential family resolves its principal through the route's one resolver.
+        module = AuthnDepsModule(
+            kernel=_kernel_min_access(),
+            authn={"main": frozenset({"password"})},
+            resolvers={"main": MagicMock()},
+        )
+
+        assert module.resolvers is not None
 
     def test_module_flags_flow_into_password_factories(self) -> None:
         deps = AuthnDepsModule(

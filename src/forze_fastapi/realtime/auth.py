@@ -18,6 +18,7 @@ from forze.application.integrations.realtime.auth import (
     RealtimeCredentialSources,
     RealtimeHandshake,
     auth_payload,
+    require_connection_tenant,
     require_origin_attestation,
     resolve_realtime_identity,
 )
@@ -91,7 +92,9 @@ def build_ws_connection_resolver(
     :param tenancy_route: Tenancy route whose resolver binds the principal's tenant;
         defaults to the authn spec's own name, which is how the shipped tenancy module
         registers it and how the HTTP boundary looks it up. A route-less lookup finds
-        nothing there, and the connection would silently bind no tenant.
+        nothing there, and the connection would silently bind no tenant. Once the
+        deployment registers a tenant resolver on any route, a connection that resolves no
+        tenant is refused with ``tenant_required``.
     :param device_id_key: Query / payload key carrying the client's device id.
     :param session_id_key: Query / payload key carrying the client's session id.
     :returns: A resolver to pass as ``attach_realtime_ws_route(resolve=...)``.
@@ -145,6 +148,8 @@ def build_ws_connection_resolver(
 
         if identity is None:
             return None
+
+        require_connection_tenant(ctx, identity.tenant)
 
         return WsConnection(
             authn=identity.authn,

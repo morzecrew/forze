@@ -11,7 +11,11 @@ import pytest
 from socketio.exceptions import ConnectionRefusedError as SocketIOConnectionRefusedError
 
 from forze.application.contracts.authn import AuthnIdentity
+from forze.application.contracts.tenancy import TenantResolverDepKey
+from forze.application.execution import Deps
 from forze.base.exceptions import exc
+from forze.testing import context_from_deps
+from forze_mock import MockDepsModule
 from forze_socketio import (
     InMemoryRealtimePresence,
     RealtimeConnection,
@@ -300,4 +304,94 @@ async def test_reauth_survives_a_crashing_resolver_with_a_generic_ack() -> None:
     ack = await sio.handlers["realtime.reauth"]("sid-1", {"token": "t"})
 
     assert ack["error"]["kind"] == "internal"  # generic — internals never leak
+    assert sio.sessions["sid-1"][CONNECTION_SESSION_KEY] is first
+
+
+# ----------------------- #
+# The connect and reauth require a tenant themselves once the deployment is tenanted
+
+
+# A tenant resolver of the deployment's own, beside the mock's fallback one on "main": the
+# real-on-one-route, fallback-on-another hybrid is tenanted on every route.
+_TENANCY = (
+    pytest.param(
+        Deps.routed({TenantResolverDepKey: {"api": lambda _ctx: object()}}), id="routed"
+    ),
+    pytest.param(Deps.plain({TenantResolverDepKey: lambda _ctx: object()}), id="plain"),
+)
+
+
+def _tenanted(tenancy: Deps) -> Any:
+    ctx = context_from_deps(MockDepsModule()(), tenancy)
+
+    return lambda: ctx
+
+
+def _refusal_code(refusal: SocketIOConnectionRefusedError) -> str:
+    return refusal.error_args["data"]["code"]
+
+
+@pytest.mark.parametrize("tenancy", _TENANCY)
+async def test_a_hand_written_resolvers_untenanted_connection_is_refused(tenancy: Deps) -> None:
+    sio = _StubSio()
+    untenanted = RealtimeConnection(authn=AuthnIdentity(principal_id=_PRINCIPAL))
+
+    attach_realtime_connection(  # pyright: ignore[reportArgumentType]
+        sio, resolve=_resolver(untenanted), ctx_dep=_tenanted(tenancy)
+    )
+
+    with pytest.raises(SocketIOConnectionRefusedError) as caught:
+        await sio.handlers["connect"](*_connect_args())
+
+    assert _refusal_code(caught.value) == "tenant_required"
+    assert sio.entered == []
+
+
+@pytest.mark.parametrize("tenancy", _TENANCY)
+async def test_an_anonymous_connect_is_refused_once_tenanted(tenancy: Deps) -> None:
+    sio = _StubSio()
+
+    attach_realtime_connection(  # pyright: ignore[reportArgumentType]
+        sio, resolve=_resolver(None), ctx_dep=_tenanted(tenancy)
+    )
+
+    with pytest.raises(SocketIOConnectionRefusedError) as caught:
+        await sio.handlers["connect"](*_connect_args())
+
+    assert _refusal_code(caught.value) == "auth_required"
+
+
+async def test_without_tenancy_wired_anonymous_and_untenanted_connects_stand() -> None:
+    untenanted = RealtimeConnection(authn=AuthnIdentity(principal_id=_PRINCIPAL))
+    mock_only = context_from_deps(MockDepsModule()())
+
+    for connection in (None, untenanted):
+        sio = _StubSio()
+        attach_realtime_connection(  # pyright: ignore[reportArgumentType]
+            sio, resolve=_resolver(connection), ctx_dep=lambda: mock_only
+        )
+
+        await sio.handlers["connect"](*_connect_args())
+
+
+@pytest.mark.parametrize("tenancy", _TENANCY)
+async def test_a_reauth_resolving_no_tenant_is_refused_and_keeps_the_tenant(
+    tenancy: Deps,
+) -> None:
+    sio = _StubSio()
+    first = RealtimeConnection(authn=AuthnIdentity(principal_id=_PRINCIPAL), tenant=_TENANT)
+    untenanted = RealtimeConnection(authn=AuthnIdentity(principal_id=_PRINCIPAL))
+    outcomes = iter([first, untenanted])
+
+    async def resolve(_c: SocketIOConnect) -> RealtimeConnection | None:
+        return next(outcomes)
+
+    attach_realtime_connection(  # pyright: ignore[reportArgumentType]
+        sio, resolve=resolve, ctx_dep=_tenanted(tenancy)
+    )
+    await sio.handlers["connect"](*_connect_args())
+
+    ack = await sio.handlers["realtime.reauth"]("sid-1", {"token": "untenanted"})
+
+    assert ack["error"]["code"] == "tenant_required"
     assert sio.sessions["sid-1"][CONNECTION_SESSION_KEY] is first

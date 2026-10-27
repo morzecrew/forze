@@ -70,6 +70,7 @@ from forze.application.integrations.realtime import (
     iter_backlog,
     negotiate_realtime_protocol,
     refuse_delegated_identity,
+    require_connection_tenant,
     resolve_client_key,
 )
 from forze.base.exceptions import (
@@ -215,7 +216,9 @@ Return ``None`` for anonymous — which this route refuses (replay, ack, and com
 dispatch all need a principal) — or raise a client-safe
 :class:`~forze.base.exceptions.CoreException` to refuse the connection. Return the identity
 with its ``actor`` chain intact: a delegated identity is refused from it, and one normalized
-to its subject would be served the subject's stream as the subject.
+to its subject would be served the subject's stream as the subject. Once the deployment
+registers a tenant resolver, a connection without a tenant is refused (``tenant_required``),
+at connect and at reauth.
 """
 
 
@@ -251,6 +254,7 @@ def _egress_frame(*, event: str, event_id: str | None, payload: Mapping[str, Any
 async def _resolve(
     resolver: WsConnectionResolver,
     connect: WsConnect,
+    ctx: ExecutionContext,
 ) -> tuple[WsConnection | None, object | None]:
     """The connection, and the admission its credential's verification recorded.
 
@@ -265,6 +269,9 @@ async def _resolve(
 
     # Every accepted identity passes here, at connect and at reauth, whatever the resolver.
     refuse_delegated_identity(connection.authn if connection is not None else None)
+
+    if connection is not None:
+        require_connection_tenant(ctx, connection.tenant)
 
     return connection, admission
 
@@ -470,7 +477,7 @@ def attach_realtime_ws_route(
         async def _handshake() -> tuple[WsConnection, object | None, frozenset[str]]:
             _require_allowed_origin(websocket, origin_allowlist)
             negotiate_realtime_protocol(websocket.query_params.get("protocol"))
-            connection, admission = await _resolve(resolve, WsConnect(websocket=websocket))
+            connection, admission = await _resolve(resolve, WsConnect(websocket=websocket), ctx)
 
             if connection is None:
                 raise exc.authentication(
@@ -703,7 +710,7 @@ def attach_realtime_ws_route(
         async def _handle_reauth(frame: Mapping[str, Any], cid: Any) -> None:
             async def _unit() -> dict[str, Any]:
                 refreshed, admission = await _resolve(
-                    resolve, WsConnect(websocket=websocket, auth=frame.get("auth"))
+                    resolve, WsConnect(websocket=websocket, auth=frame.get("auth")), ctx
                 )
 
                 if (

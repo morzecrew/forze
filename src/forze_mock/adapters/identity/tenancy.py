@@ -60,7 +60,7 @@ class MockTenantResolverPort(_TenantRouteStore, TenantResolverPort):
 
     - ``requested_tenant_id`` resolves only when the principal is a member of
       that tenant; otherwise raises ``tenant_mismatch``;
-    - ambiguous membership (no request, >1 tenant) raises ``tenant_ambiguous``;
+    - no membership, or several and no request, binds no tenant (``None``);
     - inactive tenants raise ``tenant_inactive``.
 
     Seed memberships via :meth:`MockTenantManagementPort.attach_principal`.
@@ -96,14 +96,8 @@ class MockTenantResolverPort(_TenantRouteStore, TenantResolverPort):
                 tid, entry = match
 
             else:
-                if not member_of:
+                if len(member_of) != 1:
                     return None
-
-                if len(member_of) > 1:
-                    raise exc.authentication(
-                        "Tenant identity is ambiguous for this principal",
-                        code="tenant_ambiguous",
-                    )
 
                 tid, entry = member_of[0]
 

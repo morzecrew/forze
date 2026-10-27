@@ -11,6 +11,7 @@ presents them — and that what it resolves is what the route then enforces.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import time
 from inspect import isawaitable
@@ -40,6 +41,8 @@ from forze.application.integrations.realtime import (
 )
 from forze.base.exceptions import CoreException, ExceptionKind, exc
 from forze_fastapi.realtime import attach_realtime_ws_route, build_ws_connection_resolver
+from forze_mock import MockState
+from forze_mock.adapters.identity.tenancy import MockTenantManagementPort, MockTenantResolverPort
 
 pytestmark = pytest.mark.unit
 
@@ -484,6 +487,81 @@ class TestTheTenantIsBound:
 
         assert seen and seen[0] is not None
         assert seen[0].tenant == tenant
+
+
+    @staticmethod
+    def _tenanted_client(memberships: int) -> tuple[TestClient, list[Any], list[UUID]]:
+        state = MockState()
+        mgmt = MockTenantManagementPort(state=state, route=str(_SPEC.name))
+
+        async def seed() -> list[UUID]:
+            tenants = [(await mgmt.provision_tenant()).tenant_id for _ in range(memberships)]
+
+            for tenant in tenants:
+                await mgmt.attach_principal(_PRINCIPAL, tenant)
+
+            return tenants
+
+        tenants = asyncio.run(seed())
+        resolver = MockTenantResolverPort(state=state, route=str(_SPEC.name))
+        deps = (
+            Deps.plain({AuthnDepKey: _AuthnFactory()}),
+            Deps.routed({TenantResolverDepKey: {str(_SPEC.name): lambda _ctx: resolver}}),
+        )
+        resolve = build_ws_connection_resolver(
+            ctx_dep=lambda: context_from_deps(*deps),
+            authn_spec=_SPEC,
+        )
+        seen: list[Any] = []
+
+        async def _record(connect: Any) -> Any:
+            outcome = resolve(connect)
+            resolved = await outcome if isawaitable(outcome) else outcome
+            seen.append(resolved)
+
+            return resolved
+
+        router = APIRouter()
+        attach_realtime_ws_route(
+            router,
+            ctx_dep=lambda: context_from_deps(*deps),
+            resolve=_record,
+            mailbox_factory=lambda _ctx: InMemoryRealtimeMailbox(),
+            cursors_factory=lambda _ctx: InMemoryMailboxCursors(),
+            authorize_topics=_allow_all,
+        )
+        app = FastAPI()
+        app.include_router(router)
+
+        return TestClient(app), seen, tenants
+
+    @pytest.mark.parametrize("memberships", [0, 2], ids=["none", "two"])
+    def test_a_wired_resolver_that_binds_no_tenant_refuses_the_upgrade(
+        self, memberships: int
+    ) -> None:
+        client, _, _ = self._tenanted_client(memberships)
+
+        with (
+            client.websocket_connect(
+                "/realtime/ws", headers={"Authorization": f"Bearer {_GOOD}"}
+            ) as ws,
+            pytest.raises(WebSocketDisconnect) as caught,
+        ):
+            ws.receive_json()
+
+        assert caught.value.code == 1008
+        assert "Tenant identity is required" in str(caught.value.reason)
+
+    def test_a_single_membership_connects_bound_to_it(self) -> None:
+        client, seen, tenants = self._tenanted_client(1)
+
+        with client.websocket_connect(
+            "/realtime/ws", headers={"Authorization": f"Bearer {_GOOD}"}
+        ) as ws:
+            assert _is_live(ws)
+
+        assert seen and seen[0] is not None
+        assert seen[0].tenant == tenants[0]
 
 
 class TestAnonymous:

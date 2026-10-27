@@ -18,6 +18,11 @@ def local_identity_deps(
 ) -> Deps:
     """Merge authn + tenancy deps for API-key-only local identity (demo/MVP).
 
+    The tenant resolver is registered only when *config* maps a tenant (per principal, on
+    an API key, or by default): one that maps none could never bind a tenant, and a
+    registered resolver declares a tenanted deployment, whose realtime connections must
+    carry one.
+
     :param config: Frozen local identity configuration.
     :param authn_route: Route name for :class:`AuthnDepsModule` registration.
     :param tenancy_route: Route name for :class:`TenancyDepsModule` registration.
@@ -31,6 +36,9 @@ def local_identity_deps(
             authn_route: ConfigurableLocalApiKeyVerifier(config=config),
         },
     )()
+
+    if not config.maps_a_tenant:
+        return authn
 
     tenancy = TenancyDepsModule(
         tenant_resolver={tenancy_route},

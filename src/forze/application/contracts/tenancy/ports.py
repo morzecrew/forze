@@ -21,6 +21,10 @@ class TenantResolverPort(Protocol):
         ``requested_tenant_id`` is an optional non-authoritative tenant request
         (for example from a verified issuer claim or HTTP header). Implementations
         should validate it against principal membership rather than trusting it.
+
+        Without a request, return ``None`` (no tenant bound) unless the principal has
+        exactly one membership: tenant-scoped work refuses an unbound caller, while
+        membership-scoped routes such as a tenant selector stay reachable.
         """
         ...
 

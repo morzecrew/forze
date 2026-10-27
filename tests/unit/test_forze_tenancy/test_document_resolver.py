@@ -10,12 +10,15 @@ from forze.application.contracts.cache import CacheSpec
 from forze.application.contracts.document import DocumentSpec
 from forze.base.exceptions import CoreException
 from forze.base.primitives import utcnow
+from forze.testing import context_from_modules
 from forze_identity.tenancy.adapters.resolver import TenantResolverAdapter
 from forze_identity.tenancy.application.specs import principal_tenant_binding_spec, tenant_spec
 from forze_identity.tenancy.domain.models.principal_tenant_binding import (
     ReadPrincipalTenantBinding,
 )
 from forze_identity.tenancy.domain.models.tenant import ReadTenant
+from forze_mock import MockDepsModule
+from tests.support.tenant_memberships import management
 
 
 def _binding_row(*, pid: UUID, tid: UUID) -> ReadPrincipalTenantBinding:
@@ -142,7 +145,9 @@ async def test_resolver_uses_requested_tenant_when_present() -> None:
     assert got.tenant_id == tid
 
 @pytest.mark.asyncio
-async def test_resolver_raises_when_principal_membership_is_ambiguous() -> None:
+async def test_resolver_binds_no_tenant_when_principal_membership_is_ambiguous() -> None:
+    # Several memberships and no requested tenant is the state right after a password
+    # login: the principal must reach the selector, so no tenant is bound (#666).
     pid = uuid4()
     bind_a = _binding_row(pid=pid, tid=uuid4())
     bind_b = _binding_row(pid=pid, tid=uuid4())
@@ -155,5 +160,45 @@ async def test_resolver_raises_when_principal_membership_is_ambiguous() -> None:
 
     resolver = TenantResolverAdapter(binding_qry=binding_qry, tenant_qry=None)
 
-    with pytest.raises(CoreException, match="ambiguous"):
-        await resolver.resolve_from_principal(pid)
+    assert await resolver.resolve_from_principal(pid) is None
+
+@pytest.mark.asyncio
+async def test_resolver_binds_no_tenant_without_membership() -> None:
+    binding_qry = AsyncMock()
+    binding_qry.spec = principal_tenant_binding_spec
+    binding_qry.find_many = AsyncMock(
+        return_value=CountlessPage(hits=[], page=1, size=0),
+    )
+
+    resolver = TenantResolverAdapter(binding_qry=binding_qry, tenant_qry=None)
+
+    assert await resolver.resolve_from_principal(uuid4()) is None
+
+@pytest.mark.asyncio
+async def test_resolver_refuses_a_non_member_request_from_a_principal_in_several_tenants() -> None:
+    # Over real (mock) binding documents: binding no tenant for an ambiguous principal must
+    # not loosen what a requested tenant has to be.
+    ctx = context_from_modules(MockDepsModule())
+    mgmt = management(ctx)
+    pid = uuid4()
+    first = await mgmt.provision_tenant(tenant_key="acme")
+    second = await mgmt.provision_tenant(tenant_key="globex")
+    stranger = await mgmt.provision_tenant(tenant_key="initech")
+    await mgmt.attach_principal(pid, first.tenant_id)
+    await mgmt.attach_principal(pid, second.tenant_id)
+    resolver = TenantResolverAdapter(
+        binding_qry=ctx.doc.query(principal_tenant_binding_spec),
+        tenant_qry=ctx.doc.query(tenant_spec),
+    )
+
+    assert await resolver.resolve_from_principal(pid) is None
+
+    picked = await resolver.resolve_from_principal(pid, requested_tenant_id=second.tenant_id)
+    assert picked is not None
+    assert picked.tenant_id == second.tenant_id
+
+    for requested in (stranger.tenant_id, uuid4()):
+        with pytest.raises(CoreException) as ei:
+            await resolver.resolve_from_principal(pid, requested_tenant_id=requested)
+
+        assert ei.value.code == "tenant_mismatch"
