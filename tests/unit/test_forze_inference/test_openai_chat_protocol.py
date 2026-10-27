@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import time
-from collections.abc import AsyncIterator, Mapping, Sequence
+from collections.abc import AsyncIterator, Callable, Mapping, Sequence
 from datetime import date, timedelta
 from decimal import Decimal
 from typing import Any, cast, final
@@ -36,7 +36,11 @@ from forze_inference.http.protocols.generation import (
     USAGE_INPUT_TOKENS_ATTRIBUTE,
     USAGE_OUTPUT_TOKENS_ATTRIBUTE,
 )
-from forze_inference.http.protocols.openai_chat import OpenAiChatProtocol, chat_output_schema
+from forze_inference.http.protocols.openai_chat import (
+    OpenAiChatProtocol,
+    chat_output_schema,
+    json_object_instruction,
+)
 
 # ----------------------- #
 
@@ -1310,3 +1314,267 @@ class TestErrorTaxonomy:
             await port.predict(_Document(text="x"))
 
         assert ei.value.code == "inference_output_mismatch"
+
+
+# ....................... #
+
+
+def _schema_text(model: type[BaseModel]) -> str:
+    """The output model's JSON schema as the json_object instruction carries it."""
+
+    return json.dumps(model.model_json_schema(), sort_keys=True, separators=(",", ":"))
+
+
+class TestJsonObjectStructuredOutput:
+    """`structured_output="json_object"`: the shape travels in the prompt and is validated.
+
+    For hosts that refuse a `json_schema` response format (DeepSeek answers 400) but honour
+    `json_object`, which guarantees JSON and nothing about its shape.
+    """
+
+    @pytest.mark.asyncio
+    async def test_the_default_request_is_unchanged(self) -> None:
+        raw: list[bytes] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            raw.append(request.content)
+
+            return httpx.Response(200, json=_completion('{"number": "a", "total": 1.0}'))
+
+        client = await _client(handler)
+
+        for config in (_config(), _config(structured_output="json_schema")):
+            await _ctx(client, config).inference.model(_spec()).predict(_Document(text="x"))
+
+        assert raw[0] == raw[1]
+
+        sent = json.loads(raw[0])
+        # Literal rather than derived, so a drift both requests share is still caught.
+        assert sent["response_format"] == {
+            "type": "json_schema",
+            "json_schema": {
+                "name": "_Invoice",
+                "strict": True,
+                "schema": {
+                    "properties": {
+                        "number": {"title": "Number", "type": "string"},
+                        "total": {"title": "Total", "type": "number"},
+                    },
+                    "required": ["number", "total"],
+                    "title": "_Invoice",
+                    "type": "object",
+                    "additionalProperties": False,
+                },
+            },
+        }
+        assert sent["messages"][0] == {
+            "role": "system",
+            "content": "You extract invoice fields precisely.",
+        }
+
+    @pytest.mark.asyncio
+    async def test_the_schema_joins_the_system_prompt(self) -> None:
+        sent: list[dict[str, Any]] = []
+        config = _config(structured_output="json_object")
+        port = _ctx(await _client(_recording(sent)), config).inference.model(_spec())
+        await port.predict(_Document(text="Invoice INV-7"))
+
+        body = sent[0]
+        assert body["response_format"] == {"type": "json_object"}
+
+        system, user = body["messages"]
+        assert system["role"] == "system"
+        # The configured system prompt is kept, first, and the schema follows it.
+        assert system["content"].startswith("You extract invoice fields precisely.\n\n")
+        assert system["content"].endswith(_schema_text(_Invoice))
+        # json_object mode requires the word in the messages, or the host refuses.
+        assert "JSON" in system["content"]
+        assert user == {
+            "role": "user",
+            "content": "Extract the invoice fields from:\n\nInvoice INV-7",
+        }
+
+    @pytest.mark.asyncio
+    async def test_a_route_with_no_system_prompt_gets_one_carrying_the_schema(self) -> None:
+        sent: list[dict[str, Any]] = []
+        config = _config(prompt=PromptTemplate(template="{text}"), structured_output="json_object")
+        port = _ctx(await _client(_recording(sent)), config).inference.model(_spec())
+        await port.predict(_Document(text="only"))
+
+        system, user = sent[0]["messages"]
+        assert system["role"] == "system"
+        assert system["content"].endswith(_schema_text(_Invoice))
+        assert "JSON" in system["content"]
+        assert not system["content"].startswith("\n")
+        assert user == {"role": "user", "content": "only"}
+
+    @pytest.mark.asyncio
+    async def test_a_reply_that_fits_is_the_output_model(self) -> None:
+        handler = _answers(json.dumps({"number": "INV-7", "total": 42.5}))
+        config = _config(structured_output="json_object")
+        port = _ctx(await _client(handler), config).inference.model(_spec())
+
+        out = await port.predict(_Document(text="x"))
+
+        assert (out.number, out.total) == ("INV-7", 42.5)
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "reply",
+        [
+            '{"number": "INV-7"}',
+            '{"number": "INV-7", "total": "free"}',
+            '{"invoice": {"number": "INV-7", "total": 1.0}}',
+        ],
+    )
+    async def test_a_reply_of_the_wrong_shape_is_an_output_mismatch(self, reply: str) -> None:
+        config = _config(structured_output="json_object")
+        port = _ctx(await _client(_answers(reply)), config).inference.model(_spec())
+
+        with pytest.raises(CoreException) as ei:
+            await port.predict(_Document(text="x"))
+
+        assert (ei.value.kind, ei.value.code) == ("validation", "inference_output_mismatch")
+        assert "does not decode to _Invoice" in str(ei.value)
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("reply", ["The total is 42.5", '["INV-7", 42.5]'])
+    async def test_a_reply_that_is_not_a_json_object_is_an_output_mismatch(
+        self,
+        reply: str,
+    ) -> None:
+        config = _config(structured_output="json_object")
+        port = _ctx(await _client(_answers(reply)), config).inference.model(_spec())
+
+        with pytest.raises(CoreException) as ei:
+            await port.predict(_Document(text="x"))
+
+        assert (ei.value.kind, ei.value.code) == ("validation", "inference_output_mismatch")
+
+    @pytest.mark.asyncio
+    async def test_a_model_the_strict_constraint_refuses_is_served_and_validated(self) -> None:
+        """Validation enforces what the constraint could not: defaults, formats, bounds."""
+
+        class _Loose(BaseModel):
+            number: str = "unknown"
+            issued: date
+            note: str = Field(default="", max_length=10)
+            counts: dict[str, int] = {}
+
+        with pytest.raises(CoreException):
+            chat_output_schema(_spec(_Loose))
+
+        fits = json.dumps({"issued": "2026-10-27", "counts": {"a": 1}})
+        too_long = json.dumps({"issued": "2026-10-27", "note": "x" * 11})
+        not_a_date = json.dumps({"issued": "soon"})
+        replies = iter([fits, too_long, not_a_date])
+
+        def handler(_request: httpx.Request) -> httpx.Response:
+            return httpx.Response(200, json=_completion(next(replies)))
+
+        config = _config(structured_output="json_object")
+        port = _ctx(await _client(handler), config).inference.model(_spec(_Loose))
+
+        out = await port.predict(_Document(text="x"))
+        assert (out.number, out.issued, out.counts) == ("unknown", date(2026, 10, 27), {"a": 1})
+
+        for _ in range(2):
+            with pytest.raises(CoreException) as ei:
+                await port.predict(_Document(text="x"))
+
+            assert ei.value.code == "inference_output_mismatch"
+
+    @pytest.mark.asyncio
+    async def test_a_stream_asks_and_validates_the_same_way(self) -> None:
+        sent: list[dict[str, Any]] = []
+        config = _config(structured_output="json_object")
+        port = _ctx(await _client(_recording(sent)), config).inference.model(_spec())
+
+        async def chunks() -> AsyncIterator[Sequence[_Document]]:
+            yield [_Document(text="a"), _Document(text="b")]
+
+        scored = [chunk async for chunk in port.predict_stream(chunks())]
+
+        assert [[invoice.number for invoice in chunk] for chunk in scored] == [["a", "a"]]
+        assert [body["response_format"] for body in sent] == [{"type": "json_object"}] * 2
+
+    @pytest.mark.parametrize("protocol", ["kserve_v2", "mlflow", "anthropic_messages"])
+    def test_a_dialect_that_does_not_read_it_refuses_it(self, protocol: str) -> None:
+        values: dict[str, Any] = {}
+
+        if protocol == "anthropic_messages":
+            values = {"prompt": _prompt(), "max_output_tokens": 64}
+
+        with pytest.raises(CoreException) as ei:
+            HttpInferenceConfig(
+                protocol=protocol,  # type: ignore[arg-type]
+                model_name="m",
+                acknowledge_data_egress=True,
+                structured_output="json_object",
+                **values,
+            )
+
+        assert ei.value.kind == "configuration"
+        assert "structured_output" in str(ei.value)
+
+    def test_a_text_route_refuses_it(self) -> None:
+        with pytest.raises(CoreException) as ei:
+            _config(output_mode="text", structured_output="json_object")
+
+        assert ei.value.kind == "configuration"
+        assert "structured_output" in str(ei.value)
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("root", [list[str], float])
+    async def test_a_non_object_root_is_refused_at_wiring(self, root: Any) -> None:
+        """The host answers with one object, so a root model could never fit a reply."""
+
+        class _Rooted(RootModel[root]):  # type: ignore[valid-type]
+            pass
+
+        config = _config(structured_output="json_object")
+        ctx = _ctx(await _client(_answers("{}")), config)
+
+        with pytest.raises(CoreException) as ei:
+            ctx.inference.model(_spec(_Rooted))
+
+        assert ei.value.kind == "configuration"
+        assert "_Rooted" in str(ei.value)
+
+    @pytest.mark.asyncio
+    async def test_an_output_model_with_no_json_schema_is_refused_at_wiring(self) -> None:
+        """Pydantic cannot write a schema for a `Callable` field, and the route has none to
+        state — refused at resolve rather than on every request."""
+
+        class _WithHook(BaseModel):
+            number: str
+            hook: Callable[[], Any]
+
+        sent: list[dict[str, Any]] = []
+        config = _config(structured_output="json_object")
+        ctx = _ctx(await _client(_recording(sent)), config)
+
+        with pytest.raises(CoreException) as ei:
+            ctx.inference.model(_spec(_WithHook))
+
+        assert (ei.value.kind, ei.value.code) == (
+            "configuration",
+            "inference_output_schema_unavailable",
+        )
+        assert "_WithHook" in str(ei.value)
+        assert sent == []
+
+    def test_the_instruction_is_built_once_per_output_model(self) -> None:
+        """Wiring builds the schema text; every request after it reuses that text."""
+
+        first = json_object_instruction(_spec())
+
+        assert json_object_instruction(_spec()) is first
+        assert first.endswith(_schema_text(_Invoice))
+
+    def test_an_unknown_strategy_is_refused(self) -> None:
+        with pytest.raises(CoreException) as ei:
+            _config(structured_output="json")
+
+        assert ei.value.kind == "configuration"
+        assert "json_object" in str(ei.value) and "json_schema" in str(ei.value)

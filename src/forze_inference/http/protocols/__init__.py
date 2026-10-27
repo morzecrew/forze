@@ -13,7 +13,12 @@ from .generation import (
 )
 from .kserve_v2 import KserveV2Protocol, validate_flat_scalar_fields
 from .mlflow import MlflowProtocol
-from .openai_chat import OpenAiChatProtocol, chat_output_schema
+from .openai_chat import (
+    InferenceStructuredOutput,
+    OpenAiChatProtocol,
+    chat_output_schema,
+    json_object_instruction,
+)
 
 # ----------------------- #
 
@@ -21,6 +26,7 @@ __all__ = [
     "CONTENT_REFUSED_CODE",
     "AnthropicMessagesProtocol",
     "InferenceOutputMode",
+    "InferenceStructuredOutput",
     "KserveV2Protocol",
     "MlflowProtocol",
     "OpenAiChatProtocol",
@@ -28,6 +34,7 @@ __all__ = [
     "WireProtocol",
     "WireRequest",
     "chat_output_schema",
+    "json_object_instruction",
     "messages_output_schema",
     "validate_flat_scalar_fields",
     "validate_prompt_template",

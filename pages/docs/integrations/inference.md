@@ -190,15 +190,16 @@ Both dialects refuse these:
 The rest is **per dialect**, because the accepted vocabularies differ — and this
 is the practical reason to pick one endpoint over the other for a given model:
 
-| Output model feature | `openai_chat` | `anthropic_messages` |
-| --- | --- | --- |
-| A field with a **default** (an optional property) | refused | served |
-| `datetime`, `EmailStr`, `UUID` (a string `format`) | refused | served |
-| A nested model (`$ref`) | served | served |
-| `min_length=1` on a list | refused | served |
-| `min_length=2` on a list | refused | refused |
-| A **self-referencing** model | refused | refused |
-| Output model name as the constraint's name | ASCII, ≤ 64 chars | not sent |
+| Output model feature | `openai_chat` | `openai_chat`, `json_object` | `anthropic_messages` |
+| --- | --- | --- | --- |
+| How the shape is enforced | constraint | **validation** of the reply | constraint |
+| A field with a **default** (an optional property) | refused | served | served |
+| `datetime`, `EmailStr`, `UUID` (a string `format`) | refused | served | served |
+| A nested model (`$ref`) | served | served | served |
+| `min_length=1` on a list | refused | served | served |
+| `min_length=2` on a list | refused | served | refused |
+| A **self-referencing** model | refused | served | refused |
+| Output model name as the constraint's name | ASCII, ≤ 64 chars | not sent | not sent |
 
 Where the chat dialect refuses a `format` outright, the native one enforces a
 listed set (`date-time`, `date`, `time`, `duration`, `email`, `hostname`, `uri`,
@@ -206,6 +207,33 @@ listed set (`date-time`, `date`, `time`, `duration`, `email`, `hostname`, `uri`,
 story: enforced natively, so it serves — except for the constructs the decoder
 does not run (a word boundary, lookaround, a backreference), which are refused
 by name.
+
+**A host that refuses the schema constraint** — DeepSeek answers `400` to a
+`json_schema` response format — is served by `structured_output="json_object"`
+on an `openai_chat` route:
+
+```python
+from forze_inference.http import HttpInferenceConfig, PromptTemplate
+
+HttpInferenceConfig(
+    protocol="openai_chat",
+    model_name="deepseek-chat",                  # base URL https://api.deepseek.com
+    prompt=PromptTemplate(template="Triage this ticket:\n\n{text}"),
+    structured_output="json_object",
+    acknowledge_data_egress=True,
+)
+```
+
+The output model's JSON schema is appended to the system prompt (or becomes it),
+the request asks only for valid JSON, and the reply is validated against the
+output model: one that does not fit raises the same `inference_output_mismatch`
+as any other. No constraint is sent, so wiring refuses only two things: a
+non-object root (a `RootModel`), and an output model Pydantic cannot write a JSON
+schema for, such as one with a `Callable` field (`inference_output_schema_unavailable`).
+Everything else in the lists above is served. A bound or a `format` is checked
+after the fact, so a reply that breaks it costs a request instead of being
+impossible. `json_schema` stays the default, and `structured_output` on another
+dialect or on a text route is refused at wiring.
 
 `output_mode="text"` sends no constraint and fills a one-field `str` output model
 with the completion prose; any other output model is refused at wiring.

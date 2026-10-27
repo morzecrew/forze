@@ -11,17 +11,23 @@ the strict constraint is expressed, and how a refusal is reported. Both the slot
 the output model's JSON schema are checked at wiring time — a typo'd slot or an output
 model the provider's constraint cannot express costs a boot, not a production request.
 
+A host that refuses the ``json_schema`` response format but honours ``json_object`` (DeepSeek)
+is served by :data:`InferenceStructuredOutput`: the schema travels in the system message, and
+the shape is enforced by validating the reply against the output model, not by a constraint.
+
 One completion per request: the endpoint scores a single instance, so
 :attr:`OpenAiChatProtocol.instances_per_request` is ``1`` and the adapter fans a batch out
 into sequential calls.
 """
 
+import json
 import re
 from collections.abc import Mapping, Sequence
-from typing import Any, Final, cast, final
+from typing import Any, Final, Literal, cast, final
+from weakref import WeakKeyDictionary
 
 import attrs
-from pydantic import BaseModel
+from pydantic import BaseModel, PydanticUserError, RootModel
 
 from forze.application.contracts.inference import InferenceSpec
 from forze.base.exceptions import exc
@@ -47,6 +53,25 @@ CHAT_COMPLETIONS_PATH = "/v1/chat/completions"
 ``kserve_v2`` owns ``/v2/models``."""
 
 _DIALECT = "openai_chat"
+
+InferenceStructuredOutput = Literal["json_schema", "json_object"]
+"""How a structured ``openai_chat`` route asks for its output.
+
+``json_schema`` sends the output model's schema as a strict ``response_format`` constraint, so
+the provider decodes only what the model declares. ``json_object`` is for a host that refuses
+that format: the schema is stated in the system message, ``response_format`` asks only for
+valid JSON, and the shape is enforced by validating the reply against the output model — a
+reply that does not fit is the same output mismatch a constrained one would be."""
+
+OUTPUT_SCHEMA_UNAVAILABLE_CODE = "inference_output_schema_unavailable"
+"""Pydantic cannot write a JSON schema for the output model (a ``Callable`` field, say), so a
+``json_object`` route has no shape to state in its prompt."""
+
+_JSON_OBJECT_INSTRUCTIONS: "WeakKeyDictionary[type[BaseModel], str]" = WeakKeyDictionary()
+"""Each output model's ``json_object`` instruction, built at the route's resolve.
+
+Keyed by the model class, which is all the text depends on, and weakly so that a model
+defined at runtime is not kept alive by having once been served."""
 
 _SCHEMA_NAME_PATTERN = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 """What the provider accepts as a ``json_schema.name``. A Python class name is not a
@@ -136,6 +161,55 @@ def chat_output_schema(spec: InferenceSpec[Any, Any]) -> dict[str, Any]:
     return cast(dict[str, Any], tighten(schema))
 
 
+def json_object_instruction(spec: InferenceSpec[Any, Any]) -> str:
+    """The system-message text that carries *spec*'s output schema in ``json_object`` mode.
+
+    The output model's own schema, not the tightened strict one: validation is what enforces
+    it here, so a default, a ``format`` or a bound the strict constraint refuses is stated as
+    the model declares it. Keys sorted and separators compact, so one route sends the same
+    bytes on every request. It names JSON too, which the host requires of a ``json_object``
+    request's messages.
+
+    Built once per output model — the route's resolve calls this for its refusals — and
+    reused by every request after it.
+
+    :raises CoreException: ``configuration`` for a ``RootModel`` output, which the one JSON
+        object the host answers with can never fit, and — with
+        :data:`OUTPUT_SCHEMA_UNAVAILABLE_CODE` — for an output model Pydantic cannot write
+        a JSON schema for.
+    """
+
+    cached = _JSON_OBJECT_INSTRUCTIONS.get(spec.output)
+
+    if cached is not None:
+        return cached
+
+    if issubclass(spec.output, RootModel):
+        raise exc.configuration(
+            f"Inference {spec.name!r}: structured_output='json_object' answers with one JSON "
+            f"object, and {spec.output.__name__} is a root model. Wrap the value in a model "
+            "with one field."
+        )
+
+    try:
+        schema = spec.output.model_json_schema()
+
+    except PydanticUserError as e:
+        raise exc.configuration(
+            f"Inference {spec.name!r}: structured_output='json_object' states the output "
+            f"model's JSON schema, and {spec.output.__name__} has none ({e.message}).",
+            code=OUTPUT_SCHEMA_UNAVAILABLE_CODE,
+        ) from e
+
+    instruction = (
+        "Answer with one JSON object, and nothing else, that validates against this JSON "
+        f"Schema:\n{json.dumps(schema, sort_keys=True, separators=(',', ':'))}"
+    )
+    _JSON_OBJECT_INSTRUCTIONS[spec.output] = instruction
+
+    return instruction
+
+
 # ....................... #
 
 
@@ -146,6 +220,7 @@ class OpenAiChatProtocol:
 
     prompt: PromptTemplate
     output_mode: InferenceOutputMode = "structured"
+    structured_output: InferenceStructuredOutput = "json_schema"
     temperature: float | None = None
     max_output_tokens: int | None = None
 
@@ -172,16 +247,28 @@ class OpenAiChatProtocol:
         model_name: str,
     ) -> WireRequest:
         instance = single_instance(spec, instances, dialect=_DIALECT)
+        json_object = self.output_mode == "structured" and self.structured_output == "json_object"
+        system = self.prompt.system
+
+        # Joined to the configured system prompt rather than sent as a second system
+        # message, which not every host reads.
+        if json_object:
+            instruction = json_object_instruction(spec)
+            system = instruction if system is None else f"{system}\n\n{instruction}"
+
         messages: list[dict[str, str]] = []
 
-        if self.prompt.system is not None:
-            messages.append({"role": "system", "content": self.prompt.system})
+        if system is not None:
+            messages.append({"role": "system", "content": system})
 
         messages.append({"role": "user", "content": render_prompt(spec, self.prompt, instance)})
 
         body: dict[str, Any] = {"model": model_name, "messages": messages}
 
-        if self.output_mode == "structured":
+        if json_object:
+            body["response_format"] = {"type": "json_object"}
+
+        elif self.output_mode == "structured":
             body["response_format"] = {
                 "type": "json_schema",
                 "json_schema": {

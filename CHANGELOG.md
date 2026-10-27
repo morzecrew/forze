@@ -25,6 +25,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Agent tools can state the filter grammar once.** `operation_tools(shared_filter_grammar=True)` strips it from tool schemas as MCP does; `OperationToolset.filter_grammar` holds it for the system prompt. `forze.application.contracts.querying` gains `filter_grammar`, `without_filter_grammar`, `takes_filter_expression`.
 
+- **An `openai_chat` route can serve a host that refuses a schema constraint, such as DeepSeek.** `structured_output="json_object"` puts the output model's schema in the system message, asks for valid JSON, and refuses a reply that does not fit as `inference_output_mismatch`. `json_schema` stays the default.
+
 ### Changed
 
 - **`HttpServicePort` requires `stream`** (**behaviour change**). A hand-written implementation or test stub must add it, or it fails type checks and `isinstance` against the runtime-checkable port.
