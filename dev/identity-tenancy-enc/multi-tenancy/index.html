@@ -6768,7 +6768,8 @@ tenant resolved, and both bound to the execution context:</p>
    <code>tid</code> claim).</li>
 <li><strong>Resolve</strong> the <code>TenantIdentity</code>. A resolver validates any hints against the
    principal's actual memberships — it is authoritative, so a hint can never
-   grant access the principal doesn't have.</li>
+   grant access the principal doesn't have. With no hint, a principal with no
+   membership, or with several, gets no tenant, and tenant-scoped work refuses it.</li>
 <li><strong>Bind</strong> both with <code>ctx.inv_ctx.bind(...)</code>, so every adapter can call
    <code>ctx.inv_ctx.get_tenant()</code> on its own.</li>
 </ol>

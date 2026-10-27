@@ -10259,15 +10259,35 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <li>
 <p><strong>An <code>openai_chat</code> route can serve a host that refuses a schema constraint, such as DeepSeek.</strong> <code>structured_output="json_object"</code> puts the output model's schema in the system message, asks for valid JSON, and refuses a reply that does not fit as <code>inference_output_mismatch</code>. <code>json_schema</code> stays the default.</p>
 </li>
+<li>
+<p><strong><code>forze_identity.tenancy.application</code> exports <code>TenancyResourceName</code>.</strong> It matches <code>AuthnResourceName</code> in <code>forze_identity.authn.application</code>.</p>
+</li>
 </ul>
 <h3 id="changed">Changed<a class="headerlink" href="#changed" title="Permanent link">&para;</a></h3>
 <ul>
-<li><strong><code>HttpServicePort</code> requires <code>stream</code></strong> (<strong>behaviour change</strong>). A hand-written implementation or test stub must add it, or it fails type checks and <code>isinstance</code> against the runtime-checkable port.</li>
+<li>
+<p><strong><code>HttpServicePort</code> requires <code>stream</code></strong> (<strong>behaviour change</strong>). A hand-written implementation or test stub must add it, or it fails type checks and <code>isinstance</code> against the runtime-checkable port.</p>
+</li>
+<li>
+<p><strong><code>local_identity_deps</code> wires no tenant resolver for a config that maps no tenant</strong> (<strong>behaviour change</strong>). There, <code>forze ops call --tenant</code> gets <code>400 tenant_request_unverifiable</code>, not <code>401 tenant_mismatch</code>. A tenant on an API key counts and resolves, also in a config built directly.</p>
+</li>
 </ul>
 <h3 id="fixed">Fixed<a class="headerlink" href="#fixed" title="Permanent link">&para;</a></h3>
 <ul>
 <li>
 <p><strong><code>forze[duckdb]</code> no longer installs DuckDB 2.0.</strong> The extra now requires <code>duckdb&gt;=1.1.0,&lt;2</code>: 2.0 removed <code>fetch_arrow_table</code>, so every <code>DuckDbClient</code> query failed on a fresh install. An environment that already installed 2.0 outside the lock must reinstall the extra or pin <code>duckdb&lt;2</code>.</p>
+</li>
+<li>
+<p><strong>A principal in several tenants reaches the tenant selector after a password login</strong> (<strong>behaviour change</strong>). With no <code>tid</code> the resolver binds no tenant, as for no membership, instead of refusing every request with <code>tenant_ambiguous</code>. Tenant-scoped work still refuses it with <code>tenant_required</code>.</p>
+</li>
+<li>
+<p><strong>An authz route with <code>require_invocation_tenant</code> refuses a caller with no tenant bound with <code>401 tenant_required</code>.</strong> It answered <code>500</code>, unlike <code>TenantRequired</code> and the tenant-aware stores.</p>
+</li>
+<li>
+<p><strong><code>TenancyDepsModule</code> refuses a <code>tenant_resolvers</code> override for a route <code>tenant_resolver</code> does not name</strong> (<strong>behaviour change</strong>). It registered nothing, so the first request failed with <code>Tenant resolver is not registered</code>; now the module fails when built.</p>
+</li>
+<li>
+<p><strong><code>AuthnDepsModule</code> refuses an override that would never be registered</strong> (<strong>behaviour change</strong>). That is one for a route <code>authn</code> does not name, or a verifier override for a method its route does not enable. It registered nothing, so the route silently kept its default.</p>
 </li>
 <li>
 <p><strong>A Postgres dynamic read no longer collapses duplicate column names.</strong> <code>SELECT a.id, b.id</code> came back as one <code>id</code> holding the second value. A result with rows now fails with <code>dynamic_read_statement_invalid</code>, naming the duplicates; an empty one still returns no rows.</p>
@@ -10284,7 +10304,12 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 </ul>
 <h3 id="security">Security<a class="headerlink" href="#security" title="Permanent link">&para;</a></h3>
 <ul>
-<li><strong>A stale access cookie could keep a cookie-mode logout from ending the session.</strong> <code>runtime_lifespan</code> now refuses an app whose <code>anonymous_paths</code> misses a cookie-mode login, refresh or logout route (<code>check_authn_cookie_paths</code>, <strong>behaviour change</strong>).</li>
+<li>
+<p><strong>A realtime connection needs a tenant once tenancy is wired</strong> (<strong>behaviour change</strong>). Socket.IO, WebSocket and <abbr title="Server-Side Encryption">SSE</abbr> refuse one without a tenant (<code>tenant_required</code>), and Socket.IO an anonymous one, instead of admitting it to the untenanted rooms. Socket.IO checks this at the connect when given the new <code>ctx_dep</code>.</p>
+</li>
+<li>
+<p><strong>A stale access cookie could keep a cookie-mode logout from ending the session.</strong> <code>runtime_lifespan</code> now refuses an app whose <code>anonymous_paths</code> misses a cookie-mode login, refresh or logout route (<code>check_authn_cookie_paths</code>, <strong>behaviour change</strong>).</p>
+</li>
 </ul>
 <h2 id="0162-2026-10-26"><a href="https://github.com/morzecrew/forze/compare/v0.16.1...v0.16.2">0.16.2</a> - 2026-10-26<a class="headerlink" href="#0162-2026-10-26" title="Permanent link">&para;</a></h2>
 <h3 id="added_1">Added<a class="headerlink" href="#added_1" title="Permanent link">&para;</a></h3>

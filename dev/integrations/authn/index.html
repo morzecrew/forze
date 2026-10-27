@@ -6787,7 +6787,11 @@ credential families a route accepts; <code>kernel</code> carries the signing/sec
 <span class="p">)</span>
 </code></pre></div>
 <p>A route's <a href="../../identity-tenancy-enc/identity/"><code>AuthnSpec</code></a> selects verifiers and a resolver
-by profile name; override the defaults via <code>token_verifiers</code>, <code>resolvers</code>, etc.</p>
+by profile name; override the defaults via <code>token_verifiers</code>, <code>resolvers</code>, etc. Each override
+must name a route in <code>authn</code>, and a verifier override a method that route enables; any
+other is refused when the module is built. A <code>token_verifiers</code> override also needs a
+<code>resolvers</code> override on its route: the default resolver would take an external token's
+subject as an internal principal id.</p>
 <p>By default every wired route checks the authenticating principal against an
 active <code>policy_principal</code> document — the posture for deployments running the
 authz plane. A token-only service with no authz plane opts out explicitly:</p>

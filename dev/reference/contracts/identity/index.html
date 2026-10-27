@@ -6734,7 +6734,7 @@ contract):</p>
 <td><code>tenancy_mode</code></td>
 <td><code>"global" \| "require_invocation_tenant"</code></td>
 <td><code>"global"</code></td>
-<td>whether grant resolution is partitioned by the invocation tenant — set <code>require_invocation_tenant</code> in a multi-tenant deployment</td>
+<td>whether grant resolution is partitioned by the invocation tenant — set <code>require_invocation_tenant</code> in a multi-tenant deployment; it refuses a call with no tenant bound as <code>tenant_required</code> (401), which asks the client to select a tenant, not to refresh its token</td>
 </tr>
 <tr>
 <td><code>enforce_principal_active</code></td>

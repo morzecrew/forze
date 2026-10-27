@@ -6676,6 +6676,11 @@ and gives two operations that <code>attach_tenancy_routes</code> projects:</p>
 </code></pre></div>
 <p>The active tenant rides the signed <code>tid</code> claim and is re-validated against live membership on
 every request, so removing a principal from a tenant invalidates their scoped token at once.
+A password login carries no <code>tid</code>. A principal with one membership is bound to it anyway; one
+with several starts with <strong>no tenant bound</strong>, so the selector answers while every tenant-scoped
+operation refuses with <code>tenant_required</code> until the client activates a tenant. The code means
+"select a tenant": refreshing the token does not clear it, since a refresh keeps the
+session's tenant, or its lack of one.
 Requires a <code>TenancyDepsModule</code> wiring a <code>tenant_resolver</code> <strong>and</strong> <code>tenant_management</code> route
 (see <a href="../authn-authz-tenancy-fastapi/#wire-the-planes">Wire the planes</a>), and a transaction
 manager on the registry's <code>tx_route</code> (<code>"default"</code>), which the switch issues its session in.</p>

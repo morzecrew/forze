@@ -7045,7 +7045,9 @@ delivery:</p>
     <span class="p">),</span>
     <span class="n">realtime_gateway_lifecycle_step</span><span class="p">(</span><span class="n">gateway</span><span class="p">),</span>
 <span class="p">]</span>
-<span class="n">attach_realtime_connection</span><span class="p">(</span><span class="n">sio</span><span class="p">,</span> <span class="n">resolve</span><span class="o">=</span><span class="n">resolve_connection</span><span class="p">,</span> <span class="n">presence</span><span class="o">=</span><span class="n">presence</span><span class="p">)</span>  <span class="c1"># the single connect path</span>
+<span class="n">attach_realtime_connection</span><span class="p">(</span>  <span class="c1"># the single connect path</span>
+    <span class="n">sio</span><span class="p">,</span> <span class="n">resolve</span><span class="o">=</span><span class="n">resolve_connection</span><span class="p">,</span> <span class="n">presence</span><span class="o">=</span><span class="n">presence</span><span class="p">,</span> <span class="n">ctx_dep</span><span class="o">=</span><span class="n">runtime</span><span class="o">.</span><span class="n">get_context</span><span class="p">,</span>
+<span class="p">)</span>
 </code></pre></div>
 <p><code>attach_realtime_connection</code> is the <strong>single</strong> connect path — it authenticates <em>and</em>
 auto-joins the principal room, so do not also give <code>ForzeSocketIOAdapter</code> an
@@ -7053,6 +7055,13 @@ auto-joins the principal room, so do not also give <code>ForzeSocketIOAdapter</c
 resolver must return the identity with its <code>actor</code> chain intact, not normalized to its
 subject. The publish-side <code>Audience.principal(id)</code> must
 use the same id the gateway joins with (<code>str(authn.principal_id)</code>).</p>
+<p>Pass <code>ctx_dep</code> (or the serving <code>runtime</code>) so the connect can ask whether the deployment is
+tenanted. Once it registers a tenant resolver, an anonymous connect and a connection
+without a tenant are refused (<code>auth_required</code>, <code>tenant_required</code>), at connect and at
+<code>realtime.reauth</code>, whatever the resolver returned. Anonymous connects are accepted only
+where no tenancy is wired. <code>build_socketio_connection_resolver</code> applies both rules itself,
+so they hold without <code>ctx_dep</code> too; a hand-written resolver relies on it. <code>tenant_required</code>
+asks the client to select a tenant; a token refresh does not clear it.</p>
 <p>A client that opens several namespaces over one connection is authenticated once per
 namespace. Pass <code>share_identity=True</code> to each of them to authenticate once per Engine.IO
 connection instead. Later namespaces with the same credential and resolver reuse the
@@ -7209,6 +7218,7 @@ the balancer to replicas that are still ready, a few at a time.</p>
     <span class="n">resolve</span><span class="o">=</span><span class="n">resolve_connection</span><span class="p">,</span>
     <span class="n">draining</span><span class="o">=</span><span class="k">lambda</span><span class="p">:</span> <span class="n">runtime</span><span class="o">.</span><span class="n">draining</span><span class="p">,</span>  <span class="c1"># turn connects away while leaving</span>
     <span class="n">stats</span><span class="o">=</span><span class="n">stats</span><span class="p">,</span>
+    <span class="n">ctx_dep</span><span class="o">=</span><span class="n">runtime</span><span class="o">.</span><span class="n">get_context</span><span class="p">,</span>
 <span class="p">)</span>
 <span class="n">instrument_realtime_connections</span><span class="p">(</span><span class="n">stats</span><span class="p">)</span>
 
