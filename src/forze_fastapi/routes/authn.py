@@ -79,6 +79,8 @@ from ..middlewares.authn_cookies import AUTHN_COOKIE_ANONYMOUS_ATTR, AUTHN_COOKI
 from ..security.cookies import AuthnCookieCarrier
 from ..security.resolvers import enforce_published_cookie_csrf
 from ._attach import (
+    PATH_PARAMS_ATTR,
+    EndpointBuilder,
     OperationRunner,
     RouteBinding,
     _operation_runner,
@@ -111,43 +113,57 @@ def _no_body_endpoint(
 # Cookie-mode endpoint builders: same operations, token material rides cookies.
 
 
-def _cookie_token_endpoint(cookies: AuthnCookieCarrier) -> Any:
-    """Login-shaped builder: run the op, set/rotate cookies, strip the body.
+def _cookie_token_endpoint(
+    cookies: AuthnCookieCarrier,
+    build: EndpointBuilder = body_endpoint,
+    *,
+    anonymous: bool = False,
+) -> EndpointBuilder:
+    """Wrap *build* for an operation answering a token pair: run it, set/rotate the
+    carrier's cookies, strip the tokens from the body.
 
     Setting the cookies applies the access cookie's CSRF gate first, as refresh and
-    logout do, on every request.
+    logout do, on every request. Login (*anonymous*: its mounted path must be in
+    ``anonymous_paths``) and the tenant switch use it.
     """
 
-    def build(
+    def wrapped(
         runner: OperationRunner,
         input_type: type[BaseModel] | None,
         op: str,
     ) -> Callable[..., Awaitable[Any]]:
-        dto_type = require_input_type(input_type, op)
+        inner = build(runner, input_type, op)
 
-        async def endpoint(*, request: Request, payload: Any, response: Response) -> Any:
+        async def endpoint(*, request: Request, response: Response, **inputs: Any) -> Any:
             enforce_published_cookie_csrf(request, cookies.access_cookie)
 
-            return cookies.apply(response, await runner(payload))
+            return cookies.apply(response, await inner(**inputs))
 
+        params = inspect.signature(inner).parameters.values()
         endpoint.__signature__ = inspect.Signature(  # type: ignore[attr-defined]
             [
                 inspect.Parameter("request", inspect.Parameter.KEYWORD_ONLY, annotation=Request),
-                inspect.Parameter("payload", inspect.Parameter.KEYWORD_ONLY, annotation=dto_type),
                 inspect.Parameter("response", inspect.Parameter.KEYWORD_ONLY, annotation=Response),
+                *params,
             ]
         )
         endpoint.__annotations__ = {
             "request": Request,
-            "payload": dto_type,
             "response": Response,
+            **{param.name: param.annotation for param in params},
         }
-        # check_authn_cookie_paths requires the route's mounted path in anonymous_paths.
-        setattr(endpoint, AUTHN_COOKIE_ANONYMOUS_ATTR, True)
+
+        if anonymous:
+            # check_authn_cookie_paths requires the route's mounted path in anonymous_paths.
+            setattr(endpoint, AUTHN_COOKIE_ANONYMOUS_ATTR, True)
 
         return endpoint
 
-    return build
+    # The placeholders *build* fills, which attach_operation_routes checks the path against.
+    if hasattr(build, PATH_PARAMS_ATTR):
+        setattr(wrapped, PATH_PARAMS_ATTR, getattr(build, PATH_PARAMS_ATTR))
+
+    return wrapped
 
 
 def _empty_object_as_none(value: Any) -> Any:
@@ -299,7 +315,8 @@ def _cookie_bindings(
 
     bindings = dict(_AUTHN_BINDINGS)
     bindings[AuthnKernelOp.PASSWORD_LOGIN] = attrs.evolve(
-        bindings[AuthnKernelOp.PASSWORD_LOGIN], build=_cookie_token_endpoint(cookies)
+        bindings[AuthnKernelOp.PASSWORD_LOGIN],
+        build=_cookie_token_endpoint(cookies, anonymous=True),
     )
     bindings[AuthnKernelOp.REFRESH_TOKENS] = attrs.evolve(
         bindings[AuthnKernelOp.REFRESH_TOKENS], build=_cookie_refresh_endpoint(cookies)

@@ -14,7 +14,10 @@ All require a bound identity (``AuthnRequired`` — a 401 without one) and are *
 principal's membership before minting (``tenant_mismatch`` / ``tenant_inactive``). The
 ``/activate`` response carries token material in the body by design — the client swaps to the
 new token — so keep any custom access logging body-blind (the stock
-:class:`~forze_fastapi.middlewares.LoggingMiddleware` already is).
+:class:`~forze_fastapi.middlewares.LoggingMiddleware` already is). In cookie mode
+(``cookies=``, the carrier given to :func:`~forze_fastapi.routes.attach_authn_routes`) it
+rotates the session cookies instead, behind the access cookie's CSRF gate, and the body keeps
+only scheme and lifetimes.
 """
 
 from forze_fastapi._compat import require_fastapi
@@ -27,6 +30,7 @@ from collections.abc import Awaitable, Callable, Mapping
 from collections.abc import Set as AbstractSet
 from typing import Any
 
+import attrs
 from fastapi import APIRouter
 from pydantic import BaseModel
 
@@ -35,6 +39,7 @@ from forze.application.execution.operations import FrozenOperationRegistry
 from forze.base.primitives import StrKeyNamespace
 from forze_kits.aggregates.tenancy import TenancyKernelOp
 
+from ..security.cookies import AuthnCookieCarrier
 from ._attach import (
     OperationRunner,
     RouteBinding,
@@ -42,6 +47,7 @@ from ._attach import (
     id_endpoint,
     resolve_namespace,
 )
+from .authn import _cookie_token_endpoint
 
 # ----------------------- #
 
@@ -96,6 +102,7 @@ def attach_tenancy_routes(
     resource: str | None = None,
     path_overrides: Mapping[TenancyKernelOp | str, str] | None = None,
     exclude_none: bool = True,
+    cookies: AuthnCookieCarrier | None = None,
 ) -> APIRouter:
     """Attach the tenant-selector operations under *ns* to *router*.
 
@@ -126,6 +133,12 @@ def attach_tenancy_routes(
             (keyed like *include*); only the path changes, the ``operation_id`` stays
             verbatim. An override must bind exactly the ``{id}`` placeholder the
             default path binds.
+        cookies (AuthnCookieCarrier | None): Cookie mode — pass the carrier given to
+            :func:`~forze_fastapi.routes.attach_authn_routes`. ``/activate`` then sets
+            (and rotates) both HttpOnly cookies and strips token strings from its body,
+            applying the access cookie's CSRF gate to every request first, as ``/login``
+            does. It still needs the access cookie's identity, so it stays out of
+            ``anonymous_paths``.
 
     Returns:
         APIRouter: The same *router*, for chaining.
@@ -136,12 +149,23 @@ def attach_tenancy_routes(
             drops or adds a placeholder.
     """
 
+    bindings = _TENANCY_BINDINGS
+
+    if cookies is not None:
+        switch = bindings[TenancyKernelOp.SWITCH_TENANT]
+        bindings = {
+            **bindings,
+            TenancyKernelOp.SWITCH_TENANT: attrs.evolve(
+                switch, build=_cookie_token_endpoint(cookies, switch.build)
+            ),
+        }
+
     return attach_operation_routes(
         router,
         registry=registry,
         ns=resolve_namespace(ns, resource),
         ctx_dep=ctx_dep,
-        bindings=_TENANCY_BINDINGS,
+        bindings=bindings,
         include=include,
         path_overrides=path_overrides,
         exclude_none=exclude_none,
