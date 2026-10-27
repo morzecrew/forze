@@ -11,7 +11,7 @@ import structlog.testing
 
 from forze.application.contracts.authz import AuthzSpec, EffectiveGrants, PrincipalRef
 from forze.application.contracts.document import DocumentSpec
-from forze.base.exceptions import CoreException
+from forze.base.exceptions import CoreException, ExceptionKind
 from forze_identity.authz.adapters.effective_grants import GrantQueryAdapter
 from forze_identity.authz.domain.models.policy_principal import ReadPolicyPrincipal
 from forze_identity.authz.services.grants import AuthzGrantResolver, AuthzGrantResolverDeps
@@ -112,6 +112,24 @@ def test_tenant_scoped_route_accepts_tenant_aware_ports() -> None:
     )
 
     assert adapter.spec.tenancy_mode == "require_invocation_tenant"
+
+
+@pytest.mark.asyncio
+async def test_tenant_scoped_route_refuses_an_unbound_caller_as_tenant_required() -> None:
+    # A principal in several tenants is signed in with none bound until it activates one.
+    resolver = _resolver(tenant_aware=True)
+    adapter = GrantQueryAdapter(
+        spec=AuthzSpec(name="main", tenancy_mode="require_invocation_tenant"),
+        principal_qry=_document_qry(tenant_aware=True),
+        resolver=resolver,
+    )
+
+    with pytest.raises(CoreException) as excinfo:
+        await adapter.resolve_effective_grants(uuid4())
+
+    assert excinfo.value.kind is ExceptionKind.AUTHENTICATION
+    assert excinfo.value.code == "tenant_required"
+    resolver.resolve_effective_grants.assert_not_awaited()
 
 
 def test_global_route_allows_non_tenant_aware_ports() -> None:

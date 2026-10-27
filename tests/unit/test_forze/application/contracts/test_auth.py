@@ -33,7 +33,7 @@ from forze.application.contracts.authz import (
     subject_from_authn,
 )
 from forze.application.contracts.authz.specs import AuthzSpec
-from forze.base.exceptions import CoreException
+from forze.base.exceptions import CoreException, ExceptionKind, error_envelope
 
 # ----------------------- #
 
@@ -146,6 +146,20 @@ class TestResolveAuthzScope:
         )
 
         assert scope.tenant_id == tid
+
+    @pytest.mark.parametrize("explicit", [None, AuthzScope(tenant_id=uuid4())])
+    def test_an_unbound_caller_is_refused_as_tenant_required(
+        self, explicit: AuthzScope | None
+    ) -> None:
+        # The refusal TenantRequired and the tenant-aware gateways give (401), not a 500.
+        spec = AuthzSpec(name="z", tenancy_mode="require_invocation_tenant")
+
+        with pytest.raises(CoreException) as excinfo:
+            resolve_policy_scope(spec=spec, explicit=explicit, invocation_tenant_id=None)
+
+        assert excinfo.value.kind is ExceptionKind.AUTHENTICATION
+        assert excinfo.value.code == "tenant_required"
+        assert error_envelope(excinfo.value).status == 401
 
     def test_conflict_raises(self) -> None:
         spec = AuthzSpec(name="z", tenancy_mode="require_invocation_tenant")

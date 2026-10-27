@@ -33,8 +33,9 @@ class AuthzSpec(BaseSpec):
     deployment it usually means the flag was forgotten — set
     ``require_invocation_tenant`` so grant resolution is partitioned by the
     invocation tenant (adapters then refuse non-tenant-aware ports at
-    startup). Authz adapters log a warning when constructed in ``global``
-    mode over tenant-aware ports.
+    startup, and a call with no tenant bound as ``authentication`` /
+    ``tenant_required``). Authz adapters log a warning when constructed in
+    ``global`` mode over tenant-aware ports.
     """
 
     enforce_principal_active: bool = True
