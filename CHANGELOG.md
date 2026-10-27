@@ -31,9 +31,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **HTTP error bodies carry the error's `code` and `kind`.** The body is `{"detail", "code", "kind", "context"}`, as on Socket.IO and WebSocket, so a client tells `revision_mismatch` from any other 400 without matching text. An unhandled error answers `core.internal`, in the body and `X-Error-Code`.
 
-- **A throttled HTTP error tells the client when to come back.** Its `retry_after` (seconds) or `retry_at` (aware `datetime`) detail becomes a `Retry-After` header, which `AllowlistCORSMiddleware` exposes; its other details stay withheld. An unusable value sends no header.
+- **A throttled HTTP error tells the client when to come back.** Its `retry_after` (seconds) or else `retry_at` (aware `datetime`) detail becomes a `Retry-After` header, which `AllowlistCORSMiddleware` exposes; other details stay withheld. No header when neither key is usable.
 
 ### Changed
+
+- **HTTP error bodies carry the error's `code` and `kind`** (**behaviour change**). The body is `{"detail", "code", "kind", "context"}`, so a client tells `revision_mismatch` from other 400s; a whole-body comparison breaks. An unhandled 500 now also sends `X-Error-Code: core.internal`.
 
 - **`HttpServicePort` requires `stream`** (**behaviour change**). A hand-written implementation or test stub must add it, or it fails type checks and `isinstance` against the runtime-checkable port.
 

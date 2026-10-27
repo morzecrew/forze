@@ -10,7 +10,7 @@ from fastapi import FastAPI
 from starlette.requests import Request
 from starlette.testclient import TestClient
 
-from forze.base.exceptions import exc
+from forze.base.exceptions import error_envelope, exc
 from forze.base.logging import configure_logging
 from forze.base.scrubbing import SECRET_PLACEHOLDER
 from forze_fastapi.exceptions import (
@@ -331,6 +331,33 @@ class TestRegisterExceptionHandlers:
                 "kind": kind,
             }
             assert needle not in response.text
+
+    def test_a_server_kind_body_follows_the_envelope_as_the_header_does(self) -> None:
+        # 5xx code and kind are what the envelope gives, as on X-Error-Code and the realtime
+        # frames; the summary and details stay masked.
+        app = FastAPI()
+        err = exc.configuration(
+            "Policy 'secrets-prod' is misconfigured",
+            code="secrets_policy_invalid",
+            details={"policy": "secrets-prod"},
+        )
+
+        @app.get("/misconfigured")
+        def misconfigured() -> None:
+            raise err
+
+        register_exception_handlers(app)
+        response = TestClient(app).get("/misconfigured")
+        envelope = error_envelope(err)
+
+        assert response.status_code == 500
+        assert response.json() == {
+            "detail": "Internal server error",
+            "code": envelope.code,
+            "kind": envelope.kind.value,
+        }
+        assert response.json()["code"] == response.headers[ERROR_CODE_HEADER]
+        assert "secrets-prod" not in response.text
 
     def test_request_validation_error_uses_forze_envelope(self) -> None:
         from pydantic import BaseModel

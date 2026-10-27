@@ -218,9 +218,11 @@ come back: the response carries a `Retry-After` header read from two `details` k
 | `retry_after` | non-negative seconds, `int` or `float` | the seconds, rounded up |
 | `retry_at` | an aware `datetime` | that instant as an HTTP-date |
 
-`retry_after` wins when both are set; it is also what the [HTTP client](http.md) puts on
-an upstream `429`, so a throttle passed through keeps its hint. Any other value — a
-negative or non-finite number, a string, a naive `datetime` — sends no header, never an error.
+A usable `retry_after` wins when both are set; an unusable one — a negative or non-finite
+number, a string — falls through to `retry_at`. When neither is usable (a naive `datetime`
+is not), no header is sent, never an error. `retry_after` is also what the
+[HTTP client](http.md) puts on an upstream `429`, so a throttle passed through keeps its
+hint — but the client caps it at 3600 seconds, so a longer upstream wait arrives as 3600.
 
 ## Readiness probe
 
