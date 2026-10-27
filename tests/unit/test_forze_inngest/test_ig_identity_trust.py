@@ -57,6 +57,7 @@ def _register(captured: dict[str, Any], *, bind_identity_from_event: bool) -> in
             # Read the identity bound for this invocation (inside _bind_invocation).
             captured["authn"] = exec_ctx.inv_ctx.get_authn()
             captured["tenant"] = exec_ctx.inv_ctx.get_tenant()
+            captured["metadata"] = exec_ctx.inv_ctx.get_metadata()
             return _Out()
 
         return _h
@@ -172,3 +173,48 @@ def test_a_valid_tenant_survives_a_malformed_principal() -> None:
     assert decoded.identity_malformed
     assert decoded.authn is None
     assert decoded.tenant is not None and decoded.tenant.tenant_id == _TENANT
+
+
+# ....................... #
+# The worker mints its own execution id for every call: it owns idempotency claims, so a
+# producer's id must not be adopted. The producer's id becomes the causation.
+
+
+async def test_the_worker_mints_its_own_execution_id() -> None:
+    captured: dict[str, Any] = {}
+    fn = _register(captured, bind_identity_from_event=False)
+    producer, correlation = uuid4(), uuid4()
+    envelope = {"execution_id": str(producer), "correlation_id": str(correlation)}
+    event = {"_forze": envelope, "value": "ok"}
+
+    await fn._handler(_FakeContext(event))  # pyright: ignore[reportPrivateUsage]
+
+    metadata = captured["metadata"]
+    assert metadata.execution_id != producer
+    assert metadata.causation_id == producer
+    assert metadata.correlation_id == correlation
+
+
+async def test_a_run_without_an_envelope_still_gets_metadata() -> None:
+    captured: dict[str, Any] = {}
+    fn = _register(captured, bind_identity_from_event=False)
+
+    await fn._handler(_FakeContext({"value": "ok"}))  # pyright: ignore[reportPrivateUsage]
+
+    assert captured["metadata"] is not None
+    assert captured["metadata"].execution_id is not None
+    assert captured["metadata"].causation_id is None
+
+
+async def test_each_call_from_one_envelope_gets_a_distinct_execution_id() -> None:
+    captured: dict[str, Any] = {}
+    fn = _register(captured, bind_identity_from_event=False)
+    event = {"_forze": {"execution_id": str(uuid4())}, "value": "ok"}
+
+    await fn._handler(_FakeContext(event))  # pyright: ignore[reportPrivateUsage]
+    first = captured["metadata"]
+    await fn._handler(_FakeContext(event))  # pyright: ignore[reportPrivateUsage]
+    second = captured["metadata"]
+
+    assert first.execution_id != second.execution_id
+    assert first.causation_id == second.causation_id
