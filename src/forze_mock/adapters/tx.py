@@ -183,9 +183,11 @@ class MockStrictTxManagerAdapter(TransactionManagerPort):
     def capabilities(self) -> TxCapabilities:
         # Root transactions are globally serialized (per-state lock) and rolled back via a
         # whole-store snapshot, so this manager trivially satisfies every level up to
-        # serializable; nested scopes are real savepoints.
+        # serializable; nested scopes are real savepoints. A read-only root refuses writes to
+        # the participating stores (``ensure_mock_tx_writable``).
         return TxCapabilities(
             isolation=frozenset(IsolationLevel),
+            read_only_enforced=True,
         )
 
     # ....................... #
@@ -275,9 +277,11 @@ class MockJournalTxManagerAdapter(TransactionManagerPort):
 
     def capabilities(self) -> TxCapabilities:
         # Read-committed by default (write-through journal + row-``rev`` OCC); snapshot and
-        # serializable are honored via the MVCC buffered overlay (see ``adapters._mvcc``).
+        # serializable are honored via the MVCC buffered overlay (see ``adapters._mvcc``). A
+        # read-only root refuses writes to the participating stores (``ensure_mock_tx_writable``).
         return TxCapabilities(
             isolation=frozenset(IsolationLevel),
+            read_only_enforced=True,
         )
 
     # ....................... #

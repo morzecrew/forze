@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import threading
 from concurrent.futures import ThreadPoolExecutor
+from typing import Any, Literal
 from uuid import uuid4
 
 import attrs
@@ -38,6 +39,11 @@ from forze.base.exceptions import CoreException, ExceptionKind
 from forze.base.serialization import PydanticModelCodec
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
 from forze_mock import MockDepsModule, MockState
+from forze_mock.adapters.tx import (
+    MockJournalTxManagerAdapter,
+    MockStrictTxManagerAdapter,
+    MockTxManagerAdapter,
+)
 from tests.support.execution_context import context_from_modules
 
 # ----------------------- #
@@ -295,6 +301,33 @@ class TestReadOnlyRoot:
 
         assert module.state.outbox_rows.get("things-events", []) == []
         assert module.state.inbox == set()
+
+    @pytest.mark.parametrize(
+        ("mode", "manager"),
+        [
+            ("strict", MockStrictTxManagerAdapter),
+            ("journal", MockJournalTxManagerAdapter),
+            ("none", MockTxManagerAdapter),
+        ],
+    )
+    async def test_the_capability_says_whether_a_read_only_root_refuses_writes(
+        self, mode: Literal["strict", "journal", "none"], manager: Any
+    ) -> None:
+        # The kernel skips the commit point of a read-only root on this report alone, so
+        # a manager that lets the write through must never claim it.
+        state = MockState()
+        ctx = context_from_modules(MockDepsModule(state=state, transactions=mode))
+        refused = False
+
+        try:
+            async with ctx.tx_ctx.scope("mock", read_only=True):
+                await ctx.document.command(SPEC).create(ThingCreate(name="a"))
+
+        except CoreException as error:
+            refused = error.code == "read_only_tx"
+
+        assert manager(state=state).capabilities().read_only_enforced is refused
+        assert refused is (mode != "none")
 
     async def test_reads_are_fine_and_flag_resets(self) -> None:
         state = MockState()

@@ -307,7 +307,9 @@ class TransactionContext:
         Cancellation semantics: cancellation during the body follows the
         rollback path as usual (safely retryable — nothing committed). Once the
         body completes, the scope marks the commit imminent (see
-        :func:`commit_started`); the deferred post-commit callbacks are a
+        :func:`commit_started`) — unless the root is read-only and its manager reports
+        :attr:`~forze.application.contracts.transaction.TxCapabilities.read_only_enforced`,
+        since such a root cannot commit a write; the deferred post-commit callbacks are a
         critical section — they run to completion even if the task is cancelled.
         A *non-fatal* post-commit callback that fails is logged and reported to
         a wired :class:`AfterCommitErrorHandler` but never raised — the
@@ -395,6 +397,15 @@ class TransactionContext:
                     code="tx_isolation_unsupported",
                 )
 
+        # A read-only root on a manager that refuses writes inside it commits nothing, so its
+        # commit is no commit point. Fail-closed: a manager that reports nothing, or reports
+        # read-only as a hint, marks it like a read-write root.
+        marks_commit = not (
+            root_read_only
+            and isinstance(tx, IsolationAware)
+            and tx.capabilities().read_only_enforced
+        )
+
         token_h = self.__tx_handle.set(
             TransactionHandle(scope=tx.scope_key, read_only=root_read_only, isolation=isolation)
         )
@@ -430,8 +441,9 @@ class TransactionContext:
                     # body failure/cancel throws into the yield, skips this, and follows
                     # the rollback path (safely retryable). Not reset here: it must
                     # survive to the boundary.
-                    mark_commit_started()
-                    commit_reached = True
+                    if marks_commit:
+                        mark_commit_started()
+                        commit_reached = True
 
                 # Reached only on a clean exit (no exception thrown into the scope) — capture the
                 # after-commit callbacks to drain below, and mark the transaction committed. An escaping

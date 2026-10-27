@@ -165,6 +165,27 @@ class TestSignals:
         assert document["error"]["retryable"] is False
         assert "ops-sample: shutdown ran" in stderr
 
+    @pytest.mark.parametrize(
+        ("app_name", "expected_code", "error_code"),
+        [
+            ("ANONYMOUS", 143, "interrupted"),
+            ("UNENFORCED_READ_ONLY", 1, "commit_ambiguous"),
+        ],
+    )
+    def test_a_cancel_after_a_querys_read(
+        self, app_name: str, expected_code: int, error_code: str
+    ) -> None:
+        process = _spawn(
+            "probe.read", "--input", '{"seconds": 60}', "--grace", "0", app_name=app_name
+        )
+        seen = _wait_for(process)
+        process.send_signal(signal.SIGTERM)
+
+        code, document, _stderr = _finish(process, seen)
+
+        assert code == expected_code
+        assert document["error"]["code"] == error_code
+
 
 class TestCrashOutput:
     def test_an_unhandled_failure_prints_no_locals(self) -> None:

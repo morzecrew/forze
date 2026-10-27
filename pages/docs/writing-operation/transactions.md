@@ -129,6 +129,11 @@ read-only transaction where it supports one (Postgres `BEGIN … READ ONLY`) and
 rejects accidental writes. You rarely set this by hand — the operation kind does
 it for you.
 
+A manager that refuses every write inside a read-only transaction reports
+`TxCapabilities(read_only_enforced=True)`, as Postgres and the mock's `journal`
+and `strict` managers do. A query interrupted after such a read is then safe to
+re-run rather than [`commit_ambiguous`](../running-in-prod/deadlines.md#a-late-cancel-is-never-reported-as-safe).
+
 ## Isolation
 
 Most operations are fine at the backend's default isolation. When one needs a

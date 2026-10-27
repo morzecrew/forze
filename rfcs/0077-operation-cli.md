@@ -494,11 +494,15 @@ Execution log, Unit "RFC 0077 P3", entries D-AMB-1 to D-AMB-3.
 
 - **Audit is unchanged.** `AuditOutcome` has no ambiguous value. A command's audit row is
   written inside its transaction, so it commits with the operation.
-- **A read-only transaction also marks the commit point** (D-AMB-3). A query cancelled or
-  timed out after its read therefore reports `commit_ambiguous` on the CLI, the deadline path
-  and the new record. It stays that way: Mongo, Firestore and Neo4j accept `read_only`
-  without enforcing it, and forze's write guard covers a `QUERY` operation, not a read-only
-  transaction. So a write can land inside a read-only root.
+- **A read-only transaction marks the commit point unless its manager proves read-only**
+  (D-AMB-3). Every root used to mark it, so a query cancelled or timed out after its read
+  reported `commit_ambiguous`. `TxCapabilities.read_only_enforced` now lets a manager
+  report that it refuses writes inside a read-only root. Postgres and the mock's `journal`
+  and `strict` managers report it, and their read-only roots mark nothing: such a query
+  exits 6 (`deadline_exceeded`) or 130 or 143 (interrupted). Mongo, Firestore and Neo4j
+  accept `read_only` without enforcing it, and forze's write guard covers a `QUERY`
+  operation, not the transaction. Their read-only roots still mark the point and still
+  report `commit_ambiguous`.
 
 ### 5.7 Shared core (P1): `forze.application.execution.ingress`
 

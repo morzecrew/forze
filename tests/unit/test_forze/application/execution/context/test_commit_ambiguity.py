@@ -27,6 +27,7 @@ from forze.application.contracts.transaction import (
     IsolationLevel,
     TransactionManagerPort,
     TransactionScopeKey,
+    TxCapabilities,
 )
 from forze.application.execution import ExecutionContext, bind_deadline
 from forze.application.execution.context.active_operation import active_operation_var
@@ -571,3 +572,122 @@ class TestCancellationAfterCommitIsRecorded:
         [entry] = self._ambiguous(logs)
         assert entry["operation"] == "outer"
         reset_commit_started()
+
+
+class _CapableTxManager(_RecordingTxManager):
+    """Reports whether it refuses writes inside a read-only root."""
+
+    def __init__(self, *, read_only_enforced: bool, commit_delay: float = 0.0) -> None:
+        super().__init__(commit_delay=commit_delay)
+        self.read_only_enforced = read_only_enforced
+
+    def capabilities(self) -> TxCapabilities:
+        return TxCapabilities(
+            isolation=frozenset(IsolationLevel), read_only_enforced=self.read_only_enforced
+        )
+
+
+class TestReadOnlyRootCommitPoint:
+    """A read-only root marks no commit point only where its manager refuses writes in it."""
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("manager", "read_only", "marked"),
+        [
+            pytest.param(_CapableTxManager(read_only_enforced=True), True, False, id="enforced"),
+            pytest.param(_CapableTxManager(read_only_enforced=False), True, True, id="hint"),
+            pytest.param(_RecordingTxManager(), True, True, id="unreported"),
+            pytest.param(_CapableTxManager(read_only_enforced=True), False, True, id="writes"),
+        ],
+    )
+    async def test_the_mark_follows_the_capability(
+        self, manager: TransactionManagerPort, read_only: bool, marked: bool
+    ) -> None:
+        reset_commit_started()
+
+        async with _tx_with(manager).scope("rec", read_only=read_only):
+            pass
+
+        assert commit_started() is marked
+        reset_commit_started()
+
+    @staticmethod
+    def _read_then_wait(enforced: bool, parked: asyncio.Event) -> OperationRegistry:
+        tx = _tx_with(_CapableTxManager(read_only_enforced=enforced))
+
+        @attrs.define(slots=True, kw_only=True, frozen=True)
+        class ReadThenWait(Handler[str, str]):
+            async def __call__(self, args: str) -> str:
+                async with tx.scope("rec", read_only=True):
+                    pass
+
+                parked.set()
+                await asyncio.sleep(10)
+                return args
+
+        reg = OperationRegistry(handlers={"op": lambda _c: ReadThenWait()})
+
+        return reg.bind("op").as_query().finish()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("enforced", "kind", "code"),
+        [
+            (True, ExceptionKind.TIMEOUT, "deadline_exceeded"),
+            (False, ExceptionKind.INTERNAL, "commit_ambiguous"),
+        ],
+    )
+    async def test_a_query_timed_out_after_its_read(
+        self, ctx: ExecutionContext, enforced: bool, kind: ExceptionKind, code: str
+    ) -> None:
+        reset_commit_started()
+        resolved = self._read_then_wait(enforced, asyncio.Event()).freeze().resolve("op", ctx)
+
+        with bind_deadline(0.05), pytest.raises(CoreException) as ei:
+            await resolved("x")
+
+        assert (ei.value.kind, ei.value.code) == (kind, code)
+        reset_commit_started()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(("enforced", "records"), [(True, 0), (False, 1)])
+    async def test_a_query_cancelled_after_its_read(
+        self, ctx: ExecutionContext, enforced: bool, records: int
+    ) -> None:
+        reset_commit_started()
+        parked = asyncio.Event()
+        resolved = self._read_then_wait(enforced, parked).freeze().resolve("op", ctx)
+        task = asyncio.create_task(resolved("x"))
+        await parked.wait()
+
+        with structlog.testing.capture_logs() as logs:
+            task.cancel()
+
+            with pytest.raises(asyncio.CancelledError):
+                await task
+
+        assert task.cancelled() is True
+        assert len([e for e in logs if e.get("code") == "commit_ambiguous"]) == records
+
+    @pytest.mark.asyncio
+    async def test_a_cancel_in_an_enforced_read_only_commit_stays_a_cancel(self) -> None:
+        reset_commit_started()
+        manager = _CapableTxManager(read_only_enforced=True, commit_delay=10.0)
+        tx = _tx_with(manager)
+
+        async def driver() -> None:
+            task = asyncio.current_task()
+            assert task is not None
+            active_operation_var.set(task)
+
+            async with tx.scope("rec", read_only=True):
+                pass
+
+        task = asyncio.create_task(driver())
+        await manager.in_commit.wait()
+        task.cancel()
+
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+        assert task.cancelled() is True  # nothing can have landed: not converted

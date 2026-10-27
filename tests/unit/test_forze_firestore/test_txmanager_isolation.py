@@ -30,6 +30,7 @@ def test_reports_all_levels_serializable_satisfies_any() -> None:
     adapter, _ = _adapter()
     assert isinstance(adapter, IsolationAware)
     assert adapter.capabilities().isolation == frozenset(IsolationLevel)
+    assert adapter.capabilities().read_only_enforced is False  # no read-only mode
 
 
 async def test_any_isolation_runs_a_serializable_transaction() -> None:

@@ -84,7 +84,8 @@ class PostgresTxManagerAdapter(TransactionManagerPort):
 
     def capabilities(self) -> TxCapabilities:
         # Postgres honors every level natively (snapshot via REPEATABLE READ).
-        return TxCapabilities(isolation=frozenset(CoreIsolationLevel))
+        # ``BEGIN ... READ ONLY``: the database refuses writes inside a read-only root.
+        return TxCapabilities(isolation=frozenset(CoreIsolationLevel), read_only_enforced=True)
 
     # ....................... #
 

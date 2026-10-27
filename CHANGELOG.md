@@ -61,6 +61,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **`AuthnDepsModule` refuses an override that would never be registered** (**behaviour change**). That is one for a route `authn` does not name, or a verifier override for a method its route does not enable. It registered nothing, so the route silently kept its default.
 
+- **A query interrupted after its read on Postgres no longer reports `commit_ambiguous`** (**behaviour change**). It reports `deadline_exceeded` (CLI exit 6) or `interrupted`, and is safe to re-run. A manager opts in with the new `TxCapabilities.read_only_enforced`, as the mock's `journal` and `strict` managers do.
+
 - **A Postgres dynamic read no longer collapses duplicate column names.** `SELECT a.id, b.id` came back as one `id` holding the second value. A result with rows now fails with `dynamic_read_statement_invalid`, naming the duplicates; an empty one still returns no rows.
 
 - **A timed-out `DuckDbClient` statement returns at its timeout.** The caller no longer waits for a hung HTTP request to give up, about two minutes on the Iceberg path; the worker keeps its thread until DuckDB unwinds, and `close` still waits for it.

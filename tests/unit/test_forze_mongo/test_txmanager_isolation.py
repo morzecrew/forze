@@ -36,6 +36,7 @@ def test_reports_snapshot_but_not_serializable() -> None:
     assert IsolationLevel.SNAPSHOT in caps
     assert IsolationLevel.READ_COMMITTED in caps
     assert IsolationLevel.SERIALIZABLE not in caps  # Mongo has no serializable mode
+    assert adapter.capabilities().read_only_enforced is False  # no read-only mode
 
 
 async def test_snapshot_sets_read_concern_snapshot() -> None:

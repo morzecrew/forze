@@ -39,6 +39,8 @@ def test_is_isolation_aware_and_reports_all_levels() -> None:
     adapter, _ = _adapter()
     assert isinstance(adapter, IsolationAware)
     assert adapter.capabilities().isolation == frozenset(IsolationLevel)
+    # BEGIN ... READ ONLY: the database refuses writes inside a read-only root.
+    assert adapter.capabilities().read_only_enforced is True
 
 
 async def test_isolation_maps_to_postgres_level() -> None:

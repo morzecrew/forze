@@ -14,7 +14,7 @@ import logging
 import os
 import sys
 from collections.abc import Awaitable, Callable
-from typing import Any
+from typing import Any, Literal
 from uuid import UUID
 
 from pydantic import SecretStr
@@ -109,6 +109,10 @@ class Slow(BaseDTO):
     after_commit: bool = False
 
 
+class Read(BaseDTO):
+    seconds: float
+
+
 class Secret(BaseDTO):
     token: SecretStr
 
@@ -169,6 +173,19 @@ async def _slow(args: Slow) -> None:
     await asyncio.sleep(args.seconds)
 
 
+def _read(ctx: ExecutionContext) -> Callable[[Read], Awaitable[None]]:
+    async def handler(args: Read) -> None:
+        # A query's read-only transaction, committed before the cancel or deadline lands.
+        async with ctx.tx_ctx.scope("mock", read_only=True):
+            pass
+
+        sys.stderr.write("ops-sample: slow started\n")
+        sys.stderr.flush()
+        await asyncio.sleep(args.seconds)
+
+    return handler
+
+
 async def _chatty(_args: None) -> Text:
     print("printed during the call")
     _chatty_logger.warning("logged during the call")
@@ -208,6 +225,7 @@ def build_registry(*, sensitive: bool = False) -> FrozenOperationRegistry:
             "probe.fail_write": lambda _c: _fail,
             "probe.fail_keyed": lambda _c: _fail,
             "probe.slow": lambda _c: _slow,
+            "probe.read": _read,
             "probe.chatty": lambda _c: _chatty,
             "probe.secret": lambda _c: _secret,
             "probe.deny": lambda _c: _deny,
@@ -223,6 +241,7 @@ def build_registry(*, sensitive: bool = False) -> FrozenOperationRegistry:
             "probe.fail_write": _descriptor(Fail),
             "probe.fail_keyed": _descriptor(Fail),
             "probe.slow": _descriptor(Slow),
+            "probe.read": _descriptor(Read),
             "probe.chatty": _descriptor(output_type=Text),
             "probe.secret": _descriptor(Secret, Text),
             "probe.deny": _descriptor(Deny),
@@ -235,6 +254,7 @@ def build_registry(*, sensitive: bool = False) -> FrozenOperationRegistry:
         "probe.bound",
         "probe.echo",
         "probe.fail",
+        "probe.read",
         "probe.chatty",
         "probe.secret",
         "probe.deny",
@@ -316,12 +336,13 @@ def runtime(
     deployment: DeploymentProfile = DeploymentProfile.SERVERLESS,
     tenancy: bool = True,
     denial_posture: DenialPosture | None = None,
+    transactions: Literal["journal", "none"] = "journal",
 ) -> ExecutionRuntime:
     # Without tenancy, the resolver sits on another route: the key's route finds none.
     identity = MockIdentityConfig(tenancy_routes=frozenset({"main" if tenancy else "elsewhere"}))
 
     return build_runtime(
-        MockDepsModule(state=STATE, identity=identity),
+        MockDepsModule(state=STATE, identity=identity, transactions=transactions),
         lifecycle_steps=LifecycleStep(id="ops-sample", shutdown=_shutdown),
         deployment=deployment,
         denial_posture=denial_posture,
@@ -345,6 +366,13 @@ API_NO_TENANCY = OpsApp(
 )
 
 ANONYMOUS = OpsApp(registry=REGISTRY, runtime=runtime, identity=AnonymousIdentity())
+
+UNENFORCED_READ_ONLY = OpsApp(
+    registry=REGISTRY,
+    # The no-op manager lets a write through a read-only root, so a read commits like a write.
+    runtime=lambda: runtime(transactions="none"),
+    identity=AnonymousIdentity(),
+)
 
 STATIC = OpsApp(
     registry=REGISTRY,

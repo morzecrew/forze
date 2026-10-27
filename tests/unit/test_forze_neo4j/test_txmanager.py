@@ -54,6 +54,7 @@ def test_capabilities_declare_read_committed_only() -> None:
     caps = Neo4jTxManagerAdapter(client=_FakeClient()).capabilities()  # type: ignore[arg-type]
     assert caps.isolation == frozenset({IsolationLevel.READ_COMMITTED})
     assert IsolationLevel.SERIALIZABLE not in caps.isolation
+    assert caps.read_only_enforced is False  # no read-only mode wired
 
 
 @pytest.mark.asyncio

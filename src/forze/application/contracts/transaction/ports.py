@@ -82,10 +82,19 @@ class TxCapabilities:
     isolation: frozenset[IsolationLevel]
     """Isolation levels this manager can honor.
 
-    The capability report intentionally covers only what the kernel **enforces** at resolve
-    (the declared isolation). Other transaction features (savepoints / partial rollback,
-    read-only enforcement) are honored by the adapter at runtime, not advertised here — add
-    a field only when the kernel grows a fail-closed check that consults it."""
+    The capability report intentionally covers only what the kernel consults (the declared
+    isolation, and :attr:`read_only_enforced`). Other transaction features (savepoints /
+    partial rollback) are honored by the adapter at runtime, not advertised here — add a
+    field only when the kernel grows a fail-closed check that consults it."""
+
+    read_only_enforced: bool = False
+    """The backend refuses writes inside a read-only transaction.
+
+    Report ``True`` only when a write in a ``read_only=True`` root fails whatever path
+    reaches the backend. The kernel then treats that root's commit as no commit point: a
+    deadline or cancellation after it stays retryable instead of ``commit_ambiguous``.
+    ``False`` (the default) treats ``read_only`` as a hint, and the commit point is marked as
+    for a read-write transaction."""
 
 
 # ....................... #

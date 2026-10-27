@@ -51,7 +51,9 @@ def mark_commit_started() -> None:
     """Mark the current root transaction's commit as imminent/in-flight.
 
     Called by :meth:`~forze.application.execution.context.transaction.TransactionContext.scope`
-    once the body completes cleanly, just before the driver commit runs.
+    once the body completes cleanly, just before the driver commit runs — except for a
+    read-only root whose manager reports ``TxCapabilities.read_only_enforced``, which cannot
+    commit a write.
     """
 
     _commit_started.set(True)

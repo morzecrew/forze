@@ -157,10 +157,17 @@ Reconcile from the warning before running the operation again. Where a client
 retries, an [idempotency key](../recipes/add-idempotency.md) makes the retry
 safe.
 
-A query counts too. Its read-only transaction marks the commit point like any
-other, because Mongo, Firestore and Neo4j accept `read_only` without enforcing
-it. So a query interrupted after its read reports `commit_ambiguous`. If the
-query wrote nothing, it is safe to run again.
+A query's read-only transaction is a commit point only where the backend could
+have let a write through it:
+
+| Transaction manager | A query interrupted after its read reports |
+| --- | --- |
+| Postgres, and the mock's `journal` and `strict` managers | `deadline_exceeded`, or a plain cancellation: they refuse writes inside a read-only transaction |
+| Mongo, Firestore, Neo4j, and the mock's `none` manager | `commit_ambiguous`: they accept `read_only` without enforcing it |
+
+A manager says which it is through `TxCapabilities.read_only_enforced`; one
+that reports nothing counts as not enforcing. On the second row, a query that
+wrote nothing is still safe to run again.
 
 A deadline is one of several controls over how an operation behaves under
 stress; the full set — retries, bulkheads, breakers, hedging — composes in
