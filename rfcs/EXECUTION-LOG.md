@@ -2003,11 +2003,15 @@ boundary step was set beside the `ingress` function, and a step moved only where
 agree on every input the surface can send.
 
 **Drift count: 0.** Ten entries: six `spec-gap`, four `discovery`. Two steps moved with no
-behaviour change (D-ING-1, D-ING-2). One moved with a behaviour change, in a commit and a
-changelog entry of its own (D-ING-7). Seven stayed, each for the reason its entry gives.
+behaviour change (D-ING-1, D-ING-2). Two gained invocation metadata, a behaviour change, each
+in a commit of its own under one changelog entry: the WS route's bind-and-run moved whole
+(D-ING-7), and Socket.IO's events mint metadata while its bind-and-run stays (D-ING-10). Six
+stayed, each for the reason its entry gives.
 
-**Socket.IO moved nothing.** Every step it has is either shared with the WS route below the
-execution layer (D-ING-8, D-ING-9) or runs through a port that has no registry (D-ING-10).
+**Socket.IO moved one step.** Its events mint their metadata through
+`mint_invocation_metadata` (D-ING-10). Every other step is either shared with the WS route
+below the execution layer (D-ING-8, D-ING-9) or runs through a port that has no registry
+(D-ING-10).
 
 | Id | Surface | Step | Decision |
 |---|---|---|---|
@@ -2020,7 +2024,7 @@ execution layer (D-ING-8, D-ING-9) or runs through a port that has no registry (
 | D-ING-7 | WS route | bind-and-run | moved, **behaviour change** |
 | D-ING-8 | WS route, Socket.IO | payload validation | stays: route-typed, not descriptor-typed |
 | D-ING-9 | WS route, Socket.IO | identity and tenant ladder | stays: below the execution layer |
-| D-ING-10 | Socket.IO | bind-and-run | stays: the adapter holds no registry |
+| D-ING-10 | Socket.IO | metadata, bind-and-run | metadata moved, **behaviour change**; run stays |
 
 ## D-ING-1 — FastAPI's metadata minting is `mint_invocation_metadata`; only parsing differs
 
@@ -2195,7 +2199,7 @@ execution layer (D-ING-8, D-ING-9) or runs through a port that has no registry (
 - **Class:** `discovery`.
 - **Consequence:** left as is. The two answers agree today, so no parity work is owed.
 
-## D-ING-10 — Socket.IO's event path cannot reach `invoke_at_ingress` without a registry
+## D-ING-10 — Socket.IO's events now mint metadata; the run cannot reach `invoke_at_ingress`
 
 - **Touches:** RFC 0077 §2 ("Socket.IO's event path … calls the resolved operation
   directly, not through `run_operation`") and §12 P3.
@@ -2207,12 +2211,19 @@ execution layer (D-ING-8, D-ING-9) or runs through a port that has no registry (
   `invoke_at_ingress` needs one.
 - **Because:** the adapter's public shape predates the registry entry point.
 - **Class:** `discovery`.
-- **Consequence:** left as is. Moving it needs a public API decision, such as a `registry=`
-  on the adapter, which is not a refactor. Minting metadata there alone would be half that
-  move. After D-ING-7 the two duplex twins differ on metadata, and this entry records that
-  the difference is deliberate.
+- **Consequence:** split in two.
+  - **The metadata is adopted**, as a **behaviour change** in its own commit, under the same
+    `Fixed` entry as D-ING-7, with a test that failed first (`test_routing_metadata.py`).
+    `_dispatch_event` binds `mint_invocation_metadata()` with `bind_metadata` around the
+    resolved handler's run, beside the session identity and the admission, so the two duplex
+    transports agree on metadata. The `operation_resolver` API is unchanged. The event's
+    metadata replaces any bound around it for the event's duration; a handler that binds its
+    own inside still wins.
+  - **The bind-and-run move stays demand-gated.** It needs a public API decision, such as a
+    `registry=` on the adapter, which is not a refactor.
 - **Proposed row (RFC 0077):** `ASSUMED` — Socket.IO moves onto `invoke_at_ingress` only
-  with a registry-backed adapter, on a named consumer, as the rest of P3 is.
+  with a registry-backed adapter, on a named consumer, as the rest of P3 is. Until then it
+  mints each event's metadata as the WS route does.
 
 **Out of scope, noted.** Neither duplex transport checks its command table against the
 catalog at attach time, so an unknown operation raises `internal` at the first call. Neither
