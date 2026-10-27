@@ -10,12 +10,15 @@ from forze.application.contracts.cache import CacheSpec
 from forze.application.contracts.document import DocumentSpec
 from forze.base.exceptions import CoreException
 from forze.base.primitives import utcnow
+from forze.testing import context_from_modules
 from forze_identity.tenancy.adapters.resolver import TenantResolverAdapter
 from forze_identity.tenancy.application.specs import principal_tenant_binding_spec, tenant_spec
 from forze_identity.tenancy.domain.models.principal_tenant_binding import (
     ReadPrincipalTenantBinding,
 )
 from forze_identity.tenancy.domain.models.tenant import ReadTenant
+from forze_mock import MockDepsModule
+from tests.support.tenant_memberships import management
 
 
 def _binding_row(*, pid: UUID, tid: UUID) -> ReadPrincipalTenantBinding:
@@ -170,3 +173,32 @@ async def test_resolver_binds_no_tenant_without_membership() -> None:
     resolver = TenantResolverAdapter(binding_qry=binding_qry, tenant_qry=None)
 
     assert await resolver.resolve_from_principal(uuid4()) is None
+
+@pytest.mark.asyncio
+async def test_resolver_refuses_a_non_member_request_from_a_principal_in_several_tenants() -> None:
+    # Over real (mock) binding documents: binding no tenant for an ambiguous principal must
+    # not loosen what a requested tenant has to be.
+    ctx = context_from_modules(MockDepsModule())
+    mgmt = management(ctx)
+    pid = uuid4()
+    first = await mgmt.provision_tenant(tenant_key="acme")
+    second = await mgmt.provision_tenant(tenant_key="globex")
+    stranger = await mgmt.provision_tenant(tenant_key="initech")
+    await mgmt.attach_principal(pid, first.tenant_id)
+    await mgmt.attach_principal(pid, second.tenant_id)
+    resolver = TenantResolverAdapter(
+        binding_qry=ctx.doc.query(principal_tenant_binding_spec),
+        tenant_qry=ctx.doc.query(tenant_spec),
+    )
+
+    assert await resolver.resolve_from_principal(pid) is None
+
+    picked = await resolver.resolve_from_principal(pid, requested_tenant_id=second.tenant_id)
+    assert picked is not None
+    assert picked.tenant_id == second.tenant_id
+
+    for requested in (stranger.tenant_id, uuid4()):
+        with pytest.raises(CoreException) as ei:
+            await resolver.resolve_from_principal(pid, requested_tenant_id=requested)
+
+        assert ei.value.code == "tenant_mismatch"
