@@ -7,8 +7,9 @@ token strings from response bodies (the OAuth2-shaped body keeps scheme + lifeti
 so cookie clients still learn how long the credential is valid — exactly the split
 :class:`~forze_kits.aggregates.authn.AuthnTokenResponseDTO` documents).
 
-Wire it into :func:`~forze_fastapi.routes.attach_authn_routes` via ``cookies=`` and
-point :class:`CookieTokenAuthn`'s ``cookie_name`` at :attr:`access_cookie`. Scope
+Wire it into :func:`~forze_fastapi.routes.attach_authn_routes` via ``cookies=`` (and
+into :func:`~forze_fastapi.routes.attach_tenancy_routes`, whose tenant switch re-mints the
+session) and point :class:`CookieTokenAuthn`'s ``cookie_name`` at :attr:`access_cookie`. Scope
 the two cookies with :attr:`access_path` / :attr:`refresh_path` (e.g. access →
 ``/api``, refresh → ``/api/auth``, every authn route) so the refresh token never rides
 ordinary API requests — and pair the login, refresh and logout paths with the security
@@ -53,8 +54,8 @@ class AuthnCookieCarrier:
     :class:`~forze_fastapi.security.CookieCsrf` gate (on by default) requires an
     unsafe request using either cookie to prove a same-host or allowlisted origin:
     :class:`CookieTokenAuthn` applies it when the access cookie is read,
-    and ``/login``, ``/logout`` and ``/refresh`` apply the same ingress's gate to
-    every request (the default gate when no ``CookieTokenAuthn`` reads
+    and ``/login``, ``/logout``, ``/refresh`` and the tenant switch apply the same
+    ingress's gate to every request (the default gate when no ``CookieTokenAuthn`` reads
     :attr:`access_cookie`).
     It is the server-side check that still holds when a proxy strips ``SameSite``
     or a ``samesite="none"`` deployment relies on it; list your cross-origin
@@ -108,8 +109,8 @@ class AuthnCookieCarrier:
     def apply(self, response: Response, tokens: AuthnTokenResponseDTO) -> AuthnTokenResponseDTO:
         """Set (or rotate) both cookies from a token response; return the body to send.
 
-        Called on login **and** refresh — a rotated refresh token overwrites its
-        cookie, which is what makes single-use rotation work in cookie mode.
+        Called on login, refresh **and** the tenant switch — a rotated refresh token
+        overwrites its cookie, which is what makes single-use rotation work in cookie mode.
         """
 
         if tokens.access_token is not None:

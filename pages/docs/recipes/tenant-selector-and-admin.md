@@ -48,6 +48,24 @@ Requires a `TenancyDepsModule` wiring a `tenant_resolver` **and** `tenant_manage
 (see [Wire the planes](authn-authz-tenancy-fastapi.md#wire-the-planes)), and a transaction
 manager on the registry's `tx_route` (`"default"`), which the switch issues its session in.
 
+On [cookie auth](../reference/fastapi-routes.md#cookie-mode) the browser never sees the new
+token pair, so pass `attach_tenancy_routes` the `AuthnCookieCarrier` you gave
+`attach_authn_routes`:
+
+```python
+attach_tenancy_routes(
+    router,
+    registry=build_tenancy_registry(spec).freeze(),
+    ns=spec.default_namespace,
+    ctx_dep=ctx_dep,
+    cookies=cookies,
+)
+```
+
+The switch then rotates both `HttpOnly` cookies and strips the tokens from its body, as
+`/login` does, behind the same CSRF gate. It authenticates from the access cookie, so it does
+not belong in `anonymous_paths`.
+
 ## Tenant administration
 
 The selector is **self-service** — every op acts on the caller's *own* membership. Managing
