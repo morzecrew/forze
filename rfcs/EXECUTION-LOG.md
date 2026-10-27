@@ -1996,42 +1996,44 @@ Each fix was checked against its own removal. R-5 has a battery test as well,
 
 # Unit ? · RFC 0077 P3 — surfaces onto ingress
 
+# Unit 9 · RFC 0077 P3 — surfaces onto ingress
+
 Branch `refactor/ingress-fastapi-socketio-ws`. RFC 0077 §12 P3's bullet "moving FastAPI,
 Socket.IO and the WS route onto `ingress`", against §5.7 and the P1 core in
 [`execution/ingress/`](../src/forze/application/execution/ingress/). Each surface's copy of a
 boundary step was set beside the `ingress` function, and a step moved only where the two
 agree on every input the surface can send.
 
-**Drift count: 1.** Eleven entries: one `drift` (D-ING-7), six `spec-gap`, four
-`discovery`. Two steps moved with no behaviour change (D-ING-1, D-ING-2). Three behaviour
+**Drift count: 1.** Eleven entries: one `drift` (D-083), six `spec-gap`, four
+`discovery`. Two steps moved with no behaviour change (D-077, D-078). Three behaviour
 changes landed, each in a commit of its own:
-- the WS route's bind-and-run moved whole and gained metadata (D-ING-7);
-- Socket.IO's events mint metadata while its bind-and-run stays (D-ING-10), under the same
-  changelog entry as D-ING-7;
-- Socket.IO's events bind their connection's tenant (D-ING-11), with an entry of its own.
+- the WS route's bind-and-run moved whole and gained metadata (D-083);
+- Socket.IO's events mint metadata while its bind-and-run stays (D-086), under the same
+  changelog entry as D-083;
+- Socket.IO's events bind their connection's tenant (D-087), with an entry of its own.
 
 Six steps stayed, each for the reason its entry gives.
 
 **Socket.IO moved one step.** Its events mint their metadata through
-`mint_invocation_metadata` (D-ING-10), and they now bind the tenant the WS route already
-bound (D-ING-11). Every other step is either shared with the WS route below the execution
-layer (D-ING-8, D-ING-9) or runs through a port that has no registry (D-ING-10).
+`mint_invocation_metadata` (D-086), and they now bind the tenant the WS route already
+bound (D-087). Every other step is either shared with the WS route below the execution
+layer (D-084, D-085) or runs through a port that has no registry (D-086).
 
 | Id | Surface | Step | Decision |
 |---|---|---|---|
-| D-ING-1 | FastAPI | invocation-metadata minting | moved, no change |
-| D-ING-2 | FastAPI | API-key split and verification | moved, no change |
-| D-ING-3 | FastAPI | principal → tenant resolution | stays: the HTTP ladder differs |
-| D-ING-4 | FastAPI | route input validation | stays: the 422 body would change |
-| D-ING-5 | FastAPI | exposure and the sensitive refusal | stays: same rule, other wording |
-| D-ING-6 | FastAPI | bind-and-run | stays: the envelope is bound by middleware |
-| D-ING-7 | WS route | bind-and-run | moved, **behaviour change** |
-| D-ING-8 | WS route, Socket.IO | payload validation | stays: route-typed, not descriptor-typed |
-| D-ING-9 | WS route, Socket.IO | identity and tenant ladder | stays: below the execution layer |
-| D-ING-10 | Socket.IO | metadata, bind-and-run | metadata moved, **behaviour change**; run stays |
-| D-ING-11 | Socket.IO | tenant binding per command | fixed, **behaviour change** |
+| D-077 | FastAPI | invocation-metadata minting | moved, no change |
+| D-078 | FastAPI | API-key split and verification | moved, no change |
+| D-079 | FastAPI | principal → tenant resolution | stays: the HTTP ladder differs |
+| D-080 | FastAPI | route input validation | stays: the 422 body would change |
+| D-081 | FastAPI | exposure and the sensitive refusal | stays: same rule, other wording |
+| D-082 | FastAPI | bind-and-run | stays: the envelope is bound by middleware |
+| D-083 | WS route | bind-and-run | moved, **behaviour change** |
+| D-084 | WS route, Socket.IO | payload validation | stays: route-typed, not descriptor-typed |
+| D-085 | WS route, Socket.IO | identity and tenant ladder | stays: below the execution layer |
+| D-086 | Socket.IO | metadata, bind-and-run | metadata moved, **behaviour change**; run stays |
+| D-087 | Socket.IO | tenant binding per command | fixed, **behaviour change** |
 
-## D-ING-1 — FastAPI's metadata minting is `mint_invocation_metadata`; only parsing differs
+## D-077 — FastAPI's metadata minting is `mint_invocation_metadata`; only parsing differs
 
 - **Touches:** RFC 0077 §5.7, the `mint_invocation_metadata` row ("the fresh-`uuid7` blocks
   in MCP and FastAPI").
@@ -2048,7 +2050,7 @@ layer (D-ING-8, D-ING-9) or runs through a port that has no registry (D-ING-10).
 - **Consequence:** `_decode_metadata` keeps its name and its header parsing, and calls
   `mint_invocation_metadata`. No behaviour change.
 
-## D-ING-2 — FastAPI's API-key path keeps its blank check, then calls `authenticate_api_key`
+## D-078 — FastAPI's API-key path keeps its blank check, then calls `authenticate_api_key`
 
 - **Touches:** RFC 0077 §5.7, the `authenticate_api_key` row ("FastAPI's copies later"), and
   "As built (P1)", which made `api_key_credentials` public for this move.
@@ -2067,7 +2069,7 @@ layer (D-ING-8, D-ING-9) or runs through a port that has no registry (D-ING-10).
   bearer split is left. Its colon cases left `test_authorization_split.py`, and
   `TestApiKeyCredentials` in `test_ingress.py` covers them. No behaviour change.
 
-## D-ING-3 — FastAPI's tenant ladder stays: it drops a tenant the ingress refuses
+## D-079 — FastAPI's tenant ladder stays: it drops a tenant the ingress refuses
 
 - **Touches:** RFC 0077 §5.7, the `resolve_principal_tenant` row ("FastAPI's copies later"),
   and "As built (P1)" (`tenant_request_unverifiable`, `tenant_mismatch`).
@@ -2094,7 +2096,7 @@ layer (D-ING-8, D-ING-9) or runs through a port that has no registry (D-ING-10).
   refusal of an unverifiable requested tenant applies where the caller names the tenant
   explicitly, and an advisory `X-Tenant-Id` stays dropped, not refused.
 
-## D-ING-4 — FastAPI's route validation stays: moving it changes every 422 body
+## D-080 — FastAPI's route validation stays: moving it changes every 422 body
 
 - **Touches:** RFC 0077 §2's first table row. It lists the MCP, Socket.IO, WS and agent-tool
   copies, but not FastAPI's
@@ -2116,7 +2118,7 @@ layer (D-ING-8, D-ING-9) or runs through a port that has no registry (D-ING-10).
 - **Consequence:** left as is. Moving it would add a `url` to every error row of these 422s
   and close no gap, since both drop the input and the echoing messages.
 
-## D-ING-5 — FastAPI's sensitive refusal stays: the same rule, worded for routes
+## D-081 — FastAPI's sensitive refusal stays: the same rule, worded for routes
 
 - **Touches:** RFC 0077 §2's second table row (`_attach.py:926`) and §5.2 ("now in one
   place").
@@ -2135,7 +2137,7 @@ layer (D-ING-8, D-ING-9) or runs through a port that has no registry (D-ING-10).
   resource-template refusals (`forze_mcp/schemas.py`, `resource_templates.py`), which keep
   their own wording.
 
-## D-ING-6 — FastAPI's bind-and-run does not map onto `invoke_at_ingress`
+## D-082 — FastAPI's bind-and-run does not map onto `invoke_at_ingress`
 
 - **Touches:** RFC 0077 §2's third table row ("FastAPI middleware plus `_operation_runner`").
 - **RFC said:** the route's bind-and-run is a copy of `invoke_at_ingress`.
@@ -2149,7 +2151,7 @@ layer (D-ING-8, D-ING-9) or runs through a port that has no registry (D-ING-10).
 - **Class:** `spec-gap`.
 - **Consequence:** left as is.
 
-## D-ING-7 — The WS route ran commands with no invocation metadata; it now uses `invoke_at_ingress`
+## D-083 — The WS route ran commands with no invocation metadata; it now uses `invoke_at_ingress`
 
 - **Touches:** RFC 0077 §2's third table row, "Mint metadata, bind identity, run", which
   lists the WS route (`forze_fastapi/realtime/ws.py:780`) among its copies.
@@ -2174,7 +2176,7 @@ layer (D-ING-8, D-ING-9) or runs through a port that has no registry (D-ING-10).
 - **Proposed row (RFC 0077):** `ASSUMED` — every governed invocation runs with its own
   `InvocationMetadata`, a duplex command frame included. A connection is not an invocation.
 
-## D-ING-8 — Realtime payload validation is typed by the route, not by the descriptor
+## D-084 — Realtime payload validation is typed by the route, not by the descriptor
 
 - **Touches:** RFC 0077 §2's first table row (Socket.IO `_parse_payload`, the realtime WS
   route).
@@ -2189,7 +2191,7 @@ layer (D-ING-8, D-ING-9) or runs through a port that has no registry (D-ING-10).
 - **Class:** `spec-gap`.
 - **Consequence:** left as is on both surfaces.
 
-## D-ING-9 — The realtime identity and tenant ladder sits below the execution layer
+## D-085 — The realtime identity and tenant ladder sits below the execution layer
 
 - **Touches:** RFC 0077 §5.7 ("Integrations sit below that layer and cannot import it").
 - **RFC said:** `ingress` lives in the execution layer.
@@ -2205,9 +2207,9 @@ layer (D-ING-8, D-ING-9) or runs through a port that has no registry (D-ING-10).
 - **Class:** `discovery`.
 - **Consequence:** left as is. The ladder's answers agree, so resolution owes no parity
   work. Whether each command then *binds* the resolved tenant is a separate question, and
-  Socket.IO did not (D-ING-11).
+  Socket.IO did not (D-087).
 
-## D-ING-10 — Socket.IO's events now mint metadata; the run cannot reach `invoke_at_ingress`
+## D-086 — Socket.IO's events now mint metadata; the run cannot reach `invoke_at_ingress`
 
 - **Touches:** RFC 0077 §2 ("Socket.IO's event path … calls the resolved operation
   directly, not through `run_operation`") and §12 P3.
@@ -2221,10 +2223,10 @@ layer (D-ING-8, D-ING-9) or runs through a port that has no registry (D-ING-10).
 - **Class:** `discovery`.
 - **Consequence:** split in two.
   - **The metadata is adopted**, as a **behaviour change** in its own commit, under the same
-    `Fixed` entry as D-ING-7, with a test that failed first (`test_routing_metadata.py`).
+    `Fixed` entry as D-083, with a test that failed first (`test_routing_metadata.py`).
     `_dispatch_event` binds `mint_invocation_metadata()` with `bind_metadata` around the
     resolved handler's run, beside the session identity and the admission, so the two duplex
-    transports agree on metadata (the tenant is D-ING-11). The `operation_resolver` API is
+    transports agree on metadata (the tenant is D-087). The `operation_resolver` API is
     unchanged. The event's
     metadata replaces any bound around it for the event's duration; a handler that binds its
     own inside still wins.
@@ -2234,7 +2236,7 @@ layer (D-ING-8, D-ING-9) or runs through a port that has no registry (D-ING-10).
   with a registry-backed adapter, on a named consumer, as the rest of P3 is. Until then it
   mints each event's metadata as the WS route does.
 
-## D-ING-11 — Socket.IO's command events bound no tenant; they now bind the connection's
+## D-087 — Socket.IO's command events bound no tenant; they now bind the connection's
 
 - **Touches:** RFC 0077 §2 ("Socket.IO's event path … binds identity but no
   `InvocationMetadata`"). Unlisted: the tenant.
@@ -2244,7 +2246,7 @@ layer (D-ING-8, D-ING-9) or runs through a port that has no registry (D-ING-10).
   bound only `bind_identity(authn=...)`, which sets the tenant to `None`. So a tenant-aware
   operation on a tenanted connection failed `tenant_required`. Replay and ack on the same
   connection did bind the tenant (`_bind_connection`), and the WS route binds it per frame.
-  The branch's review found this, not the inventory: D-ING-9 compared how the tenant is
+  The branch's review found this, not the inventory: D-085 compared how the tenant is
   resolved, not whether it is bound.
 - **Because:** the routing module predates `attach_realtime_connection`, and its docstring
   left tenant resolution to the `context_factory`.
