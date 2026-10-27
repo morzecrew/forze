@@ -203,7 +203,7 @@ What the route promises, and who keeps each promise:
 | Timeout | the client interrupts the cursor. A CPU-bound statement stops at once. A catalog or store request that hangs is not cut short: the caller still gets `dynamic_read_timeout` on time, but the worker holds its slot for about 120 s, whatever `http_timeout` says |
 | Row cap | the shell fetches cap + 1 rows from a streaming result and refuses the overflow |
 | Container | the tenant's instance, principal and vended credentials (`dedicated`) |
-| Untrusted statements | refused at wiring (`duckdb_dynamic_read_untrusted_refused`) |
+| Untrusted statements | refused at wiring (`duckdb_dynamic_read_untrusted_refused`); a `provenance` other than `"trusted"` or `"untrusted"` is `duckdb_dynamic_read_provenance_invalid` |
 
 Wiring refuses a dynamic route on a plain `DuckDbClient` (its origin floor is
 `namespace`), and an `http_timeout` above the smallest route timeout. Named

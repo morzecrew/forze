@@ -65,9 +65,8 @@ class DuckDbDepsModule(DepsModule):
     def __attrs_post_init__(self) -> None:
         routed = isinstance(self.client, RoutedDuckDbClient)
         reads = self.dynamic_reads or {}
-        untrusted = sorted(
-            str(name) for name, cfg in reads.items() if cfg.provenance == "untrusted"
-        )
+        # Anything but the exact "trusted": the config refuses other spellings, this is the belt.
+        untrusted = sorted(str(name) for name, cfg in reads.items() if cfg.provenance != "trusted")
 
         if untrusted:
             raise exc.configuration(

@@ -79,6 +79,17 @@ class TestWiring:
         assert ei.value.code == "duckdb_dynamic_read_untrusted_refused"
         assert ei.value.details == {"routes": [ROUTE]}
 
+    def test_the_module_admits_only_the_exact_trusted_spelling(self) -> None:
+        """A belt under the config's own check: anything but ``"trusted"`` is refused."""
+
+        config = _config()
+        object.__setattr__(config, "provenance", "untrussted")  # past the config's check
+
+        with pytest.raises(CoreException) as ei:
+            DuckDbDepsModule(client=_routed(), dynamic_reads={ROUTE: config})
+
+        assert ei.value.code == "duckdb_dynamic_read_untrusted_refused"
+
     def test_a_routed_module_derives_dedicated(self) -> None:
         DuckDbDepsModule(
             client=_routed(),
@@ -128,6 +139,16 @@ class TestConfig:
 
         with pytest.raises(TypeError):
             DuckDbDynamicReadConfig(provenance="trusted")  # type: ignore[call-arg]
+
+    @pytest.mark.parametrize(
+        "provenance", ["untrussted", "untrusted ", "Trusted", "", None, ["trusted"]]
+    )
+    def test_a_provenance_outside_the_closed_set_is_refused(self, provenance: Any) -> None:
+        with pytest.raises(CoreException) as ei:
+            _config(provenance=provenance)
+
+        assert ei.value.code == "duckdb_dynamic_read_provenance_invalid"
+        assert ei.value.kind is ExceptionKind.CONFIGURATION
 
     @pytest.mark.parametrize("timeout", [timedelta(0), timedelta(seconds=-1)])
     def test_a_non_positive_statement_timeout_is_refused(self, timeout: timedelta) -> None:

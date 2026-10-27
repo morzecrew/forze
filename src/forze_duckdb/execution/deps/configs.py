@@ -1,7 +1,7 @@
 """DuckDB analytics and dynamic-read execution configs."""
 
 from datetime import timedelta
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, get_args
 
 import attrs
 
@@ -15,6 +15,10 @@ if TYPE_CHECKING:
     from forze.application.contracts.analytics import AnalyticsSpec
 
 # ----------------------- #
+
+_PROVENANCES = frozenset(get_args(DynamicReadProvenance))
+
+# ....................... #
 
 
 @attrs.define(slots=True, kw_only=True, frozen=True)
@@ -122,6 +126,18 @@ class DuckDbDynamicReadConfig(TenantAwareIntegrationConfig):
     # ....................... #
 
     def __attrs_post_init__(self) -> None:
+        # The annotation is not enforced at runtime: a misspelt tier is refused here by name,
+        # not left to the module's trusted-only check. A string is checked first, so an
+        # unhashable value is refused rather than raising TypeError.
+        provenance: object = self.provenance
+
+        if not (isinstance(provenance, str) and provenance in _PROVENANCES):
+            raise exc.configuration(
+                f"DuckDB dynamic-read provenance={provenance!r} is not one of "
+                f"{', '.join(sorted(_PROVENANCES))}.",
+                code="duckdb_dynamic_read_provenance_invalid",
+            )
+
         if self.statement_timeout.total_seconds() <= 0:
             raise exc.configuration(
                 "DuckDB dynamic-read statement_timeout must be positive.",
