@@ -2270,19 +2270,22 @@ generated surfaces) does not cover, and no copy of a boundary step is involved.
 
 # Unit ? · RFC 0077 P3 — CLI items
 
+---
+
+# Unit 10 · RFC 0077 P3 — CLI items
+
 Branch `feat/ops-cli-p3`. RFC 0077 (operation CLI, ✅ Complete for P1 and P2) §12 P3, the
 three `forze ops` items the maintainer named a demand for on 2026-10-27: typed flags for flat
 scalar inputs, a JSONL batch in one runtime scope, and shell completion of operation names.
-The surface field, the FastAPI / Socket.IO / WS moves onto `ingress` and the boundary-wide
-`commit_ambiguous` question stay demand-gated. Entry ids are temporary (`D-CLI-n`) until the
-unit is numbered at publish.
+The FastAPI / Socket.IO / WS moves onto `ingress` (Unit 9), the boundary-wide
+`commit_ambiguous` question (Unit 11) and the surface field (RFC 0079) are their own changes.
 
 **Drift count: 0.** Seven entries, all `spec-gap`: §12 named the three items and §5.9 and §8
 gave them one sentence each, so every rule below was knowable before code and none was
 settled. One entry amends a graded row (decision 15); three are close-outs for the `LOCKED`
-rows a batch touches (decisions 9, 10 and 12), folded into D-CLI-5 and D-CLI-6.
+rows a batch touches (decisions 9, 10 and 12), folded into D-092 and D-093.
 
-## D-CLI-1 — Decision 15 gives way to §12's demand gate for three items
+## D-088 — Decision 15 gives way to §12's demand gate for three items
 
 - **Touches:** RFC 0077 decision 15 (`ASSUMED`): "No typed flags, JSONL batch, remote mode, or
   surface field in this RFC." And §12, whose P3 list names the same items as demand-gated.
@@ -2299,7 +2302,7 @@ rows a batch touches (decisions 9, 10 and 12), folded into D-CLI-5 and D-CLI-6.
   this RFC. Typed flags for flat scalar inputs, the JSONL batch and shell completion shipped in
   P3 on a named demand.
 
-## D-CLI-2 — Typed flags: flat scalars only, all or none, validated as strings
+## D-089 — Typed flags: flat scalars only, all or none, validated as strings
 
 - **Touches:** RFC 0077 §5.9 and §8, which defer "the flat-scalar case … using the flat
   signature MCP already synthesises"; decision 13 (`ASSUMED`); decision 5 (`LOCKED`). The
@@ -2347,12 +2350,12 @@ rows a batch touches (decisions 9, 10 and 12), folded into D-CLI-5 and D-CLI-6.
   option or another flag. Otherwise it takes none. The flags build the raw object for the
   shared validation, read by field name.
 
-## D-CLI-3 — An unknown option after `OP` is an error object, not Click's usage text
+## D-090 — An unknown option after `OP` is an error object, not Click's usage text
 
 - **Touches:** RFC 0077 §5.5, whose first table row makes argument parsing Click's usage text
   on stderr with nothing on stdout; decision 8 (`ASSUMED`).
 - **RFC said:** a parse error exits 2 with Click's usage text.
-- **Found:** under D-CLI-2's parse model, Click hands every option it does not know to the
+- **Found:** under D-089's parse model, Click hands every option it does not know to the
   command, a misspelt call option included. Only the loaded declaration can tell a typo from a
   typed flag, and once it has loaded, decision 8 owes an error object.
 - **Class:** `spec-gap`. It follows from the parse model, which was a design choice.
@@ -2363,7 +2366,7 @@ rows a batch touches (decisions 9, 10 and 12), folded into D-CLI-5 and D-CLI-6.
 - **Proposed row (RFC 0077):** `ASSUMED` — an option `call` does not have is read as a typed
   flag, and its refusal is an error object with exit 2.
 
-## D-CLI-4 — `--batch` writes one JSON line per call
+## D-091 — `--batch` writes one JSON line per call
 
 - **Touches:** decision 8 (`ASSUMED`): exactly one JSON document on stdout. §8 named a batch
   mode ("many inputs, one scope") and nothing else.
@@ -2384,7 +2387,7 @@ rows a batch touches (decisions 9, 10 and 12), folded into D-CLI-5 and D-CLI-6.
   that ran, numbered by its input line, its value under `result` or `error`. A refusal of the
   whole batch is one error object without a line number.
 
-## D-CLI-5 — A batch is validated whole, stops at its first failure, and takes no key
+## D-092 — A batch is validated whole, stops at its first failure, and takes no key
 
 - **Touches:** decisions 9 and 12 (`LOCKED`); §5.6 step 3 ("None of this builds a runtime").
   Unlisted: when lines are validated, stop or continue, the batch's exit code, the key.
@@ -2413,7 +2416,7 @@ rows a batch touches (decisions 9, 10 and 12), folded into D-CLI-5 and D-CLI-6.
   runtime and stops at the first failure with that line's exit code. It refuses
   `--idempotency-key` and `--pretty`.
 
-## D-CLI-6 — A signal stops a batch after the line in flight
+## D-093 — A signal stops a batch after the line in flight
 
 - **Touches:** decision 10 (`LOCKED`) and §5.6's two-signal shape, written for one call.
 - **Built:** the shape applies to the line in flight. The first signal arms the grace timer;
@@ -2433,7 +2436,7 @@ rows a batch touches (decisions 9, 10 and 12), folded into D-CLI-5 and D-CLI-6.
   which gets one call's grace and cancellation. With lines left unrun, the batch exits 128
   plus the signal number.
 
-## D-CLI-7 — Completion loads the declaration quietly and never builds a runtime
+## D-094 — Completion loads the declaration quietly and never builds a runtime
 
 - **Touches:** decision 11 (`ASSUMED`): `list` and `describe` never build a runtime. Completion
   itself is unlisted.
