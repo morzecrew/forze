@@ -387,7 +387,8 @@ principal, tenant, requested) -> granted` — and the connection is refused
 membership is the app's authorization decision, exactly as Socket.IO topic rooms
 are joined by app code; the requested set is also bounded (`max_topics`, default
 32). Once the deployment registers a tenant resolver, a stream with no tenant bound is
-refused with `tenant_required` before it subscribes.
+refused with `tenant_required` before it subscribes; the client selects a tenant, as a
+token refresh does not clear it.
 
 With the realtime stream route wired `tenant_aware` — a per-tenant stream key, the
 [tenancy ladder](../identity-tenancy-enc/multi-tenancy.md)'s `tagged` tier — use
@@ -471,7 +472,8 @@ Four things to know before you wire it:
   (the shipped tenancy module registers it there), falling back to the issuer's own
   claim; the `X-Tenant-Id` header is *not* honored here, because an upgrade's headers
   are set by the client being authenticated. Once a resolver is registered on that
-  route, a connection that resolves no tenant is refused with `tenant_required`.
+  route, a connection that resolves no tenant is refused with `tenant_required`, which
+  asks the client to select a tenant (a token refresh does not clear it).
 
 `forze_socketio.build_socketio_connection_resolver` is the same ladder over a
 Socket.IO handshake, so a deployment serving both transports authenticates by one set

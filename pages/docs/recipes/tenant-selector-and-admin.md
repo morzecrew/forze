@@ -41,7 +41,9 @@ The active tenant rides the signed `tid` claim and is re-validated against live 
 every request, so removing a principal from a tenant invalidates their scoped token at once.
 A password login carries no `tid`. A principal with one membership is bound to it anyway; one
 with several starts with **no tenant bound**, so the selector answers while every tenant-scoped
-operation refuses with `tenant_required` until the client activates a tenant.
+operation refuses with `tenant_required` until the client activates a tenant. The code means
+"select a tenant": refreshing the token does not clear it, since a refresh keeps the
+session's tenant, or its lack of one.
 Requires a `TenancyDepsModule` wiring a `tenant_resolver` **and** `tenant_management` route
 (see [Wire the planes](authn-authz-tenancy-fastapi.md#wire-the-planes)), and a transaction
 manager on the registry's `tx_route` (`"default"`), which the switch issues its session in.

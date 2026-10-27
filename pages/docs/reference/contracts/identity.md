@@ -44,7 +44,7 @@ Ports, via `ctx.authn.<x>(spec)`:
 | Field | Type | Default | Meaning |
 |-------|------|---------|---------|
 | `name` | `str \| StrEnum` | required | route name |
-| `tenancy_mode` | `"global" \| "require_invocation_tenant"` | `"global"` | whether grant resolution is partitioned by the invocation tenant — set `require_invocation_tenant` in a multi-tenant deployment; it refuses a call with no tenant bound as `tenant_required` (401) |
+| `tenancy_mode` | `"global" \| "require_invocation_tenant"` | `"global"` | whether grant resolution is partitioned by the invocation tenant — set `require_invocation_tenant` in a multi-tenant deployment; it refuses a call with no tenant bound as `tenant_required` (401), which asks the client to select a tenant, not to refresh its token |
 | `enforce_principal_active` | `bool` | `True` | refuse a decision for a deactivated principal |
 | `enforce_delegation_grant` | `bool` | `False` | a delegated identity (`actor` set) also needs a recorded delegation grant |
 
