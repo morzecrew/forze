@@ -33,6 +33,7 @@ require_duckdb()
 # ....................... #
 
 import asyncio
+import re
 from collections.abc import AsyncGenerator, Callable, Sequence
 from contextlib import asynccontextmanager
 from datetime import timedelta
@@ -64,6 +65,9 @@ _CATALOG_SECRET = "lake_cat"  # nosec B105 - the secret entry's name, not a secr
 _EXTENSIONS = ("httpfs", "iceberg")
 _DATABASES = frozenset({"memory", "system", "temp", LAKE_CATALOG})
 _DISABLED_FILESYSTEMS = ("LocalFileSystem", "HTTPFileSystem")
+_STATEMENT_ECHO = re.compile(r"\n\s*LINE \d+:.*", re.DOTALL)
+"""DuckDB's echo of a failing statement: a window of its text after ``LINE n:``, cut at either
+end, so a secret in it can show only in part."""
 
 # ....................... #
 
@@ -122,6 +126,25 @@ class LakeTenantCatalog:
 
 def _literal(value: str) -> str:
     return "'" + value.replace("'", "''") + "'"
+
+
+def _redacted(text: str, secret: str) -> str:
+    """*text* without DuckDB's statement echo, and without *secret* in either spelling.
+
+    Setup embeds the tenant's client secret in ``CREATE SECRET``, and an error from that
+    statement can quote it.
+    """
+
+    text = _STATEMENT_ECHO.sub("", text)
+
+    if not secret:
+        return text
+
+    # The SQL-escaped spelling first: the raw one can be a substring of it.
+    for spelling in (secret.replace("'", "''"), secret):
+        text = text.replace(spelling, "***")
+
+    return text
 
 
 def _connect_config(extension_directory: str | None) -> dict[str, Any]:
@@ -447,11 +470,16 @@ class RoutedDuckDbClient(
             except Exception as error:
                 # A failed step is the deployment's fault (an extension missing from the image,
                 # a principal the catalog refuses), never that of the statement waiting on it.
+                # Not chained: the engine's error can quote the secret, and a server-error log
+                # prints the cause. Its text survives, redacted, in the details.
                 raise exc.configuration(
                     "The tenant's DuckDB lake session could not be set up; it serves nothing.",
                     code="duckdb_session_setup_failed",
-                    details={"tenant_id": str(tenant_id), "error": str(error)},
-                ) from error
+                    details={
+                        "tenant_id": str(tenant_id),
+                        "error": _redacted(str(error), creds.client_secret.get_secret_value()),
+                    },
+                ) from None
 
             problems = await _attest(
                 client,

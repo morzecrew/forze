@@ -184,7 +184,9 @@ attest                                          -- settings, secrets, databases,
 A session that does not attest raises `duckdb_session_attestation_failed`, and one
 whose sequence fails (an extension missing from the image, a principal the catalog
 refuses) raises `duckdb_session_setup_failed`. Both are `configuration` errors, and
-the instance is closed. Each statement then runs on a fresh cursor:
+the instance is closed. A setup error carries the engine's message with the
+tenant's client secret and DuckDB's quote of the statement removed, and does not
+chain the engine's error. Each statement then runs on a fresh cursor:
 `USE lake.<namespace>`, DuckDB's own parser checks that the text is exactly one
 `SELECT`, the classified statement runs unmodified, and a result with two columns
 of the same name is refused. After every read, dynamic or analytics, the

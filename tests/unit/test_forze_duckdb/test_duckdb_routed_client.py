@@ -15,6 +15,7 @@ import json
 import random
 from collections.abc import Iterator
 from datetime import timedelta
+from secrets import token_hex
 from typing import Any, ClassVar
 from uuid import UUID, uuid4
 
@@ -270,6 +271,60 @@ class TestInstances:
         (instance,) = fake_engine.built
         assert instance.closed
         await routed.close()
+
+    @pytest.mark.parametrize("spelling", ["raw", "sql_escaped", "statement_echo"])
+    async def test_a_failed_build_step_never_reports_the_client_secret(
+        self, fake_engine: type[_FakeEngine], monkeypatch: pytest.MonkeyPatch, spelling: str
+    ) -> None:
+        """The error's text is redacted, and the engine's error is not chained, so neither the
+        details nor a log of the cause carry the principal's secret, even in part."""
+
+        value = token_hex(16)
+        leak = value[:16] + "'" + value[16:]  # an apostrophe, so the escaped spelling differs
+        escaped = leak.replace("'", "''")
+        engine_errors: list[str] = []
+
+        async def failing(engine: _FakeEngine, command: str, *args: Any, **kwargs: Any) -> None:
+            if not command.startswith("CREATE SECRET"):
+                return
+
+            if spelling == "statement_echo":
+                # DuckDB's own parser error, which quotes a window of the statement around the
+                # error: here it cuts the secret short, so an exact match would miss it.
+                broken = command.replace(", OAUTH2_SCOPE", " OAUTH2_SCOPE", 1)
+
+                try:
+                    duckdb.connect(":memory:").execute(broken)
+
+                except duckdb.ParserException as error:
+                    engine_errors.append(str(error))
+                    raise
+
+            engine_errors.append(f"Invalid secret {leak if spelling == 'raw' else escaped}")
+            raise duckdb.InvalidInputException(engine_errors[-1])
+
+        monkeypatch.setattr(_FakeEngine, "run_command", failing)
+        principals = _MemSecrets(_A)
+        principals.rotate(_A, leak)
+        routed = _routed(principals)
+        await routed.startup()
+
+        with pytest.raises(CoreException) as ei:
+            await _read(routed, _A)
+
+        windows = {text[i : i + 6] for text in (leak, escaped) for i in range(len(text) - 5)}
+        (engine_error,) = engine_errors
+        assert any(w in engine_error for w in windows)  # the engine's text did carry it
+        reported = f"{ei.value} {ei.value.details}"
+        assert not any(w in reported for w in windows)
+        assert ei.value.code == "duckdb_session_setup_failed"
+        assert ei.value.__cause__ is None and ei.value.__suppress_context__
+        await routed.close()
+
+    def test_an_empty_secret_still_loses_the_statement_quote(self) -> None:
+        text = "Parser Error: syntax error at or near \",\"\n\nLINE 1: ...SECRET '' , ,\n   ^"
+
+        assert routed_client._redacted(text, "") == 'Parser Error: syntax error at or near ","'
 
     async def test_a_retired_instance_is_evicted_and_its_successor_spared(
         self, fake_engine: type[_FakeEngine]
