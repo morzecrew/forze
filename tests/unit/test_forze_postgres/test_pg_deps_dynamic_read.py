@@ -10,6 +10,7 @@ from datetime import timedelta
 from typing import Any
 from unittest.mock import Mock
 
+import attrs
 import pytest
 
 from forze.application.contracts.dynamic_read import DynamicReadDepKey, DynamicReadSpec
@@ -255,6 +256,63 @@ def test_provenance_has_no_default() -> None:
 
     with pytest.raises(TypeError):
         PostgresDynamicReadConfig()  # type: ignore[call-arg]
+
+
+@pytest.mark.parametrize(
+    "provenance",
+    ["untrussted", "untrusted ", "Untrusted", "TRUSTED", "", None, ["untrusted"]],
+)
+def test_a_provenance_outside_the_closed_set_is_refused(provenance: Any) -> None:
+    """The ``Literal`` is not enforced at runtime, so the config refuses any other value."""
+
+    with pytest.raises(CoreException) as ei:
+        PostgresDynamicReadConfig(provenance=provenance)
+
+    assert ei.value.code == "postgres_dynamic_read_provenance_invalid"
+    assert ei.value.kind == ExceptionKind.CONFIGURATION
+
+
+def test_evolving_a_config_to_an_unknown_provenance_is_refused() -> None:
+    """``attrs.evolve`` rebuilds through ``__init__``, so it gets the same check."""
+
+    config = PostgresDynamicReadConfig(provenance="untrusted")
+
+    with pytest.raises(CoreException) as ei:
+        attrs.evolve(config, provenance="untrussted")
+
+    assert ei.value.code == "postgres_dynamic_read_provenance_invalid"
+
+
+@pytest.mark.parametrize(
+    ("provenance", "named"),
+    [("postgresql://u:s3cr3t@db/app", None), ({"token": "s3cr3t"}, "dict")],
+)
+def test_the_refusal_does_not_echo_the_value(provenance: Any, named: str | None) -> None:
+    """A mis-wired value may be a credential, so only its type reaches the error."""
+
+    with pytest.raises(CoreException) as ei:
+        PostgresDynamicReadConfig(provenance=provenance)
+
+    text = f"{ei.value.summary} {ei.value.details}"
+
+    assert "s3cr3t" not in text
+    assert "trusted, untrusted" in ei.value.summary
+    assert named is None or f"(got {named})" in ei.value.summary
+
+
+def test_the_module_reads_only_the_exact_trusted_value_as_trusted() -> None:
+    """A value that slipped past the config still takes the untrusted guard."""
+
+    config = PostgresDynamicReadConfig(
+        provenance="untrusted",
+        query_schema=lambda tenant_id: f"t_{tenant_id}",
+    )
+    object.__setattr__(config, "provenance", "untrussted")
+
+    with pytest.raises(CoreException) as ei:
+        _module(config)
+
+    assert ei.value.code == "dynamic_read_untrusted_unconfined"
 
 
 @pytest.mark.parametrize("timeout", [timedelta(0), timedelta(seconds=-1)])
