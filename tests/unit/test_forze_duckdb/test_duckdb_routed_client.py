@@ -13,20 +13,21 @@ import asyncio
 import contextvars
 import json
 import random
-from collections.abc import Iterator
+from collections.abc import AsyncIterator, Iterator
 from datetime import timedelta
 from secrets import token_hex
 from typing import Any, ClassVar
+from unittest.mock import MagicMock
 from uuid import UUID, uuid4
 
 import duckdb
 import pytest
 
 from forze.application.contracts.secrets import SecretRef
-from forze.base.exceptions import CoreException, ExceptionKind
+from forze.base.exceptions import CoreException, ExceptionKind, exc
 from forze_dst.runtime import run_simulation
 from forze_dst.scheduler import PCTReorderer
-from forze_duckdb import LakeTenantCatalog, RoutedDuckDbClient
+from forze_duckdb import DuckDbConfig, LakeTenantCatalog, RoutedDuckDbClient
 from forze_duckdb.adapters import dynamic_read_error
 from forze_duckdb.kernel.client import routed_client
 
@@ -101,6 +102,23 @@ class _FakeEngine:
 
         assert not self.closed, "the instance closed under a running statement"
         return [{"secret": self.secret}]
+
+    async def run_query(self, sql: str, *args: Any, **kwargs: Any) -> Any:
+        self.statements.append(sql)
+        return [{"sql": sql}]
+
+    async def run_query_all_pages(self, sql: str, *args: Any, **kwargs: Any) -> Any:
+        self.statements.append(sql)
+        return [{"sql": sql}]
+
+    async def run_query_streamed(
+        self, sql: str, *args: Any, **kwargs: Any
+    ) -> AsyncIterator[list[Any]]:
+        self.statements.append(sql)
+        yield [{"sql": sql}]
+
+    async def health(self) -> tuple[str, bool]:
+        return "ok", True
 
     async def close(self) -> None:
         self.closed = True
@@ -391,6 +409,43 @@ class TestInstances:
         assert loop.time() - started >= 0.1  # the third statement waited for a slot
         await routed.close()
 
+    async def test_a_classified_error_from_a_build_step_passes_unchanged(
+        self, fake_engine: type[_FakeEngine], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        refused = exc.infrastructure("no slot in time", code="duckdb_query_timeout")
+
+        async def timed_out(engine: _FakeEngine, command: str, *args: Any, **kwargs: Any) -> None:
+            raise refused
+
+        monkeypatch.setattr(_FakeEngine, "run_command", timed_out)
+        routed = _routed(_MemSecrets(_A))
+        await routed.startup()
+
+        with pytest.raises(CoreException) as ei:
+            await _read(routed, _A)
+
+        assert ei.value is refused
+        (instance,) = fake_engine.built
+        assert instance.closed
+        await routed.close()
+
+    async def test_every_call_runs_on_the_bound_tenants_instance(
+        self, fake_engine: type[_FakeEngine]
+    ) -> None:
+        routed = _routed(_MemSecrets(_A))
+        await routed.startup()
+        _tenant.set(_A)
+
+        assert await routed.health() == ("ok", True)
+        assert await routed.run_query("q1") == [{"sql": "q1"}]
+        assert await routed.run_query_all_pages("q2") == [{"sql": "q2"}]
+        assert [batch async for batch in routed.run_query_streamed("q3")] == [[{"sql": "q3"}]]
+        await routed.run_command("q4")
+
+        (instance,) = fake_engine.built
+        assert instance.statements[-4:] == ["q1", "q2", "q3", "q4"]
+        await routed.close()
+
 
 class TestTeardownAndRemapping:
     """A stuck close never holds a caller; a remapped catalog rebuilds the instance."""
@@ -443,6 +498,24 @@ class TestTeardownAndRemapping:
         await close
         assert all(engine.closed for engine in fake_engine.built)
 
+    async def test_a_failed_background_close_is_logged(
+        self, fake_engine: type[_FakeEngine], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        async def broken(engine: _FakeEngine) -> None:
+            raise RuntimeError("close failed")
+
+        monkeypatch.setattr(_FakeEngine, "close", broken)
+        log = MagicMock()
+        monkeypatch.setattr(routed_client, "logger", log)
+        routed = _routed(_MemSecrets(_A))
+        await routed.startup()
+        await _read(routed, _A)
+
+        await routed.evict_tenant(_A)
+        await routed.close()  # waits for the teardown, and does not raise its error
+
+        log.warning.assert_called_once()
+
     async def test_a_remapped_catalog_rebuilds_the_instance(
         self, fake_engine: type[_FakeEngine]
     ) -> None:
@@ -475,6 +548,50 @@ class TestTeardownAndRemapping:
         assert old.closed and not new.closed
         assert any("ATTACH 'wh-new'" in statement for statement in new.statements)
         await routed.close()
+
+
+# ....................... #
+
+
+class _Probe:
+    """Answers the attestation's filesystem read with *error*, or with rows when it is None."""
+
+    def __init__(self, error: Exception | None) -> None:
+        self.error = error
+
+    async def run_query(self, sql: str) -> None:
+        if self.error is not None:
+            raise self.error
+
+
+@pytest.mark.parametrize(
+    ("error", "disabled"),
+    [
+        (duckdb.PermissionException("LocalFileSystem has been disabled by configuration"), True),
+        (duckdb.PermissionException("enable_external_access is disabled"), False),
+        (duckdb.IOException("No files found that match the pattern"), False),
+        (None, False),
+    ],
+    ids=["disabled", "other_refusal", "io_error", "read_succeeded"],
+)
+async def test_a_filesystem_attests_disabled_only_on_its_own_refusal(
+    error: Exception | None, disabled: bool
+) -> None:
+    probe: Any = _Probe(error)
+
+    assert await routed_client._filesystem_disabled(probe, "LocalFileSystem", "/x") is disabled
+
+
+def test_unset_engine_threads_and_extension_directory_are_not_attested() -> None:
+    expected = routed_client._expected_settings(
+        _catalog(_A),
+        http_timeout_seconds=5,
+        engine=DuckDbConfig(threads=None),
+        extension_directory=None,
+    )
+
+    assert "threads" not in expected
+    assert "extension_directory" not in expected
 
 
 # ....................... #

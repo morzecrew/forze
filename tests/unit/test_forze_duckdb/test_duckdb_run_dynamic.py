@@ -671,3 +671,43 @@ async def test_a_timed_out_read_still_drops(
     assert ei.value.code == QUERY_TIMEOUT_CODE
     assert await asyncio.to_thread(dropped.wait, 5)
     assert await _secret_names(lake_client) == []  # listed before its own drop runs
+
+
+def test_a_worker_that_starts_after_its_caller_gave_up_never_runs() -> None:
+    conn = duckdb.connect(":memory:")
+    holder: dict[str, Any] = {"expired": True}
+
+    with pytest.raises(CoreException) as ei:
+        client_module._open_cursor(conn, holder)
+
+    assert ei.value.code == QUERY_TIMEOUT_CODE
+    assert "cursor" not in holder
+
+
+async def test_a_failing_interrupt_is_logged_and_sent_again(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    log = MagicMock()
+    monkeypatch.setattr(client_module, "logger", log)
+    fut = asyncio.get_running_loop().create_future()
+    cursor = MagicMock()
+    cursor.interrupt.side_effect = RuntimeError("connection closed")
+
+    client_module._keep_interrupting(asyncio.get_running_loop(), fut, cursor)
+    await _wait_until(lambda: cursor.interrupt.call_count >= 2, within=5)
+    fut.set_result(None)
+
+    assert log.debug.call_count >= 2
+
+
+def test_a_slot_released_after_its_loop_closed_is_dropped(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    log = MagicMock()
+    monkeypatch.setattr(client_module, "logger", log)
+    loop = asyncio.new_event_loop()
+    loop.close()
+
+    client_module._release_from_worker(loop, asyncio.Semaphore(0))
+
+    log.debug.assert_called_once()
