@@ -10267,6 +10267,9 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <h3 id="fixed">Fixed<a class="headerlink" href="#fixed" title="Permanent link">&para;</a></h3>
 <ul>
 <li>
+<p><strong><code>forze[duckdb]</code> no longer installs DuckDB 2.0.</strong> The extra now requires <code>duckdb&gt;=1.1.0,&lt;2</code>: 2.0 removed <code>fetch_arrow_table</code>, so every <code>DuckDbClient</code> query failed on a fresh install. An environment that already installed 2.0 outside the lock must reinstall the extra or pin <code>duckdb&lt;2</code>.</p>
+</li>
+<li>
 <p><strong>A Postgres dynamic read no longer collapses duplicate column names.</strong> <code>SELECT a.id, b.id</code> came back as one <code>id</code> holding the second value. A result with rows now fails with <code>dynamic_read_statement_invalid</code>, naming the duplicates; an empty one still returns no rows.</p>
 </li>
 <li>

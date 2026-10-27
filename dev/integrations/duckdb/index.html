@@ -6720,6 +6720,8 @@ queries returning typed rows, exactly like the other analytics adapters.</p>
 </code></pre></div>
 <p>No server to run — DuckDB is a library. Reading object storage pulls the
 <code>httpfs</code> extension (and <code>iceberg</code> / <code>delta</code> for those formats) on first use.</p>
+<p>The extra installs DuckDB 1.x (<code>duckdb&gt;=1.1.0,&lt;2</code>). DuckDB 2.0 removed
+<code>fetch_arrow_table</code>, which the client reads results with, so it is not supported yet.</p>
 <h2 id="the-client">The client<a class="headerlink" href="#the-client" title="Permanent link">&para;</a></h2>
 <div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">forze_duckdb</span><span class="w"> </span><span class="kn">import</span> <span class="n">DuckDbClient</span>
 
