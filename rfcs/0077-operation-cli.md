@@ -529,9 +529,10 @@ below that layer and cannot import it.
   - The WS route's command frames run through `invoke_at_ingress`. That is a behaviour
     change: a frame now gets fresh invocation metadata, where before it had none.
   - Socket.IO's events mint metadata through `mint_invocation_metadata` and bind it around
-    each run, the same behaviour change. Its adapter still dispatches through a handler
-    resolver, not a registry, so the bind-and-run did not move. Its payload validation and
-    identity ladder are shared with the WS route, below the execution layer.
+    each run, the same behaviour change. Review found they bound no tenant, and they now
+    bind their connection's tenant as WS frames do. The adapter still dispatches through a
+    handler resolver, not a registry, so the bind-and-run did not move. Its payload
+    validation and identity ladder are shared with the WS route, below the execution layer.
 
 ### 5.8 Commands
 

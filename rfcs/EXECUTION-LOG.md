@@ -2002,16 +2002,20 @@ Socket.IO and the WS route onto `ingress`", against §5.7 and the P1 core in
 boundary step was set beside the `ingress` function, and a step moved only where the two
 agree on every input the surface can send.
 
-**Drift count: 0.** Ten entries: six `spec-gap`, four `discovery`. Two steps moved with no
-behaviour change (D-ING-1, D-ING-2). Two gained invocation metadata, a behaviour change, each
-in a commit of its own under one changelog entry: the WS route's bind-and-run moved whole
-(D-ING-7), and Socket.IO's events mint metadata while its bind-and-run stays (D-ING-10). Six
-stayed, each for the reason its entry gives.
+**Drift count: 1.** Eleven entries: one `drift` (D-ING-7), six `spec-gap`, four
+`discovery`. Two steps moved with no behaviour change (D-ING-1, D-ING-2). Three behaviour
+changes landed, each in a commit of its own:
+- the WS route's bind-and-run moved whole and gained metadata (D-ING-7);
+- Socket.IO's events mint metadata while its bind-and-run stays (D-ING-10), under the same
+  changelog entry as D-ING-7;
+- Socket.IO's events bind their connection's tenant (D-ING-11), with an entry of its own.
+
+Six steps stayed, each for the reason its entry gives.
 
 **Socket.IO moved one step.** Its events mint their metadata through
-`mint_invocation_metadata` (D-ING-10). Every other step is either shared with the WS route
-below the execution layer (D-ING-8, D-ING-9) or runs through a port that has no registry
-(D-ING-10).
+`mint_invocation_metadata` (D-ING-10), and they now bind the tenant the WS route already
+bound (D-ING-11). Every other step is either shared with the WS route below the execution
+layer (D-ING-8, D-ING-9) or runs through a port that has no registry (D-ING-10).
 
 | Id | Surface | Step | Decision |
 |---|---|---|---|
@@ -2025,6 +2029,7 @@ below the execution layer (D-ING-8, D-ING-9) or runs through a port that has no 
 | D-ING-8 | WS route, Socket.IO | payload validation | stays: route-typed, not descriptor-typed |
 | D-ING-9 | WS route, Socket.IO | identity and tenant ladder | stays: below the execution layer |
 | D-ING-10 | Socket.IO | metadata, bind-and-run | metadata moved, **behaviour change**; run stays |
+| D-ING-11 | Socket.IO | tenant binding per command | fixed, **behaviour change** |
 
 ## D-ING-1 — FastAPI's metadata minting is `mint_invocation_metadata`; only parsing differs
 
@@ -2146,9 +2151,9 @@ below the execution layer (D-ING-8, D-ING-9) or runs through a port that has no 
 
 ## D-ING-7 — The WS route ran commands with no invocation metadata; it now uses `invoke_at_ingress`
 
-- **Touches:** RFC 0077 §2. It names Socket.IO for "binds identity but no
-  `InvocationMetadata`", and lists the WS route's bind-and-run (`ws.py:780`) as a copy.
-- **RFC said:** nothing about WS metadata.
+- **Touches:** RFC 0077 §2's third table row, "Mint metadata, bind identity, run", which
+  lists the WS route (`forze_fastapi/realtime/ws.py:780`) among its copies.
+- **RFC said:** the WS route is a copy of that sequence, so it mints metadata.
 - **Found:** a `cmd` frame bound identity, the connection's admission, the idempotency key
   and the deadline, then called `run_operation`, but bound no `InvocationMetadata`. The
   middlewares pass the socket's scope through, so nothing ambient had one. Its logs and
@@ -2158,7 +2163,8 @@ below the execution layer (D-ING-8, D-ING-9) or runs through a port that has no 
   `allowed_websocket_paths` lists routes "which bind their own per-frame envelope".
 - **Because:** the route was written without the metadata step, and nothing failed without
   it, because the readers treat missing metadata as `None`.
-- **Class:** `spec-gap`. Knowable by reading the route, as §2 did for Socket.IO.
+- **Class:** `drift`. §2 counted the route as a copy that mints metadata, and it was built
+  otherwise. The route predates the RFC, so the RFC's account was wrong as well as the code.
 - **Consequence:** adopted, as a **behaviour change** in its own commit, with a `Fixed`
   entry and a test that failed first (`test_realtime_ws_metadata.py`). The frame calls
   `invoke_at_ingress` with `mint_invocation_metadata()`, the connection's identity, its
@@ -2197,7 +2203,9 @@ below the execution layer (D-ING-8, D-ING-9) or runs through a port that has no 
 - **Because:** the ladder is shared by the Socket.IO and WS resolvers, which is the reason it
   lives in the kernel.
 - **Class:** `discovery`.
-- **Consequence:** left as is. The two answers agree today, so no parity work is owed.
+- **Consequence:** left as is. The ladder's answers agree, so resolution owes no parity
+  work. Whether each command then *binds* the resolved tenant is a separate question, and
+  Socket.IO did not (D-ING-11).
 
 ## D-ING-10 — Socket.IO's events now mint metadata; the run cannot reach `invoke_at_ingress`
 
@@ -2216,7 +2224,8 @@ below the execution layer (D-ING-8, D-ING-9) or runs through a port that has no 
     `Fixed` entry as D-ING-7, with a test that failed first (`test_routing_metadata.py`).
     `_dispatch_event` binds `mint_invocation_metadata()` with `bind_metadata` around the
     resolved handler's run, beside the session identity and the admission, so the two duplex
-    transports agree on metadata. The `operation_resolver` API is unchanged. The event's
+    transports agree on metadata (the tenant is D-ING-11). The `operation_resolver` API is
+    unchanged. The event's
     metadata replaces any bound around it for the event's duration; a handler that binds its
     own inside still wins.
   - **The bind-and-run move stays demand-gated.** It needs a public API decision, such as a
@@ -2224,6 +2233,31 @@ below the execution layer (D-ING-8, D-ING-9) or runs through a port that has no 
 - **Proposed row (RFC 0077):** `ASSUMED` — Socket.IO moves onto `invoke_at_ingress` only
   with a registry-backed adapter, on a named consumer, as the rest of P3 is. Until then it
   mints each event's metadata as the WS route does.
+
+## D-ING-11 — Socket.IO's command events bound no tenant; they now bind the connection's
+
+- **Touches:** RFC 0077 §2 ("Socket.IO's event path … binds identity but no
+  `InvocationMetadata`"). Unlisted: the tenant.
+- **RFC said:** the event path binds identity, and nothing about the tenant.
+- **Found:** `attach_realtime_connection` resolves the principal and the tenant at connect,
+  and stores the connection on the session under `CONNECTION_SESSION_KEY`. `_dispatch_event`
+  bound only `bind_identity(authn=...)`, which sets the tenant to `None`. So a tenant-aware
+  operation on a tenanted connection failed `tenant_required`. Replay and ack on the same
+  connection did bind the tenant (`_bind_connection`), and the WS route binds it per frame.
+  The branch's review found this, not the inventory: D-ING-9 compared how the tenant is
+  resolved, not whether it is bound.
+- **Because:** the routing module predates `attach_realtime_connection`, and its docstring
+  left tenant resolution to the `context_factory`.
+- **Class:** `spec-gap`.
+- **Consequence:** fixed, as a **behaviour change** in its own commit, with its own `Fixed`
+  entry and a test that failed first (`test_command_tenant.py`). The event binds the stored
+  connection's tenant with the identity. `CONNECTION_SESSION_KEY` moved to `routing` to
+  avoid a circular import, and the package still exports it. A connection authenticated by
+  an `identity_resolver` stores no connection, so its events still bind no tenant. No
+  security fix is claimed: tenant-aware stores and `TenantRequired` fail closed without a
+  tenant.
+- **Proposed row (RFC 0077):** `ASSUMED` — a duplex command binds the identity and the
+  tenant its connection resolved, on every transport.
 
 **Out of scope, noted.** Neither duplex transport checks its command table against the
 catalog at attach time, so an unknown operation raises `internal` at the first call. Neither
