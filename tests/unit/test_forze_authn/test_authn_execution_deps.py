@@ -6,7 +6,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from forze.base.exceptions import CoreException
+from forze.base.exceptions import CoreException, ExceptionKind
 from tests.support.execution_context import (
     context_from_deps,
 )
@@ -273,6 +273,24 @@ class TestAuthnDepsModule:
         )
 
         assert isinstance(resolver, JwtNativeUuidResolver)
+
+    @pytest.mark.parametrize(
+        "field", ["resolvers", "token_verifiers", "password_verifiers", "api_key_verifiers"]
+    )
+    @pytest.mark.parametrize("declared", [None, {"other": frozenset({"token"})}])
+    def test_an_override_for_a_route_authn_does_not_name_is_refused(
+        self, field: str, declared: dict[str, frozenset[str]] | None
+    ) -> None:
+        # It used to register nothing, so the route kept the default it was meant to replace.
+        with pytest.raises(CoreException, match="'main'") as excinfo:
+            AuthnDepsModule(  # type: ignore[misc]
+                kernel=_kernel_min_access(),
+                authn=declared,
+                **{field: {"main": MagicMock()}},
+            )
+
+        assert excinfo.value.kind is ExceptionKind.CONFIGURATION
+        assert field in excinfo.value.summary
 
     def test_module_flags_flow_into_password_factories(self) -> None:
         deps = AuthnDepsModule(

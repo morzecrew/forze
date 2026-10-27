@@ -86,7 +86,7 @@ authn_module = AuthnDepsModule(
 )
 ```
 
-Routes without verifier/resolver overrides fall back to the first-party defaults (`ForzeJwtTokenVerifier` + `JwtNativeUuidResolver`). Lifecycle / provisioning sets are independent of `authn` and may be empty.
+Routes without verifier/resolver overrides fall back to the first-party defaults (`ForzeJwtTokenVerifier` + `JwtNativeUuidResolver`). Every override key must be a route in `authn`; any other key is refused when the module is built. Lifecycle / provisioning sets are independent of `authn` and may be empty.
 
 ## Authn document specs
 

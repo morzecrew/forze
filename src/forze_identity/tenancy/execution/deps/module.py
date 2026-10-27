@@ -12,9 +12,9 @@ from forze.application.contracts.tenancy import (
     TenantResolverDepKey,
     TenantResolverDepPort,
 )
-from forze.base.exceptions import exc
 from forze.base.primitives import MappingConverter, StrKey, StrKeyMapping
 from forze_identity._routes import normalize_route_set as _normalize_route_set
+from forze_identity._routes import refuse_undeclared_overrides
 
 from .deps import (
     ConfigurableTenantManagement,
@@ -59,13 +59,12 @@ class TenancyDepsModule(DepsModule):
     # ....................... #
 
     def __attrs_post_init__(self) -> None:
-        undeclared = set(self.tenant_resolvers or {}) - _normalize_route_set(self.tenant_resolver)
-
-        if undeclared:
-            raise exc.configuration(
-                f"tenant_resolvers overrides routes {sorted(undeclared)!r} that tenant_resolver "
-                "does not name; add them to tenant_resolver or the override is never registered.",
-            )
+        refuse_undeclared_overrides(
+            self.tenant_resolvers,
+            self.tenant_resolver,
+            field="tenant_resolvers",
+            declared_field="tenant_resolver",
+        )
 
     # ....................... #
 

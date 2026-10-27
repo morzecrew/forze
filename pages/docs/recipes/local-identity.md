@@ -51,9 +51,10 @@ deps = DepsRegistry.from_deps(local)
 ??? note "Wiring it by hand"
 
     `local_identity_deps` is a thin wrapper over the two planes — drop to this if
-    you want to mix local keys with other routes. A `tenant_resolvers` override
-    replaces the resolver on a route `tenant_resolver` names; one for any other
-    route is refused when the module is built:
+    you want to mix local keys with other routes. An override applies only to a
+    route its module registers: `api_key_verifiers` to a route in `authn`,
+    `tenant_resolvers` to one in `tenant_resolver`. One for any other route is
+    refused when the module is built:
 
     ```python
     from forze_identity.authn import AuthnDepsModule, AuthnKernelConfig

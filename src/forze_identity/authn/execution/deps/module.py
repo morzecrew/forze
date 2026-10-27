@@ -31,6 +31,7 @@ from forze.application.integrations.authn import LOCKOUT_COUNTER_ROUTE, LockoutC
 from forze.base.exceptions import exc
 from forze.base.primitives import MappingConverter, StrKey, StrKeyMapping
 from forze_identity._routes import normalize_route_set as _normalize_route_set
+from forze_identity._routes import refuse_undeclared_overrides
 
 from .configs import (
     AuthnKernelConfig,
@@ -69,7 +70,8 @@ class AuthnDepsModule(DepsModule):
     3. the orchestrator under :class:`AuthnDepKey`.
 
     External integrations override individual verifiers/resolvers by merging additional
-    :class:`Deps` after the module's output.
+    :class:`Deps` after the module's output, or through the per-route override mappings,
+    whose keys must be routes in ``authn``: any other key is refused at construction.
     """
 
     kernel: AuthnKernelConfig | None = attrs.field(default=None)
@@ -179,6 +181,19 @@ class AuthnDepsModule(DepsModule):
 
     lockout_counter_route: StrKey = attrs.field(default=LOCKOUT_COUNTER_ROUTE)
     """Counter route the lockout guard resolves its ``CounterPort`` from."""
+
+    # ....................... #
+
+    def __attrs_post_init__(self) -> None:
+        overrides = {
+            "resolvers": self.resolvers,
+            "token_verifiers": self.token_verifiers,
+            "password_verifiers": self.password_verifiers,
+            "api_key_verifiers": self.api_key_verifiers,
+        }
+
+        for field, routes in overrides.items():
+            refuse_undeclared_overrides(routes, self.authn, field=field, declared_field="authn")
 
     # ....................... #
 
