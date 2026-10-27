@@ -176,31 +176,96 @@ async def test_a_non_select_is_refused_before_it_runs(
 
 
 async def test_select_shaped_forms_pass_classification(lake_client: DuckDbClient) -> None:
-    for sql in ("FROM lake.gold.t", "VALUES (1)", "DESCRIBE lake.gold.t"):
+    for sql in (
+        "FROM lake.gold.t",
+        "VALUES (1)",
+        "DESCRIBE lake.gold.t",
+        "SELECT * FROM range(3)",
+        "SELECT * FROM generate_series(1, 3)",
+        "SELECT * FROM unnest([1, 2])",
+    ):
         assert await lake_client.run_dynamic(sql, row_probe=10, timeout=_TIMEOUT)
 
 
-async def test_pragma_and_pivot_classify_by_engine_version(lake_client: DuckDbClient) -> None:
-    """DuckDB 2 types ``PRAGMA version`` as ``PRAGMA`` and ``PIVOT`` as one ``MULTI`` statement
-    (EXECUTION-LOG D-060). Both stay refused there; on 1.x ``PRAGMA`` passes as a ``SELECT``."""
+async def test_pragma_and_pivot_are_refused_alike_on_every_version(
+    lake_client: DuckDbClient,
+) -> None:
+    """DuckDB 1.5 rewrites ``PRAGMA version`` into ``pragma_version()`` and splits a ``PIVOT``
+    in two; 2 types them ``PRAGMA`` and ``MULTI`` (D-060, D-076). One answer on both."""
 
-    pivot = "PIVOT (SELECT 1 AS a, 'x' AS b) ON b USING sum(a)"
+    for sql in ("PRAGMA version", "SELECT * FROM pragma_version()"):
+        with pytest.raises(CoreException) as pragma:
+            await lake_client.run_dynamic(sql, row_probe=10, timeout=_TIMEOUT)
 
-    if not _ON_DUCKDB_2:
-        assert await lake_client.run_dynamic("PRAGMA version", row_probe=10, timeout=_TIMEOUT)
+        assert pragma.value.code == WRITE_REFUSED_CODE
+        assert pragma.value.details == {"statement_type": "PRAGMA"}
 
-        with pytest.raises(CoreException) as multi:
-            await lake_client.run_dynamic(pivot, row_probe=10, timeout=_TIMEOUT)
+    with pytest.raises(CoreException) as multi:
+        await lake_client.run_dynamic(
+            "PIVOT (SELECT 1 AS a, 'x' AS b) ON b USING sum(a)", row_probe=10, timeout=_TIMEOUT
+        )
 
-        assert multi.value.code == MULTI_STATEMENT_CODE
-        return
+    assert multi.value.code == MULTI_STATEMENT_CODE
 
-    for sql, statement_type in (("PRAGMA version", "PRAGMA"), (pivot, "MULTI")):
+
+_NOT_ALLOWED = "table function not allowed: "
+
+
+@pytest.mark.parametrize(
+    ("sql", "detail"),
+    [
+        ("SELECT * FROM query('FROM zzz.gold.t')", _NOT_ALLOWED + "query"),
+        ("SELECT * FROM query_table('zzz.gold.t')", _NOT_ALLOWED + "query_table"),
+        ("SELECT * FROM query_table(['lake.gold.t'])", _NOT_ALLOWED + "query_table"),
+        ("SELECT * FROM iceberg_scan('s3://lake/b/m.json')", _NOT_ALLOWED + "iceberg_scan"),
+        ("SELECT * FROM read_parquet('s3://lake/b/*.parquet')", _NOT_ALLOWED + "read_parquet"),
+        ("SELECT * FROM read_text('/etc/passwd')", _NOT_ALLOWED + "read_text"),
+        ("SELECT * FROM glob('/etc/*')", _NOT_ALLOWED + "glob"),
+        ("SELECT * FROM duckdb_secrets()", _NOT_ALLOWED + "duckdb_secrets"),
+        (
+            "SELECT * FROM lake.gold.t, LATERAL (SELECT * FROM query('FROM zzz.gold.t'))",
+            _NOT_ALLOWED + "query",
+        ),
+        ("SELECT (SELECT count(*) FROM query_table('t'))", _NOT_ALLOWED + "query_table"),
+        ("WITH c AS (FROM read_csv('x.csv')) SELECT * FROM c", _NOT_ALLOWED + "read_csv"),
+        ("SELECT * FROM 's3://lake/b/x.parquet'", "path as a table name: s3://lake/b/x.parquet"),
+        ('SELECT * FROM "http://h/x.csv"', "path as a table name: http://h/x.csv"),
+        ("SELECT * FROM 'local.parquet'", "path as a table name: local.parquet"),
+    ],
+)
+async def test_a_read_beyond_the_named_tables_is_refused(
+    lake_client: DuckDbClient, sql: str, detail: str
+) -> None:
+    """D-072: a table function or a path would open what the statement does not name as a table,
+    and get past the D-058 check. Refused on every version before anything runs."""
+
+    with pytest.raises(CoreException) as ei:
+        await lake_client.run_dynamic(sql, row_probe=10, timeout=_TIMEOUT, use="lake.gold")
+
+    assert ei.value.code == STATEMENT_INVALID_CODE
+    assert ei.value.details == {"detail": detail}
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "s3://lake/tenant-a/../tenant-b/x.parquet",
+        "s3://lake/tenant-a/%2e%2e/tenant-b/x.parquet",
+        "s3://lake/tenant-a//../tenant-b/x.parquet",
+        "http://catalog/catalog/../management/v1/info",
+        "http://catalog/catalog/%2E%2E/management/v1/info",
+    ],
+)
+async def test_a_dot_segment_path_never_reaches_the_engine(
+    lake_client: DuckDbClient, path: str
+) -> None:
+    """D-073: the engine's allowlist does not resolve dot-segments, so no path gets that far."""
+
+    for sql in (f"SELECT * FROM read_parquet('{path}')", f"SELECT * FROM '{path}'"):
         with pytest.raises(CoreException) as ei:
             await lake_client.run_dynamic(sql, row_probe=10, timeout=_TIMEOUT)
 
-        assert ei.value.code == WRITE_REFUSED_CODE
-        assert ei.value.details == {"statement_type": statement_type}
+        assert ei.value.code == STATEMENT_INVALID_CODE
 
 
 @pytest.mark.parametrize(

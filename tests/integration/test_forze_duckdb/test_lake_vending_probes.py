@@ -765,6 +765,84 @@ class TestSessionHardening:
             read(allow_ca=True, disabled="LocalFileSystem")
         )
 
+    def test_the_allowlist_resolves_no_dot_segments(
+        self, lake: LakeVendingStack, tenant_a: LakeTenant
+    ) -> None:
+        """D-073: a path matches by its spelling. ``catalog/../management`` passes as inside
+        the catalog's tree and the request goes out; Lakekeeper refuses it unauthenticated."""
+
+        con = lake.session(
+            tenant_a.principal,
+            tenant_a.warehouse,
+            before_attach=_shipped_allowlist(lake, tenant_a),
+        )
+        origin = lake.catalog_uri.rsplit("/", 1)[0]
+
+        for dots in ("..", "%2e%2e"):
+            url = f"{lake.catalog_uri}/{dots}/management/v1/info"
+            with pytest.raises(duckdb.HTTPException, match="401"):
+                con.execute(f"SELECT * FROM read_text('{url}')").fetchall()
+
+        with pytest.raises(duckdb.PermissionException, match="disabled by configuration"):
+            con.execute(f"SELECT * FROM read_text('{origin}//catalog/v1/config')").fetchall()
+
+    def test_a_redirect_is_followed_past_the_allowlist(self) -> None:
+        """D-074: a 3xx from an allow-listed origin is followed without re-checking its target,
+        and no setting turns redirects off. Pinned so a bump that re-checks them shows."""
+
+        hits: list[str] = []
+
+        class _Stub(http.server.BaseHTTPRequestHandler):
+            def _answer(self, body: bool) -> None:  # noqa: FBT001
+                hits.append(f"{self.server.server_address[1]}{self.path}")  # type: ignore[index]
+                if self.path.startswith("/allowed/"):
+                    self.send_response(302)
+                    self.send_header("Location", f"http://127.0.0.1:{off_list}/elsewhere.csv")
+                    self.send_header("Content-Length", "0")
+                    self.end_headers()
+                    return
+                self.send_response(200)
+                self.send_header("Content-Length", "4")
+                self.end_headers()
+                if body:
+                    self.wfile.write(b"a\n1\n")
+
+            def do_GET(self) -> None:  # noqa: N802
+                self._answer(True)
+
+            def do_HEAD(self) -> None:  # noqa: N802
+                self._answer(False)
+
+            def log_message(self, *args: Any) -> None:
+                pass
+
+        servers = [http.server.ThreadingHTTPServer(("127.0.0.1", 0), _Stub) for _ in range(2)]
+        for server in servers:
+            threading.Thread(target=server.serve_forever, daemon=True).start()
+        allowed, off_list = (server.server_address[1] for server in servers)
+
+        try:
+            con = duckdb.connect(":memory:", config={"allow_persistent_secrets": False})
+            con.execute("LOAD httpfs")
+            con.execute(f"SET GLOBAL allowed_directories=['http://127.0.0.1:{allowed}/allowed/']")
+            con.execute("SET GLOBAL enable_external_access=false")
+            con.execute("SET GLOBAL lock_configuration=true")
+
+            rows = con.execute(
+                f"SELECT * FROM read_csv('http://127.0.0.1:{allowed}/allowed/x.csv')"
+            ).fetchall()
+
+            assert rows == [(1,)]
+            assert f"{off_list}/elsewhere.csv" in hits
+            assert con.execute(
+                "SELECT count(*) FROM duckdb_settings() "
+                "WHERE name ILIKE '%redirect%' OR name ILIKE '%follow%'"
+            ).fetchone() == (0,)
+
+        finally:
+            for server in servers:
+                server.shutdown()
+
     def test_the_p2_allowlist_must_be_set_before_external_access_goes_off(self) -> None:
         con = duckdb.connect(":memory:")
         con.execute("SET enable_external_access=false")
@@ -844,8 +922,9 @@ class TestRefusalTaxonomy:
         self, lake: LakeVendingStack, tenant_a: LakeTenant
     ) -> None:
         """D-058, the engine's half: 1.5 refuses an unknown catalog at bind; 2 reads it as a
-        nested namespace and resolves only its last level, in the tenant's own warehouse. The
-        dynamic-read classification refuses such names on both (D-066)."""
+        nested namespace and resolves only its last level, in the tenant's own warehouse. A table
+        function taking the name or SQL text does the same (D-072). The dynamic-read
+        classification refuses all of these on both (D-066, D-072)."""
 
         con = lake.session(tenant_a.principal, tenant_a.warehouse)
         con.execute("USE lake.gold")
@@ -853,6 +932,8 @@ class TestRefusalTaxonomy:
         for sql in (
             "SELECT DISTINCT tenant FROM zzz.gold.orders",
             "SELECT DISTINCT tenant FROM wh_tenant_b.gold.orders",
+            "SELECT DISTINCT tenant FROM query('FROM zzz.gold.orders')",
+            "SELECT DISTINCT tenant FROM query_table('wh_tenant_b.gold.orders')",
         ):
             if _ON_DUCKDB_2:
                 assert con.execute(sql).fetchall() == [("tenant-a",)]

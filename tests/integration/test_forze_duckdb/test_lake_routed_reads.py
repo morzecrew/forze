@@ -312,6 +312,10 @@ class TestCrossTenantThroughTheCatalog:
             "SELECT * FROM tenant_b.orders",
             "SELECT * FROM zzz.gold.orders",
             "SELECT * FROM lake.zzz.gold.orders",
+            # D-072: a table function would get past the name check.
+            "SELECT * FROM query('FROM zzz.gold.orders')",
+            "SELECT * FROM query_table('zzz.gold.orders')",
+            "SELECT * FROM query_table('wh_tenant_b.gold.orders')",
         ):
             assert (await _refused(port, _A, sql)).code == STATEMENT_INVALID_CODE
 
@@ -326,6 +330,8 @@ class TestCrossTenantThroughTheCatalog:
         for sql in (
             "SELECT tenant FROM wh_tenant_b.gold.orders",
             "SELECT tenant FROM zzz.gold.orders",
+            "SELECT tenant FROM query('FROM zzz.gold.orders')",
+            "SELECT tenant FROM query_table('wh_tenant_b.gold.orders')",
         ):
             if _ON_DUCKDB_2:
                 assert {row["tenant"] for row in await _run(port, _A, sql)} == {"tenant-a"}
@@ -373,12 +379,38 @@ class TestCrossTenantByPath:
         monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", lake.root_secret_key)
         monkeypatch.setenv("AWS_REGION", "local-01")
 
+    async def test_b_named_by_path_is_refused_before_it_runs(
+        self, routed: RoutedDuckDbClient, lake: LakeVendingStack, tenant_b: LakeTenant
+    ) -> None:
+        """D-072: a dynamic read may not hand the engine a path at all."""
+
+        loaded = lake.load_table(tenant_b.principal, tenant_b.warehouse).json()
+        meta, data = loaded["metadata-location"], loaded["metadata"]["location"]
+        port = _port(routed)
+
+        for sql, detail in (
+            (f"SELECT * FROM iceberg_scan('{meta}')", "table function not allowed: iceberg_scan"),
+            (
+                f"SELECT * FROM read_parquet('{data}/data/*.parquet')",
+                "table function not allowed: read_parquet",
+            ),
+            (
+                f"SELECT * FROM '{data}/data/x.parquet'",
+                f"path as a table name: {data}/data/x.parquet",
+            ),
+        ):
+            error = await _refused(port, _A, sql)
+
+            assert error.code == STATEMENT_INVALID_CODE
+            assert error.details["detail"] == detail
+
     async def test_b_is_refused_inside_the_engine_and_nothing_goes_out(
         self,
         build_routed: Callable[..., RoutedDuckDbClient],
         monkeypatch: pytest.MonkeyPatch,
         lake: LakeVendingStack,
         tenant_b: LakeTenant,
+        stub_classification: None,
     ) -> None:
         loaded = lake.load_table(tenant_b.principal, tenant_b.warehouse).json()
         meta, data = loaded["metadata-location"], loaded["metadata"]["location"]
@@ -505,9 +537,24 @@ class TestLocalFilesystem:
 
 
 class TestHttpEgress:
-    """Battery 8 — fetch-by-URL is refused inside the engine, by the allowlist (D-062)."""
+    """Battery 8 — fetch-by-URL is refused by classification (D-072), and inside the engine by
+    the allowlist with classification stubbed (D-062)."""
 
-    async def test_an_https_read_is_refused(self, routed: RoutedDuckDbClient) -> None:
+    async def test_a_url_is_refused_before_it_runs(
+        self, routed: RoutedDuckDbClient, lake: LakeVendingStack
+    ) -> None:
+        port = _port(routed)
+
+        for sql in (
+            "SELECT * FROM read_csv('https://example.com/x.csv')",
+            f"SELECT * FROM read_text('{lake.catalog_uri}/v1/config')",
+            f"SELECT * FROM '{lake.catalog_uri}/v1/x.csv'",
+        ):
+            assert (await _refused(port, _A, sql)).code == STATEMENT_INVALID_CODE
+
+    async def test_an_https_read_is_refused(
+        self, routed: RoutedDuckDbClient, stub_classification: None
+    ) -> None:
         error = await _refused(
             _port(routed), _A, "SELECT * FROM read_csv('https://example.com/x.csv')"
         )
@@ -516,9 +563,9 @@ class TestHttpEgress:
         assert _ALLOWLIST_REFUSAL in error.details["detail"]
 
     async def test_only_the_catalog_tree_and_the_token_endpoint_are_reachable(
-        self, routed: RoutedDuckDbClient, lake: LakeVendingStack
+        self, routed: RoutedDuckDbClient, lake: LakeVendingStack, stub_classification: None
     ) -> None:
-        """D-064: what the allowlist lets a statement open over HTTP, and what it does not."""
+        """D-064: what the allowlist lets the engine open over HTTP, and what it does not."""
 
         port = _port(routed)
         catalog_origin = lake.catalog_uri.rsplit("/", 1)[0]
