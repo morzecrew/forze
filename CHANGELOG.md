@@ -79,6 +79,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **A Socket.IO command event runs under its connection's tenant** (**behaviour change**). On a connection `attach_realtime_connection` admitted, an event bound the principal but no tenant, so a tenant-aware operation failed `tenant_required`. It now binds the tenant resolved at connect, as the WS route does.
 
+- **A Postgres update with a changed `jsonb` field no longer answers `500` on the generated update route** (**behaviour change**). Its diff holds the values the caller set, as on the other backends: no `Jsonb` wrapper, a `StrEnum` stays a member and a datetime is as given, not coerced to the column type.
+
 ### Security
 
 - **A realtime connection needs a tenant once tenancy is wired** (**behaviour change**). Socket.IO, WebSocket and SSE refuse one without a tenant (`tenant_required`), and Socket.IO an anonymous one, instead of admitting it to the untenanted rooms. Socket.IO checks this at the connect when given the new `ctx_dep`.

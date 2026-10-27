@@ -1035,22 +1035,16 @@ class PostgresWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
 
         *written* is the update's merge patch with each changed mapping whole
         (:meth:`Document.stored_changes`), which the store needs; the caller still gets the
-        merge patch, as it always has. One adapt when they are the same.
+        merge patch, as it always has. Only the payload is adapted for the driver: the diff
+        keeps the values the caller set, never a driver adapter such as ``Jsonb``.
         """
 
-        reported = await self.adapt_payload_for_write(self.__bump_rev(current, diff), create=False)
-        payload = (
-            reported
-            if written is diff
-            else await self.adapt_payload_for_write(self.__bump_rev(current, written), create=False)
+        reported = self.__bump_rev(current, diff)
+        payload = await self.adapt_payload_for_write(
+            reported if written is diff else self.__bump_rev(current, written), create=False
         )
 
-        # A sealed field's column holds its ciphertext, so the column type says nothing of
-        # the value the caller set.
-        sealed = self._sealed_fields()
-        open_values = {key: value for key, value in diff.items() if key in sealed}
-
-        return payload, {**reported, **open_values} if open_values else reported
+        return payload, {k: v for k, v in reported.items() if k not in self.write_omit_fields}
 
     # ....................... #
 
@@ -1528,10 +1522,9 @@ class PostgresWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
 
                 async def _prepare_touch(c: D) -> tuple[UUID, int, JsonDict]:
                     _, diff = c.touch()
-                    diff = self.__bump_rev(c, diff)
-                    adapted_diff = await self.adapt_payload_for_write(diff, create=False)
+                    payload, returned[c.id] = await self.__payload_and_diff(c, diff, diff)
 
-                    return c.id, c.rev, adapted_diff
+                    return c.id, c.rev, payload
 
                 results = await gather_db_work(
                     self.client,

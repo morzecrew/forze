@@ -78,11 +78,14 @@ async def assert_encrypted_updates(
         (EncUpdate(note="quiet"), {"note": "quiet"}),
     ):
         single, diff = await command.update(one.id, revs[one.id], update, return_diff=True)
-        (bulk,) = await command.update_many([KeyedUpdate(id=many.id, rev=revs[many.id], dto=update)])
+        ((bulk, bulk_diff),) = await command.update_many(
+            [KeyedUpdate(id=many.id, rev=revs[many.id], dto=update)], return_diff=True
+        )
 
-        # The diff reports what the caller set, open and in its own type.
+        # The diff reports what the caller set, open and in its own type, never ciphertext.
         for field, value in update.model_dump(exclude_unset=True).items():
             assert diff[field] == value, (update, field, diff[field])
+            assert bulk_diff[field] == value, (update, field, bulk_diff[field])
 
         for written in (single, bulk):
             assert written.rev == revs[written.id] + 1, update
