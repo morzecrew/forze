@@ -7,10 +7,12 @@ declaration bound, for an application's own CLI, and drops ``--app``.
 
 import functools
 import inspect
+import io
 import json
 import math
 import traceback
 from collections.abc import Callable
+from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from typing import Any
 from uuid import UUID
@@ -208,6 +210,25 @@ def _group(bound: OpsApp | None, *, name: str) -> typer.Typer:
     def declaration(ref: str | None) -> OpsApp:
         return bound if bound is not None else _load(ref)
 
+    def complete_op(ctx: typer.Context, incomplete: str) -> list[str]:
+        # The shell reads stdout as candidates and shows stderr: a declaration that cannot
+        # load completes nothing, and says nothing.
+        try:
+            with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+                ops = declaration(ctx.params.get("app"))
+
+        except Exception:
+            return []
+
+        return [op for op in sorted(ops.exposed) if op.startswith(incomplete)]
+
+    op_argument: Any = typer.Argument(
+        ...,
+        metavar="OP",
+        help="The operation key, e.g. 'orders.get'.",
+        autocompletion=complete_op,
+    )
+
     def command(command_name: str, **settings: Any) -> Callable[[Callable[..., None]], Any]:
         def register(fn: Callable[..., None]) -> Any:
             return group.command(command_name, **settings)(
@@ -246,7 +267,7 @@ def _group(bound: OpsApp | None, *, name: str) -> typer.Typer:
 
     @command("describe")
     def describe(
-        op: str = typer.Argument(..., metavar="OP", help="The operation key, e.g. 'orders.get'."),
+        op: str = op_argument,
         app: str | None = _APP_OPTION,
         as_json: bool = typer.Option(False, "--json", help="Write JSON instead of text."),
     ) -> None:
@@ -273,7 +294,7 @@ def _group(bound: OpsApp | None, *, name: str) -> typer.Typer:
     @command("call", context_settings={"allow_extra_args": True, "ignore_unknown_options": True})
     def call(
         ctx: typer.Context,
-        op: str = typer.Argument(..., metavar="OP", help="The operation key, e.g. 'orders.get'."),
+        op: str = op_argument,
         app: str | None = _APP_OPTION,
         raw_input: str | None = typer.Option(
             None,
@@ -327,8 +348,7 @@ def _group(bound: OpsApp | None, *, name: str) -> typer.Typer:
     ) -> None:
         """Call one exposed operation and write its result, or the error, as one JSON document.
 
-        An input of flat scalars also takes typed flags after OP, '--field VALUE' per field
-        and '--name/--no-name' per boolean, instead of --input; 'describe' lists them.
+        An input of flat scalars also takes typed flags after OP; 'describe' lists them.
         """
 
         with document_stream() as out:

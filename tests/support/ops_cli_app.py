@@ -442,6 +442,14 @@ def lazy() -> OpsApp:
     return ANONYMOUS
 
 
+def chatty() -> OpsApp:
+    """Prints while it builds the declaration, as an application module may on import."""
+
+    print("building the declaration")  # noqa: T201
+
+    return ANONYMOUS
+
+
 def unbuildable() -> OpsApp:
     credential = "marker-in-a-local"  # what a crash that printed locals would leak
 

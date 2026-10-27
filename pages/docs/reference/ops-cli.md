@@ -25,6 +25,12 @@ forze ops call      [--app REF] OP
 `module:attribute`, or a zero-argument callable returning one, and falls back to
 `FORZE_OPS_APP`. A group from `build_ops_cli(app)` has the declaration bound and no `--app`.
 
+`OP` completes in the shell after `describe` and `call` once completion is installed with
+`forze --install-completion`. Completion loads the declaration from `--app` or
+`FORZE_OPS_APP` as `list` does, never builds the runtime, and offers nothing when the
+declaration cannot load. A group from `build_ops_cli` completes from its own declaration,
+installed by your root CLI's `--install-completion`.
+
 `list` and `describe` never build the runtime. They write text, or JSON with `--json`.
 `describe` shows the title and description, the kind, the declared authn requirement and
 permissions, idempotency support, the deadline, the typed flags, the query surface, and the

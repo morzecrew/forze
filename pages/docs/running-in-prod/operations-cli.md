@@ -86,6 +86,9 @@ $ forze ops call notes.create --input '{"title": "hi"}'
 {"id":"…","title":"hi",…}
 ```
 
+Run `forze --install-completion` once, and your shell completes operation names after
+`describe` and `call`.
+
 `--input` takes inline JSON, `@PATH` for a file, or `-` for stdin. Inline input is refused for
 an operation whose input declares a `SecretStr` or `SecretBytes` field; pipe it instead. An
 unknown input key is refused, not dropped, so a typo in a script fails loudly.
