@@ -2268,8 +2268,6 @@ generated surfaces) does not cover, and no copy of a boundary step is involved.
 
 ---
 
-# Unit ? · RFC 0077 P3 — CLI items
-
 ---
 
 # Unit 10 · RFC 0077 P3 — CLI items

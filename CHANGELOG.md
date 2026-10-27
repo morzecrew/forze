@@ -35,15 +35,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **A throttled HTTP error tells the client when to come back.** Its `retry_after` (seconds) or else `retry_at` (aware `datetime`) detail becomes a `Retry-After` header, which `AllowlistCORSMiddleware` exposes; other details stay withheld. No header when neither key is usable.
 
-- **`forze ops call` takes typed flags for an input of flat scalars.** `--field VALUE` per field and `--name/--no-name` per boolean replace `--input`, validated the same way; `describe` lists them. An unknown option after `OP` now exits 2 with an error object, not Click's usage text.
-
 **`forze ops` for people at a shell and for backfills:**
-
-- **`call` takes typed flags for an input of flat scalars.** `--field VALUE` per field and `--name/--no-name` per boolean replace `--input`, validated the same way; `describe` lists them. An unknown option after `OP` now exits 2 with an error object, not Click's usage text.
-
-- **`call --batch @PATH|-` runs one call per JSONL line in one runtime.** Every line is validated before any runs; each call writes a numbered JSON line, and the first failure stops the batch and sets its exit code.
-
-- **The shell completes operation names** after `describe` and `call`, from `--app` or `FORZE_OPS_APP`, without building a runtime. Install it with `forze --install-completion`.
 
 - **`forze ops` gains typed flags, JSONL batches and shell completion.** `call OP --field VALUE` takes a flat-scalar input as flags; `--batch @PATH|-` runs one call per line in one runtime, stopping at the first failure; `OP` completes in the shell. An unknown option after `OP` now exits 2 with an error object.
 
