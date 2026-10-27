@@ -2,11 +2,7 @@ from collections.abc import Sequence
 
 from fastapi import Request
 
-from forze.application.contracts.authn import (
-    AccessTokenCredentials,
-    ApiKeyCredentials,
-    AuthnResult,
-)
+from forze.application.contracts.authn import AccessTokenCredentials, AuthnResult
 from forze.application.contracts.tenancy import (
     TENANT_ID_HEADER,
     TenantIdentity,
@@ -14,6 +10,7 @@ from forze.application.contracts.tenancy import (
     parse_tenant_hint,
 )
 from forze.application.execution.context import ExecutionContext
+from forze.application.execution.ingress import authenticate_api_key
 from forze.base.exceptions import exc
 
 from .value_objects import (
@@ -27,28 +24,23 @@ from .value_objects import (
 # ----------------------- #
 
 
-def _split_authorization(raw: str, sep: str = " ") -> tuple[str, str | None]:
+def _split_authorization(raw: str) -> tuple[str, str | None]:
     """Split an authorization-style header into ``(scheme, value)`` (or ``(value, None)``).
 
-    The default whitespace separator collapses runs (so ``Bearer  tok`` yields a
-    clean token); a non-whitespace *sep* (e.g. ``":"`` for ``prefix:key`` API
-    keys) splits on the first occurrence, mirroring
-    :func:`~forze.application.execution.ingress.api_key_credentials` so the same key
-    authenticates over FastAPI and MCP.
+    Whitespace runs collapse, so ``Bearer  tok`` yields a clean token. A ``prefix:key``
+    API key is split by :func:`~forze.application.execution.ingress.api_key_credentials`
+    instead, so the same key authenticates alike on every surface.
     """
 
-    raw = raw.strip()
+    parts: Sequence[str] = raw.strip().split(maxsplit=1)
 
-    if sep == " ":
-        parts: Sequence[str] = raw.split(maxsplit=1)
-        if not parts:
-            return "", None
-        if len(parts) == 1:
-            return parts[0], None
-        return parts[0], parts[1]
+    if not parts:
+        return "", None
 
-    head, found, tail = raw.partition(sep)
-    return (head, tail) if found else (head, None)
+    if len(parts) == 1:
+        return parts[0], None
+
+    return parts[0], parts[1]
 
 
 # ....................... #
@@ -212,17 +204,7 @@ async def _resolve_header_api_key_authn(
 
         return None
 
-    prefix, key = _split_authorization(raw, sep=":")
-
-    if key is None:
-        creds = ApiKeyCredentials(key=prefix)
-
-    else:
-        creds = ApiKeyCredentials(key=key, prefix=prefix)
-
-    authn = ctx.authn.authn(ingress.authn_spec)
-
-    return await authn.authenticate_with_api_key(creds)
+    return await authenticate_api_key(ctx, ingress.authn_spec, raw)
 
 
 # ....................... #
