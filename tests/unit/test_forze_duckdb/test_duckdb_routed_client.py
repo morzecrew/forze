@@ -15,7 +15,7 @@ import json
 import random
 from collections.abc import Iterator
 from datetime import timedelta
-from typing import Any
+from typing import Any, ClassVar
 from uuid import UUID, uuid4
 
 import pytest
@@ -64,7 +64,7 @@ class _MemSecrets:
 class _FakeEngine:
     """Stands in for one tenant's DuckDbClient and records what happened to it."""
 
-    built: list[_FakeEngine] = []
+    built: ClassVar[list[_FakeEngine]] = []
 
     def __init__(self) -> None:
         self.closed = False
