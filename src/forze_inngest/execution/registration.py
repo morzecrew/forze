@@ -8,7 +8,8 @@ require_inngest()
 
 from collections.abc import Callable, Iterator, Sequence
 from contextlib import contextmanager
-from typing import Any, Generic, Self, TypeVar, final
+from typing import Any, Final, Generic, Self, TypeVar, final
+from uuid import UUID, uuid5
 
 import attrs
 import inngest
@@ -26,6 +27,7 @@ from forze.application.execution.context import (
     ExecutionContext,
     ExecutionContextFactory,
 )
+from forze.application.execution.ingress import mint_invocation_metadata
 from forze.application.execution.operations.registry import FrozenOperationRegistry
 from forze.application.execution.operations.run import handler_for_registry_operation
 from forze.application.integrations.crypto import is_encrypted_payload
@@ -45,6 +47,9 @@ from ._logger import logger
 
 In = TypeVar("In", bound=BaseModel)
 Out = TypeVar("Out", bound=BaseModel)
+
+_RUN_CORRELATION_NAMESPACE: Final[UUID] = UUID("5640166e-49e2-480e-a009-57b76ecf68e1")
+"""Namespace for the correlation id derived from an Inngest run id when the event has none."""
 
 # ....................... #
 
@@ -138,31 +143,32 @@ def _bind_invocation(
     ctx: ExecutionContext,
     envelope: InngestDecodedContext,
     *,
+    run_id: str,
     bind_identity: bool,
 ) -> Iterator[None]:
     # The ``_forze`` envelope is plaintext, attacker-controllable event data — any producer able to
     # emit an event can set ``principal_id`` / ``tenant_id`` to whatever it likes. So the claimed
     # identity is bound only when the caller opted in (``bind_identity_from_event=True``, for a
     # deployment where every event producer is trusted); by default it is dropped, otherwise any
-    # event would impersonate any principal in any tenant. Metadata (correlation/execution ids) is
-    # tracing context, not an authority, so it always propagates.
+    # event would impersonate any principal in any tenant. The execution id owns idempotency
+    # claims, so every call mints its own; the producer's id becomes the causation and its
+    # correlation id is kept (tracing context, not an authority). Without one, the run id
+    # gives every step and retry of the run one correlation id.
     authn = envelope.authn if bind_identity else None
     tenant = envelope.tenant if bind_identity else None
+    producer = envelope.metadata
 
-    if envelope.metadata is not None:
-        with ctx.inv_ctx.bind(
-            metadata=envelope.metadata,
-            authn=authn,
-            tenant=tenant,
-        ):
-            yield
+    metadata = mint_invocation_metadata(
+        correlation_id=(
+            envelope.correlation_id
+            or (producer.correlation_id if producer is not None else None)
+            or uuid5(_RUN_CORRELATION_NAMESPACE, run_id)
+        ),
+        causation_id=producer.execution_id if producer is not None else None,
+    )
 
-    else:
-        with ctx.inv_ctx.bind_identity(
-            authn=authn,
-            tenant=tenant,
-        ):
-            yield
+    with ctx.inv_ctx.bind(metadata=metadata, authn=authn, tenant=tenant):
+        yield
 
 
 # ....................... #
@@ -307,7 +313,12 @@ def _register_one(
         logger.debug("Inngest function invoked", function=str(spec.name))
 
         try:
-            with _bind_invocation(execution_ctx, envelope, bind_identity=bind_identity_from_event):
+            with _bind_invocation(
+                execution_ctx,
+                envelope,
+                run_id=ctx.run_id,
+                bind_identity=bind_identity_from_event,
+            ):
                 handler = handler_factory(execution_ctx)
                 return await handler(args)
 
@@ -343,9 +354,11 @@ def register_functions(
     identity. That envelope is **untrusted** — any producer able to emit an event sets it — so it
     stays off by default: enabling it lets an event impersonate any principal in any tenant, so
     only turn it on for a deployment where every event producer is trusted (mirrors the inbox
-    consumer's ``bind_tenant_from_headers``). Tracing metadata (correlation/execution ids) is
-    propagated regardless; end-to-end payload decryption still uses the envelope tenant for AAD,
-    which is self-authenticating (a forged tenant fails the AEAD open).
+    consumer's ``bind_tenant_from_headers``). Each call mints its own execution id, with the
+    envelope's correlation id kept (or one derived from the run id) and its execution id
+    recorded as the causation, so an idempotency claim belongs to one handler entry; end-to-end
+    payload decryption still uses the envelope tenant for AAD, which is self-authenticating (a
+    forged tenant fails the AEAD open).
     """
 
     sdk = client.native

@@ -31,6 +31,11 @@ class InngestDecodedContext:
     """Execution context fields recovered from an event payload envelope."""
 
     metadata: InvocationMetadata | None = None
+
+    correlation_id: UUID | None = None
+    """The envelope's correlation id, decoded on its own: kept even when its execution id is
+    malformed, so the run still correlates with its producer."""
+
     authn: AuthnIdentity | None = None
     tenant: TenantIdentity | None = None
 
@@ -88,6 +93,26 @@ def merge_envelope(
 # ....................... #
 
 
+def _tracing_id(value: object) -> UUID | None:
+    """Decode one tracing id, or ``None`` when it is absent or malformed.
+
+    Tracing context, not an authority: a malformed id is dropped on its own rather than
+    trusted or fatal, so it never takes a valid sibling id with it.
+    """
+
+    if not value:
+        return None
+
+    try:
+        return UUID(str(value))
+
+    except ValueError:
+        return None
+
+
+# ....................... #
+
+
 def split_envelope(data: JsonDict) -> tuple[InngestDecodedContext, JsonDict]:
     """Split ``_forze`` envelope from business payload data."""
 
@@ -107,20 +132,14 @@ def split_envelope(data: JsonDict) -> tuple[InngestDecodedContext, JsonDict]:
     tenant = None
     identity_malformed = False
 
-    try:
-        if exec_raw := raw.get(EXEC_ID_KEY):
-            corr_raw = raw.get(CORR_ID_KEY) or exec_raw
-            caus_raw = raw.get(CAUS_ID_KEY)
+    correlation_id = _tracing_id(raw.get(CORR_ID_KEY))
 
-            metadata = InvocationMetadata(
-                execution_id=UUID(str(exec_raw)),
-                correlation_id=UUID(str(corr_raw)),
-                causation_id=UUID(str(caus_raw)) if caus_raw else None,
-            )
-
-    except ValueError:
-        # Tracing context, not an authority: dropped rather than trusted or fatal.
-        metadata = None
+    if (execution_id := _tracing_id(raw.get(EXEC_ID_KEY))) is not None:
+        metadata = InvocationMetadata(
+            execution_id=execution_id,
+            correlation_id=correlation_id or execution_id,
+            causation_id=_tracing_id(raw.get(CAUS_ID_KEY)),
+        )
 
     # A claimed part is any key present with a value; one that does not decode marks the
     # identity malformed. The principal chain and the tenant decode apart, because a sealed
@@ -153,6 +172,7 @@ def split_envelope(data: JsonDict) -> tuple[InngestDecodedContext, JsonDict]:
     return (
         InngestDecodedContext(
             metadata=metadata,
+            correlation_id=correlation_id,
             authn=authn,
             tenant=tenant,
             identity_malformed=identity_malformed,

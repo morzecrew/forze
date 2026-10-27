@@ -36,11 +36,13 @@ class _FakeEvent:
 
 
 class _FakeContext:
-    """Minimal stand-in for ``inngest.Context`` — only ``.event.data`` / ``.step`` are read."""
+    """Minimal stand-in for ``inngest.Context`` — only ``.event.data`` / ``.step`` /
+    ``.run_id`` are read."""
 
     def __init__(self, data: dict[str, Any]) -> None:
         self.event = _FakeEvent(data)
         self.step = object()
+        self.run_id = "01JRUN000000000000000000"
 
 
 def _register(handler: Any) -> inngest.Function:

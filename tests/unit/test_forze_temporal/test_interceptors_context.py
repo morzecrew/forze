@@ -6,6 +6,7 @@ import pytest
 
 pytest.importorskip("temporalio")
 
+from temporalio.api.common.v1 import Payload
 from temporalio.client import OutboundInterceptor
 from temporalio.worker import (
     ActivityInboundInterceptor,
@@ -113,6 +114,26 @@ class TestExecutionContextInterceptorChains:
         assert captured[0] is not None
         assert captured[0] is not None
         assert captured[0].correlation_id == cid
+
+    @pytest.mark.asyncio
+    async def test_activity_runs_past_a_malformed_execution_header(self) -> None:
+        ctx = _exec_ctx()
+        captured: list[InvocationMetadata | None] = []
+
+        async def inner_exec(_inp: ExecuteActivityInput) -> str:
+            captured.append(ctx.inv_ctx.get_metadata())
+            return "ok"
+
+        inner = MagicMock(spec=ActivityInboundInterceptor)
+        inner.execute_activity = inner_exec
+
+        act_chain = ExecutionContextInterceptor(ctx_dep=lambda: ctx).intercept_activity(inner)
+        inp = MagicMock(spec=ExecuteActivityInput)
+        inp.headers = {_EXEC_HEADER: Payload(data=b"not-a-uuid")}
+
+        assert await act_chain.execute_activity(inp) == "ok"
+        assert captured[0] is not None
+        assert captured[0].causation_id is None
 
 
 class TestWorkflowInterceptorClassFactory:

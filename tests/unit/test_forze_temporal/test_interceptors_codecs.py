@@ -1,8 +1,10 @@
 """Unit tests for :mod:`forze_temporal.interceptors.codecs`."""
 
+import secrets
 from uuid import UUID
 
 import pytest
+import structlog.testing
 
 pytest.importorskip("temporalio")
 
@@ -138,6 +140,50 @@ class TestTemporalContextCodecDecode:
         assert metadata_out.execution_id != eid
         assert metadata_out.correlation_id == cid
         assert metadata_out.causation_id == eid
+
+
+class TestMalformedTracingHeaders:
+    """A malformed tracing id is dropped, so the task runs under freshly minted metadata."""
+
+    @pytest.mark.parametrize("header", [_EXEC_HEADER, _CORR_HEADER])
+    @pytest.mark.parametrize("raw", [b"not-a-uuid", b"", b"\xff\xfe"])
+    def test_a_malformed_id_is_dropped(self, header: str, raw: bytes) -> None:
+        decoded = TemporalContextCodec().decode({header: Payload(data=raw)})
+        metadata, _, _ = TemporalContextBinder().bind(decoded)
+
+        assert decoded.execution_id is None and decoded.correlation_id is None
+        assert metadata.causation_id is None
+        assert metadata.correlation_id == metadata.execution_id
+
+    def test_a_valid_correlation_survives_a_malformed_execution_id(self) -> None:
+        cid = uuid7()
+        headers = {
+            _EXEC_HEADER: Payload(data=b"not-a-uuid"),
+            _CORR_HEADER: Payload(data=str(cid).encode("utf-8")),
+        }
+
+        decoded = TemporalContextCodec().decode(headers)
+        metadata, _, _ = TemporalContextBinder().bind(decoded)
+
+        assert decoded.execution_id is None
+        assert decoded.correlation_id == cid
+        assert metadata.correlation_id == cid
+        assert metadata.causation_id is None
+
+    def test_a_dropped_header_is_logged_by_name_not_value(self) -> None:
+        value = f"not-a-uuid-{secrets.token_hex(8)}"
+
+        with structlog.testing.capture_logs(processors=[]) as logs:
+            TemporalContextCodec().decode({_EXEC_HEADER: Payload(data=value.encode("utf-8"))})
+
+        dropped = [one for one in logs if one.get("header") == _EXEC_HEADER]
+        assert dropped and dropped[0]["log_level"] == "debug"
+        assert value not in repr(logs)
+
+    @pytest.mark.parametrize("header", [_PRINCIPAL_HEADER, _TENANT_HEADER])
+    def test_a_malformed_identity_header_still_raises(self, header: str) -> None:
+        with pytest.raises(ValueError):
+            TemporalContextCodec().decode({header: Payload(data=b"not-a-uuid")})
 
 
 class TestTheActorChain:

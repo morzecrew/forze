@@ -46,6 +46,8 @@ class _FnOut(BaseModel):
 
 class _CorrelationOut(BaseModel):
     correlation_id: str
+    execution_id: str = ""
+    causation_id: str | None = None
 
 
 # ....................... #
@@ -166,6 +168,7 @@ async def test_execution_context_envelope_restored_in_function(
 
     outcomes: list[_CorrelationOut] = []
     correlation = uuid7()
+    producer = uuid7()
     event_spec = _event_spec()
     fn_spec = DurableFunctionSpec(
         name="it-forze-inngest-envelope",
@@ -179,7 +182,13 @@ async def test_execution_context_envelope_restored_in_function(
     async def _handler(ctx: ExecutionContext, args: _FnIn) -> _CorrelationOut:
         meta = ctx.inv_ctx.get_metadata()
         assert meta is not None
-        outcomes.append(_CorrelationOut(correlation_id=str(meta.correlation_id)))
+        outcomes.append(
+            _CorrelationOut(
+                correlation_id=str(meta.correlation_id),
+                execution_id=str(meta.execution_id),
+                causation_id=str(meta.causation_id) if meta.causation_id else None,
+            )
+        )
         return outcomes[-1]
 
     def _factory(ctx: ExecutionContext):
@@ -203,7 +212,7 @@ async def test_execution_context_envelope_restored_in_function(
     try:
         ctx = harness.ctx_factory()
         metadata = InvocationMetadata(
-            execution_id=uuid7(),
+            execution_id=producer,
             correlation_id=correlation,
         )
 
@@ -222,6 +231,9 @@ async def test_execution_context_envelope_restored_in_function(
         harness.stop()
 
     assert out.correlation_id == str(correlation)
+    # The worker mints its own execution id; the producer's becomes the causation.
+    assert out.execution_id != str(producer)
+    assert out.causation_id == str(producer)
 
 
 @pytest.mark.integration

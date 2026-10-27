@@ -203,3 +203,5 @@ expression.
   the same `workflow_configs` to the lifecycle step to bootstrap them.
 - Worker-side helpers (`ExecutionContextInterceptor`, `sandboxed_workflow_runner`,
   `TemporalSaga`) are exported for the worker process.
+- The interceptor binds principal, actor chain and tenant from headers as sent; who can
+  start, signal or update workflows in the namespace decides who can set them.
