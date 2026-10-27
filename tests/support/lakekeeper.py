@@ -249,7 +249,7 @@ def _wait_http(url: str, *, timeout: float = 120.0) -> None:
     raise RuntimeError(f"{url} did not answer 200 within {timeout}s: {last!r}")
 
 
-def _secret_env(client_id: str) -> str:
+def _realm_env_var(client_id: str) -> str:
     return "LAKE_CLIENT_SECRET_" + client_id.upper().replace("-", "_")
 
 
@@ -267,7 +267,7 @@ def _realm(client_ids: Iterable[str]) -> dict[str, Any]:
         "clients": [
             {
                 "clientId": client_id,
-                "secret": f"${{{_secret_env(client_id)}}}",
+                "secret": f"${{{_realm_env_var(client_id)}}}",
                 "enabled": True,
                 "publicClient": False,
                 "clientAuthenticatorType": "client-secret",
@@ -357,12 +357,13 @@ def _skip_unless_gateway_reachable(url: str) -> None:
 def lake_vending_stack() -> Iterator[LakeVendingStack]:
     """Start the whole stack, bootstrap it, seed both tenants, and yield its addresses."""
 
-    client_secrets = {name: secrets.token_hex(16) for name in (_ADMIN, *_TENANTS, _UNGRANTED)}
+    client_ids = (_ADMIN, *_TENANTS, _UNGRANTED)
+    client_secrets = {name: secrets.token_hex(16) for name in client_ids}
     root_secret_key, pg_password = secrets.token_hex(16), secrets.token_hex(16)
     _install_extensions()
 
     with ExitStack() as stack, tempfile.TemporaryDirectory() as realm_dir:
-        Path(realm_dir, "realm.json").write_text(json.dumps(_realm(client_secrets)))
+        Path(realm_dir, "realm.json").write_text(json.dumps(_realm(client_ids)))
         Path(realm_dir).chmod(0o755)
         Path(realm_dir, "realm.json").chmod(0o644)
 
@@ -390,7 +391,7 @@ def lake_vending_stack() -> Iterator[LakeVendingStack]:
             .with_command("start-dev --import-realm")
         )
         for client_id, secret in client_secrets.items():
-            keycloak.with_env(_secret_env(client_id), secret)
+            keycloak.with_env(_realm_env_var(client_id), secret)
         stack.enter_context(keycloak)
         issuer = f"http://{gateway}:{keycloak.get_exposed_port(8080)}/realms/{REALM}"
         _wait_http(f"{issuer}/.well-known/openid-configuration", timeout=180)
