@@ -10,9 +10,10 @@ import inspect
 import io
 import json
 import math
+import os
 import traceback
-from collections.abc import Callable
-from contextlib import redirect_stderr, redirect_stdout
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager, redirect_stderr, redirect_stdout
 from pathlib import Path
 from typing import Any
 from uuid import UUID
@@ -80,6 +81,32 @@ def _load(ref: str | None) -> OpsApp:
         raise typer.Exit(EXIT_CONFIG)
 
     return target
+
+
+# ....................... #
+
+
+@contextmanager
+def _silenced() -> Iterator[None]:
+    """Discard what the block writes, through ``sys.stdout`` and ``sys.stderr`` or straight to
+    descriptors 1 and 2."""
+
+    saved = [os.dup(fd) for fd in (1, 2)]
+    devnull = os.open(os.devnull, os.O_WRONLY)
+
+    try:
+        for fd in (1, 2):
+            os.dup2(devnull, fd)
+
+        with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+            yield
+
+    finally:
+        for fd, copy in zip((1, 2), saved, strict=True):
+            os.dup2(copy, fd)
+            os.close(copy)
+
+        os.close(devnull)
 
 
 # ....................... #
@@ -214,10 +241,11 @@ def _group(bound: OpsApp | None, *, name: str) -> typer.Typer:
         # The shell reads stdout as candidates and shows stderr: a declaration that cannot
         # load completes nothing, and says nothing.
         try:
-            with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+            with _silenced():
                 ops = declaration(ctx.params.get("app"))
 
-        except Exception:
+        # An application module may well ``sys.exit`` when it cannot configure itself.
+        except (Exception, SystemExit):
             return []
 
         return [op for op in sorted(ops.exposed) if op.startswith(incomplete)]

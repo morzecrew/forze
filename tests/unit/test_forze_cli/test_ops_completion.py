@@ -7,6 +7,11 @@ nothing, silently, when the declaration cannot load.
 
 from __future__ import annotations
 
+import os
+import subprocess
+import sys
+from pathlib import Path
+
 import pytest
 import typer
 from typer.testing import CliRunner
@@ -20,6 +25,7 @@ from tests.support import ops_cli_app as sample
 runner = CliRunner()
 
 _MODULE = "tests.support.ops_cli_app"
+_ROOT = Path(__file__).resolve().parents[3]
 
 
 def _complete(
@@ -79,6 +85,7 @@ class TestCompletion:
             f"{_MODULE}_missing:APP",
             f"{_MODULE}:unbuildable",
             f"{_MODULE}:NOT_AN_OPS_APP",
+            "tests.support.ops_cli_exits:ops",
         ],
     )
     def test_a_declaration_that_cannot_load_completes_nothing_quietly(
@@ -95,3 +102,34 @@ class TestCompletion:
             """An application's own CLI."""
 
         assert _complete("myapp ops call probe.e", cli=root, prog="myapp") == ["probe.echo"]
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX descriptors")
+def test_output_past_sys_stdout_is_no_candidate() -> None:
+    # A real process: the test runner's captured streams have no descriptor 1 to write past.
+    env = {k: v for k, v in os.environ.items() if not k.startswith("FORZE_")}
+    words = "forze ops call probe.e"
+    env |= {
+        "_FORZE_COMPLETE": "complete_bash",
+        "COMP_WORDS": words,
+        "COMP_CWORD": "3",
+        "FORZE_OPS_APP": f"{_MODULE}:noisy",
+    }
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "import sys; sys.argv[0] = 'forze'; from forze_cli import main; main()",
+        ],
+        cwd=_ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=60,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.split() == ["probe.echo"]
+    assert "noise" not in result.stderr

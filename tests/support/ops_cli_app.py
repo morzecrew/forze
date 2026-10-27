@@ -471,6 +471,15 @@ def chatty() -> OpsApp:
     return ANONYMOUS
 
 
+def noisy() -> OpsApp:
+    """Writes to descriptors 1 and 2 directly, past ``sys.stdout``, as a C library may."""
+
+    os.write(1, b"fd-one-noise\n")
+    os.write(2, b"fd-two-noise\n")
+
+    return ANONYMOUS
+
+
 def unbuildable() -> OpsApp:
     credential = "marker-in-a-local"  # what a crash that printed locals would leak
 
