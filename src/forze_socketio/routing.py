@@ -17,9 +17,10 @@ once at connect time (receiving the connection ``environ`` and ``auth``
 payload), the resolved :class:`~forze.application.contracts.authn.AuthnIdentity`
 is stored in the Socket.IO session, and each dispatched event binds it onto the
 invocation context (``ctx.inv_ctx.bind_identity(authn=...)``) around handler
-execution. Tenant resolution stays the ``context_factory``'s job. Without a
-resolver nothing changes: no connect handler is registered and no identity is
-bound.
+execution. Tenant resolution stays the ``context_factory``'s job, except on a
+connection ``attach_realtime_connection`` admitted, whose events also bind the
+tenant it resolved at connect. Without a resolver nothing changes: no connect
+handler is registered and no identity is bound.
 """
 
 from ._compat import require_socketio
@@ -44,6 +45,7 @@ from forze.application.contracts.authn import (
     current_authn_admission,
 )
 from forze.application.contracts.execution import Handler
+from forze.application.contracts.tenancy import TenantIdentity
 from forze.application.execution import ExecutionContext
 from forze.application.execution.ingress import mint_invocation_metadata
 from forze.application.integrations.realtime import RealtimeCommandRoute
@@ -67,6 +69,10 @@ AUTHN_ADMISSION_SESSION_KEY: Final[str] = "forze.authn_admission"
 """Socket.IO session key holding what the connect's credential was admitted as, which each
 command binds with the identity, so a credential minted over the socket is checked against the
 one that authenticated it."""
+
+CONNECTION_SESSION_KEY: Final[str] = "forze.realtime_connection"
+"""Session key holding the :class:`~forze_socketio.RealtimeConnection` for disconnect presence,
+and the tenant each command binds with the identity."""
 
 # ....................... #
 
@@ -387,7 +393,14 @@ async def _dispatch_event(
 
     if IDENTITY_SESSION_KEY in session:
         identity: AuthnIdentity | None = session[IDENTITY_SESSION_KEY]
-        binding = ctx.inv_ctx.bind_identity(authn=identity)
+        # The tenant ``attach_realtime_connection`` resolved at connect, bound as the WS route
+        # binds it; an ``identity_resolver`` connect stores no connection, so no tenant.
+        connection = session.get(CONNECTION_SESSION_KEY)
+        tenant = connection.tenant if connection is not None else None
+        binding = ctx.inv_ctx.bind_identity(
+            authn=identity,
+            tenant=TenantIdentity(tenant_id=tenant) if tenant is not None else None,
+        )
 
     # Each event is an invocation of its own, so it gets fresh metadata, as a WS frame does.
     with (

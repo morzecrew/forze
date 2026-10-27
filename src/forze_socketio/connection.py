@@ -80,14 +80,14 @@ from .exceptions import (
 from .gateway import room_for
 from .mailbox import MailboxCursors, RealtimeMailbox
 from .observability import ConnectRefusal, RealtimeConnectionStats
-from .routing import AUTHN_ADMISSION_SESSION_KEY, IDENTITY_SESSION_KEY, SocketIOConnect
+from .routing import (
+    AUTHN_ADMISSION_SESSION_KEY,
+    CONNECTION_SESSION_KEY,
+    IDENTITY_SESSION_KEY,
+    SocketIOConnect,
+)
 
 # ----------------------- #
-
-CONNECTION_SESSION_KEY = "forze.realtime_connection"
-"""Session key holding the :class:`RealtimeConnection` for disconnect presence."""
-
-# ....................... #
 
 
 @final

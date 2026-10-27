@@ -79,6 +79,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Duplex realtime commands get their own invocation metadata** (**behaviour change**). A `cmd` frame on `attach_realtime_ws_route` and a Socket.IO command event each mint a fresh execution and correlation id, as an HTTP request does, so the operation's logs, spans and integration events carry them.
 
+- **A Socket.IO command event runs under its connection's tenant** (**behaviour change**). On a connection `attach_realtime_connection` admitted, an event bound the principal but no tenant, so a tenant-aware operation failed `tenant_required`. It now binds the tenant resolved at connect, as the WS route does.
+
 ### Security
 
 - **A realtime connection needs a tenant once tenancy is wired** (**behaviour change**). Socket.IO, WebSocket and SSE refuse one without a tenant (`tenant_required`), and Socket.IO an anonymous one, instead of admitting it to the untenanted rooms. Socket.IO checks this at the connect when given the new `ctx_dep`.
