@@ -485,6 +485,37 @@ async def test_a_failed_drop_after_a_failed_read_raises_the_reads_error(
     assert log.warning.call_count == 1
 
 
+async def test_a_statement_waiting_for_a_slot_is_refused_once_the_client_retires(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(client_module, "logger", MagicMock())
+    monkeypatch.setattr(client_module, "_drop_vended_secrets", _failing_drop)
+    c = DuckDbClient()
+    await c.initialize(
+        ":memory:",
+        config=DuckDbConfig(),
+        extensions=(),
+        admission=asyncio.Semaphore(1),
+        drop_vended_secrets=True,
+    )
+
+    try:
+        busy = "SELECT count(*) AS n FROM range(300000000) t(i) WHERE i % 7 = 3"
+        running = asyncio.create_task(c.run_query(busy))  # holds the one slot; its drop fails
+        await asyncio.sleep(0.1)
+        waiting = asyncio.create_task(c.run_query("SELECT 1 AS one"))
+
+        assert len((await running).rows) == 1  # a statement already running finishes
+
+        with pytest.raises(CoreException) as ei:
+            await waiting
+
+        assert ei.value.code == client_module.INSTANCE_RETIRED_CODE
+
+    finally:
+        await c.close()
+
+
 @pytest.mark.parametrize("locked", [True, False], ids=["locked", "lock_removed"])
 async def test_concurrent_drops_conflict_unless_serialized(
     lake_client: DuckDbClient, monkeypatch: pytest.MonkeyPatch, locked: bool

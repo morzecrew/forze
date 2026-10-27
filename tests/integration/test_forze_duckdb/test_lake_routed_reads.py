@@ -683,6 +683,32 @@ class TestPool:
         await routed.evict_tenant(_A)
         assert len(await _run(port, _A, _ORDERS)) == 3  # ...and a rebuilt one sees the grant
 
+    async def test_a_failed_drop_retires_the_instance_and_the_next_call_rebuilds(
+        self, routed: RoutedDuckDbClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """D-049 end to end: the read keeps its rows, and no later call runs on the instance."""
+
+        port = _port(routed)
+        await _run(port, _A, _ORDERS)
+        first = routed._peek_client(_A)
+        real_drop = client_module._drop_vended_secrets
+
+        def failing_drop(conn: Any, lock: Any) -> None:
+            raise RuntimeError("drop failed")
+
+        monkeypatch.setattr(client_module, "_drop_vended_secrets", failing_drop)
+
+        assert len(await _run(port, _A, _ORDERS)) == 3
+
+        assert first is not None and first.retired
+        assert routed._peek_client(_A) is None  # evicted as its scope ended
+        monkeypatch.setattr(client_module, "_drop_vended_secrets", real_drop)
+
+        assert len(await _run(port, _A, _ORDERS)) == 3
+        second = routed._peek_client(_A)
+        assert second is not None and second is not first and not second.retired
+        assert routed.pool_stats().created == 2
+
     async def test_the_process_wide_semaphore_bounds_statements_across_tenants(
         self, build_routed: Callable[..., RoutedDuckDbClient]
     ) -> None:

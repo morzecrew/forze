@@ -1484,9 +1484,9 @@ published.
 
 **Where each battery item lives.** The real leg is
 [`test_lake_routed_reads.py`](../tests/integration/test_forze_duckdb/test_lake_routed_reads.py):
-73 tests on one module-scoped stack, about 29 s including the stack. It starts its own stack
-rather than share the P0 module's, which costs one more stack start (about 20 s) in the duckdb
-shard. Items 3–10, 12–14 and 16 are classes there, named by number. Item 1 is P0's
+74 tests on one module-scoped stack (75 with the D-042 commit), about 29 s including the stack.
+It starts its own stack rather than share the P0 module's, which costs one more stack start
+(about 20 s) in the duckdb shard. Items 3–10, 12–14 and 16 are classes there, named by number. Item 1 is P0's
 `TestFixtureSelfTest`, imported so it runs first against this module's stack. Item 2 is in the
 unit suite (`test_duckdb_dynamic_read_wiring.py`, `test_duckdb_routed_client.py`). Item 17 is
 deferred (D-030). Item 15 has no test of its own. Each §4.3 cell maps to the tests that exercise
@@ -1906,11 +1906,15 @@ and a rotate-and-evict race. With guarded eviction sabotaged, all 20 seeds fail.
   counter is gone. Each read drops the committed vended secrets when it ends, and a per-instance
   lock serializes the drops, since two would conflict.
 
-  The design now rests on one engine assumption: a statement's vended secret stays uncommitted
-  until the statement ends. The drop's docstring states it. P0's
-  `test_a_running_statements_secret_is_invisible_to_another_cursor` is the version tripwire: an
-  engine that lists a running statement's secret to other cursors fails it first. Four more
-  tests pin the rest:
+  The design now rests on two engine assumptions, and each has a tripwire.
+  - A statement's vended secret stays uncommitted until the statement ends. The drop's
+    docstring states it. P0's `test_a_running_statements_secret_is_invisible_to_another_cursor`
+    fails first on an engine that lists a running statement's secret to other cursors.
+  - Two drops of one secret cannot both succeed. This is why the lock exists. The `lock_removed`
+    leg of `test_concurrent_drops_conflict_unless_serialized` fails first on an engine where
+    they can, and the lock would then be unnecessary rather than wrong.
+
+  Four more tests pin the rest:
   - `test_a_scan_keeps_reading_while_another_statements_drop_runs`, in the P0 module. A paused
     scan of an 8-file table keeps reading after the drop has taken another statement's
     leftover, and its own secret appears once it ends.
@@ -1919,8 +1923,9 @@ and a rotate-and-evict race. With guarded eviction sabotaged, all 20 seeds fail.
   - `test_a_committed_leftover_is_dropped_while_another_statement_runs`. The drop does not wait
     for idle. Its running statement reads no table, so the scan test above is what shows a
     reader is not disturbed.
-  - `test_concurrent_drops_conflict_unless_serialized`. Two reads drop the same leftover, and
-    with the lock taken away one drop fails. That is its sabotage leg.
+  - `test_concurrent_drops_conflict_unless_serialized`. Two reads drop the same leftover, forced
+    to interleave by a barrier. With the lock, one waits out the barrier's timeout alone and the
+    other finds nothing left to drop. Without it, one drop fails. That is its sabotage leg.
 - **Proposed row (RFC 0078):** `ASSUMED` — the drop runs after every read statement, serialized
   per instance. This withdraws D-044's row, which stays as written.
 
@@ -1938,15 +1943,35 @@ and a rotate-and-evict race. With guarded eviction sabotaged, all 20 seeds fail.
   the instance later.
 - **Class:** `spec-gap`.
 - **Consequence:** a failed drop never raises over the read. The read's rows or its error come
-  back, the failure is logged at warning, and the client is retired. A retired client refuses
-  every further statement with `duckdb_instance_retired` (infrastructure), and its health check
-  reports it. `RoutedDuckDbClient.client_scope` evicts a retired instance when the scope that
-  saw it ends, but only while the pool still holds that instance. A later scope that held the
-  same instance would otherwise evict its healthy successor. The next call then builds afresh.
-  A read that failed retires the client as well, because the leftover stays either way. Pinned
-  by `test_a_failed_drop_after_a_good_read_returns_the_rows_and_retires_the_client`,
+  back, the failure is logged at warning, and the client is retired. A read that failed retires
+  the client as well, because the leftover stays either way.
+
+  A retired client refuses, with `duckdb_instance_retired` (infrastructure), every statement
+  submitted after the retire, including one that was waiting for an admission slot: the check
+  runs again once the slot is held, and the slot goes back. A statement already running
+  finishes. The health check reports the refusal.
+
+  `RoutedDuckDbClient.client_scope` evicts a retired instance at two points, each time only
+  while the pool still holds that instance, so a scope that held it late spares its healthy
+  successor.
+  - When the scope that saw the retire ends.
+  - When a scope starts. A timed-out read leaves its scope while its worker still runs (D-042),
+    and the worker's failed drop can retire the instance after that scope has gone. The next
+    scope for the tenant evicts it and builds a fresh one before yielding, so `health()` too
+    rebuilds and then probes.
+
+  Until that next call, or an LRU eviction, a retired instance lingers in the pool. It costs
+  memory and nothing else. A retire that lands between the entry check and a statement is
+  refused by that statement's own check, and evicted when the scope ends. Pinned by
+  `test_a_failed_drop_after_a_good_read_returns_the_rows_and_retires_the_client`,
   `test_a_failed_drop_after_a_failed_read_raises_the_reads_error`,
-  `test_a_retired_instance_is_evicted_and_its_successor_spared`, which fails with the
-  successor check removed, and `test_a_timed_out_read_still_drops`.
+  `test_a_statement_waiting_for_a_slot_is_refused_once_the_client_retires`,
+  `test_a_retired_instance_is_evicted_and_its_successor_spared`, and
+  `test_a_timed_out_read_still_drops` in the unit suite. The battery adds
+  `test_a_failed_drop_retires_the_instance_and_the_next_call_rebuilds`, a real `DuckDbClient`
+  under the routed client. With D-042, the battery's
+  `test_a_late_worker_retire_is_evicted_by_the_next_call` pins the entry check. That test
+  travels in D-042's commit, because only D-042 lets a worker outlive its scope. Each test was
+  checked against its fix removed.
 - **Proposed row (RFC 0078):** `ASSUMED` — a failed drop is logged, never raised over the read,
   and retires the instance, which the routed client evicts and rebuilds.

@@ -201,6 +201,13 @@ def _timed_out(detail: str) -> CoreException:
     return exc.infrastructure(f"DuckDB query exceeded timeout {detail}", code=QUERY_TIMEOUT_CODE)
 
 
+def _retired() -> CoreException:
+    return exc.infrastructure(
+        "DuckDB instance retired after a failed vended-secret drop; it serves nothing.",
+        code=INSTANCE_RETIRED_CODE,
+    )
+
+
 def _open_cursor(conn: Any, holder: dict[str, Any]) -> Any:
     """Open a statement's cursor and publish it for interruption, unless its caller gave up.
 
@@ -468,10 +475,7 @@ class DuckDbClient(DuckDbDynamicReadClientPort):
         """
 
         if self.__retired:
-            raise exc.infrastructure(
-                "DuckDB instance retired after a failed vended-secret drop; it serves nothing.",
-                code=INSTANCE_RETIRED_CODE,
-            )
+            raise _retired()
 
         loop = asyncio.get_running_loop()
         executor = self.__require_executor()
@@ -488,6 +492,9 @@ class DuckDbClient(DuckDbDynamicReadClientPort):
                 raise _timed_out(f"of {timeout_sec}s waiting for a slot") from None
 
         try:
+            if self.__retired:  # again: a drop may have failed while this waited for a slot
+                raise _retired()
+
             work: Future[T] = executor.submit(fn)
 
         except BaseException:

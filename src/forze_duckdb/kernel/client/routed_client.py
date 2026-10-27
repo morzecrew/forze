@@ -287,7 +287,8 @@ class RoutedDuckDbClient(
     object-store credentials, raw secrets, sources or bootstrap statements. An instance holds
     the tenant's catalog principal for its life, and the S3 credentials vended for a read
     statement until that statement ends. An instance that fails to drop them is retired: it
-    refuses statements, and the scope that saw it evicts it so the next one rebuilds.
+    refuses new statements, and the scope that saw it, or else the tenant's next scope, evicts
+    it so a fresh one is built.
 
     Register it under :data:`~forze_duckdb.execution.deps.DuckDbClientDepKey` and use
     :func:`~forze.application.execution.lifecycle.builtin.routed_client_lifecycle_step`, not
@@ -483,6 +484,9 @@ class RoutedDuckDbClient(
         if tenant_id is None:
             tenant_id = self._require_tenant_id()
 
+        # A worker that outlived its timed-out scope may have retired the pooled instance since
+        # (EXECUTION-LOG D-049): rebuild before serving, so no caller starts on a retired one.
+        await self._evict_if_retired(tenant_id, self._peek_client(tenant_id))
         inner: DuckDbClient | None = None
 
         try:
@@ -493,10 +497,13 @@ class RoutedDuckDbClient(
                 yield inner
 
         finally:
-            # A failed vended-secret drop retired it (EXECUTION-LOG D-049). Evict it only while
-            # the pool still holds it, so a later scope on the same instance spares its successor.
-            if inner is not None and inner.retired and self._peek_client(tenant_id) is inner:
-                await self.evict_tenant(tenant_id)
+            await self._evict_if_retired(tenant_id, inner)
+
+    async def _evict_if_retired(self, tenant_id: UUID, inner: DuckDbClient | None) -> None:
+        # Only while the pool still holds it, so a later scope on the same instance spares its
+        # successor.
+        if inner is not None and inner.retired and self._peek_client(tenant_id) is inner:
+            await self.evict_tenant(tenant_id)
 
     # ....................... #
 
