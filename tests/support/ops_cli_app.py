@@ -19,7 +19,7 @@ from enum import Enum, IntEnum, StrEnum
 from typing import Annotated, Any, Literal
 from uuid import UUID
 
-from pydantic import Field, SecretStr
+from pydantic import ConfigDict, Field, SecretStr
 
 from forze.application.contracts.authn import AuthnIdentity, AuthnSpec
 from forze.application.contracts.execution import LifecycleStep
@@ -75,6 +75,9 @@ ADDED: list[str] = []
 
 SHUTDOWNS: list[str] = []
 """One entry per runtime shutdown."""
+
+LEFT_BOUND: list[tuple[Any, ...]] = []
+"""What the invocation context still held at each shutdown, after every call left it."""
 
 # An application may well log to stdout; the CLI must keep its document clean anyway.
 _chatty_logger = logging.getLogger("ops_cli_app")
@@ -163,6 +166,15 @@ class Collides(BaseDTO):
     timeout: float = 1.0
 
 
+class Crossed(BaseDTO):
+    """One field's alias is the other field's name, and both spellings are read."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    first: str = Field(default="unset", alias="second")
+    second: str = "unset"
+
+
 class Coded(BaseDTO):
     code: Code = Code.ONE
 
@@ -203,6 +215,11 @@ async def _echo(args: Text) -> Text:
 
 async def _returned(args: Any) -> Any:
     return args
+
+
+async def _revoke(_args: Text) -> None:
+    # Revokes the key the call itself verified with: the next call must be refused.
+    STATE.identity["authn"]["main"]["api_keys"].pop(API_KEY)
 
 
 async def _fail(args: Fail) -> None:
@@ -262,6 +279,8 @@ def build_registry(*, sensitive: bool = False) -> FrozenOperationRegistry:
     reg = OperationRegistry(
         handlers={
             "probe.bound": _bound,
+            "probe.bound_input": _bound,
+            "probe.revoke": lambda _c: _revoke,
             "probe.echo": lambda _c: _echo,
             "probe.secure": lambda _c: _ok,
             "probe.tenanted": lambda _c: _ok,
@@ -278,10 +297,13 @@ def build_registry(*, sensitive: bool = False) -> FrozenOperationRegistry:
             "probe.collides": lambda _c: _returned,
             "probe.aliased": lambda _c: _returned,
             "probe.coded": lambda _c: _returned,
+            "probe.crossed": lambda _c: _returned,
             "notes.add": lambda _c: _add,
         },
         descriptors={
             "probe.bound": _descriptor(output_type=Bound, title="What a call binds"),
+            "probe.bound_input": _descriptor(Text, Bound),
+            "probe.revoke": _descriptor(Text),
             "probe.echo": _descriptor(Text, Text, description="Echo the text.\nSecond line."),
             "probe.secure": _descriptor(description="Needs a principal."),
             "probe.tenanted": _descriptor(description="Needs a tenant."),
@@ -298,6 +320,7 @@ def build_registry(*, sensitive: bool = False) -> FrozenOperationRegistry:
             "probe.collides": _descriptor(Collides, Collides),
             "probe.aliased": _descriptor(Aliased),
             "probe.coded": _descriptor(Coded),
+            "probe.crossed": _descriptor(Crossed),
             "notes.add": _descriptor(Text, Count, title="Add a note"),
         },
     )
@@ -315,6 +338,8 @@ def build_registry(*, sensitive: bool = False) -> FrozenOperationRegistry:
         "probe.collides",
         "probe.aliased",
         "probe.coded",
+        "probe.bound_input",
+        "probe.crossed",
     ):
         reg = reg.bind(op).as_query().finish()
 
@@ -376,9 +401,20 @@ def seed() -> None:
     STATE.identity["tenants"] = {"main": {str(TENANT): {"principals": [MEMBER], "active": True}}}
     ADDED.clear()
     SHUTDOWNS.clear()
+    LEFT_BOUND.clear()
 
 
-async def _shutdown(_ctx: ExecutionContext) -> None:
+async def _shutdown(ctx: ExecutionContext) -> None:
+    inv = ctx.inv_ctx
+    LEFT_BOUND.append(
+        (
+            inv.get_metadata(),
+            inv.get_authn(),
+            inv.get_tenant(),
+            inv.get_idempotency_key(),
+            inv.get_deadline(),
+        )
+    )
     sys.stderr.write("ops-sample: shutdown started\n")
     sys.stderr.flush()
     # A slow shutdown, for the signal tests.

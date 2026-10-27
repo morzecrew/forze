@@ -79,6 +79,34 @@ class TestBatch:
         assert len({d["correlation_id"] for d in minted}) == 1
         assert len({d["execution_id"] for d in given + minted}) == 4
 
+    def test_each_line_binds_afresh_and_leaves_nothing_bound(self) -> None:
+        result = _batch("probe.bound_input", "--timeout", "30", stdin=_jsonl(*[{"text": "x"}] * 2))
+
+        assert result.exit_code == 0, result.stdout
+        documents = _documents(result)
+        assert [d["result"]["execution_id"] for d in documents] == [
+            d["execution_id"] for d in documents
+        ]
+        assert documents[0]["execution_id"] != documents[1]["execution_id"]
+
+        for document in documents:
+            bound = document["result"]
+            assert bound["principal_id"] == str(sample.OPERATOR)
+            assert bound["idempotency_key"] is None
+            assert bound["deadline_set"] is True
+
+        # After the last line: no metadata, identity, tenant, key or deadline left behind.
+        assert sample.LEFT_BOUND == [(None, None, None, None, None)]
+
+    def test_a_key_revoked_between_lines_refuses_the_next_line(self) -> None:
+        result = _batch("probe.revoke", stdin=_jsonl({"text": "a"}, {"text": "b"}))
+
+        assert result.exit_code == 5
+        documents = _documents(result)
+        assert documents[0] == {**documents[0], "line": 1, "result": None}
+        assert documents[1]["line"] == 2
+        assert documents[1]["error"]["kind"] == "authentication"
+
     def test_the_first_failure_stops_the_batch_and_sets_the_exit_code(self) -> None:
         result = _batch("probe.fail", stdin=_jsonl({}, {"kind": "domain"}, {}))
 

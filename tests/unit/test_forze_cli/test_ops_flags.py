@@ -120,6 +120,12 @@ class TestTypedFlags:
         # No output type: the model dumps itself, by field name.
         assert _doc(_call("probe.aliased", "--display-name", "Ann")) == {"display_name": "Ann"}
 
+    def test_a_flag_never_reaches_a_field_through_its_alias(self) -> None:
+        # first's alias is "second": read by alias, --second would set both fields.
+        document = _doc(_call("probe.crossed", "--second", "y"))
+
+        assert document == {"first": "unset", "second": "y"}
+
     def test_call_options_mix_with_flags(self) -> None:
         result = _call("probe.echo", "--text", "hi", "--pretty")
 
