@@ -134,6 +134,16 @@ class TransactionContext:
     )
     """Queued ``(callback, fatal)`` pairs run after a successful root transaction exit."""
 
+    __tx_routes: ContextVar[set[str] | None] = attrs.field(
+        factory=lambda: ContextVar("tx_routes", default=None),
+        init=False,
+        repr=False,
+        on_setattr=attrs.setters.frozen,
+    )
+    """Routes entered under the active root, its own first. A nested scope on another route
+    resolves another manager, which can open (and commit) a transaction of its own, so a
+    read-only root skips its commit point only while this holds its route alone."""
+
     # ....................... #
 
     def lock(
@@ -364,6 +374,11 @@ class TransactionContext:
                     code="tx_nested_isolation_conflict",
                 )
 
+            entered = self.__tx_routes.get()
+
+            if entered is not None:
+                entered.add(str(getattr(route, "value", route)))
+
             token_d = self.__tx_depth.set(depth + 1)
 
             try:
@@ -404,6 +419,8 @@ class TransactionContext:
         )
         token_d = self.__tx_depth.set(1)
         token_cb = self.__cb_stack.set([])
+        routes = {route_name}
+        token_r = self.__tx_routes.set(routes)
         # A run-global id for this root transaction (``None`` in production). Stamped on the trace
         # so the oracle groups port calls by transaction — operation spans cannot, since concurrent
         # transactions interleave. The scope always emits a tx ``exit`` event under this id (from the
@@ -438,9 +455,14 @@ class TransactionContext:
                     # A read-only root the backend refuses writes in commits nothing, so it is
                     # no commit point. Asked of the transaction actually opened, not the
                     # manager: a root that became a savepoint in an outer transaction is not
-                    # read-only. Fail-closed: an unaware manager marks it like a write.
+                    # read-only. Only while it is the sole route entered: another route's
+                    # nested scope may have committed a transaction of its own. Fail-closed:
+                    # an unaware manager, or any answer but ``True``, marks it like a write.
                     if not (
-                        root_read_only and isinstance(tx, ReadOnlyAware) and tx.read_only_enforced()
+                        root_read_only
+                        and len(routes) == 1
+                        and isinstance(tx, ReadOnlyAware)
+                        and tx.read_only_enforced() is True
                     ):
                         mark_commit_started()
                         commit_reached = True
@@ -460,6 +482,7 @@ class TransactionContext:
                     committed=committed,
                 )
                 self.__cb_stack.reset(token_cb)
+                self.__tx_routes.reset(token_r)
                 self.__tx_handle.reset(token_h)
                 self.__tx_depth.reset(token_d)
                 self.__tx_id.reset(token_id)

@@ -124,8 +124,8 @@ A deadline firing — or a client disconnecting — cancels the operation's task
 One window must survive that: after the root transaction **commits**, the
 deferred after-commit work (idempotency records, event dispatch) is a
 cancellation-protected critical section. It runs to completion even while
-cancellation is pending — so a committed transaction is never left
-half-announced.
+cancellation is pending, and the cancellation re-raises afterwards — so a
+committed transaction is never left half-announced.
 
 ## A late cancel is never reported as safe
 
@@ -162,14 +162,17 @@ have let a write through it:
 
 | Transaction manager | A query interrupted after its read reports |
 | --- | --- |
-| Postgres, and the mock's `journal` and `strict` managers, when the query's transaction is the outermost one | `deadline_exceeded`, or a plain cancellation: the backend refused writes inside it |
+| Postgres, and the mock's `journal` and `strict` managers, when the query's read-only transaction is the only one it entered | `deadline_exceeded` (CLI exit 6), or a plain cancellation (CLI exit 130 or 143): the store refused writes inside it |
 | The same managers, when the query's transaction is nested in one opened outside forze | `commit_ambiguous`: it became a savepoint, which cannot be read-only |
+| The same managers, when a nested scope entered another route | `commit_ambiguous`: that route opened, and may have committed, a transaction of its own |
+| Postgres, after a `detached()` statement or another client's transaction | `commit_ambiguous`: those commit outside the read-only transaction |
 | Mongo, Firestore, Neo4j, and the mock's `none` manager | `commit_ambiguous`: they accept `read_only` without enforcing it |
 
 The kernel asks the manager about the transaction it actually opened, through
-`ReadOnlyAware.read_only_enforced()`. A manager that does not implement it
-counts as not enforcing. Where a query reports `commit_ambiguous` but wrote
-nothing, it is still safe to run again.
+`ReadOnlyAware.read_only_enforced()`, and only while the read-only root is the
+only route entered. A manager that does not implement it counts as not
+enforcing. Where a query reports `commit_ambiguous` but wrote nothing, it is
+still safe to run again.
 
 A deadline is one of several controls over how an operation behaves under
 stress; the full set — retries, bulkheads, breakers, hedging — composes in

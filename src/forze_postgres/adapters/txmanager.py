@@ -7,8 +7,7 @@ require_psycopg()
 # ....................... #
 
 from collections.abc import AsyncGenerator
-from contextlib import asynccontextmanager
-from contextvars import ContextVar
+from contextlib import asynccontextmanager, nullcontext
 from typing import final
 
 import attrs
@@ -24,6 +23,7 @@ from forze.application.contracts.transaction import (
 from forze.base.primitives import driver_deadline_budget
 
 from ..kernel.client import PostgresClientPort, PostgresTransactionOptions
+from ..kernel.client.read_only_root import read_only_root, read_only_root_enforced
 from ..kernel.client.types import IsolationLevel as PgIsolationLevel
 from ..kernel.client.value_objects import DeadlinePushdownPolicy
 from ._logger import logger
@@ -39,12 +39,6 @@ _PG_ISOLATION: dict[CoreIsolationLevel, PgIsolationLevel] = {
     CoreIsolationLevel.SERIALIZABLE: "serializable",
 }
 """Map the kernel's intent-named isolation to the Postgres level (Postgres can do all three)."""
-
-_read_only_begin: ContextVar[bool] = ContextVar("forze_pg_read_only_begin", default=False)
-"""Whether the transaction this task has open began ``READ ONLY`` (see ``read_only_enforced``).
-
-Set by every :meth:`PostgresTxManagerAdapter.transaction` and reset on its exit, so a nested
-scope never changes the enclosing root's answer."""
 
 
 def _statement_timeout_ms(
@@ -96,13 +90,16 @@ class PostgresTxManagerAdapter(TransactionManagerPort):
     # ....................... #
 
     def read_only_enforced(self) -> bool:
-        """Whether the open transaction began ``BEGIN … READ ONLY``, so the database refuses writes.
+        """Whether the open root began ``BEGIN … READ ONLY`` and nothing has bypassed it.
 
-        ``False`` for a scope opened inside an outer client transaction: that is a savepoint,
-        which cannot be read-only, and the outer transaction may write.
+        ``READ ONLY`` makes Postgres refuse writes to this database; it does not cover
+        ``dblink`` or ``postgres_fdw``. ``False`` for a scope opened inside an outer client
+        transaction (a savepoint, which cannot be read-only, under a transaction that may
+        write), and once a :meth:`~forze_postgres.kernel.client.client.PostgresClient.detached`
+        statement or another client's root transaction could have committed beside it.
         """
 
-        return _read_only_begin.get()
+        return read_only_root_enforced()
 
     # ....................... #
 
@@ -137,9 +134,10 @@ class PostgresTxManagerAdapter(TransactionManagerPort):
         # savepoint rides the root's SET LOCAL).
         at_root = not self.client.is_in_transaction()
         # Only a root BEGIN carries READ ONLY; inside a client transaction this is a savepoint.
-        token = _read_only_begin.set(at_root and options.read_only)
+        # A nested scope records nothing, so a bypass inside it still clears the root's record.
+        record = read_only_root() if at_root and options.read_only else nullcontext()
 
-        try:
+        with record:
             async with self.client.transaction(options=options):
                 if at_root:
                     await self._apply_deadline_backstop()
@@ -154,9 +152,6 @@ class PostgresTxManagerAdapter(TransactionManagerPort):
 
                 else:
                     logger.debug("Transaction committed")
-
-        finally:
-            _read_only_begin.reset(token)
 
     # ....................... #
 

@@ -583,15 +583,39 @@ class _ReadOnlyAwareTxManager(_RecordingTxManager):
         super().__init__(commit_delay=commit_delay)
         self.in_outer_transaction = in_outer_transaction
         self.enforced = False
+        self.depth = 0
 
     def transaction(
         self, *, read_only: bool = False, isolation: IsolationLevel | None = None
     ) -> AbstractAsyncContextManager[None]:
-        self.enforced = read_only and not self.in_outer_transaction
-        return super().transaction(read_only=read_only, isolation=isolation)
+        inner = super().transaction(read_only=read_only, isolation=isolation)
+
+        @asynccontextmanager
+        async def _cm() -> AsyncGenerator[None]:
+            # Only the root decides; a nested savepoint shares the root's mode.
+            if self.depth == 0:
+                self.enforced = read_only and not self.in_outer_transaction
+
+            self.depth += 1
+
+            try:
+                async with inner:
+                    yield
+
+            finally:
+                self.depth -= 1
+
+        return _cm()
 
     def read_only_enforced(self) -> bool:
         return self.enforced
+
+
+class _TruthyTxManager(_RecordingTxManager):
+    """Answers with a truthy value that is not ``True``; only ``True`` may skip the mark."""
+
+    def read_only_enforced(self) -> Any:
+        return "yes"
 
 
 class TestReadOnlyRootCommitPoint:
@@ -607,6 +631,7 @@ class TestReadOnlyRootCommitPoint:
             ),
             pytest.param(_RecordingTxManager(), True, True, id="unaware"),
             pytest.param(_ReadOnlyAwareTxManager(), False, True, id="writes"),
+            pytest.param(_TruthyTxManager(), True, True, id="truthy-not-true"),
         ],
     )
     async def test_the_mark_follows_the_opened_transaction(
@@ -700,3 +725,46 @@ class TestReadOnlyRootCommitPoint:
             await task
 
         assert task.cancelled() is True  # nothing can have landed: not converted
+
+    @pytest.mark.asyncio
+    async def test_a_nested_scope_on_another_route_keeps_the_commit_point(self) -> None:
+        # Another route resolves another manager under the same scope key, so its nested
+        # scope is an independent transaction that commits on its own: the read-only root
+        # is no longer the only transaction, and a cancel in its commit stays ambiguous.
+        reset_commit_started()
+        root = _ReadOnlyAwareTxManager(commit_delay=10.0)
+        other = _RecordingTxManager()
+        tx = TransactionContext()
+        tx.lock(lambda route: root if route == "rec" else other)
+
+        async def driver() -> None:
+            task = asyncio.current_task()
+            assert task is not None
+            active_operation_var.set(task)
+
+            async with tx.scope("rec", read_only=True):
+                async with tx.scope("other"):
+                    pass
+
+        task = asyncio.create_task(driver())
+        await root.in_commit.wait()
+        task.cancel()
+
+        with pytest.raises(CoreException) as ei:
+            await task
+
+        assert ei.value.code == "commit_ambiguous"
+        assert other.committed is True
+        reset_commit_started()
+
+    @pytest.mark.asyncio
+    async def test_a_nested_scope_on_the_same_route_keeps_the_skip(self) -> None:
+        # The same route is the same transaction: a savepoint inside the read-only root.
+        reset_commit_started()
+        tx = _tx_with(_ReadOnlyAwareTxManager())
+
+        async with tx.scope("rec", read_only=True):
+            async with tx.scope("rec"):
+                pass
+
+        assert commit_started() is False

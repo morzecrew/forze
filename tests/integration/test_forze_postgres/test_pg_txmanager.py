@@ -1,9 +1,11 @@
 """Integration tests for PostgresTxManagerAdapter."""
 
+from typing import Any
+
 import pytest
 
 from forze_postgres.adapters import PostgresTxManagerAdapter, PostgresTxScopeKey
-from forze_postgres.kernel.client.client import PostgresClient
+from forze_postgres.kernel.client.client import PostgresClient, PostgresConfig
 
 
 @pytest.fixture
@@ -218,3 +220,43 @@ async def test_read_only_is_enforced_only_by_a_read_only_begin(
 
     val = await pg_client.fetch_value("SELECT value FROM test_txmanager_ro_savepoint")
     assert val == 1
+
+
+@pytest.mark.asyncio
+async def test_a_write_outside_the_read_only_root_clears_its_claim(
+    pg_client: PostgresClient, postgres_container: Any
+) -> None:
+    """A detached statement, or another client's own transaction, commits outside the root.
+
+    Either one leaves the read-only root not the only thing that committed, so the manager
+    must stop claiming enforcement.
+    """
+
+    await pg_client.execute(
+        "CREATE TABLE test_txmanager_ro_bypass (id serial PRIMARY KEY, value integer);"
+    )
+
+    other = PostgresClient()
+    url = postgres_container.get_connection_url().replace("postgresql+psycopg://", "postgresql://")
+    await other.initialize(dsn=url, config=PostgresConfig(min_size=1, max_size=2))
+    txmanager = PostgresTxManagerAdapter(client=pg_client)
+    insert = "INSERT INTO test_txmanager_ro_bypass (value) VALUES (%(val)s)"
+
+    try:
+        async with txmanager.transaction(read_only=True):
+            async with pg_client.detached():
+                await pg_client.execute(insert, {"val": 1})
+
+            assert txmanager.read_only_enforced() is False
+
+        async with txmanager.transaction(read_only=True):
+            async with other.transaction():
+                await other.execute(insert, {"val": 2})
+
+            assert txmanager.read_only_enforced() is False
+
+    finally:
+        await other.close()
+
+    count = await pg_client.fetch_value("SELECT count(*) FROM test_txmanager_ro_bypass")
+    assert count == 2

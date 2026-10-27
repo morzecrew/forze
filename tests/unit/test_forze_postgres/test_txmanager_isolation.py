@@ -18,6 +18,7 @@ from forze.application.execution.context.commit_state import (
 )
 from forze.application.execution.context.transaction import TransactionContext
 from forze_postgres.adapters.txmanager import PostgresTxManagerAdapter
+from forze_postgres.kernel.client import PostgresClient
 from forze_postgres.kernel.client import PostgresTransactionOptions
 
 # ----------------------- #
@@ -81,9 +82,16 @@ async def test_read_only_is_enforced_only_by_a_read_only_begin(
     assert adapter.read_only_enforced() is False
 
 
-@pytest.mark.parametrize(("in_outer_transaction", "marked"), [(False, False), (True, True)])
+@pytest.mark.parametrize(
+    ("in_outer_transaction", "detached", "marked"),
+    [
+        pytest.param(False, False, False, id="read-only-begin"),
+        pytest.param(True, False, True, id="savepoint"),
+        pytest.param(False, True, True, id="detached-statement"),
+    ],
+)
 async def test_a_read_only_root_marks_the_commit_point_unless_enforced(
-    in_outer_transaction: bool, marked: bool
+    in_outer_transaction: bool, detached: bool, marked: bool
 ) -> None:
     adapter, client = _adapter()
     client.in_transaction = in_outer_transaction
@@ -92,10 +100,24 @@ async def test_a_read_only_root_marks_the_commit_point_unless_enforced(
     reset_commit_started()
 
     async with tx.scope("pg", read_only=True):
-        pass
+        if detached:
+            # Statements in a detached scope autocommit outside the root, on any client.
+            async with PostgresClient().detached():
+                pass
 
     assert commit_started() is marked
     reset_commit_started()
+
+
+async def test_a_detached_scope_clears_the_claim_even_from_a_nested_scope() -> None:
+    adapter, _client = _adapter()
+
+    async with adapter.transaction(read_only=True):
+        async with adapter.transaction():  # a savepoint shares the root's record
+            async with PostgresClient().detached():
+                pass
+
+        assert adapter.read_only_enforced() is False
 
 
 async def test_isolation_maps_to_postgres_level() -> None:

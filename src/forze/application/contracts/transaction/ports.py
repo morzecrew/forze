@@ -204,21 +204,22 @@ class IsolationAware(Protocol):
 
 @runtime_checkable
 class ReadOnlyAware(Protocol):
-    """Opt-in extension for transaction managers whose backend can refuse writes.
+    """Opt-in extension for transaction managers whose store can refuse writes.
 
-    The kernel asks it inside a ``read_only=True`` root, just before the commit. A ``True``
-    answer means the root committed nothing, so its commit is no commit point: a deadline or
-    cancellation after it stays retryable instead of ``commit_ambiguous``. A manager that
-    does not implement this, or answers ``False``, has its read-only root marked like a
-    read-write one (fail-closed).
+    The kernel asks it inside a ``read_only=True`` root, just before the commit, and only
+    while the root is the sole route entered. A ``True`` answer means the root committed
+    nothing, so its commit is no commit point: a deadline or cancellation after it stays
+    retryable instead of ``commit_ambiguous``. A manager that does not implement this, or
+    answers anything but ``True``, has its read-only root marked like a read-write one
+    (fail-closed).
     """
 
     def read_only_enforced(self) -> bool:
-        """Whether the root transaction open on this task refuses every write at the backend.
+        """Whether the transaction's own store refuses writes in the root open on this task.
 
-        ``True`` only for a transaction the backend itself opened read-only (Postgres
+        ``True`` only when the store itself opened the transaction read-only (Postgres
         ``BEGIN … READ ONLY``), whatever path a write takes to it. A root that became a
         savepoint in an outer transaction, or one where ``read_only`` was only a hint, is
-        ``False``.
+        ``False``. Writes to other stores were never part of the transaction.
         """
         ...

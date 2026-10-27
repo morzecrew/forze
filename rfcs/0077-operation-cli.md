@@ -500,7 +500,10 @@ Execution log, Unit "RFC 0077 P3", entries D-AMB-1 to D-AMB-3.
   before the commit, whether the backend refused writes in the transaction it actually
   opened. Postgres answers yes only after a real `BEGIN … READ ONLY`, and the mock's
   `journal` and `strict` managers only for a root they opened read-only. A root nested in a
-  transaction opened outside forze is a savepoint and answers no. A root that answers yes
+  transaction opened outside forze is a savepoint and answers no. Postgres also answers no
+  once a `detached()` statement or another client's transaction could have committed
+  beside the root. The kernel asks only while the root is the only route entered, because
+  a nested scope on another route opens a transaction of its own. A root that answers yes
   marks nothing, so its query exits 6 (`deadline_exceeded`) or 130 or 143 (interrupted).
   Mongo, Firestore and Neo4j accept `read_only` without enforcing it, and forze's write
   guard covers a `QUERY` operation, not the transaction. They do not implement the
