@@ -80,7 +80,6 @@ from forze.application.contracts.realtime import RealtimeShard
 from .asyncapi import ACK_EVENT, asyncapi_document
 from .auth import build_socketio_connection_resolver, socketio_handshake
 from .connection import (
-    CONNECTION_SESSION_KEY,
     InMemoryRealtimePresence,
     RealtimeConnection,
     RealtimePresence,
@@ -133,6 +132,7 @@ from .observability import (
 )
 from .rebalance import connection_rebalance_lifecycle_step, connection_report
 from .routing import (
+    CONNECTION_SESSION_KEY,
     IDENTITY_SESSION_KEY,
     ExecutionContextFactoryPort,
     ForzeSocketIOAdapter,

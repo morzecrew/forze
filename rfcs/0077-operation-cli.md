@@ -518,6 +518,21 @@ below that layer and cannot import it.
     `authentication` with code `tenant_mismatch`. The call never runs tenant-less instead. A
     `requested` tenant equal to the key's own tenant is bound, as over HTTP. MCP never passes
     one.
+- **As built (P3).** FastAPI and the WS route moved each step that agrees with `ingress` on
+  every input they send. Socket.IO moved its metadata minting only. The execution-log unit
+  "RFC 0077 P3 — surfaces onto ingress" holds the comparison and a decision for each step.
+  - FastAPI's invocation middleware mints through `mint_invocation_metadata` and keeps its
+    advisory header parsing. Its API-key header goes through `authenticate_api_key` after
+    its own blank and `required` check. Tenant resolution, route validation, the sensitive
+    refusal and the middleware binding stay, because each differs in a way the move would
+    make visible.
+  - The WS route's command frames run through `invoke_at_ingress`. That is a behaviour
+    change: a frame now gets fresh invocation metadata, where before it had none.
+  - Socket.IO's events mint metadata through `mint_invocation_metadata` and bind it around
+    each run, the same behaviour change. Review found they bound no tenant, and they now
+    bind their connection's tenant as WS frames do. The adapter still dispatches through a
+    handler resolver, not a registry, so the bind-and-run did not move. Its payload
+    validation and identity ladder are shared with the WS route, below the execution layer.
 
 ### 5.8 Commands
 
@@ -778,6 +793,8 @@ answer took the recorded lean.
   - JSONL batch in one scope;
   - shell completion of operation names;
   - the surface field (its own RFC);
-  - moving FastAPI, Socket.IO and the WS route onto `ingress`;
+  - moving FastAPI, Socket.IO and the WS route onto `ingress`. FastAPI and the WS route
+    moved where a step agrees (§5.7, "As built (P3)"). Socket.IO mints its metadata, and its
+    bind-and-run waits for a registry-backed adapter;
   - deciding whether a cancellation after the commit point should report `commit_ambiguous`
     at every boundary, not only the CLI (§5.6).

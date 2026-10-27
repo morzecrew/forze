@@ -16,7 +16,7 @@ from forze.application.execution.context import (
     ExecutionContextFactory,
     InvocationMetadata,
 )
-from forze.base.primitives import uuid7
+from forze.application.execution.ingress import mint_invocation_metadata
 
 from .raw_websocket import refuse_raw_websocket, websocket_scope_refused
 
@@ -115,19 +115,11 @@ class InvocationMetadataMiddleware:
     # ....................... #
 
     def _decode_metadata(self, request: Request) -> InvocationMetadata:
-        execution_id = uuid7()
-        corr_raw = request.headers.get(self.corr_header)
-        caus_raw = request.headers.get(self.caus_header)
-
         # The headers are advisory client input: fall back to a fresh id
         # (or no causation) instead of failing the request on garbage values.
-        correlation_id = self._parse_uuid_header(corr_raw) or uuid7()
-        causation_id = self._parse_uuid_header(caus_raw)
-
-        return InvocationMetadata(
-            execution_id=execution_id,
-            correlation_id=correlation_id,
-            causation_id=causation_id,
+        return mint_invocation_metadata(
+            correlation_id=self._parse_uuid_header(request.headers.get(self.corr_header)),
+            causation_id=self._parse_uuid_header(request.headers.get(self.caus_header)),
         )
 
     # ....................... #

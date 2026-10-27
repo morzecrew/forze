@@ -9,14 +9,19 @@ exception is logged and acked with a generic internal-error payload (see
 returned as the handler's return value, which python-socketio delivers as the
 event acknowledgement when the client requested one.
 
+Each event also binds fresh invocation metadata (execution and correlation ids)
+around its run, as an HTTP request and a raw-WebSocket command frame do.
+
 Identity is bound per event through an optional ``identity_resolver``: it runs
 once at connect time (receiving the connection ``environ`` and ``auth``
 payload), the resolved :class:`~forze.application.contracts.authn.AuthnIdentity`
 is stored in the Socket.IO session, and each dispatched event binds it onto the
 invocation context (``ctx.inv_ctx.bind_identity(authn=...)``) around handler
-execution. Tenant resolution stays the ``context_factory``'s job. Without a
-resolver nothing changes: no connect handler is registered and no identity is
-bound.
+execution. Tenant resolution stays the ``context_factory``'s job, except on a
+connection ``attach_realtime_connection`` admitted, whose events also bind the
+tenant it resolved at connect; such a connection's identity is bound the same way, with or
+without an ``identity_resolver``. A connection admitted by neither path binds no identity,
+and without a resolver no connect handler is registered here.
 """
 
 from ._compat import require_socketio
@@ -41,7 +46,9 @@ from forze.application.contracts.authn import (
     current_authn_admission,
 )
 from forze.application.contracts.execution import Handler
+from forze.application.contracts.tenancy import TenantIdentity
 from forze.application.execution import ExecutionContext
+from forze.application.execution.ingress import mint_invocation_metadata
 from forze.application.integrations.realtime import RealtimeCommandRoute
 from forze.base.exceptions import CoreException, FrameErr, exc, guard_frame
 from forze.base.primitives import StrKey
@@ -63,6 +70,10 @@ AUTHN_ADMISSION_SESSION_KEY: Final[str] = "forze.authn_admission"
 """Socket.IO session key holding what the connect's credential was admitted as, which each
 command binds with the identity, so a credential minted over the socket is checked against the
 one that authenticated it."""
+
+CONNECTION_SESSION_KEY: Final[str] = "forze.realtime_connection"
+"""Session key holding the :class:`~forze_socketio.RealtimeConnection` for disconnect presence,
+and the tenant each command binds with the identity."""
 
 # ....................... #
 
@@ -383,9 +394,21 @@ async def _dispatch_event(
 
     if IDENTITY_SESSION_KEY in session:
         identity: AuthnIdentity | None = session[IDENTITY_SESSION_KEY]
-        binding = ctx.inv_ctx.bind_identity(authn=identity)
+        # The tenant ``attach_realtime_connection`` resolved at connect, bound as the WS route
+        # binds it; an ``identity_resolver`` connect stores no connection, so no tenant.
+        connection = session.get(CONNECTION_SESSION_KEY)
+        tenant = connection.tenant if connection is not None else None
+        binding = ctx.inv_ctx.bind_identity(
+            authn=identity,
+            tenant=TenantIdentity(tenant_id=tenant) if tenant is not None else None,
+        )
 
-    with binding, bind_authn_admission(session.get(AUTHN_ADMISSION_SESSION_KEY)):
+    # Each event is an invocation of its own, so it gets fresh metadata, as a WS frame does.
+    with (
+        ctx.inv_ctx.bind_metadata(metadata=mint_invocation_metadata()),
+        binding,
+        bind_authn_admission(session.get(AUTHN_ADMISSION_SESSION_KEY)),
+    ):
         op = operation_resolver(route.operation, ctx)
         result = await op(args)
 

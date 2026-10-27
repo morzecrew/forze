@@ -354,6 +354,42 @@ class TestResolveAuthnIngress:
         assert authn.identity.principal_id == uuid5(NAMESPACE_URL, "key:secret-key")
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize("raw", [b"", b"   "])
+    async def test_header_api_key_blank_is_no_identity_when_optional(self, raw: bytes) -> None:
+        # Checked before ingress's authenticate_api_key, which has no optional outcome.
+        ctx = context_from_deps(Deps.plain({AuthnDepKey: _ApiKeyAuthFactory()}))
+        req = Request(
+            {"type": "http", "path": "/", "method": "GET", "headers": [(b"x-api-key", raw)]}
+        )
+
+        authn = await resolve_authn_ingress(
+            HeaderApiKeyAuthn(authn_spec=_API_KEY_SPEC, header_name="X-API-Key"),
+            request=req,
+            ctx=ctx,
+        )
+
+        assert authn is None
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("raw", [b"", b"   "])
+    async def test_header_api_key_blank_is_refused_when_required(self, raw: bytes) -> None:
+        ctx = context_from_deps(Deps.plain({AuthnDepKey: _ApiKeyAuthFactory()}))
+        req = Request(
+            {"type": "http", "path": "/", "method": "GET", "headers": [(b"x-api-key", raw)]}
+        )
+
+        with pytest.raises(CoreException, match="required") as raised:
+            await resolve_authn_ingress(
+                HeaderApiKeyAuthn(
+                    authn_spec=_API_KEY_SPEC, header_name="X-API-Key", required=True
+                ),
+                request=req,
+                ctx=ctx,
+            )
+
+        assert raised.value.kind == "authentication"
+
+    @pytest.mark.asyncio
     async def test_cookie_token_uses_authentication_port(self) -> None:
         ctx = context_from_deps(Deps.plain({AuthnDepKey: _TokenAuthFactory()}))
         req = Request(

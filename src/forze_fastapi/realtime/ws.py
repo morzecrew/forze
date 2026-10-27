@@ -55,7 +55,8 @@ from forze.application.contracts.authn import (
 from forze.application.contracts.tenancy import TenantIdentity
 from forze.application.execution import ExecutionContext
 from forze.application.execution.context import ExecutionContextFactory
-from forze.application.execution.operations import FrozenOperationRegistry, run_operation
+from forze.application.execution.ingress import invoke_at_ingress, mint_invocation_metadata
+from forze.application.execution.operations import FrozenOperationRegistry
 from forze.application.integrations.realtime import (
     FRAME_UNSERIALIZABLE_CODE,
     REALTIME_ACK_EVENT,
@@ -276,12 +277,14 @@ async def _resolve(
     return connection, admission
 
 
+def _tenant(connection: WsConnection) -> TenantIdentity | None:
+    return TenantIdentity(tenant_id=connection.tenant) if connection.tenant is not None else None
+
+
 def _bind(ctx: ExecutionContext, connection: WsConnection) -> Any:
-    """Bind the connection's identity for a unit of work (mailbox, ack, dispatch)."""
+    """Bind the connection's identity for a unit of work (topic grant, mailbox, ack)."""
 
-    tenant = TenantIdentity(tenant_id=connection.tenant) if connection.tenant is not None else None
-
-    return ctx.inv_ctx.bind_identity(authn=connection.authn, tenant=tenant)
+    return ctx.inv_ctx.bind_identity(authn=connection.authn, tenant=_tenant(connection))
 
 
 def _log_server_error(core: CoreException | None, error: BaseException) -> None:
@@ -777,18 +780,20 @@ def attach_realtime_ws_route(
                             code="realtime_invalid_frame",
                         )
 
-                with (
-                    _bind(ctx, session.connection),
-                    bind_authn_admission(session.admission),
-                    ctx.inv_ctx.bind_idempotency(idempotency_key or None),
-                    # None is a no-op passthrough; a bound budget is tighten-only
-                    ctx.inv_ctx.bind_deadline(budget),
-                ):
-                    result = await run_operation(
+                # Each frame is an invocation of its own, with fresh metadata: the
+                # middlewares pass the socket's scope through, so nothing ambient has any.
+                with bind_authn_admission(session.admission):
+                    result = await invoke_at_ingress(
                         registry,  # type: ignore[arg-type] # attach refused commands without it
+                        ctx,
                         route.operation,
                         args,
-                        ctx,
+                        authn=session.connection.authn,
+                        tenant=_tenant(session.connection),
+                        metadata=mint_invocation_metadata(),
+                        idempotency_key=idempotency_key or None,
+                        # None is a no-op passthrough; a bound budget is tighten-only
+                        deadline=budget,
                     )
 
                 return route.parse_ack(result)
