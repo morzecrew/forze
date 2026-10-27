@@ -142,7 +142,7 @@ firestore = ["google-cloud-firestore>=2.21.0"]
 gcs = ["aiohttp>=3.11.0", "gcloud-aio-storage>=9.6.0", "python-magic>=0.4.27"]
 bigquery = ["aiohttp>=3.11.0", "gcloud-aio-bigquery>=7.1.0"]
 clickhouse = ["clickhouse-connect[async]>=1.0.0"]
-duckdb = ["duckdb>=1.1.0", "pyarrow>=17.0.0", "pyarrow-stubs>=20.0.0.20260625"]
+duckdb = ["duckdb>=1.1.0,<2", "pyarrow>=17.0.0", "pyarrow-stubs>=20.0.0.20260625"]
 rabbitmq = ["aio-pika>=9.6.1", "yarl>=1.24.5"]
 kafka = ["aiokafka>=0.14.0"]
 socketio = [
