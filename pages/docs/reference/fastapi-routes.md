@@ -659,3 +659,8 @@ yourself. An operation with no tags is in no group: Scalar still lists it, Redoc
 so tag every route. A later call with `tag_groups` replaces the groups; one without leaves
 them as they are. `register_scalar_docs` needs no setting, since Scalar reads the groups
 from the schema.
+
+`register_scalar_docs` points Scalar at the URL the app serves its document at
+(`app.openapi_url`, prefixed with the request's `root_path`), so a versioned
+`FastAPI(openapi_url="/v1/openapi.json")` needs nothing extra. Pass `openapi_url=` for a
+document another route serves; an app with `openapi_url=None` must pass one.
