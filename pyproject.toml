@@ -289,6 +289,7 @@ markers = [
     "perf: Performance benchmark (excluded from default just test; not all perf tests need Docker)",
     "perf_gate: In-process, deterministic benchmark gated for regressions in CI (same-runner A/B vs merge-base)",
     "fuzz: Extended DST fuzz over many seeds (excluded from default just test; run via just fuzz, e.g. nightly)",
+    "lake_slow: Lake credential expiry against the vending stack, RFC 0078 battery 11b/11c (waits out a 900 s vended credential; excluded from default just test; run via just lake-slow, scheduled in lake-expiry.yml)",
     "integration: Integration test",
     "unit: Unit test",
     "asyncio: Async test",
