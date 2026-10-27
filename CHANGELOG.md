@@ -37,6 +37,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **A principal in several tenants reaches the tenant selector after a password login** (**behaviour change**). With no `tid` the resolver binds no tenant, as for no membership, instead of refusing every request with `tenant_ambiguous`. Tenant-scoped work still refuses it with `tenant_required`.
 
+- **`TenancyDepsModule` refuses a `tenant_resolvers` override for a route `tenant_resolver` does not name** (**behaviour change**). It registered nothing, so the first request failed with `Tenant resolver is not registered`; now the module fails when built.
+
 - **A Postgres dynamic read no longer collapses duplicate column names.** `SELECT a.id, b.id` came back as one `id` holding the second value. A result with rows now fails with `dynamic_read_statement_invalid`, naming the duplicates; an empty one still returns no rows.
 
 - **Two quick `SIGINT`s to `serve_uvicorn` now give the drain phases up.** A second one handled in the same loop turn as the first cancelled the drain before it started, so the forced exit still ran every phase at length in teardown.

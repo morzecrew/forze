@@ -12,6 +12,7 @@ from forze.application.contracts.tenancy import (
     TenantResolverDepKey,
     TenantResolverDepPort,
 )
+from forze.base.exceptions import exc
 from forze.base.primitives import MappingConverter, StrKey, StrKeyMapping
 from forze_identity._routes import normalize_route_set as _normalize_route_set
 
@@ -41,7 +42,11 @@ class TenancyDepsModule(DepsModule):
         default=None,
         converter=MappingConverter.to_str_key_frozen,  # type: ignore[misc]
     )
-    """Optional per-route tenant resolver overrides (e.g. local file/env backend)."""
+    """Optional per-route tenant resolver overrides (e.g. local file/env backend).
+
+    Each key must also be named in :attr:`tenant_resolver`; any other key is refused at
+    construction rather than silently registering nothing.
+    """
 
     tenant_provisioner: TenantProvisionerPort | None = attrs.field(default=None)
     """Optional infrastructure provisioner run on ``provision_tenant`` for management routes.
@@ -50,6 +55,17 @@ class TenancyDepsModule(DepsModule):
     per-integration provisioners (e.g. an object-storage bucket provisioner) so onboarding a
     tenant also creates its per-tenant resources.
     """
+
+    # ....................... #
+
+    def __attrs_post_init__(self) -> None:
+        undeclared = set(self.tenant_resolvers or {}) - _normalize_route_set(self.tenant_resolver)
+
+        if undeclared:
+            raise exc.configuration(
+                f"tenant_resolvers overrides routes {sorted(undeclared)!r} that tenant_resolver "
+                "does not name; add them to tenant_resolver or the override is never registered.",
+            )
 
     # ....................... #
 
