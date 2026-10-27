@@ -7327,7 +7327,15 @@ normal pipeline.</p>
 <p><code>attach_tenancy_routes</code> projects the self-service tenant-selector registry — fixed
 paths, no style choice: <code>GET /tenants</code> (the caller's tenants), <code>POST
 /tenants/{id}/activate</code> (switch the active tenant), <code>DELETE /tenants/{id}</code> (204,
-leave). <code>attach_tenancy_admin_routes</code> projects the admin plane: <code>POST /tenants</code>
+leave). In <a href="#cookie-mode">cookie mode</a>, pass the same carrier as <code>cookies=</code>: <code>/activate</code>
+then sets and rotates both cookies and strips the token strings from its body, behind the
+gate login applies. It authenticates from the access cookie, so leave it out of
+<code>anonymous_paths</code>. The access cookie's <code>access_path</code> must cover the tenancy routes' mount,
+or the switch answers 401. The refresh cookie's path need not cover it: the response sets
+that cookie at its own path, and the route never reads it. The gate follows the <code>csrf</code> of
+the <code>CookieTokenAuthn</code> reading the access cookie: <code>csrf=None</code> on every such ingress turns it
+off for the switch too, as for login.
+<code>attach_tenancy_admin_routes</code> projects the admin plane: <code>POST /tenants</code>
 (201, create), <code>GET /tenants/{id}/members</code>, <code>POST /tenants/{id}/deactivate</code> (204),
 <code>POST /memberships</code> (204, invite) and <code>DELETE /memberships</code> (204, remove). Admin
 operations ship without hooks bound — guard them with <code>AuthnRequired</code> + authz hooks

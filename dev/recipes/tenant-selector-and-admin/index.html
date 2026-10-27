@@ -6684,6 +6684,20 @@ session's tenant, or its lack of one.
 Requires a <code>TenancyDepsModule</code> wiring a <code>tenant_resolver</code> <strong>and</strong> <code>tenant_management</code> route
 (see <a href="../authn-authz-tenancy-fastapi/#wire-the-planes">Wire the planes</a>), and a transaction
 manager on the registry's <code>tx_route</code> (<code>"default"</code>), which the switch issues its session in.</p>
+<p>On <a href="../../reference/fastapi-routes/#cookie-mode">cookie auth</a> the browser never sees the new
+token pair, so pass <code>attach_tenancy_routes</code> the <code>AuthnCookieCarrier</code> you gave
+<code>attach_authn_routes</code>:</p>
+<div class="highlight"><pre><span></span><code><span class="n">attach_tenancy_routes</span><span class="p">(</span>
+    <span class="n">router</span><span class="p">,</span>
+    <span class="n">registry</span><span class="o">=</span><span class="n">build_tenancy_registry</span><span class="p">(</span><span class="n">spec</span><span class="p">)</span><span class="o">.</span><span class="n">freeze</span><span class="p">(),</span>
+    <span class="n">ns</span><span class="o">=</span><span class="n">spec</span><span class="o">.</span><span class="n">default_namespace</span><span class="p">,</span>
+    <span class="n">ctx_dep</span><span class="o">=</span><span class="n">ctx_dep</span><span class="p">,</span>
+    <span class="n">cookies</span><span class="o">=</span><span class="n">cookies</span><span class="p">,</span>
+<span class="p">)</span>
+</code></pre></div>
+<p>The switch then rotates both <code>HttpOnly</code> cookies and strips the tokens from its body, as
+<code>/login</code> does, behind the same CSRF gate. It authenticates from the access cookie, so it does
+not belong in <code>anonymous_paths</code>.</p>
 <h2 id="tenant-administration">Tenant administration<a class="headerlink" href="#tenant-administration" title="Permanent link">&para;</a></h2>
 <p>The selector is <strong>self-service</strong> — every op acts on the caller's <em>own</em> membership. Managing
 <em>other</em> tenants and members (create an org, invite/remove a member, list members, deactivate a
