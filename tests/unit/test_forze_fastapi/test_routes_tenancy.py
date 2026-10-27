@@ -30,6 +30,7 @@ from forze_fastapi.routes import (
     attach_tenancy_routes,
     id_endpoint,
 )
+from forze_fastapi.routes._attach import PATH_PARAMS_ATTR
 from forze_fastapi.routes.authn import _cookie_token_endpoint
 from forze_fastapi.security import (
     AuthnCookieCarrier,
@@ -496,6 +497,16 @@ class TestTenancyCookieMode:
                 ctx_dep=lambda: None,
                 bindings={TenancyKernelOp.SWITCH_TENANT: binding},
             )
+
+    def test_the_cookie_builder_leaves_an_undeclared_builder_unchecked(self) -> None:
+        # A builder of your own without the declaration is not checked, so the wrapper
+        # must not invent one for it.
+        def own_builder(runner: Any, input_type: Any, op: str) -> Any:
+            return id_endpoint(runner, input_type, op)
+
+        wrapped = _cookie_token_endpoint(_carrier(), own_builder)
+
+        assert not hasattr(wrapped, PATH_PARAMS_ATTR)
 
 
 class TestTenancyBearerMode:
