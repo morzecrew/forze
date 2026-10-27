@@ -67,7 +67,8 @@ server = build_mcp_server(
   most of a list tool's schema, out of every tool: each `filters` (and an aggregate's
   `$having`) becomes a plain object, and the grammar is added once to the server's
   instructions and published at `forze://filter-grammar` (`FILTER_GRAMMAR_URI`). Calls
-  are validated against the full grammar either way.
+  are validated against the full grammar either way. The
+  [agent-tool bridge](../data-events/agent-tools.md) takes the same option.
 - `output_schemas=False` drops each tool's output schema. A call still returns its result
   as text, but a list or scalar result then carries no structured content, and an object
   comes back as a plain mapping rather than a typed model.

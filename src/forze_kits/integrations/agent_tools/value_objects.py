@@ -128,6 +128,11 @@ class OperationToolset:
     promise, not an authorization boundary — in-process code that could edit it could call
     ``run_operation`` directly."""
 
+    filter_grammar: str | None = None
+    """The filter grammar, stated once for the system prompt, when the palette was built
+    with ``shared_filter_grammar=True`` and a tool in it takes a filter; ``None`` otherwise,
+    when each filter-accepting def carries the grammar itself."""
+
     # ....................... #
 
     @property

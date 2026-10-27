@@ -111,6 +111,25 @@ It is the same sentence the MCP surface gives an external agent, from one shared
 builder, so the two surfaces cannot describe one read model differently.
 [Build a question-answering agent](../recipes/query-agent.md) puts it to work.
 
+The [filter grammar](../reference/query-syntax.md) itself is most of a list tool's
+schema, and it is the same in every filter-accepting tool, so a palette with ten of
+them sends it ten times per request. `shared_filter_grammar=True` sends it once:
+
+```python
+from forze_kits.integrations.agent_tools import operation_tools
+
+tools = operation_tools(
+    registry, include=["notes.list", "notes.agg_list"], shared_filter_grammar=True
+)
+system_prompt = f"You answer questions about notes.\n\n{tools.filter_grammar}"
+```
+
+Each `filters` (and an aggregate's `$having`) becomes a plain object pointing at the
+system prompt, the same stripping the [MCP](../integrations/mcp.md) option of that name
+applies, and `tools.filter_grammar` is the text to put there. It is `None` when the
+option is off or no tool in the palette takes a filter. The descriptions keep their
+filter surface, and a call is validated against the full grammar either way.
+
 ## A tool call is simulable, because it is an operation
 
 Nothing about the bridge is deterministic-simulation-aware, and it does not need to be. A

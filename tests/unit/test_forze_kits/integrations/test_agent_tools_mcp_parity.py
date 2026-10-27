@@ -11,6 +11,7 @@ is the thing worth pinning; byte equality would be a test of FastMCP's schema ge
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 import pytest
@@ -22,7 +23,7 @@ from fastmcp import Client, FastMCP
 from pydantic import BaseModel
 
 from forze.application.contracts.execution import Handler
-from forze.application.contracts.querying import describe_query_discovery
+from forze.application.contracts.querying import describe_query_discovery, filter_grammar
 from forze.application.execution import OperationDescriptor
 from forze.application.execution.operations.registry import (
     FrozenOperationRegistry,
@@ -250,3 +251,41 @@ class TestTheFilterSurfaceIsOneSentence:
 
         assert advertised == set(QUERY_POLICY.filterable)
         assert "body" not in advertised
+
+
+class TestTheFilterGrammarIsSharedTheSameWay:
+    """Both surfaces strip through one function and state one grammar text.
+
+    MCP inlines its definitions where the bridge keeps ``$defs``, so the comparison is the
+    shape a stripped filter takes and the grammar each surface states in its place.
+    """
+
+    @pytest.mark.parametrize("kernel_op", [DocumentKernelOp.LIST, DocumentKernelOp.AGG_LIST])
+    async def test_a_filter_strips_to_the_same_shape(self, kernel_op: DocumentKernelOp) -> None:
+        registry = query_registry()
+        op = str(QUERY_NS.key(kernel_op))
+
+        server = FastMCP("notes")
+        register_tools(server, registry, _ctx_factory, shared_filter_grammar=True)
+
+        async with Client(server) as client:
+            mcp_tool = {t.name: t for t in await client.list_tools()}[op]
+            instructions = client.instructions or ""
+
+        bridged = operation_tools(registry, include=[op], shared_filter_grammar=True)
+
+        def shape(schema: dict[str, Any]) -> list[dict[str, Any]]:
+            options = schema["properties"]["filters"]["anyOf"]
+
+            return [{k: v for k, v in o.items() if k != "description"} for o in options]
+
+        grammar = filter_grammar()
+        roots = [option["$ref"] for option in json.loads(grammar)["anyOf"]]
+
+        assert shape(bridged.defs[0].input_schema) == shape(mcp_tool.input_schema)
+        assert shape(mcp_tool.input_schema) == [{"type": "object"}, {"type": "null"}]
+        assert not any(root in json.dumps(bridged.defs[0].input_schema) for root in roots)
+        assert not any(root in json.dumps(mcp_tool.input_schema) for root in roots)
+        assert grammar in instructions
+        assert bridged.filter_grammar is not None
+        assert grammar in bridged.filter_grammar

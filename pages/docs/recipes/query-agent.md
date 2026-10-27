@@ -156,6 +156,9 @@ marker does not cover it.
   included — around 600 characters for a two-field model, in every tool the palette
   carries. A policy keeps the description small as well as the surface narrow, which is
   the same reason to write one twice over.
+- **The filter grammar is repeated in every filter tool's schema** unless the palette is
+  built with `shared_filter_grammar=True`, which moves it to `tools.filter_grammar` for
+  the system prompt — see [Agent tools](../data-events/agent-tools.md).
 
 - **A read-only palette is the default.** `operation_tools` refuses a command operation
   unless you ask for a command-capable toolset, so an agent that must act is a visible

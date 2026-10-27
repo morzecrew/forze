@@ -14,7 +14,12 @@ apart: they read the same type.
 import re
 from collections.abc import Callable, Iterable, Mapping
 
-from forze.application.contracts.querying import describe_query_discovery
+from forze.application.contracts.querying import (
+    describe_query_discovery,
+    filter_grammar,
+    takes_filter_expression,
+    without_filter_grammar,
+)
 from forze.application.execution.operations import (
     FrozenOperationRegistry,
     OperationCatalogEntry,
@@ -28,6 +33,9 @@ from .value_objects import OperationToolset, ToolDef
 
 _TOOL_NAME = re.compile(r"[A-Za-z0-9_-]{1,64}")
 """A tool name OpenAI-style function calling and Anthropic's Messages API both accept."""
+
+_GRAMMAR_POINTER = "Its grammar is in the system prompt."
+"""What a filter expression stripped of the grammar says in its place."""
 
 # ....................... #
 
@@ -99,6 +107,18 @@ def _checked_names(names: Mapping[str, object]) -> dict[str, str]:
 # ....................... #
 
 
+def _grammar_note() -> str:
+    """The filter grammar as a palette states it once, worded for a system prompt."""
+
+    return (
+        "Every filter expression a tool takes (each `filters` argument and `$having` clause) "
+        f"follows this JSON schema:\n{filter_grammar()}"
+    )
+
+
+# ....................... #
+
+
 def _input_schema(entry: OperationCatalogEntry) -> JsonDict:
     """JSON Schema of *entry*'s input DTO, or ``{}`` when the operation takes no input."""
 
@@ -152,6 +172,7 @@ def operation_tools(
     include: Iterable[StrKey],
     read_only: bool = True,
     name: Callable[[str], str] = provider_safe_tool_name,
+    shared_filter_grammar: bool = False,
 ) -> OperationToolset:
     """Project the allowlisted operations of *registry* into a tool palette.
 
@@ -163,6 +184,11 @@ def operation_tools(
         not merely denied at dispatch — an agent's tools are its capabilities.
     :param name: The naming policy, operation key → tool name. The default,
         :func:`provider_safe_tool_name`, spells ``orders.list`` as ``orders__list``.
+    :param shared_filter_grammar: State the filter grammar once instead of in every
+        filter-accepting tool: each ``filters`` (and aggregate ``$having``) becomes a plain
+        object in the tool's schema, as on MCP, and the grammar is
+        :attr:`~.value_objects.OperationToolset.filter_grammar`, for the system prompt.
+        Dispatch validates a call against the full grammar either way.
     :returns: The palette: :attr:`~.value_objects.OperationToolset.defs` for the agent's
         SDK, and the bindings dispatch resolves names against.
     :raises CoreException: When *include* is empty, names an operation the registry does
@@ -228,15 +254,30 @@ def operation_tools(
     # configuration error rather than fail on hashing.
     policy_names: dict[str, object] = {op: name(op) for op in entries}
     names = _checked_names(policy_names)
+    schemas = {op: _input_schema(entry) for op, entry in entries.items()}
+    # Only a tool that takes a filter changes; the grammar is stated when one does.
+    filtered = [
+        op
+        for op, schema in schemas.items()
+        if shared_filter_grammar and takes_filter_expression(schema)
+    ]
+
+    for op in filtered:
+        schemas[op] = without_filter_grammar(schemas[op], pointer=_GRAMMAR_POINTER)
 
     defs = tuple(
         ToolDef(
             name=names[op],
             description=_description(entry),
-            input_schema=_input_schema(entry),
+            input_schema=schemas[op],
         )
         for op, entry in entries.items()
     )
     bindings = {names[op]: entry for op, entry in entries.items()}
 
-    return OperationToolset(registry=registry, defs=defs, bindings=bindings)
+    return OperationToolset(
+        registry=registry,
+        defs=defs,
+        bindings=bindings,
+        filter_grammar=_grammar_note() if filtered else None,
+    )

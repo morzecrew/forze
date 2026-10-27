@@ -7,9 +7,7 @@ fields at top level (a flat signature is synthesized so MCP clients see a natura
 contract); the result is whatever the operation returns, serialized by FastMCP.
 """
 
-import functools
 import inspect
-import json
 import warnings
 import weakref
 from collections.abc import Awaitable, Callable, Iterable
@@ -20,10 +18,13 @@ from fastmcp.exceptions import ToolError
 from fastmcp.resources import Resource
 from fastmcp.tools import FunctionTool
 from mcp.types import ToolAnnotations
-from pydantic import TypeAdapter
 from pydantic.json_schema import PydanticJsonSchemaWarning
 
-from forze.application.contracts.querying import QueryFilterExpression, describe_query_discovery
+from forze.application.contracts.querying import (
+    describe_query_discovery,
+    filter_grammar,
+    without_filter_grammar,
+)
 from forze.application.execution.context import ExecutionContextFactory
 from forze.application.execution.ingress import refuse_sensitive
 from forze.application.execution.operations import (
@@ -44,6 +45,9 @@ FILTER_GRAMMAR_URI: Final = "forze://filter-grammar"
 
 _GRAMMAR_PUBLISHED: Final[weakref.WeakSet[FastMCP]] = weakref.WeakSet()
 """The servers :func:`register_tools` has published the filter grammar resource on."""
+
+_GRAMMAR_POINTER: Final = f"Its grammar is in the server instructions and at {FILTER_GRAMMAR_URI}."
+"""What a filter expression stripped of the grammar says in its place."""
 
 from ._errors import client_safe_error
 from .dispatch import invoke_operation
@@ -196,91 +200,10 @@ def _tool_description(entry: OperationCatalogEntry) -> str | None:
 # ....................... #
 
 
-@functools.cache
-def _filter_grammar() -> str:
-    """The filter expression's JSON schema, as compact JSON: the grammar every
-    filter-accepting tool takes."""
-
-    return json.dumps(TypeAdapter(QueryFilterExpression).json_schema(), separators=(",", ":"))
-
-
-def _refs(node: Any) -> set[str]:
-    """The ``$defs`` entries *node* references by ``$ref``, by name."""
-
-    if isinstance(node, list):
-        return set().union(*(_refs(item) for item in node))  # pyright: ignore[reportUnknownVariableType]
-
-    if not isinstance(node, dict):
-        return set()
-
-    found: set[str] = set().union(*(_refs(value) for value in node.values()))  # pyright: ignore[reportUnknownVariableType]
-    ref = node.get("$ref")  # pyright: ignore[reportUnknownVariableType]
-
-    if isinstance(ref, str) and ref.startswith("#/$defs/"):
-        found.add(ref.removeprefix("#/$defs/"))
-
-    return found
-
-
-def _without_filter_grammar(schema: dict[str, Any]) -> dict[str, Any]:
-    """*schema* with each filter expression a plain object pointing at the shared grammar,
-    and the definitions nothing references any more dropped.
-
-    A filter expression is the ``anyOf`` of the grammar's root definitions, wherever it sits:
-    a tool's ``filters``, or ``$having`` inside an aggregate. A schema that names the
-    grammar's definitions differently (pydantic qualifies a name another model also uses) is
-    left as it is, whole.
-    """
-
-    roots = {option["$ref"] for option in json.loads(_filter_grammar())["anyOf"]}
-    pointer = f"Its grammar is in the server instructions and at {FILTER_GRAMMAR_URI}."
-
-    def strip(node: Any) -> Any:
-        if isinstance(node, list):
-            return [strip(item) for item in node]  # pyright: ignore[reportUnknownVariableType]
-
-        if not isinstance(node, dict):
-            return node
-
-        out: dict[str, Any] = {key: strip(value) for key, value in node.items()}  # pyright: ignore[reportUnknownVariableType]
-        options = out.get("anyOf")
-
-        if isinstance(options, list):
-            refs = {option.get("$ref") for option in options if isinstance(option, dict)}  # pyright: ignore[reportUnknownVariableType]
-
-            if roots <= refs:
-                rest = [option for option in options if option.get("$ref") not in roots]  # pyright: ignore[reportUnknownVariableType]
-                del out["anyOf"]
-                plain = {"type": "object", "description": f"A filter expression. {pointer}"}
-
-                if rest:
-                    return {**out, "anyOf": [plain, *rest]}
-
-                own = out.get("description")
-
-                return {**out, **plain, **({"description": f"{own} {pointer}"} if own else {})}
-
-        return out
-
-    stripped = strip(schema)
-    defs: dict[str, Any] = stripped.pop("$defs", {})
-    kept: dict[str, Any] = {}
-    pending = _refs(stripped)
-
-    while pending:
-        name = pending.pop()
-
-        if name in defs and name not in kept:
-            kept[name] = defs[name]
-            pending |= _refs(defs[name])
-
-    return {**stripped, "$defs": kept} if kept else stripped
-
-
 def _share_filter_grammar(server: FastMCP) -> None:
     """State the filter grammar once on *server*: after its instructions, and as a resource."""
 
-    grammar = _filter_grammar()
+    grammar = filter_grammar()
 
     # Published once per server, tracked here, as FastMCP has no synchronous look-up. A
     # resource the caller put at the same URI meets the server's own ``on_duplicate``, so it
@@ -391,7 +314,7 @@ def register_tools(
             )
 
         if shared_filter_grammar:
-            parameters = _without_filter_grammar(tool.parameters)
+            parameters = without_filter_grammar(tool.parameters, pointer=_GRAMMAR_POINTER)
 
             if parameters != tool.parameters:
                 tool = tool.model_copy(update={"parameters": parameters})

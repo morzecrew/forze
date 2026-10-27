@@ -6,14 +6,17 @@ clause fails here rather than drifting. What this module owns is the mock's prov
 plus the projection facts that belong to the palette rather than to either engine.
 """
 
+import json
+
 import pytest
+from jsonschema import Draft202012Validator
 
 from forze.application.contracts.document import DocumentSpec
-from forze.application.contracts.querying import QueryFieldPolicy
+from forze.application.contracts.querying import QueryFieldPolicy, filter_grammar
 from forze.application.execution import ExecutionRuntime
 from forze.application.execution.deps import DepsRegistry
 from forze_kits.aggregates.document import DocumentKernelOp, build_document_registry
-from forze_kits.integrations.agent_tools import operation_tools
+from forze_kits.integrations.agent_tools import ToolUse, dispatch_tool_use, operation_tools
 from forze_mock import MockDepsModule
 from tests.support.agent_tools_query import (
     AGENT_TOOLS_QUERY_BATTERY,
@@ -145,3 +148,80 @@ class TestThePolicyIsWhatTheBatteryThinksItIs:
         # would make the refusal check pass without the allow-set ever being consulted.
         assert "body" in QueryNoteRead.model_fields
         assert "body" not in QUERY_POLICY.filterable
+
+
+# ....................... #
+
+_FILTER_OPS = [QUERY_NS.key(DocumentKernelOp.LIST), QUERY_NS.key(DocumentKernelOp.AGG_LIST)]
+_GRAMMAR_DEFS = json.loads(filter_grammar())["$defs"]
+
+
+def _carries_grammar(schema: object) -> bool:
+    return any(f'"#/$defs/{name}"' in json.dumps(schema) for name in _GRAMMAR_DEFS)
+
+
+class TestTheSharedFilterGrammar:
+    def test_off_by_default_every_filter_tool_carries_it(self) -> None:
+        registry = query_registry()
+        default = operation_tools(registry, include=_FILTER_OPS)
+
+        off = operation_tools(registry, include=_FILTER_OPS, shared_filter_grammar=False)
+
+        assert default.defs == off.defs
+        assert default.filter_grammar is None
+        assert all(_carries_grammar(tool.input_schema) for tool in default.defs)
+
+    def test_shared_no_tool_carries_it_and_the_toolset_states_it_once(self) -> None:
+        # `filters` and the aggregate `$having` alike: the agg tool carries both.
+        tools = operation_tools(query_registry(), include=_FILTER_OPS, shared_filter_grammar=True)
+
+        assert not any(_carries_grammar(tool.input_schema) for tool in tools.defs)
+        assert tools.filter_grammar is not None
+        assert tools.filter_grammar.count(filter_grammar()) == 1
+        filters = tools.defs[0].input_schema["properties"]["filters"]
+        assert filters["anyOf"][0] == {
+            "type": "object",
+            "description": "A filter expression. Its grammar is in the system prompt.",
+        }
+
+    def test_descriptions_keep_their_filter_surface(self) -> None:
+        # The field allow-set is per tool; only the grammar, which is the same for all, moves.
+        registry = query_registry()
+        shared = operation_tools(registry, include=_FILTER_OPS, shared_filter_grammar=True)
+
+        assert [t.description for t in shared.defs] == [
+            t.description for t in operation_tools(registry, include=_FILTER_OPS).defs
+        ]
+
+    def test_a_palette_with_no_filter_has_no_grammar_to_state(self) -> None:
+        registry = query_registry()
+        get = [QUERY_NS.key(DocumentKernelOp.GET)]
+        tools = operation_tools(registry, include=get, shared_filter_grammar=True)
+
+        assert tools.filter_grammar is None
+        assert tools.defs == operation_tools(registry, include=get).defs
+
+    def test_the_stripped_schemas_are_still_json_schema(self) -> None:
+        tools = operation_tools(query_registry(), include=_FILTER_OPS, shared_filter_grammar=True)
+
+        for tool in tools.defs:
+            Draft202012Validator.check_schema(tool.input_schema)
+
+        Draft202012Validator(tools.defs[0].input_schema).validate(
+            {"filters": {"$values": {"category": "green"}}}
+        )
+
+    async def test_a_call_is_still_validated_against_the_full_grammar(self) -> None:
+        tools = operation_tools(query_registry(), include=_FILTER_OPS, shared_filter_grammar=True)
+        runtime = ExecutionRuntime(deps=DepsRegistry.from_modules(MockDepsModule()).freeze())
+
+        async with runtime.scope():
+            result = await dispatch_tool_use(
+                ToolUse(id="q", name=tools.names[0], input={"filters": {"$values": "green"}}),
+                ctx=runtime.get_context(),
+                tools=tools,
+            )
+
+        assert result.is_error is True
+        assert isinstance(result.content, dict)
+        assert result.content["code"] == "agent_tools_invalid_arguments"
