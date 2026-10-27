@@ -471,9 +471,10 @@ Four things to know before you wire it:
 - **The tenant is the resolver's binding**, looked up on the authn spec's own route
   (the shipped tenancy module registers it there), falling back to the issuer's own
   claim; the `X-Tenant-Id` header is *not* honored here, because an upgrade's headers
-  are set by the client being authenticated. Once a resolver is registered on that
-  route, a connection that resolves no tenant is refused with `tenant_required`, which
-  asks the client to select a tenant (a token refresh does not clear it).
+  are set by the client being authenticated. Once the deployment registers a tenant
+  resolver on any route, not only this one, a connection that resolves no tenant is
+  refused with `tenant_required`, which asks the client to select a tenant (a token
+  refresh does not clear it).
 
 `forze_socketio.build_socketio_connection_resolver` is the same ladder over a
 Socket.IO handshake, so a deployment serving both transports authenticates by one set
