@@ -88,6 +88,37 @@ def test_adapt_value_for_write_coerces_numeric_and_preserves_null() -> None:
     assert gw.adapt_value_for_write("12.5", t=numeric_t) == 12.5
     assert gw.adapt_value_for_write(None, t=numeric_t) is None
 
+def test_adapt_value_for_write_wraps_each_element_of_a_json_array() -> None:
+    from psycopg.types.json import Json, Jsonb
+
+    gw, _ = _build_gateway()
+
+    for base, wrapper in (("jsonb", Jsonb), ("json", Json)):
+        out = gw.adapt_value_for_write(
+            [{"a": 1}, [2]], t=PostgresType(base=base, is_array=True, not_null=False)
+        )
+
+        assert [type(x) for x in out] == [wrapper, wrapper], base
+        assert [x.obj for x in out] == [{"a": 1}, [2]], base
+
+def test_adapt_value_for_write_keeps_a_none_json_array_element_an_sql_null() -> None:
+    gw, _ = _build_gateway()
+    out = gw.adapt_value_for_write(
+        [None, {"a": 1}], t=PostgresType(base="jsonb", is_array=True, not_null=False)
+    )
+
+    assert out[0] is None and out[1].obj == {"a": 1}
+
+@pytest.mark.parametrize("value", [{"a": 1}, "ab"])
+def test_adapt_value_for_write_refuses_a_json_array_value_that_is_not_a_list(value) -> None:
+    gw, _ = _build_gateway()
+
+    for base in ("jsonb", "json"):
+        with pytest.raises(CoreException, match=rf"{base}\[\] column takes a list"):
+            gw.adapt_value_for_write(
+                value, t=PostgresType(base=base, is_array=True, not_null=False)
+            )
+
 def test_json_write_dumps_stores_decimal_exact_and_rejects_unknown_types() -> None:
     """The jsonb write encoder stores a Decimal as its exact string form; anything
     else orjson cannot encode stays a hard error, never a silent stringification."""
@@ -560,3 +591,19 @@ def test_a_column_compares_unless_its_equality_differs_from_the_domains() -> Non
     assert _comparable(t("text")) and _comparable(t("numeric(10,2)")) and _comparable(t("json"))
     assert not _comparable(t("citext")) and not _comparable(t("character(3)"))
     assert not _comparable(t("xml")) and not _comparable(t("json", is_array=True))
+
+
+def test_a_jsonb_array_compares_as_it_is_and_a_json_array_falls_back() -> None:
+    from forze_postgres.kernel.catalog.introspect import PostgresType
+    from forze_postgres.kernel.gateways.write import _comparable, _compared
+
+    jsonb_array = PostgresType(base="jsonb", is_array=True, not_null=False)
+    json_array = PostgresType(base="json", is_array=True, not_null=False)
+    json = PostgresType(base="json", is_array=False, not_null=False)
+
+    # jsonb has equality, so a jsonb[] stays on the set-based path, compared uncast.
+    assert _comparable(jsonb_array)
+    assert _compared("t", "tags", jsonb_array).as_string() == '"t"."tags"'
+    # json has none: a json[] column takes the domain path; a json one compares as jsonb.
+    assert not _comparable(json_array)
+    assert _compared("t", "doc", json).as_string() == '"t"."doc"::jsonb'

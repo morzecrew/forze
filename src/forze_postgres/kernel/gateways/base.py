@@ -445,12 +445,27 @@ class PostgresGateway[M: BaseModel](
     # ....................... #
 
     def adapt_value_for_write(self, v: Any, *, t: PostgresType | None) -> Any:
-        # sourcery skip: remove-redundant-if, remove-unreachable-code
         if t is None:
             return v
 
         if v is None:
             return None
+
+        # Before the array branch: a ``jsonb[]`` / ``json[]`` element needs its wrapper too.
+        if t.base in {"jsonb", "json"}:
+            wrapper = Jsonb if t.base == "jsonb" else Json
+
+            if not t.is_array:
+                return wrapper(v, dumps=_json_write_dumps)
+
+            # A mapping would be written as its keys, a string as its characters.
+            if not isinstance(v, (list, tuple)):
+                raise exc.configuration(
+                    f"A {t.base}[] column takes a list, not {type(v).__name__}."
+                )
+
+            # A ``None`` element is an SQL ``NULL`` in the array, not a JSON ``null``.
+            return [None if x is None else wrapper(x, dumps=_json_write_dumps) for x in v]
 
         if t.is_array:
             elem_t = PostgresType(base=t.base, is_array=False, not_null=True)
@@ -459,14 +474,6 @@ class PostgresGateway[M: BaseModel](
                 t=elem_t,
                 raise_on_scalar_t=False,
             )
-
-        if t.base in {"jsonb", "json"}:
-            wrapper = Jsonb if t.base == "jsonb" else Json
-
-            if not t.is_array:
-                return wrapper(v, dumps=_json_write_dumps)
-
-            return [wrapper(x, dumps=_json_write_dumps) for x in v]
 
         return _WRITE_VALUE_COERCER.scalar(v, t=t)
 
