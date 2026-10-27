@@ -33,10 +33,7 @@ class LocalTenantResolver(TenantResolverPort):
         *,
         requested_tenant_id: UUID | None = None,
     ) -> TenantIdentity | None:
-        tid = self.config.principal_tenants.get(principal_id)
-
-        if tid is None:
-            tid = self.config.default_tenant_id
+        tid = self.config.tenant_of(principal_id)
 
         if tid is None:
             return None
