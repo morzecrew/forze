@@ -6804,8 +6804,8 @@ consequence of what happens to be registered:</p>
 <p>Two read tools, and no write tool anywhere. An agent that only answers questions cannot
 create, update or delete a note — not because a check denies it, but because there is
 nothing in the palette to call.</p>
-<p>Each definition carries a name, a JSON Schema taken from the operation's own input DTO,
-and a description. For a filter-accepting operation that description also spells out the
+<p>Each definition carries a name (<code>notes__list</code>: providers refuse the <code>.</code> in <code>notes.list</code>), a
+JSON Schema taken from the operation's own input DTO, and a description. For a filter-accepting operation that description also spells out the
 filter surface:</p>
 <blockquote>
 <p>List documents by filters and sorts (offset pagination). Filterable fields — category
@@ -7007,7 +7007,7 @@ answers a streaming request with events cut mid-line:</p>
         <span class="k">return</span> <span class="n">ModelReply</span><span class="p">(</span>
             <span class="n">tool_call</span><span class="o">=</span><span class="n">ModelToolCall</span><span class="p">(</span>
                 <span class="nb">id</span><span class="o">=</span><span class="s2">"call-1"</span><span class="p">,</span>
-                <span class="n">name</span><span class="o">=</span><span class="nb">next</span><span class="p">(</span><span class="n">name</span> <span class="k">for</span> <span class="n">name</span> <span class="ow">in</span> <span class="n">names</span> <span class="k">if</span> <span class="n">name</span><span class="o">.</span><span class="n">endswith</span><span class="p">(</span><span class="s2">".agg_list"</span><span class="p">)),</span>
+                <span class="n">name</span><span class="o">=</span><span class="nb">next</span><span class="p">(</span><span class="n">name</span> <span class="k">for</span> <span class="n">name</span> <span class="ow">in</span> <span class="n">names</span> <span class="k">if</span> <span class="n">name</span><span class="o">.</span><span class="n">endswith</span><span class="p">(</span><span class="s2">"__agg_list"</span><span class="p">)),</span>
                 <span class="nb">input</span><span class="o">=</span><span class="p">{</span>
                     <span class="s2">"aggregates"</span><span class="p">:</span> <span class="p">{</span>
                         <span class="s2">"$groups"</span><span class="p">:</span> <span class="p">{</span><span class="s2">"category"</span><span class="p">:</span> <span class="s2">"category"</span><span class="p">},</span>
@@ -7020,7 +7020,7 @@ answers a streaming request with events cut mid-line:</p>
     <span class="k">return</span> <span class="n">ModelReply</span><span class="p">(</span>
         <span class="n">tool_call</span><span class="o">=</span><span class="n">ModelToolCall</span><span class="p">(</span>
             <span class="nb">id</span><span class="o">=</span><span class="s2">"call-2"</span><span class="p">,</span>
-            <span class="n">name</span><span class="o">=</span><span class="nb">next</span><span class="p">(</span><span class="n">name</span> <span class="k">for</span> <span class="n">name</span> <span class="ow">in</span> <span class="n">names</span> <span class="k">if</span> <span class="n">name</span><span class="o">.</span><span class="n">endswith</span><span class="p">(</span><span class="s2">".list"</span><span class="p">)),</span>
+            <span class="n">name</span><span class="o">=</span><span class="nb">next</span><span class="p">(</span><span class="n">name</span> <span class="k">for</span> <span class="n">name</span> <span class="ow">in</span> <span class="n">names</span> <span class="k">if</span> <span class="n">name</span><span class="o">.</span><span class="n">endswith</span><span class="p">(</span><span class="s2">"__list"</span><span class="p">)),</span>
             <span class="nb">input</span><span class="o">=</span><span class="p">{</span><span class="s2">"filters"</span><span class="p">:</span> <span class="p">{</span><span class="s2">"$values"</span><span class="p">:</span> <span class="p">{</span><span class="s2">"category"</span><span class="p">:</span> <span class="s2">"postgres"</span><span class="p">}},</span> <span class="s2">"sorts"</span><span class="p">:</span> <span class="p">{</span><span class="s2">"title"</span><span class="p">:</span> <span class="s2">"asc"</span><span class="p">}},</span>
         <span class="p">)</span>
     <span class="p">)</span>

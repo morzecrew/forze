@@ -6773,6 +6773,16 @@ default; an agent that must act is given a command-capable toolset on purpose.</
 <p><code>tools.defs</code> is what your SDK needs — a name, a description and a JSON Schema per
 tool. Adapt them to whichever tool type your provider uses; that adapter is a few
 lines and it stays yours.</p>
+<p>A tool is named after its operation, spelled the way providers accept it: OpenAI-style
+function calling and Anthropic both take only <code>^[A-Za-z0-9_-]{1,64}$</code>, so <code>notes.list</code>
+becomes <code>notes__list</code>, and any other character outside that set becomes <code>_</code>. Pass
+<code>name=</code> — a function from operation key to tool name — to choose another spelling. The
+toolset keeps each name's operation, so dispatch never has to reverse the spelling.</p>
+<p>The operation key still dispatches too. It was the tool's name in 0.16.2 and earlier, so
+a durable run or a conversation history that journaled <code>notes.list</code> replays after an
+upgrade. A palette with a name outside that pattern, or one name for two operations —
+an operation's key counts as one of its names — is refused when it is built rather than
+by the provider on the first request.</p>
 <p>When the model asks for a tool, hand the call back:</p>
 <div class="highlight"><pre><span></span><code><span class="n">result</span> <span class="o">=</span> <span class="k">await</span> <span class="n">dispatch_tool_use</span><span class="p">(</span>
     <span class="n">ToolUse</span><span class="p">(</span><span class="nb">id</span><span class="o">=</span><span class="n">block</span><span class="o">.</span><span class="n">id</span><span class="p">,</span> <span class="n">name</span><span class="o">=</span><span class="n">block</span><span class="o">.</span><span class="n">name</span><span class="p">,</span> <span class="nb">input</span><span class="o">=</span><span class="n">block</span><span class="o">.</span><span class="n">input</span><span class="p">),</span>

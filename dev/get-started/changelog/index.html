@@ -10264,6 +10264,9 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <p><strong>Two quick <code>SIGINT</code>s to <code>serve_uvicorn</code> now give the drain phases up.</strong> A second one handled in the same loop turn as the first cancelled the drain before it started, so the forced exit still ran every phase at length in teardown.</p>
 </li>
 <li>
+<p><strong>Agent tool names are ones model providers accept</strong> (<strong>behaviour change</strong>). <code>operation_tools</code> names <code>orders.list</code> as <code>orders__list</code> (<code>provider_safe_tool_name</code>) or as <code>name=</code> says; the old name, the op key, still dispatches. A name outside <code>^[A-Za-z0-9_-]{1,64}$</code>, or one two operations share, is refused at build time.</p>
+</li>
+<li>
 <p><strong>An aliased input field no longer loses the caller's value.</strong> <code>forze ops call</code> and agent tools refuse a name the DTO's config does not read, which pydantic dropped, running the operation on the default. <abbr title="Model Context Protocol">MCP</abbr> reads each field by the name its tool signature advertises, so an aliased field is no longer dropped there.</p>
 </li>
 </ul>
