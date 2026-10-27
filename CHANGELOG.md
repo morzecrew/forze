@@ -63,8 +63,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **`AuthnDepsModule` refuses an override that would never be registered** (**behaviour change**). That is one for a route `authn` does not name, or a verifier override for a method its route does not enable. It registered nothing, so the route silently kept its default.
 
-- **A query interrupted after its read on Postgres no longer reports `commit_ambiguous`** (**behaviour change**). It reports `deadline_exceeded` (CLI exit 6) or `interrupted`, and is safe to re-run. A manager opts in with the new `ReadOnlyAware` protocol, as the mock's `journal` and `strict` managers do.
-
 - **A query interrupted after its read no longer reports `commit_ambiguous` on Postgres or the mock's `journal` and `strict` managers** (**behaviour change**). When its read-only transaction was the only one it entered, it reports `deadline_exceeded` (CLI exit 6) or `interrupted`, and is safe to re-run.
 
 - **A Postgres dynamic read no longer collapses duplicate column names.** `SELECT a.id, b.id` came back as one `id` holding the second value. A result with rows now fails with `dynamic_read_statement_invalid`, naming the duplicates; an empty one still returns no rows.
