@@ -15,7 +15,7 @@ import os
 import sys
 from collections.abc import Awaitable, Callable
 from datetime import date
-from enum import StrEnum
+from enum import Enum, IntEnum, StrEnum
 from typing import Annotated, Any, Literal
 from uuid import UUID
 
@@ -125,6 +125,19 @@ class Mode(StrEnum):
     LOUD = "loud"
 
 
+class Rank(IntEnum):
+    """Pydantic reads an ``IntEnum`` from a string, as it reads an ``int``."""
+
+    FIRST = 1
+    SECOND = 2
+
+
+class Code(Enum):
+    """Pydantic matches a plain enum's value exactly: ``"1"`` is not ``1``."""
+
+    ONE = 1
+
+
 class Flags(BaseDTO):
     """Flat scalars only: ``forze ops call`` takes typed flags for it."""
 
@@ -137,6 +150,7 @@ class Flags(BaseDTO):
     mode: Mode = Mode.PLAIN
     level: Literal["low", "high"] = "low"
     retry_after: Annotated[int, Field(ge=0)] | None = None
+    rank: Rank = Rank.FIRST
 
 
 class Nested(BaseDTO):
@@ -147,6 +161,10 @@ class Collides(BaseDTO):
     """A field spelled like a ``call`` option: no typed flags."""
 
     timeout: float = 1.0
+
+
+class Coded(BaseDTO):
+    code: Code = Code.ONE
 
 
 class Aliased(BaseDTO):
@@ -259,6 +277,7 @@ def build_registry(*, sensitive: bool = False) -> FrozenOperationRegistry:
             "probe.nested": lambda _c: _ok,
             "probe.collides": lambda _c: _returned,
             "probe.aliased": lambda _c: _returned,
+            "probe.coded": lambda _c: _returned,
             "notes.add": lambda _c: _add,
         },
         descriptors={
@@ -278,6 +297,7 @@ def build_registry(*, sensitive: bool = False) -> FrozenOperationRegistry:
             "probe.nested": _descriptor(Nested),
             "probe.collides": _descriptor(Collides, Collides),
             "probe.aliased": _descriptor(Aliased),
+            "probe.coded": _descriptor(Coded),
             "notes.add": _descriptor(Text, Count, title="Add a note"),
         },
     )
@@ -294,6 +314,7 @@ def build_registry(*, sensitive: bool = False) -> FrozenOperationRegistry:
         "probe.nested",
         "probe.collides",
         "probe.aliased",
+        "probe.coded",
     ):
         reg = reg.bind(op).as_query().finish()
 

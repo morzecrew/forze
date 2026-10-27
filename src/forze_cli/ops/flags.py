@@ -149,6 +149,11 @@ def parse_flags(args: list[str], table: FlagTable) -> dict[str, Any]:
             if following is None:
                 raise ValueError(f"{spelling} needs a value")
 
+            # A forgotten value would swallow the next flag; --name=VALUE spells one that
+            # looks like a flag.
+            if following.partition("=")[0] in table:
+                raise ValueError(f"{spelling} needs a value, not the flag after it")
+
             raw[name] = following
 
     return raw
@@ -173,8 +178,15 @@ def _unwrap(annotation: Any) -> Any:
 
 
 def _scalar(annotation: Any) -> bool:
-    # Pydantic matches a string literal exactly; another literal's value never comes from one.
+    # Pydantic matches a literal, or a plain enum's value, exactly: only a string one ever
+    # comes from a string. A ``StrEnum`` or an ``IntEnum`` coerces as its base type does.
     if get_origin(annotation) is Literal:
         return all(isinstance(value, str) for value in get_args(annotation))
 
-    return isinstance(annotation, type) and issubclass(annotation, _SCALARS)
+    if not isinstance(annotation, type) or not issubclass(annotation, _SCALARS):
+        return False
+
+    if issubclass(annotation, Enum) and not issubclass(annotation, (str, int)):
+        return all(isinstance(member.value, str) for member in annotation)
+
+    return True

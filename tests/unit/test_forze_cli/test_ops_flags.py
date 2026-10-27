@@ -79,6 +79,8 @@ class TestTypedFlags:
             "high",
             "--retry-after",
             "7",
+            "--rank",
+            "2",
         )
 
         assert result.exit_code == 0, result.stdout
@@ -92,6 +94,7 @@ class TestTypedFlags:
             "mode": "loud",
             "level": "high",
             "retry_after": 7,
+            "rank": 2,
         }
 
     def test_an_omitted_flag_takes_the_default(self) -> None:
@@ -158,6 +161,8 @@ class TestMalformedFlags:
             ["--text", "x", "--loud", "--no-loud"],
             ["--text", "x", "stray-marker-81c0"],
             ["--text", "x", "-x"],
+            ["--text", "--loud"],
+            ["--text", "--count=3"],
         ],
     )
     def test_is_usage(self, flags: list[str]) -> None:
@@ -196,6 +201,15 @@ class TestWithoutTypedFlags:
         # --timeout is the call's deadline here, never the field: the field keeps its default.
         assert _doc(_call("probe.collides", "--timeout", "5")) == {"timeout": 1.0}
 
+    def test_an_enum_matched_exactly_takes_none_though_input_takes_it(self) -> None:
+        # A plain enum of ints: pydantic never reads "1" as 1, so no flag could set it.
+        refused = _error(_call("probe.coded", "--code", "1"), 2)
+        accepted = _call("probe.coded", "--input", '{"code": 1}')
+
+        assert refused["code"] == "cli_flags_unsupported"
+        assert accepted.exit_code == 0
+        assert _doc(accepted) == {"code": 1}
+
     def test_a_secret_on_argv_is_refused_and_never_echoed(self) -> None:
         result = _call("probe.secret", "--token", "fx-7chr")
 
@@ -219,7 +233,7 @@ class TestDescribe:
 
         assert (
             "Typed flags: --text, --count, --ratio, --loud/--no-loud, --day, --ref, --mode, "
-            "--level, --retry-after"
+            "--level, --retry-after, --rank"
         ) in out
 
     def test_text_says_why_there_are_none(self) -> None:
