@@ -25,8 +25,10 @@ uv add 'forze[duckdb]'
 No server to run — DuckDB is a library. Reading object storage pulls the
 `httpfs` extension (and `iceberg` / `delta` for those formats) on first use.
 
-The extra installs DuckDB 1.x (`duckdb>=1.1.0,<2`). DuckDB 2.0 removed
-`fetch_arrow_table`, which the client reads results with, so it is not supported yet.
+The extra installs DuckDB 1.5 or 2 (`duckdb>=1.5.6,<3`). Both clients run on
+both majors with the same code. The repository's lock tests on 2.0.0, and CI
+runs the DuckDB suites on 1.5.6 as well. Where the per-tenant lake client
+behaves differently on the two, the section on it says so.
 
 ## The client
 
@@ -140,13 +142,14 @@ lake = RoutedDuckDbClient(
     secret_ref_for_tenant=lambda t: SecretRef(path=f"tenants/{t}/lake"),
     tenant_provider=current_tenant,
     catalog_for_tenant=lambda t: LakeTenantCatalog(
-        uri="http://lakekeeper:8181/catalog",
+        uri="https://lakekeeper:8181/catalog",
         warehouse=f"wh-{t}",
-        oauth2_server_uri="http://idp/realms/lake/protocol/openid-connect/token",
+        oauth2_server_uri="https://idp/realms/lake/protocol/openid-connect/token",
         oauth2_scope="lakekeeper",
         storage_prefix=f"s3://lake/{t}/",
     ),
-    extension_directory="/opt/duckdb/extensions",   # httpfs + iceberg, baked into the image
+    extension_directory="/opt/duckdb/extensions",   # httpfs, iceberg, avro: in the image
+    ca_cert_file="/etc/ssl/certs/ca-certificates.crt",   # HTTPS on DuckDB 2 reads it
 )
 
 widgets = DuckDbDynamicReadConfig(
@@ -161,8 +164,8 @@ lifecycle = LifecyclePlan.from_steps(routed_client_lifecycle_step("duckdb_lake",
 
 The secret holds `LakeCatalogCredentials`: `client_id` and `client_secret`, never
 a static token, because a token is never refreshed. An empty `client_id` is
-refused on first use, since the bundled `iceberg` build never refreshes a token
-issued for one.
+refused on first use, since the `iceberg` build for DuckDB 1.5 never refreshes a
+token issued for one.
 
 Each instance is built by one fixed sequence and serves nothing until it has
 read the result back:
@@ -170,16 +173,30 @@ read the result back:
 ```text
 connect(":memory:", persistent secrets off, extension autoload/autoinstall off,
         temp_directory '', extension_directory)
-LOAD httpfs; LOAD iceberg                       -- never INSTALL at runtime
+LOAD httpfs; LOAD iceberg                       -- never INSTALL; iceberg also loads avro
 SET GLOBAL enable_global_s3_configuration=false; s3 keys cleared
-SET GLOBAL allowed_directories=[storage_prefix]; enable_external_access=false
+SET GLOBAL ca_cert_file                         -- if configured
+SET GLOBAL allowed_directories=[storage_prefix, catalog uri/]
+SET GLOBAL allowed_paths=[token endpoint, ca_cert_file]
+SET GLOBAL enable_external_access=false
 CREATE SECRET (TYPE iceberg, client credentials, scope)
 ATTACH warehouse AS lake (vended_credentials, READ_ONLY)
-SET GLOBAL disabled_filesystems='LocalFileSystem,HTTPFileSystem'
 SET GLOBAL http_timeout; HTTP metadata and external file caches off
 SET GLOBAL lock_configuration=true
-attest                                          -- settings, secrets, databases, filesystems
+attest                                          -- settings, secrets, databases, refusals
 ```
+
+The allowlist is the one bound inside the engine on what a statement can open,
+local or remote. Anything outside it is refused before any request:
+another tenant's prefix, a local path, any other URL. It names the catalog
+and the IdP because DuckDB 2 checks the `iceberg` extension's own requests
+against it. A statement can therefore also send GETs into the catalog's tree
+and to the token endpoint. They carry no token, and the catalog and the IdP
+refuse them. No filesystem is disabled: DuckDB 2 reaches neither the catalog with
+`HTTPFileSystem` off nor its CA bundle with `LocalFileSystem` off. For HTTPS to
+the catalog, the IdP or the store, set `ca_cert_file`: DuckDB 2 reads the
+bundle through the allowlist, and without it the session does not build. The
+same sequence runs on DuckDB 1.5.
 
 A session that does not attest raises `duckdb_session_attestation_failed`, and one
 whose sequence fails (an extension missing from the image, a principal the catalog
@@ -189,10 +206,15 @@ tenant's client secret and DuckDB's quote of the statement removed, and does not
 chain the engine's error. Each statement then runs on a fresh cursor:
 `USE lake.<namespace>`, DuckDB's own parser checks that the text is exactly one
 `SELECT`, the classified statement runs unmodified, and a result with two columns
-of the same name is refused. After every read, dynamic or analytics, the
-per-table S3 secrets the catalog vended for it are dropped. A kept secret
-outranks the next statement's fresh one, so once it expired every later read of
-that table would fail. If a drop fails, the read's own rows or error still come
+of the same name is refused. So is a table named through a catalog the instance
+has not attached, or nested deeper than `catalog.schema.table`
+(`dynamic_read_statement_invalid`): DuckDB 2 would read it as a nested namespace
+and resolve only its last level, a table the statement did not name. After every
+read, dynamic or analytics, the
+per-table S3 secrets the catalog vended for it are dropped. On DuckDB 1.5 a
+kept secret outranks the next statement's fresh one, so once it expired every
+later read of that table would fail. DuckDB 2 discards it when the statement
+ends, and the drop finds nothing. If a drop fails, the read's own rows or error still come
 back, and the instance is retired: it refuses further statements
 (`duckdb_instance_retired`), and the next call builds a fresh one.
 
@@ -202,7 +224,7 @@ What the route promises, and who keeps each promise:
 |----------|---------|
 | Read-only | the catalog's `select`-only grant and the store; the `READ_ONLY` attach and parser classification are belts |
 | One statement | DuckDB's parser, before anything runs |
-| Timeout | the client interrupts the cursor, also when the caller is cancelled. A CPU-bound statement stops at once. A catalog or store request that hangs is not cut short: the caller still gets `dynamic_read_timeout` on time, but the worker holds its slot for about 120 s, whatever `http_timeout` says |
+| Timeout | the client interrupts the cursor, also when the caller is cancelled. A CPU-bound statement stops at once. A catalog or store request that hangs is not cut short: the caller still gets `dynamic_read_timeout` on time, but the worker holds its slot until the request ends. On DuckDB 2 that is `http_timeout` × (1 + `http_retries`, default 3); on 1.5 about 120 s, whatever `http_timeout` says |
 | Row cap | the shell fetches cap + 1 rows from a streaming result and refuses the overflow |
 | Container | the tenant's instance, principal and vended credentials (`dedicated`) |
 | Untrusted statements | refused at wiring (`duckdb_dynamic_read_untrusted_refused`); a `provenance` other than `"trusted"` or `"untrusted"` is `duckdb_dynamic_read_provenance_invalid` |
@@ -219,8 +241,9 @@ Operating it:
 - **Size `max_concurrent_queries_total` for hung requests.** It bounds
   statements across all tenants (default 8), and peak memory is about that
   many times `engine.memory_limit`. A tenant whose catalog or store stops
-  answering holds a slot for about 120 s per stuck request. Waiting for a slot
-  counts against a statement's timeout.
+  answering holds a slot per stuck request: `http_timeout` × (1 +
+  `http_retries`) on DuckDB 2, about 120 s on 1.5. Waiting for a slot counts
+  against a statement's timeout.
 - **Call `evict_tenant` after a grant is restored or a namespace is created.**
   An instance that once found a namespace missing keeps it missing for its
   life. Rotate credentials or remap a tenant's catalog the same way, or set
