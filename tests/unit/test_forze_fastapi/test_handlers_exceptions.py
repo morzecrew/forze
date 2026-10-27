@@ -3,6 +3,7 @@
 import io
 import json
 from collections.abc import Iterator
+from datetime import UTC, datetime, timedelta, timezone
 
 import pytest
 from fastapi import FastAPI
@@ -15,6 +16,7 @@ from forze.base.scrubbing import SECRET_PLACEHOLDER
 from forze_fastapi.exceptions import (
     ERROR_CODE_HEADER,
     _forze_exception_handler,
+    build_core_exception_response,
     register_exception_handlers,
 )
 from tests.support.logging import reset_forze_stdlib_loggers
@@ -387,3 +389,92 @@ class TestRegisterExceptionHandlers:
         assert row["event"] == "Unhandled exception"
         assert row["error.type"] == "ValueError"
         assert "ValueError" in row["error.stack"]
+
+
+class TestRetryAfterHeader:
+    def test_retry_after_seconds_become_the_header(self) -> None:
+        err = exc.throttled(
+            "Rate limit exceeded", details={"retry_after": 30, "policy": "internal-policy"}
+        )
+
+        response = build_core_exception_response(err)
+
+        assert response.status_code == 429
+        assert response.headers["Retry-After"] == "30"
+        # The rest of the details stay withheld.
+        assert "context" not in json.loads(response.body)
+        assert b"internal-policy" not in response.body
+
+    def test_fractional_seconds_round_up(self) -> None:
+        # Rounding down would send the client back before the limit has reset.
+        err = exc.throttled("Slow down", details={"retry_after": 2.1})
+
+        assert build_core_exception_response(err).headers["Retry-After"] == "3"
+
+    def test_retry_at_becomes_an_http_date(self) -> None:
+        moscow = timezone(timedelta(hours=3))
+        at = datetime(2026, 10, 21, 10, 28, tzinfo=moscow)
+        err = exc.throttled("Quota spent", details={"retry_at": at})
+
+        header = build_core_exception_response(err).headers["Retry-After"]
+
+        assert header == "Wed, 21 Oct 2026 07:28:00 GMT"
+
+    def test_retry_after_wins_over_retry_at(self) -> None:
+        at = datetime(2026, 10, 21, 7, 28, tzinfo=UTC)
+        err = exc.throttled("Slow down", details={"retry_after": 5, "retry_at": at})
+
+        assert build_core_exception_response(err).headers["Retry-After"] == "5"
+
+    @pytest.mark.parametrize(
+        "details",
+        [
+            {},
+            {"retry_after": -1},
+            {"retry_after": float("nan")},
+            {"retry_after": float("inf")},
+            {"retry_after": "30"},
+            {"retry_after": True},
+            {"retry_at": datetime(2026, 10, 21, 7, 28)},
+            {"retry_at": "2026-10-21T07:28:00+00:00"},
+            {"retry_at": datetime(1, 1, 1, tzinfo=timezone(timedelta(hours=1)))},
+        ],
+        ids=[
+            "none",
+            "negative",
+            "nan",
+            "infinite",
+            "string-seconds",
+            "bool",
+            "naive-datetime",
+            "string-instant",
+            "out-of-range",
+        ],
+    )
+    def test_an_unusable_hint_sends_no_header(self, details: dict[str, object]) -> None:
+        response = build_core_exception_response(exc.throttled("Slow down", details=details))
+
+        assert response.status_code == 429
+        assert "Retry-After" not in response.headers
+
+    def test_only_a_throttled_error_sends_it(self) -> None:
+        err = exc.infrastructure("Upstream busy", details={"retry_after": 30})
+
+        response = build_core_exception_response(err)
+
+        assert response.status_code == 500
+        assert "Retry-After" not in response.headers
+
+    def test_a_route_raised_throttle_answers_with_the_header(self) -> None:
+        app = FastAPI()
+
+        @app.get("/limited")
+        def limited() -> None:
+            raise exc.throttled("Slow down", code="rate_limited", details={"retry_after": 7})
+
+        register_exception_handlers(app)
+        response = TestClient(app).get("/limited")
+
+        assert response.status_code == 429
+        assert response.headers["Retry-After"] == "7"
+        assert response.json()["code"] == "rate_limited"

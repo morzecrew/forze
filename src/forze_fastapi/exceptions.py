@@ -5,15 +5,20 @@ require_fastapi()
 
 # ....................... #
 
+import math
+from datetime import UTC, datetime
+from email.utils import format_datetime
 from typing import Final
 
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
+from forze.application.execution.resilience.backoff import retry_after
 from forze.base.exceptions import (
     CoreException,
     ErrorEnvelope,
+    ExceptionKind,
     error_envelope,
     exc,
     unhandled_error_envelope,
@@ -60,6 +65,37 @@ def _render_envelope(envelope: ErrorEnvelope) -> JSONResponse:
 # ....................... #
 
 
+def _retry_after_header(exc: CoreException) -> str | None:
+    """The ``Retry-After`` value (RFC 9110) a throttled *exc* asks for, or :obj:`None`.
+
+    ``details["retry_after"]`` — seconds, read as the retry layer reads it — is rounded up
+    to whole seconds; otherwise ``details["retry_at"]``, an aware :class:`~datetime.datetime`,
+    becomes an HTTP-date. Any other value gives no header: a bad hint never fails the response.
+    """
+
+    if exc.kind is not ExceptionKind.THROTTLED:
+        return None
+
+    seconds = retry_after(exc)
+
+    if seconds is not None and math.isfinite(seconds):
+        return str(math.ceil(seconds))
+
+    at = exc.details.get("retry_at") if exc.details else None
+
+    if not isinstance(at, datetime) or at.utcoffset() is None:
+        return None
+
+    try:
+        return format_datetime(at.astimezone(UTC), usegmt=True)
+
+    except (OverflowError, ValueError):  # an instant UTC cannot represent
+        return None
+
+
+# ....................... #
+
+
 def build_core_exception_response(exc: CoreException) -> JSONResponse:
     """Build the standard JSON response for a :class:`CoreException`.
 
@@ -67,6 +103,8 @@ def build_core_exception_response(exc: CoreException) -> JSONResponse:
     projection — server-error masking and egress sanitization already applied —
     into a FastAPI :class:`JSONResponse`, logging server-side errors on the way.
     The same envelope the Socket.IO transport renders, so both stay in lock-step.
+    A throttled error's ``retry_after`` (seconds) or ``retry_at`` (aware datetime)
+    detail also sets ``Retry-After``; its other details stay withheld.
     """
 
     envelope = error_envelope(exc)
@@ -76,7 +114,12 @@ def build_core_exception_response(exc: CoreException) -> JSONResponse:
 
     log_withheld_details(error_logger, exc)
 
-    return _render_envelope(envelope)
+    response = _render_envelope(envelope)
+
+    if (when := _retry_after_header(exc)) is not None:
+        response.headers["Retry-After"] = when
+
+    return response
 
 
 # ....................... #

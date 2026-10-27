@@ -168,7 +168,7 @@ WebSocket route below; for server-push, the SSE route below.
 
 A browser front end on another origin needs CORS, and it reads forze's own response
 headers — the `X-Error-Code`, the request and correlation ids, a download's filename,
-validator and range headers —
+validator and range headers, a throttled error's `Retry-After` —
 only once they are exposed. `AllowlistCORSMiddleware` is Starlette's `CORSMiddleware`
 answering the origins an allowlist names (a port range or `*` on a loopback host, for a dev
 server) and exposing `EXPOSED_RESPONSE_HEADERS`:
@@ -209,6 +209,18 @@ Branch on `code`, never on `detail`: a stale `?rev=` on an update answers
 `400 {"code": "revision_mismatch", ...}`, which no other 400 shares. A server-side
 error keeps its code and gets a generic `detail`; an exception that is not a
 `CoreException` answers `core.internal`.
+
+A `throttled` error withholds its details, but it can still tell the client when to
+come back: the response carries a `Retry-After` header read from two `details` keys.
+
+| Key | Value | `Retry-After` |
+|-----|-------|---------------|
+| `retry_after` | non-negative seconds, `int` or `float` | the seconds, rounded up |
+| `retry_at` | an aware `datetime` | that instant as an HTTP-date |
+
+`retry_after` wins when both are set; it is also what the [HTTP client](http.md) puts on
+an upstream `429`, so a throttle passed through keeps its hint. Any other value — a
+negative or non-finite number, a string, a naive `datetime` — sends no header, never an error.
 
 ## Readiness probe
 
