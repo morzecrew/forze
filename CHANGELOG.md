@@ -43,7 +43,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **`TenancyDepsModule` refuses a `tenant_resolvers` override for a route `tenant_resolver` does not name** (**behaviour change**). It registered nothing, so the first request failed with `Tenant resolver is not registered`; now the module fails when built.
 
-- **`AuthnDepsModule` refuses a verifier or resolver override for a route `authn` does not name** (**behaviour change**). It registered nothing, so the route silently kept its default; now the module fails when built.
+- **`AuthnDepsModule` refuses an override that would never be registered** (**behaviour change**). That is one for a route `authn` does not name, or a verifier override for a method its route does not enable. It registered nothing, so the route silently kept its default.
 
 - **A Postgres dynamic read no longer collapses duplicate column names.** `SELECT a.id, b.id` came back as one `id` holding the second value. A result with rows now fails with `dynamic_read_statement_invalid`, naming the duplicates; an empty one still returns no rows.
 

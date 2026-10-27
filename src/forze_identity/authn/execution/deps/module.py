@@ -185,15 +185,26 @@ class AuthnDepsModule(DepsModule):
     # ....................... #
 
     def __attrs_post_init__(self) -> None:
-        overrides = {
-            "resolvers": self.resolvers,
-            "token_verifiers": self.token_verifiers,
-            "password_verifiers": self.password_verifiers,
-            "api_key_verifiers": self.api_key_verifiers,
-        }
+        # Every method resolves its principal through the route's one resolver, so a
+        # resolver override needs only the route; a verifier override needs its method too.
+        refuse_undeclared_overrides(
+            self.resolvers, self.authn, field="resolvers", declared_field="authn"
+        )
+        verifiers: tuple[tuple[str, AuthnMethod, StrKeyMapping[object] | None], ...] = (
+            ("token_verifiers", "token", self.token_verifiers),
+            ("password_verifiers", "password", self.password_verifiers),
+            ("api_key_verifiers", "api_key", self.api_key_verifiers),
+        )
 
-        for field, routes in overrides.items():
+        for field, method, routes in verifiers:
             refuse_undeclared_overrides(routes, self.authn, field=field, declared_field="authn")
+            unused = sorted(r for r in routes or () if method not in (self.authn or {})[r])
+
+            if unused:
+                raise exc.configuration(
+                    f"{field} overrides routes {unused!r} whose authn methods do not include "
+                    f"{method!r}; add {method!r} there or the override is never registered.",
+                )
 
     # ....................... #
 

@@ -292,6 +292,39 @@ class TestAuthnDepsModule:
         assert excinfo.value.kind is ExceptionKind.CONFIGURATION
         assert field in excinfo.value.summary
 
+    @pytest.mark.parametrize(
+        ("field", "method"),
+        [
+            ("token_verifiers", "token"),
+            ("password_verifiers", "password"),
+            ("api_key_verifiers", "api_key"),
+        ],
+    )
+    def test_a_verifier_override_for_a_method_the_route_lacks_is_refused(
+        self, field: str, method: str
+    ) -> None:
+        others = frozenset({"token", "password", "api_key"} - {method})
+
+        with pytest.raises(CoreException, match=f"'{method}'") as excinfo:
+            AuthnDepsModule(  # type: ignore[misc]
+                kernel=_kernel_min_access(),
+                authn={"main": others},
+                **{field: {"main": MagicMock()}},
+            )
+
+        assert excinfo.value.kind is ExceptionKind.CONFIGURATION
+        assert field in excinfo.value.summary
+
+    def test_a_resolver_override_serves_every_method(self) -> None:
+        # Every credential family resolves its principal through the route's one resolver.
+        module = AuthnDepsModule(
+            kernel=_kernel_min_access(),
+            authn={"main": frozenset({"password"})},
+            resolvers={"main": MagicMock()},
+        )
+
+        assert module.resolvers is not None
+
     def test_module_flags_flow_into_password_factories(self) -> None:
         deps = AuthnDepsModule(
             kernel=AuthnKernelConfig(password=_slow_password_config()),
