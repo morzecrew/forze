@@ -33,6 +33,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`forze[duckdb]` no longer installs DuckDB 2.0.** The extra now requires `duckdb>=1.1.0,<2`: 2.0 removed `fetch_arrow_table`, so every `DuckDbClient` query failed on a fresh install. An environment that already installed 2.0 outside the lock must reinstall the extra or pin `duckdb<2`.
+
 - **A Postgres dynamic read no longer collapses duplicate column names.** `SELECT a.id, b.id` came back as one `id` holding the second value. A result with rows now fails with `dynamic_read_statement_invalid`, naming the duplicates; an empty one still returns no rows.
 
 - **Two quick `SIGINT`s to `serve_uvicorn` now give the drain phases up.** A second one handled in the same loop turn as the first cancelled the drain before it started, so the forced exit still ran every phase at length in teardown.

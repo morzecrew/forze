@@ -23,6 +23,9 @@ uv add 'forze[duckdb]'
 No server to run — DuckDB is a library. Reading object storage pulls the
 `httpfs` extension (and `iceberg` / `delta` for those formats) on first use.
 
+The extra installs DuckDB 1.x (`duckdb>=1.1.0,<2`). DuckDB 2.0 removed
+`fetch_arrow_table`, which the client reads results with, so it is not supported yet.
+
 ## The client
 
 ```python
