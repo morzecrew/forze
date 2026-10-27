@@ -28,6 +28,8 @@ from forze.application.contracts.tenancy import TenantIdentity, TenantResolverDe
 from forze.application.execution import Deps, ExecutionContext
 from forze.base.exceptions import CoreException, ExceptionKind, exc
 from forze.testing import context_from_deps
+from forze_mock import MockState
+from forze_mock.adapters.identity.tenancy import MockTenantManagementPort, MockTenantResolverPort
 from forze_socketio import SocketIOConnect, build_socketio_connection_resolver, socketio_handshake
 
 pytestmark = pytest.mark.unit
@@ -241,6 +243,52 @@ class TestTheTenantIsBound:
 
         assert connection is not None
         assert connection.tenant == tenant
+
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("memberships", "connects"), [(0, False), (1, True), (2, False)], ids=["none", "one", "two"]
+    )
+    async def test_a_wired_resolver_must_bind_a_tenant(
+        self, memberships: int, connects: bool
+    ) -> None:
+        state = MockState()
+        mgmt = MockTenantManagementPort(state=state, route=str(_SPEC.name))
+        tenants = [(await mgmt.provision_tenant()).tenant_id for _ in range(memberships)]
+
+        for tenant in tenants:
+            await mgmt.attach_principal(_PRINCIPAL, tenant)
+
+        resolver = MockTenantResolverPort(state=state, route=str(_SPEC.name))
+        deps = (
+            Deps.plain({AuthnDepKey: _AuthnFactory()}),
+            Deps.routed({TenantResolverDepKey: {str(_SPEC.name): lambda _ctx: resolver}}),
+        )
+        resolve = build_socketio_connection_resolver(
+            ctx_dep=lambda: context_from_deps(*deps),
+            authn_spec=_SPEC,
+        )
+        connect = _connect(environ={"HTTP_AUTHORIZATION": f"Bearer {_GOOD}"})
+
+        if not connects:
+            with pytest.raises(CoreException) as caught:
+                await resolve(connect)
+
+            assert caught.value.kind is ExceptionKind.AUTHENTICATION
+            assert caught.value.code == "tenant_required"
+            return
+
+        connection = await resolve(connect)
+
+        assert connection is not None
+        assert connection.tenant == tenants[0]
+
+    @pytest.mark.asyncio
+    async def test_without_tenancy_wired_the_connection_binds_none(self) -> None:
+        connection = await _resolver()(_connect(environ={"HTTP_AUTHORIZATION": f"Bearer {_GOOD}"}))
+
+        assert connection is not None
+        assert connection.tenant is None
 
 
 class TestPayloadOnly:

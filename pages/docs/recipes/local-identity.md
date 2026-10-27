@@ -91,7 +91,8 @@ requirement = AuthnRequirement(
 ```
 
 A request carrying `X-API-Key: dev-service-key` is resolved to that principal and
-tenant — the same `ctx.inv_ctx` binding every authz/tenancy hook reads.
+tenant — the same `ctx.inv_ctx` binding every authz/tenancy hook reads. A config that
+maps no tenant wires no tenant resolver, so the app runs untenanted, realtime included.
 
 !!! warning "Demo trust model"
 

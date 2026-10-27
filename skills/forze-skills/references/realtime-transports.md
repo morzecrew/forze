@@ -145,7 +145,8 @@ refuses the connection rather than falling through.
   fresh one without reconnecting.
 - **The tenant is the resolver's binding**, looked up on the authn spec's own route and
   falling back to the issuer's claim. `X-Tenant-Id` is not honored on an upgrade, whose
-  headers are set by the client being authenticated.
+  headers are set by the client being authenticated. Once a tenant resolver is wired, a
+  connection that resolves no tenant is refused with `tenant_required`.
 
 The route itself still needs its exact mounted path in both middlewares'
 `allowed_websocket_paths`, or the scope is refused before the resolver runs — see the

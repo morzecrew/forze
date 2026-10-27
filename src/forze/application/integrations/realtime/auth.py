@@ -14,7 +14,7 @@ transport-neutral: the connection value objects belong to their transports.
 
 from collections.abc import Mapping
 from datetime import datetime
-from typing import Any, Final, Literal, final
+from typing import TYPE_CHECKING, Any, Final, Literal, final
 from uuid import UUID
 
 import attrs
@@ -26,8 +26,16 @@ from forze.application.contracts.authn import (
     AuthnResult,
     ClientIdentity,
 )
-from forze.application.contracts.tenancy import TenantResolverPort, parse_tenant_hint
+from forze.application.contracts.tenancy import (
+    TenantResolverDepKey,
+    TenantResolverPort,
+    parse_tenant_hint,
+)
 from forze.base.exceptions import exc
+from forze.base.primitives import StrKey
+
+if TYPE_CHECKING:
+    from forze.application.execution import ExecutionContext
 
 # ----------------------- #
 
@@ -43,6 +51,7 @@ __all__ = [
     "refuse_delegated_identity",
     "require_origin_attestation",
     "resolve_realtime_identity",
+    "tenancy_wired",
 ]
 
 REALTIME_AUTH_TOKEN_KEY: Final[str] = "token"
@@ -383,10 +392,38 @@ def client_identity(
 # ....................... #
 
 
+def tenancy_wired(ctx: "ExecutionContext", route: StrKey | None = None) -> bool:
+    """Whether the deployment registers a tenant resolver of its own that answers *route*.
+
+    ``None`` asks about any route. The mock's fallback registrations do not count: a plane
+    wired only by fallback is unwired (see
+    :class:`~forze.application.contracts.deps.FallbackReport`), so a mock-backed app without
+    tenancy keeps its untenanted connections.
+    """
+
+    store = ctx.deps.store
+    plain = (
+        TenantResolverDepKey in store.plain_deps
+        and TenantResolverDepKey not in store.fallback_plain
+    )
+    routed = frozenset(store.routed_deps.get(TenantResolverDepKey) or ())
+    fallback = store.fallback_routes.get(TenantResolverDepKey) or frozenset()
+
+    if route is None:
+        return plain or bool(routed - fallback)
+
+    # A routed entry answers its own route before the plain one does.
+    return route not in fallback if route in routed else plain
+
+
+# ....................... #
+
+
 async def _tenant(
     result: AuthnResult,
     *,
     tenants: TenantResolverPort | None,
+    require: bool,
 ) -> UUID | None:
     """The connection's tenant: the resolver's answer, else the verified issuer hint.
 
@@ -395,19 +432,30 @@ async def _tenant(
     the route is authenticating. The issuer hint is kept because it rides a credential
     the authn plane just verified, and a resolver that has no binding for a principal
     returns ``None`` (a genuine mismatch raises instead, inside the call).
+
+    Unlike HTTP, a connection in a tenanted deployment (*require*) must end up with a
+    tenant: an untenanted one would join the global rooms
+    (:func:`~forze.application.integrations.realtime.rooms.room_for` with ``None``), which
+    there carry only misrouted signals. Without tenancy ``None`` stands.
+
+    :raises CoreException: ``authentication`` / ``tenant_required`` when *require* is set
+        and neither the resolver nor the credential names a tenant.
     """
 
     hint = parse_tenant_hint(result.issuer_tenant_hint)
+    tenant = hint
 
-    if tenants is None:
-        return hint
+    if tenants is not None:
+        resolved = await tenants.resolve_from_principal(
+            result.identity.principal_id,
+            requested_tenant_id=hint,
+        )
+        tenant = resolved.tenant_id if resolved is not None else hint
 
-    resolved = await tenants.resolve_from_principal(
-        result.identity.principal_id,
-        requested_tenant_id=hint,
-    )
+    if tenant is None and require:
+        raise exc.authentication("Tenant identity is required", code="tenant_required")
 
-    return resolved.tenant_id if resolved is not None else hint
+    return tenant
 
 
 # ....................... #
@@ -440,6 +488,7 @@ async def resolve_realtime_identity(
     sources: RealtimeCredentialSources,
     handshake: RealtimeHandshake,
     tenants: TenantResolverPort | None = None,
+    require_tenant: bool | None = None,
     device_id_key: str = "device_id",
     session_id_key: str = "session_id",
 ) -> RealtimeIdentity | None:
@@ -448,7 +497,10 @@ async def resolve_realtime_identity(
     Returns ``None`` for an anonymous handshake (no enabled source presented a
     credential). Raises whatever the authn plane raises for an invalid one — a
     client-safe :class:`~forze.base.exceptions.CoreException` the transport turns
-    into its own refusal.
+    into its own refusal — and ``tenant_required`` when the connection must carry a tenant
+    and resolves none (a principal in several tenants, or none, with no ``tid``).
+    *require_tenant* says whether it must; ``None`` means "when *tenants* is wired". The
+    shipped transport resolvers pass :func:`tenancy_wired` for their route.
 
     The client identity is read from the handshake's query parameters and auth payload
     under *device_id_key* / *session_id_key*.
@@ -465,7 +517,11 @@ async def resolve_realtime_identity(
 
     return RealtimeIdentity(
         authn=result.identity,
-        tenant=await _tenant(result, tenants=tenants),
+        tenant=await _tenant(
+            result,
+            tenants=tenants,
+            require=tenants is not None if require_tenant is None else require_tenant,
+        ),
         client=client_identity(
             handshake,
             device_id_key=device_id_key,

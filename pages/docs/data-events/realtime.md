@@ -65,7 +65,10 @@ that emit to whichever node actually holds the recipient's socket, so the gatewa
 need not be co-located with connections.
 
 Tenancy lives at **room membership**: a connection only ever joins its own
-tenant's rooms, so the stream itself can be tenant-global.
+tenant's rooms, so the stream itself can be tenant-global. Once tenancy is wired, a
+connection needs a bound tenant: one that resolves none, such as a principal in
+several tenants that has not picked one, is refused with `tenant_required` rather
+than joining the untenanted rooms.
 
 **A transport is never a new application contract.** Three ship — the Socket.IO
 gateway, an SSE route and a raw-WebSocket route — and each is just another

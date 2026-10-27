@@ -26,7 +26,8 @@ from forze.application.contracts.authn import (
     PasswordCredentials,
     VerifiedAssertion,
 )
-from forze.application.contracts.tenancy import TenantIdentity
+from forze.application.contracts.tenancy import TenantIdentity, TenantResolverDepKey
+from forze.application.execution import Deps
 from forze.application.integrations.authn import AuthnOrchestrator
 from forze.application.integrations.realtime import (
     RealtimeCredentialSources,
@@ -34,8 +35,11 @@ from forze.application.integrations.realtime import (
     client_identity,
     present_credential,
     resolve_realtime_identity,
+    tenancy_wired,
 )
 from forze.base.exceptions import CoreException, ExceptionKind
+from forze.testing import context_from_deps
+from forze_mock import MockDepsModule
 
 pytestmark = pytest.mark.unit
 
@@ -381,6 +385,30 @@ class TestMapping:
         assert identity.tenant == _TENANT
 
     @pytest.mark.asyncio
+    async def test_a_wired_resolver_that_binds_no_tenant_refuses_the_connection(self) -> None:
+        # A principal in several tenants (or none) with no `tid`: once tenancy is wired, an
+        # untenanted connection would join the global rooms, so it is refused instead.
+        with pytest.raises(CoreException) as caught:
+            await _resolve(
+                RealtimeCredentialSources(),
+                _handshake(headers={"Authorization": "Bearer tok"}),
+                tenants=_Tenants(None),
+            )
+
+        assert caught.value.kind is ExceptionKind.AUTHENTICATION
+        assert caught.value.code == "tenant_required"
+
+    @pytest.mark.asyncio
+    async def test_without_a_resolver_an_untenanted_connection_still_resolves(self) -> None:
+        identity = await _resolve(
+            RealtimeCredentialSources(),
+            _handshake(headers={"Authorization": "Bearer tok"}),
+        )
+
+        assert identity is not None
+        assert identity.tenant is None
+
+    @pytest.mark.asyncio
     async def test_an_unparseable_tenant_hint_is_no_tenant(self) -> None:
         identity = await _resolve(
             RealtimeCredentialSources(),
@@ -390,6 +418,31 @@ class TestMapping:
 
         assert identity is not None
         assert identity.tenant is None
+
+
+class TestTenancyWired:
+    def test_the_mocks_fallback_resolver_does_not_count(self) -> None:
+        ctx = context_from_deps(MockDepsModule()())
+
+        assert ctx.tenancy.resolver("main") is not None
+        assert not tenancy_wired(ctx)
+        assert not tenancy_wired(ctx, "main")
+
+    def test_a_routed_registration_counts_on_its_own_route(self) -> None:
+        ctx = context_from_deps(
+            MockDepsModule()(),
+            Deps.routed({TenantResolverDepKey: {"api": lambda _ctx: _Tenants(None)}}),
+        )
+
+        assert tenancy_wired(ctx)
+        assert tenancy_wired(ctx, "api")
+        assert not tenancy_wired(ctx, "main")
+
+    def test_a_plain_registration_answers_every_route(self) -> None:
+        ctx = context_from_deps(Deps.plain({TenantResolverDepKey: lambda _ctx: _Tenants(None)}))
+
+        assert tenancy_wired(ctx)
+        assert tenancy_wired(ctx, "any")
 
 
 class TestClientIdentity:
