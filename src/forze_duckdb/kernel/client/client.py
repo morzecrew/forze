@@ -262,6 +262,25 @@ def _consume_late_result(fut: asyncio.Future[Any]) -> None:
         fut.exception()
 
 
+def _abandon(
+    loop: asyncio.AbstractEventLoop,
+    work: Future[Any],
+    fut: asyncio.Future[Any],
+    holder: dict[str, Any],
+) -> None:
+    """Stop the statement of a caller that stopped waiting for it, timed out or cancelled.
+
+    Returns at once rather than await the worker: an interrupt does not cut a blocking HTTP call
+    short, so the worker may run on for minutes (RFC 0078 EXECUTION-LOG D-028). It keeps its
+    thread and its admission slot until DuckDB unwinds; ``close`` waits for it.
+    """
+
+    holder["expired"] = True
+    work.cancel()  # a statement still queued never starts
+    _keep_interrupting(loop, fut, holder.get("cursor"))
+    fut.add_done_callback(_consume_late_result)
+
+
 # ....................... #
 
 
@@ -514,20 +533,18 @@ class DuckDbClient(DuckDbDynamicReadClientPort):
             work.add_done_callback(lambda _work: _release_from_worker(loop, admission))
 
         fut = asyncio.wrap_future(work, loop=loop)
+        remaining = None if deadline is None else max(0.0, deadline - loop.time())
 
-        if deadline is None:
-            return await fut
+        try:
+            # ``wait`` never cancels *fut*, so a cancelled caller reaches the handler below.
+            done, _pending = await asyncio.wait({fut}, timeout=remaining)
 
-        done, _pending = await asyncio.wait({fut}, timeout=max(0.0, deadline - loop.time()))
+        except asyncio.CancelledError:
+            _abandon(loop, work, fut, holder)
+            raise
 
         if fut not in done:
-            holder["expired"] = True
-            work.cancel()  # a statement still queued never starts
-            _keep_interrupting(loop, fut, holder.get("cursor"))
-            # Raise now rather than await the worker: an interrupt does not cut a blocking HTTP
-            # call short, so the worker may run on for minutes (RFC 0078 EXECUTION-LOG D-028).
-            # It keeps its thread and its admission slot until DuckDB unwinds; ``close`` waits.
-            fut.add_done_callback(_consume_late_result)
+            _abandon(loop, work, fut, holder)
             raise _timed_out(f"of {timeout_sec}s")
 
         return fut.result()

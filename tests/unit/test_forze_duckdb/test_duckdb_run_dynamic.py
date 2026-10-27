@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import gc
 import os
 import re
 import secrets
@@ -275,23 +276,70 @@ async def _wait_until(predicate: Any, *, within: float = 30.0) -> None:
         await asyncio.sleep(0.02)
 
 
-async def test_a_cancelled_caller_leaves_the_slot_with_the_running_worker() -> None:
+@pytest.mark.parametrize("timeout", [None, timedelta(seconds=60)], ids=["untimed", "timed"])
+@pytest.mark.parametrize("how", ["cancel", "outer_timeout"])
+async def test_a_cancelled_caller_interrupts_its_statement_and_leaves_the_slot_to_it(
+    monkeypatch: pytest.MonkeyPatch, timeout: timedelta | None, how: str
+) -> None:
+    """A caller cancelled mid-statement stops it as its own timeout would. The cancellation
+    reaches the caller unchanged, the slot stays with the worker until it returns, and the
+    worker's late error is retrieved."""
+
+    entered, gate = threading.Event(), threading.Event()
+    real = client_module._open_cursor
+
+    def held(conn: Any, holder: dict[str, Any]) -> Any:
+        cursor = real(conn, holder)
+        entered.set()
+        gate.wait(5)  # a worker an interrupt cannot reach yet, as one inside a hung request
+        return cursor
+
+    monkeypatch.setattr(client_module, "_open_cursor", held)
+    loop = asyncio.get_running_loop()
+    unhandled: list[dict[str, Any]] = []
+    loop.set_exception_handler(lambda _loop, context: unhandled.append(context))
     admission = asyncio.Semaphore(1)
     c = DuckDbClient()
     await c.initialize(":memory:", extensions=(), admission=admission)
 
+    async def call() -> None:
+        if how == "cancel":
+            await c.run_query(_SPIN, timeout=timeout)
+
+        else:
+            async with asyncio.timeout(0.2):
+                await c.run_query(_SPIN, timeout=timeout)
+
     try:
-        caller = asyncio.create_task(c.run_query(_HEAVY_SQL))
-        await asyncio.sleep(0.05)
-        caller.cancel()
-        await asyncio.gather(caller, return_exceptions=True)
+        caller = asyncio.create_task(call())
+        assert await asyncio.to_thread(entered.wait, 5)
+
+        if how == "cancel":
+            caller.cancel()
+
+        await asyncio.wait({caller})
+
+        if how == "cancel":
+            assert caller.cancelled()
+
+        else:
+            assert isinstance(caller.exception(), TimeoutError)
+
+        del caller  # its traceback holds the worker's future, which must be collected below
         await asyncio.sleep(0.05)
 
-        assert admission.locked()  # the thread is still inside DuckDB
+        assert admission.locked()  # the worker still holds its slot
 
-        await _wait_until(lambda: not admission.locked())
+        gate.set()
+        await _wait_until(lambda: not admission.locked(), within=5)  # _SPIN runs for minutes
+        await asyncio.sleep(3 * client_module._REINTERRUPT_S)  # the re-interrupt timer lets go
+        gc.collect()
+
+        assert unhandled == []
 
     finally:
+        gate.set()
+        loop.set_exception_handler(None)
         await c.close()
 
 
