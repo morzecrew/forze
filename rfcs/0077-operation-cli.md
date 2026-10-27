@@ -496,7 +496,9 @@ Execution log, Unit "RFC 0077 P3", entries D-AMB-1 to D-AMB-3.
   written inside its transaction, so it commits with the operation.
 - **A read-only transaction also marks the commit point** (D-AMB-3). A query cancelled or
   timed out after its read therefore reports `commit_ambiguous` on the CLI, the deadline path
-  and the new record. This is flagged, not changed here.
+  and the new record. It stays that way: Mongo, Firestore and Neo4j accept `read_only`
+  without enforcing it, and forze's write guard covers a `QUERY` operation, not a read-only
+  transaction. So a write can land inside a read-only root.
 
 ### 5.7 Shared core (P1): `forze.application.execution.ingress`
 

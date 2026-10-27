@@ -2339,17 +2339,47 @@ root transaction committed.
 - **RFC said:** "a cancel after the commit point reports `commit_ambiguous`", on the reading
   that a commit may have landed.
 - **Found:** the scope calls `mark_commit_started()` for every root transaction, read-only
-  ones included. Probed: after `tx.scope(route, read_only=True)` exits, `commit_started()` is
-  `True`. A query cancelled after its read therefore reports `commit_ambiguous` on the CLI
-  (exit 1, not 130 or 143). A query whose deadline fires after its read gets the same
-  report, and so does the new record. A read-only transaction lands nothing, so the report
-  is a false positive.
-- **Because:** the mark predates any reader that cared which transactions can write.
-- **Class:** `spec-gap`. The scope's behaviour was readable when §5.6 was written.
-- **Consequence:** not changed here. Gating the mark on `read_only` would change the deadline
-  code and the CLI exit code for queries, and whether every backend enforces a read-only
-  root needs checking first. This unit keeps the record consistent with the CLI and the
-  deadline path rather than gating it alone.
-- **Proposed row (RFC 0077):** `ASSUMED` — a read-only root transaction does not mark the
-  commit point. A query interrupted after its read reports `interrupted` or
-  `deadline_exceeded`, never `commit_ambiguous`. This needs its own change and tests.
+  ones included (`src/forze/application/execution/context/transaction.py:433`). Probed:
+  after `tx.scope(route, read_only=True)` exits, `commit_started()` is `True`. So a query
+  that is cancelled after its read reports `commit_ambiguous` on the CLI (exit 1, not 130 or
+  143). A query whose deadline fires after its read gets the same report, and so does the
+  new record. That error is not retryable, so a caller refuses to retry a read.
+
+  Gating the mark on `read_only` is not safe today: a `read_only` root does not always stop
+  a write.
+  - **Postgres** enforces it: `BEGIN … READ ONLY`
+    (`src/forze_postgres/adapters/txmanager.py:100-111`).
+  - **`MockStrictTxManagerAdapter`** refuses a write with `read_only_tx`
+    (`src/forze_mock/adapters/tx.py:78`). The default `MockTxManagerAdapter` is a no-op.
+  - **Mongo** accepts the flag and does not enforce it
+    (`src/forze_mongo/adapters/txmanager.py:73-76`).
+  - **Firestore** does the same (`src/forze_firestore/adapters/txmanager.py:63-65`).
+  - **Neo4j** does the same (`src/forze_neo4j/adapters/txmanager.py:75-77`).
+
+  The forze-level guard does not close the gap. `_refuse_if_read_only`
+  (`src/forze/application/contracts/deps/keys.py:41-45`) checks whether the *operation* is
+  read-only (`QUERY`), not the transaction. Its own docstring (`keys.py:64-66`) says
+  `forze.testing.unguarded`, direct resolution and `backend_of` all bypass it. Two writes
+  therefore commit unrefused on Mongo, Firestore or Neo4j:
+  - a command that opens `ctx.tx_ctx.scope(route, read_only=True)` and writes through its
+    command port, which nothing guards outside a `QUERY`;
+  - a `QUERY` that reaches a write port through one of those bypasses.
+
+  If the mark skipped read-only roots, a deadline or a cancel after either write would come
+  back as a retryable `deadline_exceeded` or `interrupted`, although the write landed. That
+  is the duplicate decision 10 forbids.
+- **Because:** the mark predates any reader that cared which transactions can write, and
+  `read_only` is a hint on three of the five transaction managers.
+- **Class:** `spec-gap`. Both the scope and the managers were readable when §5.6 was written.
+- **Consequence:** not changed. A query interrupted after its read keeps reporting
+  `commit_ambiguous`. That is a false positive on Postgres, and correct where nothing
+  enforces read-only. The record stays consistent with the CLI and the deadline path.
+- **Proposed row (RFC 0077):** `ASSUMED` — a read-only root transaction marks the commit
+  point until every manager that sets it can prove read-only. Follow-up: add a "read-only is
+  enforced" capability to `TxCapabilities`, reported by Postgres and the strict mock, and skip
+  the mark only for a read-only root whose manager reports it. The alternative is to make the
+  Mongo, Firestore and Neo4j write adapters refuse a write inside a read-only root, as the
+  strict mock does. Either change needs failing tests first. They must show that a query
+  timed out or cancelled after its read reports `deadline_exceeded` or `interrupted` on the
+  deadline path and the CLI, that a write in a read-only root is refused, and that a
+  read-write root still marks.

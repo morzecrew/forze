@@ -157,6 +157,11 @@ Reconcile from the warning before running the operation again. Where a client
 retries, an [idempotency key](../recipes/add-idempotency.md) makes the retry
 safe.
 
+A query counts too. Its read-only transaction marks the commit point like any
+other, because Mongo, Firestore and Neo4j accept `read_only` without enforcing
+it. So a query interrupted after its read reports `commit_ambiguous`. If the
+query wrote nothing, it is safe to run again.
+
 A deadline is one of several controls over how an operation behaves under
 stress; the full set — retries, bulkheads, breakers, hedging — composes in
 [Resilience](resilience.md).
