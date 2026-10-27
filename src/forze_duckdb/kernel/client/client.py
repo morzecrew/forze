@@ -401,6 +401,7 @@ class DuckDbClient(DuckDbDynamicReadClientPort):
             self.__conn = await asyncio.to_thread(_open)
             self.__admission = admission
             self.__drop_lock = threading.Lock() if drop_vended_secrets else None
+            self.__retired = False  # a fresh connection holds no leftover; close drained workers
             self.__executor = ThreadPoolExecutor(
                 max_workers=cfg.max_concurrent_queries,
                 thread_name_prefix="forze-duckdb",

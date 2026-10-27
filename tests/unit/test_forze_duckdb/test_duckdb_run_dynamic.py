@@ -564,6 +564,32 @@ async def test_a_statement_waiting_for_a_slot_is_refused_once_the_client_retires
         await c.close()
 
 
+async def test_a_retired_client_serves_again_once_closed_and_initialized(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Retirement belongs to the connection: a fresh one has no leftover secret."""
+
+    monkeypatch.setattr(client_module, "logger", MagicMock())
+    real_drop = client_module._drop_vended_secrets
+    monkeypatch.setattr(client_module, "_drop_vended_secrets", _failing_drop)
+    c = DuckDbClient()
+    await c.initialize(":memory:", extensions=(), drop_vended_secrets=True)
+
+    try:
+        await c.run_query("SELECT 1 AS one")
+        assert c.retired
+
+        await c.close()
+        monkeypatch.setattr(client_module, "_drop_vended_secrets", real_drop)
+        await c.initialize(":memory:", extensions=(), drop_vended_secrets=True)
+
+        assert not c.retired
+        assert (await c.run_query("SELECT 1 AS one")).rows == [{"one": 1}]
+
+    finally:
+        await c.close()
+
+
 @pytest.mark.parametrize("locked", [True, False], ids=["locked", "lock_removed"])
 async def test_concurrent_drops_conflict_unless_serialized(
     lake_client: DuckDbClient, monkeypatch: pytest.MonkeyPatch, locked: bool
