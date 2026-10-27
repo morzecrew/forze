@@ -10,12 +10,14 @@ from typing import Any
 
 import attrs
 from starlette.requests import Request
-from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from forze.base.exceptions import CoreException
 from forze.base.logging import DEFAULT_HEALTH_PATHS, AccessLogSampler, Logger
-from forze_fastapi.exceptions import build_core_exception_response
+from forze_fastapi.exceptions import (
+    build_core_exception_response,
+    build_unhandled_exception_response,
+)
 
 # ----------------------- #
 
@@ -109,10 +111,7 @@ class LoggingMiddleware:
             process_time_ms = int((time.perf_counter() - start_time) * 1000)
             self._log_exception(request, scope, process_time_ms, exc)
 
-            response = JSONResponse(
-                status_code=500,
-                content={"detail": "Internal server error"},
-            )
+            response = build_unhandled_exception_response()
             await response(scope, receive, send)
 
     # ....................... #

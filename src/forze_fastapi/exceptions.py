@@ -5,14 +5,20 @@ require_fastapi()
 
 # ....................... #
 
+import math
+from datetime import UTC, datetime, timedelta
+from email.utils import format_datetime
 from typing import Final
 
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
+from forze.application.execution.resilience.backoff import retry_after
 from forze.base.exceptions import (
     CoreException,
+    ErrorEnvelope,
+    ExceptionKind,
     error_envelope,
     exc,
     unhandled_error_envelope,
@@ -32,23 +38,19 @@ error_logger = Logger("fastapi.errors")
 # ....................... #
 
 
-def build_core_exception_response(exc: CoreException) -> JSONResponse:
-    """Build the standard JSON response for a :class:`CoreException`.
+def _render_envelope(envelope: ErrorEnvelope) -> JSONResponse:
+    """Render *envelope* as ``{detail, code, kind, context?}`` plus the error-code header.
 
-    Renders the shared core :func:`~forze.base.exceptions.error_envelope`
-    projection — server-error masking and egress sanitization already applied —
-    into a FastAPI :class:`JSONResponse`, logging server-side errors on the way.
-    The same envelope the Socket.IO transport renders, so both stay in lock-step.
+    The shape the Socket.IO ack and the WebSocket error frame carry. Every field comes
+    from the envelope, which has already masked server-side errors and sanitized the
+    context, so nothing here decides what a client may see.
     """
 
-    envelope = error_envelope(exc)
-
-    if envelope.server_error:
-        log_server_error(error_logger, exc, core=exc)
-
-    log_withheld_details(error_logger, exc)
-
-    content: JsonDict = {"detail": envelope.detail}
+    content: JsonDict = {
+        "detail": envelope.detail,
+        "code": envelope.code,
+        "kind": envelope.kind.value,
+    }
 
     if envelope.context is not None:
         content["context"] = envelope.context
@@ -58,6 +60,86 @@ def build_core_exception_response(exc: CoreException) -> JSONResponse:
         content=content,
         headers={ERROR_CODE_HEADER: envelope.code},
     )
+
+
+# ....................... #
+
+
+def _retry_after_header(exc: CoreException) -> str | None:
+    """The ``Retry-After`` value (RFC 9110) a throttled *exc* asks for, or :obj:`None`.
+
+    ``details["retry_after"]`` — seconds, read as the retry layer reads it — is rounded up
+    to whole seconds; otherwise ``details["retry_at"]``, an aware :class:`~datetime.datetime`,
+    becomes an HTTP-date. Any other value gives no header: a bad hint never fails the response.
+    """
+
+    if exc.kind is not ExceptionKind.THROTTLED:
+        return None
+
+    seconds = retry_after(exc)
+
+    if seconds is not None and math.isfinite(seconds):
+        return str(math.ceil(seconds))
+
+    at = exc.details.get("retry_at") if exc.details else None
+
+    if not isinstance(at, datetime) or at.utcoffset() is None:
+        return None
+
+    try:
+        at = at.astimezone(UTC)
+
+        # An HTTP-date has whole seconds; rounding down would send the client back early.
+        if at.microsecond:
+            at = at.replace(microsecond=0) + timedelta(seconds=1)
+
+        return format_datetime(at, usegmt=True)
+
+    except (OverflowError, ValueError):  # an instant UTC cannot represent
+        return None
+
+
+# ....................... #
+
+
+def build_core_exception_response(exc: CoreException) -> JSONResponse:
+    """Build the standard JSON response for a :class:`CoreException`.
+
+    Renders the shared core :func:`~forze.base.exceptions.error_envelope`
+    projection — server-error masking and egress sanitization already applied —
+    into a FastAPI :class:`JSONResponse`, logging server-side errors on the way.
+    The same envelope the Socket.IO transport renders, so both stay in lock-step.
+    A throttled error's ``retry_after`` (seconds) or ``retry_at`` (aware datetime)
+    detail also sets ``Retry-After``; its other details stay withheld.
+    """
+
+    envelope = error_envelope(exc)
+
+    if envelope.server_error:
+        log_server_error(error_logger, exc, core=exc)
+
+    log_withheld_details(error_logger, exc)
+
+    response = _render_envelope(envelope)
+
+    if (when := _retry_after_header(exc)) is not None:
+        response.headers["Retry-After"] = when
+
+    return response
+
+
+# ....................... #
+
+
+def build_unhandled_exception_response() -> JSONResponse:
+    """Build the generic 500 response for an unhandled, non-:class:`CoreException` error.
+
+    Nothing of the exception reaches it: the body is the
+    :func:`~forze.base.exceptions.unhandled_error_envelope`. Logging the exception is the
+    caller's job.
+    """
+
+    return _render_envelope(unhandled_error_envelope())
 
 
 # ....................... #
@@ -77,12 +159,7 @@ async def _unhandled_exception_handler(_: Request, exc: Exception) -> JSONRespon
 
     log_server_error(error_logger, exc)
 
-    envelope = unhandled_error_envelope()
-
-    return JSONResponse(
-        status_code=envelope.status,
-        content={"detail": envelope.detail},
-    )
+    return build_unhandled_exception_response()
 
 
 # ....................... #

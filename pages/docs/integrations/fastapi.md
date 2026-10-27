@@ -168,7 +168,7 @@ WebSocket route below; for server-push, the SSE route below.
 
 A browser front end on another origin needs CORS, and it reads forze's own response
 headers — the `X-Error-Code`, the request and correlation ids, a download's filename,
-validator and range headers —
+validator and range headers, a throttled error's `Retry-After` —
 only once they are exposed. `AllowlistCORSMiddleware` is Starlette's `CORSMiddleware`
 answering the origins an allowlist names (a port range or `*` on a loopback host, for a dev
 server) and exposing `EXPOSED_RESPONSE_HEADERS`:
@@ -192,15 +192,37 @@ CORS headers too, and the browser can read its error code. An app that renames t
 ## Map errors to HTTP
 
 `register_exception_handlers` turns a `CoreException` into a response — the kind
-decides the status, the `code` rides an error-code header, and details are
-exposed only when the kind's [egress policy](../writing-operation/errors.md) allows:
+decides the status, the `code` rides both the body and the `X-Error-Code` header, and
+details are exposed only when the kind's [egress policy](../writing-operation/errors.md) allows:
 
 ```python
 from forze_fastapi.exceptions import register_exception_handlers
 
 register_exception_handlers(app)
-# raise exc.not_found("...") in a handler → 404 {"detail": "..."}
+# raise exc.not_found("...") in a handler → 404 {"detail": "...", "code": "core.not_found",
+#                                                "kind": "not_found"}
 ```
+
+The body is `{"detail", "code", "kind", "context"}`, the shape the Socket.IO and
+WebSocket error frames carry; `context` appears only when the policy exposes details.
+Branch on `code`, never on `detail`: a stale `?rev=` on an update answers
+`400 {"code": "revision_mismatch", ...}`, which no other 400 shares. A server-side
+error keeps its code and gets a generic `detail`; an exception that is not a
+`CoreException` answers `core.internal`.
+
+A `throttled` error withholds its details, but it can still tell the client when to
+come back: the response carries a `Retry-After` header read from two `details` keys.
+
+| Key | Value | `Retry-After` |
+|-----|-------|---------------|
+| `retry_after` | non-negative seconds, `int` or `float` | the seconds, rounded up |
+| `retry_at` | an aware `datetime` | that instant, rounded up to the second, as an HTTP-date |
+
+A usable `retry_after` wins when both are set; an unusable one — a negative or non-finite
+number, a string — falls through to `retry_at`. When neither is usable (a naive `datetime`
+is not), no header is sent, never an error. `retry_after` is also what the
+[HTTP client](http.md) puts on an upstream `429`, so a throttle passed through keeps its
+hint — but the client caps it at 3600 seconds, so a longer upstream wait arrives as 3600.
 
 ## Readiness probe
 

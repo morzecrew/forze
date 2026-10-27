@@ -24,5 +24,9 @@ def test_register_exception_handlers_maps_core_not_found() -> None:
     response = client.get("/missing")
 
     assert response.status_code == 404
-    assert response.json() == {"detail": "Document not found"}
+    assert response.json() == {
+        "detail": "Document not found",
+        "code": "core.not_found",
+        "kind": "not_found",
+    }
     assert response.headers.get(ERROR_CODE_HEADER) == "core.not_found"

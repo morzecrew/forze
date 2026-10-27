@@ -3,18 +3,20 @@
 import io
 import json
 from collections.abc import Iterator
+from datetime import UTC, datetime, timedelta, timezone
 
 import pytest
 from fastapi import FastAPI
 from starlette.requests import Request
 from starlette.testclient import TestClient
 
-from forze.base.exceptions import exc
+from forze.base.exceptions import error_envelope, exc
 from forze.base.logging import configure_logging
 from forze.base.scrubbing import SECRET_PLACEHOLDER
 from forze_fastapi.exceptions import (
     ERROR_CODE_HEADER,
     _forze_exception_handler,
+    build_core_exception_response,
     register_exception_handlers,
 )
 from tests.support.logging import reset_forze_stdlib_loggers
@@ -54,7 +56,11 @@ class TestForzeExceptionHandler:
         request = Request(scope={"type": "http", "path": "/", "method": "GET"})
         response = await _forze_exception_handler(request, err)
         assert response.status_code == 404
-        assert response.body == b'{"detail":"Document not found"}'
+        assert json.loads(response.body) == {
+            "detail": "Document not found",
+            "code": "core.not_found",
+            "kind": "not_found",
+        }
         assert response.headers.get(ERROR_CODE_HEADER) == "core.not_found"
 
     @pytest.mark.asyncio
@@ -98,7 +104,11 @@ class TestForzeExceptionHandler:
         request = Request(scope={"type": "http", "path": "/", "method": "GET"})
         response = await _forze_exception_handler(request, err)
         body = json.loads(response.body)
-        assert body == {"detail": "Rate limit exceeded"}
+        assert body == {
+            "detail": "Rate limit exceeded",
+            "code": "core.throttled",
+            "kind": "throttled",
+        }
         assert _json_records(error_log_buf) == []
 
     @pytest.mark.asyncio
@@ -165,6 +175,8 @@ class TestForzeExceptionHandler:
         assert response.headers.get(ERROR_CODE_HEADER) == "core.not_found"
         assert json.loads(response.body) == {
             "detail": "Document not found",
+            "code": "core.not_found",
+            "kind": "not_found",
             "context": {
                 "table": "users",
                 "value": "a57cf97f-a50f-42eb-bdc6-502f8c7f18af",
@@ -195,7 +207,11 @@ class TestForzeExceptionHandler:
         response = await _forze_exception_handler(request, err)
 
         assert response.status_code == 500
-        assert json.loads(response.body) == {"detail": "Internal server error"}
+        assert json.loads(response.body) == {
+            "detail": "Internal server error",
+            "code": "core.infrastructure",
+            "kind": "infrastructure",
+        }
         assert b"Database down" not in response.body
         assert b"dsn" not in response.body
 
@@ -206,7 +222,11 @@ class TestForzeExceptionHandler:
         response = await _forze_exception_handler(request, err)
 
         assert response.status_code == 500
-        assert json.loads(response.body) == {"detail": "Internal server error"}
+        assert json.loads(response.body) == {
+            "detail": "Internal server error",
+            "code": "core.internal",
+            "kind": "internal",
+        }
         assert b"wiring" not in response.body
 
     @pytest.mark.asyncio
@@ -219,7 +239,11 @@ class TestForzeExceptionHandler:
         response = await _forze_exception_handler(request, err)
 
         assert response.status_code == 500
-        assert json.loads(response.body) == {"detail": "Internal server error"}
+        assert json.loads(response.body) == {
+            "detail": "Internal server error",
+            "code": "core.configuration",
+            "kind": "configuration",
+        }
         assert b"secrets-prod" not in response.body
         assert b"SecretsDepKey" not in response.body
 
@@ -229,13 +253,36 @@ class TestForzeExceptionHandler:
 
         validation = await _forze_exception_handler(request, exc.validation("Invalid input"))
         assert validation.status_code == 422
-        assert json.loads(validation.body) == {"detail": "Invalid input"}
+        assert json.loads(validation.body) == {
+            "detail": "Invalid input",
+            "code": "core.validation",
+            "kind": "validation",
+        }
 
         authentication = await _forze_exception_handler(
             request, exc.authentication("Token expired")
         )
         assert authentication.status_code == 401
-        assert json.loads(authentication.body) == {"detail": "Token expired"}
+        assert json.loads(authentication.body) == {
+            "detail": "Token expired",
+            "code": "core.authentication",
+            "kind": "authentication",
+        }
+
+    @pytest.mark.asyncio
+    async def test_body_carries_the_code_a_client_branches_on(self) -> None:
+        # A stale revision is a 400 like any domain miss; only the code tells them apart.
+        err = exc.precondition("Revision mismatch", code="revision_mismatch")
+        request = Request(scope={"type": "http", "path": "/", "method": "GET"})
+        response = await _forze_exception_handler(request, err)
+
+        assert response.status_code == 400
+        assert json.loads(response.body) == {
+            "detail": "Revision mismatch",
+            "code": "revision_mismatch",
+            "kind": "precondition",
+        }
+        assert response.headers.get(ERROR_CODE_HEADER) == "revision_mismatch"
 
 
 class TestRegisterExceptionHandlers:
@@ -251,7 +298,11 @@ class TestRegisterExceptionHandlers:
         client = TestClient(app)
         response = client.get("/raise")
         assert response.status_code == 404
-        assert response.json() == {"detail": "Not found"}
+        assert response.json() == {
+            "detail": "Not found",
+            "code": "core.not_found",
+            "kind": "not_found",
+        }
         assert response.headers.get(ERROR_CODE_HEADER) == "core.not_found"
 
     def test_route_raised_server_error_returns_generic_detail(self) -> None:
@@ -268,11 +319,45 @@ class TestRegisterExceptionHandlers:
         register_exception_handlers(app)
         client = TestClient(app)
 
-        for path, needle in (("/infra", "10.0.0.5"), ("/internal", "wiring")):
+        for path, needle, kind in (
+            ("/infra", "10.0.0.5", "infrastructure"),
+            ("/internal", "wiring", "internal"),
+        ):
             response = client.get(path)
             assert response.status_code == 500
-            assert response.json() == {"detail": "Internal server error"}
+            assert response.json() == {
+                "detail": "Internal server error",
+                "code": f"core.{kind}",
+                "kind": kind,
+            }
             assert needle not in response.text
+
+    def test_a_server_kind_body_follows_the_envelope_as_the_header_does(self) -> None:
+        # 5xx code and kind are what the envelope gives, as on X-Error-Code and the realtime
+        # frames; the summary and details stay masked.
+        app = FastAPI()
+        err = exc.configuration(
+            "Policy 'secrets-prod' is misconfigured",
+            code="secrets_policy_invalid",
+            details={"policy": "secrets-prod"},
+        )
+
+        @app.get("/misconfigured")
+        def misconfigured() -> None:
+            raise err
+
+        register_exception_handlers(app)
+        response = TestClient(app).get("/misconfigured")
+        envelope = error_envelope(err)
+
+        assert response.status_code == 500
+        assert response.json() == {
+            "detail": "Internal server error",
+            "code": envelope.code,
+            "kind": envelope.kind.value,
+        }
+        assert response.json()["code"] == response.headers[ERROR_CODE_HEADER]
+        assert "secrets-prod" not in response.text
 
     def test_request_validation_error_uses_forze_envelope(self) -> None:
         from pydantic import BaseModel
@@ -316,7 +401,13 @@ class TestRegisterExceptionHandlers:
         client = TestClient(app, raise_server_exceptions=False)
         response = client.get("/raise")
         assert response.status_code == 500
-        assert response.json() == {"detail": "Internal server error"}
+        # The envelope's own code for an unhandled error: nothing of the exception reaches it.
+        assert response.json() == {
+            "detail": "Internal server error",
+            "code": "core.internal",
+            "kind": "internal",
+        }
+        assert response.headers.get(ERROR_CODE_HEADER) == "core.internal"
 
         records = _json_records(error_log_buf)
         assert len(records) == 1
@@ -325,3 +416,101 @@ class TestRegisterExceptionHandlers:
         assert row["event"] == "Unhandled exception"
         assert row["error.type"] == "ValueError"
         assert "ValueError" in row["error.stack"]
+
+
+class TestRetryAfterHeader:
+    def test_retry_after_seconds_become_the_header(self) -> None:
+        err = exc.throttled(
+            "Rate limit exceeded", details={"retry_after": 30, "policy": "internal-policy"}
+        )
+
+        response = build_core_exception_response(err)
+
+        assert response.status_code == 429
+        assert response.headers["Retry-After"] == "30"
+        # The rest of the details stay withheld.
+        assert "context" not in json.loads(response.body)
+        assert b"internal-policy" not in response.body
+
+    def test_fractional_seconds_round_up(self) -> None:
+        # Rounding down would send the client back before the limit has reset.
+        err = exc.throttled("Slow down", details={"retry_after": 2.1})
+
+        assert build_core_exception_response(err).headers["Retry-After"] == "3"
+
+    def test_retry_at_becomes_an_http_date(self) -> None:
+        moscow = timezone(timedelta(hours=3))
+        at = datetime(2026, 10, 21, 10, 28, tzinfo=moscow)
+        err = exc.throttled("Quota spent", details={"retry_at": at})
+
+        header = build_core_exception_response(err).headers["Retry-After"]
+
+        assert header == "Wed, 21 Oct 2026 07:28:00 GMT"
+
+    def test_retry_at_rounds_up_to_the_next_second(self) -> None:
+        # The HTTP-date drops sub-seconds; truncating would send the client back early.
+        at = datetime(2026, 10, 21, 7, 28, 0, 500_000, tzinfo=UTC)
+        err = exc.throttled("Quota spent", details={"retry_at": at})
+
+        header = build_core_exception_response(err).headers["Retry-After"]
+
+        assert header == "Wed, 21 Oct 2026 07:28:01 GMT"
+
+    def test_retry_after_wins_over_retry_at(self) -> None:
+        at = datetime(2026, 10, 21, 7, 28, tzinfo=UTC)
+        err = exc.throttled("Slow down", details={"retry_after": 5, "retry_at": at})
+
+        assert build_core_exception_response(err).headers["Retry-After"] == "5"
+
+    @pytest.mark.parametrize(
+        "details",
+        [
+            {},
+            {"retry_after": -1},
+            {"retry_after": float("nan")},
+            {"retry_after": float("inf")},
+            {"retry_after": "30"},
+            {"retry_after": True},
+            {"retry_at": datetime(2026, 10, 21, 7, 28)},
+            {"retry_at": "2026-10-21T07:28:00+00:00"},
+            {"retry_at": datetime(1, 1, 1, tzinfo=timezone(timedelta(hours=1)))},
+        ],
+        ids=[
+            "none",
+            "negative",
+            "nan",
+            "infinite",
+            "string-seconds",
+            "bool",
+            "naive-datetime",
+            "string-instant",
+            "out-of-range",
+        ],
+    )
+    def test_an_unusable_hint_sends_no_header(self, details: dict[str, object]) -> None:
+        response = build_core_exception_response(exc.throttled("Slow down", details=details))
+
+        assert response.status_code == 429
+        assert "Retry-After" not in response.headers
+
+    def test_only_a_throttled_error_sends_it(self) -> None:
+        err = exc.infrastructure("Upstream busy", details={"retry_after": 30})
+
+        response = build_core_exception_response(err)
+
+        assert response.status_code == 500
+        assert "Retry-After" not in response.headers
+
+    def test_a_route_raised_throttle_answers_with_the_header(self) -> None:
+        app = FastAPI()
+
+        @app.get("/limited")
+        def limited() -> None:
+            raise exc.throttled("Slow down", code="rate_limited", details={"retry_after": 7})
+
+        register_exception_handlers(app)
+        response = TestClient(app).get("/limited")
+
+        assert response.status_code == 429
+        assert response.headers["Retry-After"] == "7"
+        assert response.json()["code"] == "rate_limited"

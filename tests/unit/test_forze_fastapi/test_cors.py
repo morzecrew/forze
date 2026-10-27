@@ -76,6 +76,7 @@ def test_the_list_names_every_header_forze_sets() -> None:
         "ETag",
         "Accept-Ranges",
         "Content-Range",
+        "Retry-After",
     ):
         assert str(header).lower() in names
 

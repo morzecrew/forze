@@ -22,10 +22,12 @@ EXPOSED_RESPONSE_HEADERS: Final[tuple[str, ...]] = (
     "ETag",
     "Accept-Ranges",
     "Content-Range",
+    "Retry-After",
 )
 """Response headers forze sets that a cross-origin browser can read only once exposed: the
-error code, the invocation ids (:class:`InvocationMetadataMiddleware`'s default names), and a
-download's filename, validator and range headers. ``Last-Modified`` and ``Content-Length`` are
+error code, the invocation ids (:class:`InvocationMetadataMiddleware`'s default names), a
+download's filename, validator and range headers, and a throttled error's ``Retry-After``.
+``Last-Modified`` and ``Content-Length`` are
 safelisted, so a browser reads them anyway. An app that renames the invocation headers, or sets its own,
 passes its list as ``expose_headers``."""
 

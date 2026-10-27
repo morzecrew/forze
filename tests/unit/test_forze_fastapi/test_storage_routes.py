@@ -907,7 +907,7 @@ class TestStorageEncryptingRouteRefusal:
         # error propagates cleanly through run_operation to a proper status — no
         # leaked stack, standard JSON body.
         assert resp.status_code == 500
-        assert resp.json() == {"detail": "Internal server error"}
+        assert resp.json()["detail"] == "Internal server error"
 
 
 class TestStreamingDownload:
