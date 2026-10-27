@@ -254,6 +254,19 @@ class TestRestStyle:
 
         assert response.status_code == 422
 
+    def test_a_stale_rev_answers_with_its_code_in_the_body(self) -> None:
+        client = TestClient(_build_app("rest"))
+
+        created = client.post("/notes", json={"title": "x"}).json()
+        client.patch(f"/notes/{created['id']}", params={"rev": created["rev"]}, json={"title": "y"})
+        stale = client.patch(
+            f"/notes/{created['id']}", params={"rev": created["rev"]}, json={"title": "z"}
+        )
+
+        assert stale.status_code == 400
+        assert stale.json()["code"] == "revision_mismatch"
+        assert stale.json()["kind"] == "precondition"
+
 
 class TestRpcStyle:
     def test_crud_round_trip(self) -> None:

@@ -196,7 +196,11 @@ class TestNonDisclosingPosture:
         status, body, headers = rendered["no_capability"]
         assert status == 404
         assert headers[ERROR_CODE_HEADER.lower()] == "core.not_found"
-        assert json.loads(body) == {"detail": "Not found"}
+        assert json.loads(body) == {
+            "detail": "Not found",
+            "code": "core.not_found",
+            "kind": "not_found",
+        }
 
     async def test_every_reason_renders_the_same_socketio_ack(self, posture: Any) -> None:
         reasons = await _four_reasons()
@@ -234,7 +238,10 @@ class TestNonDisclosingPosture:
             exc.authorization("no", code="permission_denied", resource_type="notes")
         )
 
-        assert (status, json.loads(body)) == (403, {"detail": "no"})
+        assert (status, json.loads(body)) == (
+            403,
+            {"detail": "no", "code": "permission_denied", "kind": "authorization"},
+        )
 
 
 class TestStandardPosture:
@@ -245,7 +252,11 @@ class TestStandardPosture:
         status, body, headers = await _http(denial)
 
         assert (status, headers[ERROR_CODE_HEADER.lower()]) == (403, "permission_denied")
-        assert json.loads(body) == {"detail": "Not yours"}
+        assert json.loads(body) == {
+            "detail": "Not yours",
+            "code": "permission_denied",
+            "kind": "authorization",
+        }
 
     async def test_a_not_found_keeps_its_detail_and_context(self, posture: Any) -> None:
         posture(DenialPosture())
@@ -253,7 +264,12 @@ class TestStandardPosture:
 
         _, body, _ = await _http(missing)
 
-        assert json.loads(body) == {"detail": "Note 7 not found", "context": {"id": "7"}}
+        assert json.loads(body) == {
+            "detail": "Note 7 not found",
+            "code": "core.not_found",
+            "kind": "not_found",
+            "context": {"id": "7"},
+        }
 
     def test_standard_is_the_default(self) -> None:
         assert DenialPosture().mode == "standard"

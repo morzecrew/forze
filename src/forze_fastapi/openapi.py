@@ -91,11 +91,19 @@ _ERROR_SCHEMA_BODY: Final[dict[str, Any]] = {
     "type": "object",
     "title": _ERROR_SCHEMA,
     "description": "The error envelope a failed request answers with.",
-    "required": ["detail"],
+    "required": ["detail", "code", "kind"],
     "properties": {
         "detail": {
             "type": "string",
             "description": "Human-readable summary; generic for server errors.",
+        },
+        "code": {
+            "type": "string",
+            "description": "Machine-readable error code; the error-code header carries it too.",
+        },
+        "kind": {
+            "type": "string",
+            "description": "Error kind, e.g. `not_found`, `precondition`, `throttled`.",
         },
         "context": {
             "type": "object",

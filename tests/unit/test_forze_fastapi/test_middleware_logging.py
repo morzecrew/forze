@@ -80,7 +80,11 @@ class TestLoggingMiddleware:
 
         assert response.status_code == 500
         # internal summaries must not leak to clients
-        assert response.json() == {"detail": "Internal server error"}
+        assert response.json() == {
+            "detail": "Internal server error",
+            "code": "test",
+            "kind": "internal",
+        }
         assert response.headers.get(ERROR_CODE_HEADER) == "test"
         assert "x-process-time" in response.headers
 
@@ -95,7 +99,12 @@ class TestLoggingMiddleware:
         response = client.get("/")
 
         assert response.status_code == 500
-        assert response.json() == {"detail": "Internal server error"}
+        assert response.json() == {
+            "detail": "Internal server error",
+            "code": "core.internal",
+            "kind": "internal",
+        }
+        assert response.headers.get(ERROR_CODE_HEADER) == "core.internal"
 
     def test_unhandled_exception_logs_traceback(self) -> None:
         """Fallback path logs the exception with a traceback."""

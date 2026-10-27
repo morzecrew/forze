@@ -563,7 +563,7 @@ class TestSecurityContextMiddleware:
         )
 
         assert response.status_code == 401
-        assert response.json() == {"detail": "Multiple authentication credentials present"}
+        assert response.json()["detail"] == "Multiple authentication credentials present"
         assert response.headers.get(ERROR_CODE_HEADER) == "ambiguous_credentials"
 
     @pytest.mark.asyncio
@@ -655,7 +655,7 @@ class TestMiddlewareStackErrorHandling:
         response = client.get("/", headers={"Authorization": "Bearer not-a-valid-token"})
 
         assert response.status_code == 401
-        assert response.json() == {"detail": "Invalid authentication credentials"}
+        assert response.json()["detail"] == "Invalid authentication credentials"
         assert response.headers.get(ERROR_CODE_HEADER) == "core.authentication"
 
     def test_missing_required_credentials_returns_401(self) -> None:
@@ -666,7 +666,7 @@ class TestMiddlewareStackErrorHandling:
         response = client.get("/")
 
         assert response.status_code == 401
-        assert response.json() == {"detail": "Authentication credentials are required"}
+        assert response.json()["detail"] == "Authentication credentials are required"
         assert response.headers.get(ERROR_CODE_HEADER) == "core.authentication"
 
     def test_ambiguous_credentials_returns_mapped_status(self) -> None:
@@ -680,7 +680,7 @@ class TestMiddlewareStackErrorHandling:
         )
 
         assert response.status_code == 401
-        assert response.json() == {"detail": "Multiple authentication credentials present"}
+        assert response.json()["detail"] == "Multiple authentication credentials present"
         assert response.headers.get(ERROR_CODE_HEADER) == "ambiguous_credentials"
 
     def test_garbage_correlation_header_still_succeeds(self) -> None:
@@ -708,7 +708,7 @@ class TestMiddlewareStackErrorHandling:
         response = client.get("/raise", headers={"Authorization": "Bearer token-1"})
 
         assert response.status_code == 404
-        assert response.json() == {"detail": "Document not found"}
+        assert response.json()["detail"] == "Document not found"
         assert response.headers.get(ERROR_CODE_HEADER) == "core.not_found"
 
 

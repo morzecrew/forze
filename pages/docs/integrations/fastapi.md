@@ -192,15 +192,23 @@ CORS headers too, and the browser can read its error code. An app that renames t
 ## Map errors to HTTP
 
 `register_exception_handlers` turns a `CoreException` into a response — the kind
-decides the status, the `code` rides an error-code header, and details are
-exposed only when the kind's [egress policy](../writing-operation/errors.md) allows:
+decides the status, the `code` rides both the body and the `X-Error-Code` header, and
+details are exposed only when the kind's [egress policy](../writing-operation/errors.md) allows:
 
 ```python
 from forze_fastapi.exceptions import register_exception_handlers
 
 register_exception_handlers(app)
-# raise exc.not_found("...") in a handler → 404 {"detail": "..."}
+# raise exc.not_found("...") in a handler → 404 {"detail": "...", "code": "core.not_found",
+#                                                "kind": "not_found"}
 ```
+
+The body is `{"detail", "code", "kind", "context"}`, the shape the Socket.IO and
+WebSocket error frames carry; `context` appears only when the policy exposes details.
+Branch on `code`, never on `detail`: a stale `?rev=` on an update answers
+`400 {"code": "revision_mismatch", ...}`, which no other 400 shares. A server-side
+error keeps its code and gets a generic `detail`; an exception that is not a
+`CoreException` answers `core.internal`.
 
 ## Readiness probe
 

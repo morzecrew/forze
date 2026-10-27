@@ -54,7 +54,11 @@ class TestForzeExceptionHandler:
         request = Request(scope={"type": "http", "path": "/", "method": "GET"})
         response = await _forze_exception_handler(request, err)
         assert response.status_code == 404
-        assert response.body == b'{"detail":"Document not found"}'
+        assert json.loads(response.body) == {
+            "detail": "Document not found",
+            "code": "core.not_found",
+            "kind": "not_found",
+        }
         assert response.headers.get(ERROR_CODE_HEADER) == "core.not_found"
 
     @pytest.mark.asyncio
@@ -98,7 +102,11 @@ class TestForzeExceptionHandler:
         request = Request(scope={"type": "http", "path": "/", "method": "GET"})
         response = await _forze_exception_handler(request, err)
         body = json.loads(response.body)
-        assert body == {"detail": "Rate limit exceeded"}
+        assert body == {
+            "detail": "Rate limit exceeded",
+            "code": "core.throttled",
+            "kind": "throttled",
+        }
         assert _json_records(error_log_buf) == []
 
     @pytest.mark.asyncio
@@ -165,6 +173,8 @@ class TestForzeExceptionHandler:
         assert response.headers.get(ERROR_CODE_HEADER) == "core.not_found"
         assert json.loads(response.body) == {
             "detail": "Document not found",
+            "code": "core.not_found",
+            "kind": "not_found",
             "context": {
                 "table": "users",
                 "value": "a57cf97f-a50f-42eb-bdc6-502f8c7f18af",
@@ -195,7 +205,11 @@ class TestForzeExceptionHandler:
         response = await _forze_exception_handler(request, err)
 
         assert response.status_code == 500
-        assert json.loads(response.body) == {"detail": "Internal server error"}
+        assert json.loads(response.body) == {
+            "detail": "Internal server error",
+            "code": "core.infrastructure",
+            "kind": "infrastructure",
+        }
         assert b"Database down" not in response.body
         assert b"dsn" not in response.body
 
@@ -206,7 +220,11 @@ class TestForzeExceptionHandler:
         response = await _forze_exception_handler(request, err)
 
         assert response.status_code == 500
-        assert json.loads(response.body) == {"detail": "Internal server error"}
+        assert json.loads(response.body) == {
+            "detail": "Internal server error",
+            "code": "core.internal",
+            "kind": "internal",
+        }
         assert b"wiring" not in response.body
 
     @pytest.mark.asyncio
@@ -219,7 +237,11 @@ class TestForzeExceptionHandler:
         response = await _forze_exception_handler(request, err)
 
         assert response.status_code == 500
-        assert json.loads(response.body) == {"detail": "Internal server error"}
+        assert json.loads(response.body) == {
+            "detail": "Internal server error",
+            "code": "core.configuration",
+            "kind": "configuration",
+        }
         assert b"secrets-prod" not in response.body
         assert b"SecretsDepKey" not in response.body
 
@@ -229,13 +251,36 @@ class TestForzeExceptionHandler:
 
         validation = await _forze_exception_handler(request, exc.validation("Invalid input"))
         assert validation.status_code == 422
-        assert json.loads(validation.body) == {"detail": "Invalid input"}
+        assert json.loads(validation.body) == {
+            "detail": "Invalid input",
+            "code": "core.validation",
+            "kind": "validation",
+        }
 
         authentication = await _forze_exception_handler(
             request, exc.authentication("Token expired")
         )
         assert authentication.status_code == 401
-        assert json.loads(authentication.body) == {"detail": "Token expired"}
+        assert json.loads(authentication.body) == {
+            "detail": "Token expired",
+            "code": "core.authentication",
+            "kind": "authentication",
+        }
+
+    @pytest.mark.asyncio
+    async def test_body_carries_the_code_a_client_branches_on(self) -> None:
+        # A stale revision is a 400 like any domain miss; only the code tells them apart.
+        err = exc.precondition("Revision mismatch", code="revision_mismatch")
+        request = Request(scope={"type": "http", "path": "/", "method": "GET"})
+        response = await _forze_exception_handler(request, err)
+
+        assert response.status_code == 400
+        assert json.loads(response.body) == {
+            "detail": "Revision mismatch",
+            "code": "revision_mismatch",
+            "kind": "precondition",
+        }
+        assert response.headers.get(ERROR_CODE_HEADER) == "revision_mismatch"
 
 
 class TestRegisterExceptionHandlers:
@@ -251,7 +296,11 @@ class TestRegisterExceptionHandlers:
         client = TestClient(app)
         response = client.get("/raise")
         assert response.status_code == 404
-        assert response.json() == {"detail": "Not found"}
+        assert response.json() == {
+            "detail": "Not found",
+            "code": "core.not_found",
+            "kind": "not_found",
+        }
         assert response.headers.get(ERROR_CODE_HEADER) == "core.not_found"
 
     def test_route_raised_server_error_returns_generic_detail(self) -> None:
@@ -268,10 +317,17 @@ class TestRegisterExceptionHandlers:
         register_exception_handlers(app)
         client = TestClient(app)
 
-        for path, needle in (("/infra", "10.0.0.5"), ("/internal", "wiring")):
+        for path, needle, kind in (
+            ("/infra", "10.0.0.5", "infrastructure"),
+            ("/internal", "wiring", "internal"),
+        ):
             response = client.get(path)
             assert response.status_code == 500
-            assert response.json() == {"detail": "Internal server error"}
+            assert response.json() == {
+                "detail": "Internal server error",
+                "code": f"core.{kind}",
+                "kind": kind,
+            }
             assert needle not in response.text
 
     def test_request_validation_error_uses_forze_envelope(self) -> None:
@@ -316,7 +372,13 @@ class TestRegisterExceptionHandlers:
         client = TestClient(app, raise_server_exceptions=False)
         response = client.get("/raise")
         assert response.status_code == 500
-        assert response.json() == {"detail": "Internal server error"}
+        # The envelope's own code for an unhandled error: nothing of the exception reaches it.
+        assert response.json() == {
+            "detail": "Internal server error",
+            "code": "core.internal",
+            "kind": "internal",
+        }
+        assert response.headers.get(ERROR_CODE_HEADER) == "core.internal"
 
         records = _json_records(error_log_buf)
         assert len(records) == 1

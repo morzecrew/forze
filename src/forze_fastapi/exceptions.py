@@ -13,6 +13,7 @@ from fastapi.responses import JSONResponse
 
 from forze.base.exceptions import (
     CoreException,
+    ErrorEnvelope,
     error_envelope,
     exc,
     unhandled_error_envelope,
@@ -27,6 +28,33 @@ ERROR_CODE_HEADER: Final[str] = "X-Error-Code"
 
 error_logger = Logger("fastapi.errors")
 """Logger for FastAPI server-side error diagnostics."""
+
+
+# ....................... #
+
+
+def _render_envelope(envelope: ErrorEnvelope) -> JSONResponse:
+    """Render *envelope* as ``{detail, code, kind, context?}`` plus the error-code header.
+
+    The shape the Socket.IO ack and the WebSocket error frame carry. Every field comes
+    from the envelope, which has already masked server-side errors and sanitized the
+    context, so nothing here decides what a client may see.
+    """
+
+    content: JsonDict = {
+        "detail": envelope.detail,
+        "code": envelope.code,
+        "kind": envelope.kind.value,
+    }
+
+    if envelope.context is not None:
+        content["context"] = envelope.context
+
+    return JSONResponse(
+        status_code=envelope.status,
+        content=content,
+        headers={ERROR_CODE_HEADER: envelope.code},
+    )
 
 
 # ....................... #
@@ -48,16 +76,21 @@ def build_core_exception_response(exc: CoreException) -> JSONResponse:
 
     log_withheld_details(error_logger, exc)
 
-    content: JsonDict = {"detail": envelope.detail}
+    return _render_envelope(envelope)
 
-    if envelope.context is not None:
-        content["context"] = envelope.context
 
-    return JSONResponse(
-        status_code=envelope.status,
-        content=content,
-        headers={ERROR_CODE_HEADER: envelope.code},
-    )
+# ....................... #
+
+
+def build_unhandled_exception_response() -> JSONResponse:
+    """Build the generic 500 response for an unhandled, non-:class:`CoreException` error.
+
+    Nothing of the exception reaches it: the body is the
+    :func:`~forze.base.exceptions.unhandled_error_envelope`. Logging the exception is the
+    caller's job.
+    """
+
+    return _render_envelope(unhandled_error_envelope())
 
 
 # ....................... #
@@ -77,12 +110,7 @@ async def _unhandled_exception_handler(_: Request, exc: Exception) -> JSONRespon
 
     log_server_error(error_logger, exc)
 
-    envelope = unhandled_error_envelope()
-
-    return JSONResponse(
-        status_code=envelope.status,
-        content={"detail": envelope.detail},
-    )
+    return build_unhandled_exception_response()
 
 
 # ....................... #
