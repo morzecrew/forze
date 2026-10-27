@@ -5,7 +5,18 @@ from __future__ import annotations
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 
-from forze.application.contracts.transaction import IsolationAware, IsolationLevel
+import pytest
+
+from forze.application.contracts.transaction import (
+    IsolationAware,
+    IsolationLevel,
+    ReadOnlyAware,
+)
+from forze.application.execution.context.commit_state import (
+    commit_started,
+    reset_commit_started,
+)
+from forze.application.execution.context.transaction import TransactionContext
 from forze_postgres.adapters.txmanager import PostgresTxManagerAdapter
 from forze_postgres.kernel.client import PostgresTransactionOptions
 
@@ -15,9 +26,10 @@ from forze_postgres.kernel.client import PostgresTransactionOptions
 class _FakeClient:
     def __init__(self) -> None:
         self.options: PostgresTransactionOptions | None = None
+        self.in_transaction = False
 
     def is_in_transaction(self) -> bool:
-        return False
+        return self.in_transaction
 
     def deadline_pushdown(self) -> None:
         return None  # push-down disabled for this isolation-only stub
@@ -39,8 +51,51 @@ def test_is_isolation_aware_and_reports_all_levels() -> None:
     adapter, _ = _adapter()
     assert isinstance(adapter, IsolationAware)
     assert adapter.capabilities().isolation == frozenset(IsolationLevel)
-    # BEGIN ... READ ONLY: the database refuses writes inside a read-only root.
-    assert adapter.capabilities().read_only_enforced is True
+
+
+@pytest.mark.parametrize(
+    ("read_only", "in_outer_transaction", "enforced"),
+    [
+        pytest.param(True, False, True, id="read-only-begin"),
+        pytest.param(True, True, False, id="savepoint"),
+        pytest.param(False, False, False, id="read-write"),
+    ],
+)
+async def test_read_only_is_enforced_only_by_a_read_only_begin(
+    read_only: bool, in_outer_transaction: bool, enforced: bool
+) -> None:
+    # Inside an outer client transaction the root is a savepoint: it cannot be READ ONLY,
+    # and the outer transaction may write.
+    adapter, client = _adapter()
+    client.in_transaction = in_outer_transaction
+    assert isinstance(adapter, ReadOnlyAware)
+
+    async with adapter.transaction(read_only=read_only):
+        assert adapter.read_only_enforced() is enforced
+
+        async with adapter.transaction():  # a nested scope does not change the root's answer
+            pass
+
+        assert adapter.read_only_enforced() is enforced
+
+    assert adapter.read_only_enforced() is False
+
+
+@pytest.mark.parametrize(("in_outer_transaction", "marked"), [(False, False), (True, True)])
+async def test_a_read_only_root_marks_the_commit_point_unless_enforced(
+    in_outer_transaction: bool, marked: bool
+) -> None:
+    adapter, client = _adapter()
+    client.in_transaction = in_outer_transaction
+    tx = TransactionContext()
+    tx.lock(lambda _route: adapter)
+    reset_commit_started()
+
+    async with tx.scope("pg", read_only=True):
+        pass
+
+    assert commit_started() is marked
+    reset_commit_started()
 
 
 async def test_isolation_maps_to_postgres_level() -> None:

@@ -183,12 +183,17 @@ class MockStrictTxManagerAdapter(TransactionManagerPort):
     def capabilities(self) -> TxCapabilities:
         # Root transactions are globally serialized (per-state lock) and rolled back via a
         # whole-store snapshot, so this manager trivially satisfies every level up to
-        # serializable; nested scopes are real savepoints. A read-only root refuses writes to
-        # the participating stores (``ensure_mock_tx_writable``).
+        # serializable; nested scopes are real savepoints.
         return TxCapabilities(
             isolation=frozenset(IsolationLevel),
-            read_only_enforced=True,
         )
+
+    # ....................... #
+
+    def read_only_enforced(self) -> bool:
+        # The flag ``ensure_mock_tx_writable`` refuses writes on: set only by a root this
+        # manager opened read-only, and inherited (not set) by a scope nested in an outer one.
+        return _mock_tx_read_only.get()
 
     # ....................... #
 
@@ -277,12 +282,17 @@ class MockJournalTxManagerAdapter(TransactionManagerPort):
 
     def capabilities(self) -> TxCapabilities:
         # Read-committed by default (write-through journal + row-``rev`` OCC); snapshot and
-        # serializable are honored via the MVCC buffered overlay (see ``adapters._mvcc``). A
-        # read-only root refuses writes to the participating stores (``ensure_mock_tx_writable``).
+        # serializable are honored via the MVCC buffered overlay (see ``adapters._mvcc``).
         return TxCapabilities(
             isolation=frozenset(IsolationLevel),
-            read_only_enforced=True,
         )
+
+    # ....................... #
+
+    def read_only_enforced(self) -> bool:
+        # The flag ``ensure_mock_tx_writable`` refuses writes on: set only by a root this
+        # manager opened read-only, and inherited (not set) by a scope nested in an outer one.
+        return _mock_tx_read_only.get()
 
     # ....................... #
 

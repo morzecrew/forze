@@ -181,3 +181,40 @@ async def test_transaction_per_call_read_only_rejects_writes(
 
     val = await pg_client.fetch_value("SELECT value FROM test_txmanager_per_call_ro")
     assert val == 2
+
+
+@pytest.mark.asyncio
+async def test_read_only_is_enforced_only_by_a_read_only_begin(
+    pg_client: PostgresClient,
+) -> None:
+    """A read-only root inside an outer client transaction is a savepoint, and a write lands.
+
+    The manager must say so: the kernel skips a read-only root's commit point only when the
+    manager reports the root as enforced.
+    """
+
+    await pg_client.execute(
+        """
+        CREATE TABLE test_txmanager_ro_savepoint (
+            id serial PRIMARY KEY,
+            value integer
+        );
+        """
+    )
+
+    txmanager = PostgresTxManagerAdapter(client=pg_client)
+
+    async with txmanager.transaction(read_only=True):
+        assert txmanager.read_only_enforced() is True
+
+    async with pg_client.transaction():  # an outer read-write transaction
+        async with txmanager.transaction(read_only=True):
+            assert txmanager.read_only_enforced() is False
+
+            await pg_client.execute(
+                "INSERT INTO test_txmanager_ro_savepoint (value) VALUES (%(val)s)",
+                {"val": 1},
+            )
+
+    val = await pg_client.fetch_value("SELECT value FROM test_txmanager_ro_savepoint")
+    assert val == 1

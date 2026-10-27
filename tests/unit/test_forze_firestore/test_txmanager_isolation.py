@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 
-from forze.application.contracts.transaction import IsolationAware, IsolationLevel
+from forze.application.contracts.transaction import IsolationAware, IsolationLevel, ReadOnlyAware
 from forze_firestore.adapters.txmanager import FirestoreTxManagerAdapter
 
 # ----------------------- #
@@ -30,7 +30,7 @@ def test_reports_all_levels_serializable_satisfies_any() -> None:
     adapter, _ = _adapter()
     assert isinstance(adapter, IsolationAware)
     assert adapter.capabilities().isolation == frozenset(IsolationLevel)
-    assert adapter.capabilities().read_only_enforced is False  # no read-only mode
+    assert not isinstance(adapter, ReadOnlyAware)  # no read-only mode: a hint, so it marks
 
 
 async def test_any_isolation_runs_a_serializable_transaction() -> None:

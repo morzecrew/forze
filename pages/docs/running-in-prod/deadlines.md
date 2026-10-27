@@ -162,12 +162,14 @@ have let a write through it:
 
 | Transaction manager | A query interrupted after its read reports |
 | --- | --- |
-| Postgres, and the mock's `journal` and `strict` managers | `deadline_exceeded`, or a plain cancellation: they refuse writes inside a read-only transaction |
+| Postgres, and the mock's `journal` and `strict` managers, when the query's transaction is the outermost one | `deadline_exceeded`, or a plain cancellation: the backend refused writes inside it |
+| The same managers, when the query's transaction is nested in one opened outside forze | `commit_ambiguous`: it became a savepoint, which cannot be read-only |
 | Mongo, Firestore, Neo4j, and the mock's `none` manager | `commit_ambiguous`: they accept `read_only` without enforcing it |
 
-A manager says which it is through `TxCapabilities.read_only_enforced`; one
-that reports nothing counts as not enforcing. On the second row, a query that
-wrote nothing is still safe to run again.
+The kernel asks the manager about the transaction it actually opened, through
+`ReadOnlyAware.read_only_enforced()`. A manager that does not implement it
+counts as not enforcing. Where a query reports `commit_ambiguous` but wrote
+nothing, it is still safe to run again.
 
 A deadline is one of several controls over how an operation behaves under
 stress; the full set — retries, bulkheads, breakers, hedging — composes in

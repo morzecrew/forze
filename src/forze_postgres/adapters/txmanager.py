@@ -8,6 +8,7 @@ require_psycopg()
 
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
+from contextvars import ContextVar
 from typing import final
 
 import attrs
@@ -38,6 +39,12 @@ _PG_ISOLATION: dict[CoreIsolationLevel, PgIsolationLevel] = {
     CoreIsolationLevel.SERIALIZABLE: "serializable",
 }
 """Map the kernel's intent-named isolation to the Postgres level (Postgres can do all three)."""
+
+_read_only_begin: ContextVar[bool] = ContextVar("forze_pg_read_only_begin", default=False)
+"""Whether the transaction this task has open began ``READ ONLY`` (see ``read_only_enforced``).
+
+Set by every :meth:`PostgresTxManagerAdapter.transaction` and reset on its exit, so a nested
+scope never changes the enclosing root's answer."""
 
 
 def _statement_timeout_ms(
@@ -84,8 +91,18 @@ class PostgresTxManagerAdapter(TransactionManagerPort):
 
     def capabilities(self) -> TxCapabilities:
         # Postgres honors every level natively (snapshot via REPEATABLE READ).
-        # ``BEGIN ... READ ONLY``: the database refuses writes inside a read-only root.
-        return TxCapabilities(isolation=frozenset(CoreIsolationLevel), read_only_enforced=True)
+        return TxCapabilities(isolation=frozenset(CoreIsolationLevel))
+
+    # ....................... #
+
+    def read_only_enforced(self) -> bool:
+        """Whether the open transaction began ``BEGIN … READ ONLY``, so the database refuses writes.
+
+        ``False`` for a scope opened inside an outer client transaction: that is a savepoint,
+        which cannot be read-only, and the outer transaction may write.
+        """
+
+        return _read_only_begin.get()
 
     # ....................... #
 
@@ -119,21 +136,27 @@ class PostgresTxManagerAdapter(TransactionManagerPort):
         # Apply the invocation-deadline backstop only at the root transaction (a nested
         # savepoint rides the root's SET LOCAL).
         at_root = not self.client.is_in_transaction()
+        # Only a root BEGIN carries READ ONLY; inside a client transaction this is a savepoint.
+        token = _read_only_begin.set(at_root and options.read_only)
 
-        async with self.client.transaction(options=options):
-            if at_root:
-                await self._apply_deadline_backstop()
+        try:
+            async with self.client.transaction(options=options):
+                if at_root:
+                    await self._apply_deadline_backstop()
 
-            try:
-                yield
+                try:
+                    yield
 
-            #! Hmmm.. should it be like that?
-            except Exception:
-                logger.debug("Transaction rolled back")
-                raise
+                #! Hmmm.. should it be like that?
+                except Exception:
+                    logger.debug("Transaction rolled back")
+                    raise
 
-            else:
-                logger.debug("Transaction committed")
+                else:
+                    logger.debug("Transaction committed")
+
+        finally:
+            _read_only_begin.reset(token)
 
     # ....................... #
 

@@ -27,7 +27,6 @@ from forze.application.contracts.transaction import (
     IsolationLevel,
     TransactionManagerPort,
     TransactionScopeKey,
-    TxCapabilities,
 )
 from forze.application.execution import ExecutionContext, bind_deadline
 from forze.application.execution.context.active_operation import active_operation_var
@@ -574,33 +573,43 @@ class TestCancellationAfterCommitIsRecorded:
         reset_commit_started()
 
 
-class _CapableTxManager(_RecordingTxManager):
-    """Reports whether it refuses writes inside a read-only root."""
+class _ReadOnlyAwareTxManager(_RecordingTxManager):
+    """Refuses writes in a read-only root it opens, unless it is nested in an outer transaction.
 
-    def __init__(self, *, read_only_enforced: bool, commit_delay: float = 0.0) -> None:
+    Nested, the root is a savepoint the backend cannot make read-only, as with Postgres.
+    """
+
+    def __init__(self, *, in_outer_transaction: bool = False, commit_delay: float = 0.0) -> None:
         super().__init__(commit_delay=commit_delay)
-        self.read_only_enforced = read_only_enforced
+        self.in_outer_transaction = in_outer_transaction
+        self.enforced = False
 
-    def capabilities(self) -> TxCapabilities:
-        return TxCapabilities(
-            isolation=frozenset(IsolationLevel), read_only_enforced=self.read_only_enforced
-        )
+    def transaction(
+        self, *, read_only: bool = False, isolation: IsolationLevel | None = None
+    ) -> AbstractAsyncContextManager[None]:
+        self.enforced = read_only and not self.in_outer_transaction
+        return super().transaction(read_only=read_only, isolation=isolation)
+
+    def read_only_enforced(self) -> bool:
+        return self.enforced
 
 
 class TestReadOnlyRootCommitPoint:
-    """A read-only root marks no commit point only where its manager refuses writes in it."""
+    """A read-only root marks no commit point only where the backend refuses writes in it."""
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
         ("manager", "read_only", "marked"),
         [
-            pytest.param(_CapableTxManager(read_only_enforced=True), True, False, id="enforced"),
-            pytest.param(_CapableTxManager(read_only_enforced=False), True, True, id="hint"),
-            pytest.param(_RecordingTxManager(), True, True, id="unreported"),
-            pytest.param(_CapableTxManager(read_only_enforced=True), False, True, id="writes"),
+            pytest.param(_ReadOnlyAwareTxManager(), True, False, id="enforced"),
+            pytest.param(
+                _ReadOnlyAwareTxManager(in_outer_transaction=True), True, True, id="savepoint"
+            ),
+            pytest.param(_RecordingTxManager(), True, True, id="unaware"),
+            pytest.param(_ReadOnlyAwareTxManager(), False, True, id="writes"),
         ],
     )
-    async def test_the_mark_follows_the_capability(
+    async def test_the_mark_follows_the_opened_transaction(
         self, manager: TransactionManagerPort, read_only: bool, marked: bool
     ) -> None:
         reset_commit_started()
@@ -613,7 +622,7 @@ class TestReadOnlyRootCommitPoint:
 
     @staticmethod
     def _read_then_wait(enforced: bool, parked: asyncio.Event) -> OperationRegistry:
-        tx = _tx_with(_CapableTxManager(read_only_enforced=enforced))
+        tx = _tx_with(_ReadOnlyAwareTxManager(in_outer_transaction=not enforced))
 
         @attrs.define(slots=True, kw_only=True, frozen=True)
         class ReadThenWait(Handler[str, str]):
@@ -672,7 +681,7 @@ class TestReadOnlyRootCommitPoint:
     @pytest.mark.asyncio
     async def test_a_cancel_in_an_enforced_read_only_commit_stays_a_cancel(self) -> None:
         reset_commit_started()
-        manager = _CapableTxManager(read_only_enforced=True, commit_delay=10.0)
+        manager = _ReadOnlyAwareTxManager(commit_delay=10.0)
         tx = _tx_with(manager)
 
         async def driver() -> None:

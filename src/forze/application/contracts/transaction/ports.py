@@ -82,19 +82,12 @@ class TxCapabilities:
     isolation: frozenset[IsolationLevel]
     """Isolation levels this manager can honor.
 
-    The capability report intentionally covers only what the kernel consults (the declared
-    isolation, and :attr:`read_only_enforced`). Other transaction features (savepoints /
-    partial rollback) are honored by the adapter at runtime, not advertised here — add a
-    field only when the kernel grows a fail-closed check that consults it."""
-
-    read_only_enforced: bool = False
-    """The backend refuses writes inside a read-only transaction.
-
-    Report ``True`` only when a write in a ``read_only=True`` root fails whatever path
-    reaches the backend. The kernel then treats that root's commit as no commit point: a
-    deadline or cancellation after it stays retryable instead of ``commit_ambiguous``.
-    ``False`` (the default) treats ``read_only`` as a hint, and the commit point is marked as
-    for a read-write transaction."""
+    The capability report intentionally covers only what the kernel **enforces** at resolve
+    (the declared isolation). Other transaction features (savepoints / partial rollback,
+    read-only enforcement) are honored by the adapter at runtime, not advertised here — add
+    a field only when the kernel grows a fail-closed check that consults it. Whether a
+    read-only root is enforced depends on the transaction actually opened, so it is asked of
+    the open transaction (:class:`ReadOnlyAware`), not reported here."""
 
 
 # ....................... #
@@ -203,4 +196,29 @@ class IsolationAware(Protocol):
         isolation: "IsolationLevel | None" = None,
     ) -> AbstractAsyncContextManager[None]:
         """Open a transaction at *isolation* (honored at root only; nested inherits)."""
+        ...
+
+
+# ....................... #
+
+
+@runtime_checkable
+class ReadOnlyAware(Protocol):
+    """Opt-in extension for transaction managers whose backend can refuse writes.
+
+    The kernel asks it inside a ``read_only=True`` root, just before the commit. A ``True``
+    answer means the root committed nothing, so its commit is no commit point: a deadline or
+    cancellation after it stays retryable instead of ``commit_ambiguous``. A manager that
+    does not implement this, or answers ``False``, has its read-only root marked like a
+    read-write one (fail-closed).
+    """
+
+    def read_only_enforced(self) -> bool:
+        """Whether the root transaction open on this task refuses every write at the backend.
+
+        ``True`` only for a transaction the backend itself opened read-only (Postgres
+        ``BEGIN … READ ONLY``), whatever path a write takes to it. A root that became a
+        savepoint in an outer transaction, or one where ``read_only`` was only a hint, is
+        ``False``.
+        """
         ...

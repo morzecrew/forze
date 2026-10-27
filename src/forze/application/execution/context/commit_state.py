@@ -52,8 +52,8 @@ def mark_commit_started() -> None:
 
     Called by :meth:`~forze.application.execution.context.transaction.TransactionContext.scope`
     once the body completes cleanly, just before the driver commit runs — except for a
-    read-only root whose manager reports ``TxCapabilities.read_only_enforced``, which cannot
-    commit a write.
+    read-only root whose manager answers ``ReadOnlyAware.read_only_enforced()`` for the
+    transaction it opened, which cannot commit a write.
     """
 
     _commit_started.set(True)

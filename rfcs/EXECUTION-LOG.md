@@ -2348,14 +2348,18 @@ root transaction committed.
 
   A plain gate on `read_only` would not be safe, because a `read_only` root does not always
   stop a write. Each manager that reports `TxCapabilities`, with its evidence:
-  - **Postgres** enforces it: `BEGIN … READ ONLY`
-    (`src/forze_postgres/adapters/txmanager.py:101-112`). Integration tests pin the refusal
+  - **Postgres** enforces it only for a root `BEGIN … READ ONLY`
+    (`src/forze_postgres/adapters/txmanager.py:118-128`). Integration tests pin the refusal
     (`test_pg_txmanager.py::test_transaction_per_call_read_only_rejects_writes`,
     `test_pg_transaction_options_leak.py::test_read_only_tx_still_rejects_writes`).
+    Inside a client transaction opened outside forze, the client turns the root into a
+    savepoint. A savepoint cannot be `READ ONLY`, and a write there lands
+    (`test_pg_txmanager.py::test_read_only_is_enforced_only_by_a_read_only_begin`).
   - **`MockStrictTxManagerAdapter`** and **`MockJournalTxManagerAdapter`**, the mock's
-    default, enforce it. Each sets the read-only flag at the root (`tx.py:220`, `tx.py:328`),
-    and every participating store's write checks it through `ensure_mock_tx_writable`
-    (`tx.py:78`), raising `read_only_tx`.
+    default, enforce it for a root they open. Each sets the read-only flag only at its own
+    root (`tx.py:225`, `tx.py:338`), and every participating store's write checks it through
+    `ensure_mock_tx_writable` (`tx.py:78`), raising `read_only_tx`. A scope nested in an outer
+    read-write transaction inherits that transaction's flag, so a write there lands.
   - **`MockTxManagerAdapter`** (`transactions="none"`) is a no-op and lets the write through.
   - **Mongo** accepts the flag and does not enforce it
     (`src/forze_mongo/adapters/txmanager.py:73-76`).
@@ -2368,39 +2372,55 @@ root transaction committed.
   (`src/forze/application/contracts/deps/keys.py:41-45`) checks whether the *operation* is
   read-only (`QUERY`), not the transaction. Its own docstring (`keys.py:64-66`) says
   `forze.testing.unguarded`, direct resolution and `backend_of` all bypass it. Two writes
-  therefore commit unrefused on Mongo, Firestore or Neo4j:
+  therefore commit unrefused on Mongo, Firestore or Neo4j, and inside a savepoint root:
   - a command that opens `ctx.tx_ctx.scope(route, read_only=True)` and writes through its
     command port, which nothing guards outside a `QUERY`;
   - a `QUERY` that reaches a write port through one of those bypasses.
 
-  If the mark skipped every read-only root, a deadline or a cancel after either write would
-  come back as `deadline_exceeded` or `interrupted`, although the write landed. That is the
-  duplicate decision 10 forbids. Neither write can reach a Postgres or mock backend through
-  an enforced read-only root: there the refusal happens in the store, whatever path reached
-  it.
-- **Because:** the mark predates any reader that cared which transactions can write, and
-  `read_only` is a hint on four of the seven managers that report capabilities.
+  If the mark skipped those roots, a deadline or a cancel after either write would come back
+  as `deadline_exceeded` or `interrupted`, although the write landed. That is the duplicate
+  decision 10 forbids. In a real read-only `BEGIN`, or a mock root opened read-only, the
+  store refuses the write whatever path reached it.
+- **Because:** the mark predates any reader that cared which transactions can write.
+  `read_only` is a hint on four of the seven managers that report capabilities, and on the
+  other three it is enforced only for a root they open themselves.
 - **Class:** `spec-gap`. Both the scope and the managers were readable when §5.6 was written.
-- **Consequence:** implemented as a capability, fail-closed. `TxCapabilities` gained
-  `read_only_enforced: bool = False`. Postgres and the strict and journal mocks report
-  `True`; Mongo, Firestore, Neo4j and the no-op mock keep `False`. The scope skips the mark,
-  and with it the commit-time `commit_ambiguous` conversion, only for a read-only root whose
-  manager reports `True`. A manager that reports nothing marks as before, and so does one
-  that reports `False`. On Postgres and the default mock, a query interrupted after its
-  read now reports `deadline_exceeded` (CLI exit 6) or `interrupted` (130 or 143). On the
-  other three backends it still reports `commit_ambiguous`.
+- **Consequence:** implemented, fail-closed, as a question about the transaction actually
+  opened. A new opt-in protocol, `ReadOnlyAware`, has one method, `read_only_enforced()`
+  (`src/forze/application/contracts/transaction/ports.py:216`). The scope asks it just
+  before the commit (`transaction.py:445`) and skips the mark only on a yes. That also skips
+  the commit-time `commit_ambiguous` conversion. The answers:
+  - Postgres answers from a per-task flag that is true only after a root
+    `BEGIN … READ ONLY` (`txmanager.py:140`). Every scope sets the flag and resets it on
+    exit, so a nested savepoint does not change the root's answer.
+  - The strict and journal mocks answer from the flag `ensure_mock_tx_writable` refuses on
+    (`tx.py:193`, `tx.py:292`).
+  - Mongo, Firestore, Neo4j and the no-op mock do not implement the protocol, so they mark
+    as before.
 
-  Three things pin this:
-  - a mock test ties each mock's report to whether a write in its read-only root is
-    actually refused;
-  - backend unit tests pin each adapter's report;
-  - core and CLI tests cover both outcomes, on the deadline path and under a signal.
+  On Postgres and the default mock, a query interrupted after its read now reports
+  `deadline_exceeded` (CLI exit 6) or `interrupted` (130 or 143). Where the root is nested
+  in an outer transaction, or on the other three backends, it still reports
+  `commit_ambiguous`.
 
-  One edge stays outside the claim. A Postgres root opened inside a client transaction
-  started outside forze becomes a savepoint, so that root's "commit" is not where anything
-  commits.
+  A first cut on this branch put a manager-wide `TxCapabilities.read_only_enforced` flag on
+  the manager. Review found that it claimed enforcement for a savepoint root, so it was
+  replaced before publish.
+
+  Pinned by:
+  - a mock test that ties each mock's answer to whether a write in its read-only root is
+    actually refused, at the root and nested in an outer transaction;
+  - Postgres unit tests, with a fake client, and an integration test that cover a root
+    `BEGIN`, a savepoint, and a read-write root;
+  - core and CLI tests that cover both outcomes, on the deadline path and under a signal.
+
+  Outside the claim, and older than this unit: a nested forze scope on another route
+  resolves another Postgres client under the same scope key (`"postgres"`), so it opens an
+  independent transaction rather than a savepoint. The mark never covers that transaction's
+  commit, for read-write roots as much as read-only ones.
 - **Proposed row (RFC 0077):** `ASSUMED` — a read-only root marks no commit point when its
-  manager reports `TxCapabilities.read_only_enforced`; every other root marks one. A manager
-  may report it only if a write in a read-only root is refused on every path to the backend.
-  Follow-up, not built: make the Mongo, Firestore and Neo4j write adapters refuse writes
-  inside a read-only root, as the mocks do, so they too can report it.
+  manager implements `ReadOnlyAware` and answers that the backend refused writes in the
+  transaction it actually opened. Every other root marks one. A manager may answer yes only
+  if every write to that transaction fails on every path to the backend. Follow-up, not
+  built: make the Mongo, Firestore and Neo4j write adapters refuse writes inside a read-only
+  root, as the mocks do, so they can implement the protocol too.
