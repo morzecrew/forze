@@ -11,10 +11,12 @@ does, including the ones a hand-written second copy would get subtly wrong.
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from types import SimpleNamespace
 from typing import Any
 from uuid import UUID
 
 import pytest
+from socketio.exceptions import ConnectionRefusedError as SocketIOConnectionRefusedError
 
 from forze.application.contracts.authn import (
     AccessTokenCredentials,
@@ -30,7 +32,12 @@ from forze.base.exceptions import CoreException, ExceptionKind, exc
 from forze.testing import context_from_deps
 from forze_mock import MockState
 from forze_mock.adapters.identity.tenancy import MockTenantManagementPort, MockTenantResolverPort
-from forze_socketio import SocketIOConnect, build_socketio_connection_resolver, socketio_handshake
+from forze_socketio import (
+    SocketIOConnect,
+    attach_realtime_connection,
+    build_socketio_connection_resolver,
+    socketio_handshake,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -68,6 +75,32 @@ class _AuthnPort:
 
 
 _PORT = _AuthnPort()
+
+
+class _StubSio:
+    """Records handlers and per-sid sessions; every sid stays connected."""
+
+    manager = SimpleNamespace(
+        is_connected=lambda _sid, _namespace: True, eio_sid_from_sid=lambda _sid, _namespace: None
+    )
+
+    def __init__(self) -> None:
+        self.handlers: dict[str, Any] = {}
+        self.sessions: dict[str, dict[str, Any]] = {}
+
+    def on(self, event: str, handler: Any, namespace: str | None = None) -> None:
+        self.handlers[event] = handler
+
+    async def enter_room(self, sid: str, room: str, namespace: str | None = None) -> None:
+        pass
+
+    async def get_session(self, sid: str, namespace: str | None = None) -> dict[str, Any]:
+        return self.sessions.setdefault(sid, {})
+
+    async def save_session(
+        self, sid: str, session: dict[str, Any], namespace: str | None = None
+    ) -> None:
+        self.sessions[sid] = session
 
 
 class _AuthnFactory:
@@ -289,6 +322,27 @@ class TestTheTenantIsBound:
 
         assert connection is not None
         assert connection.tenant is None
+
+    @pytest.mark.asyncio
+    async def test_an_anonymous_handshake_is_refused_once_tenanted(self) -> None:
+        # Refused by the resolver itself, so a namespace attached without ctx_dep or a
+        # runtime (whose connect cannot ask) still turns it away.
+        deps = (
+            Deps.plain({AuthnDepKey: _AuthnFactory()}),
+            Deps.routed({TenantResolverDepKey: {"other": lambda _ctx: object()}}),
+        )
+        resolve = build_socketio_connection_resolver(
+            ctx_dep=lambda: context_from_deps(*deps),
+            authn_spec=_SPEC,
+        )
+        sio = _StubSio()
+        attach_realtime_connection(sio, resolve=resolve)  # pyright: ignore[reportArgumentType]
+
+        with pytest.raises(SocketIOConnectionRefusedError) as caught:
+            await sio.handlers["connect"]("sid-1", {}, None)
+
+        assert caught.value.error_args["data"]["code"] == "auth_required"
+        assert await _resolver()(_connect()) is None  # untenanted deployments: unchanged
 
 
 class TestPayloadOnly:

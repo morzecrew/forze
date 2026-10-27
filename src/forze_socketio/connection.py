@@ -50,9 +50,9 @@ from forze.application.integrations.realtime import (
     iter_backlog,
     negotiate_realtime_protocol,
     refuse_delegated_identity,
+    require_authenticated_connection,
     require_connection_tenant,
     resolve_client_key,
-    tenancy_wired,
 )
 from forze.application.integrations.realtime import (
     InMemoryRealtimePresence as InMemoryRealtimePresence,  # re-export: established home
@@ -477,11 +477,8 @@ class _ConnectionLifecycle:
         if connection is not None:
             require_connection_tenant(ctx, connection.tenant)
 
-        elif tenancy_wired(ctx):
-            raise exc.authentication(
-                "A realtime connection requires an authenticated principal once tenancy is wired",
-                code="auth_required",
-            )
+        else:
+            require_authenticated_connection(ctx)
 
     # ....................... #
 
@@ -1061,7 +1058,7 @@ def attach_realtime_connection(
     is tenanted. Once it registers a tenant resolver, this layer refuses an anonymous connect
     (``auth_required``) and a connection without a tenant (``tenant_required``), at connect
     and at reauth, whatever *resolve* returned. Without either it cannot ask, and leaves the
-    decision to *resolve* (the shipped one refuses an untenanted connection itself): pass
+    decision to *resolve* (the shipped one refuses both itself): pass
     *ctx_dep* whenever a hand-written resolver serves a tenanted deployment.
 
     *stats* counts this namespace's open connections and its refused connects by reason

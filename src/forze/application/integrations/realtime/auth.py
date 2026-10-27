@@ -49,6 +49,7 @@ __all__ = [
     "present_credential",
     "refuse_delegated_identity",
     "require_origin_attestation",
+    "require_authenticated_connection",
     "require_connection_tenant",
     "resolve_realtime_identity",
     "tenancy_wired",
@@ -431,6 +432,26 @@ def require_connection_tenant(ctx: "ExecutionContext", tenant: UUID | None) -> N
 
     if tenant is None and tenancy_wired(ctx):
         raise exc.authentication("Tenant identity is required", code="tenant_required")
+
+
+# ....................... #
+
+
+def require_authenticated_connection(ctx: "ExecutionContext") -> None:
+    """Refuse an anonymous realtime connection once the deployment is tenanted.
+
+    An anonymous connection has no tenant either, so it would join the global topic rooms
+    the same way. The WebSocket route refuses anonymous connections outright; Socket.IO
+    admits them only where no tenancy is wired.
+
+    :raises CoreException: ``authentication`` / ``auth_required`` when :func:`tenancy_wired`.
+    """
+
+    if tenancy_wired(ctx):
+        raise exc.authentication(
+            "A realtime connection requires an authenticated principal once tenancy is wired",
+            code="auth_required",
+        )
 
 
 # ....................... #

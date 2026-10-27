@@ -137,8 +137,9 @@ Pass `ctx_dep` (or the serving `runtime`) so the connect can ask whether the dep
 tenanted. Once it registers a tenant resolver, an anonymous connect and a connection
 without a tenant are refused (`auth_required`, `tenant_required`), at connect and at
 `realtime.reauth`, whatever the resolver returned. Anonymous connects are accepted only
-where no tenancy is wired. `tenant_required` asks the client to select a tenant; a token
-refresh does not clear it.
+where no tenancy is wired. `build_socketio_connection_resolver` applies both rules itself,
+so they hold without `ctx_dep` too; a hand-written resolver relies on it. `tenant_required`
+asks the client to select a tenant; a token refresh does not clear it.
 
 A client that opens several namespaces over one connection is authenticated once per
 namespace. Pass `share_identity=True` to each of them to authenticate once per Engine.IO
