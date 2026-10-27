@@ -10233,6 +10233,9 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <h3 id="added">Added<a class="headerlink" href="#added" title="Permanent link">&para;</a></h3>
 <ul>
 <li>
+<p><strong>DuckDB serves trusted dynamic reads over a per-tenant Iceberg lake.</strong> <code>RoutedDuckDbClient</code> gives each tenant a locked-down instance holding its catalog principal and the S3 credentials vended per statement, and serves nothing from one that fails its attestation. Wire routes with <code>DuckDbDepsModule(dynamic_reads=...)</code>.</p>
+</li>
+<li>
 <p><strong><code>attach_readiness_route</code> takes a runtime provider.</strong> Pass a zero-argument callable returning the runtime, or <code>None</code> before it exists; it is asked on every request. No runtime, or a provider that raises, answers <code>503 unavailable</code>.</p>
 </li>
 <li>
@@ -10280,6 +10283,9 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <li>
 <p><strong><code>local_identity_deps</code> wires no tenant resolver for a config that maps no tenant</strong> (<strong>behaviour change</strong>). There, <code>forze ops call --tenant</code> gets <code>400 tenant_request_unverifiable</code>, not <code>401 tenant_mismatch</code>. A tenant on an API key counts and resolves, also in a config built directly.</p>
 </li>
+<li>
+<p><strong>The dynamic-read write refusal no longer names a READ ONLY transaction.</strong> The message is engine-neutral and the details carry the engine's <code>statement_type</code> where it has one. A <code>DuckDbClient</code> statement timeout now carries the code <code>duckdb_query_timeout</code>.</p>
+</li>
 </ul>
 <h3 id="fixed">Fixed<a class="headerlink" href="#fixed" title="Permanent link">&para;</a></h3>
 <ul>
@@ -10303,6 +10309,12 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 </li>
 <li>
 <p><strong>A Postgres dynamic read no longer collapses duplicate column names.</strong> <code>SELECT a.id, b.id</code> came back as one <code>id</code> holding the second value. A result with rows now fails with <code>dynamic_read_statement_invalid</code>, naming the duplicates; an empty one still returns no rows.</p>
+</li>
+<li>
+<p><strong>A timed-out <code>DuckDbClient</code> statement returns at its timeout.</strong> The caller no longer waits for a hung HTTP request to give up, about two minutes on the Iceberg path; the worker keeps its thread until DuckDB unwinds, and <code>close</code> still waits for it.</p>
+</li>
+<li>
+<p><strong>A cancelled <code>DuckDbClient</code> caller now interrupts its statement.</strong> The statement ran to completion and kept its executor thread; it now stops as a timed-out one does.</p>
 </li>
 <li>
 <p><strong>Two quick <code>SIGINT</code>s to <code>serve_uvicorn</code> now give the drain phases up.</strong> A second one handled in the same loop turn as the first cancelled the drain before it started, so the forced exit still ran every phase at length in teardown.</p>

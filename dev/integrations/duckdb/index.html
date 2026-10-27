@@ -3477,6 +3477,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#per-tenant-lake-reads-dedicated" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Per-tenant lake reads (<code>dedicated</code>)
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#what-it-provides" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -6589,6 +6600,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#per-tenant-lake-reads-dedicated" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Per-tenant lake reads (<code>dedicated</code>)
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#what-it-provides" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -6714,7 +6736,9 @@ CSV, Iceberg or Delta files on S3/GCS (or local disk) and it runs the scan
 in-process. It suits heavy analytics that don't need ultra-low-latency
 serving — and, being Docker-free, it doubles as an analytics backend in tests.</p>
 <p>It is <strong>query-only</strong> (no ingest, no table management): named, parameterized
-queries returning typed rows, exactly like the other analytics adapters.</p>
+queries returning typed rows, exactly like the other analytics adapters. With a
+per-tenant routed client it also serves trusted
+<a href="../../data-events/dynamic-read/">dynamic reads</a> over an Iceberg lake.</p>
 <h2 id="install">Install<a class="headerlink" href="#install" title="Permanent link">&para;</a></h2>
 <div class="highlight"><pre><span></span><code>uv<span class="w"> </span>add<span class="w"> </span><span class="s1">'forze[duckdb]'</span>
 </code></pre></div>
@@ -6786,6 +6810,145 @@ source views:</p>
 </code></pre></div>
 <p>For a runnable, Docker-free walkthrough, see the
 <a href="../../recipes/analytics-over-a-data-lake/">analytics recipe</a>.</p>
+<h2 id="per-tenant-lake-reads-dedicated">Per-tenant lake reads (<code>dedicated</code>)<a class="headerlink" href="#per-tenant-lake-reads-dedicated" title="Permanent link">&para;</a></h2>
+<p>One <code>DuckDbClient</code> is one engine for every tenant: whatever credentials it holds,
+every statement can use. <code>RoutedDuckDbClient</code> instead builds an unnamed
+<code>:memory:</code> instance per tenant, attached to that tenant's own warehouse in an
+Iceberg REST catalog (Lakekeeper) with the tenant's own OAuth2 principal. The
+instance holds that principal's client secret for its whole life, and the S3
+credentials the catalog vends for a statement until the statement ends. Neither
+reaches another tenant's data. That is the <code>dedicated</code> tier, and
+it is what lets a <a href="../../data-events/dynamic-read/">dynamic-read</a> route run
+compiled statements here:</p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">datetime</span><span class="w"> </span><span class="kn">import</span> <span class="n">timedelta</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">forze.application.contracts.secrets</span><span class="w"> </span><span class="kn">import</span> <span class="n">SecretRef</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">forze.application.execution</span><span class="w"> </span><span class="kn">import</span> <span class="n">DepsRegistry</span><span class="p">,</span> <span class="n">LifecyclePlan</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">forze.application.execution.lifecycle.builtin</span><span class="w"> </span><span class="kn">import</span> <span class="n">routed_client_lifecycle_step</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">forze_duckdb</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+    <span class="n">DuckDbDepsModule</span><span class="p">,</span>
+    <span class="n">DuckDbDynamicReadConfig</span><span class="p">,</span>
+    <span class="n">LakeTenantCatalog</span><span class="p">,</span>
+    <span class="n">RoutedDuckDbClient</span><span class="p">,</span>
+<span class="p">)</span>
+
+<span class="n">lake</span> <span class="o">=</span> <span class="n">RoutedDuckDbClient</span><span class="p">(</span>
+    <span class="n">secrets</span><span class="o">=</span><span class="n">secrets</span><span class="p">,</span>                       <span class="c1"># SecretsPort; holds LakeCatalogCredentials</span>
+    <span class="n">secret_ref_for_tenant</span><span class="o">=</span><span class="k">lambda</span> <span class="n">t</span><span class="p">:</span> <span class="n">SecretRef</span><span class="p">(</span><span class="n">path</span><span class="o">=</span><span class="sa">f</span><span class="s2">"tenants/</span><span class="si">{</span><span class="n">t</span><span class="si">}</span><span class="s2">/lake"</span><span class="p">),</span>
+    <span class="n">tenant_provider</span><span class="o">=</span><span class="n">current_tenant</span><span class="p">,</span>
+    <span class="n">catalog_for_tenant</span><span class="o">=</span><span class="k">lambda</span> <span class="n">t</span><span class="p">:</span> <span class="n">LakeTenantCatalog</span><span class="p">(</span>
+        <span class="n">uri</span><span class="o">=</span><span class="s2">"http://lakekeeper:8181/catalog"</span><span class="p">,</span>
+        <span class="n">warehouse</span><span class="o">=</span><span class="sa">f</span><span class="s2">"wh-</span><span class="si">{</span><span class="n">t</span><span class="si">}</span><span class="s2">"</span><span class="p">,</span>
+        <span class="n">oauth2_server_uri</span><span class="o">=</span><span class="s2">"http://idp/realms/lake/protocol/openid-connect/token"</span><span class="p">,</span>
+        <span class="n">oauth2_scope</span><span class="o">=</span><span class="s2">"lakekeeper"</span><span class="p">,</span>
+        <span class="n">storage_prefix</span><span class="o">=</span><span class="sa">f</span><span class="s2">"s3://lake/</span><span class="si">{</span><span class="n">t</span><span class="si">}</span><span class="s2">/"</span><span class="p">,</span>
+    <span class="p">),</span>
+    <span class="n">extension_directory</span><span class="o">=</span><span class="s2">"/opt/duckdb/extensions"</span><span class="p">,</span>   <span class="c1"># httpfs + iceberg, baked into the image</span>
+<span class="p">)</span>
+
+<span class="n">widgets</span> <span class="o">=</span> <span class="n">DuckDbDynamicReadConfig</span><span class="p">(</span>
+    <span class="n">provenance</span><span class="o">=</span><span class="s2">"trusted"</span><span class="p">,</span>                  <span class="c1"># the only tier admitted</span>
+    <span class="n">namespace</span><span class="o">=</span><span class="s2">"gold"</span><span class="p">,</span>                      <span class="c1"># USE lake.gold before every statement</span>
+    <span class="n">statement_timeout</span><span class="o">=</span><span class="n">timedelta</span><span class="p">(</span><span class="n">seconds</span><span class="o">=</span><span class="mi">5</span><span class="p">),</span>
+<span class="p">)</span>
+
+<span class="n">deps</span> <span class="o">=</span> <span class="n">DepsRegistry</span><span class="o">.</span><span class="n">from_modules</span><span class="p">(</span><span class="n">DuckDbDepsModule</span><span class="p">(</span><span class="n">client</span><span class="o">=</span><span class="n">lake</span><span class="p">,</span> <span class="n">dynamic_reads</span><span class="o">=</span><span class="p">{</span><span class="s2">"widgets"</span><span class="p">:</span> <span class="n">widgets</span><span class="p">}))</span>
+<span class="n">lifecycle</span> <span class="o">=</span> <span class="n">LifecyclePlan</span><span class="o">.</span><span class="n">from_steps</span><span class="p">(</span><span class="n">routed_client_lifecycle_step</span><span class="p">(</span><span class="s2">"duckdb_lake"</span><span class="p">,</span> <span class="n">client</span><span class="o">=</span><span class="n">lake</span><span class="p">))</span>
+</code></pre></div>
+<p>The secret holds <code>LakeCatalogCredentials</code>: <code>client_id</code> and <code>client_secret</code>, never
+a static token, because a token is never refreshed. An empty <code>client_id</code> is
+refused on first use, since the bundled <code>iceberg</code> build never refreshes a token
+issued for one.</p>
+<p>Each instance is built by one fixed sequence and serves nothing until it has
+read the result back:</p>
+<div class="highlight"><pre><span></span><code>connect(":memory:", persistent secrets off, extension autoload/autoinstall off,
+        temp_directory '', extension_directory)
+LOAD httpfs; LOAD iceberg                       -- never INSTALL at runtime
+SET GLOBAL enable_global_s3_configuration=false; s3 keys cleared
+SET GLOBAL allowed_directories=[storage_prefix]; enable_external_access=false
+CREATE SECRET (TYPE iceberg, client credentials, scope)
+ATTACH warehouse AS lake (vended_credentials, READ_ONLY)
+SET GLOBAL disabled_filesystems='LocalFileSystem,HTTPFileSystem'
+SET GLOBAL http_timeout; HTTP metadata and external file caches off
+SET GLOBAL lock_configuration=true
+attest                                          -- settings, secrets, databases, filesystems
+</code></pre></div>
+<p>A session that does not attest raises <code>duckdb_session_attestation_failed</code>, and one
+whose sequence fails (an extension missing from the image, a principal the catalog
+refuses) raises <code>duckdb_session_setup_failed</code>. Both are <code>configuration</code> errors, and
+the instance is closed. A setup error carries the engine's message with the
+tenant's client secret and DuckDB's quote of the statement removed, and does not
+chain the engine's error. Each statement then runs on a fresh cursor:
+<code>USE lake.&lt;namespace&gt;</code>, DuckDB's own parser checks that the text is exactly one
+<code>SELECT</code>, the classified statement runs unmodified, and a result with two columns
+of the same name is refused. After every read, dynamic or analytics, the
+per-table S3 secrets the catalog vended for it are dropped. A kept secret
+outranks the next statement's fresh one, so once it expired every later read of
+that table would fail. If a drop fails, the read's own rows or error still come
+back, and the instance is retired: it refuses further statements
+(<code>duckdb_instance_retired</code>), and the next call builds a fresh one.</p>
+<p>What the route promises, and who keeps each promise:</p>
+<table>
+<thead>
+<tr>
+<th>Property</th>
+<th>Kept by</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Read-only</td>
+<td>the catalog's <code>select</code>-only grant and the store; the <code>READ_ONLY</code> attach and parser classification are belts</td>
+</tr>
+<tr>
+<td>One statement</td>
+<td>DuckDB's parser, before anything runs</td>
+</tr>
+<tr>
+<td>Timeout</td>
+<td>the client interrupts the cursor, also when the caller is cancelled. A CPU-bound statement stops at once. A catalog or store request that hangs is not cut short: the caller still gets <code>dynamic_read_timeout</code> on time, but the worker holds its slot for about 120 s, whatever <code>http_timeout</code> says</td>
+</tr>
+<tr>
+<td>Row cap</td>
+<td>the shell fetches cap + 1 rows from a streaming result and refuses the overflow</td>
+</tr>
+<tr>
+<td>Container</td>
+<td>the tenant's instance, principal and vended credentials (<code>dedicated</code>)</td>
+</tr>
+<tr>
+<td>Untrusted statements</td>
+<td>refused at wiring (<code>duckdb_dynamic_read_untrusted_refused</code>); a <code>provenance</code> other than <code>"trusted"</code> or <code>"untrusted"</code> is <code>duckdb_dynamic_read_provenance_invalid</code></td>
+</tr>
+</tbody>
+</table>
+<p>Wiring refuses a dynamic route on a plain <code>DuckDbClient</code> (its origin floor is
+<code>namespace</code>), and an <code>http_timeout</code> above the smallest route timeout. Named
+analytics routes work on the routed client too and derive <code>dedicated</code>; their
+SQL names tables as <code>lake.&lt;namespace&gt;.&lt;table&gt;</code>. A nested namespace is written
+dotted, <code>namespace="gold.sub"</code>. DuckDB lists it as one schema, so SQL names its
+tables bare or as <code>lake."gold.sub".&lt;table&gt;</code>.</p>
+<p>Operating it:</p>
+<ul>
+<li><strong>Size <code>max_concurrent_queries_total</code> for hung requests.</strong> It bounds
+  statements across all tenants (default 8), and peak memory is about that
+  many times <code>engine.memory_limit</code>. A tenant whose catalog or store stops
+  answering holds a slot for about 120 s per stuck request. Waiting for a slot
+  counts against a statement's timeout.</li>
+<li><strong>Call <code>evict_tenant</code> after a grant is restored or a namespace is created.</strong>
+  An instance that once found a namespace missing keeps it missing for its
+  life. Rotate credentials or remap a tenant's catalog the same way, or set
+  <code>fingerprint_ttl</code>. An evicted instance closes in the background, and
+  <code>close()</code> waits for those teardowns.</li>
+<li><strong>A revocation lands at the next statement</strong>, or after the authorizer's
+  check cache expires: OpenFGA caches checks for 10 s when its cache is on.</li>
+<li><strong>The deployment owns the outer controls.</strong> The worker must hold no ambient
+  cloud credentials, write nowhere it should not, and egress only to the
+  catalog, the IdP and the store. An <code>s3://</code> path inside the tenant's prefix
+  with no vended secret behind it goes, unsigned, to the public AWS endpoint.</li>
+<li><strong>Keep <code>sts-token-validity-seconds</code> well above the longest statement.</strong>
+  The engine does not re-vend a credential that expires mid-statement.</li>
+</ul>
 <h2 id="what-it-provides">What it provides<a class="headerlink" href="#what-it-provides" title="Permanent link">&para;</a></h2>
 <table>
 <thead>
@@ -6798,6 +6961,10 @@ source views:</p>
 <tr>
 <td>Analytics query (<code>run</code> / <code>run_page</code> / <code>run_cursor</code> / <code>run_chunked</code>)</td>
 <td><code>AnalyticsSpec.name</code></td>
+</tr>
+<tr>
+<td>Dynamic read (<code>run</code> / <code>select</code>), on <code>RoutedDuckDbClient</code> only</td>
+<td><code>DynamicReadSpec.name</code></td>
 </tr>
 </tbody>
 </table>
