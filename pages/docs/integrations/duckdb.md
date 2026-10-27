@@ -186,17 +186,27 @@ SET GLOBAL lock_configuration=true
 attest                                          -- settings, secrets, databases, refusals
 ```
 
-The allowlist is the one bound inside the engine on what a statement can open,
-local or remote. Anything outside it is refused before any request:
-another tenant's prefix, a local path, any other URL. It names the catalog
-and the IdP because DuckDB 2 checks the `iceberg` extension's own requests
-against it. A statement can therefore also send GETs into the catalog's tree
-and to the token endpoint. They carry no token, and the catalog and the IdP
-refuse them. No filesystem is disabled: DuckDB 2 reaches neither the catalog with
-`HTTPFileSystem` off nor its CA bundle with `LocalFileSystem` off. For HTTPS to
-the catalog, the IdP or the store, set `ca_cert_file`: DuckDB 2 reads the
-bundle through the allowlist, and without it the session does not build. The
-same sequence runs on DuckDB 1.5.
+The allowlist is the one bound inside the engine on what can be opened, local
+or remote. Anything outside it is refused before any request: another
+tenant's prefix, a local path, any other URL. It names the catalog and the
+IdP because DuckDB 2 checks the `iceberg` extension's own requests against
+it. Analytics SQL on the instance can therefore also send GETs into the
+catalog's tree, which every tenant shares, and to the token endpoint. They
+carry no token, and the catalog and the IdP refuse them. The allowlist
+matches a path by its spelling: it resolves no `..`, and it does not re-check
+where a redirect leads. No filesystem is disabled: DuckDB 2 reaches neither the
+catalog with `HTTPFileSystem` off nor its CA bundle with `LocalFileSystem` off.
+For HTTPS to the catalog, the IdP or the store, set `ca_cert_file` to a PEM
+bundle: DuckDB 2 reads it through the allowlist, and without it the session does
+not build. Any statement on the instance can read that file. The same sequence
+runs on DuckDB 1.5.
+
+What keeps credentials in is not the allowlist but their being unreadable:
+`duckdb_secrets()` stays redacted, the `s3_*` options are cleared, no secret
+persists, and the lock keeps it so. The attestation reads each of these back,
+and checks by effect that a local path, an unlisted URL, the token endpoint
+with a path or query added, a sibling of the prefix or the catalog tree, a file
+beside the CA bundle, and a write to `lake` are all refused.
 
 A session that does not attest raises `duckdb_session_attestation_failed`, and one
 whose sequence fails (an extension missing from the image, a principal the catalog
@@ -206,11 +216,19 @@ tenant's client secret and DuckDB's quote of the statement removed, and does not
 chain the engine's error. Each statement then runs on a fresh cursor:
 `USE lake.<namespace>`, DuckDB's own parser checks that the text is exactly one
 `SELECT`, the classified statement runs unmodified, and a result with two columns
-of the same name is refused. So is a table named through a catalog the instance
-has not attached, or nested deeper than `catalog.schema.table`
-(`dynamic_read_statement_invalid`): DuckDB 2 would read it as a nested namespace
-and resolve only its last level, a table the statement did not name. After every
-read, dynamic or analytics, the
+of the same name is refused. A dynamic read may read only tables it names
+(`dynamic_read_statement_invalid` otherwise):
+
+- no table function but `range`, `generate_series` and `unnest`. The others take
+  a path, a URL, a table name or SQL text (`read_parquet`, `iceberg_scan`,
+  `query`, `query_table`), and `PRAGMA` is refused on 1.5 as on 2;
+- no path or URL as a table name, so nothing a statement writes reaches the
+  allowlist's spelling match;
+- no table named through a catalog the instance has not attached, or nested
+  deeper than `catalog.schema.table`: DuckDB 2 would read it as a nested
+  namespace and resolve only its last level, a table the statement did not name.
+
+After every read, dynamic or analytics, the
 per-table S3 secrets the catalog vended for it are dropped. On DuckDB 1.5 a
 kept secret outranks the next statement's fresh one, so once it expired every
 later read of that table would fail. DuckDB 2 discards it when the statement
@@ -255,6 +273,9 @@ Operating it:
   cloud credentials, write nowhere it should not, and egress only to the
   catalog, the IdP and the store. An `s3://` path inside the tenant's prefix
   with no vended secret behind it goes, unsigned, to the public AWS endpoint.
+  The engine follows a redirect from any of the three without re-checking it,
+  and the store, not the allowlist, refuses a `..` key outside the vended
+  credential's table.
 - **Keep `sts-token-validity-seconds` well above the longest statement.**
   The engine does not re-vend a credential that expires mid-statement: the
   statement fails with an HTTP 400 from the store. A statement that starts

@@ -35,7 +35,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **A throttled HTTP error tells the client when to come back.** Its `retry_after` (seconds) or else `retry_at` (aware `datetime`) detail becomes a `Retry-After` header, which `AllowlistCORSMiddleware` exposes; other details stay withheld. No header when neither key is usable.
 
-- **`RoutedDuckDbClient(ca_cert_file=...)` lets a lake session use HTTPS on DuckDB 2.** The session's allowlist now names the catalog, the IdP and that bundle instead of disabling filesystems. A dynamic read naming a table through a catalog the instance has not attached is refused before it runs.
+- **`RoutedDuckDbClient(ca_cert_file=...)` lets a lake session use HTTPS on DuckDB 2.** The file must hold a PEM certificate, and any statement on the instance can read it. A dynamic read calling a table function other than `range`, `generate_series` or `unnest`, naming a path, or naming an unattached catalog is refused.
 
 **`forze ops` for people at a shell and for backfills:**
 
@@ -44,6 +44,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - **HTTP error bodies carry the error's `code` and `kind`** (**behaviour change**). The body is `{"detail", "code", "kind", "context"}`, so a client tells `revision_mismatch` from other 400s; a whole-body comparison breaks. An unhandled 500 now also sends `X-Error-Code: core.internal`.
+
+- **The DuckDB lake session no longer disables any filesystem** (**behaviour change**). On 1.5 as on 2 it relies on an allowlist of the tenant's prefix, the catalog's tree and the token endpoint, plus attested settings. That tree is shared by every tenant, and analytics SQL can send it unauthenticated requests.
 
 - **The `duckdb` extra takes DuckDB 1.5 or 2** (**behaviour change**). It now requires `duckdb>=1.5.6,<3`, so releases before 1.5.6 no longer install with it. `DuckDbClient` and `RoutedDuckDbClient` run on both majors with the same code.
 
