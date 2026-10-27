@@ -7,7 +7,7 @@ work.
 
 ## Allocating a number
 
-The next free number is **0078**. Before creating an RFC, glance at the table below
+The next free number is **0079**. Before creating an RFC, glance at the table below
 (or `ls rfcs/`) and take the next unused integer — numbers collide when minted in
 parallel. Update this table in the same change.
 
@@ -97,6 +97,7 @@ only in the code, which is the failure this log exists to prevent.
 | [0075](0075-realtime-connection-drain.md) | Realtime connection drain | ✅ Complete | Close a leaving replica's socket.io, WebSocket and SSE connections spread over a window, refuse connects while draining, count connections, and let apps admit connects. |
 | [0076](0076-connection-rebalancing-step.md) | Connection rebalancing step | ✅ Complete | A socket.io step that sheds movable connections from a replica well above the fleet's mean once the fleet has settled. |
 | [0077](0077-operation-cli.md) | Operation CLI: governed operations from the command line | ✅ Complete | A `forze ops` group that invokes registry operations in process through `run_operation`, with a verified identity, a stable exit-code contract, and the boundary code each surface copies lifted into core first, with MCP moved onto it. |
+| [0078](0078-routed-duckdb-lake-reads.md) | Routed DuckDB lake reads: per-tenant client, vended credentials, governed dynamic read | 📝 Draft | One in-memory DuckDB instance per tenant behind the shared routed-client pool, a locked-down Lakekeeper REST-catalog `ATTACH` with vended credentials, and a trusted-only DuckDB `DynamicReadPort` adapter, so a `compiled` dynamic read runs on the lake at the `dedicated` tier. |
 
 ## Status legend
 
