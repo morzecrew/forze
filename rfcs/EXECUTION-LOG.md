@@ -1975,3 +1975,21 @@ and a rotate-and-evict race. With guarded eviction sabotaged, all 20 seeds fail.
   checked against its fix removed.
 - **Proposed row (RFC 0078):** `ASSUMED` — a failed drop is logged, never raised over the read,
   and retires the instance, which the routed client evicts and rebuilds.
+
+## Review findings — 2026-10-27
+
+PR #685, after it was published. Five findings from CodeRabbit and CodeAnt, all fixed, plus
+the Codecov patch check. None changes a proposed row. R-5 amends what D-034's consequence says
+about quoting, and that entry stays as written.
+
+| # | Severity | Finding | Status |
+|---|---|---|---|
+| R-1 | Medium | `provenance` is a `Literal`, which attrs does not enforce, and the module refused only the exact `"untrusted"`. A misspelt tier wired as trusted (CodeRabbit, CodeAnt) | Fixed — the config refuses a value outside the closed set (`duckdb_dynamic_read_provenance_invalid`), and the module admits only the exact `"trusted"` |
+| R-2 | Medium | A caller cancelled mid-statement, by a disconnect or an outer `asyncio.timeout`, did not interrupt the statement or retrieve its late result. The worker ran past `statement_timeout` on its thread and a process-wide admission slot (CodeRabbit). The released `DuckDbClient` had the same gap, without the slot | Fixed — a cancelled caller takes D-042's path: flag, cancel, interrupt until the worker returns, retrieve its result. The cancellation is re-raised unchanged, and the slot still goes back from the worker |
+| R-3 | Medium | `duckdb_session_setup_failed` carried the engine's text and chained its error. Setup writes the client secret into `CREATE SECRET`, and a DuckDB parser error quotes a window of the statement, cut at either end. The secret could reach the details and the server-error log, whole or in part (CodeRabbit) | Fixed — the text loses DuckDB's quote of the statement and both spellings of the secret, and the error is not chained |
+| R-4 | Low | A retired client stayed retired through `close()` and `initialize()`, and refused every statement (CodeAnt). `initialize` reopens a closed client, though the routed client never does | Fixed — `initialize` clears the flag when it opens a connection. `close` has drained the old connection's workers by then |
+| R-5 | Medium | `run_dynamic` split `use` on every dot, so `namespace="gold.sub"` issued `USE "lake"."gold"."sub"`, a parser error (CodeAnt) | Fixed — the catalog ends at the first dot and the rest is one schema. On the stack, DuckDB lists the nested Iceberg namespace `gold.sub` as one schema of that name. `USE "lake"."gold.sub"` resolves a bare table name; a two-part `sub.deep` does not |
+| R-6 | — | Patch coverage: 14 lines and 2 branches of `routed_client.py`, 7 lines and 2 branches of `client.py`, with the unit and integration legs combined (Codecov) | Unit tests over fakes now cover them, except one branch: a submit that fails with no admission semaphore, which needs the executor shut down under a call |
+
+Each fix was checked against its own removal. R-5 has a battery test as well,
+`test_a_nested_namespace_is_one_schema_to_use`, which brings the battery to 76 tests.
