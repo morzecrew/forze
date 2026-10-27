@@ -386,7 +386,8 @@ principal, tenant, requested) -> granted` — and the connection is refused
 (`realtime_topics_unauthorized`) unless every requested topic is granted. Topic
 membership is the app's authorization decision, exactly as Socket.IO topic rooms
 are joined by app code; the requested set is also bounded (`max_topics`, default
-32).
+32). Once the deployment registers a tenant resolver, a stream with no tenant bound is
+refused with `tenant_required` before it subscribes.
 
 With the realtime stream route wired `tenant_aware` — a per-tenant stream key, the
 [tenancy ladder](../identity-tenancy-enc/multi-tenancy.md)'s `tagged` tier — use

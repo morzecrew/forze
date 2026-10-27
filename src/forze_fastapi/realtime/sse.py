@@ -64,6 +64,7 @@ from forze.application.integrations.realtime import (
     negotiate_realtime_protocol,
     refuse_delegated_identity,
     resolve_client_key,
+    tenancy_wired,
 )
 from forze.base.exceptions import exc
 from forze.base.logging import Logger
@@ -95,7 +96,12 @@ TopicAuthorizer = Callable[
 ``enter_room`` decision on Socket.IO: topic membership is an authorization the app
 owns, never a client-asserted fact. The route refuses the connection unless every
 requested topic is granted — a silently-narrowed subscription would read as
-"subscribed" while delivering nothing."""
+"subscribed" while delivering nothing.
+
+*tenant* is ``None`` only where no tenancy is wired: once a tenant resolver is
+registered, the SSE route and the shipped WebSocket connection resolver refuse a
+connection that resolves no tenant (``tenant_required``) before asking. A hand-written
+WebSocket resolver must do the same."""
 
 _SSE_HEADERS = {
     "Cache-Control": "no-store",
@@ -464,6 +470,10 @@ def attach_realtime_sse_route(
     Socket.IO analog is app code calling ``enter_room``), never a client-asserted
     fact. Principal-addressed delivery needs no authorizer.
 
+    Once the deployment registers a tenant resolver, a stream with no tenant bound (a
+    principal in several tenants that has not picked one, or in none) is refused with
+    ``tenant_required`` before it subscribes or asks *authorize_topics*.
+
     While the replica drains — as the *hub*'s drain step reports it, or for a route without
     a hub as the request's context does — a new stream is answered 200 with only a jittered
     ``retry:`` (1–3 s) and
@@ -498,6 +508,12 @@ def attach_realtime_sse_route(
 
         tenant_identity = ctx.inv_ctx.get_tenant()
         tenant = tenant_identity.tenant_id if tenant_identity is not None else None
+
+        if tenant is None and tenancy_wired(ctx):
+            # Untenanted, the stream would match the global rooms' signals: in a tenanted
+            # deployment those are misrouted ones. Picking a tenant is the client's move.
+            raise exc.authentication("Tenant identity is required", code="tenant_required")
+
         client_key = _client_key(principal, device_id)
         mailbox = mailbox_factory(ctx)
         cursors = cursors_factory(ctx)

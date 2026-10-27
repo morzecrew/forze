@@ -25,8 +25,8 @@ from starlette.types import ASGIApp, Receive, Scope, Send
 
 from forze.application.contracts.authn import AuthnIdentity
 from forze.application.contracts.realtime import Audience, RealtimeSignal
-from forze.application.contracts.tenancy import TenantIdentity
-from forze.application.execution import ExecutionContext
+from forze.application.contracts.tenancy import TenantIdentity, TenantResolverDepKey
+from forze.application.execution import Deps, ExecutionContext
 from forze.application.integrations.realtime import (
     InMemoryMailboxCursors,
     InMemoryRealtimeMailbox,
@@ -95,8 +95,10 @@ def _build_client(
     hub: RealtimeSseHub | None = None,
     authenticated: bool = True,
     authn: AuthnIdentity | None = None,
+    tenant: TenantIdentity | None = None,
+    extra: tuple[Deps, ...] = (),
 ) -> TestClient:
-    ctx = context_from_deps(MockDepsModule(state=MockState())())
+    ctx = context_from_deps(MockDepsModule(state=MockState())(), *extra)
     router = APIRouter()
     attach_realtime_sse_route(
         router,
@@ -113,6 +115,7 @@ def _build_client(
         _BindIdentity,  # type: ignore[arg-type]
         ctx=ctx,
         authn=authn or (AuthnIdentity(principal_id=_PRINCIPAL) if authenticated else None),
+        tenant=tenant,
     )
 
     return TestClient(app)
@@ -358,6 +361,29 @@ class TestHandshake:
         for response in (stream, ack):
             assert response.status_code == 403
             assert response.headers["X-Error-Code"] == "delegate_denied"
+
+    def test_an_untenanted_stream_is_refused_once_tenancy_is_wired(self) -> None:
+        # A principal in several tenants (or none) has no tenant bound until it picks one.
+        tenancy = Deps.routed({TenantResolverDepKey: {"main": lambda _ctx: object()}})
+        refused = _build_client(
+            mailbox=InMemoryRealtimeMailbox(), cursors=InMemoryMailboxCursors(), extra=(tenancy,)
+        ).get("/realtime/sse")
+        bound = _build_client(
+            mailbox=InMemoryRealtimeMailbox(),
+            cursors=InMemoryMailboxCursors(),
+            tenant=TenantIdentity(tenant_id=uuid4()),
+            extra=(tenancy,),
+        ).get("/realtime/sse")
+
+        assert refused.status_code == 401
+        assert refused.headers[ERROR_CODE_HEADER] == "tenant_required"
+        assert bound.status_code == 200
+
+    def test_without_tenancy_wired_an_untenanted_stream_is_served(self) -> None:
+        # The mock's own fallback resolver is not the deployment wiring tenancy.
+        client = _build_client(mailbox=InMemoryRealtimeMailbox(), cursors=InMemoryMailboxCursors())
+
+        assert client.get("/realtime/sse").status_code == 200
 
     def test_unsupported_protocol_is_refused(self) -> None:
         client = _build_client(mailbox=InMemoryRealtimeMailbox(), cursors=InMemoryMailboxCursors())

@@ -55,7 +55,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
-- **A realtime connection needs a tenant once tenancy is wired** (**behaviour change**). A Socket.IO or WebSocket connection that resolves none is refused with `tenant_required` instead of joining the untenanted rooms. `local_identity_deps` wires no tenant resolver for a config that maps no tenant.
+- **A realtime connection needs a tenant once tenancy is wired** (**behaviour change**). A Socket.IO, WebSocket or SSE connection that resolves none is refused with `tenant_required` instead of joining the untenanted rooms. `local_identity_deps` wires no tenant resolver for a config that maps no tenant.
 
 - **A stale access cookie could keep a cookie-mode logout from ending the session.** `runtime_lifespan` now refuses an app whose `anonymous_paths` misses a cookie-mode login, refresh or logout route (`check_authn_cookie_paths`, **behaviour change**).
 
