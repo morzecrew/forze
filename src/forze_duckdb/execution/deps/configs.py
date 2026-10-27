@@ -117,7 +117,9 @@ class DuckDbDynamicReadConfig(TenantAwareIntegrationConfig):
     namespace: str
     """The lake namespace issued as ``USE lake.<namespace>`` before every statement, so a
     plan's two-part ``gold.orders`` and a bare ``orders`` resolve in the tenant's warehouse.
-    An Iceberg catalog has no default schema, so ``USE lake`` alone is refused by DuckDB."""
+    An Iceberg catalog has no default schema, so ``USE lake`` alone is refused by DuckDB. A
+    nested namespace is written dotted (``gold.sub``); DuckDB lists it as one schema of that
+    name, so a plan names its tables bare or as ``lake."gold.sub".orders``."""
 
     statement_timeout: timedelta = attrs.field(default=timedelta(seconds=5))
     """Statement timeout, enforced by cursor interrupt. A per-call option may clamp it down,

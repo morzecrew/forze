@@ -177,10 +177,11 @@ def _port(
     *,
     row_cap: int = 100,
     timeout: timedelta = timedelta(seconds=5),
+    namespace: str = "gold",
     **spec: Any,
 ) -> DynamicReadPort:
     config = DuckDbDynamicReadConfig(
-        provenance="trusted", namespace="gold", statement_timeout=timeout
+        provenance="trusted", namespace=namespace, statement_timeout=timeout
     )
     return DuckDbDynamicReadAdapter(
         client=client,
@@ -270,6 +271,27 @@ class TestDisjointTenants:
         rows = await _run(_port(routed), _A, "SELECT $tenant AS t, count(*) AS n FROM orders")
 
         assert rows == [{"t": str(_A), "n": 3}]
+
+    async def test_a_nested_namespace_is_one_schema_to_use(
+        self, routed: RoutedDuckDbClient, lake: LakeVendingStack, tenant_a: LakeTenant
+    ) -> None:
+        """``gold.sub`` is one namespace two levels deep, which DuckDB lists as one schema."""
+
+        import pyarrow as pa
+
+        catalog = lake.admin_catalog(tenant_a)
+        catalog.create_namespace_if_not_exists(("gold", "sub"))
+        data = pa.table({"id": pa.array([7], pa.int64())})
+        catalog.create_table(("gold", "sub", "deep"), schema=data.schema).append(data)
+
+        try:
+            rows = await _run(_port(routed, namespace="gold.sub"), _A, "SELECT id FROM deep")
+
+            assert rows == [{"id": 7}]
+
+        finally:
+            catalog.drop_table(("gold", "sub", "deep"))
+            catalog.drop_namespace(("gold", "sub"))
 
 
 class TestCrossTenantThroughTheCatalog:

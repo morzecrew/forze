@@ -210,7 +210,9 @@ What the route promises, and who keeps each promise:
 Wiring refuses a dynamic route on a plain `DuckDbClient` (its origin floor is
 `namespace`), and an `http_timeout` above the smallest route timeout. Named
 analytics routes work on the routed client too and derive `dedicated`; their
-SQL names tables as `lake.<namespace>.<table>`.
+SQL names tables as `lake.<namespace>.<table>`. A nested namespace is written
+dotted, `namespace="gold.sub"`. DuckDB lists it as one schema, so SQL names its
+tables bare or as `lake."gold.sub".<table>`.
 
 Operating it:
 

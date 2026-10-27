@@ -102,6 +102,31 @@ async def test_use_makes_two_part_and_bare_names_resolve(lake_client: DuckDbClie
         assert rows == [{"c": 5}]
 
 
+async def test_use_keeps_a_dotted_schema_whole(lake_client: DuckDbClient) -> None:
+    """A nested Iceberg namespace is one DuckDB schema named ``gold.sub``, not a third part."""
+
+    await lake_client.run_command('CREATE SCHEMA lake."gold.sub"')
+    await lake_client.run_command('CREATE TABLE lake."gold.sub".deep AS SELECT 7 AS id')
+
+    rows = await lake_client.run_dynamic(
+        "SELECT id FROM deep", row_probe=2, timeout=_TIMEOUT, use="lake.gold.sub"
+    )
+
+    assert rows == [{"id": 7}]
+
+
+async def test_use_of_a_catalog_alone_selects_its_default_schema(
+    lake_client: DuckDbClient,
+) -> None:
+    await lake_client.run_command("CREATE TABLE lake.main.top AS SELECT 1 AS id")
+
+    rows = await lake_client.run_dynamic(
+        "SELECT id FROM top", row_probe=2, timeout=_TIMEOUT, use="lake"
+    )
+
+    assert rows == [{"id": 1}]
+
+
 async def test_use_quotes_each_part(lake_client: DuckDbClient) -> None:
     # The quote is doubled inside the identifier, so the tail never parses as a statement.
     quoted = re.escape('schema named "lake."gold""; DROP""')

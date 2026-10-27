@@ -698,7 +698,9 @@ class DuckDbClient(DuckDbDynamicReadClientPort):
         :param params: ``$name`` bindings.
         :param row_probe: Rows to fetch; the caller's cap plus one.
         :param timeout: Statement timeout, enforced by cursor interrupt.
-        :param use: Dotted ``catalog.schema`` path issued as ``USE`` first; each part is quoted.
+        :param use: ``catalog.schema`` issued as ``USE`` first. The catalog ends at the first dot
+            and the rest is one schema name, so a nested Iceberg namespace (``gold.sub``, which
+            DuckDB lists as one schema of that name) stays whole. Each part is quoted.
         :returns: The fetched rows as dictionaries.
         """
 
@@ -708,9 +710,13 @@ class DuckDbClient(DuckDbDynamicReadClientPort):
 
         def _run(cursor: Any) -> list[JsonDict]:
             if use is not None:
-                cursor.execute(
-                    "USE " + ".".join(_quote_identifier(part) for part in use.split("."))
-                )
+                catalog, dot, schema = use.partition(".")
+                path = _quote_identifier(catalog)
+
+                if dot:
+                    path += "." + _quote_identifier(schema)
+
+                cursor.execute(f"USE {path}")
 
             single = _single_select(cursor, statement)
 
