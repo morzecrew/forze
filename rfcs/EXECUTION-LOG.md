@@ -1413,6 +1413,13 @@ raised these, and each was checked against the probes before it was written here
   Lakekeeper 76 MB, OpenFGA 28 MB, Keycloak 265 MB and Postgres 195 MB, about 0.56 GB in all.
   The module stays in the duckdb shard, which runs alone on its own runner with a 30-minute
   budget.
+- **The header's "24 tests" is the count before review.** The fixes above added two tests,
+  the version pin and the pin for D-026's two cases, so the module holds 26. Every count
+  in this entry is the module's, at 26.
+- **D-027's "step 2 does close it" overstates step 2.** What step 2 closes is the signed read:
+  no request carries the ambient key, so the read fails. It does not stop the request leaving.
+  Unsigned, it still carries the bucket name and tenant path names to public AWS. Only the
+  network egress policy or the allowlist profile D-027 proposes keeps those names in.
 - **Drift count: 0.** The unit holds nine entries, not seven: D-031 and D-032 were appended
   after the header. Classes: six `discovery`, two `spec-gap`, plus this record.
 
