@@ -1471,14 +1471,16 @@ empty `client_id` refused and battery 17 deferred (D-030), revocation at the nex
 the authorizer's cache TTL (D-032). D-028 is `OPEN`. P1 works under option (a): the docs state the
 ~120 s bound for a hung request and size `max_concurrent_queries_total` from it. The DuckDbClient
 early return is the last commit on the branch, on its own, so it can be dropped (D-042). D-047
-widens D-025's drop from dynamic reads to every read, and D-048 withdraws D-044's idle rule.
+widens D-025's drop from dynamic reads to every read, D-048 withdraws D-044's idle rule, and
+D-049 sets what a failed drop does.
 
-**Drift count: 0.** Sixteen entries, D-033 to D-048: seven `discovery`, nine `spec-gap`. Most
+**Drift count: 0.** Seventeen entries, D-033 to D-049: seven `discovery`, ten `spec-gap`. Most
 were forced by a probe result or by a sketch that did not fit the shipped code. Five were not.
 D-039, D-042, D-043 and D-045 are design choices that follow from working assumption (a) of
 D-028, and D-044 set out to close a concurrency gap in D-025's row; D-048 withdraws it, because
-the gap does not exist. D-043 to D-046 came out of a review of the branch, and D-047 and D-048
-out of P2's run of battery 11b, all before the branch was published.
+the gap does not exist. D-043 to D-046 came out of a review of the branch, D-047 and D-048 out
+of P2's run of battery 11b, and D-049 out of a review of that fix, all before the branch was
+published.
 
 **Where each battery item lives.** The real leg is
 [`test_lake_routed_reads.py`](../tests/integration/test_forze_duckdb/test_lake_routed_reads.py):
@@ -1870,14 +1872,16 @@ and a rotate-and-evict race. With guarded eviction sabotaged, all 20 seeds fail.
 - **Consequence:** with the routed client as first built, an instance's analytics reads of a
   table stopped working one credential lifetime after the first of them, until `evict_tenant`.
   The fix is the drop D-025 proposed, on every read: `DuckDbClient.run_query` now drops the
-  vended secrets after each statement, as `run_dynamic` does. The drop is in `DuckDbClient`, so
-  a plain client drops them too. There nothing matches the prefix unless a bootstrap statement
-  attached a vending catalog, and such a client had the same defect. `run_command` is not a
-  read path and is left alone. Pinned here by `test_an_analytics_read_keeps_no_vended_secret_either`
-  in the battery and a unit test in `test_duckdb_run_dynamic.py`. The expiry itself takes 15
-  minutes to show, so it is pinned in P2's `lake_slow` module.
-- **Proposed row (RFC 0078):** `ASSUMED` — every read statement on an instance, dynamic or
-  analytics, drops the vended secrets when it ends. This widens D-025's row, which stays as
+  vended secrets after each statement, as `run_dynamic` does. Only an instance initialized with
+  `drop_vended_secrets=True` drops them, and the routed client is what sets it. A plain
+  `DuckDbClient` reads exactly as before: no extra cursor, no `duckdb_secrets()` scan, no lock.
+  `run_command` is not a read path and is left alone. Pinned here by
+  `test_an_analytics_read_keeps_no_vended_secret_either` in the battery, and by
+  `test_an_analytics_read_drops_the_vended_secrets_too` and `test_a_plain_client_never_drops` in
+  `test_duckdb_run_dynamic.py`. The expiry itself takes 15 minutes to show, so it is pinned in
+  P2's `lake_slow` module.
+- **Proposed row (RFC 0078):** `ASSUMED` — every read statement on a routed instance, dynamic
+  or analytics, drops the vended secrets when it ends. This widens D-025's row, which stays as
   written.
 
 ## D-048 — A running statement's vended secret is invisible to another cursor; D-044's rule is withdrawn
@@ -1900,7 +1904,49 @@ and a rotate-and-evict race. With guarded eviction sabotaged, all 20 seeds fail.
   exposes. Under sustained concurrent load the instance is never idle, so committed secrets
   pile up, and once the oldest expires the next statement on that table fails as in D-047. The
   counter is gone. Each read drops the committed vended secrets when it ends, and a per-instance
-  lock serializes the drops, since two would conflict. P0's
-  `test_a_running_statements_secret_is_invisible_to_another_cursor` and two unit tests pin it.
+  lock serializes the drops, since two would conflict.
+
+  The design now rests on one engine assumption: a statement's vended secret stays uncommitted
+  until the statement ends. The drop's docstring states it. P0's
+  `test_a_running_statements_secret_is_invisible_to_another_cursor` is the version tripwire: an
+  engine that lists a running statement's secret to other cursors fails it first. Four more
+  tests pin the rest:
+  - `test_a_scan_keeps_reading_while_another_statements_drop_runs`, in the P0 module. A paused
+    scan of an 8-file table keeps reading after the drop has taken another statement's
+    leftover, and its own secret appears once it ends.
+  - `test_duckdb_hides_a_secret_created_under_begin_until_commit`, the same visibility rule on
+    a plain transaction.
+  - `test_a_committed_leftover_is_dropped_while_another_statement_runs`. The drop does not wait
+    for idle. Its running statement reads no table, so the scan test above is what shows a
+    reader is not disturbed.
+  - `test_concurrent_drops_conflict_unless_serialized`. Two reads drop the same leftover, and
+    with the lock taken away one drop fails. That is its sabotage leg.
 - **Proposed row (RFC 0078):** `ASSUMED` — the drop runs after every read statement, serialized
   per instance. This withdraws D-044's row, which stays as written.
+
+## D-049 — A failed vended-secret drop retires the instance and never masks the read
+
+- **Touches:** D-047 and D-048 (the drop after every read), §2.4 (lifecycle and eviction), and
+  §4.5 (taxonomy).
+- **RFC said:** nothing. The drop is not in the RFC. D-025 proposed it, and D-047 and D-048 put
+  it on every read without saying what a failure does.
+- **Found:** a review of D-047's fix found the drop in the read's `finally`. A drop that raised
+  replaced the read's outcome. A failed read surfaced as the drop's error, and a good read
+  lost its rows. Either way the leftover stayed, and under D-047 it fails every later read of
+  its table once it expires.
+- **Because:** the drop was written as cleanup, but its failure leaves state behind that breaks
+  the instance later.
+- **Class:** `spec-gap`.
+- **Consequence:** a failed drop never raises over the read. The read's rows or its error come
+  back, the failure is logged at warning, and the client is retired. A retired client refuses
+  every further statement with `duckdb_instance_retired` (infrastructure), and its health check
+  reports it. `RoutedDuckDbClient.client_scope` evicts a retired instance when the scope that
+  saw it ends, but only while the pool still holds that instance. A later scope that held the
+  same instance would otherwise evict its healthy successor. The next call then builds afresh.
+  A read that failed retires the client as well, because the leftover stays either way. Pinned
+  by `test_a_failed_drop_after_a_good_read_returns_the_rows_and_retires_the_client`,
+  `test_a_failed_drop_after_a_failed_read_raises_the_reads_error`,
+  `test_a_retired_instance_is_evicted_and_its_successor_spared`, which fails with the
+  successor check removed, and `test_a_timed_out_read_still_drops`.
+- **Proposed row (RFC 0078):** `ASSUMED` — a failed drop is logged, never raised over the read,
+  and retires the instance, which the routed client evicts and rebuilds.
