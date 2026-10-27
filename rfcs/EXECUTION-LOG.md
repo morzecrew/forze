@@ -2310,10 +2310,11 @@ rows a batch touches (decisions 9, 10 and 12), folded into D-CLI-5 and D-CLI-6.
   the `mcp` extra (§5.9). So
   [`flags.py`](../src/forze_cli/ops/flags.py) checks each field itself. With `Annotated` and
   `Optional` stripped, a field must be `str`, `int`, `float`, `Decimal`, `UUID`, `date` (so
-  `datetime`), an `Enum`, or a `Literal` of strings; a `bool` is a `--name` / `--no-name`
-  switch. Two shapes came back from probing pydantic: a non-string `Literal` never validates
-  from a string (`"2"` is not `Literal[2]`), and a union of two scalars keeps a string a
-  string, so both are out.
+  `datetime`), an `Enum` of strings, an `IntEnum`, or a `Literal` of strings; a `bool` is a
+  `--name` / `--no-name` switch. Three shapes came back from probing pydantic: a non-string
+  `Literal`, like a plain enum with non-string values, never validates from a string (`"2"` is
+  not `Literal[2]`, `"1"` not `Code.ONE = 1`), while an `IntEnum` coerces as `int` does; and a
+  union of two scalars keeps a string a string. The first two and the union are out.
 - **Built:** Typer's options are static, and the flags depend on the operation, which Click
   has not read when it parses. `call` sets `allow_extra_args` and `ignore_unknown_options` and
   parses `ctx.args` against the field table. Click claims `call`'s own options first, so a
@@ -2335,9 +2336,12 @@ rows a batch touches (decisions 9, 10 and 12), folded into D-CLI-5 and D-CLI-6.
   answers.
 - **Class:** `spec-gap`.
 - **Consequence:** `describe` lists the flags or says why there are none (`typed_flags` in
-  `--json`). A value spelled like a call option needs `--field=VALUE`. A float flag accepts
-  `nan`, which `--input` refuses as not JSON; with no JSON parsed, the DTO's `allow_inf_nan`
-  decides.
+  `--json`). A value spelled like a call option, or like one of the input's flags, needs
+  `--field=VALUE`; a bare one spelled like an input flag is refused, since a forgotten value
+  would swallow the next flag. A float flag accepts `nan` exactly as `--input` accepts the
+  string `"nan"`: flags match `--input`'s string form, and only the JSON literal `NaN` is
+  refused there. Values on argv are visible to `ps` and shell history; the docs send any
+  sensitive value that is not a declared secret to `--input @PATH`.
 - **Proposed row (RFC 0077):** `ASSUMED` — an input takes typed flags only when every field is a
   scalar or an optional one, it declares no secret, and no flag shares a spelling with a call
   option or another flag. Otherwise it takes none. The flags build the raw object for the
@@ -2385,6 +2389,8 @@ rows a batch touches (decisions 9, 10 and 12), folded into D-CLI-5 and D-CLI-6.
 - **Touches:** decisions 9 and 12 (`LOCKED`); §5.6 step 3 ("None of this builds a runtime").
   Unlisted: when lines are validated, stop or continue, the batch's exit code, the key.
 - **Built:**
+  - Lines end at `\n` only, with one trailing `\r` dropped: `str.splitlines` also splits at
+    U+2028 and U+0085, which JSON allows raw inside a string.
   - Every line is read and validated before the runtime is built, as one call's input is. A
     malformed or invalid line is the only line written, and nothing runs, so a typo on line
     900 cannot leave 899 lines applied. The whole input is held in memory to allow that; a
@@ -2416,7 +2422,9 @@ rows a batch touches (decisions 9, 10 and 12), folded into D-CLI-5 and D-CLI-6.
   signal. With lines left unrun, the batch exits 128 plus the signal number. When the signal
   came during the last line and that line finished, the batch exits by its own outcome, as one
   call does. Each line resets the commit flag on entry, so an earlier line's commit never reads
-  as the current one's.
+  as the current one's. Each line also enters and leaves its own metadata, identity, tenant,
+  idempotency and deadline bindings, and verifies its key again: a key revoked by line 1 refuses
+  line 2, and nothing stays bound after the batch (`test_ops_batch.py`).
 - **Class:** `spec-gap`.
 - **Consequence:** close-out for decision 10 (`LOCKED`): a line cancelled after its commit
   point still reports `commit_ambiguous`, and no line is reported safe when its commit may
@@ -2431,8 +2439,9 @@ rows a batch touches (decisions 9, 10 and 12), folded into D-CLI-5 and D-CLI-6.
   itself is unlisted.
 - **Built:** `OP` completes after `describe` and `call` through Typer's `autocompletion`, from
   `--app` (when it comes before `OP`), `FORZE_OPS_APP`, or the declaration `build_ops_cli`
-  bound. Loading runs with stdout and stderr captured, and any failure completes nothing: the
-  shell reads stdout as candidates and prints stderr under the prompt. The root app already
+  bound. Loading runs with `sys.stdout`, `sys.stderr` and descriptors 1 and 2 discarded, and
+  any failure, `SystemExit` included, completes nothing: the shell reads stdout as candidates
+  and prints stderr under the prompt. The root app already
   offered Typer's `--install-completion` and `--show-completion`, and keeps them.
 - **Class:** `spec-gap`.
 - **Consequence:** every TAB imports the application module, as `list` does, so its import side

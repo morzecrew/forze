@@ -587,8 +587,8 @@ forze ops call      [--app REF] OP [--input JSON|@PATH|-] [--tenant UUID]
 - **As built (P3).** Three §12 items. The execution-log unit "RFC 0077 P3 — CLI items" records
   each decision, including the amendment of decision 15 they need; none is yet a row in §11.
   - **Typed flags.** `call OP --field VALUE` takes the input as flags when every field is a
-    scalar: `str`, `int`, `float`, `Decimal`, `UUID`, `date`, `datetime`, an `Enum` or a
-    `Literal` of strings, optional or constrained. A `bool` is `--name` / `--no-name`. The
+    scalar: `str`, `int`, `float`, `Decimal`, `UUID`, `date`, `datetime`, an `Enum` of strings,
+    an `IntEnum` or a `Literal` of strings, optional or constrained. A `bool` is `--name` / `--no-name`. The
     flags only spell the raw object, which goes through `validate_operation_input` with
     `forbid_unknown=True` and `by_name=True`. `call` accepts options it does not have and
     parses `ctx.args`, so its own options always win. An input with a field spelled like one

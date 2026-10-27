@@ -29,7 +29,8 @@ forze ops call      [--app REF] OP
 `forze --install-completion`. Completion loads the declaration from `--app` or
 `FORZE_OPS_APP` as `list` does, never builds the runtime, and offers nothing when the
 declaration cannot load. A group from `build_ops_cli` completes from its own declaration,
-installed by your root CLI's `--install-completion`.
+installed by your root CLI's `--install-completion`. Every TAB imports the application
+module, so its import side effects run in the operator's shell.
 
 `list` and `describe` never build the runtime. They write text, or JSON with `--json`.
 `describe` shows the title and description, the kind, the declared authn requirement and
@@ -65,15 +66,18 @@ $ forze ops call notes.create --title "Quarterly report"
 
 | Field type | Flag |
 |---|---|
-| `str`, `int`, `float`, `Decimal`, `UUID`, `date`, `datetime`, an `Enum`, a `Literal` of strings; optional or constrained ones too | `--field-name VALUE`, or `--field-name=VALUE` |
+| `str`, `int`, `float`, `Decimal`, `UUID`, `date`, `datetime`, an `Enum` of strings, an `IntEnum`, a `Literal` of strings; optional or constrained ones too | `--field-name VALUE`, or `--field-name=VALUE` |
 | `bool` | `--field-name` sets it, `--no-field-name` clears it |
 
 - **Spelling.** A field's flag is its name with `-` for `_`. An alias never is.
 - **Validation.** The flags build the object `--input` would carry, and it is validated the same
   way: each value is the string you typed, coerced by the DTO; an omitted flag takes the
   field's default; a missing required field or a bad value exits 4 and is never echoed.
-- **A value that is a `call` option.** `--title --pretty` gives `--pretty` to `call`. Write
+- **A value that looks like a flag.** `--title --pretty` gives `--pretty` to `call`, and
+  `--title --draft` is refused when `--draft` is one of the input's flags. Write
   `--title=--pretty`.
+- **On argv.** Every value is on the command line, where `ps` and shell history show it. A
+  secret field is refused; pass any other sensitive value with `--input @PATH`.
 - **All or none.** An input takes no flags when one of its fields is anything else (a list, a
   model, a union), when it declares a `SecretStr` or `SecretBytes` field, or when a flag would
   be spelled like a `call` option (`--timeout`, `--input`, …) or like another field's. A `call`
@@ -173,7 +177,7 @@ retryable kinds are `concurrency`, `throttled` and `infrastructure`.
 | `cli_input_not_accepted` | `validation` | 2 | `--input`, typed flags or `--batch` given to an operation that takes none |
 | `cli_option_conflict` | `validation` | 2 | typed flags given with `--input`; `--batch` given with `--input`, typed flags, `--idempotency-key` or `--pretty` |
 | `cli_flags_unsupported` | `validation` | 2 | typed flags given to an operation whose input takes none; the detail says why |
-| `cli_malformed_flags` | `validation` | 2 | the typed flags do not parse: an unknown flag, a missing value, a value to a switch, a field given twice, or an argument that is not a flag |
+| `cli_malformed_flags` | `validation` | 2 | the typed flags do not parse: an unknown flag, a missing value or one spelled like a flag, a value to a switch, a field given twice, or an argument that is not a flag |
 | `cli_input_unreadable` | `validation` | 2 | the `@PATH` file of `--input` or `--batch` cannot be read |
 | `cli_malformed_input` | `validation` | 2 | the input, or a batch line, is not JSON, or not an object |
 | `cli_inline_secret` | `validation` | 2 | the input declares a secret and was given inline or as typed flags |

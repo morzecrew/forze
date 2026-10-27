@@ -87,7 +87,8 @@ $ forze ops call notes.create --input '{"title": "hi"}'
 ```
 
 Run `forze --install-completion` once, and your shell completes operation names after
-`describe` and `call`.
+`describe` and `call`. Each TAB imports your application module, so keep its import free of
+side effects.
 
 `--input` takes inline JSON, `@PATH` for a file, or `-` for stdin. Inline input is refused for
 an operation whose input declares a `SecretStr` or `SecretBytes` field; pipe it instead. An
@@ -102,7 +103,9 @@ $ forze ops call notes.create --title hi
 
 Each field is a flag named after it, a boolean is `--name` or `--no-name`, and the values are
 validated exactly as `--input` is. `forze ops describe` lists an operation's flags, or says why
-it has none; the [reference](../reference/ops-cli.md#typed-flags) has the rules.
+it has none; the [reference](../reference/ops-cli.md#typed-flags) has the rules. Flags put every
+value on argv, where `ps` and shell history show it: secret fields are refused, and any other
+sensitive value belongs in `--input @PATH`.
 
 `call` writes exactly one JSON document to stdout: the result, or an error object carrying the
 invocation's `execution_id` and `correlation_id`. Everything else the application writes,
