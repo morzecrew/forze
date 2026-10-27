@@ -261,6 +261,27 @@ async def test_stopping_at_the_row_cap_leaves_the_connection_usable(
     assert await port.run("SELECT n FROM items ORDER BY n LIMIT 2") == [{"n": 0}, {"n": 1}]
 
 
+async def test_duplicate_column_names_are_refused_not_collapsed(
+    pg_client: PostgresClient,
+    schema: str,
+) -> None:
+    """``SELECT a.n, b.n`` would come back as one ``n`` holding the second value, silently.
+
+    An empty result is let through: ``stream`` exposes no columns without a row, and with no row
+    there is nothing to collapse.
+    """
+
+    port = _port(pg_client, schema)
+
+    with pytest.raises(CoreException) as ei:
+        await port.run("SELECT 1 AS n, 2 AS n, 3 AS m FROM items")
+
+    assert ei.value.code == STATEMENT_INVALID_CODE
+    assert ei.value.details["detail"] == "duplicate column names: n"
+    assert await port.run("SELECT 1 AS n, 2 AS n FROM items WHERE false") == []
+    assert await port.run("SELECT n FROM items ORDER BY n LIMIT 2") == [{"n": 0}, {"n": 1}]
+
+
 async def test_a_data_error_does_not_echo_the_stored_value(
     pg_client: PostgresClient,
     schema: str,

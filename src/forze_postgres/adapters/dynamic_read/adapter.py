@@ -39,6 +39,7 @@ from forze.application.integrations.dynamic_read import (
     DynamicReadAdapter,
     DynamicReadRequest,
     role_unavailable,
+    statement_invalid,
 )
 from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict, OnceCell
@@ -269,12 +270,30 @@ class PostgresDynamicReadAdapter(DynamicReadAdapter):
 
             async with aclosing(stream):
                 async for row in stream:
+                    if not rows:
+                        self._refuse_duplicate_columns(cur.description)
+
                     rows.append(dict(row))
 
                     if len(rows) >= request.row_probe:
                         break
 
         return rows
+
+    # ....................... #
+
+    def _refuse_duplicate_columns(self, description: Sequence[Any] | None) -> None:
+        # A row is a mapping: a second column of the same name would replace the first's value.
+        # Checked on the first row, because ``stream`` exposes no description for an empty
+        # result; an empty result has nothing to collapse and returns no rows.
+        names = [column.name for column in description or ()]
+        duplicates = sorted({name for name in names if names.count(name) > 1})
+
+        if duplicates:
+            raise statement_invalid(
+                str(self.spec.name),
+                detail=f"duplicate column names: {', '.join(duplicates)}",
+            )
 
     # ....................... #
 
