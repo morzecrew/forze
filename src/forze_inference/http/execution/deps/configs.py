@@ -70,6 +70,15 @@ a request the operator believes was shaped by it."""
 # ....................... #
 
 
+def _in_closed_set(value: object, names: frozenset[str]) -> bool:
+    """Whether *value* is one of *names*, without hashing a non-string first."""
+
+    return isinstance(value, str) and value in names
+
+
+# ....................... #
+
+
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class HttpInferenceConfig(TenantAwareIntegrationConfig):
@@ -165,21 +174,27 @@ class HttpInferenceConfig(TenantAwareIntegrationConfig):
     # ....................... #
 
     def _validate_vocabulary(self) -> None:
-        """The two closed sets `attrs` does not enforce at runtime."""
+        """The closed sets `attrs` does not enforce at runtime.
 
-        if self.protocol not in _PROTOCOL_NAMES:
+        A value is checked as a string first: membership in a frozenset hashes it, so an
+        unhashable value such as a list would raise `TypeError` instead of the refusal.
+        """
+
+        if not _in_closed_set(self.protocol, _PROTOCOL_NAMES):
             raise exc.configuration(
                 f"HttpInferenceConfig.protocol={self.protocol!r} is not a wire dialect this "
                 f"plane speaks; choose one of {', '.join(sorted(_PROTOCOL_NAMES))}."
             )
 
-        if self.output_mode is not None and self.output_mode not in _OUTPUT_MODES:
+        if self.output_mode is not None and not _in_closed_set(self.output_mode, _OUTPUT_MODES):
             raise exc.configuration(
                 f"HttpInferenceConfig.output_mode={self.output_mode!r} is not a generation "
                 f"mode; choose one of {', '.join(sorted(_OUTPUT_MODES))}."
             )
 
-        if self.structured_output is not None and self.structured_output not in _STRUCTURED_OUTPUTS:
+        if self.structured_output is not None and not _in_closed_set(
+            self.structured_output, _STRUCTURED_OUTPUTS
+        ):
             raise exc.configuration(
                 f"HttpInferenceConfig.structured_output={self.structured_output!r} is not a "
                 f"structured-output strategy; choose one of "

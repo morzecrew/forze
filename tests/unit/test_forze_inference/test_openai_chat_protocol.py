@@ -951,6 +951,19 @@ class TestTheRouteRefusesAValueTheProviderWould:
         assert ei.value.kind == "configuration"
         assert "not a generation mode" in str(ei.value)
 
+    @pytest.mark.parametrize("field", ["protocol", "output_mode", "structured_output"])
+    def test_an_unhashable_value_is_a_configuration_refusal(self, field: str) -> None:
+        """A list reached the frozenset membership test and raised `TypeError`."""
+
+        fields: dict[str, Any] = {"model_name": "m", "acknowledge_data_egress": True}
+        fields.setdefault("protocol", "openai_chat")
+        fields[field] = ["json_object"]
+
+        with pytest.raises(CoreException) as ei:
+            HttpInferenceConfig(**fields)
+
+        assert ei.value.kind == "configuration"
+
 
 # ....................... #
 
