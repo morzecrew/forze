@@ -2265,3 +2265,91 @@ layer (D-084, D-085) or runs through a port that has no registry (D-086).
 catalog at attach time, so an unknown operation raises `internal` at the first call. Neither
 refuses a sensitive operation. These are hand-declared routes, which the sensitive rule (§5.2,
 generated surfaces) does not cover, and no copy of a boundary step is involved.
+
+---
+
+# Unit ? · RFC 0077 P3 — commit ambiguity at every boundary
+
+Branch `feat/commit-ambiguous-boundaries`. RFC 0077 §12 P3, the last code item: whether a
+cancellation after the commit point should report `commit_ambiguous` at every boundary, not
+only the CLI (§5.6). The decision is recorded in §5.6 "As built (P3)".
+
+**Drift count: 0.** Three entries: two `discovery`, one `spec-gap`. The RFC left the question
+open on purpose, so the decision itself is an entry rather than a departure.
+
+**Already true, so no entry.** A cancel that lands inside a transaction's commit, or inside
+its shielded post-commit drain, was already converted to `commit_ambiguous` by the
+transaction scope on every surface (§5.8 P2 note). The open window was only a cancel after
+the scope had exited: in an outer hook, a dispatched operation, or after a nested operation's
+root transaction committed.
+
+## D-AMB-1 — Every boundary records a late cancel; only the CLI converts it
+
+- **Touches:** RFC 0077 §5.6 (last paragraph), §12 P3, decision 10.
+- **RFC said:** reading the flag at the CLI boundary "keeps the CLI correct without changing
+  how cancellation behaves everywhere else", and whether other boundaries need the same check
+  is left to §12.
+- **Found:** each other boundary has a reason to keep the raw cancel.
+  - HTTP routes, MCP, Socket.IO and WS commands are cancelled by a client that left or by a
+    server shutdown. No one is left to read a converted error, and uvicorn's shutdown and the
+    receivers' task groups need the cancel to propagate.
+  - The durable runner, Temporal and Inngest read the raw cancel to name its cause.
+  - The saga executors already convert, at their own boundary, because they own the journal.
+
+  So the only safe change is to make the outcome visible. `ResolvedOperation.__call__`, the
+  top-level boundary every surface reaches, now logs a `commit_ambiguous` warning and adds a
+  `forze.commit_ambiguous` span event when a cancel arrives with the flag set. It then
+  re-raises the cancel unchanged. Socket.IO and Inngest call the resolved operation without
+  `run_operation`, so the record could not live in `run_operation` itself.
+- **Because:** the CLI can convert because it owns both its process and its result channel.
+  No other boundary owns both.
+- **Class:** `discovery`. The answer depended on each boundary's cancel semantics, which the
+  RFC deliberately did not survey.
+- **Consequence:** the P2 contract is unchanged: the flag survives the cancel, every reader
+  resets it on entry, and the CLI keeps converting. A nested operation records nothing, and
+  its top-level caller records once.
+- **Proposed row (RFC 0077):** `LOCKED` — a cancel after the commit point is converted to
+  `commit_ambiguous` only by a boundary that owns its process and result channel (the CLI)
+  or its journal (the saga executors). Every other boundary records it at the top-level
+  operation boundary, with a warning log and a span event, and re-raises the cancel.
+
+## D-AMB-2 — The durable runner cannot read the commit flag; the record has to be emitted inside the body
+
+- **Touches:** RFC 0077 §5.6. Unlisted: boundaries that run the operation on another task.
+- **RFC said:** nothing. The CLI pattern assumes the boundary reads `commit_started()` on the
+  task the operation ran on.
+- **Found:** the self-hosted durable runner runs the body with `asyncio.ensure_future`, so the
+  body gets a copy of the context. A flag the body's transaction sets never reaches the
+  runner's frame. The runner names a cancel's cause by which watcher fired: a lease reclaim,
+  an operator cancel, or `max_run_duration`. Any other cancel, a drain's included, propagates
+  raw and writes no terminal state. The row stays `RUNNING`, and recovery re-claims it. That
+  re-run can apply a committed operation twice, so ambiguity matters more here than on any
+  request surface.
+- **Because:** `ContextVar` writes on a child task stay on the child.
+- **Class:** `discovery`.
+- **Consequence:** a reader at each surface, as the CLI does it, cannot work here. This is why
+  the record lives at the operation boundary, which runs on the body's own task. Making the
+  re-run safe stays the job of an idempotency key, an inbox, or a saga journal.
+- **Proposed row (RFC 0077):** none. D-AMB-1's row covers it.
+
+## D-AMB-3 — A read-only root transaction marks the commit point too
+
+- **Touches:** RFC 0077 §5.6 and decision 10. Also `TransactionContext.scope` and the
+  deadline classification in `ResolvedOperation._run`.
+- **RFC said:** "a cancel after the commit point reports `commit_ambiguous`", on the reading
+  that a commit may have landed.
+- **Found:** the scope calls `mark_commit_started()` for every root transaction, read-only
+  ones included. Probed: after `tx.scope(route, read_only=True)` exits, `commit_started()` is
+  `True`. A query cancelled after its read therefore reports `commit_ambiguous` on the CLI
+  (exit 1, not 130 or 143). A query whose deadline fires after its read gets the same
+  report, and so does the new record. A read-only transaction lands nothing, so the report
+  is a false positive.
+- **Because:** the mark predates any reader that cared which transactions can write.
+- **Class:** `spec-gap`. The scope's behaviour was readable when §5.6 was written.
+- **Consequence:** not changed here. Gating the mark on `read_only` would change the deadline
+  code and the CLI exit code for queries, and whether every backend enforces a read-only
+  root needs checking first. This unit keeps the record consistent with the CLI and the
+  deadline path rather than gating it alone.
+- **Proposed row (RFC 0077):** `ASSUMED` — a read-only root transaction does not mark the
+  commit point. A query interrupted after its read reports `interrupted` or
+  `deadline_exceeded`, never `commit_ambiguous`. This needs its own change and tests.

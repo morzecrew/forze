@@ -2,7 +2,8 @@
 
 - **Status:** ✅ Complete (P1, P2). P1, the shared ingress core, landed on 2026-10-23, and
   P2, `forze ops`, on 2026-10-24; the "As built" notes in §5.7 and §5.8 record where each
-  departs from the plan. P3 stays demand-gated (§12). The three questions were answered on
+  departs from the plan. P3 stays demand-gated (§12); its commit-ambiguity item was built on
+  2026-10-27 (§5.6, "As built (P3)"). The three questions were answered on
   2026-10-22 (§10, decisions 14, 16 and 17).
 - **Scope:** A `forze ops` command group in the existing `forze_cli` package. It lists,
   describes and invokes the operations of an application's frozen registry, in process,
@@ -472,6 +473,31 @@ only `TimeoutError`, and cancellation raises `CancelledError`, which passes it b
 the flag at the CLI boundary keeps the CLI correct without changing how cancellation behaves
 everywhere else. Whether the other boundaries need the same check is recorded in §12.
 
+**As built (P3).** The other boundaries record a late cancel; none of them converts it.
+Execution log, Unit "RFC 0077 P3", entries D-AMB-1 to D-AMB-3.
+
+- **The record lives in one place.** `ResolvedOperation.__call__` is the top-level boundary
+  every surface reaches: `run_operation` and `invoke_at_ingress` go through it, and Socket.IO
+  and Inngest call it directly. When a cancel reaches it with the commit flag set, it logs a
+  `commit_ambiguous` warning and adds a `forze.commit_ambiguous` event to the active span.
+  Then it re-raises the cancel. A nested operation records nothing; its top-level caller
+  records once. The P2 contract stands: the flag survives the cancel, and the CLI converts.
+- **The conversion stays with boundaries that own the outcome.**
+
+  | Boundary | Late cancel comes from | Decision |
+  | --- | --- | --- |
+  | `forze ops call` | a second signal or the grace running out | converts (P2): the CLI owns its process and its stdout |
+  | FastAPI routes, MCP, Socket.IO, WS commands | a client that left, or a server shutdown | record only: no one is left to read an error, and shutdown needs the cancel |
+  | Durable runner, Inngest, app-written Temporal activities | a drain, an operator cancel, `max_run_duration`, the engine's own cancel | record only: each reads the raw cancel to name its cause (D-AMB-2) |
+  | Saga executors | any of the above, per step | already convert, at their own boundary: they own the journal |
+  | Inbox consumer, outbox relay | shutdown | unchanged: no operation at the top level; inbox dedup covers a redelivery |
+
+- **Audit is unchanged.** `AuditOutcome` has no ambiguous value. A command's audit row is
+  written inside its transaction, so it commits with the operation.
+- **A read-only transaction also marks the commit point** (D-AMB-3). A query cancelled or
+  timed out after its read therefore reports `commit_ambiguous` on the CLI, the deadline path
+  and the new record. This is flagged, not changed here.
+
 ### 5.7 Shared core (P1): `forze.application.execution.ingress`
 
 `ingress` sits in the execution layer because it needs `ExecutionContext`. Integrations sit
@@ -796,5 +822,6 @@ answer took the recorded lean.
   - moving FastAPI, Socket.IO and the WS route onto `ingress`. FastAPI and the WS route
     moved where a step agrees (§5.7, "As built (P3)"). Socket.IO mints its metadata, and its
     bind-and-run waits for a registry-backed adapter;
-  - deciding whether a cancellation after the commit point should report `commit_ambiguous`
-    at every boundary, not only the CLI (§5.6).
+  - ~~deciding whether a cancellation after the commit point should report `commit_ambiguous`
+    at every boundary, not only the CLI (§5.6).~~ Done on 2026-10-27: every boundary
+    records it and only the CLI converts it (§5.6, "As built (P3)").
