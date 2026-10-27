@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Any, cast, final
 import attrs
 from pydantic import BaseModel
 
+from forze.application._logger import logger
 from forze.application.contracts.durable.function import DurableFunctionSpec
 from forze.application.contracts.execution import Handler, OnSuccess, TwoPhaseHandler
 from forze.application.contracts.transaction import COMMIT_AMBIGUOUS_CODE, AfterCommitPort
@@ -164,6 +165,13 @@ class ResolvedOperation[Args, R](Handler[Args, R]):
         (never ambient) precisely so user-spawned tasks stay classified as fresh
         top-level drivers.
 
+        A top-level invocation cancelled at or after a commit point (one the transaction
+        scope no longer converts — its scope has exited, or a nested operation's root
+        transaction committed) is recorded as ``commit_ambiguous``: a warning log and an
+        event on the active span. The cancellation itself propagates untouched — only a
+        boundary that owns its result channel and its process (the operation CLI)
+        converts it, by reading :func:`commit_started` where the cancel reaches it.
+
         Hot path: both flags are token set/reset directly (the equivalent of the
         :func:`~forze.application.execution.context.active_operation.operation_running`
         and ``InvocationContext.bind_read_only`` context managers) — a
@@ -206,6 +214,10 @@ class ResolvedOperation[Args, R](Handler[Args, R]):
 
         except asyncio.CancelledError:
             cancelled = True
+
+            if gate is not None and commit_started():
+                _record_commit_ambiguous(self.op)
+
             raise
 
         finally:
@@ -224,6 +236,30 @@ class ResolvedOperation[Args, R](Handler[Args, R]):
                 # saga runners reset it per step.
                 if not cancelled:
                     reset_commit_started()
+
+
+# ....................... #
+
+
+def _record_commit_ambiguous(op: StrKey) -> None:
+    """Record a cancel that reached the top-level boundary at or after a commit point.
+
+    The log carries the invocation metadata the boundary bound (execution and
+    correlation ids, tenant, principal, idempotency key) through the logging context.
+    """
+
+    # Lazy: the cancellation path is cold, and importing this module must not pull in
+    # ``opentelemetry`` (see ``observability``).
+    from opentelemetry import trace
+
+    logger.warning(
+        "Operation %r was cancelled at or after its transaction commit; the commit may "
+        "have landed. Reconcile before re-running.",
+        str(op),
+        code=COMMIT_AMBIGUOUS_CODE,
+        operation=str(op),
+    )
+    trace.get_current_span().add_event("forze.commit_ambiguous", {"forze.operation": str(op)})
 
 
 # ....................... #

@@ -124,8 +124,38 @@ A deadline firing — or a client disconnecting — cancels the operation's task
 One window must survive that: after the root transaction **commits**, the
 deferred after-commit work (idempotency records, event dispatch) is a
 cancellation-protected critical section. It runs to completion even while
-cancellation is pending, and the cancellation re-raises afterwards — so a
-committed transaction is never left half-announced.
+cancellation is pending — so a committed transaction is never left
+half-announced.
+
+## A late cancel is never reported as safe
+
+A deadline or a cancel that lands at or after the commit point leaves the
+outcome unknown. The commit may have landed, so a retry could apply the
+operation twice. What happens depends on where it lands:
+
+- **In the commit or the after-commit work**, a deadline or a cancel raises
+  `exc.internal` with `code="commit_ambiguous"` instead of `deadline_exceeded`
+  or a bare cancellation. The kind is non-retryable.
+- **A deadline after the transaction has closed** — in an outer hook or a
+  dispatched operation — raises the same error.
+- **A cancel after the transaction has closed** stays a cancellation, because
+  server shutdown and task groups rely on it propagating. The operation logs a
+  warning with `code="commit_ambiguous"` and `operation`, carrying the
+  invocation's ids, and adds a `forze.commit_ambiguous` event to the active
+  span.
+
+What each surface does with that late cancel:
+
+| Surface | What the caller sees | What records it |
+| --- | --- | --- |
+| [`forze ops call`](operations-cli.md) | a `commit_ambiguous` error, exit 1 | the error document and the warning |
+| HTTP routes, MCP tools, Socket.IO and WebSocket commands | nothing: the client went away or the server is stopping | the warning and the span event |
+| Durable runs, Inngest functions, your own Temporal activities | the runner's cancel outcome; recovery or a retry may run it again | the warning and the span event |
+| Saga steps | `saga.step_ambiguous`, and nothing is compensated | the saga's error or its journal row |
+
+Reconcile from the warning before running the operation again. Where a client
+retries, an [idempotency key](../recipes/add-idempotency.md) makes the retry
+safe.
 
 A deadline is one of several controls over how an operation behaves under
 stress; the full set — retries, bulkheads, breakers, hedging — composes in
