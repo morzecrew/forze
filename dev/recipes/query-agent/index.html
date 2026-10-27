@@ -4556,6 +4556,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#the-answer-streams-over-the-same-hop" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        The answer streams over the same hop
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#what-stands-in-for-the-provider" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -6571,6 +6582,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#the-answer-streams-over-the-same-hop" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        The answer streams over the same hop
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#what-stands-in-for-the-provider" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -6717,7 +6739,7 @@ hand, both turn into parallel machinery — a table of tool schemas mirroring yo
 operations, and an outbound call nobody reviewed. This recipe assembles them out of
 what is already there: the <a href="../../data-events/agent-tools/">agent-tool bridge</a> for the
 first, a declared <a href="../../integrations/http/">egress route</a> for the second. The loop that
-joins them stays yours.</p>
+joins them stays yours, and the answer can stream back over the same route.</p>
 <p>The runnable version lives at <code>examples/recipes/query_agent/</code> and runs fully in-process
 on the mock — the provider is answered by a registered handler, so there is no API key
 and no network.</p>
@@ -6801,6 +6823,7 @@ provider. Declare that route as a service and say so:</p>
 <div class="highlight"><pre><span></span><code><span class="k">class</span><span class="w"> </span><span class="nc">ModelArgs</span><span class="p">(</span><span class="n">BaseModel</span><span class="p">):</span>
     <span class="n">question</span><span class="p">:</span> <span class="nb">str</span>
     <span class="n">tools</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]]</span>
+    <span class="n">stream</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span>
 
 
 <span class="k">class</span><span class="w"> </span><span class="nc">ModelToolCall</span><span class="p">(</span><span class="n">BaseModel</span><span class="p">):</span>
@@ -6925,8 +6948,49 @@ request for the same operation. A governed failure — a denied permission, a fi
 the policy — comes back as <code>is_error</code> with the code, which is something the model can act
 on. An infrastructure failure propagates to your loop instead, because retrying a dropped
 connection is not the model's job.</p>
+<h2 id="the-answer-streams-over-the-same-hop">The answer streams over the same hop<a class="headerlink" href="#the-answer-streams-over-the-same-hop" title="Permanent link">&para;</a></h2>
+<p>A model that answers in prose usually streams it, a token at a time. <code>stream</code> takes the
+operation <code>invoke</code> takes and yields the response body as it arrives, so the streamed
+answer leaves through the declared route like everything else:</p>
+<div class="highlight"><pre><span></span><code><span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">stream_answer</span><span class="p">(</span><span class="n">question</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="o">*</span><span class="p">,</span> <span class="n">ctx</span><span class="p">:</span> <span class="n">ExecutionContext</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">AsyncGenerator</span><span class="p">[</span><span class="nb">str</span><span class="p">]:</span>
+<span class="w">    </span><span class="sd">"""The model's prose answer as it is generated, over the same declared route.</span>
+
+<span class="sd">    `stream` sends the request `invoke` would send and yields the body as it arrives. The</span>
+<span class="sd">    events are lines and a network splits them wherever it likes, so lines are cut from a</span>
+<span class="sd">    buffer rather than from each chunk.</span>
+<span class="sd">    """</span>
+
+    <span class="n">chunks</span> <span class="o">=</span> <span class="n">ctx</span><span class="o">.</span><span class="n">http</span><span class="o">.</span><span class="n">service</span><span class="p">(</span><span class="n">model_service</span><span class="p">)</span><span class="o">.</span><span class="n">stream</span><span class="p">(</span>
+        <span class="n">model_messages</span><span class="p">,</span>
+        <span class="n">ModelArgs</span><span class="p">(</span><span class="n">question</span><span class="o">=</span><span class="n">question</span><span class="p">,</span> <span class="n">tools</span><span class="o">=</span><span class="p">[],</span> <span class="n">stream</span><span class="o">=</span><span class="kc">True</span><span class="p">),</span>
+    <span class="p">)</span>
+    <span class="n">buffer</span> <span class="o">=</span> <span class="sa">b</span><span class="s2">""</span>
+
+    <span class="k">async</span> <span class="k">with</span> <span class="n">aclosing</span><span class="p">(</span><span class="n">chunks</span><span class="p">):</span>
+        <span class="k">async</span> <span class="k">for</span> <span class="n">chunk</span> <span class="ow">in</span> <span class="n">chunks</span><span class="p">:</span>
+            <span class="o">*</span><span class="n">lines</span><span class="p">,</span> <span class="n">buffer</span> <span class="o">=</span> <span class="p">(</span><span class="n">buffer</span> <span class="o">+</span> <span class="n">chunk</span><span class="p">)</span><span class="o">.</span><span class="n">split</span><span class="p">(</span><span class="sa">b</span><span class="s2">"</span><span class="se">\n</span><span class="s2">"</span><span class="p">)</span>
+
+            <span class="k">for</span> <span class="n">raw</span> <span class="ow">in</span> <span class="n">lines</span><span class="p">:</span>
+                <span class="n">line</span> <span class="o">=</span> <span class="n">raw</span><span class="o">.</span><span class="n">removesuffix</span><span class="p">(</span><span class="sa">b</span><span class="s2">"</span><span class="se">\r</span><span class="s2">"</span><span class="p">)</span>  <span class="c1"># a provider may end lines with CRLF</span>
+
+                <span class="k">if</span> <span class="ow">not</span> <span class="n">line</span><span class="o">.</span><span class="n">startswith</span><span class="p">(</span><span class="sa">b</span><span class="s2">"data:"</span><span class="p">):</span>
+                    <span class="k">continue</span>
+
+                <span class="c1"># The space after the colon is optional, and only one is stripped.</span>
+                <span class="n">data</span> <span class="o">=</span> <span class="n">line</span><span class="o">.</span><span class="n">removeprefix</span><span class="p">(</span><span class="sa">b</span><span class="s2">"data:"</span><span class="p">)</span><span class="o">.</span><span class="n">removeprefix</span><span class="p">(</span><span class="sa">b</span><span class="s2">" "</span><span class="p">)</span>
+
+                <span class="k">if</span> <span class="n">data</span> <span class="o">!=</span> <span class="sa">b</span><span class="s2">"[DONE]"</span><span class="p">:</span>
+                    <span class="k">yield</span> <span class="n">data</span><span class="o">.</span><span class="n">decode</span><span class="p">()</span>
+</code></pre></div>
+<p>The request is the one <code>invoke</code> sends: the acknowledgement gates it, the credential and
+the deadline budget ride on it as it opens, and its span carries <code>forze.egress.sensitive</code>. A rejected
+request raises before the first token, with the error <code>invoke</code> would raise. Server-sent
+events are lines, and a network cuts chunks wherever it likes, so lines come out of a
+buffer rather than out of each chunk. <code>aclosing</code> closes the connection as soon as you stop
+reading — on an early return as much as at the end.</p>
 <h2 id="what-stands-in-for-the-provider">What stands in for the provider<a class="headerlink" href="#what-stands-in-for-the-provider" title="Permanent link">&para;</a></h2>
-<p>The example registers a handler for the model service and keyword-matches the question:</p>
+<p>The example registers a handler for the model service. It keyword-matches the question, and
+answers a streaming request with events cut mid-line:</p>
 <div class="highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">canned_model</span><span class="p">(</span><span class="n">args</span><span class="p">:</span> <span class="n">ModelArgs</span> <span class="o">|</span> <span class="kc">None</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">ModelReply</span><span class="p">:</span>
 <span class="w">    </span><span class="sd">"""Stands in for the provider: picks a tool from the palette it was given.</span>
 
@@ -6960,6 +7024,18 @@ connection is not the model's job.</p>
             <span class="nb">input</span><span class="o">=</span><span class="p">{</span><span class="s2">"filters"</span><span class="p">:</span> <span class="p">{</span><span class="s2">"$values"</span><span class="p">:</span> <span class="p">{</span><span class="s2">"category"</span><span class="p">:</span> <span class="s2">"postgres"</span><span class="p">}},</span> <span class="s2">"sorts"</span><span class="p">:</span> <span class="p">{</span><span class="s2">"title"</span><span class="p">:</span> <span class="s2">"asc"</span><span class="p">}},</span>
         <span class="p">)</span>
     <span class="p">)</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">canned_stream</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="nb">bytes</span><span class="p">]:</span>
+<span class="w">    </span><span class="sd">"""Stands in for the provider's streamed answer: server-sent events, a token per event.</span>
+
+<span class="sd">    The second chunk starts mid-event, as a network is free to cut it.</span>
+<span class="sd">    """</span>
+
+    <span class="k">return</span> <span class="p">[</span>
+        <span class="sa">b</span><span class="s2">"data: Two</span><span class="se">\n\n</span><span class="s2">data:  no"</span><span class="p">,</span>
+        <span class="sa">b</span><span class="s2">"tes</span><span class="se">\n\n</span><span class="s2">data:  mention postgres.</span><span class="se">\n\n</span><span class="s2">data: [DONE]</span><span class="se">\n\n</span><span class="s2">"</span><span class="p">,</span>
+    <span class="p">]</span>
 </code></pre></div>
 <p>Only the provider's <em>answer</em> is stubbed. The palette it chooses from, the dispatch its
 choice triggers, and the governance around both are the real thing — which is what lets a
@@ -6967,13 +7043,12 @@ test drive the whole recipe:</p>
 <div class="highlight"><pre><span></span><code>uv<span class="w"> </span>run<span class="w"> </span>python<span class="w"> </span>-m<span class="w"> </span>examples.recipes.query_agent.app
 uv<span class="w"> </span>run<span class="w"> </span>pytest<span class="w"> </span>tests/unit/test_examples/test_query_agent.py
 </code></pre></div>
-<p>Swapping in a real provider is a choice about which of the two things above you keep.
-Point the service at the provider's real base URL and describe its endpoint as an
-<code>HttpOperationSpec</code>, and the loop, the palette and the egress declaration all stay as they
-are — you write the request and response models instead of importing an SDK. Reach for the
-vendor's SDK instead and you own the transport: adapt its tool-call type to a <code>ToolUse</code> the
-same way, but the hop is no longer a declared service, so the marker no longer covers it.
-That is the trade, stated where it is made rather than discovered later in a review.</p>
+<p>Swapping in a real provider means pointing the service at the provider's real base URL and
+describing its endpoint as an <code>HttpOperationSpec</code>. The loop, the palette, the egress
+declaration and the streamed answer all stay as they are — you write the request and
+response models and parse the provider's events instead of importing an SDK. A vendor's
+SDK brings its own transport, and a hop made through it is not a declared service, so the
+marker does not cover it.</p>
 <h2 id="notes">Notes<a class="headerlink" href="#notes" title="Permanent link">&para;</a></h2>
 <ul>
 <li>
@@ -6987,10 +7062,10 @@ That is the trade, stated where it is made rather than discovered later in a rev
   unless you ask for a command-capable toolset, so an agent that must act is a visible
   decision in the diff.</p>
 </li>
-<li><strong>Streaming the answer</strong> is a transport concern, not an agent one. The realtime
-  recipes — <a href="../realtime-offline-delivery/">delivery to offline users</a>,
-  <a href="../tenant-sharded-realtime/">tenant-sharded realtime</a> — apply unchanged to an answer
-  arriving a token at a time.</li>
+<li><strong>Delivering the streamed answer to a user</strong> is a transport concern, not an agent one.
+  The realtime recipes — <a href="../realtime-offline-delivery/">delivery to offline users</a>,
+  <a href="../tenant-sharded-realtime/">tenant-sharded realtime</a> — apply unchanged to the tokens
+  <code>stream_answer</code> yields.</li>
 <li><strong>An operation whose read model is marked <code>sensitive</code> cannot be projected at all</strong>, so
   credential material has no path into a tool palette.</li>
 </ul>
