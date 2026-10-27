@@ -2362,6 +2362,326 @@ changes a proposed row.
 
 ---
 
+# Unit 8 · RFC 0078 — DuckDB 2.0 adoption
+
+Branch `feat/duckdb-2`, stacked on `feat/rfc-0078-p2-tightening` (unpublished), which is
+stacked on P1. Scope: make `duckdb==2.0.0` (released 2026-10-21) the locked engine, carry
+D-053's list, and keep DuckDB 1.5 supported. Same stack as Units 5 to 7. Two builds:
+`duckdb==2.0.0` with iceberg `4c0c0874c4`, the lock's, and `duckdb==1.5.6` with iceberg
+`890b78a9c`, run as an overlay (`uv run --with duckdb==1.5.6`).
+
+**Working assumptions.** The author has not answered Units 5 to 7. Every `ASSUMED` row there is
+taken as the design. D-055 was `OPEN`; this unit answers it under the maintainer's standing
+instruction, "the most reasonable choice for a production framework" (D-062, D-063). D-054's cap
+(`<2`) went to `main` as #679 and is not in this branch's base. A rebase onto `main` brings it,
+and conflicts on the one `pyproject.toml` line this unit sets to `>=1.5.6,<3`. D-042's early
+return stays, and D-028 stays `OPEN` for 1.5 (D-068).
+
+**Drift count: 0.** Eleven entries, D-061 to D-071: seven `discovery`, four `spec-gap`. Product
+code changes in four places: the plain client's result fetch (D-061), the routed session
+profile and its attestation (D-062, D-063, D-065), the dynamic-read classification (D-066), and
+the taxonomy (D-067). Units 5 to 7 are not edited here.
+
+**Where each item lives.**
+
+- The plain client: `DuckDbClient.run_query` and `_ignore_arrow_copy_warning`; pinned by
+  `test_run_query_does_not_warn_about_the_arrow_copy`.
+- The session profile: `_allowlist`, `_session_statements`, `_expected_settings`, `_setting`
+  and `_attest` in `routed_client.py`, and the new `RoutedDuckDbClient.ca_cert_file`. Battery 8
+  (`TestHttpEgress`) and 14 (`TestAttestation`) pin it on the stack. The unit suite pins the
+  statements (`test_the_session_allow_lists_the_prefix_the_catalog_the_idp_and_the_ca_bundle`).
+- HTTPS, which the stack does not serve: the P0 module's
+  `test_on_2_https_needs_the_ca_bundle_on_the_allowlist`, against a local TLS server with a
+  throwaway CA.
+- The D-058 refusal: `_refuse_unattached_catalogs` in `client.py`; the unit suite, battery 4,
+  and the P0 pin `test_an_unknown_first_part_is_a_nested_namespace_on_2`.
+- Version-specific facts: the P0 module and the battery branch on the major. The P0 version
+  pin admits exactly the two probed builds (`_PROBED`).
+- 1.5 in CI: `just test-duckdb-1x`, run by `ci.yml`'s duckdb shard after `just test` (D-070).
+
+**The battery on the adopted profile.** Every item, run against the stack on both builds.
+
+| Item | 2.0.0 | 1.5.6 |
+|---|---|---|
+| 1 fixture self-test | pass | pass |
+| 3 disjoint tenants | pass | pass |
+| 4 cross-tenant by name | refused, including `zzz.gold.orders` and `lake.zzz.gold.orders` (D-066). Stubbed: A's own rows (D-058) | refused. Stubbed: `BinderException` |
+| 5 cross-tenant by path | refused by the allowlist, no request logged | the same |
+| 6 classification | pass | pass |
+| 7 local filesystem | refused by the allowlist ("file system operations are disabled by configuration"); the process control refuses with the session's layer gone | the same |
+| 8 HTTP egress | `https://example.com` and the catalog's and IdP's siblings refused; the catalog tree answers 401 (D-064) | the same |
+| 9 lock | pass, with the doubled quotes of D-060 | pass |
+| 10 read-only | pass. Without `READ_ONLY`, a CTAS is refused by the catalog (403) before it stages (D-067) | pass. A CTAS is refused by the allowlist where it stages |
+| 12 shell | pass | pass |
+| 13 pool | pass | pass |
+| 14 attestation | every step removed once is refused; an allowlist entry removed fails setup (the catalog or IdP is refused) | the same, except an allowlist entry removed builds and fails attestation |
+| 16 taxonomy | pass | pass |
+| 11b, 11c | 6 passed in 1014.8 s (`just lake-slow`). The kept-secret leg reads (D-056), and the held-open leg logs no status (D-067) | 6 passed in P2's run (Unit 7) |
+| 17 | deferred (D-059) | deferred |
+
+**Counts.** The DuckDB unit and integration suites, `lake_slow` excluded: 361 passed on 2.0.0
+(`just test`) and 361 on 1.5.6 (`just test-duckdb-1x`), in about 85 s each with the stacks.
+The unit suite alone: 247 on each. On a 1.5.0 overlay the routed battery passes 75 of 79
+(D-061).
+
+**Confirmed, so no entry.**
+
+- The vended-secret drop runs on 2.0 and finds nothing, under `lock_configuration` too (D-056).
+  P0's three D-025 pins now pin each build.
+- `http_timeout` reads back in whole seconds, and `lock_configuration` refuses every `SET` of
+  the profile on the parent connection and on cursors, on both builds.
+- `ca_cert_file` set to a CA a client trusts works on both builds; 1.5.6 reads it outside
+  DuckDB's filesystem, so neither the allowlist nor `LocalFileSystem` matters there.
+
+## D-061 — The plain client fetches with `to_arrow_table`, which exists from 1.5.0 and is all 2.0 keeps
+
+- **Touches:** D-054 ("Switching to `to_arrow_table` belongs to the adoption change"; "Whether
+  `to_arrow_table` exists at the 1.1.0 floor was not checked"), `DuckDbClient.run_query`, and
+  the extra's range.
+- **RFC said:** nothing. D-054 capped the extra below 2.
+- **Found:**
+  - A cursor's `to_arrow_table` is absent on 1.2.0, 1.3.0, 1.4.0 and 1.4.4, and present from
+    1.5.0. On 1.5.6, `fetch_arrow_table` raises a `DeprecationWarning` naming it. On 2.0.0 it is
+    the only Arrow fetch left on a cursor. Rows and types match on both builds (integer,
+    string, decimal, `NULL`, an empty result).
+  - On 2.0.0 every Arrow fetch from an executed cursor warns: "Arrow output on a DB-API result
+    makes an extra copy of the rows, use con.sql(query).to_arrow_table() instead". The
+    relation path it names exists from 1.2.0 and does not warn, but binds a `SELECT` twice.
+    Against a local HTTP server, `sql(q).to_arrow_table()` made three requests where
+    `execute(q)` made two, on both builds. On a lake that is a second `LoadTable` per statement.
+  - 1.1.0 has no CPython 3.13 wheel, and its sdist fails to build. The floor never installed on
+    this project's Python.
+  - The routed battery on 1.5.0 (extensions installed by hand, D-071) passes 75 of 79. All
+    confinement items pass. Four outcomes differ from 1.5.6: a catalog 401 maps to
+    `infrastructure`, a describe-only read times out instead of being refused, a CTAS reaches
+    the catalog first, and a persistent-secrets fault fails attestation instead of setup.
+- **Because:** 1.5 added `to_arrow_table` to the cursor, and 2.0 removed the rest.
+- **Class:** `discovery`.
+- **Consequence:** one call on both majors. The 2.0 warning is filtered for the client module
+  only, by `initialize`. A filter set at import does not survive pytest, which restores the
+  filters after collection, and an application suite run with `filterwarnings = error` would
+  then fail every query on 2.0. The extra becomes `duckdb>=1.5.6,<3`: the plain client needs
+  1.5.0, and 1.5.6 is the one 1.x build the routed client is verified on, so every admitted
+  1.x build is a verified one. Users on 1.1 to 1.5.5 must upgrade, which the changelog marks.
+- **Proposed row (RFC 0078):** `ASSUMED` — the extra is `duckdb>=1.5.6,<3`, and both clients run
+  on both majors with one code path. This supersedes D-054's cap.
+
+## D-062 — D-055 answered: one allowlist of the prefix, the catalog tree and the token endpoint, and no filesystem disabled
+
+- **Touches:** D-055 (`OPEN`), D-027's proposed row, §3.4 steps 5 and 8, §3.5's rows "No local-disk
+  read/write" and "No arbitrary HTTP egress", and batteries 7, 8 and 14.
+- **RFC said:** §3.4 step 5 sets `disabled_filesystems='LocalFileSystem,HTTPFileSystem'`. D-027
+  adds an allowlist of the prefix with external access off. D-055 leaves two options open.
+- **Found:** D-055's first option, narrowed. `allowed_directories` names the prefix and the
+  catalog's base URI as a directory, `allowed_paths` names the token endpoint as one exact
+  path, and external access goes off before `CREATE SECRET`. D-055 probed whole origins; this
+  is the narrowest set that builds. It builds, attests and reads on both builds. Under it, on
+  both builds, these are all `PermissionException` "Cannot access file … file system
+  operations are disabled by configuration": local reads and writes (`/etc/passwd`,
+  `/proc/self/environ`, `COPY TO`, a local `ATTACH`, a `glob`, `INSTALL`), any other URL, and
+  B's prefix, before any request. With `HTTPFileSystem` also disabled, 2.0 refuses the catalog
+  (D-055). With `LocalFileSystem` disabled, 2.0 cannot make an HTTPS request (D-063).
+- **Because:** on 2.0 the allowlist is the one check that admits the extension's own requests
+  and refuses a statement's. The disabled filesystems refuse both.
+- **Class:** `discovery`.
+- **Consequence:** one layer inside the engine, for local and HTTP alike, where 1.5 had two for
+  local paths. The outer controls, the process filesystem and the egress policy, stay primary
+  (§3.5). Battery 7's second leg still proves the process control. 1.5.6 runs the same profile,
+  so the battery tests the production profile on both builds. Step 8 attests the refusals by
+  effect, a local path and an unlisted URL, as D-055's row asked.
+- **Proposed row (RFC 0078):** `ASSUMED` — §3.4 step 5 is the allowlist above, set before
+  `CREATE SECRET`, and `disabled_filesystems` is not set. §3.5's two "promise" rows name the
+  allowlist. This overrides §3.4 step 5 and D-027's row, which stay as written.
+
+## D-063 — On 2.0 every HTTPS request reads the CA bundle through the allowlist, so `LocalFileSystem` stays on and the bundle is configured
+
+- **Touches:** D-062, §3.4's connect options and step 5, §3.1 (the deployment contract), and the
+  stack, which serves plain HTTP only.
+- **RFC said:** nothing about TLS.
+- **Found:**
+  - With external access off and `https://example.com/` allow-listed, 2.0.0 refuses the read:
+    "Cannot read a CA certificate bundle: file system access is restricted by configuration.
+    Add one of /etc/ssl/certs/ca-certificates.crt, … to allowed_paths, point ca_cert_file at an
+    allowed file, or disable server certificate verification". With the bundle in
+    `allowed_paths` it reads. With `LocalFileSystem` disabled as well, it is refused again. 1.5.6
+    reads in all four cases.
+  - Once `ca_cert_file` is set, 2.0 hands the file to curl for every request, plain HTTP too.
+    An empty file fails the token request: "Failed to set curl option 40309".
+  - A by-path read inside the prefix with no vended secret behind it heads for the public AWS
+    endpoint (D-040). On 2.0 under the allowlist it now stops at the bundle, before any request.
+  - DuckDB reports a symlink in `allowed_paths` as its target.
+- **Because:** 2.0's `httpfs` reads the bundle through DuckDB's filesystem, which honours
+  `enable_external_access` and the disabled filesystems.
+- **Class:** `discovery`.
+- **Consequence:** `RoutedDuckDbClient` gains `ca_cert_file`, resolved to its real path at
+  construction. When it is set, the session sets `ca_cert_file` and allow-lists the path, and
+  step 8 reads it back. Without it, a 2.0 session with an HTTPS endpoint fails setup with
+  DuckDB's own message, so this fails closed. A statement can read the bundle, which holds
+  public certificates only. `allowed_paths` also admits a write to it: classification refuses
+  `COPY`, and the deployment's read-only filesystem is the outer control.
+- **Proposed row (RFC 0078):** `ASSUMED` — the deployment contract (§3.1) names the CA bundle as
+  the routed client's `ca_cert_file` whenever the catalog, the IdP or the store is HTTPS.
+
+## D-064 — What the allowlist opens over HTTP: the catalog's tree and the token endpoint, with no token
+
+- **Touches:** §3.5's "No arbitrary HTTP egress" row, battery 8, and D-055's consequence ("A
+  statement can then open `http://` URLs on those two origins").
+- **RFC said:** `HTTPFileSystem` disabled refuses every `http(s)://` read.
+- **Found:** under the profile, on both builds, `read_text('<catalog uri>/v1/config')` goes out
+  and Lakekeeper answers 401. A GET on the token endpoint gets 405. The catalog origin's
+  `/health` and the IdP's `/certs` are refused by the allowlist. The requests carry no bearer
+  token: the catalog secret is an `iceberg` secret, not an HTTP one.
+- **Because:** a directory entry matches by prefix, a path entry exactly.
+- **Class:** `discovery`.
+- **Consequence:** a statement can send unauthenticated GETs to two endpoints the deployment
+  already trusts, which is less than D-055 expected. Sending data out by URL needs control of
+  the catalog or the IdP. Battery 8 pins both halves. `LakeTenantCatalog` now refuses a `uri`
+  or `oauth2_server_uri` that is not an http(s) URL, since each widens the allowlist.
+- **Proposed row (RFC 0078):** `ASSUMED` — §3.5's HTTP row reads "egress policy; inside the
+  engine, the allowlist bounds HTTP to the catalog's tree and the token endpoint".
+
+## D-065 — Step 8 reads each setting with `current_setting()`, one query each
+
+- **Touches:** §3.4 step 8, D-035, and D-060's attestation item.
+- **RFC said:** step 8 reads `duckdb_settings()`.
+- **Found:** 2.0's `duckdb_settings()` leaves out the `s3_*` options and `extension_directory`
+  (D-060). `current_setting()` reads them on both builds, as typed values. But on a fresh
+  cursor, `current_setting()` of an extension option the session never set raises: "Setting
+  with name "s3_access_key_id" is not in the catalog, but it exists in the httpfs extension".
+  On the parent connection it returns `NULL`. Battery 14's fault that skips the `s3_*` clear
+  showed it: the error escaped step 8 and reached the caller as the statement's
+  `dynamic_read_statement_invalid`. Lists read back sorted.
+- **Because:** an extension option is not in a new connection's catalog until it is set.
+- **Class:** `discovery`.
+- **Consequence:** step 8 reads one setting per query, and one it cannot read counts as a
+  problem. It now runs inside the setup guard, so any other error there is
+  `duckdb_session_setup_failed`, never a statement's code. That adds about twenty queries per
+  instance build. Battery 14 pins every step's removal on both builds.
+- **Proposed row (RFC 0078):** `ASSUMED` — step 8 reads each setting with `current_setting()` on a
+  fresh cursor, and treats one it cannot read as unattested.
+
+## D-066 — Classification refuses a table named through a catalog that is not attached, or nested past three parts
+
+- **Touches:** D-058 and its row, §4.2, battery 4, and decision 12.
+- **RFC said:** a name that does not resolve fails at the catalog. D-058 proposed asserting
+  "never B's rows" and forbidding nested namespaces in the deployment contract.
+- **Found:** D-058 re-confirmed on 2.0.0. `zzz.gold.orders`, `wh_tenant_b.gold.orders` and
+  `lake.zzz.gold.orders` all return tenant A's rows. `json_serialize_sql` parses without
+  binding and gives each table reference's catalog, schema and table on both builds. On 2.0 it
+  also gives the full dotted path (`qualified_name.path`), the levels the extension drops. 1.5.6
+  cannot parse a four-part name ("NameListToString NOT IMPLEMENTED"). `get_table_names` is no
+  use: it binds table functions, and an `iceberg_scan` in it raised the allowlist's refusal, so
+  it does I/O.
+- **Because:** D-058 left the safer option open, and refusing is it.
+- **Class:** `spec-gap`.
+- **Consequence:** after the `SELECT` check, the client serializes the classified statement. It
+  refuses any table whose catalog is not attached (compared case-insensitively) or whose path
+  has more than three parts, with `dynamic_read_statement_invalid`. That is one parse-only
+  query per dynamic read, with no I/O. Both builds give the same answer, so battery 4 keeps
+  asserting a refusal. D-058's "never B's rows" becomes the stubbed leg's assertion on 2.0.
+  Analytics reads are not checked, since their SQL is code. A view's body is resolved by the
+  engine, not by this check.
+- **Proposed row (RFC 0078):** `ASSUMED` — this overrides D-058's row: classification refuses such
+  names. The deployment rule against nested namespaces stays, as a second line.
+
+## D-067 — D-060's deltas, carried; on 2.0 a CTAS reaches the catalog first, and a failed request logs no status
+
+- **Touches:** §4.5, D-029, D-038, §4.2, batteries 5, 9 and 10, and D-060's row.
+- **RFC said:** the 1.5.6 behaviour, as D-060 lists it.
+- **Found:**
+  - With `READ_ONLY` taken away and classification stubbed, a CTAS on 2.0 is refused by the
+    catalog (403, `NamespaceActionForbidden`) before it writes anything. On 1.5.6 it stages a
+    local file first, and the allowlist refuses that.
+  - DuckDB 2's HTTP log records a failed GET with `'response': NULL`, where 1.5.6 records its
+    status. Battery 11b's held-open leg reads the store request's status from that log. On 2.0
+    it reads empty, while the error still names HTTP 400.
+- **Because:** 2.0's iceberg build creates the table in the catalog first, and 2.0's logger
+  writes no response for a request that failed.
+- **Class:** `discovery`.
+- **Consequence:** the rest of D-060 is carried as proposed, with one change.
+  - The taxonomy maps `Unauthorized_401` and `Forbidden_403` inside an `HTTPException` to
+    `dynamic_read_permission_denied`. Both CTAS refusals map there.
+  - On 2.0, `PRAGMA` is refused as `PRAGMA` and `PIVOT` as `MULTI`. The tests pin each build.
+  - Battery 9 matches the lock refusal with either quoting, and tries
+    `SET allowed_directories=['/']` instead of `SET disabled_filesystems=''`, which no longer
+    guards anything. Battery 5 turns logging on before the lock, through the sequence seam.
+  - The change: P0's ambient-key pin checks the key on 1.5 only. On 2.0 it rests on the read
+    succeeding against a store that refuses unsigned reads (battery 1). Reading the store's
+    request log, as D-060 proposed, was not built.
+  - Battery 11b's held-open leg asserts one store request on both builds, with its status
+    `BadRequest_400` on 1.5 and empty on 2.0.
+- **Proposed row (RFC 0078):** `ASSUMED` — D-060's row stands, except that P0's ambient-key pin on
+  2.0 infers the signature from the read rather than from the store's log.
+
+## D-068 — On adoption: the drop stays and finds nothing, and a hung request lasts `http_timeout` × (1 + `http_retries`) on 2.0
+
+- **Touches:** D-056, D-057, D-028 (`OPEN`), D-042 (`OPEN`), and the docs' "about 120 s".
+- **RFC said:** a blocking HTTP read is bounded by `http_timeout`.
+- **Found:** P0's D-025 pins, re-pinned per build. On 2.0 no `__internal_ic_` secret exists after
+  a statement, while one runs, or after a rollback. The routed client's drop runs and finds
+  nothing, under the lock too. D-057 was not re-measured: Unit 7's 2 s probe stands.
+  `http_retries` defaults to 3 on both builds, and the routed client does not set it.
+- **Because:** 2.0 ends the secret with its statement and honours `http_timeout`.
+- **Class:** `spec-gap`.
+- **Consequence:** the drop stays as a belt, at one `duckdb_secrets()` query per read. D-042's
+  early return stays, since an interrupt still does not cut a request short. The docs and
+  docstrings state the hung-request bound per build.
+- **Proposed row (RFC 0078):** `ASSUMED` — D-028 resolves to option (b) on 2.0, with the bound
+  `http_timeout` × (1 + `http_retries`). On 1.5 it stays `OPEN`, worked under option (a).
+
+## D-069 — The lock moves to 2.0.0 with a newer uv, and one unrelated wheel drops with it
+
+- **Touches:** `uv.lock`.
+- **RFC said:** nothing.
+- **Found:** the local uv 0.10.10 rewrites the lock as revision 3, and so does uv 0.11.6. uv
+  0.13.6 keeps revision 5. `uv lock --upgrade-package duckdb` under 0.13.6 moves `duckdb` from
+  1.5.6 to 2.0.0 (abi3 wheels) and updates its specifier. It also drops one wheel line,
+  zensical 0.0.71's armv7l. 0.11.6 drops the same line, so it comes from the index, not the
+  tool. A direct query to PyPI timed out, so that was not confirmed. uv 0.10.10 then accepts the
+  lock: `uv lock --check` passes and `uv sync` leaves it alone.
+- **Because:** revision 5 postdates uv 0.11, and the index no longer lists that wheel.
+- **Class:** `discovery`.
+- **Consequence:** the lock's diff is `duckdb`, its specifier and that one wheel line. CI's
+  `setup-uv` installs a current uv. A relock with a uv older than 0.12 would downgrade the
+  format.
+- **Proposed row (RFC 0078):** `ASSUMED` — the lock pins the newest admitted DuckDB, 2.0.0, and
+  1.5.6 runs as an overlay (D-070).
+
+## D-070 — 1.5 stays tested: the duckdb shard runs the DuckDB suites again on 1.5.6
+
+- **Touches:** CI and D-061.
+- **RFC said:** nothing. The fact tags say every probe re-runs on a bump.
+- **Built:** `just test-duckdb-1x`, which runs the unit and integration DuckDB suites under
+  `uv run --with duckdb==1.5.6` with `just test`'s markers. `ci.yml`'s duckdb shard runs it
+  after `just test`. `lake_slow` is not run on 1.5: P2's run on 1.5.6 stands, and the scheduled
+  workflow runs the lock's 2.0.
+- **Because:** the range admits 1.5.6, and the lock no longer exercises it.
+- **Class:** `spec-gap`.
+- **Consequence:** the duckdb shard runs about twice as long, with no coverage upload from the
+  second run. A 1.5.x release after 1.5.6 is admitted but untested until the overlay pin and
+  `_PROBED` move together.
+- **Proposed row (RFC 0078):** `ASSUMED` — 1.5 support is CI-tested at 1.5.6 only.
+
+## D-071 — The image needs `avro` too: `iceberg` loads it, and fails without it
+
+- **Touches:** §3.4's connect options and step 1 ("pre-installed; INSTALL never runs at
+  runtime"), the docs' `extension_directory` line, and the stack's extension install.
+- **RFC said:** the image holds `httpfs` and `iceberg`.
+- **Found:** from an extension directory holding only `httpfs` and `iceberg`, with autoinstall
+  off, `LOAD iceberg` fails on both builds: "The iceberg extension requires the avro extension".
+  On 1.5.0, `INSTALL iceberg` does not fetch `avro`, so the stack's session setup failed there.
+  Battery 14's extension-directory test copies the whole installed directory, `avro` included,
+  so it never saw this.
+- **Because:** the iceberg build loads `avro` at its own initialization.
+- **Class:** `spec-gap`.
+- **Consequence:** the stack installs `avro` with the other two, and the docs and the
+  `extension_directory` docstring name all three. An image built from the old docs fails setup
+  on the first tenant (`duckdb_session_setup_failed`), so it fails closed.
+- **Proposed row (RFC 0078):** `ASSUMED` — §3.4 step 1's pre-installed set is `httpfs`, `iceberg`
+  and `avro`.
+
+---
+
 # Unit 9 · RFC 0077 P3 — surfaces onto ingress
 
 Branch `refactor/ingress-fastapi-socketio-ws`. RFC 0077 §12 P3's bullet "moving FastAPI,
