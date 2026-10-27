@@ -40,6 +40,9 @@ _DEFAULT_EXTENSIONS: tuple[str, ...] = ("httpfs",)
 QUERY_TIMEOUT_CODE = "duckdb_query_timeout"
 """Code of the infrastructure error a statement raises when its timeout fires."""
 
+INSTANCE_RETIRED_CODE = "duckdb_instance_retired"
+"""Code of the infrastructure error a retired client raises for every statement."""
+
 _VENDED_SECRET_PREFIX = "__internal_ic_"  # nosec B105 - a secret-name prefix, not a secret
 """Name prefix of the temporary S3 secrets the ``iceberg`` extension creates per ``LoadTable``."""
 
@@ -164,9 +167,13 @@ def _drop_vended_secrets(conn: Any, lock: threading.Lock) -> None:
     The extension creates one per ``LoadTable`` and keeps it once the statement's transaction
     commits. Kept, it lets a revoked principal read by path until the credential expires
     (RFC 0078 EXECUTION-LOG D-025), and once expired it outranks the fresh secret of the next
-    statement on the same table, which then fails (D-047). A running statement's own secret is
-    uncommitted, so this drop cannot see it (D-048). *lock* serializes drops: two transactions
-    dropping one secret conflict.
+    statement on the same table, which then fails (D-047). *lock* serializes drops: two
+    transactions dropping one secret conflict.
+
+    Safe beside a running statement only because DuckDB keeps a statement's vended secret
+    uncommitted until the statement ends, so ``duckdb_secrets()`` here cannot list it (D-048).
+    The P0 probe ``test_a_running_statements_secret_is_invisible_to_another_cursor`` is the
+    tripwire: if an engine bump makes that secret visible, it fails first.
     """
 
     with lock:
@@ -273,7 +280,8 @@ class DuckDbClient(DuckDbDynamicReadClientPort):
     __executor: ThreadPoolExecutor | None = attrs.field(default=None, init=False)
     __admission: asyncio.Semaphore | None = attrs.field(default=None, init=False)
     __init_lock: asyncio.Lock = attrs.field(factory=asyncio.Lock, init=False)
-    __drop_lock: threading.Lock = attrs.field(factory=threading.Lock, init=False)
+    __drop_lock: threading.Lock | None = attrs.field(default=None, init=False)
+    __retired: bool = attrs.field(default=False, init=False)
 
     # ....................... #
     # Lifecycle
@@ -287,6 +295,7 @@ class DuckDbClient(DuckDbDynamicReadClientPort):
         install_extensions: bool = True,
         connect_config: Mapping[str, Any] | None = None,
         admission: asyncio.Semaphore | None = None,
+        drop_vended_secrets: bool = False,
         secrets: Sequence[str] = (),
         sources: Mapping[str, str] | None = None,
         bootstrap_sql: Sequence[str] = (),
@@ -306,6 +315,9 @@ class DuckDbClient(DuckDbDynamicReadClientPort):
         :param admission: A semaphore shared with other clients. Each statement holds a slot
             from submission until its worker thread returns, so it bounds statements across
             every client that shares it.
+        :param drop_vended_secrets: Drop the S3 secrets an attached Iceberg catalog vends after
+            every read, for an instance attached with vended credentials (RFC 0078). A drop that
+            fails retires the client: see :attr:`retired`.
         :param secrets: Raw ``CREATE SECRET ...`` statements (object-storage credentials).
         :param sources: Optional ``name -> scan expression`` map registered as
             ``CREATE OR REPLACE VIEW name AS SELECT * FROM <expr>`` (the "view" source style).
@@ -355,6 +367,7 @@ class DuckDbClient(DuckDbDynamicReadClientPort):
 
             self.__conn = await asyncio.to_thread(_open)
             self.__admission = admission
+            self.__drop_lock = threading.Lock() if drop_vended_secrets else None
             self.__executor = ThreadPoolExecutor(
                 max_workers=cfg.max_concurrent_queries,
                 thread_name_prefix="forze-duckdb",
@@ -407,6 +420,40 @@ class DuckDbClient(DuckDbDynamicReadClientPort):
 
     # ....................... #
 
+    @property
+    def retired(self) -> bool:
+        """Whether a failed vended-secret drop retired this client; it then refuses statements.
+
+        A secret left behind fails every later read of its table once it expires
+        (RFC 0078 EXECUTION-LOG D-047, D-049), so a retired instance must be rebuilt.
+        """
+
+        return self.__retired
+
+    def __end_read(self, conn: Any) -> None:
+        """Drop the read's vended secrets, if this client drops them. Never raises.
+
+        The read's own outcome, its rows or its error, is what the caller gets either way. A
+        failed drop is logged and retires the client (D-049).
+        """
+
+        lock = self.__drop_lock
+
+        if lock is None:
+            return
+
+        try:
+            _drop_vended_secrets(conn, lock)
+
+        except Exception:
+            self.__retired = True
+            logger.warning(
+                "DuckDB could not drop vended secrets after a read; the instance is retired",
+                exc_info=True,
+            )
+
+    # ....................... #
+
     async def __submit(
         self,
         fn: Callable[[], T],
@@ -419,6 +466,12 @@ class DuckDbClient(DuckDbDynamicReadClientPort):
         released when the worker returns, not when the caller stops waiting, so a cancelled or
         timed-out caller never frees capacity its statement still uses.
         """
+
+        if self.__retired:
+            raise exc.infrastructure(
+                "DuckDB instance retired after a failed vended-secret drop; it serves nothing.",
+                code=INSTANCE_RETIRED_CODE,
+            )
 
         loop = asyncio.get_running_loop()
         executor = self.__require_executor()
@@ -495,7 +548,7 @@ class DuckDbClient(DuckDbDynamicReadClientPort):
             finally:
                 holder.pop("cursor", None)
                 cursor.close()
-                _drop_vended_secrets(conn, self.__drop_lock)
+                self.__end_read(conn)
 
         return await self.__submit(_exec, holder, timeout)
 
@@ -655,7 +708,7 @@ class DuckDbClient(DuckDbDynamicReadClientPort):
                 holder.pop("cursor", None)
                 # An unexhausted stream rolls back here, discarding its own vended secret.
                 cursor.close()
-                _drop_vended_secrets(conn, self.__drop_lock)
+                self.__end_read(conn)
 
         return await self.__submit(_exec, holder, timeout)
 

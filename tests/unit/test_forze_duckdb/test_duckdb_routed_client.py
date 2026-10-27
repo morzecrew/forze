@@ -70,6 +70,7 @@ class _FakeEngine:
 
     def __init__(self) -> None:
         self.closed = False
+        self.retired = False
         self.statements: list[str] = []
         self.admission: asyncio.Semaphore | None = None
         self.secret: str | None = None
@@ -79,6 +80,7 @@ class _FakeEngine:
         self.database = database
         self.admission = kwargs["admission"]
         self.install_extensions = kwargs["install_extensions"]
+        self.drop_vended_secrets = kwargs["drop_vended_secrets"]
 
     async def run_command(self, command: str, *args: Any, **kwargs: Any) -> None:
         if command.startswith("CREATE SECRET"):
@@ -88,6 +90,10 @@ class _FakeEngine:
     async def run_dynamic(self, statement: str, *args: Any, **kwargs: Any) -> list[Any]:
         assert not self.closed, "a statement ran on a closed instance"
         assert self.admission is not None
+
+        if statement == "retire":  # stands in for a read whose vended-secret drop failed
+            self.retired = True
+            return []
 
         async with self.admission:
             await asyncio.sleep(float(statement))
@@ -194,6 +200,7 @@ class TestInstances:
         first, second = fake_engine.built
         assert first.database == second.database == ":memory:"
         assert first.install_extensions is False
+        assert first.drop_vended_secrets is True
         assert first.admission is second.admission is not None
         assert first.statements[-1] == "SET GLOBAL lock_configuration=true"
         await routed.close()
@@ -263,6 +270,25 @@ class TestInstances:
         (instance,) = fake_engine.built
         assert instance.closed
         await routed.close()
+
+    async def test_a_retired_instance_is_evicted_and_its_successor_spared(
+        self, fake_engine: type[_FakeEngine]
+    ) -> None:
+        routed = _routed(_MemSecrets(_A))
+        await routed.startup()
+        holding = asyncio.create_task(_read(routed, _A, 0.2))  # keeps the first instance busy
+        await asyncio.sleep(0.05)
+
+        _tenant.set(_A)
+        await routed.run_dynamic("retire", row_probe=2, timeout=_TIMEOUT)
+        await _read(routed, _A)  # served by a rebuilt instance
+        await holding  # leaves the retired instance last, after its successor exists
+
+        first, second = fake_engine.built
+        assert first.retired and not second.retired
+        assert routed._peek_client(_A) is second
+        await routed.close()
+        assert first.closed
 
     async def test_evict_tenant_rebuilds_with_rotated_credentials(
         self, fake_engine: type[_FakeEngine]

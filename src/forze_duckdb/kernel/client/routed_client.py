@@ -34,6 +34,7 @@ require_duckdb()
 
 import asyncio
 from collections.abc import AsyncGenerator, Callable, Sequence
+from contextlib import asynccontextmanager
 from datetime import timedelta
 from typing import Any, cast
 from uuid import UUID
@@ -285,7 +286,8 @@ class RoutedDuckDbClient(
     errors, never a statement's). It has no field for static
     object-store credentials, raw secrets, sources or bootstrap statements. An instance holds
     the tenant's catalog principal for its life, and the S3 credentials vended for a read
-    statement until that statement ends.
+    statement until that statement ends. An instance that fails to drop them is retired: it
+    refuses statements, and the scope that saw it evicts it so the next one rebuilds.
 
     Register it under :data:`~forze_duckdb.execution.deps.DuckDbClientDepKey` and use
     :func:`~forze.application.execution.lifecycle.builtin.routed_client_lifecycle_step`, not
@@ -430,6 +432,7 @@ class RoutedDuckDbClient(
                     install_extensions=False,
                     connect_config=_connect_config(self.extension_directory),
                     admission=self._admission,
+                    drop_vended_secrets=True,
                 )
 
                 for statement in _session_statements(
@@ -472,6 +475,28 @@ class RoutedDuckDbClient(
             raise
 
         return client
+
+    # ....................... #
+
+    @asynccontextmanager
+    async def client_scope(self, tenant_id: UUID | None = None) -> AsyncGenerator[DuckDbClient]:
+        if tenant_id is None:
+            tenant_id = self._require_tenant_id()
+
+        inner: DuckDbClient | None = None
+
+        try:
+            # Zero-argument super() does not reach through asynccontextmanager in a slots class.
+            base = StructuredSecretRoutedTenantClientBase.client_scope
+
+            async with base(self, tenant_id) as inner:
+                yield inner
+
+        finally:
+            # A failed vended-secret drop retired it (EXECUTION-LOG D-049). Evict it only while
+            # the pool still holds it, so a later scope on the same instance spares its successor.
+            if inner is not None and inner.retired and self._peek_client(tenant_id) is inner:
+                await self.evict_tenant(tenant_id)
 
     # ....................... #
 

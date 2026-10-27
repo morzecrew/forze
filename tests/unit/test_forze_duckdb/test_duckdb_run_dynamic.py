@@ -8,6 +8,7 @@ probe, and drops the vended secrets the statement left behind.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import os
 import re
 import secrets
@@ -18,6 +19,7 @@ from collections.abc import AsyncIterator
 from datetime import timedelta
 from pathlib import Path
 from typing import Any
+from unittest.mock import MagicMock
 
 import duckdb
 import pytest
@@ -42,13 +44,15 @@ _SPIN = "SELECT count(*) AS n FROM range(20000000000) t(i) WHERE i % 7 = 3"
 
 @pytest.fixture
 async def lake_client() -> AsyncIterator[DuckDbClient]:
-    """A client with an attached ``lake`` catalog holding ``gold.t`` (``n`` = 0..4)."""
+    """A lake client, as the routed one builds it: an attached ``lake`` with ``gold.t``
+    (``n`` = 0..4), and vended secrets dropped after every read."""
 
     c = DuckDbClient()
     await c.initialize(
         ":memory:",
         config=DuckDbConfig(),
         extensions=(),
+        drop_vended_secrets=True,
         bootstrap_sql=(
             "ATTACH ':memory:' AS lake",
             "CREATE SCHEMA lake.gold",
@@ -361,6 +365,12 @@ async def test_an_interrupt_that_lands_before_execute_is_sent_again(
 async def test_a_committed_leftover_is_dropped_while_another_statement_runs(
     lake_client: DuckDbClient,
 ) -> None:
+    """The drop does not wait for the instance to be idle (D-048).
+
+    The running statement reads no table, so this does not show that a running scan keeps
+    working; P0's ``test_a_scan_keeps_reading_while_another_statements_drop_runs`` does.
+    """
+
     running = asyncio.create_task(
         lake_client.run_dynamic(_HEAVY_SQL, row_probe=2, timeout=timedelta(seconds=30))
     )
@@ -383,8 +393,9 @@ async def test_an_analytics_read_drops_the_vended_secrets_too(lake_client: DuckD
     assert await _secret_names(lake_client) == []
 
 
-def test_a_drop_cannot_see_a_running_statements_secret() -> None:
-    """A statement's vended secret is uncommitted until it ends, so a concurrent drop skips it."""
+def test_duckdb_hides_a_secret_created_under_begin_until_commit() -> None:
+    """DuckDB's secret catalog is transactional: the drop cannot list another open transaction's
+    secret, so it leaves it (D-048)."""
 
     conn = duckdb.connect(":memory:")
     running = conn.cursor()
@@ -412,3 +423,121 @@ def test_run_dynamic_is_not_part_of_the_base_port() -> None:
 
     assert "run_dynamic" not in typing.get_protocol_members(DuckDbClientPort)
     assert "run_dynamic" in typing.get_protocol_members(DuckDbDynamicReadClientPort)
+
+
+async def test_a_plain_client_never_drops(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Only a lake instance pays for the drop; a plain client reads exactly as before."""
+
+    calls: list[object] = []
+    monkeypatch.setattr(
+        client_module, "_drop_vended_secrets", lambda conn, lock: calls.append(lock)
+    )
+    plain = DuckDbClient()
+    await plain.initialize(":memory:", config=DuckDbConfig(), extensions=())
+
+    try:
+        await plain.run_command(f"CREATE TEMPORARY SECRET __internal_ic_t ({_S3_SECRET})")
+        await plain.run_query("SELECT 1 AS one")
+        await plain.run_dynamic("SELECT 1 AS one", row_probe=2, timeout=_TIMEOUT)
+
+        assert calls == []
+        assert await _secret_names(plain) == ["__internal_ic_t"]
+
+    finally:
+        await plain.close()
+
+
+def _failing_drop(conn: Any, lock: Any) -> None:
+    raise duckdb.TransactionException("Catalog write-write conflict on alter")
+
+
+async def test_a_failed_drop_after_a_good_read_returns_the_rows_and_retires_the_client(
+    lake_client: DuckDbClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    log = MagicMock()
+    monkeypatch.setattr(client_module, "logger", log)
+    monkeypatch.setattr(client_module, "_drop_vended_secrets", _failing_drop)
+
+    result = await lake_client.run_query("SELECT n FROM lake.gold.t ORDER BY n")
+
+    assert [row["n"] for row in result.rows] == [0, 1, 2, 3, 4]
+    assert lake_client.retired
+    assert log.warning.call_count == 1
+
+    with pytest.raises(CoreException) as ei:
+        await lake_client.run_dynamic("SELECT 1 AS one", row_probe=2, timeout=_TIMEOUT)
+
+    assert ei.value.code == client_module.INSTANCE_RETIRED_CODE
+    assert ei.value.kind is ExceptionKind.INFRASTRUCTURE
+
+
+async def test_a_failed_drop_after_a_failed_read_raises_the_reads_error(
+    lake_client: DuckDbClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    log = MagicMock()
+    monkeypatch.setattr(client_module, "logger", log)
+    monkeypatch.setattr(client_module, "_drop_vended_secrets", _failing_drop)
+
+    with pytest.raises(duckdb.CatalogException):
+        await lake_client.run_dynamic("SELECT * FROM nope", row_probe=2, timeout=_TIMEOUT)
+
+    assert lake_client.retired
+    assert log.warning.call_count == 1
+
+
+@pytest.mark.parametrize("locked", [True, False], ids=["locked", "lock_removed"])
+async def test_concurrent_drops_conflict_unless_serialized(
+    lake_client: DuckDbClient, monkeypatch: pytest.MonkeyPatch, locked: bool
+) -> None:
+    """Two reads list the same leftover; unserialized, both drop it and one drop fails."""
+
+    barrier = threading.Barrier(2, timeout=0.5)
+    real_quote = client_module._quote_identifier
+
+    def meet_then_quote(name: str) -> str:
+        # Unserialized, both drops arrive here holding the same name; serialized, one waits out
+        # the timeout alone and the other finds nothing left to drop.
+        with contextlib.suppress(threading.BrokenBarrierError):
+            barrier.wait()
+
+        return real_quote(name)
+
+    monkeypatch.setattr(client_module, "_quote_identifier", meet_then_quote)
+
+    if not locked:
+        real_drop = client_module._drop_vended_secrets
+        monkeypatch.setattr(
+            client_module,
+            "_drop_vended_secrets",
+            lambda conn, lock: real_drop(conn, contextlib.nullcontext()),
+        )
+
+    await lake_client.run_command(f"CREATE TEMPORARY SECRET __internal_ic_t ({_S3_SECRET})")
+
+    await asyncio.gather(
+        lake_client.run_query("SELECT 1 AS a"), lake_client.run_query("SELECT 2 AS b")
+    )
+
+    assert lake_client.retired is not locked
+
+
+async def test_a_timed_out_read_still_drops(
+    lake_client: DuckDbClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    dropped = threading.Event()
+    real_drop = client_module._drop_vended_secrets
+
+    def recorded(conn: Any, lock: Any) -> None:
+        real_drop(conn, lock)
+        dropped.set()
+
+    monkeypatch.setattr(client_module, "_drop_vended_secrets", recorded)
+    await lake_client.run_command(f"CREATE TEMPORARY SECRET __internal_ic_t ({_S3_SECRET})")
+    dropped.clear()
+
+    with pytest.raises(CoreException) as ei:
+        await lake_client.run_query(_SPIN, timeout=timedelta(seconds=0.2))
+
+    assert ei.value.code == QUERY_TIMEOUT_CODE
+    assert await asyncio.to_thread(dropped.wait, 5)
+    assert await _secret_names(lake_client) == []  # listed before its own drop runs

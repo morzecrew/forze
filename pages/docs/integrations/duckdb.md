@@ -190,7 +190,9 @@ the instance is closed. Each statement then runs on a fresh cursor:
 of the same name is refused. After every read, dynamic or analytics, the
 per-table S3 secrets the catalog vended for it are dropped. A kept secret
 outranks the next statement's fresh one, so once it expired every later read of
-that table would fail.
+that table would fail. If a drop fails, the read's own rows or error still come
+back, and the instance is retired: it refuses further statements
+(`duckdb_instance_retired`), and the next call builds a fresh one.
 
 What the route promises, and who keeps each promise:
 
