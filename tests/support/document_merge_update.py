@@ -11,6 +11,7 @@ from __future__ import annotations
 from typing import Any
 
 from pydantic import BaseModel, Field
+from pydantic_core import to_json
 
 from forze.application.contracts.document import KeyedUpdate
 from forze.base.exceptions import CoreException
@@ -112,15 +113,10 @@ UPDATES: tuple[tuple[MergeUpdate, dict[str, Any], dict[str, str], dict[str, Any]
 """Each update, the stored ``meta`` and ``address`` after it, and the merge patch it reports."""
 
 
-def _unwrapped(value: Any) -> Any:
-    # A store may report a JSON value in its driver's wrapper (psycopg's ``Jsonb``).
-    return getattr(value, "obj", value)
-
-
 async def assert_updates_merge(command: Any, query: Any) -> None:
     """Create :data:`SEED` twice and apply each of :data:`UPDATES` in turn, to one document
     with ``update`` and to the other with ``update_many``: each stores the merged value and
-    still reports the merge patch it applied."""
+    still reports the merge patch it applied, as plain values a response can serialize."""
 
     one, many = await command.create(SEED), await command.create(SEED)
     revs = {one.id: one.rev, many.id: many.rev}
@@ -140,12 +136,16 @@ async def assert_updates_merge(command: Any, query: Any) -> None:
             assert stored.meta == meta, (update, stored.meta)
             assert stored.address.model_dump() == address, (update, stored.address)
             assert written.meta == meta and written.address.model_dump() == address, update
-            assert {k: _unwrapped(diff[k]) for k in patch} == patch, (update, diff)
+            assert {k: diff[k] for k in patch} == patch, (update, diff)
+            to_json(diff)  # what the generated update route does with it
 
     # A field typed ``Any`` that holds a mapping merges the same way; a list is replaced, the
     # nulls in it kept.
     update = MergeUpdate(items=[{"a": None}, {"b": 1}], extra={"y": [None, {"z": None}]})
-    written = await command.update(one.id, revs[one.id], update)
+    written, diff = await command.update(one.id, revs[one.id], update, return_diff=True)
+    assert diff["items"] == [{"a": None}, {"b": 1}], diff
+    assert diff["extra"] == {"y": [None, {"z": None}]}, diff
+    to_json(diff)
     stored = await query.get(one.id, skip_cache=True)
 
     for read in (written, stored):

@@ -28,6 +28,7 @@ class OmitCreate(CreateDocumentCmd):
 
 class OmitUpdate(BaseDTO):
     name: str | None = None
+    label: str | None = None
 
 
 def _write_types() -> DocumentWriteTypes[OmitDomain, OmitCreate, OmitUpdate]:
@@ -85,6 +86,15 @@ async def test_write_omit_field_stripped_and_hydrated(
     updated, _ = await write.update(created.id, OmitUpdate(name="Ada Lovelace"))
     assert updated.name == "Ada Lovelace"
     assert updated.label == "n/a"
+
+    # A change to the omitted field is never written, so the diff never reports it.
+    _, diff = await write.update(created.id, OmitUpdate(name="Ada L.", label="set"))
+    assert diff["name"] == "Ada L." and "label" not in diff, diff
+
+    _, (bulk_diff,) = await write.update_many(
+        [created.id], [OmitUpdate(name="Ada", label="again")], batch_size=10
+    )
+    assert bulk_diff["name"] == "Ada" and "label" not in bulk_diff, bulk_diff
 
 
 @pytest.mark.integration

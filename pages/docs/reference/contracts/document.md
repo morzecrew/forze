@@ -368,7 +368,7 @@ value, a mirror's too. On the domain path, a mirror whose create sets a frozen f
 
 | Method | Signature | Notes |
 |--------|-----------|-------|
-| `update` | `update(pk, rev, dto, *, return_new=True, return_diff=False)` | optimistic — a stale `rev` raises `conflict`; `return_diff` adds the change `JsonDict` |
+| `update` | `update(pk, rev, dto, *, return_new=True, return_diff=False)` | optimistic — a stale `rev` raises `conflict`; `return_diff` adds the change `JsonDict`, a merge patch holding the values the caller set on every backend (a `StrEnum` stays a member, a datetime is as given), not the store's column coercion |
 | `update_many` | `update_many(updates, *, return_new=True, return_diff=False)` | per-row update (`KeyedUpdate`: id, rev, dto) with OCC |
 | `update_matching` | `update_matching(filters, dto, *, return_new=True)` | fast bulk patch by filter — **no per-row OCC, no domain side effects**; refuses a field set to a mapping or model, which only an update merges; not on Firestore; `return_new=False` → rows-updated count |
 | `update_matching_strict` | `update_matching_strict(filters, dto, *, return_new=True, chunk_size=None)` | like `update_many` (per-row OCC + domain apply) over a filter |
