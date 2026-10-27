@@ -12,7 +12,8 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import AsyncGenerator
-from contextlib import AbstractAsyncContextManager, asynccontextmanager
+from contextlib import AbstractAsyncContextManager, asynccontextmanager, nullcontext
+from types import SimpleNamespace
 from typing import Any
 
 import attrs
@@ -37,6 +38,7 @@ from forze.application.execution.context.commit_state import (
 )
 from forze.application.execution.context.transaction import TransactionContext
 from forze.application.execution.operations.registry import OperationRegistry
+from forze.application.execution.operations.run import invoke as invoke_module
 from forze.base.exceptions import CoreException, ExceptionKind
 from forze_mock import MockDepsModule
 from forze_mock.adapters import MockTxManagerAdapter
@@ -535,6 +537,43 @@ class TestCancellationAfterCommitIsRecorded:
         assert self._ambiguous(logs) == []
         [span] = exporter.get_finished_spans()
         assert len(span.events) == 0
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("broken", ["logger", "span"])
+    async def test_a_failing_record_never_replaces_the_cancellation(
+        self, ctx: ExecutionContext, monkeypatch: pytest.MonkeyPatch, broken: str
+    ) -> None:
+        def _boom(*_args: Any, **_kwargs: Any) -> Any:
+            raise RuntimeError("telemetry is down")
+
+        if broken == "logger":
+            stub = SimpleNamespace(warning=_boom, debug=_boom)
+            monkeypatch.setattr(invoke_module, "logger", stub)
+
+        else:
+            monkeypatch.setattr("opentelemetry.trace.get_current_span", _boom)
+
+        reset_commit_started()
+        tx = _tx_with(_RecordingTxManager())
+        parked = asyncio.Event()
+
+        @attrs.define(slots=True, kw_only=True, frozen=True)
+        class CommitThenWait(Handler[str, str]):
+            async def __call__(self, args: str) -> str:
+                async with tx.scope("rec"):
+                    pass
+
+                parked.set()
+                await asyncio.sleep(10)
+                return args
+
+        reg = OperationRegistry(handlers={"op": lambda _c: CommitThenWait()}).freeze()
+        # No SDK span: starting one would itself call the broken ``get_current_span``.
+        tracer = SimpleNamespace(start_as_current_span=lambda _name: nullcontext())
+        task = await self._cancel_while_parked(reg.resolve("op", ctx), parked, tracer)
+
+        assert task.cancelled() is True
+        reset_commit_started()
 
     @pytest.mark.asyncio
     async def test_a_nested_commit_is_recorded_once_for_the_top_level_operation(

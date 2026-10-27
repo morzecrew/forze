@@ -2,6 +2,7 @@ import asyncio
 import hashlib
 import json
 from collections.abc import Callable, Mapping
+from contextlib import suppress
 from typing import TYPE_CHECKING, Any, cast, final
 
 import attrs
@@ -246,20 +247,27 @@ def _record_commit_ambiguous(op: StrKey) -> None:
 
     The log carries the invocation metadata the boundary bound (execution and
     correlation ids, tenant, principal, idempotency key) through the logging context.
+    Never raises: the caller re-raises a cancellation, which must win over a broken log
+    or tracer.
     """
 
-    # Lazy: the cancellation path is cold, and importing this module must not pull in
-    # ``opentelemetry`` (see ``observability``).
-    from opentelemetry import trace
+    try:
+        # Lazy: the cancellation path is cold, and importing this module must not pull in
+        # ``opentelemetry`` (see ``observability``).
+        from opentelemetry import trace
 
-    logger.warning(
-        "Operation %r was cancelled at or after its transaction commit; the commit may "
-        "have landed. Reconcile before re-running.",
-        str(op),
-        code=COMMIT_AMBIGUOUS_CODE,
-        operation=str(op),
-    )
-    trace.get_current_span().add_event("forze.commit_ambiguous", {"forze.operation": str(op)})
+        logger.warning(
+            "Operation %r was cancelled at or after its transaction commit; the commit may "
+            "have landed. Reconcile before re-running.",
+            str(op),
+            code=COMMIT_AMBIGUOUS_CODE,
+            operation=str(op),
+        )
+        trace.get_current_span().add_event("forze.commit_ambiguous", {"forze.operation": str(op)})
+
+    except Exception:
+        with suppress(Exception):
+            logger.debug("Could not record commit_ambiguous for %r", str(op), exc_info=True)
 
 
 # ....................... #
