@@ -13,6 +13,7 @@ The three P0 gate items are battery 1 (``TestFixtureSelfTest``), battery 5
 
 from __future__ import annotations
 
+import os
 import re
 import socket
 import threading
@@ -29,6 +30,7 @@ import pytest
 from botocore.config import Config
 from botocore.exceptions import ClientError
 
+from forze_duckdb.kernel.client import client as client_module
 from tests.support.lakekeeper import (
     BUCKET,
     LakePrincipal,
@@ -465,6 +467,53 @@ class TestCredentialLifetime:
             )
             == 0
         )
+
+    def test_a_running_statements_secret_is_invisible_to_another_cursor(
+        self, lake: LakeVendingStack, tenant_a: LakeTenant
+    ) -> None:
+        """Uncommitted until the statement ends, so a drop elsewhere cannot take it (D-048).
+
+        The version tripwire for the routed client's drop: an engine that lists a running
+        statement's secret to other cursors fails here first."""
+
+        con = lake.session(tenant_a.principal, tenant_a.warehouse)
+        vended = "SELECT count(*) FROM duckdb_secrets() WHERE name LIKE '__internal_ic_%'"
+        running = con.cursor()
+        running.execute("SELECT * FROM lake.gold.orders").fetchmany(1)
+
+        assert con.cursor().execute(vended).fetchone() == (0,)
+        running.fetchall()  # exhausted: the statement commits, and its secret with it
+        assert con.cursor().execute(vended).fetchone() == (1,)
+
+    def test_a_scan_keeps_reading_while_another_statements_drop_runs(
+        self, lake: LakeVendingStack, tenant_a: LakeTenant
+    ) -> None:
+        """D-048 on a live scan: the drop takes the committed leftover, never the scan's secret."""
+
+        schema = pa.schema([("id", pa.int64()), ("pad", pa.string())])
+        table = lake.admin_catalog(tenant_a).create_table(("gold", "scan_d048"), schema=schema)
+        for f in range(8):  # enough files that a paused stream still has requests to make
+            ids = pa.array(range(f * 50_000, (f + 1) * 50_000), pa.int64())
+            pad = pa.array([os.urandom(24).hex() for _ in range(50_000)], pa.string())
+            table.append(pa.table({"id": ids, "pad": pad}, schema=schema))
+
+        con = lake.session(tenant_a.principal, tenant_a.warehouse)
+        con.execute("SET threads=1")
+        con.execute("SET enable_external_file_cache=false")
+        con.execute("CALL enable_logging('HTTP')")
+        con.execute("SELECT count(*) FROM lake.gold.orders").fetchall()  # a committed leftover
+        vended = "SELECT count(*) FROM duckdb_secrets() WHERE name LIKE '__internal_ic_%'"
+        scan = con.cursor()
+        scan.execute("SELECT id, pad FROM lake.gold.scan_d048")
+        scan.fetchmany(1)
+        requests_before = sum("/data/" in r["url"] for r in _http_log(con))
+
+        client_module._drop_vended_secrets(con, threading.Lock())
+
+        assert con.cursor().execute(vended).fetchone() == (0,)  # the leftover went
+        assert len(scan.fetchall()) == 8 * 50_000 - 1
+        assert sum("/data/" in r["url"] for r in _http_log(con)) > requests_before
+        assert con.cursor().execute(vended).fetchone() == (1,)  # the scan's own, now committed
 
     def test_a_vended_secret_can_be_dropped_under_lock_configuration(
         self, lake: LakeVendingStack, tenant_a: LakeTenant

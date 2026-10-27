@@ -12,7 +12,9 @@ in-process. It suits heavy analytics that don't need ultra-low-latency
 serving — and, being Docker-free, it doubles as an analytics backend in tests.
 
 It is **query-only** (no ingest, no table management): named, parameterized
-queries returning typed rows, exactly like the other analytics adapters.
+queries returning typed rows, exactly like the other analytics adapters. With a
+per-tenant routed client it also serves trusted
+[dynamic reads](../data-events/dynamic-read.md) over an Iceberg lake.
 
 ## Install
 
@@ -108,11 +110,137 @@ lifecycle = LifecyclePlan.from_steps(
 For a runnable, Docker-free walkthrough, see the
 [analytics recipe](../recipes/analytics-over-a-data-lake.md).
 
+## Per-tenant lake reads (`dedicated`)
+
+One `DuckDbClient` is one engine for every tenant: whatever credentials it holds,
+every statement can use. `RoutedDuckDbClient` instead builds an unnamed
+`:memory:` instance per tenant, attached to that tenant's own warehouse in an
+Iceberg REST catalog (Lakekeeper) with the tenant's own OAuth2 principal. The
+instance holds that principal's client secret for its whole life, and the S3
+credentials the catalog vends for a statement until the statement ends. Neither
+reaches another tenant's data. That is the `dedicated` tier, and
+it is what lets a [dynamic-read](../data-events/dynamic-read.md) route run
+compiled statements here:
+
+```python
+from datetime import timedelta
+
+from forze.application.contracts.secrets import SecretRef
+from forze.application.execution import DepsRegistry, LifecyclePlan
+from forze.application.execution.lifecycle.builtin import routed_client_lifecycle_step
+from forze_duckdb import (
+    DuckDbDepsModule,
+    DuckDbDynamicReadConfig,
+    LakeTenantCatalog,
+    RoutedDuckDbClient,
+)
+
+lake = RoutedDuckDbClient(
+    secrets=secrets,                       # SecretsPort; holds LakeCatalogCredentials
+    secret_ref_for_tenant=lambda t: SecretRef(path=f"tenants/{t}/lake"),
+    tenant_provider=current_tenant,
+    catalog_for_tenant=lambda t: LakeTenantCatalog(
+        uri="http://lakekeeper:8181/catalog",
+        warehouse=f"wh-{t}",
+        oauth2_server_uri="http://idp/realms/lake/protocol/openid-connect/token",
+        oauth2_scope="lakekeeper",
+        storage_prefix=f"s3://lake/{t}/",
+    ),
+    extension_directory="/opt/duckdb/extensions",   # httpfs + iceberg, baked into the image
+)
+
+widgets = DuckDbDynamicReadConfig(
+    provenance="trusted",                  # the only tier admitted
+    namespace="gold",                      # USE lake.gold before every statement
+    statement_timeout=timedelta(seconds=5),
+)
+
+deps = DepsRegistry.from_modules(DuckDbDepsModule(client=lake, dynamic_reads={"widgets": widgets}))
+lifecycle = LifecyclePlan.from_steps(routed_client_lifecycle_step("duckdb_lake", client=lake))
+```
+
+The secret holds `LakeCatalogCredentials`: `client_id` and `client_secret`, never
+a static token, because a token is never refreshed. An empty `client_id` is
+refused on first use, since the bundled `iceberg` build never refreshes a token
+issued for one.
+
+Each instance is built by one fixed sequence and serves nothing until it has
+read the result back:
+
+```text
+connect(":memory:", persistent secrets off, extension autoload/autoinstall off,
+        temp_directory '', extension_directory)
+LOAD httpfs; LOAD iceberg                       -- never INSTALL at runtime
+SET GLOBAL enable_global_s3_configuration=false; s3 keys cleared
+SET GLOBAL allowed_directories=[storage_prefix]; enable_external_access=false
+CREATE SECRET (TYPE iceberg, client credentials, scope)
+ATTACH warehouse AS lake (vended_credentials, READ_ONLY)
+SET GLOBAL disabled_filesystems='LocalFileSystem,HTTPFileSystem'
+SET GLOBAL http_timeout; HTTP metadata and external file caches off
+SET GLOBAL lock_configuration=true
+attest                                          -- settings, secrets, databases, filesystems
+```
+
+A session that does not attest raises `duckdb_session_attestation_failed`, and one
+whose sequence fails (an extension missing from the image, a principal the catalog
+refuses) raises `duckdb_session_setup_failed`. Both are `configuration` errors, and
+the instance is closed. A setup error carries the engine's message with the
+tenant's client secret and DuckDB's quote of the statement removed, and does not
+chain the engine's error. Each statement then runs on a fresh cursor:
+`USE lake.<namespace>`, DuckDB's own parser checks that the text is exactly one
+`SELECT`, the classified statement runs unmodified, and a result with two columns
+of the same name is refused. After every read, dynamic or analytics, the
+per-table S3 secrets the catalog vended for it are dropped. A kept secret
+outranks the next statement's fresh one, so once it expired every later read of
+that table would fail. If a drop fails, the read's own rows or error still come
+back, and the instance is retired: it refuses further statements
+(`duckdb_instance_retired`), and the next call builds a fresh one.
+
+What the route promises, and who keeps each promise:
+
+| Property | Kept by |
+|----------|---------|
+| Read-only | the catalog's `select`-only grant and the store; the `READ_ONLY` attach and parser classification are belts |
+| One statement | DuckDB's parser, before anything runs |
+| Timeout | the client interrupts the cursor, also when the caller is cancelled. A CPU-bound statement stops at once. A catalog or store request that hangs is not cut short: the caller still gets `dynamic_read_timeout` on time, but the worker holds its slot for about 120 s, whatever `http_timeout` says |
+| Row cap | the shell fetches cap + 1 rows from a streaming result and refuses the overflow |
+| Container | the tenant's instance, principal and vended credentials (`dedicated`) |
+| Untrusted statements | refused at wiring (`duckdb_dynamic_read_untrusted_refused`); a `provenance` other than `"trusted"` or `"untrusted"` is `duckdb_dynamic_read_provenance_invalid` |
+
+Wiring refuses a dynamic route on a plain `DuckDbClient` (its origin floor is
+`namespace`), and an `http_timeout` above the smallest route timeout. Named
+analytics routes work on the routed client too and derive `dedicated`; their
+SQL names tables as `lake.<namespace>.<table>`. A nested namespace is written
+dotted, `namespace="gold.sub"`. DuckDB lists it as one schema, so SQL names its
+tables bare or as `lake."gold.sub".<table>`.
+
+Operating it:
+
+- **Size `max_concurrent_queries_total` for hung requests.** It bounds
+  statements across all tenants (default 8), and peak memory is about that
+  many times `engine.memory_limit`. A tenant whose catalog or store stops
+  answering holds a slot for about 120 s per stuck request. Waiting for a slot
+  counts against a statement's timeout.
+- **Call `evict_tenant` after a grant is restored or a namespace is created.**
+  An instance that once found a namespace missing keeps it missing for its
+  life. Rotate credentials or remap a tenant's catalog the same way, or set
+  `fingerprint_ttl`. An evicted instance closes in the background, and
+  `close()` waits for those teardowns.
+- **A revocation lands at the next statement**, or after the authorizer's
+  check cache expires: OpenFGA caches checks for 10 s when its cache is on.
+- **The deployment owns the outer controls.** The worker must hold no ambient
+  cloud credentials, write nowhere it should not, and egress only to the
+  catalog, the IdP and the store. An `s3://` path inside the tenant's prefix
+  with no vended secret behind it goes, unsigned, to the public AWS endpoint.
+- **Keep `sts-token-validity-seconds` well above the longest statement.**
+  The engine does not re-vend a credential that expires mid-statement.
+
 ## What it provides
 
 | Contract | Keyed by |
 |----------|----------|
 | Analytics query (`run` / `run_page` / `run_cursor` / `run_chunked`) | `AnalyticsSpec.name` |
+| Dynamic read (`run` / `select`), on `RoutedDuckDbClient` only | `DynamicReadSpec.name` |
 
 ## Notes
 

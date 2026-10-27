@@ -1,9 +1,13 @@
-"""DuckDB integration for Forze analytics contracts.
+"""DuckDB integration for Forze analytics and dynamic-read contracts.
 
 Query-only: an in-process DuckDB engine implementing :class:`AnalyticsQueryPort`
 over object storage / local files (``read_parquet`` and friends). The lake source
 binds in :class:`DuckDbAnalyticsConfig` / the lifecycle step, below the handler
 boundary; handlers only ever name a ``query_key`` and an output type.
+
+:class:`RoutedDuckDbClient` gives each tenant its own locked-down instance over its own
+Iceberg warehouse, which is what lets ``DynamicReadPort`` run trusted, runtime-compiled
+statements here (RFC 0078).
 """
 
 from ._compat import require_duckdb
@@ -16,6 +20,7 @@ from .execution import (
     DuckDbAnalyticsConfig,
     DuckDbClientDepKey,
     DuckDbDepsModule,
+    DuckDbDynamicReadConfig,
     DuckDbQueryConfig,
     duckdb_lifecycle_step,
 )
@@ -23,7 +28,11 @@ from .kernel.client import (
     DuckDbClient,
     DuckDbClientPort,
     DuckDbConfig,
+    DuckDbDynamicReadClientPort,
     DuckDbQueryResult,
+    LakeCatalogCredentials,
+    LakeTenantCatalog,
+    RoutedDuckDbClient,
 )
 from .kernel.credentials import (
     GcsCredentials,
@@ -48,13 +57,18 @@ __all__ = [
     "DuckDbDepsModule",
     "DuckDbClient",
     "DuckDbClientPort",
+    "DuckDbDynamicReadClientPort",
     "DuckDbConfig",
     "DuckDbSettings",
     "DuckDbQueryResult",
+    "RoutedDuckDbClient",
+    "LakeTenantCatalog",
+    "LakeCatalogCredentials",
     "DuckDbClientDepKey",
     "duckdb_lifecycle_step",
     "DuckDbAnalyticsConfig",
     "DuckDbQueryConfig",
+    "DuckDbDynamicReadConfig",
     "DuckDbSource",
     "ParquetSource",
     "CsvSource",

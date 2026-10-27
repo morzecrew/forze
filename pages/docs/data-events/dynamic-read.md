@@ -190,6 +190,10 @@ and that is this plane's one load-bearing guarantee. It also means a dynamic rea
 does not see the caller's uncommitted writes, which is the right trade for a read
 plane.
 
+The same plane runs on an Iceberg lake through DuckDB, one locked-down instance
+per tenant, for trusted statements only: see
+[per-tenant lake reads](../integrations/duckdb.md#per-tenant-lake-reads-dedicated).
+
 ## Tenancy
 
 Tenancy here is the **container**, not a predicate. A statement the framework
@@ -289,7 +293,7 @@ database, and none of it egresses as `internal`.
 
 | Condition | Kind | Code |
 | --- | --- | --- |
-| A write or DDL inside the read-only transaction | `precondition` | `dynamic_read_write_refused` |
+| A write or DDL, refused by the engine | `precondition` | `dynamic_read_write_refused` |
 | Syntax error, unknown relation/column/function | `validation` | `dynamic_read_statement_invalid` |
 | Multi-command string rejected by the protocol | `validation` | `dynamic_read_multi_statement` |
 | Refused by the route's confinement (role grants) | `precondition` | `dynamic_read_permission_denied` |

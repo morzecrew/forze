@@ -902,7 +902,7 @@ DELIVERY_DIVERGENCES: tuple[PlaneDivergence, ...] = (
 DYNAMIC_READ_DIVERGENCES: tuple[PlaneDivergence, ...] = (
     PlaneDivergence(
         plane="dynamic_read",
-        name="engine-enforced-refusals-are-postgres-only",
+        name="engine-enforced-refusals-are-real-engine-only",
         observed=(
             EngineBehaviour(
                 engine="postgres",
@@ -911,6 +911,14 @@ DYNAMIC_READ_DIVERGENCES: tuple[PlaneDivergence, ...] = (
                     "multi-command string at the extended protocol's parse step, and a "
                     "cross-schema read through role grants — all before the adapter is "
                     "consulted"
+                ),
+            ),
+            EngineBehaviour(
+                engine="duckdb",
+                behaviour=(
+                    "refuses a write or a multi-statement string with its own parser before "
+                    "execution, and a path outside the tenant's prefix or a disabled "
+                    "filesystem inside the locked session"
                 ),
             ),
             EngineBehaviour(

@@ -1452,3 +1452,544 @@ raised these, and each was checked against the probes before it was written here
 - **Proposed row (RFC 0078):** `ASSUMED` — revocation latency is the longer of "the next
   statement" and the OpenFGA check-cache TTL. The deployment contract (§3.1) names the TTL.
   Battery 11a runs with caching off, and a second leg asserts the TTL bound with caching on.
+
+---
+
+# Unit 6 · RFC 0078 P1 — the routed read path
+
+Branch `feat/rfc-0078-p1-routed-reads`, stacked on `feat/rfc-0078-p0-probes`. RFC 0078 §8 P1:
+`RoutedDuckDbClient` (§2), the §3.4 sequence and its attestation, `run_dynamic` (§4.2),
+`DuckDbDynamicReadAdapter` (§4), the wiring (§2.5), the taxonomy (§4.5), docs, and battery items
+1–10 and 12–17. Same engine as Unit 5 (`duckdb==1.5.6`, iceberg `890b78a9c`), same stack
+(`tests/support/lakekeeper.py`, reused unchanged).
+
+**Working assumptions.** The author has not answered Unit 5 yet. Every `ASSUMED` row there is
+taken as the design: `oauth2_scope` required (D-024), vended secrets dropped after each statement
+(D-025), `evict_tenant` after a grant or namespace change (D-026), the allowlist profile in P1
+(D-027), catalog refusals mapped by message with the message in the details (D-029 and D-031), an
+empty `client_id` refused and battery 17 deferred (D-030), revocation at the next statement or
+the authorizer's cache TTL (D-032). D-028 is `OPEN`. P1 works under option (a): the docs state the
+~120 s bound for a hung request and size `max_concurrent_queries_total` from it. The DuckDbClient
+early return is the last commit on the branch, on its own, so it can be dropped (D-042). D-047
+widens D-025's drop from dynamic reads to every read, D-048 withdraws D-044's idle rule, and
+D-049 sets what a failed drop does.
+
+**Drift count: 0.** Seventeen entries, D-033 to D-049: seven `discovery`, ten `spec-gap`. Most
+were forced by a probe result or by a sketch that did not fit the shipped code. Five were not.
+D-039, D-042, D-043 and D-045 are design choices that follow from working assumption (a) of
+D-028, and D-044 set out to close a concurrency gap in D-025's row; D-048 withdraws it, because
+the gap does not exist. D-043 to D-046 came out of a review of the branch, D-047 and D-048 out
+of P2's run of battery 11b, and D-049 out of a review of that fix, all before the branch was
+published.
+
+**Where each battery item lives.** The real leg is
+[`test_lake_routed_reads.py`](../tests/integration/test_forze_duckdb/test_lake_routed_reads.py):
+74 tests on one module-scoped stack (75 with the D-042 commit), about 29 s including the stack.
+It starts its own stack rather than share the P0 module's, which costs one more stack start
+(about 20 s) in the duckdb shard. Items 3–10, 12–14 and 16 are classes there, named by number. Item 1 is P0's
+`TestFixtureSelfTest`, imported so it runs first against this module's stack. Item 2 is in the
+unit suite (`test_duckdb_dynamic_read_wiring.py`, `test_duckdb_routed_client.py`). Item 17 is
+deferred (D-030). Item 15 has no test of its own. Each §4.3 cell maps to the tests that exercise
+it:
+
+- read-only: `TestReadOnly`, all three legs;
+- single statement: `TestClassification`;
+- timeout: `TestShell.test_a_long_statement_times_out_within_its_bound` for a CPU-bound statement.
+  The hung-request bound is D-028's measurement and is not pinned, because a pin takes two minutes;
+- row cap: `TestShell`, together with P0's streaming probe;
+- container: `TestDisjointTenants`, `TestCrossTenantThroughTheCatalog`, `TestCrossTenantByPath`;
+- untrusted refused: the unit wiring tests.
+
+The RFC 0015 shell battery runs mock ≡ DuckDB in
+[`test_duckdb_dynamic_read_conformance.py`](../tests/unit/test_forze_duckdb/test_duckdb_dynamic_read_conformance.py).
+It uses one in-process `:memory:` instance per tenant, each with an attached `lake` catalog,
+because the battery seeds arbitrary tenants and a Lakekeeper warehouse cannot be made per check.
+DuckDB joins the manifest's `dynamic_read` engines through that leg. The DST of §4.6 is
+`test_the_pool_holds_under_perturbed_schedules`. It runs `run_simulation` with a PCT scheduler
+over 20 seeds and a fake engine, covering eviction under a running statement, the guarded drain,
+and a rotate-and-evict race. With guarded eviction sabotaged, all 20 seeds fail.
+
+**Confirmed, so no entry.**
+
+- The full hardened sequence with the allowlist profile attaches, attests and serves, and
+  dropping the vended secrets under `lock_configuration` works from a cursor (D-025's probe was
+  on the parent connection).
+- `READ_ONLY` refuses `INSERT`, `UPDATE` and `DELETE` with `InvalidInputException` before any
+  request. Without it, the store refuses the data-file `PUT` (`HTTPException` 403), and the
+  catalog refuses `CREATE TABLE` with the bare `Error`, whose message carries `Forbidden_403`.
+- `ATTACH` of a local file, `INSTALL`, `COPY TO` a local path, `read_text('/proc/self/environ')`
+  and `https://` reads are all `PermissionException` in the locked session, and no file appears.
+- A wrong client secret fails at `CREATE SECRET`, not at `ATTACH`: a bare `Error` carrying
+  `Unauthorized_401`, raised while the instance is built.
+
+## D-033 — A setting `SET` on a cursor stays on that cursor, so §3.4 runs as `SET GLOBAL`
+
+- **Touches:** RFC 0078 §1 ("Every setting that matters is `GLOBAL` scope"), §3.3, and §3.4
+  steps 2 and 6. Also decision 7 and battery 14.
+- **RFC said:** a plain `SET` per instance, shared by every connection of the instance.
+- **Found:** that is true of the engine's own global options (`threads`, `disabled_filesystems`,
+  `lock_configuration`, `allowed_directories`, `enable_external_access`). It is not true of the
+  `httpfs` options. Set without `GLOBAL`, on the parent connection or on a cursor,
+  `enable_global_s3_configuration`, `s3_access_key_id`, `s3_secret_access_key`,
+  `s3_session_token` and `http_timeout` change only that connection. A fresh cursor still reads
+  `true`, `NULL` and `30`. `DuckDbClient` runs every statement on a fresh cursor, so the sequence
+  as written would leave ambient S3 configuration on for every statement it serves. P0's probes
+  ran their statements on the parent connection, where the session value applies, so none of
+  them could see it.
+- **Because:** DuckDB scopes an extension option set with the automatic scope to the session
+  that set it.
+- **Class:** `discovery`.
+- **Consequence:** every hardening statement is `SET GLOBAL`. The attestation reads settings
+  from a fresh cursor, which is the view a statement gets. Battery 14 has two cases that drop
+  `GLOBAL` from step 2, and both are refused.
+- **Proposed row (RFC 0078):** `ASSUMED` — §3.4 is issued as `SET GLOBAL`, and step 8 reads back
+  from a fresh cursor. This overrides §1's sentence and §3.4's spelling, which stay as written.
+
+## D-034 — `USE lake` fails on an attached Iceberg catalog; the route names its namespace
+
+- **Touches:** RFC 0078 §4.2 step 1 (`USE lake`), §4.1 ("There is no `query_schema`"), §5.1, and
+  decision 12.
+- **RFC said:** the framework issues `USE lake`, and a plan's `gold.orders` then resolves in the
+  tenant's warehouse.
+- **Found:** `USE lake` raises `CatalogException: SET schema: No catalog + schema named "lake"
+  found`, on a plain session and on a hardened one. `USE lake.gold` works, and after it both
+  `gold.orders` and a bare `orders` resolve in the warehouse.
+- **Because:** `USE <catalog>` selects the catalog's default schema, and an attached Iceberg
+  catalog has none.
+- **Class:** `discovery`.
+- **Consequence:** `DuckDbDynamicReadConfig` gains a required `namespace`, and `run_dynamic`
+  issues `USE lake.<namespace>` with each part quoted. Plans stay tenant-neutral. The namespace
+  must exist in every tenant's warehouse. Where it does not, every statement on the route is
+  `dynamic_read_statement_invalid`, and under D-026 the miss sticks until `evict_tenant`.
+- **Proposed row (RFC 0078):** `ASSUMED` — a dynamic route names one namespace, issued as
+  `USE lake.<namespace>`. This overrides §4.1's field list and §4.2 step 1, which stay as written.
+
+## D-035 — Step 8 attests `disabled_filesystems` by effect and leaves `memory_limit` out
+
+- **Touches:** RFC 0078 §3.4 step 8 ("`duckdb_settings()` has every value above") and battery 14.
+- **RFC said:** read every value back from `duckdb_settings()`.
+- **Found:** two of the values cannot be read back as set.
+  - `disabled_filesystems` reads back empty from every connection while it is enforced.
+  - `memory_limit` reads back reformatted: `1GB` comes back as `953.6 MiB`.
+
+  Two smaller facts surfaced in battery 14.
+  - `enable_http_metadata_cache` is off by default, so removing its step changes nothing the
+    attestation can see.
+  - With `allow_persistent_secrets` left on, `CREATE SECRET` reads `~/.duckdb/stored_secrets`,
+    which the allowlist refuses. The session fails before it can attest anything
+    (`PermissionException`, so `dynamic_read_permission_denied`).
+- **Because:** DuckDB keeps the disabled set on the filesystem, not in the setting, and formats
+  memory sizes for display.
+- **Class:** `discovery`.
+- **Consequence:** the attestation reads `read_text('/forze-attest')` and
+  `read_text('http://forze-attest.invalid/')`, and requires the "… has been disabled"
+  `PermissionException` for each. Neither does any I/O. `memory_limit` is not attested: it bounds
+  resources, not reach. Battery 14 turns the metadata cache on rather than removing its step, and
+  pins the persistent-secrets case separately. The attestation checks state, not steps.
+- **Proposed row (RFC 0078):** `ASSUMED` — step 8 probes the disabled filesystems by effect and
+  skips `memory_limit`. This overrides step 8's wording, which stays as written.
+
+## D-036 — Fields and checks beyond §2.1's sketch
+
+- **Touches:** RFC 0078 §2.1 (the `LakeTenantCatalog` and `RoutedDuckDbClient` sketches), §3.4
+  (`extension_directory`, the `ATTACH` options), and D-030's "at construction".
+- **RFC said:** the field lists in §2.1, an `ATTACH … URI …`, and (D-030) the empty `client_id`
+  refused at construction.
+- **Found:** the sketch omits what other rows require, and two spellings do not fit.
+  - `LakeTenantCatalog.storage_prefix` is new and required. D-027's allowlist needs the
+    tenant's prefix, and the prefix must be `s3://…/`: without the trailing slash it would also
+    admit siblings that share the spelling (`duckdb_lake_catalog_invalid`).
+  - `RoutedDuckDbClient.extension_directory` is new. §3.4 connects with one, and §2.1 has no
+    field for it. `None` keeps DuckDB's default.
+  - The `iceberg` extension's option is `ENDPOINT`, not `URI`.
+  - The client is built long before any secret is read, so the empty `client_id` is refused when
+    the tenant's secret is first resolved, as `duckdb_lake_client_id_empty` (configuration).
+  - `http_timeout` must be a whole number of seconds, at least 1, because DuckDB takes seconds.
+  - The catalog fields are captured at build alongside the secret, so they belong in the
+    instance's fingerprint, as the routed base's rotation contract says. The structured base
+    had no hook for facets outside the secret, so it gains `access_fingerprint_extra_parts`,
+    the DSN base's hook under the same name, empty by default. A remapped catalog then
+    rebuilds the instance after `evict_tenant` or a `fingerprint_ttl` refresh.
+  - §4.2 puts `run_dynamic` on `DuckDbClientPort`. Adding a method to a public `Protocol`
+    breaks every external implementation of it, so it lives on a sub-protocol,
+    `DuckDbDynamicReadClientPort`, which the adapter requires.
+- **Because:** the sketch predates D-024, D-027 and D-030, and was not checked against the
+  extension's option names or the shipped base and port.
+- **Class:** `spec-gap`.
+- **Consequence:** none beyond the fields. `guarded` stays a field, as sketched, and `False` is
+  refused with `duckdb_routed_client_unguarded`.
+- **Proposed row (RFC 0078):** `ASSUMED` — the catalog carries `storage_prefix`, the client
+  carries `extension_directory`, `ATTACH` uses `ENDPOINT`, the fingerprint covers the catalog,
+  and `run_dynamic` is on a sub-protocol.
+
+## D-037 — `duckdb_routed_client_static_credentials` has nothing to inspect
+
+- **Touches:** RFC 0078 §2.1 ("A construction that smuggles them in through `engine` fails with
+  `duckdb_routed_client_static_credentials`"), decision 6, and battery 2.
+- **RFC said:** `engine` is a path static credentials could take, and construction refuses it.
+- **Found:** `engine` is a `DuckDbConfig`: threads, memory limit, executor size, read-only. It
+  carries no credential, statement or connect option. The connect options are an `initialize`
+  argument that the routed client builds itself.
+- **Because:** the sentence anticipated a config shape the shipped `DuckDbConfig` does not have.
+- **Class:** `spec-gap`.
+- **Consequence:** the code is not minted. The refusal is structural: passing `object_stores`,
+  `sources`, `bootstrap_sql` or raw secret statements raises `TypeError`, and a unit test pins
+  it. One path the RFC did not list stays open. `lock_configuration` does not cover secret DDL
+  (D-025), so a statement could `CREATE SECRET` or `DROP SECRET lake_cat`. Only classification
+  refuses those, and battery 6 pins both.
+- **Proposed row (RFC 0078):** `ASSUMED` — the routed client has no static-credential surface,
+  by construction, and no error code for one.
+
+## D-038 — Taxonomy rows §4.5 and D-029 did not cover
+
+- **Touches:** RFC 0078 §4.5, D-029's proposed row, and battery 16.
+- **RFC said:** the class table in §4.5, plus D-029's message rows for the bare `duckdb.Error`.
+- **Found:** the battery provokes refusals neither one maps.
+  - `InvalidInputException` covers three different things. "attached in read-only mode" is a
+    write, and the lock's "configuration has been locked" and "Displaying unredacted secrets is
+    disabled" are confinement. A missing or excess `$parameter` is the caller's statement.
+  - A revoked grant reaches the statement as `CatalogException` (`schema "gold" does not
+    exist`), which D-029's table showed and its row did not map.
+  - `ConversionException` quotes the value that failed, which can come out of a column.
+  - The client's own timeout is an `infrastructure` error, which the adapter could not tell
+    apart from any other.
+  - A comment-only string holds zero statements.
+  - A result with two columns of the same name (`SELECT a.id, b.id`) collapses into one key
+    when a row becomes a mapping, and the first value is lost without a word.
+  - A broken image fails while the instance is built. A missing `LOAD iceberg` or `LOAD httpfs`
+    raises `InvalidInputException` or `CatalogException`, and a missing catalog secret raises
+    the bare `Error`. Mapped like a statement's failure, the first two would blame the caller's
+    statement for a deployment fault. The same is true of D-029's build-time refusals: an
+    ungranted principal's `NotFound_404` and a wrong secret's `Unauthorized_401` arrive while
+    §3.4 runs, before any statement.
+- **Because:** these surfaced only once the adapter ran against the stack.
+- **Class:** `spec-gap`.
+- **Consequence:** the mapping follows these rules.
+  - The read-only message becomes `dynamic_read_write_refused`. The two lock messages become
+    `dynamic_read_permission_denied`. Any other `InvalidInputException` becomes
+    `dynamic_read_statement_invalid`.
+  - A revocation is `dynamic_read_statement_invalid`, indistinguishable from a typo. It is still
+    never rows.
+  - A conversion failure reports the class name only, as Postgres does for SQLSTATE class 22.
+  - The client's timeout carries the code `duckdb_query_timeout`. That is a user-visible change
+    to shipped code, recorded under `Changed`.
+  - Zero statements is `dynamic_read_multi_statement`, by §4.2's "`len != 1`".
+  - Duplicate column names are refused as `dynamic_read_statement_invalid`, naming them.
+  - Anything a step of §3.4 raises before the attestation becomes
+    `duckdb_session_setup_failed` (configuration), with the engine's message in the details,
+    and the instance is closed. That covers the missing extensions and secret, and D-029's
+    `NotFound_404` and `Unauthorized_401` at build time. It overrides D-029's row for
+    refusals raised while an instance is built, which stays as written. The same refusals
+    raised by a statement still map as D-029 says. Battery 14 and 16 pin it. Nothing is served
+    either way.
+  - Anything unmatched goes through `fallback_exception_mapper("DuckDB")` to `infrastructure`.
+- **Proposed row (RFC 0078):** `ASSUMED` — §4.5 gains the rows above, and battery 16 pins them.
+
+## D-039 — The process-wide semaphore is held by the worker, not by the caller's scope
+
+- **Touches:** RFC 0078 §2.2 ("an `asyncio.Semaphore(max_concurrent_queries_total)` around every
+  `client_scope` use") and decision 4.
+- **RFC said:** the routed client wraps each scope in the semaphore.
+- **Found:** under D-028 option (a) the caller returns at the statement timeout while the worker
+  keeps running. A semaphore released with the caller's scope would let new statements start
+  while hung workers still hold threads and memory.
+- **Because:** the semaphore exists to bound the work, and the caller's lifetime no longer
+  bounds the work.
+- **Class:** `spec-gap`.
+- **Consequence:** `DuckDbClient.initialize(admission=…)` takes a shared semaphore. A statement
+  takes a slot before it is submitted with `executor.submit`, and the concurrent future's own
+  done callback gives it back through `loop.call_soon_threadsafe`. So the slot is held until the
+  thread returns, whether the caller waits, times out or is cancelled. A cancelled caller
+  cancels only asyncio's wrapper, which settles before the thread does. A statement cancelled
+  while still queued gives its slot back at once, since it never runs. The routed client passes
+  one semaphore to every instance, so instance creation counts against the bound too.
+- **Proposed row (RFC 0078):** `ASSUMED` — the bound is held by the statement's worker. This
+  overrides §2.2's placement, which stays as written.
+
+## D-040 — After the D-025 drop, a by-path read inside the tenant's prefix goes to public AWS
+
+- **Touches:** RFC 0078 §3.3, §3.5's "no cross-tenant read by object path" row, D-025 and D-027.
+- **RFC said:** nothing about own-prefix paths once the vended secrets are gone.
+- **Found:** with the secrets dropped after each statement, a statement that names an `s3://`
+  path inside the tenant's own table matches no secret. The allowlist admits the prefix. With
+  global S3 configuration off the endpoint is ignored, so the read goes unsigned to
+  `https://lake.s3.amazonaws.com/…`, which answered 403.
+- **Because:** D-027's mechanism, reached from the tenant's own prefix instead of another's.
+- **Class:** `discovery`.
+- **Consequence:** this is not a cross-tenant read, and a trusted compiler never emits paths.
+  But the bucket name and the tenant's own path names reach the public internet, and only the
+  network egress policy stops that. The DuckDB docs page lists it under the deployment's
+  controls. No code changed.
+- **Proposed row (RFC 0078):** `ASSUMED` — the deployment contract (§3.1) requires an egress
+  policy that admits only the catalog, the IdP and the store.
+
+## D-041 — Battery items adapted to the P0 findings
+
+- **Touches:** RFC 0078 §7 items 4, 5, 7, 10 and 12.
+- **RFC said:** the items as written.
+- **Found:** five items could not run as written on this stack.
+  - Item 4 says A "names B's namespace". Both warehouses hold `gold`, so a namespace name
+    cannot point at B. The test names a catalog and a namespace that do not resolve, and
+    attaches B's warehouse with classification stubbed (`NotFound_404`).
+  - Item 5's listener variant becomes DuckDB's own HTTP log: zero requests. The allowlist
+    refuses B's paths before any I/O, so no request could be signed with the ambient key.
+  - Item 7's second leg removes the allowlist pair as well as step 5, since D-027 made the
+    allowlist a second refusal. The process control stands in as a directory this process
+    cannot write. The test skips as root.
+  - Item 10's stubbed leg meets the `READ_ONLY` attach first, which P0 adopted. A third leg
+    removes `READ_ONLY` too. The store refuses `INSERT`, `UPDATE` and `DELETE`, the catalog
+    refuses `CREATE TABLE`, and CTAS stops at the disabled local filesystem.
+  - Item 12's timeout bound holds for a CPU-bound statement. A hung request is D-028's case.
+- **Because:** D-027, D-028 and P0's `READ_ONLY` finding changed what each layer refuses first.
+- **Class:** `spec-gap`.
+- **Consequence:** each item still removes one layer and asserts the next one refuses.
+- **Proposed row (RFC 0078):** `ASSUMED` — §7 items 4, 5, 7, 10 and 12 read as adapted above.
+
+## D-042 — `DuckDbClient` returns the timeout without waiting for the worker
+
+- **Touches:** RFC 0078 §4.3's timeout cell ("the executor thread is held until DuckDB unwinds"),
+  D-028 option (a), and battery 12.
+- **RFC said:** the caller learns of the timeout when the worker returns, about 120 s late for a
+  hung request (D-028).
+- **Found:** nothing new. This is the change D-028's consequence asked about. On timeout,
+  `__submit` interrupts the cursor and raises at once. The worker keeps its executor thread and
+  its admission slot (D-039) until DuckDB unwinds, and the late result is consumed so asyncio
+  does not report it.
+- **Because:** working assumption (a). The author has not chosen.
+- **Class:** `spec-gap`.
+- **Consequence:** the caller sees `dynamic_read_timeout` at the statement timeout. The test,
+  `test_duckdb_client_hung_request.py`, stands a local socket that never answers in for a hung
+  catalog: a plain `http://` read the interrupt cannot cut short. It sits with the integration
+  tests because it needs `httpfs`, not Docker. `DuckDbClient.close()` still waits for the
+  worker; the routed client runs that close in the background (D-043). This is the branch's last
+  commit, with its own test and changelog line, so it can be dropped alone.
+- **Proposed row (RFC 0078):** `OPEN` — keep the early return if D-028 resolves to (a), and
+  drop the commit otherwise.
+
+## D-043 — An evicted tenant instance closes in the background
+
+- **Touches:** RFC 0078 §2.4 ("closes after its last in-flight statement. Close is the existing
+  `DuckDbClient.close`") and decision 4.
+- **RFC said:** the guarded drain closes the instance with `DuckDbClient.close`.
+- **Found:** the pool awaits that close in the caller's path. The last scope to leave a
+  draining instance awaits it, and so does an overflow eviction inside another tenant's first
+  `client_scope`. `DuckDbClient.close` waits for every worker, and a worker stuck on a hung
+  request takes about 120 s (D-028). So a timed-out caller, or a cancelled one, waits after all
+  when it leaves the scope, and an unrelated tenant's first call stalls behind the eviction.
+- **Because:** the shared pool treats dispose as cheap, and DuckDB's close is not cheap while a
+  worker is stuck.
+- **Class:** `spec-gap`.
+- **Consequence:** `DuckDbClient.close` keeps waiting, which is the analytics contract. The
+  routed base gains a `_dispose_client` hook whose default is the old close, so every other
+  integration is unchanged. `RoutedDuckDbClient` overrides it to start the close as a tracked
+  background task, and `RoutedDuckDbClient.close` waits for every outstanding teardown. A close
+  that fails is logged. Each hung teardown parks one thread of the loop's default executor,
+  because `DuckDbClient.close` shuts its executor down through `asyncio.to_thread`. A burst of
+  evictions of hung instances can therefore exhaust that executor.
+- **Proposed row (RFC 0078):** `ASSUMED` — the routed client disposes an instance in the
+  background and drains the teardowns on close.
+
+## D-044 — Vended secrets are dropped only when no statement is running on the instance
+
+- **Touches:** D-025's proposed row ("after every statement, `run_dynamic` drops the vended
+  `__internal_ic_%` secrets") and §2.2's "max_concurrent_queries" per instance.
+- **RFC said:** D-025 drops after every statement.
+- **Found:** an instance runs up to `engine.max_concurrent_queries` statements at once. Dropping
+  every `__internal_ic_` secret when one statement ends can drop the secret another statement
+  was just vended, while that statement is still reading with it.
+- **Because:** the drop matches by prefix, not by the statement that was vended the secret, and
+  DuckDB exposes no link between the two.
+- **Class:** `spec-gap`.
+- **Consequence:** each instance counts its running dynamic statements under a lock. A statement
+  increments the count before it opens its cursor. It decrements the count when it ends, and
+  drops the secrets if the count reaches zero, still under the lock, so no statement can start
+  between the two. Under sustained concurrent load the instance may never be idle. The by-path
+  revocation window of D-025 then extends to the next idle moment, still bounded by the vended
+  credential's STS validity.
+- **Proposed row (RFC 0078):** `ASSUMED` — vended secrets are dropped when the instance's last
+  running statement ends. This refines D-025's row, which stays as written.
+
+## D-045 — One deadline covers the wait for a slot and the statement
+
+- **Touches:** RFC 0078 §2.2 (the process-wide semaphore), §4.3's timeout cell, and decision 10.
+- **RFC said:** the timeout is the statement's, enforced by interrupt.
+- **Found:** a statement waited for its admission slot before its timeout started. With every
+  slot held by hung workers (D-039, D-028), a caller could wait without bound for a slot.
+- **Because:** the semaphore was added in front of an executor whose timeout covered only the
+  work.
+- **Class:** `spec-gap`.
+- **Consequence:** `__submit` computes one deadline from the statement's timeout. The wait for a
+  slot runs under `asyncio.timeout_at` of that deadline, and running out raises the same
+  `duckdb_query_timeout`, so the adapter reports `dynamic_read_timeout`. The statement gets
+  whatever is left. A statement without a timeout still waits as long as it takes.
+- **Proposed row (RFC 0078):** `ASSUMED` — a statement's timeout covers its wait for admission.
+
+## D-046 — A timed-out statement still queued was never stopped, and one interrupt is not enough
+
+- **Touches:** RFC 0078 §4.3's timeout cell ("client-side `cursor.interrupt()`, cooperative") and
+  battery 12.
+- **RFC said:** the client interrupts the statement's cursor when the timeout fires.
+- **Found:** two gaps.
+  - A statement still queued in the instance's executor has no cursor when its timeout fires.
+    It was not interrupted, and it ran later without a bound while holding a slot.
+  - DuckDB drops an interrupt that arrives before its statement starts. A probe interrupted a
+    fresh cursor and then ran a 10 s query on it, and the query ran to the end. So a worker that
+    has published its cursor but not yet begun executing misses a single interrupt.
+- **Because:** the first is how `run_in_executor` works. The second is DuckDB's: each query
+  clears the interrupt flag when it starts.
+- **Class:** `discovery`.
+- **Consequence:** on timeout the client cancels the executor future, which dequeues a statement
+  that never started. It sets an `expired` flag before reading the cursor, and each worker
+  checks that flag right after publishing its cursor, raising before it executes. Under the GIL
+  either the caller sees the cursor or the worker sees the flag. The caller then interrupts
+  again every 100 ms until the worker returns, which closes the window between the worker's
+  check and the start of its query. A test holds the worker in that window for 300 ms and
+  checks that the statement still stops.
+- **Proposed row (RFC 0078):** `ASSUMED` — a timeout dequeues a queued statement and repeats
+  the interrupt until the worker returns.
+
+## D-047 — An analytics read kept its vended secret, and once expired it broke the table
+
+- **Touches:** D-025's proposed row ("after every statement, `run_dynamic` drops the vended
+  `__internal_ic_%` secrets"), RFC 0078 §2.5's "Named-query analytics routes keep working on the
+  routed client", §3.2, and battery 11b, which P2 runs (Unit 7).
+- **RFC said:** every statement starts from a fresh `LoadTable`, so an expired credential is
+  never reused. D-025 added the drop to the dynamic path only.
+- **Found:** P2's first real run of battery 11b, before this branch was published, found it.
+  An analytics read on the routed client (`run_query`) kept the secret it was vended,
+  as D-025 describes for any committed statement. After that credential expired, the next
+  analytics read of the same table on the same instance loaded the table again and was vended a
+  fresh secret, then signed its store requests with the old one. It failed with
+  `HTTPException` "HTTP 400 Bad Request … InvalidRequest: check key failed", and so did every
+  read after it. Only the old secret was left afterwards: the failed statement rolled back and
+  took the fresh one with it. A dynamic read on the same instance succeeded, because its drop
+  had left no old secret to choose. A plain session that kept its secret did not fail with the
+  external file cache on, probably because its read never reached the store. With the cache
+  off, it fails the same way (11b's kept-secret leg, Unit 7).
+- **Because:** the engine picks between two secrets of the same scope without regard to
+  expiry, and here it picked the older one. duckdb-iceberg#1352 reports the same symptom.
+- **Class:** `discovery`. It shows only after a credential expires, 900 s at the store's floor.
+- **Consequence:** with the routed client as first built, an instance's analytics reads of a
+  table stopped working one credential lifetime after the first of them, until `evict_tenant`.
+  The fix is the drop D-025 proposed, on every read: `DuckDbClient.run_query` now drops the
+  vended secrets after each statement, as `run_dynamic` does. Only an instance initialized with
+  `drop_vended_secrets=True` drops them, and the routed client is what sets it. A plain
+  `DuckDbClient` reads exactly as before: no extra cursor, no `duckdb_secrets()` scan, no lock.
+  `run_command` is not a read path and is left alone. Pinned here by
+  `test_an_analytics_read_keeps_no_vended_secret_either` in the battery, and by
+  `test_an_analytics_read_drops_the_vended_secrets_too` and `test_a_plain_client_never_drops` in
+  `test_duckdb_run_dynamic.py`. The expiry itself takes 15 minutes to show, so it is pinned in
+  P2's `lake_slow` module.
+- **Proposed row (RFC 0078):** `ASSUMED` — every read statement on a routed instance, dynamic
+  or analytics, drops the vended secrets when it ends. This widens D-025's row, which stays as
+  written.
+
+## D-048 — A running statement's vended secret is invisible to another cursor; D-044's rule is withdrawn
+
+- **Touches:** D-044 ("Dropping every `__internal_ic_` secret when one statement ends can drop
+  the secret another statement was just vended") and its proposed row.
+- **RFC said:** nothing. D-044 reasoned the race from the drop matching by prefix, and drops only
+  when no dynamic statement is running.
+- **Found:** a secret vended inside a statement is part of that statement's transaction. Until the
+  statement ends, `duckdb_secrets()` on any other cursor does not list it, so a drop issued
+  elsewhere cannot see it. Probed with a real `LoadTable` (another cursor counts no new
+  `__internal_ic_` secret while the stream is open, and one after it is exhausted) and with a
+  plain `BEGIN; CREATE TEMPORARY SECRET` (the drop leaves it, and it is there after `COMMIT`).
+  Thirty-one dynamic statements dropping secrets while an analytics scan of 24 files ran left
+  the scan intact. Two drops of the same secret from two connections do conflict: the second
+  raises `TransactionException: Catalog write-write conflict`.
+- **Because:** DuckDB's secret catalog is transactional, like the rest of its catalog.
+- **Class:** `discovery`. It corrects D-044's premise, which was not probed.
+- **Consequence:** the race D-044 guards against cannot happen. Its rule has a cost D-047
+  exposes. Under sustained concurrent load the instance is never idle, so committed secrets
+  pile up, and once the oldest expires the next statement on that table fails as in D-047. The
+  counter is gone. Each read drops the committed vended secrets when it ends, and a per-instance
+  lock serializes the drops, since two would conflict.
+
+  The design now rests on two engine assumptions, and each has a tripwire.
+  - A statement's vended secret stays uncommitted until the statement ends. The drop's
+    docstring states it. P0's `test_a_running_statements_secret_is_invisible_to_another_cursor`
+    fails first on an engine that lists a running statement's secret to other cursors.
+  - Two drops of one secret cannot both succeed. This is why the lock exists. The `lock_removed`
+    leg of `test_concurrent_drops_conflict_unless_serialized` fails first on an engine where
+    they can, and the lock would then be unnecessary rather than wrong.
+
+  Four more tests pin the rest:
+  - `test_a_scan_keeps_reading_while_another_statements_drop_runs`, in the P0 module. A paused
+    scan of an 8-file table keeps reading after the drop has taken another statement's
+    leftover, and its own secret appears once it ends.
+  - `test_duckdb_hides_a_secret_created_under_begin_until_commit`, the same visibility rule on
+    a plain transaction.
+  - `test_a_committed_leftover_is_dropped_while_another_statement_runs`. The drop does not wait
+    for idle. Its running statement reads no table, so the scan test above is what shows a
+    reader is not disturbed.
+  - `test_concurrent_drops_conflict_unless_serialized`. Two reads drop the same leftover, forced
+    to interleave by a barrier. With the lock, one waits out the barrier's timeout alone and the
+    other finds nothing left to drop. Without it, one drop fails. That is its sabotage leg.
+- **Proposed row (RFC 0078):** `ASSUMED` — the drop runs after every read statement, serialized
+  per instance. This withdraws D-044's row, which stays as written.
+
+## D-049 — A failed vended-secret drop retires the instance and never masks the read
+
+- **Touches:** D-047 and D-048 (the drop after every read), §2.4 (lifecycle and eviction), and
+  §4.5 (taxonomy).
+- **RFC said:** nothing. The drop is not in the RFC. D-025 proposed it, and D-047 and D-048 put
+  it on every read without saying what a failure does.
+- **Found:** a review of D-047's fix found the drop in the read's `finally`. A drop that raised
+  replaced the read's outcome. A failed read surfaced as the drop's error, and a good read
+  lost its rows. Either way the leftover stayed, and under D-047 it fails every later read of
+  its table once it expires.
+- **Because:** the drop was written as cleanup, but its failure leaves state behind that breaks
+  the instance later.
+- **Class:** `spec-gap`.
+- **Consequence:** a failed drop never raises over the read. The read's rows or its error come
+  back, the failure is logged at warning, and the client is retired. A read that failed retires
+  the client as well, because the leftover stays either way.
+
+  A retired client refuses, with `duckdb_instance_retired` (infrastructure), every statement
+  submitted after the retire, including one that was waiting for an admission slot: the check
+  runs again once the slot is held, and the slot goes back. A statement already running
+  finishes. The health check reports the refusal.
+
+  `RoutedDuckDbClient.client_scope` evicts a retired instance at two points, each time only
+  while the pool still holds that instance, so a scope that held it late spares its healthy
+  successor.
+  - When the scope that saw the retire ends.
+  - When a scope starts. A timed-out read leaves its scope while its worker still runs (D-042),
+    and the worker's failed drop can retire the instance after that scope has gone. The next
+    scope for the tenant evicts it and builds a fresh one before yielding, so `health()` too
+    rebuilds and then probes.
+
+  Until that next call, or an LRU eviction, a retired instance lingers in the pool. It costs
+  memory and nothing else. A retire that lands between the entry check and a statement is
+  refused by that statement's own check, and evicted when the scope ends. Pinned by
+  `test_a_failed_drop_after_a_good_read_returns_the_rows_and_retires_the_client`,
+  `test_a_failed_drop_after_a_failed_read_raises_the_reads_error`,
+  `test_a_statement_waiting_for_a_slot_is_refused_once_the_client_retires`,
+  `test_a_retired_instance_is_evicted_and_its_successor_spared`, and
+  `test_a_timed_out_read_still_drops` in the unit suite. The battery adds
+  `test_a_failed_drop_retires_the_instance_and_the_next_call_rebuilds`, a real `DuckDbClient`
+  under the routed client. With D-042, the battery's
+  `test_a_late_worker_retire_is_evicted_by_the_next_call` pins the entry check. That test
+  travels in D-042's commit, because only D-042 lets a worker outlive its scope. Each test was
+  checked against its fix removed.
+- **Proposed row (RFC 0078):** `ASSUMED` — a failed drop is logged, never raised over the read,
+  and retires the instance, which the routed client evicts and rebuilds.
+
+## Review findings — 2026-10-27
+
+PR #685, after it was published. Five findings from CodeRabbit and CodeAnt, all fixed, plus
+the Codecov patch check. None changes a proposed row. R-5 amends what D-034's consequence says
+about quoting, and that entry stays as written.
+
+| # | Severity | Finding | Status |
+|---|---|---|---|
+| R-1 | Medium | `provenance` is a `Literal`, which attrs does not enforce, and the module refused only the exact `"untrusted"`. A misspelt tier wired as trusted (CodeRabbit, CodeAnt) | Fixed — the config refuses a value outside the closed set (`duckdb_dynamic_read_provenance_invalid`), and the module admits only the exact `"trusted"` |
+| R-2 | Medium | A caller cancelled mid-statement, by a disconnect or an outer `asyncio.timeout`, did not interrupt the statement or retrieve its late result. The worker ran past `statement_timeout` on its thread and a process-wide admission slot (CodeRabbit). The released `DuckDbClient` had the same gap, without the slot | Fixed — a cancelled caller takes D-042's path: flag, cancel, interrupt until the worker returns, retrieve its result. The cancellation is re-raised unchanged, and the slot still goes back from the worker |
+| R-3 | Medium | `duckdb_session_setup_failed` carried the engine's text and chained its error. Setup writes the client secret into `CREATE SECRET`, and a DuckDB parser error quotes a window of the statement, cut at either end. The secret could reach the details and the server-error log, whole or in part (CodeRabbit) | Fixed — the text loses DuckDB's quote of the statement and both spellings of the secret, and the error is not chained |
+| R-4 | Low | A retired client stayed retired through `close()` and `initialize()`, and refused every statement (CodeAnt). `initialize` reopens a closed client, though the routed client never does | Fixed — `initialize` clears the flag when it opens a connection. `close` has drained the old connection's workers by then |
+| R-5 | Medium | `run_dynamic` split `use` on every dot, so `namespace="gold.sub"` issued `USE "lake"."gold"."sub"`, a parser error (CodeAnt) | Fixed — the catalog ends at the first dot and the rest is one schema. On the stack, DuckDB lists the nested Iceberg namespace `gold.sub` as one schema of that name. `USE "lake"."gold.sub"` resolves a bare table name; a two-part `sub.deep` does not |
+| R-6 | — | Patch coverage: 14 lines and 2 branches of `routed_client.py`, 7 lines and 2 branches of `client.py`, with the unit and integration legs combined (Codecov) | Unit tests over fakes now cover them, except one branch: a submit that fails with no admission semaphore, which needs the executor shut down under a call |
+
+Each fix was checked against its own removal. R-5 has a battery test as well,
+`test_a_nested_namespace_is_one_schema_to_use`, which brings the battery to 76 tests.
