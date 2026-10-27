@@ -255,6 +255,13 @@ def _release_from_worker(loop: asyncio.AbstractEventLoop, admission: asyncio.Sem
         logger.debug("DuckDB admission slot released after its loop closed")
 
 
+def _consume_late_result(fut: asyncio.Future[Any]) -> None:
+    """Retrieve a timed-out worker's outcome, so asyncio does not report it as unhandled."""
+
+    if not fut.cancelled():
+        fut.exception()
+
+
 # ....................... #
 
 
@@ -517,7 +524,10 @@ class DuckDbClient(DuckDbDynamicReadClientPort):
             holder["expired"] = True
             work.cancel()  # a statement still queued never starts
             _keep_interrupting(loop, fut, holder.get("cursor"))
-            await asyncio.gather(fut, return_exceptions=True)
+            # Raise now rather than await the worker: an interrupt does not cut a blocking HTTP
+            # call short, so the worker may run on for minutes (RFC 0078 EXECUTION-LOG D-028).
+            # It keeps its thread and its admission slot until DuckDB unwinds; ``close`` waits.
+            fut.add_done_callback(_consume_late_result)
             raise _timed_out(f"of {timeout_sec}s")
 
         return fut.result()

@@ -20,11 +20,13 @@ import json
 import os
 import re
 import shutil
+import threading
 import time
 from collections.abc import AsyncIterator, Callable, Iterator
 from datetime import timedelta
 from pathlib import Path
 from typing import Any, ClassVar
+from unittest.mock import MagicMock
 from uuid import UUID
 
 import pytest
@@ -707,6 +709,40 @@ class TestPool:
         assert len(await _run(port, _A, _ORDERS)) == 3
         second = routed._peek_client(_A)
         assert second is not None and second is not first and not second.retired
+        assert routed.pool_stats().created == 2
+
+    async def test_a_late_worker_retire_is_evicted_by_the_next_call(
+        self, routed: RoutedDuckDbClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """D-049's entry check: a timed-out read's worker retires the instance after its scope."""
+
+        await _run(_port(routed), _A, _ORDERS)
+        first = routed._peek_client(_A)
+        real_drop = client_module._drop_vended_secrets
+        release, retired = threading.Event(), threading.Event()
+
+        def late_failing_drop(conn: Any, lock: Any) -> None:
+            release.wait(10)  # held until the timed-out caller has left its scope
+            raise RuntimeError("drop failed")
+
+        log = MagicMock()
+        log.warning.side_effect = lambda *args, **kwargs: retired.set()  # logged once retired
+        monkeypatch.setattr(client_module, "logger", log)
+        monkeypatch.setattr(client_module, "_drop_vended_secrets", late_failing_drop)
+        timed = _port(routed, timeout=timedelta(seconds=0.5))
+
+        assert (await _refused(timed, _A, _SPIN)).code == TIMEOUT_CODE
+        assert first is not None and not first.retired
+        assert routed._peek_client(_A) is first  # its scope ended with nothing to evict
+
+        release.set()
+
+        assert await asyncio.to_thread(retired.wait, 10)
+        assert first.retired
+        monkeypatch.setattr(client_module, "_drop_vended_secrets", real_drop)
+
+        assert len(await _run(_port(routed), _A, _ORDERS)) == 3
+        assert routed._peek_client(_A) is not first
         assert routed.pool_stats().created == 2
 
     async def test_the_process_wide_semaphore_bounds_statements_across_tenants(

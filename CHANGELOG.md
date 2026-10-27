@@ -61,6 +61,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **A Postgres dynamic read no longer collapses duplicate column names.** `SELECT a.id, b.id` came back as one `id` holding the second value. A result with rows now fails with `dynamic_read_statement_invalid`, naming the duplicates; an empty one still returns no rows.
 
+- **A timed-out `DuckDbClient` statement returns at its timeout.** The caller no longer waits for a hung HTTP request to give up, about two minutes on the Iceberg path; the worker keeps its thread until DuckDB unwinds, and `close` still waits for it.
+
 - **Two quick `SIGINT`s to `serve_uvicorn` now give the drain phases up.** A second one handled in the same loop turn as the first cancelled the drain before it started, so the forced exit still ran every phase at length in teardown.
 
 - **Agent tool names are ones model providers accept** (**behaviour change**). `operation_tools` names `orders.list` as `orders__list` (`provider_safe_tool_name`) or as `name=` says; the old name, the op key, still dispatches. A name outside `^[A-Za-z0-9_-]{1,64}$`, or one two operations share, is refused at build time.

@@ -200,7 +200,7 @@ What the route promises, and who keeps each promise:
 |----------|---------|
 | Read-only | the catalog's `select`-only grant and the store; the `READ_ONLY` attach and parser classification are belts |
 | One statement | DuckDB's parser, before anything runs |
-| Timeout | the client interrupts the cursor. A CPU-bound statement stops at once. A catalog or store request that hangs is not cut short: its worker holds its slot for about 120 s, whatever `http_timeout` says |
+| Timeout | the client interrupts the cursor. A CPU-bound statement stops at once. A catalog or store request that hangs is not cut short: the caller still gets `dynamic_read_timeout` on time, but the worker holds its slot for about 120 s, whatever `http_timeout` says |
 | Row cap | the shell fetches cap + 1 rows from a streaming result and refuses the overflow |
 | Container | the tenant's instance, principal and vended credentials (`dedicated`) |
 | Untrusted statements | refused at wiring (`duckdb_dynamic_read_untrusted_refused`) |
