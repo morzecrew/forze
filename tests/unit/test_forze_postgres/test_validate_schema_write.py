@@ -360,3 +360,97 @@ async def test_the_suggestion_carries_skip_null_and_holds_commit() -> None:
     assert len(reported) == 1
     assert "skip_null=True" in reported[0]
     assert 'holds="commit"' in reported[0]
+
+
+# ....................... #
+
+
+def _nullable() -> PostgresType:
+    return PostgresType(base="text", is_array=False, not_null=False)
+
+
+def _read_only(name: str, relation: str) -> PostgresDocumentSchemaSpec:
+    return PostgresDocumentSchemaSpec(
+        name=name, read_model=_Read, read_relation=("public", relation)
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind", ["view", "materialized_view"])
+async def test_a_view_column_read_as_nullable_does_not_refuse_a_required_field(kind: str) -> None:
+    # Postgres records NOT NULL on tables only: every view column reads nullable.
+    intro = MagicMock(spec=PostgresIntrospector)
+    intro.get_column_types = AsyncMock(return_value={"id": _nullable(), "name": _nullable()})
+    intro.get_relation = AsyncMock(return_value=kind)
+
+    await validate_postgres_document_schemas(intro, [_read_only("doc", "v")])
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind", ["table", "partitioned_table"])
+async def test_a_nullable_table_column_still_refuses_a_required_field(kind: str) -> None:
+    intro = MagicMock(spec=PostgresIntrospector)
+    intro.get_column_types = AsyncMock(return_value={"id": _col("id"), "name": _nullable()})
+    intro.get_relation = AsyncMock(return_value=kind)
+
+    with pytest.raises(CoreException, match="nullable column") as caught:
+        await validate_postgres_document_schemas(intro, [_read_only("doc", "t")])
+
+    assert caught.value.code == "postgres_schema_validation_failed"
+
+
+@pytest.mark.asyncio
+async def test_every_failing_document_is_reported_in_one_error() -> None:
+    intro = MagicMock(spec=PostgresIntrospector)
+    columns = {
+        "t_ok": {"id": _col("id"), "name": _col("name")},
+        "t_nullable": {"id": _col("id"), "name": _nullable()},
+        "t_missing": {"id": _col("id")},
+    }
+
+    async def _types(*, schema: str, relation: str) -> dict[str, PostgresType]:
+        return columns[relation]
+
+    intro.get_column_types = AsyncMock(side_effect=_types)
+    intro.get_relation = AsyncMock(return_value="table")
+    specs = [
+        _read_only("nullable", "t_nullable"),
+        _read_only("ok", "t_ok"),
+        _read_only("missing", "t_missing"),
+    ]
+
+    with pytest.raises(CoreException) as caught:
+        await validate_postgres_document_schemas(intro, specs)
+
+    assert caught.value.code == "postgres_schema_validation_failed"
+    assert caught.value.details is not None
+    failures = caught.value.details["failures"]
+    assert [f["document"] for f in failures] == ["nullable", "missing"]
+    assert failures[0]["code"] == "postgres_schema_validation_failed"
+    assert failures[0]["details"]["field"] == "name"
+    assert "missing columns" in failures[1]["summary"]
+    assert "nullable: " in caught.value.summary
+    assert "missing: " in caught.value.summary
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "error",
+    [
+        CoreException.infrastructure("Database connection error."),
+        CoreException.internal("No tenant.", code="introspection_partition_required"),
+    ],
+)
+async def test_an_error_of_no_one_document_stops_the_validation_at_once(
+    error: CoreException,
+) -> None:
+    intro = MagicMock(spec=PostgresIntrospector)
+    intro.get_column_types = AsyncMock(side_effect=error)
+
+    with pytest.raises(CoreException) as caught:
+        await validate_postgres_document_schemas(
+            intro, [_read_only("a", "t"), _read_only("b", "t")]
+        )
+
+    assert caught.value is error
+    assert intro.get_column_types.await_count == 1

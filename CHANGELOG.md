@@ -97,6 +97,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Firestore `update_many` and `touch_many` work inside a transaction.** They read every row before writing any, as a Firestore transaction requires; a second row used to fail with a read-after-write error.
 
+- **Postgres schema validation accepts the required fields of a view-backed read model.** Postgres records `NOT NULL` on tables only, so a view's or materialized view's nullability is not checked. Several failing documents now raise one `postgres_schema_validation_failed` error listing each (**behaviour change**).
+
 - **`HttpClient` reads a compressed response.** A gzip or deflate body, and with no cap a zstd or brotli one, no longer fails `request`, or a rejected response from `stream`, as an infrastructure error. `RoutedHttpClient` and declared services are fixed with it.
 
 - **A federated result snapshot replays only for the same members and member filters.** Its fingerprint now covers each member's weight and leg filters, and a thin replay drops a row its member's filters no longer match.
