@@ -41,6 +41,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **A transaction manager can say its store refused writes in a read-only root.** Implement `ReadOnlyAware.read_only_enforced()`, as Postgres and the mock's `journal` and `strict` managers do; that root then marks no commit point.
 
+- **A derived read field can resolve an expanded reference.** `DerivedReadField(source=..., via=..., fields=("id", "name"))` makes the mock build a nested object from the one joined row, under `field`'s one-hop and `optional` rules. An optional join that finds no row yields `None` for the whole object.
+
+- **`run_derived_fidelity` checks the mock's derived fields against the real view.** It loads one seed into a real backend and the mock, reads the same ids through both, and reports each derived field that differs, per row. Import it from `forze_dst.conformance`.
+
 **`forze ops` for people at a shell and for backfills:**
 
 - **`forze ops` gains typed flags, JSONL batches and shell completion.** `call OP --field VALUE` takes a flat-scalar input as flags; `--batch @PATH|-` runs one call per line in one runtime, stopping at the first failure; `OP` completes in the shell. An unknown option after `OP` now exits 2 with an error object.

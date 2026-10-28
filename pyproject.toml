@@ -599,6 +599,14 @@ scenario = "forze_dst.conformance.transfer:run_transfer"
 dep_keys = []
 engines = ["postgres"]
 
+[tool.conformance_manifest.planes.derived_reads]
+scenario = "forze_dst.conformance.derived:run_derived_fidelity"
+# No dep_keys of its own: derived read fields ride the document ports the isolation plane
+# claims. What this plane gates is the mock's stand-in for a view — a declared join or a
+# fixture callback — against the relation it imitates, so its engines are declared.
+dep_keys = []
+engines = ["postgres"]
+
 [tool.conformance_manifest.planes.dlock]
 scenario = "tests.support.dlock_conformance:DLOCK_BATTERY"
 dep_keys = ["distributed_lock_command", "distributed_lock_query"]

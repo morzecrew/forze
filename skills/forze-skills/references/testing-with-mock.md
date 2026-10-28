@@ -84,7 +84,10 @@ your handler around the read. The derivation belongs to the database and to an
 integration test against the real view.
 
 Where the value is one field of one row reached by one key, `DerivedReadField(source=…,
-via=…, field=…)` makes the mock perform the join instead. One hop, primary key only.
+via=…, field=…)` makes the mock perform the join instead — or `fields=("id", "name")` for
+an expanded reference, a nested object built from that one row. One hop, primary key only.
+`forze_dst.conformance.run_derived_fidelity` checks the mock's join or callback against the
+real view, comparing each derived field on each row of one seed.
 Either way the field is not filterable, sortable or sealable, and a required marked field
 left unsupplied is refused by name rather than as a pydantic error.
 

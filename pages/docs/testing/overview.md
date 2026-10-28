@@ -54,6 +54,32 @@ MockDepsModule(
 
 Keep it a function of the row: a source that reads a clock or a counter makes two runs of one seed disagree, and a simulation you cannot replay is one you cannot minimize. A seeded or persisted value still wins, so a test that wrote a specific row keeps it. Registering nothing keeps the refusal above, which is the posture that makes a missing value discoverable.
 
+Where the value is one row reached by one key — a joined column, or an expanded reference like `warehouse: {id, name}` — declare the join instead (`DerivedReadField(source=..., via=..., fields=("id", "name"))`, see [reading data](../data-events/reading-data.md#read-fields-storage-doesnt-hold)) and the mock resolves it with no callback at all.
+
+### Checking derived fields against the real view
+
+A declared join or a registered callback is the mock's copy of your view, and it can drift from the real one while every mock-backed test stays green. `run_derived_fidelity` checks one spec against a real backend: it loads one seed into both stores, reads the same ids through both, and compares only the derived fields:
+
+```python
+from forze.testing import context_from_modules
+from forze_dst.conformance import run_derived_fidelity
+from forze_mock import MockDepsModule
+from forze_mock.seeding import apply_seed
+
+
+async def test_orders_match_the_view(postgres_ctx, plan) -> None:
+    report = await run_derived_fidelity(
+        spec=ORDERS,
+        seed=lambda ctx: apply_seed(ctx, plan),  # one SeedPlan, loaded into both stores
+        real=postgres_ctx,  # reads ORDERS from the view
+        mock=context_from_modules(MockDepsModule()),  # plus derived_values=... for marked fields
+    )
+
+    assert report.agrees, report.render_markdown()
+```
+
+Each disagreement is one `DerivedMismatch` for one field on one row, holding both values. A read that raises on one side is recorded as a `ReadRefused` value, so one bad row does not hide the rest. Keep the plan's `instant` pinned (the default), so both stores create the same ids. Leave `SpecSeed.derived` out of the plan: the real store has no column to write those values to, and the point is to test the join or callback your tests use, not a value you supplied.
+
 ## Transaction rollback in tests
 
 Mock transactions are **faithful by default**: a write inside a transaction that rolls back is undone, so a "forgot to run it in the same transaction" bug fails in your unit test exactly as it would in production. No flag needed.

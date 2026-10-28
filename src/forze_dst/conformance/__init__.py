@@ -19,7 +19,9 @@ sharp — the **transactional-isolation** anomalies (verdict per level), the **o
 semantics under a crash** (:func:`run_crash_recovery_delivery`: at-least-once + exactly-once effect
 across the publish-then-crash window), and the **realtime gateway's ack-stream delivery under a
 crash** (:func:`run_gateway_crash_delivery`: exactly-once emit + store-then-forward atomicity across
-the bridge-then-crash windows, with the real gateway bridge injected by the test). A general
+the bridge-then-crash windows, with the real gateway bridge injected by the test). Beside them,
+:func:`run_derived_fidelity` diffs one spec's **derived read fields** — the mock's join or
+fixture callback against the real view — per field and per row over one seed. A general
 "mock ≡ real for every port" matrix stays out — it has no shared equivalence relation and would
 drown in false positives.
 """
@@ -53,6 +55,14 @@ from .delivery import (
     observe_uncommitted_outbox_visibility,
     run_crash_recovery_delivery,
     run_rollback_crash_delivery,
+)
+from .derived import (
+    DerivedFidelityReport,
+    DerivedMismatch,
+    ReadRefused,
+    SeededIds,
+    SeedFn,
+    run_derived_fidelity,
 )
 from .divergence import (
     CONTRACT_STRENGTHENINGS,
@@ -151,6 +161,12 @@ __all__ = [
     "Verdict",
     "is_serialization_conflict",
     "record_outcome",
+    "DerivedFidelityReport",
+    "DerivedMismatch",
+    "ReadRefused",
+    "SeededIds",
+    "SeedFn",
+    "run_derived_fidelity",
     "ContractStrengthening",
     "MechanismDivergence",
     "CONTRACT_STRENGTHENINGS",

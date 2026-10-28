@@ -117,10 +117,31 @@ derived_read_fields={
 }
 ```
 
+An **expanded reference** — a nested object built from a few columns of the joined
+row, the most common derived field in a view — resolves the same way with `fields`
+in place of `field`:
+
+```python
+derived_read_fields={
+    # read model: `warehouse: WarehouseRef`, where WarehouseRef has `id` and `name`
+    "warehouse": DerivedReadField(source="warehouses", via="warehouse_id", fields=("id", "name")),
+}
+```
+
+The mock builds `{"id": ..., "name": ...}` from the one source row and the read model
+validates it into the nested type. `field` and `fields` are exclusive.
+
 One hop, by primary key, no predicates and no ordering. Declare `optional=True` when
 the join key is nullable; a key that resolves to no row is refused rather than
-quietly `None`. A derived field is not filterable, sortable or sealable either way,
-because this aggregate holds no column of its own for it.
+quietly `None`. With `optional=True`, an unset key or a missing row yields `None` for
+the whole field — for an expanded reference, `None` rather than an object of `None`s,
+which is what a `LEFT JOIN` view produces too. A derived field is not filterable,
+sortable or sealable either way, because this aggregate holds no column of its own
+for it.
+
+The join or callback the mock uses is a second implementation of the view, and
+nothing ties the two together on its own. To check them against each other on a real
+backend, see [checking derived fields against the real view](../testing/overview.md#checking-derived-fields-against-the-real-view).
 
 ## Searching
 

@@ -44,8 +44,9 @@ class ResolvedDerivedRead:
     via: str
     """Field on the reading document carrying the source row's primary key."""
 
-    field: str
-    """Field on the source row whose value lands on the reading document."""
+    field: str | tuple[str, ...]
+    """Field on the source row whose value lands on the reading document — or, as a
+    tuple, the fields projected into a nested object (``DerivedReadField.fields``)."""
 
     optional: bool = False
     """Whether an absent source row (or an unset key) yields ``None``."""
@@ -120,7 +121,10 @@ def hydrate_derived(
             out[name] = None
             continue
 
-        out[name] = row.get(spec.field)
+        field = spec.field
+        out[name] = (
+            row.get(field) if isinstance(field, str) else {key: row.get(key) for key in field}
+        )
 
     return out
 

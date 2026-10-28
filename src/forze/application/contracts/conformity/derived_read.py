@@ -40,9 +40,11 @@ class DerivedReadField:
       is shape-independent — a nested reference object, a ``COALESCE`` over sibling
       rows, a ``CASE`` expression and a plain joined column are all the same
       declaration, because none of them is computed here.
-    - **Resolved** (all three given). The mock performs the join itself, one hop by
-      primary key. Available where the value is one field of one row reached by one key,
-      which is the narrow case; everything else is marked.
+    - **Resolved** (*source*, *via*, and one of *field* or *fields*). The mock performs
+      the join itself, one hop by primary key. Available where the value is one field of
+      one row reached by one key, or — with *fields* — an expanded reference built from
+      several fields of that one row (``warehouse: {id, name}``); everything else is
+      marked.
 
       The join reads the source's **stored** row, not its read model, so it does not
       decrypt: a source field the source spec seals at rest arrives as ciphertext. Mark
@@ -64,6 +66,16 @@ class DerivedReadField:
     field: str | None = None
     """Field on the source's read model whose value lands here."""
 
+    fields: tuple[str, ...] | None = None
+    """Fields on the source's read model projected into a nested object here.
+
+    The expanded-reference form of :attr:`field`, and exclusive with it: the value is
+    ``{name: value, ...}`` over these names, read from the one joined row, so the read
+    model types the field as a nested model or a mapping. The object is ``None`` as a
+    whole where :attr:`optional` lets the join find no row — never an object of ``None``
+    values, which no view built from a ``LEFT JOIN`` produces either.
+    """
+
     optional: bool = False
     """Whether a missing source row yields ``None`` instead of a refusal.
 
@@ -84,18 +96,44 @@ class DerivedReadField:
     # ....................... #
 
     def __attrs_post_init__(self) -> None:
+        if self.field is not None and self.fields is not None:
+            raise exc.configuration(
+                "DerivedReadField gives both field and fields; field reads one value of "
+                "the joined row and fields projects several into a nested object, so "
+                "give one of them.",
+            )
+
+        if isinstance(self.fields, str):
+            # A bare string is iterable, so it would project one key per character.
+            raise exc.configuration(
+                f"DerivedReadField fields={self.fields!r} is a string; pass a tuple of "
+                "field names, or use field= to read a single value.",
+            )
+
+        if self.fields is not None and not self.fields:
+            raise exc.configuration(
+                "DerivedReadField gives an empty fields tuple; name at least one field "
+                "of the source row to project.",
+            )
+
+        if self.fields is not None and len(set(self.fields)) != len(self.fields):
+            raise exc.configuration(
+                f"DerivedReadField fields {list(self.fields)} names a field twice; each "
+                "name is one key of the nested object.",
+            )
+
         given = {
             "source": self.source is not None,
             "via": self.via is not None,
-            "field": self.field is not None,
+            "field": self.field is not None or self.fields is not None,
         }
 
         if any(given.values()) and not all(given.values()):
             missing = sorted(name for name, present in given.items() if not present)
             raise exc.configuration(
                 f"DerivedReadField is partly resolved: {missing} missing. Give all of "
-                "source, via and field to declare a join, or none of them to mark the "
-                "field derived and leave its value to the relation.",
+                "source, via and field (or fields) to declare a join, or none of them to "
+                "mark the field derived and leave its value to the relation.",
             )
 
         if self.optional and not any(given.values()):
@@ -121,9 +159,10 @@ def _validate_join(
 ) -> None:
     """Validate one declaration's join, or return where it declares none."""
 
-    source, via, field = spec.source, spec.via, spec.field
+    source, via = spec.source, spec.via
+    read = spec.fields if spec.fields is not None else spec.field
 
-    if source is None or via is None or field is None:
+    if source is None or via is None or read is None:
         # A marked field declares only that the relation produces it. There is no source
         # to reach, no key to join on and no nullability to reconcile, so every check
         # below is about a join this declaration does not make. The three are
@@ -137,7 +176,7 @@ def _validate_join(
             "name the spec the value is joined from.",
         )
 
-    if not field.strip():
+    if any(not field.strip() for field in ((read,) if isinstance(read, str) else read)):
         raise exc.configuration(
             f"Derived read field {name!r} has a blank source field "
             f"(spec {spec_name!r}); name the field on {str(source)!r} to read.",

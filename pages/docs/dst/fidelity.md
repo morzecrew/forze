@@ -116,6 +116,16 @@ explorer drives will interleave it. The leg drives that interleaving directly ag
 Postgres and Mongo, and its controls reconstruct the fault by truncating the replay — so the
 check is known to fail when the guarantee does, rather than merely passing today.
 
+The `derived_reads` plane checks something that only applications can define. A
+[derived read field](../data-events/reading-data.md#read-fields-storage-doesnt-hold) has two
+implementations by design: the view's column, and the mock's copy of it, which is a declared
+join or a fixture callback. `run_derived_fidelity` loads one seed into Postgres and into the
+mock, reads the same ids through both, and reports each derived field that disagrees, per row.
+The leg runs it on an expanded reference built by a `LEFT JOIN`, and also on a hand-written
+callback that is wrong on purpose. The helper is shipped, so an app can run the same check
+against its own views, as [the testing guide](../testing/overview.md#checking-derived-fields-against-the-real-view)
+shows.
+
 One divergence there is worth reading as a pattern rather than an entry. The inference port is
 **declarative**: each adapter publishes an `InferenceCapabilities` and the shared validators gate
 requests against it, so "does this call get through?" is a property of the declaration, not of the

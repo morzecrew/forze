@@ -344,7 +344,7 @@ class _MockFactoryBase:
             resolved[name] = ResolvedDerivedRead(
                 namespace=self._namespace_for(ctx, source, default=source),
                 via=str(declared.via),
-                field=str(declared.field),
+                field=declared.fields if declared.fields is not None else str(declared.field),
                 optional=declared.optional,
                 tenant_scoped=source_tenant_aware,
             )
