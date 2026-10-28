@@ -269,6 +269,7 @@ class FirestoreWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
         merge: bool = True,
     ) -> tuple[D, JsonDict]:
         self._require_update_cmd()
+        self._require_revision_to_check(merge=merge, revisions=rev)
         update_data = await self._encode_patch_one(dto, record_id=pk, seal=False)
 
         return await self._patch(pk, update_data, rev=rev, merge=merge)
@@ -295,6 +296,13 @@ class FirestoreWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
 
         if revs is not None and len(revs) != len(pks):
             raise exc.internal("Length mismatch between primary keys and revisions")
+
+        self._require_revision_to_check(merge=merge, revisions=revs)
+
+        if revs is not None and self._checks_strictly(merge=merge):
+            # Every row at its revision before any is written. A row moved between this check
+            # and its write is still refused, but only a transaction undoes the rows before it.
+            self._require_revisions(*zip(await self.read_gw.get_many(pks), revs, strict=True))
 
         results: list[D] = []
         diffs: list[JsonDict] = []
@@ -440,6 +448,10 @@ class FirestoreWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
 
         if revs is not None and len(revs) != len(pks):
             raise exc.precondition("Length mismatch between primary keys and revisions")
+
+        if revs is not None:
+            # As for update_many: checked before any row is written.
+            self._require_revisions(*zip(await self.read_gw.get_many(pks), revs, strict=True))
 
         out: list[D] = []
 

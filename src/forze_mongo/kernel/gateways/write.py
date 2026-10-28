@@ -661,6 +661,7 @@ class MongoWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
         """
 
         self._require_update_cmd()
+        self._require_revision_to_check(merge=merge, revisions=rev)
 
         update_data = await self._encode_patch_one(dto, record_id=pk, seal=False)
         return await self._patch(pk, update_data, rev=rev, merge=merge)
@@ -698,6 +699,7 @@ class MongoWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
         if revs is not None and len(revs) != len(pks):
             raise exc.precondition("Length mismatch between primary keys and revisions")
 
+        self._require_revision_to_check(merge=merge, revisions=revs)
         updates = await self._encode_patch_many(dtos, record_ids=pks, seal=False)
         return await self._patch_many(pks, updates, revs=revs, merge=merge, batch_size=batch_size)
 

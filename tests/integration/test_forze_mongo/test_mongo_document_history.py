@@ -23,7 +23,7 @@ from forze.application.contracts.document import (
     KeyedUpdate,
 )
 from forze.application.execution import Deps, ExecutionContext
-from forze.base.exceptions import CoreException
+from forze.base.exceptions import CoreException, ExceptionKind
 from forze.domain.constants import HISTORY_SOURCE_FIELD
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
 from forze_mongo.execution.deps import ConfigurableMongoDocument, MongoDocumentConfig
@@ -280,3 +280,9 @@ async def test_a_strict_check_refuses_the_stale_rev_history_would_merge(
     assert refused == ["revision_mismatch"] * 5
     assert (await cmd.touch(doc.id, rev=2)).rev == 3
     assert (await cmd.touch(other.id, rev=other.rev)).rev == 2
+
+    # A strict check with no revision to check would apply unchecked.
+    with pytest.raises(CoreException) as exc_info:
+        await cmd.update(doc.id, None, HistUpdate(name="v3"), merge=False)  # type: ignore[arg-type]
+
+    assert exc_info.value.kind is ExceptionKind.CONFIGURATION

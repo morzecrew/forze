@@ -756,6 +756,24 @@ class HistoryOccMixin(Generic[D]):
                     code="revision_mismatch",
                 )
 
+    @staticmethod
+    def _require_revision_to_check(*, merge: bool, revisions: object) -> None:
+        """Refuse a strict check (``merge=False``) given no revision to check.
+
+        :raises CoreException: ``configuration``: without one, the write would apply unchecked.
+        """
+
+        if not merge and revisions is None:
+            raise exc.configuration(
+                "A strict revision check (merge=False) needs the revision it checks; got none, "
+                "so the write would apply unchecked.",
+            )
+
+    def _checks_strictly(self, *, merge: bool) -> bool:
+        """Whether a presented revision is checked strictly: merge off, or no history to merge."""
+
+        return not merge or self.history_gw is None
+
     # ....................... #
 
     async def _validate_history(

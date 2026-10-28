@@ -1,14 +1,18 @@
 """Specifications for document models and storage layout."""
 
-from collections.abc import Iterable, Iterator, Mapping
+import functools
+from collections.abc import Iterable, Iterator, Mapping, Sequence
+from datetime import datetime
 from types import UnionType
 from typing import Annotated, Any, Generic, TypeAliasType, TypeVar, Union, get_args, get_origin
+from uuid import UUID
 
 import attrs
-from pydantic import BaseModel, PlainSerializer, WrapSerializer
+from pydantic import BaseModel, PlainSerializer, TypeAdapter, WrapSerializer
 
 from forze.application._logger import logger
 from forze.base.exceptions import exc
+from forze.base.primitives import advisory_lock_key
 from forze.base.serialization import stored_field_names_for
 from forze.domain.models import AggregateRoot, BaseDTO, Document
 
@@ -248,6 +252,141 @@ def _without_none(annotation: Any) -> frozenset[Any]:
         return frozenset(arg for arg in get_args(annotation) if arg is not type(None))
 
     return frozenset({annotation})
+
+
+# ....................... #
+
+
+def _holds_instant(annotation: Any, seen: frozenset[int] = frozenset()) -> bool:
+    """Whether *annotation* admits a ``datetime``, at any level of a union, alias or
+    ``Annotated``."""
+
+    if id(annotation) in seen:
+        return False
+
+    if isinstance(annotation, TypeAliasType):
+        annotation = annotation.__value__
+
+    if isinstance(annotation, type) and issubclass(annotation, datetime):
+        return True
+
+    return any(_holds_instant(arg, seen | {id(annotation)}) for arg in get_args(annotation))
+
+
+def _refuse_unholdable(domain: type[Document], fields: Iterable[str], *, scope: str) -> None:
+    """Refuse a key whose values a hold cannot derive as the write path derives them.
+
+    A write keys the value its domain model holds after every validator, read back from the
+    store for a stored row. A hold sees only the caller's value and the field's type, so a
+    validator that rewrites the value, or an instant the store returns in the session's time
+    zone, would lock an owner no write takes.
+    """
+
+    if _own_decorators(domain, "model_validators") or _own_decorators(domain, "root_validators"):
+        raise exc.configuration(
+            f"Spec {scope!r} cannot hold a write lock: its domain {domain.__name__} has a model "
+            "validator, which can rewrite a key field after the type check a hold runs, so the "
+            "hold could lock an owner no write takes.",
+        )
+
+    validated = {
+        name
+        for kind in ("field_validators", "validators")
+        for decorator in _own_decorators(domain, kind)
+        for name in decorator.info.fields
+    }
+
+    for name in fields:
+        if name in validated or "*" in validated:
+            raise exc.configuration(
+                f"Spec {scope!r} cannot hold a write lock by {name!r}: the domain validates "
+                "that field with a validator of its own, which a hold does not run, so the hold "
+                "could lock an owner no write takes.",
+            )
+
+        if _holds_instant(domain.model_fields[name].annotation):
+            raise exc.configuration(
+                f"Spec {scope!r} cannot hold a write lock by {name!r}: it is a datetime, which a "
+                "write keys as the store returns it, in the session's time zone, so a hold "
+                "cannot derive the same key.",
+            )
+
+
+def require_hold_in_transaction(in_transaction: bool) -> None:
+    """Refuse a write-lock hold outside a transaction, where it would end with its statement.
+
+    :raises CoreException: ``precondition`` (``document_hold_outside_transaction``).
+    """
+
+    if not in_transaction:
+        raise exc.precondition(
+            "A write lock is held until the transaction ends, so hold() must run inside one: "
+            "outside it, the lock would be released before anything is read.",
+            code="document_hold_outside_transaction",
+        )
+
+
+@functools.cache
+def _stored_as(domain: type[Document], field: str) -> TypeAdapter[Any]:
+    info = domain.model_fields[field]
+    # With the field's own constraints and the model's config, as the model applies them.
+    form: Any = Annotated[info.annotation, info]  # type: ignore[name-defined]
+
+    return TypeAdapter(form, config=domain.model_config)
+
+
+def serialization_keys(
+    declarations: Sequence[SerializedBy],
+    owners: Sequence[Mapping[str, Any]],
+    *,
+    domain: type[Document],
+    scope: str,
+    tenant: UUID | None,
+) -> list[int]:
+    """The lock keys a write for each of *owners* takes, sorted and without repeats.
+
+    Each owner names the fields of one of *declarations*' keys. Its values are validated
+    against those fields' types and constraints under the domain's config, so an id passed as
+    a string locks the owner a write with a UUID locks. A key the write path derives otherwise
+    is refused (:func:`_refuse_unholdable`).
+
+    :param declarations: The spec's ``SerializedBy`` declarations.
+    :param owners: One mapping per owner, from each key field to its value.
+    :param domain: The domain model, whose fields carry the key.
+    :param scope: The spec's name, which every key carries.
+    :param tenant: The tenant every key carries, or ``None`` for a spec without tenancy.
+    :returns: The keys, in the order a holder takes them.
+    :raises CoreException: ``configuration`` when nothing is declared, when no owner is named,
+        when an owner's fields are not exactly the fields of a declared key, or when a key
+        field is a datetime or one the domain validates with a validator of its own.
+    """
+
+    if not declarations:
+        raise exc.configuration(
+            f"Spec {scope!r} declares no SerializedBy, so its writes take no lock to hold.",
+        )
+
+    if not owners:
+        raise exc.configuration("Holding a write lock needs at least one owner; got none.")
+
+    by_fields = {frozenset(d.key): d for d in declarations}
+    keys: set[int] = set()
+
+    for owner in owners:
+        declared = by_fields.get(frozenset(owner))
+
+        if declared is None:
+            raise exc.configuration(
+                f"Spec {scope!r} serializes writes by "
+                f"{' or '.join(repr(d.key) for d in declarations)}; an owner naming "
+                f"{tuple(owner)!r} matches none of them.",
+            )
+
+        _refuse_unholdable(domain, declared.key, scope=scope)
+        values = [_stored_as(domain, f).validate_python(owner[f]) for f in declared.key]
+        keys.add(advisory_lock_key(scope, tenant, *declared.key, *values))
+
+    return sorted(keys)
 
 
 # ....................... #

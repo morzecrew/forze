@@ -161,14 +161,28 @@ async with ctx.tx_ctx.scope("orders"):
     ...  # read the order's lines, decide, then write: held until commit
 ```
 
-`hold` writes nothing. Each argument names the fields of one declared key, and a value is taken
-as the domain model stores it, so an id passed as a string locks the same owner. A second
-handler for the order waits at its own `hold` until the first commits, and the first handler's
-writes take the lock again without waiting. A spec that declares no `SerializedBy`, or an
-argument naming other fields, is refused as `configuration`. A call outside a transaction is
-refused (`document_hold_outside_transaction`), since its lock would end with its statement.
-Mongo and Firestore keep no write lock and refuse the call. The declaration itself refuses no
-write: where the rule can also be a hard stop, that is a second guarantee beside this one.
+`hold` writes nothing. Each argument names the fields of one declared key. A value is validated
+against the field's type and constraints, so an id passed as a string locks the same owner. A
+second handler for the order waits at its own `hold` until the first commits, and the first
+handler's writes take the lock again without waiting.
+
+`hold` refuses as `configuration`:
+
+- a spec that declares no `SerializedBy`, or an argument naming other fields;
+- a datetime key field: a write keys it as the database returns it, in the session's time zone;
+- a key field the domain validates with a field validator of its own, or any domain with a
+  model validator: a write keys the value after them, and `hold` does not run them.
+
+A call outside a transaction is refused (`document_hold_outside_transaction`), since its lock
+would end with its statement. Mongo and Firestore keep no write lock and refuse the call.
+
+One call takes its owners in sorted order. Two calls, or a hold and then a write for another
+owner, can take owners in another order than a concurrent transaction does. Postgres refuses
+that deadlock on one side as a retryable `concurrency`, and the in-memory store refuses the same
+cycle. Pass every owner a handler needs to one `hold` call.
+
+The declaration itself refuses no write: where the rule can also be a hard stop, that is a
+second guarantee beside this one.
 
 `UniqueTogether` and `NonOverlapping` also say **when** they hold: `holds="always"`, the default,
 means after every write; `holds="commit"` means once the transaction commits, so a transaction may

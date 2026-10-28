@@ -68,9 +68,15 @@ await ctx.document.command(order_spec).touch(order.id, rev=order.rev)
 A stale `rev` raises `exc.precondition` (`revision_mismatch`), even for an update
 that changes nothing. The check is atomic: the write matches the revision you
 passed, so a writer committing between the store's read and its write makes it
-fail too. `update_many(..., merge=False)` applies it to every row, and
-`touch_many(pks, revs=...)` takes one revision per id. The in-memory store keeps
-no history, so it is always this strict.
+fail too. `merge=False` with no revision to check is refused as `configuration`.
+
+`update_many(..., merge=False)` applies the check to every row, and
+`touch_many(pks, revs=...)` takes one revision per id. Every row is checked
+before any is written. A row a concurrent writer moves after that check is
+refused at its own write, and only a transaction undoes the rows written before
+it. Postgres opens one of its own; Mongo, Firestore and the in-memory store do
+not. Run a strict bulk write in a transaction when it must be all or nothing.
+The in-memory store keeps no history, so it is always this strict.
 
 ## Related write helpers
 

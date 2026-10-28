@@ -325,13 +325,29 @@ class TestAHoldTakesTheWriteLockWithoutWriting:
         assert row.owner == "o1"
         assert state.write_serialization.held() == ()
 
-    async def test_under_the_strict_manager_it_is_taken(self) -> None:
+    async def test_under_the_strict_manager_it_lasts_until_the_transaction_ends(self) -> None:
+        # The strict manager runs one root transaction at a time, but a write outside any
+        # transaction still runs beside it: it must wait for the hold, not for the statement.
         state = MockState()
         cmd = _ctx(state).doc.command(_spec(BY_OWNER))
+        held = asyncio.Event()
+        order: list[str] = []
 
-        async with MockStrictTxManagerAdapter(state=state).transaction():
-            await cmd.hold({"owner": "o1"})
+        async def holder() -> None:
+            async with MockStrictTxManagerAdapter(state=state).transaction():
+                await cmd.hold({"owner": "o1"})
+                held.set()
+                await asyncio.sleep(0.05)
+                order.append("holder:out")
 
+        async def writer() -> None:
+            await held.wait()
+            await cmd.create(_BookingCreate(owner="o1"))
+            order.append("writer:wrote")
+
+        await asyncio.wait_for(asyncio.gather(holder(), writer()), timeout=5)
+
+        assert order == ["holder:out", "writer:wrote"]
         assert state.write_serialization.held() == ()
 
     @pytest.mark.parametrize("manager", ["none", "outside"])

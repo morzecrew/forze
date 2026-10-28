@@ -7,7 +7,12 @@ from uuid import UUID, uuid4
 
 import pytest
 
-from forze.application.contracts.document import DocumentSpec, DocumentWriteTypes, KeyedCreate
+from forze.application.contracts.document import (
+    DocumentSpec,
+    DocumentWriteTypes,
+    KeyedCreate,
+    KeyedUpdate,
+)
 from forze.application.execution import DomainEventRegistry, ExecutionContext
 from forze.base.exceptions import CoreException, ExceptionKind
 from forze.domain.models import (
@@ -621,6 +626,39 @@ class TestTouch:
 
         else:
             assert outcome is None
+
+    async def test_a_strict_check_without_a_revision_is_refused(self) -> None:
+        adapter = _plain_adapter(MockState())
+        created = await adapter.create(ThingCreate(name="a"))
+
+        with pytest.raises(CoreException) as excinfo:
+            await adapter.update(created.id, None, ThingUpdate(name="b"), merge=False)  # type: ignore[arg-type]
+
+        assert excinfo.value.kind is ExceptionKind.CONFIGURATION
+
+    @pytest.mark.parametrize("method", ["update_many", "touch_many"])
+    async def test_a_stale_row_in_a_bulk_write_leaves_every_row_unwritten(
+        self, method: str
+    ) -> None:
+        adapter = _plain_adapter(MockState())
+        a = await adapter.create(ThingCreate(name="a"))
+        b = await adapter.create(ThingCreate(name="b"))
+        await adapter.touch(b.id)
+
+        with pytest.raises(CoreException) as excinfo:
+            if method == "update_many":
+                await adapter.update_many(
+                    [
+                        KeyedUpdate(id=a.id, rev=a.rev, dto=ThingUpdate(name="a2")),
+                        KeyedUpdate(id=b.id, rev=b.rev, dto=ThingUpdate(name="b2")),
+                    ]
+                )
+
+            else:
+                await adapter.touch_many([a.id, b.id], revs=[a.rev, b.rev])
+
+        assert excinfo.value.code == "revision_mismatch"
+        assert (await adapter.touch(a.id, rev=a.rev)).name == "a"
 
     async def test_a_strict_update_is_the_mock_s_only_kind(self) -> None:
         # No history, so every stale rev is refused: `merge=False` is accepted and changes

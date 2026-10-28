@@ -11,9 +11,11 @@ from forze.application.contracts.document import (
     KeyedUpdate,
     UpsertItem,
 )
+from forze.application.contracts.document.specs import require_hold_in_transaction
 from forze.application.contracts.domain import drain_domain_events
 from forze.application.contracts.guarantees import GUARANTEE_UNSUPPORTED
 from forze.application.contracts.querying import QueryFilterExpression
+from forze.application.contracts.transaction import TransactionallyEnlistable
 from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict
 from forze.domain.constants import ID_FIELD, REV_FIELD
@@ -754,7 +756,9 @@ class DocumentCommandMixin(
         """Hold the write lock of each of *owners* until the transaction ends.
 
         :raises CoreException: ``precondition`` (``storage_guarantee_unsupported``) when the
-            store serializes no writes; otherwise as the store's own ``hold``.
+            store serializes no writes; ``precondition`` (``document_hold_outside_transaction``)
+            unless this port reports its writes enlisted in an open transaction; otherwise as
+            the store's own ``hold``.
         """
 
         # A store without the method keeps no write lock, and its wiring already refuses a
@@ -768,6 +772,11 @@ class DocumentCommandMixin(
                 code=GUARANTEE_UNSUPPORTED,
             )
 
+        # Here as well as in the store, so a store that forgets the check is still refused; a
+        # port that cannot say whether it is in a transaction is refused too.
+        require_hold_in_transaction(
+            isinstance(self, TransactionallyEnlistable) and self.is_transactionally_enlisted()
+        )
         await hold(*owners)
 
     # ....................... #

@@ -18,7 +18,7 @@ from forze.application.contracts.document import (
     KeyedUpdate,
 )
 from forze.application.execution import Deps, ExecutionContext
-from forze.base.exceptions import CoreException
+from forze.base.exceptions import CoreException, ExceptionKind
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
 from forze_postgres.execution.deps import ConfigurablePostgresDocument
 from forze_postgres.execution.deps.configs import PostgresDocumentConfig
@@ -455,6 +455,18 @@ class TestAStrictRevisionCheck:
 
         assert refused.value.code == "revision_mismatch"
         assert (merged.name, merged.due, merged.rev) == ("v2", MOVED, 3)
+
+    async def test_a_strict_check_without_a_revision_is_refused(
+        self, pg_client: PostgresClient
+    ) -> None:
+        cmd, _ = await _due_cmd(pg_client)
+        doc = await cmd.create(HistDueCreate(name="v1", due=DUE))
+
+        with pytest.raises(CoreException) as refused:
+            await cmd.update(doc.id, None, HistDueUpdate(name="v2"), merge=False)
+
+        assert refused.value.kind is ExceptionKind.CONFIGURATION
+        assert (await cmd.touch(doc.id, rev=doc.rev)).name == "v1"
 
     async def test_a_no_op_at_a_stale_rev_is_refused(self, pg_client: PostgresClient) -> None:
         # A confirmation that changes nothing is not a success at a revision it did not see.

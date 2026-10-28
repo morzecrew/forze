@@ -698,7 +698,10 @@ class DocumentCommandPort(BaseDocumentPort[R, D, C, U], Protocol[R, D, C, U]):
     ) -> Awaitable[Sequence[R] | Sequence[JsonDict] | Sequence[tuple[R, JsonDict]] | None]:
         """Apply partial updates to multiple documents.
 
-        :param merge: As for :meth:`update`, for every row.
+        :param merge: As for :meth:`update`, for every row. Strict, every row is checked
+            before any is written, but a row a concurrent writer moves after that check is
+            refused at its own write: only inside a transaction are the rows written before it
+            undone.
         """
         ...  # pragma: no cover
 
@@ -869,7 +872,8 @@ class DocumentCommandPort(BaseDocumentPort[R, D, C, U], Protocol[R, D, C, U]):
         """Bump metadata for multiple documents.
 
         :param revs: When given, the revision each document must still be at, by position,
-            as ``rev`` is for :meth:`touch`.
+            as ``rev`` is for :meth:`touch`, and all-or-nothing only inside a transaction, as
+            for :meth:`update_many`.
         """
         ...  # pragma: no cover
 
@@ -884,8 +888,19 @@ class DocumentCommandPort(BaseDocumentPort[R, D, C, U], Protocol[R, D, C, U]):
         write: a second handler for the owner waits here, and this handler's own writes later
         in the transaction take the lock again without waiting.
 
+        Values are validated against the key fields' types and constraints, so an id passed
+        as a string locks the same owner. A key the write path derives otherwise is refused:
+        a datetime field, which a write keys as the store returns it, in the session's time
+        zone, and a field the domain validates with a field or model validator of its own.
+
+        One call takes its owners in a fixed order. Two calls, or a hold followed by a write
+        for another owner, can take owners in another order than a concurrent transaction
+        does; that deadlock is refused as a retryable ``concurrency`` on one side. Pass every
+        owner the handler needs to one call.
+
         :raises CoreException: ``configuration`` when the spec declares no ``SerializedBy``,
-            when no owner is given, or when an owner's fields are not those of a declared key;
+            when no owner is given, when an owner's fields are not those of a declared key, or
+            when a key field is one a hold cannot derive as a write does;
             ``precondition`` (``document_hold_outside_transaction``) outside a transaction;
             ``precondition`` (``storage_guarantee_unsupported``) on a store that serializes no
             writes.

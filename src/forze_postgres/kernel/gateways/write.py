@@ -22,8 +22,11 @@ from forze.application.contracts.document import (
     domains_from_create_payloads,
     require_whole_update_matching,
 )
+from forze.application.contracts.document.specs import (
+    require_hold_in_transaction,
+    serialization_keys,
+)
 from forze.application.contracts.guarantees import SerializedBy
-from forze.application.contracts.guarantees.value_objects import serialization_keys
 from forze.application.contracts.querying import QueryFilterExpression
 from forze.application.contracts.resilience import ResilienceExecutorPort
 from forze.application.contracts.tenancy import TENANT_ID_FIELD
@@ -410,26 +413,19 @@ class PostgresWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
         The same ``pg_advisory_xact_lock`` keys :meth:`_serialize` takes, sorted, so a write
         for one of *owners* later in this transaction re-enters it without waiting.
 
-        :raises CoreException: ``configuration`` per :func:`serialization_keys`;
-            ``precondition`` (``document_hold_outside_transaction``) outside a transaction,
-            where the lock would end with its own statement.
+        :raises CoreException: ``precondition`` (``document_hold_outside_transaction``)
+            outside a transaction, where the lock would end with its own statement;
+            ``configuration`` per :func:`serialization_keys`.
         """
 
+        require_hold_in_transaction(self.client.is_in_transaction())
         keys = serialization_keys(
             self.serialized_by,
             owners,
-            model=self.model_type,
+            domain=self.model_type,
             scope=self.serialization_scope,
             tenant=self.require_tenant_if_aware() if self.tenant_aware else None,
         )
-
-        if not self.client.is_in_transaction():
-            raise exc.precondition(
-                "A write lock is held until the transaction ends, so hold() must run inside "
-                "one: outside it, the lock would be released before anything is read.",
-                code="document_hold_outside_transaction",
-            )
-
         stmt = sql.SQL("SELECT pg_advisory_xact_lock({})").format(sql.Placeholder())
 
         for key in keys:
@@ -1412,6 +1408,7 @@ class PostgresWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
         merge: bool = True,
     ) -> tuple[D, JsonDict]:
         self._require_update_cmd()
+        self._require_revision_to_check(merge=merge, revisions=rev)
 
         update_data = await self._encode_patch_one(dto, record_id=pk, seal=False)
 
@@ -1676,6 +1673,7 @@ class PostgresWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
     ) -> tuple[Sequence[D], Sequence[JsonDict]]:
 
         self._require_update_cmd()
+        self._require_revision_to_check(merge=merge, revisions=revs)
 
         updates: list[JsonDict] = []
         for start in range(0, len(dtos), batch_size):

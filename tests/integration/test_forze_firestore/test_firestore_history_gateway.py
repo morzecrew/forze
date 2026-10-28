@@ -195,3 +195,43 @@ async def test_a_strict_check_refuses_the_stale_rev_history_would_merge(
 
     assert refused == ["revision_mismatch"] * 3
     assert (await write.touch(created.id, rev=created.rev + 1)).rev == created.rev + 2
+
+    with pytest.raises(CoreException) as ei:
+        await write.update(created.id, IntegrationUpdateCmd(name="x"), merge=False)
+
+    assert ei.value.kind is ExceptionKind.CONFIGURATION
+
+
+@pytest.mark.parametrize("method", ["update_many", "touch_many"])
+async def test_a_stale_row_in_a_strict_bulk_write_leaves_every_row_unwritten(
+    firestore_client: FirestoreClient,
+    unique_collection: str,
+    method: str,
+) -> None:
+    collection = f"hist_bulk_{method}_{unique_collection}"
+    write = doc_write_gw(
+        client_context(firestore_client),
+        write_types=_WRITE_TYPES,
+        write_relation=("(default)", collection),
+        history_relation=("(default)", f"{collection}_history"),
+        history_enabled=True,
+        tenant_aware=False,
+    )
+    a = await write.create(make_create_cmd(name="a"))
+    b = await write.create(make_create_cmd(name="b"))
+    await write.touch(b.id)
+
+    with pytest.raises(CoreException) as ei:
+        if method == "update_many":
+            await write.update_many(
+                [a.id, b.id],
+                [IntegrationUpdateCmd(name="a2"), IntegrationUpdateCmd(name="b2")],
+                revs=[a.rev, b.rev],
+                merge=False,
+            )
+
+        else:
+            await write.touch_many([a.id, b.id], revs=[a.rev, b.rev])
+
+    assert ei.value.code == "revision_mismatch"
+    assert (await write.touch(a.id, rev=a.rev)).name == "a"

@@ -941,13 +941,35 @@ class _HoldingWriteGateway(FakeWriteGateway):
         self.calls.append(f"hold:{list(owners)}")
 
 
+class _EnlistedHarness(CommandHarness):
+    enlisted = True
+
+    def is_transactionally_enlisted(self) -> bool:
+        return self.enlisted
+
+
 @pytest.mark.asyncio
-async def test_a_hold_is_the_store_s_own() -> None:
+async def test_a_hold_in_a_transaction_is_the_store_s_own() -> None:
     write_gw = _HoldingWriteGateway()
 
-    await CommandHarness(write_gw).hold({"owner": "o1"})
+    await _EnlistedHarness(write_gw).hold({"owner": "o1"})
 
     assert write_gw.calls == ["hold:[{'owner': 'o1'}]"]
+
+
+@pytest.mark.parametrize("enlistable", [True, False])
+@pytest.mark.asyncio
+async def test_a_hold_outside_a_transaction_is_refused_before_the_store(enlistable: bool) -> None:
+    # Whatever the store checks: a port that is not in a transaction, or cannot say, is refused.
+    write_gw = _HoldingWriteGateway()
+    harness = _EnlistedHarness(write_gw) if enlistable else CommandHarness(write_gw)
+    harness.enlisted = False  # type: ignore[attr-defined]
+
+    with pytest.raises(CoreException) as refused:
+        await harness.hold({"owner": "o1"})
+
+    assert refused.value.code == "document_hold_outside_transaction"
+    assert write_gw.calls == []
 
 
 @pytest.mark.asyncio

@@ -307,6 +307,18 @@ class TestHistoryOccMixin:
         assert exc_info.value.code == "revision_mismatch"
         assert len(history.read_calls) == 1
 
+    def test_a_strict_check_without_a_revision_is_refused(self) -> None:
+        # Otherwise the write would apply unchecked, the opposite of what was asked.
+        gw = _OccGateway(None)
+
+        gw._require_revision_to_check(merge=True, revisions=None)
+        gw._require_revision_to_check(merge=False, revisions=3)
+
+        with pytest.raises(CoreException) as exc_info:
+            gw._require_revision_to_check(merge=False, revisions=None)
+
+        assert exc_info.value.kind is ExceptionKind.CONFIGURATION
+
     @pytest.mark.asyncio
     async def test_validate_history_without_merge_passes_the_stored_rev(self) -> None:
         current_a, _, _, _ = _occ_fixture()

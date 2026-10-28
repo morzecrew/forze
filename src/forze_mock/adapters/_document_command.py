@@ -19,13 +19,16 @@ from forze.application.contracts.document import (
     UpsertItem,
     require_whole_update_matching,
 )
+from forze.application.contracts.document.specs import (
+    require_hold_in_transaction,
+    serialization_keys,
+)
 from forze.application.contracts.domain import drain_domain_events
 from forze.application.contracts.guarantees import (
     NonOverlapping,
     SerializedBy,
     UniqueTogether,
 )
-from forze.application.contracts.guarantees.value_objects import serialization_keys
 from forze.application.contracts.querying import QueryFilterExpression
 from forze.application.contracts.querying.internal.matching import instant_key
 from forze.base.exceptions import exc
@@ -40,7 +43,11 @@ from forze_mock.adapters._mvcc import (
     release_write_locks,
     wait_cycle_rows,
 )
-from forze_mock.adapters.tx import ensure_mock_tx_writable, in_mock_transaction
+from forze_mock.adapters.tx import (
+    ensure_mock_tx_writable,
+    in_mock_transaction,
+    strict_tx_locks,
+)
 from forze_mock.query._types import C, D, R, U
 
 if TYPE_CHECKING:
@@ -390,7 +397,8 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
 
         table = self.state.write_serialization
         mvcc = current_mvcc_tx()
-        holder = mvcc if mvcc is not None else StatementLocks()
+        held_by_tx: MvccTx | StatementLocks | None = mvcc if mvcc is not None else strict_tx_locks()
+        holder = held_by_tx if held_by_tx is not None else StatementLocks()
 
         try:
             await self._lock_rows(locking, holder)
@@ -414,7 +422,7 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
                     table.hold(key, holder)
 
         finally:
-            if mvcc is None:
+            if held_by_tx is None:
                 release_write_locks(holder, self.state)
                 release_row_locks(holder, self.state)
 
@@ -499,6 +507,29 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
         stored = self._store().get(pk)
 
         return [stored, self._destination(stored, patch)]
+
+    # ....................... #
+
+    @staticmethod
+    def _require_revision_to_check(*, merge: bool, rev: int | None) -> None:
+        """Refuse a strict check (``merge=False``) given no revision, as the backends do."""
+
+        if not merge and rev is None:
+            raise exc.configuration(
+                "A strict revision check (merge=False) needs the revision it checks; got none, "
+                "so the write would apply unchecked.",
+            )
+
+    def _check_revisions_first(self, pairs: Sequence[tuple[UUID, int | None]]) -> None:
+        """Refuse a bulk write before any row is written when one row is not at its revision.
+
+        A row moved between this check and its own write is still refused there, but only a
+        transaction undoes the rows written before it.
+        """
+
+        with self.state.lock:
+            for pk, rev in pairs:
+                self._check_rev(int(self._ensure_exists(pk)[REV_FIELD]), rev)
 
     # ....................... #
 
@@ -950,7 +981,7 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
         merge: bool = True,
     ) -> R | JsonDict | tuple[R, JsonDict] | None:
         # The mock keeps no history, so every update is strict; `merge` has nothing to merge.
-        del merge
+        self._require_revision_to_check(merge=merge, rev=rev)
         self._ensure_writable()
         patch = self._encode_patch(dto)
         await self._serialize_writes(lambda: self._sides(pk, patch), lambda: [pk])
@@ -1069,7 +1100,8 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
         return_diff: bool = False,
         merge: bool = True,
     ) -> Sequence[R] | Sequence[JsonDict] | Sequence[tuple[R, JsonDict]] | None:
-        del merge  # as for update: always strict
+        for u in updates:
+            self._require_revision_to_check(merge=merge, rev=u.rev)
 
         if not updates:
             return [] if (return_new or return_diff) else None
@@ -1077,6 +1109,8 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
         pks = [u.id for u in updates]
         if len(set(pks)) != len(pks):
             raise exc.precondition("update_many requires distinct id values in the batch")
+
+        self._check_revisions_first([(u.id, u.rev) for u in updates])
 
         if return_new:
             if return_diff:
@@ -1378,6 +1412,7 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
             raise exc.internal("Primary keys must be unique")
 
         pairs = list(zip(pks, revs if revs is not None else [None] * len(pks), strict=True))
+        self._check_revisions_first(pairs)
 
         if return_new:
             return [await self.touch(pk, rev=rev, return_new=True) for pk, rev in pairs]
@@ -1390,24 +1425,14 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
     # ....................... #
 
     async def hold(self, *owners: Mapping[str, Any]) -> None:
+        require_hold_in_transaction(in_mock_transaction())
         keys = serialization_keys(
             self._serialized_by(),
             owners,
-            model=self._require_domain_model(),
+            domain=self._require_domain_model(),
             scope=str(self.spec.name),
             tenant=self.require_tenant_if_aware() if self.tenant_aware else None,
         )
-
-        if not in_mock_transaction():
-            raise exc.precondition(
-                "A write lock is held until the transaction ends, so hold() must run inside "
-                "one: outside it, the lock would be released before anything is read.",
-                code="document_hold_outside_transaction",
-            )
-
-        # The journal manager's transaction keeps the locks until it ends. The strict one runs
-        # one root transaction at a time, so the locks are taken and given back at once, as its
-        # writes' are.
         await self._take_write_locks(lambda: keys)
 
     # ....................... #

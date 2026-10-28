@@ -19,16 +19,13 @@ enforcement at write time (the store raises ``conflict``). Nothing in this packa
 anything — declared, validated, never created.
 """
 
-import functools
-from collections.abc import Mapping, Sequence
-from typing import Annotated, Any, Literal, final
-from uuid import UUID
+from collections.abc import Sequence
+from typing import Literal, final
 
 import attrs
-from pydantic import BaseModel, TypeAdapter
 
 from forze.base.exceptions import exc
-from forze.base.primitives import Bounds, advisory_lock_key
+from forze.base.primitives import Bounds
 
 from ..querying import QueryFilterExpression
 
@@ -256,70 +253,6 @@ class SerializedBy:
                 "once. A repeated field changes nothing about which writes contend and reads "
                 "as a wider key than it is.",
             )
-
-
-# ....................... #
-
-
-@functools.cache
-def _stored_as(model: type[BaseModel], field: str) -> TypeAdapter[Any]:
-    info = model.model_fields[field]
-    # With the field's own constraints and the model's config, as the model applies them.
-    form: Any = Annotated[info.annotation, info]  # type: ignore[name-defined]
-
-    return TypeAdapter(form, config=model.model_config)
-
-
-def serialization_keys(
-    declarations: Sequence[SerializedBy],
-    owners: Sequence[Mapping[str, Any]],
-    *,
-    model: type[BaseModel],
-    scope: str,
-    tenant: UUID | None,
-) -> list[int]:
-    """The lock keys a write for each of *owners* takes, sorted and without repeats.
-
-    Each owner names the fields of one of *declarations*' keys, and its values are validated as
-    *model* stores those fields, so a key derived here is the one a write derives from its row:
-    an id passed as a string still locks the owner a write with a UUID locks. A field
-    validator of the model's own does not run.
-
-    :param declarations: The spec's ``SerializedBy`` declarations.
-    :param owners: One mapping per owner, from each key field to its value.
-    :param model: The domain model, whose fields carry the key.
-    :param scope: The spec's name, which every key carries.
-    :param tenant: The tenant every key carries, or ``None`` for a spec without tenancy.
-    :returns: The keys, in the order a holder takes them.
-    :raises CoreException: ``configuration`` when nothing is declared, when no owner is named,
-        or when an owner's fields are not exactly the fields of a declared key.
-    """
-
-    if not declarations:
-        raise exc.configuration(
-            f"Spec {scope!r} declares no SerializedBy, so its writes take no lock to hold.",
-        )
-
-    if not owners:
-        raise exc.configuration("Holding a write lock needs at least one owner; got none.")
-
-    by_fields = {frozenset(d.key): d for d in declarations}
-    keys: set[int] = set()
-
-    for owner in owners:
-        declared = by_fields.get(frozenset(owner))
-
-        if declared is None:
-            raise exc.configuration(
-                f"Spec {scope!r} serializes writes by "
-                f"{' or '.join(repr(d.key) for d in declarations)}; an owner naming "
-                f"{tuple(owner)!r} matches none of them.",
-            )
-
-        values = [_stored_as(model, f).validate_python(owner[f]) for f in declared.key]
-        keys.add(advisory_lock_key(scope, tenant, *declared.key, *values))
-
-    return sorted(keys)
 
 
 # ....................... #
