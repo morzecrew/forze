@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Iterable
 from datetime import timedelta
 from typing import TYPE_CHECKING, Any, final
+from uuid import UUID
 
 import attrs
 
@@ -475,29 +476,30 @@ class ConfigurableMockAnalytics(_MockFactoryBase):
             resolvers=self.module.analytics,
             view=MockAnalyticsView(
                 state=state,
-                namespace_for=lambda name: self._document_namespace(context, name),
+                scope_for=lambda name: self._document_scope(context, name),
             ),
         )
 
     # ....................... #
 
-    def _document_namespace(self, ctx: ExecutionContext, spec_name: str) -> str:
-        """The namespace the document adapter for *spec_name* keeps this caller's rows in.
+    def _document_scope(self, ctx: ExecutionContext, spec_name: str) -> tuple[str, UUID | None]:
+        """The namespace the document adapter for *spec_name* keeps this caller's rows in, and
+        the tenant it narrows them to.
 
         Resolved the way :class:`ConfigurableMockDocument` resolves its own, tenant partition
-        included, so a resolver reads the rows a document read would — and a tenant-aware
-        document route with no tenant bound refuses here, as it refuses there.
+        and row filter included, so a resolver reads the rows a document read would — and a
+        tenant-aware document route with no tenant bound refuses here, as it refuses there.
         """
 
         cfg = self._route(spec_name)
-        tenancy = TenancyMixin(
+        tenant_id = TenancyMixin(
             tenant_aware=cfg.tenant_aware if cfg else False,
             tenant_provider=_tenant_provider(ctx),
-        )
+        ).require_tenant_if_aware()
 
-        return partition_namespace(
-            tenancy.require_tenant_if_aware(),
-            self._namespace_for(ctx, spec_name, default=spec_name),
+        return (
+            partition_namespace(tenant_id, self._namespace_for(ctx, spec_name, default=spec_name)),
+            tenant_id,
         )
 
 

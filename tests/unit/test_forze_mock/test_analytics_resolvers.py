@@ -365,3 +365,43 @@ class TestTenancy:
             await _totals_of(ctx)
 
         assert caught.value.code == "tenant_required"
+
+    async def test_an_unscoped_analytics_route_reads_what_a_document_read_returns(self) -> None:
+        # The document route is tenant-aware and the analytics route is not: the bound tenant's
+        # partition holds a row another tenant owns and one with no owner, which a document read
+        # hides, so the resolver must not see them either.
+        first = uuid4()
+        state = MockState()
+        ctx = context_from_modules(
+            _module(state=state, routes={"orders": MockRouteConfig(tenant_aware=True)})
+        )
+
+        with ctx.inv_ctx.bind_identity(tenant=TenantIdentity(tenant_id=first)):
+            for customer, amount in (("ada", 10), ("mallory", 3), ("nobody", 1)):
+                await _order(ctx, customer, amount)
+
+            for row in state.documents[f"{first}/orders"].values():
+                if row["customer"] == "mallory":
+                    row["tenant_id"] = str(uuid4())
+                elif row["customer"] == "nobody":
+                    row.pop("tenant_id", None)
+
+            listed = await ctx.document.query(ORDERS).find_many()
+            assert [row.customer for row in listed.hits] == ["ada"]
+            assert await _totals_of(ctx) == {"ada": 10}
+
+
+# ....................... #
+
+
+async def test_an_undeclared_query_key_is_a_configuration_error() -> None:
+    # The real adapters validate params through the shared helper, which raises CONFIGURATION.
+    ctx = context_from_modules(_module())
+    port = ctx.analytics.query(TOTALS)
+
+    for call in (port.run("nope", MinTotal()), port.run_cursor("nope", MinTotal())):
+        with pytest.raises(CoreException) as caught:
+            await call
+
+        assert caught.value.kind is ExceptionKind.CONFIGURATION
+        assert "Unknown analytics query key" in str(caught.value)

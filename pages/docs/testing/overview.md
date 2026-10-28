@@ -109,7 +109,7 @@ MockDepsModule(
 
 `view.rows(spec)` returns a document spec's stored rows in storage form: the columns a SQL query over the table would see. You get the rows the calling transaction sees. Inside a transaction, its own uncommitted writes are included and a concurrent transaction's are not. Outside one, you get the committed rows. A field the document spec seals arrives encrypted, exactly as SQL sees the column. It is decrypted on the way out only if the analytics spec declares it encrypted too.
 
-On a tenant-aware analytics route, a call with no tenant bound is refused with `tenant_required`. Otherwise `view.rows` returns only rows whose `tenant_id` names the bound tenant, even when the document route keeps every tenant in one namespace.
+On a tenant-aware analytics route, a call with no tenant bound is refused with `tenant_required`. Otherwise `view.rows` returns only rows whose `tenant_id` names the bound tenant, even when the document route keeps every tenant in one namespace. A tenant-aware document route narrows `view.rows` the way a document read does, whatever the analytics route declares: the bound tenant's partition, without rows another tenant owns or rows with no owner.
 
 The resolver receives the call's validated params. Its rows then go through the same `max_rows` cap and read-model decoding as seeded rows. A query with no resolver keeps its seeded rows. `on()` refuses a query key the spec does not declare, and a second resolver for the same query.
 

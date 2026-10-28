@@ -21,7 +21,6 @@ from forze.application.contracts.analytics import (
     AnalyticsRunOptions,
     AnalyticsSpec,
 )
-from forze.application.contracts.analytics.specs import AnalyticsQueryDefinition
 from forze.application.contracts.base import (
     CountlessPage,
     CursorPage,
@@ -40,10 +39,10 @@ from forze.application.integrations.analytics.adapter_common import (
     computed_rows_required,
     dry_run_enabled,
     validate_fetch_batch_size,
+    validated_params,
 )
 from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict
-from forze.base.serialization import default_model_codec
 from forze_mock.adapters.analytics_resolvers import MockAnalyticsRegistry, MockAnalyticsView
 from forze_mock.query._types import T
 from forze_mock.query.cursors import (
@@ -81,23 +80,9 @@ class MockAnalyticsAdapter[R: BaseModel, Ing: BaseModel](
 
     # ....................... #
 
-    def _definition(self, query_key: str) -> AnalyticsQueryDefinition:
-        try:
-            return self.spec.queries[query_key]
-        except KeyError as e:
-            raise exc.internal(f"Unknown analytics query key: {query_key!r}") from e
-
-    # ....................... #
-
     def _validated_params(self, query_key: str, params: BaseModel) -> BaseModel:
-        defn = self._definition(query_key)
-        if isinstance(params, defn.params):
-            return params
-        if isinstance(params, BaseModel):  # pyright: ignore[reportUnnecessaryIsInstance]
-            return default_model_codec(defn.params).decode_mapping(
-                params.model_dump(),
-            )
-        raise exc.internal("Analytics params must be a Pydantic model instance.")
+        # The real adapters' helper, so an undeclared key is the same configuration error.
+        return validated_params(self.spec, query_key, params)
 
     # ....................... #
 

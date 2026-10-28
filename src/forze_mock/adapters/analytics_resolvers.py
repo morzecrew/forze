@@ -44,8 +44,16 @@ class MockAnalyticsView:
 
     state: MockState
 
-    namespace_for: Callable[[str], str] = attrs.field(default=lambda name: name)
-    """Map a document spec name to the namespace its rows live in, for the calling tenant."""
+    scope_for: Callable[[str], tuple[str, UUID | None]] = attrs.field(
+        default=lambda name: (name, None),
+    )
+    """Map a document spec name to the namespace its rows live in, for the calling tenant, and
+    the tenant a document read narrows those rows to (``None`` on a route that is not
+    tenant-aware).
+
+    The rows are narrowed to that tenant whatever the analytics route's own tenancy, so a
+    resolver never sees a row a document read would hide: one another tenant owns, or one with
+    no owner, left in the bound tenant's partition."""
 
     tenant_id: UUID | None = None
     """When set, only rows whose ``tenant_id`` names this tenant are returned.
@@ -66,24 +74,34 @@ class MockAnalyticsView:
         decrypts it on the way out only if the analytics spec declares it encrypted too.
         """
 
-        namespace = self.namespace_for(spec if isinstance(spec, str) else str(spec.name))
+        namespace, document_tenant = self.scope_for(
+            spec if isinstance(spec, str) else str(spec.name)
+        )
 
         with self.state.lock:
             live = self.state.documents.get(namespace, {})
             mvcc = current_mvcc_tx()
             store = live if mvcc is None else mvcc.view(namespace, live)
 
-            return [copy.deepcopy(row) for row in store.values() if self._visible(row)]
+            return [
+                copy.deepcopy(row)
+                for row in store.values()
+                if _owned_by(row, self.tenant_id) and _owned_by(row, document_tenant)
+            ]
 
-    # ....................... #
 
-    def _visible(self, row: JsonDict) -> bool:
-        if self.tenant_id is None:
-            return True
+# ....................... #
 
-        owner = row.get("tenant_id")
 
-        return owner is not None and str(owner) == str(self.tenant_id)
+def _owned_by(row: JsonDict, tenant_id: UUID | None) -> bool:
+    """Whether *row* names *tenant_id* as its owner; any row when *tenant_id* is ``None``."""
+
+    if tenant_id is None:
+        return True
+
+    owner = row.get("tenant_id")
+
+    return owner is not None and str(owner) == str(tenant_id)
 
 
 # ....................... #
