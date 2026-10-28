@@ -2814,6 +2814,18 @@ of them are the unit suite. Before the review's changes it was 361 on each. On a
 - **Proposed row (RFC 0078):** `ASSUMED` — §4.2's `PRAGMA version` is refused, on every build.
   This overrides that line of §4.2, which stays as written.
 
+## Review findings — 2026-10-28
+
+PR #700, after it was published. Four findings from CodeAnt, and one CodeQL alert. Two are
+fixed, one is refuted, and one is kept by design. None changes a proposed row.
+
+| # | Severity | Finding | Status |
+|---|---|---|---|
+| R-1 | Medium | `ca_cert_file` passed when it held only the PEM begin marker, so a truncated bundle built the client and then failed every request (CodeAnt, twice) | Fixed — OpenSSL loads the file at construction (`ssl.create_default_context(cafile=…)`), and a file it loads no certificate from is refused |
+| R-2 | — | The P0 probe's local TLS server allowed TLS 1.0 and 1.1 (CodeQL `py/insecure-protocol`) | Fixed — its context sets TLS 1.2 as the minimum |
+| R-3 | — | Battery 9's lock messages use `"+`, read as a literal by mistake (CodeAnt) | Refuted — the `+` quantifies the quote, which DuckDB 2 doubles (D-060); the battery passes on 1.5.6 and 2.0.0 |
+| R-4 | Low | A quoted table name holding a dot, legal in Iceberg, is refused as a path (CodeAnt) | Kept — parsing binds nothing, so `"orders.v2"` cannot be told from a replacement scan of `"orders.csv"`. Refusing every `/`, `:` and `.` is D-072's fail-closed choice; the docs now say such a table cannot be read dynamically |
+
 ---
 
 # Unit 9 · RFC 0077 P3 — surfaces onto ingress

@@ -223,7 +223,9 @@ of the same name is refused. A dynamic read may read only tables it names
   a path, a URL, a table name or SQL text (`read_parquet`, `iceberg_scan`,
   `query`, `query_table`), and `PRAGMA` is refused on 1.5 as on 2;
 - no path or URL as a table name, so nothing a statement writes reaches the
-  allowlist's spelling match;
+  allowlist's spelling match. Parsing binds nothing, so any name holding `/`,
+  `:` or `.` counts as one: a table whose own name has a dot cannot be read
+  dynamically;
 - no table named through a catalog the instance has not attached, or nested
   deeper than `catalog.schema.table`: DuckDB 2 would read it as a nested
   namespace and resolve only its last level, a table the statement did not name.

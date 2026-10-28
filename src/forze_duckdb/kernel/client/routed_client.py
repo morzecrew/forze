@@ -43,10 +43,10 @@ require_duckdb()
 import asyncio
 import os
 import re
+import ssl
 from collections.abc import AsyncGenerator, Callable, Sequence
 from contextlib import asynccontextmanager
 from datetime import timedelta
-from pathlib import Path
 from typing import Any, cast
 from urllib.parse import urlsplit
 from uuid import UUID
@@ -78,7 +78,6 @@ _DATABASES = frozenset({"memory", "system", "temp", LAKE_CATALOG})
 _STATEMENT_ECHO = re.compile(r"\n\s*LINE \d+:.*", re.DOTALL)
 """DuckDB's echo of a failing statement: a window of its text after ``LINE n:``, cut at either
 end, so a secret in it can show only in part."""
-_PEM_CERTIFICATE = "-----BEGIN CERTIFICATE-----"
 
 # ....................... #
 
@@ -302,7 +301,15 @@ def _require_pem(path: str) -> None:
     every request, plain HTTP included, and a wrong file fails each one obscurely (D-063)."""
 
     try:
-        text = Path(path).read_text(encoding="utf-8", errors="replace")
+        # OpenSSL parses it, as curl will: a marker alone or a truncated body loads nothing.
+        ssl.create_default_context(cafile=path)
+
+    except ssl.SSLError as error:
+        raise exc.configuration(
+            "RoutedDuckDbClient.ca_cert_file holds no PEM certificate OpenSSL can load.",
+            code="duckdb_routed_client_invalid",
+            details={"ca_cert_file": path},
+        ) from error
 
     except OSError as error:
         raise exc.configuration(
@@ -310,13 +317,6 @@ def _require_pem(path: str) -> None:
             code="duckdb_routed_client_invalid",
             details={"ca_cert_file": path, "error": str(error)},
         ) from error
-
-    if _PEM_CERTIFICATE not in text:
-        raise exc.configuration(
-            f"RoutedDuckDbClient.ca_cert_file holds no PEM certificate ({_PEM_CERTIFICATE}).",
-            code="duckdb_routed_client_invalid",
-            details={"ca_cert_file": path},
-        )
 
 
 def _outside_the_allowlist(catalog: LakeTenantCatalog, ca_cert_file: str | None) -> list[str]:

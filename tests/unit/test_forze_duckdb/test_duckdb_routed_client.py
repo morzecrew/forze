@@ -14,7 +14,7 @@ import contextvars
 import json
 import random
 from collections.abc import AsyncIterator, Iterator
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 from secrets import token_hex
 from typing import Any, ClassVar
 from unittest.mock import MagicMock
@@ -22,6 +22,10 @@ from uuid import UUID, uuid4
 
 import duckdb
 import pytest
+from cryptography import x509
+from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives.asymmetric import ec
+from cryptography.x509.oid import NameOID
 
 from forze.application.contracts.secrets import SecretRef
 from forze.base.exceptions import CoreException, ExceptionKind, exc
@@ -37,6 +41,29 @@ _A = UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
 _B = UUID("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb")
 _C = UUID("cccccccc-cccc-cccc-cccc-cccccccccccc")
 _TIMEOUT = timedelta(seconds=5)
+
+
+def _self_signed_pem() -> str:
+    signer = ec.generate_private_key(ec.SECP256R1())
+    name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "ca.test")])
+    now = datetime.now(UTC)
+    cert = (
+        x509.CertificateBuilder()
+        .subject_name(name)
+        .issuer_name(name)
+        .public_key(signer.public_key())
+        .serial_number(x509.random_serial_number())
+        .not_valid_before(now - timedelta(minutes=1))
+        .not_valid_after(now + timedelta(hours=1))
+        .add_extension(x509.BasicConstraints(ca=True, path_length=None), critical=True)
+        .sign(signer, hashes.SHA256())
+    )
+
+    return cert.public_bytes(serialization.Encoding.PEM).decode()
+
+
+_PEM = _self_signed_pem()
+"""A CA certificate OpenSSL loads, as a ``ca_cert_file`` must hold."""
 
 _tenant: contextvars.ContextVar[UUID | None] = contextvars.ContextVar("tenant", default=None)
 
@@ -219,7 +246,15 @@ class TestConstruction:
         assert ei.value.details == {field: value}
 
     @pytest.mark.parametrize(
-        "content", ["", "not a certificate\n", "-----BEGIN PRIVATE KEY-----\n"]
+        "content",
+        [
+            "",
+            "not a certificate\n",
+            "-----BEGIN PRIVATE KEY-----\n",
+            "-----BEGIN CERTIFICATE-----\n",
+            _PEM[: len(_PEM) // 2],
+        ],
+        ids=["empty", "text", "key", "marker", "truncated"],
     )
     def test_a_ca_bundle_without_a_pem_certificate_is_refused(
         self, tmp_path: Any, content: str
@@ -252,7 +287,7 @@ class TestInstances:
         """D-062, D-063: one allowlist bounds every path, and no filesystem is disabled."""
 
         bundle = tmp_path / "ca.pem"
-        bundle.write_text("-----BEGIN CERTIFICATE-----\n")
+        bundle.write_text(_PEM)
         link = tmp_path / "ca-link.pem"
         link.symlink_to(bundle)
         routed = _routed(_MemSecrets(_A), ca_cert_file=str(link))
