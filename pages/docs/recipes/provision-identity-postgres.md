@@ -50,6 +50,11 @@ CREATE TABLE authn_password_accounts (
 CREATE UNIQUE INDEX ON authn_password_accounts (username);
 ```
 
+Keep the unique index on `username`: registration checks for an existing login before it
+inserts, and only the index stops two concurrent registrations of one username. The spec does
+not declare it as a storage guarantee, because not every document store can keep one, so
+startup validation neither requires it nor reports it.
+
 API-key accounts (`api_key_account_spec`):
 
 ```sql

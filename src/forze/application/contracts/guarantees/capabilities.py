@@ -98,6 +98,16 @@ class StorageGuaranteeCapabilities:
     property of constraints, a partial uniqueness is only an index, and a unique constraint
     cannot be partial. Non-overlap has no such flag: its constraint can be both."""
 
+    unique_together_skip_null_at_commit: bool = False
+    """Whether a uniqueness exempting nulls (``skip_null``) can hold at commit even where a
+    filtered one cannot. Consulted only when :attr:`unique_together_partial_at_commit` is off,
+    since that flag already covers ``skip_null``.
+
+    Separate because the exemption is partial only in a store whose plain uniqueness counts
+    nulls as values. A Postgres unique constraint already treats a tuple holding a null as
+    distinct, so it keeps ``skip_null`` without a predicate, and a deferred one keeps it at
+    commit."""
+
     # ....................... #
 
     def unmet(self, guarantee: StorageGuarantee) -> tuple[str, ...]:
@@ -116,7 +126,9 @@ class StorageGuaranteeCapabilities:
         match guarantee:
             case UniqueTogether():
                 missing = [] if self.unique_together else ["uniqueness over a field tuple"]
-                partial = guarantee.where is not None or guarantee.skip_null
+                partial = guarantee.where is not None or (
+                    guarantee.skip_null and not self.unique_together_skip_null_at_commit
+                )
 
                 # Each axis is consulted only where the guarantee asks for it: a declaration
                 # with no `where` must not be refused by a store lacking the filtered form.
@@ -173,6 +185,7 @@ FULL_STORAGE_GUARANTEES: Final[StorageGuaranteeCapabilities] = StorageGuaranteeC
     serialized_by=True,
     checks_deferred_to_commit=True,
     unique_together_partial_at_commit=True,
+    unique_together_skip_null_at_commit=True,
 )
 """Every guarantee that is enforced anywhere today — the in-memory store's declaration.
 

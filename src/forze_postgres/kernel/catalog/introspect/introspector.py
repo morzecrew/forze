@@ -618,7 +618,9 @@ class PostgresIntrospector:
             ) AS columns,
             pg_get_expr(i.indpred, i.indrelid) AS predicate,
             i.indnullsnotdistinct AS nulls_not_distinct,
-            COALESCE(c.condeferred, false) AS initially_deferred
+            COALESCE(c.condeferred, false) AS initially_deferred,
+            i.indexrelid::regclass::text AS name,
+            i.indisprimary AS is_primary
             FROM pg_index i
             JOIN rel ON rel.oid = i.indrelid
             LEFT JOIN pg_constraint c
@@ -655,6 +657,8 @@ class PostgresIntrospector:
                     predicate=str(predicate) if predicate is not None else None,
                     nulls_not_distinct=bool(row.get("nulls_not_distinct")),
                     initially_deferred=bool(row.get("initially_deferred")),
+                    name=str(row.get("name") or ""),
+                    primary=bool(row.get("is_primary")),
                 )
             )
 

@@ -2,14 +2,21 @@
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock
+from typing import Any
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from pydantic import BaseModel
 
 from forze.application.contracts.document import DocumentSpec
+from forze.application.contracts.inventory import (
+    FrozenSpecRegistry,
+    SpecRegistry,
+    SpecSource,
+)
 from forze.application.execution import Deps
 from forze.base.exceptions import CoreException, exc
+from forze_postgres.execution.deps import PostgresDepsModule
 from forze_postgres.execution.deps.configs import (
     PostgresDocumentConfig,
     PostgresReadOnlyDocumentConfig,
@@ -18,6 +25,7 @@ from forze_postgres.execution.deps.keys import PostgresIntrospectorDepKey
 from forze_postgres.execution.lifecycle import (
     PostgresDocumentSchemaValidationHook,
     postgres_document_schema_spec_for_binding,
+    postgres_document_schema_specs,
     postgres_document_schema_validation_lifecycle_step,
 )
 from forze_postgres.kernel.catalog.validation.validate_schema import PostgresDocumentSchemaSpec
@@ -57,15 +65,34 @@ def test_postgres_document_schema_spec_read_only() -> None:
     assert out.write_relation is None
 
 
-def test_postgres_document_schema_spec_write_requires_write_config() -> None:
+def test_a_read_only_binding_of_a_writable_spec_validates_its_read_side() -> None:
+    # Another service writes the document; this one only reads it.
     spec = DocumentSpec(
         name="doc",
         read=_Read,
         write={"domain": _Domain, "create_cmd": _Create},
     )
     config = PostgresReadOnlyDocumentConfig(read=("public", "items"))
-    with pytest.raises(CoreException, match="not a PostgresDocumentConfig"):
-        postgres_document_schema_spec_for_binding("doc", spec=spec, config=config)
+
+    out = postgres_document_schema_spec_for_binding("doc", spec=spec, config=config)
+
+    assert out.read_relation == ("public", "items")
+    assert out.write_relation is None
+
+
+def test_a_read_write_binding_of_a_read_only_spec_is_refused() -> None:
+    config = PostgresDocumentConfig(
+        read=("public", "items"),
+        write=("public", "items"),
+        bookkeeping_strategy="application",
+    )
+
+    with pytest.raises(CoreException) as exc_info:
+        postgres_document_schema_spec_for_binding(
+            "doc", spec=DocumentSpec(name="doc", read=_Read), config=config
+        )
+
+    assert exc_info.value.code == "postgres_document_spec_read_only"
 
 
 def test_postgres_document_schema_spec_rejects_dynamic_read_relation() -> None:
@@ -139,3 +166,150 @@ def test_schema_validation_lifecycle_step() -> None:
         specs=(),
     )
     assert step.id == "custom_validate"
+
+
+# ....................... #
+
+
+def _registry(*specs: DocumentSpec[Any, Any, Any, Any]) -> FrozenSpecRegistry:
+    return SpecRegistry().register(*specs).freeze()
+
+
+_WRITE: Any = {"domain": _Domain, "create_cmd": _Create}
+
+
+def _deps(**kwargs: Any) -> PostgresDepsModule:
+    return PostgresDepsModule(client=MagicMock(), **kwargs)
+
+
+class TestSpecsFromTheCatalogue:
+    def test_every_bound_document_gets_a_spec(self) -> None:
+        registry = _registry(
+            DocumentSpec(name="orders", read=_Read, write=_WRITE),
+            DocumentSpec(name="catalog", read=_Read),
+        )
+        deps = _deps(
+            ro_documents={"catalog": PostgresReadOnlyDocumentConfig(read=("public", "cat_v"))},
+            rw_documents={
+                "orders": PostgresDocumentConfig(
+                    read=("public", "orders_v"),
+                    write=("public", "orders"),
+                    bookkeeping_strategy="application",
+                ),
+            },
+        )
+
+        specs = postgres_document_schema_specs(registry, deps)
+
+        assert [s.name for s in specs] == ["catalog", "orders"]
+        assert specs[0].write_relation is None
+        assert specs[1].write_relation == ("public", "orders")
+        assert specs[1].read_relation == ("public", "orders_v")
+
+    def test_a_framework_spec_is_not_reported_for_undeclared_indexes(self) -> None:
+        # The application can declare nothing on a spec it does not own.
+        registry = (
+            SpecRegistry()
+            .register(DocumentSpec(name="mine", read=_Read))
+            .register(DocumentSpec(name="theirs", read=_Read), source=SpecSource.FRAMEWORK)
+            .freeze()
+        )
+        deps = _deps(
+            ro_documents={
+                name: PostgresReadOnlyDocumentConfig(read=("public", name))
+                for name in ("mine", "theirs")
+            },
+        )
+
+        specs = postgres_document_schema_specs(registry, deps)
+
+        assert [(s.name, s.warn_undeclared) for s in specs] == [
+            ("mine", True),
+            ("theirs", False),
+        ]
+
+    def test_a_bound_document_with_no_catalogued_spec_is_refused(self) -> None:
+        # Skipping it would leave one document unvalidated with nothing said — the gap the
+        # derived form exists to close.
+        deps = _deps(
+            ro_documents={
+                "a": PostgresReadOnlyDocumentConfig(read=("public", "a")),
+                "b": PostgresReadOnlyDocumentConfig(read=("public", "b")),
+            },
+        )
+
+        with pytest.raises(CoreException) as caught:
+            postgres_document_schema_specs(_registry(DocumentSpec(name="a", read=_Read)), deps)
+
+        assert caught.value.code == "postgres_schema_spec_uncatalogued"
+        assert caught.value.details == {"routes": ["b"]}
+
+    def test_a_read_write_route_over_a_read_only_spec_is_refused(self) -> None:
+        deps = _deps(
+            rw_documents={
+                "catalog": PostgresDocumentConfig(
+                    read=("public", "cat"),
+                    write=("public", "cat"),
+                    bookkeeping_strategy="application",
+                ),
+            },
+        )
+
+        with pytest.raises(CoreException) as caught:
+            postgres_document_schema_specs(_registry(DocumentSpec(name="catalog", read=_Read)), deps)
+
+        assert caught.value.code == "postgres_document_spec_read_only"
+
+    def test_a_route_bound_both_ways_is_refused(self) -> None:
+        # Otherwise one config would win with nothing said about the other.
+        deps = _deps(
+            ro_documents={"a": PostgresReadOnlyDocumentConfig(read=("public", "a_v"))},
+            rw_documents={
+                "a": PostgresDocumentConfig(
+                    read=("public", "a"),
+                    write=("public", "a"),
+                    bookkeeping_strategy="application",
+                ),
+            },
+        )
+
+        with pytest.raises(CoreException) as caught:
+            postgres_document_schema_specs(_registry(DocumentSpec(name="a", read=_Read)), deps)
+
+        assert caught.value.code == "postgres_document_route_duplicated"
+
+    def test_an_excluded_route_is_left_out(self) -> None:
+        deps = _deps(
+            ro_documents={
+                "a": PostgresReadOnlyDocumentConfig(read=("public", "a")),
+                "b": PostgresReadOnlyDocumentConfig(read=("public", "b")),
+            },
+        )
+
+        specs = postgres_document_schema_specs(
+            _registry(DocumentSpec(name="a", read=_Read)), deps, exclude=("b",)
+        )
+
+        assert [s.name for s in specs] == ["a"]
+
+    def test_a_dynamic_relation_is_skipped_with_a_warning(self) -> None:
+        # Known only per request, so one tenant-routed document must not stop the others.
+        registry = _registry(
+            DocumentSpec(name="a", read=_Read),
+            DocumentSpec(name="tenanted", read=_Read),
+        )
+        deps = _deps(
+            ro_documents={
+                "a": PostgresReadOnlyDocumentConfig(read=("public", "a")),
+                "tenanted": PostgresReadOnlyDocumentConfig(
+                    read=lambda _: ("public", "t"),  # type: ignore[arg-type]
+                ),
+            },
+        )
+
+        with patch("forze_postgres.execution.lifecycle.document_schema.logger") as log:
+            specs = postgres_document_schema_specs(registry, deps)
+
+        assert [s.name for s in specs] == ["a"]
+        log.warning.assert_called_once()
+        assert log.warning.call_args.args[1:] == ("tenanted", "read")

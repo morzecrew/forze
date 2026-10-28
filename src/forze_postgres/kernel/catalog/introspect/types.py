@@ -120,6 +120,12 @@ class UniqueIndexInfo:
     for ``DEFERRABLE INITIALLY IMMEDIATE``, which checks per statement unless a transaction
     asks otherwise."""
 
+    name: str = ""
+    """The index's name, for the warning about an index no guarantee declares."""
+
+    primary: bool = False
+    """Whether the index backs the primary key, which no guarantee needs to declare."""
+
 
 @attrs.define(slots=True, frozen=True, kw_only=True)
 class ExclusionConstraintInfo:

@@ -13,7 +13,12 @@ from forze.application.contracts.guarantees import (
     StorageGuarantees,
     UniqueTogether,
 )
-from forze.application.contracts.querying import collect_filter_field_roots
+from forze.application.contracts.querying import (
+    QueryFilterExpression,
+    collect_filter_field_roots,
+)
+from forze.application.contracts.querying.internal.nodes import QueryAnd, QueryField
+from forze.application.contracts.querying.internal.parse import QueryFilterExpressionParser
 from forze.application.contracts.tenancy import TENANT_ID_FIELD
 from forze.base.exceptions import exc
 from forze.base.serialization import stored_field_names_for
@@ -106,6 +111,11 @@ class PostgresDocumentSchemaSpec:
 
     Validated against the live catalog: reconciliation at wiring says Postgres *can* keep
     these, and this says whether the deployment's migration actually did."""
+
+    warn_undeclared: bool = True
+    """Whether a unique index or EXCLUDE constraint on the write relation that no guarantee
+    declares is reported. Off for a spec the framework owns: the application can declare
+    nothing on it, so the warning would be one it cannot act on."""
 
     # ....................... #
 
@@ -263,6 +273,13 @@ def _warn_unused_tenant_column(
     if TENANT_ID_FIELD not in write_column_types:
         return
 
+    # A model that maps the column stores the tenant as data — a session minted for one
+    # tenant, a membership naming one — rather than leaving an isolation column unused.
+    if spec.write_domain_model is not None and TENANT_ID_FIELD in stored_field_names_for(
+        spec.write_domain_model, include_computed=False
+    ):
+        return
+
     schema, relation = spec.write_relation
     logger.warning(
         "Postgres schema validation for document %r: write relation %s.%s has "
@@ -281,8 +298,11 @@ def _warn_unused_tenant_column(
 async def _require_guarantee_mechanisms(
     introspector: PostgresIntrospector,
     spec: PostgresDocumentSchemaSpec,
-) -> None:
+) -> frozenset[str]:
     """Refuse a declared guarantee whose index is not in the database, naming the DDL.
+
+    Returns the names of the indexes that keep the declared guarantees, so the undeclared-index
+    warning can tell those from the rest.
 
     Reconciliation at wiring proved Postgres *can* keep these; this is the other half — whether
     this deployment's migration did. Never creates anything: an adapter that issued the DDL
@@ -294,8 +314,11 @@ async def _require_guarantee_mechanisms(
     * it is not partial where the guarantee is filtered, or its predicate does not mention the
       fields the filter selects on — the case that matters, because a predicate over the wrong
       column leaves exactly the rows the guarantee covers unconstrained;
-    * it is an ordinary unique index over a nullable column while the guarantee counts nulls as
-      values, which Postgres does not unless the index says ``NULLS NOT DISTINCT``;
+    * it compares nulls the other way from the guarantee: an ordinary unique index over a
+      nullable column lets two rows share a tuple holding a null, which a guarantee counting
+      nulls as values refuses unless the index says ``NULLS NOT DISTINCT`` — and an index that
+      says it refuses the pair a ``skip_null`` guarantee exempts. ``skip_null`` is therefore
+      Postgres's default reading, kept by a plain index with no predicate at all;
     * it is not valid, ready or live — the state a failed concurrent build leaves;
     * its deferral disagrees with ``holds``: a ``DEFERRABLE INITIALLY DEFERRED`` constraint
       behind a guarantee that holds after every write lets the database accept writes the
@@ -305,17 +328,20 @@ async def _require_guarantee_mechanisms(
 
     What is still not checked is whether the predicate *means* the same as the filter: deciding
     that two boolean expressions agree is the database's job, not a startup check's. So the
-    column-level comparison is a floor, not a proof, and the docs say so.
+    column-level comparison is a floor, not a proof, and the docs say so. The one predicate read
+    structurally is the null exclusion behind an unfiltered ``skip_null``: it has a single right
+    shape, so anything else is refused.
     """
 
     relation = spec.write_relation or spec.read_relation
     schema, table = relation
 
     guarantees = [g for g in spec.guarantees if isinstance(g, UniqueTogether)]
+    matched: set[str] = set()
 
     if not guarantees:
         # Reconciliation refuses every other member today, so nothing else reaches here.
-        return
+        return frozenset()
 
     indexes = await introspector.unique_indexes(schema=schema, relation=table)
     column_types = await introspector.get_column_types(schema=schema, relation=table)
@@ -324,24 +350,26 @@ async def _require_guarantee_mechanisms(
         columns = tuple(guarantee.fields)
         wanted = frozenset(columns)
         # A filter over a column the index does not mention cannot restrict the guarantee's
-        # rows, so the predicate has to name every field the declaration selects on — and, when
-        # nulls are exempt, every field of the tuple, since that exemption *is* a predicate.
+        # rows, so the predicate has to name every field the declaration selects on. The null
+        # exemption adds nothing here: an ordinary unique index already never matches a tuple
+        # holding a null, so on Postgres `skip_null` is how nulls compare, not a predicate.
         predicate_columns = (
             collect_filter_field_roots(guarantee.where) if guarantee.where else frozenset()
         )
-
-        if guarantee.skip_null:
-            predicate_columns |= wanted
+        non_null = _forced_non_null(guarantee.where)
 
         nullable = sorted(
             column
             for column in columns
-            if column in column_types and not column_types[column].not_null
+            if column in column_types
+            and not column_types[column].not_null
+            and column not in non_null
         )
         # Only a nullable column can produce the divergence: Postgres compares two nulls as
         # distinct, so an ordinary unique index admits a pair of rows the guarantee refuses.
-        # Over NOT NULL columns the ordinary index is exactly the mechanism, and demanding
-        # NULLS NOT DISTINCT there would refuse a correct migration.
+        # Over NOT NULL columns — or columns the `where` already holds non-null in every row it
+        # selects — the ordinary index is exactly the mechanism, and demanding NULLS NOT
+        # DISTINCT there would refuse a correct migration.
         needs_nulls_not_distinct = bool(nullable) and not guarantee.skip_null
         at_commit = guarantee.holds == "commit"
         # Right in every respect but when it is checked, kept so the refusal can say that
@@ -353,24 +381,35 @@ async def _require_guarantee_mechanisms(
                 continue
 
             if predicate_columns:
-                if index.predicate is None:
+                if not _names_every(index.predicate, predicate_columns):
                     continue
 
-                if any(
-                    not _predicate_names(index.predicate, column) for column in predicate_columns
-                ):
-                    continue
-
-            elif index.predicate is not None:
+            # Unfiltered, the one restriction an index may add is dropping the rows the
+            # exemption already lets through. Read structurally, not by name: a predicate that
+            # merely mentions the field (`code = 'x'`, `code IS NULL`) leaves covered rows out.
+            elif index.predicate is not None and not (
+                guarantee.skip_null and _excludes_only_nulls(index.predicate, wanted, nullable)
+            ):
                 continue
 
             if needs_nulls_not_distinct and not index.nulls_not_distinct:
+                continue
+
+            # Grouping nulls refuses the pairs `skip_null` exempts, unless the predicate drops
+            # every row that could hold one before the comparison is made.
+            if (
+                guarantee.skip_null
+                and nullable
+                and index.nulls_not_distinct
+                and not frozenset(nullable) <= _null_exclusions(index.predicate)
+            ):
                 continue
 
             if index.initially_deferred != at_commit:
                 deferral_mismatch = True
                 continue
 
+            matched.add(index.name)
             break
 
         else:
@@ -401,6 +440,7 @@ async def _require_guarantee_mechanisms(
                     columns=columns,
                     predicate_columns=predicate_columns,
                     nulls_not_distinct=needs_nulls_not_distinct,
+                    nulls_distinct=guarantee.skip_null and bool(nullable),
                     nullable=nullable,
                     ddl=ddl,
                 ),
@@ -410,6 +450,8 @@ async def _require_guarantee_mechanisms(
                     "columns": list(columns),
                 },
             )
+
+    return frozenset(matched)
 
 
 # ....................... #
@@ -438,6 +480,170 @@ def _predicate_names(predicate: str, column: str) -> bool:
     bare = _LITERAL.sub("''", predicate)
 
     return re.search(rf"(?<![A-Za-z0-9_]){re.escape(column)}(?![A-Za-z0-9_])", bare) is not None
+
+
+def _names_every(predicate: str | None, columns: frozenset[str] | Sequence[str]) -> bool:
+    """Whether *predicate* exists and names each of *columns* — never for an empty set, since a
+    predicate that has to name nothing is one that restricts rows nothing asked it to."""
+
+    return (
+        predicate is not None
+        and bool(columns)
+        and all(_predicate_names(predicate, column) for column in columns)
+    )
+
+
+_NULL_EXCLUSION = re.compile(
+    r'^(?:"((?:[^"]|"")+)"|([A-Za-z_][A-Za-z0-9_$]*))\s+IS\s+NOT\s+NULL$', re.IGNORECASE
+)
+"""One deparsed ``<column> IS NOT NULL`` conjunct, the column bare or double-quoted."""
+
+
+def _unwrap(text: str) -> str | None:
+    """*text* without the parentheses wrapping all of it, or ``None`` when they do not balance."""
+
+    text = text.strip()
+
+    while text.startswith("("):
+        depth = 0
+        end = -1
+
+        for position, char in enumerate(text):
+            depth += (char == "(") - (char == ")")
+
+            if depth == 0:
+                end = position
+                break
+
+        if end < 0:
+            return None
+
+        if end != len(text) - 1:
+            return text
+
+        text = text[1:-1].strip()
+
+    return text
+
+
+def _conjuncts(predicate: str) -> list[str] | None:
+    """The top-level ``AND`` operands of a deparsed predicate, each unwrapped, or ``None`` when
+    it cannot be split — a reading this declines is one the caller refuses."""
+
+    body = _unwrap(_LITERAL.sub("''", predicate))
+
+    if body is None:
+        return None
+
+    parts: list[str] = []
+    depth = start = position = 0
+    upper = body.upper()
+
+    while position < len(body):
+        char = body[position]
+        depth += (char == "(") - (char == ")")
+
+        if depth == 0 and upper.startswith(" AND ", position):
+            parts.append(body[start:position])
+            position = start = position + len(" AND ")
+            continue
+
+        position += 1
+
+    parts.append(body[start:])
+    unwrapped = [_unwrap(part) for part in parts]
+
+    if depth != 0 or any(part is None for part in unwrapped):
+        return None
+
+    return [part for part in unwrapped if part is not None]
+
+
+def _excluded_column(conjunct: str) -> str | None:
+    """The column *conjunct* holds non-null, when it is exactly ``<column> IS NOT NULL``."""
+
+    match = _NULL_EXCLUSION.match(conjunct)
+
+    if match is None:
+        return None
+
+    quoted, bare = match.groups()
+
+    return quoted.replace('""', '"') if quoted is not None else bare
+
+
+def _null_exclusions(predicate: str | None) -> frozenset[str]:
+    """The columns the top-level conjuncts of *predicate* hold ``IS NOT NULL``."""
+
+    parts = _conjuncts(predicate) if predicate is not None else None
+
+    return frozenset(
+        column for part in parts or () if (column := _excluded_column(part)) is not None
+    )
+
+
+def _excludes_only_nulls(
+    predicate: str,
+    columns: frozenset[str],
+    nullable: Sequence[str],
+) -> bool:
+    """Whether *predicate* is a conjunction of ``IS NOT NULL`` over fields of the tuple that
+    excludes every nullable one — the only restriction an unfiltered ``skip_null`` admits."""
+
+    parts = _conjuncts(predicate)
+
+    if not parts:
+        return False
+
+    excluded = [_excluded_column(part) for part in parts]
+
+    if any(column is None or column not in columns for column in excluded):
+        return False
+
+    return frozenset(nullable) <= frozenset(excluded)
+
+
+_NULL_REJECTING: Final[frozenset[str]] = frozenset({"$eq", "$gt", "$gte", "$lt", "$lte"})
+"""Operators no null satisfies, in the in-memory matcher and in SQL alike."""
+
+
+def _forced_non_null(where: QueryFilterExpression | None) -> frozenset[str]:  # type: ignore[valid-type]
+    """The fields every row *where* selects holds a non-null value in.
+
+    Read off the top-level conjunction only — a ``$null: false``, a comparison against a value
+    (the parser refuses a null operand there) or an ``$in`` whose list holds no null. A
+    disjunction, a negation or anything nested is not interpreted: a field this cannot prove
+    non-null keeps the stricter reading.
+    """
+
+    if where is None:
+        return frozenset()
+
+    found: set[str] = set()
+
+    def collect(node: object) -> None:
+        match node:
+            case QueryAnd(items):
+                for item in items:
+                    collect(item)
+
+            case QueryField(name, op, value) if op == "$null" and value is False:
+                found.add(name)
+
+            case QueryField(name, op, _) if op in _NULL_REJECTING:
+                found.add(name)
+
+            case QueryField(name, op, value) if (
+                op == "$in" and isinstance(value, (list, tuple)) and None not in value
+            ):
+                found.add(name)
+
+            case _:
+                pass
+
+    collect(QueryFilterExpressionParser.parse(where))
+
+    return frozenset(found)
 
 
 # ....................... #
@@ -563,7 +769,7 @@ def _is_column(argument: str, column: str) -> bool:
 async def _require_overlap_mechanisms(
     introspector: PostgresIntrospector,
     spec: PostgresDocumentSchemaSpec,
-) -> None:
+) -> frozenset[str]:
     """Refuse a declared non-overlap guarantee with no exclusion constraint behind it.
 
     The sibling of :func:`_require_guarantee_mechanisms` for the other member, and the same
@@ -593,12 +799,15 @@ async def _require_overlap_mechanisms(
     Deliberately no validity check, unlike the uniqueness pass: Postgres refuses ``NOT VALID``
     on an EXCLUDE constraint and has no concurrent build for one, so the half-built state that
     check guards against cannot arise here.
+
+    Returns the names of the constraints that keep the declared guarantees.
     """
 
     guarantees = [g for g in spec.guarantees if isinstance(g, NonOverlapping)]
+    matched: set[str] = set()
 
     if not guarantees:
-        return
+        return frozenset()
 
     relation = spec.write_relation or spec.read_relation
     schema, table = relation
@@ -650,6 +859,7 @@ async def _require_overlap_mechanisms(
                 deferral_mismatch = True
                 continue
 
+            matched.add(constraint.name)
             break
 
         else:
@@ -684,6 +894,8 @@ async def _require_overlap_mechanisms(
                     "period": list(guarantee.period),
                 },
             )
+
+    return frozenset(matched)
 
 
 # ....................... #
@@ -786,9 +998,11 @@ def _unique_ddl(
     """The DDL that keeps a uniqueness, or ``None`` when Postgres has no mechanism for it.
 
     A partial uniqueness is only an index and a deferred one is only a constraint, and
-    ``CREATE UNIQUE INDEX`` has no ``DEFERRABLE`` clause — so a partial uniqueness holding at
-    commit has nothing to print. Wiring refuses that declaration first; startup can still meet
-    it when it runs without the port being resolved.
+    ``CREATE UNIQUE INDEX`` has no ``DEFERRABLE`` clause — so a uniqueness filtered by ``where``
+    holding at commit has nothing to print. Wiring refuses that declaration first; startup can
+    still meet it when it runs without the port being resolved. ``skip_null`` is not partial
+    here: a plain unique constraint already treats a tuple holding a null as distinct, so it
+    prints the constraint, deferred when it holds at commit.
     """
 
     column_list = ", ".join(columns)
@@ -855,6 +1069,7 @@ def _guarantee_refusal(
     columns: tuple[str, ...],
     predicate_columns: frozenset[str],
     nulls_not_distinct: bool,
+    nulls_distinct: bool,
     nullable: Sequence[str],
     ddl: str | None,
 ) -> str:
@@ -871,10 +1086,9 @@ def _guarantee_refusal(
     if ddl is None:
         return (
             f"Document {spec_name!r} guarantees at most one row per ({column_list}) at commit, "
-            f"among the rows a filter selects (a `where`, or `skip_null`), and Postgres has no "
-            "mechanism for that: a deferrable uniqueness is a constraint, a partial one is an "
-            "index, and a unique constraint cannot be partial. Declare it to hold always, or "
-            "drop the filter."
+            "among the rows its `where` selects, and Postgres has no mechanism for that: a "
+            "deferrable uniqueness is a constraint, a partial one is an index, and a unique "
+            "constraint cannot be partial. Declare it to hold always, or drop the filter."
         )
 
     why = " among the rows its filter selects, and " if filtered else ", and "
@@ -889,6 +1103,9 @@ def _guarantee_refusal(
         "two rows share a tuple containing a null unless the index says otherwise, while the "
         "guarantee does not"
         if nulls_not_distinct
+        else f" that leaves nulls distinct — {', '.join(nullable)} is nullable and skip_null "
+        "exempts a tuple holding a null, which an index declared NULLS NOT DISTINCT refuses"
+        if nulls_distinct
         else ""
     )
 
@@ -905,6 +1122,92 @@ def _guarantee_refusal(
 # ....................... #
 
 
+async def _warn_undeclared_mechanisms(
+    introspector: PostgresIntrospector,
+    spec: PostgresDocumentSchemaSpec,
+    *,
+    write_relation: tuple[str, str],
+    write_column_types: dict[str, PostgresType],
+    conflict_target: Sequence[str],
+    declared: frozenset[str],
+) -> None:
+    """Warn about each unique index and EXCLUDE constraint on the write relation that no
+    guarantee declares.
+
+    The reverse of the two passes above, and a warning rather than a refusal: the index is not
+    wrong, but the in-memory store does not know about it, so Postgres refuses with ``conflict``
+    a write that a test or simulation run accepted. The primary key is left out, and so is any
+    index over all its columns, which refuses no write the key would not: every store keeps a
+    document's identity. Without a primary key, the conflict target stands in for it. A conflict
+    target over other columns is reported like any index: it refuses a duplicate the in-memory
+    store accepts.
+
+    *declared* names the mechanisms the passes above matched to a guarantee, so an index over
+    declared columns that keeps something else — partial behind an unfiltered declaration, or
+    the reverse — is still reported.
+    """
+
+    if not spec.warn_undeclared:
+        return
+
+    schema, table = write_relation
+    identity = frozenset(
+        await introspector.get_primary_key_columns(schema=schema, relation=table) or conflict_target
+    )
+
+    for index in await introspector.unique_indexes(schema=schema, relation=table):
+        if index.primary or (identity and identity <= index.columns) or index.name in declared:
+            continue
+
+        parts = [f"fields={tuple(sorted(index.columns))!r}"]
+
+        if not index.nulls_not_distinct and any(
+            column in write_column_types and not write_column_types[column].not_null
+            for column in index.columns
+        ):
+            parts.append("skip_null=True")
+
+        if index.initially_deferred:
+            parts.append('holds="commit"')
+
+        restriction = (
+            f" and a `where` selecting the rows of ({index.predicate})"
+            if index.predicate is not None
+            else ""
+        )
+
+        logger.warning(
+            "Postgres schema validation for document %r: unique index %s on %s.%s is declared "
+            "by no guarantee, so the in-memory store accepts writes it refuses. Declare it: "
+            "UniqueTogether(%s)%s.",
+            spec.name,
+            index.name,
+            schema,
+            table,
+            ", ".join(parts),
+            restriction,
+        )
+
+    for constraint in await introspector.exclusion_constraints(schema=schema, relation=table):
+        if constraint.name in declared:
+            continue
+
+        logger.warning(
+            "Postgres schema validation for document %r: EXCLUDE constraint %s on %s.%s is "
+            "declared by no guarantee, so the in-memory store accepts writes it refuses. "
+            "Declare it: NonOverlapping(key=%r, period=..., bounds=...) matching %s.",
+            spec.name,
+            constraint.name,
+            schema,
+            table,
+            tuple(sorted(constraint.columns)),
+            constraint.definition,
+        )
+
+
+# ....................... #
+
+
 async def validate_postgres_document_schemas(
     introspector: PostgresIntrospector,
     specs: Sequence[PostgresDocumentSchemaSpec],
@@ -912,8 +1215,9 @@ async def validate_postgres_document_schemas(
     """Assert each spec's relations expose the columns implied by the Pydantic models."""
 
     for spec in specs:
-        await _require_guarantee_mechanisms(introspector, spec)
-        await _require_overlap_mechanisms(introspector, spec)
+        declared = await _require_guarantee_mechanisms(
+            introspector, spec
+        ) | await _require_overlap_mechanisms(introspector, spec)
 
         read_need = frozenset(
             (stored_field_names_for(spec.read_model, include_computed=False) | spec.materialized)
@@ -1011,12 +1315,20 @@ async def validate_postgres_document_schemas(
             _warn_read_not_subset_of_write(spec=spec, write_column_types=write_types)
             _warn_unused_tenant_column(spec=spec, write_column_types=write_types)
 
-            await resolve_write_conflict_target(
+            conflict_target = await resolve_write_conflict_target(
                 introspector,
                 schema=spec.write_relation[0],
                 relation=spec.write_relation[1],
                 configured=spec.conflict_target,
                 document_label=spec.name,
+            )
+            await _warn_undeclared_mechanisms(
+                introspector,
+                spec,
+                write_relation=spec.write_relation,
+                write_column_types=write_types,
+                conflict_target=conflict_target,
+                declared=declared,
             )
 
         if spec.history_relation is not None:

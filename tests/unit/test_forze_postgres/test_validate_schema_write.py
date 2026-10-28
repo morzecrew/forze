@@ -2,14 +2,20 @@
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock
+from typing import Any
+from unittest.mock import AsyncMock, MagicMock, patch
+from uuid import UUID
 
 import pytest
 from pydantic import BaseModel, computed_field
 
 from forze.application.contracts.tenancy import TENANT_ID_FIELD
 from forze.base.exceptions import CoreException
-from forze_postgres.kernel.catalog.introspect import PostgresIntrospector, PostgresType
+from forze_postgres.kernel.catalog.introspect import (
+    PostgresIntrospector,
+    PostgresType,
+    UniqueIndexInfo,
+)
 from forze_postgres.kernel.catalog.validation.validate_schema import (
     PostgresDocumentSchemaSpec,
     validate_postgres_document_schemas,
@@ -239,3 +245,118 @@ async def test_validate_tenant_aware_write_requires_tenant_column() -> None:
                 ),
             ],
         )
+
+
+# ....................... #
+
+
+class _ScopedDomain(_Domain):
+    tenant_id: UUID | None = None
+
+
+def _spec_over(domain: type[BaseModel], **kwargs: Any) -> PostgresDocumentSchemaSpec:
+    return PostgresDocumentSchemaSpec(
+        name="doc",
+        read_model=_Read,
+        read_relation=("public", "t"),
+        write_domain_model=domain,
+        write_create_model=_Create,
+        write_relation=("public", "t"),
+        **kwargs,
+    )
+
+
+_NAME_KEY = UniqueIndexInfo(
+    columns=frozenset({"name"}), predicate=None, nulls_not_distinct=False, name="t_name_key"
+)
+
+
+async def _warnings(
+    spec: PostgresDocumentSchemaSpec,
+    *,
+    tenant_column: bool,
+    indexes: tuple[UniqueIndexInfo, ...] = (_NAME_KEY,),
+) -> list[str]:
+    intro = MagicMock(spec=PostgresIntrospector)
+    intro.get_primary_key_columns = AsyncMock(return_value=["id"])
+    columns = {
+        "id": _col("id"),
+        "name": _col("name"),
+        "rev": PostgresType(base="int4", is_array=False, not_null=True),
+    }
+
+    if tenant_column:
+        columns[TENANT_ID_FIELD] = PostgresType(base="uuid", is_array=False, not_null=False)
+
+    intro.get_column_types = AsyncMock(return_value=columns)
+    intro.unique_indexes = AsyncMock(return_value=indexes)
+    intro.exclusion_constraints = AsyncMock(return_value=())
+
+    with patch("forze_postgres.kernel.catalog.validation.validate_schema.logger") as log:
+        await validate_postgres_document_schemas(intro, [spec])
+
+    return [call.args[0] % call.args[1:] for call in log.warning.call_args_list]
+
+
+@pytest.mark.asyncio
+async def test_an_undeclared_index_is_reported_only_for_a_spec_the_app_owns() -> None:
+    reported = await _warnings(_spec_over(_Domain), tenant_column=False)
+
+    assert len(reported) == 1
+    assert "t_name_key" in reported[0]
+    assert await _warnings(_spec_over(_Domain, warn_undeclared=False), tenant_column=False) == []
+
+
+@pytest.mark.asyncio
+async def test_a_tenant_column_the_model_maps_is_not_an_unused_one() -> None:
+    # A session minted for one tenant stores the tenant as data on a tenant-unaware table.
+    mapped = _spec_over(_ScopedDomain, warn_undeclared=False)
+
+    assert await _warnings(mapped, tenant_column=True) == []
+
+    reported = await _warnings(_spec_over(_Domain, warn_undeclared=False), tenant_column=True)
+
+    assert len(reported) == 1
+    assert "tenant_aware=False" in reported[0]
+
+
+@pytest.mark.asyncio
+async def test_a_conflict_target_over_other_columns_is_reported() -> None:
+    # Upserts resolve on name, and a duplicate create is refused there: the mock knows neither.
+    reported = await _warnings(_spec_over(_Domain, conflict_target=("name",)), tenant_column=False)
+
+    assert len(reported) == 1
+    assert "t_name_key" in reported[0]
+
+
+@pytest.mark.asyncio
+async def test_an_index_over_the_primary_key_is_not_reported() -> None:
+    # Unique wherever the key is: it refuses no write the key would not.
+    over_key = UniqueIndexInfo(
+        columns=frozenset({"id", "name"}),
+        predicate=None,
+        nulls_not_distinct=False,
+        name="t_id_name_key",
+    )
+
+    assert await _warnings(_spec_over(_Domain), tenant_column=False, indexes=(over_key,)) == []
+
+
+@pytest.mark.asyncio
+async def test_the_suggestion_carries_skip_null_and_holds_commit() -> None:
+    # Over a nullable column, and checked at commit: the declaration has to say both.
+    nullable_deferred = UniqueIndexInfo(
+        columns=frozenset({TENANT_ID_FIELD}),
+        predicate=None,
+        nulls_not_distinct=False,
+        name="t_tenant_key",
+        initially_deferred=True,
+    )
+
+    reported = await _warnings(
+        _spec_over(_ScopedDomain), tenant_column=True, indexes=(nullable_deferred,)
+    )
+
+    assert len(reported) == 1
+    assert "skip_null=True" in reported[0]
+    assert 'holds="commit"' in reported[0]

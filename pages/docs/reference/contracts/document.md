@@ -119,7 +119,7 @@ Two sentences carry the whole doctrine:
 |--------|----------|----------|-------|-----------|
 | `UniqueTogether(fields=…)` | at most one row per field tuple | unique index | unique index | ✅ |
 | `UniqueTogether(fields=…, where=…)` | …among the rows the filter selects | partial unique index | `partialFilterExpression` | ✅ |
-| `UniqueTogether(fields=…, skip_null=True)` | …exempting tuples holding a null | partial unique index | `partialFilterExpression` with `$type` | ✅ |
+| `UniqueTogether(fields=…, skip_null=True)` | …exempting tuples holding a null | unique index (nulls distinct) | `partialFilterExpression` with `$type` | ✅ |
 | `NonOverlapping(key=…, period=…)` | no two rows for one key hold overlapping [periods](../../core-concepts/domain-layer.md#a-period-and-which-end-is-in-force) | `EXCLUDE USING gist` | — | ✅ |
 | `NonOverlapping(key=…, period=…, where=…)` | …among the rows the filter selects | `EXCLUDE … WHERE (…)` | — | ✅ |
 | `SerializedBy(key=…)` | two writes for one key never run at once | `pg_advisory_xact_lock` | — | ✅ |
@@ -162,10 +162,12 @@ UniqueTogether(fields=("order_id", "position"), holds="commit")
 On Postgres that is a constraint declared `DEFERRABLE INITIALLY DEFERRED`, and startup checks the
 deferral both ways: a deferred constraint behind a guarantee that holds always is refused — the
 in-memory store would refuse writes the database accepts — and so is an immediate one behind a
-guarantee that holds at commit. `DEFERRABLE INITIALLY IMMEDIATE` counts as immediate. A *partial*
-uniqueness (`where` or `skip_null`) cannot hold at commit on Postgres, because deferral belongs to
-constraints and a unique constraint cannot be partial, so wiring refuses it there; a filtered
-`NonOverlapping` can, since an `EXCLUDE` constraint takes both. Mongo checks every write and
+guarantee that holds at commit. `DEFERRABLE INITIALLY IMMEDIATE` counts as immediate. A
+uniqueness filtered by `where` cannot hold at commit on Postgres, because deferral belongs to
+constraints and a unique constraint cannot be partial, so wiring refuses it there. `skip_null` can:
+a plain unique constraint already treats a tuple holding a null as distinct, so
+`ADD UNIQUE (…) DEFERRABLE INITIALLY DEFERRED` keeps it. A filtered `NonOverlapping` can too,
+since an `EXCLUDE` constraint takes both. Mongo checks every write and
 refuses `"commit"`. The in-memory store checks a `"commit"` guarantee when the transaction
 commits — and at the write itself outside a transaction, where, as in Postgres autocommit, there
 is no later moment.
@@ -207,7 +209,15 @@ periods and takes every other overlapping pair.
    and anything that does not reduce that way is refused rather than guessed at. Postgres hands
    back a deparsed SQL predicate, so only the columns it restricts on are checked — an index on
    the right column and the wrong value passes there. Neither is a proof that the mechanism
-   matches; on Postgres it is a floor under a forgotten migration.
+   matches; on Postgres it is a floor under a forgotten migration. Postgres also warns about
+   each unique index and `EXCLUDE` constraint on the write table that no guarantee declares,
+   other than the primary key and an index over all its columns, and suggests the declaration.
+   A `conflict_target` over other columns is reported too, since it refuses duplicates. Without it
+   the in-memory store accepts writes the database refuses. An index counts as declared only
+   when it is the one that keeps a guarantee, so a partial index beside an unfiltered
+   declaration is still reported. A spec the framework owns, such as a `forze_identity` one,
+   is not reported at all, even for an index you added yourself, because the application
+   cannot declare anything on it.
 3. **Enforcement**, at write time, by the store. A violating write raises `conflict`, from every
    backend and from the in-memory store alike — including across two concurrent transactions,
    which the in-memory store rechecks at commit because a unique index is not snapshot-scoped.
@@ -217,7 +227,16 @@ periods and takes every other overlapping pair.
     With `skip_null` off, two rows sharing a tuple that holds a null conflict. An ordinary
     Postgres unique index permits them, so a guarantee over a nullable column asks for
     `UNIQUE NULLS NOT DISTINCT` and startup refuses the plain index by name. Over `NOT NULL`
-    columns the two readings cannot differ and an ordinary index is exactly the mechanism.
+    columns the two readings cannot differ and an ordinary index is exactly the mechanism. The
+    same holds for a column the `where` rules out nulls in: a top-level `$null: false`, an
+    equality or ordered comparison, or an `$in` whose list holds no null.
+
+    With `skip_null` on, the ordinary index *is* the mechanism, and no predicate is needed. A
+    predicate dropping the rows that hold a null also counts, if it is only `IS NOT NULL`
+    conditions on fields of the tuple, joined by `AND`, covering each nullable field. Any other
+    predicate, such as `code = 'x'` or `code IS NULL`, is refused. `NULLS NOT DISTINCT` is
+    refused there too, unless such a predicate drops the null rows first, because it rejects
+    the rows the exemption lets through.
 
 !!! warning "A guarantee with no `where` covers soft-deleted rows too"
 
