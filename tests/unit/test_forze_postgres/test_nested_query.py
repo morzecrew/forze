@@ -6,11 +6,11 @@ from collections.abc import Mapping
 from datetime import date, datetime
 from decimal import Decimal
 from enum import Enum
-from typing import Any, Union
+from typing import Annotated, Any, Union
 from uuid import UUID
 
 import pytest
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, PlainSerializer, create_model
 
 from forze.base.exceptions import CoreException
 from forze_postgres.kernel.catalog.introspect import PostgresType
@@ -569,3 +569,70 @@ def test_walk_str_keyed_mapping_with_filter_path_ok() -> None:
         )
         is int
     )
+
+
+type _InnerAlias = _Inner
+
+
+class _AnnotatedRow(BaseModel):
+    meta: Annotated[_Inner, "m"] | None = None
+    by_key: dict[str, Annotated[_Inner, "m"]] = {}
+    items: list[Annotated[_Inner, "m"]] = []
+    aliased: _InnerAlias | None = None
+
+
+@pytest.mark.parametrize(
+    "path",
+    [["meta", "score"], ["by_key", "k", "score"], ["items", "score"], ["aliased", "score"]],
+)
+def test_walk_reads_through_annotated_and_aliases(path: list[str]) -> None:
+    # Pydantic keeps the metadata inside a union or a container; the walk stopped there,
+    # and a filter on the path failed as "not found" (an internal error).
+    assert walk_pydantic_path(_AnnotatedRow, path) is int
+
+
+def test_annotated_decimal_leaf_maps_to_numeric() -> None:
+    pg = python_type_to_postgres_scalar(Annotated[Decimal, Field(ge=0)] | None)
+
+    assert pg is not None and pg.base == "numeric"
+
+
+def test_annotated_member_of_a_numeric_union_maps_to_numeric() -> None:
+    # Each member is read through its metadata, or the union falls back to text.
+    pg = python_type_to_postgres_scalar(Annotated[int, Field(ge=0)] | float)
+
+    assert pg is not None and pg.base == "numeric"
+
+
+type _OptDecimal = Decimal | None
+type _Shown = Annotated[int, PlainSerializer(lambda v: f"#{v}", return_type=str)]
+
+
+@pytest.mark.parametrize(
+    "ann", [_OptDecimal | int, Annotated[Decimal | None, Field(ge=0)] | int]
+)
+def test_a_nested_optional_member_of_a_numeric_union_maps_to_numeric(ann: Any) -> None:
+    # The member's own ``None`` kept it a union, which is not a plain number: text, 10 < 9.
+    pg = python_type_to_postgres_scalar(ann)
+
+    assert pg is not None and pg.base == "numeric"
+
+
+@pytest.mark.parametrize("ann", [Decimal | int | None, _OptDecimal | int])
+def test_a_none_does_not_make_a_numeric_union_ambiguous(ann: Any) -> None:
+    # ``None`` was counted as a third member, so the leaf was refused as ambiguous.
+    row = create_model("_Row", rank=(ann, 0))
+    leaf = resolve_leaf_python_type(
+        model_type=row, path="rank", segments=["rank"], nested_field_hints=None
+    )
+    pg = python_type_to_postgres_scalar(leaf)
+
+    assert pg is not None and pg.base == "numeric"
+
+
+@pytest.mark.parametrize(
+    "ann", [_Shown | None, Annotated[int, PlainSerializer(lambda v: f"#{v}")] | None]
+)
+def test_a_serialized_leaf_is_not_cast_to_its_python_type(ann: Any) -> None:
+    # The serializer stores prefixed text, which a numeric cast fails on.
+    assert python_type_to_postgres_scalar(ann) is None

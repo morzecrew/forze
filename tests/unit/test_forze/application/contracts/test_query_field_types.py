@@ -10,16 +10,25 @@ rejection).
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import UTC, datetime
+from decimal import Decimal
+from typing import Annotated, Any
 from uuid import UUID
 
 import pytest
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, PlainSerializer, StringConstraints
 
 from forze.application.contracts.querying import (
+    ELEM_SCALAR_FIELD,
     OPERATOR_TYPE_MISMATCH_CODE,
+    QueryElem,
+    QueryField,
     QueryFilterExpressionParser,
     TreePath,
+    classify_field_type,
+    coerce_query_ord_operands,
+    field_value_operators,
+    is_quantifiable_field,
     validate_query_field_types,
 )
 from forze.base.exceptions import CoreException, ExceptionKind
@@ -245,3 +254,114 @@ class TestScalarArrayOfArrays:
             _check({"$values": {"matrix": {"$any": {"$any": {"$gt": 5}}}}})
 
         assert ei.value.code == OPERATOR_TYPE_MISMATCH_CODE
+
+
+# ....................... #
+
+Code = Annotated[str, StringConstraints(max_length=32)]
+Qty = Annotated[Decimal, Field(ge=0)]
+When = Annotated[datetime, Field()]
+type CodeAlias = Annotated[str, StringConstraints(max_length=32)]
+type Batch[T] = list[T]
+type Maybe[T] = T | None
+type Same[T] = T
+type Swap[K, V] = dict[V, K]
+type Shown = Annotated[int, PlainSerializer(lambda v: f"#{v}", return_type=str)]
+
+
+class _Constrained(BaseModel):
+    code: Code | None = None
+    qty: Qty | None = None
+    when: When | None = None
+    codes: list[Code] = []
+    qtys: list[Qty] = []
+    aliased: CodeAlias | None = None
+
+
+class TestAnnotatedFields:
+    """An ``Annotated`` field classifies as the type it wraps.
+
+    Pydantic drops the metadata only from a bare top-level ``Annotated``: inside a union or
+    a container it stays, so ``Code | None`` must not fall through to "unknown" and skip
+    every check that a plain ``str | None`` gets.
+    """
+
+    @pytest.mark.parametrize(
+        ("ann", "expected"),
+        [
+            (Code, "string"),
+            (Code | None, "string"),
+            (Annotated[str | None, Field()], "string"),
+            (Annotated[Code | None, Field()] | None, "string"),
+            (Qty | None, "number"),
+            (When | None, "temporal"),
+            (list[Code], "collection"),
+            (CodeAlias | None, "string"),
+            # A generic alias applied to arguments reads as its value with them substituted.
+            (Batch[int], "collection"),
+            (Maybe[Decimal], "number"),
+            (Same[datetime] | None, "temporal"),
+            (Swap[int, str], "mapping"),
+            # A serializer may store something else entirely, so its type is not guessed.
+            (Shown | None, "unknown"),
+            (Annotated[int, PlainSerializer(str)] | None, "unknown"),
+            # A genuine union stays unresolved, metadata or not.
+            (Annotated[int | str, Field()] | None, "unknown"),
+        ],
+    )
+    def test_classifies_the_wrapped_type(self, ann: Any, expected: str) -> None:
+        assert classify_field_type(ann) == expected
+
+    def test_advertises_the_wrapped_types_operators(self) -> None:
+        assert field_value_operators(Code | None) == field_value_operators(str)
+        assert field_value_operators(Qty | None) == field_value_operators(Decimal)
+        assert "$superset" not in field_value_operators(Code | None)
+        assert is_quantifiable_field(list[Code]) is True
+        assert is_quantifiable_field(Code | None) is False
+
+    @pytest.mark.parametrize(
+        "expr",
+        [
+            {"$values": {"code": {"$gt": "a"}}},
+            {"$values": {"aliased": {"$gt": "a"}}},
+            {"$values": {"qty": {"$like": "%1%"}}},
+            {"$values": {"codes": {"$any": {"$gt": "a"}}}},
+            {"$values": {"codes": {"$like": "a%"}}},
+        ],
+    )
+    def test_refuses_an_operator_the_wrapped_type_does_not_take(self, expr: dict) -> None:
+        with pytest.raises(CoreException) as ei:
+            _check(expr, model=_Constrained)
+
+        assert ei.value.code == OPERATOR_TYPE_MISMATCH_CODE
+
+    @pytest.mark.parametrize(
+        "expr",
+        [
+            {"$values": {"code": {"$like": "a%"}}},
+            {"$values": {"qty": {"$gt": 5}}},
+            {"$values": {"codes": {"$superset": ["a"]}}},
+            {"$values": {"codes": {"$any": {"$like": "a%"}}}},
+        ],
+    )
+    def test_accepts_what_the_wrapped_type_takes(self, expr: dict) -> None:
+        _check(expr, model=_Constrained)
+
+    def test_casts_a_string_bound_to_the_wrapped_type(self) -> None:
+        qty = coerce_query_ord_operands(QueryField(name="qty", op="$gt", value="5"), _Constrained)
+        when = coerce_query_ord_operands(
+            QueryField(name="when", op="$gt", value="2021-06-01T00:00:00"), _Constrained
+        )
+        elem = coerce_query_ord_operands(
+            QueryElem(
+                path="qtys",
+                quantifier="$any",
+                inner=QueryField(name=ELEM_SCALAR_FIELD, op="$gt", value="5"),
+            ),
+            _Constrained,
+        )
+
+        assert isinstance(qty, QueryField) and qty.value == Decimal("5")
+        assert isinstance(when, QueryField) and when.value == datetime(2021, 6, 1, tzinfo=UTC)
+        assert isinstance(elem, QueryElem) and isinstance(elem.inner, QueryField)
+        assert elem.inner.value == Decimal("5")

@@ -11,6 +11,7 @@ from uuid import UUID
 from pydantic import BaseModel
 from pydantic.fields import FieldInfo
 
+from forze.application.contracts.querying import unwrap_annotated
 from forze.base.exceptions import exc
 from forze_postgres.kernel.catalog.introspect.types import PostgresType
 from forze_postgres.kernel.catalog.introspect.utils import (
@@ -49,6 +50,7 @@ def _unwrap_optional(annotation: Any) -> tuple[Any, bool]:
     the column was never validated at all.
     """
 
+    annotation = unwrap_annotated(annotation)
     origin = get_origin(annotation)
 
     if origin is Union or origin is types.UnionType:
@@ -89,6 +91,8 @@ def expected_pg_bases_for_field(field: FieldInfo) -> frozenset[str] | None:
 
 def expected_pg_bases_for_annotation(annotation: Any) -> frozenset[str] | None:
     """Return acceptable Postgres bases for a Python type annotation."""
+
+    annotation = unwrap_annotated(annotation)
 
     if annotation is Any:
         return None

@@ -8,16 +8,17 @@ secret, or has a field spelled like a ``call`` option takes no flags at all.
 from __future__ import annotations
 
 import json
-from typing import Any
+from typing import Annotated, Any
 from uuid import UUID, uuid4
 
 import pytest
 import typer
+from pydantic import BaseModel, Field
 from typer.testing import CliRunner, Result
 
 from forze_cli.app import app
 from forze_cli.ops import build_ops_cli
-from forze_cli.ops.flags import CALL_OPTIONS
+from forze_cli.ops.flags import CALL_OPTIONS, flag_table
 from tests.support import ops_cli_app as sample
 
 # ----------------------- #
@@ -270,3 +271,18 @@ def test_flags_never_build_a_runtime_before_they_parse() -> None:
 
     assert _error(result, 2)["code"] == "cli_malformed_flags"
     UUID(_doc(result)["execution_id"])
+
+
+type _Code = Annotated[str, Field(max_length=8)]
+
+
+class TestFlagTableReadsThroughAliases:
+    def test_a_type_alias_of_a_scalar_takes_a_flag(self) -> None:
+        class _In(BaseModel):
+            code: _Code
+            note: _Code | None = None
+
+        table, reason = flag_table(_In)
+
+        assert reason is None
+        assert set(table) == {"--code", "--note"}

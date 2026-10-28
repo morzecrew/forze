@@ -2,13 +2,17 @@
 
 from __future__ import annotations
 
+from decimal import Decimal
+from typing import Annotated
 from uuid import uuid4
 
 import pytest
+from pydantic import BaseModel, Field
 
 from forze.application.contracts.document import (
     DocumentSpec,
 )
+from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
 from forze_postgres.kernel.client.client import PostgresClient
 from tests.integration.test_forze_postgres._document_fixtures import document_context
 from tests.support.scenarios.document_nested_filters import (
@@ -299,3 +303,90 @@ async def test_multi_field_sort_nested_then_scalar(pg_client: PostgresClient) ->
     total = __p.count
     assert total == 3
     assert [r.title for r in rows] == ["a", "b", "z"]
+
+
+type _OptPrice = Decimal | None
+
+
+class _PricedMeta(BaseModel):
+    price: Annotated[Decimal, Field(ge=0)]
+    weight: Annotated[int, Field(ge=0)] | float = 0
+    rank: _OptPrice | int = 0
+
+
+_AnnotatedMeta = Annotated[_PricedMeta, "metadata pydantic keeps inside the union"]
+
+
+@pytest.mark.asyncio
+async def test_filter_and_sort_through_an_annotated_optional_model(
+    pg_client: PostgresClient,
+) -> None:
+    """``meta: Annotated[Meta, ...] | None`` is walked like ``Meta | None``: the filter used
+    to fail as an internal error, and the Decimal leaf still compares numerically."""
+
+    class _Doc(Document):
+        title: str
+        meta: _AnnotatedMeta | None = None
+
+    class _Create(CreateDocumentCmd):
+        title: str
+        meta: _AnnotatedMeta | None = None
+
+    class _Update(BaseDTO):
+        title: str | None = None
+        meta: _AnnotatedMeta | None = None
+
+    class _Read(ReadDocument):
+        title: str
+        meta: _AnnotatedMeta | None = None
+
+    t = f"nest_ann_{uuid4().hex[:12]}"
+    await pg_client.execute(
+        f"""
+        CREATE TABLE {t} (
+            id uuid PRIMARY KEY,
+            rev integer NOT NULL,
+            created_at timestamptz NOT NULL,
+            last_update_at timestamptz NOT NULL,
+            title text NOT NULL,
+            meta jsonb
+        );
+        """
+    )
+    spec = DocumentSpec(
+        name="nested_ann_ns",
+        read=_Read,
+        write={"domain": _Doc, "create_cmd": _Create, "update_cmd": _Update},
+    )
+    ctx = document_context(pg_client, t)
+    cmd = ctx.document.command(spec)
+    query = ctx.document.query(spec)
+
+    rows = (("cheap", "9.5", 9.5), ("mid", "10.5", 10.5), ("dear", "100.25", 100))
+
+    for title, price, weight in rows:
+        meta = _PricedMeta(price=Decimal(price), weight=weight, rank=int(weight))
+        await cmd.create(_Create(title=title, meta=meta))
+
+    page = await query.find_page(
+        {"$values": {"meta.price": {"$lt": Decimal("10.5")}}},
+        pagination={"limit": 10, "offset": 0},
+    )
+    assert [r.title for r in page.hits] == ["cheap"]
+
+    page = await query.find_page(
+        None, pagination={"limit": 10, "offset": 0}, sorts={"meta.price": "asc"}
+    )
+    assert [r.title for r in page.hits] == ["cheap", "mid", "dear"]
+
+    # A numeric union with an annotated member still orders as numbers, not as text.
+    page = await query.find_page(
+        None, pagination={"limit": 10, "offset": 0}, sorts={"meta.weight": "asc"}
+    )
+    assert [r.title for r in page.hits] == ["cheap", "mid", "dear"]
+
+    # So does one whose aliased member holds its own ``None``: 9, 10, 100, not "10" < "9".
+    page = await query.find_page(
+        None, pagination={"limit": 10, "offset": 0}, sorts={"meta.rank": "asc"}
+    )
+    assert [r.title for r in page.hits] == ["cheap", "mid", "dear"]

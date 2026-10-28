@@ -302,9 +302,8 @@ async def check_the_tool_advertises_the_policy_and_nothing_else(
     description = h.tool_def(DocumentKernelOp.LIST).description
 
     assert description is not None, f"{h.backend}: the list tool has no description"
-    assert "title (string:" in description, description
-    assert "category (string:" in description, description
-    assert "body (" not in description, (
+    assert "string: category, title." in description, description
+    assert "body" not in description, (
         f"{h.backend}: the description advertises `body`, which the policy excludes — the "
         "projection is reading the read model rather than the allow-set"
     )

@@ -71,6 +71,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **`local_identity_deps` wires no tenant resolver for a config that maps no tenant** (**behaviour change**). There, `forze ops call --tenant` gets `400 tenant_request_unverifiable`, not `401 tenant_mismatch`. A tenant on an API key counts and resolves, also in a config built directly.
 
+- **MCP and agent tool descriptions group filterable fields by type** (**behaviour change**). `describe_query_discovery` states the operators every field shares once, then each further operator set once, with its fields under their own types. `QueryDiscovery` and `x-forze-query` are unchanged.
+
 - **The dynamic-read write refusal no longer names a READ ONLY transaction.** The message is engine-neutral and the details carry the engine's `statement_type` where it has one. A `DuckDbClient` statement timeout now carries the code `duckdb_query_timeout`.
 
 ### Fixed
@@ -124,6 +126,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Postgres startup accepts a plain unique index for a `skip_null` guarantee.** Postgres already treats a tuple holding a null as distinct, so no predicate is needed, and a deferred constraint keeps `skip_null` at commit. A `where` ruling out nulls in a column no longer demands `NULLS NOT DISTINCT`.
 
 - **Postgres startup no longer warns about a `tenant_id` column the document model maps itself.** Such a table stores the tenant as data, as identity's sessions and tenant memberships do, so the column is not an unused isolation column.
+
+- **A filter on an `Annotated` field is checked against the type it wraps** (**behaviour change**). `Annotated[str, ...] | None` and its list elements resolved to no type, so discovery advertised every operator and `$gt` passed. They now get their type's operators; a string bound on an annotated number or date is cast.
+
+- **Filters and sorts see through `Annotated` fields** (**behaviour change**). `Annotated[str, ...] | None` and list elements took any operator unchecked; now they get their type's and a string bound is cast. A sort into an annotated submodel resolves; Postgres compares annotated `Decimal` elements to an int numerically.
+
+- **Backends and spec checks see through `Annotated` and `type` aliases** (**behaviour change**). A Postgres filter via `Annotated[M, ...] | None` returned 500; BigQuery parameters and `forze ops` flags misread them. A schema, index, null or graph-key mismatch fails at startup; a mock seed nulls an aliased optional link.
 
 ### Security
 

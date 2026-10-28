@@ -89,8 +89,8 @@ class TestThePaletteIsACapabilityGrant:
         )
 
         assert listed.description is not None
-        assert "category (string:" in listed.description
-        assert "body (" not in listed.description
+        assert "string: category, title." in listed.description
+        assert "body" not in listed.description
 
 
 class TestTheModelHopIsGoverned:

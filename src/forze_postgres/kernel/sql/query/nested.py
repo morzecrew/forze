@@ -13,6 +13,7 @@ from uuid import UUID
 from psycopg import sql
 from pydantic import BaseModel
 
+from forze.application.contracts.querying import unwrap_annotated
 from forze.base.exceptions import exc
 from forze.domain.constants import ID_FIELD
 from forze_postgres.kernel.catalog.introspect import PostgresColumnTypes, PostgresType
@@ -142,13 +143,14 @@ def _walk_through_ann(ann: Any, segments: list[str], *, filter_path: str | None)
 
 
 def _unwrap_optional(annotation: Any) -> Any:
+    annotation = unwrap_annotated(annotation)
     origin = get_origin(annotation)
     args = get_args(annotation)
 
     if origin is Union or origin is UnionType:
         non_none = [a for a in args if a is not type(None)]
         if len(non_none) == 1:
-            return non_none[0]
+            return _unwrap_optional(non_none[0])
     return annotation
 
 
@@ -183,7 +185,8 @@ def _is_any_like(annotation: Any) -> bool:
     origin = get_origin(annotation)
 
     if origin is Union or origin is UnionType:
-        return len(get_args(annotation)) > 2
+        # ``None`` adds no ambiguity: ``Decimal | int | None`` orders as ``Decimal | int``.
+        return len([a for a in get_args(annotation) if a is not type(None)]) > 2
 
     return False
 
@@ -267,6 +270,8 @@ def _is_plain_numeric_type(t: Any) -> bool:
 
 def python_type_to_postgres_scalar(py_t: Any) -> PostgresType | None:
     """Map a Python type to a :class:`PostgresType` for JSON text extraction casts."""
+
+    py_t = unwrap_annotated(py_t)
 
     if py_t is Any:
         return None

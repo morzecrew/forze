@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 from decimal import Decimal
+from typing import Annotated
 
 import pytest
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from forze.base.exceptions import CoreException, ExceptionKind
 from forze_bigquery.kernel.client.query import (
@@ -63,6 +64,31 @@ def test_non_empty_array_param_emits_values() -> None:
     assert qps["ids"]["parameterValue"] == {
         "arrayValues": [{"value": "1"}, {"value": "2"}],
     }
+
+
+type _OptAmount = Decimal | None
+type _Maybe[T] = T | None
+
+
+class _AnnotatedParams(BaseModel):
+    amount: Annotated[Decimal, Field(ge=0)] | None = None
+    codes: list[Annotated[str, Field(max_length=8)]] = []
+    aliased: _OptAmount = None
+    generic: _Maybe[Decimal] = None
+    either: int | str | None = None
+
+
+def test_annotated_params_typed_from_the_wrapped_type() -> None:
+    # Pydantic keeps the metadata inside a union or a list: a None still carries NUMERIC,
+    # and an empty list its element type, rather than STRING and a refusal.
+    qps = {q["name"]: q for q in params_to_query_parameters(_AnnotatedParams())}
+
+    assert qps["amount"]["parameterType"] == {"type": "NUMERIC"}
+    assert qps["codes"]["parameterType"] == {"type": "ARRAY", "arrayType": {"type": "STRING"}}
+    assert qps["aliased"]["parameterType"] == {"type": "NUMERIC"}
+    assert qps["generic"]["parameterType"] == {"type": "NUMERIC"}
+    # A genuine union has no one type to narrow to: a None falls back to STRING.
+    assert qps["either"]["parameterType"] == {"type": "STRING"}
 
 
 class _BytesParams(BaseModel):

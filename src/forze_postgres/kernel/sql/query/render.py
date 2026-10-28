@@ -42,6 +42,7 @@ from forze.application.contracts.querying import (
     QueryValueCaster,
     elem_inner_is_scalar,
     parse_sort_value,
+    unwrap_annotated,
     validate_aggregate_capabilities,
     validate_query_capabilities,
 )
@@ -137,17 +138,25 @@ def _compares_numerically(value: Any, *, decimal_elem: bool) -> bool:
 # ....................... #
 
 
-def _scalar_ann_may_hold_decimal(ann: Any) -> bool:
-    """Whether the scalar reached by unwrapping lists/unions in *ann* can be a ``Decimal``."""
+def _scalar_ann_may_hold_decimal(ann: Any, seen: set[int] | None = None) -> bool:
+    """Whether the scalar reached by unwrapping lists/unions in *ann* can be a ``Decimal``.
 
+    ``Annotated`` metadata and ``type`` aliases are unwrapped too: pydantic keeps them
+    inside a union or a container, as in ``list[Annotated[Decimal, Field(ge=0)]]``. *seen*
+    carries the aliases expanded so far, so a recursive one (``type Json = str |
+    list[Json]``) ends the walk.
+    """
+
+    seen = set() if seen is None else seen
+    ann = unwrap_annotated(ann, seen)
     origin = get_origin(ann)
 
     if origin is list:
         args = get_args(ann)
-        return bool(args) and _scalar_ann_may_hold_decimal(args[0])
+        return bool(args) and _scalar_ann_may_hold_decimal(args[0], seen)
 
     if origin is Union or origin is UnionType:
-        return any(_scalar_ann_may_hold_decimal(a) for a in get_args(ann))
+        return any(_scalar_ann_may_hold_decimal(a, seen) for a in get_args(ann))
 
     return isinstance(ann, type) and issubclass(ann, Decimal)
 

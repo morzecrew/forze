@@ -26,11 +26,11 @@ from datetime import date, datetime, time
 from decimal import Decimal
 from enum import Enum
 from types import UnionType
-from typing import Any, Final, Union, get_args, get_origin
+from typing import Annotated, Any, Final, TypeAliasType, TypeVar, Union, get_args, get_origin
 from uuid import UUID
 
 import attrs
-from pydantic import BaseModel
+from pydantic import BaseModel, PlainSerializer, WrapSerializer
 
 from forze.base.exceptions import exc
 
@@ -109,6 +109,9 @@ _ALLOWED: Final[dict[str, frozenset[str]]] = {
     _HIERARCHY: _TEXT_OPS | _MEMB_OPS | _HIERARCHY_OPS,
 }
 
+_SERIALIZERS: Final = (PlainSerializer, WrapSerializer)
+"""``Annotated`` metadata that may store a value as something other than its type."""
+
 _CLASS_LABEL: Final[dict[str, str]] = {
     _STRING: "a string",
     _NUMBER: "a number",
@@ -125,20 +128,84 @@ _CLASS_LABEL: Final[dict[str, str]] = {
 # ....................... #
 
 
+def _alias_value(ann: Any, alias: TypeAliasType) -> Any:
+    """The value *ann* stands for: *alias*'s, with ``Alias[int]``'s arguments substituted."""
+
+    value = alias.__value__
+
+    if ann is alias:
+        return value
+
+    bound = dict(zip(alias.__type_params__, get_args(ann), strict=False))
+
+    if isinstance(value, TypeVar):
+        return bound.get(value, value)
+
+    # By the value's own parameters, which need not follow the alias's order.
+    params = getattr(value, "__parameters__", ())
+
+    return value[tuple(bound.get(p, p) for p in params)] if params else value
+
+
+def unwrap_annotated(ann: Any, seen: set[int] | None = None) -> Any:
+    """*ann* without the ``Annotated`` metadata or ``type`` aliases wrapped around it.
+
+    Pydantic strips the metadata only from a bare top-level ``Annotated``: inside a union or
+    a container it stays, as in ``Annotated[Meta, ...] | None``. A generic alias applied to
+    arguments (``Alias[int]``) reads as its value with them substituted, and every arm of a
+    union is unwrapped, so ``NullableInt | str`` flattens to ``int | None | str``.
+
+    An ``Annotated`` carrying a serializer stays as it is: what it stores need not be its
+    type, so a caller reading the stored type meets an opaque annotation and skips it.
+
+    :param ann: The annotation to unwrap.
+    :param seen: Ids of the aliases a walk expanded already, for a caller that descends into
+        the result (a list's element) and unwraps again. An alias met twice reads as ``Any``,
+        so a recursive one (``type Json = str | list[Json]``) ends the walk.
+    :returns: The unwrapped annotation.
+    """
+
+    seen = set() if seen is None else seen
+    alias = ann if isinstance(ann, TypeAliasType) else get_origin(ann)
+
+    if isinstance(alias, TypeAliasType):
+        if id(alias) in seen:
+            return Any
+
+        seen.add(id(alias))
+
+        return unwrap_annotated(_alias_value(ann, alias), seen)
+
+    origin = get_origin(ann)
+
+    if origin is Annotated and not any(isinstance(m, _SERIALIZERS) for m in ann.__metadata__):
+        return unwrap_annotated(get_args(ann)[0], seen)
+
+    if origin is Union or origin is UnionType:
+        # Each arm on its own copy: a sibling naming the same alias is not a recursion.
+        # ``Union[...]``, not ``|``: it also takes a forward reference, and flattens.
+        return Union[tuple(unwrap_annotated(arg, set(seen)) for arg in get_args(ann))]  # noqa: UP007
+
+    return ann
+
+
 def _strip_optional(ann: Any) -> Any:
     """Return *ann* with ``None`` removed from a union, or ``Any`` if still ambiguous.
 
     ``Optional[int]`` → ``int``; ``int | str`` → ``Any`` (a genuine union we won't
-    second-guess); a plain annotation passes through.
+    second-guess); a plain annotation passes through. ``Annotated`` metadata and ``type``
+    aliases are unwrapped at every level, so ``Annotated[str, ...] | None`` resolves to
+    ``str`` — pydantic strips the metadata only from a bare top-level ``Annotated``.
     """
 
+    ann = unwrap_annotated(ann)
     origin = get_origin(ann)
 
     if origin is Union or origin is UnionType:
         members = [a for a in get_args(ann) if a is not type(None)]
 
         if len(members) == 1:
-            return members[0]
+            return _strip_optional(members[0])
 
         return Any
 

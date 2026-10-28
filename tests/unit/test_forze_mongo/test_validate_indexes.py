@@ -3,12 +3,13 @@
 from datetime import UTC, date, datetime
 from decimal import Decimal
 from enum import IntEnum, StrEnum
+from typing import Annotated
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import UUID
 
 import pytest
 from bson import Decimal128
-from pydantic import BaseModel
+from pydantic import BaseModel, PlainSerializer
 
 from forze.application.contracts.guarantees import UniqueTogether
 from forze.base.exceptions import CoreException
@@ -571,6 +572,10 @@ class TestEveryValueShapeSurvivesTheRoundTrip:
 # ....................... #
 
 
+type _StrAlias = str
+type _Shown = Annotated[int, PlainSerializer(lambda v: f"#{v}", return_type=str)]
+
+
 class _Colour(StrEnum):
     RED = "red"
 
@@ -600,6 +605,8 @@ class TestNamingAFieldsStoredType:
             (date, ("date",)),
             (bytes, ("binData",)),
             (UUID | None, ("string",)),  # the optional wrapper is stripped
+            (Annotated[str, "m"] | None, ("string",)),  # metadata kept inside a union
+            (_StrAlias | None, ("string",)),  # a type alias hides its value
             (str | int, ("string", "int", "long")),
             (list[str], ("array",)),
             (_Colour, ("string",)),
@@ -620,6 +627,8 @@ class TestNamingAFieldsStoredType:
             object,  # nothing this can name
             dict[str, int],  # a stored document, whose fields are not the guarantee's
             UUID | object,  # one unresolvable arm poisons the union
+            _Shown | None,  # a serializer stores something other than its type
+            Annotated[int, PlainSerializer(str)] | None,
         ],
     )
     def test_it_refuses_what_it_cannot_name(self, annotation: object) -> None:

@@ -10,6 +10,7 @@ from uuid import UUID
 
 from pydantic import BaseModel
 
+from forze.application.contracts.querying import unwrap_annotated
 from forze.application.integrations.analytics.sql import (
     build_count_sql as build_count_sql,  # thin re-export of the shared builder
 )
@@ -132,13 +133,19 @@ def params_to_query_parameters(params: BaseModel | JsonDict) -> list[JsonDict]:
 
 
 def _unwrap_optional(annotation: Any) -> Any:
-    """Strip a single ``Optional[...]`` / ``X | None`` wrapper, else return as-is."""
+    """Strip ``Optional[...]`` / ``X | None``, ``Annotated`` metadata and ``type`` aliases.
 
+    Pydantic keeps ``Annotated`` metadata inside a union or a container, so
+    ``Annotated[Decimal, ...] | None`` must still type a ``None`` as ``NUMERIC``.
+    """
+
+    annotation = unwrap_annotated(annotation)
     args = get_args(annotation)
+
     if args and type(None) in args:
         non_none = [a for a in args if a is not type(None)]
         if len(non_none) == 1:
-            return non_none[0]
+            return _unwrap_optional(non_none[0])
 
     return annotation
 

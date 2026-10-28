@@ -19,6 +19,7 @@ from forze.application.contracts.guarantees import StorageGuarantees, UniqueToge
 from forze.application.contracts.querying import (
     QueryFilterExpression,
     collect_filter_field_roots,
+    unwrap_annotated,
 )
 from forze.application.contracts.querying.internal.nodes import QueryAnd, QueryField
 from forze.application.contracts.querying.internal.parse import (
@@ -263,6 +264,9 @@ def _bson_types(annotation: Any) -> tuple[str, ...] | None:
     if annotation is None:
         return None
 
+    # Pydantic keeps ``Annotated`` metadata inside a union; an alias hides its value. One
+    # carrying a serializer stays opaque, and refused below: it may store another type.
+    annotation = unwrap_annotated(annotation)
     origin = get_origin(annotation)
 
     if origin is UnionType or origin is Union:

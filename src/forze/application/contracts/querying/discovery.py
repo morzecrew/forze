@@ -128,7 +128,12 @@ def describe_query_discovery(discovery: QueryDiscovery) -> str:
 
     Spells out which operator each field accepts (so a caller does not guess ``$like`` on
     a number) and which array fields take element quantifiers — the type-derived upper
-    bound, independent of the serving backend.
+    bound, independent of the serving backend. The operators every field shares are stated
+    once, then fields are grouped by the rest of their operator set, so each list appears
+    once rather than once per field:
+    ``$eq, $in, $neq, $nin, $null on every field; string (also $ilike, $like, $regex): a, b``.
+    Within a group each field stays under its own type, the later types pointing back to the
+    first: ``number (also $gt, …): a; temporal (as number): b``.
 
     Written for a reader rather than a parser: the driving surfaces that project
     :class:`QueryDiscovery` as structured data (the OpenAPI extension) use its fields
@@ -139,18 +144,33 @@ def describe_query_discovery(discovery: QueryDiscovery) -> str:
 
     parts: list[str] = []
 
-    field_bits: list[str] = []
+    if discovery.filterable:
+        common = frozenset.intersection(*(frozenset(f.operators) for f in discovery.filterable))
 
-    for field in discovery.filterable:
-        ops = ", ".join(field.operators)
+        # Fields arrive sorted by name, so groups and their types keep a stable order.
+        groups: dict[tuple[tuple[str, ...], bool], dict[str, list[str]]] = {}
 
-        if field.quantifiable:
-            ops += f"; element quantifiers {', '.join(QUANTIFIER_OPS)}"
+        for field in discovery.filterable:
+            extra = tuple(op for op in field.operators if op not in common)
+            by_type = groups.setdefault((extra, field.quantifiable), {})
+            by_type.setdefault(field.type, []).append(field.field)
 
-        field_bits.append(f"{field.field} ({field.type}: {ops})")
+        clauses = [f"{', '.join(sorted(common))} on every field"] if common else []
 
-    if field_bits:
-        parts.append("Filterable fields — " + "; ".join(field_bits) + ".")
+        for (extra, quantifiable), by_type in groups.items():
+            notes = [f"also {', '.join(extra)}"] if extra else []
+
+            if quantifiable:
+                notes.append(f"element quantifiers {', '.join(QUANTIFIER_OPS)}")
+
+            note = f" ({'; '.join(notes)})" if notes else ""
+
+            for kind, names in by_type.items():
+                clauses.append(f"{kind}{note}: {', '.join(names)}")
+                # The group's later types take the same operators: point back, not repeat.
+                note = f" (as {next(iter(by_type))})" if notes else ""
+
+        parts.append("Filterable fields — " + "; ".join(clauses) + ".")
 
     if discovery.sortable:
         parts.append("Sortable by: " + ", ".join(discovery.sortable) + ".")

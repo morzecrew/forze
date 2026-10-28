@@ -4,13 +4,13 @@ from __future__ import annotations
 
 from datetime import date, datetime
 from decimal import Decimal
-from typing import Any, cast
+from typing import Annotated, Any, cast
 from uuid import UUID, uuid4
 
 import attrs
 import pytest
 from psycopg import sql as psql
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, create_model
 
 from forze.application.contracts.querying import (
     ELEM_SCALAR_FIELD,
@@ -41,6 +41,12 @@ class _UnknownExpr(QueryExpr):
 
 def _t(base: str, *, is_array: bool = False) -> PostgresType:
     return PostgresType(base=base, is_array=is_array, not_null=True)
+
+
+type _PriceAlias = Annotated[Decimal, Field(ge=0)]
+type _Json = str | list[_Json]
+type _Tree = list[_Tree] | Annotated[str, Field(min_length=1)]
+type _Nested[T] = T | list[_Nested[T]]
 
 
 class TestPsycopgQueryRenderer:
@@ -517,6 +523,45 @@ class TestPsycopgQueryRenderer:
         assert "#>>" in s and "::numeric" in s
         assert "to_jsonb" not in s
         assert params == [Decimal("5")]
+
+    @pytest.mark.parametrize(
+        "ann",
+        [
+            list[Annotated[Decimal, Field(ge=0)]],
+            Annotated[list[Decimal], Field(min_length=1)] | None,
+            list[_PriceAlias],
+            # A generic alias, recursive too: substituted, and walked once.
+            list[_Nested[Decimal]],
+        ],
+    )
+    def test_scalar_elem_annotated_decimal_int_operand_compares_numerically(self, ann: Any) -> None:
+        """``Annotated`` metadata or a ``type`` alias around a Decimal element (or its
+        array) still routes an int operand to the numeric path."""
+
+        doc = create_model("_Doc", prices=(ann, ...))
+        r = PsycopgQueryRenderer(types={"prices": _t("jsonb")}, model_type=doc)
+        sql_out, params = r.render(
+            QueryElem("prices", "$any", QueryField(ELEM_SCALAR_FIELD, "$gte", 5)),
+        )
+        s = sql_out.as_string(None)
+        assert "#>>" in s and "::numeric" in s
+        assert "to_jsonb" not in s
+        assert params == [Decimal("5")]
+
+    @pytest.mark.parametrize("ann", [list[_Json], _Tree])
+    def test_scalar_elem_recursive_alias_renders(self, ann: Any) -> None:
+        """A recursive ``type`` alias is walked once: following ``list[_Json]`` back into
+        ``_Json`` expanded it on every lap and never ended (a RecursionError)."""
+
+        doc = create_model("_Doc", tags=(ann, ...))
+        r = PsycopgQueryRenderer(types={"tags": _t("jsonb")}, model_type=doc)
+        sql_out, params = r.render(
+            QueryElem("tags", "$any", QueryField(ELEM_SCALAR_FIELD, "$gte", 5)),
+        )
+        s = sql_out.as_string(None)
+        # No Decimal anywhere in the alias: jsonb space, not the extract-and-cast path.
+        assert "to_jsonb" in s and "#>>" not in s
+        assert params == [5]
 
     def test_scalar_elem_int_typed_int_operand_stays_in_jsonb_space(self) -> None:
         class _Doc(BaseModel):
