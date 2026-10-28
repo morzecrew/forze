@@ -144,6 +144,25 @@ class TestLoginLockoutGuard:
             await guard.record_failure(DIGEST)
             assert await guard.is_locked(DIGEST) is True
 
+    async def test_locked_until_is_the_window_end(self) -> None:
+        guard, _counter = _guard(threshold=2, window=WINDOW)
+        window_s = int(WINDOW.total_seconds())
+        end = datetime.fromtimestamp((int(T0.timestamp()) // window_s + 1) * window_s, tz=UTC)
+
+        with bind_time_source(FrozenTimeSource(T0)):
+            await guard.record_failure(DIGEST)
+            assert await guard.locked_until(DIGEST) is None
+
+            await guard.record_failure(DIGEST)
+            assert await guard.locked_until(DIGEST) == end
+
+        # Any instant inside the window reports the same end; the boundary itself unlocks.
+        with bind_time_source(FrozenTimeSource(end - timedelta(seconds=1))):
+            assert await guard.locked_until(DIGEST) == end
+
+        with bind_time_source(FrozenTimeSource(end)):
+            assert await guard.locked_until(DIGEST) is None
+
     async def test_digests_are_isolated(self) -> None:
         guard, _counter = _guard(threshold=1)
         other = login_digest("bob")

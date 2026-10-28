@@ -104,7 +104,9 @@ class AuthnOrchestrator(AuthnPort):
     Checked **before** password verification against the digest of the presented
     login string — regardless of whether the account exists — so nonexistent
     logins lock exactly like real ones (no account enumeration). A locked
-    attempt raises ``exc.throttled`` (HTTP 429) with code ``login_locked``."""
+    attempt raises ``exc.throttled`` (HTTP 429) with code ``login_locked`` and the
+    unlock instant as ``details["retry_at"]``, which the FastAPI edge sends as
+    ``Retry-After``."""
 
     # ....................... #
 
@@ -172,7 +174,13 @@ class AuthnOrchestrator(AuthnPort):
 
         # Lockout gates BEFORE verification on the login *string* — nonexistent
         # logins lock identically to real ones (no account enumeration).
-        if self.lockout is not None and digest is not None and await self.lockout.is_locked(digest):
+        locked_until = (
+            await self.lockout.locked_until(digest)
+            if self.lockout is not None and digest is not None
+            else None
+        )
+
+        if locked_until is not None:
             # Throttle-once semantics are not required: every attempt in a
             # locked window re-emits LOGIN_LOCKED.
             if self.events is not None:
@@ -181,7 +189,12 @@ class AuthnOrchestrator(AuthnPort):
                     login_digest=digest,
                 )
 
-            raise exc.throttled(LOCKED_LOGIN_MSG, code=LOCKED_LOGIN_CODE)
+            # Throttle details stay out of the body; only ``Retry-After`` leaves the process.
+            raise exc.throttled(
+                LOCKED_LOGIN_MSG,
+                code=LOCKED_LOGIN_CODE,
+                details={"retry_at": locked_until},
+            )
 
         try:
             assertion = await self.password_verifier.verify_password(credentials)
