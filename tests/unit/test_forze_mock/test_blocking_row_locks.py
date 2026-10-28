@@ -302,6 +302,15 @@ class TestWhoWaits:
         assert log == ["holder:locked", "holder:committed", "contender:wrote"]
         assert value == 10
 
+    def test_a_locking_read_outside_a_transaction_waits_too(self) -> None:
+        async def contender(module: MockDepsModule, pk: UUID, log: list[str]) -> None:
+            row = await context_from_modules(module).doc.query(SPEC).get(pk, for_update=True)
+            log.append(f"contender:read {row.value}")
+
+        log, _ = _race("block", contender)
+
+        assert log == ["holder:locked", "holder:committed", "contender:read 1"]
+
     def test_a_rollback_releases_the_row(self) -> None:
         log, value = _race("block", _locking_read, fail=True)
 
