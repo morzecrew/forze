@@ -9,6 +9,7 @@ from .catalog_warmup import (
 from .document_schema import (
     PostgresDocumentSchemaValidationHook,
     postgres_document_schema_spec_for_binding,
+    postgres_document_schema_specs,
     postgres_document_schema_validation_lifecycle_step,
 )
 from .module import PostgresLifecycleModule
@@ -30,6 +31,7 @@ __all__ = [
     "PostgresStartupHook",
     "postgres_catalog_warmup_lifecycle_step",
     "postgres_document_schema_spec_for_binding",
+    "postgres_document_schema_specs",
     "postgres_document_schema_validation_lifecycle_step",
     "postgres_lifecycle_step",
     "routed_postgres_lifecycle_step",

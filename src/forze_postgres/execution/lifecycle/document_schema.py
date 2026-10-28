@@ -1,6 +1,6 @@
 """Lifecycle wiring for optional Postgres document schema validation."""
 
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 from typing import Any, final
 
 import attrs
@@ -8,6 +8,7 @@ import attrs
 from forze.application._logger import logger
 from forze.application.contracts.document import DocumentSpec
 from forze.application.contracts.execution import LifecycleHook, LifecycleStep
+from forze.application.contracts.inventory import FrozenSpecRegistry, SpecPlane
 from forze.application.execution.context import ExecutionContext
 from forze.base.exceptions import exc
 
@@ -22,6 +23,7 @@ from ...kernel.catalog.validation.validate_schema import (
 from ...kernel.relation import require_static_relation
 from ..deps.configs import PostgresDocumentConfig, PostgresReadOnlyDocumentConfig
 from ..deps.keys import PostgresIntrospectorDepKey
+from ..deps.module import PostgresDepsModule
 from .capabilities import POSTGRES_CLIENT_CAPABILITY
 
 # ----------------------- #
@@ -109,6 +111,87 @@ def postgres_document_schema_spec_for_binding(
 # ....................... #
 
 
+def postgres_document_schema_specs(
+    registry: FrozenSpecRegistry,
+    deps: PostgresDepsModule,
+    *,
+    exclude: Iterable[str] = (),
+) -> tuple[PostgresDocumentSchemaSpec, ...]:
+    """Build a schema spec for every document *deps* binds, from the specs *registry* holds.
+
+    Each route in :attr:`~PostgresDepsModule.ro_documents` and
+    :attr:`~PostgresDepsModule.rw_documents` is paired with the catalogued
+    :class:`DocumentSpec` of the same name through
+    :func:`postgres_document_schema_spec_for_binding`, so a document added to the wiring is
+    validated without anyone remembering to list it.
+
+    A route using a dynamic :class:`~forze_postgres.kernel.relation.RelationSpec` is skipped
+    with a warning naming it: its relation is known only per request, and one tenant-routed
+    document must not stop every other one being checked. A bound route with no catalogued
+    spec is refused instead — skipping it would leave it unvalidated with nothing said, which
+    is the gap this exists to close.
+
+    :param registry: The application's spec inventory.
+    :param deps: The module that binds the documents.
+    :param exclude: Routes the application knowingly leaves unvalidated.
+    :returns: One spec per validated document, ordered by route name.
+    :raises CoreException: ``configuration``, code ``postgres_schema_spec_uncatalogued``,
+        naming every bound route the registry has no document spec for.
+    """
+
+    skipped = frozenset(exclude)
+    bindings: dict[str, PostgresReadOnlyDocumentConfig | PostgresDocumentConfig] = {
+        str(name): config
+        for mapping in (deps.ro_documents, deps.rw_documents)
+        for name, config in (mapping or {}).items()
+        if str(name) not in skipped
+    }
+    specs: list[PostgresDocumentSchemaSpec] = []
+    uncatalogued: list[str] = []
+
+    for name in sorted(bindings):
+        entry = registry.find(SpecPlane.DOCUMENT, name)
+        spec = entry.spec if entry is not None else None
+
+        if not isinstance(spec, DocumentSpec):
+            uncatalogued.append(name)
+            continue
+
+        try:
+            specs.append(
+                postgres_document_schema_spec_for_binding(
+                    name,
+                    spec=spec,  # pyright: ignore[reportUnknownArgumentType]
+                    config=bindings[name],
+                )
+            )
+
+        except exc as e:
+            if getattr(e, "code", None) != "dynamic_relation_startup_validation":
+                raise
+
+            logger.warning(
+                "Postgres document schema validation skips route %r: its %s relation is a "
+                "dynamic RelationSpec, known only per request.",
+                name,
+                (e.details or {}).get("field"),
+            )
+
+    if uncatalogued:
+        raise exc.configuration(
+            f"Postgres binds document route(s) {uncatalogued} that the spec registry does not "
+            "catalogue, so their schema cannot be validated. Register their DocumentSpec, or "
+            "pass the routes in exclude= to leave them unvalidated.",
+            code="postgres_schema_spec_uncatalogued",
+            details={"routes": uncatalogued},
+        )
+
+    return tuple(specs)
+
+
+# ....................... #
+
+
 @final
 @attrs.define(slots=True, frozen=True, kw_only=True)
 class PostgresDocumentSchemaValidationHook(LifecycleHook):
@@ -167,8 +250,9 @@ def postgres_document_schema_validation_lifecycle_step(
     validation is skipped (trace log only).
 
     :param name: Unique step name.
-    :param specs: One spec per document to validate (see
-        :func:`postgres_document_schema_spec_for_binding`).
+    :param specs: One spec per document to validate — every bound document from
+        :func:`postgres_document_schema_specs`, or hand-built with
+        :func:`postgres_document_schema_spec_for_binding`.
     :returns: Lifecycle step with startup hook only.
     """
 

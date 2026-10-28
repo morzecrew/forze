@@ -70,7 +70,9 @@ class PostgresLifecycleModule(LifecycleModule):
     """When set, registers catalog warmup for federated search routes."""
 
     schema_specs: Sequence[PostgresDocumentSchemaSpec] = attrs.field(factory=tuple)
-    """When non-empty, registers document schema validation at startup."""
+    """When non-empty, registers document schema validation at startup. Build it with
+    :func:`~.document_schema.postgres_document_schema_specs` to check every document the deps
+    module binds."""
 
     # ....................... #
 

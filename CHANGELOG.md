@@ -51,6 +51,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Postgres startup warns about a unique index or `EXCLUDE` constraint that no guarantee declares.** The in-memory store does not enforce it, so a test run accepts writes the database refuses. The warning names it and suggests the declaration; the primary key and the conflict target are left out.
 
+- **`postgres_document_schema_specs(registry, deps)` validates every bound Postgres document.** It pairs each bound route with its catalogued `DocumentSpec`; pass the result as `schema_specs`. A route with no catalogued spec is refused, `exclude=` skips routes, and a per-tenant relation is skipped with a warning.
+
 **`forze ops` for people at a shell and for backfills:**
 
 - **`forze ops` gains typed flags, JSONL batches and shell completion.** `call OP --field VALUE` takes a flat-scalar input as flags; `--batch @PATH|-` runs one call per line in one runtime, stopping at the first failure; `OP` completes in the shell. An unknown option after `OP` now exits 2 with an error object.

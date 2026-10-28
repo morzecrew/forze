@@ -104,6 +104,27 @@ lifecycle = LifecyclePlan.from_modules(
 )
 ```
 
+To check every bound document's relations at startup, build the schema specs from the spec
+registry and the deps module:
+
+```python
+from forze_postgres import postgres_document_schema_specs
+
+pg_deps = PostgresDepsModule(client=pg, rw_documents={"orders": orders_pg}, tx={"orders"})
+
+PostgresLifecycleModule(
+    client=pg,
+    dsn="postgresql://…",
+    schema_specs=postgres_document_schema_specs(spec_registry, pg_deps),
+)
+```
+
+Each route in `ro_documents` and `rw_documents` is paired with the `DocumentSpec` of the same
+name, so a document added later is validated too. A bound route with no spec in the registry
+is refused with `postgres_schema_spec_uncatalogued`. Pass `exclude=` for routes you leave
+unvalidated on purpose. A route on a per-tenant relation resolver is skipped with a warning,
+because its relation names are known only per request.
+
 ## What it provides
 
 | Contract | Keyed by | Notes |
