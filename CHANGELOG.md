@@ -125,6 +125,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Postgres startup no longer warns about a `tenant_id` column the document model maps itself.** Such a table stores the tenant as data, as identity's sessions and tenant memberships do, so the column is not an unused isolation column.
 
+- **A filter on an `Annotated` field is checked against the type it wraps** (**behaviour change**). `Annotated[str, ...] | None` and its list elements resolved to no type, so discovery advertised every operator and `$gt` passed. They now get their type's operators; a string bound on an annotated number or date is cast.
+
 ### Security
 
 - **A guarded hub or federated search authorizes each member it reads** (**Breaking**). New `AuthzSearchMembers` checks each member's read action; the adapter then refuses a request naming a forbidden member and skips one it only reaches. The registry refuses to freeze a guarded search without that search's hook.

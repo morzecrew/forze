@@ -26,7 +26,7 @@ from datetime import date, datetime, time
 from decimal import Decimal
 from enum import Enum
 from types import UnionType
-from typing import Any, Final, Union, get_args, get_origin
+from typing import Annotated, Any, Final, TypeAliasType, Union, get_args, get_origin
 from uuid import UUID
 
 import attrs
@@ -129,16 +129,24 @@ def _strip_optional(ann: Any) -> Any:
     """Return *ann* with ``None`` removed from a union, or ``Any`` if still ambiguous.
 
     ``Optional[int]`` → ``int``; ``int | str`` → ``Any`` (a genuine union we won't
-    second-guess); a plain annotation passes through.
+    second-guess); a plain annotation passes through. ``Annotated`` metadata and ``type``
+    aliases are unwrapped at every level, so ``Annotated[str, ...] | None`` resolves to
+    ``str`` — pydantic strips the metadata only from a bare top-level ``Annotated``.
     """
 
+    if isinstance(ann, TypeAliasType):
+        return _strip_optional(ann.__value__)
+
     origin = get_origin(ann)
+
+    if origin is Annotated:
+        return _strip_optional(get_args(ann)[0])
 
     if origin is Union or origin is UnionType:
         members = [a for a in get_args(ann) if a is not type(None)]
 
         if len(members) == 1:
-            return members[0]
+            return _strip_optional(members[0])
 
         return Any
 
