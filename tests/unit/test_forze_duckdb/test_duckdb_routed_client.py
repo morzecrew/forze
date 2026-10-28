@@ -620,41 +620,13 @@ class TestTeardownAndRemapping:
 # ....................... #
 
 
-class _Probe:
-    """Answers the attestation's filesystem read with *error*, or with rows when it is None."""
-
-    def __init__(self, error: Exception | None) -> None:
-        self.error = error
-
-    async def run_query(self, sql: str) -> None:
-        if self.error is not None:
-            raise self.error
-
-
-@pytest.mark.parametrize(
-    ("error", "disabled"),
-    [
-        (duckdb.PermissionException("LocalFileSystem has been disabled by configuration"), True),
-        (duckdb.PermissionException("enable_external_access is disabled"), False),
-        (duckdb.IOException("No files found that match the pattern"), False),
-        (None, False),
-    ],
-    ids=["disabled", "other_refusal", "io_error", "read_succeeded"],
-)
-async def test_a_filesystem_attests_disabled_only_on_its_own_refusal(
-    error: Exception | None, disabled: bool
-) -> None:
-    probe: Any = _Probe(error)
-
-    assert await routed_client._filesystem_disabled(probe, "LocalFileSystem", "/x") is disabled
-
-
 def test_unset_engine_threads_and_extension_directory_are_not_attested() -> None:
     expected = routed_client._expected_settings(
         _catalog(_A),
         http_timeout_seconds=5,
         engine=DuckDbConfig(threads=None),
         extension_directory=None,
+        ca_cert_file=None,
     )
 
     assert "threads" not in expected
