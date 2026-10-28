@@ -8,6 +8,7 @@ require_mongo()
 
 from collections.abc import Sequence
 from decimal import Decimal, DecimalException
+from enum import Enum
 from typing import Any, cast
 from uuid import UUID
 
@@ -244,8 +245,13 @@ class MongoGateway[M: BaseModel](
         The write and query counterpart of :meth:`_decode_bson_value`: a ``UUID`` becomes its
         canonical string (the representation ``_id`` already uses, and the only one BSON will take
         under ``UuidRepresentation.UNSPECIFIED``); a ``Decimal`` becomes a ``Decimal128`` (exact,
-        and sortable/comparable as a number — a stringified decimal would sort lexically).
+        and sortable/comparable as a number — a stringified decimal would sort lexically). An
+        ``Enum`` member becomes its value, which the read model decodes back: BSON cannot encode
+        a plain member, and a ``StrEnum`` or ``IntEnum`` value is what BSON stored before.
         """
+
+        if isinstance(value, Enum):
+            return self._coerce_query_value(value.value)
 
         if isinstance(value, UUID):
             return str(value)

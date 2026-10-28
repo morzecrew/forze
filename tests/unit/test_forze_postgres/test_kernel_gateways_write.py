@@ -2,6 +2,7 @@
 
 import asyncio
 from datetime import UTC, datetime
+from enum import Enum, IntEnum, StrEnum
 from unittest.mock import AsyncMock, MagicMock
 from uuid import UUID
 
@@ -118,6 +119,32 @@ def test_adapt_value_for_write_refuses_a_json_array_value_that_is_not_a_list(val
             gw.adapt_value_for_write(
                 value, t=PostgresType(base=base, is_array=True, not_null=False)
             )
+
+class _Plain(Enum):
+    OPEN = "open"
+
+class _Text(StrEnum):
+    OPEN = "open"
+
+class _Number(IntEnum):
+    ONE = 1
+
+def test_adapt_value_for_write_stores_an_enum_member_as_its_value() -> None:
+    gw, _ = _build_gateway()
+    text = PostgresType(base="text", is_array=False, not_null=True)
+
+    assert gw.adapt_value_for_write(_Plain.OPEN, t=text) == "open"
+    assert gw.adapt_value_for_write(
+        [_Plain.OPEN], t=PostgresType(base="text", is_array=True, not_null=True)
+    ) == ["open"]
+    assert gw.adapt_value_for_write(
+        _Plain.OPEN, t=PostgresType(base="jsonb", is_array=False, not_null=True)
+    ).obj == "open"
+    # A StrEnum or IntEnum member is written as it was before.
+    assert gw.adapt_value_for_write(_Text.OPEN, t=text) == str(_Text.OPEN)
+    assert gw.adapt_value_for_write(
+        _Number.ONE, t=PostgresType(base="int8", is_array=False, not_null=True)
+    ) == 1
 
 def test_json_write_dumps_stores_decimal_exact_and_rejects_unknown_types() -> None:
     """The jsonb write encoder stores a Decimal as its exact string form; anything

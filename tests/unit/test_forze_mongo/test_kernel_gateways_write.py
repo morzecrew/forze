@@ -1,6 +1,7 @@
 """Unit tests for ``forze_mongo.kernel.gateways.write``."""
 
 from datetime import UTC, datetime, timedelta
+from enum import Enum, IntEnum, StrEnum
 from unittest.mock import AsyncMock, MagicMock
 from uuid import UUID, uuid4
 
@@ -677,3 +678,39 @@ class TestMongoKillNotFound:
         await gw.kill_many([uuid4(), uuid4()])
 
         client.delete_many.assert_awaited_once()
+
+
+class _Plain(Enum):
+    OPEN = "open"
+
+class _Text(StrEnum):
+    OPEN = "open"
+
+class _Number(IntEnum):
+    ONE = 1
+
+def test_an_enum_member_is_stored_as_its_value() -> None:
+    """A plain member, which BSON cannot encode, as its value; a StrEnum or IntEnum member as
+    the same string or number BSON stored before."""
+
+    client = _build_client()
+    gw = MongoWriteGateway(
+        relation=("test_db", "docs"),
+        client=client,
+        read_gw=_build_read(client),
+        create_cmd_type=MyCreateDoc,
+        update_cmd_type=MyUpdateDoc,
+        model_type=MyDoc,
+        **_WRITE_CODECS,
+    )
+    out = gw._coerce_query_value(
+        {
+            "plain": _Plain.OPEN,
+            "text": _Text.OPEN,
+            "number": _Number.ONE,
+            "nested": [{"s": _Plain.OPEN}],
+        }
+    )
+
+    assert out == {"plain": "open", "text": "open", "number": 1, "nested": [{"s": "open"}]}
+    assert [type(out[k]) for k in ("plain", "text", "number")] == [str, str, int]

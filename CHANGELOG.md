@@ -135,6 +135,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **The mock matches a plain `Enum` field by its value, as Postgres does.** A filter naming `"open"` matched no row holding `Status.OPEN` unless `Status` was a `StrEnum`. Equality, membership, ordering and set operators now compare the value, in arrays and nested objects too, as do the DST oracles.
 
+- **A plain `Enum` document field is stored as its value on Postgres, MongoDB and Firestore.** Postgres wrote its name (`Status.OPEN`), which no read could decode, and MongoDB and Firestore refused the write. A `StrEnum` or `IntEnum` field is stored as before.
+
 ### Security
 
 - **A guarded hub or federated search authorizes each member it reads** (**Breaking**). New `AuthzSearchMembers` checks each member's read action; the adapter then refuses a request naming a forbidden member and skips one it only reaches. The registry refuses to freeze a guarded search without that search's hook.

@@ -50,7 +50,9 @@ async def test_dsl_parity_postgres(pg_client: PostgresClient) -> None:
             nums integer[] NOT NULL,
             score integer,
             items jsonb NOT NULL,
-            matrix jsonb NOT NULL
+            matrix jsonb NOT NULL,
+            status text NOT NULL,
+            statuses text[] NOT NULL
         );
         """
     )
