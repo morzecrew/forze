@@ -70,8 +70,10 @@ class MockAnalyticsView:
 
         Rows are in storage form, the shape a SQL query over the table would see: no read-model
         decoding, no derived fields, soft-deleted rows included. A field the document spec
-        seals arrives as its ciphertext, exactly as SQL sees the column; the analytics read path
-        decrypts it on the way out only if the analytics spec declares it encrypted too.
+        seals arrives as its ciphertext, exactly as SQL sees the column. The analytics read path
+        cannot open it, even when the analytics spec declares the field encrypted: the document
+        codec binds the ciphertext to the document spec's name, the analytics codec to
+        ``forze.field``, so decryption fails authentication.
         """
 
         namespace, document_tenant = self.scope_for(

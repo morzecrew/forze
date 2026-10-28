@@ -107,7 +107,7 @@ MockDepsModule(
 )
 ```
 
-`view.rows(spec)` returns a document spec's stored rows in storage form: the columns a SQL query over the table would see. You get the rows the calling transaction sees. Inside a transaction, its own uncommitted writes are included and a concurrent transaction's are not. Outside one, you get the committed rows. A field the document spec seals arrives encrypted, exactly as SQL sees the column. It is decrypted on the way out only if the analytics spec declares it encrypted too.
+`view.rows(spec)` returns a document spec's stored rows in storage form: the columns a SQL query over the table would see. You get the rows the calling transaction sees. Inside a transaction, its own uncommitted writes are included and a concurrent transaction's are not. Outside one, you get the committed rows. A field the document spec seals arrives encrypted, exactly as SQL sees the column. Analytics cannot decrypt it today, even if the analytics spec declares the field encrypted. The document codec binds the ciphertext to the document spec's name and the analytics codec to `forze.field`, so the read fails authentication. Keep sealed fields out of a resolver's rows.
 
 On a tenant-aware analytics route, a call with no tenant bound is refused with `tenant_required`. Otherwise `view.rows` returns only rows whose `tenant_id` names the bound tenant, even when the document route keeps every tenant in one namespace. A tenant-aware document route narrows `view.rows` the way a document read does, whatever the analytics route declares: the bound tenant's partition, without rows another tenant owns or rows with no owner.
 
