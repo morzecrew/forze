@@ -18,7 +18,7 @@ from forze.base.primitives import (
     str_key_selector,
 )
 
-from ..descriptors import OperationCatalogEntry, OperationDescriptor
+from ..descriptors import OperationCatalogEntry, OperationDescriptor, refuse_dropped_members
 from ..planning import FrozenOperationPlan, OperationKind, OperationPlan
 from ..run import DispatchedOperation, ResolvedOperation
 from .binder import OperationRegistryBinder
@@ -158,6 +158,7 @@ class OperationRegistry:
         if op in self._descriptors and not override:
             raise exc.internal(f"Descriptor already set for operation: {op}")
 
+        refuse_dropped_members(op, self._descriptors.get(op), descriptor)
         new_descriptors = dict(self._descriptors)
         new_descriptors[op] = descriptor
 
@@ -183,6 +184,7 @@ class OperationRegistry:
             if op in new_descriptors and not override:
                 raise exc.internal(f"Descriptor already set for operation: {op}")
 
+            refuse_dropped_members(op, new_descriptors.get(op), descriptor)
             new_descriptors[op] = descriptor
 
         return attrs.evolve(self, descriptors=new_descriptors)
@@ -564,6 +566,7 @@ class OperationRegistry:
 
         resolution = self._resolution()
         RegistryFreezeValidator.validate_all(self._handlers, resolution)
+        RegistryFreezeValidator.validate_member_authz(self._handlers, resolution, self._descriptors)
 
         frozen_handlers = dict(self._handlers)
         frozen_plans = {op: resolution.resolve(str(op)).freeze() for op in frozen_handlers}
@@ -649,7 +652,7 @@ class FrozenOperationRegistry:
     @staticmethod
     def _operation_shape(entry: OperationCatalogEntry) -> dict[str, Any]:
         descriptor = entry.descriptor
-        return {
+        shape: dict[str, Any] = {
             "kind": str(entry.kind),
             "input": descriptor.input_schema() if descriptor is not None else None,
             "output": descriptor.output_schema() if descriptor is not None else None,
@@ -661,11 +664,19 @@ class FrozenOperationRegistry:
             "deadline_s": (entry.deadline.total_seconds() if entry.deadline is not None else None),
         }
 
+        # Only a multi-source operation carries these, so every other fingerprint is unchanged.
+        if descriptor is not None and descriptor.members:
+            shape["members"] = sorted(descriptor.members)
+            shape["members_of"] = descriptor.members_of
+
+        return shape
+
     def operation_fingerprint(self, op: StrKey) -> str:
         """Stable structural fingerprint of a single operation's contract + plan facts.
 
         Covers the operation's kind, input/output JSON schema, declared idempotency /
-        authn / authz-permission / deadline facts, and catalog tags. Intended as a
+        authn / authz-permission / deadline facts, catalog tags, and a multi-source
+        operation's members and the search they belong to. Intended as a
         version tag: if it changes, the operation's observable contract changed.
 
         It is *structural*, not behavioral — it does NOT hash handler code or a hook's

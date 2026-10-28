@@ -4,6 +4,7 @@ from .builders import (
 )
 from .defaults import noop_lifecycle_hook
 from .protocols import (
+    AuthorizesMembers,
     Before,
     BeforeFactory,
     DeclaresAuthn,
@@ -48,6 +49,7 @@ from .value_objects import (
 # ----------------------- #
 
 __all__ = [
+    "AuthorizesMembers",
     "DeclaresAuthn",
     "DeclaresAuthz",
     "DeclaresHedge",

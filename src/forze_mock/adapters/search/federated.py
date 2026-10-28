@@ -24,6 +24,7 @@ from forze.application.contracts.search import (
     SearchPage,
     SearchQueryPort,
     SearchResultSnapshotOptions,
+    federated_leg_filters,
     normalize_search_queries,
     prepare_federated_search_options,
     reject_federated_facets,
@@ -96,6 +97,8 @@ class MockFederatedSearchAdapter[M: BaseModel](
             self.federated_spec,
             options,
         )
+        # Index-aligned with the spec members, as the weights are (leg names may differ here).
+        leg_filters = list(federated_leg_filters(self.federated_spec, filters, options).values())
         leg_cap = max(1, int(self.rrf_per_leg_limit))
         rrf_rows: list[tuple[str, list[M], float]] = []
         weighted_rows: list[tuple[str, list[M], list[float], float]] = []
@@ -107,7 +110,7 @@ class MockFederatedSearchAdapter[M: BaseModel](
                 continue
             page = await port.search(
                 query,
-                filters,
+                leg_filters[i],
                 {"limit": leg_cap},
                 None,
                 options=leg_opts,

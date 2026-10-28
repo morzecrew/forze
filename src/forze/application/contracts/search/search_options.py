@@ -25,7 +25,8 @@ from forze.base.exceptions import exc
 
 from ..._logger import logger
 from ..querying.capabilities import UNSUPPORTED_QUERY_FEATURE_CODE
-from ..querying.expressions import refuse_unknown_keys
+from ..querying.expressions import QueryFilterExpression, refuse_unknown_keys
+from .member_grants import search_member_grant
 from .utils import normalize_search_queries
 
 # ----------------------- #
@@ -91,17 +92,18 @@ def search_options_for_simple_adapter(
     if spec is not None and spec.default_search_count is not None:
         opts.setdefault("search_count", spec.default_search_count)
 
-    if "member_weights" in opts or "members" in opts:
+    if "member_weights" in opts or "members" in opts or "member_filters" in opts:
         logger.warning(
             "search_options_member_keys_ignored_simple_index",
             message=(
-                "SearchOptions member_weights and members are ignored for simple "
-                "(single-index) search"
+                "SearchOptions member_weights, members and member_filters are ignored for "
+                "simple (single-index) search"
             ),
         )
 
         opts.pop("member_weights", None)
         opts.pop("members", None)
+        opts.pop("member_filters", None)
 
     return cast(SearchOptions, opts)
 
@@ -125,6 +127,13 @@ def prepare_hub_search_options(
     _refuse_query_vector(options, scope="hub")
     opts = dict(options or {})
 
+    if opts.get("member_filters"):
+        # A hub filter applies to the hub rows, so a leg has no filter of its own to narrow.
+        raise exc.precondition(
+            "Search feature member_filters is not supported for hub search.",
+            code=UNSUPPORTED_QUERY_FEATURE_CODE,
+        )
+
     if hub_spec.default_search_count is not None:
         opts.setdefault("search_count", hub_spec.default_search_count)
 
@@ -140,13 +149,12 @@ def prepare_hub_search_options(
         opts.pop("weights", None)
         opts.pop("fields", None)
 
-    names = [m.name for m in hub_spec.members]
-    base = _member_weights_base(names, hub_spec.default_member_weights)
-    weights_list = _apply_member_weight_overrides(names, base, opts, scope="hub")
+    weights_list = _member_weights(hub_spec, opts, scope="hub")
 
     leg_opts = dict(opts)
     leg_opts.pop("member_weights", None)
     leg_opts.pop("members", None)
+    leg_opts.pop("member_filters", None)
     leg_opts.pop("fusion", None)
 
     return cast(SearchOptions, leg_opts), weights_list
@@ -179,16 +187,106 @@ def prepare_federated_search_options(
         opts.pop("weights", None)
         opts.pop("fields", None)
 
-    names = [m.name for m in federated_spec.members]
-    base = _member_weights_base(names, None)
-    weights_list = _apply_member_weight_overrides(names, base, opts, scope="federated")
+    weights_list = _member_weights(federated_spec, opts, scope="federated")
 
     leg_opts = dict(opts)
     leg_opts.pop("member_weights", None)
     leg_opts.pop("members", None)
+    leg_opts.pop("member_filters", None)
     leg_opts.pop("fusion", None)
 
     return cast(SearchOptions, leg_opts), weights_list
+
+
+# ....................... #
+
+
+def _member_weights(
+    spec: HubSearchSpec[Any] | FederatedSearchSpec[Any],
+    opts: dict[str, Any],
+    *,
+    scope: Literal["hub", "federated"],
+) -> list[float]:
+    """Each member's weight in spec order, as the request sets it and its grant allows.
+
+    Under a bound :class:`~.member_grants.SearchMemberGrant`, a request naming a member the
+    grant leaves out (in ``members``, or in ``member_weights`` above zero) is refused with that
+    member's denial, and one merely reaching it skips it; reaching none it allows is refused.
+    """
+
+    names = [m.name for m in spec.members]
+    defaults = spec.default_member_weights if isinstance(spec, HubSearchSpec) else None
+    weights = _apply_member_weight_overrides(
+        names, _member_weights_base(names, defaults), opts, scope=scope
+    )
+    grant = search_member_grant(spec.name)
+
+    if grant is None:
+        return weights
+
+    reached = [name for name, weight in zip(names, weights, strict=True) if weight > 0.0]
+    denied = [name for name in reached if name not in grant.allowed]
+
+    if not denied:
+        return weights
+
+    named = _named_members(opts)
+    refused = [name for name in denied if name in named]
+
+    if not refused and len(denied) == len(reached):
+        refused = denied
+
+    if refused:
+        raise grant.denials.get(refused[0]) or exc.authorization(
+            f"Permission denied for search member {refused[0]!r}",
+            code="permission_denied",
+        )
+
+    return [0.0 if name in denied else w for name, w in zip(names, weights, strict=True)]
+
+
+def _named_members(opts: Mapping[str, Any]) -> set[str]:
+    """The members a request names, read as the weights are: ``member_weights`` above zero
+    when it has any, else ``members``."""
+
+    if weights := opts.get("member_weights"):
+        return {name for name, weight in weights.items() if float(weight) > 0.0}
+
+    return set(opts.get("members") or ())
+
+
+# ....................... #
+
+
+def federated_leg_filters(
+    federated_spec: FederatedSearchSpec[Any],
+    filters: QueryFilterExpression | None,  # type: ignore[valid-type]
+    options: SearchOptions | None,
+) -> dict[str, QueryFilterExpression | None]:  # type: ignore[valid-type]
+    """The filters each member's leg runs, by member name: *filters*, the request's
+    ``member_filters`` entry for that member and a bound grant's policy filter, conjoined.
+
+    :raises exc.validation: ``member_filters`` names a member the spec does not have.
+    """
+
+    member_filters = cast(MultiSourceSearchOptions, options or {}).get("member_filters") or {}
+    names = [m.name for m in federated_spec.members]
+
+    if unknown := sorted(set(member_filters) - set(names)):
+        raise exc.validation(
+            f"member_filters names no member of federated search "
+            f"{federated_spec.name!r}: {unknown}.",
+        )
+
+    grant = search_member_grant(federated_spec.name)
+    policy = grant.filters if grant is not None else {}
+    legs: dict[str, QueryFilterExpression | None] = {}  # type: ignore[valid-type]
+
+    for name in names:
+        parts = [f for f in (filters, member_filters.get(name), policy.get(name)) if f is not None]
+        legs[name] = {"$and": parts} if len(parts) > 1 else (parts[0] if parts else None)
+
+    return legs
 
 
 # ....................... #

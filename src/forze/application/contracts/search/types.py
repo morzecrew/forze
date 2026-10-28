@@ -3,7 +3,7 @@ from typing import Annotated, Final, Literal, TypeAlias, TypedDict
 
 from pydantic import Field, with_config
 
-from ..querying.expressions import CLOSED_EXPRESSION
+from ..querying.expressions import CLOSED_EXPRESSION, QueryFilterExpression
 from .capabilities import FusionStrategy
 
 # ----------------------- #
@@ -170,6 +170,11 @@ class MultiSourceSearchOptions(SearchOptions, total=False):
     For specified members weights will be set to 1.0, for other members weights will be set to 0.0.
     Ignored if member_weights are provided.
     """
+
+    member_filters: dict[str, QueryFilterExpression]  # type: ignore[valid-type]
+    """Filters for one federation member's leg alone, by member name, conjoined with the
+    request's ``filters`` on that leg. Federated search only: a hub search refuses it, since a
+    hub filter applies to the hub rows. A name the spec has no member for is refused."""
 
     merge_candidates: int
     """Advisory upper bound on the merged candidate pool kept across members before the final

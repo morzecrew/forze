@@ -139,6 +139,58 @@ probe's rows never reach the caller, only whether any exist. Off by default;
 note that `not_permitted` discloses that hidden rows exist, so surfacing it to
 end users is your API's disclosure decision.
 
+### Hub and federated search
+
+A hub or federated search reads several members under one operation, so an
+action on the operation would let a caller read a member it may not. Attach
+`AuthzSearchMembers`, which checks each member the request reaches against
+that member's own read action:
+
+```python
+from forze.application.hooks.authz import AuthzSearchMembers
+
+SEARCH = EVERYTHING.default_namespace.key(SearchKernelOp.TYPED)
+
+registry = (
+    build_federated_search_registry(EVERYTHING)  # members: orders, invoices
+    .bind(SEARCH)
+        .bind_outer()
+        .before(AuthnRequired().to_step())
+        .wrap(
+            AuthzSearchMembers(
+                spec=AUTHZ,
+                search=EVERYTHING,
+                actions={"orders": "orders:read", "invoices": "invoices:read"},
+                scope_operation="search",
+            ).to_step()
+        )
+        .finish(deep=True)
+    .freeze()
+)
+```
+
+- **A request that names its members** (`members`, or `member_weights` above
+  zero) is refused with `403` when it names one the caller may not read.
+- **A request that names none** searches the members the search runs by
+  default (on a hub, those with a default weight above zero). It is narrowed to
+  the members the caller may read, and refused only when none remains.
+- **`scope_operation`** (federated only) also asks the scope port for each
+  member's row filter and applies it to that member's leg alone. The request
+  names the member as its `document_name`, unless `scope_documents` maps the
+  member to another document.
+
+The hook decides before the handler runs and binds the result as a
+`SearchMemberGrant`. The adapter applies that grant to the request it actually
+receives, so a request mapper in `SearchMappers` cannot widen it: a member the
+mapper adds is refused or skipped by the same two rules, and the policy filters
+stay on their legs.
+
+`actions` must name every member. The registry refuses to freeze a hub or
+federated search operation that has an authz hook but no `AuthzSearchMembers`,
+or that also carries an `IdempotencyWrap`, whose replayed result would skip the
+check. To let one action read every member, map each member to it. Two
+`AuthzSearchMembers` on one operation both apply: a member must pass each.
+
 ## HTTP login endpoints
 
 The login flows themselves come for free: `build_authn_registry` registers the

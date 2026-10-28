@@ -1,9 +1,11 @@
 """Freeze-time validation for operation registries."""
 
 from collections import defaultdict
-from typing import final
+from typing import Any, final
 
 from forze.application.contracts.execution import (
+    AuthorizesMembers,
+    DeclaresAuthz,
     DeclaresHedge,
     OperationHandlerFactory,
 )
@@ -15,6 +17,7 @@ from forze.base.primitives import (
     str_key_selector,
 )
 
+from ..descriptors import OperationDescriptor
 from ..planning import OperationPlan
 from .resolution import PlanResolution
 
@@ -216,6 +219,67 @@ class RegistryFreezeValidator:
                     f"Operation {op!r} is two-phase (prepare/apply) but has no "
                     "transaction route; bind one via bind_tx().set_route(...). "
                     "Two-phase runs apply inside a transaction.",
+                )
+
+    # ....................... #
+
+    @staticmethod
+    def validate_member_authz(
+        handlers: StrKeyMapping[OperationHandlerFactory],
+        resolution: PlanResolution,
+        descriptors: StrKeyMapping[OperationDescriptor],
+    ) -> None:
+        """Refuse an authz-guarded multi-source operation that leaves a member unauthorized.
+
+        A hub or federated search reads every member's rows under one operation, so a
+        permission on the operation alone would reach a member the caller may not read.
+        """
+
+        for op in handlers:
+            descriptor = descriptors.get(op)
+
+            if descriptor is None or not descriptor.members:
+                continue
+
+            plan = resolution.resolve(str(op))
+            factories: list[Any] = [step.factory for step in plan.iter_before_steps()]
+            factories += [step.factory for step in plan.iter_wrap_steps()]
+
+            if not any(isinstance(factory, DeclaresAuthz) for factory in factories):
+                continue
+
+            if plan.supports_idempotency_key():
+                # A replayed result answers without running the member check.
+                raise exc.configuration(
+                    f"Operation {op!r} reads members under authorization but carries a wrap "
+                    "that replays stored results; drop the idempotency wrap from it.",
+                    code="member_authz_replay",
+                )
+
+            covered: set[str] = set()
+
+            for factory in factories:
+                if not isinstance(factory, AuthorizesMembers):
+                    continue
+
+                # The hook binds its grant under its own search's name, and the adapter reads
+                # it under the operation's: another search's hook would leave this one unchecked.
+                if factory.members_of() != descriptor.members_of:
+                    raise exc.configuration(
+                        f"Operation {op!r} reads the members of {descriptor.members_of!r} but "
+                        f"carries a member authorization hook for {factory.members_of()!r}; "
+                        "attach a hook for the search the operation runs.",
+                        code="member_authz_search_mismatch",
+                    )
+
+                covered |= factory.authorized_members()
+
+            if missing := sorted(set(descriptor.members) - covered):
+                raise exc.configuration(
+                    f"Operation {op!r} declares authorization but authorizes no read for its "
+                    f"member(s) {missing}; attach AuthzSearchMembers (or another "
+                    "AuthorizesMembers hook) naming each member's read action.",
+                    code="member_authz_missing",
                 )
 
     # ....................... #

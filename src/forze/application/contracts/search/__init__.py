@@ -50,6 +50,11 @@ from .facet_highlight import (
     resolve_facet_fields,
     resolve_highlight,
 )
+from .member_grants import (
+    SearchMemberGrant,
+    bind_search_member_grant,
+    search_member_grant,
+)
 from .models import FederatedSearchReadModel
 from .pages import (
     SearchCountlessPage,
@@ -64,6 +69,7 @@ from .ports import (
     SearchResultSnapshotPort,
 )
 from .search_options import (
+    federated_leg_filters,
     prepare_federated_search_options,
     prepare_hub_search_options,
     search_options_for_simple_adapter,
@@ -171,6 +177,10 @@ __all__ = [
     "FederatedSearchSpec",
     "FederatedSearchReadModel",
     "normalize_search_queries",
+    "federated_leg_filters",
+    "SearchMemberGrant",
+    "bind_search_member_grant",
+    "search_member_grant",
     "prepare_federated_search_options",
     "prepare_hub_search_options",
     "ranked_search_cursor_key_spec",

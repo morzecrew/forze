@@ -1,7 +1,7 @@
 """Wire authz into :class:`~forze.application.execution.operations.registry.OperationRegistry` plans."""
 
 from collections.abc import Awaitable, Callable, Collection, Mapping
-from typing import Any, final
+from typing import Any, cast, final
 
 import attrs
 from pydantic import BaseModel
@@ -29,9 +29,15 @@ from forze.application.contracts.execution import (
     MiddlewareStep,
 )
 from forze.application.contracts.querying import QueryFilterExpression
+from forze.application.contracts.search import (
+    FederatedSearchSpec,
+    HubSearchSpec,
+    SearchMemberGrant,
+    bind_search_member_grant,
+)
 from forze.application.execution.context import ExecutionContext
-from forze.base.exceptions import exc
-from forze.base.primitives import StrKey
+from forze.base.exceptions import CoreException, ExceptionKind, exc
+from forze.base.primitives import MappingConverter, StrKey
 from forze.domain.models import BaseDTO
 
 from .._base import required_guard_step
@@ -291,6 +297,57 @@ class AuthzBeforeAuthorize(BeforeFactory):
 # ....................... #
 
 
+async def _delegated_scope_filters(
+    scope_port: AuthzScopePort,
+    delegation_port: DelegationPort | None,
+    request: AuthzDocumentScopeRequest,
+    subject_filters: QueryFilterExpression | None,  # type: ignore[valid-type]
+) -> QueryFilterExpression | None:  # type: ignore[valid-type]
+    """The row filters for a delegated call: every principal in the chain, conjoined.
+
+    As the before-hook guard does for the action, each actor is scoped *independently*, so
+    a delegation never sees more than every principal in it could: an actor the policy
+    denies refuses the call, and an actor's row filters narrow the subject's. When the spec
+    enforces delegation grants, each actor must also hold a ``may_act`` grant for the
+    principal it acts for.
+    """
+
+    parts = [subject_filters] if subject_filters is not None else []
+    node = request.subject
+
+    while node.actor is not None:
+        actor = node.actor
+        actor_scope = await scope_port.scope_document(attrs.evolve(request, subject=actor))
+
+        if actor_scope.deny_all:
+            raise exc.authorization(
+                actor_scope.reason or "Delegate not permitted by policy scope",
+                code="delegate_denied",
+            )
+
+        if delegation_port is not None and not await delegation_port.may_act(
+            actor.principal_id, node.principal_id, scope=request.scope
+        ):
+            raise exc.authorization(
+                f"Delegation not granted: {actor.principal_id} may not act on behalf of "
+                f"{node.principal_id}",
+                code="delegation_not_granted",
+            )
+
+        if actor_scope.filters is not None:
+            parts.append(actor_scope.filters)
+
+        node = actor
+
+    if not parts:
+        return None
+
+    return parts[0] if len(parts) == 1 else {"$and": parts}
+
+
+# ....................... #
+
+
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class AuthzDocumentScopeWrap(MiddlewareFactory):
@@ -414,53 +471,7 @@ class AuthzDocumentScopeWrap(MiddlewareFactory):
 
     # ....................... #
 
-    @staticmethod
-    async def _delegated_filters(
-        scope_port: AuthzScopePort,
-        delegation_port: DelegationPort | None,
-        request: AuthzDocumentScopeRequest,
-        subject_filters: QueryFilterExpression | None,  # type: ignore[valid-type]
-    ) -> QueryFilterExpression | None:  # type: ignore[valid-type]
-        """The row filters for a delegated call: every principal in the chain, conjoined.
-
-        As the before-hook guard does for the action, each actor is scoped *independently*, so
-        a delegation never sees more than every principal in it could: an actor the policy
-        denies refuses the call, and an actor's row filters narrow the subject's. When the spec
-        enforces delegation grants, each actor must also hold a ``may_act`` grant for the
-        principal it acts for.
-        """
-
-        parts = [subject_filters] if subject_filters is not None else []
-        node = request.subject
-
-        while node.actor is not None:
-            actor = node.actor
-            actor_scope = await scope_port.scope_document(attrs.evolve(request, subject=actor))
-
-            if actor_scope.deny_all:
-                raise exc.authorization(
-                    actor_scope.reason or "Delegate not permitted by policy scope",
-                    code="delegate_denied",
-                )
-
-            if delegation_port is not None and not await delegation_port.may_act(
-                actor.principal_id, node.principal_id, scope=request.scope
-            ):
-                raise exc.authorization(
-                    f"Delegation not granted: {actor.principal_id} may not act on behalf of "
-                    f"{node.principal_id}",
-                    code="delegation_not_granted",
-                )
-
-            if actor_scope.filters is not None:
-                parts.append(actor_scope.filters)
-
-            node = actor
-
-        if not parts:
-            return None
-
-        return parts[0] if len(parts) == 1 else {"$and": parts}
+    _delegated_filters = staticmethod(_delegated_scope_filters)
 
     # ....................... #
 
@@ -481,6 +492,249 @@ class AuthzDocumentScopeWrap(MiddlewareFactory):
         *,
         step_id: StrKey,
         priority: int = 40,
+    ) -> MiddlewareStep:
+        """Build a :class:`MiddlewareStep` using this factory."""
+
+        return MiddlewareStep(id=step_id, factory=self, priority=priority)
+
+
+# ....................... #
+
+
+@final
+@attrs.define(slots=True, kw_only=True, frozen=True)
+class AuthzSearchMembers(MiddlewareFactory):
+    """Wrap middleware factory that authorizes each member of a hub or federated search.
+
+    Each member must pass its own read action, the check :class:`AuthzBeforeAuthorize` makes
+    for one; a caller who may read none is refused. The result is bound as a
+    :class:`~forze.application.contracts.search.SearchMemberGrant`, which the adapter applies
+    to the request it receives, after any request mapper: a request naming a member the caller
+    may not read (in ``members``, or in ``member_weights`` above zero) is refused with that
+    member's denial, and one naming none skips such members, refused only when none remains.
+
+    With :attr:`scope_operation` set (federated search only), each member is also scoped as
+    :class:`AuthzDocumentScopeWrap` scopes one document, and its row filters reach its own leg
+    alone. The scope request names the member's document from :attr:`scope_documents`, or the
+    member's own name. A member the policy scope denies counts as one the caller may not read.
+
+    Any authz-guarded hub or federated search operation needs this hook (or another
+    :class:`~forze.application.contracts.execution.AuthorizesMembers` one): without it the
+    registry refuses to freeze. Two such hooks on one operation, or on nested ones, both
+    apply: their grants intersect.
+    """
+
+    spec: AuthzSpec
+    search: HubSearchSpec[Any] | FederatedSearchSpec[Any]
+    """The hub or federated search the operation runs."""
+
+    actions: Mapping[str, str] = attrs.field(
+        converter=MappingConverter.to_str_key_frozen,  # type: ignore[misc]
+    )
+    """The read action for each member, by member name. Names every member of :attr:`search`
+    and nothing else. Map every member to the operation's own action to let that one
+    permission read them all."""
+
+    scope_operation: str | None = None
+    """The ``operation`` of each member's policy scope request, or ``None`` to scope none."""
+
+    scope_documents: Mapping[str, str] = attrs.field(
+        factory=dict,
+        converter=MappingConverter.to_str_key_frozen,  # type: ignore[misc]
+    )
+    """The ``document_name`` of a member's policy scope request, by member name, where it is
+    not the member's own name."""
+
+    # ....................... #
+
+    def __attrs_post_init__(self) -> None:
+        names = {member.name for member in self.search.members}
+
+        if missing := sorted(names - self.actions.keys()):
+            raise exc.configuration(
+                f"AuthzSearchMembers for {self.search.name!r} names no read action for "
+                f"member(s) {missing}.",
+            )
+
+        if unknown := sorted(self.actions.keys() - names):
+            raise exc.configuration(
+                f"AuthzSearchMembers for {self.search.name!r} names action(s) for {unknown}, "
+                "which it has no member for.",
+            )
+
+        if self.scope_operation is not None and isinstance(self.search, HubSearchSpec):
+            raise exc.configuration(
+                f"AuthzSearchMembers for hub {self.search.name!r} cannot scope its members: a "
+                "hub filter applies to the hub rows, so scope those with AuthzDocumentScopeWrap.",
+            )
+
+        if self.scope_documents and self.scope_operation is None:
+            raise exc.configuration(
+                f"AuthzSearchMembers for {self.search.name!r} names scope documents but no "
+                "scope_operation to scope them with.",
+            )
+
+        if unknown := sorted(self.scope_documents.keys() - names):
+            raise exc.configuration(
+                f"AuthzSearchMembers for {self.search.name!r} names scope documents for "
+                f"{unknown}, which it has no member for.",
+            )
+
+    # ....................... #
+
+    def __call__(self, ctx: ExecutionContext) -> Middleware[Any, Any]:
+        decision_port = ctx.authz.decision(self.spec)
+        # Resolved eagerly, as the other guards do: missing wiring fails when the hook is built.
+        delegation_port = (
+            ctx.authz.delegation(self.spec) if self.spec.enforce_delegation_grant else None
+        )
+        scope_port = ctx.authz.scope(self.spec) if self.scope_operation is not None else None
+
+        async def _wrap(
+            next: Callable[[Any], Awaitable[Any]],
+            args: Any,
+        ) -> Any:
+            identity = _authenticated(ctx)
+            allowed: set[str] = set()
+            denials: dict[str, CoreException] = {}
+            policy_filters: dict[str, Any] = {}
+
+            # One decision per action, which the port answers alike for every member mapped to it.
+            verdicts: dict[str, CoreException | None] = {}
+
+            # Every member, not only those the request reaches: a request mapper runs after
+            # this hook and may reach others, which the bound grant must answer for too.
+            for member in self.search.members:
+                name = member.name
+                action = self.actions[name]
+
+                try:
+                    if action not in verdicts:
+                        verdicts[action] = await self._decide(
+                            ctx, decision_port, delegation_port, action
+                        )
+
+                    if (denial := verdicts[action]) is not None:
+                        raise denial
+
+                    if scope_port is not None:
+                        filters = await self._member_filters(
+                            ctx, scope_port, delegation_port, identity, name
+                        )
+
+                        if filters is not None:
+                            policy_filters[name] = filters
+
+                except CoreException as error:
+                    if error.kind is not ExceptionKind.AUTHORIZATION:
+                        raise
+
+                    denials[name] = error
+
+                else:
+                    allowed.add(name)
+
+            if not allowed:
+                raise denials[self.search.members[0].name]
+
+            grant = SearchMemberGrant(
+                allowed=frozenset(allowed), denials=denials, filters=policy_filters
+            )
+
+            with bind_search_member_grant(self.search.name, grant):
+                return await next(args)
+
+        return _wrap
+
+    # ....................... #
+
+    @staticmethod
+    async def _decide(
+        ctx: ExecutionContext,
+        decision_port: AuthzDecisionPort,
+        delegation_port: DelegationPort | None,
+        action: str,
+    ) -> CoreException | None:
+        """The denial of *action* for the caller, or ``None`` when it is allowed."""
+
+        try:
+            await authorize_action(ctx, decision_port, action, delegation_port=delegation_port)
+
+        except CoreException as error:
+            if error.kind is not ExceptionKind.AUTHORIZATION:
+                raise
+
+            return error
+
+        return None
+
+    # ....................... #
+
+    async def _member_filters(
+        self,
+        ctx: ExecutionContext,
+        scope_port: AuthzScopePort,
+        delegation_port: DelegationPort | None,
+        identity: AuthnIdentity,
+        name: str,
+    ) -> QueryFilterExpression | None:  # type: ignore[valid-type]
+        """The policy's row filters for member *name*, or ``None`` when it restricts none.
+
+        :raises CoreException: ``authorization`` (``scope_denied``) when the policy denies the
+            member outright, or a delegated actor's denial.
+        """
+
+        request = AuthzDocumentScopeRequest(
+            subject=subject_from_authn(identity),
+            scope=policy_scope_from_invocation(ctx),
+            document_name=self.scope_documents.get(name, name),
+            operation=cast(str, self.scope_operation),
+            action=self.actions[name],
+        )
+        doc_scope = await scope_port.scope_document(request)
+
+        if doc_scope.deny_all:
+            raise exc.authorization(
+                doc_scope.reason or "Access denied by policy scope",
+                code="scope_denied",
+            )
+
+        return await _delegated_scope_filters(
+            scope_port, delegation_port, request, doc_scope.filters
+        )
+
+    # ....................... #
+
+    def permission_keys(self) -> tuple[str, ...]:
+        """Marker (``DeclaresAuthz``): every member's read action.
+
+        A caller needs the action of each member it searches, not all of them. Declared-hook
+        introspection only, not a security statement.
+        """
+
+        return tuple(sorted(set(self.actions.values())))
+
+    # ....................... #
+
+    def authorized_members(self) -> frozenset[str]:
+        """Marker (``AuthorizesMembers``): every member of :attr:`search`."""
+
+        return frozenset(self.actions)
+
+    # ....................... #
+
+    def members_of(self) -> str:
+        """Marker (``AuthorizesMembers``): :attr:`search`, under whose name the grant binds."""
+
+        return str(self.search.name)
+
+    # ....................... #
+
+    def to_step(
+        self,
+        *,
+        step_id: StrKey = "authz.search_members",
+        priority: int = 45,
     ) -> MiddlewareStep:
         """Build a :class:`MiddlewareStep` using this factory."""
 

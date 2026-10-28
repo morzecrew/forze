@@ -16,7 +16,7 @@ from forze.base.primitives import (
     str_key_selector,
 )
 
-from ..descriptors import OperationDescriptor
+from ..descriptors import OperationDescriptor, refuse_dropped_members
 from ..planning import OperationPlan
 from .patch import PlanPatch
 
@@ -184,6 +184,9 @@ class RegistryMerge:
                         f"selector: {patch.selector!r}. Pass override=True to let "
                         "the later patch replace the earlier one."
                     )
+
+            for op, descriptor in part.descriptors.items():
+                refuse_dropped_members(op, merged_descriptors.get(op), descriptor)
 
             merged_handlers.update(part.handlers)
             merged_plans.update(part.plans)

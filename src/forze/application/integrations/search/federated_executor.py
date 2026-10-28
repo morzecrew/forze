@@ -19,7 +19,7 @@ adapters fall back to the full-fetch path otherwise (see :func:`federated_thin_e
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from typing import Any
 
 from pydantic import BaseModel
@@ -100,6 +100,17 @@ def federated_thin_eligible(
 # ....................... #
 
 
+def _leg_filter(
+    filters: QueryFilterExpression | None,  # type: ignore[valid-type]
+    leg_filters: Mapping[str, QueryFilterExpression | None] | None,  # type: ignore[valid-type]
+    member: str,
+) -> QueryFilterExpression | None:  # type: ignore[valid-type]
+    if leg_filters is None or member not in leg_filters:
+        return filters
+
+    return leg_filters[member]
+
+
 def _and_id_filter(
     filters: QueryFilterExpression | None,  # type: ignore[valid-type]
     ids: Sequence[str],
@@ -122,11 +133,13 @@ async def _hydrate_federated_page(
     filters: QueryFilterExpression | None,  # type: ignore[valid-type]
     leg_opts: SearchOptions | None,
     run_legs: RunLegs,
+    leg_filters: Mapping[str, QueryFilterExpression | None] | None = None,  # type: ignore[valid-type]
 ) -> list[FederatedSearchReadModel[Any]]:
     """Re-fetch full hits for ``ordered_keys`` (one query per member, by id), in order.
 
     A key whose hit is gone (deleted since the candidate fetch / snapshot write) is
-    skipped. Used by both the fresh thin search and thin-snapshot replay.
+    skipped. Used by both the fresh thin search and thin-snapshot replay. *leg_filters*,
+    when given, replaces *filters* for each member it names.
     """
 
     ids_by_member: dict[str, list[str]] = {}
@@ -136,7 +149,10 @@ async def _hydrate_federated_page(
 
     members_in_order = list(ids_by_member.items())
     pages = await run_legs(
-        [_hydrate(ports[member], query, filters, ids, leg_opts) for member, ids in members_in_order]
+        [
+            _hydrate(ports[member], query, _leg_filter(filters, leg_filters, member), ids, leg_opts)
+            for member, ids in members_in_order
+        ]
     )
 
     hydrated: dict[tuple[str, str], BaseModel] = {}
@@ -157,11 +173,14 @@ def federated_snapshot_rehydrator(
     ports: dict[str, SearchQueryPort[Any]],
     leg_opts: SearchOptions | None,
     run_legs: RunLegs,
+    leg_filters: Mapping[str, QueryFilterExpression | None] | None = None,  # type: ignore[valid-type]
 ) -> Callable[[Sequence[tuple[str, str]]], Awaitable[Sequence[FederatedSearchReadModel[Any]]]]:
-    """A re-fetch-by-id callback for thin-snapshot replay (current content, by id only).
+    """A re-fetch-by-id callback for thin-snapshot replay (current content, by id).
 
-    Replay re-fetches each key's hit by id (no query/filters: the snapshot froze the
-    identities, not the matcher), so the returned content is current."""
+    Replay re-fetches each key's hit by id with no query (the snapshot froze the identities,
+    not the ranking), so the returned content is current. *leg_filters*, each member's
+    filters for this request, drop a hit they no longer match, such as one a policy scope
+    now excludes, as a deleted hit drops out."""
 
     async def _rehydrate(
         ordered_keys: Sequence[tuple[str, str]],
@@ -173,6 +192,7 @@ def federated_snapshot_rehydrator(
             filters=None,
             leg_opts=leg_opts,
             run_legs=run_legs,
+            leg_filters=leg_filters,
         )
 
     return _rehydrate
@@ -199,8 +219,12 @@ async def execute_federated_thin_offset(
     snapshot: SearchResultSnapshotOptions | None = None,
     fp_computed: str = "",
     write_snapshot: bool = False,
+    leg_filters: Mapping[str, QueryFilterExpression | None] | None = None,  # type: ignore[valid-type]
 ) -> Any:
     """Thin RRF offset page: id-only fetch, fuse on ``(member, id)``, hydrate the page.
+
+    *leg_filters*, when given, replaces *filters* for each member it names (see
+    :func:`~forze.application.contracts.search.federated_leg_filters`).
 
     *legs* are the active ``(member, port, weight)`` triples (member weight already
     applied upstream). *run_legs* runs the per-leg thunks under the backend's
@@ -218,8 +242,15 @@ async def execute_federated_thin_offset(
     # 1. Thin candidate fetch: ``id`` (+ any sort fields) per leg, in relevance order.
     thin_pages = await run_legs(
         [
-            _thin_fetch(port, query, filters, leg_page, leg_opts, sort_fields)
-            for _name, port, _weight in legs
+            _thin_fetch(
+                port,
+                query,
+                _leg_filter(filters, leg_filters, name),
+                leg_page,
+                leg_opts,
+                sort_fields,
+            )
+            for name, port, _weight in legs
         ]
     )
 
@@ -290,6 +321,7 @@ async def execute_federated_thin_offset(
         filters=filters,
         leg_opts=leg_opts,
         run_legs=run_legs,
+        leg_filters=leg_filters,
     )
     scores = (
         [score_by_key[(fm.member, str(getattr(fm.hit, ID_FIELD)))] for fm in models]

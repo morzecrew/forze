@@ -18,6 +18,7 @@ import attrs
 from pydantic import BaseModel, TypeAdapter
 
 from forze.application.contracts.querying import QueryDiscovery
+from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict, StrKey
 
 from .planning import OperationKind
@@ -57,6 +58,17 @@ class OperationDescriptor:
     external surfaces (HTTP route generators, MCP tools/resources) must refuse to
     project operations marked sensitive."""
 
+    members: tuple[str, ...] = attrs.field(factory=tuple)
+    """Names of the sources the operation reads rows from, each with its own read permission
+    (a hub or federated search's members). An intrinsic fact: when the plan declares authz
+    (``DeclaresAuthz``), hooks that authorize each member (``AuthorizesMembers``) must cover
+    every one, or the registry refuses to freeze. Empty for a single-source operation."""
+
+    members_of: str | None = None
+    """Name of the hub or federated search whose :attr:`members` these are: the name its
+    adapter reads the member grant under. A member authorization hook must name the same
+    search, or the registry refuses to freeze. ``None`` for a single-source operation."""
+
     commutative: bool = False
     """The operation is declared **order-independent**: any interleaving of it against
     its peers must converge to the same final state. A *declaration*, verified — not
@@ -88,6 +100,43 @@ class OperationDescriptor:
 
         # A model's schema is the same either way, so its operation fingerprint is unchanged.
         return TypeAdapter[Any](self.output_type).json_schema()
+
+
+# ....................... #
+
+
+def refuse_dropped_members(
+    op: StrKey,
+    current: OperationDescriptor | None,
+    replacement: OperationDescriptor,
+) -> None:
+    """Refuse replacing *current* with a descriptor naming fewer :attr:`~OperationDescriptor.members`,
+    or another :attr:`~OperationDescriptor.members_of`.
+
+    The member authorization gate reads them, so an override dropping one would let the
+    operation freeze without that member's check.
+
+    :raises exc.configuration: *replacement* leaves out a member *current* names, or names
+        another search.
+    """
+
+    if current is None:
+        return
+
+    if missing := sorted(set(current.members) - set(replacement.members)):
+        raise exc.configuration(
+            f"Descriptor override for operation {op!r} drops member(s) {missing}, which the "
+            "member authorization check reads; keep them (attrs.evolve the descriptor).",
+            code="descriptor_members_dropped",
+        )
+
+    if current.members_of is not None and replacement.members_of != current.members_of:
+        raise exc.configuration(
+            f"Descriptor override for operation {op!r} changes the search its members belong "
+            f"to from {current.members_of!r}, which the member authorization check reads; "
+            "keep it (attrs.evolve the descriptor).",
+            code="descriptor_members_of_changed",
+        )
 
 
 # ....................... #
