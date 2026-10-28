@@ -269,8 +269,8 @@ Branch on `code`, never on `detail`: a stale `?rev=` on an update answers
 error keeps its code and gets a generic `detail`; an exception that is not a
 `CoreException` answers `core.internal`.
 
-A `throttled` error withholds its details, but it can still tell the client when to
-come back: the response carries a `Retry-After` header read from two `details` keys.
+A `throttled` or `unavailable` error withholds its details, but it can still tell the client
+when to come back: the response carries a `Retry-After` header read from two `details` keys.
 
 | Key | Value | `Retry-After` |
 |-----|-------|---------------|

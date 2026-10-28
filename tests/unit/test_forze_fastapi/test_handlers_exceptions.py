@@ -112,6 +112,23 @@ class TestForzeExceptionHandler:
         assert _json_records(error_log_buf) == []
 
     @pytest.mark.asyncio
+    async def test_unavailable_returns_503_with_summary_and_no_error_log(
+        self, error_log_buf: io.StringIO
+    ) -> None:
+        # An operator switched it off: the client learns so, and nothing is logged as broken.
+        err = exc.unavailable("Exports are off", code="exports_off", details={"flag": "f"})
+        request = Request(scope={"type": "http", "path": "/", "method": "GET"})
+        response = await _forze_exception_handler(request, err)
+        assert response.status_code == 503
+        assert response.headers.get(ERROR_CODE_HEADER) == "exports_off"
+        assert json.loads(response.body) == {
+            "detail": "Exports are off",
+            "code": "exports_off",
+            "kind": "unavailable",
+        }
+        assert _json_records(error_log_buf) == []
+
+    @pytest.mark.asyncio
     async def test_internal_returns_500(self) -> None:
         err = exc.internal("Something went wrong", code="internal")
         request = Request(scope={"type": "http", "path": "/", "method": "GET"})
@@ -493,7 +510,15 @@ class TestRetryAfterHeader:
         assert response.status_code == 429
         assert "Retry-After" not in response.headers
 
-    def test_only_a_throttled_error_sends_it(self) -> None:
+    def test_an_unavailable_error_sends_it(self) -> None:
+        err = exc.unavailable("Switched off for maintenance", details={"retry_after": 120})
+
+        response = build_core_exception_response(err)
+
+        assert response.status_code == 503
+        assert response.headers["Retry-After"] == "120"
+
+    def test_only_a_throttled_or_unavailable_error_sends_it(self) -> None:
         err = exc.infrastructure("Upstream busy", details={"retry_after": 30})
 
         response = build_core_exception_response(err)

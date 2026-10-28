@@ -27,6 +27,7 @@ from forze.application.execution.observability import (
 )
 from forze.application.execution.operations import run_operation
 from forze.application.execution.operations.registry import OperationRegistry
+from forze.base.exceptions import CoreException, exc
 from forze_mock import MockDepsModule
 from tests.support.execution_context import context_from_modules
 
@@ -43,6 +44,12 @@ class _Echo(Handler[str, str]):
 class _Boom(Handler[None, None]):
     async def __call__(self, _args: None) -> None:
         raise RuntimeError("boom")
+
+
+@attrs.define(slots=True)
+class _Off(Handler[None, None]):
+    async def __call__(self, _args: None) -> None:
+        raise exc.unavailable("Switched off")
 
 
 def _otel() -> tuple[Any, Any, InMemorySpanExporter, InMemoryMetricReader]:
@@ -124,6 +131,18 @@ class TestInstrumentOperations:
 
         ((labels, _),) = _points(reader, OPERATIONS_COUNTER)
         assert labels["forze.outcome"] == "error"
+
+    async def test_an_unavailable_failure_counts_as_failed_not_error(self) -> None:
+        # Its 503 is a state an operator chose, not a fault: no error-rate noise.
+        tracer, meter, _, reader = _otel()
+        reg = _instrumented({"off": lambda _c: _Off()}, tracer, meter)
+        ctx = context_from_modules(MockDepsModule())
+
+        with pytest.raises(CoreException, match="Switched off"):
+            await run_operation(reg, "off", None, ctx)
+
+        ((labels, _),) = _points(reader, OPERATIONS_COUNTER)
+        assert labels["forze.outcome"] == "failed"
 
     async def test_query_op_kind_attribute(self) -> None:
         tracer, meter, exporter, _ = _otel()

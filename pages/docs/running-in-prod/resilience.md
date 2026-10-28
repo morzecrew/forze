@@ -67,7 +67,7 @@ circuit breaker → retry → timeout), plus optional fallback and hedge:
 | **Fallback / Hedge** | a fallback value on failure; or race staggered attempts |
 
 Retry only fires on kinds that declare themselves **retryable** —
-`concurrency`, `infrastructure`, and `throttled` (see
+`concurrency`, `infrastructure`, `throttled`, and `unavailable` (see
 [Errors & failures](../writing-operation/errors.md)). You can't retry a `validation` or `domain`
 failure, by design.
 

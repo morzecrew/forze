@@ -85,10 +85,11 @@ def test_cap_holds_for_any_attempt(jitter: str, attempt: int) -> None:
         (exc.throttled("slow", details={"retry_after": float("nan")}), None),
         (exc.throttled("slow", details={"retry_after": float("inf")}), math.inf),
         (exc.throttled("slow", details={"retry_after": 10**400}), math.inf),
+        (exc.unavailable("off", details={"retry_after": 30}), 30.0),
         (exc.infrastructure("down", details={"retry_after": 5}), None),
     ],
 )
-def test_retry_after_reads_only_a_throttles_numeric_hint(
+def test_retry_after_reads_only_a_hinted_kinds_numeric_hint(
     error: CoreException, expected: float | None
 ) -> None:
     assert retry_after(error) == expected

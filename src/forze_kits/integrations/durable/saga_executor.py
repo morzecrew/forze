@@ -542,7 +542,7 @@ class DurableSagaExecutor:
         fn: Callable[[], Awaitable[JsonDict]],
     ) -> JsonDict:
         # Bounded in-place retry on retryable-classified kinds only (infrastructure,
-        # throttled, concurrency); anything else — and the last exhausted attempt —
+        # throttled, unavailable, concurrency); anything else — and the last exhausted attempt —
         # propagates to be journaled as the step's outcome.
         for attempt in range(self.retry_attempts):
             try:

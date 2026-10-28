@@ -51,6 +51,16 @@ class ExceptionKind(StrEnum):
     Maps to HTTP 504 at the FastAPI edge.
     """
 
+    UNAVAILABLE = "unavailable"
+    """The call works, but is switched off right now — by configuration, a
+    maintenance window, or a dependency an operator turned off on purpose.
+
+    **Retryable**: the state is temporary by definition. Maps to HTTP 503 at
+    the FastAPI edge, yet it reports a state an operator chose, not a fault, so
+    its summary and code reach the client and it is not logged as a server
+    error. A backing system that *failed* is ``INFRASTRUCTURE``.
+    """
+
 
 # ....................... #
 
@@ -234,6 +244,9 @@ class CoreException(Exception):
 
     timeout = _exc_of_kind(ExceptionKind.TIMEOUT)
     """Build a timeout (deadline exceeded) exception."""
+
+    unavailable = _exc_of_kind(ExceptionKind.UNAVAILABLE)
+    """Build an unavailable (switched off right now) exception."""
 
     # ....................... #
 

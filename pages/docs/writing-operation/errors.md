@@ -39,6 +39,7 @@ Every `CoreException` carries a `kind`, a human `summary`, a machine `code`
 | `infrastructure` | a backing system failed (transient) |
 | `throttled` | a rate limit rejected the call (transient — capacity refills) |
 | `timeout` | the invocation's [time budget](../running-in-prod/deadlines.md) ran out (final — the budget is spent) |
+| `unavailable` | it works, but is switched off right now — a feature flag, a maintenance window (transient) |
 | `internal` | an unexpected bug |
 
 ## Raising aborts the operation
@@ -60,11 +61,11 @@ Beyond its meaning, each kind has an **egress policy** with two booleans:
 
 - **`expose_details`** — are the details safe to show a caller? (`internal`,
   `authentication`, `authorization`, `configuration`, `infrastructure`,
-  `throttled`, and `timeout` say no.) An error an integration translated from its
+  `throttled`, `timeout`, and `unavailable` say no.) An error an integration translated from its
   backend's never shows its details, whatever its kind: they describe the failed
   call, and stay on the exception for your code and your logs.
 - **`retryable`** — is this transient? Only **`concurrency`**,
-  **`infrastructure`**, and **`throttled`** are. This flag is what the
+  **`infrastructure`**, **`throttled`**, and **`unavailable`** are. This flag is what the
   [resilience](../running-in-prod/resilience.md) retry policies key on — you can only retry a kind
   that declares itself retryable. (`timeout` is deliberately *not* retryable:
   within one invocation the budget is spent; a fresh invocation carries a
@@ -75,4 +76,6 @@ Beyond its meaning, each kind has an **egress policy** with two booleans:
 Core stays transport-neutral — it never picks an HTTP status. The
 [FastAPI integration](../integrations/fastapi.md) turns a `CoreException` into a response,
 exposing details only when the kind's policy allows and logging the rest
-server-side.
+server-side. Raise `unavailable` rather than `infrastructure` for something an
+operator switched off: it answers 503, but its summary reaches the client and it
+is not logged as a server error, since nothing is broken.

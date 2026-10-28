@@ -14,11 +14,10 @@ from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
-from forze.application.execution.resilience.backoff import retry_after
+from forze.application.execution.resilience.backoff import RETRY_HINT_KINDS, retry_after
 from forze.base.exceptions import (
     CoreException,
     ErrorEnvelope,
-    ExceptionKind,
     error_envelope,
     exc,
     unhandled_error_envelope,
@@ -66,14 +65,14 @@ def _render_envelope(envelope: ErrorEnvelope) -> JSONResponse:
 
 
 def _retry_after_header(exc: CoreException) -> str | None:
-    """The ``Retry-After`` value (RFC 9110) a throttled *exc* asks for, or :obj:`None`.
+    """The ``Retry-After`` value (RFC 9110) a throttled or unavailable *exc* asks for, or None.
 
     ``details["retry_after"]`` — seconds, read as the retry layer reads it — is rounded up
     to whole seconds; otherwise ``details["retry_at"]``, an aware :class:`~datetime.datetime`,
     becomes an HTTP-date. Any other value gives no header: a bad hint never fails the response.
     """
 
-    if exc.kind is not ExceptionKind.THROTTLED:
+    if exc.kind not in RETRY_HINT_KINDS:
         return None
 
     seconds = retry_after(exc)
@@ -109,8 +108,8 @@ def build_core_exception_response(exc: CoreException) -> JSONResponse:
     projection — server-error masking and egress sanitization already applied —
     into a FastAPI :class:`JSONResponse`, logging server-side errors on the way.
     The same envelope the Socket.IO transport renders, so both stay in lock-step.
-    A throttled error's ``retry_after`` (seconds) or ``retry_at`` (aware datetime)
-    detail also sets ``Retry-After``; its other details stay withheld.
+    A throttled or unavailable error's ``retry_after`` (seconds) or ``retry_at`` (aware
+    datetime) detail also sets ``Retry-After``; its other details stay withheld.
     """
 
     envelope = error_envelope(exc)

@@ -989,6 +989,26 @@ class TestErrorMasking:
         assert event == "MCP server error"
         assert isinstance(kw["exc"], ValueError)  # the chained cause
 
+    def test_unavailable_reaches_the_agent_and_is_not_logged(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # A 503, but an operator-chosen state: the agent learns why, operators see no error.
+        calls: list[str] = []
+
+        class _StubLogger:
+            def error(self, event: str, **kw: object) -> None:
+                calls.append(event)
+
+            def critical_exception(self, event: str, **kw: object) -> None:
+                calls.append(event)
+
+        monkeypatch.setattr("forze_mcp._errors._error_logger", _StubLogger())
+
+        error = exc.unavailable("Search is off", code="search_off")
+
+        assert str(client_safe_error(error, ToolError)) == "search_off: Search is off"
+        assert calls == []
+
 
 class _IdIn(BaseModel):
     id: str

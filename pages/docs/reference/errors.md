@@ -45,6 +45,7 @@ policy.
 | `infrastructure` | a backing system failed | — | ✅ | 500 | `core.infrastructure` |
 | `throttled` | a rate limit rejected the call | — | ✅ | 429 | `core.throttled` |
 | `timeout` | the invocation's [time budget](../running-in-prod/deadlines.md) ran out | — | — | 504 | `core.timeout` |
+| `unavailable` | it works, but is switched off right now (a feature flag, a maintenance window) | — | ✅ | 503 | `core.unavailable` |
 | `internal` | an unexpected bug | — | — | 500 | `core.internal` |
 
 ## Outcomes
@@ -60,7 +61,10 @@ Core owns the canonical kind→status mapping (the column above, via
 [FastAPI](../integrations/fastapi.md) exception handlers turn a `CoreException`
 into a response — the status from the kind, the `code` on an error-code header,
 and details exposed only when `expose_details` is set; kinds with no status of
-their own (`configuration`, `infrastructure`, `internal`) map to `500`.
+their own (`configuration`, `infrastructure`, `internal`) map to `500`. Every
+transport masks a `>= 500` error's summary and logs it as a server error, except
+`unavailable`: its 503 reports a state an operator chose, not a fault, so its
+summary reaches the client and nothing is logged as an error.
 
 ## Non-disclosing denials
 

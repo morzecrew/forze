@@ -28,7 +28,7 @@ import attrs
 from opentelemetry.trace import Span, SpanKind, Status, StatusCode, Tracer
 
 from forze.application.contracts.deps.proxy import PortProxy
-from forze.base.exceptions import CoreException, http_status_for_kind
+from forze.base.exceptions import CoreException, is_server_error_kind
 
 # ----------------------- #
 
@@ -79,10 +79,11 @@ class OtelSpanPortProxy(PortProxy):
         ``CoreException`` (a 5xx kind — a lost connection, a timeout, an adapter bug) sets ``ERROR``,
         as does any non-``CoreException``. A domain ``CoreException`` whose kind maps to a 4xx status
         (not-found, conflict, precondition, validation) is an *expected* result the caller may handle —
-        like a 404 on an HTTP client span, it does not paint the span red.
+        like a 404 on an HTTP client span, it does not paint the span red. Nor does ``unavailable``:
+        its 503 is a state an operator chose, not a fault.
         """
 
-        if isinstance(exc, CoreException) and http_status_for_kind(exc.kind) < 500:
+        if isinstance(exc, CoreException) and not is_server_error_kind(exc.kind):
             return
 
         span.record_exception(exc)

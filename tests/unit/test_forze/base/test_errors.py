@@ -390,7 +390,13 @@ class TestExceptionEgressPolicy:
             ExceptionKind.CONCURRENCY,
             ExceptionKind.INFRASTRUCTURE,
             ExceptionKind.THROTTLED,
+            ExceptionKind.UNAVAILABLE,
         }
+
+    def test_unavailable_hides_details_and_is_retryable(self) -> None:
+        policy = exception_egress_policy(ExceptionKind.UNAVAILABLE)
+        assert policy.expose_details is False
+        assert policy.retryable is True
 
 
 class TestHttpStatusForKind:
@@ -405,6 +411,7 @@ class TestHttpStatusForKind:
         assert http_status_for_kind(ExceptionKind.AUTHORIZATION) == 403
         assert http_status_for_kind(ExceptionKind.THROTTLED) == 429
         assert http_status_for_kind(ExceptionKind.TIMEOUT) == 504
+        assert http_status_for_kind(ExceptionKind.UNAVAILABLE) == 503
 
     def test_internal_kinds_fall_back_to_500(self) -> None:
         for kind in (

@@ -2,11 +2,17 @@
 
 import math
 import random
+from typing import Final
 
 from forze.application.contracts.resilience import BackoffStrategy
 from forze.base.exceptions import CoreException, ExceptionKind
 
 # ----------------------- #
+
+RETRY_HINT_KINDS: Final = frozenset({ExceptionKind.THROTTLED, ExceptionKind.UNAVAILABLE})
+"""The kinds whose ``retry_after`` / ``retry_at`` details say when a retry can succeed."""
+
+# ....................... #
 
 
 def compute_delay(
@@ -50,7 +56,7 @@ def compute_delay(
 
 
 def retry_after(error: CoreException) -> float | None:
-    """Return the soonest a retry of a throttled *error* can succeed, in seconds.
+    """Return the soonest a retry of a throttled or unavailable *error* can succeed, in seconds.
 
     Reads ``details["retry_after"]`` — the upstream's ``Retry-After``, as the HTTP client
     maps a ``429`` — and returns ``None`` for any other kind, a missing value, or one that is
@@ -58,7 +64,7 @@ def retry_after(error: CoreException) -> float | None:
     ``math.inf``: no retry waits it out.
     """
 
-    if error.kind is not ExceptionKind.THROTTLED or not error.details:
+    if error.kind not in RETRY_HINT_KINDS or not error.details:
         return None
 
     value = error.details.get("retry_after")

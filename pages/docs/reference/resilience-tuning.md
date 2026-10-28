@@ -37,10 +37,10 @@ immediately (no queuing) with `exc.throttled(code="rate_limited")`. State is key
 | `retry_on` | — | the `ExceptionKind`s that trigger a retry (all must be retryable) |
 | `budget` | `None` | optional `RetryBudget` token-bucket cap on retries across calls |
 
-A `throttled` error carrying `details["retry_after"]` (an upstream `429`'s `Retry-After`,
-in seconds) waits at least that long before the next attempt. One longer than
+A `throttled` or `unavailable` error carrying `details["retry_after"]` (an upstream `429`'s
+`Retry-After`, in seconds) waits at least that long before the next attempt. One longer than
 `backoff.max`, or one that would outlive the invocation deadline, is not retried: the
-throttled error is raised at once (event `retry_after_exceeds_max` or
+error is raised at once (event `retry_after_exceeds_max` or
 `retry_deadline_exhausted`).
 
 ## Timeout
