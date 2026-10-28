@@ -164,7 +164,9 @@ def _validate_allowlisted_path(path: str, endpoints: list[Any]) -> None:
     if not endpoints:
         raise exc.configuration(
             f"allowed_websocket_paths lists {path!r}, but no websocket route is "
-            "registered at that exact path. If the governed route sits under a "
+            "reachable at that exact path, so it reaches no governed route. A route "
+            "declared after a mount that matches its path is never reached: declare it "
+            "first. If the governed route sits under a "
             "router prefix, allowlist the full mounted path; under a FastAPI(root_path=...), "
             "the path relative to it. On a mounted application, run the checks on the "
             "outermost app (run_startup_checks), the only one that sees the mount. A path "

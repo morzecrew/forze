@@ -124,8 +124,9 @@ def _check_level(app: Any, scopes: Callable[[str], list[Scope]]) -> None:
             "middlewares run before routing, so list the full mounted path "
             "(/api/livez, not /livez); on an application mounted under a prefix, the full "
             "path or the path relative to the mount, and run the checks on the outermost "
-            "app (run_startup_checks), the only one that sees the mount. Drop the argument "
-            "if the probes are served elsewhere entirely."
+            "app (run_startup_checks), the only one that sees the mount. A route declared "
+            "after a mount that matches its path is never reached: declare it first. Drop "
+            "the argument if the probes are served elsewhere entirely."
         )
 
 

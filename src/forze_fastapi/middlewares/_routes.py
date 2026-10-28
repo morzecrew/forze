@@ -85,20 +85,30 @@ def iter_effective_routes(app: Any) -> Iterator[tuple[str, Any]]:
     Starlette or FastAPI app, or a router, is descended into, its routes under the mount
     prefix; any other mounted ASGI app cannot be seen into and is yielded as the mount.
 
+    Routing takes the first full match in declaration order, and a mount fully matches
+    every path its pattern matches, HTTP or websocket alike. A route whose path a mount
+    declared before it matches is never reached, so it is left out.
+
     :returns: ``(effective path, route)`` pairs — the route being the object that
         actually serves it, so callers read ``endpoint`` and match types on it.
     """
 
+    earlier_mounts: list[Mount] = []
+
     for path, route in _iter_own_routes(app):
         mounted = _mounted_app(route)
+        served = (
+            [(path, route)]
+            if mounted is None
+            else [(path + sub_path, sub) for sub_path, sub in iter_effective_routes(mounted)]
+        )
 
-        if mounted is None:
-            yield path, route
+        for served_path, served_route in served:
+            if not any(mount.path_regex.match(served_path) for mount in earlier_mounts):
+                yield served_path, served_route
 
-            continue
-
-        for sub_path, sub_route in iter_effective_routes(mounted):
-            yield path + sub_path, sub_route
+        if isinstance(route, Mount):
+            earlier_mounts.append(route)
 
 
 def iter_mounted_apps(app: Any) -> Iterator[tuple[Any, Callable[[str], list[Scope]]]]:
@@ -203,11 +213,14 @@ def entry_into_opaque_mount(
 def _routes_into(mount_path: str, route: Any, path: str) -> bool:
     """Whether a request routed by *path* can reach the mount or host route."""
 
-    # A host route matches any path, and so does a mount at the root or one with params.
-    if isinstance(route, Host) or not mount_path or "{" in mount_path:
-        return True
+    if isinstance(route, Host):
+        return True  # it matches on the Host header, whatever the path
 
-    return path.startswith(mount_path + "/")
+    # A mount with params is reached by any path under its static prefix, cut back to a
+    # segment boundary (``/api/{tenant}`` by ``/api/...``); a mount at the root by any.
+    prefix = mount_path.split("{", 1)[0].rpartition("/")[0] if "{" in mount_path else mount_path
+
+    return not prefix or path.startswith(prefix + "/")
 
 
 def _scopes(bases: tuple[str, ...], root_path: str, path: str) -> list[Scope]:

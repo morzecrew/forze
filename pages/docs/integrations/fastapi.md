@@ -107,6 +107,9 @@ The relative reading trusts the ASGI `root_path`, so it must come from server
 configuration: a `Mount`, or the server's `--root-path`. Never derive it from a request
 header. A middleware that sets it from `X-Forwarded-Prefix` lets the client choose the
 prefix, and a relative entry would then admit paths the startup checks never verified.
+The startup checks see only the app's own `root_path` and its mounts. A root path the
+server sets (`--root-path`, typically behind a proxy that strips the prefix) is invisible
+to them: under one, list entries relative to it, which match with or without it.
 
 Probe paths want the opposite treatment. Both middlewares resolve the execution
 context on every HTTP request, so in front of `/livez` they answer 500 while the
@@ -174,11 +177,15 @@ or FastAPI app mounted beneath it, and hold each one's middlewares against the r
 they reach, at the path they see. A bypass on the outer app that reaches a generated
 route of a mounted one fails the boot too.
 
+Routing takes the first match in declaration order, and a mount matches every path
+under its prefix. The checks treat a route declared after a mount that matches its path
+as unreachable, so an entry naming only that route fails the boot.
+
 The checks cannot see into any other mounted ASGI app, such as a Prometheus
 `make_asgi_app()`. A bypass or websocket allowlist entry that could admit a request into
-one fails the boot, even when it also names a visible route: routing order decides which
-one serves it, and the checks do not model that. A mount at `/` or a `Host` route is
-reached by every entry. A `StaticFiles` mount is the exception: it serves files and no
+one fails the boot, even when a route declared before that app would serve it. A mount
+at `/` or a `Host` route is reached by every entry, and a mount with path parameters
+(`/api/{tenant}`) by every path under its static prefix. A `StaticFiles` mount is the exception: it serves files and no
 governed operation, and closes every websocket, so a single-page app mounted at `/` with
 `StaticFiles(html=True)` keeps its `/livez` bypass. Mount it after the probe routes. For
 any other app, two layouts pass:

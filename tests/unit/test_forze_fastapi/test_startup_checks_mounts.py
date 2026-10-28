@@ -291,6 +291,37 @@ class TestBypassIntoAnUninspectableMount:
         assert response.status_code == 200
         assert "spa" not in response.text
 
+    def test_an_spa_mounted_before_the_probe_hides_it(self, tmp_path: Path) -> None:
+        # Routing takes the first match: the mount at / catches /livez.
+        root = _gate(FastAPI(), bypass_paths={"/livez"})
+        root.mount("/", StaticFiles(directory=tmp_path, html=True))
+        _probes(root)
+
+        assert TestClient(root).get("/livez").status_code == 404
+        assert "not one of those paths is routed" in _refused(check_bypass_paths, root)
+
+    def test_an_app_mounted_at_the_root_first_hides_later_routes(self) -> None:
+        root = _gate(FastAPI(), bypass_paths={"/livez"})
+        root.mount("/", FastAPI())
+        _probes(root)
+
+        assert "not one of those paths is routed" in _refused(check_bypass_paths, root)
+
+    def test_a_mount_with_params_is_reached_only_under_its_static_prefix(self) -> None:
+        root = _gate(_probes(FastAPI()), bypass_paths={"/livez"})
+        root.mount("/api/{tenant}", _opaque)
+
+        check_bypass_paths(root)
+
+    def test_an_entry_under_that_prefix_is_still_refused(self) -> None:
+        root = _gate(_probes(FastAPI()), bypass_paths={"/livez", "/api/acme/livez"})
+        root.mount("/api/{tenant}", _opaque)
+
+        message = _refused(check_bypass_paths, root)
+
+        assert "/api/acme/livez" in message
+        assert "cannot see into it" in message
+
     def test_entries_that_cannot_reach_it_pass(self) -> None:
         # /metrics is not under /raw/, and a request for /raw itself is redirected by
         # the router, never handed to the mounted app.
@@ -444,6 +475,19 @@ class TestWebsocketAllowlistOnAMountedApp:
         root.mount("/", StaticFiles(directory=tmp_path))
 
         check_websocket_allowlist(root)
+
+    def test_a_governed_route_after_static_files_at_the_root_is_refused(
+        self, tmp_path: Path
+    ) -> None:
+        # The mount catches the path first and StaticFiles closes the websocket.
+        root = _gate(FastAPI(), allowed_websocket_paths={"/realtime/ws"})
+        root.mount("/", StaticFiles(directory=tmp_path))
+        _realtime(root)
+
+        message = _refused(check_websocket_allowlist, root)
+
+        assert "no websocket route" in message
+        assert "reaches no governed route" in message
 
     def test_an_entry_reaching_only_static_files_routes_nothing(self, tmp_path: Path) -> None:
         root = _gate(FastAPI(), allowed_websocket_paths={"/assets/ws"})
