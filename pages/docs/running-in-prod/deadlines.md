@@ -127,6 +127,54 @@ cancellation-protected critical section. It runs to completion even while
 cancellation is pending, and the cancellation re-raises afterwards — so a
 committed transaction is never left half-announced.
 
+## A late cancel is never reported as safe
+
+A deadline or a cancel that lands at or after the commit point leaves the
+outcome unknown. The commit may have landed, so a retry could apply the
+operation twice. What happens depends on where it lands:
+
+- **In the commit or the after-commit work**, a deadline or a cancel raises
+  `exc.internal` with `code="commit_ambiguous"` instead of `deadline_exceeded`
+  or a bare cancellation. The kind is non-retryable.
+- **A deadline after the transaction has closed** — in an outer hook or a
+  dispatched operation — raises the same error.
+- **A cancel after the transaction has closed** stays a cancellation, because
+  server shutdown and task groups rely on it propagating. The operation logs a
+  warning with `code="commit_ambiguous"` and `operation`, carrying the
+  invocation's ids, and adds a `forze.commit_ambiguous` event to the active
+  span.
+
+What each surface does with that late cancel:
+
+| Surface | What the caller sees | What records it |
+| --- | --- | --- |
+| [`forze ops call`](operations-cli.md) | a `commit_ambiguous` error, exit 1 | the error document and the warning |
+| HTTP routes, MCP tools, Socket.IO and WebSocket commands | nothing: the client went away or the server is stopping | the warning and the span event |
+| Durable runs, Inngest functions, your own Temporal activities | the runner's cancel outcome; recovery or a retry may run it again | the warning and the span event |
+| Saga steps | `saga.step_ambiguous`, and nothing is compensated | the saga's error or its journal row |
+
+Reconcile from the warning before running the operation again. Where a client
+retries, an [idempotency key](../recipes/add-idempotency.md) makes the retry
+safe.
+
+A query's read-only transaction is a commit point only where the backend could
+have let a write through it:
+
+| Transaction manager | A query interrupted after its read reports |
+| --- | --- |
+| Postgres, and the mock's `journal` and `strict` managers, when the query's read-only transaction is the only one it entered | `deadline_exceeded` (CLI exit 6), or a plain cancellation (CLI exit 130 or 143): the store refused writes inside it |
+| The same managers, when the query's transaction is nested in one opened outside forze | `commit_ambiguous`: it became a savepoint, which cannot be read-only |
+| The same managers, when a nested scope on another route finished its body | `commit_ambiguous`: that route opened, and may have committed, a transaction of its own |
+| The same managers, when the query queued after-commit work (`run_or_defer`) | `commit_ambiguous`: that work runs after the transaction closes and may write |
+| Postgres, after a `detached()` statement, another client's `bound_connection()`, or another client's transaction or statement outside a transaction | `commit_ambiguous`: those commit outside the read-only transaction, so even an autocommit read gives up the skip |
+| Mongo, Firestore, Neo4j, and the mock's `none` manager | `commit_ambiguous`: they accept `read_only` without enforcing it |
+
+The kernel asks the manager about the transaction it actually opened, through
+`ReadOnlyAware.read_only_enforced()`, and only while the read-only root is the
+only route that may have committed and no after-commit work is queued. A manager that does not implement it counts as not
+enforcing. Where a query reports `commit_ambiguous` but wrote nothing, it is
+still safe to run again.
+
 A deadline is one of several controls over how an operation behaves under
 stress; the full set — retries, bulkheads, breakers, hedging — composes in
 [Resilience](resilience.md).

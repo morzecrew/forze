@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 
-from forze.application.contracts.transaction import IsolationAware, IsolationLevel
+from forze.application.contracts.transaction import IsolationAware, IsolationLevel, ReadOnlyAware
 from forze_mongo.adapters.txmanager import MongoTxManagerAdapter
 from forze_mongo.kernel.client import MongoTransactionOptions
 
@@ -36,6 +36,7 @@ def test_reports_snapshot_but_not_serializable() -> None:
     assert IsolationLevel.SNAPSHOT in caps
     assert IsolationLevel.READ_COMMITTED in caps
     assert IsolationLevel.SERIALIZABLE not in caps  # Mongo has no serializable mode
+    assert not isinstance(adapter, ReadOnlyAware)  # no read-only mode: a hint, so it marks
 
 
 async def test_snapshot_sets_read_concern_snapshot() -> None:

@@ -129,6 +129,17 @@ read-only transaction where it supports one (Postgres `BEGIN … READ ONLY`) and
 rejects accidental writes. You rarely set this by hand — the operation kind does
 it for you.
 
+A manager whose store refused every write in the transaction it opened says so
+through `ReadOnlyAware.read_only_enforced()`. Postgres and the mock's `journal`
+and `strict` managers do, but not for a scope nested in a transaction opened
+outside forze, which becomes a savepoint. A nested scope on another route
+resolves another manager and opens a transaction of its own, so the read-only
+root counts only while it is the only route a finished scope entered. After-commit
+work queued with `run_or_defer` may write, so it gives up the skip too. A query
+interrupted after
+such a read is safe to re-run rather than
+[`commit_ambiguous`](../running-in-prod/deadlines.md#a-late-cancel-is-never-reported-as-safe).
+
 ## Isolation
 
 Most operations are fine at the backend's default isolation. When one needs a

@@ -11,6 +11,8 @@ from __future__ import annotations
 import asyncio
 import threading
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import AsyncExitStack
+from typing import Any, Literal
 from uuid import uuid4
 
 import attrs
@@ -27,6 +29,7 @@ from forze.application.contracts.storage import (
     StorageSpec,
     UploadedObject,
 )
+from forze.application.contracts.transaction import ReadOnlyAware
 from forze.application.execution import (
     DepsRegistry,
     ExecutionContext,
@@ -38,6 +41,11 @@ from forze.base.exceptions import CoreException, ExceptionKind
 from forze.base.serialization import PydanticModelCodec
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
 from forze_mock import MockDepsModule, MockState
+from forze_mock.adapters.tx import (
+    MockJournalTxManagerAdapter,
+    MockStrictTxManagerAdapter,
+    MockTxManagerAdapter,
+)
 from tests.support.execution_context import context_from_modules
 
 # ----------------------- #
@@ -295,6 +303,43 @@ class TestReadOnlyRoot:
 
         assert module.state.outbox_rows.get("things-events", []) == []
         assert module.state.inbox == set()
+
+    @pytest.mark.parametrize("outer", [False, True], ids=["root", "inside-outer"])
+    @pytest.mark.parametrize(
+        ("mode", "manager"),
+        [
+            ("strict", MockStrictTxManagerAdapter),
+            ("journal", MockJournalTxManagerAdapter),
+            ("none", MockTxManagerAdapter),
+        ],
+    )
+    async def test_enforcement_is_reported_exactly_where_writes_are_refused(
+        self, mode: Literal["strict", "journal", "none"], manager: Any, outer: bool
+    ) -> None:
+        # The kernel skips a read-only root's commit point on this report alone, so a root
+        # that lets the write through must never claim it. Nested in an outer read-write
+        # transaction, the root inherits that transaction's mode and must not claim it.
+        state = MockState()
+        ctx = context_from_modules(MockDepsModule(state=state, transactions=mode))
+        reporter = manager(state=state)
+        enforced: bool | None = None
+        refused = False
+
+        async with AsyncExitStack() as stack:
+            if outer:
+                await stack.enter_async_context(reporter.transaction())
+
+            try:
+                async with ctx.tx_ctx.scope("mock", read_only=True):
+                    aware = isinstance(reporter, ReadOnlyAware)
+                    enforced = aware and reporter.read_only_enforced()
+                    await ctx.document.command(SPEC).create(ThingCreate(name="a"))
+
+            except CoreException as error:
+                refused = error.code == "read_only_tx"
+
+        assert enforced is refused
+        assert refused is (mode != "none" and not outer)
 
     async def test_reads_are_fine_and_flag_resets(self) -> None:
         state = MockState()

@@ -1,9 +1,11 @@
 """Integration tests for PostgresTxManagerAdapter."""
 
+from typing import Any
+
 import pytest
 
 from forze_postgres.adapters import PostgresTxManagerAdapter, PostgresTxScopeKey
-from forze_postgres.kernel.client.client import PostgresClient
+from forze_postgres.kernel.client.client import PostgresClient, PostgresConfig
 
 
 @pytest.fixture
@@ -181,3 +183,93 @@ async def test_transaction_per_call_read_only_rejects_writes(
 
     val = await pg_client.fetch_value("SELECT value FROM test_txmanager_per_call_ro")
     assert val == 2
+
+
+@pytest.mark.asyncio
+async def test_read_only_is_enforced_only_by_a_read_only_begin(
+    pg_client: PostgresClient,
+) -> None:
+    """A read-only root inside an outer client transaction is a savepoint, and a write lands.
+
+    The manager must say so: the kernel skips a read-only root's commit point only when the
+    manager reports the root as enforced.
+    """
+
+    await pg_client.execute(
+        """
+        CREATE TABLE test_txmanager_ro_savepoint (
+            id serial PRIMARY KEY,
+            value integer
+        );
+        """
+    )
+
+    txmanager = PostgresTxManagerAdapter(client=pg_client)
+
+    async with txmanager.transaction(read_only=True):
+        assert txmanager.read_only_enforced() is True
+
+    async with pg_client.transaction():  # an outer read-write transaction
+        async with txmanager.transaction(read_only=True):
+            assert txmanager.read_only_enforced() is False
+
+            await pg_client.execute(
+                "INSERT INTO test_txmanager_ro_savepoint (value) VALUES (%(val)s)",
+                {"val": 1},
+            )
+
+    val = await pg_client.fetch_value("SELECT value FROM test_txmanager_ro_savepoint")
+    assert val == 1
+
+
+@pytest.mark.asyncio
+async def test_a_write_outside_the_read_only_root_clears_its_claim(
+    pg_client: PostgresClient, postgres_container: Any
+) -> None:
+    """A write that commits outside the read-only root clears the root's claim.
+
+    A detached statement, another client's transaction, and another client's autocommit
+    statement each leave the root not the only thing that committed, so the manager must
+    stop claiming enforcement.
+    """
+
+    await pg_client.execute(
+        "CREATE TABLE test_txmanager_ro_bypass (id serial PRIMARY KEY, value integer);"
+    )
+
+    other = PostgresClient()
+    url = postgres_container.get_connection_url().replace("postgresql+psycopg://", "postgresql://")
+    await other.initialize(dsn=url, config=PostgresConfig(min_size=1, max_size=2))
+    txmanager = PostgresTxManagerAdapter(client=pg_client)
+    insert = "INSERT INTO test_txmanager_ro_bypass (value) VALUES (%(val)s)"
+
+    try:
+        async with txmanager.transaction(read_only=True):
+            async with pg_client.detached():
+                await pg_client.execute(insert, {"val": 1})
+
+            assert txmanager.read_only_enforced() is False
+
+        async with txmanager.transaction(read_only=True):
+            async with other.transaction():
+                await other.execute(insert, {"val": 2})
+
+            assert txmanager.read_only_enforced() is False
+
+        async with txmanager.transaction(read_only=True):
+            await other.execute(insert, {"val": 3})  # autocommit: outside any transaction
+
+            assert txmanager.read_only_enforced() is False
+
+        async with txmanager.transaction(read_only=True):
+            # Out of transaction, a batched scan commits a short-lived transaction of its own.
+            async for _chunk in other.fetch_all_batched("SELECT 1"):
+                pass
+
+            assert txmanager.read_only_enforced() is False
+
+    finally:
+        await other.close()
+
+    count = await pg_client.fetch_value("SELECT count(*) FROM test_txmanager_ro_bypass")
+    assert count == 3

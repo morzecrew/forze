@@ -2827,3 +2827,227 @@ consequence in place; no proposed row changes.
 | R-3 | Low | The app-author skill said every flat-scalar input takes typed flags, though a secret field or a colliding spelling disables them (CodeAnt) | Fixed — it says "usually" and points at `describe` |
 
 Each fix was checked against its own removal.
+
+---
+
+# Unit 11 · RFC 0077 P3 — commit ambiguity at every boundary
+
+Branch `feat/commit-ambiguous-boundaries`. RFC 0077 §12 P3, the last code item: whether a
+cancellation after the commit point should report `commit_ambiguous` at every boundary, not
+only the CLI (§5.6). The decision is recorded in §5.6 "As built (P3)".
+
+**Drift count: 0.** Three entries: two `discovery`, one `spec-gap`. The RFC left the question
+open on purpose, so the decision itself is an entry rather than a departure.
+
+**Already true, so no entry.** A cancel that lands inside a transaction's commit, or inside
+its shielded post-commit drain, was already converted to `commit_ambiguous` by the
+transaction scope on every surface (§5.8 P2 note). The open window was only a cancel after
+the scope had exited: in an outer hook, a dispatched operation, or after a nested operation's
+root transaction committed.
+
+## D-095 — Every boundary records a late cancel; only the CLI and the saga executors convert it
+
+- **Touches:** RFC 0077 §5.6 (last paragraph), §12 P3, decision 10.
+- **RFC said:** reading the flag at the CLI boundary "keeps the CLI correct without changing
+  how cancellation behaves everywhere else", and whether other boundaries need the same check
+  is left to §12.
+- **Found:** each other boundary has a reason to keep the raw cancel.
+  - HTTP routes, MCP, Socket.IO and WS commands are cancelled by a client that left or by a
+    server shutdown. No one is left to read a converted error, and uvicorn's shutdown and the
+    receivers' task groups need the cancel to propagate.
+  - The durable runner, Temporal and Inngest read the raw cancel to name its cause.
+  - The saga executors already convert, at their own boundary, because they own the journal.
+
+  So the only safe change is to make the outcome visible. `ResolvedOperation.__call__`, the
+  top-level boundary every surface reaches, now logs a `commit_ambiguous` warning and adds a
+  `forze.commit_ambiguous` span event when a cancel arrives with the flag set. It then
+  re-raises the cancel unchanged. Socket.IO and Inngest call the resolved operation without
+  `run_operation`, so the record could not live in `run_operation` itself.
+- **Because:** the CLI can convert because it owns both its process and its result channel.
+  No other boundary owns both.
+- **Class:** `discovery`. The answer depended on each boundary's cancel semantics, which the
+  RFC deliberately did not survey.
+- **Consequence:** the P2 contract is unchanged: the flag survives the cancel, every reader
+  resets it on entry, and the CLI keeps converting. A nested operation records nothing, and
+  its top-level caller records once.
+- **Proposed row (RFC 0077):** `LOCKED` — a cancel after the commit point is converted to
+  `commit_ambiguous` only by a boundary that owns its process and result channel (the CLI)
+  or its journal (the saga executors). Every other boundary records it at the top-level
+  operation boundary, with a warning log and a span event, and re-raises the cancel.
+
+## D-096 — The durable runner cannot read the commit flag; the record has to be emitted inside the body
+
+- **Touches:** RFC 0077 §5.6. Unlisted: boundaries that run the operation on another task.
+- **RFC said:** nothing. The CLI pattern assumes the boundary reads `commit_started()` on the
+  task the operation ran on.
+- **Found:** the self-hosted durable runner runs the body with `asyncio.ensure_future`, so the
+  body gets a copy of the context. A flag the body's transaction sets never reaches the
+  runner's frame. The runner names a cancel's cause by which watcher fired: a lease reclaim,
+  an operator cancel, or `max_run_duration`. Any other cancel, a drain's included, propagates
+  raw and writes no terminal state. The row stays `RUNNING`, and recovery re-claims it. That
+  re-run can apply a committed operation twice, so ambiguity matters more here than on any
+  request surface.
+- **Because:** `ContextVar` writes on a child task stay on the child.
+- **Class:** `discovery`.
+- **Consequence:** a reader at each surface, as the CLI does it, cannot work here. This is why
+  the record lives at the operation boundary, which runs on the body's own task. Making the
+  re-run safe stays the job of an idempotency key, an inbox, or a saga journal.
+- **Proposed row (RFC 0077):** none. D-095's row covers it.
+
+## D-097 — A read-only root transaction marks the commit point too
+
+- **Touches:** RFC 0077 §5.6 and decision 10. Also `TransactionContext.scope` and the
+  deadline classification in `ResolvedOperation._run`.
+- **RFC said:** "a cancel after the commit point reports `commit_ambiguous`", on the reading
+  that a commit may have landed.
+- **Found:** the scope called `mark_commit_started()` for every root transaction, read-only
+  ones included (`src/forze/application/execution/context/transaction.py`, at the end of the
+  root's body). Probed: after `tx.scope(route, read_only=True)` exits, `commit_started()` was
+  `True`. So a query that is cancelled after its read reported `commit_ambiguous` on the CLI
+  (exit 1, not 130 or 143). A query whose deadline fires after its read got the same report,
+  and so did the new record. That error is not retryable, so a caller refused to retry a
+  read.
+
+  A plain gate on `read_only` would not be safe, because a `read_only` root does not always
+  stop a write. Each manager that reports `TxCapabilities`, with its evidence:
+  - **Postgres** enforces it only for a root `BEGIN … READ ONLY`
+    (`src/forze_postgres/adapters/txmanager.py:115-126`). Integration tests pin the refusal
+    (`test_pg_txmanager.py::test_transaction_per_call_read_only_rejects_writes`,
+    `test_pg_transaction_options_leak.py::test_read_only_tx_still_rejects_writes`).
+    Inside a client transaction opened outside forze, the client turns the root into a
+    savepoint. A savepoint cannot be `READ ONLY`, and a write there lands
+    (`test_pg_txmanager.py::test_read_only_is_enforced_only_by_a_read_only_begin`).
+  - **`MockStrictTxManagerAdapter`** and **`MockJournalTxManagerAdapter`**, the mock's
+    default, enforce it for a root they open. Each sets the read-only flag only at its own
+    root (`tx.py:231`, `tx.py:350`), and every participating store's write checks it through
+    `ensure_mock_tx_writable` (`tx.py:78`), raising `read_only_tx`. A scope nested in an outer
+    read-write transaction inherits that transaction's flag, so a write there lands.
+  - **`MockTxManagerAdapter`** (`transactions="none"`) is a no-op and lets the write through.
+  - **Mongo** accepts the flag and does not enforce it
+    (`src/forze_mongo/adapters/txmanager.py:73-76`).
+  - **Firestore** does the same (`src/forze_firestore/adapters/txmanager.py:63-65`).
+  - **Neo4j** does the same (`src/forze_neo4j/adapters/txmanager.py:75-77`).
+
+  No other manager in `src/` reports `TxCapabilities`.
+
+  The forze-level guard does not close the gap. `_refuse_if_read_only`
+  (`src/forze/application/contracts/deps/keys.py:41-45`) checks whether the *operation* is
+  read-only (`QUERY`), not the transaction. Its own docstring (`keys.py:64-66`) says
+  `forze.testing.unguarded`, direct resolution and `backend_of` all bypass it. Two writes
+  therefore commit unrefused on Mongo, Firestore or Neo4j, and inside a savepoint root:
+  - a command that opens `ctx.tx_ctx.scope(route, read_only=True)` and writes through its
+    command port, which nothing guards outside a `QUERY`;
+  - a `QUERY` that reaches a write port through one of those bypasses.
+
+  If the mark skipped those roots, a deadline or a cancel after either write would come back
+  as `deadline_exceeded` or `interrupted`, although the write landed. That is the duplicate
+  decision 10 forbids. In a real read-only `BEGIN`, or a mock root opened read-only, the
+  store refuses the write whatever path reached it.
+- **Because:** the mark predates any reader that cared which transactions can write.
+  `read_only` is a hint on four of the seven managers that report capabilities, and on the
+  other three it is enforced only for a root they open themselves.
+- **Class:** `spec-gap`. Both the scope and the managers were readable when §5.6 was written.
+- **Consequence:** implemented, fail-closed, as a question about the transaction actually
+  opened. A new opt-in protocol, `ReadOnlyAware`, has one method, `read_only_enforced()`
+  (`src/forze/application/contracts/transaction/ports.py:217`). The scope asks it just
+  before the commit and skips the mark only when four things hold (`transaction.py:463`):
+  - the root is read-only;
+  - it is the only route a finished nested scope entered;
+  - no after-commit callback is queued;
+  - the answer is exactly `True`.
+
+  Skipping the mark also skips the commit-time `commit_ambiguous` conversion. The answers:
+  - **Postgres** answers from a per-task record in the kernel client
+    (`kernel/client/read_only_root.py`). The manager opens the record only for a root
+    `BEGIN … READ ONLY` (`txmanager.py:138`), and a nested savepoint shares it.
+  - **The strict and journal mocks** answer from the flag `ensure_mock_tx_writable` refuses
+    on (`tx.py:193`, `tx.py:298`).
+  - **Mongo, Firestore, Neo4j and the no-op mock** do not implement the protocol, so they
+    mark as before.
+
+  On Postgres and the default mock, a query whose read-only root is the only transaction
+  it entered now reports `deadline_exceeded` (CLI exit 6) or `interrupted` (130 or 143).
+  Every other case still reports `commit_ambiguous`.
+
+  How the design got here, all before publish:
+  - **Manager-wide flag.** The first cut put `TxCapabilities.read_only_enforced` on the
+    manager. Review found that it claimed enforcement for a savepoint root, so it became
+    the per-transaction question.
+  - **Nested root on another route.** A fresh-eyes review found two more ways a write could
+    commit while the answer stayed yes. Here a nested scope on a second route with the same
+    scope key (two Postgres clients under `"postgres"`) calls that manager's
+    `transaction()`. That client is not in a transaction, so it opens an independent
+    `BEGIN` and commits, and nested scopes never mark. The fix: the root records every
+    route a nested scope enters (`transaction.py:380`, `:422`), and skips only while it
+    holds the root's own route alone.
+  - **`detached()` statements.** `PostgresClient.detached()` resets the client's depth, so
+    its statements autocommit beside the root. The fix: `detached()` clears the record on
+    entry (`client.py:693`). So does any write-capable root opened by any Postgres client
+    (`client.py:899`), which also covers the nested-route case for Postgres.
+  - **Autocommit on another client.** A statement on another client outside any
+    transaction autocommits beside the root. The fix: both of the client's
+    out-of-transaction connection paths clear the record before they check out a pooled
+    connection.
+    - `_statement_conn` serves every single-statement method in autocommit
+      (`client.py:631`).
+    - `__acquire_conn` serves `fetch_all_batched`, which wraps an out-of-transaction scan
+      in a short-lived transaction of its own and commits it, and `health`
+      (`client.py:589`).
+
+    A query that also runs such a read loses only the skip.
+  - **Shared record.** The record is one per task and shared by every client, so a bypass
+    on any client, in a nested scope or a child task, clears the root's own claim.
+
+  Pinned by:
+  - a mock test that ties each mock's answer to whether a write in its read-only root is
+    actually refused, at the root and nested in an outer transaction;
+  - Postgres unit tests, with a fake client, for a root `BEGIN`, a savepoint, a read-write
+    root, a `detached()` scope (at the root and from a nested scope), and an autocommit
+    statement on a second client;
+  - Postgres integration tests: a savepoint root lets a write land, and a `detached()`
+    insert, a second client's transaction, or its autocommit insert clears the claim;
+  - a core test where a nested scope on another route commits an independent transaction,
+    and a cancel in the read-only root's commit window reports `commit_ambiguous`;
+  - core and CLI tests that assert the reported code (`deadline_exceeded`, `interrupted`,
+    `commit_ambiguous`) on the deadline path and under a signal.
+
+  Removing the skip fails eight of those tests. Removing only the route check fails the
+  nested-route test.
+
+  Still outside the claim, as for any transaction:
+  - a write to another store (Redis, a queue, a blob);
+  - `dblink` or `postgres_fdw`.
+
+  Neither ever joined the transaction the commit mark covers.
+- **Proposed row (RFC 0077):** `ASSUMED` — a read-only root marks no commit point only
+  when three things hold:
+  - its manager implements `ReadOnlyAware` and answers exactly `True` for the transaction
+    it actually opened;
+  - no nested scope on another route finished its body;
+  - no after-commit callback is queued;
+  - for Postgres, no `detached()` statement, autocommit statement, `bound_connection()` or
+    other write-capable root ran beside it.
+
+  Every other root marks one. A manager may answer `True` only if its own store refuses
+  every write to that transaction on every path. Follow-up, not built: make the Mongo,
+  Firestore and Neo4j write adapters refuse writes inside a read-only root, as the mocks
+  do, so they can implement the protocol too.
+
+## Review findings — 2026-10-28
+
+PR #693. Three findings from CodeRabbit and CodeAnt, all fixed, plus the Codecov patch check,
+then four more from CodeRabbit's second pass (R-5 to R-8), all fixed. R-1 and R-3 add
+conditions to D-097's summary and proposed row, both amended in place.
+
+| # | Severity | Finding | Status |
+|---|---|---|---|
+| R-1 | Medium | A read-only root skipped the mark while an after-commit callback was queued. The callback runs after the root exits and may write, so a cancel in the drain came back retryable after that write (CodeRabbit, CodeAnt) | Fixed — a queued callback keeps the mark |
+| R-2 | Medium | `bound_connection()` on another client never cleared the read-only record, though the pool commits the connection's statements when it goes back (CodeRabbit) | Fixed — it clears the record before checking out the connection |
+| R-3 | Low | A nested scope on another route was recorded on entry, so one whose body failed and rolled back still cost the root its skip when the root's body caught the error (CodeAnt) | Fixed — the route is recorded once the nested body succeeds, before its commit, so a torn commit still counts |
+| R-4 | — | Patch coverage: the record's fallback for a generator finalized in another context, and a `None` branch for the route set that a nested scope never takes (Codecov) | A unit test covers the fallback; the branch is gone, since the root sets the route set with the depth |
+| R-5 | Medium | A read-only root opened directly on a second Postgres manager, inside the first, replaced the first's record. A `detached()` write inside it cleared only the inner record, so the outer root still answered `True` (CodeRabbit) | Fixed — the record holds one box per open root, and a bypass clears all of them |
+| R-6 | Low | Before `configure_logging`, the fallback renderer did not merge the bound context, so the `commit_ambiguous` warning, and every other, lost the invocation's ids (CodeRabbit) | Fixed — the fallback chain merges it after the level filter, as the configured chain does |
+| R-7 | Low | A logger that raised skipped the span event too (CodeRabbit, unverified) | Fixed — the two records are attempted separately |
+| R-8 | Low | D-095's heading named only the CLI as converting, though the saga executors convert too; D-097's summary listed three conditions where the row has four (CodeRabbit) | Fixed in place |
+
+Each fix was checked against its own removal.

@@ -296,6 +296,24 @@ class TestEnvelope:
         assert _error(result, 6)["code"] == "deadline_exceeded"
 
     @pytest.mark.parametrize(
+        ("app_name", "exit_code", "code"),
+        [
+            ("ANONYMOUS", 6, "deadline_exceeded"),
+            ("UNENFORCED_READ_ONLY", 1, "commit_ambiguous"),
+        ],
+    )
+    def test_a_query_timed_out_after_its_read(
+        self, app_name: str, exit_code: int, code: str
+    ) -> None:
+        # The mock's default manager refuses writes in a read-only root, so the read's commit
+        # is no commit point; the no-op manager lets writes through, so it still is one.
+        result = _call(
+            "probe.read", "--input", '{"seconds": 5}', "--timeout", "0.05", app_name=app_name
+        )
+
+        assert _error(result, exit_code)["code"] == code
+
+    @pytest.mark.parametrize(
         "option",
         [
             ["--timeout", "0"],

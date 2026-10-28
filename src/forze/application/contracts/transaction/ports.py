@@ -85,7 +85,9 @@ class TxCapabilities:
     The capability report intentionally covers only what the kernel **enforces** at resolve
     (the declared isolation). Other transaction features (savepoints / partial rollback,
     read-only enforcement) are honored by the adapter at runtime, not advertised here — add
-    a field only when the kernel grows a fail-closed check that consults it."""
+    a field only when the kernel grows a fail-closed check that consults it. Whether a
+    read-only root is enforced depends on the transaction actually opened, so it is asked of
+    the open transaction (:class:`ReadOnlyAware`), not reported here."""
 
 
 # ....................... #
@@ -194,4 +196,31 @@ class IsolationAware(Protocol):
         isolation: "IsolationLevel | None" = None,
     ) -> AbstractAsyncContextManager[None]:
         """Open a transaction at *isolation* (honored at root only; nested inherits)."""
+        ...
+
+
+# ....................... #
+
+
+@runtime_checkable
+class ReadOnlyAware(Protocol):
+    """Opt-in extension for transaction managers whose store can refuse writes.
+
+    The kernel asks it inside a ``read_only=True`` root, just before the commit, and only
+    while the root is the sole route a finished nested scope entered and no after-commit
+    callback is queued. A ``True`` answer means the root committed
+    nothing, so its commit is no commit point: a deadline or cancellation after it stays
+    retryable instead of ``commit_ambiguous``. A manager that does not implement this, or
+    answers anything but ``True``, has its read-only root marked like a read-write one
+    (fail-closed).
+    """
+
+    def read_only_enforced(self) -> bool:
+        """Whether the transaction's own store refuses writes in the root open on this task.
+
+        ``True`` only when the store itself opened the transaction read-only (Postgres
+        ``BEGIN … READ ONLY``), whatever path a write takes to it. A root that became a
+        savepoint in an outer transaction, or one where ``read_only`` was only a hint, is
+        ``False``. Writes to other stores were never part of the transaction.
+        """
         ...

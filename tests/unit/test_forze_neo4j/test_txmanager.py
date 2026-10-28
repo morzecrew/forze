@@ -13,6 +13,7 @@ pytest.importorskip("neo4j")
 from forze.application.contracts.transaction import (
     IsolationAware,
     IsolationLevel,
+    ReadOnlyAware,
     TransactionManagerPort,
 )
 from forze_neo4j.adapters import Neo4jTxManagerAdapter, Neo4jTxScopeKey
@@ -54,6 +55,9 @@ def test_capabilities_declare_read_committed_only() -> None:
     caps = Neo4jTxManagerAdapter(client=_FakeClient()).capabilities()  # type: ignore[arg-type]
     assert caps.isolation == frozenset({IsolationLevel.READ_COMMITTED})
     assert IsolationLevel.SERIALIZABLE not in caps.isolation
+    # No read-only mode wired: a read-only root is a hint, so it still marks a commit point.
+    mgr = Neo4jTxManagerAdapter(client=_FakeClient())  # type: ignore[arg-type]
+    assert not isinstance(mgr, ReadOnlyAware)
 
 
 @pytest.mark.asyncio

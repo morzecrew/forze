@@ -35,6 +35,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **A throttled HTTP error tells the client when to come back.** Its `retry_after` (seconds) or else `retry_at` (aware `datetime`) detail becomes a `Retry-After` header, which `AllowlistCORSMiddleware` exposes; other details stay withheld. No header when neither key is usable.
 
+- **A cancel after an operation's commit point is recorded on every surface.** The operation logs a `commit_ambiguous` warning carrying its name and invocation ids, adds a `forze.commit_ambiguous` span event, and re-raises the cancellation. `forze ops call` still reports it as an error.
+
+- **A transaction manager can say its store refused writes in a read-only root.** Implement `ReadOnlyAware.read_only_enforced()`, as Postgres and the mock's `journal` and `strict` managers do; that root then marks no commit point.
+
 **`forze ops` for people at a shell and for backfills:**
 
 - **`forze ops` gains typed flags, JSONL batches and shell completion.** `call OP --field VALUE` takes a flat-scalar input as flags; `--batch @PATH|-` runs one call per line in one runtime, stopping at the first failure; `OP` completes in the shell. An unknown option after `OP` now exits 2 with an error object.
@@ -51,6 +55,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A warning logged before `configure_logging` carries the invocation's ids.** The fallback renderer now merges the bound logging context, as the configured chain does.
+
 - **`register_scalar_docs` loads the document the app actually serves** (**behaviour change**). It fetched `/openapi.json` whatever `openapi_url` said, so a versioned app got an empty `/docs`. It now defaults to `app.openapi_url` and takes `openapi_url=`; an app serving no document fails at startup unless it passes one.
 
 - **`forze[duckdb]` no longer installs DuckDB 2.0.** The extra now requires `duckdb>=1.1.0,<2`: 2.0 removed `fetch_arrow_table`, so every `DuckDbClient` query failed on a fresh install. An environment that already installed 2.0 outside the lock must reinstall the extra or pin `duckdb<2`.
@@ -62,6 +68,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`TenancyDepsModule` refuses a `tenant_resolvers` override for a route `tenant_resolver` does not name** (**behaviour change**). It registered nothing, so the first request failed with `Tenant resolver is not registered`; now the module fails when built.
 
 - **`AuthnDepsModule` refuses an override that would never be registered** (**behaviour change**). That is one for a route `authn` does not name, or a verifier override for a method its route does not enable. It registered nothing, so the route silently kept its default.
+
+- **A query interrupted after its read no longer reports `commit_ambiguous` on Postgres or the mock's `journal` and `strict` managers** (**behaviour change**). When its read-only transaction was the only one it entered, it reports `deadline_exceeded` (CLI exit 6) or `interrupted`, and is safe to re-run.
 
 - **A Postgres dynamic read no longer collapses duplicate column names.** `SELECT a.id, b.id` came back as one `id` holding the second value. A result with rows now fails with `dynamic_read_statement_invalid`, naming the duplicates; an empty one still returns no rows.
 

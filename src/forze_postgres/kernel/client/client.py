@@ -39,6 +39,7 @@ from .._logger import logger
 from .errors import copy_data_error, exc_interceptor, pool_acquire_error
 from .helpers import isolation_level_enum
 from .port import PostgresClientPort
+from .read_only_root import bypass_read_only_root
 from .types import RowFactory
 from .value_objects import (
     DeadlinePushdownPolicy,
@@ -584,6 +585,9 @@ class PostgresClient(PostgresClientPort):
             yield await self._materialize_pending()
             return
 
+        # Out of transaction, a batched scan commits its own short-lived transaction.
+        bypass_read_only_root()
+
         async with self._acquire() as pooled_conn:
             yield pooled_conn
 
@@ -622,6 +626,9 @@ class PostgresClient(PostgresClientPort):
         if self.__ctx_pending.get() is not None:
             yield await self._materialize_pending()
             return
+
+        # An autocommit statement commits on its own, outside any open read-only root.
+        bypass_read_only_root()
 
         async with self._acquire() as pooled_conn:
             await pooled_conn.set_autocommit(True)
@@ -682,6 +689,8 @@ class PostgresClient(PostgresClientPort):
         connection.
         """
 
+        # Its statements commit outside any open read-only root.
+        bypass_read_only_root()
         token_conn = self.__ctx_conn.set(None)
         token_depth = self.__ctx_depth.set(0)
         token_pending = self.__ctx_pending.set(None)
@@ -752,6 +761,10 @@ class PostgresClient(PostgresClientPort):
 
         if self.__current_conn() is not None:
             raise exc.internal("A connection is already bound in this context")
+
+        # The pool commits the connection's statements when it goes back, outside any open
+        # read-only root.
+        bypass_read_only_root()
 
         async with self._acquire() as conn:
             token = self.__ctx_conn.set(conn)
@@ -884,6 +897,10 @@ class PostgresClient(PostgresClientPort):
                 self.__ctx_depth.reset(token_depth)
 
             return
+
+        # A write-capable root commits on its own, outside any open read-only root.
+        if not options.read_only:
+            bypass_read_only_root()
 
         # Non-default options are applied as connection attributes before BEGIN
         # (zero extra round-trips) and must be restored in the finally of the
