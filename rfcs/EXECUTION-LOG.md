@@ -2364,8 +2364,7 @@ changes a proposed row.
 
 # Unit 8 · RFC 0078 — DuckDB 2.0 adoption
 
-Branch `feat/duckdb-2`, stacked on `feat/rfc-0078-p2-tightening` (unpublished), which is
-stacked on P1. Scope: make `duckdb==2.0.0` (released 2026-10-21) the locked engine, carry
+Branch `feat/duckdb-2`, on `main` after P1 (#685) and P2 (#690). Scope: make `duckdb==2.0.0` (released 2026-10-21) the locked engine, carry
 D-053's list, and keep DuckDB 1.5 supported. Same stack as Units 5 to 7. Two builds:
 `duckdb==2.0.0` with iceberg `4c0c0874c4`, the lock's, and `duckdb==1.5.6` with iceberg
 `890b78a9c`, run as an overlay (`uv run --with duckdb==1.5.6`).
@@ -2373,8 +2372,8 @@ D-053's list, and keep DuckDB 1.5 supported. Same stack as Units 5 to 7. Two bui
 **Working assumptions.** The author has not answered Units 5 to 7. Every `ASSUMED` row there is
 taken as the design. D-055 was `OPEN`; this unit answers it under the maintainer's standing
 instruction, "the most reasonable choice for a production framework" (D-062, D-063). D-054's cap
-(`<2`) went to `main` as #679 and is not in this branch's base. A rebase onto `main` brings it,
-and conflicts on the one `pyproject.toml` line this unit sets to `>=1.5.6,<3`. D-042's early
+(`<2`) went to `main` as #679. This unit sets that `pyproject.toml` line to `>=1.5.6,<3`, and
+rewords #679's changelog entry, which no release has shipped, to the fix as it now stands. D-042's early
 return stays, and D-028 stays `OPEN` for 1.5 (D-068).
 
 **Drift count: 0.** Sixteen entries, D-061 to D-076: ten `discovery`, six `spec-gap`. Product

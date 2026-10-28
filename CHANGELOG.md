@@ -59,7 +59,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **`register_scalar_docs` loads the document the app actually serves** (**behaviour change**). It fetched `/openapi.json` whatever `openapi_url` said, so a versioned app got an empty `/docs`. It now defaults to `app.openapi_url` and takes `openapi_url=`; an app serving no document fails at startup unless it passes one.
 
-- **`forze[duckdb]` no longer installs DuckDB 2.0.** The extra now requires `duckdb>=1.1.0,<2`: 2.0 removed `fetch_arrow_table`, so every `DuckDbClient` query failed on a fresh install. An environment that already installed 2.0 outside the lock must reinstall the extra or pin `duckdb<2`.
+- **`forze[duckdb]` works on a fresh install of DuckDB 2.0.** 2.0 removed `fetch_arrow_table`, so every `DuckDbClient` query failed; the client now fetches with `to_arrow_table`, which 1.5 has too.
 
 - **A principal in several tenants reaches the tenant selector after a password login** (**behaviour change**). With no `tid` the resolver binds no tenant, as for no membership, instead of refusing every request with `tenant_ambiguous`. Tenant-scoped work still refuses it with `tenant_required`.
 
