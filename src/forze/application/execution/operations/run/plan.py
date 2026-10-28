@@ -129,21 +129,22 @@ async def _run_scope_body[Args, R](
 
 async def run_resolved_scope[R](
     scope: ResolvedScope,
-    inner: Callable[[], Awaitable[R]],
+    inner: Callable[[Any], Awaitable[R]],
     args: Any,
 ) -> R:
-    """Run a resolved scope around an inner callable."""
+    """Run a resolved scope around an inner callable.
+
+    *inner* receives the arguments the innermost wrap passes on, so a wrap that rewrites them
+    (a policy filter merged into a request, say) reaches the handler.
+    """
 
     # Fast path: a scope with no body stages adds no behavior, so invoke the inner
     # callable directly and skip the wrap/finally machinery and its allocations.
     # ``body_empty`` is precomputed at plan-resolution time (the scope is frozen).
     if scope.body_empty:
-        return await inner()
+        return await inner(args)
 
-    async def _wrapped(a: Any) -> R:
-        return await inner()
-
-    return await _run_scope_body(scope, args, inner=_wrapped)
+    return await _run_scope_body(scope, args, inner=inner)
 
 
 # ....................... #
@@ -222,10 +223,10 @@ async def run_resolved_operation_plan[Args, R](
     future, shared by retries and inherited by hedge child contexts.
     """
 
-    async def transactional_core() -> R:
+    async def transactional_core(call_args: Args) -> R:
         if plan.two_phase:
             inner = await _prepare_apply_handler(
-                cast(TwoPhaseHandler[Args, Any, R], handler), args, inv_ctx
+                cast(TwoPhaseHandler[Args, Any, R], handler), call_args, inv_ctx
             )
         else:
             inner = cast(Handler[Args, R], handler)
@@ -234,12 +235,12 @@ async def run_resolved_operation_plan[Args, R](
             # A route-less tx scope with stages is rejected at plan-resolution time
             # (``ResolvedTransactionScope.__attrs_post_init__``); two-phase without a
             # route is rejected at freeze. So no re-validation is needed per call.
-            return await inner(args)
+            return await inner(call_args)
 
         return await run_resolved_tx_scope(
             plan.tx,
             inner,
-            args,
+            call_args,
             tx_runner=tx_runner,
             defer_after_commit=defer_after_commit,
             # QUERY explicitly requests a read-only transaction; other kinds leave

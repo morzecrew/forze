@@ -318,6 +318,40 @@ _POLICY = AuthzDocumentScope(filters={"$values": {"owner": "me"}})
 _UNRESTRICTED = AuthzDocumentScope()
 
 
+@pytest.mark.asyncio
+async def test_document_scope_wrap_in_the_outer_scope_filters_what_the_handler_reads() -> None:
+    # The documented placement (``bind_outer().wrap(...)``): the handler must see the policy.
+    from forze.application.execution.operations.registry import OperationRegistry
+
+    seen: list[Any] = []
+
+    async def _handler(args: _ListArgs) -> None:
+        seen.append(args.filters)
+
+    reg = (
+        OperationRegistry(handlers={"docs.list": lambda _ctx: _handler})
+        .bind("docs.list")
+        .bind_outer()
+        .wrap(
+            AuthzDocumentScopeWrap(
+                spec=AuthzSpec(name="z"), document_name="docs", operation="list"
+            ).to_step(step_id="authz.scope")
+        )
+        .finish(deep=True)
+        .freeze()
+    )
+    ctx = context_from_deps(Deps())
+    metadata = InvocationMetadata(execution_id=uuid4(), correlation_id=uuid4())
+
+    with (
+        patch.object(ctx.authz, "scope", return_value=_FixedScope(_POLICY)),
+        ctx.inv_ctx.bind(metadata=metadata, authn=AuthnIdentity(principal_id=uuid4())),
+    ):
+        await reg.resolve("docs.list", ctx)(_ListArgs(filters={"$values": {"kind": "a"}}))
+
+    assert seen == [{"$and": [{"$values": {"kind": "a"}}, _POLICY.filters]}]
+
+
 class TestExplainEmpty:
     def _bound_ctx(self, scope: AuthzDocumentScope) -> tuple[Any, Any, Any]:
         ctx = context_from_deps(Deps())

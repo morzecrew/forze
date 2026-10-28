@@ -269,6 +269,34 @@ class TestWrapOrdering:
             "outer:after",
         ]
 
+    @pytest.mark.asyncio
+    async def test_outer_wraps_pass_rewritten_args_on_to_the_handler(
+        self, ctx: ExecutionContext
+    ) -> None:
+        # A policy wrap narrows the request it passes on; the handler must run on that one.
+        def _rewrite(suffix: str):
+            def _factory(_ctx):
+                async def _wrap(next, args):
+                    return await next(f"{args}+{suffix}")
+
+                return _wrap
+
+            return _factory
+
+        reg = (
+            OperationRegistry(handlers={"op": lambda _ctx: EchoHandler()})
+            .bind("op")
+            .bind_outer()
+            .wrap(
+                MiddlewareStep(id="a", factory=_rewrite("a"), priority=10),
+                MiddlewareStep(id="b", factory=_rewrite("b"), priority=100),
+            )
+            .finish(deep=True)
+            .freeze()
+        )
+
+        assert await reg.resolve("op", ctx)("x") == "handler:x+a+b"
+
 
 class TestTransactionScope:
     @pytest.mark.asyncio
