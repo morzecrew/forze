@@ -344,8 +344,12 @@ issued before is then refused by its epoch, so the eligibility read has nothing 
   holding the session and principal documents, e.g. `PostgresDepsModule(..., tx={"default"})`. A deactivation then commits
   whole. On Postgres an issue also reads the principal with a row lock that lasts until its
   session commits, so a concurrent deactivation either revokes the new session or refuses
-  the issue; Mongo's locking read takes no lock, so there the race remains.
-  `tx_route=None` runs the writes without a transaction and gives up both guarantees.
+  the issue; Mongo's locking read takes no lock, so there the race remains. A password change,
+  a reset and a deactivation likewise read the password account with a row lock on Postgres:
+  a change or reset that reached the account first completes and the deactivation then closes
+  the changed account, and one that comes second reads the account closed and is refused. On
+  Mongo one of the two still fails on the conflict.
+  `tx_route=None` runs the writes without a transaction and gives up these guarantees.
   Refresh refuses to run inside a transaction the caller already opened: a reused refresh
   token's family is revoked in a transaction of its own, which an enclosing one would roll
   back.

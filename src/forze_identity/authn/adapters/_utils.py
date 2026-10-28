@@ -20,6 +20,7 @@ from ..domain.models.session import (
     Session,
     UpdateSessionCmd,
 )
+from ..services.revocation_states import _enlisted  # pyright: ignore[reportPrivateUsage]
 
 # ----------------------- #
 
@@ -57,12 +58,22 @@ async def find_password_account_by_principal_id(
     qry: DocumentQueryPort[ReadPasswordAccount],
     principal_id: UUID,
 ) -> ReadPasswordAccount | None:
+    """The principal's password account, row-locked when the open transaction holds the store.
+
+    Each caller writes the account it reads (a password change, a reset, a deactivation), and a
+    change or reset hashes in between. With the lock, a concurrent one waits and reads the
+    account as this one left it instead of failing on its revision: a change that comes second
+    to a deactivation is refused on the closed account, and a deactivation that comes second
+    closes the changed one. A store that cannot report its enlistment is read without the lock.
+    """
+
     return await qry.find(
         filters={
             "$values": {
                 "principal_id": principal_id,
             },
-        }
+        },
+        for_update=_enlisted(qry),
     )
 
 

@@ -820,8 +820,9 @@ async def test_a_deactivation_and_a_password_change_never_deadlock(
     redis_client: RedisClient,
     first: str,
 ) -> None:
-    # Both take the password account before the epoch, so one waits for the other; the loser
-    # fails on the account's revision or the closed account, never as a deadlock victim.
+    # Both take the password account before the epoch, so one waits for the other and neither
+    # is a deadlock victim: a deactivation that comes second closes the account after the
+    # change, and a change that comes second reads the account closed and is refused.
     gates: dict[str, _Gate] = {}
     stack = await _stack(pg_client, redis_client, gates=gates)
     principal = await stack.principal()
@@ -859,10 +860,12 @@ async def test_a_deactivation_and_a_password_change_never_deadlock(
 
     assert not isinstance(results[0], BaseException), results[0]
 
-    for result in results[1:]:
-        if isinstance(result, BaseException):
-            assert "deadlock" not in str(result).lower(), result
-            assert isinstance(result, CoreException), result
+    if first == "password_change":
+        assert not isinstance(results[1], BaseException), results[1]
+
+    else:
+        assert isinstance(results[1], CoreException), results[1]
+        assert results[1].kind is ExceptionKind.AUTHENTICATION, results[1]
 
 
 async def _lock_waiter_relations(pg_client: PostgresClient) -> set[str]:

@@ -27,6 +27,7 @@ from forze.application.execution import Deps, ExecutionContext
 from forze.base.exceptions import CoreException, ExceptionKind
 from forze_identity.authn.adapters import (
     PasswordLifecycleAdapter,
+    PasswordResetAdapter,
     PolicyPrincipalEligibilityAdapter,
     PrincipalDeactivationAdapter,
     TokenLifecycleAdapter,
@@ -34,14 +35,18 @@ from forze_identity.authn.adapters import (
 from forze_identity.authn.adapters.credential_deactivation import (
     AuthnCredentialDeactivationHelper,
 )
-from forze_identity.authn.application.specs import password_account_spec
-from forze_identity.authn.domain.models.account import CreatePasswordAccountCmd
+from forze_identity.authn.application.specs import password_account_spec, password_reset_spec
+from forze_identity.authn.domain.models.account import (
+    CreatePasswordAccountCmd,
+    ReadPasswordAccount,
+)
 from forze_identity.authn.services import (
     AccessTokenService,
     Hs256Signer,
     PasswordService,
     RefreshTokenConfig,
     RefreshTokenService,
+    ResetTokenService,
 )
 from forze_identity.authz.adapters.principal_registry import PrincipalRegistryAdapter
 from forze_identity.authz.application import policy_principal_spec
@@ -159,7 +164,113 @@ def _live(sessions: list[Any]) -> list[Any]:
     return [s for s in sessions if s.revoked_at is None and s.rotated_at is None]
 
 
+async def _password_race(
+    stack: _Stack, principal: UUID, flow: str
+) -> tuple[PrincipalDeactivationAdapter, Callable[[], Awaitable[Any]]]:
+    """A password account with a live session, the deactivation that closes it, and the write
+    under test: a password change, or a reset by a token requested beforehand."""
+
+    ctx = stack.ctx
+    passwords = PasswordService()
+    pa_qry = ctx.document.query(password_account_spec)
+    pa_cmd = ctx.document.command(password_account_spec)
+    eligibility = PolicyPrincipalEligibilityAdapter(
+        principal_qry=ctx.document.query(policy_principal_spec)
+    )
+
+    with ctx.inv_ctx.bind(metadata=_invocation_metadata()):
+        await pa_cmd.create(
+            CreatePasswordAccountCmd(
+                principal_id=principal,
+                username="bob",
+                password_hash=passwords.hash_password_sync("old-secret"),
+            ),
+            return_new=False,
+        )
+        await stack.tokens.issue_tokens(AuthnIdentity(principal_id=principal))
+
+    deactivation = PrincipalDeactivationAdapter(
+        principal_registry=stack.deactivation.principal_registry,
+        token_lifecycle=stack.tokens,
+        credentials=AuthnCredentialDeactivationHelper(pa_qry=pa_qry, pa_cmd=pa_cmd),
+    )
+
+    if flow == "change":
+        change = PasswordLifecycleAdapter(
+            password_svc=passwords,
+            pa_qry=pa_qry,
+            pa_cmd=pa_cmd,
+            eligibility=eligibility,
+            session_qry=ctx.document.query(session_spec),
+            session_cmd=ctx.document.command(session_spec),
+        )
+        identity = AuthnIdentity(principal_id=principal)
+
+        return deactivation, lambda: change.change_password(identity, "old-secret", "new-secret")
+
+    reset = PasswordResetAdapter(
+        password_svc=passwords,
+        reset_svc=ResetTokenService(pepper=secrets.token_bytes(32)),
+        pa_qry=pa_qry,
+        pa_cmd=pa_cmd,
+        reset_qry=ctx.document.query(password_reset_spec),
+        reset_cmd=ctx.document.command(password_reset_spec),
+        eligibility=eligibility,
+        session_qry=ctx.document.query(session_spec),
+        session_cmd=ctx.document.command(session_spec),
+    )
+
+    with ctx.inv_ctx.bind(metadata=_invocation_metadata()):
+        issued = await reset.request_reset("bob")
+
+    if issued is None:
+        raise AssertionError("the reset adapter issued no token")
+
+    token = issued.token
+
+    return deactivation, lambda: reset.reset_password(token, "new-secret")
+
+
+async def _account(stack: _Stack, principal: UUID) -> ReadPasswordAccount:
+    with stack.ctx.inv_ctx.bind(metadata=_invocation_metadata()):
+        account = await stack.ctx.document.query(password_account_spec).find(
+            filters={"$values": {"principal_id": principal}},
+        )
+
+    assert account is not None
+
+    return account
+
+
+def _hold(
+    monkeypatch: pytest.MonkeyPatch, owner: type, name: str, *, after: bool = False
+) -> tuple[asyncio.Event, asyncio.Event]:
+    """Hold each call of the method *name* of *owner* before it runs, or with *after* once it
+    returned, until the second event is set; the first is set once a call is held."""
+
+    reached, release = asyncio.Event(), asyncio.Event()
+    method = getattr(owner, name)
+
+    async def held(self: Any, *args: Any) -> Any:
+        if not after:
+            reached.set()
+            await release.wait()
+
+        result = await method(self, *args)
+
+        if after:
+            reached.set()
+            await release.wait()
+
+        return result
+
+    monkeypatch.setattr(owner, name, held)
+
+    return reached, release
+
+
 FLOWS = pytest.mark.parametrize("flow", ["login", "refresh"])
+PASSWORD_WRITES = pytest.mark.parametrize("flow", ["change", "reset"])
 
 # ----------------------- #
 
@@ -270,76 +381,81 @@ async def test_a_logout_racing_a_refresh_revokes_the_session_that_replaced_it(
     assert _live(sessions) == []
 
 
-async def test_a_deactivation_and_a_password_change_do_not_deadlock(
+@PASSWORD_WRITES
+async def test_a_deactivation_waits_for_a_password_write_that_read_the_account(
     pg_client: PostgresClient,
     monkeypatch: pytest.MonkeyPatch,
+    flow: str,
 ) -> None:
-    # Both write the password account and the sessions. Taken in opposite orders, a
-    # deactivation and a password change of one principal each wait on the other's lock,
-    # and Postgres aborts one of them.
+    # The write reads the account, then hashes before it writes. A deactivation that reaches
+    # the account meanwhile waits for the write, instead of closing the account under it and
+    # failing the write on its revision. Both then take the account before the sessions, so
+    # they never deadlock either.
     stack, principal = await _stack(pg_client)
-    ctx = stack.ctx
-    passwords = PasswordService()
-    pa_qry = ctx.document.query(password_account_spec)
-    pa_cmd = ctx.document.command(password_account_spec)
-
-    with ctx.inv_ctx.bind(metadata=_invocation_metadata()):
-        await pa_cmd.create(
-            CreatePasswordAccountCmd(
-                principal_id=principal,
-                username="bob",
-                password_hash=passwords.hash_password_sync("old-secret"),
-            ),
-            return_new=False,
-        )
-        await stack.tokens.issue_tokens(AuthnIdentity(principal_id=principal))
-
-    deactivation = PrincipalDeactivationAdapter(
-        principal_registry=stack.deactivation.principal_registry,
-        token_lifecycle=stack.tokens,
-        credentials=AuthnCredentialDeactivationHelper(pa_qry=pa_qry, pa_cmd=pa_cmd),
-    )
-    change = PasswordLifecycleAdapter(
-        password_svc=passwords,
-        pa_qry=pa_qry,
-        pa_cmd=pa_cmd,
-        eligibility=PolicyPrincipalEligibilityAdapter(
-            principal_qry=ctx.document.query(policy_principal_spec)
-        ),
-        session_qry=ctx.document.query(session_spec),
-        session_cmd=ctx.document.command(session_spec),
-    )
-
-    # Hold the deactivation where it reaches the credentials, its transaction open.
-    paused, go = asyncio.Event(), asyncio.Event()
-    close_credentials = AuthnCredentialDeactivationHelper.deactivate_all
-
-    async def held(self: Any, principal_id: UUID) -> None:
-        paused.set()
-        await go.wait()
-        await close_credentials(self, principal_id)
-
-    monkeypatch.setattr(AuthnCredentialDeactivationHelper, "deactivate_all", held)
+    deactivation, write = await _password_race(stack, principal, flow)
+    paused, go = _hold(monkeypatch, AuthnCredentialDeactivationHelper, "deactivate_all")
+    hashing, hashed = _hold(monkeypatch, PasswordService, "hash_password")
+    before = await _account(stack, principal)
 
     async with asyncio.timeout(15):
         deactivate = asyncio.create_task(stack.in_tx(lambda: deactivation.deactivate(principal)))
         await paused.wait()
 
-        changing = asyncio.create_task(
-            stack.in_tx(
-                lambda: change.change_password(
-                    AuthnIdentity(principal_id=principal),
-                    "old-secret",
-                    "new-secret",
-                )
-            )
-        )
-        await asyncio.sleep(BLOCKED_FOR)
+        writing = asyncio.create_task(stack.in_tx(write))
+        await hashing.wait()
         go.set()
+        await asyncio.sleep(BLOCKED_FOR)
 
-        results = await asyncio.gather(deactivate, changing, return_exceptions=True)
+        # The write holds the account it read until it commits.
+        assert not deactivate.done()
+
+        hashed.set()
+        results = await asyncio.gather(deactivate, writing, return_exceptions=True)
 
     assert [r for r in results if isinstance(r, BaseException)] == []
+
+    # The write landed, and the deactivation closed the account after it.
+    after = await _account(stack, principal)
+
+    assert not after.is_active
+    assert after.password_hash != before.password_hash
+    assert _live(await stack.sessions(principal)) == []
+
+
+@PASSWORD_WRITES
+async def test_a_password_write_waits_for_a_deactivation_and_is_refused(
+    pg_client: PostgresClient,
+    monkeypatch: pytest.MonkeyPatch,
+    flow: str,
+) -> None:
+    # The deactivation closed the account and holds it until it commits; the write then
+    # reads the account closed and is refused, rather than failing on its revision.
+    stack, principal = await _stack(pg_client)
+    deactivation, write = await _password_race(stack, principal, flow)
+    closed, go = _hold(monkeypatch, AuthnCredentialDeactivationHelper, "deactivate_all", after=True)
+    before = await _account(stack, principal)
+
+    async with asyncio.timeout(15):
+        deactivate = asyncio.create_task(stack.in_tx(lambda: deactivation.deactivate(principal)))
+        await closed.wait()
+
+        writing = asyncio.create_task(stack.in_tx(write))
+        await asyncio.sleep(BLOCKED_FOR)
+
+        assert not writing.done()
+
+        go.set()
+        await deactivate
+
+        with pytest.raises(CoreException) as caught:
+            await writing
+
+    assert caught.value.kind is ExceptionKind.AUTHENTICATION, caught.value
+
+    after = await _account(stack, principal)
+
+    assert not after.is_active
+    assert after.password_hash == before.password_hash
     assert _live(await stack.sessions(principal)) == []
 
 
