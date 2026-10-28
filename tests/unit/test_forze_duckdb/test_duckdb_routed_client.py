@@ -14,7 +14,7 @@ import contextvars
 import json
 import random
 from collections.abc import AsyncIterator, Iterator
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 from secrets import token_hex
 from typing import Any, ClassVar
 from unittest.mock import MagicMock
@@ -22,6 +22,10 @@ from uuid import UUID, uuid4
 
 import duckdb
 import pytest
+from cryptography import x509
+from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives.asymmetric import ec
+from cryptography.x509.oid import NameOID
 
 from forze.application.contracts.secrets import SecretRef
 from forze.base.exceptions import CoreException, ExceptionKind, exc
@@ -37,6 +41,29 @@ _A = UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
 _B = UUID("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb")
 _C = UUID("cccccccc-cccc-cccc-cccc-cccccccccccc")
 _TIMEOUT = timedelta(seconds=5)
+
+
+def _self_signed_pem() -> str:
+    signer = ec.generate_private_key(ec.SECP256R1())
+    name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "ca.test")])
+    now = datetime.now(UTC)
+    cert = (
+        x509.CertificateBuilder()
+        .subject_name(name)
+        .issuer_name(name)
+        .public_key(signer.public_key())
+        .serial_number(x509.random_serial_number())
+        .not_valid_before(now - timedelta(minutes=1))
+        .not_valid_after(now + timedelta(hours=1))
+        .add_extension(x509.BasicConstraints(ca=True, path_length=None), critical=True)
+        .sign(signer, hashes.SHA256())
+    )
+
+    return cert.public_bytes(serialization.Encoding.PEM).decode()
+
+
+_PEM = _self_signed_pem()
+"""A CA certificate OpenSSL loads, as a ``ca_cert_file`` must hold."""
 
 _tenant: contextvars.ContextVar[UUID | None] = contextvars.ContextVar("tenant", default=None)
 
@@ -132,7 +159,7 @@ def fake_engine(monkeypatch: pytest.MonkeyPatch) -> Iterator[type[_FakeEngine]]:
     yield _FakeEngine
 
 
-async def _attested(client: Any, expected: dict[str, str]) -> list[str]:
+async def _attested(client: Any, *args: Any) -> list[str]:
     return []
 
 
@@ -202,11 +229,86 @@ class TestConstruction:
 
         assert ei.value.code == "duckdb_lake_catalog_invalid"
 
+    @pytest.mark.parametrize("field", ["uri", "oauth2_server_uri"])
+    @pytest.mark.parametrize("value", ["s3://lake/", "/catalog", "catalog.test/catalog", "http://"])
+    def test_the_catalog_and_the_idp_must_be_http_urls(self, field: str, value: str) -> None:
+        """Both go into the session's allowlist, where anything else would widen it."""
+
+        urls = {"uri": "https://catalog.test/catalog", "oauth2_server_uri": "https://idp.test/t"}
+
+        with pytest.raises(CoreException) as ei:
+            LakeTenantCatalog(
+                **{**urls, field: value}, warehouse="w", oauth2_scope="s",
+                storage_prefix="s3://lake/a/",
+            )
+
+        assert ei.value.code == "duckdb_lake_catalog_invalid"
+        assert ei.value.details == {field: value}
+
+    @pytest.mark.parametrize(
+        "content",
+        [
+            "",
+            "not a certificate\n",
+            "-----BEGIN PRIVATE KEY-----\n",
+            "-----BEGIN CERTIFICATE-----\n",
+            _PEM[: len(_PEM) // 2],
+        ],
+        ids=["empty", "text", "key", "marker", "truncated"],
+    )
+    def test_a_ca_bundle_without_a_pem_certificate_is_refused(
+        self, tmp_path: Any, content: str
+    ) -> None:
+        """D-075: DuckDB 2 hands the file to curl for every request; a wrong one fails each."""
+
+        bundle = tmp_path / "ca.pem"
+        bundle.write_text(content)
+
+        with pytest.raises(CoreException) as ei:
+            _routed(_MemSecrets(_A), ca_cert_file=str(bundle))
+
+        assert ei.value.code == "duckdb_routed_client_invalid"
+        assert ei.value.details == {"ca_cert_file": str(bundle.resolve())}
+
+    def test_a_missing_ca_bundle_is_refused(self, tmp_path: Any) -> None:
+        with pytest.raises(CoreException) as ei:
+            _routed(_MemSecrets(_A), ca_cert_file=str(tmp_path / "absent.pem"))
+
+        assert ei.value.code == "duckdb_routed_client_invalid"
+
 
 # ....................... #
 
 
 class TestInstances:
+    async def test_the_session_allow_lists_the_prefix_the_catalog_the_idp_and_the_ca_bundle(
+        self, fake_engine: type[_FakeEngine], tmp_path: Any
+    ) -> None:
+        """D-062, D-063: one allowlist bounds every path, and no filesystem is disabled."""
+
+        bundle = tmp_path / "ca.pem"
+        bundle.write_text(_PEM)
+        link = tmp_path / "ca-link.pem"
+        link.symlink_to(bundle)
+        routed = _routed(_MemSecrets(_A), ca_cert_file=str(link))
+        await routed.startup()
+
+        await _read(routed, _A)
+
+        (engine,) = fake_engine.built
+        real = str(bundle.resolve())
+        assert f"SET GLOBAL ca_cert_file='{real}'" in engine.statements
+        assert (
+            "SET GLOBAL allowed_directories=['http://catalog.test/catalog/', "
+            f"'s3://lake/{_A.hex[:4]}/']"
+        ) in engine.statements
+        assert f"SET GLOBAL allowed_paths=['{real}', 'http://idp.test/token']" in engine.statements
+        assert engine.statements.index("SET GLOBAL enable_external_access=false") < next(
+            i for i, s in enumerate(engine.statements) if s.startswith("CREATE SECRET")
+        )
+        assert not any("disabled_filesystems" in s for s in engine.statements)
+        await routed.close()
+
     async def test_an_instance_is_built_load_only_with_the_shared_admission(
         self, fake_engine: type[_FakeEngine]
     ) -> None:
@@ -243,7 +345,7 @@ class TestInstances:
     async def test_a_failed_attestation_closes_the_instance_and_serves_nothing(
         self, fake_engine: type[_FakeEngine], monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        async def unlocked(client: Any, expected: dict[str, str]) -> list[str]:
+        async def unlocked(client: Any, *args: Any) -> list[str]:
             return ["setting lock_configuration"]
 
         monkeypatch.setattr(routed_client, "_attest", unlocked)
@@ -553,41 +655,13 @@ class TestTeardownAndRemapping:
 # ....................... #
 
 
-class _Probe:
-    """Answers the attestation's filesystem read with *error*, or with rows when it is None."""
-
-    def __init__(self, error: Exception | None) -> None:
-        self.error = error
-
-    async def run_query(self, sql: str) -> None:
-        if self.error is not None:
-            raise self.error
-
-
-@pytest.mark.parametrize(
-    ("error", "disabled"),
-    [
-        (duckdb.PermissionException("LocalFileSystem has been disabled by configuration"), True),
-        (duckdb.PermissionException("enable_external_access is disabled"), False),
-        (duckdb.IOException("No files found that match the pattern"), False),
-        (None, False),
-    ],
-    ids=["disabled", "other_refusal", "io_error", "read_succeeded"],
-)
-async def test_a_filesystem_attests_disabled_only_on_its_own_refusal(
-    error: Exception | None, disabled: bool
-) -> None:
-    probe: Any = _Probe(error)
-
-    assert await routed_client._filesystem_disabled(probe, "LocalFileSystem", "/x") is disabled
-
-
 def test_unset_engine_threads_and_extension_directory_are_not_attested() -> None:
     expected = routed_client._expected_settings(
         _catalog(_A),
         http_timeout_seconds=5,
         engine=DuckDbConfig(threads=None),
         extension_directory=None,
+        ca_cert_file=None,
     )
 
     assert "threads" not in expected

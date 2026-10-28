@@ -7,8 +7,11 @@ require_duckdb()
 # ....................... #
 
 import asyncio
+import json
+import re
 import threading
-from collections.abc import AsyncGenerator, Callable, Mapping, Sequence
+import warnings
+from collections.abc import AsyncGenerator, Callable, Iterator, Mapping, Sequence
 from concurrent.futures import Future, ThreadPoolExecutor
 from datetime import timedelta
 from decimal import Decimal
@@ -48,6 +51,24 @@ _VENDED_SECRET_PREFIX = "__internal_ic_"  # nosec B105 - a secret-name prefix, n
 
 _REINTERRUPT_S = 0.1
 """How often a timed-out statement is interrupted again until its worker returns."""
+
+
+def _ignore_arrow_copy_warning() -> None:
+    """Silence DuckDB 2's warning on an Arrow fetch from an executed cursor, for this module only.
+
+    The warning points at ``sql(...)``, which binds a ``SELECT`` twice: one more catalog
+    ``LoadTable`` or file-footer read per statement. :meth:`DuckDbClient.run_query` keeps the
+    single bind. Installed at :meth:`DuckDbClient.initialize` rather than at import, so it
+    holds under a test runner that resets warning filters after collection; idempotent.
+    """
+
+    warnings.filterwarnings(
+        "ignore",
+        message="Arrow output on a DB-API result",
+        category=UserWarning,
+        module=re.escape(__name__) + r"\Z",
+    )
+
 
 # ....................... #
 
@@ -131,15 +152,16 @@ def _quote_identifier(name: str) -> str:
 def _single_select(cursor: Any, statement: str) -> Any:
     """Classify *statement* with the engine's own parser and return the one ``SELECT`` in it.
 
-    Raises when the text holds anything but exactly one statement, or a statement that is not a
-    ``SELECT``. The caller executes the returned object rather than the string, so the text that
-    runs is the text that was classified. A belt, not the read-only boundary: a ``SELECT`` can
-    still call a side-effecting table function.
+    Raises when the text holds anything but exactly one statement, a statement that is not a
+    ``SELECT``, or a ``SELECT`` that reads beyond the tables it names. The caller executes the
+    returned object rather than the string, so the text that runs is the text that was
+    classified. A belt, not the read-only boundary, which is the catalog's grant.
     """
 
     statements = cursor.extract_statements(statement)
 
-    if len(statements) != 1:
+    # DuckDB 2 types a PIVOT as one MULTI statement; 1.5 splits it in two. Same answer on both.
+    if len(statements) != 1 or statements[0].type == duckdb.StatementType.MULTI:
         raise exc.validation(
             "DuckDB dynamic read executes exactly one statement per call.",
             code=MULTI_STATEMENT_CODE,
@@ -155,7 +177,103 @@ def _single_select(cursor: Any, statement: str) -> Any:
             details={"statement_type": single.type.name},
         )
 
+    _refuse_indirect_reads(cursor, single.query)
+
     return single
+
+
+_TABLE_FUNCTIONS = frozenset({"generate_series", "range", "unnest"})
+"""The table functions a dynamic read may call. Every other one can take a path, a URL, a table
+name or SQL text (``read_parquet``, ``iceberg_scan``, ``glob``, ``query``, ``query_table``), so it
+opens something the statement does not name as a table (RFC 0078 EXECUTION-LOG D-072)."""
+
+_PATH_LIKE = re.compile(r"[/:.]")
+"""A table name DuckDB would read as a file or a URL (a replacement scan, ``FROM 's3://…'``)."""
+
+
+def _references(tree: Any) -> Iterator[dict[str, Any]]:
+    """Every table and table-function reference in a ``json_serialize_sql`` tree, nested ones
+    (subqueries, CTEs, joins, ``LATERAL``) included."""
+
+    pending = [tree]
+
+    while pending:
+        node = pending.pop()
+
+        if isinstance(node, dict):
+            kind = node.get("type")  # pyright: ignore[reportUnknownMemberType]
+
+            if kind in ("BASE_TABLE", "TABLE_FUNCTION"):
+                yield node  # pyright: ignore[reportReturnType]
+
+            pending.extend(node.values())  # pyright: ignore[reportUnknownArgumentType]
+
+        elif isinstance(node, list):
+            pending.extend(node)  # pyright: ignore[reportUnknownArgumentType]
+
+
+def _invalid(detail: str) -> CoreException:
+    return exc.validation(
+        "DuckDB dynamic read refuses a statement that reads beyond the tables it names.",
+        code=STATEMENT_INVALID_CODE,
+        details={"detail": detail},
+    )
+
+
+def _refuse_indirect_reads(cursor: Any, statement: str) -> None:
+    """Refuse a ``SELECT`` that reads anything but tables of an attached catalog, by name.
+
+    Parsed with ``json_serialize_sql``, which binds nothing and makes no request:
+
+    - a table function outside :data:`_TABLE_FUNCTIONS`. A ``pragma_*`` one is refused as the
+      ``PRAGMA`` it stands for: DuckDB 1.5 rewrites ``PRAGMA version`` into ``pragma_version()``.
+    - a table name that is a path or a URL. The engine's allowlist resolves no dot-segments and
+      re-checks no redirect, so no statement may hand it a path at all (D-073, D-074).
+    - a table named through a catalog the instance has not attached, or nested deeper than
+      ``catalog.schema.table``. DuckDB 2 reads it as a nested namespace and its ``iceberg``
+      extension resolves only the last level, a table the statement did not name (D-058).
+
+    Every version gives the same answer, before any request.
+    """
+
+    serialized, attached = cursor.execute(
+        "SELECT json_serialize_sql($statement), "
+        "(SELECT list(database_name) FROM duckdb_databases())",
+        {"statement": statement},
+    ).fetchone()
+    tree = json.loads(serialized)
+
+    if tree.get("error"):
+        raise _invalid(f"not a plain SELECT: {tree.get('error_message', '')}")
+
+    known = {name.lower() for name in attached}  # DuckDB looks catalogs up case-insensitively
+
+    for ref in _references(tree):
+        if ref["type"] == "TABLE_FUNCTION":
+            name = str((ref.get("function") or {}).get("function_name", "")).lower()
+
+            if name.startswith("pragma_"):
+                raise exc.precondition(
+                    "DuckDB dynamic read executes SELECT statements only.",
+                    code=WRITE_REFUSED_CODE,
+                    details={"statement_type": "PRAGMA"},
+                )
+
+            if name not in _TABLE_FUNCTIONS:
+                raise _invalid(f"table function not allowed: {name}")
+
+            continue
+
+        catalog = ref["catalog_name"]
+        path = (ref.get("qualified_name") or {}).get("path") or [
+            part for part in (catalog, ref["schema_name"], ref["table_name"]) if part
+        ]
+
+        if _PATH_LIKE.search(ref["table_name"]):
+            raise _invalid(f"path as a table name: {ref['table_name']}")
+
+        if len(path) > 3 or (catalog and catalog.lower() not in known):
+            raise _invalid(f"unknown catalog in table name {'.'.join(path)}")
 
 
 # ....................... #
@@ -363,6 +481,7 @@ class DuckDbClient(DuckDbDynamicReadClientPort):
 
             cfg = config or DuckDbConfig()
             self.__config = cfg
+            _ignore_arrow_copy_warning()
 
             def _open() -> Any:
                 conn = duckdb.connect(
@@ -578,7 +697,7 @@ class DuckDbClient(DuckDbDynamicReadClientPort):
                 else:
                     cursor.execute(final_sql)
 
-                return DuckDbQueryResult(arrow=cursor.fetch_arrow_table())
+                return DuckDbQueryResult(arrow=cursor.to_arrow_table())
 
             finally:
                 holder.pop("cursor", None)

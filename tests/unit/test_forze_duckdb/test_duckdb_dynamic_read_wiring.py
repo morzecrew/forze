@@ -187,11 +187,19 @@ _INFRA = ("core.infrastructure", ExceptionKind.INFRASTRUCTURE)
     [
         (duckdb.InterruptException("Interrupted!"), (TIMEOUT_CODE, ExceptionKind.TIMEOUT)),
         (duckdb.PermissionException("File system LocalFileSystem has been disabled"), _PERMISSION),
+        (duckdb.PermissionException(
+            'Cannot access file "/etc/passwd" - file system operations are disabled by '
+            "configuration"
+        ), _PERMISSION),
         (duckdb.HTTPException("HTTP GET error reading 'x' (HTTP 403 Forbidden)"), _PERMISSION),
         (duckdb.HTTPException("Unable to connect to URL x: Forbidden (HTTP code 403)"),
          _PERMISSION),
         (duckdb.HTTPException("HTTP GET error reading 'x' (HTTP 401 Unauthorized)"), _PERMISSION),
         (duckdb.HTTPException("HTTP GET error reading 'x' (HTTP 500)"), _INFRA),
+        # DuckDB 2: a catalog refusal of CREATE TABLE (D-060)
+        (duckdb.HTTPException("returned a non-200 status code (Forbidden_403)"), _PERMISSION),
+        (duckdb.HTTPException("returned a non-200 status code (Unauthorized_401)"), _PERMISSION),
+        (duckdb.HTTPException("returned a non-200 status code (NotFound_404)"), _INFRA),
         (duckdb.Error("returned a non-200 status code (NotFound_404)"), _PERMISSION),
         (duckdb.Error("OAuth2 token request failed (Unauthorized_401)"), _PERMISSION),
         (duckdb.Error("returned a non-200 status code (Forbidden_403)"), _PERMISSION),

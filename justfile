@@ -175,6 +175,15 @@ lake-slow *args='tests/integration/test_forze_duckdb':
     uv run pytest -m lake_slow {{ args }}
 
 
+# Run the DuckDB suites on DuckDB 1.5, the oldest supported major, layered over the locked 2.x
+# (EXECUTION-LOG D-070). CI's duckdb shard runs this after `just test`.
+test-duckdb-1x *args='tests/unit/test_forze_duckdb tests/integration/test_forze_duckdb':
+    {{ _uv_sync }}
+
+    uv run --with 'duckdb==1.5.6' python -c "import duckdb; v = duckdb.__version__; assert v.startswith('1.5.'), f'overlay gave DuckDB {v}'"
+    uv run --with 'duckdb==1.5.6' pytest -m "not perf and not fuzz and not lake_slow" {{ args }}
+
+
 # Run one cell of the nightly DST matrix (see `just dst-nightly-cells` for the names)
 dst-nightly cell seeds='65536':
     {{ _uv_sync }}

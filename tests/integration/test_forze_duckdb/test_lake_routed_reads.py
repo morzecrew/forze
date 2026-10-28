@@ -4,7 +4,8 @@ Every statement here goes through the production path: ``DuckDbDynamicReadAdapte
 ``RoutedDuckDbClient`` → a per-tenant instance built by the §3.4 sequence and attested, attached
 to the tenant's Lakekeeper warehouse (``tests/support/lakekeeper.py``). The numbered classes are
 the items of RFC 0078 §7. Item 2 is the unit suite's (``test_duckdb_dynamic_read_wiring.py``),
-item 11 is outside P1, and item 17 is deferred to the DuckDB 2.0 re-probe (EXECUTION-LOG D-030).
+item 11 is ``test_lake_credential_expiry.py``'s, and item 17 stays deferred (EXECUTION-LOG
+D-059). The module runs on DuckDB 1.5 and 2; where the two differ, a test says which is which.
 
 Two seams make the belt-and-braces items possible without a second code path:
 ``_stub_classification`` swaps the client's parser check for "run the first statement", and
@@ -29,6 +30,8 @@ from typing import Any, ClassVar
 from unittest.mock import MagicMock
 from uuid import UUID
 
+import certifi
+import duckdb
 import pytest
 
 from forze.application.contracts.dynamic_read import DynamicReadPort, DynamicReadSpec
@@ -77,6 +80,8 @@ _SETUP_FAILED = "duckdb_session_setup_failed"
 _ORDERS = "SELECT id, tenant FROM gold.orders ORDER BY id"
 _SPIN = "SELECT count(*) AS n FROM range(20000000000) t(i) WHERE i % 7 = 3"
 """CPU-bound and long: stops only on interrupt."""
+_ALLOWLIST_REFUSAL = "file system operations are disabled by configuration"
+_ON_DUCKDB_2 = int(duckdb.__version__.split(".", 1)[0]) >= 2
 
 _tenant: contextvars.ContextVar[UUID | None] = contextvars.ContextVar("tenant", default=None)
 
@@ -237,7 +242,7 @@ def _fault(
 
     if not attest:
 
-        async def waived(client: Any, expected: dict[str, str]) -> list[str]:
+        async def waived(client: Any, *args: Any) -> list[str]:
             return []
 
         monkeypatch.setattr(routed_client, "_attest", waived)
@@ -302,8 +307,37 @@ class TestCrossTenantThroughTheCatalog:
     ) -> None:
         port = _port(routed)
 
-        for sql in ("SELECT * FROM wh_tenant_b.gold.orders", "SELECT * FROM tenant_b.orders"):
+        for sql in (
+            "SELECT * FROM wh_tenant_b.gold.orders",
+            "SELECT * FROM tenant_b.orders",
+            "SELECT * FROM zzz.gold.orders",
+            "SELECT * FROM lake.zzz.gold.orders",
+            # D-072: a table function would get past the name check.
+            "SELECT * FROM query('FROM zzz.gold.orders')",
+            "SELECT * FROM query_table('zzz.gold.orders')",
+            "SELECT * FROM query_table('wh_tenant_b.gold.orders')",
+        ):
             assert (await _refused(port, _A, sql)).code == STATEMENT_INVALID_CODE
+
+    async def test_with_classification_stubbed_an_unknown_first_part_never_reads_b(
+        self, routed: RoutedDuckDbClient, stub_classification: None
+    ) -> None:
+        """D-058, what the refusal above is for: DuckDB 2 reads an unknown first part as a
+        nested namespace and resolves its last level in A's own warehouse. Never B's rows."""
+
+        port = _port(routed)
+
+        for sql in (
+            "SELECT tenant FROM wh_tenant_b.gold.orders",
+            "SELECT tenant FROM zzz.gold.orders",
+            "SELECT tenant FROM query('FROM zzz.gold.orders')",
+            "SELECT tenant FROM query_table('wh_tenant_b.gold.orders')",
+        ):
+            if _ON_DUCKDB_2:
+                assert {row["tenant"] for row in await _run(port, _A, sql)} == {"tenant-a"}
+
+            else:
+                assert (await _refused(port, _A, sql)).code == STATEMENT_INVALID_CODE
 
     async def test_attaching_the_other_warehouse_is_refused(
         self, routed: RoutedDuckDbClient, tenant_b: LakeTenant, lake: LakeVendingStack
@@ -345,33 +379,67 @@ class TestCrossTenantByPath:
         monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", lake.root_secret_key)
         monkeypatch.setenv("AWS_REGION", "local-01")
 
-    async def test_b_is_refused_inside_the_engine_and_nothing_goes_out(
+    async def test_b_named_by_path_is_refused_before_it_runs(
         self, routed: RoutedDuckDbClient, lake: LakeVendingStack, tenant_b: LakeTenant
     ) -> None:
+        """D-072: a dynamic read may not hand the engine a path at all."""
+
         loaded = lake.load_table(tenant_b.principal, tenant_b.warehouse).json()
         meta, data = loaded["metadata-location"], loaded["metadata"]["location"]
         port = _port(routed)
-        await _run(port, _A, _ORDERS)  # build the instance first
 
-        async with routed.client_scope(_A) as inner:
-            await inner.run_command("CALL enable_logging('HTTP')")
-
-        count = "SELECT count(*) AS n FROM duckdb_logs WHERE type = 'HTTP'"
-        await _run(port, _A, _ORDERS)  # the positive control: a permitted read is logged
-        (before,) = await _inner_rows(routed, _A, count)
-        assert before["n"] > 0
-
-        for sql in (
-            f"SELECT * FROM iceberg_scan('{meta}')",
-            f"SELECT * FROM read_parquet('{data}/data/*.parquet')",
+        for sql, detail in (
+            (f"SELECT * FROM iceberg_scan('{meta}')", "table function not allowed: iceberg_scan"),
+            (
+                f"SELECT * FROM read_parquet('{data}/data/*.parquet')",
+                "table function not allowed: read_parquet",
+            ),
+            (
+                f"SELECT * FROM '{data}/data/x.parquet'",
+                f"path as a table name: {data}/data/x.parquet",
+            ),
         ):
             error = await _refused(port, _A, sql)
 
-            assert error.code == PERMISSION_DENIED_CODE
-            assert "file system operations are disabled" in error.details["detail"]
+            assert error.code == STATEMENT_INVALID_CODE
+            assert error.details["detail"] == detail
 
-        # Not one request more, so none was signed with the root key.
-        assert await _inner_rows(routed, _A, count) == [before]
+    async def test_b_is_refused_inside_the_engine_and_nothing_goes_out(
+        self,
+        build_routed: Callable[..., RoutedDuckDbClient],
+        monkeypatch: pytest.MonkeyPatch,
+        lake: LakeVendingStack,
+        tenant_b: LakeTenant,
+        stub_classification: None,
+    ) -> None:
+        loaded = lake.load_table(tenant_b.principal, tenant_b.warehouse).json()
+        meta, data = loaded["metadata-location"], loaded["metadata"]["location"]
+        # Logging goes on before the lock: DuckDB 2's lock refuses it after (D-060).
+        _fault(monkeypatch, lambda ss: [*ss[:-1], "CALL enable_logging('HTTP')", ss[-1]])
+        routed = build_routed()
+        await routed.startup()
+
+        try:
+            port = _port(routed)
+            count = "SELECT count(*) AS n FROM duckdb_logs WHERE type = 'HTTP'"
+            await _run(port, _A, _ORDERS)  # the positive control: a permitted read is logged
+            (before,) = await _inner_rows(routed, _A, count)
+            assert before["n"] > 0
+
+            for sql in (
+                f"SELECT * FROM iceberg_scan('{meta}')",
+                f"SELECT * FROM read_parquet('{data}/data/*.parquet')",
+            ):
+                error = await _refused(port, _A, sql)
+
+                assert error.code == PERMISSION_DENIED_CODE
+                assert _ALLOWLIST_REFUSAL in error.details["detail"]
+
+            # Not one request more, so none was signed with the root key.
+            assert await _inner_rows(routed, _A, count) == [before]
+
+        finally:
+            await routed.close()
 
 
 class TestClassification:
@@ -411,7 +479,7 @@ class TestClassification:
         error = await _refused(_port(routed), _A, f"ATTACH '{target}' AS l")
 
         assert error.code == PERMISSION_DENIED_CODE
-        assert "LocalFileSystem has been disabled" in error.details["detail"]
+        assert _ALLOWLIST_REFUSAL in error.details["detail"]
         assert not target.exists()
 
 
@@ -432,7 +500,7 @@ class TestLocalFilesystem:
             error = await _refused(port, _A, sql)
 
             assert error.code == PERMISSION_DENIED_CODE
-            assert "LocalFileSystem has been disabled" in error.details["detail"]
+            assert _ALLOWLIST_REFUSAL in error.details["detail"]
 
         assert not target.exists()
 
@@ -450,7 +518,7 @@ class TestLocalFilesystem:
         locked.chmod(0o500)
         _fault(
             monkeypatch,
-            _without("disabled_filesystems", "allowed_directories", "enable_external_access"),
+            _without("allowed_directories", "allowed_paths", "enable_external_access"),
             attest=False,
         )
         client = build_routed()
@@ -469,27 +537,65 @@ class TestLocalFilesystem:
 
 
 class TestHttpEgress:
-    """Battery 8 — fetch-by-URL is refused inside the engine."""
+    """Battery 8 — fetch-by-URL is refused by classification (D-072), and inside the engine by
+    the allowlist with classification stubbed (D-062)."""
 
-    async def test_an_https_read_is_refused(self, routed: RoutedDuckDbClient) -> None:
+    async def test_a_url_is_refused_before_it_runs(
+        self, routed: RoutedDuckDbClient, lake: LakeVendingStack
+    ) -> None:
+        port = _port(routed)
+
+        for sql in (
+            "SELECT * FROM read_csv('https://example.com/x.csv')",
+            f"SELECT * FROM read_text('{lake.catalog_uri}/v1/config')",
+            f"SELECT * FROM '{lake.catalog_uri}/v1/x.csv'",
+        ):
+            assert (await _refused(port, _A, sql)).code == STATEMENT_INVALID_CODE
+
+    async def test_an_https_read_is_refused(
+        self, routed: RoutedDuckDbClient, stub_classification: None
+    ) -> None:
         error = await _refused(
             _port(routed), _A, "SELECT * FROM read_csv('https://example.com/x.csv')"
         )
 
         assert error.code == PERMISSION_DENIED_CODE
-        assert "HTTPFileSystem has been disabled" in error.details["detail"]
+        assert _ALLOWLIST_REFUSAL in error.details["detail"]
+
+    async def test_only_the_catalog_tree_and_the_token_endpoint_are_reachable(
+        self, routed: RoutedDuckDbClient, lake: LakeVendingStack, stub_classification: None
+    ) -> None:
+        """D-064: what the allowlist lets the engine open over HTTP, and what it does not."""
+
+        port = _port(routed)
+        catalog_origin = lake.catalog_uri.rsplit("/", 1)[0]
+        idp_sibling = lake.token_uri.rsplit("/", 1)[0] + "/certs"
+
+        for url in (f"{catalog_origin}/health", idp_sibling):
+            error = await _refused(port, _A, f"SELECT * FROM read_text('{url}')")
+
+            assert error.code == PERMISSION_DENIED_CODE
+            assert _ALLOWLIST_REFUSAL in error.details["detail"]
+
+        # Inside the tree the request goes out, without the principal's token.
+        config = f"SELECT * FROM read_text('{lake.catalog_uri}/v1/config')"
+        inside = await _refused(port, _A, config)
+
+        assert inside.code == PERMISSION_DENIED_CODE
+        assert "401" in inside.details["detail"]
 
 
 class TestLock:
     """Battery 9 — the locked session refuses reconfiguration, on the parent and on cursors."""
 
+    # DuckDB 2 quotes the option name twice (D-060), hence the ``"+``.
     _ATTEMPTS: ClassVar[dict[str, str]] = {
-        "SET disabled_filesystems=''": (
-            'Cannot change configuration option "disabled_filesystems" - the configuration has '
+        "SET allowed_directories=['/']": (
+            'Cannot change configuration option "+allowed_directories"+ - the configuration has '
             "been locked"
         ),
         "SET lock_configuration=false": (
-            'Cannot change configuration option "lock_configuration" - the configuration has '
+            'Cannot change configuration option "+lock_configuration"+ - the configuration has '
             "been locked"
         ),
         "LOAD aws": "Loading external extensions is disabled through configuration",
@@ -505,20 +611,18 @@ class TestLock:
             error = await _refused(port, _A, sql)
 
             assert error.code == PERMISSION_DENIED_CODE
-            assert refusal in error.details["detail"]
+            assert re.search(refusal, error.details["detail"])
 
     async def test_each_attempt_is_refused_on_the_parent_connection(
         self, routed: RoutedDuckDbClient
     ) -> None:
-        import duckdb
-
         await _run(_port(routed), _A, _ORDERS)
 
         async with routed.client_scope(_A) as inner:
             parent = inner._DuckDbClient__conn  # type: ignore[attr-defined]
 
             for sql, refusal in self._ATTEMPTS.items():
-                with pytest.raises(duckdb.Error, match=re.escape(refusal)):
+                with pytest.raises(duckdb.Error, match=refusal):
                     parent.execute(sql).fetchall()
 
 
@@ -562,9 +666,10 @@ class TestReadOnly:
         client = build_routed()
         await client.startup()
         refusals = {
-            **dict.fromkeys(self._WRITES[:3], "HTTP code 403"),  # the store, on the data file
+            **dict.fromkeys(self._WRITES[:3], "HTTP (code )?403"),  # the store, on the data file
             "CREATE TABLE gold.t_new (i INT)": "Forbidden_403",  # the catalog
-            self._WRITES[3]: "LocalFileSystem has been disabled",  # CTAS stages locally
+            # CTAS: 1.5 stages locally first; 2 asks the catalog first
+            self._WRITES[3]: "NamespaceActionForbidden" if _ON_DUCKDB_2 else _ALLOWLIST_REFUSAL,
         }
 
         try:
@@ -574,7 +679,7 @@ class TestReadOnly:
                 error = await _refused(port, _A, sql)
 
                 assert error.code == PERMISSION_DENIED_CODE
-                assert by in error.details["detail"]
+                assert re.search(by, error.details["detail"])
 
             assert len(await _run(port, _A, _ORDERS)) == 3
 
@@ -811,10 +916,8 @@ class TestAttestation:
             (_without("s3_access_key_id"), ["setting s3_access_key_id"]),
             (_without("s3_secret_access_key"), ["setting s3_secret_access_key"]),
             (_without("s3_session_token"), ["setting s3_session_token"]),
-            (_without("allowed_directories"), ["setting allowed_directories"]),
+            # The path probes run only with external access off: on, they would go out.
             (_without("enable_external_access"), ["setting enable_external_access"]),
-            (_without("disabled_filesystems"), ["filesystem LocalFileSystem enabled",
-                                                "filesystem HTTPFileSystem enabled"]),
             (_without("http_timeout"), ["setting http_timeout"]),
             # Off by default, so removing the step changes nothing; turning it on does.
             (lambda ss: [s.replace("metadata_cache=false", "metadata_cache=true") for s in ss],
@@ -838,9 +941,7 @@ class TestAttestation:
             "key_id",
             "secret_key",
             "session_token",
-            "allowlist",
             "external_access",
-            "disabled_filesystems",
             "http_timeout",
             "metadata_cache",
             "file_cache",
@@ -869,6 +970,100 @@ class TestAttestation:
 
             assert error.code == "duckdb_session_attestation_failed"
             assert error.details["problems"] == problems
+
+        finally:
+            await client.close()
+
+    async def test_a_widened_allowlist_is_refused_by_effect(
+        self,
+        build_routed: Callable[..., RoutedDuckDbClient],
+        monkeypatch: pytest.MonkeyPatch,
+        lake: LakeVendingStack,
+    ) -> None:
+        """D-075: the catalog's whole origin allow-listed lets a sibling of its tree open."""
+
+        origin = lake.catalog_uri.rsplit("/", 1)[0]
+
+        def widen(statements: list[str]) -> list[str]:
+            return [
+                s.replace("allowed_directories=[", f"allowed_directories=['{origin}/', ")
+                for s in statements
+            ]
+
+        _fault(monkeypatch, widen)
+        client = build_routed()
+        await client.startup()
+
+        try:
+            error = await _refused(_port(client), _A, _ORDERS)
+
+            assert error.code == "duckdb_session_attestation_failed"
+            assert error.details["problems"] == [
+                "setting allowed_directories",
+                f"path {lake.catalog_uri}-forze-attest/ not refused",
+            ]
+
+        finally:
+            await client.close()
+
+    @pytest.mark.parametrize("step", ["allowed_directories", "allowed_paths"])
+    async def test_a_session_missing_an_allowlist_step_is_refused(
+        self,
+        build_routed: Callable[..., RoutedDuckDbClient],
+        monkeypatch: pytest.MonkeyPatch,
+        step: str,
+    ) -> None:
+        """Without its allowlist entry, DuckDB 2 refuses the catalog's or the IdP's own request,
+        so the session never builds (D-055); DuckDB 1.5 builds it and attestation refuses it."""
+
+        _fault(monkeypatch, _without(step))
+        client = build_routed()
+        await client.startup()
+
+        try:
+            error = await _refused(_port(client), _A, _ORDERS)
+
+            if _ON_DUCKDB_2:
+                assert error.code == _SETUP_FAILED
+                assert _ALLOWLIST_REFUSAL in error.details["error"]
+
+            else:
+                assert error.code == "duckdb_session_attestation_failed"
+                assert error.details["problems"] == [f"setting {step}"]
+
+        finally:
+            await client.close()
+
+    @pytest.mark.parametrize("dropped", [False, True], ids=["shipped", "dropped"])
+    async def test_the_ca_bundle_is_allow_listed_and_attested(
+        self,
+        build_routed: Callable[..., RoutedDuckDbClient],
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+        dropped: bool,
+    ) -> None:
+        """D-063 on this HTTP-only stack: the bundle is set, allow-listed and read back. The P0
+        module's ``test_on_2_https_needs_the_ca_bundle_on_the_allowlist`` covers HTTPS. It must
+        be a real bundle: once set, DuckDB 2 hands it to curl for every request, plain HTTP too."""
+
+        bundle = tmp_path / "ca.pem"
+        shutil.copyfile(certifi.where(), bundle)
+
+        if dropped:
+            _fault(monkeypatch, _without("SET GLOBAL ca_cert_file"))
+
+        client = build_routed(ca_cert_file=str(bundle))
+        await client.startup()
+
+        try:
+            if not dropped:
+                assert len(await _run(_port(client), _A, _ORDERS)) == 3
+                return
+
+            error = await _refused(_port(client), _A, _ORDERS)
+
+            assert error.code == "duckdb_session_attestation_failed"
+            assert error.details["problems"] == ["setting ca_cert_file"]
 
         finally:
             await client.close()

@@ -59,6 +59,7 @@ _STATUS = re.compile(r"'status': ([A-Za-z_0-9]+)")
 _EVENTS = ("gold", "events")
 _EVENT_FILES, _EVENT_ROWS = 24, 50_000
 """Enough data files that a paused stream has requests left to make after the pause."""
+_ON_DUCKDB_2 = int(duckdb.__version__.split(".", 1)[0]) >= 2
 
 # ----------------------- #
 
@@ -331,14 +332,20 @@ class TestVendedCredentialExpiry:
         error = credential_expiry.span_after
         assert isinstance(error, duckdb.Error)
         assert "HTTP 400" in str(error)
-        assert credential_expiry.span_store_after == ["BadRequest_400"]
+        # One store request. DuckDB 2 logs a failed GET with no response, so no status (D-067).
+        assert credential_expiry.span_store_after == ([""] if _ON_DUCKDB_2 else ["BadRequest_400"])
         assert credential_expiry.span_catalog_after == []
 
     def test_a_kept_secret_outranks_the_fresh_one_after_expiry(
         self, credential_expiry: _CredentialExpiry
     ) -> None:
         """Why every routed read drops its secrets: the next statement fetches a fresh one and
-        still signs with the expired one (EXECUTION-LOG D-047)."""
+        still signs with the expired one (EXECUTION-LOG D-047). On DuckDB 2 nothing is kept, so
+        the next statement loads afresh and reads (D-056)."""
+
+        if _ON_DUCKDB_2:
+            assert credential_expiry.kept_after == [(3,)]
+            return
 
         error = credential_expiry.kept_after
         assert isinstance(error, duckdb.HTTPException)

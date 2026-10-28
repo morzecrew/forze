@@ -335,15 +335,17 @@ def _seed_table(stack: LakeVendingStack, tenant: LakeTenant) -> None:
 
 
 def _install_extensions() -> None:
-    """Install ``httpfs`` and ``iceberg`` into the default extension directory.
+    """Install ``httpfs``, ``iceberg`` and ``avro`` into the default extension directory.
 
     Sessions load them with autoinstall off (RFC 0078 §3.4), so a cold runner needs this once.
+    ``iceberg`` loads ``avro`` itself and fails without it (EXECUTION-LOG D-071).
     """
 
     con = duckdb.connect(":memory:")
     try:
         con.execute("INSTALL httpfs")
         con.execute("INSTALL iceberg")
+        con.execute("INSTALL avro")
     finally:
         con.close()
 

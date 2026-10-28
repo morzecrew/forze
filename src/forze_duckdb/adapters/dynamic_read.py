@@ -73,8 +73,10 @@ is a ``LoadTable`` that came back without credentials, which is what a revocatio
 while the authorizer's cache expires (D-032) and also what a store profile with no region
 produces. Every one carries its message into the error details, so the two stay apart."""
 
-_HTTP_REFUSAL = re.compile(r"HTTP (?:code )?40[13]\b")
-"""A 401 or 403 from the store, as ``HTTPException`` spells it in its message."""
+_HTTP_REFUSAL = re.compile(r"HTTP (?:code )?40[13]\b|Unauthorized_401|Forbidden_403")
+"""A 401 or 403 as ``HTTPException`` spells it: the store's in its message, the catalog's (on
+DuckDB 2, where a catalog refusal is no longer the bare ``Error``) as its status name
+(EXECUTION-LOG D-060)."""
 
 _READ_ONLY_ATTACH = "attached in read-only mode"
 

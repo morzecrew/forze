@@ -35,6 +35,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **A throttled HTTP error tells the client when to come back.** Its `retry_after` (seconds) or else `retry_at` (aware `datetime`) detail becomes a `Retry-After` header, which `AllowlistCORSMiddleware` exposes; other details stay withheld. No header when neither key is usable.
 
+- **`RoutedDuckDbClient(ca_cert_file=...)` lets a lake session use HTTPS on DuckDB 2.** The file must hold a PEM certificate, and any statement on the instance can read it. A dynamic read calling a table function other than `range`, `generate_series` or `unnest`, naming a path, or naming an unattached catalog is refused.
+
 - **A cancel after an operation's commit point is recorded on every surface.** The operation logs a `commit_ambiguous` warning carrying its name and invocation ids, adds a `forze.commit_ambiguous` span event, and re-raises the cancellation. `forze ops call` still reports it as an error.
 
 - **A transaction manager can say its store refused writes in a read-only root.** Implement `ReadOnlyAware.read_only_enforced()`, as Postgres and the mock's `journal` and `strict` managers do; that root then marks no commit point.
@@ -46,6 +48,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - **HTTP error bodies carry the error's `code` and `kind`** (**behaviour change**). The body is `{"detail", "code", "kind", "context"}`, so a client tells `revision_mismatch` from other 400s; a whole-body comparison breaks. An unhandled 500 now also sends `X-Error-Code: core.internal`.
+
+- **The DuckDB lake session no longer disables any filesystem** (**behaviour change**). On 1.5 as on 2 it relies on an allowlist of the tenant's prefix, the catalog's tree and the token endpoint, plus attested settings. That tree is shared by every tenant, and analytics SQL can send it unauthenticated requests.
+
+- **The `duckdb` extra takes DuckDB 1.5 or 2** (**behaviour change**). It now requires `duckdb>=1.5.6,<3`, so releases before 1.5.6 no longer install with it. `DuckDbClient` and `RoutedDuckDbClient` run on both majors with the same code.
 
 - **`HttpServicePort` requires `stream`** (**behaviour change**). A hand-written implementation or test stub must add it, or it fails type checks and `isinstance` against the runtime-checkable port.
 
@@ -59,7 +65,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **`register_scalar_docs` loads the document the app actually serves** (**behaviour change**). It fetched `/openapi.json` whatever `openapi_url` said, so a versioned app got an empty `/docs`. It now defaults to `app.openapi_url` and takes `openapi_url=`; an app serving no document fails at startup unless it passes one.
 
-- **`forze[duckdb]` no longer installs DuckDB 2.0.** The extra now requires `duckdb>=1.1.0,<2`: 2.0 removed `fetch_arrow_table`, so every `DuckDbClient` query failed on a fresh install. An environment that already installed 2.0 outside the lock must reinstall the extra or pin `duckdb<2`.
+- **`forze[duckdb]` works on a fresh install of DuckDB 2.0.** 2.0 removed `fetch_arrow_table`, so every `DuckDbClient` query failed; the client now fetches with `to_arrow_table`, which 1.5 has too.
 
 - **A principal in several tenants reaches the tenant selector after a password login** (**behaviour change**). With no `tid` the resolver binds no tenant, as for no membership, instead of refusing every request with `tenant_ambiguous`. Tenant-scoped work still refuses it with `tenant_required`.
 
