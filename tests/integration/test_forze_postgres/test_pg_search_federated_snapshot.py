@@ -16,8 +16,10 @@ from forze.application.contracts.search import (
     FederatedSearchSpec,
     SearchQueryDepKey,
     SearchResultSnapshotDepKey,
+    SearchMemberGrant,
     SearchResultSnapshotSpec,
     SearchSpec,
+    bind_search_member_grant,
 )
 from forze.application.contracts.querying import UNSUPPORTED_QUERY_FEATURE_CODE
 from forze.application.execution import Deps
@@ -788,3 +790,22 @@ async def test_federated_member_filters_and_selection_bind_legs_and_snapshots(
     )
 
     assert idents(fewer) == {(leg_a, rid) for rid in rows[leg_a]}
+
+    # A bound grant (AuthzSearchMembers binds one) narrows whatever request reaches the adapter.
+    first_a = rows[leg_a][0]
+    grant = SearchMemberGrant(
+        allowed=frozenset({leg_a}), filters={leg_a: {"$values": {"id": first_a}}}
+    )
+
+    with bind_search_member_grant(f"fed_mf_{suffix}", grant):
+        granted = await fed.search_page(
+            "mftok",
+            pagination={"limit": 10},
+            snapshot={"id": every.snapshot.id, "fingerprint": every.snapshot.fingerprint},
+        )
+
+        with pytest.raises(CoreException) as refused:
+            await fed.search_page("mftok", options={"members": [leg_b]})
+
+    assert idents(granted) == {(leg_a, first_a)}
+    assert refused.value.code == "permission_denied"

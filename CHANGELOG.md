@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **Federated search takes `member_filters`, a filter for one member's leg alone.** It joins `filters` with `$and` on that leg, and a hub refuses it. `AuthzSearchMembers(scope_operation=...)` puts each member's policy filter there; `OperationDescriptor.members` and `AuthorizesMembers` back the freeze check.
+- **Federated search takes `member_filters`, a filter for one member's leg alone.** It joins `filters` with `$and` on that leg, and a hub refuses it. New `SearchMemberGrant`, `bind_search_member_grant`, `OperationDescriptor.members` and `AuthorizesMembers` back member authorization.
 
 - **DuckDB serves trusted dynamic reads over a per-tenant Iceberg lake.** `RoutedDuckDbClient` gives each tenant a locked-down instance holding its catalog principal and the S3 credentials vended per statement, and serves nothing from one that fails its attestation. Wire routes with `DuckDbDepsModule(dynamic_reads=...)`.
 
@@ -119,7 +119,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
-- **A guarded hub or federated search authorizes each member it reads** (**Breaking**). The new `AuthzSearchMembers` checks each member's own read action, refusing a request that names a forbidden member and narrowing one that names none. The registry refuses to freeze a guarded one without it.
+- **A guarded hub or federated search authorizes each member it reads** (**Breaking**). The new `AuthzSearchMembers` checks each member's read action; after any request mapper, the adapter refuses a request naming a forbidden member and skips one it only reaches. The registry refuses to freeze a guarded one without it.
 
 - **`AuthzDocumentScopeWrap` in an operation's outer scope applies its row filter** (**behaviour change**). A wrap bound with `bind_outer().wrap(...)`, as the authz recipe does, now hands the handler the arguments it passes on, so a scoped list returns only the rows the policy allows.
 

@@ -459,9 +459,9 @@ class SearchResultSnapshot:
     ) -> str:
         """Fingerprint a federated search, so a snapshot replays only for the same request.
 
-        *members_weighted* (each member's effective weight) and *member_filters* (the
-        request's per-member filters) belong in it: a caller who may read fewer members, or
-        fewer of a member's rows, must not replay a snapshot written for one who may read more.
+        *members_weighted* (each member's effective weight) and *member_filters* (the filters
+        each member's leg runs) belong in it: a caller who may read fewer members, or fewer of a
+        member's rows, must not replay a snapshot written for one who may read more.
         """
 
         if isinstance(query, (list, tuple)):

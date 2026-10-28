@@ -354,7 +354,7 @@ class MeilisearchFederatedSearchAdapter[M: BaseModel](
             spec_name=self.federated_spec.name,
             extras={"merge": "federation", **federated_member_sorts(self.federated_spec.members)},
             members_weighted=[(name, member_weights[i]) for i, (name, _) in enumerate(self.legs)],
-            member_filters=cast("MultiSourceSearchOptions", options or {}).get("member_filters"),
+            member_filters=leg_filters,
         )
 
         rs_spec: SearchResultSnapshotSpec | None = self.federated_spec.snapshot
@@ -621,7 +621,7 @@ class MeilisearchFederatedSearchAdapter[M: BaseModel](
             rrf_k=int(self.rrf_k),
             extras=fp_extras,
             members_weighted=[(name, member_weights[i]) for i, (name, _) in enumerate(self.legs)],
-            member_filters=cast("MultiSourceSearchOptions", options or {}).get("member_filters"),
+            member_filters=leg_filters,
         )
 
         rs_spec: SearchResultSnapshotSpec | None = self.federated_spec.snapshot

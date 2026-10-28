@@ -99,7 +99,9 @@ at a request and at the port alike.
 
 An authorization hook on a hub or federated search operation authorizes the operation, not
 each member it reads. Attach `AuthzSearchMembers` to check every member against its own read
-action; the registry refuses to freeze such an operation without it (see
+action. It binds a `SearchMemberGrant`, which every hub and federated adapter applies where it
+reads its options, after any request mapper. The registry refuses to freeze such an operation
+without the hook (see
 [Enforce on operations](../../recipes/authn-authz-tenancy-fastapi.md#enforce-on-operations)).
 
 A sort on a field the read model lacks is refused as the caller's error, a key after `id`

@@ -285,7 +285,7 @@ class PostgresFederatedSearchAdapter[M: BaseModel](
             rrf_k=int(self.rrf_k),
             extras=extras or None,
             members_weighted=[(name, member_weights[i]) for i, (name, _) in enumerate(self.legs)],
-            member_filters=cast("MultiSourceSearchOptions", options or {}).get("member_filters"),
+            member_filters=leg_filters,
         )
 
         if (

@@ -174,8 +174,15 @@ registry = (
 - **A request that names none** searches every member, so it is narrowed to
   the members the caller may read, and refused only when none remains.
 - **`scope_operation`** (federated only) also asks the scope port for each
-  member's row filter, with the member's name as `document_name`, and applies
-  it to that member's leg alone.
+  member's row filter and applies it to that member's leg alone. The request
+  names the member as its `document_name`, unless `scope_documents` maps the
+  member to another document.
+
+The hook decides before the handler runs and binds the result as a
+`SearchMemberGrant`. The adapter applies that grant to the request it actually
+receives, so a request mapper in `SearchMappers` cannot widen it: a member the
+mapper adds is refused or skipped by the same two rules, and the policy filters
+stay on their legs.
 
 `actions` must name every member. The registry refuses to freeze a hub or
 federated search operation that has an authz hook but no `AuthzSearchMembers`.

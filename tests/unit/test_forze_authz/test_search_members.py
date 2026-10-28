@@ -35,6 +35,7 @@ from forze.base.exceptions import CoreException, ExceptionKind
 from forze_kits.aggregates.search import (
     SearchFacade,
     SearchKernelOp,
+    SearchMappers,
     SearchRequestDTO,
     build_federated_search_registry,
     build_hub_search_registry,
@@ -150,9 +151,18 @@ def _guarded(registry: Any, spec: Any, *steps: Any) -> Any:
     )
 
 
-def _fed_registry(**hook: Any) -> Any:
+def _fed_registry(*, mapper_options: Any = ..., **hook: Any) -> Any:
     members = AuthzSearchMembers(spec=AUTHZ, search=FED, actions=FED_ACTIONS, **hook)
-    return _guarded(build_federated_search_registry(FED), FED, members.to_step())
+    mappers: SearchMappers[Any] = SearchMappers()
+
+    if mapper_options is not ...:
+        # App code inside the handler, after the hook: it rewrites the request's options.
+        async def _map(dto: Any) -> Any:
+            return dto.model_copy(update={"options": mapper_options})
+
+        mappers = SearchMappers(search=lambda _ctx: _map)
+
+    return _guarded(build_federated_search_registry(FED, mappers), FED, members.to_step())
 
 
 async def _search(
@@ -390,8 +400,107 @@ def test_the_surface_permission_can_still_read_every_member_when_mapped_explicit
         ({"search": FED, "actions": {"orders": "orders:read"}}, "no read action"),
         ({"search": FED, "actions": {**FED_ACTIONS, "notes": "x"}}, "no member for"),
         ({"search": HUB, "actions": HUB_ACTIONS, "scope_operation": "search"}, "hub"),
+        (
+            {"search": FED, "actions": FED_ACTIONS, "scope_documents": {"orders": "o"}},
+            "no scope_operation",
+        ),
+        (
+            {
+                "search": FED,
+                "actions": FED_ACTIONS,
+                "scope_operation": "search",
+                "scope_documents": {"notes": "n"},
+            },
+            "no member for",
+        ),
     ],
 )
 def test_a_misconfigured_hook_is_refused(kwargs: dict[str, Any], match: str) -> None:
     with pytest.raises(CoreException, match=match):
         AuthzSearchMembers(spec=AUTHZ, **kwargs)
+
+
+# ....................... #
+# A request mapper runs inside the handler, after the hook: the adapter holds the line.
+
+
+@pytest.mark.asyncio
+async def test_a_mapper_naming_a_forbidden_member_is_refused() -> None:
+    ctx = _ctx(await _state())
+    registry = _fed_registry(mapper_options={"members": ["orders", "invoices"]})
+
+    with pytest.raises(CoreException) as exc_info:
+        await _search(ctx, registry, FED, role=ORDERS_ONLY)
+
+    assert exc_info.value.code == "permission_denied"
+    assert "invoices:read" in exc_info.value.summary
+
+
+@pytest.mark.asyncio
+async def test_a_mapper_widening_to_every_member_skips_the_forbidden_one() -> None:
+    ctx = _ctx(await _state())
+    registry = _fed_registry(mapper_options=None)
+
+    hits = await _search(ctx, registry, FED, role=ORDERS_ONLY, members=["orders"])
+
+    assert hits == {("orders", "o1")}
+
+
+@pytest.mark.asyncio
+async def test_a_mapper_naming_a_readable_member_reaches_it() -> None:
+    ctx = _ctx(await _state())
+    registry = _fed_registry(mapper_options={"members": ["orders", "invoices"]})
+
+    hits = await _search(ctx, registry, FED, role=BOTH, members=["orders"])
+
+    assert hits == {("orders", "o1"), ("invoices", "i1"), ("invoices", "i2")}
+
+
+@pytest.mark.asyncio
+async def test_a_mapper_dropping_member_filters_keeps_the_policy_filter() -> None:
+    ctx = _ctx(await _state())
+    scope = _Scope(filters={"invoices": {"$values": {"owner": "u1"}}})
+    registry = _fed_registry(mapper_options=None, scope_operation="search")
+
+    hits = await _search(
+        ctx,
+        registry,
+        FED,
+        role=BOTH,
+        scope=scope,
+        member_filters={"invoices": {"$values": {"id": "i1"}}},
+    )
+
+    assert hits == {("orders", "o1"), ("invoices", "i1")}
+
+
+@pytest.mark.asyncio
+async def test_a_hub_mapper_naming_a_forbidden_member_is_refused() -> None:
+    ctx = _ctx(await _state())
+
+    async def _map(dto: Any) -> Any:
+        return dto.model_copy(update={"options": {"members": ["order_notes"]}})
+
+    members = AuthzSearchMembers(spec=AUTHZ, search=HUB, actions=HUB_ACTIONS)
+    registry = _guarded(
+        build_hub_search_registry(HUB, SearchMappers(search=lambda _ctx: _map)),
+        HUB,
+        members.to_step(),
+    )
+
+    with pytest.raises(CoreException) as exc_info:
+        await _search(ctx, registry, HUB, role=ORDERS_ONLY)
+
+    assert exc_info.value.code == "permission_denied"
+
+
+@pytest.mark.asyncio
+async def test_scope_documents_names_a_members_policy_document() -> None:
+    ctx = _ctx(await _state())
+    scope = _Scope(filters={"invoice_docs": {"$values": {"owner": "u2"}}})
+    registry = _fed_registry(scope_operation="search", scope_documents={"invoices": "invoice_docs"})
+
+    hits = await _search(ctx, registry, FED, role=BOTH, scope=scope)
+
+    assert hits == {("orders", "o1"), ("invoices", "i2")}
+    assert {r.document_name for r in scope.requests} == {"orders", "invoice_docs"}

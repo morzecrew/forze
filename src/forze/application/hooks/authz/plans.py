@@ -32,8 +32,8 @@ from forze.application.contracts.querying import QueryFilterExpression
 from forze.application.contracts.search import (
     FederatedSearchSpec,
     HubSearchSpec,
-    SearchOptions,
-    multi_source_member_weights,
+    SearchMemberGrant,
+    bind_search_member_grant,
 )
 from forze.application.execution.context import ExecutionContext
 from forze.base.exceptions import CoreException, ExceptionKind, exc
@@ -501,34 +501,22 @@ class AuthzDocumentScopeWrap(MiddlewareFactory):
 # ....................... #
 
 
-def _named_members(options: Mapping[str, Any]) -> set[str]:
-    """The members a request names, read as the adapters read them: ``member_weights`` above
-    zero when it has any, else ``members``."""
-
-    if weights := options.get("member_weights"):
-        return {name for name, weight in weights.items() if float(weight) > 0.0}
-
-    return set(options.get("members") or ())
-
-
-# ....................... #
-
-
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class AuthzSearchMembers(MiddlewareFactory):
-    """Wrap middleware factory that authorizes each member a hub or federated search reaches.
+    """Wrap middleware factory that authorizes each member of a hub or federated search.
 
-    Every member the request reaches (weighted above zero) must pass its own read action, the
-    check :class:`AuthzBeforeAuthorize` makes for one. A request naming a member the caller may
-    not read (in ``members``, or in ``member_weights`` above zero) is refused with that member's
-    denial. A request naming none searches every member, so it is narrowed to the members the
-    caller may read, and refused when none remains.
+    Each member must pass its own read action, the check :class:`AuthzBeforeAuthorize` makes
+    for one; a caller who may read none is refused. The result is bound as a
+    :class:`~forze.application.contracts.search.SearchMemberGrant`, which the adapter applies
+    to the request it receives, after any request mapper: a request naming a member the caller
+    may not read (in ``members``, or in ``member_weights`` above zero) is refused with that
+    member's denial, and one naming none skips such members, refused only when none remains.
 
-    With :attr:`scope_operation` set (federated search only), each member searched is also
-    scoped as :class:`AuthzDocumentScopeWrap` scopes one document, its name as the
-    ``document_name``, and its row filters reach its own leg alone (``member_filters``). A
-    member the policy scope denies counts as one the caller may not read.
+    With :attr:`scope_operation` set (federated search only), each member is also scoped as
+    :class:`AuthzDocumentScopeWrap` scopes one document, and its row filters reach its own leg
+    alone. The scope request names the member's document from :attr:`scope_documents`, or the
+    member's own name. A member the policy scope denies counts as one the caller may not read.
 
     Any authz-guarded hub or federated search operation needs this hook (or another
     :class:`~forze.application.contracts.execution.AuthorizesMembers` one): without it the
@@ -548,6 +536,13 @@ class AuthzSearchMembers(MiddlewareFactory):
 
     scope_operation: str | None = None
     """The ``operation`` of each member's policy scope request, or ``None`` to scope none."""
+
+    scope_documents: Mapping[str, str] = attrs.field(
+        factory=dict,
+        converter=MappingConverter.to_str_key_frozen,  # type: ignore[misc]
+    )
+    """The ``document_name`` of a member's policy scope request, by member name, where it is
+    not the member's own name."""
 
     # ....................... #
 
@@ -572,6 +567,18 @@ class AuthzSearchMembers(MiddlewareFactory):
                 "hub filter applies to the hub rows, so scope those with AuthzDocumentScopeWrap.",
             )
 
+        if self.scope_documents and self.scope_operation is None:
+            raise exc.configuration(
+                f"AuthzSearchMembers for {self.search.name!r} names scope documents but no "
+                "scope_operation to scope them with.",
+            )
+
+        if unknown := sorted(self.scope_documents.keys() - names):
+            raise exc.configuration(
+                f"AuthzSearchMembers for {self.search.name!r} names scope documents for "
+                f"{unknown}, which it has no member for.",
+            )
+
     # ....................... #
 
     def __call__(self, ctx: ExecutionContext) -> Middleware[Any, Any]:
@@ -587,13 +594,15 @@ class AuthzSearchMembers(MiddlewareFactory):
             args: Any,
         ) -> Any:
             identity = _authenticated(ctx)
-            options: dict[str, Any] = dict(getattr(args, "options", None) or {})
-            weights = multi_source_member_weights(self.search, cast(SearchOptions, options))
-            reached = [name for name, weight in weights.items() if weight > 0.0]
+            allowed: set[str] = set()
             denials: dict[str, CoreException] = {}
             policy_filters: dict[str, Any] = {}
 
-            for name in reached:
+            # Every member, not only those the request reaches: a request mapper runs after
+            # this hook and may reach others, which the bound grant must answer for too.
+            for member in self.search.members:
+                name = member.name
+
                 try:
                     await authorize_action(
                         ctx,
@@ -616,42 +625,18 @@ class AuthzSearchMembers(MiddlewareFactory):
 
                     denials[name] = error
 
-            if denials:
-                named = _named_members(options)
-                refused = [name for name in denials if name in named]
+                else:
+                    allowed.add(name)
 
-                if not refused and len(denials) == len(reached):
-                    refused = reached
+            if not allowed:
+                raise denials[self.search.members[0].name]
 
-                if refused:
-                    raise denials[refused[0]]
+            grant = SearchMemberGrant(
+                allowed=frozenset(allowed), denials=denials, filters=policy_filters
+            )
 
-                options["member_weights"] = {
-                    name: 0.0 if name in denials else weight for name, weight in weights.items()
-                }
-                options.pop("members", None)
-
-            if policy_filters:
-                own = dict(options.get("member_filters") or {})
-
-                for name, filters in policy_filters.items():
-                    own[name] = merge_query_filters(own.get(name), filters)
-
-                options["member_filters"] = own
-
-            if not denials and not policy_filters:
+            with bind_search_member_grant(self.search.name, grant):
                 return await next(args)
-
-            if not hasattr(args, "options"):
-                raise exc.configuration(
-                    f"AuthzSearchMembers for {self.search.name!r} must narrow the request, "
-                    f"but args of type {type(args).__name__!r} has no 'options' attribute.",
-                )
-
-            if isinstance(args, BaseDTO):
-                return await next(args.model_copy(update={"options": options}))
-
-            return await next(attrs.evolve(args, options=options))
 
         return _wrap
 
@@ -674,7 +659,7 @@ class AuthzSearchMembers(MiddlewareFactory):
         request = AuthzDocumentScopeRequest(
             subject=subject_from_authn(identity),
             scope=policy_scope_from_invocation(ctx),
-            document_name=name,
+            document_name=self.scope_documents.get(name, name),
             operation=cast(str, self.scope_operation),
             action=self.actions[name],
         )
