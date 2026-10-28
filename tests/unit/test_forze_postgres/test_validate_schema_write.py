@@ -266,8 +266,19 @@ def _spec_over(domain: type[BaseModel], **kwargs: Any) -> PostgresDocumentSchema
     )
 
 
-async def _warnings(spec: PostgresDocumentSchemaSpec, *, tenant_column: bool) -> list[str]:
+_NAME_KEY = UniqueIndexInfo(
+    columns=frozenset({"name"}), predicate=None, nulls_not_distinct=False, name="t_name_key"
+)
+
+
+async def _warnings(
+    spec: PostgresDocumentSchemaSpec,
+    *,
+    tenant_column: bool,
+    indexes: tuple[UniqueIndexInfo, ...] = (_NAME_KEY,),
+) -> list[str]:
     intro = MagicMock(spec=PostgresIntrospector)
+    intro.get_primary_key_columns = AsyncMock(return_value=["id"])
     columns = {
         "id": _col("id"),
         "name": _col("name"),
@@ -278,16 +289,7 @@ async def _warnings(spec: PostgresDocumentSchemaSpec, *, tenant_column: bool) ->
         columns[TENANT_ID_FIELD] = PostgresType(base="uuid", is_array=False, not_null=False)
 
     intro.get_column_types = AsyncMock(return_value=columns)
-    intro.unique_indexes = AsyncMock(
-        return_value=(
-            UniqueIndexInfo(
-                columns=frozenset({"name"}),
-                predicate=None,
-                nulls_not_distinct=False,
-                name="t_name_key",
-            ),
-        ),
-    )
+    intro.unique_indexes = AsyncMock(return_value=indexes)
     intro.exclusion_constraints = AsyncMock(return_value=())
 
     with patch("forze_postgres.kernel.catalog.validation.validate_schema.logger") as log:
@@ -316,3 +318,25 @@ async def test_a_tenant_column_the_model_maps_is_not_an_unused_one() -> None:
 
     assert len(reported) == 1
     assert "tenant_aware=False" in reported[0]
+
+
+@pytest.mark.asyncio
+async def test_a_conflict_target_over_other_columns_is_reported() -> None:
+    # Upserts resolve on name, and a duplicate create is refused there: the mock knows neither.
+    reported = await _warnings(_spec_over(_Domain, conflict_target=("name",)), tenant_column=False)
+
+    assert len(reported) == 1
+    assert "t_name_key" in reported[0]
+
+
+@pytest.mark.asyncio
+async def test_an_index_over_the_primary_key_is_not_reported() -> None:
+    # Unique wherever the key is: it refuses no write the key would not.
+    over_key = UniqueIndexInfo(
+        columns=frozenset({"id", "name"}),
+        predicate=None,
+        nulls_not_distinct=False,
+        name="t_id_name_key",
+    )
+
+    assert await _warnings(_spec_over(_Domain), tenant_column=False, indexes=(over_key,)) == []

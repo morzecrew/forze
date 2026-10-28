@@ -65,15 +65,34 @@ def test_postgres_document_schema_spec_read_only() -> None:
     assert out.write_relation is None
 
 
-def test_postgres_document_schema_spec_write_requires_write_config() -> None:
+def test_a_read_only_binding_of_a_writable_spec_validates_its_read_side() -> None:
+    # Another service writes the document; this one only reads it.
     spec = DocumentSpec(
         name="doc",
         read=_Read,
         write={"domain": _Domain, "create_cmd": _Create},
     )
     config = PostgresReadOnlyDocumentConfig(read=("public", "items"))
-    with pytest.raises(CoreException, match="not a PostgresDocumentConfig"):
-        postgres_document_schema_spec_for_binding("doc", spec=spec, config=config)
+
+    out = postgres_document_schema_spec_for_binding("doc", spec=spec, config=config)
+
+    assert out.read_relation == ("public", "items")
+    assert out.write_relation is None
+
+
+def test_a_read_write_binding_of_a_read_only_spec_is_refused() -> None:
+    config = PostgresDocumentConfig(
+        read=("public", "items"),
+        write=("public", "items"),
+        bookkeeping_strategy="application",
+    )
+
+    with pytest.raises(CoreException) as exc_info:
+        postgres_document_schema_spec_for_binding(
+            "doc", spec=DocumentSpec(name="doc", read=_Read), config=config
+        )
+
+    assert exc_info.value.code == "postgres_document_spec_read_only"
 
 
 def test_postgres_document_schema_spec_rejects_dynamic_read_relation() -> None:

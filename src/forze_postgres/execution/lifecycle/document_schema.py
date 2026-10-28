@@ -42,8 +42,13 @@ def postgres_document_schema_spec_for_binding(
     (see :func:`~forze_postgres.kernel.relation.require_static_relation`) because startup
     validation introspects fixed relation names.
 
+    A read-only binding validates the spec's read side alone, even when the spec has a write
+    side another service writes through.
+
     :param warn_undeclared: Whether to report unique indexes no guarantee declares. Pass
         ``False`` for a spec the framework owns, such as a ``forze_identity`` one.
+    :raises CoreException: ``configuration``, code ``postgres_document_spec_read_only``, when a
+        read-write binding pairs with a spec that has no write model.
     """
 
     read_rel = require_static_relation(
@@ -53,7 +58,16 @@ def postgres_document_schema_spec_for_binding(
     )
     tenant_aware = config.tenant_aware
 
-    if spec.write is None:
+    if isinstance(config, PostgresDocumentConfig) and spec.write is None:
+        raise exc.configuration(
+            f"Postgres document route {name!r} is bound read-write, but its spec has no write "
+            "model, so nothing can write through it; bind it in ro_documents.",
+            code="postgres_document_spec_read_only",
+            details={"route": name},
+        )
+
+    # A read-only binding reads the spec's read side alone, whatever else the spec declares.
+    if not isinstance(config, PostgresDocumentConfig) or spec.write is None:
         return PostgresDocumentSchemaSpec(
             name=name,
             read_model=spec.read,
@@ -63,11 +77,6 @@ def postgres_document_schema_spec_for_binding(
             materialized=spec.materialized,
             guarantees=spec.guarantees,
             warn_undeclared=warn_undeclared,
-        )
-
-    if not isinstance(config, PostgresDocumentConfig):
-        raise exc.internal(
-            f"Document {name!r} has write spec but config is not a PostgresDocumentConfig.",
         )
 
     w = spec.write

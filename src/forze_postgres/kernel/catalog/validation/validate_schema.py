@@ -1136,8 +1136,11 @@ async def _warn_undeclared_mechanisms(
 
     The reverse of the two passes above, and a warning rather than a refusal: the index is not
     wrong, but the in-memory store does not know about it, so Postgres refuses with ``conflict``
-    a write that a test or simulation run accepted. The primary key and the conflict target are
-    left out — upserts resolve against them, and every store keeps a document's identity.
+    a write that a test or simulation run accepted. The primary key is left out, and so is any
+    index over all its columns, which refuses no write the key would not: every store keeps a
+    document's identity. Without a primary key, the conflict target stands in for it. A conflict
+    target over other columns is reported like any index: it refuses a duplicate the in-memory
+    store accepts.
 
     *declared* names the mechanisms the passes above matched to a guarantee, so an index over
     declared columns that keeps something else — partial behind an unfiltered declaration, or
@@ -1148,10 +1151,12 @@ async def _warn_undeclared_mechanisms(
         return
 
     schema, table = write_relation
-    target = frozenset(conflict_target)
+    identity = frozenset(
+        await introspector.get_primary_key_columns(schema=schema, relation=table) or conflict_target
+    )
 
     for index in await introspector.unique_indexes(schema=schema, relation=table):
-        if index.primary or index.columns == target or index.name in declared:
+        if index.primary or (identity and identity <= index.columns) or index.name in declared:
             continue
 
         parts = [f"fields={tuple(sorted(index.columns))!r}"]

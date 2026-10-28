@@ -211,7 +211,8 @@ periods and takes every other overlapping pair.
    the right column and the wrong value passes there. Neither is a proof that the mechanism
    matches; on Postgres it is a floor under a forgotten migration. Postgres also warns about
    each unique index and `EXCLUDE` constraint on the write table that no guarantee declares,
-   other than the primary key and the conflict target, and suggests the declaration. Without it
+   other than the primary key and an index over all its columns, and suggests the declaration.
+   A `conflict_target` over other columns is reported too, since it refuses duplicates. Without it
    the in-memory store accepts writes the database refuses. An index counts as declared only
    when it is the one that keeps a guarantee, so a partial index beside an unfiltered
    declaration is still reported. A spec the framework owns, such as a `forze_identity` one,
