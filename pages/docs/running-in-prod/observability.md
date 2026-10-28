@@ -29,8 +29,11 @@ default; pass `tracer=` / `meter=` to target your own.
 ## What you get
 
 Every operation produces a **span**, named by its operation key and nested under
-whatever span is already active (an incoming HTTP request, say). A failure
-records the exception and sets the span status to `ERROR` — then re-raises it
+whatever span is already active (an incoming HTTP request, say). A server-side
+failure — an internal, infrastructure, configuration or timeout error, or any
+exception that is not a `CoreException` — records the exception and sets the span
+status to `ERROR`; a failure the caller can handle, such as not-found, validation or
+`unavailable`, leaves the span clean. Either way the exception is re-raised
 unchanged. The span carries:
 
 | Attribute | Value |
@@ -41,7 +44,7 @@ unchanged. The span carries:
 
 Alongside each span, two **metrics** — `forze.operations` (a counter) and
 `forze.operation.duration` (a histogram, in ms) — labelled by operation, kind,
-and outcome.
+and outcome: `success`, `failed` for a failure the caller can handle, or `error`.
 
 ## Trace every outbound call
 

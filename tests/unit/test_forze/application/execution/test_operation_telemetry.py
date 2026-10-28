@@ -47,9 +47,11 @@ class _Boom(Handler[None, None]):
 
 
 @attrs.define(slots=True)
-class _Off(Handler[None, None]):
+class _Raise(Handler[None, None]):
+    error: CoreException
+
     async def __call__(self, _args: None) -> None:
-        raise exc.unavailable("Switched off")
+        raise self.error
 
 
 def _otel() -> tuple[Any, Any, InMemorySpanExporter, InMemoryMetricReader]:
@@ -132,17 +134,36 @@ class TestInstrumentOperations:
         ((labels, _),) = _points(reader, OPERATIONS_COUNTER)
         assert labels["forze.outcome"] == "error"
 
-    async def test_an_unavailable_failure_counts_as_failed_not_error(self) -> None:
-        # Its 503 is a state an operator chose, not a fault: no error-rate noise.
-        tracer, meter, _, reader = _otel()
-        reg = _instrumented({"off": lambda _c: _Off()}, tracer, meter)
+    @pytest.mark.parametrize(
+        ("error", "outcome", "status", "exception_events"),
+        [
+            (exc.not_found("No such note"), "failed", StatusCode.UNSET, 0),
+            # A 503, but a state an operator chose, not a fault: no error-rate noise.
+            (exc.unavailable("Switched off"), "failed", StatusCode.UNSET, 0),
+            (exc.internal("Wiring broke"), "error", StatusCode.ERROR, 1),
+        ],
+        ids=["client-kind", "unavailable", "server-kind"],
+    )
+    async def test_only_a_server_error_marks_the_span(
+        self,
+        error: CoreException,
+        outcome: str,
+        status: StatusCode,
+        exception_events: int,
+    ) -> None:
+        tracer, meter, exporter, reader = _otel()
+        reg = _instrumented({"op": lambda _c: _Raise(error)}, tracer, meter)
         ctx = context_from_modules(MockDepsModule())
 
-        with pytest.raises(CoreException, match="Switched off"):
-            await run_operation(reg, "off", None, ctx)
+        with pytest.raises(CoreException):
+            await run_operation(reg, "op", None, ctx)
+
+        (span,) = exporter.get_finished_spans()
+        assert span.status.status_code is status
+        assert sum(e.name == "exception" for e in span.events) == exception_events
 
         ((labels, _),) = _points(reader, OPERATIONS_COUNTER)
-        assert labels["forze.outcome"] == "failed"
+        assert labels["forze.outcome"] == outcome
 
     async def test_query_op_kind_attribute(self) -> None:
         tracer, meter, exporter, _ = _otel()

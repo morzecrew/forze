@@ -423,7 +423,12 @@ def _telemetry_factory(
             outcome = "success"
 
             with tracer.start_as_current_span(
-                op_name, attributes=_span_attributes(ctx, op_name, kind)
+                op_name,
+                attributes=_span_attributes(ctx, op_name, kind),
+                # Classified below, as the port spans do: OTel's own handling would mark
+                # every failure an error and record a server error's exception twice.
+                record_exception=False,
+                set_status_on_exception=False,
             ) as span:
                 try:
                     return await next(args)
