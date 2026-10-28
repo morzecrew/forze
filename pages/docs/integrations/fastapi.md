@@ -100,7 +100,16 @@ app.mount("/v1", api)  # /v1/auth/login is anonymous; "/v1/auth/login" works too
 A server `root_path` counts as a mount the same way. An entry whose leading path segments
 are the mount prefix (`/v1` or `/v1/...` under `/v1`, not `/v1x`) is only ever read as a
 full path, so no entry names two routes. A middleware added to the parent application
-sees no mount: list full paths there.
+sees no mount: list full paths there. `bypass_paths` and `allowed_websocket_paths`, below,
+read their entries the same way.
+
+The relative reading trusts the ASGI `root_path`, so it must come from server
+configuration: a `Mount`, or the server's `--root-path`. Never derive it from a request
+header. A middleware that sets it from `X-Forwarded-Prefix` lets the client choose the
+prefix, and a relative entry would then admit paths the startup checks never verified.
+The startup checks see only the app's own `root_path` and its mounts. A root path the
+server sets (`--root-path`, typically behind a proxy that strips the prefix) is invisible
+to them: under one, list entries relative to it, which match with or without it.
 
 Probe paths want the opposite treatment. Both middlewares resolve the execution
 context on every HTTP request, so in front of `/livez` they answer 500 while the
@@ -121,11 +130,12 @@ A bypassed path serves with no identity, no tenant and no invocation envelope
 bound, and no error shaping — list probe and scrape paths, never anything that
 reads or writes tenant data. `anonymous_paths` is the softer tool: it still runs
 the middleware, and still binds a valid credential. Paths are exact here too, so
-a route *under* a bypassed path stays governed — and they are the full mounted
-path, since middleware runs before routing: list `/api/livez`, not `/livez`, for a
-router mounted under `/api`.
+a route *under* a bypassed path stays governed — and they include every router
+prefix, since middleware runs before routing: list `/api/livez`, not `/livez`, for a
+router included under `/api`. On an application mounted under a prefix, an entry may be
+the full path or the path relative to the mount, as for `anonymous_paths`.
 
-`check_bypass_paths` (run automatically by `runtime_lifespan`) fails the boot on
+`check_bypass_paths` fails the boot on
 the three ways that goes wrong: a bypassed path serving a **generated operation
 route** (it would read and write tenant data with nothing bound), the two
 middlewares carrying **different sets** (the one still resolving the context fails
@@ -133,18 +143,67 @@ the request anyway, so the bypass reads as configured and does nothing), and a
 non-empty set matching **no route at all** — the prefix mistake above. A superset
 is fine and expected: `DEFAULT_HEALTH_PATHS` names ten paths and most apps serve
 three. In [cookie mode](../reference/fastapi-routes.md#cookie-mode),
-`check_authn_cookie_paths` (also run by `runtime_lifespan`) fails the boot when
+`check_authn_cookie_paths` fails the boot when
 the refresh cookie's path does not cover the logout route, or when
 `anonymous_paths` leaves out the login, refresh or logout route. Under a root path,
 list those paths relative to it: behind a proxy that strips the prefix the middleware
 never sees it, so a full-path entry is refused, and so is a `root_path` declared with a
-trailing slash. The check knows only the app's own `root_path`. It finds the
-security middleware by its `anonymous_paths` field, so one wrapped in your own
-middleware or factory is not checked, and neither is a mounted sub-application. An app
-that supplies its own lifespan instead of `runtime_lifespan` has to call
-`check_bypass_paths(app)`,
-`check_websocket_allowlist(app)` and `check_authn_cookie_paths(app)` itself — all
-three are exported from `forze_fastapi.middlewares`, and none runs on its own.
+trailing slash. The checks know only the app's own `root_path`. They find the
+middlewares by the fields they declare, so one wrapped in your own middleware or factory
+is not checked.
+
+`runtime_lifespan` runs all three checks through `run_startup_checks(app)`. An app that
+supplies its own lifespan calls that function there; none of the checks runs on its own:
+
+```python
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+
+from forze_fastapi import run_startup_checks
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+    run_startup_checks(app)
+
+    async with build_runtime(...).scope():
+        yield
+```
+
+Give the lifespan to the outermost app. Starlette never sends lifespan events to a
+mounted application, so a mounted app's own lifespan never runs: neither its runtime
+nor its checks would start. Run from the outermost app, the checks walk every Starlette
+or FastAPI app mounted beneath it, and hold each one's middlewares against the routes
+they reach, at the path they see. A bypass on the outer app that reaches a generated
+route of a mounted one fails the boot too.
+
+Routing takes the first match in declaration order, and a mount matches every path
+under its prefix. The checks treat a route declared after a mount that matches its path
+as unreachable, so an entry naming only that route fails the boot.
+
+The checks cannot see into any other mounted ASGI app, such as a Prometheus
+`make_asgi_app()`. A bypass or websocket allowlist entry that could admit a request into
+one fails the boot, even when a route declared before that app would serve it. A mount
+at `/` or a `Host` route is reached by every entry, and a mount with path parameters
+(`/api/{tenant}`) by every path under its static prefix. A `StaticFiles` mount is the exception: it serves files and no
+governed operation, and closes every websocket, so a single-page app mounted at `/` with
+`StaticFiles(html=True)` keeps its `/livez` bypass. Mount it after the probe routes. For
+any other app, two layouts pass:
+
+- serve the probe or scrape endpoint as a route of the gated app (`attach_metrics_route`
+  for Prometheus), and bypass that route;
+- mount the other app on an outer app beside the gated one, outside its middlewares:
+
+```python
+root = FastAPI(lifespan=runtime_lifespan(runtime))
+root.mount("/metrics", make_asgi_app())  # no gate in front of it
+root.mount("/api", api)  # api carries the middlewares and their bypass_paths
+```
+
+A mounted FastAPI app must not declare its own `root_path`. FastAPI writes it over the
+one the mount passes down, so its routes are matched against another prefix and the
+checks cannot tell what its middlewares see. The checks refuse such a mount unless the
+value equals the mount's own prefix.
 
 When an upstream Forze service forwards its remaining [time
 budget](../running-in-prod/deadlines.md) as `X-Forze-Deadline-Budget`, opt in to
@@ -156,11 +215,11 @@ Both middlewares **refuse raw websocket scopes** (the upgrade handshake is close
 with a policy violation): identity, tenancy, and the envelope are resolved for HTTP
 only, so a raw `@app.websocket` route would otherwise run with none of them —
 silently. Framework-attached websocket routes (`attach_realtime_ws_route`) are
-allowlisted by **exact full mounted path** (router prefixes included) with
+allowlisted by **exact path** (router prefixes included; on a mounted application, the
+full path or the path relative to the mount) with
 `allowed_websocket_paths={"/realtime/ws"}` — they resolve identity at connect
-themselves, and `check_websocket_allowlist` (run automatically by
-`runtime_lifespan`) fails the boot if an allowlisted path doesn't serve exactly
-one governed route. Only if you deliberately self-manage
+themselves, and `check_websocket_allowlist` (run by `run_startup_checks`) fails the boot
+if an allowlisted path doesn't serve exactly one governed route. Only if you deliberately self-manage
 your own websocket routes, opt out app-wide with `allow_raw_websockets=True`; you
 then own identity, tenancy, and error shaping on every websocket route yourself.
 For governed duplex realtime, use the [Socket.IO integration](socketio.md) or the

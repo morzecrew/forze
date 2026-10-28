@@ -4,7 +4,7 @@ require_fastapi()
 
 # ....................... #
 
-from collections.abc import Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from typing import Any, Final, cast
 
 from starlette.routing import WebSocketRoute
@@ -12,7 +12,12 @@ from starlette.types import Receive, Scope, Send
 
 from forze.base.exceptions import exc
 
-from ._routes import iter_effective_routes
+from ._routes import (
+    entry_into_opaque_mount,
+    iter_effective_routes,
+    iter_mounted_apps,
+    path_is_listed,
+)
 
 # ----------------------- #
 
@@ -40,16 +45,17 @@ def websocket_scope_refused(
     exact-path allowlist entry (a governed route that resolves identity itself);
     everything else — including a *prefix* of an allowlisted path — is refused.
     Non-websocket scopes (``lifespan``, …) are never refused. Allowlist entries are
-    the **full mounted path** (router prefixes included); run
-    :func:`check_websocket_allowlist` at startup (``runtime_lifespan`` does) so a
-    prefix mismatch or a non-governed route at an allowlisted path fails the boot
-    instead of silently refusing — or serving — connections.
+    the **full path** (router prefixes included) or, on a mounted application, the path
+    relative to the mount, read as ``anonymous_paths`` reads them; run
+    :func:`check_websocket_allowlist` at startup (:func:`~forze_fastapi.run_startup_checks`
+    does) so a prefix mismatch or a non-governed route at an allowlisted path fails the
+    boot instead of silently refusing — or serving — connections.
     """
 
     return (
         scope["type"] == "websocket"
         and not allow_raw_websockets
-        and scope.get("path") not in allowed_websocket_paths
+        and not path_is_listed(allowed_websocket_paths, scope)
     )
 
 
@@ -69,7 +75,19 @@ def check_websocket_allowlist(app: Any) -> None:
     runtime, so a path one middleware allows and another does not would pass this
     check while the stricter gate refuses every connection (1008). A no-op when no
     allowlists are configured.
+
+    Run it on the outermost app: it checks that app and every Starlette or FastAPI app
+    mounted beneath it, each against the routes it reaches and the paths its middlewares
+    see. A path that could reach any other mounted ASGI app cannot be verified and is
+    refused, even when it also names a governed route (routing order is not modelled).
     """
+
+    for level, scopes in iter_mounted_apps(app):
+        _check_allowlist(level, scopes)
+
+
+def _check_allowlist(app: Any, scopes: Callable[[str], list[Scope]]) -> None:
+    """One app's gates against the websocket routes it reaches."""
 
     # A gating middleware is detected structurally (it declares the gate fields) —
     # one added without any websocket kwargs still refuses every websocket scope,
@@ -114,14 +132,30 @@ def check_websocket_allowlist(app: Any) -> None:
                 "allowed_websocket_paths on every governed middleware."
             )
 
-    websocket_routes: dict[str, list[Any]] = {}
+    reached = entry_into_opaque_mount(allowlisted, app, scopes)
 
-    for path, route in iter_effective_routes(app):
-        if isinstance(route, WebSocketRoute):
-            websocket_routes.setdefault(path, []).append(route.endpoint)
+    if reached is not None:
+        entry, mount = reached
 
-    for path in sorted(allowlisted):
-        _validate_allowlisted_path(path, websocket_routes.get(path, []))
+        raise exc.configuration(
+            f"allowed_websocket_paths lists {entry!r}, which can reach the application "
+            f"mounted at {mount!r}. The startup checks cannot see into it, so they cannot "
+            "prove the path serves a governed route. Allowlist only routes the checks can "
+            "see, or mount that application on an outer app, outside these middlewares."
+        )
+
+    routes = [
+        (scopes(path), route.endpoint)
+        for path, route in iter_effective_routes(app)
+        if isinstance(route, WebSocketRoute)
+    ]
+
+    # Under each scope the middleware may see, every entry must reach exactly one governed
+    # route, and so every route an entry admits is a governed one.
+    for at in range(len(scopes("/"))):
+        for path in sorted(allowlisted):
+            endpoints = [endpoint for seen, endpoint in routes if path_is_listed({path}, seen[at])]
+            _validate_allowlisted_path(path, endpoints)
 
 
 def _validate_allowlisted_path(path: str, endpoints: list[Any]) -> None:
@@ -130,9 +164,14 @@ def _validate_allowlisted_path(path: str, endpoints: list[Any]) -> None:
     if not endpoints:
         raise exc.configuration(
             f"allowed_websocket_paths lists {path!r}, but no websocket route is "
-            "registered at that exact path. If the governed route sits under a "
-            "router prefix, allowlist the full mounted path; a path inside a "
-            "mounted sub-application cannot be verified and must not be allowlisted."
+            "reachable at that exact path, so it reaches no governed route. A route "
+            "declared after a mount that matches its path is never reached: declare it "
+            "first. If the governed route sits under a "
+            "router prefix, allowlist the full mounted path; under a FastAPI(root_path=...), "
+            "the path relative to it. On a mounted application, run the checks on the "
+            "outermost app (run_startup_checks), the only one that sees the mount. A path "
+            "inside a mounted ASGI app that is not a Starlette or FastAPI app cannot be "
+            "verified and must not be allowlisted."
         )
 
     if len(endpoints) > 1:

@@ -18,6 +18,7 @@ from forze.application.execution.context import (
 )
 from forze.application.execution.ingress import mint_invocation_metadata
 
+from ._routes import path_is_listed
 from .raw_websocket import refuse_raw_websocket, websocket_scope_refused
 
 # ----------------------- #
@@ -80,7 +81,8 @@ class InvocationMetadataMiddleware:
 
     The narrow alternative to the app-wide ``allow_raw_websockets`` hatch: list the
     framework-attached websocket routes, which bind their own per-frame envelope.
-    Exact paths, never prefixes.
+    Exact paths, never prefixes: the full path, or on a mounted application the path
+    relative to the mount, read as ``SecurityContextMiddleware.anonymous_paths`` reads them.
     """
 
     bypass_paths: frozenset[str] = attrs.field(
@@ -91,11 +93,13 @@ class InvocationMetadataMiddleware:
     Liveness must not depend on anything: this middleware resolves the execution
     context on every request, so in front of a probe path it answers 500 while the
     runtime scope is not yet open — which is precisely the window a liveness probe
-    exists to observe. Exact paths, never prefixes. Entries are the **full mounted
-    path** (router prefixes included), the same as ``allowed_websocket_paths``: this
-    middleware runs before routing, so a prefix mismatch simply never matches and the
-    probe goes on failing — :func:`~forze_fastapi.middlewares.check_bypass_paths` (run
-    by ``runtime_lifespan``) fails the boot on that rather than letting the probe 500."""
+    exists to observe. Exact paths, never prefixes. Entries are the **full path** (router
+    prefixes included) or, on a mounted application, the path relative to the mount, the
+    same as ``allowed_websocket_paths``: this middleware runs before routing, so a
+    router-prefix mismatch simply never matches and the probe goes on failing —
+    :func:`~forze_fastapi.middlewares.check_bypass_paths` (run by
+    :func:`~forze_fastapi.run_startup_checks`) fails the boot on that rather than letting
+    the probe 500."""
 
     # ....................... #
 
@@ -169,7 +173,7 @@ class InvocationMetadataMiddleware:
             await self.app(scope, receive, send)
             return
 
-        if scope.get("path") in self.bypass_paths:
+        if path_is_listed(self.bypass_paths, scope):
             await self.app(scope, receive, send)
             return
 

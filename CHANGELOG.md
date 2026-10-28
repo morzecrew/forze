@@ -45,6 +45,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **`run_derived_fidelity` checks the mock's derived fields against the real view.** It loads one seed into a real backend and the mock, reads the same ids through both, and reports each derived field that differs, per row. Import it from `forze_dst.conformance`.
 
+- **`forze_fastapi.run_startup_checks(app)` runs every FastAPI startup check in one call.** It checks the app and each Starlette or FastAPI app mounted beneath it, and `runtime_lifespan` calls it. An app with its own lifespan calls it there, on the outermost app: Starlette never runs a mounted app's lifespan.
+
 **`forze ops` for people at a shell and for backfills:**
 
 - **`forze ops` gains typed flags, JSONL batches and shell completion.** `call OP --field VALUE` takes a flat-scalar input as flags; `--batch @PATH|-` runs one call per line in one runtime, stopping at the first failure; `OP` completes in the shell. An unknown option after `OP` now exits 2 with an error object.
@@ -114,6 +116,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **A realtime connection needs a tenant once tenancy is wired** (**behaviour change**). Socket.IO, WebSocket and SSE refuse one without a tenant (`tenant_required`), and Socket.IO an anonymous one, instead of admitting it to the untenanted rooms. Socket.IO checks this at the connect when given the new `ctx_dep`.
 
 - **A stale access cookie could keep a cookie-mode logout from ending the session.** `runtime_lifespan` now refuses an app whose `anonymous_paths` misses a cookie-mode login, refresh or logout route (`check_authn_cookie_paths`, **behaviour change**).
+
+- **`bypass_paths` and `allowed_websocket_paths` admit more paths** (**behaviour change**). On a mounted FastAPI app or under a server root path, an entry matches the full path or the path relative to `root_path`, as `anonymous_paths` does. `root_path` must come from server configuration, never from a request header.
+
+- **The FastAPI startup checks cover every mounted Starlette or FastAPI app** (**behaviour change**). The boot fails on a bypass reaching a mounted generated route, on a bypass or websocket allowlist entry that could reach a mounted app they cannot inspect, and on a mounted FastAPI app overriding its `root_path`.
 
 - **Postgres dynamic-read routes refuse an unknown `provenance` value** (**Breaking**). `PostgresDynamicReadConfig` accepts only `"trusted"` or `"untrusted"` (`postgres_dynamic_read_provenance_invalid`); a config with any other value now fails at startup. New `validate_dynamic_read_provenance`.
 
