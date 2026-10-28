@@ -18,6 +18,7 @@ import operator
 import re
 from collections.abc import Callable, Mapping, Sequence
 from datetime import UTC, datetime
+from enum import Enum
 from typing import TYPE_CHECKING, Any, Final, cast
 from uuid import UUID
 
@@ -63,7 +64,10 @@ def _value_is_empty(value: Any) -> bool:
 def _coerce_set(value: Any) -> set[Any]:
     items = value if isinstance(value, (list, tuple, set, frozenset)) else (value,)
 
-    return {instant_key(item) for item in items}  # pyright: ignore[reportUnknownVariableType]
+    return {
+        instant_key(_plain(item))
+        for item in items  # pyright: ignore[reportUnknownVariableType]
+    }
 
 
 _EPOCH: Final = datetime(1970, 1, 1, tzinfo=UTC)
@@ -95,12 +99,24 @@ def instant_key(value: Any) -> Any:
     return (_INSTANT, value - _EPOCH) if _is_aware(value) else value
 
 
+def _plain(value: Any) -> Any:
+    """An ``Enum`` member as its value, as a store holds it; anything else as is.
+
+    A row keeps the member (a ``model_dump``) while a filter names the value — the parser takes
+    no member operand — and a plain ``Enum`` member equals nothing but itself.
+    """
+
+    return value.value if isinstance(value, Enum) else value
+
+
 def _pair(left: Any, right: Any) -> tuple[Any, Any]:
     """*left* and *right* as instants when both are aware datetimes; otherwise as they are.
 
     Both or neither: a lone distance would compare cleanly against a ``timedelta`` operand,
-    which a store refuses.
+    which a store refuses. An ``Enum`` member compares as its value.
     """
+
+    left, right = _plain(left), _plain(right)
 
     if _is_aware(left) and _is_aware(right):
         return left - _EPOCH, right - _EPOCH
