@@ -2397,6 +2397,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#run-a-backfill" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Run a backfill
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#run-it-as-a-job-or-from-cron" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -6577,6 +6588,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#run-a-backfill" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Run a backfill
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#run-it-as-a-job-or-from-cron" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -6825,9 +6847,21 @@ validate it against.</p>
 <span class="gp">$ </span>forze<span class="w"> </span>ops<span class="w"> </span>call<span class="w"> </span>notes.create<span class="w"> </span>--input<span class="w"> </span><span class="s1">'{"title": "hi"}'</span>
 <span class="go">{"id":"…","title":"hi",…}</span>
 </code></pre></div>
+<p>Run <code>forze --install-completion</code> once, and your shell completes operation names after
+<code>describe</code> and <code>call</code>. Each TAB imports your application module, so keep its import free of
+side effects.</p>
 <p><code>--input</code> takes inline JSON, <code>@PATH</code> for a file, or <code>-</code> for stdin. Inline input is refused for
 an operation whose input declares a <code>SecretStr</code> or <code>SecretBytes</code> field; pipe it instead. An
 unknown input key is refused, not dropped, so a typo in a script fails loudly.</p>
+<p>An operation whose input is flat scalars (strings, numbers, booleans, ids, dates, enums) also
+takes typed flags instead of <code>--input</code>:</p>
+<div class="highlight"><pre><span></span><code><span class="gp">$ </span>forze<span class="w"> </span>ops<span class="w"> </span>call<span class="w"> </span>notes.create<span class="w"> </span>--title<span class="w"> </span>hi
+</code></pre></div>
+<p>Each field is a flag named after it, a boolean is <code>--name</code> or <code>--no-name</code>, and the values are
+validated exactly as <code>--input</code> is. <code>forze ops describe</code> lists an operation's flags, or says why
+it has none; the <a href="../../reference/ops-cli/#typed-flags">reference</a> has the rules. Flags put every
+value on argv, where <code>ps</code> and shell history show it: secret fields are refused, and any other
+sensitive value belongs in <code>--input @PATH</code>.</p>
 <p><code>call</code> writes exactly one JSON document to stdout: the result, or an error object carrying the
 invocation's <code>execution_id</code> and <code>correlation_id</code>. Everything else the application writes,
 logs and prints included, goes to stderr. Branch on the exit code: 0 is success, 4 a rejected
@@ -6837,6 +6871,17 @@ input, 5 a denial, 75 a failure safe to retry as is. The
 input returns the stored result; the same key with different input exits 4. An operation that
 does not support a key refuses the option, so a script never believes a retry is safe when it
 is not.</p>
+<h2 id="run-a-backfill">Run a backfill<a class="headerlink" href="#run-a-backfill" title="Permanent link">&para;</a></h2>
+<p><code>--batch</code> calls an operation once per line of a JSONL file, or of stdin, inside one runtime,
+so a backfill pays for startup once rather than per row:</p>
+<div class="highlight"><pre><span></span><code><span class="gp">$ </span>forze<span class="w"> </span>ops<span class="w"> </span>call<span class="w"> </span>notes.create<span class="w"> </span>--batch<span class="w"> </span>@notes.jsonl<span class="w"> </span>&gt;<span class="w"> </span>results.jsonl
+</code></pre></div>
+<p>Every line is validated before anything runs, so a typo on line 900 does not leave 899 rows
+applied. Stdout gets one JSON line per call, numbered by its input line, and the batch stops at
+the first failure: that line is the last one written, and its exit code is the batch's. To
+resume, fix that line and run the file from it on. <code>--idempotency-key</code> is refused with
+<code>--batch</code>, because one key would claim every line. The
+<a href="../../reference/ops-cli/#batches">reference</a> has the output contract.</p>
 <h2 id="run-it-as-a-job-or-from-cron">Run it as a Job or from cron<a class="headerlink" href="#run-it-as-a-job-or-from-cron" title="Permanent link">&para;</a></h2>
 <p>Run the command where the application's infrastructure credentials already live, in the
 cluster, not on a laptop. A Kubernetes Job can retry on exit 75 alone, the code that means

@@ -6258,6 +6258,28 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#typed-flags" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Typed flags
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#batches" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Batches
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#output" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -6536,6 +6558,28 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#typed-flags" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Typed flags
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#batches" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Batches
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#output" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -6682,18 +6726,26 @@ across releases.</p>
 <h2 id="commands">Commands<a class="headerlink" href="#commands" title="Permanent link">&para;</a></h2>
 <div class="highlight"><pre><span></span><code>forze ops list      [--app REF] [--json]
 forze ops describe  [--app REF] OP [--json]
-forze ops call      [--app REF] OP [--input JSON|@PATH|-] [--tenant UUID]
-                    [--idempotency-key KEY] [--timeout SECONDS] [--grace SECONDS]
+forze ops call      [--app REF] OP
+                    [--input JSON|@PATH|- | --FIELD VALUE ... | --batch @PATH|-]
+                    [--tenant UUID] [--idempotency-key KEY]
+                    [--timeout SECONDS] [--grace SECONDS]
                     [--correlation-id UUID] [--causation-id UUID]
                     [--api-key-file PATH] [--pretty]
 </code></pre></div>
 <p><code>OP</code> is the operation key, dots included: <code>orders.get</code>. <code>--app</code> names the <code>OpsApp</code> as
 <code>module:attribute</code>, or a zero-argument callable returning one, and falls back to
 <code>FORZE_OPS_APP</code>. A group from <code>build_ops_cli(app)</code> has the declaration bound and no <code>--app</code>.</p>
+<p><code>OP</code> completes in the shell after <code>describe</code> and <code>call</code> once completion is installed with
+<code>forze --install-completion</code>. Completion loads the declaration from <code>--app</code> or
+<code>FORZE_OPS_APP</code> as <code>list</code> does, never builds the runtime, and offers nothing when the
+declaration cannot load. A group from <code>build_ops_cli</code> completes from its own declaration,
+installed by your root CLI's <code>--install-completion</code>. Every TAB imports the application
+module, so its import side effects run in the operator's shell.</p>
 <p><code>list</code> and <code>describe</code> never build the runtime. They write text, or JSON with <code>--json</code>.
 <code>describe</code> shows the title and description, the kind, the declared authn requirement and
-permissions, idempotency support, the deadline, the query surface, and the input and output
-JSON Schemas.</p>
+permissions, idempotency support, the deadline, the typed flags, the query surface, and the
+input and output JSON Schemas.</p>
 <h2 id="call-options"><code>call</code> options<a class="headerlink" href="#call-options" title="Permanent link">&para;</a></h2>
 <table>
 <thead>
@@ -6708,6 +6760,11 @@ JSON Schemas.</p>
 <td><code>--input JSON</code> / <code>@PATH</code> / <code>-</code></td>
 <td>the input object, inline, from a file, or from stdin; validated into the operation's input DTO, unknown keys refused</td>
 <td>the operation takes no input; the JSON does not parse (<code>NaN</code> and <code>Infinity</code> included) or is not an object; the file cannot be read; the input is inline and the DTO declares a <code>SecretStr</code> or <code>SecretBytes</code> field</td>
+</tr>
+<tr>
+<td><code>--batch @PATH</code> / <code>-</code></td>
+<td>one call per line of a JSONL file or of stdin, in one runtime; see <a href="#batches">Batches</a></td>
+<td>the value is neither <code>@PATH</code> nor <code>-</code>; combined with <code>--input</code>, typed flags, <code>--idempotency-key</code> or <code>--pretty</code></td>
 </tr>
 <tr>
 <td><code>--tenant UUID</code></td>
@@ -6746,8 +6803,75 @@ JSON Schemas.</p>
 </tr>
 </tbody>
 </table>
-<p>A malformed <code>--timeout</code>, <code>--grace</code>, <code>--tenant</code> or id is a parse error: Click's usage text on
-stderr, exit 2, nothing on stdout. Every other refusal is an error object.</p>
+<p>A malformed <code>--timeout</code>, <code>--grace</code>, <code>--tenant</code>, <code>--batch</code> or id is a parse error: Click's usage text on
+stderr, exit 2, nothing on stdout. Every other refusal is an error object, an option <code>call</code>
+does not have included: it is read as a typed flag.</p>
+<h2 id="typed-flags">Typed flags<a class="headerlink" href="#typed-flags" title="Permanent link">&para;</a></h2>
+<p>An operation whose input is flat scalars also takes that input as flags after <code>OP</code>, instead of
+<code>--input</code>:</p>
+<div class="highlight"><pre><span></span><code><span class="gp">$ </span>forze<span class="w"> </span>ops<span class="w"> </span>call<span class="w"> </span>notes.create<span class="w"> </span>--title<span class="w"> </span><span class="s2">"Quarterly report"</span>
+</code></pre></div>
+<table>
+<thead>
+<tr>
+<th>Field type</th>
+<th>Flag</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>str</code>, <code>int</code>, <code>float</code>, <code>Decimal</code>, <code>UUID</code>, <code>date</code>, <code>datetime</code>, an <code>Enum</code> of strings, an <code>IntEnum</code>, a <code>Literal</code> of strings; optional or constrained ones too</td>
+<td><code>--field-name VALUE</code>, or <code>--field-name=VALUE</code></td>
+</tr>
+<tr>
+<td><code>bool</code></td>
+<td><code>--field-name</code> sets it, <code>--no-field-name</code> clears it</td>
+</tr>
+</tbody>
+</table>
+<ul>
+<li><strong>Spelling.</strong> A field's flag is its name with <code>-</code> for <code>_</code>. An alias never is.</li>
+<li><strong>Validation.</strong> The flags build the object <code>--input</code> would carry, and it is validated the same
+  way: each value is the string you typed, coerced by the DTO; an omitted flag takes the
+  field's default; a missing required field or a bad value exits 4 and is never echoed.</li>
+<li><strong>A value that looks like a flag.</strong> <code>--title --pretty</code> gives <code>--pretty</code> to <code>call</code>, and
+  <code>--title --draft</code> is refused: the token after a flag that needs a value cannot start with
+  <code>--</code>. Write <code>--title=--pretty</code>.</li>
+<li><strong>On argv.</strong> Every value is on the command line, where <code>ps</code> and shell history show it. A
+  secret field is refused; pass any other sensitive value with <code>--input @PATH</code>.</li>
+<li><strong>All or none.</strong> An input takes no flags when one of its fields is anything else (a list, a
+  model, a union), when it declares a <code>SecretStr</code> or <code>SecretBytes</code> field, or when a flag would
+  be spelled like a <code>call</code> option (<code>--timeout</code>, <code>--input</code>, …) or like another field's. A <code>call</code>
+  option means the same for every operation. <code>describe</code> lists the flags, or says why there are
+  none.</li>
+<li><strong>Exclusive.</strong> Typed flags and <code>--input</code> cannot be combined.</li>
+</ul>
+<h2 id="batches">Batches<a class="headerlink" href="#batches" title="Permanent link">&para;</a></h2>
+<p><code>--batch @PATH</code> or <code>--batch -</code> calls the operation once per line of a JSONL file, or of stdin,
+inside one runtime: one startup and one shutdown for the whole batch. Each line is an input
+object, as <code>--input</code> would carry; blank lines are skipped.</p>
+<div class="highlight"><pre><span></span><code><span class="gp">$ </span>forze<span class="w"> </span>ops<span class="w"> </span>call<span class="w"> </span>notes.create<span class="w"> </span>--batch<span class="w"> </span>@notes.jsonl
+<span class="go">{"line": 1, "result": {"id": "…", "title": "a", …}, "execution_id": "…", "correlation_id": "…"}</span>
+<span class="go">{"line": 2, "result": {"id": "…", "title": "b", …}, "execution_id": "…", "correlation_id": "…"}</span>
+</code></pre></div>
+<ul>
+<li><strong>Validated first.</strong> Every line is read and validated before the runtime is built. A line
+  that does not parse or validate is the only line written, and nothing runs. The whole input
+  is held in memory, so split a file too large for that.</li>
+<li><strong>One line out per call.</strong> Stdout holds one JSON document per line that ran, in order, each
+  written as its call finishes: <code>{"line": N, "result": …}</code> or the error object with
+  <code>"line": N</code>. Each carries its own <code>execution_id</code>; all share one <code>correlation_id</code>, the
+  <code>--correlation-id</code> given or one minted for the batch. Each line is a governed call: its
+  identity is verified and its tenant resolved again.</li>
+<li><strong>Stops at the first failure.</strong> The failed line is the last one written, and its exit code,
+  by the table below, is the batch's. Exit 0 means every line succeeded.</li>
+<li><strong>No idempotency key.</strong> One key would claim every line, so <code>--idempotency-key</code> is refused. A
+  retryable failure therefore exits 75 from a query and 69 from a command.</li>
+<li><strong>Signals.</strong> A signal stops the batch: the line in flight gets <code>--grace</code> as a single call
+  does, and no line starts after it. When lines remained, the batch exits 130 or 143.</li>
+<li><strong>The batch as a whole.</strong> A refusal before any line runs (a conflicting option, an unreadable
+  file, a runtime that does not start) is one error object without <code>line</code>.</li>
+</ul>
 <h2 id="output">Output<a class="headerlink" href="#output" title="Permanent link">&para;</a></h2>
 <p>After the declaration loads, <code>call</code> writes exactly one JSON document to stdout, followed by a
 newline. For the duration of the call, file descriptor 1 points at stderr, so whatever the
@@ -6880,25 +7004,43 @@ retryable kinds are <code>concurrency</code>, <code>throttled</code> and <code>i
 <td><code>cli_input_not_accepted</code></td>
 <td><code>validation</code></td>
 <td>2</td>
-<td><code>--input</code> is given to an operation that takes none</td>
+<td><code>--input</code>, typed flags or <code>--batch</code> given to an operation that takes none</td>
+</tr>
+<tr>
+<td><code>cli_option_conflict</code></td>
+<td><code>validation</code></td>
+<td>2</td>
+<td>typed flags given with <code>--input</code>; <code>--batch</code> given with <code>--input</code>, typed flags, <code>--idempotency-key</code> or <code>--pretty</code></td>
+</tr>
+<tr>
+<td><code>cli_flags_unsupported</code></td>
+<td><code>validation</code></td>
+<td>2</td>
+<td>typed flags given to an operation whose input takes none; the detail says why</td>
+</tr>
+<tr>
+<td><code>cli_malformed_flags</code></td>
+<td><code>validation</code></td>
+<td>2</td>
+<td>the typed flags do not parse: an unknown flag, a missing value or one spelled like a flag, a value to a switch, a field given twice, or an argument that is not a flag</td>
 </tr>
 <tr>
 <td><code>cli_input_unreadable</code></td>
 <td><code>validation</code></td>
 <td>2</td>
-<td>the <code>@PATH</code> file cannot be read</td>
+<td>the <code>@PATH</code> file of <code>--input</code> or <code>--batch</code> cannot be read</td>
 </tr>
 <tr>
 <td><code>cli_malformed_input</code></td>
 <td><code>validation</code></td>
 <td>2</td>
-<td>the input is not JSON, or not an object</td>
+<td>the input, or a batch line, is not JSON, or not an object</td>
 </tr>
 <tr>
 <td><code>cli_inline_secret</code></td>
 <td><code>validation</code></td>
 <td>2</td>
-<td>the input declares a secret and was given inline</td>
+<td>the input declares a secret and was given inline or as typed flags</td>
 </tr>
 <tr>
 <td><code>cli_idempotency_unsupported</code></td>

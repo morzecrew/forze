@@ -10272,6 +10272,10 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <p><strong>A throttled HTTP error tells the client when to come back.</strong> Its <code>retry_after</code> (seconds) or else <code>retry_at</code> (aware <code>datetime</code>) detail becomes a <code>Retry-After</code> header, which <code>AllowlistCORSMiddleware</code> exposes; other details stay withheld. No header when neither key is usable.</p>
 </li>
 </ul>
+<p><strong><code>forze ops</code> for people at a shell and for backfills:</strong></p>
+<ul>
+<li><strong><code>forze ops</code> gains typed flags, JSONL batches and shell completion.</strong> <code>call OP --field VALUE</code> takes a flat-scalar input as flags; <code>--batch @PATH|-</code> runs one call per line in one runtime, stopping at the first failure; <code>OP</code> completes in the shell. An unknown option after <code>OP</code> now exits 2 with an error object.</li>
+</ul>
 <h3 id="changed">Changed<a class="headerlink" href="#changed" title="Permanent link">&para;</a></h3>
 <ul>
 <li>
