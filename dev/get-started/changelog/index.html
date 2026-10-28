@@ -10286,6 +10286,9 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <li>
 <p><strong><code>run_derived_fidelity</code> checks the mock's derived fields against the real view.</strong> It loads one seed into a real backend and the mock, reads the same ids through both, and reports each derived field that differs, per row. Import it from <code>forze_dst.conformance</code>.</p>
 </li>
+<li>
+<p><strong><code>forze_fastapi.run_startup_checks(app)</code> runs every FastAPI startup check in one call.</strong> It checks the app and each Starlette or FastAPI app mounted beneath it, and <code>runtime_lifespan</code> calls it. An app with its own lifespan calls it there, on the outermost app: Starlette never runs a mounted app's lifespan.</p>
+</li>
 </ul>
 <p><strong><code>forze ops</code> for people at a shell and for backfills:</strong></p>
 <ul>
@@ -10388,6 +10391,12 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 </li>
 <li>
 <p><strong>A stale access cookie could keep a cookie-mode logout from ending the session.</strong> <code>runtime_lifespan</code> now refuses an app whose <code>anonymous_paths</code> misses a cookie-mode login, refresh or logout route (<code>check_authn_cookie_paths</code>, <strong>behaviour change</strong>).</p>
+</li>
+<li>
+<p><strong><code>bypass_paths</code> and <code>allowed_websocket_paths</code> admit more paths</strong> (<strong>behaviour change</strong>). On a mounted FastAPI app or under a server root path, an entry matches the full path or the path relative to <code>root_path</code>, as <code>anonymous_paths</code> does. <code>root_path</code> must come from server configuration, never from a request header.</p>
+</li>
+<li>
+<p><strong>The FastAPI startup checks cover every mounted Starlette or FastAPI app</strong> (<strong>behaviour change</strong>). The boot fails on a bypass reaching a mounted generated route, on a bypass or websocket allowlist entry that could reach a mounted app they cannot inspect, and on a mounted FastAPI app overriding its <code>root_path</code>.</p>
 </li>
 <li>
 <p><strong>Postgres dynamic-read routes refuse an unknown <code>provenance</code> value</strong> (<strong>Breaking</strong>). <code>PostgresDynamicReadConfig</code> accepts only <code>"trusted"</code> or <code>"untrusted"</code> (<code>postgres_dynamic_read_provenance_invalid</code>); a config with any other value now fails at startup. New <code>validate_dynamic_read_provenance</code>.</p>

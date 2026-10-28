@@ -7247,8 +7247,8 @@ and the logout route, as above. No single cookie path covers only <code>/refresh
 <code>/logout</code>: with <code>refresh_path="/api/auth"</code> the browser sends the refresh cookie to
 every authn route under that prefix, and only refresh and logout read it.
 <code>runtime_lifespan</code> refuses to start an app whose cookie-mode logout route the
-refresh cookie's path does not cover (<code>check_authn_cookie_paths</code>; routes inside a
-mounted sub-application are not checked).</p>
+refresh cookie's path does not cover (<code>check_authn_cookie_paths</code>, run by
+<code>run_startup_checks</code> on the app and every app mounted beneath it).</p>
 <p>Every tab and window shares the refresh cookie, so two of them can refresh with the
 same token at once. With a <a href="../../integrations/authn/#notes">reuse grace</a> the losing
 refresh answers 401 <code>refresh_superseded</code> instead of revoking the session as reuse. The
