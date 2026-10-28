@@ -296,7 +296,7 @@ def python_type_to_postgres_scalar(py_t: Any) -> PostgresType | None:
     origin = get_origin(py_t)
     args = get_args(py_t)
     if origin is Union or origin is UnionType:
-        non_none = [a for a in args if a is not type(None)]
+        non_none = [unwrap_annotated(a) for a in args if a is not type(None)]
         if len(non_none) == 1:
             return python_type_to_postgres_scalar(non_none[0])
         if non_none and all(_is_plain_numeric_type(a) for a in non_none):

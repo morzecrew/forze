@@ -307,6 +307,7 @@ async def test_multi_field_sort_nested_then_scalar(pg_client: PostgresClient) ->
 
 class _PricedMeta(BaseModel):
     price: Annotated[Decimal, Field(ge=0)]
+    weight: Annotated[int, Field(ge=0)] | float = 0
 
 
 _AnnotatedMeta = Annotated[_PricedMeta, "metadata pydantic keeps inside the union"]
@@ -357,8 +358,11 @@ async def test_filter_and_sort_through_an_annotated_optional_model(
     cmd = ctx.document.command(spec)
     query = ctx.document.query(spec)
 
-    for title, price in (("cheap", "9.5"), ("mid", "10.5"), ("dear", "100.25")):
-        await cmd.create(_Create(title=title, meta=_PricedMeta(price=Decimal(price))))
+    rows = (("cheap", "9.5", 9.5), ("mid", "10.5", 10.5), ("dear", "100.25", 100))
+
+    for title, price, weight in rows:
+        meta = _PricedMeta(price=Decimal(price), weight=weight)
+        await cmd.create(_Create(title=title, meta=meta))
 
     page = await query.find_page(
         {"$values": {"meta.price": {"$lt": Decimal("10.5")}}},
@@ -368,5 +372,11 @@ async def test_filter_and_sort_through_an_annotated_optional_model(
 
     page = await query.find_page(
         None, pagination={"limit": 10, "offset": 0}, sorts={"meta.price": "asc"}
+    )
+    assert [r.title for r in page.hits] == ["cheap", "mid", "dear"]
+
+    # A numeric union with an annotated member still orders as numbers, not as text.
+    page = await query.find_page(
+        None, pagination={"limit": 10, "offset": 0}, sorts={"meta.weight": "asc"}
     )
     assert [r.title for r in page.hits] == ["cheap", "mid", "dear"]

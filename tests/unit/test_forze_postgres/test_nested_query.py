@@ -595,3 +595,10 @@ def test_annotated_decimal_leaf_maps_to_numeric() -> None:
     pg = python_type_to_postgres_scalar(Annotated[Decimal, Field(ge=0)] | None)
 
     assert pg is not None and pg.base == "numeric"
+
+
+def test_annotated_member_of_a_numeric_union_maps_to_numeric() -> None:
+    # Each member is read through its metadata, or the union falls back to text.
+    pg = python_type_to_postgres_scalar(Annotated[int, Field(ge=0)] | float)
+
+    assert pg is not None and pg.base == "numeric"

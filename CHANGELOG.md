@@ -131,7 +131,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Filters and sorts see through `Annotated` fields** (**behaviour change**). `Annotated[str, ...] | None` and list elements took any operator unchecked; now they get their type's and a string bound is cast. A sort into an annotated submodel resolves; Postgres compares annotated `Decimal` elements to an int numerically.
 
-- **Backends and spec checks read `Annotated` and `type` aliases as their type** (**behaviour change**). A Postgres filter or sort through `Annotated[Model, ...] | None` returned 500. Schema, index, nullability and graph-key checks, BigQuery parameters and `forze ops` flags misread them; a mismatch now fails at startup.
+- **Backends and spec checks see through `Annotated` and `type` aliases** (**behaviour change**). A Postgres filter via `Annotated[M, ...] | None` returned 500; BigQuery parameters and `forze ops` flags misread them. A schema, index, null or graph-key mismatch fails at startup; a mock seed nulls an aliased optional link.
 
 ### Security
 
