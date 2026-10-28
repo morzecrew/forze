@@ -14,6 +14,7 @@ from zoneinfo import ZoneInfo
 import pytest
 from pydantic import SecretStr
 
+from forze.base.exceptions import CoreException, ExceptionKind
 from forze.base.primitives.fingerprint import (
     advisory_lock_key,
     build_routing_fingerprint,
@@ -415,6 +416,30 @@ class TestAnInstantIsOneLockKeyInAnyOffset:
         assert advisory_lock_key("s", None, second) == advisory_lock_key(
             "s", None, datetime(2026, 10, 25, 1, 30, tzinfo=UTC)
         )
+
+    @pytest.mark.parametrize(
+        ("value", "offset"),
+        [
+            (datetime.max.replace(tzinfo=timezone(timedelta(hours=-1))), "-01:00"),
+            (datetime.min.replace(tzinfo=timezone(timedelta(hours=5, minutes=30))), "+05:30"),
+        ],
+        ids=["after-9999", "before-1"],
+    )
+    def test_an_instant_outside_the_utc_range_is_refused(
+        self, value: datetime, offset: str
+    ) -> None:
+        # Its UTC spelling is no `datetime`, so there is no key to derive: refused as the
+        # caller's value, naming the offset rather than echoing the value.
+        with pytest.raises(CoreException) as caught:
+            advisory_lock_key("s", None, value)
+
+        assert caught.value.kind is ExceptionKind.VALIDATION
+        assert caught.value.code == "lock_key_instant_out_of_range"
+        assert offset in caught.value.summary
+        assert caught.value.details == {"offset": offset}
+        for echoed in (value.isoformat(), value.date().isoformat(), value.time().isoformat()):
+            assert echoed not in caught.value.summary
+            assert echoed not in str(caught.value.details)
 
 
 class TestEveryOtherLockKeyIsUnchanged:

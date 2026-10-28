@@ -543,18 +543,37 @@ def _slot_spec(name: str, *guarantees: SerializedBy) -> DocumentSpec[Any, Any, A
     )
 
 
+async def _client_in(container: PostgresContainer, zone: str) -> PostgresClient:
+    """A pool whose sessions run in time zone *zone*, set rather than left to the server."""
+
+    url = container.get_connection_url().replace("postgresql+psycopg://", "postgresql://")
+    client = PostgresClient()
+    await client.initialize(
+        dsn=f"{url}?options=-c%20TimeZone%3D{zone.replace('/', '%2F')}",
+        config=PostgresConfig(min_size=1, max_size=3),
+    )
+
+    return client
+
+
+@pytest.fixture
+async def utc_writer(postgres_container: PostgresContainer) -> AsyncIterator[PostgresClient]:
+    """The writer, in a UTC session: the one zone where Postgres stores a naive value as UTC."""
+
+    client = await _client_in(postgres_container, "Etc/UTC")
+
+    yield client
+
+    await client.close()
+
+
 @pytest.fixture(params=["Etc/UTC", "Asia/Tokyo"])
 async def zoned_client(
     request: pytest.FixtureRequest, postgres_container: PostgresContainer
 ) -> AsyncIterator[PostgresClient]:
     """A second pool whose sessions read a ``timestamptz`` back in the given time zone."""
 
-    url = postgres_container.get_connection_url().replace("postgresql+psycopg://", "postgresql://")
-    zone = str(request.param).replace("/", "%2F")
-    client = PostgresClient()
-    await client.initialize(
-        dsn=f"{url}?options=-c%20TimeZone%3D{zone}", config=PostgresConfig(min_size=1, max_size=3)
-    )
+    client = await _client_in(postgres_container, str(request.param))
 
     yield client
 
@@ -568,12 +587,12 @@ class TestAnInstantIsOneOwnerInAnyOffset:
         ids=["+03:00", "naive"],
     )
     async def test_an_update_read_back_in_the_session_zone_waits_for_the_create(
-        self, written: datetime, pg_client: PostgresClient, zoned_client: PostgresClient
+        self, written: datetime, utc_writer: PostgresClient, zoned_client: PostgresClient
     ) -> None:
         # The create keys the caller's offset; the update keys the stored row, which the other
         # session reads back in its own zone. One instant, so one owner.
         table = f"slots_{uuid4().hex[:10]}"
-        await pg_client.execute(
+        await utc_writer.execute(
             f"""
             CREATE TABLE {table} (
                 id uuid PRIMARY KEY,
@@ -585,7 +604,7 @@ class TestAnInstantIsOneOwnerInAnyOffset:
             );
             """
         )
-        row = await _ctx(pg_client, table).doc.command(_slot_spec(table)).create(
+        row = await _ctx(utc_writer, table).doc.command(_slot_spec(table)).create(
             _SlotCreate(slot=written)
         )
         [stored] = await zoned_client.fetch_all(
@@ -603,4 +622,4 @@ class TestAnInstantIsOneOwnerInAnyOffset:
                 row.id, row.rev, _SlotUpdate(label="x")
             )
 
-        assert not await _landed_while_held(pg_client, zoned_client, table, create, update)
+        assert not await _landed_while_held(utc_writer, zoned_client, table, create, update)
