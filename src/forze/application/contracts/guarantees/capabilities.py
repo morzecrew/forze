@@ -100,7 +100,8 @@ class StorageGuaranteeCapabilities:
 
     unique_together_skip_null_at_commit: bool = False
     """Whether a uniqueness exempting nulls (``skip_null``) can hold at commit even where a
-    filtered one cannot. Implied by :attr:`unique_together_partial_at_commit`.
+    filtered one cannot. Consulted only when :attr:`unique_together_partial_at_commit` is off,
+    since that flag already covers ``skip_null``.
 
     Separate because the exemption is partial only in a store whose plain uniqueness counts
     nulls as values. A Postgres unique constraint already treats a tuple holding a null as

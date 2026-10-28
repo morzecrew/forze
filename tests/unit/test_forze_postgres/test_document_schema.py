@@ -225,6 +225,24 @@ class TestSpecsFromTheCatalogue:
         assert caught.value.code == "postgres_schema_spec_uncatalogued"
         assert caught.value.details == {"routes": ["b"]}
 
+    def test_a_route_bound_both_ways_is_refused(self) -> None:
+        # Otherwise one config would win with nothing said about the other.
+        deps = _deps(
+            ro_documents={"a": PostgresReadOnlyDocumentConfig(read=("public", "a_v"))},
+            rw_documents={
+                "a": PostgresDocumentConfig(
+                    read=("public", "a"),
+                    write=("public", "a"),
+                    bookkeeping_strategy="application",
+                ),
+            },
+        )
+
+        with pytest.raises(CoreException) as caught:
+            postgres_document_schema_specs(_registry(DocumentSpec(name="a", read=_Read)), deps)
+
+        assert caught.value.code == "postgres_document_route_duplicated"
+
     def test_an_excluded_route_is_left_out(self) -> None:
         deps = _deps(
             ro_documents={

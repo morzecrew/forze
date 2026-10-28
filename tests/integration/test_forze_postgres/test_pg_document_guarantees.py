@@ -729,6 +729,34 @@ class TestNullsAreValuesUnlessExempted:
         with pytest.raises(CoreException, match="no valid unique index"):
             await _validate_nullable(pg_client, table, SKIP_NULL)
 
+    @pytest.mark.parametrize(
+        ("fields", "index"),
+        [
+            (("is_current", "root_id"), "(is_current, root_id) WHERE root_id = 'x'"),
+            (("root_id",), "(root_id) WHERE root_id IS NULL"),
+            (("root_id",), "(root_id) NULLS NOT DISTINCT WHERE root_id IS NULL"),
+            (("root_id",), "(root_id) WHERE root_id = '1'"),
+            (("root_id",), "(root_id) WHERE root_id IS NOT NULL OR is_current"),
+            (("root_id",), "(root_id) WHERE root_id IS NOT NULL AND is_current"),
+        ],
+        ids=["equality", "is-null", "nnd-is-null", "literal", "or", "and-other"],
+    )
+    async def test_naming_the_field_is_not_dropping_its_nulls(
+        self,
+        pg_client: PostgresClient,
+        fields: tuple[str, ...],
+        index: str,
+    ) -> None:
+        # Each predicate mentions the nullable field and leaves rows the guarantee covers
+        # outside the index, or covers only the rows it exempts.
+        table = await _nullable_table(pg_client)
+        await pg_client.execute(f"CREATE UNIQUE INDEX ON {table} {index};")
+
+        with pytest.raises(CoreException, match="no valid unique index"):
+            await _validate_nullable(
+                pg_client, table, UniqueTogether(fields=fields, skip_null=True)
+            )
+
     async def test_skip_null_is_not_kept_by_nulls_not_distinct(
         self,
         pg_client: PostgresClient,
@@ -1366,6 +1394,30 @@ class TestAnUndeclaredMechanismIsReported:
         await pg_client.execute(f"ALTER TABLE {table} ADD UNIQUE (root_id);")
 
         assert await self._warnings(pg_client, table, ONE_EVER) == []
+
+    @pytest.mark.parametrize(
+        ("guarantee", "kept_by", "extra"),
+        [
+            (ONE_EVER, "(root_id)", "(root_id) WHERE is_current"),
+            (ONE_CURRENT, "(root_id) WHERE is_current", "(root_id)"),
+        ],
+        ids=["partial-beside-unfiltered", "plain-beside-filtered"],
+    )
+    async def test_an_index_over_declared_columns_that_keeps_something_else_is_named(
+        self,
+        pg_client: PostgresClient,
+        guarantee: UniqueTogether,
+        kept_by: str,
+        extra: str,
+    ) -> None:
+        table = await _table(pg_client)
+        await pg_client.execute(f"CREATE UNIQUE INDEX ON {table} {kept_by};")
+        await pg_client.execute(f"CREATE UNIQUE INDEX {table}_extra ON {table} {extra};")
+
+        warnings = await self._warnings(pg_client, table, guarantee)
+
+        assert len(warnings) == 1
+        assert f"{table}_extra" in warnings[0]
 
     async def test_an_undeclared_exclusion_constraint_is_named(
         self, pg_client: PostgresClient

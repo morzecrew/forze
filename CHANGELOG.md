@@ -49,7 +49,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **`forze_fastapi.run_startup_checks(app)` runs every FastAPI startup check in one call.** It checks the app and each Starlette or FastAPI app mounted beneath it, and `runtime_lifespan` calls it. An app with its own lifespan calls it there, on the outermost app: Starlette never runs a mounted app's lifespan.
 
-- **Postgres startup warns about a unique index or `EXCLUDE` constraint that no guarantee declares.** The in-memory store does not enforce it, so a test run accepts writes the database refuses. The warning names it and suggests the declaration; the primary key, the conflict target and framework-owned specs are left out.
+- **Postgres startup warns about a unique index or `EXCLUDE` constraint that no guarantee declares.** The in-memory store does not enforce it, so a test run accepts writes the database refuses. It suggests the declaration; the primary key, the conflict target and framework-owned specs are left out.
 
 - **`postgres_document_schema_specs(registry, deps)` validates every bound Postgres document.** It pairs each bound route with its catalogued `DocumentSpec`; pass the result as `schema_specs`. A route with no catalogued spec is refused, `exclude=` skips routes, and a per-tenant relation is skipped with a warning.
 

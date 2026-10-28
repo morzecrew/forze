@@ -16,7 +16,9 @@ from __future__ import annotations
 import pytest
 
 from forze_postgres.kernel.catalog.validation.validate_schema import (
+    _excludes_only_nulls,  # pyright: ignore[reportPrivateUsage]
     _forced_non_null,  # pyright: ignore[reportPrivateUsage]
+    _null_exclusions,  # pyright: ignore[reportPrivateUsage]
     _predicate_names,  # pyright: ignore[reportPrivateUsage]
 )
 
@@ -101,3 +103,48 @@ class TestAFilterThatRulesOutNulls:
 
     def test_no_filter_rules_out_nothing(self) -> None:
         assert _forced_non_null(None) == frozenset()
+
+
+# ....................... #
+
+TUPLE = frozenset({"parent_id", "code"})
+
+
+class TestTheNullExclusionIsReadStructurally:
+    """An unfiltered `skip_null` admits one predicate shape: `IS NOT NULL` conjuncts over the
+    tuple, covering each nullable field. Naming the field is not enough."""
+
+    @pytest.mark.parametrize(
+        "predicate",
+        [
+            "(code IS NOT NULL)",
+            "((parent_id IS NOT NULL) AND (code IS NOT NULL))",
+            '("code" IS NOT NULL)',
+        ],
+    )
+    def test_the_null_exclusion_counts(self, predicate: str) -> None:
+        assert _excludes_only_nulls(predicate, TUPLE, ["code"])
+
+    @pytest.mark.parametrize(
+        "predicate",
+        [
+            "(code = 'x'::text)",
+            "(code IS NULL)",
+            "((code IS NOT NULL) OR is_current)",
+            "((code IS NOT NULL) AND is_current)",
+            "(NOT (code IS NULL))",
+            "((code IS NOT NULL)",
+            "(parent_id IS NOT NULL)",
+            "(other IS NOT NULL)",
+        ],
+    )
+    def test_anything_else_does_not(self, predicate: str) -> None:
+        assert not _excludes_only_nulls(predicate, TUPLE, ["code"])
+
+    def test_the_exclusions_are_read_beside_other_conjuncts(self) -> None:
+        # A filtered guarantee's predicate carries its own conditions too.
+        predicate = "(is_current AND (code IS NOT NULL) AND (label <> ' AND x IS NOT NULL'))"
+
+        assert _null_exclusions(predicate) == frozenset({"code"})
+        assert _null_exclusions("((code IS NULL) OR (code IS NOT NULL))") == frozenset()
+        assert _null_exclusions(None) == frozenset()

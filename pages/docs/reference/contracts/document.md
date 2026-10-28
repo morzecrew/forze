@@ -212,9 +212,11 @@ periods and takes every other overlapping pair.
    matches; on Postgres it is a floor under a forgotten migration. Postgres also warns about
    each unique index and `EXCLUDE` constraint on the write table that no guarantee declares,
    other than the primary key and the conflict target, and suggests the declaration. Without it
-   the in-memory store accepts writes the database refuses. A spec the framework owns, such as
-   a `forze_identity` one, is not reported, because the application cannot declare anything
-   on it.
+   the in-memory store accepts writes the database refuses. An index counts as declared only
+   when it is the one that keeps a guarantee, so a partial index beside an unfiltered
+   declaration is still reported. A spec the framework owns, such as a `forze_identity` one,
+   is not reported at all, even for an index you added yourself, because the application
+   cannot declare anything on it.
 3. **Enforcement**, at write time, by the store. A violating write raises `conflict`, from every
    backend and from the in-memory store alike — including across two concurrent transactions,
    which the in-memory store rechecks at commit because a unique index is not snapshot-scoped.
@@ -229,9 +231,11 @@ periods and takes every other overlapping pair.
     equality or ordered comparison, or an `$in` whose list holds no null.
 
     With `skip_null` on, the ordinary index *is* the mechanism, and no predicate is needed. A
-    predicate dropping the rows that hold a null also counts, if it names each nullable field.
-    `NULLS NOT DISTINCT` is refused there, because it rejects the rows the exemption lets
-    through.
+    predicate dropping the rows that hold a null also counts, if it is only `IS NOT NULL`
+    conditions on fields of the tuple, joined by `AND`, covering each nullable field. Any other
+    predicate, such as `code = 'x'` or `code IS NULL`, is refused. `NULLS NOT DISTINCT` is
+    refused there too, unless such a predicate drops the null rows first, because it rejects
+    the rows the exemption lets through.
 
 !!! warning "A guarantee with no `where` covers soft-deleted rows too"
 

@@ -138,13 +138,28 @@ def postgres_document_schema_specs(
     is the gap this exists to close. A spec catalogued as :attr:`SpecSource.FRAMEWORK` is not
     reported for unique indexes it does not declare: the application cannot change it.
 
+    The reverse — a catalogued document no backend binds — is not checked here: inventory
+    reconciliation (:func:`~forze.application.contracts.inventory.reconcile_specs`) refuses it
+    when the runtime is built with a spec registry.
+
     :param registry: The application's spec inventory.
     :param deps: The module that binds the documents.
     :param exclude: Routes the application knowingly leaves unvalidated.
     :returns: One spec per validated document, ordered by route name.
     :raises CoreException: ``configuration``, code ``postgres_schema_spec_uncatalogued``,
-        naming every bound route the registry has no document spec for.
+        naming every bound route the registry has no document spec for; code
+        ``postgres_document_route_duplicated`` when a route is both read-only and read-write.
     """
+
+    # The deps module refuses this too, but only when it registers; here one config would win.
+    if duplicated := sorted(
+        str(name) for name in set(deps.ro_documents or {}) & set(deps.rw_documents or {})
+    ):
+        raise exc.configuration(
+            f"Postgres document route(s) {duplicated} are bound both read-only and read-write.",
+            code="postgres_document_route_duplicated",
+            details={"routes": duplicated},
+        )
 
     skipped = frozenset(exclude)
     bindings: dict[str, PostgresReadOnlyDocumentConfig | PostgresDocumentConfig] = {

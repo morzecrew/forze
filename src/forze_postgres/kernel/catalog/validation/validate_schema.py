@@ -298,8 +298,11 @@ def _warn_unused_tenant_column(
 async def _require_guarantee_mechanisms(
     introspector: PostgresIntrospector,
     spec: PostgresDocumentSchemaSpec,
-) -> None:
+) -> frozenset[str]:
     """Refuse a declared guarantee whose index is not in the database, naming the DDL.
+
+    Returns the names of the indexes that keep the declared guarantees, so the undeclared-index
+    warning can tell those from the rest.
 
     Reconciliation at wiring proved Postgres *can* keep these; this is the other half — whether
     this deployment's migration did. Never creates anything: an adapter that issued the DDL
@@ -325,17 +328,20 @@ async def _require_guarantee_mechanisms(
 
     What is still not checked is whether the predicate *means* the same as the filter: deciding
     that two boolean expressions agree is the database's job, not a startup check's. So the
-    column-level comparison is a floor, not a proof, and the docs say so.
+    column-level comparison is a floor, not a proof, and the docs say so. The one predicate read
+    structurally is the null exclusion behind an unfiltered ``skip_null``: it has a single right
+    shape, so anything else is refused.
     """
 
     relation = spec.write_relation or spec.read_relation
     schema, table = relation
 
     guarantees = [g for g in spec.guarantees if isinstance(g, UniqueTogether)]
+    matched: set[str] = set()
 
     if not guarantees:
         # Reconciliation refuses every other member today, so nothing else reaches here.
-        return
+        return frozenset()
 
     indexes = await introspector.unique_indexes(schema=schema, relation=table)
     column_types = await introspector.get_column_types(schema=schema, relation=table)
@@ -365,12 +371,6 @@ async def _require_guarantee_mechanisms(
         # selects — the ordinary index is exactly the mechanism, and demanding NULLS NOT
         # DISTINCT there would refuse a correct migration.
         needs_nulls_not_distinct = bool(nullable) and not guarantee.skip_null
-        # Unfiltered, the one restriction an index may add is dropping the rows the exemption
-        # already lets through, so its predicate must mention each nullable field — or, with
-        # none nullable, each field, the floor a predicate restating NOT NULL always met.
-        restricted_by = predicate_columns or (
-            frozenset(nullable or columns) if guarantee.skip_null else frozenset()
-        )
         at_commit = guarantee.holds == "commit"
         # Right in every respect but when it is checked, kept so the refusal can say that
         # rather than describe columns the operator will find are already indexed.
@@ -380,11 +380,16 @@ async def _require_guarantee_mechanisms(
             if index.columns != wanted:
                 continue
 
-            if index.predicate is None:
-                if predicate_columns:
+            if predicate_columns:
+                if not _names_every(index.predicate, predicate_columns):
                     continue
 
-            elif not _names_every(index.predicate, restricted_by):
+            # Unfiltered, the one restriction an index may add is dropping the rows the
+            # exemption already lets through. Read structurally, not by name: a predicate that
+            # merely mentions the field (`code = 'x'`, `code IS NULL`) leaves covered rows out.
+            elif index.predicate is not None and not (
+                guarantee.skip_null and _excludes_only_nulls(index.predicate, wanted, nullable)
+            ):
                 continue
 
             if needs_nulls_not_distinct and not index.nulls_not_distinct:
@@ -396,7 +401,7 @@ async def _require_guarantee_mechanisms(
                 guarantee.skip_null
                 and nullable
                 and index.nulls_not_distinct
-                and not _names_every(index.predicate, nullable)
+                and not frozenset(nullable) <= _null_exclusions(index.predicate)
             ):
                 continue
 
@@ -404,6 +409,7 @@ async def _require_guarantee_mechanisms(
                 deferral_mismatch = True
                 continue
 
+            matched.add(index.name)
             break
 
         else:
@@ -445,6 +451,8 @@ async def _require_guarantee_mechanisms(
                 },
             )
 
+    return frozenset(matched)
+
 
 # ....................... #
 
@@ -483,6 +491,116 @@ def _names_every(predicate: str | None, columns: frozenset[str] | Sequence[str])
         and bool(columns)
         and all(_predicate_names(predicate, column) for column in columns)
     )
+
+
+_NULL_EXCLUSION = re.compile(
+    r'^(?:"((?:[^"]|"")+)"|([A-Za-z_][A-Za-z0-9_$]*))\s+IS\s+NOT\s+NULL$', re.IGNORECASE
+)
+"""One deparsed ``<column> IS NOT NULL`` conjunct, the column bare or double-quoted."""
+
+
+def _unwrap(text: str) -> str | None:
+    """*text* without the parentheses wrapping all of it, or ``None`` when they do not balance."""
+
+    text = text.strip()
+
+    while text.startswith("("):
+        depth = 0
+        end = -1
+
+        for position, char in enumerate(text):
+            depth += (char == "(") - (char == ")")
+
+            if depth == 0:
+                end = position
+                break
+
+        if end < 0:
+            return None
+
+        if end != len(text) - 1:
+            return text
+
+        text = text[1:-1].strip()
+
+    return text
+
+
+def _conjuncts(predicate: str) -> list[str] | None:
+    """The top-level ``AND`` operands of a deparsed predicate, each unwrapped, or ``None`` when
+    it cannot be split — a reading this declines is one the caller refuses."""
+
+    body = _unwrap(_LITERAL.sub("''", predicate))
+
+    if body is None:
+        return None
+
+    parts: list[str] = []
+    depth = start = position = 0
+    upper = body.upper()
+
+    while position < len(body):
+        char = body[position]
+        depth += (char == "(") - (char == ")")
+
+        if depth == 0 and upper.startswith(" AND ", position):
+            parts.append(body[start:position])
+            position = start = position + len(" AND ")
+            continue
+
+        position += 1
+
+    parts.append(body[start:])
+    unwrapped = [_unwrap(part) for part in parts]
+
+    if depth != 0 or any(part is None for part in unwrapped):
+        return None
+
+    return [part for part in unwrapped if part is not None]
+
+
+def _excluded_column(conjunct: str) -> str | None:
+    """The column *conjunct* holds non-null, when it is exactly ``<column> IS NOT NULL``."""
+
+    match = _NULL_EXCLUSION.match(conjunct)
+
+    if match is None:
+        return None
+
+    quoted, bare = match.groups()
+
+    return quoted.replace('""', '"') if quoted is not None else bare
+
+
+def _null_exclusions(predicate: str | None) -> frozenset[str]:
+    """The columns the top-level conjuncts of *predicate* hold ``IS NOT NULL``."""
+
+    parts = _conjuncts(predicate) if predicate is not None else None
+
+    return frozenset(
+        column for part in parts or () if (column := _excluded_column(part)) is not None
+    )
+
+
+def _excludes_only_nulls(
+    predicate: str,
+    columns: frozenset[str],
+    nullable: Sequence[str],
+) -> bool:
+    """Whether *predicate* is a conjunction of ``IS NOT NULL`` over fields of the tuple that
+    excludes every nullable one — the only restriction an unfiltered ``skip_null`` admits."""
+
+    parts = _conjuncts(predicate)
+
+    if not parts:
+        return False
+
+    excluded = [_excluded_column(part) for part in parts]
+
+    if any(column is None or column not in columns for column in excluded):
+        return False
+
+    return frozenset(nullable) <= frozenset(excluded)
 
 
 _NULL_REJECTING: Final[frozenset[str]] = frozenset({"$eq", "$gt", "$gte", "$lt", "$lte"})
@@ -651,7 +769,7 @@ def _is_column(argument: str, column: str) -> bool:
 async def _require_overlap_mechanisms(
     introspector: PostgresIntrospector,
     spec: PostgresDocumentSchemaSpec,
-) -> None:
+) -> frozenset[str]:
     """Refuse a declared non-overlap guarantee with no exclusion constraint behind it.
 
     The sibling of :func:`_require_guarantee_mechanisms` for the other member, and the same
@@ -681,12 +799,15 @@ async def _require_overlap_mechanisms(
     Deliberately no validity check, unlike the uniqueness pass: Postgres refuses ``NOT VALID``
     on an EXCLUDE constraint and has no concurrent build for one, so the half-built state that
     check guards against cannot arise here.
+
+    Returns the names of the constraints that keep the declared guarantees.
     """
 
     guarantees = [g for g in spec.guarantees if isinstance(g, NonOverlapping)]
+    matched: set[str] = set()
 
     if not guarantees:
-        return
+        return frozenset()
 
     relation = spec.write_relation or spec.read_relation
     schema, table = relation
@@ -738,6 +859,7 @@ async def _require_overlap_mechanisms(
                 deferral_mismatch = True
                 continue
 
+            matched.add(constraint.name)
             break
 
         else:
@@ -772,6 +894,8 @@ async def _require_overlap_mechanisms(
                     "period": list(guarantee.period),
                 },
             )
+
+    return frozenset(matched)
 
 
 # ....................... #
@@ -1005,6 +1129,7 @@ async def _warn_undeclared_mechanisms(
     write_relation: tuple[str, str],
     write_column_types: dict[str, PostgresType],
     conflict_target: Sequence[str],
+    declared: frozenset[str],
 ) -> None:
     """Warn about each unique index and EXCLUDE constraint on the write relation that no
     guarantee declares.
@@ -1013,21 +1138,20 @@ async def _warn_undeclared_mechanisms(
     wrong, but the in-memory store does not know about it, so Postgres refuses with ``conflict``
     a write that a test or simulation run accepted. The primary key and the conflict target are
     left out — upserts resolve against them, and every store keeps a document's identity.
-    Matched on columns, the same floor the passes above stand on.
+
+    *declared* names the mechanisms the passes above matched to a guarantee, so an index over
+    declared columns that keeps something else — partial behind an unfiltered declaration, or
+    the reverse — is still reported.
     """
 
     if not spec.warn_undeclared:
         return
 
     schema, table = write_relation
-    declared_unique = {
-        frozenset(g.fields) for g in spec.guarantees if isinstance(g, UniqueTogether)
-    }
-    declared_keys = {frozenset(g.key) for g in spec.guarantees if isinstance(g, NonOverlapping)}
     target = frozenset(conflict_target)
 
     for index in await introspector.unique_indexes(schema=schema, relation=table):
-        if index.primary or index.columns == target or index.columns in declared_unique:
+        if index.primary or index.columns == target or index.name in declared:
             continue
 
         parts = [f"fields={tuple(sorted(index.columns))!r}"]
@@ -1060,7 +1184,7 @@ async def _warn_undeclared_mechanisms(
         )
 
     for constraint in await introspector.exclusion_constraints(schema=schema, relation=table):
-        if constraint.columns in declared_keys:
+        if constraint.name in declared:
             continue
 
         logger.warning(
@@ -1086,8 +1210,9 @@ async def validate_postgres_document_schemas(
     """Assert each spec's relations expose the columns implied by the Pydantic models."""
 
     for spec in specs:
-        await _require_guarantee_mechanisms(introspector, spec)
-        await _require_overlap_mechanisms(introspector, spec)
+        declared = await _require_guarantee_mechanisms(
+            introspector, spec
+        ) | await _require_overlap_mechanisms(introspector, spec)
 
         read_need = frozenset(
             (stored_field_names_for(spec.read_model, include_computed=False) | spec.materialized)
@@ -1198,6 +1323,7 @@ async def validate_postgres_document_schemas(
                 write_relation=spec.write_relation,
                 write_column_types=write_types,
                 conflict_target=conflict_target,
+                declared=declared,
             )
 
         if spec.history_relation is not None:

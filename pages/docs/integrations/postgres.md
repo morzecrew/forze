@@ -123,7 +123,8 @@ Each route in `ro_documents` and `rw_documents` is paired with the `DocumentSpec
 name, so a document added later is validated too. A bound route with no spec in the registry
 is refused with `postgres_schema_spec_uncatalogued`. Pass `exclude=` for routes you leave
 unvalidated on purpose. A route on a per-tenant relation resolver is skipped with a warning,
-because its relation names are known only per request.
+because its relation names are known only per request. A catalogued document that nothing
+binds is refused by the inventory reconciliation when the runtime is built with the registry.
 
 ## What it provides
 
