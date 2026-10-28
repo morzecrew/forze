@@ -8,7 +8,7 @@ from forze.application.contracts.document import (
     DocumentQueryPort,
     KeyedUpdate,
 )
-from forze.base.exceptions import exc
+from forze.base.exceptions import CoreException, exc
 
 from ..domain.models.account import (
     ApiKeyAccount,
@@ -20,7 +20,7 @@ from ..domain.models.account import (
     UpdatePasswordAccountCmd,
 )
 from ..services import ApiKeyRevocation
-from ._utils import find_password_account_by_principal_id
+from ._utils import STALE_RETRIES, detected_stale, find_password_account_by_principal_id
 
 # ----------------------- #
 
@@ -37,6 +37,10 @@ class AuthnCredentialDeactivationHelper:
 
     Each store is optional: a deployment that never wired password or API-key authn has no
     route for that store, and its leg is skipped. Pass both ports of a store or neither.
+
+    A write a concurrent password change or key rotation made stale is read again and closed
+    again, a few times in a row at most, so a deactivation does not leave a credential open for
+    losing one write. A conflict the backend reports has aborted the transaction and propagates.
     """
 
     pa_qry: DocumentQueryPort[ReadPasswordAccount] | None = None
@@ -88,17 +92,28 @@ class AuthnCredentialDeactivationHelper:
         if self.pa_qry is None or self.pa_cmd is None:
             return
 
-        account = await find_password_account_by_principal_id(self.pa_qry, principal_id)
+        for attempt in range(STALE_RETRIES + 1):
+            account = await find_password_account_by_principal_id(
+                self.pa_qry,
+                principal_id,
+                lock=True,
+            )
 
-        if account is None or not account.is_active:
-            return
+            if account is None or not account.is_active:
+                return
 
-        await self.pa_cmd.update(
-            account.id,
-            account.rev,
-            UpdatePasswordAccountCmd(is_active=False),
-            return_new=False,
-        )
+            try:
+                await self.pa_cmd.update(
+                    account.id,
+                    account.rev,
+                    UpdatePasswordAccountCmd(is_active=False),
+                    return_new=False,
+                )
+                return
+
+            except CoreException as error:
+                if not detected_stale(error) or attempt == STALE_RETRIES:
+                    raise
 
     # ....................... #
 
@@ -107,6 +122,7 @@ class AuthnCredentialDeactivationHelper:
             return
 
         offset = 0
+        stale = 0
 
         # A read naming no limit stops at the store's implicit cap; page through every key.
         # ponytail: offset pages; keyset by id if principals ever hold many thousands of keys.
@@ -123,7 +139,18 @@ class AuthnCredentialDeactivationHelper:
             ]
 
             if upds:
-                await self.ak_cmd.update_many(upds, return_new=False)
+                try:
+                    await self.ak_cmd.update_many(upds, return_new=False)
+
+                except CoreException as error:
+                    if not detected_stale(error) or stale >= STALE_RETRIES:
+                        raise
+
+                    # The page is read again, with the key a rotation minted if it committed.
+                    stale += 1
+                    continue
+
+            stale = 0
 
             # Every key, active or not: a retry then repairs a write-through that failed.
             if self.key_revocation is not None:

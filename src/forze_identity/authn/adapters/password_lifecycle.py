@@ -25,7 +25,11 @@ from ..domain.models.session import (
     UpdateSessionCmd,
 )
 from ..services import PasswordService, SessionRevocation
-from ._utils import find_password_account_by_authn_identity, revoke_sessions_matching
+from ._utils import (
+    find_password_account_by_authn_identity,
+    find_password_account_by_principal_id,
+    revoke_sessions_matching,
+)
 
 # ----------------------- #
 
@@ -136,6 +140,18 @@ class PasswordLifecycleAdapter(PasswordLifecyclePort):
 
         new_pwd_hash = await self.password_svc.hash_password(new_password)
         upd_cmd = UpdatePasswordAccountCmd(password_hash=new_pwd_hash)
+
+        # Both hashes ran before the lock, so a deactivation never queues behind them. Locked,
+        # an account closed meanwhile is refused, and the write keeps the revision verified,
+        # so the store refuses one changed meanwhile.
+        locked = await find_password_account_by_principal_id(
+            self.pa_qry,
+            identity.principal_id,
+            lock=True,
+        )
+
+        if locked is None or not locked.is_active:
+            raise exc.authentication("Password account not found")
 
         await self.pa_cmd.update(pa.id, pa.rev, upd_cmd, return_new=False)
 

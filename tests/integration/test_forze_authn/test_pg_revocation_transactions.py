@@ -66,6 +66,9 @@ TX = "default"
 BLOCKED_FOR = 0.3
 """How long a statement must stay blocked to count as waiting on the other's lock."""
 
+LOCK_WAIT = 5.0
+"""How long a backend may take to start waiting on a lock a held transaction keeps."""
+
 
 class _Stack:
     def __init__(self, ctx: ExecutionContext, *, grace: timedelta = timedelta(0)) -> None:
@@ -164,11 +167,35 @@ def _live(sessions: list[Any]) -> list[Any]:
     return [s for s in sessions if s.revoked_at is None and s.rotated_at is None]
 
 
+class _BeforeFirstUpdate:
+    """A command port that awaits *before* ahead of its first ``update``."""
+
+    def __init__(self, inner: Any, before: Callable[[], Awaitable[Any]]) -> None:
+        self._inner, self._before = inner, before
+        self._done = False
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._inner, name)
+
+    async def update(self, *args: Any, **kwargs: Any) -> Any:
+        if not self._done:
+            self._done = True
+            await self._before()
+
+        return await self._inner.update(*args, **kwargs)
+
+
 async def _password_race(
-    stack: _Stack, principal: UUID, flow: str
+    stack: _Stack,
+    principal: UUID,
+    flow: str,
+    *,
+    before_write: Callable[[], Awaitable[Any]] | None = None,
+    before_close: Callable[[], Awaitable[Any]] | None = None,
 ) -> tuple[PrincipalDeactivationAdapter, Callable[[], Awaitable[Any]]]:
     """A password account with a live session, the deactivation that closes it, and the write
-    under test: a password change, or a reset by a token requested beforehand."""
+    under test: a password change, or a reset by a token requested beforehand. *before_write*
+    and *before_close* run ahead of the write's and the deactivation's update of the account."""
 
     ctx = stack.ctx
     passwords = PasswordService()
@@ -177,6 +204,9 @@ async def _password_race(
     eligibility = PolicyPrincipalEligibilityAdapter(
         principal_qry=ctx.document.query(policy_principal_spec)
     )
+
+    def held(hook: Callable[[], Awaitable[Any]] | None) -> Any:
+        return pa_cmd if hook is None else _BeforeFirstUpdate(pa_cmd, hook)
 
     with ctx.inv_ctx.bind(metadata=_invocation_metadata()):
         await pa_cmd.create(
@@ -192,14 +222,14 @@ async def _password_race(
     deactivation = PrincipalDeactivationAdapter(
         principal_registry=stack.deactivation.principal_registry,
         token_lifecycle=stack.tokens,
-        credentials=AuthnCredentialDeactivationHelper(pa_qry=pa_qry, pa_cmd=pa_cmd),
+        credentials=AuthnCredentialDeactivationHelper(pa_qry=pa_qry, pa_cmd=held(before_close)),
     )
 
     if flow == "change":
         change = PasswordLifecycleAdapter(
             password_svc=passwords,
             pa_qry=pa_qry,
-            pa_cmd=pa_cmd,
+            pa_cmd=held(before_write),
             eligibility=eligibility,
             session_qry=ctx.document.query(session_spec),
             session_cmd=ctx.document.command(session_spec),
@@ -212,7 +242,7 @@ async def _password_race(
         password_svc=passwords,
         reset_svc=ResetTokenService(pepper=secrets.token_bytes(32)),
         pa_qry=pa_qry,
-        pa_cmd=pa_cmd,
+        pa_cmd=held(before_write),
         reset_qry=ctx.document.query(password_reset_spec),
         reset_cmd=ctx.document.command(password_reset_spec),
         eligibility=eligibility,
@@ -251,12 +281,12 @@ def _hold(
     reached, release = asyncio.Event(), asyncio.Event()
     method = getattr(owner, name)
 
-    async def held(self: Any, *args: Any) -> Any:
+    async def held(self: Any, *args: Any, **kwargs: Any) -> Any:
         if not after:
             reached.set()
             await release.wait()
 
-        result = await method(self, *args)
+        result = await method(self, *args, **kwargs)
 
         if after:
             reached.set()
@@ -267,6 +297,27 @@ def _hold(
     monkeypatch.setattr(owner, name, held)
 
     return reached, release
+
+
+async def _waits_on_a_lock(pg_client: PostgresClient) -> None:
+    """Return once a backend of this database waits on a lock; fail when none does in time."""
+
+    try:
+        async with asyncio.timeout(LOCK_WAIT):
+            while True:
+                waiting = await pg_client.fetch_all(
+                    "SELECT pid FROM pg_stat_activity "
+                    "WHERE wait_event_type = 'Lock' AND datname = current_database()",
+                    row_factory="tuple",
+                )
+
+                if waiting:
+                    return
+
+                await asyncio.sleep(0.02)
+
+    except TimeoutError:
+        pytest.fail("no backend waited on a lock")
 
 
 FLOWS = pytest.mark.parametrize("flow", ["login", "refresh"])
@@ -387,14 +438,19 @@ async def test_a_deactivation_waits_for_a_password_write_that_read_the_account(
     monkeypatch: pytest.MonkeyPatch,
     flow: str,
 ) -> None:
-    # The write reads the account, then hashes before it writes. A deactivation that reaches
-    # the account meanwhile waits for the write, instead of closing the account under it and
-    # failing the write on its revision. Both then take the account before the sessions, so
+    # The write hashes, then reads the account locked and writes it. A deactivation that
+    # reaches the account in between waits for the write, instead of closing the account under
+    # it and failing the write on its revision; both take the account before the sessions, so
     # they never deadlock either.
     stack, principal = await _stack(pg_client)
-    deactivation, write = await _password_race(stack, principal, flow)
+    read, written = asyncio.Event(), asyncio.Event()
+
+    async def hold_the_write() -> None:
+        read.set()
+        await written.wait()
+
+    deactivation, write = await _password_race(stack, principal, flow, before_write=hold_the_write)
     paused, go = _hold(monkeypatch, AuthnCredentialDeactivationHelper, "deactivate_all")
-    hashing, hashed = _hold(monkeypatch, PasswordService, "hash_password")
     before = await _account(stack, principal)
 
     async with asyncio.timeout(15):
@@ -402,14 +458,14 @@ async def test_a_deactivation_waits_for_a_password_write_that_read_the_account(
         await paused.wait()
 
         writing = asyncio.create_task(stack.in_tx(write))
-        await hashing.wait()
+        await read.wait()
         go.set()
-        await asyncio.sleep(BLOCKED_FOR)
 
         # The write holds the account it read until it commits.
+        await _waits_on_a_lock(pg_client)
         assert not deactivate.done()
 
-        hashed.set()
+        written.set()
         results = await asyncio.gather(deactivate, writing, return_exceptions=True)
 
     assert [r for r in results if isinstance(r, BaseException)] == []
@@ -440,8 +496,9 @@ async def test_a_password_write_waits_for_a_deactivation_and_is_refused(
         await closed.wait()
 
         writing = asyncio.create_task(stack.in_tx(write))
-        await asyncio.sleep(BLOCKED_FOR)
 
+        # Its locked read waits on the account the deactivation closed.
+        await _waits_on_a_lock(pg_client)
         assert not writing.done()
 
         go.set()
@@ -456,6 +513,75 @@ async def test_a_password_write_waits_for_a_deactivation_and_is_refused(
 
     assert not after.is_active
     assert after.password_hash == before.password_hash
+    assert _live(await stack.sessions(principal)) == []
+
+
+@PASSWORD_WRITES
+async def test_a_deactivation_does_not_wait_for_a_password_write_to_hash(
+    pg_client: PostgresClient,
+    monkeypatch: pytest.MonkeyPatch,
+    flow: str,
+) -> None:
+    # The write hashes before it locks the account, so changes sent one after another cannot
+    # keep a deactivation queued behind Argon2; the write then reads the account closed.
+    stack, principal = await _stack(pg_client)
+    deactivation, write = await _password_race(stack, principal, flow)
+    hashing, hashed = _hold(monkeypatch, PasswordService, "hash_password")
+    before = await _account(stack, principal)
+
+    async with asyncio.timeout(15):
+        writing = asyncio.create_task(stack.in_tx(write))
+        await hashing.wait()
+
+        await stack.in_tx(lambda: deactivation.deactivate(principal))
+
+        hashed.set()
+
+        with pytest.raises(CoreException) as caught:
+            await writing
+
+    assert caught.value.kind is ExceptionKind.AUTHENTICATION, caught.value
+
+    after = await _account(stack, principal)
+
+    assert not after.is_active
+    assert after.password_hash == before.password_hash
+    assert _live(await stack.sessions(principal)) == []
+
+
+@PASSWORD_WRITES
+async def test_a_deactivation_outside_a_transaction_closes_an_account_written_under_it(
+    pg_client: PostgresClient,
+    monkeypatch: pytest.MonkeyPatch,
+    flow: str,
+) -> None:
+    # Outside a transaction nothing locks the account: the write lands between the
+    # deactivation's read and its update, and the deactivation reads the account again and
+    # closes it, instead of failing with the principal already inactive and the account open.
+    stack, principal = await _stack(pg_client)
+    writing: asyncio.Task[Any] | None = None
+
+    async def write_first() -> None:
+        assert writing is not None
+        hashed.set()
+        await writing
+
+    deactivation, write = await _password_race(stack, principal, flow, before_close=write_first)
+    hashing, hashed = _hold(monkeypatch, PasswordService, "hash_password")
+    before = await _account(stack, principal)
+
+    async with asyncio.timeout(15):
+        with stack.ctx.inv_ctx.bind(metadata=_invocation_metadata()):
+            # The write passes the eligibility check before the principal is deactivated.
+            writing = asyncio.create_task(write())
+            await hashing.wait()
+            await deactivation.deactivate(principal)
+
+    await writing
+    after = await _account(stack, principal)
+
+    assert not after.is_active
+    assert after.password_hash != before.password_hash
     assert _live(await stack.sessions(principal)) == []
 
 

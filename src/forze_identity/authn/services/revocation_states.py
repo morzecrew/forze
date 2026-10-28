@@ -39,6 +39,7 @@ from forze.application.contracts.transaction import TransactionallyEnlistable
 from forze.base.exceptions import CoreException, exc
 from forze.base.primitives import StrKey, utcnow
 from forze_identity._secure_spec import forbid_cache_and_history
+from forze_identity._transaction import enlisted
 
 from .._logger import logger
 from ..domain.models.account import ReadApiKeyAccount
@@ -519,14 +520,6 @@ def _require_transaction(in_transaction: Callable[[], bool], *stores: object) ->
             )
 
 
-def _enlisted(port: object) -> bool:
-    """Whether *port* reports that the open transaction holds its work; one that cannot, no."""
-
-    backend = backend_of(port)
-
-    return isinstance(backend, TransactionallyEnlistable) and backend.is_transactionally_enlisted()
-
-
 async def _write_through(
     config: RevocationStates,
     credential: RevocationCredential,
@@ -607,7 +600,7 @@ class EpochRaise:
 
         self.require_transaction()
 
-        if self.principals is not None and _enlisted(self.principals):
+        if self.principals is not None and enlisted(self.principals):
             # A raise then a deactivation in one transaction would otherwise take the epoch
             # before the principal, the reverse of an issue, and deadlock with it.
             await self.principals.find(filters={"$values": {"id": principal_id}}, for_update=True)
