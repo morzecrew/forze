@@ -340,3 +340,23 @@ async def test_an_index_over_the_primary_key_is_not_reported() -> None:
     )
 
     assert await _warnings(_spec_over(_Domain), tenant_column=False, indexes=(over_key,)) == []
+
+
+@pytest.mark.asyncio
+async def test_the_suggestion_carries_skip_null_and_holds_commit() -> None:
+    # Over a nullable column, and checked at commit: the declaration has to say both.
+    nullable_deferred = UniqueIndexInfo(
+        columns=frozenset({TENANT_ID_FIELD}),
+        predicate=None,
+        nulls_not_distinct=False,
+        name="t_tenant_key",
+        initially_deferred=True,
+    )
+
+    reported = await _warnings(
+        _spec_over(_ScopedDomain), tenant_column=True, indexes=(nullable_deferred,)
+    )
+
+    assert len(reported) == 1
+    assert "skip_null=True" in reported[0]
+    assert 'holds="commit"' in reported[0]

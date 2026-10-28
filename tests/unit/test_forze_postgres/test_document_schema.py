@@ -244,6 +244,22 @@ class TestSpecsFromTheCatalogue:
         assert caught.value.code == "postgres_schema_spec_uncatalogued"
         assert caught.value.details == {"routes": ["b"]}
 
+    def test_a_read_write_route_over_a_read_only_spec_is_refused(self) -> None:
+        deps = _deps(
+            rw_documents={
+                "catalog": PostgresDocumentConfig(
+                    read=("public", "cat"),
+                    write=("public", "cat"),
+                    bookkeeping_strategy="application",
+                ),
+            },
+        )
+
+        with pytest.raises(CoreException) as caught:
+            postgres_document_schema_specs(_registry(DocumentSpec(name="catalog", read=_Read)), deps)
+
+        assert caught.value.code == "postgres_document_spec_read_only"
+
     def test_a_route_bound_both_ways_is_refused(self) -> None:
         # Otherwise one config would win with nothing said about the other.
         deps = _deps(

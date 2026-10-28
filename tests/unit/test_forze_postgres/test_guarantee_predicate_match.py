@@ -16,6 +16,7 @@ from __future__ import annotations
 import pytest
 
 from forze_postgres.kernel.catalog.validation.validate_schema import (
+    _conjuncts,  # pyright: ignore[reportPrivateUsage]
     _excludes_only_nulls,  # pyright: ignore[reportPrivateUsage]
     _forced_non_null,  # pyright: ignore[reportPrivateUsage]
     _null_exclusions,  # pyright: ignore[reportPrivateUsage]
@@ -148,3 +149,12 @@ class TestTheNullExclusionIsReadStructurally:
         assert _null_exclusions(predicate) == frozenset({"code"})
         assert _null_exclusions("((code IS NULL) OR (code IS NOT NULL))") == frozenset()
         assert _null_exclusions(None) == frozenset()
+
+
+class TestTheConjunctSplit:
+    def test_top_level_operands_come_back_unwrapped(self) -> None:
+        assert _conjuncts("((a IS NOT NULL) AND (b = 1))") == ["a IS NOT NULL", "b = 1"]
+
+    @pytest.mark.parametrize("predicate", ["a AND (b IS NOT NULL", "(a)) AND ((b"])
+    def test_an_unbalanced_predicate_is_declined(self, predicate: str) -> None:
+        assert _conjuncts(predicate) is None
