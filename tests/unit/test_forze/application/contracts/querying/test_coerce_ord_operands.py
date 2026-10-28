@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from datetime import UTC, date, datetime
 from decimal import Decimal
+from enum import Enum
 from uuid import UUID
 
 import pytest
@@ -35,8 +36,27 @@ class _Line(BaseModel):
     prior: list[Decimal] = []
 
 
+class _RefKind(Enum):
+    A = UUID(int=1)
+    B = UUID(int=2)
+
+
+class _Level(Enum):
+    LOW = 1
+    HIGH = 9
+    UNSET = None
+
+
+class _Mixed(Enum):
+    A = "a"
+    B = 2
+
+
 class _Model(BaseModel):
     name: str
+    ref_kind: _RefKind = _RefKind.A
+    level: _Level | None = None
+    mixed: _Mixed = _Mixed.A
     price: Decimal = Decimal("0")
     created_at: datetime = datetime(2020, 1, 1, tzinfo=UTC)
     born_on: date = date(2020, 1, 1)
@@ -76,6 +96,22 @@ def test_uuid_field_casts_string_to_uuid() -> None:
     u = UUID(int=42)
     out = coerce_query_ord_operands(_f("ref", str(u)), _Model)
     assert isinstance(out, QueryField) and out.value == u
+
+
+def test_enum_field_casts_string_as_its_values_type() -> None:
+    """A plain member is stored as its value, so a bound casts as that value's type does."""
+
+    out = coerce_query_ord_operands(_f("ref_kind", str(UUID(int=1))), _Model)
+    assert isinstance(out, QueryField) and out.value == UUID(int=1)
+
+    # A ``None`` value has no type to cast to; the other members decide.
+    out = coerce_query_ord_operands(_f("level", "5"), _Model)
+    assert isinstance(out, QueryField) and out.value == Decimal(5)
+
+
+def test_enum_field_with_values_of_several_types_is_left_untouched() -> None:
+    node = _f("mixed", "2")
+    assert coerce_query_ord_operands(node, _Model) is node
 
 
 def test_non_ordering_op_is_left_untouched() -> None:

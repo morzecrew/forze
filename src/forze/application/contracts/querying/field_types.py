@@ -569,8 +569,19 @@ def coerce_query_ord_operands(
 
             return QueryValueCaster.as_datetime(value, force_tz=True)
 
-        if cls == _SCALAR_OTHER and _strip_optional(ann) is UUID:
-            return QueryValueCaster.as_uuid(value)
+        if cls == _SCALAR_OTHER:
+            base = _strip_optional(ann)
+
+            if base is UUID:
+                return QueryValueCaster.as_uuid(value)
+
+            # A member is stored as its value, so the bound casts as the members' values do.
+            if issubclass(base, Enum):
+                members: list[Enum] = list(base)
+                kinds = {type(m.value) for m in members if m.value is not None}
+
+                if len(kinds) == 1:
+                    return _coerced_value(op, kinds.pop(), value)
 
         return value
 

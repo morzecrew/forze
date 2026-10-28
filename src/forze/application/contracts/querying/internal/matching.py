@@ -18,7 +18,6 @@ import operator
 import re
 from collections.abc import Callable, Mapping, Sequence
 from datetime import UTC, datetime
-from enum import Enum
 from typing import TYPE_CHECKING, Any, Final, cast
 from uuid import UUID
 
@@ -26,6 +25,7 @@ from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict
 from forze.base.primitives.projection import MISSING as _MISSING
 from forze.base.primitives.projection import path_get as _path_get
+from forze.base.serialization import enum_values
 
 from .nodes import (
     ELEM_SCALAR_FIELD,
@@ -69,7 +69,7 @@ def _coerce_set(value: Any) -> set[Any]:
 
 def _set_key(item: Any) -> Any:
     """*item* as a set member: an ``Enum`` member as its value, or as itself when the value
-    cannot be hashed (a list)."""
+    cannot be hashed (a list); a ``UUID`` as its text, which ``$in`` also matches it by."""
 
     plain = _plain(item)
 
@@ -78,6 +78,9 @@ def _set_key(item: Any) -> Any:
 
     except TypeError:
         plain = item
+
+    if isinstance(plain, UUID):
+        plain = str(plain)
 
     return instant_key(plain)
 
@@ -112,13 +115,14 @@ def instant_key(value: Any) -> Any:
 
 
 def _plain(value: Any) -> Any:
-    """An ``Enum`` member as its value, as a store holds it; anything else as is.
+    """*value* with each ``Enum`` member in it, in containers too, as its value, as a store
+    holds it.
 
     A row keeps the member (a ``model_dump``) while a filter names the value — the parser takes
-    no member operand — and a plain ``Enum`` member equals nothing but itself.
+    no plain member operand — and a plain ``Enum`` member equals nothing but itself.
     """
 
-    return value.value if isinstance(value, Enum) else value
+    return enum_values(value)
 
 
 def _pair(left: Any, right: Any) -> tuple[Any, Any]:
@@ -257,10 +261,9 @@ def _match_field(doc: JsonDict, field: QueryField) -> bool:
                 return False
 
         case "$null":
-            should_be_null = bool(field.value)
-            if should_be_null:
-                return value is _MISSING or value is None
-            return value is not _MISSING and value is not None
+            # A member whose value is ``None`` is stored as ``NULL``.
+            is_null = value is _MISSING or _plain(value) is None
+            return is_null is bool(field.value)
 
         case "$empty":
             should_be_empty = bool(field.value)
