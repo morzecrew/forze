@@ -7,13 +7,16 @@ a mock context — the production shape splits exactly there (broker on Redis, i
 the database), and the store side already has its own mock↔Postgres differential. Asserting
 the same `GatewayDeliveryOutcome` on both legs turns "the mock's ack-stream survives a crash"
 into "the mock's ack-stream matches the engine that actually keeps the pending-entries list".
+The transport-neutral ``RealtimeMailboxWriter`` runs the same leg and must agree on everything
+but the emits it never makes.
 """
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 from uuid import UUID, uuid4
 
+import attrs
 import pytest
 
 pytest.importorskip("redis")
@@ -27,6 +30,7 @@ from forze.application.contracts.stream import (
     StreamSpec,
 )
 from forze.application.execution import DepsRegistry, ExecutionRuntime
+from forze.application.execution.realtime import RealtimeMailboxWriter
 from forze.base.primitives import HlcTimestamp
 from forze.base.serialization import PydanticModelCodec
 from forze.testing import context_from_modules
@@ -87,8 +91,11 @@ def _redis_stream_runtime(redis_client: RedisClient) -> ExecutionRuntime:
     return ExecutionRuntime(deps=DepsRegistry.from_modules(module).freeze())
 
 
+Consumer = Literal["gateway", "writer"]
+
+
 async def _run(
-    redis_client: RedisClient, *, crash: GatewayCrashPoint
+    redis_client: RedisClient, *, crash: GatewayCrashPoint, consumer: Consumer = "gateway"
 ) -> GatewayDeliveryOutcome:
     # Stream ports on real Redis; the bridge's dedup mark + mailbox on a mock context —
     # the production split (broker vs database), and the store side has its own differential.
@@ -102,10 +109,19 @@ async def _run(
         dedup=GatewayDedup(inbox_spec=realtime_inbox_spec(), tx_route="mock"),
     )
     mailbox = build_realtime_mailbox(store_ctx, retention=UNSWEPT)
+    writer = RealtimeMailboxWriter(
+        source=_NullSource(),
+        dedup=GatewayDedup(inbox_spec=realtime_inbox_spec(), tx_route="mock"),
+        mailbox_factory=lambda _ctx: mailbox,
+    )
 
     async def bridge(
         signal: RealtimeSignal, tenant: UUID | None, dedup_id: str | None, hlc: HlcTimestamp
     ) -> None:
+        if consumer == "writer":
+            await writer._handle(store_ctx, mailbox, signal, tenant, dedup_id, hlc)  # pyright: ignore[reportPrivateUsage]
+            return
+
         await gateway._handle(store_ctx, mailbox, signal, tenant, dedup_id, hlc)  # pyright: ignore[reportPrivateUsage]
 
     async def _rows() -> int:
@@ -160,3 +176,30 @@ class TestRedisGatewayCrashDelivery:
             mailboxed=_N,
             pending_after=0,
         )
+
+
+_GATEWAY_BEFORE_BRIDGE = GatewayDeliveryOutcome(
+    appended=_N, deliveries=_N, emitted=_N, distinct_emitted=_N, mailboxed=_N, pending_after=0
+)
+_GATEWAY_AFTER_COMMIT = GatewayDeliveryOutcome(
+    appended=_N, deliveries=2 * _N, emitted=_N, distinct_emitted=_N, mailboxed=_N, pending_after=0
+)
+
+
+@pytest.mark.conformance(plane="realtime_delivery", engine="redis")
+class TestRedisMailboxWriterCrashDelivery:
+    """The mailbox writer over the same Redis leg: the gateway's outcome, minus the emits."""
+
+    async def test_crash_before_bridge_stores_every_signal_once(
+        self, redis_client: RedisClient
+    ) -> None:
+        outcome = await _run(redis_client, crash=GatewayCrashPoint.BEFORE_BRIDGE, consumer="writer")
+        assert outcome == attrs.evolve(_GATEWAY_BEFORE_BRIDGE, emitted=0, distinct_emitted=0)
+
+    async def test_crash_between_commit_and_ack_dedups_the_redelivery(
+        self, redis_client: RedisClient
+    ) -> None:
+        outcome = await _run(
+            redis_client, crash=GatewayCrashPoint.AFTER_BRIDGE_BEFORE_ACK, consumer="writer"
+        )
+        assert outcome == attrs.evolve(_GATEWAY_AFTER_COMMIT, emitted=0, distinct_emitted=0)

@@ -226,6 +226,12 @@ disconnect handlers, without logging it. The full store-and-forward flow —
 per-device cursors, trimming, and opting an event out (`offline_delivery=False`) — is the
 [offline-delivery recipe](../recipes/realtime-offline-delivery.md).
 
+The gateway's store half is shared code. A deployment with no Socket.IO server runs it
+alone as `RealtimeMailboxWriter`, filling the mailbox the SSE and raw-WebSocket routes
+replay from (see [offline delivery without Socket.IO](fastapi.md#offline-delivery-without-socketio)).
+Run one or the other against a dedup inbox, never both: whichever marks a signal first
+owns it, and a gateway that loses the race skips its live emit.
+
 Operational hardening around the loop:
 
 - **Token rotation without a reconnect** — a client sends `realtime.reauth` with its

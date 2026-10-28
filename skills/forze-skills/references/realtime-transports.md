@@ -104,6 +104,31 @@ domain state, not in a mailbox.
 Topic broadcasts are never mailboxed — there is no fixed membership to store them
 for.
 
+The routes replay and ack the mailbox; something else must **write** it. The Socket.IO
+gateway does as it emits. An SSE- or WebSocket-only app has no gateway, so it runs
+`RealtimeMailboxWriter`, the gateway's store half under the same rules (no Socket.IO
+install needed):
+
+```python
+from forze.application.execution.realtime import (
+    GatewayDedup,
+    RealtimeMailboxWriter,
+    StreamGroupSignalSource,
+    realtime_mailbox_writer_lifecycle_step,
+)
+
+writer = RealtimeMailboxWriter(
+    source=StreamGroupSignalSource(stream_spec=transport.stream_spec),
+    dedup=GatewayDedup(inbox_spec=transport.inbox_spec, tx_route="..."),
+    mailbox_factory=mailbox_factory,  # the factory the routes replay from
+)
+# alongside realtime_group_ensure_lifecycle_step and realtime_relay_lifecycle_step
+step = realtime_mailbox_writer_lifecycle_step(writer)
+```
+
+Run it on every node with one consumer group, but never beside a mailboxing Socket.IO
+gateway on the same dedup inbox: whichever marks a signal first owns it.
+
 ## Authenticating the connection
 
 Do not hand-write the credential ladder. `build_ws_connection_resolver` (and
@@ -185,6 +210,7 @@ advance, not on transport internals.
 ## Anti-patterns
 
 - **Treating the live emit as the delivery guarantee** — the mailbox is the source of truth; a signal emitted into an empty room is gone.
+- **An SSE- or WebSocket-only app with no mailbox writer** — the routes replay and ack an empty mailbox, so a durable signal sent while the client reconnects is lost.
 - **Client-asserted topics** — never subscribe a connection to a topic it asked for without an authorization decision.
 - **Skipping `device_id`** — a shared per-principal cursor makes two tabs fight over the same ack position.
 - **Building a client against one transport's quirks** — write against the wire protocol so the transport stays a deployment choice.

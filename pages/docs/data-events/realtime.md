@@ -87,7 +87,10 @@ Online delivery is only half the promise. If the recipient's phone is asleep whe
 the shipment confirms, emitting into an empty room loses the signal. So a durable,
 principal-addressed signal is also written to a per-recipient **mailbox** — the
 mailbox is the source of truth, and the live emit is just a latency optimization
-on top. In a live app the gateway does this store as it processes the signal:
+on top. In a live app the Socket.IO gateway does this store as it processes the signal.
+A deployment that serves only SSE or the raw WebSocket route runs the
+[mailbox writer](../integrations/fastapi.md#offline-delivery-without-socketio) instead:
+the same store, with no live emit.
 
 ```python
 --8<-- "recipes/realtime_offline/app.py:emit"

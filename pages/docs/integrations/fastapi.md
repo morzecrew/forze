@@ -459,8 +459,9 @@ step = realtime_sse_tail_lifecycle_step(hub, stream_spec=realtime_stream_spec())
 
 The live leg reads the realtime stream with a plain (non-group) tail — broadcast
 semantics, so every node sees every signal, with zero consumer-group lifecycle —
-and is at-most-once by contract: the mailbox carries the durable guarantee, and the
-Socket.IO gateway remains its sole writer. Without a hub the endpoint is
+and is at-most-once by contract: the mailbox carries the durable guarantee, and
+something else must write it (see [offline delivery without
+Socket.IO](#offline-delivery-without-socketio)). Without a hub the endpoint is
 catch-up-only (the browser's auto-reconnect gives long-poll-style delivery). Topics
 are subscribed per connection with `?topics=a,b` (live-only, like Socket.IO rooms)
 and are **fail-closed**: they require an `authorize_topics` resolver — `(ctx,
@@ -491,6 +492,74 @@ re-assert within the TTL. The heartbeat runs with no tenant bound, so it refuses
 on a client routed per tenant; rooms already carry their tenant. A closing stream leaves its rooms even when it closes cancelled —
 its client gone, or cut off by a drain — within 2 s; past that, a warning is logged and the
 rest expire with the store's TTL.
+
+### Offline delivery without Socket.IO
+
+The SSE and WebSocket routes replay the mailbox and ack against it; they never write it.
+Something has to consume the realtime stream through a consumer group and store each
+durable, principal-addressed signal. With a Socket.IO server, its gateway does. Without
+one, run `RealtimeMailboxWriter`: the gateway's store half and nothing else. It runs
+the same delivery code as the gateway, so admission against the catalog, the
+tenancy rules, the dedup mark and the store-before-ack order are identical:
+
+```python
+from datetime import timedelta
+
+from forze.application.execution.realtime import (
+    GatewayDedup,
+    RealtimeMailboxWriter,
+    StreamGroupSignalSource,
+    realtime_mailbox_writer_lifecycle_step,
+)
+from forze_kits.integrations.realtime import (
+    MailboxRetention,
+    build_realtime_mailbox,
+    build_realtime_transport,
+    realtime_group_ensure_lifecycle_step,
+    realtime_mailbox_retention_lifecycle_step,
+    realtime_relay_lifecycle_step,
+)
+
+transport = build_realtime_transport()
+writer = RealtimeMailboxWriter(
+    source=StreamGroupSignalSource(stream_spec=transport.stream_spec),
+    dedup=GatewayDedup(inbox_spec=transport.inbox_spec, tx_route="..."),
+    # the same mailbox the routes replay from
+    mailbox_factory=lambda ctx: build_realtime_mailbox(
+        ctx, retention=MailboxRetention(max_age=timedelta(days=7)),
+    ),
+)
+lifecycle = [
+    realtime_group_ensure_lifecycle_step(stream_spec=transport.stream_spec),  # before serving
+    realtime_relay_lifecycle_step(
+        outbox_spec=transport.outbox_spec, stream_spec=transport.stream_spec,
+    ),
+    realtime_mailbox_retention_lifecycle_step(max_age=timedelta(days=7)),
+    realtime_mailbox_writer_lifecycle_step(writer),
+]
+```
+
+- **Any number of nodes.** Give every node's writer the same consumer group: each signal
+  goes to one writer, a crashed node's unacked entries are reclaimed, and a redelivery
+  finds the dedup mark. Rows are ordered by the signal's carried HLC, not by which node
+  stored them.
+- **Instead of the gateway, not beside it.** Never run the writer next to a Socket.IO
+  gateway that has a mailbox and shares its dedup inbox. Whichever marks a signal first
+  owns it, and a gateway that loses the race skips its live emit.
+- **Store only.** Ephemeral, topic and `offline_delivery=False` signals are left alone and
+  unmarked; live delivery stays with the hub.
+- **Tenancy as on the gateway.** `bind_tenant_from_headers` is opt-in (the header is
+  untrusted), and `require_tenant` follows it. For a `tenant_aware` stream route use
+  `TenantShardedSignalSource(shard=shard)` with
+  `realtime_tenant_group_ensure_lifecycle_step`. A `PubSubSignalSource` is refused
+  (`realtime_mailbox_writer_source_unsupported`): pub/sub keeps nothing for a writer that
+  was not subscribed.
+- **Counters.** Hand one `RealtimeGatewayStats` to the writer and its source, then call
+  `instrument_realtime_gateway(stats)`. Both live in `forze.application.execution.realtime`,
+  so no Socket.IO install is needed.
+
+With neither a writer nor a gateway, the mailbox stays empty. The routes still serve and
+accept acks, but a durable signal that lands while a client is disconnected is lost.
 
 ## Realtime over raw WebSocket
 
