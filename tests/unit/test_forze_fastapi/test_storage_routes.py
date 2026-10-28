@@ -1180,7 +1180,7 @@ class TestStreamingHeaderHelpers:
             last_modified=None,
         )
 
-        resp = mod._full_stream_response(streamed)  # pyright: ignore[reportPrivateUsage]
+        resp = mod.streamed_download_response(streamed)
 
         lower = {k.lower() for k in resp.headers}
         assert "content-length" not in lower

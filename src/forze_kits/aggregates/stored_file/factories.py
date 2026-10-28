@@ -10,15 +10,19 @@ from forze_kits.dto.paginated import Paginated
 
 from .dto import (
     ListStoredFilesRequestDTO,
+    PresignStoredFileDownloadRequestDTO,
     StoredFileDownloadDTO,
     StoredFileIdDTO,
     StoredFileIdRevDTO,
+    StoredFilePresignedDownloadDTO,
     UploadStoredFileRequestDTO,
 )
 from .handlers import (
     DownloadStoredFile,
+    DownloadStoredFileStream,
     GetStoredFile,
     ListStoredFiles,
+    PresignStoredFileDownload,
     SearchStoredFiles,
     SoftDeleteStoredFile,
     UploadStoredFile,
@@ -61,6 +65,15 @@ def build_stored_file_registry(
                 doc=ctx.doc.query(doc_spec),
                 storage=ctx.storage.query(kit.resolved_storage),
             ),
+            ns.key(StoredFileKernelOp.DOWNLOAD_STREAM): lambda ctx: DownloadStoredFileStream(
+                doc=ctx.doc.query(doc_spec),
+                storage=ctx.storage.query(kit.resolved_storage),
+            ),
+            # presign_download is a read grant → query port.
+            ns.key(StoredFileKernelOp.PRESIGN_DOWNLOAD): lambda ctx: PresignStoredFileDownload(
+                doc=ctx.doc.query(doc_spec),
+                storage=ctx.storage.query(kit.resolved_storage),
+            ),
             ns.key(StoredFileKernelOp.DELETE): lambda ctx: SoftDeleteStoredFile(
                 doc=ctx.doc.command(doc_spec),
                 outbox=(ctx.outbox.command(kit.outbox) if kit.outbox is not None else None),
@@ -68,12 +81,14 @@ def build_stored_file_registry(
         },
     )
 
-    # GET / LIST / DOWNLOAD only acquire read (query) ports.
+    # GET / LIST and the download ops only acquire read (query) ports.
     reg = (
         reg.bind(
             StoredFileKernelOp.GET,
             StoredFileKernelOp.LIST,
             StoredFileKernelOp.DOWNLOAD,
+            StoredFileKernelOp.DOWNLOAD_STREAM,
+            StoredFileKernelOp.PRESIGN_DOWNLOAD,
             namespace=ns,
         )
         .as_query()
@@ -101,6 +116,19 @@ def build_stored_file_registry(
                 input_type=StoredFileIdDTO,
                 output_type=StoredFileDownloadDTO,
                 description="Download blob bytes for a ready stored file.",
+            ),
+            # The result carries an async chunk iterator, not JSON — no output type.
+            StoredFileKernelOp.DOWNLOAD_STREAM: OperationDescriptor(
+                input_type=StoredFileIdDTO,
+                description="Open a bounded-memory download stream for a ready stored file.",
+            ),
+            StoredFileKernelOp.PRESIGN_DOWNLOAD: OperationDescriptor(
+                input_type=PresignStoredFileDownloadRequestDTO,
+                output_type=StoredFilePresignedDownloadDTO,
+                description=(
+                    "Mint a time-limited URL granting direct download (GET) of a ready "
+                    "stored file. The returned URL is a bearer credential — never logged."
+                ),
             ),
             StoredFileKernelOp.DELETE: OperationDescriptor(
                 input_type=StoredFileIdRevDTO,

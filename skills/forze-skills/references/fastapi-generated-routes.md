@@ -107,6 +107,8 @@ The facade runs each operation through the pipeline (mapping, hooks, transaction
 
 A hand-written upload route reads the file with `await read_upload_capped(file, max_size)` (from `forze_fastapi.routes`), never a bare `await file.read()`: it is the generated upload route's reader, refusing a file over the cap, without buffering it all, with the same 422 status and `upload_too_large` code. A stored-file kit's `max_bytes` checks only after the whole body is in memory.
 
+A stored-file download route runs the kit's `download_stream` operation (`StoredFileIdDTO`) and returns `streamed_download_response(result.stream)` (from `forze_fastapi.routes`), not the buffered `download`. For a direct fetch, `presign_download` (`id`, `expires_in` up to 7 days) returns the row and a presigned URL; a client-side-encrypting route refuses it. Both load the row and refuse a file that is not ready. Bind authn and authz on each one you expose.
+
 ## Readiness and deadline headers
 
 - `attach_readiness_route(router, runtime)` (from `forze_fastapi.routes`) adds

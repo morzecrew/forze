@@ -73,6 +73,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **SSE- and WebSocket-only apps get offline delivery without Socket.IO.** `RealtimeMailboxWriter` and its lifecycle step fill the mailbox those routes replay from, using the gateway's store code. They and the signal sources live in `forze.application.execution.realtime`; `forze_socketio` re-exports what moved.
 
+- **Stored files stream and presign downloads.** The kit's `download_stream` and `presign_download` operations load the row and refuse a file that is not ready, as `download` does; bind authn and authz on them too. A hand-written route returns `forze_fastapi.routes.streamed_download_response(result.stream)`.
+
 **`forze ops` for people at a shell and for backfills:**
 
 - **`forze ops` gains typed flags, JSONL batches and shell completion.** `call OP --field VALUE` takes a flat-scalar input as flags; `--batch @PATH|-` runs one call per line in one runtime, stopping at the first failure; `OP` completes in the shell. An unknown option after `OP` now exits 2 with an error object.

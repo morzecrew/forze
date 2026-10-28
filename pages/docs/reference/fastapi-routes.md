@@ -317,6 +317,50 @@ flow above needs them.
     error propagates to a normal error status. **Server-side** (SSE/CMEK)
     encryption is transparent and does not refuse.
 
+### Stored-file downloads
+
+The stored-file kit ships no generated routes. It has three read-only download
+operations, and each one loads the row first: a row the caller can't read
+(another tenant's, or a missing one) answers not-found, and a `pending` or
+`failed` file is refused before storage is touched.
+
+| Operation | Input | Result |
+|-----------|-------|--------|
+| `download` | `StoredFileIdDTO` | `StoredFileDownloadDTO`: the whole object in memory, for small files |
+| `download_stream` | `StoredFileIdDTO` | `StoredFileStream`: the row plus a bounded-memory `StreamedDownload` named after the stored filename |
+| `presign_download` | `PresignStoredFileDownloadRequestDTO` (`id`, `expires_in` up to 7 days) | `StoredFilePresignedDownloadDTO`: the row plus a presigned `GET` URL |
+
+A hand-written route hands the stream to `streamed_download_response`, which
+builds the generated download route's `200`: `Content-Disposition`, `ETag`,
+`Last-Modified`, and `Content-Length` when the size is known. It doesn't answer
+`Range` or conditional requests.
+
+```python
+from uuid import UUID
+
+from fastapi import APIRouter, Depends
+
+from forze.application.execution.operations import run_operation
+from forze_fastapi.routes import streamed_download_response
+from forze_kits.aggregates.stored_file import StoredFileIdDTO
+
+files_router = APIRouter(prefix="/files", tags=["files"])
+
+
+@files_router.get("/{file_id}/content")
+async def file_content(file_id: UUID, ctx=Depends(ctx_dep)):
+    args = StoredFileIdDTO(id=file_id)
+    result = await run_operation(registry, "files.download_stream", args, ctx)
+
+    return streamed_download_response(result.stream)
+```
+
+`presign_download` follows the storage kit's presign rules: the URL is a bearer
+credential, the storage key's tenant check applies, and a client-side-encrypting
+route refuses it. The URL saves under the object key's name, so the client takes
+the filename from `file.filename`. Each operation has its own plan: bind your
+authn and authz on every one you expose, as you do on `download`.
+
 ## Authn routes
 
 `attach_authn_routes` projects an authn registry (`build_authn_registry`) the

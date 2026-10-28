@@ -14,7 +14,13 @@ class StoredFileKernelOp(StrEnum):
     """Create a pending stored-file row (blob upload runs after commit)."""
 
     DOWNLOAD = "download"
-    """Download blob bytes for a ready stored file."""
+    """Download blob bytes for a ready stored file (whole body, fully buffered)."""
+
+    DOWNLOAD_STREAM = "download_stream"
+    """Open a bounded-memory download stream for a ready stored file."""
+
+    PRESIGN_DOWNLOAD = "presign_download"
+    """Mint a time-limited URL for downloading a ready stored file directly (read grant)."""
 
     DELETE = "delete"
     """Soft-delete a stored file."""

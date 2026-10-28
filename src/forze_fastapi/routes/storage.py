@@ -530,8 +530,18 @@ def _cache_validators(etag: str, last_modified: Any) -> dict[str, str]:
     return validators
 
 
-def _full_stream_response(streamed: StreamedDownload) -> StreamingResponse:
-    """A **200** streamed body with cache/validator/disposition headers from *streamed*."""
+def streamed_download_response(streamed: StreamedDownload) -> StreamingResponse:
+    """The generated download route's **200** streamed response, for a hand-written route.
+
+    Carries ``Content-Disposition`` (RFC 6266-encoded from :attr:`StreamedDownload.filename`),
+    ``ETag`` and ``Last-Modified`` from the stream's validators, ``Accept-Ranges``, and
+    ``Content-Length`` when the plaintext size is known (chunked transfer otherwise). It does not
+    answer conditional or ``Range`` requests.
+
+    :param streamed: An opened stream, e.g. the ``stream`` of a stored-file ``download_stream``
+        result; its chunks are consumed as the response is sent.
+    :returns: The streaming response.
+    """
 
     etag = f'"{streamed.etag}"' if streamed.etag else ""
     headers = {
@@ -586,7 +596,7 @@ def _streaming_download_endpoint(
         # Fast path: a plain download needs only download_stream — one governed op, validators
         # ride along on the result (no separate head).
         if not wants_range and not wants_conditional:
-            return _full_stream_response(await stream_runner(key))
+            return streamed_download_response(await stream_runner(key))
 
         head: ObjectHeadDTO = await head_runner(key)
         etag = f'"{head.etag}"' if head.etag else ""
@@ -614,7 +624,7 @@ def _streaming_download_endpoint(
             if ranged_response is not None:
                 return ranged_response
 
-        return _full_stream_response(await stream_runner(key))
+        return streamed_download_response(await stream_runner(key))
 
     return endpoint
 
@@ -712,7 +722,7 @@ async def _range_response(
             **base_headers,
             "Content-Range": ranged.content_range,
             "Content-Length": str(len(ranged.data)),
-            # Same filename source as the full streamed download (see _full_stream_response), so a
+            # Same filename source as the full streamed download (see streamed_download_response), so a
             # Range and a full GET advertise the same Content-Disposition. Fall back to the key
             # basename if the adapter resolved none.
             "Content-Disposition": _content_disposition(

@@ -8,8 +8,10 @@ from forze.application.execution.operations.facade import (
 
 from .handlers import (
     DownloadStoredFile,
+    DownloadStoredFileStream,
     GetStoredFile,
     ListStoredFiles,
+    PresignStoredFileDownload,
     SearchStoredFiles,
     SoftDeleteStoredFile,
     UploadStoredFile,
@@ -34,7 +36,19 @@ class StoredFileFacade(OperationFacade):
         StoredFileKernelOp.DOWNLOAD,
         uc=DownloadStoredFile,
     )
-    """Download blob bytes."""
+    """Download blob bytes (whole body, buffered)."""
+
+    download_stream = facade_op(
+        StoredFileKernelOp.DOWNLOAD_STREAM,
+        uc=DownloadStoredFileStream,
+    )
+    """Open a bounded-memory download stream."""
+
+    presign_download = facade_op(
+        StoredFileKernelOp.PRESIGN_DOWNLOAD,
+        uc=PresignStoredFileDownload,
+    )
+    """Mint a presigned download URL."""
 
     delete = facade_op(
         StoredFileKernelOp.DELETE,
