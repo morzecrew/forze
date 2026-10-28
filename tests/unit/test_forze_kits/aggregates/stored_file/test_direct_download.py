@@ -22,12 +22,14 @@ from forze_kits.aggregates.stored_file import (
     PresignStoredFileDownload,
     PresignStoredFileDownloadRequestDTO,
     SoftDeleteStoredFile,
+    StoredFileFacade,
     StoredFileIdDTO,
     StoredFileIdRevDTO,
     StoredFileKernelOp,
     UploadStoredFile,
     UploadStoredFileRequestDTO,
     bind_stored_file_writes,
+    build_stored_file_registry,
     freeze_stored_file_registry,
 )
 from forze_kits.domain.stored_file import (
@@ -40,7 +42,8 @@ from forze_mock import MockDepsModule, MockRouteConfig, MockState
 
 # ----------------------- #
 
-_KIT = StoredFileKitSpec(name="files")
+# Both download paths are opt-in; these tests run against a kit that enables them.
+_KIT = StoredFileKitSpec(name="files", stream_downloads=True, presign_downloads=True)
 _KEY = _KIT.document.default_namespace.key
 _REG = freeze_stored_file_registry(_KIT, tx_route="mock")
 
@@ -109,6 +112,52 @@ def state() -> MockState:
 @pytest.fixture
 def ctx(state: MockState) -> ExecutionContext:
     return context_from_modules(MockDepsModule(state=state))
+
+
+# ....................... #
+
+
+class TestDirectDownloadOptIn:
+    def _ops(self, kit: StoredFileKitSpec) -> set[str]:
+        catalog = build_stored_file_registry(kit).freeze().catalog()
+        return {op for op in (_STREAM, _PRESIGN) if op in catalog}
+
+    def test_neither_is_registered_by_default(self) -> None:
+        assert self._ops(StoredFileKitSpec(name="files")) == set()
+
+    @pytest.mark.parametrize(
+        ("flags", "ops"),
+        [
+            ({"stream_downloads": True}, {_STREAM}),
+            ({"presign_downloads": True}, {_PRESIGN}),
+            ({"stream_downloads": True, "presign_downloads": True}, {_STREAM, _PRESIGN}),
+        ],
+        ids=["stream", "presign", "both"],
+    )
+    def test_each_flag_registers_only_its_operation(self, flags: dict, ops: set[str]) -> None:
+        assert self._ops(StoredFileKitSpec(name="files", **flags)) == ops
+
+    def test_the_facade_resolves_an_enabled_operation(self, ctx: ExecutionContext) -> None:
+        facade = StoredFileFacade(ctx=ctx, registry=_REG, namespace=_KIT.document.default_namespace)
+
+        assert facade.download_stream is not None
+        assert facade.presign_download is not None
+
+    @pytest.mark.parametrize("attr", ["download_stream", "presign_download"])
+    def test_the_facade_refuses_an_operation_left_off(
+        self, ctx: ExecutionContext, attr: str
+    ) -> None:
+        kit = StoredFileKitSpec(name="files")
+        facade = StoredFileFacade(
+            ctx=ctx,
+            registry=build_stored_file_registry(kit).freeze(),
+            namespace=kit.document.default_namespace,
+        )
+
+        with pytest.raises(CoreException) as ei:
+            getattr(facade, attr)
+
+        assert ei.value.kind is ExceptionKind.CONFIGURATION
 
 
 # ....................... #

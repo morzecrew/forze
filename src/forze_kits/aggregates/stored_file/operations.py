@@ -17,10 +17,10 @@ class StoredFileKernelOp(StrEnum):
     """Download blob bytes for a ready stored file (whole body, fully buffered)."""
 
     DOWNLOAD_STREAM = "download_stream"
-    """Open a bounded-memory download stream for a ready stored file."""
+    """Open a bounded-memory download stream for a ready stored file (opt-in)."""
 
     PRESIGN_DOWNLOAD = "presign_download"
-    """Mint a time-limited URL for downloading a ready stored file directly (read grant)."""
+    """Mint a time-limited URL for downloading a ready stored file directly (opt-in)."""
 
     DELETE = "delete"
     """Soft-delete a stored file."""

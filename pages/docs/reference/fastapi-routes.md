@@ -322,7 +322,12 @@ flow above needs them.
 The stored-file kit ships no generated routes. It has three read-only download
 operations, and each one loads the row first: a row the caller can't read
 (another tenant's, or a missing one) answers not-found, and a `pending` or
-`failed` file is refused before storage is touched.
+`failed` file is refused before storage is touched. `download` is always
+registered. The other two are opt-in, because an operation runs only the guards
+bound on its own key: enable each with
+`StoredFileKitSpec(stream_downloads=True, presign_downloads=True)`, then bind
+your authn and authz on it as you do on `download`. A `StoredFileFacade` method
+for an operation left off raises a configuration error.
 
 | Operation | Input | Result |
 |-----------|-------|--------|
@@ -358,8 +363,7 @@ async def file_content(file_id: UUID, ctx=Depends(ctx_dep)):
 `presign_download` follows the storage kit's presign rules: the URL is a bearer
 credential, the storage key's tenant check applies, and a client-side-encrypting
 route refuses it. The URL saves under the object key's name, so the client takes
-the filename from `file.filename`. Each operation has its own plan: bind your
-authn and authz on every one you expose, as you do on `download`.
+the filename from `file.filename`.
 
 ## Authn routes
 

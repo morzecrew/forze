@@ -40,7 +40,7 @@ from forze_s3.kernel.client import S3Client
 
 MIB = 1024 * 1024
 
-_KIT = StoredFileKitSpec(name="files")
+_KIT = StoredFileKitSpec(name="files", stream_downloads=True, presign_downloads=True)
 _KEY = _KIT.document.default_namespace.key
 _REG = freeze_stored_file_registry(_KIT, tx_route="mock")
 

@@ -43,7 +43,11 @@ def build_stored_file_registry(
     *,
     ns: StrKeyNamespace | None = None,
 ) -> OperationRegistry:
-    """Build stored-file operation registry for *kit*."""
+    """Build stored-file operation registry for *kit*.
+
+    ``download_stream`` and ``presign_download`` are registered only when *kit* enables them
+    (:attr:`~StoredFileKitSpec.stream_downloads`, :attr:`~StoredFileKitSpec.presign_downloads`).
+    """
 
     ns = ns or kit.document.default_namespace
     doc_spec = kit.document
@@ -65,15 +69,6 @@ def build_stored_file_registry(
                 doc=ctx.doc.query(doc_spec),
                 storage=ctx.storage.query(kit.resolved_storage),
             ),
-            ns.key(StoredFileKernelOp.DOWNLOAD_STREAM): lambda ctx: DownloadStoredFileStream(
-                doc=ctx.doc.query(doc_spec),
-                storage=ctx.storage.query(kit.resolved_storage),
-            ),
-            # presign_download is a read grant → query port.
-            ns.key(StoredFileKernelOp.PRESIGN_DOWNLOAD): lambda ctx: PresignStoredFileDownload(
-                doc=ctx.doc.query(doc_spec),
-                storage=ctx.storage.query(kit.resolved_storage),
-            ),
             ns.key(StoredFileKernelOp.DELETE): lambda ctx: SoftDeleteStoredFile(
                 doc=ctx.doc.command(doc_spec),
                 outbox=(ctx.outbox.command(kit.outbox) if kit.outbox is not None else None),
@@ -81,14 +76,12 @@ def build_stored_file_registry(
         },
     )
 
-    # GET / LIST and the download ops only acquire read (query) ports.
+    # GET / LIST / DOWNLOAD only acquire read (query) ports.
     reg = (
         reg.bind(
             StoredFileKernelOp.GET,
             StoredFileKernelOp.LIST,
             StoredFileKernelOp.DOWNLOAD,
-            StoredFileKernelOp.DOWNLOAD_STREAM,
-            StoredFileKernelOp.PRESIGN_DOWNLOAD,
             namespace=ns,
         )
         .as_query()
@@ -117,19 +110,6 @@ def build_stored_file_registry(
                 output_type=StoredFileDownloadDTO,
                 description="Download blob bytes for a ready stored file.",
             ),
-            # The result carries an async chunk iterator, not JSON — no output type.
-            StoredFileKernelOp.DOWNLOAD_STREAM: OperationDescriptor(
-                input_type=StoredFileIdDTO,
-                description="Open a bounded-memory download stream for a ready stored file.",
-            ),
-            StoredFileKernelOp.PRESIGN_DOWNLOAD: OperationDescriptor(
-                input_type=PresignStoredFileDownloadRequestDTO,
-                output_type=StoredFilePresignedDownloadDTO,
-                description=(
-                    "Mint a time-limited URL granting direct download (GET) of a ready "
-                    "stored file. The returned URL is a bearer credential — never logged."
-                ),
-            ),
             StoredFileKernelOp.DELETE: OperationDescriptor(
                 input_type=StoredFileIdRevDTO,
                 output_type=StoredFileRead,
@@ -138,6 +118,48 @@ def build_stored_file_registry(
         },
         namespace=ns,
     )
+
+    # Opt-in: an operation runs only the guards bound on its own key, so a new download path
+    # must not appear unguarded in a registry whose app guarded only ``download``.
+    if kit.stream_downloads:
+        reg = (
+            reg.register(
+                ns.key(StoredFileKernelOp.DOWNLOAD_STREAM),
+                lambda ctx: DownloadStoredFileStream(
+                    doc=ctx.doc.query(doc_spec),
+                    storage=ctx.storage.query(kit.resolved_storage),
+                ),
+                # The result carries an async chunk iterator, not JSON — no output type.
+                descriptor=OperationDescriptor(
+                    input_type=StoredFileIdDTO,
+                    description="Open a bounded-memory download stream for a ready stored file.",
+                ),
+            )
+            .as_query()
+            .finish()
+        )
+
+    # presign_download is a read grant → query port.
+    if kit.presign_downloads:
+        reg = (
+            reg.register(
+                ns.key(StoredFileKernelOp.PRESIGN_DOWNLOAD),
+                lambda ctx: PresignStoredFileDownload(
+                    doc=ctx.doc.query(doc_spec),
+                    storage=ctx.storage.query(kit.resolved_storage),
+                ),
+                descriptor=OperationDescriptor(
+                    input_type=PresignStoredFileDownloadRequestDTO,
+                    output_type=StoredFilePresignedDownloadDTO,
+                    description=(
+                        "Mint a time-limited URL granting direct download (GET) of a ready "
+                        "stored file. The returned URL is a bearer credential — never logged."
+                    ),
+                ),
+            )
+            .as_query()
+            .finish()
+        )
 
     if kit.search_spec is not None:
         search_spec = kit.search_spec
