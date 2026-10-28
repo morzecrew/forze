@@ -385,13 +385,25 @@ the step — no manual `put`:
 spec = DurableFunctionSpec(
     name="report",
     run=DurableFunctionInvokeSpec(args_type=ReportArgs),
-    triggers=(DurableFunctionCronTrigger(expression="0 3 * * *"),),
+    triggers=(
+        DurableFunctionCronTrigger(
+            expression="0 3 * * *",
+            tz="Europe/Berlin",
+            input=ReportArgs(kind="daily"),
+        ),
+    ),
 )
 durable_scheduler_background_lifecycle_step(scheduler=scheduler, specs=[spec])
 ```
 
+`tz` names the IANA zone the expression runs in (UTC when unset). `input` is what each fire
+hands the run: a dict or an instance of the spec's `args_type`, checked against it when the
+spec is declared. On Inngest, `tz` maps to its `TZ=` prefix, and an `input` is refused,
+since an Inngest cron run receives no data.
+
 Auto-registration is **idempotent** — a restart re-uses an unchanged schedule (so it never
-resets `next_fire_at` and skips a due fire) and re-registers only when the cron changes.
+resets `next_fire_at` and skips a due fire) and re-registers only when the cron or timezone
+changes. A changed `input` alone replaces the stored input and keeps the next fire.
 
 Firing is **fire-once / skip-missed**: if the scheduler was down across several occurrences
 it fires once and advances to the next future one (no backfill). It's exactly-once across

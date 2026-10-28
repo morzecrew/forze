@@ -3,6 +3,8 @@
 import pytest
 from pydantic import BaseModel
 
+from forze.base.exceptions import CoreException
+
 from forze.application.contracts.durable.function import (
     DurableFunctionCronTrigger,
     DurableFunctionEventSpec,
@@ -67,3 +69,47 @@ class TestDurableFunctionSpec:
         )
 
         assert spec.operation == "jobs.scan_inbox"
+
+
+class TestDurableFunctionCronTrigger:
+    def test_tz_and_input_default_to_none(self) -> None:
+        trigger = DurableFunctionCronTrigger(expression="0 2 * * *")
+
+        assert trigger.tz is None
+        assert trigger.input is None
+        assert trigger.encode_input(_In) is None
+
+    def test_a_dict_input_is_validated_and_encoded(self) -> None:
+        trigger = DurableFunctionCronTrigger(expression="0 2 * * *", input={"n": "3"})
+
+        assert trigger.encode_input(_In) == {"n": 3}
+
+    def test_a_model_input_is_encoded(self) -> None:
+        trigger = DurableFunctionCronTrigger(expression="0 2 * * *", input=_In(n=4))
+
+        assert trigger.encode_input(_In) == {"n": 4}
+
+    def test_a_trigger_with_a_dict_input_still_hashes(self) -> None:
+        trigger = DurableFunctionCronTrigger(expression="0 2 * * *", input={"n": 1})
+
+        assert hash(trigger) == hash(DurableFunctionCronTrigger(expression="0 2 * * *"))
+
+    def test_an_input_that_does_not_validate_fails_the_declaration(self) -> None:
+        with pytest.raises(CoreException) as raised:
+            DurableFunctionSpec(
+                name="fn",
+                run=DurableFunctionInvokeSpec(args_type=_In),
+                triggers=(DurableFunctionCronTrigger(expression="0 2 * * *", input={"n": "x"}),),
+            )
+
+        assert raised.value.kind == "configuration"
+
+    def test_a_model_of_another_type_fails_the_declaration(self) -> None:
+        with pytest.raises(CoreException) as raised:
+            DurableFunctionSpec(
+                name="fn",
+                run=DurableFunctionInvokeSpec(args_type=_In),
+                triggers=(DurableFunctionCronTrigger(expression="0 2 * * *", input=_Out()),),
+            )
+
+        assert raised.value.kind == "configuration"

@@ -1,11 +1,11 @@
 from typing import Any, Generic, TypeVar, final
 
 import attrs
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 from forze.application.contracts.base import BaseSpec
 from forze.base.exceptions import exc
-from forze.base.primitives import StrKey
+from forze.base.primitives import JsonDict, StrKey
 from forze.base.serialization import ModelCodec
 
 # ----------------------- #
@@ -75,6 +75,44 @@ class DurableFunctionCronTrigger:
     expression: str
     """Cron expression interpreted by the provider."""
 
+    tz: str | None = None
+    """IANA timezone the expression is evaluated in (``None`` = UTC)."""
+
+    # Kept out of the hash: a dict (or an unfrozen model) does not hash.
+    input: JsonDict | BaseModel | None = attrs.field(default=None, hash=False)
+    """Input every fire hands the run: a JSON dict or an instance of the spec's args type.
+
+    Checked against :attr:`DurableFunctionInvokeSpec.args_type` when the spec is declared, so
+    a payload no run could accept fails at import rather than on the first fire."""
+
+    # ....................... #
+
+    def encode_input(self, args_type: type[BaseModel]) -> JsonDict | None:
+        """Return :attr:`input` validated against *args_type*, as the run store holds it.
+
+        :raises CoreException: ``configuration`` when the input is not an *args_type*.
+        """
+
+        if self.input is None:
+            return None
+
+        if isinstance(self.input, BaseModel):
+            if not isinstance(self.input, args_type):
+                raise exc.configuration(
+                    f"Cron trigger input is a {type(self.input).__name__}, "
+                    f"not the spec's args type {args_type.__name__}.",
+                )
+
+            return self.input.model_dump(mode="json")
+
+        try:
+            return args_type.model_validate(self.input).model_dump(mode="json")
+
+        except ValidationError as error:
+            raise exc.configuration(
+                f"Cron trigger input does not validate as {args_type.__name__}.",
+            ) from error
+
 
 # ....................... #
 
@@ -111,3 +149,7 @@ class DurableFunctionSpec(Generic[In, Out], BaseSpec):
             raise exc.validation(
                 "DurableFunctionSpec requires at least one trigger",
             )
+
+        for trigger in self.triggers:
+            if isinstance(trigger, DurableFunctionCronTrigger):
+                trigger.encode_input(self.run.args_type)

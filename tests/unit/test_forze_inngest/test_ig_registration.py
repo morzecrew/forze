@@ -140,3 +140,22 @@ def test_binding_requires_handler_factory_without_operation() -> None:
 
     with pytest.raises(CoreException, match="handler_factory"):
         InngestFunctionBinding(spec=spec)
+
+
+class TestCronTriggerMapping:
+    def test_tz_maps_to_the_tz_prefix(self) -> None:
+        from forze_inngest.execution.registration import _map_trigger
+
+        trigger = _map_trigger(
+            DurableFunctionCronTrigger(expression="0 2 * * *", tz="Europe/Berlin")
+        )
+
+        assert trigger.cron == "TZ=Europe/Berlin 0 2 * * *"  # type: ignore[union-attr]
+
+    def test_an_input_is_refused(self) -> None:
+        from forze_inngest.execution.registration import _map_trigger
+
+        with pytest.raises(CoreException) as raised:
+            _map_trigger(DurableFunctionCronTrigger(expression="0 2 * * *", input={"value": "x"}))
+
+        assert raised.value.kind == "configuration"

@@ -160,7 +160,67 @@ class TestEnsureSchedule:
         assert loaded.next_fire_at == datetime(2026, 1, 1, 3, tzinfo=UTC)
 
 
+    async def test_an_input_change_alone_keeps_the_next_fire_and_the_pause(self) -> None:
+        ctx = context_from_modules(MockDepsModule())
+        scheduler = DurableScheduler()
+
+        created = await scheduler.ensure_schedule(
+            ctx, "s", "fn", "* * * * *", input_json={"n": 1}, enabled=False, now=_T0
+        )
+        updated = await scheduler.ensure_schedule(
+            ctx,
+            "s",
+            "fn",
+            "* * * * *",
+            input_json={"n": 2},
+            # Past the first fire's minute, so a re-put would visibly move the instant.
+            now=datetime(2026, 1, 1, 0, 1, 10, tzinfo=UTC),
+        )
+
+        loaded = await resolve_durable_schedule_store(ctx).load("s")
+        assert loaded is not None
+        assert loaded == updated
+        assert loaded.input_json == {"n": 2}
+        assert loaded.next_fire_at == created.next_fire_at
+        assert loaded.enabled is False
+
+    async def test_reregisters_when_tz_changes(self) -> None:
+        ctx = context_from_modules(MockDepsModule())
+        scheduler = DurableScheduler()
+
+        await scheduler.ensure_schedule(ctx, "s", "fn", "0 3 * * *", now=_T0)
+        await scheduler.ensure_schedule(ctx, "s", "fn", "0 3 * * *", tz="Asia/Tokyo", now=_T0)
+
+        loaded = await resolve_durable_schedule_store(ctx).load("s")
+        assert loaded is not None
+        assert loaded.tz == "Asia/Tokyo"
+        # 03:00 in Tokyo is 18:00 UTC the day before, so the first after _T0 is 18:00 UTC.
+        assert loaded.next_fire_at == datetime(2026, 1, 1, 18, tzinfo=UTC)
+
+
 class TestEnsureCronSchedules:
+    async def test_passes_the_trigger_tz_and_input(self) -> None:
+        class _Report(BaseModel):
+            kind: str
+
+        ctx = context_from_modules(MockDepsModule())
+        spec = DurableFunctionSpec(
+            name="report",
+            run=DurableFunctionInvokeSpec(args_type=_Report),
+            triggers=(
+                DurableFunctionCronTrigger(
+                    expression="0 3 * * *", tz="Asia/Tokyo", input=_Report(kind="daily")
+                ),
+            ),
+        )
+
+        await DurableScheduler().ensure_cron_schedules(ctx, [spec], now=_T0)
+
+        scheduled = await resolve_durable_schedule_store(ctx).load(cron_schedule_id(spec, 0))
+        assert scheduled is not None
+        assert scheduled.tz == "Asia/Tokyo"
+        assert scheduled.input_json == {"kind": "daily"}
+
     async def test_extracts_cron_triggers_and_skips_events(self) -> None:
         ctx = context_from_modules(MockDepsModule())
         scheduler = DurableScheduler()
