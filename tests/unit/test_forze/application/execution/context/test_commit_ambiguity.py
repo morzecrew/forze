@@ -12,10 +12,16 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import AsyncGenerator
-from contextlib import AbstractAsyncContextManager, asynccontextmanager
+from contextlib import AbstractAsyncContextManager, asynccontextmanager, nullcontext
+from types import SimpleNamespace
+from typing import Any
 
 import attrs
 import pytest
+import structlog
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 
 from forze.application.contracts.execution import Handler
 from forze.application.contracts.transaction import (
@@ -32,6 +38,7 @@ from forze.application.execution.context.commit_state import (
 )
 from forze.application.execution.context.transaction import TransactionContext
 from forze.application.execution.operations.registry import OperationRegistry
+from forze.application.execution.operations.run import invoke as invoke_module
 from forze.base.exceptions import CoreException, ExceptionKind
 from forze_mock import MockDepsModule
 from forze_mock.adapters import MockTxManagerAdapter
@@ -434,3 +441,430 @@ class TestCancellationThroughOperationBoundary:
 
         assert manager.committed is True
         assert await task is True
+
+
+class TestCancellationAfterCommitIsRecorded:
+    """A cancel the scope no longer covers is recorded at the top-level boundary, not converted.
+
+    Only the CLI owns its result channel and its process, so every other boundary keeps
+    the raw cancellation; the warning log and the span event are what tell an operator
+    the commit may have landed.
+    """
+
+    @staticmethod
+    def _tracer() -> tuple[Any, InMemorySpanExporter]:
+        exporter = InMemorySpanExporter()
+        provider = TracerProvider()
+        provider.add_span_processor(SimpleSpanProcessor(exporter))
+
+        return provider.get_tracer("test"), exporter
+
+    @staticmethod
+    def _ambiguous(logs: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        return [entry for entry in logs if entry.get("code") == "commit_ambiguous"]
+
+    @staticmethod
+    async def _cancel_while_parked(
+        resolved: Any, parked: asyncio.Event, tracer: Any
+    ) -> asyncio.Task[None]:
+        async def _drive() -> None:
+            with tracer.start_as_current_span("boundary"):
+                await resolved("x")
+
+        task = asyncio.create_task(_drive())
+        await parked.wait()
+        task.cancel()
+
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+        return task
+
+    @pytest.mark.asyncio
+    async def test_cancel_after_the_scope_is_logged_and_still_cancels(
+        self, ctx: ExecutionContext
+    ) -> None:
+        reset_commit_started()
+        manager = _RecordingTxManager()
+        tx = _tx_with(manager)
+        parked = asyncio.Event()
+
+        @attrs.define(slots=True, kw_only=True, frozen=True)
+        class CommitThenWait(Handler[str, str]):
+            async def __call__(self, args: str) -> str:
+                async with tx.scope("rec"):
+                    pass
+
+                parked.set()
+                await asyncio.sleep(10)
+                return args
+
+        reg = OperationRegistry(handlers={"op": lambda _c: CommitThenWait()}).freeze()
+        tracer, exporter = self._tracer()
+
+        with structlog.testing.capture_logs() as logs:
+            task = await self._cancel_while_parked(reg.resolve("op", ctx), parked, tracer)
+
+        assert task.cancelled() is True  # recorded, never converted
+        assert manager.committed is True
+        [entry] = self._ambiguous(logs)
+        assert entry["log_level"] == "warning"
+        assert entry["operation"] == "op"
+        [span] = exporter.get_finished_spans()
+        [event] = span.events
+        assert event.name == "forze.commit_ambiguous"
+        assert dict(event.attributes or {}) == {"forze.operation": "op"}
+        reset_commit_started()
+
+    @pytest.mark.asyncio
+    async def test_cancel_before_the_commit_records_nothing(self, ctx: ExecutionContext) -> None:
+        reset_commit_started()
+        parked = asyncio.Event()
+
+        @attrs.define(slots=True, kw_only=True, frozen=True)
+        class WaitInBody(Handler[str, str]):
+            async def __call__(self, args: str) -> str:
+                parked.set()
+                await asyncio.sleep(10)  # never reaches a commit
+                return args
+
+        reg = OperationRegistry(handlers={"op": lambda _c: WaitInBody()}).freeze()
+        tracer, exporter = self._tracer()
+
+        with structlog.testing.capture_logs() as logs:
+            await self._cancel_while_parked(reg.resolve("op", ctx), parked, tracer)
+
+        assert self._ambiguous(logs) == []
+        [span] = exporter.get_finished_spans()
+        assert len(span.events) == 0
+
+    @pytest.mark.asyncio
+    async def test_a_broken_log_still_records_the_span_event(
+        self, ctx: ExecutionContext, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        def _boom(*_args: Any, **_kwargs: Any) -> Any:
+            raise RuntimeError("logging is down")
+
+        monkeypatch.setattr(invoke_module, "logger", SimpleNamespace(warning=_boom, debug=_boom))
+        reset_commit_started()
+        tx = _tx_with(_RecordingTxManager())
+        parked = asyncio.Event()
+
+        @attrs.define(slots=True, kw_only=True, frozen=True)
+        class CommitThenWait(Handler[str, str]):
+            async def __call__(self, args: str) -> str:
+                async with tx.scope("rec"):
+                    pass
+
+                parked.set()
+                await asyncio.sleep(10)
+                return args
+
+        reg = OperationRegistry(handlers={"op": lambda _c: CommitThenWait()}).freeze()
+        tracer, exporter = self._tracer()
+        await self._cancel_while_parked(reg.resolve("op", ctx), parked, tracer)
+
+        [span] = exporter.get_finished_spans()
+        assert [event.name for event in span.events] == ["forze.commit_ambiguous"]
+        reset_commit_started()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("broken", ["logger", "span"])
+    async def test_a_failing_record_never_replaces_the_cancellation(
+        self, ctx: ExecutionContext, monkeypatch: pytest.MonkeyPatch, broken: str
+    ) -> None:
+        def _boom(*_args: Any, **_kwargs: Any) -> Any:
+            raise RuntimeError("telemetry is down")
+
+        if broken == "logger":
+            stub = SimpleNamespace(warning=_boom, debug=_boom)
+            monkeypatch.setattr(invoke_module, "logger", stub)
+
+        else:
+            monkeypatch.setattr("opentelemetry.trace.get_current_span", _boom)
+
+        reset_commit_started()
+        tx = _tx_with(_RecordingTxManager())
+        parked = asyncio.Event()
+
+        @attrs.define(slots=True, kw_only=True, frozen=True)
+        class CommitThenWait(Handler[str, str]):
+            async def __call__(self, args: str) -> str:
+                async with tx.scope("rec"):
+                    pass
+
+                parked.set()
+                await asyncio.sleep(10)
+                return args
+
+        reg = OperationRegistry(handlers={"op": lambda _c: CommitThenWait()}).freeze()
+        # No SDK span: starting one would itself call the broken ``get_current_span``.
+        tracer = SimpleNamespace(start_as_current_span=lambda _name: nullcontext())
+        task = await self._cancel_while_parked(reg.resolve("op", ctx), parked, tracer)
+
+        assert task.cancelled() is True
+        reset_commit_started()
+
+    @pytest.mark.asyncio
+    async def test_a_nested_commit_is_recorded_once_for_the_top_level_operation(
+        self, ctx: ExecutionContext
+    ) -> None:
+        reset_commit_started()
+        manager = _RecordingTxManager()
+        tx = _tx_with(manager)
+        parked = asyncio.Event()
+
+        @attrs.define(slots=True, kw_only=True, frozen=True)
+        class CommitThenWait(Handler[str, str]):
+            async def __call__(self, args: str) -> str:
+                async with tx.scope("rec"):
+                    pass
+
+                parked.set()
+                await asyncio.sleep(10)
+                return args
+
+        @attrs.define(slots=True, kw_only=True, frozen=True)
+        class Outer(Handler[str, str]):
+            async def __call__(self, args: str) -> str:
+                return await reg.resolve("inner", ctx)(args)
+
+        reg = OperationRegistry(
+            handlers={"outer": lambda _c: Outer(), "inner": lambda _c: CommitThenWait()}
+        ).freeze()
+        tracer, _exporter = self._tracer()
+
+        with structlog.testing.capture_logs() as logs:
+            await self._cancel_while_parked(reg.resolve("outer", ctx), parked, tracer)
+
+        [entry] = self._ambiguous(logs)
+        assert entry["operation"] == "outer"
+        reset_commit_started()
+
+
+class _ReadOnlyAwareTxManager(_RecordingTxManager):
+    """Refuses writes in a read-only root it opens, unless it is nested in an outer transaction.
+
+    Nested, the root is a savepoint the backend cannot make read-only, as with Postgres.
+    """
+
+    def __init__(self, *, in_outer_transaction: bool = False, commit_delay: float = 0.0) -> None:
+        super().__init__(commit_delay=commit_delay)
+        self.in_outer_transaction = in_outer_transaction
+        self.enforced = False
+        self.depth = 0
+
+    def transaction(
+        self, *, read_only: bool = False, isolation: IsolationLevel | None = None
+    ) -> AbstractAsyncContextManager[None]:
+        inner = super().transaction(read_only=read_only, isolation=isolation)
+
+        @asynccontextmanager
+        async def _cm() -> AsyncGenerator[None]:
+            # Only the root decides; a nested savepoint shares the root's mode.
+            if self.depth == 0:
+                self.enforced = read_only and not self.in_outer_transaction
+
+            self.depth += 1
+
+            try:
+                async with inner:
+                    yield
+
+            finally:
+                self.depth -= 1
+
+        return _cm()
+
+    def read_only_enforced(self) -> bool:
+        return self.enforced
+
+
+class _TruthyTxManager(_RecordingTxManager):
+    """Answers with a truthy value that is not ``True``; only ``True`` may skip the mark."""
+
+    def read_only_enforced(self) -> Any:
+        return "yes"
+
+
+class TestReadOnlyRootCommitPoint:
+    """A read-only root marks no commit point only where the backend refuses writes in it."""
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("manager", "read_only", "marked"),
+        [
+            pytest.param(_ReadOnlyAwareTxManager(), True, False, id="enforced"),
+            pytest.param(
+                _ReadOnlyAwareTxManager(in_outer_transaction=True), True, True, id="savepoint"
+            ),
+            pytest.param(_RecordingTxManager(), True, True, id="unaware"),
+            pytest.param(_ReadOnlyAwareTxManager(), False, True, id="writes"),
+            pytest.param(_TruthyTxManager(), True, True, id="truthy-not-true"),
+        ],
+    )
+    async def test_the_mark_follows_the_opened_transaction(
+        self, manager: TransactionManagerPort, read_only: bool, marked: bool
+    ) -> None:
+        reset_commit_started()
+
+        async with _tx_with(manager).scope("rec", read_only=read_only):
+            pass
+
+        assert commit_started() is marked
+        reset_commit_started()
+
+    @staticmethod
+    def _read_then_wait(enforced: bool, parked: asyncio.Event) -> OperationRegistry:
+        tx = _tx_with(_ReadOnlyAwareTxManager(in_outer_transaction=not enforced))
+
+        @attrs.define(slots=True, kw_only=True, frozen=True)
+        class ReadThenWait(Handler[str, str]):
+            async def __call__(self, args: str) -> str:
+                async with tx.scope("rec", read_only=True):
+                    pass
+
+                parked.set()
+                await asyncio.sleep(10)
+                return args
+
+        reg = OperationRegistry(handlers={"op": lambda _c: ReadThenWait()})
+
+        return reg.bind("op").as_query().finish()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("enforced", "kind", "code"),
+        [
+            (True, ExceptionKind.TIMEOUT, "deadline_exceeded"),
+            (False, ExceptionKind.INTERNAL, "commit_ambiguous"),
+        ],
+    )
+    async def test_a_query_timed_out_after_its_read(
+        self, ctx: ExecutionContext, enforced: bool, kind: ExceptionKind, code: str
+    ) -> None:
+        reset_commit_started()
+        resolved = self._read_then_wait(enforced, asyncio.Event()).freeze().resolve("op", ctx)
+
+        with bind_deadline(0.05), pytest.raises(CoreException) as ei:
+            await resolved("x")
+
+        assert (ei.value.kind, ei.value.code) == (kind, code)
+        reset_commit_started()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(("enforced", "records"), [(True, 0), (False, 1)])
+    async def test_a_query_cancelled_after_its_read(
+        self, ctx: ExecutionContext, enforced: bool, records: int
+    ) -> None:
+        reset_commit_started()
+        parked = asyncio.Event()
+        resolved = self._read_then_wait(enforced, parked).freeze().resolve("op", ctx)
+        task = asyncio.create_task(resolved("x"))
+        await parked.wait()
+
+        with structlog.testing.capture_logs() as logs:
+            task.cancel()
+
+            with pytest.raises(asyncio.CancelledError):
+                await task
+
+        assert task.cancelled() is True
+        assert len([e for e in logs if e.get("code") == "commit_ambiguous"]) == records
+
+    @pytest.mark.asyncio
+    async def test_a_cancel_in_an_enforced_read_only_commit_stays_a_cancel(self) -> None:
+        reset_commit_started()
+        manager = _ReadOnlyAwareTxManager(commit_delay=10.0)
+        tx = _tx_with(manager)
+
+        async def driver() -> None:
+            task = asyncio.current_task()
+            assert task is not None
+            active_operation_var.set(task)
+
+            async with tx.scope("rec", read_only=True):
+                pass
+
+        task = asyncio.create_task(driver())
+        await manager.in_commit.wait()
+        task.cancel()
+
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+        assert task.cancelled() is True  # nothing can have landed: not converted
+
+    @pytest.mark.asyncio
+    async def test_a_nested_scope_on_another_route_keeps_the_commit_point(self) -> None:
+        # Another route resolves another manager under the same scope key, so its nested
+        # scope is an independent transaction that commits on its own: the read-only root
+        # is no longer the only transaction, and a cancel in its commit stays ambiguous.
+        reset_commit_started()
+        root = _ReadOnlyAwareTxManager(commit_delay=10.0)
+        other = _RecordingTxManager()
+        tx = TransactionContext()
+        tx.lock(lambda route: root if route == "rec" else other)
+
+        async def driver() -> None:
+            task = asyncio.current_task()
+            assert task is not None
+            active_operation_var.set(task)
+
+            async with tx.scope("rec", read_only=True):
+                async with tx.scope("other"):
+                    pass
+
+        task = asyncio.create_task(driver())
+        await root.in_commit.wait()
+        task.cancel()
+
+        with pytest.raises(CoreException) as ei:
+            await task
+
+        assert ei.value.code == "commit_ambiguous"
+        assert other.committed is True
+        reset_commit_started()
+
+    @pytest.mark.asyncio
+    async def test_a_failed_nested_scope_on_another_route_keeps_the_skip(self) -> None:
+        # Its transaction rolled back, so the read-only root is still the only one.
+        reset_commit_started()
+        other = _RecordingTxManager()
+        tx = TransactionContext()
+        tx.lock(lambda route: _ReadOnlyAwareTxManager() if route == "rec" else other)
+
+        async with tx.scope("rec", read_only=True):
+            with pytest.raises(RuntimeError):
+                async with tx.scope("other"):
+                    raise RuntimeError("caught by the root's body")
+
+        assert other.rolled_back is True
+        assert commit_started() is False
+
+    @pytest.mark.asyncio
+    async def test_a_deferred_callback_keeps_the_commit_point(self) -> None:
+        # It runs after the root exits and may commit a write of its own.
+        reset_commit_started()
+        tx = _tx_with(_ReadOnlyAwareTxManager())
+
+        async def cb() -> None:
+            return None
+
+        async with tx.scope("rec", read_only=True):
+            await tx.run_or_defer(cb)
+
+        assert commit_started() is True
+        reset_commit_started()
+
+    @pytest.mark.asyncio
+    async def test_a_nested_scope_on_the_same_route_keeps_the_skip(self) -> None:
+        # The same route is the same transaction: a savepoint inside the read-only root.
+        reset_commit_started()
+        tx = _tx_with(_ReadOnlyAwareTxManager())
+
+        async with tx.scope("rec", read_only=True):
+            async with tx.scope("rec"):
+                pass
+
+        assert commit_started() is False

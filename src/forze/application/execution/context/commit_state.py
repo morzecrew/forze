@@ -22,9 +22,12 @@ _commit_started: ContextVar[bool] = ContextVar(
 A deadline or cancellation surfacing at or after this point means the commit may have
 (or has) landed, so the invocation boundary reports a **non-retryable**
 ``commit_ambiguous`` error instead of a retryable deadline — an at-least-once caller
-must not blindly retry into a duplicate. Left set on purpose (a body failure/cancel
-before the commit never sets it, so the body stays safely retryable); the top-level
-boundary clears it via :func:`reset_commit_started`.
+must not blindly retry into a duplicate. A cancellation the transaction scope no longer
+covers stays a cancellation: the top-level boundary records it as ``commit_ambiguous``
+(a warning log and a span event) and re-raises. Left set on purpose (a body
+failure/cancel before the commit never sets it, so the body stays safely retryable);
+the top-level boundary clears it via :func:`reset_commit_started` on entry, and on exit
+unless the call was cancelled, so whatever cancelled it can still read it.
 """
 
 
@@ -48,7 +51,9 @@ def mark_commit_started() -> None:
     """Mark the current root transaction's commit as imminent/in-flight.
 
     Called by :meth:`~forze.application.execution.context.transaction.TransactionContext.scope`
-    once the body completes cleanly, just before the driver commit runs.
+    once the body completes cleanly, just before the driver commit runs — except for a
+    read-only root whose manager answers ``ReadOnlyAware.read_only_enforced()`` for the
+    transaction it opened, which cannot commit a write.
     """
 
     _commit_started.set(True)

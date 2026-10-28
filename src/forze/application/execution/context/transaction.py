@@ -12,6 +12,7 @@ from forze.application.contracts.transaction import (
     COMMIT_AMBIGUOUS_CODE,
     IsolationAware,
     IsolationLevel,
+    ReadOnlyAware,
     TransactionallyEnlistable,
     TransactionHandle,
     TransactionManagerPort,
@@ -132,6 +133,17 @@ class TransactionContext:
         on_setattr=attrs.setters.frozen,
     )
     """Queued ``(callback, fatal)`` pairs run after a successful root transaction exit."""
+
+    __tx_routes: ContextVar[set[str] | None] = attrs.field(
+        factory=lambda: ContextVar("tx_routes", default=None),
+        init=False,
+        repr=False,
+        on_setattr=attrs.setters.frozen,
+    )
+    """Routes under the active root whose scopes may have committed, its own first. A nested
+    scope on another route resolves another manager, which can open (and commit) a
+    transaction of its own, so a read-only root skips its commit point only while this holds
+    its route alone."""
 
     # ....................... #
 
@@ -307,7 +319,10 @@ class TransactionContext:
         Cancellation semantics: cancellation during the body follows the
         rollback path as usual (safely retryable — nothing committed). Once the
         body completes, the scope marks the commit imminent (see
-        :func:`commit_started`); the deferred post-commit callbacks are a
+        :func:`commit_started`) — unless the root is read-only and its manager answers
+        :meth:`~forze.application.contracts.transaction.ReadOnlyAware.read_only_enforced`
+        for the transaction it opened, since such a root cannot commit a write; the
+        deferred post-commit callbacks are a
         critical section — they run to completion even if the task is cancelled.
         A *non-fatal* post-commit callback that fails is logged and reported to
         a wired :class:`AfterCommitErrorHandler` but never raised — the
@@ -360,11 +375,17 @@ class TransactionContext:
                     code="tx_nested_isolation_conflict",
                 )
 
+            # Set by the root alongside the depth, so a nested scope always finds it.
+            entered = self.__tx_routes.get() or set()
             token_d = self.__tx_depth.set(depth + 1)
 
             try:
                 async with tx.transaction():
                     yield
+
+                    # Recorded once the body succeeds, before leaving commits it: a body that
+                    # failed rolled back, and committed nothing beside the root.
+                    entered.add(str(getattr(route, "value", route)))
 
             finally:
                 self.__tx_depth.reset(token_d)
@@ -400,6 +421,8 @@ class TransactionContext:
         )
         token_d = self.__tx_depth.set(1)
         token_cb = self.__cb_stack.set([])
+        routes = {route_name}
+        token_r = self.__tx_routes.set(routes)
         # A run-global id for this root transaction (``None`` in production). Stamped on the trace
         # so the oracle groups port calls by transaction — operation spans cannot, since concurrent
         # transactions interleave. The scope always emits a tx ``exit`` event under this id (from the
@@ -430,8 +453,24 @@ class TransactionContext:
                     # body failure/cancel throws into the yield, skips this, and follows
                     # the rollback path (safely retryable). Not reset here: it must
                     # survive to the boundary.
-                    mark_commit_started()
-                    commit_reached = True
+                    #
+                    # A read-only root the backend refuses writes in commits nothing, so it is
+                    # no commit point. Asked of the transaction actually opened, not the
+                    # manager: a root that became a savepoint in an outer transaction is not
+                    # read-only. Only while it is the sole route entered: another route's
+                    # nested scope may have committed a transaction of its own. Only with no
+                    # deferred callback: one runs after the root exits and may write.
+                    # Fail-closed: an unaware manager, or any answer but ``True``, marks it
+                    # like a write.
+                    if not (
+                        root_read_only
+                        and len(routes) == 1
+                        and not self.__cb_stack.get()
+                        and isinstance(tx, ReadOnlyAware)
+                        and tx.read_only_enforced() is True
+                    ):
+                        mark_commit_started()
+                        commit_reached = True
 
                 # Reached only on a clean exit (no exception thrown into the scope) — capture the
                 # after-commit callbacks to drain below, and mark the transaction committed. An escaping
@@ -448,6 +487,7 @@ class TransactionContext:
                     committed=committed,
                 )
                 self.__cb_stack.reset(token_cb)
+                self.__tx_routes.reset(token_r)
                 self.__tx_handle.reset(token_h)
                 self.__tx_depth.reset(token_d)
                 self.__tx_id.reset(token_id)

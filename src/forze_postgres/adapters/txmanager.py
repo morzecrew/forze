@@ -7,7 +7,7 @@ require_psycopg()
 # ....................... #
 
 from collections.abc import AsyncGenerator
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, nullcontext
 from typing import final
 
 import attrs
@@ -23,6 +23,7 @@ from forze.application.contracts.transaction import (
 from forze.base.primitives import driver_deadline_budget
 
 from ..kernel.client import PostgresClientPort, PostgresTransactionOptions
+from ..kernel.client.read_only_root import read_only_root, read_only_root_enforced
 from ..kernel.client.types import IsolationLevel as PgIsolationLevel
 from ..kernel.client.value_objects import DeadlinePushdownPolicy
 from ._logger import logger
@@ -88,6 +89,21 @@ class PostgresTxManagerAdapter(TransactionManagerPort):
 
     # ....................... #
 
+    def read_only_enforced(self) -> bool:
+        """Whether the open root began ``BEGIN … READ ONLY`` and nothing has bypassed it.
+
+        ``READ ONLY`` makes Postgres refuse writes to this database; it does not cover
+        ``dblink`` or ``postgres_fdw``. ``False`` for a scope opened inside an outer client
+        transaction (a savepoint, which cannot be read-only, under a transaction that may
+        write), and once a :meth:`~forze_postgres.kernel.client.client.PostgresClient.detached`
+        statement, another client's autocommit statement, or another client's root
+        transaction could have committed beside it.
+        """
+
+        return read_only_root_enforced()
+
+    # ....................... #
+
     @asynccontextmanager
     async def transaction(
         self,
@@ -118,21 +134,25 @@ class PostgresTxManagerAdapter(TransactionManagerPort):
         # Apply the invocation-deadline backstop only at the root transaction (a nested
         # savepoint rides the root's SET LOCAL).
         at_root = not self.client.is_in_transaction()
+        # Only a root BEGIN carries READ ONLY; inside a client transaction this is a savepoint.
+        # A nested scope records nothing, so a bypass inside it still clears the root's record.
+        record = read_only_root() if at_root and options.read_only else nullcontext()
 
-        async with self.client.transaction(options=options):
-            if at_root:
-                await self._apply_deadline_backstop()
+        with record:
+            async with self.client.transaction(options=options):
+                if at_root:
+                    await self._apply_deadline_backstop()
 
-            try:
-                yield
+                try:
+                    yield
 
-            #! Hmmm.. should it be like that?
-            except Exception:
-                logger.debug("Transaction rolled back")
-                raise
+                #! Hmmm.. should it be like that?
+                except Exception:
+                    logger.debug("Transaction rolled back")
+                    raise
 
-            else:
-                logger.debug("Transaction committed")
+                else:
+                    logger.debug("Transaction committed")
 
     # ....................... #
 

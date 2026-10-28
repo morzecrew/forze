@@ -190,6 +190,19 @@ class MockStrictTxManagerAdapter(TransactionManagerPort):
 
     # ....................... #
 
+    def read_only_enforced(self) -> bool:
+        """Whether the stores that join the transaction refuse writes in the open root.
+
+        Answers from the flag ``ensure_mock_tx_writable`` refuses on: set only by a root this
+        manager opened read-only, and inherited, not set, by a scope nested in an outer one.
+        Queue, blob and cache stores are non-transactional here, as they are beside Postgres,
+        and the commit mark never covered them.
+        """
+
+        return _mock_tx_read_only.get()
+
+    # ....................... #
+
     def transaction(
         self,
         *,
@@ -279,6 +292,19 @@ class MockJournalTxManagerAdapter(TransactionManagerPort):
         return TxCapabilities(
             isolation=frozenset(IsolationLevel),
         )
+
+    # ....................... #
+
+    def read_only_enforced(self) -> bool:
+        """Whether the stores that join the transaction refuse writes in the open root.
+
+        Answers from the flag ``ensure_mock_tx_writable`` refuses on: set only by a root this
+        manager opened read-only, and inherited, not set, by a scope nested in an outer one.
+        Queue, blob and cache stores are non-transactional here, as they are beside Postgres,
+        and the commit mark never covered them.
+        """
+
+        return _mock_tx_read_only.get()
 
     # ....................... #
 
