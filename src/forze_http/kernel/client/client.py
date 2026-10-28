@@ -71,9 +71,15 @@ async def _buffered(streaming: httpx.Response, max_bytes: int | None) -> httpx.R
         if max_bytes is not None and len(body) > max_bytes:
             raise exc.infrastructure(f"HTTP response body exceeded max_response_bytes {max_bytes}")
 
+    # The body is decoded now, so the headers stop describing an encoding: left in, httpx
+    # decodes it a second time. Content-Length is dropped too and recomputed from the body.
+    headers = streaming.headers.copy()
+    headers.pop("content-encoding", None)
+    headers.pop("content-length", None)
+
     return httpx.Response(
         status_code=streaming.status_code,
-        headers=streaming.headers,
+        headers=headers,
         content=bytes(body),
         request=streaming.request,
     )

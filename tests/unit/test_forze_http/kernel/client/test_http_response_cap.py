@@ -1,5 +1,10 @@
 """Tests for the ``max_response_bytes`` response-size guard."""
 
+import contextlib
+import gzip
+import zlib
+from collections.abc import Callable
+
 import httpx
 import pytest
 
@@ -89,3 +94,96 @@ async def test_no_cap_allows_large_body() -> None:
         assert len(response.content) == 100_000
     finally:
         await client.close()
+
+
+# ....................... #
+
+
+def _encoders() -> list[tuple[str, Callable[[bytes], bytes]]]:
+    """Every content coding httpx can decode in this environment, with an encoder for it."""
+
+    encoders: list[tuple[str, Callable[[bytes], bytes]]] = [
+        ("gzip", gzip.compress),
+        ("deflate", zlib.compress),
+    ]
+
+    with contextlib.suppress(ImportError):
+        import zstandard
+
+        encoders.append(("zstd", zstandard.ZstdCompressor().compress))
+
+    with contextlib.suppress(ImportError):
+        import brotli  # pyright: ignore[reportMissingImports]
+
+        encoders.append(("br", brotli.compress))  # pyright: ignore[reportUnknownMemberType]
+
+    return encoders
+
+
+class TestEncodedBodies:
+    """A compressed body is read once and decoded once. The buffered response used to keep
+    the upstream `Content-Encoding`, so httpx decoded the decoded body a second time and every
+    compressed answer failed as a transport error."""
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(("coding", "encode"), _encoders())
+    async def test_an_encoded_body_is_returned_decoded(
+        self, coding: str, encode: Callable[[bytes], bytes]
+    ) -> None:
+        body = b'{"ok": true}'
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(200, headers={"Content-Encoding": coding}, content=encode(body))
+
+        client = await _client(handler, max_response_bytes=1024)
+
+        try:
+            response = await client.request("GET", "/x")
+
+        finally:
+            await client.close()
+
+        assert response.json() == {"ok": True}
+        assert "content-encoding" not in response.headers
+        assert response.headers["content-length"] == str(len(body))
+
+    @pytest.mark.asyncio
+    async def test_an_encoded_rejection_keeps_its_status(self) -> None:
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(
+                404, headers={"Content-Encoding": "gzip"}, content=gzip.compress(b"gone")
+            )
+
+        client = await _client(handler, max_response_bytes=None)
+
+        try:
+            with pytest.raises(CoreException) as err:
+                await client.request("GET", "/x")
+
+            async with client.stream("GET", "/x", raise_for_status=False) as rejected:
+                content = rejected.content
+
+        finally:
+            await client.close()
+
+        assert err.value.kind is ExceptionKind.NOT_FOUND
+        assert content == b"gone"
+
+    @pytest.mark.asyncio
+    async def test_the_cap_counts_the_decoded_body(self) -> None:
+        # Small on the wire, large once decoded: the memory the cap protects is the decoded one.
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(
+                200, headers={"Content-Encoding": "gzip"}, content=gzip.compress(b"x" * 10_000)
+            )
+
+        client = await _client(handler, max_response_bytes=1000)
+
+        try:
+            with pytest.raises(CoreException) as err:
+                await client.request("GET", "/x")
+
+        finally:
+            await client.close()
+
+        assert "max_response_bytes" in str(err.value)
