@@ -3,7 +3,7 @@
 import binascii
 import hashlib
 from collections.abc import Iterable, Sequence
-from datetime import date, datetime
+from datetime import UTC, date, datetime
 from decimal import Decimal
 from typing import Any, cast
 from urllib.parse import parse_qs, urlparse
@@ -323,7 +323,11 @@ def _advisory_bytes(part: object) -> bytes:
             return format(part.normalize(), "f").encode("utf-8")
 
         case datetime():
-            return part.isoformat().encode("utf-8")
+            # The instant, in UTC: a store reads one back in its session's offset (Postgres's
+            # `timestamptz`), not the one it was written in. Naive is UTC, as forze reads it.
+            instant = part.replace(tzinfo=UTC) if part.utcoffset() is None else part.astimezone(UTC)
+
+            return instant.isoformat().encode("utf-8")
 
         case date():
             return part.isoformat().encode("utf-8")

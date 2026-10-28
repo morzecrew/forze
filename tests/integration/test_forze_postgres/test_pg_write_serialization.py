@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import AsyncIterator, Awaitable, Callable
+from datetime import UTC, datetime, timedelta, timezone
 from typing import Any
 from unittest.mock import patch
 from uuid import UUID, uuid4
@@ -504,3 +505,102 @@ class TestTheLockIsTheOneTheMockTakes:
         await asyncio.wait_for(asyncio.gather(holder(), reader()), timeout=15)
 
         assert (key >> 32, key & 0xFFFF_FFFF) in seen, seen
+
+
+# ....................... #
+
+BY_SLOT = SerializedBy(key=("slot",))
+
+_SLOT_UTC = datetime(2026, 3, 29, 9, 0, tzinfo=UTC)
+
+
+class _Slot(Document):
+    slot: datetime
+    label: str = ""
+
+
+class _SlotRead(ReadDocument):
+    slot: datetime
+    label: str = ""
+
+
+class _SlotCreate(CreateDocumentCmd):
+    slot: datetime
+    label: str = ""
+
+
+class _SlotUpdate(BaseDTO):
+    slot: datetime | None = None
+    label: str | None = None
+
+
+def _slot_spec(name: str, *guarantees: SerializedBy) -> DocumentSpec[Any, Any, Any, Any]:
+    return DocumentSpec[_SlotRead, _Slot, _SlotCreate, _SlotUpdate](
+        name=name,
+        read=_SlotRead,
+        write=DocumentWriteTypes(domain=_Slot, create_cmd=_SlotCreate, update_cmd=_SlotUpdate),
+        guarantees=guarantees,
+    )
+
+
+@pytest.fixture(params=["Etc/UTC", "Asia/Tokyo"])
+async def zoned_client(
+    request: pytest.FixtureRequest, postgres_container: PostgresContainer
+) -> AsyncIterator[PostgresClient]:
+    """A second pool whose sessions read a ``timestamptz`` back in the given time zone."""
+
+    url = postgres_container.get_connection_url().replace("postgresql+psycopg://", "postgresql://")
+    zone = str(request.param).replace("/", "%2F")
+    client = PostgresClient()
+    await client.initialize(
+        dsn=f"{url}?options=-c%20TimeZone%3D{zone}", config=PostgresConfig(min_size=1, max_size=3)
+    )
+
+    yield client
+
+    await client.close()
+
+
+class TestAnInstantIsOneOwnerInAnyOffset:
+    @pytest.mark.parametrize(
+        "written",
+        [_SLOT_UTC.astimezone(timezone(timedelta(hours=3))), _SLOT_UTC.replace(tzinfo=None)],
+        ids=["+03:00", "naive"],
+    )
+    async def test_an_update_read_back_in_the_session_zone_waits_for_the_create(
+        self, written: datetime, pg_client: PostgresClient, zoned_client: PostgresClient
+    ) -> None:
+        # The create keys the caller's offset; the update keys the stored row, which the other
+        # session reads back in its own zone. One instant, so one owner.
+        table = f"slots_{uuid4().hex[:10]}"
+        await pg_client.execute(
+            f"""
+            CREATE TABLE {table} (
+                id uuid PRIMARY KEY,
+                rev integer NOT NULL,
+                created_at timestamptz NOT NULL,
+                last_update_at timestamptz NOT NULL,
+                slot timestamptz NOT NULL,
+                label text NOT NULL DEFAULT ''
+            );
+            """
+        )
+        row = await _ctx(pg_client, table).doc.command(_slot_spec(table)).create(
+            _SlotCreate(slot=written)
+        )
+        [stored] = await zoned_client.fetch_all(
+            f"SELECT slot FROM {table}", [], row_factory="dict"
+        )
+        # The premise: the update sees the instant in an offset the create did not write.
+        assert stored["slot"] == _SLOT_UTC
+        assert stored["slot"].utcoffset() != written.utcoffset()
+
+        async def create(ctx: ExecutionContext) -> None:
+            await ctx.doc.command(_slot_spec(table, BY_SLOT)).create(_SlotCreate(slot=written))
+
+        async def update(ctx: ExecutionContext) -> None:
+            await ctx.doc.command(_slot_spec(table, BY_SLOT)).update(
+                row.id, row.rev, _SlotUpdate(label="x")
+            )
+
+        assert not await _landed_while_held(pg_client, zoned_client, table, create, update)
