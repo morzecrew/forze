@@ -17,7 +17,9 @@ A single `FieldEncryption` policy — `encrypted` (randomized AEAD) and `searcha
 (deterministic, equality-only) field sets, plus `binds_record_id` and
 `reject_plaintext` — is declared once on the document spec and **carried to search,
 analytics, graph, and procedure params** by pointing their spec at the same policy, so
-the planes can't drift.
+the planes can't drift. Document ciphertext is also bound to the document spec's name: a
+search or analytics spec that reads the document's table in place opens it only when the
+policy sets `document` to that name (otherwise `core.crypto.aead_auth_failed`).
 
 | Surface | Backends | `searchable` | `binds_record_id` | Fail-closed code |
 |---------|----------|--------------|-------------------|------------------|

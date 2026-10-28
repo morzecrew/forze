@@ -237,6 +237,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **A password change or reset racing its principal's deactivation no longer fails on `revision_mismatch`, nor does the deactivation.** In a Postgres transaction they lock the account (a `read` view must accept `FOR UPDATE`), so the second waits; elsewhere the deactivation rereads a stale credential and closes it.
 
+- **In-place search and analytics can read a document's sealed fields.** Document ciphertext is bound to the document spec's name, so a search or warehouse query over its table failed with `aead_auth_failed`. Name it with `FieldEncryption(document=...)`; a document spec of another name refuses that policy.
+
 ### Security
 
 - **A document query policy checks `$having` and aggregate sorts against their source fields** (**Breaking**). Refused now: `$having` over a field that is not filterable, and a sort by an alias whose field is not sortable. Allowed now: a sort by a `$count` alias, or by an alias whose field is sortable.

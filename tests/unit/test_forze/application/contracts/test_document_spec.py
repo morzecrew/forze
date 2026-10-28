@@ -674,6 +674,22 @@ def test_derived_field_is_not_sealable() -> None:
         )
 
 
+def test_encryption_policy_naming_another_document_is_refused() -> None:
+    """The policy's ``document`` is the AAD name its search/analytics readers bind; a document
+    spec of another name seals under its own, so they could not open its rows."""
+
+    named = FieldEncryption(encrypted=frozenset({"note"}), document="orders")
+    spec = DocumentSpec(
+        name="orders", read=_DerivedRead, derived_read_fields=_derived(), encryption=named
+    )
+    assert spec.encryption is named
+
+    with pytest.raises(CoreException, match="names document 'orders'"):
+        DocumentSpec(
+            name="invoices", read=_DerivedRead, derived_read_fields=_derived(), encryption=named
+        )
+
+
 def test_derived_nullable_key_requires_optional() -> None:
     """A key that may be unset cannot yield a required value."""
 

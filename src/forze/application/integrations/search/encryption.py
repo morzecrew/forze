@@ -5,11 +5,12 @@ document table (Postgres FTS/vector, Mongo text/vector) — uses this to wrap a
 :class:`SearchSpec`'s read codec with an :class:`EncryptingModelCodec`, so encrypted
 fields are decrypted out of search results (and, for an external index, sealed on upsert).
 
-The wrapped codec uses the **default** field-encryption AAD label and the spec's record-id
-binding, so an in-place search reproduces exactly the document write's configuration and
-decrypts the document's own ciphertext. The spec's ``encryption`` policy must therefore be
-the same as the underlying ``DocumentSpec.encryption`` —
-:func:`assert_search_encryption_parity` is that rule, enforced.
+The wrapped codec binds the policy's ``document`` name (the default field-encryption label
+when unset) and its record-id binding into the AAD, so an in-place search over a table whose
+policy names its document reproduces the document write's configuration and decrypts the
+document's own ciphertext. The spec's ``encryption`` policy must therefore be the same as the
+underlying ``DocumentSpec.encryption`` — :func:`assert_search_encryption_parity` is that rule,
+enforced.
 """
 
 from collections.abc import Callable, Mapping
@@ -27,7 +28,11 @@ from forze.application.contracts.crypto import (
 from forze.application.contracts.document import DocumentSpec
 from forze.application.contracts.search import SearchSpec
 from forze.application.contracts.tenancy import TenantIdentity
-from forze.application.integrations.crypto import EncryptingModelCodec, decrypt_rows
+from forze.application.integrations.crypto import (
+    DEFAULT_FIELD_LABEL,
+    EncryptingModelCodec,
+    decrypt_rows,
+)
 from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict
 from forze.base.serialization import ModelCodec
@@ -157,6 +162,8 @@ def resolve_search_read_codec_spec[S: _EncryptableReadSpec](
         searchable_fields=encryption.searchable,
         deterministic=deterministic,
         tenant_provider=tenant_provider,
+        # Bound to the owning document's name so in-place search opens the document's rows.
+        label=encryption.document or DEFAULT_FIELD_LABEL,
         record_id_field=ID_FIELD if encryption.binds_record_id else None,
         reject_plaintext=encryption.reject_plaintext,
     )
@@ -243,7 +250,7 @@ def assert_search_encryption_parity(
     if not reasons:
         reasons.append(
             f"the field sets agree ({sorted(doc_sealed)}) but the policies differ "
-            f"(binds_record_id / reject_plaintext / encrypted-vs-searchable split)"
+            f"(binds_record_id / reject_plaintext / document / encrypted-vs-searchable split)"
         )
 
     detail = "; ".join(reasons)

@@ -22,7 +22,10 @@ from forze.application.contracts.crypto import (
     FieldCipherPort,
 )
 from forze.application.contracts.tenancy import TenantIdentity
-from forze.application.integrations.crypto import EncryptingModelCodec
+from forze.application.integrations.crypto import (
+    DEFAULT_FIELD_LABEL,
+    EncryptingModelCodec,
+)
 from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict
 from forze.base.serialization import ModelCodec, enum_values
@@ -74,6 +77,8 @@ def resolve_analytics_codecs_spec(
             searchable_fields=encryption.searchable,
             deterministic=deterministic,
             tenant_provider=tenant_provider,
+            # Bound to the owning document's name so a query over its table opens its rows.
+            label=encryption.document or DEFAULT_FIELD_LABEL,
             reject_plaintext=encryption.reject_plaintext,
         )
 

@@ -20,9 +20,15 @@ from forze.application.integrations.analytics import (
     encode_ingest_payloads,
     resolve_analytics_codecs_spec,
 )
-from forze.application.integrations.crypto import EncryptingModelCodec, Keyring
+from forze.application.contracts.document import DocumentSpec
+from forze.application.integrations.crypto import (
+    EncryptingModelCodec,
+    Keyring,
+    resolve_document_codecs,
+)
 from forze.base.crypto import is_envelope
 from forze.base.exceptions import CoreException, ExceptionKind
+from forze.domain.models import ReadDocument
 from forze_mock import MockKeyManagement
 
 # ----------------------- #
@@ -32,6 +38,11 @@ class _Row(BaseModel):
     id: str
     region: str  # a plaintext dimension we group by
     email: str  # PII: stored, returned, never aggregated
+
+
+class _DocRow(ReadDocument):
+    region: str
+    email: str
 
 
 class _Params(BaseModel):
@@ -187,3 +198,65 @@ def test_spec_reject_plaintext_reaches_analytics_codecs() -> None:
         read.decode_mapping({"id": "1", "region": "eu", "email": "a@b.co"})
 
     assert ei.value.code == "core.crypto.plaintext_rejected"
+
+
+# ....................... #
+
+
+def _document_sealed_row(keyring: Keyring, policy: FieldEncryption) -> dict[str, object]:
+    """A row as the document plane stores it: the email sealed under the document's name."""
+
+    codecs = resolve_document_codecs(
+        DocumentSpec(name="events", read=_DocRow, encryption=policy).resolved_codecs,
+        spec_name="events",
+        encryption=policy,
+        keyring=keyring,
+        deterministic=None,
+        tenant_provider=lambda: None,
+        integration="test",
+        code="test.encryption_wiring",
+    )
+    read = codecs.read
+    assert isinstance(read, EncryptingModelCodec)
+    return read.encrypt_mapping({"id": "1", "region": "eu", "email": "a@b.co"})
+
+
+def _analytics_read(keyring: Keyring, policy: FieldEncryption) -> EncryptingModelCodec[_Row]:
+    spec = resolve_analytics_codecs_spec(
+        _spec(encryption=policy), keyring=keyring, deterministic=None, tenant_provider=lambda: None
+    )
+    return spec.resolved_read_codec  # type: ignore[return-value]
+
+
+@pytest.mark.asyncio
+async def test_policy_naming_the_document_opens_its_sealed_rows() -> None:
+    """A warehouse query over a document's table decrypts what the document port sealed."""
+
+    keyring = _keyring()
+    await keyring.warm(None)
+    policy = FieldEncryption(encrypted=frozenset({"email"}), document="events")
+    row = _document_sealed_row(keyring, policy)
+    assert is_envelope(base64.b64decode(str(row["email"])))
+
+    read = _analytics_read(keyring, policy)
+    await read.prepare_decrypt([row])
+    assert read.decode_mapping(row) == _Row(id="1", region="eu", email="a@b.co")
+
+
+@pytest.mark.asyncio
+async def test_policy_without_the_document_name_refuses_its_rows() -> None:
+    """No silent cross-namespace open: an unnamed policy keeps the analytics AAD, so the
+    document's ciphertext fails authentication instead of being accepted."""
+
+    keyring = _keyring()
+    await keyring.warm(None)
+    policy = FieldEncryption(encrypted=frozenset({"email"}))
+    row = _document_sealed_row(keyring, policy)
+
+    read = _analytics_read(keyring, policy)
+    await read.prepare_decrypt([row])
+
+    with pytest.raises(CoreException) as ei:
+        read.decode_mapping(row)
+
+    assert ei.value.code == "core.crypto.aead_auth_failed"

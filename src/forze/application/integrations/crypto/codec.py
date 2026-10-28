@@ -67,6 +67,10 @@ from forze.base.serialization.model_codec import ModelCodec, ModelDumpExcludeOpt
 _MISSING = object()
 _UNSET = object()
 
+DEFAULT_FIELD_LABEL = "forze.field"
+"""AAD namespace of a field ciphertext that no document spec name binds (search, analytics,
+graph and procedure data sealed by its own plane)."""
+
 _AEAD_AUTH_FAILED_CODE = "core.crypto.aead_auth_failed"
 """Code raised by the AEAD when a tag check fails (see ``forze.base.crypto.ciphers``).
 The decrypt path treats *only* this as a signal to retry with the legacy (pre-record-id)
@@ -158,7 +162,7 @@ class EncryptingModelCodec[T](ModelCodec[T, Any]):
     deterministic: DeterministicFieldCipherPort | None = None
     """Cipher for :attr:`searchable_fields`; required when that set is non-empty."""
 
-    label: str = "forze.field"
+    label: str = DEFAULT_FIELD_LABEL
     """Associated-data namespace, so ciphertext cannot move between aggregates."""
 
     record_id_field: str | None = None

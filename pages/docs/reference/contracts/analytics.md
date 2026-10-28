@@ -28,7 +28,7 @@ model:
 | `queries` | `Mapping[str, AnalyticsQueryDefinition]` | required | named queries (≥1); each declares a typed `params` model |
 | `ingest` | `type[Ing] \| None` | `None` | append-row model; `None` disables ingest |
 | `provenance` | `AnalyticsProvenance` | `UNDECLARED` | where these rows come from — see below |
-| `encryption` | `FieldEncryption \| None` | `None` | seal columns at rest (confidential, **not** aggregatable; `binds_record_id` unsupported — rows have no id) |
+| `encryption` | `FieldEncryption \| None` | `None` | seal columns at rest (confidential, **not** aggregatable; `binds_record_id` unsupported — rows have no id); over a document's table, use the document's policy with `document` set to its spec name |
 | `read_codec` / `ingest_codec` | `ModelCodec \| None` | `None` | codec overrides (auto-derived otherwise) |
 
 Each `AnalyticsQueryDefinition` carries a Pydantic `params` model — the typed arguments a

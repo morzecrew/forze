@@ -14,11 +14,13 @@ from forze.application.contracts.crypto import (
     KeyRef,
     StaticKeyDirectory,
 )
+from forze.application.contracts.document import DocumentSpec
 from forze.application.contracts.search import SearchSpec
 from forze.application.integrations.crypto import (
     DeterministicFieldCipher,
     EncryptingModelCodec,
     Keyring,
+    resolve_document_codecs,
 )
 from forze.application.integrations.search import (
     decrypt_search_rows,
@@ -27,6 +29,7 @@ from forze.application.integrations.search import (
 from forze.base.crypto import is_envelope
 from forze.base.exceptions import CoreException, ExceptionKind
 from forze.base.serialization import PydanticModelCodec, default_model_codec
+from forze.domain.models import ReadDocument
 from forze_mock import MockKeyManagement
 
 # ----------------------- #
@@ -96,6 +99,50 @@ async def test_wrapped_codec_decrypts_in_place_search_rows() -> None:
     # The search read path: warm the decrypt cache, then the synchronous decode.
     await codec.prepare_decrypt([row])
     assert codec.decode_mapping(row) == _Doc(id="1", title="t", secret="s3cr3t")
+
+
+class _DocRead(ReadDocument):
+    title: str
+    secret: str
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("named", [True, False])
+async def test_in_place_search_opens_the_document_codecs_rows_only_when_named(
+    named: bool,
+) -> None:
+    """Sealed by the real document codec (AAD bound to the document spec's name), not by the
+    search codec: the policy naming the document opens it; an unnamed one is refused."""
+
+    keyring = _keyring()
+    await keyring.warm(None)
+    policy = FieldEncryption(encrypted=frozenset({"secret"}), document="docs" if named else None)
+    document = resolve_document_codecs(
+        DocumentSpec(name="docs", read=_DocRead, encryption=policy).resolved_codecs,
+        spec_name="docs",
+        encryption=policy,
+        keyring=keyring,
+        deterministic=None,
+        tenant_provider=lambda: None,
+        integration="test",
+        code="test.encryption_wiring",
+    ).read
+    assert isinstance(document, EncryptingModelCodec)
+    row = document.encrypt_mapping({"id": "1", "title": "t", "secret": "s3cr3t"})
+
+    codec = resolve_search_read_codec_spec(
+        _spec(encryption=policy), keyring=keyring, deterministic=None, tenant_provider=lambda: None
+    ).resolved_read_codec
+    await codec.prepare_decrypt([row])  # type: ignore[attr-defined]
+
+    if named:
+        assert codec.decode_mapping(row) == _Doc(id="1", title="t", secret="s3cr3t")
+        return
+
+    with pytest.raises(CoreException) as ei:
+        codec.decode_mapping(row)
+
+    assert ei.value.code == "core.crypto.aead_auth_failed"
 
 
 class _Projection(BaseModel):

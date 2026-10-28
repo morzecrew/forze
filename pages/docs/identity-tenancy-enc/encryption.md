@@ -30,7 +30,7 @@ across a scope up to `max_dek_messages` before rotating — one KMS round-trip
 amortized over many values.
 
 Every ciphertext is bound to **associated data** (AAD): at minimum the tenant
-and the field name, so an envelope lifted from one tenant or column cannot be
+and the field name (plus the spec name for document fields), so an envelope lifted from one tenant or column cannot be
 replayed into another. The cipher is AEAD (AES-256-GCM by default, ChaCha20-
 Poly1305 optional) — tampering fails the open, it doesn't return garbage.
 
@@ -142,6 +142,25 @@ One caveat when sharing a policy: `binds_record_id` needs a stable per-record id
 applies to the document and graph (key-addressed) planes only — an `AnalyticsSpec` (warehouse
 rows have no id) and an endpoint-identity graph edge reject it at wiring. Leave it off the
 policy you share with those, or give them their own.
+
+A document's ciphertext is also bound to the **document spec's name**, so it can't be
+moved between aggregates. A search or analytics spec that reads the document's table in
+place — Postgres or Mongo search, a warehouse query over that table — must bind the same
+name, so name the document on the shared policy:
+
+```python
+PATIENT_FIELDS = FieldEncryption(encrypted=frozenset({"ssn"}), document="patients")
+
+DocumentSpec(name="patients", read=Patient, encryption=PATIENT_FIELDS)
+AnalyticsSpec(name="patient_report", read=Report, queries=..., encryption=PATIENT_FIELDS)
+```
+
+Without `document`, those reads fail with `core.crypto.aead_auth_failed`: a
+ciphertext is never opened under another name. A document spec with a different name
+refuses a policy that names `patients`. Leave `document` unset for data a plane seals
+itself (an external search index, warehouse ingest); setting it later changes that
+data's AAD, so rebuild or re-ingest it.
+
 The downstream caches inherit it: when a search route encrypts, its result-snapshot
 runs (the frozen models kept for stable re-pagination) are sealed at rest too, so the
 snapshot store never re-exposes what the document sealed — automatic, no extra config.

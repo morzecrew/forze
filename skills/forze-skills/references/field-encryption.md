@@ -23,7 +23,7 @@ Useful knobs: `dek_ttl_seconds` bounds how long a cached data key stays usable �
 
 Each surface opts in independently:
 
-- **Document fields** — `DocumentSpec(encryption=FieldEncryption(...))`; the same policy object is shared by the `SearchSpec` / analytics / graph specs over the same data, so sealed-field sets cannot drift.
+- **Document fields** — `DocumentSpec(encryption=FieldEncryption(...))`; the same policy object is shared by the `SearchSpec` / analytics / graph specs over the same data, so sealed-field sets cannot drift. Document ciphertext is bound to the document spec's name, so an in-place search or analytics query over the document's table needs `document="<spec name>"` on that shared policy.
 - **Object storage** — per route: `S3StorageConfig(bucket="uploads", encrypt=True)` (client-side; the backend only stores the envelope).
 - **Outbox / queue / stream / pub-sub payloads** — `OutboxSpec(name="events", codec=codec, encryption="end_to_end")`; tiers `none` < `at_rest` (relay decrypts) < `end_to_end` (consumer decrypts).
 - **Idempotency result cache** — `IdempotencySpec(name="orders", encrypt_result=True)`.
@@ -54,6 +54,7 @@ By default the read path **tolerates plaintext** in a sealed field, so you can e
 - **Filtering or sorting on an encrypted field** — mark it `searchable` (deterministic) for equality, keep a plaintext companion field for ranges and ordering, or accept that the field is write-only to queries.
 - **Marking a field `searchable` when equality lookups aren't needed** — deterministic encryption leaks equality/frequency; default to `encrypted` (randomized).
 - **Leaving `reject_plaintext=False` after the backfill is complete** — the plaintext tolerance becomes an accept-chosen-plaintext hole.
+- **Reading a document's table in place (Postgres/Mongo search, warehouse query) with a policy that does not name the document** — every sealed row fails `core.crypto.aead_auth_failed`; set `document=` to the document spec's name.
 - **Sorting, range-filtering, or content-searching sealed fields** — randomized ciphertext has no order and no content; only `searchable` fields support equality.
 
 ## Reference
