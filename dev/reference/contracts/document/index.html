@@ -7122,7 +7122,7 @@ wiring:</p>
 <tr>
 <td><code>UniqueTogether(fields=…, skip_null=True)</code></td>
 <td>…exempting tuples holding a null</td>
-<td>partial unique index</td>
+<td>unique index (nulls distinct)</td>
 <td><code>partialFilterExpression</code> with <code>$type</code></td>
 <td>✅</td>
 </tr>
@@ -7180,10 +7180,12 @@ while the rows it displaces still hold their positions:</p>
 <p>On Postgres that is a constraint declared <code>DEFERRABLE INITIALLY DEFERRED</code>, and startup checks the
 deferral both ways: a deferred constraint behind a guarantee that holds always is refused — the
 in-memory store would refuse writes the database accepts — and so is an immediate one behind a
-guarantee that holds at commit. <code>DEFERRABLE INITIALLY IMMEDIATE</code> counts as immediate. A <em>partial</em>
-uniqueness (<code>where</code> or <code>skip_null</code>) cannot hold at commit on Postgres, because deferral belongs to
-constraints and a unique constraint cannot be partial, so wiring refuses it there; a filtered
-<code>NonOverlapping</code> can, since an <code>EXCLUDE</code> constraint takes both. Mongo checks every write and
+guarantee that holds at commit. <code>DEFERRABLE INITIALLY IMMEDIATE</code> counts as immediate. A
+uniqueness filtered by <code>where</code> cannot hold at commit on Postgres, because deferral belongs to
+constraints and a unique constraint cannot be partial, so wiring refuses it there. <code>skip_null</code> can:
+a plain unique constraint already treats a tuple holding a null as distinct, so
+<code>ADD UNIQUE (…) DEFERRABLE INITIALLY DEFERRED</code> keeps it. A filtered <code>NonOverlapping</code> can too,
+since an <code>EXCLUDE</code> constraint takes both. Mongo checks every write and
 refuses <code>"commit"</code>. The in-memory store checks a <code>"commit"</code> guarantee when the transaction
 commits — and at the write itself outside a transaction, where, as in Postgres autocommit, there
 is no later moment.</p>
@@ -7223,7 +7225,15 @@ periods and takes every other overlapping pair.</p>
    and anything that does not reduce that way is refused rather than guessed at. Postgres hands
    back a deparsed SQL predicate, so only the columns it restricts on are checked — an index on
    the right column and the wrong value passes there. Neither is a proof that the mechanism
-   matches; on Postgres it is a floor under a forgotten migration.</p>
+   matches; on Postgres it is a floor under a forgotten migration. Postgres also warns about
+   each unique index and <code>EXCLUDE</code> constraint on the write table that no guarantee declares,
+   other than the primary key and an index over all its columns, and suggests the declaration.
+   A <code>conflict_target</code> over other columns is reported too, since it refuses duplicates. Without it
+   the in-memory store accepts writes the database refuses. An index counts as declared only
+   when it is the one that keeps a guarantee, so a partial index beside an unfiltered
+   declaration is still reported. A spec the framework owns, such as a <code>forze_identity</code> one,
+   is not reported at all, even for an index you added yourself, because the application
+   cannot declare anything on it.</p>
 </li>
 <li><strong>Enforcement</strong>, at write time, by the store. A violating write raises <code>conflict</code>, from every
    backend and from the in-memory store alike — including across two concurrent transactions,
@@ -7234,7 +7244,15 @@ periods and takes every other overlapping pair.</p>
 <p>With <code>skip_null</code> off, two rows sharing a tuple that holds a null conflict. An ordinary
 Postgres unique index permits them, so a guarantee over a nullable column asks for
 <code>UNIQUE NULLS NOT DISTINCT</code> and startup refuses the plain index by name. Over <code>NOT NULL</code>
-columns the two readings cannot differ and an ordinary index is exactly the mechanism.</p>
+columns the two readings cannot differ and an ordinary index is exactly the mechanism. The
+same holds for a column the <code>where</code> rules out nulls in: a top-level <code>$null: false</code>, an
+equality or ordered comparison, or an <code>$in</code> whose list holds no null.</p>
+<p>With <code>skip_null</code> on, the ordinary index <em>is</em> the mechanism, and no predicate is needed. A
+predicate dropping the rows that hold a null also counts, if it is only <code>IS NOT NULL</code>
+conditions on fields of the tuple, joined by <code>AND</code>, covering each nullable field. Any other
+predicate, such as <code>code = 'x'</code> or <code>code IS NULL</code>, is refused. <code>NULLS NOT DISTINCT</code> is
+refused there too, unless such a predicate drops the null rows first, because it rejects
+the rows the exemption lets through.</p>
 </div>
 <div class="admonition warning">
 <p class="admonition-title">A guarantee with no <code>where</code> covers soft-deleted rows too</p>

@@ -6718,6 +6718,10 @@ the access patterns want.</p>
 <span class="p">);</span>
 <span class="k">CREATE</span><span class="w"> </span><span class="k">UNIQUE</span><span class="w"> </span><span class="k">INDEX</span><span class="w"> </span><span class="k">ON</span><span class="w"> </span><span class="n">authn_password_accounts</span><span class="w"> </span><span class="p">(</span><span class="n">username</span><span class="p">);</span>
 </code></pre></div>
+<p>Keep the unique index on <code>username</code>: registration checks for an existing login before it
+inserts, and only the index stops two concurrent registrations of one username. The spec does
+not declare it as a storage guarantee, because not every document store can keep one, so
+startup validation neither requires it nor reports it.</p>
 <p>API-key accounts (<code>api_key_account_spec</code>):</p>
 <div class="highlight"><pre><span></span><code><span class="k">CREATE</span><span class="w"> </span><span class="k">TABLE</span><span class="w"> </span><span class="n">authn_api_key_accounts</span><span class="w"> </span><span class="p">(</span>
 <span class="w">    </span><span class="n">id</span><span class="w"> </span><span class="n">uuid</span><span class="w"> </span><span class="k">PRIMARY</span><span class="w"> </span><span class="k">KEY</span><span class="p">,</span>

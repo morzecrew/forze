@@ -6794,6 +6794,24 @@ module, and open the pool from the lifecycle plan:</p>
     <span class="n">PostgresLifecycleModule</span><span class="p">(</span><span class="n">client</span><span class="o">=</span><span class="n">pg</span><span class="p">,</span> <span class="n">dsn</span><span class="o">=</span><span class="s2">"postgresql://…"</span><span class="p">,</span> <span class="n">config</span><span class="o">=</span><span class="n">PostgresConfig</span><span class="p">()),</span>
 <span class="p">)</span>
 </code></pre></div>
+<p>To check every bound document's relations at startup, build the schema specs from the spec
+registry and the deps module:</p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">forze_postgres</span><span class="w"> </span><span class="kn">import</span> <span class="n">postgres_document_schema_specs</span>
+
+<span class="n">pg_deps</span> <span class="o">=</span> <span class="n">PostgresDepsModule</span><span class="p">(</span><span class="n">client</span><span class="o">=</span><span class="n">pg</span><span class="p">,</span> <span class="n">rw_documents</span><span class="o">=</span><span class="p">{</span><span class="s2">"orders"</span><span class="p">:</span> <span class="n">orders_pg</span><span class="p">},</span> <span class="n">tx</span><span class="o">=</span><span class="p">{</span><span class="s2">"orders"</span><span class="p">})</span>
+
+<span class="n">PostgresLifecycleModule</span><span class="p">(</span>
+    <span class="n">client</span><span class="o">=</span><span class="n">pg</span><span class="p">,</span>
+    <span class="n">dsn</span><span class="o">=</span><span class="s2">"postgresql://…"</span><span class="p">,</span>
+    <span class="n">schema_specs</span><span class="o">=</span><span class="n">postgres_document_schema_specs</span><span class="p">(</span><span class="n">spec_registry</span><span class="p">,</span> <span class="n">pg_deps</span><span class="p">),</span>
+<span class="p">)</span>
+</code></pre></div>
+<p>Each route in <code>ro_documents</code> and <code>rw_documents</code> is paired with the <code>DocumentSpec</code> of the same
+name, so a document added later is validated too. A bound route with no spec in the registry
+is refused with <code>postgres_schema_spec_uncatalogued</code>. Pass <code>exclude=</code> for routes you leave
+unvalidated on purpose. A route on a per-tenant relation resolver is skipped with a warning,
+because its relation names are known only per request. A catalogued document that nothing
+binds is refused by the inventory reconciliation when the runtime is built with the registry.</p>
 <h2 id="what-it-provides">What it provides<a class="headerlink" href="#what-it-provides" title="Permanent link">&para;</a></h2>
 <table>
 <thead>

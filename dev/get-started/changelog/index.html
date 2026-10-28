@@ -10295,6 +10295,12 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <li>
 <p><strong><code>forze_fastapi.run_startup_checks(app)</code> runs every FastAPI startup check in one call.</strong> It checks the app and each Starlette or FastAPI app mounted beneath it, and <code>runtime_lifespan</code> calls it. An app with its own lifespan calls it there, on the outermost app: Starlette never runs a mounted app's lifespan.</p>
 </li>
+<li>
+<p><strong>Postgres startup warns about a unique index or <code>EXCLUDE</code> constraint that no guarantee declares.</strong> The in-memory store does not enforce it, so a test run accepts writes the database refuses. It suggests the declaration; the primary key, an index over its columns and framework-owned specs are left out.</p>
+</li>
+<li>
+<p><strong><code>postgres_document_schema_specs(registry, deps)</code> validates every bound Postgres document.</strong> It pairs each route with its catalogued <code>DocumentSpec</code> for <code>schema_specs</code>, and refuses a route with no such spec or a read-write route over a read-only one. <code>exclude=</code> skips routes; a per-tenant one is skipped with a warning.</p>
+</li>
 </ul>
 <p><strong><code>forze ops</code> for people at a shell and for backfills:</strong></p>
 <ul>
@@ -10391,6 +10397,12 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 </li>
 <li>
 <p><strong>A Postgres locking read works when the read relation differs from the write relation (a view, typically).</strong> <code>get</code>, <code>find</code>, <code>project</code> and <code>select</code> with <code>for_update</code> failed on a view that joins with <code>LEFT JOIN</code>. They now lock the row on the write table, honouring <code>nowait</code> and <code>skip_locked</code>, then read.</p>
+</li>
+<li>
+<p><strong>Postgres startup accepts a plain unique index for a <code>skip_null</code> guarantee.</strong> Postgres already treats a tuple holding a null as distinct, so no predicate is needed, and a deferred constraint keeps <code>skip_null</code> at commit. A <code>where</code> ruling out nulls in a column no longer demands <code>NULLS NOT DISTINCT</code>.</p>
+</li>
+<li>
+<p><strong>Postgres startup no longer warns about a <code>tenant_id</code> column the document model maps itself.</strong> Such a table stores the tenant as data, as identity's sessions and tenant memberships do, so the column is not an unused isolation column.</p>
 </li>
 </ul>
 <h3 id="security">Security<a class="headerlink" href="#security" title="Permanent link">&para;</a></h3>
