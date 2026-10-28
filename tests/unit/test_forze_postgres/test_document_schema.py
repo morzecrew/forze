@@ -28,6 +28,7 @@ from forze_postgres.execution.lifecycle import (
     postgres_document_schema_specs,
     postgres_document_schema_validation_lifecycle_step,
 )
+from forze_postgres.kernel.catalog.introspect import PostgresIntrospector, PostgresType
 from forze_postgres.kernel.catalog.validation.validate_schema import PostgresDocumentSchemaSpec
 from tests.support.execution_context import (
     context_from_deps,
@@ -140,6 +141,35 @@ async def test_schema_validation_hook_skips_partition_error() -> None:
         ),
     )
     await hook(ctx)
+
+
+@pytest.mark.asyncio
+async def test_schema_validation_hook_raises_a_refusal_found_before_a_partition_error() -> None:
+    # The hook skips on a missing partition; a document already refused is not skipped with it.
+    partition = exc.internal("x", code="introspection_partition_required")
+    text = {"not_null": True, "is_array": False, "base": "text"}
+
+    async def _types(*, schema: str, relation: str) -> dict[str, PostgresType]:
+        if relation == "refused":
+            return {"id": PostgresType(**text), "name": PostgresType(**text | {"not_null": False})}
+
+        raise partition
+
+    intro = MagicMock(spec=PostgresIntrospector)
+    intro.get_column_types = AsyncMock(side_effect=_types)
+    intro.get_relation = AsyncMock(return_value="table")
+    ctx = context_from_deps(Deps.plain({PostgresIntrospectorDepKey: intro}))
+    hook = PostgresDocumentSchemaValidationHook(
+        specs=tuple(
+            PostgresDocumentSchemaSpec(name=name, read_model=_Read, read_relation=("public", name))
+            for name in ("refused", "unpartitioned")
+        ),
+    )
+
+    with pytest.raises(CoreException, match="nullable column") as caught:
+        await hook(ctx)
+
+    assert caught.value.__cause__ is partition
 
 
 @pytest.mark.asyncio

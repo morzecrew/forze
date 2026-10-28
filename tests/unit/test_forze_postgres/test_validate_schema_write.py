@@ -422,7 +422,7 @@ async def test_every_failing_document_is_reported_in_one_error() -> None:
     with pytest.raises(CoreException) as caught:
         await validate_postgres_document_schemas(intro, specs)
 
-    assert caught.value.code == "postgres_schema_validation_failed"
+    assert caught.value.code == "postgres_schema_documents_refused"
     assert caught.value.details is not None
     failures = caught.value.details["failures"]
     assert [f["document"] for f in failures] == ["nullable", "missing"]
@@ -454,3 +454,96 @@ async def test_an_error_of_no_one_document_stops_the_validation_at_once(
 
     assert caught.value is error
     assert intro.get_column_types.await_count == 1
+
+
+def _stop_error(kind: str) -> CoreException:
+    if kind == "partition":
+        return CoreException.internal("No tenant.", code="introspection_partition_required")
+
+    return CoreException.infrastructure("Database connection error.")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stop", ["partition", "infrastructure"])
+@pytest.mark.parametrize("refused", [1, 2])
+async def test_refusals_found_before_an_error_of_no_one_document_are_raised(
+    stop: str,
+    refused: int,
+) -> None:
+    # The hook skips on a missing partition, so the refusal must not be lost to it.
+    error = _stop_error(stop)
+    intro = MagicMock(spec=PostgresIntrospector)
+
+    async def _types(*, schema: str, relation: str) -> dict[str, PostgresType]:
+        if relation == "t_nullable":
+            return {"id": _col("id"), "name": _nullable()}
+
+        raise error
+
+    intro.get_column_types = AsyncMock(side_effect=_types)
+    intro.get_relation = AsyncMock(return_value="table")
+    specs = [_read_only(f"nullable{i}", "t_nullable") for i in range(refused)]
+    specs += [_read_only("stops", "t"), _read_only("never", "t_nullable")]
+
+    with pytest.raises(CoreException) as caught:
+        await validate_postgres_document_schemas(intro, specs)
+
+    assert caught.value.__cause__ is error
+    assert caught.value.details is not None
+
+    if refused == 1:
+        assert caught.value.code == "postgres_schema_validation_failed"
+        assert caught.value.details["field"] == "name"
+
+    else:
+        assert caught.value.code == "postgres_schema_documents_refused"
+        assert [f["document"] for f in caught.value.details["failures"]] == [
+            "nullable0",
+            "nullable1",
+        ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("side", ["write", "history"])
+async def test_a_write_or_history_view_keeps_the_nullability_rule(side: str) -> None:
+    # Only a read relation is let off: a write through a view needs every required value.
+    intro = MagicMock(spec=PostgresIntrospector)
+    not_null = {
+        base: PostgresType(base=base, is_array=False, not_null=True)
+        for base in ("uuid", "int4", "timestamptz", "jsonb")
+    }
+    columns = {
+        "v": {"id": _nullable(), "name": _nullable()},
+        "w": {"id": _col("id"), "name": _nullable(), "rev": not_null["int4"]},
+        "h": {
+            "source": _nullable(),
+            "id": not_null["uuid"],
+            "rev": not_null["int4"],
+            "created_at": not_null["timestamptz"],
+            "data": not_null["jsonb"],
+        },
+    }
+
+    async def _types(*, schema: str, relation: str) -> dict[str, PostgresType]:
+        return columns[relation]
+
+    intro.get_column_types = AsyncMock(side_effect=_types)
+    intro.get_relation = AsyncMock(return_value="view")
+    relations: dict[str, Any] = (
+        {
+            "write_domain_model": _Domain,
+            "write_create_model": _Create,
+            "write_relation": ("public", "w"),
+        }
+        if side == "write"
+        else {"history_enabled": True, "history_relation": ("public", "h")}
+    )
+    spec = PostgresDocumentSchemaSpec(
+        name="doc", read_model=_Read, read_relation=("public", "v"), **relations
+    )
+
+    with pytest.raises(CoreException, match="nullable column") as caught:
+        await validate_postgres_document_schemas(intro, [spec])
+
+    assert caught.value.details is not None
+    assert caught.value.details["label"].startswith(f"doc {side}")

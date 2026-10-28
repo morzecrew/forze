@@ -126,12 +126,16 @@ unvalidated on purpose. A route on a per-tenant relation resolver is skipped wit
 because its relation names are known only per request. A catalogued document that nothing
 binds is refused by the inventory reconciliation when the runtime is built with the registry.
 
-Every document is checked before startup fails, so one boot names all that need a migration.
-One failing document raises its own error. Several raise one
-`postgres_schema_validation_failed` error whose summary names each, with `details["failures"]`
-holding each document's `code`, `summary` and `details`. A required field must map to a
-`NOT NULL` column of a table. On a view or a materialized view, nullability is not checked:
-Postgres records `NOT NULL` on tables only, so each column of a view reads as nullable.
+Validation checks every document before startup fails, so one boot names all that need a
+migration. One refused document raises its own error. Several raise one
+`postgres_schema_documents_refused` error whose summary names each, with `details["failures"]`
+holding each document's `code`, `summary` and `details`. An error that concerns no single
+document, such as a lost connection or a missing tenant partition, stops the checks at once.
+The documents refused before it are then raised, with that error as the cause.
+
+A required field must map to a `NOT NULL` column. On a read relation that is a view or a
+materialized view, nullability is not checked: Postgres records `NOT NULL` on tables only, so
+each column of a view reads as nullable. A write or history relation keeps the check.
 
 ## What it provides
 

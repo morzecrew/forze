@@ -79,6 +79,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Postgres schema validation reports every refused document in one `postgres_schema_documents_refused` error** (**behaviour change**). Its `details["failures"]` lists each; a single refused document still raises its own error. A connection or partition error stops the checks and raises the refusals found before it.
+
 - **HTTP error bodies carry the error's `code` and `kind`** (**behaviour change**). The body is `{"detail", "code", "kind", "context"}`, so a client tells `revision_mismatch` from other 400s; a whole-body comparison breaks. An unhandled 500 now also sends `X-Error-Code: core.internal`.
 
 - **The DuckDB lake session no longer disables any filesystem** (**behaviour change**). On 1.5 as on 2 it relies on an allowlist of the tenant's prefix, the catalog's tree and the token endpoint, plus attested settings. That tree is shared by every tenant, and analytics SQL can send it unauthenticated requests.
@@ -97,7 +99,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Firestore `update_many` and `touch_many` work inside a transaction.** They read every row before writing any, as a Firestore transaction requires; a second row used to fail with a read-after-write error.
 
-- **Postgres schema validation accepts the required fields of a view-backed read model.** Postgres records `NOT NULL` on tables only, so a view's or materialized view's nullability is not checked. Several failing documents now raise one `postgres_schema_validation_failed` error listing each (**behaviour change**).
+- **Postgres schema validation accepts the required fields of a view-backed read model.** Postgres records `NOT NULL` on tables only, so a read relation that is a view or a materialized view no longer has its nullability checked. Write and history relations keep the check.
 
 - **`HttpClient` reads a compressed response.** A gzip or deflate body, and with no cap a zstd or brotli one, no longer fails `request`, or a rejected response from `stream`, as an infrastructure error. `RoutedHttpClient` and declared services are fixed with it.
 

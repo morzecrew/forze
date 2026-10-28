@@ -221,7 +221,7 @@ async def test_every_failing_document_is_reported_in_one_error(
     with pytest.raises(CoreException) as caught:
         await PostgresDocumentSchemaValidationHook(specs=specs)(ctx)
 
-    assert caught.value.code == "postgres_schema_validation_failed"
+    assert caught.value.code == "postgres_schema_documents_refused"
     assert caught.value.details is not None
     failures = caught.value.details["failures"]
     assert [f["document"] for f in failures] == ["nullable", "missing", "unguarded"]

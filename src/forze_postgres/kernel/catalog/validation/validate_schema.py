@@ -170,9 +170,19 @@ async def _validate_relation_models(
     schema: str,
     relation: str,
     models: Sequence[tuple[type[BaseModel], frozenset[str], str]],
+    read: bool = False,
 ) -> None:
     column_types = await introspector.get_column_types(schema=schema, relation=relation)
-    kind = await introspector.get_relation(schema=schema, relation=relation)
+    # Postgres records NOT NULL on tables only: every column of a view or a materialized view
+    # reads nullable, and neither takes a NOT NULL or CHECK constraint. Which view columns
+    # cannot be null is known only to the view's parse tree (an outer join nulls a NOT NULL
+    # base column), whose stored form is internal to each Postgres version. Only a read
+    # relation is let off: a write or history relation that is a view keeps the rule, since
+    # a write through it needs every required value.
+    unchecked = read and await introspector.get_relation(schema=schema, relation=relation) in (
+        "view",
+        "materialized_view",
+    )
 
     for model, omit_fields, label in models:
         validate_field_type_compatibility(
@@ -182,18 +192,13 @@ async def _validate_relation_models(
             label=label,
         )
 
-        # Postgres records NOT NULL on tables only: every column of a view or a materialized
-        # view reads nullable, and neither takes a NOT NULL or CHECK constraint. Which view
-        # columns cannot be null is known only to the view's parse tree (an outer join nulls a
-        # NOT NULL base column), whose stored form is internal to each Postgres version.
-        if kind in ("view", "materialized_view"):
+        if unchecked:
             logger.debug(
-                "Postgres schema validation for %r: %s.%s is a %s, which records no NOT NULL; "
+                "Postgres schema validation for %r: %s.%s is a view, which records no NOT NULL; "
                 "required fields are not checked against column nullability.",
                 label,
                 schema,
                 relation,
-                kind,
             )
             continue
 
@@ -1258,6 +1263,7 @@ async def _validate_document(
                 f"{spec.name} read",
             ),
         ],
+        read=True,
     )
 
     if spec.write_relation is not None:
@@ -1392,20 +1398,40 @@ _DOCUMENT_REFUSAL_KINDS: Final = frozenset({ExceptionKind.INTERNAL, ExceptionKin
 """Kinds one document's refusal is raised as; an error of another kind is not about a document."""
 
 
+def _refusal(failures: Sequence[tuple[str, CoreException]]) -> CoreException:
+    """The one refusal as it is, or several as one error naming each document."""
+
+    if len(failures) == 1:
+        return failures[0][1]
+
+    return exc.internal(
+        f"Postgres schema validation refused {len(failures)} documents:"
+        + "".join(f"\n  - {name}: {e.summary}" for name, e in failures),
+        code="postgres_schema_documents_refused",
+        details={
+            "failures": [
+                {"document": name, "code": e.code, "summary": e.summary, "details": e.details}
+                for name, e in failures
+            ],
+        },
+    )
+
+
 async def validate_postgres_document_schemas(
     introspector: PostgresIntrospector,
     specs: Sequence[PostgresDocumentSchemaSpec],
 ) -> None:
     """Assert each spec's relations expose the columns implied by the Pydantic models.
 
-    Every spec is checked, so one startup names every document that fails. A single failure is
+    Every spec is checked, so one startup names every document refused. A single refusal is
     raised as it is. An error that is not about one document, such as a lost connection or a
-    missing introspection partition, stops the checks at once.
+    missing introspection partition, stops the checks at once; the refusals found before it
+    are raised in its place, chained from it.
 
     :param introspector: Catalog introspector for the database the specs map to.
     :param specs: The documents to check.
-    :raises CoreException: ``internal``, code ``postgres_schema_validation_failed``, when
-        several documents fail: ``details["failures"]`` lists each one's ``document``,
+    :raises CoreException: ``internal``, code ``postgres_schema_documents_refused``, when
+        several documents are refused: ``details["failures"]`` lists each one's ``document``,
         ``code``, ``summary`` and ``details``.
     """
 
@@ -1420,22 +1446,14 @@ async def validate_postgres_document_schemas(
                 e.kind not in _DOCUMENT_REFUSAL_KINDS
                 or e.code == "introspection_partition_required"
             ):
+                # The hook skips on a missing partition: a document already refused must not
+                # be skipped with it.
+                if failures:
+                    raise _refusal(failures) from e
+
                 raise
 
             failures.append((spec.name, e))
 
-    if len(failures) == 1:
-        raise failures[0][1]
-
     if failures:
-        raise exc.internal(
-            f"Postgres schema validation failed for {len(failures)} documents:"
-            + "".join(f"\n  - {name}: {e.summary}" for name, e in failures),
-            code="postgres_schema_validation_failed",
-            details={
-                "failures": [
-                    {"document": name, "code": e.code, "summary": e.summary, "details": e.details}
-                    for name, e in failures
-                ],
-            },
-        )
+        raise _refusal(failures)
