@@ -17,6 +17,9 @@ require_fastapi()
 
 import asyncio
 import math
+import signal
+from collections.abc import Generator
+from contextlib import contextmanager
 from datetime import timedelta
 
 import uvicorn
@@ -110,6 +113,8 @@ async def serve_uvicorn(
     server stopped accepting, where a later signal cannot cut them short.
 
     The app must hold *runtime*'s scope open — ``FastAPI(lifespan=runtime_lifespan(runtime))``.
+    For a runtime the lifespan builds, or several worker processes, give ``runtime_lifespan``
+    a *drain_budget* instead (:func:`drain_ahead_of_uvicorn`).
 
     An orderly exit takes up to ``announce_delay + drain_budget + 1 s`` (a phase that
     ignores its cancellation) ``+ graceful timeout + runtime.drain_timeout +
@@ -138,6 +143,36 @@ async def serve_uvicorn(
             "does not have; without it a signal would stop the server without draining"
         )
 
+    _log_exit_budget(
+        config,
+        runtime,
+        drain_budget=drain_budget,
+        announce_delay=announce_delay,
+        graceful_timeout=graceful_timeout,
+    )
+
+    server = _DrainingServer(
+        config,
+        runtime,
+        drain_budget=drain_budget,
+        announce_delay=announce_delay,
+        stop=stop,
+    )
+
+    await server.serve()
+
+
+# ....................... #
+
+
+def _log_exit_budget(
+    config: uvicorn.Config,
+    runtime: ExecutionRuntime,
+    *,
+    drain_budget: timedelta,
+    announce_delay: timedelta,
+    graceful_timeout: timedelta,
+) -> None:
     if config.timeout_graceful_shutdown is None:
         # Without one uvicorn waits for open streams forever, so one SSE client turns every
         # restart into a kill at the grace period.
@@ -164,12 +199,97 @@ async def serve_uvicorn(
         steps,
     )
 
-    server = _DrainingServer(
-        config,
+
+# ....................... #
+
+
+class _ServerDrain(SignalDrain):
+    """Drains the runtime ahead of the uvicorn server whose signal handler it displaced."""
+
+    log = _logger
+
+    def __init__(
+        self,
+        server: uvicorn.Server,
+        runtime: ExecutionRuntime,
+        *,
+        drain_budget: timedelta,
+        announce_delay: timedelta,
+    ) -> None:
+        super().__init__(runtime, drain_budget=drain_budget, announce_delay=announce_delay)
+        self._server = server
+
+    # ....................... #
+
+    def _drain_ended(self) -> None:
+        super()._drain_ended()
+        self._server.should_exit = True
+
+    # ....................... #
+
+    def _forced(self) -> None:
+        self._server.should_exit = True
+        self._server.force_exit = True
+
+
+# ....................... #
+
+
+@contextmanager
+def drain_ahead_of_uvicorn(
+    runtime: ExecutionRuntime,
+    *,
+    drain_budget: timedelta,
+    announce_delay: timedelta,
+) -> Generator[None]:
+    """Drain *runtime* on the first SIGTERM or SIGINT before the uvicorn server serving this
+    process stops, for the duration of the block.
+
+    Enter it on the server's loop, from the app's lifespan (``runtime_lifespan`` does, given
+    a *drain_budget*): it takes over the signal handler ``uvicorn.Server`` installed — the
+    one each worker of ``uvicorn --workers N`` and of gunicorn's uvicorn worker runs too —
+    and on the first signal runs the drain while the server still serves, then tells the
+    server to exit. The signals behave as under :func:`serve_uvicorn`, whose server already
+    drains: under it this does nothing. Under any other handler — another server, or a
+    server off the main thread, which installs none — it logs a warning and does nothing.
+    Unless the server sets ``timeout_graceful_shutdown``, it is set to 10 seconds.
+
+    :param runtime: The runtime whose scope the block holds.
+    :param drain_budget: Shared by the drain phases.
+    :param announce_delay: How long readiness fails before the first phase starts.
+    """
+
+    handler = signal.getsignal(signal.SIGTERM)
+    server = getattr(handler, "__self__", None)
+
+    if isinstance(server, SignalDrain):
+        # serve_uvicorn's server, which drains the runtime itself.
+        yield
+        return
+
+    if not isinstance(server, uvicorn.Server):
+        _logger.warning(
+            "SIGTERM is not handled by a uvicorn server on this process's main thread: "
+            "the runtime drains only after the server stops accepting"
+        )
+
+        yield
+        return
+
+    _log_exit_budget(
+        server.config,
         runtime,
         drain_budget=drain_budget,
         announce_delay=announce_delay,
-        stop=stop,
+        graceful_timeout=timedelta(seconds=10),
     )
 
-    await server.serve()
+    drain = _ServerDrain(
+        server,
+        runtime,
+        drain_budget=drain_budget,
+        announce_delay=announce_delay,
+    )
+
+    with drain.capture_signals():
+        yield

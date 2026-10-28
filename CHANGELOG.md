@@ -21,6 +21,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **`attach_readiness_route` takes a runtime provider.** Pass a zero-argument callable returning the runtime, or `None` before it exists; it is asked on every request. No runtime, or a provider that raises, answers `503 unavailable`.
 
+- **`runtime_lifespan(build=...)` builds the runtime when the app starts.** An app factory then imports without the runtime's environment, and each worker process builds its own. Wire routes with `ctx_dep=lifespan.get_context` and the probe with `lifespan.runtime`; a build that raises fails the startup.
+
+- **`runtime_lifespan(drain_budget=...)` drains on `SIGTERM` in every uvicorn worker.** Under `uvicorn --workers N` or gunicorn's uvicorn worker, each worker drains its own runtime while it still serves, then lets its server exit. An app with its own lifespan uses `drain_ahead_of_uvicorn`.
+
 - **`bind_max_in_size` raises the `$in` size limit for one block of trusted code.** Application code matching an id list it built itself no longer chunks it under the spec's limit, which still bounds every caller-supplied filter. A backend's own cap, such as Firestore's 30, still applies.
 
 - **A hand-written upload route can cap its read like the generated one.** `forze_fastapi.routes.read_upload_capped(file, max_size)` returns the multipart file's bytes, or refuses a file over the cap with the generated route's 422 `upload_too_large`.

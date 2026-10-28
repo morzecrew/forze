@@ -57,9 +57,10 @@ def attach_readiness_route(
     *runtime* may also be a zero-argument callable returning the runtime, or ``None`` while
     there is none yet, asked on every request. An app that builds its runtime inside the
     FastAPI lifespan can then attach the probe in its factory, before that runtime exists —
-    say the lifespan stores it on ``app.state.runtime``::
+    ``runtime_lifespan(build=...)`` provides one::
 
-        attach_readiness_route(router, lambda: getattr(app.state, "runtime", None))
+        lifespan = runtime_lifespan(build=build_my_runtime)
+        attach_readiness_route(router, lifespan.runtime)
 
     ``None`` answers ``unavailable``, as a runtime with no open scope does; so does a
     callable that raises, whose exception is logged and never served to the probe.

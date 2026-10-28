@@ -28,6 +28,28 @@ def ctx_dep():
     return runtime.get_context()
 ```
 
+An app factory that must import without the runtime's environment, or that runs one runtime per worker process, lets the lifespan build it at startup and wires routes to the lifespan:
+
+```python
+from datetime import timedelta
+
+from fastapi import FastAPI
+from forze_fastapi import runtime_lifespan
+
+
+def create_app() -> FastAPI:
+    lifespan = runtime_lifespan(
+        build=build_my_runtime,             # called at startup; raising fails the startup
+        drain_budget=timedelta(seconds=5),  # SIGTERM drains first, in every uvicorn worker
+    )
+    app = FastAPI(lifespan=lifespan)
+    # ctx_dep=lifespan.get_context for middlewares and attach_* routes;
+    # attach_readiness_route(router, lifespan.runtime) for the probe.
+    return app
+```
+
+Serve it with `uvicorn pkg.app:create_app --factory --workers N`. A second entry while the lifespan runs is refused (`configuration`), never a second runtime.
+
 ## Middleware, errors, and docs
 
 ```python
