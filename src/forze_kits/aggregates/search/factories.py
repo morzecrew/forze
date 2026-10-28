@@ -63,13 +63,15 @@ def _typed_search_descriptors(
     *,
     sensitive: bool = False,
     options_type: Any = None,
+    members: tuple[str, ...] = (),
 ) -> dict[StrKey, OperationDescriptor]:
     """Descriptors for the four single-index/hub search operations.
 
     A ``sensitive`` spec propagates the flag onto every descriptor so projection
     surfaces (generated routes, MCP) can refuse it at build time. ``options_type`` pins the
     request ``options`` shape — left ``None`` for single-index (:class:`SearchOptions`), set to
-    :class:`MultiSourceSearchOptions` for hub requests.
+    :class:`MultiSourceSearchOptions` for hub requests. ``members`` names a hub's members, each
+    of which an authz-guarded plan must authorize on its own.
     """
 
     return {
@@ -78,24 +80,28 @@ def _typed_search_descriptors(
             output_type=_parametrized(SearchPaginated, model_type),
             description="Full-text search with typed results (offset pagination).",
             sensitive=sensitive,
+            members=members,
         ),
         SearchKernelOp.RAW: OperationDescriptor(
             input_type=_request_dto(ProjectedSearchRequestDTO, options_type),
             output_type=ProjectedSearchPaginated,
             description="Full-text search with field-projected results (offset pagination).",
             sensitive=sensitive,
+            members=members,
         ),
         SearchKernelOp.TYPED_CURSOR: OperationDescriptor(
             input_type=_request_dto(CursorSearchRequestDTO, options_type),
             output_type=_parametrized(SearchCursorPaginated, model_type),
             description="Full-text search with typed results (cursor pagination).",
             sensitive=sensitive,
+            members=members,
         ),
         SearchKernelOp.RAW_CURSOR: OperationDescriptor(
             input_type=_request_dto(ProjectedCursorSearchRequestDTO, options_type),
             output_type=ProjectedSearchCursorPaginated,
             description="Full-text search with field-projected results (cursor pagination).",
             sensitive=sensitive,
+            members=members,
         ),
     }
 
@@ -174,6 +180,10 @@ def build_hub_search_registry[M: BaseModel](
 ) -> OperationRegistry:
     """Build hub search operation registry.
 
+    Each descriptor names the spec's members: an operation given an authz hook must also carry
+    :class:`~forze.application.hooks.authz.AuthzSearchMembers`, or the registry refuses to
+    freeze.
+
     :param spec: Hub search specification.
     :param mappers: Search mappers.
     :param ns: Optional namespace.
@@ -215,6 +225,7 @@ def build_hub_search_registry[M: BaseModel](
             spec.model_type,
             sensitive=any(member.sensitive for member in spec.members),
             options_type=MultiSourceSearchOptions,
+            members=tuple(member.name for member in spec.members),
         ),
         namespace=ns,
     )
@@ -230,6 +241,10 @@ def build_federated_search_registry[M: BaseModel](
     ns: StrKeyNamespace | None = None,
 ) -> OperationRegistry:
     """Build federated search operation registry.
+
+    Each descriptor names the spec's members: an operation given an authz hook must also carry
+    :class:`~forze.application.hooks.authz.AuthzSearchMembers`, or the registry refuses to
+    freeze.
 
     :param spec: Federated search specification.
     :param mappers: Search mappers.
@@ -269,6 +284,8 @@ def build_federated_search_registry[M: BaseModel](
         for member in spec.members
     )
 
+    members = tuple(member.name for member in spec.members)
+
     # Federated search is heterogeneous (no single model type), so results carry no
     # single response schema — descriptors record the request shape only.
     return reg.set_descriptors(
@@ -277,11 +294,13 @@ def build_federated_search_registry[M: BaseModel](
                 input_type=_request_dto(SearchRequestDTO, MultiSourceSearchOptions),
                 description="Federated full-text search across members (offset pagination).",
                 sensitive=sensitive,
+                members=members,
             ),
             SearchKernelOp.TYPED_CURSOR: OperationDescriptor(
                 input_type=_request_dto(CursorSearchRequestDTO, MultiSourceSearchOptions),
                 description="Federated full-text search across members (cursor pagination).",
                 sensitive=sensitive,
+                members=members,
             ),
         },
         namespace=ns,

@@ -198,6 +198,22 @@ class DeclaresAuthz(Protocol):  # pragma: no cover
 
 
 @runtime_checkable
+class AuthorizesMembers(Protocol):  # pragma: no cover
+    """Marker: a hook factory that authorizes each named member of a multi-source read.
+
+    An operation whose descriptor names ``members`` (a hub or federated search) reads every
+    member's rows under one operation. When its plan declares authz (:class:`DeclaresAuthz`),
+    hooks of this kind must together cover every member, or the registry refuses to freeze, so
+    a permission on the operation alone never reaches a member's rows.
+    """
+
+    def authorized_members(self) -> frozenset[str]: ...
+
+
+# ....................... #
+
+
+@runtime_checkable
 class DeclaresAuthn(Protocol):  # pragma: no cover
     """Marker: a hook factory that declares it requires an authenticated principal.
 

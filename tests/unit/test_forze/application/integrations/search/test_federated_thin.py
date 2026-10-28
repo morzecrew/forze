@@ -13,6 +13,7 @@ from forze.application.contracts.search import (
     FederatedSearchSpec,
     SearchResultSnapshotSpec,
     SearchSpec,
+    federated_leg_filters,
 )
 from forze.application.integrations.search import (
     SearchResultSnapshot,
@@ -331,6 +332,40 @@ async def test_thin_executor_matches_full_merge_with_nested_sort(
     assert _ordered(thin_page) == _ordered(full_page)
     expected = [("b", "2"), ("a", "1")] if direction == "asc" else [("a", "1"), ("b", "2")]
     assert _ordered(thin_page) == expected
+
+
+@pytest.mark.asyncio
+async def test_thin_executor_matches_full_merge_with_member_filters() -> None:
+    state = MockState()
+    leg_a, leg_b = await _two_legs(state)
+    spec = FederatedSearchSpec(name="fed", members=[leg_a, leg_b])
+    ports = [
+        ("a", MockSearchAdapter(state=state, spec=leg_a)),
+        ("b", MockSearchAdapter(state=state, spec=leg_b)),
+    ]
+    options: Any = {"member_filters": {"b": {"$values": {"id": "3"}}}}
+
+    full = MockFederatedSearchAdapter(federated_spec=spec, legs=ports)
+    full_page = await full.search_page("alpha", pagination={"limit": 10}, options=options)
+
+    thin_page = await execute_federated_thin_offset(
+        legs=[("a", ports[0][1], 1.0), ("b", ports[1][1], 1.0)],
+        query="alpha",
+        filters=None,
+        pagination={"limit": 10},
+        leg_opts=None,
+        rrf_k=60,
+        per_leg_limit=5000,
+        return_count=True,
+        return_type=None,
+        run_legs=_gather,
+        leg_filters=federated_leg_filters(spec, None, options),
+    )
+
+    # Leg b keeps only id 3; leg a, which the filter does not name, keeps all its rows.
+    assert _idents(full_page) == [("a", "1"), ("a", "2"), ("b", "3")]
+    assert _idents(thin_page) == _idents(full_page)
+    assert thin_page.count == full_page.count
 
 
 @pytest.mark.asyncio

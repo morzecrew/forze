@@ -191,7 +191,7 @@ async def test_federated_search_reads_snapshot_without_running_legs() -> None:
     h = _Hit(id=1, label="x")
     row_key = SearchResultSnapshot.federated_record_key_string("a", h)
     fp = SearchResultSnapshot.federated_fingerprint(
-        "q", None, None, spec_name="fed", rrf_k=60
+        "q", None, None, spec_name="fed", rrf_k=60, members_weighted=[("a", 1.0), ("b", 1.0)]
     )
     store = MagicMock()
     store.get_id_range = AsyncMock(return_value=[row_key])
@@ -241,7 +241,7 @@ async def test_federated_snapshot_honors_search_count_none() -> None:
     h = _Hit(id=1, label="x")
     row_key = SearchResultSnapshot.federated_record_key_string("a", h)
     fp = SearchResultSnapshot.federated_fingerprint(
-        "q", None, None, spec_name="fed", rrf_k=60
+        "q", None, None, spec_name="fed", rrf_k=60, members_weighted=[("a", 1.0), ("b", 1.0)]
     )
     store = MagicMock()
     store.get_id_range = AsyncMock(return_value=[row_key])

@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Federated search takes `member_filters`, a filter for one member's leg alone.** It joins `filters` with `$and` on that leg, and a hub refuses it. `AuthzSearchMembers(scope_operation=...)` puts each member's policy filter there; `OperationDescriptor.members` and `AuthorizesMembers` back the freeze check.
+
 - **DuckDB serves trusted dynamic reads over a per-tenant Iceberg lake.** `RoutedDuckDbClient` gives each tenant a locked-down instance holding its catalog principal and the S3 credentials vended per statement, and serves nothing from one that fails its attestation. Wire routes with `DuckDbDepsModule(dynamic_reads=...)`.
 
 - **`attach_readiness_route` takes a runtime provider.** Pass a zero-argument callable returning the runtime, or `None` before it exists; it is asked on every request. No runtime, or a provider that raises, answers `503 unavailable`.
@@ -71,6 +73,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **`HttpClient` reads a compressed response.** A gzip or deflate body, and with no cap a zstd or brotli one, no longer fails `request`, or a rejected response from `stream`, as an infrastructure error. `RoutedHttpClient` and declared services are fixed with it.
 
+- **A federated result snapshot replays only for the same members and member filters.** Its fingerprint now covers each member's weight and `member_filters`, so a request searching fewer members runs fresh.
+
 - **A warning logged before `configure_logging` carries the invocation's ids.** The fallback renderer now merges the bound logging context, as the configured chain does.
 
 - **`register_scalar_docs` loads the document the app actually serves** (**behaviour change**). It fetched `/openapi.json` whatever `openapi_url` said, so a versioned app got an empty `/docs`. It now defaults to `app.openapi_url` and takes `openapi_url=`; an app serving no document fails at startup unless it passes one.
@@ -114,6 +118,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **A Postgres locking read works when the read relation differs from the write relation (a view, typically).** `get`, `find`, `project` and `select` with `for_update` failed on a view that joins with `LEFT JOIN`. They now lock the row on the write table, honouring `nowait` and `skip_locked`, then read.
 
 ### Security
+
+- **A guarded hub or federated search authorizes each member it reads** (**Breaking**). The new `AuthzSearchMembers` checks each member's own read action, refusing a request that names a forbidden member and narrowing one that names none. The registry refuses to freeze a guarded one without it.
 
 - **`AuthzDocumentScopeWrap` in an operation's outer scope applies its row filter** (**behaviour change**). A wrap bound with `bind_outer().wrap(...)`, as the authz recipe does, now hands the handler the arguments it passes on, so a scoped list returns only the rows the policy allows.
 

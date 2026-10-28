@@ -57,6 +57,12 @@ class OperationDescriptor:
     external surfaces (HTTP route generators, MCP tools/resources) must refuse to
     project operations marked sensitive."""
 
+    members: tuple[str, ...] = attrs.field(factory=tuple)
+    """Names of the sources the operation reads rows from, each with its own read permission
+    (a hub or federated search's members). An intrinsic fact: when the plan declares authz
+    (``DeclaresAuthz``), hooks that authorize each member (``AuthorizesMembers``) must cover
+    every one, or the registry refuses to freeze. Empty for a single-source operation."""
+
     commutative: bool = False
     """The operation is declared **order-independent**: any interleaving of it against
     its peers must converge to the same final state. A *declaration*, verified — not

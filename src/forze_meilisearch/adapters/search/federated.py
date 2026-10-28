@@ -37,6 +37,7 @@ from forze.application.contracts.search import (
     SearchSnapshotHandle,
     SearchSpec,
     effective_phrase_combine,
+    federated_leg_filters,
     normalize_search_queries,
     prepare_federated_search_options,
     reject_federated_facets,
@@ -344,6 +345,7 @@ class MeilisearchFederatedSearchAdapter[M: BaseModel](
             options,
             snapshot=snapshot,
         )
+        leg_filters = federated_leg_filters(self.federated_spec, filters, options)
 
         fp_computed = SearchResultSnapshot.federated_fingerprint(
             query,
@@ -351,6 +353,8 @@ class MeilisearchFederatedSearchAdapter[M: BaseModel](
             sorts,
             spec_name=self.federated_spec.name,
             extras={"merge": "federation", **federated_member_sorts(self.federated_spec.members)},
+            members_weighted=[(name, member_weights[i]) for i, (name, _) in enumerate(self.legs)],
+            member_filters=cast("MultiSourceSearchOptions", options or {}).get("member_filters"),
         )
 
         rs_spec: SearchResultSnapshotSpec | None = self.federated_spec.snapshot
@@ -396,7 +400,7 @@ class MeilisearchFederatedSearchAdapter[M: BaseModel](
             leg_caps.append(adapter.config.max_total_hits)
 
             member_spec = next(m for m in self.federated_spec.members if m.name == name)
-            filter_str = adapter.build_filter(filters)
+            filter_str = adapter.build_filter(leg_filters[name])
             search_attrs = attributes_to_search_on(
                 cast(SearchSpec[M], member_spec),
                 leg_opts,
@@ -593,6 +597,7 @@ class MeilisearchFederatedSearchAdapter[M: BaseModel](
             options,
             snapshot=snapshot,
         )
+        leg_filters = federated_leg_filters(self.federated_spec, filters, options)
 
         # Spec-level (RRF mode only): thin specs store/replay tiny ``(member, id)``
         # snapshot keys; the marker keeps a thin snapshot from being read as a full one.
@@ -615,6 +620,8 @@ class MeilisearchFederatedSearchAdapter[M: BaseModel](
             spec_name=self.federated_spec.name,
             rrf_k=int(self.rrf_k),
             extras=fp_extras,
+            members_weighted=[(name, member_weights[i]) for i, (name, _) in enumerate(self.legs)],
+            member_filters=cast("MultiSourceSearchOptions", options or {}).get("member_filters"),
         )
 
         rs_spec: SearchResultSnapshotSpec | None = self.federated_spec.snapshot
@@ -718,6 +725,7 @@ class MeilisearchFederatedSearchAdapter[M: BaseModel](
                 snapshot=snapshot,
                 fp_computed=fp_computed,
                 write_snapshot=snapshot_write,
+                leg_filters=leg_filters,
             )
 
         async def _run_leg(
@@ -727,7 +735,7 @@ class MeilisearchFederatedSearchAdapter[M: BaseModel](
         ) -> tuple[str, Any, float]:
             page = await port.search(
                 query,
-                filters,
+                leg_filters[name],
                 leg_page,
                 # Legs stay in RELEVANCE order — deliberately no ``sorts``. On
                 # ``merge="rrf"`` the sorts contract is score-primary with sorts as

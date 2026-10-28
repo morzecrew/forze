@@ -64,6 +64,8 @@ from .ports import (
     SearchResultSnapshotPort,
 )
 from .search_options import (
+    federated_leg_filters,
+    multi_source_member_weights,
     prepare_federated_search_options,
     prepare_hub_search_options,
     search_options_for_simple_adapter,
@@ -171,6 +173,8 @@ __all__ = [
     "FederatedSearchSpec",
     "FederatedSearchReadModel",
     "normalize_search_queries",
+    "federated_leg_filters",
+    "multi_source_member_weights",
     "prepare_federated_search_options",
     "prepare_hub_search_options",
     "ranked_search_cursor_key_spec",

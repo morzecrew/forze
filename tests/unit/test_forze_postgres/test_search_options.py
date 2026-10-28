@@ -279,6 +279,7 @@ def test_every_option_the_type_defines_is_accepted() -> None:
         "members": ["a"],
         "merge_candidates": 10,
         "fusion": "rrf",
+        "member_filters": {"a": {"$values": {"x": 1}}},
     }
 
     # The lists track the types, so a key added to either is added here too.
@@ -292,7 +293,8 @@ def test_every_option_the_type_defines_is_accepted() -> None:
     )
     # Multi-source search serves no caller vector (refused below).
     multi_options = {k: v for k, v in options.items() if k != "query_vector"}
-    prepare_hub_search_options(_hub(), {**multi_options, **multi})
+    # A hub refuses a member filter (its filter applies to the hub rows); an empty one passes.
+    prepare_hub_search_options(_hub(), {**multi_options, **multi, "member_filters": {}})
     prepare_federated_search_options(_federated(), {**multi_options, **multi})
 
 

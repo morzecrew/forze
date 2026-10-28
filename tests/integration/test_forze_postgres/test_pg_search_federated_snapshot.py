@@ -696,3 +696,95 @@ async def test_federated_search_over_members_named_by_str_enum(pg_client: Postgr
     ).search_page("enumtok", pagination={"limit": 10})
 
     assert sorted(str(hit.member) for hit in page.hits) == sorted(str(member) for member in leg)
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+@pytest.mark.parametrize("thin_merge", [True, False])
+async def test_federated_member_filters_and_selection_bind_legs_and_snapshots(
+    pg_client: PostgresClient,
+    redis_client: RedisClient,
+    thin_merge: bool,
+) -> None:
+    """``member_filters`` narrows its own leg alone, and a snapshot written for every member
+    does not replay for a request that searches fewer."""
+
+    await pg_client.execute("CREATE EXTENSION IF NOT EXISTS pgroonga;")
+
+    suffix = uuid4().hex[:10]
+    legs = (f"mf_a_{suffix}", f"mf_b_{suffix}")
+    rows = {leg: (uuid4(), uuid4()) for leg in legs}
+
+    for leg in legs:
+        await pg_client.execute(
+            f"""
+            CREATE TABLE {leg} (id uuid PRIMARY KEY, label text NOT NULL);
+            CREATE INDEX idx_{leg} ON {leg} USING pgroonga (label);
+            """
+        )
+
+        for rid in rows[leg]:
+            await pg_client.execute(
+                f"INSERT INTO {leg} (id, label) VALUES (%(id)s, 'mftok')", {"id": rid}
+            )
+
+    ctx = context_from_deps(
+        Deps.plain(
+            {
+                PostgresClientDepKey: pg_client,
+                PostgresIntrospectorDepKey: PostgresIntrospector(client=pg_client),
+                RedisClientDepKey: redis_client,
+                SearchResultSnapshotDepKey: ConfigurableRedisSearchResultSnapshot(
+                    config=RedisSearchResultSnapshotConfig(namespace=f"it:fed:mf:{suffix}"),
+                ),
+                FederatedSearchQueryDepKey: ConfigurablePostgresFederatedSearch(
+                    config=PostgresFederatedSearchConfig(
+                        members={
+                            leg: PostgresFederatedSearchLegSearch(
+                                search=PostgresSearchConfig(
+                                    index=("public", f"idx_{leg}"),
+                                    read=("public", leg),
+                                    engine="pgroonga",
+                                ),
+                            )
+                            for leg in legs
+                        },
+                    ),
+                ),
+            }
+        )
+    )
+    fed = ctx.search.federated(
+        FederatedSearchSpec(
+            name=f"fed_mf_{suffix}",
+            members=tuple(_mem(leg) for leg in legs),
+            thin_merge=thin_merge,
+            snapshot=SearchResultSnapshotSpec(name="snap", enabled=True, ttl=timedelta(minutes=5)),
+        )
+    )
+
+    def idents(page: Any) -> set[tuple[str, UUID]]:
+        return {(hit.member, hit.hit.id) for hit in page.hits}
+
+    leg_a, leg_b = legs
+    kept = rows[leg_b][0]
+    narrowed = await fed.search_page(
+        "mftok",
+        pagination={"limit": 10},
+        options={"member_filters": {leg_b: {"$values": {"id": kept}}}},
+    )
+
+    assert idents(narrowed) == {(leg_a, rid) for rid in rows[leg_a]} | {(leg_b, kept)}
+
+    every = await fed.search_page("mftok", pagination={"limit": 10})
+    assert every.snapshot is not None
+    assert len(every.hits) == 4
+
+    fewer = await fed.search_page(
+        "mftok",
+        pagination={"limit": 10},
+        options={"members": [leg_a]},
+        snapshot={"id": every.snapshot.id, "fingerprint": every.snapshot.fingerprint},
+    )
+
+    assert idents(fewer) == {(leg_a, rid) for rid in rows[leg_a]}

@@ -1,7 +1,7 @@
 """Tests for :class:`~forze.application.integrations.search.SearchResultSnapshot`."""
 
 from datetime import timedelta
-from typing import ClassVar
+from typing import Any, ClassVar
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -415,6 +415,22 @@ def test_federated_fingerprint_extras_differ_by_merge() -> None:
         extras={"merge": "rrf"},
     )
     assert f1 != f2
+
+
+def test_federated_fingerprint_differs_by_member_selection_and_member_filters() -> None:
+    # A caller narrowed to fewer members, or fewer of a member's rows, must not replay a
+    # snapshot written for one who reads more.
+    def fp(**kw: Any) -> str:
+        return SearchResultSnapshot.federated_fingerprint("q", None, None, spec_name="s", **kw)
+
+    every = fp(members_weighted=[("a", 1.0), ("b", 1.0)])
+    narrowed = fp(members_weighted=[("a", 1.0), ("b", 0.0)])
+    scoped = fp(
+        members_weighted=[("a", 1.0), ("b", 1.0)],
+        member_filters={"b": {"$values": {"owner": "u1"}}},
+    )
+
+    assert len({every, narrowed, scoped}) == 3
 
 
 def test_federated_record_key_string_shape() -> None:

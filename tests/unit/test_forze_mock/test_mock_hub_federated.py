@@ -383,3 +383,53 @@ async def test_a_hub_aggregate_measures_an_extra_field_across_its_legs() -> None
     )
 
     assert [(row["n"], row["q"]) for row in page.hits] == [(2, 9)]
+
+
+@pytest.mark.asyncio
+async def test_federated_member_filters_narrow_their_own_leg_alone() -> None:
+    state = MockState()
+    leg_a = SearchSpec(name="a", model_type=_Item, fields=["title"])
+    leg_b = SearchSpec(name="b", model_type=_Item, fields=["title"])
+
+    for leg in (leg_a, leg_b):
+        await MockSearchCommandAdapter(state=state, spec=leg).upsert(
+            [_Item(id="1", title="alpha one"), _Item(id="2", title="alpha two")]
+        )
+
+    adapter = MockFederatedSearchAdapter(
+        federated_spec=FederatedSearchSpec(name="fed", members=[leg_a, leg_b]),
+        legs=[
+            ("a", MockSearchAdapter(state=state, spec=leg_a)),
+            ("b", MockSearchAdapter(state=state, spec=leg_b)),
+        ],
+    )
+
+    page = await adapter.search_page(
+        "alpha",
+        {"$values": {"id": {"$in": ["1", "2"]}}},
+        options={"member_filters": {"b": {"$values": {"id": "2"}}}},
+    )
+
+    assert sorted((h.member, h.hit.id) for h in page.hits) == [("a", "1"), ("a", "2"), ("b", "2")]
+
+    with pytest.raises(CoreException, match="no member"):
+        await adapter.search_page("alpha", options={"member_filters": {"c": {}}})
+
+
+@pytest.mark.asyncio
+async def test_hub_refuses_member_filters() -> None:
+    state = MockState()
+    leg_a = SearchSpec(name="a", model_type=_Item, fields=["title"])
+    leg_b = SearchSpec(name="b", model_type=_Item, fields=["title"])
+    adapter = MockHubSearchAdapter(
+        hub_spec=HubSearchSpec(name="hub", model_type=_Item, members=[leg_a, leg_b]),
+        legs=[
+            ("a", MockSearchAdapter(state=state, spec=leg_a)),
+            ("b", MockSearchAdapter(state=state, spec=leg_b)),
+        ],
+    )
+
+    with pytest.raises(CoreException, match="member_filters") as ei:
+        await adapter.search_page("alpha", options={"member_filters": {"a": {}}})
+
+    assert ei.value.code == "query_feature_unsupported"

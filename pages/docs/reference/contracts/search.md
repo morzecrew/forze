@@ -92,8 +92,15 @@ vector. Every other backend, and hub and federated search, refuse it with
 resolve to a `MultiSourceSearchOptions` port that also carries member selection
 (`member_weights` / `members`), a post-merge cap (`merge_candidates`), and the `fusion`
 strategy (`"rrf"` / `"weighted"`); passing those keys to a single-index `query(...)` port is
-a type error. A key neither type defines is refused as a `precondition` naming it, at a
-request and at the port alike.
+a type error. A federated search also takes `member_filters`: a filter per member name, joined
+with `$and` to `filters` on that member's leg alone. A hub refuses it, since a hub filter
+applies to the hub rows. A key neither type defines is refused as a `precondition` naming it,
+at a request and at the port alike.
+
+An authorization hook on a hub or federated search operation authorizes the operation, not
+each member it reads. Attach `AuthzSearchMembers` to check every member against its own read
+action; the registry refuses to freeze such an operation without it (see
+[Enforce on operations](../../recipes/authn-authz-tenancy-fastapi.md#enforce-on-operations)).
 
 A sort on a field the read model lacks is refused as the caller's error, a key after `id`
 included. On Postgres, a ranked page reads a capped pool of candidates (`max_candidates`, or

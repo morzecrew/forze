@@ -606,3 +606,31 @@ async def test_federated_search_refuses_a_misspelt_snapshot_option(
         await ctx.search.federated(spec).search_page("alpha", snapshot=misspelt)
 
     assert refused.value.kind is ExceptionKind.PRECONDITION
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+@pytest.mark.parametrize("merge", ["federation", "rrf"])
+async def test_federated_member_filters_narrow_their_own_leg_alone(
+    meilisearch_client, merge: str
+) -> None:
+    a_uid, b_uid = f"fed_mf_{merge}_a", f"fed_mf_{merge}_b"
+    spec = FederatedSearchSpec(name=f"fed_mf_{merge}", members=(_mem("a"), _mem("b")))
+    ctx = _fed_ctx(meilisearch_client, merge=merge, a_uid=a_uid, b_uid=b_uid)
+
+    for member, uid in (("a", a_uid), ("b", b_uid)):
+        cfg = MeilisearchSearchConfig(index_uid=uid)
+        mgmt = ConfigurableMeilisearchSearchManagement(config=cfg)(ctx, _mem(member))
+        await mgmt.ensure_index()
+        await mgmt.delete_all()
+        await ConfigurableMeilisearchSearchCommand(config=cfg)(ctx, _mem(member)).upsert(
+            [Hit(id="1", label=f"{member} shared book"), Hit(id="2", label=f"{member} book")]
+        )
+
+    page = await ctx.search.federated(spec).search_page(
+        "book",
+        pagination={"limit": 10},
+        options={"member_filters": {"b": {"$values": {"id": "2"}}}},
+    )
+
+    assert {(h.member, h.hit.id) for h in page.hits} == {("a", "1"), ("a", "2"), ("b", "2")}

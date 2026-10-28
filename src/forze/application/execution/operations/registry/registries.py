@@ -564,6 +564,7 @@ class OperationRegistry:
 
         resolution = self._resolution()
         RegistryFreezeValidator.validate_all(self._handlers, resolution)
+        RegistryFreezeValidator.validate_member_authz(self._handlers, resolution, self._descriptors)
 
         frozen_handlers = dict(self._handlers)
         frozen_plans = {op: resolution.resolve(str(op)).freeze() for op in frozen_handlers}

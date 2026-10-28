@@ -454,7 +454,16 @@ class SearchResultSnapshot:
         spec_name: str,
         rrf_k: int | None = None,
         extras: Mapping[str, object] | None = None,
+        members_weighted: Sequence[tuple[str, float]] | None = None,
+        member_filters: Mapping[str, object] | None = None,
     ) -> str:
+        """Fingerprint a federated search, so a snapshot replays only for the same request.
+
+        *members_weighted* (each member's effective weight) and *member_filters* (the
+        request's per-member filters) belong in it: a caller who may read fewer members, or
+        fewer of a member's rows, must not replay a snapshot written for one who may read more.
+        """
+
         if isinstance(query, (list, tuple)):
             qpart: object = [str(x) for x in query]
 
@@ -470,6 +479,12 @@ class SearchResultSnapshot:
 
         if rrf_k is not None:
             payload["rrf_k"] = rrf_k
+
+        if members_weighted is not None:
+            payload["members"] = [[name, float(w)] for name, w in members_weighted]
+
+        if member_filters:
+            payload["member_filters"] = dict(member_filters)
 
         if extras:
             payload |= dict(extras)

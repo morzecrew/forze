@@ -35,6 +35,7 @@ from forze.application.contracts.search import (
     SearchResultSnapshotOptions,
     SearchResultSnapshotSpec,
     SearchSnapshotHandle,
+    federated_leg_filters,
     normalize_search_queries,
     prepare_federated_search_options,
     reject_federated_facets,
@@ -80,7 +81,8 @@ class PostgresFederatedSearchAdapter[M: BaseModel](
     """Search several independent indexes and merge results using weighted RRF.
 
     Per-request :class:`SearchOptions` ``member_weights`` / ``members`` select
-    and weight federation members (``0`` disables a member). Field-level
+    and weight federation members (``0`` disables a member), and ``member_filters``
+    narrows one member's leg. Field-level
     ``weights`` / ``fields`` are ignored; tune each :class:`~forze.application.contracts.search.SearchSpec` instead.
 
     Each member query uses relevance ordering only; caller ``sorts`` apply after
@@ -253,6 +255,7 @@ class PostgresFederatedSearchAdapter[M: BaseModel](
             options,
             snapshot=snapshot,
         )
+        leg_filters = federated_leg_filters(self.federated_spec, filters, options)
 
         rs_spec: SearchResultSnapshotSpec | None = self.federated_spec.snapshot
         offset = int((pagination or {}).get("offset") or 0)
@@ -281,6 +284,8 @@ class PostgresFederatedSearchAdapter[M: BaseModel](
             spec_name=self.federated_spec.name,
             rrf_k=int(self.rrf_k),
             extras=extras or None,
+            members_weighted=[(name, member_weights[i]) for i, (name, _) in enumerate(self.legs)],
+            member_filters=cast("MultiSourceSearchOptions", options or {}).get("member_filters"),
         )
 
         if (
@@ -370,6 +375,7 @@ class PostgresFederatedSearchAdapter[M: BaseModel](
                 snapshot=snapshot,
                 fp_computed=fp_computed,
                 write_snapshot=snapshot_write,
+                leg_filters=leg_filters,
             )
 
         async def _run_leg(
@@ -379,7 +385,7 @@ class PostgresFederatedSearchAdapter[M: BaseModel](
         ) -> tuple[str, Any, float]:
             page = await port.search(
                 query,
-                filters,
+                leg_filters[name],
                 leg_page,
                 None,
                 options=leg_opts,
