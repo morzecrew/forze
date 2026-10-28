@@ -212,7 +212,9 @@ periods and takes every other overlapping pair.
    matches; on Postgres it is a floor under a forgotten migration. Postgres also warns about
    each unique index and `EXCLUDE` constraint on the write table that no guarantee declares,
    other than the primary key and the conflict target, and suggests the declaration. Without it
-   the in-memory store accepts writes the database refuses.
+   the in-memory store accepts writes the database refuses. A spec the framework owns, such as
+   a `forze_identity` one, is not reported, because the application cannot declare anything
+   on it.
 3. **Enforcement**, at write time, by the store. A violating write raises `conflict`, from every
    backend and from the in-memory store alike — including across two concurrent transactions,
    which the in-memory store rechecks at commit because a unique index is not snapshot-scoped.

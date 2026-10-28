@@ -8,7 +8,7 @@ import attrs
 from forze.application._logger import logger
 from forze.application.contracts.document import DocumentSpec
 from forze.application.contracts.execution import LifecycleHook, LifecycleStep
-from forze.application.contracts.inventory import FrozenSpecRegistry, SpecPlane
+from forze.application.contracts.inventory import FrozenSpecRegistry, SpecPlane, SpecSource
 from forze.application.execution.context import ExecutionContext
 from forze.base.exceptions import exc
 
@@ -34,12 +34,16 @@ def postgres_document_schema_spec_for_binding(
     *,
     spec: DocumentSpec[Any, Any, Any, Any],
     config: PostgresReadOnlyDocumentConfig | PostgresDocumentConfig,
+    warn_undeclared: bool = True,
 ) -> PostgresDocumentSchemaSpec:
     """Build a :class:`~forze_postgres.kernel.catalog.validation.validate_schema.PostgresDocumentSchemaSpec` from kernel wiring.
 
     Dynamic :class:`~forze_postgres.kernel.relation.RelationSpec` resolvers are rejected
     (see :func:`~forze_postgres.kernel.relation.require_static_relation`) because startup
     validation introspects fixed relation names.
+
+    :param warn_undeclared: Whether to report unique indexes no guarantee declares. Pass
+        ``False`` for a spec the framework owns, such as a ``forze_identity`` one.
     """
 
     read_rel = require_static_relation(
@@ -58,6 +62,7 @@ def postgres_document_schema_spec_for_binding(
             tenant_aware=tenant_aware,
             materialized=spec.materialized,
             guarantees=spec.guarantees,
+            warn_undeclared=warn_undeclared,
         )
 
     if not isinstance(config, PostgresDocumentConfig):
@@ -105,6 +110,7 @@ def postgres_document_schema_spec_for_binding(
         conflict_target=config.conflict_target,
         materialized=spec.materialized,
         guarantees=spec.guarantees,
+        warn_undeclared=warn_undeclared,
     )
 
 
@@ -129,7 +135,8 @@ def postgres_document_schema_specs(
     with a warning naming it: its relation is known only per request, and one tenant-routed
     document must not stop every other one being checked. A bound route with no catalogued
     spec is refused instead — skipping it would leave it unvalidated with nothing said, which
-    is the gap this exists to close.
+    is the gap this exists to close. A spec catalogued as :attr:`SpecSource.FRAMEWORK` is not
+    reported for unique indexes it does not declare: the application cannot change it.
 
     :param registry: The application's spec inventory.
     :param deps: The module that binds the documents.
@@ -151,9 +158,8 @@ def postgres_document_schema_specs(
 
     for name in sorted(bindings):
         entry = registry.find(SpecPlane.DOCUMENT, name)
-        spec = entry.spec if entry is not None else None
 
-        if not isinstance(spec, DocumentSpec):
+        if entry is None or not isinstance(entry.spec, DocumentSpec):
             uncatalogued.append(name)
             continue
 
@@ -161,8 +167,9 @@ def postgres_document_schema_specs(
             specs.append(
                 postgres_document_schema_spec_for_binding(
                     name,
-                    spec=spec,  # pyright: ignore[reportUnknownArgumentType]
+                    spec=entry.spec,  # pyright: ignore[reportUnknownArgumentType]
                     config=bindings[name],
+                    warn_undeclared=entry.source is not SpecSource.FRAMEWORK,
                 )
             )
 

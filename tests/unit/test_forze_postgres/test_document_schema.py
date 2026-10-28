@@ -9,7 +9,11 @@ import pytest
 from pydantic import BaseModel
 
 from forze.application.contracts.document import DocumentSpec
-from forze.application.contracts.inventory import FrozenSpecRegistry, SpecRegistry
+from forze.application.contracts.inventory import (
+    FrozenSpecRegistry,
+    SpecRegistry,
+    SpecSource,
+)
 from forze.application.execution import Deps
 from forze.base.exceptions import CoreException, exc
 from forze_postgres.execution.deps import PostgresDepsModule
@@ -182,6 +186,28 @@ class TestSpecsFromTheCatalogue:
         assert specs[0].write_relation is None
         assert specs[1].write_relation == ("public", "orders")
         assert specs[1].read_relation == ("public", "orders_v")
+
+    def test_a_framework_spec_is_not_reported_for_undeclared_indexes(self) -> None:
+        # The application can declare nothing on a spec it does not own.
+        registry = (
+            SpecRegistry()
+            .register(DocumentSpec(name="mine", read=_Read))
+            .register(DocumentSpec(name="theirs", read=_Read), source=SpecSource.FRAMEWORK)
+            .freeze()
+        )
+        deps = _deps(
+            ro_documents={
+                name: PostgresReadOnlyDocumentConfig(read=("public", name))
+                for name in ("mine", "theirs")
+            },
+        )
+
+        specs = postgres_document_schema_specs(registry, deps)
+
+        assert [(s.name, s.warn_undeclared) for s in specs] == [
+            ("mine", True),
+            ("theirs", False),
+        ]
 
     def test_a_bound_document_with_no_catalogued_spec_is_refused(self) -> None:
         # Skipping it would leave one document unvalidated with nothing said — the gap the

@@ -112,6 +112,11 @@ class PostgresDocumentSchemaSpec:
     Validated against the live catalog: reconciliation at wiring says Postgres *can* keep
     these, and this says whether the deployment's migration actually did."""
 
+    warn_undeclared: bool = True
+    """Whether a unique index or EXCLUDE constraint on the write relation that no guarantee
+    declares is reported. Off for a spec the framework owns: the application can declare
+    nothing on it, so the warning would be one it cannot act on."""
+
     # ....................... #
 
     def __attrs_post_init__(self) -> None:
@@ -266,6 +271,13 @@ def _warn_unused_tenant_column(
         return
 
     if TENANT_ID_FIELD not in write_column_types:
+        return
+
+    # A model that maps the column stores the tenant as data — a session minted for one
+    # tenant, a membership naming one — rather than leaving an isolation column unused.
+    if spec.write_domain_model is not None and TENANT_ID_FIELD in stored_field_names_for(
+        spec.write_domain_model, include_computed=False
+    ):
         return
 
     schema, relation = spec.write_relation
@@ -1003,6 +1015,9 @@ async def _warn_undeclared_mechanisms(
     left out — upserts resolve against them, and every store keeps a document's identity.
     Matched on columns, the same floor the passes above stand on.
     """
+
+    if not spec.warn_undeclared:
+        return
 
     schema, table = write_relation
     declared_unique = {
