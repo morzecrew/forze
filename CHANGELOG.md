@@ -81,8 +81,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **A federated result snapshot replays only for the same members and member filters.** Its fingerprint now covers each member's weight and leg filters, and a thin replay drops a row its member's filters no longer match.
 
-- **A datetime `SerializedBy` key locks one instant in any offset** (**behaviour change**). A create keyed the caller's offset and an update the Postgres session's, so the two could run at once; naive and non-UTC keys change. Drain those specs' writers while deploying, or accept a brief unserialized window.
-
 - **A datetime `SerializedBy` key locks its UTC instant** (**behaviour change**). One owner's create and update no longer lock apart by offset; naive reads as UTC (right in a UTC session), an out-of-range instant is refused. Drain writers of naive or non-UTC keys while deploying, or accept a brief unlocked window.
 
 - **A warning logged before `configure_logging` carries the invocation's ids.** The fallback renderer now merges the bound logging context, as the configured chain does.
