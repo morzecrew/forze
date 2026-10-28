@@ -25,6 +25,7 @@ from forze.application.contracts.guarantees import (
     SerializedBy,
     UniqueTogether,
 )
+from forze.application.contracts.guarantees.value_objects import serialization_keys
 from forze.application.contracts.querying import QueryFilterExpression
 from forze.application.contracts.querying.internal.matching import instant_key
 from forze.base.exceptions import exc
@@ -39,7 +40,7 @@ from forze_mock.adapters._mvcc import (
     release_write_locks,
     wait_cycle_rows,
 )
-from forze_mock.adapters.tx import ensure_mock_tx_writable
+from forze_mock.adapters.tx import ensure_mock_tx_writable, in_mock_transaction
 from forze_mock.query._types import C, D, R, U
 
 if TYPE_CHECKING:
@@ -370,21 +371,31 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
         caller that decides between writes decides in that same step.
         """
 
+        guarantees = self._serialized_by()
+
+        await self._take_write_locks(
+            lambda: self._owner_keys(guarantees, rows()) if guarantees else (), locking
+        )
+
+    async def _take_write_locks(
+        self,
+        keys: Callable[[], Sequence[int]],
+        locking: Callable[[], Sequence[UUID]] = tuple,
+    ) -> None:
+        """Take the row locks *locking* names, then the per-owner locks *keys* names.
+
+        *keys* is asked again after every wait. Held by the open transaction until it ends;
+        outside one, given back as this returns.
+        """
+
+        table = self.state.write_serialization
         mvcc = current_mvcc_tx()
         holder = mvcc if mvcc is not None else StatementLocks()
 
         try:
             await self._lock_rows(locking, holder)
-            guarantees = self._serialized_by()
 
-            if not guarantees:
-                return
-
-            table = self.state.write_serialization
-
-            while wanted := [
-                key for key in self._owner_keys(guarantees, rows()) if key not in holder.write_locks
-            ]:
+            while wanted := [key for key in keys() if key not in holder.write_locks]:
                 for key in wanted:
                     lock = table.for_key(key)
 
@@ -1344,6 +1355,29 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
             await self.touch(pk, return_new=False)
 
         return None
+
+    # ....................... #
+
+    async def hold(self, *owners: Mapping[str, Any]) -> None:
+        keys = serialization_keys(
+            self._serialized_by(),
+            owners,
+            model=self._require_domain_model(),
+            scope=str(self.spec.name),
+            tenant=self.require_tenant_if_aware() if self.tenant_aware else None,
+        )
+
+        if not in_mock_transaction():
+            raise exc.precondition(
+                "A write lock is held until the transaction ends, so hold() must run inside "
+                "one: outside it, the lock would be released before anything is read.",
+                code="document_hold_outside_transaction",
+            )
+
+        # The journal manager's transaction keeps the locks until it ends. The strict one runs
+        # one root transaction at a time, so the locks are taken and given back at once, as its
+        # writes' are.
+        await self._take_write_locks(lambda: keys)
 
     # ....................... #
 

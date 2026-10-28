@@ -23,6 +23,7 @@ from forze.application.contracts.document import (
     require_whole_update_matching,
 )
 from forze.application.contracts.guarantees import SerializedBy
+from forze.application.contracts.guarantees.value_objects import serialization_keys
 from forze.application.contracts.querying import QueryFilterExpression
 from forze.application.contracts.resilience import ResilienceExecutorPort
 from forze.application.contracts.tenancy import TENANT_ID_FIELD
@@ -402,6 +403,37 @@ class PostgresWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
             for key in wanted:
                 await self.client.execute(stmt, [key])
                 held.add(key)
+
+    async def hold(self, *owners: Mapping[str, Any]) -> None:
+        """Take the lock a write for each of *owners* takes, without writing, until commit.
+
+        The same ``pg_advisory_xact_lock`` keys :meth:`_serialize` takes, sorted, so a write
+        for one of *owners* later in this transaction re-enters it without waiting.
+
+        :raises CoreException: ``configuration`` per :func:`serialization_keys`;
+            ``precondition`` (``document_hold_outside_transaction``) outside a transaction,
+            where the lock would end with its own statement.
+        """
+
+        keys = serialization_keys(
+            self.serialized_by,
+            owners,
+            model=self.model_type,
+            scope=self.serialization_scope,
+            tenant=self.require_tenant_if_aware() if self.tenant_aware else None,
+        )
+
+        if not self.client.is_in_transaction():
+            raise exc.precondition(
+                "A write lock is held until the transaction ends, so hold() must run inside "
+                "one: outside it, the lock would be released before anything is read.",
+                code="document_hold_outside_transaction",
+            )
+
+        stmt = sql.SQL("SELECT pg_advisory_xact_lock({})").format(sql.Placeholder())
+
+        for key in keys:
+            await self.client.execute(stmt, [key])
 
     async def _serialize_rows(self, rows: Sequence[Any]) -> None:
         """:meth:`_serialize` for rows the write already has — the ones it inserts."""

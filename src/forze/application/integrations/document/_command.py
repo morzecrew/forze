@@ -1,7 +1,7 @@
 """Document command port methods."""
 
 import asyncio
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from typing import Any, Generic, Literal, overload
 from uuid import UUID
 
@@ -12,6 +12,7 @@ from forze.application.contracts.document import (
     UpsertItem,
 )
 from forze.application.contracts.domain import drain_domain_events
+from forze.application.contracts.guarantees import GUARANTEE_UNSUPPORTED
 from forze.application.contracts.querying import QueryFilterExpression
 from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict
@@ -708,6 +709,28 @@ class DocumentCommandMixin(
         )
 
         return await self._finalize_bulk_write(domains, return_new=return_new)
+
+    # ....................... #
+
+    async def hold(self, *owners: Mapping[str, Any]) -> None:
+        """Hold the write lock of each of *owners* until the transaction ends.
+
+        :raises CoreException: ``precondition`` (``storage_guarantee_unsupported``) when the
+            store serializes no writes; otherwise as the store's own ``hold``.
+        """
+
+        # A store without the method keeps no write lock, and its wiring already refuses a
+        # spec declaring SerializedBy: there is nothing to hold.
+        hold = getattr(self._require_write(), "hold", None)
+
+        if hold is None:
+            raise exc.precondition(
+                f"The store behind {self.spec.name!r} serializes no writes, so it has no write "
+                "lock to hold.",
+                code=GUARANTEE_UNSUPPORTED,
+            )
+
+        await hold(*owners)
 
     # ....................... #
 

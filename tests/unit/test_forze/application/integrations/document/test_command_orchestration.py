@@ -879,6 +879,32 @@ async def test_touch_many_empty(return_new: bool) -> None:
 # ....................... #
 
 
+class _HoldingWriteGateway(FakeWriteGateway):
+    async def hold(self, *owners: Any) -> None:
+        self.calls.append(f"hold:{list(owners)}")
+
+
+@pytest.mark.asyncio
+async def test_a_hold_is_the_store_s_own() -> None:
+    write_gw = _HoldingWriteGateway()
+
+    await CommandHarness(write_gw).hold({"owner": "o1"})
+
+    assert write_gw.calls == ["hold:[{'owner': 'o1'}]"]
+
+
+@pytest.mark.asyncio
+async def test_a_store_serializing_no_writes_refuses_a_hold() -> None:
+    # Mongo and Firestore: no write lock exists, so a hold that answered would protect nothing.
+    with pytest.raises(CoreException) as refused:
+        await CommandHarness(FakeWriteGateway()).hold({"owner": "o1"})
+
+    assert refused.value.code == "storage_guarantee_unsupported"
+
+
+# ....................... #
+
+
 @pytest.mark.asyncio
 async def test_kill_evicts_cache() -> None:
     write_gw = FakeWriteGateway()

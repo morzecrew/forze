@@ -149,10 +149,26 @@ locks. A request touches a few owners; a bulk load or a seed that writes under t
 transaction can fill the table and fail with `out of shared memory`. Commit such a load in batches,
 so a transaction holds only its own batch's owners.
 
-It **serializes, it does not validate**, and the difference is worth stating twice: the lock is
-taken before the *write*, so a handler that reads, decides, and then writes still made its
-decision on an unprotected read. What the declaration removes is two writes landing at once;
-making a read-then-write atomic is a different property, and reads are never serialized by this.
+It **serializes, it does not validate**. A write takes the lock just before it writes, which
+covers the write and nothing before it. A handler that reads, decides and then writes takes the
+lock first with `hold`, inside its transaction, so it decides on a read no other writer for
+that owner can change:
+
+```python
+async with ctx.tx_ctx.scope("orders"):
+    lines = ctx.document.command(line_spec)
+    await lines.hold({"order_id": order_id})  # the lock every write for the order takes
+    ...  # read the order's lines, decide, then write: held until commit
+```
+
+`hold` writes nothing. Each argument names the fields of one declared key, and a value is taken
+as the domain model stores it, so an id passed as a string locks the same owner. A second
+handler for the order waits at its own `hold` until the first commits, and the first handler's
+writes take the lock again without waiting. A spec that declares no `SerializedBy`, or an
+argument naming other fields, is refused as `configuration`. A call outside a transaction is
+refused (`document_hold_outside_transaction`), since its lock would end with its statement.
+Mongo and Firestore keep no write lock and refuse the call. The declaration itself refuses no
+write: where the rule can also be a hard stop, that is a second guarantee beside this one.
 
 `UniqueTogether` and `NonOverlapping` also say **when** they hold: `holds="always"`, the default,
 means after every write; `holds="commit"` means once the transaction commits, so a transaction may

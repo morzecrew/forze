@@ -58,6 +58,18 @@ journal manager)."""
 # ....................... #
 
 
+def in_mock_transaction() -> bool:
+    """Whether this task runs inside a transaction the strict or journal manager opened.
+
+    The no-op manager opens none: under it, a write is never inside a transaction.
+    """
+
+    return _strict_tx_depth.get() > 0 or _journal_tx_depth.get() > 0
+
+
+# ....................... #
+
+
 def ensure_mock_tx_writable(*, store: str) -> None:
     """Raise when a participating store is written inside a strict read-only root.
 

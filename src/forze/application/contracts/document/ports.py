@@ -1,6 +1,6 @@
 """Ports for document storage and retrieval."""
 
-from collections.abc import AsyncGenerator, Awaitable, Sequence
+from collections.abc import AsyncGenerator, Awaitable, Mapping, Sequence
 from typing import (
     Any,
     Literal,
@@ -831,6 +831,25 @@ class DocumentCommandPort(BaseDocumentPort[R, D, C, U], Protocol[R, D, C, U]):
         return_new: bool = True,
     ) -> Awaitable[Sequence[R] | None]:
         """Bump metadata for multiple documents."""
+        ...  # pragma: no cover
+
+    # ....................... #
+
+    def hold(self, *owners: Mapping[str, Any]) -> Awaitable[None]:
+        """Take the write lock of each of *owners*, writing nothing, until the transaction ends.
+
+        Each owner names the fields of one of the spec's ``SerializedBy`` keys, such as
+        ``{"order_id": order_id}``. The lock is the one every write for that owner takes, so a
+        handler that holds it before it reads makes its read-then-write as serialized as the
+        write: a second handler for the owner waits here, and this handler's own writes later
+        in the transaction take the lock again without waiting.
+
+        :raises CoreException: ``configuration`` when the spec declares no ``SerializedBy``,
+            when no owner is given, or when an owner's fields are not those of a declared key;
+            ``precondition`` (``document_hold_outside_transaction``) outside a transaction;
+            ``precondition`` (``storage_guarantee_unsupported``) on a store that serializes no
+            writes.
+        """
         ...  # pragma: no cover
 
     # ....................... #

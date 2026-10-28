@@ -1,5 +1,7 @@
 """The vocabulary, and the reconciliation that refuses a guarantee no store can keep."""
 
+from uuid import UUID, uuid4
+
 import attrs
 import pytest
 
@@ -15,7 +17,10 @@ from forze.application.contracts.guarantees import (
     guarantees_of,
     validate_storage_guarantees,
 )
-from forze.base.exceptions import CoreException
+from forze.application.contracts.guarantees.value_objects import serialization_keys
+from forze.base.exceptions import CoreException, ExceptionKind
+from forze.base.primitives import advisory_lock_key
+from forze.domain.models import Document
 
 # ----------------------- #
 
@@ -321,3 +326,73 @@ class TestWiringAMomentAgainstEachBackend:
             )
 
         assert "holding only at commit" in caught.value.summary
+
+
+# ....................... #
+
+
+class _Line(Document):
+    order_id: UUID
+    sku: str
+
+
+BY_ORDER = SerializedBy(key=("order_id",))
+BY_ORDER_SKU = SerializedBy(key=("sku", "order_id"))
+
+
+class TestTheKeysAHoldTakes:
+    def test_it_is_the_key_a_write_for_the_owner_derives(self) -> None:
+        order = uuid4()
+
+        keys = serialization_keys(
+            [BY_ORDER], [{"order_id": order}], model=_Line, scope="lines", tenant=None
+        )
+
+        assert keys == [advisory_lock_key("lines", None, "order_id", order)]
+
+    def test_a_value_is_taken_as_the_model_stores_it(self) -> None:
+        # A string id would derive another key and lock an owner no write ever takes.
+        order = uuid4()
+
+        def keys(value: object) -> list[int]:
+            return serialization_keys(
+                [BY_ORDER], [{"order_id": value}], model=_Line, scope="lines", tenant=None
+            )
+
+        assert keys(str(order)) == keys(order)
+
+    def test_fields_match_in_any_order_and_values_follow_the_declaration(self) -> None:
+        order = uuid4()
+
+        keys = serialization_keys(
+            [BY_ORDER, BY_ORDER_SKU],
+            [{"order_id": order, "sku": "a"}, {"order_id": order}, {"order_id": order}],
+            model=_Line,
+            scope="lines",
+            tenant=None,
+        )
+
+        assert keys == sorted(
+            {
+                advisory_lock_key("lines", None, "sku", "order_id", "a", order),
+                advisory_lock_key("lines", None, "order_id", order),
+            }
+        )
+
+    @pytest.mark.parametrize(
+        ("declarations", "owners"),
+        [
+            ((), [{"order_id": uuid4()}]),
+            ((BY_ORDER,), []),
+            ((BY_ORDER,), [{"sku": "a"}]),
+            ((BY_ORDER,), [{"order_id": uuid4(), "sku": "a"}]),
+        ],
+        ids=["nothing declared", "no owner", "another field", "a wider key"],
+    )
+    def test_what_it_cannot_lock_is_refused(
+        self, declarations: tuple[SerializedBy, ...], owners: list[dict[str, object]]
+    ) -> None:
+        with pytest.raises(CoreException) as refused:
+            serialization_keys(declarations, owners, model=_Line, scope="lines", tenant=None)
+
+        assert refused.value.kind is ExceptionKind.CONFIGURATION

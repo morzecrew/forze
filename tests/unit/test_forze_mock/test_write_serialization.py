@@ -32,7 +32,11 @@ from forze.base.primitives import advisory_lock_key, utcnow
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
 from forze_mock import MockDepsModule, MockState
 from forze_mock.adapters._mvcc import StatementLocks
-from forze_mock.adapters.tx import MockJournalTxManagerAdapter
+from forze_mock.adapters.tx import (
+    MockJournalTxManagerAdapter,
+    MockStrictTxManagerAdapter,
+    MockTxManagerAdapter,
+)
 from tests.support.execution_context import context_from_modules
 
 # ----------------------- #
@@ -260,6 +264,132 @@ class TestTheLockIsReleasedByTheTransaction:
             row = await ctx.doc.command(_spec(BY_OWNER)).create(_BookingCreate(owner="o1"))
 
         assert row.owner == "o1"
+        assert state.write_serialization.held() == ()
+
+
+# ....................... #
+
+
+def _hold(owner: str) -> Callable[[Any], Awaitable[None]]:
+    async def body(ctx: Any) -> None:
+        await ctx.doc.command(_spec(BY_OWNER)).hold({"owner": owner})
+
+    return body
+
+
+class TestAHoldTakesTheWriteLockWithoutWriting:
+    async def test_a_write_for_the_held_owner_waits(self) -> None:
+        state = MockState()
+
+        assert not await _observed_overlap(state, _hold("o1"), await _create("o1"))
+
+    async def test_a_write_for_another_owner_does_not(self) -> None:
+        state = MockState()
+
+        assert await _observed_overlap(state, _hold("o1"), await _create("o2"))
+
+    @pytest.mark.parametrize("held", [True, False])
+    async def test_two_read_then_write_handlers_decide_one_at_a_time(self, held: bool) -> None:
+        # The handler the hold exists for: each reads the owner's rows, decides, then writes.
+        # Without the hold both read before either writes, and both decide to insert.
+        state = MockState()
+        ctx = _ctx(state)
+        spec = _spec(BY_OWNER)
+
+        async def handler() -> None:
+            async with _tx(state).transaction():
+                if held:
+                    await ctx.doc.command(spec).hold({"owner": "o1"})
+
+                taken = await ctx.doc.query(spec).count({"$values": {"owner": "o1"}})
+                await asyncio.sleep(0.01)
+
+                if not taken:
+                    await ctx.doc.command(spec).create(_BookingCreate(owner="o1"))
+
+        await asyncio.wait_for(asyncio.gather(handler(), handler()), timeout=5)
+
+        rows = await ctx.doc.query(spec).count({"$values": {"owner": "o1"}})
+        assert rows == (1 if held else 2)
+        assert state.write_serialization.held() == ()
+
+    async def test_a_write_after_the_hold_in_its_transaction_re_enters_it(self) -> None:
+        state = MockState()
+        ctx = _ctx(state)
+        cmd = ctx.doc.command(_spec(BY_OWNER))
+
+        async with _tx(state).transaction():
+            await cmd.hold({"owner": "o1"})
+            row = await asyncio.wait_for(cmd.create(_BookingCreate(owner="o1")), timeout=5)
+
+        assert row.owner == "o1"
+        assert state.write_serialization.held() == ()
+
+    async def test_under_the_strict_manager_it_is_taken(self) -> None:
+        state = MockState()
+        cmd = _ctx(state).doc.command(_spec(BY_OWNER))
+
+        async with MockStrictTxManagerAdapter(state=state).transaction():
+            await cmd.hold({"owner": "o1"})
+
+        assert state.write_serialization.held() == ()
+
+    @pytest.mark.parametrize("manager", ["none", "outside"])
+    async def test_without_a_transaction_it_is_refused(self, manager: str) -> None:
+        # Released with its own statement, a hold would end before the read it is for.
+        state = MockState()
+        cmd = _ctx(state).doc.command(_spec(BY_OWNER))
+
+        with pytest.raises(CoreException) as refused:
+            if manager == "none":
+                async with MockTxManagerAdapter(state=state).transaction():
+                    await cmd.hold({"owner": "o1"})
+
+            else:
+                await cmd.hold({"owner": "o1"})
+
+        assert refused.value.code == "document_hold_outside_transaction"
+        assert state.write_serialization.held() == ()
+
+    @pytest.mark.parametrize(
+        ("guarantees", "owner"),
+        [((), {"owner": "o1"}), ((BY_OWNER,), {"label": "x"})],
+        ids=["undeclared", "another field"],
+    )
+    async def test_an_owner_no_declaration_names_is_refused(
+        self, guarantees: tuple[SerializedBy, ...], owner: dict[str, str]
+    ) -> None:
+        state = MockState()
+        cmd = _ctx(state).doc.command(_spec(*guarantees))
+
+        with pytest.raises(CoreException) as refused:
+            async with _tx(state).transaction():
+                await cmd.hold(owner)
+
+        assert refused.value.kind is ExceptionKind.CONFIGURATION
+
+    async def test_two_holders_wanting_each_others_owner_are_a_refused_cycle(self) -> None:
+        state = MockState()
+        cmd = _ctx(state).doc.command(_spec(BY_OWNER))
+        took_first = [asyncio.Event(), asyncio.Event()]
+        kinds: list[ExceptionKind] = []
+
+        async def holder(index: int, first: str, second: str) -> None:
+            try:
+                async with _tx(state).transaction():
+                    await cmd.hold({"owner": first})
+                    took_first[index].set()
+                    await took_first[1 - index].wait()
+                    await cmd.hold({"owner": second})
+
+            except CoreException as caught:
+                kinds.append(caught.kind)
+
+        await asyncio.wait_for(
+            asyncio.gather(holder(0, "o1", "o2"), holder(1, "o2", "o1")), timeout=5
+        )
+
+        assert kinds == [ExceptionKind.CONCURRENCY]
         assert state.write_serialization.held() == ()
 
 
