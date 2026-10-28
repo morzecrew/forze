@@ -447,7 +447,7 @@ graceful timeout, the lifespan sets it to 10 seconds.
 - **Under another server,** or a uvicorn off the main thread that installs no
   handler, the lifespan logs a warning. The drain phases then run only in the
   lifespan shutdown, after the server stopped accepting.
-- **An app with its own lifespan** wraps its runtime's scope in
+- **A lifespan that does not use `runtime_lifespan`** wraps its runtime's scope in
   `with drain_ahead_of_uvicorn(runtime, drain_budget=..., announce_delay=...):`.
 
 An app run as `uvicorn app:app` without a `drain_budget` keeps uvicorn's handling,
@@ -705,7 +705,7 @@ runs them. The surface, at a glance:
 |-------|--------------|
 | `runtime_lifespan` | run the runtime's lifecycle from the app lifespan; build the runtime at startup; drain it on `SIGTERM` in every uvicorn worker |
 | `serve_uvicorn` | an embedded uvicorn whose `SIGTERM` drains the runtime before the server stops |
-| `drain_ahead_of_uvicorn` | the `SIGTERM` drain `runtime_lifespan` installs, for an app with its own lifespan |
+| `drain_ahead_of_uvicorn` | the `SIGTERM` drain `runtime_lifespan` installs, for a lifespan that does not use `runtime_lifespan` |
 | `InvocationMetadataMiddleware` / `SecurityContextMiddleware` | bind per-request context, identity, and tenant |
 | `CustomHeadersMiddleware` / `LoggingMiddleware` | inject response headers; sampled, probe-excluded access logs |
 | `register_exception_handlers` | map a `CoreException` to an HTTP response by kind |

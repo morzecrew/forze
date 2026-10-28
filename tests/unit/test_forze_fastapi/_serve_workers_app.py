@@ -23,7 +23,7 @@ from forze_fastapi.routes import attach_readiness_route
 # ----------------------- #
 
 ANNOUNCE_DELAY = timedelta(seconds=1.5)
-SLOW_REQUEST = 4.0
+OUTLIVE_DRAIN = 1.0
 
 
 def record(event: str) -> None:
@@ -73,8 +73,19 @@ def create_app() -> FastAPI:
     @router.get("/slow")
     async def slow() -> dict[str, int]:  # pyright: ignore[reportUnusedFunction]
         lifespan.get_context()  # the ctx_dep the generated routes would be given
+        runtime = lifespan.runtime()
+        assert runtime is not None
         record("slow-started")
-        await asyncio.sleep(SLOW_REQUEST)
+
+        # In flight until well past this worker's drain, however late the signal reaches it.
+        for _ in range(600):  # a minute at most, whatever happens to the server
+            if runtime.draining:
+                record("draining")
+                break
+
+            await asyncio.sleep(0.1)
+
+        await asyncio.sleep(ANNOUNCE_DELAY.total_seconds() + OUTLIVE_DRAIN)
         record("slow-done")
 
         return {"pid": os.getpid()}

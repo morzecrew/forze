@@ -23,7 +23,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **`runtime_lifespan(build=...)` builds the runtime when the app starts.** An app factory then imports without the runtime's environment, and each worker process builds its own. Wire routes with `ctx_dep=lifespan.get_context` and the probe with `lifespan.runtime`; a build that raises fails the startup.
 
-- **`runtime_lifespan(drain_budget=...)` drains on `SIGTERM` in every uvicorn worker.** Under `uvicorn --workers N` or gunicorn's uvicorn worker, each worker drains its own runtime while it still serves, then lets its server exit. An app with its own lifespan uses `drain_ahead_of_uvicorn`.
+- **`runtime_lifespan(drain_budget=...)` drains on `SIGTERM` in every uvicorn worker.** Under `uvicorn --workers N` or gunicorn's uvicorn worker, each worker drains its own runtime while it still serves, then lets its server exit. An app that does not use `runtime_lifespan` gets the same from `drain_ahead_of_uvicorn`.
 
 - **`bind_max_in_size` raises the `$in` size limit for one block of trusted code.** Application code matching an id list it built itself no longer chunks it under the spec's limit, which still bounds every caller-supplied filter. A backend's own cap, such as Firestore's 30, still applies.
 

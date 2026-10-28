@@ -20,6 +20,8 @@ from forze.application._logger import logger
 from forze.base.exceptions import CoreException
 from forze.base.logging import Logger
 
+from .run import DRAIN_PHASE_CANCEL_GRACE_SECONDS
+
 if TYPE_CHECKING:
     from ..runtime import ExecutionRuntime
 
@@ -103,6 +105,20 @@ class SignalDrain:
 
     # ....................... #
 
+    async def cancel_drain_and_wait(self) -> None:
+        """Cancel the drain, if one is running, let it unwind — a second at most — and give
+        the drain phases up, so a teardown that follows does not run them."""
+
+        task = self._drain_task
+
+        if task is not None and task.cancel():
+            # Not left to the done callback: a teardown that starts before it runs would take
+            # back the claim the cancelled drain returns, and run the phases at length.
+            await asyncio.wait({task}, timeout=DRAIN_PHASE_CANCEL_GRACE_SECONDS)
+            self._forgo()
+
+    # ....................... #
+
     def _on_signal(self, sig: int, _frame: FrameType | None) -> None:
         # Runs on the main thread between two bytecodes, possibly while the loop sleeps in
         # its selector: hand over to the loop, which ``call_soon_threadsafe`` wakes. In the
@@ -173,10 +189,15 @@ class SignalDrain:
         if task.cancelled():
             # A forced exit. A drain cut short before its phases started gives its claim
             # back, and the scope's teardown would then run them at length: give them up.
-            with suppress(CoreException):
-                self._runtime.get_context().drain_phases.forgo()
+            self._forgo()
 
         self._drain_ended()
+
+    # ....................... #
+
+    def _forgo(self) -> None:
+        with suppress(CoreException):
+            self._runtime.get_context().drain_phases.forgo()
 
     # ....................... #
 
@@ -239,5 +260,6 @@ async def serve_runtime(
                 await signals.drained.wait()
 
             finally:
-                # Cancelled from outside mid-drain: the scope's shutdown would wait it out.
-                signals.cancel_drain()
+                # Cancelled from outside mid-drain: the scope's shutdown would wait it out, or
+                # run the phases itself.
+                await signals.cancel_drain_and_wait()

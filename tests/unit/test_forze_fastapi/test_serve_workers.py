@@ -10,6 +10,7 @@ import sys
 import threading
 import time
 from collections import defaultdict
+from contextlib import suppress
 from pathlib import Path
 
 import httpx
@@ -20,7 +21,8 @@ from tests.support.ports import free_port
 # ----------------------- #
 
 ANNOUNCE_DELAY = 1.5
-SLOW_REQUEST = 4.0
+SLOW_REQUEST = ANNOUNCE_DELAY + 1.0  # past its worker's drain start: the app's OUTLIVE_DRAIN
+_SLOW_EVENTS = ("slow-started", "draining", "slow-done")
 
 
 def _events(record: Path) -> dict[int, list[str]]:
@@ -65,6 +67,9 @@ def test_sigterm_drains_every_worker_before_it_stops(tmp_path: Path) -> None:
     def started_workers() -> int:
         return sum("started" in events for events in _events(record).values())
 
+    def seen_anywhere(event: str) -> bool:
+        return any(event in events for events in _events(record).values())
+
     def slow_request() -> None:
         replies.append(httpx.get(f"http://127.0.0.1:{port}/slow", timeout=SLOW_REQUEST + 10))
 
@@ -90,22 +95,23 @@ def test_sigterm_drains_every_worker_before_it_stops(tmp_path: Path) -> None:
             env={**os.environ, "FORZE_TEST_RECORD": str(record)},
             stdout=subprocess.DEVNULL,
             stderr=stderr,
+            start_new_session=True,
         )
 
         try:
             _wait_for("both workers", lambda: started_workers() == 2, within=30.0)
             _wait_for("readiness", lambda: _readiness(port) == 200, within=10.0)
 
-            in_flight = threading.Thread(target=slow_request)
+            # A daemon: a failed test must not wait for it.
+            in_flight = threading.Thread(target=slow_request, daemon=True)
             in_flight.start()
-            _wait_for(
-                "the slow request",
-                lambda: any("slow-started" in e for e in _events(record).values()),
-                within=5.0,
-            )
+            _wait_for("the slow request", lambda: seen_anywhere("slow-started"), within=5.0)
 
             signalled = time.monotonic()
             process.send_signal(signal.SIGTERM)
+
+            # From when the drain began, however late the supervisor passed the signal on.
+            _wait_for("a worker to drain", lambda: seen_anywhere("draining"), within=10.0)
 
             # Still serving, but no longer ready: the balancer's cue to stop routing.
             _wait_for("readiness to fail", lambda: _readiness(port) == 503, within=ANNOUNCE_DELAY)
@@ -124,9 +130,11 @@ def test_sigterm_drains_every_worker_before_it_stops(tmp_path: Path) -> None:
             raise
 
         finally:
-            if process.poll() is None:
-                process.kill()
-                process.wait(timeout=10)
+            # The whole session: killing the supervisor alone would leave the workers on the port.
+            with suppress(ProcessLookupError):
+                os.killpg(process.pid, signal.SIGKILL)
+
+            process.wait(timeout=10)
 
     assert code == 0
     assert [reply.status_code for reply in replies] == [200]
@@ -138,13 +146,13 @@ def test_sigterm_drains_every_worker_before_it_stops(tmp_path: Path) -> None:
     assert len(events) == 2
 
     for pid, seen in events.items():
-        tail = [e for e in seen if not e.startswith("slow-")]
+        tail = [e for e in seen if e not in _SLOW_EVENTS]
         assert tail == ["built", "started", "phase-started", "phase-done", "teardown"], pid
 
     # The in-flight request outlived the drain and finished before the teardown.
     slow = events[served_by]
-    assert slow.index("slow-started") < slow.index("phase-started")
+    assert slow.index("slow-started") < slow.index("draining") < slow.index("phase-started")
     assert slow.index("phase-done") < slow.index("slow-done") < slow.index("teardown")
 
-    # The supervisor notices the signal within half a second; the request held the exit.
+    # The supervisor passes the signal on within half a second; the request held the exit.
     assert elapsed < 0.5 + SLOW_REQUEST + 5.0

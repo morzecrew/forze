@@ -18,6 +18,7 @@ require_fastapi()
 import asyncio
 import math
 import signal
+import threading
 from collections.abc import Generator
 from contextlib import contextmanager
 from datetime import timedelta
@@ -250,16 +251,23 @@ def drain_ahead_of_uvicorn(
     one each worker of ``uvicorn --workers N`` and of gunicorn's uvicorn worker runs too —
     and on the first signal runs the drain while the server still serves, then tells the
     server to exit. The signals behave as under :func:`serve_uvicorn`, whose server already
-    drains: under it this does nothing. Under any other handler — another server, or a
-    server off the main thread, which installs none — it logs a warning and does nothing.
-    Unless the server sets ``timeout_graceful_shutdown``, it is set to 10 seconds.
+    drains: under it this does nothing. Entered off the main thread, or under any handler
+    other than ``uvicorn.Server.handle_exit`` — another server's, or none — it logs a
+    warning and does nothing. Unless the server sets ``timeout_graceful_shutdown``, it is
+    set to 10 seconds.
+
+    A signal during the lifecycle startup finds nothing to drain yet, as under
+    :func:`serve_uvicorn` and plain uvicorn: the server exits once startup finishes, with
+    no announcement, and the drain phases run in the lifespan shutdown instead.
 
     :param runtime: The runtime whose scope the block holds.
     :param drain_budget: Shared by the drain phases.
     :param announce_delay: How long readiness fails before the first phase starts.
     """
 
-    handler = signal.getsignal(signal.SIGTERM)
+    # Only the main thread can take a handler over; off it, no server state is touched.
+    on_main = threading.current_thread() is threading.main_thread()
+    handler = signal.getsignal(signal.SIGTERM) if on_main else None
     server = getattr(handler, "__self__", None)
 
     if isinstance(server, SignalDrain):
@@ -267,7 +275,12 @@ def drain_ahead_of_uvicorn(
         yield
         return
 
-    if not isinstance(server, uvicorn.Server):
+    # Exactly uvicorn's own handler, resolved through the instance's class so an override
+    # counts: anything else, a uvicorn that changed its handling included, is not taken over.
+    if not (
+        isinstance(server, uvicorn.Server)
+        and getattr(handler, "__func__", None) is type(server).handle_exit
+    ):
         _logger.warning(
             "SIGTERM is not handled by a uvicorn server on this process's main thread: "
             "the runtime drains only after the server stops accepting"

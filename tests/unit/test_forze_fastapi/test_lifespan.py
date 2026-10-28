@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import signal
+import threading
 from datetime import timedelta
 from unittest.mock import MagicMock
 
@@ -372,3 +373,60 @@ class TestRuntimeLifespanDrain:
             assert signal.getsignal(signal.SIGTERM) == before
 
         logger.warning.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_a_server_method_other_than_handle_exit_is_not_taken_over(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        logger = MagicMock()
+        monkeypatch.setattr(serving_module, "_logger", logger)
+        server = uvicorn.Server(uvicorn.Config(FastAPI()))
+        lifespan = runtime_lifespan(build=build_runtime, drain_budget=timedelta(seconds=1))
+        before = signal.signal(signal.SIGTERM, server.on_tick)  # pyright: ignore[reportArgumentType]
+
+        try:
+            async with lifespan(FastAPI()):
+                assert signal.getsignal(signal.SIGTERM) == server.on_tick
+
+        finally:
+            signal.signal(signal.SIGTERM, before)
+
+        logger.warning.assert_called_once()
+        assert server.config.timeout_graceful_shutdown is None
+
+    @pytest.mark.asyncio
+    async def test_a_subclass_overriding_handle_exit_is_taken_over(self) -> None:
+        class _Server(uvicorn.Server):
+            def handle_exit(self, sig: int, frame: object) -> None:  # type: ignore[override]
+                super().handle_exit(sig, frame)  # type: ignore[arg-type]
+
+        server = _Server(uvicorn.Config(FastAPI()))
+        lifespan = runtime_lifespan(build=build_runtime, drain_budget=timedelta(seconds=1))
+
+        with server.capture_signals():
+            async with lifespan(FastAPI()):
+                assert signal.getsignal(signal.SIGTERM) != server.handle_exit
+
+    def test_off_the_main_thread_it_warns_and_touches_nothing(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        logger = MagicMock()
+        monkeypatch.setattr(serving_module, "_logger", logger)
+        server = uvicorn.Server(uvicorn.Config(FastAPI()))
+        lifespan = runtime_lifespan(build=build_runtime, drain_budget=timedelta(seconds=1))
+        seen: list[object] = []
+
+        async def inside() -> None:
+            async with lifespan(FastAPI()):
+                seen.append(signal.getsignal(signal.SIGTERM))
+
+        # uvicorn serves on the main thread; the lifespan is entered on another.
+        with server.capture_signals():
+            thread = threading.Thread(target=lambda: asyncio.run(inside()))
+            thread.start()
+            thread.join(timeout=10)
+
+            assert seen == [server.handle_exit]
+
+        logger.warning.assert_called_once()
+        assert server.config.timeout_graceful_shutdown is None
