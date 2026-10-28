@@ -12,6 +12,7 @@ from typing import Any
 
 from pydantic import BaseModel
 
+from forze.application.contracts.analytics import AnalyticsQueryDefinition, AnalyticsSpec
 from forze.application.execution import ExecutionContext
 from forze_dst.conformance import RowDifference, compare_analytics_query
 from forze_mock import (
@@ -25,6 +26,7 @@ from tests.support.analytics_resolver_conformance import (
     PARAMS,
     PLAN,
     TOTALS,
+    MinTotal,
     drifting_resolver,
     matching_resolver,
 )
@@ -167,3 +169,54 @@ async def test_two_empty_answers_agree_when_empty_is_the_right_answer() -> None:
 
     assert comparison.agrees
     assert comparison.render().endswith("mock and real agree on 0 row(s)")
+
+
+# ....................... #
+
+
+class LooseTotal(BaseModel):
+    customer: str
+    total: Any
+    """Untyped, so each engine's JSON number type reaches the comparison as it came."""
+
+
+LOOSE = AnalyticsSpec(
+    name="loose_totals",
+    read=LooseTotal,
+    queries={"by_customer": AnalyticsQueryDefinition(params=MinTotal)},
+)
+
+
+def _loose(*rows: dict[str, Any]) -> ExecutionContext:
+    return context_from_modules(
+        MockDepsModule(analytics=MockAnalyticsRegistry().on(LOOSE, "by_customer", _fixed(*rows)))
+    )
+
+
+async def _verdicts(mock: dict[str, Any], real: dict[str, Any]) -> list[bool]:
+    return [
+        (
+            await compare_analytics_query(
+                LOOSE, "by_customer", PARAMS, mock=_loose(mock), real=_loose(real), ordered=ordered
+            )
+        ).agrees
+        for ordered in (False, True)
+    ]
+
+
+async def test_equal_numbers_agree_whatever_their_json_type_in_both_modes() -> None:
+    as_ints = {"customer": "ada", "total": {"sum": 1, "parts": [1, {"n": 2}]}}
+    as_floats = {"customer": "ada", "total": {"sum": 1.0, "parts": [1.0, {"n": 2.0}]}}
+
+    assert await _verdicts(as_ints, as_floats) == [True, True]
+
+
+async def test_a_boolean_never_matches_a_number_in_either_mode() -> None:
+    assert await _verdicts({"customer": "ada", "total": True}, {"customer": "ada", "total": 1}) == [
+        False,
+        False,
+    ]
+    assert await _verdicts(
+        {"customer": "ada", "total": {"flags": [False]}},
+        {"customer": "ada", "total": {"flags": [0]}},
+    ) == [False, False]

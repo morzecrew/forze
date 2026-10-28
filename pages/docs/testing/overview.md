@@ -130,7 +130,7 @@ comparison = await compare_analytics_query(
 assert comparison.agrees, comparison.render()
 ```
 
-Rows are compared as a multiset after the read model, so a `Decimal` from the engine and an `int` from the resolver agree when the read model types the field. Pass `ordered=True` only for a query with an `ORDER BY`. `render()` prints one line for each row that only one side returned, or, in ordered mode, for each position that differs. Two empty answers do not agree: a seed that produced no rows the query selects would pass any resolver. Pass `allow_empty=True` only for a query whose correct answer is empty. To use the same query as a simulation invariant, see [`query_invariant`](../dst/invariants.md#what-must-always-hold).
+Rows are compared as a multiset after the read model, so a `Decimal` from the engine and an `int` from the resolver agree when the read model types the field. In an untyped field, `1` and `1.0` agree and `true` never matches `1`, in either mode. Pass `ordered=True` only for a query with an `ORDER BY`. `render()` prints one line for each row that only one side returned, or, in ordered mode, for each position that differs. Two empty answers do not agree: a seed that produced no rows the query selects would pass any resolver. Pass `allow_empty=True` only for a query whose correct answer is empty. To use the same query as a simulation invariant, see [`query_invariant`](../dst/invariants.md#what-must-always-hold).
 
 ## Transaction rollback in tests
 

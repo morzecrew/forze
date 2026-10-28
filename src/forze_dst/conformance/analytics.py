@@ -8,7 +8,8 @@ mock and a real engine — runs the same query on both, and diffs the rows.
 
 Rows are compared after the read model, as JSON. The port's output is the contract, so a
 ``Decimal`` from one engine and an ``int`` from the other agree when the read model types the
-field. Order is ignored unless the caller says the query orders its rows: SQL without an
+field. In an untyped field equal numbers agree too (``1`` and ``1.0``), but a boolean never
+matches a number, at any depth. Order is ignored unless the caller says the query orders its rows: SQL without an
 ``ORDER BY`` promises none, and a resolver written over a dict has no reason to match the planner.
 """
 
@@ -16,9 +17,9 @@ from __future__ import annotations
 
 import json
 from collections import Counter
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import Awaitable, Callable, Hashable, Mapping, Sequence
 from itertools import zip_longest
-from typing import Any
+from typing import Any, cast
 
 import attrs
 from pydantic import BaseModel
@@ -180,6 +181,30 @@ def _text(row: JsonDict | None) -> str:
     return json.dumps(row, sort_keys=True)
 
 
+def _key(value: Any) -> Hashable:
+    """*value*'s identity for matching, the same in ordered and unordered mode.
+
+    Python's ``==`` makes ``True == 1``, and JSON text makes ``1 != 1.0``; neither is how the
+    port's rows should match. A boolean is tagged apart from numbers, while ``1`` and ``1.0``
+    share a tag and compare (and hash) equal. Objects and arrays recurse.
+    """
+
+    if isinstance(value, bool):
+        return ("bool", value)
+
+    if isinstance(value, int | float):
+        return ("number", value)
+
+    if isinstance(value, Mapping):
+        items = cast(Mapping[str, Any], value).items()
+        return ("object", frozenset((name, _key(item)) for name, item in items))
+
+    if isinstance(value, list):
+        return ("array", tuple(_key(item) for item in value))
+
+    return ("scalar", value)
+
+
 def _ordered_differences(
     mock_rows: Sequence[JsonDict],
     real_rows: Sequence[JsonDict],
@@ -187,7 +212,7 @@ def _ordered_differences(
     return tuple(
         RowDifference(position=index, mock=mock_row, real=real_row)
         for index, (mock_row, real_row) in enumerate(zip_longest(mock_rows, real_rows))
-        if mock_row != real_row
+        if _key(mock_row) != _key(real_row)
     )
 
 
@@ -208,11 +233,11 @@ def _unordered_differences(
 def _surplus(rows: Sequence[JsonDict], other: Sequence[JsonDict]) -> list[JsonDict]:
     """The rows of *rows* left over once each is matched to an equal row of *other*."""
 
-    unmatched = Counter(_text(row) for row in other)
+    unmatched = Counter(_key(row) for row in other)
     surplus: list[JsonDict] = []
 
     for row in rows:
-        key = _text(row)
+        key = _key(row)
 
         if unmatched[key]:
             unmatched[key] -= 1
