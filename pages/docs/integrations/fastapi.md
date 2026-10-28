@@ -103,6 +103,11 @@ full path, so no entry names two routes. A middleware added to the parent applic
 sees no mount: list full paths there. `bypass_paths` and `allowed_websocket_paths`, below,
 read their entries the same way.
 
+The relative reading trusts the ASGI `root_path`, so it must come from server
+configuration: a `Mount`, or the server's `--root-path`. Never derive it from a request
+header. A middleware that sets it from `X-Forwarded-Prefix` lets the client choose the
+prefix, and a relative entry would then admit paths the startup checks never verified.
+
 Probe paths want the opposite treatment. Both middlewares resolve the execution
 context on every HTTP request, so in front of `/livez` they answer 500 while the
 runtime scope is not yet open — precisely the window a liveness probe exists to
@@ -167,9 +172,28 @@ mounted application, so a mounted app's own lifespan never runs: neither its run
 nor its checks would start. Run from the outermost app, the checks walk every Starlette
 or FastAPI app mounted beneath it, and hold each one's middlewares against the routes
 they reach, at the path they see. A bypass on the outer app that reaches a generated
-route of a mounted one fails the boot too. Inside any other mounted ASGI app the checks
-cannot see: a websocket allowlist entry there is refused, and a bypass entry there is
-logged as a warning.
+route of a mounted one fails the boot too.
+
+The checks cannot see into any other mounted ASGI app, such as a Prometheus
+`make_asgi_app()` or a `StaticFiles` mount. A bypass or websocket allowlist entry that
+could admit a request into one fails the boot, even when it also names a visible route:
+routing order decides which one serves it, and the checks do not model that. A mount at
+`/` or a `Host` route is reached by every entry. Two layouts pass:
+
+- serve the probe or scrape endpoint as a route of the gated app (`attach_metrics_route`
+  for Prometheus), and bypass that route;
+- mount the other app on an outer app beside the gated one, outside its middlewares:
+
+```python
+root = FastAPI(lifespan=runtime_lifespan(runtime))
+root.mount("/metrics", make_asgi_app())  # no gate in front of it
+root.mount("/api", api)  # api carries the middlewares and their bypass_paths
+```
+
+A mounted FastAPI app must not declare its own `root_path`. FastAPI writes it over the
+one the mount passes down, so its routes are matched against another prefix and the
+checks cannot tell what its middlewares see. The checks refuse such a mount unless the
+value equals the mount's own prefix.
 
 When an upstream Forze service forwards its remaining [time
 budget](../running-in-prod/deadlines.md) as `X-Forze-Deadline-Budget`, opt in to

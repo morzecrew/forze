@@ -14,7 +14,6 @@ from __future__ import annotations
 
 from contextlib import asynccontextmanager
 from typing import Any
-from unittest.mock import MagicMock
 
 import pytest
 
@@ -37,7 +36,7 @@ from forze_fastapi.middlewares import (
     check_bypass_paths,
     check_websocket_allowlist,
 )
-from forze_fastapi.middlewares import bypass as bypass_module
+from forze_fastapi.middlewares._routes import path_is_listed
 from forze_fastapi.middlewares.raw_websocket import websocket_scope_refused
 from forze_fastapi.routes import (
     attach_authn_routes,
@@ -128,6 +127,10 @@ def _mounted(api: FastAPI, prefix: str = "/api") -> FastAPI:
     root.mount(prefix, api)
 
     return root
+
+
+async def _opaque(scope: Any, receive: Any, send: Any) -> None:  # pragma: no cover
+    """A mounted ASGI app that is neither a Starlette nor a FastAPI app."""
 
 
 def _refused(check: Any, app: FastAPI) -> str:
@@ -236,39 +239,118 @@ class TestBypassOnTheRootApp:
 
         check_bypass_paths(root)
 
-    def test_an_entry_inside_an_uninspectable_mount_is_warned_about(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        # The forze logger is structlog-backed and writes past caplog, so it is patched.
-        logger = MagicMock()
-        monkeypatch.setattr(bypass_module, "_logger", logger)
 
-        async def opaque(scope: Any, receive: Any, send: Any) -> None:  # pragma: no cover
-            pass
+class TestBypassIntoAnUninspectableMount:
+    """A mounted ASGI app that is not a Starlette or FastAPI app cannot be seen into: an
+    entry that could admit a request into one is refused, whatever else it matches."""
 
-        root = _gate(_probes(FastAPI()), bypass_paths={"/livez", "/raw/livez"})
-        root.mount("/raw", opaque)
+    def test_an_entry_reaching_only_that_mount_is_refused(self) -> None:
+        root = _gate(_probes(FastAPI()), bypass_paths={"/raw/livez"})
+        root.mount("/raw", _opaque)
+
+        message = _refused(check_bypass_paths, root)
+
+        assert "/raw/livez" in message
+        assert "cannot see into it" in message
+
+    def test_a_matched_superset_does_not_cover_for_it(self) -> None:
+        # /livez is a visible probe, but /raw/notes could be anything inside /raw.
+        root = _gate(_probes(FastAPI()), bypass_paths={"/livez", "/raw/notes"})
+        root.mount("/raw", _opaque)
+
+        assert "cannot see into it" in _refused(check_bypass_paths, root)
+
+    def test_an_entry_naming_a_visible_route_and_the_mount_is_refused(self) -> None:
+        # Which of the two serves /raw/livez depends on routing order, not modelled.
+        root = _gate(FastAPI(), bypass_paths={"/raw/livez"})
+        root.mount("/raw", _opaque)
+        root.get("/raw/livez")(lambda: {"ok": True})
+
+        assert "cannot see into it" in _refused(check_bypass_paths, root)
+
+    def test_a_mount_at_the_root_is_reached_by_every_entry(self) -> None:
+        root = _gate(_probes(FastAPI()), bypass_paths={"/livez"})
+        root.mount("/", _opaque)
+
+        assert "'/'" in _refused(check_bypass_paths, root)
+
+    def test_entries_that_cannot_reach_it_pass(self) -> None:
+        # /metrics is not under /raw/, and a request for /raw itself is redirected by
+        # the router, never handed to the mounted app.
+        root = _gate(_probes(FastAPI()), bypass_paths={"/livez", "/metrics", "/raw"})
+        root.mount("/raw", _opaque)
 
         check_bypass_paths(root)
 
-        logger.warning.assert_called_once()
-        assert "/raw/livez" in str(logger.warning.call_args)
+    def test_the_restructured_layout_passes(self) -> None:
+        # The fix the refusal names: mount the opaque app beside the gated one.
+        root = FastAPI()
+        root.mount("/metrics", _opaque)
+        root.mount("/api", _gate(_probes(FastAPI()), bypass_paths={"/livez"}))
 
-    def test_a_superset_beside_an_uninspectable_mount_stays_quiet(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        logger = MagicMock()
-        monkeypatch.setattr(bypass_module, "_logger", logger)
+        run_startup_checks(root)
 
-        async def opaque(scope: Any, receive: Any, send: Any) -> None:  # pragma: no cover
-            pass
 
-        root = _gate(_probes(FastAPI()), bypass_paths={"/livez", "/metrics"})
-        root.mount("/raw", opaque)
+class TestNoEntryAdmitsAnotherPath:
+    """What a relative entry must never admit, read as the gates read it."""
 
-        check_bypass_paths(root)
+    @pytest.mark.parametrize(
+        ("entries", "path", "root_path"),
+        [
+            ({"/livez"}, "/apix/livez", "/api"),  # not a segment boundary
+            ({"/api/livez"}, "/other/livez", "/other"),  # another mount
+            ({"/livez"}, "/api/livez/", "/api"),  # trailing slash on the request
+            ({"/livez/"}, "/api/livez", "/api"),  # trailing slash on the entry
+            ({"/livez"}, "/api/livez", "/api/"),  # trailing slash on the root path
+            ({"/livez"}, "/api/livez?", "/api"),  # a decoded %3F stays in the path
+        ],
+        ids=["no-boundary", "other-mount", "slash-path", "slash-entry", "slash-root", "pct"],
+    )
+    def test_the_gates_refuse(self, entries: set[str], path: str, root_path: str) -> None:
+        entries_ = frozenset(entries)
 
-        logger.warning.assert_not_called()
+        assert not path_is_listed(entries_, {"path": path, "root_path": root_path})
+        assert websocket_scope_refused(
+            {"type": "websocket", "path": path, "root_path": root_path},
+            allow_raw_websockets=False,
+            allowed_websocket_paths=entries_,
+        )
+
+    @pytest.mark.parametrize("path", ["/api/livez/", "/api/livez%3F"])
+    def test_a_near_miss_request_is_not_bypassed(self, path: str) -> None:
+        root = _mounted(_gate(_probes(FastAPI()), bypass_paths={"/livez"}))
+
+        # The gate runs and resolves the context, which no lifespan opened.
+        assert TestClient(root, raise_server_exceptions=False).get(path).status_code == 500
+
+    def test_one_entry_does_not_bypass_the_same_app_under_another_mount(self) -> None:
+        api = _gate(_probes(FastAPI()), bypass_paths={"/api/livez"})
+        root = FastAPI()
+        root.mount("/api", api)
+        root.mount("/other", api)
+        client = TestClient(root, raise_server_exceptions=False)
+
+        assert client.get("/api/livez").status_code == 200
+        assert client.get("/other/livez").status_code == 500
+        # And the check says so: under /other the set bypasses nothing.
+        assert "not one of those paths is routed" in _refused(check_bypass_paths, root)
+
+
+class TestMountedRootPath:
+    """FastAPI writes its own ``root_path`` over the one a mount passes down."""
+
+    @pytest.mark.filterwarnings("ignore:The `root_path` parameter is deprecated")
+    def test_the_mount_s_own_root_path_passes(self) -> None:
+        api = _gate(_probes(FastAPI(root_path="/api")), bypass_paths={"/livez"})
+
+        assert TestClient(_mounted(api)).get("/api/livez").status_code == 200
+        run_startup_checks(_mounted(api))
+
+    @pytest.mark.filterwarnings("ignore:The `root_path` parameter is deprecated")
+    def test_any_other_root_path_is_refused(self) -> None:
+        root = _mounted(_probes(FastAPI(root_path="/v1")))
+
+        assert "root_path='/v1'" in _refused(run_startup_checks, root)
 
 
 # ....................... #
@@ -328,14 +410,17 @@ class TestWebsocketAllowlistOnAMountedApp:
 
         check_websocket_allowlist(root)
 
-    def test_a_path_into_an_uninspectable_mount_is_still_refused(self) -> None:
-        async def opaque(scope: Any, receive: Any, send: Any) -> None:  # pragma: no cover
-            pass
-
+    def test_a_path_into_an_uninspectable_mount_is_refused(self) -> None:
         root = _gate(FastAPI(), allowed_websocket_paths={"/raw/ws"})
-        root.mount("/raw", opaque)
+        root.mount("/raw", _opaque)
 
-        assert "no websocket route" in _refused(check_websocket_allowlist, root)
+        assert "cannot see into it" in _refused(check_websocket_allowlist, root)
+
+    def test_a_governed_route_also_reaching_that_mount_is_refused(self) -> None:
+        root = _gate(_realtime(FastAPI()), allowed_websocket_paths={"/realtime/ws"})
+        root.mount("/", _opaque)
+
+        assert "cannot see into it" in _refused(check_websocket_allowlist, root)
 
 
 # ....................... #

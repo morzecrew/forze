@@ -12,7 +12,12 @@ from starlette.types import Receive, Scope, Send
 
 from forze.base.exceptions import exc
 
-from ._routes import iter_effective_routes, iter_mounted_apps, path_is_listed
+from ._routes import (
+    entry_into_opaque_mount,
+    iter_effective_routes,
+    iter_mounted_apps,
+    path_is_listed,
+)
 
 # ----------------------- #
 
@@ -73,8 +78,8 @@ def check_websocket_allowlist(app: Any) -> None:
 
     Run it on the outermost app: it checks that app and every Starlette or FastAPI app
     mounted beneath it, each against the routes it reaches and the paths its middlewares
-    see. A path into any other mounted ASGI app serves no route this check can verify and
-    is refused.
+    see. A path that could reach any other mounted ASGI app cannot be verified and is
+    refused, even when it also names a governed route (routing order is not modelled).
     """
 
     for level, scopes in iter_mounted_apps(app):
@@ -126,6 +131,18 @@ def _check_allowlist(app: Any, scopes: Callable[[str], list[Scope]]) -> None:
                 "middleware would refuse every such connection (1008). List the same "
                 "allowed_websocket_paths on every governed middleware."
             )
+
+    reached = entry_into_opaque_mount(allowlisted, app, scopes)
+
+    if reached is not None:
+        entry, mount = reached
+
+        raise exc.configuration(
+            f"allowed_websocket_paths lists {entry!r}, which can reach the application "
+            f"mounted at {mount!r}. The startup checks cannot see into it, so they cannot "
+            "prove the path serves a governed route. Allowlist only routes the checks can "
+            "see, or mount that application on an outer app, outside these middlewares."
+        )
 
     routes = [
         (scopes(path), route.endpoint)

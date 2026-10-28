@@ -7,17 +7,19 @@ require_fastapi()
 from collections.abc import Callable, Iterable, Mapping
 from typing import Any, Final, cast
 
-from starlette.routing import Host, Mount, Route
+from starlette.routing import Route
 from starlette.types import Scope
 
 from forze.base.exceptions import exc
-from forze.base.logging import Logger
 
-from ._routes import iter_effective_routes, iter_mounted_apps, path_is_listed
+from ._routes import (
+    entry_into_opaque_mount,
+    iter_effective_routes,
+    iter_mounted_apps,
+    path_is_listed,
+)
 
 # ----------------------- #
-
-_logger = Logger("fastapi.startup")
 
 GOVERNED_OPERATION_ATTR: Final[str] = "__forze_governed_operation__"
 """Marker a generated operation route's endpoint carries (set by ``attach_*_routes``).
@@ -55,8 +57,10 @@ def check_bypass_paths(app: Any) -> None:
     they read them — the full path, or the path relative to the app's mount. A request
     is judged under every path its middleware may see (with and without the app's own
     ``root_path``): bypassed under any of them counts for the governed-route refusal,
-    and only bypassed under all of them counts as a match. A bypassed path inside any
-    other mounted ASGI app cannot be verified and is logged as a warning.
+    and only bypassed under all of them counts as a match. A bypassed path that could
+    reach any other mounted ASGI app (a metrics or static-files app, say) cannot be
+    verified and is refused, whatever else the set matches: serve the probe as a route of
+    the gated app, or mount that app on an outer app, outside these middlewares.
 
     A no-op when no middleware configures a bypass.
     :func:`~forze_fastapi.run_startup_checks` runs it (``runtime_lifespan`` calls that) at
@@ -79,15 +83,11 @@ def _check_level(app: Any, scopes: Callable[[str], list[Scope]]) -> None:
 
     _check_gates_agree(gates)
 
-    routes: list[tuple[list[Scope], Any]] = []
-    opaque: list[str] = []
-
-    for path, route in iter_effective_routes(app):
-        if isinstance(route, Route):
-            routes.append((scopes(path), route))
-
-        elif isinstance(route, (Mount, Host)):
-            opaque.append(path)
+    routes = [
+        (scopes(path), route)
+        for path, route in iter_effective_routes(app)
+        if isinstance(route, Route)
+    ]
 
     for seen, route in routes:
         if getattr(route.endpoint, GOVERNED_OPERATION_ATTR, False) and any(
@@ -101,6 +101,20 @@ def _check_level(app: Any, scopes: Callable[[str], list[Scope]]) -> None:
                 "tenant data unauthenticated. List probe and scrape paths only."
             )
 
+    reached = entry_into_opaque_mount(bypassed, app, scopes)
+
+    if reached is not None:
+        entry, mount = reached
+
+        raise exc.configuration(
+            f"bypass_paths lists {entry!r}, which can reach the application mounted at "
+            f"{mount!r}. The startup checks cannot see into it, so they cannot prove the "
+            "path is a probe and not a governed route. Bypass only routes the checks can "
+            "see: serve the probe or scrape endpoint as a route of this app (for Prometheus, "
+            "attach_metrics_route), or mount that application on an outer app, outside "
+            "these middlewares."
+        )
+
     if not any(all(path_is_listed(bypassed, scope) for scope in seen) for seen, _ in routes):
         raise exc.configuration(
             f"bypass_paths lists {sorted(bypassed)}, and not one of those paths is "
@@ -113,38 +127,11 @@ def _check_level(app: Any, scopes: Callable[[str], list[Scope]]) -> None:
             "if the probes are served elsewhere entirely."
         )
 
-    _warn_unverifiable(bypassed, routes, opaque, scopes)
-
 
 def _listing(paths: Iterable[str], seen: list[Scope]) -> set[str]:
     """The entries that list a request seen as any of *seen*."""
 
     return {path for path in paths if any(path_is_listed({path}, scope) for scope in seen)}
-
-
-def _warn_unverifiable(
-    bypassed: set[str],
-    routes: list[tuple[list[Scope], Any]],
-    opaque: list[str],
-    scopes: Callable[[str], list[Scope]],
-) -> None:
-    """Warn about entries that reach only a mounted ASGI app the check cannot see into."""
-
-    unmatched = bypassed - {path for seen, _ in routes for path in _listing(bypassed, seen)}
-
-    for mount in opaque:
-        prefixes = {mount, *(scope["path"] for scope in scopes(mount))}
-        inside = sorted(
-            path for path in unmatched if any(path.startswith(f"{p}/") for p in prefixes)
-        )
-
-        if inside:
-            _logger.warning(
-                "bypass_paths lists paths inside a mounted application the startup "
-                "checks cannot inspect; they are not verified to be probe paths",
-                paths=inside,
-                mount=mount,
-            )
 
 
 def _gating_middlewares(app: Any) -> list[tuple[str, frozenset[str]]]:

@@ -107,8 +107,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **A Postgres document field stored in a native `jsonb[]` or `json[]` column can be written.** Create, update and upsert, single and batch, failed with `cannot adapt type 'dict'`; each element is now sent as JSON, a `None` one as SQL `NULL`, and reads back as written.
 
-- **On a mounted FastAPI app, `bypass_paths` and `allowed_websocket_paths` also match the path relative to the mount, as `anonymous_paths` does** (**behaviour change**). `/livez` now bypasses `/api/livez` under `/api`, so the entry the check accepted no longer answers 500, and a full-path entry no longer fails the check.
-
 - **A Postgres locking read works when the read relation differs from the write relation (a view, typically).** `get`, `find`, `project` and `select` with `for_update` failed on a view that joins with `LEFT JOIN`. They now lock the row on the write table, honouring `nowait` and `skip_locked`, then read.
 
 ### Security
@@ -119,7 +117,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **A stale access cookie could keep a cookie-mode logout from ending the session.** `runtime_lifespan` now refuses an app whose `anonymous_paths` misses a cookie-mode login, refresh or logout route (`check_authn_cookie_paths`, **behaviour change**).
 
-- **The FastAPI startup checks cover mounted apps** (**behaviour change**). They check every Starlette or FastAPI app mounted beneath the one checked, so a bypass reaching a mounted generated route fails the boot. A parent app's bypass or websocket allowlist naming a mounted route is verified, not refused.
+- **`bypass_paths` and `allowed_websocket_paths` admit more paths** (**behaviour change**). On a mounted FastAPI app or under a server root path, an entry matches the full path or the path relative to `root_path`, as `anonymous_paths` does. `root_path` must come from server configuration, never from a request header.
+
+- **The FastAPI startup checks cover every mounted Starlette or FastAPI app** (**behaviour change**). The boot fails on a bypass reaching a mounted generated route, on a bypass or websocket allowlist entry that could reach a mounted app they cannot inspect, and on a mounted FastAPI app overriding its `root_path`.
 
 - **Postgres dynamic-read routes refuse an unknown `provenance` value** (**Breaking**). `PostgresDynamicReadConfig` accepts only `"trusted"` or `"untrusted"` (`postgres_dynamic_read_provenance_invalid`); a config with any other value now fails at startup. New `validate_dynamic_read_provenance`.
 

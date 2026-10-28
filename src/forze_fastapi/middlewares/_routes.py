@@ -13,6 +13,8 @@ from starlette.applications import Starlette
 from starlette.routing import Host, Mount, Router
 from starlette.types import Scope
 
+from forze.base.exceptions import exc
+
 # ----------------------- #
 
 
@@ -24,6 +26,11 @@ def path_is_listed(paths: Set[str], scope: Scope) -> bool:
     prefix or a server root path. Reads the percent-decoded ``scope["path"]`` routing
     reads, never ``request.url``: that is re-split from it, so an encoded ``?`` or ``#``
     would end its path early and borrow a listed one.
+
+    The relative reading trusts ``scope["root_path"]``: it must come from server
+    configuration (a ``Mount``, ``--root-path``), never from a request header. A
+    middleware that set it from ``X-Forwarded-Prefix`` would let a client pick the prefix,
+    and a relative entry would then admit paths the startup checks never verified.
     """
 
     path: str = scope.get("path", "")
@@ -107,6 +114,8 @@ def iter_mounted_apps(app: Any) -> Iterator[tuple[Any, Callable[[str], list[Scop
     :returns: ``(app, scopes)`` pairs, where ``scopes(path)`` gives the scopes the app's
         middlewares see for a request to *path*, as :func:`iter_effective_routes` yields
         it for that app.
+    :raises CoreException: ``configuration`` when a mounted FastAPI app declares a
+        ``root_path`` other than the one its mount passes down, which it would overwrite.
     """
 
     raw_root = getattr(app, "root_path", "") or ""
@@ -133,11 +142,70 @@ def _iter_mounted_beneath(
 
             continue
 
-        # FastAPI writes its own root_path over the one the mount passed down.
-        sub_root = getattr(mounted, "root_path", "") or root_path + path
+        sub_root = root_path + path
+        own_root = getattr(mounted, "root_path", "") or sub_root
+
+        # FastAPI writes its own root_path over the one the mount passed down, and its
+        # router then strips that prefix instead: not what these scopes model.
+        if own_root != sub_root:
+            raise exc.configuration(
+                f"The application mounted at {path or '/'!r} declares "
+                f"root_path={own_root!r}, which replaces the {sub_root!r} its mount passes "
+                "down: its routes are matched against another prefix, and the startup "
+                "checks cannot tell what its middlewares see. Drop root_path from the "
+                "mounted application; the mount sets it."
+            )
 
         yield mounted, partial(_scopes, (base + path,), sub_root)
         yield from _iter_mounted_beneath(mounted, base + path, sub_root)
+
+
+def entry_into_opaque_mount(
+    paths: Set[str],
+    app: Any,
+    scopes: Callable[[str], list[Scope]],
+) -> tuple[str, str] | None:
+    """The first entry of *paths* that admits a request into a mounted ASGI app the checks
+    cannot see into (neither a Starlette or FastAPI app nor a router), with the mount's path.
+
+    Routing order is not modelled: an entry that could reach such a mount counts even when
+    a route declared before it would serve the request.
+    """
+
+    mounts = [
+        (path, route)
+        for path, route in iter_effective_routes(app)
+        if isinstance(route, (Mount, Host))
+    ]
+
+    if not mounts:
+        return None
+
+    bases = [scope["path"] for scope in scopes("")]
+
+    for entry in sorted(paths):
+        # The route paths a request the entry lists is routed by: the entry read relative,
+        # or the entry less the base read full.
+        routed = {entry} | {entry[len(b) :] for b in bases if b and entry.startswith(b + "/")}
+
+        for mount_path, route in mounts:
+            for path in routed:
+                if _routes_into(mount_path, route, path) and any(
+                    path_is_listed({entry}, scope) for scope in scopes(path)
+                ):
+                    return entry, mount_path or "/"
+
+    return None
+
+
+def _routes_into(mount_path: str, route: Any, path: str) -> bool:
+    """Whether a request routed by *path* can reach the mount or host route."""
+
+    # A host route matches any path, and so does a mount at the root or one with params.
+    if isinstance(route, Host) or not mount_path or "{" in mount_path:
+        return True
+
+    return path.startswith(mount_path + "/")
 
 
 def _scopes(bases: tuple[str, ...], root_path: str, path: str) -> list[Scope]:
