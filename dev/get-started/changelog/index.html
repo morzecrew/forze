@@ -10368,6 +10368,9 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <li>
 <p><strong>A Postgres document field stored in a native <code>jsonb[]</code> or <code>json[]</code> column can be written.</strong> Create, update and upsert, single and batch, failed with <code>cannot adapt type 'dict'</code>; each element is now sent as JSON, a <code>None</code> one as SQL <code>NULL</code>, and reads back as written.</p>
 </li>
+<li>
+<p><strong>A Postgres locking read works when the read relation differs from the write relation (a view, typically).</strong> <code>get</code>, <code>find</code>, <code>project</code> and <code>select</code> with <code>for_update</code> failed on a view that joins with <code>LEFT JOIN</code>. They now lock the row on the write table, honouring <code>nowait</code> and <code>skip_locked</code>, then read.</p>
+</li>
 </ul>
 <h3 id="security">Security<a class="headerlink" href="#security" title="Permanent link">&para;</a></h3>
 <ul>
