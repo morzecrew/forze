@@ -20,6 +20,7 @@ from forze.application.contracts.document import (
     DocumentCommandDepKey,
     DocumentQueryDepKey,
     DocumentSpec,
+    KeyedUpdate,
 )
 from forze.application.execution import Deps, ExecutionContext
 from forze.base.exceptions import CoreException
@@ -244,3 +245,38 @@ async def test_missing_history_snapshot_is_retryable_precondition(
         await cmd.update(doc.id, 1, HistUpdate(name="ours"))
 
     assert exc_info.value.code == "history_not_found_retry"
+
+
+@pytest.mark.asyncio
+async def test_a_strict_check_refuses_the_stale_rev_history_would_merge(
+    mongo_client: MongoClient,
+) -> None:
+    """``merge=False`` and ``touch(rev=)`` refuse any revision but the stored one."""
+    suf = uuid4().hex[:8]
+    ctx, _ = await _ctx(
+        mongo_client, collection=f"doc_hist_{suf}", history_collection=f"doc_hist_h_{suf}"
+    )
+    cmd = ctx.document.command(_spec())
+
+    doc = await cmd.create(HistCreate(name="v1", due=DUE_V1))
+    other = await cmd.create(HistCreate(name="o1", due=DUE_V1))
+    await cmd.update(doc.id, doc.rev, HistUpdate(due=DUE_V2))
+    refused: list[str | None] = []
+
+    for stale in (
+        lambda: cmd.update(doc.id, 1, HistUpdate(name="v2"), merge=False),
+        lambda: cmd.update(doc.id, 1, HistUpdate(name="v1"), merge=False),
+        lambda: cmd.update_many(
+            [KeyedUpdate(id=doc.id, rev=1, dto=HistUpdate(name="v2"))], merge=False
+        ),
+        lambda: cmd.touch(doc.id, rev=1),
+        lambda: cmd.touch_many([other.id, doc.id], revs=[other.rev, 1]),
+    ):
+        with pytest.raises(CoreException) as exc_info:
+            await stale()
+
+        refused.append(exc_info.value.code)
+
+    assert refused == ["revision_mismatch"] * 5
+    assert (await cmd.touch(doc.id, rev=2)).rev == 3
+    assert (await cmd.touch(other.id, rev=other.rev)).rev == 2

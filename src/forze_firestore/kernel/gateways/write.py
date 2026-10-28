@@ -204,6 +204,7 @@ class FirestoreWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
         update: JsonDict | None = None,
         *,
         rev: int | None = None,
+        merge: bool = True,
     ) -> tuple[D, JsonDict]:
         # The read-check-write runs inside a Firestore transaction so the write is
         # conditional on the document not having changed since the read: Firestore's
@@ -216,11 +217,14 @@ class FirestoreWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
         async with self.client.transaction():
             current = await self.read_gw.get(pk)
 
+            if update is None and rev is not None:
+                self._require_revisions((current, rev))
+
             if update is not None:
                 patch = update
 
                 if rev is not None:
-                    (patch,) = await self._validate_history((current, rev, update))
+                    (patch,) = await self._validate_history((current, rev, update), merge=merge)
 
                 after, diff = current.update(patch, materialized=self.read_codec.materialized)
                 # Every sealed field the caller named, from `after`: a stale one too.
@@ -262,11 +266,12 @@ class FirestoreWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
         dto: U,
         *,
         rev: int | None = None,
+        merge: bool = True,
     ) -> tuple[D, JsonDict]:
         self._require_update_cmd()
         update_data = await self._encode_patch_one(dto, record_id=pk, seal=False)
 
-        return await self._patch(pk, update_data, rev=rev)
+        return await self._patch(pk, update_data, rev=rev, merge=merge)
 
     # ....................... #
 
@@ -276,6 +281,7 @@ class FirestoreWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
         dtos: Sequence[U],
         *,
         revs: Sequence[int] | None = None,
+        merge: bool = True,
         batch_size: int = 200,
     ) -> tuple[Sequence[D], Sequence[JsonDict]]:
         _ = batch_size
@@ -299,7 +305,7 @@ class FirestoreWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
             revs if revs is not None else [None] * len(pks),
             strict=True,
         ):
-            updated, diff = await self.update(pk, dto, rev=rev)
+            updated, diff = await self.update(pk, dto, rev=rev, merge=merge)
             results.append(updated)
             diffs.append(diff)
 
@@ -414,8 +420,8 @@ class FirestoreWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
 
     # ....................... #
 
-    async def touch(self, pk: UUID) -> D:
-        res, _ = await self._patch(pk)
+    async def touch(self, pk: UUID, *, rev: int | None = None) -> D:
+        res, _ = await self._patch(pk, rev=rev)
         return res
 
     # ....................... #
@@ -424,6 +430,7 @@ class FirestoreWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
         self,
         pks: Sequence[UUID],
         *,
+        revs: Sequence[int] | None = None,
         batch_size: int = 200,
     ) -> Sequence[D]:
         _ = batch_size
@@ -431,10 +438,13 @@ class FirestoreWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
         if len(pks) != len(set(pks)):
             raise exc.precondition("Primary keys must be unique")
 
+        if revs is not None and len(revs) != len(pks):
+            raise exc.precondition("Length mismatch between primary keys and revisions")
+
         out: list[D] = []
 
-        for pk in pks:
-            doc, _ = await self._patch(pk)
+        for pk, rev in zip(pks, revs if revs is not None else [None] * len(pks), strict=True):
+            doc, _ = await self._patch(pk, rev=rev)
             out.append(doc)
 
         return out

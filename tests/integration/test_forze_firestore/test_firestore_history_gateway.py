@@ -158,3 +158,40 @@ async def test_a_missing_history_snapshot_is_a_precondition_to_resubmit(
 
     assert ei.value.kind is ExceptionKind.PRECONDITION
     assert ei.value.code == "history_not_found_retry"
+
+
+async def test_a_strict_check_refuses_the_stale_rev_history_would_merge(
+    firestore_client: FirestoreClient,
+    unique_collection: str,
+) -> None:
+    collection = f"hist_strict_{unique_collection}"
+    write = doc_write_gw(
+        client_context(firestore_client),
+        write_types=_WRITE_TYPES,
+        write_relation=("(default)", collection),
+        history_relation=("(default)", f"{collection}_history"),
+        history_enabled=True,
+        tenant_aware=False,
+    )
+    created = await write.create(make_create_cmd(name="v1"))
+    other = await write.create(make_create_cmd(name="o1"))
+    await write.update(created.id, IntegrationUpdateCmd(name="theirs"), rev=created.rev)
+
+    # Merged by default: resending the value it now holds changes nothing, at a stale rev.
+    await write.update(created.id, IntegrationUpdateCmd(name="theirs"), rev=created.rev)
+    refused: list[str | None] = []
+
+    for stale in (
+        lambda: write.update(
+            created.id, IntegrationUpdateCmd(name="theirs"), rev=created.rev, merge=False
+        ),
+        lambda: write.touch(created.id, rev=created.rev),
+        lambda: write.touch_many([other.id, created.id], revs=[other.rev, created.rev]),
+    ):
+        with pytest.raises(CoreException) as ei:
+            await stale()
+
+        refused.append(ei.value.code)
+
+    assert refused == ["revision_mismatch"] * 3
+    assert (await write.touch(created.id, rev=created.rev + 1)).rev == created.rev + 2

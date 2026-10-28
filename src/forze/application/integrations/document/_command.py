@@ -307,6 +307,7 @@ class DocumentCommandMixin(
         *,
         return_new: Literal[True] = True,
         return_diff: Literal[False] = False,
+        merge: bool = True,
     ) -> R: ...
 
     @overload
@@ -318,6 +319,7 @@ class DocumentCommandMixin(
         *,
         return_new: Literal[True] = True,
         return_diff: Literal[True],
+        merge: bool = True,
     ) -> tuple[R, JsonDict]: ...
 
     @overload
@@ -329,6 +331,7 @@ class DocumentCommandMixin(
         *,
         return_new: Literal[False],
         return_diff: Literal[False] = False,
+        merge: bool = True,
     ) -> None: ...
 
     @overload
@@ -340,6 +343,7 @@ class DocumentCommandMixin(
         *,
         return_new: Literal[False],
         return_diff: Literal[True],
+        merge: bool = True,
     ) -> JsonDict: ...
 
     async def update(
@@ -350,18 +354,25 @@ class DocumentCommandMixin(
         *,
         return_new: bool = True,
         return_diff: bool = False,
+        merge: bool = True,
     ) -> R | JsonDict | tuple[R, JsonDict] | None:
         """Update a document and refresh the cache.
 
         :param pk: Document primary key.
         :param dto: Update payload.
         :param rev: Expected revision for historical consistency validation.
+        :param merge: Whether a stale *rev* is merged through history; when ``False``, any
+            revision but the stored one is refused (``revision_mismatch``).
         """
 
         w = self._require_write()
 
+        # The flag goes only where it is asked for, so a gateway that predates it still serves
+        # every other call, and refuses a strict one rather than merging it.
+        write = w.update(pk, dto, rev=rev) if merge else w.update(pk, dto, rev=rev, merge=False)
+
         (domain, diff), _ = await asyncio.gather(
-            w.update(pk, dto, rev=rev),
+            write,
             self.document_cache.invalidate_keys_now(pk),
         )
 
@@ -394,6 +405,7 @@ class DocumentCommandMixin(
         *,
         return_new: Literal[True] = True,
         return_diff: Literal[False] = False,
+        merge: bool = True,
     ) -> Sequence[R]: ...
 
     @overload
@@ -403,6 +415,7 @@ class DocumentCommandMixin(
         *,
         return_new: Literal[True] = True,
         return_diff: Literal[True],
+        merge: bool = True,
     ) -> Sequence[tuple[R, JsonDict]]: ...
 
     @overload
@@ -412,6 +425,7 @@ class DocumentCommandMixin(
         *,
         return_new: Literal[False],
         return_diff: Literal[False] = False,
+        merge: bool = True,
     ) -> None: ...
 
     @overload
@@ -421,6 +435,7 @@ class DocumentCommandMixin(
         *,
         return_new: Literal[False],
         return_diff: Literal[True],
+        merge: bool = True,
     ) -> Sequence[JsonDict]: ...
 
     async def update_many(
@@ -429,11 +444,13 @@ class DocumentCommandMixin(
         *,
         return_new: bool = True,
         return_diff: bool = False,
+        merge: bool = True,
     ) -> Sequence[R] | Sequence[JsonDict] | Sequence[tuple[R, JsonDict]] | None:
         """Bulk-update documents and refresh the cache.
 
         :param updates: One :class:`KeyedUpdate` per document (id, expected rev, patch);
             ids must be unique.
+        :param merge: As for :meth:`update`, for every row.
         """
 
         w = self._require_write()
@@ -457,8 +474,14 @@ class DocumentCommandMixin(
         revs = [u.rev for u in updates]
         dtos = [u.dto for u in updates]
 
+        write = (
+            w.update_many(pks, dtos, revs=revs, batch_size=self.eff_batch_size)
+            if merge
+            else w.update_many(pks, dtos, revs=revs, merge=False, batch_size=self.eff_batch_size)
+        )
+
         (domains, diffs), _ = await asyncio.gather(
-            w.update_many(pks, dtos, revs=revs, batch_size=self.eff_batch_size),
+            write,
             self.document_cache.invalidate_keys_now(*pks),
         )
 
@@ -646,21 +669,27 @@ class DocumentCommandMixin(
     # ....................... #
 
     @overload
-    async def touch(self, pk: UUID, *, return_new: Literal[True] = True) -> R: ...
+    async def touch(
+        self, pk: UUID, *, rev: int | None = None, return_new: Literal[True] = True
+    ) -> R: ...
 
     @overload
-    async def touch(self, pk: UUID, *, return_new: Literal[False]) -> None: ...
+    async def touch(
+        self, pk: UUID, *, rev: int | None = None, return_new: Literal[False]
+    ) -> None: ...
 
-    async def touch(self, pk: UUID, *, return_new: bool = True) -> R | None:
+    async def touch(self, pk: UUID, *, rev: int | None = None, return_new: bool = True) -> R | None:
         """Touch a document (bump revision) and refresh the cache.
 
         :param pk: Document primary key.
+        :param rev: When given, touch only a document still at this revision; any other is
+            refused (``revision_mismatch``).
         """
 
         w = self._require_write()
 
         domain, _ = await asyncio.gather(
-            w.touch(pk),
+            w.touch(pk) if rev is None else w.touch(pk, rev=rev),
             self.document_cache.invalidate_keys_now(pk),
         )
 
@@ -673,6 +702,7 @@ class DocumentCommandMixin(
         self,
         pks: Sequence[UUID],
         *,
+        revs: Sequence[int] | None = None,
         return_new: Literal[True] = True,
     ) -> Sequence[R]: ...
 
@@ -681,6 +711,7 @@ class DocumentCommandMixin(
         self,
         pks: Sequence[UUID],
         *,
+        revs: Sequence[int] | None = None,
         return_new: Literal[False],
     ) -> None: ...
 
@@ -688,14 +719,19 @@ class DocumentCommandMixin(
         self,
         pks: Sequence[UUID],
         *,
+        revs: Sequence[int] | None = None,
         return_new: bool = True,
     ) -> Sequence[R] | None:
         """Touch multiple documents and refresh the cache.
 
         :param pks: Document primary keys.
+        :param revs: When given, the revision each document must still be at, by position.
         """
 
         w = self._require_write()
+
+        if revs is not None and len(revs) != len(pks):
+            raise exc.precondition("touch_many requires one revision per id")
 
         if not pks:
             if not return_new:
@@ -704,7 +740,9 @@ class DocumentCommandMixin(
             return []
 
         domains, _ = await asyncio.gather(
-            w.touch_many(pks, batch_size=self.eff_batch_size),
+            w.touch_many(pks, batch_size=self.eff_batch_size)
+            if revs is None
+            else w.touch_many(pks, revs=revs, batch_size=self.eff_batch_size),
             self.document_cache.invalidate_keys_now(*pks),
         )
 

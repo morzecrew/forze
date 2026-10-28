@@ -1338,6 +1338,7 @@ class PostgresWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
         update: JsonDict | None = None,
         *,
         rev: int | None = None,
+        merge: bool = True,
     ) -> tuple[D, JsonDict]:
         async with self._write_tx():
 
@@ -1348,11 +1349,14 @@ class PostgresWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
             await self._serialize(touched)
             current = await self.read_gw.get(pk)
 
+            if update is None and rev is not None:
+                self._require_revisions((current, rev))
+
             if update is not None:
                 patch = update
 
                 if rev is not None:
-                    (patch,) = await self._validate_history((current, rev, update))
+                    (patch,) = await self._validate_history((current, rev, update), merge=merge)
 
                 after, diff = current.update(patch, materialized=self.read_codec.materialized)
                 # Every sealed field the caller named, from `after`: a stale one too.
@@ -1405,17 +1409,18 @@ class PostgresWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
         dto: U,
         *,
         rev: int | None = None,
+        merge: bool = True,
     ) -> tuple[D, JsonDict]:
         self._require_update_cmd()
 
         update_data = await self._encode_patch_one(dto, record_id=pk, seal=False)
 
-        return await self.__patch(pk, update_data, rev=rev)
+        return await self.__patch(pk, update_data, rev=rev, merge=merge)
 
     # ....................... #
 
-    async def touch(self, pk: UUID) -> D:
-        res, _ = await self.__patch(pk)
+    async def touch(self, pk: UUID, *, rev: int | None = None) -> D:
+        res, _ = await self.__patch(pk, rev=rev)
 
         return res
 
@@ -1520,6 +1525,7 @@ class PostgresWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
         updates: Sequence[JsonDict] | None = None,
         *,
         revs: Sequence[int] | None = None,
+        merge: bool = True,
         batch_size: int = 200,
     ) -> tuple[Sequence[D], Sequence[JsonDict]]:
         if not pks or (not updates and updates is not None):
@@ -1527,6 +1533,9 @@ class PostgresWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
 
         if updates is not None and len(pks) != len(updates):
             raise exc.internal("Length mismatch between primary keys and updates")
+
+        if revs is not None and len(pks) != len(revs):
+            raise exc.internal("Length mismatch between primary keys and revisions")
 
         if len(pks) != len(set(pks)):
             raise exc.precondition("Primary keys must be unique")
@@ -1551,6 +1560,8 @@ class PostgresWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
             returned: dict[UUID, JsonDict] = {}
 
             if updates is None:
+                if revs is not None:
+                    self._require_revisions(*zip(currents, revs, strict=True))
 
                 async def _prepare_touch(c: D) -> tuple[UUID, int, JsonDict]:
                     _, diff = c.touch()
@@ -1581,7 +1592,7 @@ class PostgresWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
                             strict=True,
                         )
                     ]
-                    patches = await self._validate_history(*data)
+                    patches = await self._validate_history(*data, merge=merge)
 
                 async def _prepare_update(
                     c: D,
@@ -1660,6 +1671,7 @@ class PostgresWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
         dtos: Sequence[U],
         *,
         revs: Sequence[int] | None = None,
+        merge: bool = True,
         batch_size: int = 200,
     ) -> tuple[Sequence[D], Sequence[JsonDict]]:
 
@@ -1678,6 +1690,7 @@ class PostgresWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
             pks,
             updates,
             revs=revs,
+            merge=merge,
             batch_size=batch_size,
         )
 
@@ -1840,9 +1853,10 @@ class PostgresWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
         self,
         pks: Sequence[UUID],
         *,
+        revs: Sequence[int] | None = None,
         batch_size: int = 200,
     ) -> Sequence[D]:
-        res, _ = await self.__patch_many(pks, None, batch_size=batch_size)
+        res, _ = await self.__patch_many(pks, None, revs=revs, batch_size=batch_size)
 
         return res
 

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from uuid import UUID, uuid4
 
 import pytest
@@ -21,6 +22,7 @@ from forze.domain.models import (
 from forze_kits.domain.soft_deletion.models import DocWithSoftDeletion
 from forze_mock import MockDepsModule, MockState
 from forze_mock.adapters import MockDocumentAdapter
+from forze_mock.adapters.tx import MockJournalTxManagerAdapter
 from tests.support.execution_context import context_from_deps, context_from_modules
 
 # ----------------------- #
@@ -557,6 +559,80 @@ class TestTouch:
         adapter = _plain_adapter(state)
         created = await adapter.create(ThingCreate(name="a"))
         assert await adapter.touch(created.id, return_new=False) is None
+
+    async def test_touch_at_its_rev_bumps_and_at_a_stale_one_is_refused(self) -> None:
+        adapter = _plain_adapter(MockState())
+        created = await adapter.create(ThingCreate(name="a"))
+
+        out = await adapter.touch(created.id, rev=created.rev)
+
+        with pytest.raises(CoreException) as excinfo:
+            await adapter.touch(created.id, rev=created.rev)
+
+        assert out.rev == created.rev + 1
+        assert excinfo.value.code == "revision_mismatch"
+
+    async def test_touch_many_checks_each_row_against_its_rev(self) -> None:
+        adapter = _plain_adapter(MockState())
+        a = await adapter.create(ThingCreate(name="a"))
+        b = await adapter.create(ThingCreate(name="b"))
+
+        touched = await adapter.touch_many([a.id, b.id], revs=[a.rev, b.rev])
+
+        with pytest.raises(CoreException) as excinfo:
+            await adapter.touch_many([a.id, b.id], revs=[a.rev + 1, b.rev])
+
+        assert [row.rev for row in touched] == [a.rev + 1, b.rev + 1]
+        assert excinfo.value.code == "revision_mismatch"
+
+    @pytest.mark.parametrize("guarded", [True, False])
+    async def test_a_touch_at_its_rev_fails_when_the_row_changes_before_commit(
+        self, guarded: bool
+    ) -> None:
+        # As a rev-guarded update: the rev must still hold when the transaction commits. A
+        # blind touch keeps losing the concurrent write silently, as read committed allows.
+        state = MockState()
+        adapter = _plain_adapter(state)
+        created = await adapter.create(ThingCreate(name="a"))
+        tx = MockJournalTxManagerAdapter(state=state)
+        touched, other_committed = asyncio.Event(), asyncio.Event()
+
+        async def toucher() -> None:
+            async with tx.transaction():
+                await adapter.touch(created.id, rev=created.rev if guarded else None)
+                touched.set()
+                await other_committed.wait()
+
+        async def other() -> None:
+            await touched.wait()
+
+            async with tx.transaction():
+                await adapter.update(created.id, created.rev, ThingUpdate(name="b"))
+
+            other_committed.set()
+
+        outcome, _ = await asyncio.wait_for(
+            asyncio.gather(toucher(), other(), return_exceptions=True), timeout=5
+        )
+
+        if guarded:
+            assert isinstance(outcome, CoreException)
+            assert outcome.kind is ExceptionKind.CONCURRENCY
+
+        else:
+            assert outcome is None
+
+    async def test_a_strict_update_is_the_mock_s_only_kind(self) -> None:
+        # No history, so every stale rev is refused: `merge=False` is accepted and changes
+        # nothing, and a no-op update at a stale rev is refused too.
+        adapter = _plain_adapter(MockState())
+        created = await adapter.create(ThingCreate(name="a"))
+        await adapter.update(created.id, created.rev, ThingUpdate(name="b"), merge=False)
+
+        with pytest.raises(CoreException) as excinfo:
+            await adapter.update(created.id, created.rev, ThingUpdate(name="b"), merge=False)
+
+        assert excinfo.value.code == "revision_mismatch"
 
 
 # ....................... #

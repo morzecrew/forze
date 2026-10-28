@@ -51,13 +51,35 @@ a [conflict](errors.md) for the caller to resolve.
     The three-way merge needs document history enabled. Without it, *any*
     revision mismatch is a `precondition` error rather than a merge attempt.
 
+## Refusing any change since you read
+
+The merge is right for ordinary edits and wrong for an action that approves one
+version: confirming an order as reviewed, signing off a document, accepting a
+quote. Any change since the reviewer read it should send them back. Pass
+`merge=False` to refuse every revision but the stored one, history or not:
+
+```python
+await ctx.document.command(order_spec).update(
+    order.id, order.rev, OrderUpdate(status="confirmed"), merge=False,
+)
+await ctx.document.command(order_spec).touch(order.id, rev=order.rev)
+```
+
+A stale `rev` raises `exc.precondition` (`revision_mismatch`), even for an update
+that changes nothing. The check is atomic: the write matches the revision you
+passed, so a writer committing between the store's read and its write makes it
+fail too. `update_many(..., merge=False)` applies it to every row, and
+`touch_many(pks, revs=...)` takes one revision per id. The in-memory store keeps
+no history, so it is always this strict.
+
 ## Related write helpers
 
 - `Document.validate_historical_consistency(old, patch)` is the check behind the
   merge — `True` when the concurrent change and yours touch disjoint fields.
 - `Document.historical_update(old, patch)` is what the merge writes: the part of
   `patch` that changes `old`, or `None` on a conflict.
-- `command.touch(pk)` bumps `last_update_at` and `rev` without other changes.
+- `command.touch(pk)` bumps `last_update_at` and `rev` without other changes;
+  `touch(pk, rev=rev)` bumps only a document still at `rev`.
 
 Retrying a conflict safely is only half the story — a retried write must also
 not apply twice. That guarantee is [Idempotency](idempotency.md).

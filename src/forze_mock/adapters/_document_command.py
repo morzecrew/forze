@@ -900,6 +900,7 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
         *,
         return_new: Literal[True] = True,
         return_diff: Literal[False] = False,
+        merge: bool = True,
     ) -> R: ...
 
     @overload
@@ -911,6 +912,7 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
         *,
         return_new: Literal[True] = True,
         return_diff: Literal[True],
+        merge: bool = True,
     ) -> tuple[R, JsonDict]: ...
 
     @overload
@@ -922,6 +924,7 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
         *,
         return_new: Literal[False],
         return_diff: Literal[False] = False,
+        merge: bool = True,
     ) -> None: ...
 
     @overload
@@ -933,6 +936,7 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
         *,
         return_new: Literal[False],
         return_diff: Literal[True],
+        merge: bool = True,
     ) -> JsonDict: ...
 
     async def update(
@@ -943,7 +947,10 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
         *,
         return_new: bool = True,
         return_diff: bool = False,
+        merge: bool = True,
     ) -> R | JsonDict | tuple[R, JsonDict] | None:
+        # The mock keeps no history, so every update is strict; `merge` has nothing to merge.
+        del merge
         self._ensure_writable()
         patch = self._encode_patch(dto)
         await self._serialize_writes(lambda: self._sides(pk, patch), lambda: [pk])
@@ -1021,6 +1028,7 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
         *,
         return_new: Literal[True] = True,
         return_diff: Literal[False] = False,
+        merge: bool = True,
     ) -> Sequence[R]: ...
 
     @overload
@@ -1030,6 +1038,7 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
         *,
         return_new: Literal[True] = True,
         return_diff: Literal[True],
+        merge: bool = True,
     ) -> Sequence[tuple[R, JsonDict]]: ...
 
     @overload
@@ -1039,6 +1048,7 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
         *,
         return_new: Literal[False],
         return_diff: Literal[False] = False,
+        merge: bool = True,
     ) -> None: ...
 
     @overload
@@ -1048,6 +1058,7 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
         *,
         return_new: Literal[False],
         return_diff: Literal[True],
+        merge: bool = True,
     ) -> Sequence[JsonDict]: ...
 
     async def update_many(
@@ -1056,7 +1067,10 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
         *,
         return_new: bool = True,
         return_diff: bool = False,
+        merge: bool = True,
     ) -> Sequence[R] | Sequence[JsonDict] | Sequence[tuple[R, JsonDict]] | None:
+        del merge  # as for update: always strict
+
         if not updates:
             return [] if (return_new or return_diff) else None
 
@@ -1297,24 +1311,33 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
     # ....................... #
 
     @overload
-    async def touch(self, pk: UUID, *, return_new: Literal[True] = True) -> R: ...
+    async def touch(
+        self, pk: UUID, *, rev: int | None = None, return_new: Literal[True] = True
+    ) -> R: ...
 
     @overload
-    async def touch(self, pk: UUID, *, return_new: Literal[False]) -> None: ...
+    async def touch(
+        self, pk: UUID, *, rev: int | None = None, return_new: Literal[False]
+    ) -> None: ...
 
-    async def touch(self, pk: UUID, *, return_new: bool = True) -> R | None:
+    async def touch(self, pk: UUID, *, rev: int | None = None, return_new: bool = True) -> R | None:
         self._ensure_writable()
         await self._serialize_stored(pk)
 
         with self.state.lock:
             current_raw = dict(self._ensure_exists(pk))
             current = self._to_domain(current_raw)
+            self._check_rev(current.rev, rev)
             updated, _ = current.touch()
             updated = updated.model_copy(update={"rev": current.rev + 1}, deep=True)
             serialized = self._apply_tenant(
                 self._domain_codec().encode_persistence_mapping(updated)
             )
             self._write_row(self._store(), pk, serialized)
+
+            # As for update: a rev-guarded touch fails on a concurrent commit to the row.
+            if rev is not None:
+                self._mark_rev_guarded(pk)
 
         return self._to_read(serialized) if return_new else None
 
@@ -1325,6 +1348,7 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
         self,
         pks: Sequence[UUID],
         *,
+        revs: Sequence[int] | None = None,
         return_new: Literal[True] = True,
     ) -> Sequence[R]: ...
 
@@ -1333,6 +1357,7 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
         self,
         pks: Sequence[UUID],
         *,
+        revs: Sequence[int] | None = None,
         return_new: Literal[False],
     ) -> None: ...
 
@@ -1340,19 +1365,25 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
         self,
         pks: Sequence[UUID],
         *,
+        revs: Sequence[int] | None = None,
         return_new: bool = True,
     ) -> Sequence[R] | None:
+        if revs is not None and len(revs) != len(pks):
+            raise exc.precondition("touch_many requires one revision per id")
+
         if not pks:
             return [] if return_new else None
 
         if len(set(pks)) != len(pks):
             raise exc.internal("Primary keys must be unique")
 
-        if return_new:
-            return [await self.touch(pk, return_new=True) for pk in pks]
+        pairs = list(zip(pks, revs if revs is not None else [None] * len(pks), strict=True))
 
-        for pk in pks:
-            await self.touch(pk, return_new=False)
+        if return_new:
+            return [await self.touch(pk, rev=rev, return_new=True) for pk, rev in pairs]
+
+        for pk, rev in pairs:
+            await self.touch(pk, rev=rev, return_new=False)
 
         return None
 

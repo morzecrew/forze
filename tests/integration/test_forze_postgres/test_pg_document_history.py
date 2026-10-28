@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
+import asyncio
+import contextvars
 from datetime import UTC, datetime
+from typing import Any
+from unittest.mock import patch
 from uuid import uuid4
 
 import pytest
@@ -11,8 +15,10 @@ from forze.application.contracts.document import (
     DocumentCommandDepKey,
     DocumentQueryDepKey,
     DocumentSpec,
+    KeyedUpdate,
 )
 from forze.application.execution import Deps, ExecutionContext
+from forze.base.exceptions import CoreException
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
 from forze_postgres.execution.deps import ConfigurablePostgresDocument
 from forze_postgres.execution.deps.configs import PostgresDocumentConfig
@@ -22,6 +28,7 @@ from forze_postgres.execution.deps.keys import (
 )
 from forze_postgres.kernel.catalog.introspect import PostgresIntrospector
 from forze_postgres.kernel.client.client import PostgresClient
+from forze_postgres.kernel.gateways.read import PostgresReadGateway
 from tests.support.execution_context import context_from_deps
 
 
@@ -386,3 +393,151 @@ async def test_history_database_strategy_uses_triggers_not_app_insert(
 
     n_upd = await _history_row_count(pg_client, hist, source_literal)
     assert n_upd == 2
+
+
+# ....................... #
+
+
+async def _due_cmd(pg_client: PostgresClient) -> tuple[Any, str]:
+    """A history-enabled ``HistDue`` command port and its main table."""
+
+    suf = uuid4().hex[:12]
+    main = f"doc_hist_strict_{suf}"
+    hist = f"doc_hist_strict_h_{suf}"
+
+    await pg_client.execute(
+        f"""
+        CREATE TABLE {main} (
+            id uuid PRIMARY KEY,
+            rev integer NOT NULL,
+            created_at timestamptz NOT NULL,
+            last_update_at timestamptz NOT NULL,
+            name text NOT NULL,
+            due timestamptz NOT NULL
+        );
+        CREATE TABLE {hist} (
+            source text NOT NULL,
+            id uuid NOT NULL,
+            rev integer NOT NULL,
+            created_at timestamptz NOT NULL,
+            data jsonb NOT NULL,
+            PRIMARY KEY (source, id, rev)
+        );
+        """
+    )
+    ctx = _deps(pg_client, main_table=main, history_table=hist, bookkeeping_strategy="application")
+    spec = DocumentSpec(
+        name=f"hist_strict_{suf}",
+        read=HistDueRead,
+        write={"domain": HistDueDoc, "create_cmd": HistDueCreate, "update_cmd": HistDueUpdate},
+        history_enabled=True,
+    )
+
+    return ctx.document.command(spec), main
+
+
+DUE = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
+MOVED = datetime(2027, 2, 2, 12, 0, tzinfo=UTC)
+
+
+class TestAStrictRevisionCheck:
+    async def test_a_stale_rev_history_would_merge_is_refused(
+        self, pg_client: PostgresClient
+    ) -> None:
+        cmd, _ = await _due_cmd(pg_client)
+        doc = await cmd.create(HistDueCreate(name="v1", due=DUE))
+        await cmd.update(doc.id, doc.rev, HistDueUpdate(due=MOVED))
+
+        with pytest.raises(CoreException) as refused:
+            await cmd.update(doc.id, doc.rev, HistDueUpdate(name="v2"), merge=False)
+
+        merged = await cmd.update(doc.id, doc.rev, HistDueUpdate(name="v2"))
+
+        assert refused.value.code == "revision_mismatch"
+        assert (merged.name, merged.due, merged.rev) == ("v2", MOVED, 3)
+
+    async def test_a_no_op_at_a_stale_rev_is_refused(self, pg_client: PostgresClient) -> None:
+        # A confirmation that changes nothing is not a success at a revision it did not see.
+        cmd, _ = await _due_cmd(pg_client)
+        doc = await cmd.create(HistDueCreate(name="v1", due=DUE))
+        await cmd.update(doc.id, doc.rev, HistDueUpdate(due=MOVED))
+
+        with pytest.raises(CoreException) as refused:
+            await cmd.update(doc.id, doc.rev, HistDueUpdate(name="v1"), merge=False)
+
+        assert refused.value.code == "revision_mismatch"
+
+    async def test_update_many_refuses_every_row_when_one_is_stale(
+        self, pg_client: PostgresClient
+    ) -> None:
+        cmd, _ = await _due_cmd(pg_client)
+        a = await cmd.create(HistDueCreate(name="a", due=DUE))
+        b = await cmd.create(HistDueCreate(name="b", due=DUE))
+        await cmd.update(b.id, b.rev, HistDueUpdate(due=MOVED))
+
+        with pytest.raises(CoreException) as refused:
+            await cmd.update_many(
+                [
+                    KeyedUpdate(id=a.id, rev=a.rev, dto=HistDueUpdate(name="a2")),
+                    KeyedUpdate(id=b.id, rev=b.rev, dto=HistDueUpdate(name="b2")),
+                ],
+                merge=False,
+            )
+
+        assert refused.value.code == "revision_mismatch"
+        assert (await cmd.touch(a.id)).name == "a"
+
+    async def test_touch_bumps_only_at_its_rev(self, pg_client: PostgresClient) -> None:
+        cmd, _ = await _due_cmd(pg_client)
+        a = await cmd.create(HistDueCreate(name="a", due=DUE))
+        b = await cmd.create(HistDueCreate(name="b", due=DUE))
+
+        touched = await cmd.touch(a.id, rev=a.rev)
+
+        with pytest.raises(CoreException) as single:
+            await cmd.touch(a.id, rev=a.rev)
+
+        with pytest.raises(CoreException) as many:
+            await cmd.touch_many([a.id, b.id], revs=[a.rev, b.rev])
+
+        assert touched.rev == a.rev + 1
+        assert single.value.code == many.value.code == "revision_mismatch"
+        assert (await cmd.touch_many([a.id, b.id], revs=[touched.rev, b.rev]))[1].rev == 2
+
+    @pytest.mark.parametrize("merge", [True, False])
+    async def test_a_writer_committing_after_the_read_makes_it_fail(
+        self, pg_client: PostgresClient, merge: bool
+    ) -> None:
+        # The write matches the presented rev, so a commit between the gateway's read and its
+        # UPDATE leaves it matching no row; the retry re-reads and refuses. The merge is the
+        # contrast: its retry merges the disjoint change and succeeds.
+        cmd, table = await _due_cmd(pg_client)
+        doc = await cmd.create(HistDueCreate(name="v1", due=DUE))
+        original = PostgresReadGateway.get
+        raced: list[bool] = []
+
+        async def get_then_race(self: Any, pk: Any, **kwargs: Any) -> Any:
+            row = await original(self, pk, **kwargs)
+
+            if not raced:
+                raced.append(True)
+                # Another session, outside this call's transaction, commits first.
+                bump = f"UPDATE {table} SET rev = rev + 1, due = %s WHERE id = %s"
+                await asyncio.create_task(
+                    pg_client.execute(bump, [MOVED, doc.id]), context=contextvars.Context()
+                )
+
+            return row
+
+        with patch.object(PostgresReadGateway, "get", get_then_race):
+            if merge:
+                updated = await cmd.update(doc.id, doc.rev, HistDueUpdate(name="v2"))
+                assert (updated.name, updated.due) == ("v2", MOVED)
+
+            else:
+                with pytest.raises(CoreException) as refused:
+                    await cmd.update(doc.id, doc.rev, HistDueUpdate(name="v2"), merge=False)
+
+                assert refused.value.code == "revision_mismatch"
+
+        assert raced == [True]

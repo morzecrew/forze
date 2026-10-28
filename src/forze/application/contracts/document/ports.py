@@ -569,6 +569,7 @@ class DocumentCommandPort(BaseDocumentPort[R, D, C, U], Protocol[R, D, C, U]):
         *,
         return_new: Literal[True] = True,
         return_diff: Literal[False] = False,
+        merge: bool = True,
     ) -> Awaitable[R]:
         """Apply a partial update to a document identified by ``pk``."""
         ...  # pragma: no cover
@@ -582,6 +583,7 @@ class DocumentCommandPort(BaseDocumentPort[R, D, C, U], Protocol[R, D, C, U]):
         *,
         return_new: Literal[True] = True,
         return_diff: Literal[True],
+        merge: bool = True,
     ) -> Awaitable[tuple[R, JsonDict]]:
         """Apply a partial update to a document identified by ``pk``."""
         ...  # pragma: no cover
@@ -595,6 +597,7 @@ class DocumentCommandPort(BaseDocumentPort[R, D, C, U], Protocol[R, D, C, U]):
         *,
         return_new: Literal[False],
         return_diff: Literal[False] = False,
+        merge: bool = True,
     ) -> Awaitable[None]:
         """Apply a partial update to a document identified by ``pk``."""
         ...  # pragma: no cover
@@ -608,6 +611,7 @@ class DocumentCommandPort(BaseDocumentPort[R, D, C, U], Protocol[R, D, C, U]):
         *,
         return_new: Literal[False],
         return_diff: Literal[True],
+        merge: bool = True,
     ) -> Awaitable[JsonDict]:
         """Apply a partial update to a document identified by ``pk``."""
         ...  # pragma: no cover
@@ -620,8 +624,18 @@ class DocumentCommandPort(BaseDocumentPort[R, D, C, U], Protocol[R, D, C, U]):
         *,
         return_new: bool = True,
         return_diff: bool = False,
+        merge: bool = True,
     ) -> Awaitable[R | JsonDict | tuple[R, JsonDict] | None]:
-        """Apply a partial update to a document identified by ``pk``."""
+        """Apply a partial update to a document identified by ``pk``.
+
+        :param rev: The revision the caller read.
+        :param merge: With revision history on, a stale *rev* is merged by default: the update
+            is reduced to what it changes against that revision and refused only where it
+            overlaps a change made since. ``False`` refuses any *rev* but the stored one
+            (``revision_mismatch``), even for an update that changes nothing, and the write
+            matches that revision, so a writer committing in between makes it fail too.
+            Without history every update is already this strict.
+        """
         ...  # pragma: no cover
 
     # ....................... #
@@ -633,6 +647,7 @@ class DocumentCommandPort(BaseDocumentPort[R, D, C, U], Protocol[R, D, C, U]):
         *,
         return_new: Literal[True] = True,
         return_diff: Literal[False] = False,
+        merge: bool = True,
     ) -> Awaitable[Sequence[R]]:
         """Apply partial updates to multiple documents."""
         ...  # pragma: no cover
@@ -644,6 +659,7 @@ class DocumentCommandPort(BaseDocumentPort[R, D, C, U], Protocol[R, D, C, U]):
         *,
         return_new: Literal[True] = True,
         return_diff: Literal[True],
+        merge: bool = True,
     ) -> Awaitable[Sequence[tuple[R, JsonDict]]]:
         """Apply partial updates to multiple documents."""
         ...  # pragma: no cover
@@ -655,6 +671,7 @@ class DocumentCommandPort(BaseDocumentPort[R, D, C, U], Protocol[R, D, C, U]):
         *,
         return_new: Literal[False],
         return_diff: Literal[False] = False,
+        merge: bool = True,
     ) -> Awaitable[None]:
         """Apply partial updates to multiple documents."""
         ...  # pragma: no cover
@@ -666,6 +683,7 @@ class DocumentCommandPort(BaseDocumentPort[R, D, C, U], Protocol[R, D, C, U]):
         *,
         return_new: Literal[False],
         return_diff: Literal[True],
+        merge: bool = True,
     ) -> Awaitable[Sequence[JsonDict]]:
         """Apply partial updates to multiple documents."""
         ...  # pragma: no cover
@@ -676,8 +694,12 @@ class DocumentCommandPort(BaseDocumentPort[R, D, C, U], Protocol[R, D, C, U]):
         *,
         return_new: bool = True,
         return_diff: bool = False,
+        merge: bool = True,
     ) -> Awaitable[Sequence[R] | Sequence[JsonDict] | Sequence[tuple[R, JsonDict]] | None]:
-        """Apply partial updates to multiple documents."""
+        """Apply partial updates to multiple documents.
+
+        :param merge: As for :meth:`update`, for every row.
+        """
         ...  # pragma: no cover
 
     # ....................... #
@@ -789,17 +811,28 @@ class DocumentCommandPort(BaseDocumentPort[R, D, C, U], Protocol[R, D, C, U]):
     # ....................... #
 
     @overload
-    def touch(self, pk: UUID, *, return_new: Literal[True] = True) -> Awaitable[R]:
+    def touch(
+        self, pk: UUID, *, rev: int | None = None, return_new: Literal[True] = True
+    ) -> Awaitable[R]:
         """Bump metadata (e.g. ``last_update_at``) for a single document."""
         ...  # pragma: no cover
 
     @overload
-    def touch(self, pk: UUID, *, return_new: Literal[False]) -> Awaitable[None]:
+    def touch(
+        self, pk: UUID, *, rev: int | None = None, return_new: Literal[False]
+    ) -> Awaitable[None]:
         """Bump metadata (e.g. ``last_update_at``) for a single document."""
         ...  # pragma: no cover
 
-    def touch(self, pk: UUID, *, return_new: bool = True) -> Awaitable[R | None]:
-        """Bump metadata (e.g. ``last_update_at``) for a single document."""
+    def touch(
+        self, pk: UUID, *, rev: int | None = None, return_new: bool = True
+    ) -> Awaitable[R | None]:
+        """Bump metadata (e.g. ``last_update_at``) for a single document.
+
+        :param rev: When given, bump only a document still at this revision; any other is
+            refused (``revision_mismatch``), and the write matches it, so a writer committing
+            in between makes it fail too.
+        """
         ...  # pragma: no cover
 
     # ....................... #
@@ -809,6 +842,7 @@ class DocumentCommandPort(BaseDocumentPort[R, D, C, U], Protocol[R, D, C, U]):
         self,
         pks: Sequence[UUID],
         *,
+        revs: Sequence[int] | None = None,
         return_new: Literal[True] = True,
     ) -> Awaitable[Sequence[R]]:
         """Bump metadata for multiple documents."""
@@ -819,6 +853,7 @@ class DocumentCommandPort(BaseDocumentPort[R, D, C, U], Protocol[R, D, C, U]):
         self,
         pks: Sequence[UUID],
         *,
+        revs: Sequence[int] | None = None,
         return_new: Literal[False],
     ) -> Awaitable[None]:
         """Bump metadata for multiple documents."""
@@ -828,9 +863,14 @@ class DocumentCommandPort(BaseDocumentPort[R, D, C, U], Protocol[R, D, C, U]):
         self,
         pks: Sequence[UUID],
         *,
+        revs: Sequence[int] | None = None,
         return_new: bool = True,
     ) -> Awaitable[Sequence[R] | None]:
-        """Bump metadata for multiple documents."""
+        """Bump metadata for multiple documents.
+
+        :param revs: When given, the revision each document must still be at, by position,
+            as ``rev`` is for :meth:`touch`.
+        """
         ...  # pragma: no cover
 
     # ....................... #
