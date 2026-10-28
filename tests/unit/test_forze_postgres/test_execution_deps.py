@@ -431,6 +431,25 @@ class TestConfigurablePostgresDocumentFactories:
         assert adapter.write_gw is not None
         assert adapter.write_gw.history_gw is None
 
+    @pytest.mark.parametrize(
+        ("read", "lock"),
+        [(("public", "v_t"), ("public", "t")), (("public", "t"), None)],
+        ids=["view", "same_table"],
+    )
+    def test_locking_reads_lock_the_write_relation_only_when_it_differs(
+        self, read: tuple[str, str], lock: tuple[str, str] | None
+    ) -> None:
+        factory = ConfigurablePostgresDocument(
+            config=PostgresDocumentConfig(
+                read=read,
+                write=("public", "t"),
+                bookkeeping_strategy="application",
+            )
+        )
+        adapter = factory(_ctx(), _rw_spec())
+
+        assert adapter.read_gw.lock_relation == lock
+
 
 class TestConfigurablePostgresSearch:
     def _search_spec(self) -> SearchSpec:

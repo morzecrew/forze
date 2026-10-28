@@ -43,6 +43,7 @@ def read_gw(
     lenient_read_fields: frozenset[str] = frozenset(),
     sealed_fields: frozenset[str] = frozenset(),
     filter_limits: QueryFilterLimits | None = None,
+    lock_relation: RelationSpec | None = None,
 ) -> PostgresReadGateway[Any]:
     """Build a read gateway for a relation and model.
 
@@ -56,6 +57,8 @@ def read_gw(
         the projection and hydrated from their model default).
     :param sealed_fields: Fields stored as ciphertext; refused as sort keys.
     :param filter_limits: The spec's filter limits; ``None`` keeps the parser's defaults.
+    :param lock_relation: Write relation a locking read locks its row on, when it differs
+        from *read_relation*.
     :returns: Postgres read gateway.
     """
 
@@ -79,6 +82,7 @@ def read_gw(
         lenient_read_fields=lenient_read_fields,
         sealed_fields=sealed_fields,
         filter_limits=filter_limits,
+        lock_relation=lock_relation,
     )
 
 
