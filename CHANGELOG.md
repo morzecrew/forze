@@ -71,7 +71,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **`local_identity_deps` wires no tenant resolver for a config that maps no tenant** (**behaviour change**). There, `forze ops call --tenant` gets `400 tenant_request_unverifiable`, not `401 tenant_mismatch`. A tenant on an API key counts and resolves, also in a config built directly.
 
-- **MCP and agent tool descriptions group filterable fields by type** (**behaviour change**). `describe_query_discovery` states the operators every field shares once, then one clause per operator set naming its fields, not each field with its own list. `QueryDiscovery` and `x-forze-query` are unchanged.
+- **MCP and agent tool descriptions group filterable fields by type** (**behaviour change**). `describe_query_discovery` states the operators every field shares once, then each further operator set once, with its fields under their own types. `QueryDiscovery` and `x-forze-query` are unchanged.
 
 - **The dynamic-read write refusal no longer names a READ ONLY transaction.** The message is engine-neutral and the details carry the engine's `statement_type` where it has one. A `DuckDbClient` statement timeout now carries the code `duckdb_query_timeout`.
 

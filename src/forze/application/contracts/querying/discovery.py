@@ -132,6 +132,8 @@ def describe_query_discovery(discovery: QueryDiscovery) -> str:
     once, then fields are grouped by the rest of their operator set, so each list appears
     once rather than once per field:
     ``$eq, $in, $neq, $nin, $null on every field; string (also $ilike, $like, $regex): a, b``.
+    Within a group each field stays under its own type, the later types pointing back to the
+    first: ``number (also $gt, …): a; temporal (as number): b``.
 
     Written for a reader rather than a parser: the driving surfaces that project
     :class:`QueryDiscovery` as structured data (the OpenAPI extension) use its fields
@@ -145,29 +147,28 @@ def describe_query_discovery(discovery: QueryDiscovery) -> str:
     if discovery.filterable:
         common = frozenset.intersection(*(frozenset(f.operators) for f in discovery.filterable))
 
-        # Fields arrive sorted by name, so groups and their type labels keep a stable order.
-        groups: dict[tuple[tuple[str, ...], bool], tuple[list[str], list[str]]] = {}
+        # Fields arrive sorted by name, so groups and their types keep a stable order.
+        groups: dict[tuple[tuple[str, ...], bool], dict[str, list[str]]] = {}
 
         for field in discovery.filterable:
             extra = tuple(op for op in field.operators if op not in common)
-            types, names = groups.setdefault((extra, field.quantifiable), ([], []))
-
-            if field.type not in types:
-                types.append(field.type)
-
-            names.append(field.field)
+            by_type = groups.setdefault((extra, field.quantifiable), {})
+            by_type.setdefault(field.type, []).append(field.field)
 
         clauses = [f"{', '.join(sorted(common))} on every field"] if common else []
 
-        for (extra, quantifiable), (types, names) in groups.items():
+        for (extra, quantifiable), by_type in groups.items():
             notes = [f"also {', '.join(extra)}"] if extra else []
 
             if quantifiable:
                 notes.append(f"element quantifiers {', '.join(QUANTIFIER_OPS)}")
 
-            label = types[0] if len(types) == 1 else f"{', '.join(types[:-1])} and {types[-1]}"
-            label += f" ({'; '.join(notes)})" if notes else ""
-            clauses.append(f"{label}: {', '.join(names)}")
+            note = f" ({'; '.join(notes)})" if notes else ""
+
+            for kind, names in by_type.items():
+                clauses.append(f"{kind}{note}: {', '.join(names)}")
+                # The group's later types take the same operators: point back, not repeat.
+                note = f" (as {next(iter(by_type))})" if notes else ""
 
         parts.append("Filterable fields — " + "; ".join(clauses) + ".")
 

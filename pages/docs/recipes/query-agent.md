@@ -52,8 +52,9 @@ filter surface:
 > category, title. Sortable by: title. Aggregatable by: category.
 
 The operators every field shares come first, then fields are grouped by the rest of their
-operator set — `number, temporal and scalar (also $gt, $gte, $lt, $lte): …` on a wider
-model — so each list is stated once, not once per field.
+operator set, so each list is stated once, not once per field. Each field stays under its
+own type: `number (also $gt, $gte, $lt, $lte): price; temporal (as number): created_at`
+on a wider model.
 
 That sentence is the read model's *policy*, not its field list — `body` is readable and
 absent from it. It is the same sentence the [MCP](../integrations/mcp.md) surface hands

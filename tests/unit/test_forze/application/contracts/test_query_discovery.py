@@ -172,13 +172,14 @@ class TestDescribeDiscovery:
 
     def test_groups_fields_by_operator_set(self) -> None:
         # ``meta`` and ``item`` take only the universal operators, so ``$in`` / ``$nin``
-        # move into each group that has them; number, temporal and scalar share one set.
+        # move into each group that has them; number, temporal and scalar share one set,
+        # stated once, while each field stays listed under its own type.
         assert self._describe(_Doc) == (
             "Filterable fields — $eq, $neq, $null on every field; "
             "bool (also $in, $nin): active; "
-            "number, temporal and scalar (also $gt, $gte, $in, $lt, $lte, $nin): "
-            "age, created, ref, score; "
-            "object and mapping: item, meta; "
+            "number (also $gt, $gte, $in, $lt, $lte, $nin): age, score; "
+            "temporal (as number): created; scalar (as number): ref; "
+            "object: item; mapping: meta; "
             "string (also $ilike, $in, $like, $nin, $regex): name; "
             "collection (also $disjoint, $empty, $in, $nin, $overlaps, $subset, $superset; "
             "element quantifiers $any, $all, $none): tags."
@@ -194,16 +195,21 @@ class TestDescribeDiscovery:
         first, *clauses = re.split(r"; (?![^()]*\))", body)
         common = set(first.removesuffix(" on every field").split(", "))
         read_back: dict[str, tuple[set[str], bool]] = {}
+        by_type: dict[str, tuple[set[str], bool]] = {}
 
         for clause in clauses:
             head, names = clause.rsplit(": ", 1)
-            notes = head.partition(" (")[2].rstrip(")").split("; ")
+            kind, _, note = head.partition(" (")
+            notes = note.rstrip(")").split("; ")
             also = next((n.removeprefix("also ") for n in notes if n.startswith("also ")), "")
             ops = common | (set(also.split(", ")) if also else set())
             quantifiable = f"element quantifiers {', '.join(QUANTIFIER_OPS)}" in notes
+            # ``(as number)``: the same operators as the type it names.
+            same = next((n.removeprefix("as ") for n in notes if n.startswith("as ")), None)
+            by_type[kind] = by_type[same] if same else (ops, quantifiable)
 
             for name in names.split(", "):
-                read_back[name] = (ops, quantifiable)
+                read_back[name] = by_type[kind]
 
         assert read_back == {f.field: (set(f.operators), f.quantifiable) for f in qd.filterable}
 
