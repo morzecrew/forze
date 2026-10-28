@@ -762,6 +762,10 @@ class PostgresClient(PostgresClientPort):
         if self.__current_conn() is not None:
             raise exc.internal("A connection is already bound in this context")
 
+        # The pool commits the connection's statements when it goes back, outside any open
+        # read-only root.
+        bypass_read_only_root()
+
         async with self._acquire() as conn:
             token = self.__ctx_conn.set(conn)
 

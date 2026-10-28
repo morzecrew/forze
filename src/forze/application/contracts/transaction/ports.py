@@ -207,7 +207,8 @@ class ReadOnlyAware(Protocol):
     """Opt-in extension for transaction managers whose store can refuse writes.
 
     The kernel asks it inside a ``read_only=True`` root, just before the commit, and only
-    while the root is the sole route entered. A ``True`` answer means the root committed
+    while the root is the sole route a finished nested scope entered and no after-commit
+    callback is queued. A ``True`` answer means the root committed
     nothing, so its commit is no commit point: a deadline or cancellation after it stays
     retryable instead of ``commit_ambiguous``. A manager that does not implement this, or
     answers anything but ``True``, has its read-only root marked like a read-write one

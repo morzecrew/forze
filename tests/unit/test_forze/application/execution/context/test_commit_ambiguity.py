@@ -797,6 +797,37 @@ class TestReadOnlyRootCommitPoint:
         reset_commit_started()
 
     @pytest.mark.asyncio
+    async def test_a_failed_nested_scope_on_another_route_keeps_the_skip(self) -> None:
+        # Its transaction rolled back, so the read-only root is still the only one.
+        reset_commit_started()
+        other = _RecordingTxManager()
+        tx = TransactionContext()
+        tx.lock(lambda route: _ReadOnlyAwareTxManager() if route == "rec" else other)
+
+        async with tx.scope("rec", read_only=True):
+            with pytest.raises(RuntimeError):
+                async with tx.scope("other"):
+                    raise RuntimeError("caught by the root's body")
+
+        assert other.rolled_back is True
+        assert commit_started() is False
+
+    @pytest.mark.asyncio
+    async def test_a_deferred_callback_keeps_the_commit_point(self) -> None:
+        # It runs after the root exits and may commit a write of its own.
+        reset_commit_started()
+        tx = _tx_with(_ReadOnlyAwareTxManager())
+
+        async def cb() -> None:
+            return None
+
+        async with tx.scope("rec", read_only=True):
+            await tx.run_or_defer(cb)
+
+        assert commit_started() is True
+        reset_commit_started()
+
+    @pytest.mark.asyncio
     async def test_a_nested_scope_on_the_same_route_keeps_the_skip(self) -> None:
         # The same route is the same transaction: a savepoint inside the read-only root.
         reset_commit_started()

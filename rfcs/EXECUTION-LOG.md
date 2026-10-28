@@ -2462,11 +2462,27 @@ root transaction committed.
   when three things hold:
   - its manager implements `ReadOnlyAware` and answers exactly `True` for the transaction
     it actually opened;
-  - no nested scope entered another route;
-  - for Postgres, no `detached()` statement, autocommit statement or other write-capable
-    root ran beside it.
+  - no nested scope on another route finished its body;
+  - no after-commit callback is queued;
+  - for Postgres, no `detached()` statement, autocommit statement, `bound_connection()` or
+    other write-capable root ran beside it.
 
   Every other root marks one. A manager may answer `True` only if its own store refuses
   every write to that transaction on every path. Follow-up, not built: make the Mongo,
   Firestore and Neo4j write adapters refuse writes inside a read-only root, as the mocks
   do, so they can implement the protocol too.
+
+## Review findings — 2026-10-28
+
+PR #693. Three findings from CodeRabbit and CodeAnt, all fixed, plus the Codecov patch check.
+R-1 and R-2 add conditions to D-097's proposed row, amended in place; its consequence stays
+as written.
+
+| # | Severity | Finding | Status |
+|---|---|---|---|
+| R-1 | Medium | A read-only root skipped the mark while an after-commit callback was queued. The callback runs after the root exits and may write, so a cancel in the drain came back retryable after that write (CodeRabbit, CodeAnt) | Fixed — a queued callback keeps the mark |
+| R-2 | Medium | `bound_connection()` on another client never cleared the read-only record, though the pool commits the connection's statements when it goes back (CodeRabbit) | Fixed — it clears the record before checking out the connection |
+| R-3 | Low | A nested scope on another route was recorded on entry, so one whose body failed and rolled back still cost the root its skip when the root's body caught the error (CodeAnt) | Fixed — the route is recorded once the nested body succeeds, before its commit, so a torn commit still counts |
+| R-4 | — | Patch coverage: the record's fallback for a generator finalized in another context, and a `None` branch for the route set that a nested scope never takes (Codecov) | A unit test covers the fallback; the branch is gone, since the root sets the route set with the depth |
+
+Each fix was checked against its own removal.

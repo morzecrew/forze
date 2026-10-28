@@ -140,9 +140,10 @@ class TransactionContext:
         repr=False,
         on_setattr=attrs.setters.frozen,
     )
-    """Routes entered under the active root, its own first. A nested scope on another route
-    resolves another manager, which can open (and commit) a transaction of its own, so a
-    read-only root skips its commit point only while this holds its route alone."""
+    """Routes under the active root whose scopes may have committed, its own first. A nested
+    scope on another route resolves another manager, which can open (and commit) a
+    transaction of its own, so a read-only root skips its commit point only while this holds
+    its route alone."""
 
     # ....................... #
 
@@ -374,16 +375,17 @@ class TransactionContext:
                     code="tx_nested_isolation_conflict",
                 )
 
-            entered = self.__tx_routes.get()
-
-            if entered is not None:
-                entered.add(str(getattr(route, "value", route)))
-
+            # Set by the root alongside the depth, so a nested scope always finds it.
+            entered = self.__tx_routes.get() or set()
             token_d = self.__tx_depth.set(depth + 1)
 
             try:
                 async with tx.transaction():
                     yield
+
+                    # Recorded once the body succeeds, before leaving commits it: a body that
+                    # failed rolled back, and committed nothing beside the root.
+                    entered.add(str(getattr(route, "value", route)))
 
             finally:
                 self.__tx_depth.reset(token_d)
@@ -456,11 +458,14 @@ class TransactionContext:
                     # no commit point. Asked of the transaction actually opened, not the
                     # manager: a root that became a savepoint in an outer transaction is not
                     # read-only. Only while it is the sole route entered: another route's
-                    # nested scope may have committed a transaction of its own. Fail-closed:
-                    # an unaware manager, or any answer but ``True``, marks it like a write.
+                    # nested scope may have committed a transaction of its own. Only with no
+                    # deferred callback: one runs after the root exits and may write.
+                    # Fail-closed: an unaware manager, or any answer but ``True``, marks it
+                    # like a write.
                     if not (
                         root_read_only
                         and len(routes) == 1
+                        and not self.__cb_stack.get()
                         and isinstance(tx, ReadOnlyAware)
                         and tx.read_only_enforced() is True
                     ):

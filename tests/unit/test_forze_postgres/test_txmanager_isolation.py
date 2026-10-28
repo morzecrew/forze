@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextvars
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 
@@ -20,6 +21,10 @@ from forze.application.execution.context.transaction import TransactionContext
 from forze_postgres.adapters.txmanager import PostgresTxManagerAdapter
 from forze_postgres.kernel.client import PostgresClient
 from forze_postgres.kernel.client import PostgresTransactionOptions
+from forze_postgres.kernel.client.read_only_root import (
+    read_only_root,
+    read_only_root_enforced,
+)
 
 # ----------------------- #
 
@@ -152,6 +157,28 @@ async def test_an_autocommit_statement_on_another_client_keeps_the_mark(
     reset_commit_started()
 
 
+async def test_a_bound_connection_on_another_client_keeps_the_mark(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The pool commits a bound connection's statements when the binding ends.
+    @asynccontextmanager
+    async def _pooled(_self: object) -> AsyncGenerator[_FakeConnection]:
+        yield _FakeConnection()
+
+    monkeypatch.setattr(PostgresClient, "_acquire", _pooled)
+    adapter, _client = _adapter()
+    tx = TransactionContext()
+    tx.lock(lambda _route: adapter)
+    reset_commit_started()
+
+    async with tx.scope("pg", read_only=True):
+        async with PostgresClient().bound_connection():
+            pass
+
+    assert commit_started() is True
+    reset_commit_started()
+
+
 async def test_a_detached_scope_clears_the_claim_even_from_a_nested_scope() -> None:
     adapter, _client = _adapter()
 
@@ -161,6 +188,19 @@ async def test_a_detached_scope_clears_the_claim_even_from_a_nested_scope() -> N
                 pass
 
         assert adapter.read_only_enforced() is False
+
+
+def test_a_record_finalized_in_another_context_is_dropped_there() -> None:
+    # An abandoned generator can be finalized outside the context that entered the record.
+    entered = contextvars.copy_context()
+    record = read_only_root()
+    entered.run(record.__enter__)
+    finalizer = entered.copy()
+
+    finalizer.run(record.__exit__, None, None, None)
+
+    assert finalizer.run(read_only_root_enforced) is False
+    assert entered.run(read_only_root_enforced) is True
 
 
 async def test_isolation_maps_to_postgres_level() -> None:
