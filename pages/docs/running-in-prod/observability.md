@@ -46,6 +46,12 @@ Alongside each span, two **metrics** — `forze.operations` (a counter) and
 `forze.operation.duration` (a histogram, in ms) — labelled by operation, kind,
 and outcome: `success`, `failed` for a failure the caller can handle, or `error`.
 
+An `unavailable` error — something an operator switched off — counts as `failed`, not
+`error`, and no transport logs it as a server error, so an error-rate alert on
+`forze.outcome="error"` leaves it out. The operation metrics carry no error code, so if
+switch-offs matter to you, track them at the edge: count responses whose `X-Error-Code` is
+the code your app raises with `exc.unavailable`, or 503s at your proxy.
+
 ## Trace every outbound call
 
 The operation span tells you *that* an operation ran and how long it took; to see

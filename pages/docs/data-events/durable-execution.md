@@ -187,8 +187,8 @@ again. `registry.register(name, body, retry=...)` gives one function its own str
   asked of a waiting run is stamped and lands when the retry comes due, without running the
   body (a saga runs again and decides by its pivot); that claim spends an attempt.
 - **When it is due** it keeps its `created_at`, so the scan, oldest first, claims it ahead of
-  fresh runs. A `throttled` failure with a `retry_after` (an upstream `429`'s `Retry-After`)
-  is due no sooner than that, even past the backoff's `max`.
+  fresh runs. A `throttled` or `unavailable` failure with a `retry_after` (an upstream `429`'s
+  `Retry-After`) or a `retry_at` is due no sooner than that, even past the backoff's `max`.
 
 An attempt that sends its run back counts under the `retrying` outcome, and the last one
 under `failed`: alert on `failed`.

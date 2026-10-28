@@ -159,7 +159,9 @@ handling is offset-shaped:
   unavailable or throttled while unwrapping a cold data key is crash-shaped: the
   consumer commits the successes so far and raises, and the supervisor restarts
   it with backoff; the message is redelivered once the blip clears. Only a
-  *non-retryable* decrypt failure pauses.
+  *non-retryable* decrypt failure pauses. A retryable fault — `unavailable` and
+  `throttled` included — restarts the consumer with no cap, so pair a long-lived
+  switch-off of the KMS with pausing the consumer.
 - **Pause is consumer-wide.** A pause stops every subscribed topic of that
   consumer, and the supervisor deliberately does **not** restart it (a restart
   would re-fetch the same poison and pause again) — it alerts and waits for an

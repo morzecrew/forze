@@ -158,6 +158,14 @@ Two kinds of poison, two owners:
     when it's `None`, parking never triggers and a poison message keeps
     redelivering until the broker's policy catches it.
 
+!!! note "A dependency switched off for a while"
+    A handler failing with `unavailable` or `throttled` is nacked back like any other
+    failure: without `max_deliveries` it redelivers with no cap until the dependency is
+    back, and with it a long switch-off parks healthy messages. A message the keyring
+    could not decrypt because its KMS answered `unavailable` or `throttled` redelivers
+    with no cap either way — parking is checked after decrypt. Pair a long-lived
+    switch-off with pausing the consumer.
+
 Transient blips can also be retried in-process before the message goes back to
 the broker: pass `retry_policy="my-policy"` and the runner wraps each process
 step (dedup mark + handler, one fresh transaction per attempt) in

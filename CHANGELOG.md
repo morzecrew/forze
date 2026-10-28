@@ -45,6 +45,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **An `unavailable` error kind answers 503 for something switched off right now.** `exc.unavailable(...)` is retryable, keeps its summary and code on every transport, and is not logged as a server error; details stay withheld. A `retry_after` or `retry_at` detail sets `Retry-After`, as on a throttle.
 
+- **Retries wait out a `retry_at` hint too.** A throttled or unavailable error's aware `retry_at` detail now delays the resilience, saga and durable retries until that instant, read as the `Retry-After` header reads it. `retry_hint(error)` in `forze.application.execution.resilience.backoff` returns the hint as given.
+
 - **`RoutedDuckDbClient(ca_cert_file=...)` lets a lake session use HTTPS on DuckDB 2.** The file must hold a PEM certificate, and any statement on the instance can read it. A dynamic read calling a table function other than `range`, `generate_series` or `unnest`, naming a path, or naming an unattached catalog is refused.
 
 - **A cancel after an operation's commit point is recorded on every surface.** The operation logs a `commit_ambiguous` warning carrying its name and invocation ids, adds a `forze.commit_ambiguous` span event, and re-raises the cancellation. `forze ops call` still reports it as an error.
