@@ -339,13 +339,14 @@ class DocumentSpec(BaseSpec, Generic[R, D, C, U]):
     rows delivers read fields no write of this aggregate produces. Map each to ``None``
     to mark it derived and leave its value to the relation, or to a
     :class:`~forze.application.contracts.conformity.DerivedReadField` naming a source
-    spec, the key field and the field to read, which the mock will join itself.
+    spec, the key field and the field to read — or the fields an expanded reference
+    projects into a nested object — which the mock will join itself.
 
     **Marking is the floor and covers every shape** — a joined column, a nested object,
     a ``COALESCE`` aggregate, a ``CASE`` expression. Resolving is available only for the
-    narrow case of one field of one row reached by one key; there is deliberately no
-    expression language, because evaluating one would make the mock a second query
-    engine with divergences of its own.
+    narrow case of one row reached by one key — one of its fields, or several as a nested
+    reference object; there is deliberately no expression language, because evaluating
+    one would make the mock a second query engine with divergences of its own.
 
     Unlike :attr:`lenient_read_fields` a derived field **needs no default** and may
     be required — a joined display name usually is. That is the distinction between
