@@ -7,10 +7,13 @@ declaration bound, for an application's own CLI, and drops ``--app``.
 
 import functools
 import inspect
+import io
 import json
 import math
+import os
 import traceback
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager, redirect_stderr, redirect_stdout
 from pathlib import Path
 from typing import Any
 from uuid import UUID
@@ -23,6 +26,7 @@ from forze.application.execution.operations import OperationCatalogEntry
 from .call import document_stream, execute
 from .contract import EXIT_CONFIG, EXIT_USAGE
 from .declaration import OpsApp
+from .flags import describe_flags, flag_table
 
 # ----------------------- #
 
@@ -82,6 +86,32 @@ def _load(ref: str | None) -> OpsApp:
 # ....................... #
 
 
+@contextmanager
+def _silenced() -> Iterator[None]:
+    """Discard what the block writes, through ``sys.stdout`` and ``sys.stderr`` or straight to
+    descriptors 1 and 2."""
+
+    saved = [os.dup(fd) for fd in (1, 2)]
+    devnull = os.open(os.devnull, os.O_WRONLY)
+
+    try:
+        for fd in (1, 2):
+            os.dup2(devnull, fd)
+
+        with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+            yield
+
+    finally:
+        for fd, copy in zip((1, 2), saved, strict=True):
+            os.dup2(copy, fd)
+            os.close(copy)
+
+        os.close(devnull)
+
+
+# ....................... #
+
+
 def _without(command: Callable[..., None], name: str) -> Callable[..., None]:
     """*command* with parameter *name* dropped from its signature and passed as ``None``."""
 
@@ -101,6 +131,13 @@ def _without(command: Callable[..., None], name: str) -> Callable[..., None]:
 def _positive(value: float | None) -> float | None:
     if value is not None and not (0 < value < math.inf):
         raise typer.BadParameter("must be a positive number of seconds")
+
+    return value
+
+
+def _batch_source(value: str | None) -> str | None:
+    if value is not None and value != "-" and not value.startswith("@"):
+        raise typer.BadParameter("must be @PATH or - (stdin)")
 
     return value
 
@@ -125,7 +162,20 @@ def _summary(entry: OperationCatalogEntry) -> str:
     return descriptor.title or (descriptor.description or "").strip().split("\n", 1)[0]
 
 
-def _description(entry: OperationCatalogEntry) -> dict[str, Any]:
+def _typed_flags(entry: OperationCatalogEntry) -> tuple[list[str] | None, str]:
+    """The operation's typed flags, or ``None`` and the reason it takes none."""
+
+    input_type = entry.descriptor.input_type if entry.descriptor is not None else None
+
+    if input_type is None:
+        return None, "it takes no input"
+
+    table, reason = flag_table(input_type)
+
+    return (None, reason) if reason is not None else (describe_flags(table), "")
+
+
+def _description(entry: OperationCatalogEntry, typed_flags: list[str] | None) -> dict[str, Any]:
     descriptor = entry.descriptor
     discovery = descriptor.query_discovery if descriptor is not None else None
 
@@ -138,6 +188,7 @@ def _description(entry: OperationCatalogEntry) -> dict[str, Any]:
         "required_permissions": list(entry.required_permissions),
         "supports_idempotency_key": entry.supports_idempotency_key,
         "deadline_seconds": entry.deadline.total_seconds() if entry.deadline else None,
+        "typed_flags": typed_flags,
         # A policy that withholds every field describes to an empty sentence.
         "query_discovery": (
             (describe_query_discovery(discovery) or None) if discovery is not None else None
@@ -147,7 +198,7 @@ def _description(entry: OperationCatalogEntry) -> dict[str, Any]:
     }
 
 
-def _render(description: dict[str, Any]) -> str:
+def _render(description: dict[str, Any], no_flags_reason: str) -> str:
     lines = [f"{description['op']} ({description['kind']})"]
 
     for key in ("title", "description"):
@@ -156,6 +207,7 @@ def _render(description: dict[str, Any]) -> str:
 
     permissions = ", ".join(description["required_permissions"]) or "none declared"
     deadline = description["deadline_seconds"]
+    flags = description["typed_flags"]
     lines += [
         "",
         f"Requires authentication: {'yes' if description['requires_authn'] else 'no'}",
@@ -163,6 +215,7 @@ def _render(description: dict[str, Any]) -> str:
         "Idempotency key: "
         + ("supported" if description["supports_idempotency_key"] else "not supported"),
         f"Deadline: {f'{deadline:g}s' if deadline is not None else 'none'}",
+        f"Typed flags: {', '.join(flags) if flags else f'none ({no_flags_reason})'}",
     ]
 
     if description["query_discovery"]:
@@ -184,9 +237,31 @@ def _group(bound: OpsApp | None, *, name: str) -> typer.Typer:
     def declaration(ref: str | None) -> OpsApp:
         return bound if bound is not None else _load(ref)
 
-    def command(command_name: str) -> Callable[[Callable[..., None]], Any]:
+    def complete_op(ctx: typer.Context, incomplete: str) -> list[str]:
+        # The shell reads stdout as candidates and shows stderr: a declaration that cannot
+        # load completes nothing, and says nothing.
+        try:
+            with _silenced():
+                ops = declaration(ctx.params.get("app"))
+
+        # An application module may well ``sys.exit`` when it cannot configure itself.
+        except (Exception, SystemExit):
+            return []
+
+        return [op for op in sorted(ops.exposed) if op.startswith(incomplete)]
+
+    op_argument: Any = typer.Argument(
+        ...,
+        metavar="OP",
+        help="The operation key, e.g. 'orders.get'.",
+        autocompletion=complete_op,
+    )
+
+    def command(command_name: str, **settings: Any) -> Callable[[Callable[..., None]], Any]:
         def register(fn: Callable[..., None]) -> Any:
-            return group.command(command_name)(_without(fn, "app") if bound is not None else fn)
+            return group.command(command_name, **settings)(
+                _without(fn, "app") if bound is not None else fn
+            )
 
         return register
 
@@ -220,7 +295,7 @@ def _group(bound: OpsApp | None, *, name: str) -> typer.Typer:
 
     @command("describe")
     def describe(
-        op: str = typer.Argument(..., metavar="OP", help="The operation key, e.g. 'orders.get'."),
+        op: str = op_argument,
         app: str | None = _APP_OPTION,
         as_json: bool = typer.Option(False, "--json", help="Write JSON instead of text."),
     ) -> None:
@@ -233,20 +308,35 @@ def _group(bound: OpsApp | None, *, name: str) -> typer.Typer:
             typer.echo(f"No exposed operation {op!r}; 'list' shows them.", err=True)
             raise typer.Exit(EXIT_USAGE)
 
-        description = _description(ops.registry.catalog()[key])
-        typer.echo(json.dumps(description, indent=2) if as_json else _render(description))
+        entry = ops.registry.catalog()[key]
+        flags, no_flags_reason = _typed_flags(entry)
+        description = _description(entry, flags)
+        typer.echo(
+            json.dumps(description, indent=2) if as_json else _render(description, no_flags_reason)
+        )
 
     # ....................... #
 
-    @command("call")
+    # Typed flags depend on the operation, which Click has not read when it parses: they reach
+    # the command unparsed, and only flags no call option claims ever do.
+    @command("call", context_settings={"allow_extra_args": True, "ignore_unknown_options": True})
     def call(
-        op: str = typer.Argument(..., metavar="OP", help="The operation key, e.g. 'orders.get'."),
+        ctx: typer.Context,
+        op: str = op_argument,
         app: str | None = _APP_OPTION,
         raw_input: str | None = typer.Option(
             None,
             "--input",
             metavar="JSON|@PATH|-",
             help="The input object: inline JSON, @PATH to read a file, or - for stdin.",
+        ),
+        batch: str | None = typer.Option(
+            None,
+            "--batch",
+            metavar="@PATH|-",
+            callback=_batch_source,
+            help="Call once per JSONL line of a file or stdin, in one runtime; one line out per "
+            "call, stopping at the first failure.",
         ),
         tenant: UUID | None = typer.Option(
             None,
@@ -284,14 +374,25 @@ def _group(bound: OpsApp | None, *, name: str) -> typer.Typer:
         ),
         pretty: bool = typer.Option(False, "--pretty", help="Indent the result."),
     ) -> None:
-        """Call one exposed operation and write its result, or the error, as one JSON document."""
+        """Call one exposed operation and write its result, or the error, as one JSON document.
+
+        An input of flat scalars also takes typed flags after OP; 'describe' lists them.
+        """
 
         with document_stream() as out:
+
+            def emit(line: str) -> None:
+                # A batch's lines are read as they come, not when the batch ends.
+                out.write(line + "\n")
+                out.flush()
+
             ops = declaration(app)
             document, code = execute(
                 ops,
                 op=op,
                 raw_input=raw_input,
+                flags=ctx.args,
+                batch=batch,
                 tenant=tenant,
                 idempotency_key=idempotency_key,
                 timeout=timeout,
@@ -300,8 +401,11 @@ def _group(bound: OpsApp | None, *, name: str) -> typer.Typer:
                 causation_id=causation_id,
                 api_key_file=api_key_file,
                 pretty=pretty,
+                emit=emit,
             )
-            out.write(document + "\n")
+
+            if document is not None:
+                out.write(document + "\n")
 
         raise typer.Exit(code)
 

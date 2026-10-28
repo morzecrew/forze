@@ -86,9 +86,26 @@ $ forze ops call notes.create --input '{"title": "hi"}'
 {"id":"…","title":"hi",…}
 ```
 
+Run `forze --install-completion` once, and your shell completes operation names after
+`describe` and `call`. Each TAB imports your application module, so keep its import free of
+side effects.
+
 `--input` takes inline JSON, `@PATH` for a file, or `-` for stdin. Inline input is refused for
 an operation whose input declares a `SecretStr` or `SecretBytes` field; pipe it instead. An
 unknown input key is refused, not dropped, so a typo in a script fails loudly.
+
+An operation whose input is flat scalars (strings, numbers, booleans, ids, dates, enums) also
+takes typed flags instead of `--input`:
+
+```console
+$ forze ops call notes.create --title hi
+```
+
+Each field is a flag named after it, a boolean is `--name` or `--no-name`, and the values are
+validated exactly as `--input` is. `forze ops describe` lists an operation's flags, or says why
+it has none; the [reference](../reference/ops-cli.md#typed-flags) has the rules. Flags put every
+value on argv, where `ps` and shell history show it: secret fields are refused, and any other
+sensitive value belongs in `--input @PATH`.
 
 `call` writes exactly one JSON document to stdout: the result, or an error object carrying the
 invocation's `execution_id` and `correlation_id`. Everything else the application writes,
@@ -100,6 +117,22 @@ For a command a retry may repeat, pass `--idempotency-key`. A repeat with the sa
 input returns the stored result; the same key with different input exits 4. An operation that
 does not support a key refuses the option, so a script never believes a retry is safe when it
 is not.
+
+## Run a backfill
+
+`--batch` calls an operation once per line of a JSONL file, or of stdin, inside one runtime,
+so a backfill pays for startup once rather than per row:
+
+```console
+$ forze ops call notes.create --batch @notes.jsonl > results.jsonl
+```
+
+Every line is validated before anything runs, so a typo on line 900 does not leave 899 rows
+applied. Stdout gets one JSON line per call, numbered by its input line, and the batch stops at
+the first failure: that line is the last one written, and its exit code is the batch's. To
+resume, fix that line and run the file from it on. `--idempotency-key` is refused with
+`--batch`, because one key would claim every line. The
+[reference](../reference/ops-cli.md#batches) has the output contract.
 
 ## Run it as a Job or from cron
 

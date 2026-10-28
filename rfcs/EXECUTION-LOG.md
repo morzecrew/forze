@@ -2631,3 +2631,199 @@ layer (D-084, D-085) or runs through a port that has no registry (D-086).
 catalog at attach time, so an unknown operation raises `internal` at the first call. Neither
 refuses a sensitive operation. These are hand-declared routes, which the sensitive rule (§5.2,
 generated surfaces) does not cover, and no copy of a boundary step is involved.
+
+---
+
+---
+
+# Unit 10 · RFC 0077 P3 — CLI items
+
+Branch `feat/ops-cli-p3`. RFC 0077 (operation CLI, ✅ Complete for P1 and P2) §12 P3, the
+three `forze ops` items the maintainer named a demand for on 2026-10-27: typed flags for flat
+scalar inputs, a JSONL batch in one runtime scope, and shell completion of operation names.
+The FastAPI / Socket.IO / WS moves onto `ingress` (Unit 9), the boundary-wide
+`commit_ambiguous` question (Unit 11) and the surface field (RFC 0079) are their own changes.
+
+**Drift count: 0.** Seven entries, all `spec-gap`: §12 named the three items and §5.9 and §8
+gave them one sentence each, so every rule below was knowable before code and none was
+settled. One entry amends a graded row (decision 15); three are close-outs for the `LOCKED`
+rows a batch touches (decisions 9, 10 and 12), folded into D-092 and D-093.
+
+## D-088 — Decision 15 gives way to §12's demand gate for three items
+
+- **Touches:** RFC 0077 decision 15 (`ASSUMED`): "No typed flags, JSONL batch, remote mode, or
+  surface field in this RFC." And §12, whose P3 list names the same items as demand-gated.
+- **RFC said:** both, and they read differently: decision 15 keeps the items out of the RFC,
+  while §12 keeps them in it, gated on a named consumer.
+- **Found:** the maintainer named the consumer for three of them. Building them as P3 of this
+  RFC follows §12 and contradicts decision 15 as worded.
+- **Because:** decision 15 was written for the first version, and its "in this RFC" says more
+  than that.
+- **Class:** `spec-gap`.
+- **Consequence:** built here, recorded in §5.8 "As built (P3)". Remote mode and the surface
+  field stay out.
+- **Proposed row (RFC 0077):** amend decision 15, `ASSUMED` — no remote mode or surface field in
+  this RFC. Typed flags for flat scalar inputs, the JSONL batch and shell completion shipped in
+  P3 on a named demand.
+
+## D-089 — Typed flags: flat scalars only, all or none, validated as strings
+
+- **Touches:** RFC 0077 §5.9 and §8, which defer "the flat-scalar case … using the flat
+  signature MCP already synthesises"; decision 13 (`ASSUMED`); decision 5 (`LOCKED`). The
+  parse model, the scalar set and option collisions are unlisted.
+- **RFC said:** typed flags for a flat-scalar input, from MCP's flat signature.
+- **Found:** MCP's signature is one parameter per field of any annotation, and FastMCP derives
+  the schema from it, so it maps a list or a model as readily as a string. It is also behind
+  the `mcp` extra (§5.9). So
+  [`flags.py`](../src/forze_cli/ops/flags.py) checks each field itself. With `Annotated` and
+  `Optional` stripped, a field must be `str`, `int`, `float`, `Decimal`, `UUID`, `date` (so
+  `datetime`), an `Enum` of strings, an `IntEnum`, or a `Literal` of strings; a `bool` is a
+  `--name` / `--no-name` switch. Three shapes came back from probing pydantic: a non-string
+  `Literal`, like a plain enum with non-string values, never validates from a string (`"2"` is
+  not `Literal[2]`, `"1"` not `Code.ONE = 1`), while an `IntEnum` coerces as `int` does; and a
+  union of two scalars keeps a string a string. The first two and the union are out.
+- **Built:** Typer's options are static, and the flags depend on the operation, which Click
+  has not read when it parses. `call` sets `allow_extra_args` and `ignore_unknown_options` and
+  parses `ctx.args` against the field table. Click claims `call`'s own options first, so a
+  `timeout` field could never be set by `--timeout`. Refusing the call option at run time would
+  change P2 behaviour, and prefixing every flag would make every flag worse. Instead, an input
+  takes no flags at all when a field is spelled like a call option (`CALL_OPTIONS`, which a
+  test pins to the command) or two fields share a spelling (`no_x` beside a switch `x`). A
+  call option then never changes meaning with the operation.
+  - Values stay the strings typed. The raw object goes through
+    `validate_operation_input(..., forbid_unknown=True, by_name=True)`; `by_name` because the
+    flags spell field names, and an alias-only field would otherwise be refused as unknown.
+  - Decision 13 is extended, not departed from: an input declaring a secret takes no flags,
+    and flags given to it are refused as `cli_inline_secret`. Decision 5 concerns the
+    identity's key and still holds: `call`'s own options carry none
+    ([`test_ops_call.py`](../tests/unit/test_forze_cli/test_ops_call.py),
+    `test_no_option_takes_a_key_on_argv`).
+- **Because:** a partial mapping makes the contract depend on each input's shape, the reason
+  §5.9 gave for deferring. All or none keeps the dependence to one question that `describe`
+  answers.
+- **Class:** `spec-gap`.
+- **Consequence:** `describe` lists the flags or says why there are none (`typed_flags` in
+  `--json`). A value that starts with `--` needs `--field=VALUE`; a bare one is refused,
+  since a forgotten value would swallow the next flag, a misspelt one included. A float flag accepts `nan` exactly as `--input` accepts the
+  string `"nan"`: flags match `--input`'s string form, and only the JSON literal `NaN` is
+  refused there. Values on argv are visible to `ps` and shell history; the docs send any
+  sensitive value that is not a declared secret to `--input @PATH`.
+- **Proposed row (RFC 0077):** `ASSUMED` — an input takes typed flags only when every field is a
+  scalar or an optional one, it declares no secret, and no flag shares a spelling with a call
+  option or another flag. Otherwise it takes none. The flags build the raw object for the
+  shared validation, read by field name.
+
+## D-090 — An unknown option after `OP` is an error object, not Click's usage text
+
+- **Touches:** RFC 0077 §5.5, whose first table row makes argument parsing Click's usage text
+  on stderr with nothing on stdout; decision 8 (`ASSUMED`).
+- **RFC said:** a parse error exits 2 with Click's usage text.
+- **Found:** under D-089's parse model, Click hands every option it does not know to the
+  command, a misspelt call option included. Only the loaded declaration can tell a typo from a
+  typed flag, and once it has loaded, decision 8 owes an error object.
+- **Class:** `spec-gap`. It follows from the parse model, which was a design choice.
+- **Consequence:** still exit 2, now as `cli_malformed_flags`, `cli_flags_unsupported` or
+  `cli_input_not_accepted`. The last two name the first flag ("`--timout` is no call option
+  either"), so a typo is recognisable. A malformed value of a known option is still Click's
+  usage text. A script matching exit 2 sees no change; stdout is no longer empty there.
+- **Proposed row (RFC 0077):** `ASSUMED` — an option `call` does not have is read as a typed
+  flag, and its refusal is an error object with exit 2.
+
+## D-091 — `--batch` writes one JSON line per call
+
+- **Touches:** decision 8 (`ASSUMED`): exactly one JSON document on stdout. §8 named a batch
+  mode ("many inputs, one scope") and nothing else.
+- **RFC said:** one document per invocation.
+- **Built:** with `--batch`, stdout is JSONL, one line per input line that ran, in order, each
+  flushed as its call finishes. A line is `{"line": N, "result": …, "execution_id": …,
+  "correlation_id": …}` or the error object with `"line": N`.
+  - The result is nested under `result` because the exit code no longer says whether a given
+    line succeeded.
+  - `line` is the physical input line, blank lines skipped, so a reader can resume from it.
+  - Every line has its own `execution_id`. All share the batch's `correlation_id`, the one
+    given or one minted, and the `--causation-id` if given.
+  - A refusal of the whole batch is one error object without `line`: a conflicting option, an
+    unreadable file, a runtime that fails to build or start, or a signal during startup.
+- **Class:** `spec-gap`.
+- **Consequence:** decision 8 holds unchanged without `--batch`.
+- **Proposed row (RFC 0077):** `ASSUMED` — with `--batch`, stdout carries one JSON line per call
+  that ran, numbered by its input line, its value under `result` or `error`. A refusal of the
+  whole batch is one error object without a line number.
+
+## D-092 — A batch is validated whole, stops at its first failure, and takes no key
+
+- **Touches:** decisions 9 and 12 (`LOCKED`); §5.6 step 3 ("None of this builds a runtime").
+  Unlisted: when lines are validated, stop or continue, the batch's exit code, the key.
+- **Built:**
+  - Lines end at `\n` only, with one trailing `\r` dropped: `str.splitlines` also splits at
+    U+2028 and U+0085, which JSON allows raw inside a string.
+  - Every line is read and validated before the runtime is built, as one call's input is. A
+    malformed or invalid line is the only line written, and nothing runs, so a typo on line
+    900 cannot leave 899 lines applied. The whole input is held in memory to allow that; a
+    `shortcut:` comment in `_batch_calls` names the limit.
+  - The first failure stops the batch, and its exit code, computed as for one call, is the
+    batch's. There is no continue-on-error flag: nobody asked for one, and stopping is the safe
+    default when later lines may depend on earlier ones.
+  - `--idempotency-key` is refused as `cli_option_conflict`. One key would replay the first
+    line's result for every identical line and refuse every other line as a conflict. A
+    per-line key needs an envelope around each input, so it is left for a named demand.
+    `--pretty` is refused too: an indented document is not a line.
+- **Because:** the RFC named the mode and none of its rules.
+- **Class:** `spec-gap`.
+- **Consequence:** without a key, a batch is repeatable only when its operation is a query. A
+  retryable failure exits 75 from a query batch and 69 from a command batch. Close-out for
+  decision 9 (`LOCKED`): 75 still means safe to repeat as is, since re-running a query batch
+  repeats only queries, and a command batch can never exit 75. Close-out for decision 12
+  (`LOCKED`): compliant; under `--batch` the key is refused outright.
+- **Proposed row (RFC 0077):** `ASSUMED` — a batch validates every line before building the
+  runtime and stops at the first failure with that line's exit code. It refuses
+  `--idempotency-key` and `--pretty`.
+
+## D-093 — A signal stops a batch after the line in flight
+
+- **Touches:** decision 10 (`LOCKED`) and §5.6's two-signal shape, written for one call.
+- **Built:** the shape applies to the line in flight. The first signal arms the grace timer;
+  the line finishes with its own document, or a second signal or the expired grace cancels it
+  into `interrupted` or `commit_ambiguous`, exactly as one call. No line starts after a
+  signal. With lines left unrun, the batch exits 128 plus the signal number. When the signal
+  came during the last line and that line finished, the batch exits by its own outcome, as one
+  call does. Each line resets the commit flag on entry, so an earlier line's commit never reads
+  as the current one's. Each line also enters and leaves its own metadata, identity, tenant,
+  idempotency and deadline bindings, and verifies its key again: a key revoked by line 1 refuses
+  line 2, and nothing stays bound after the batch (`test_ops_batch.py`).
+- **Class:** `spec-gap`.
+- **Consequence:** close-out for decision 10 (`LOCKED`): a line cancelled after its commit
+  point still reports `commit_ambiguous`, and no line is reported safe when its commit may
+  have landed. The exit code alone says whether lines went unrun; stdout says which ran.
+- **Proposed row (RFC 0077):** `ASSUMED` — a signal stops a batch after the line in flight,
+  which gets one call's grace and cancellation. With lines left unrun, the batch exits 128
+  plus the signal number.
+
+## D-094 — Completion loads the declaration quietly and never builds a runtime
+
+- **Touches:** decision 11 (`ASSUMED`): `list` and `describe` never build a runtime. Completion
+  itself is unlisted.
+- **Built:** `OP` completes after `describe` and `call` through Typer's `autocompletion`, from
+  `--app` (when it comes before `OP`), `FORZE_OPS_APP`, or the declaration `build_ops_cli`
+  bound. Loading runs with `sys.stdout`, `sys.stderr` and descriptors 1 and 2 discarded, and
+  any failure, `SystemExit` included, completes nothing: the shell reads stdout as candidates
+  and prints stderr under the prompt. The root app already
+  offered Typer's `--install-completion` and `--show-completion`, and keeps them.
+- **Class:** `spec-gap`.
+- **Consequence:** every TAB imports the application module, as `list` does, so its import side
+  effects run at completion time too (§9, "Import side effects").
+- **Proposed row (RFC 0077):** `ASSUMED` — completion loads the declaration as `list` does,
+  builds no runtime, and offers nothing, silently, when the declaration cannot load.
+
+## Review findings — 2026-10-28
+
+PR #692. Three findings from CodeRabbit and CodeAnt, all fixed. R-1 amends D-089's
+consequence in place; no proposed row changes.
+
+| # | Severity | Finding | Status |
+|---|---|---|---|
+| R-1 | Medium | A flag that needs a value took the next token unless it was one of the input's flags, so `--title --tilte` ran the operation with the title `--tilte` (CodeRabbit) | Fixed — any next token that starts with `--` is refused; `--title=--tilte` still spells that value |
+| R-2 | Medium | A batch of blank lines built the runtime and ran its startup and shutdown with nothing to call (CodeAnt) | Fixed — an empty batch exits 0 after the key and the runtime profile are checked, and never enters the runtime's scope |
+| R-3 | Low | The app-author skill said every flat-scalar input takes typed flags, though a secret field or a colliding spelling disables them (CodeAnt) | Fixed — it says "usually" and points at `describe` |
+
+Each fix was checked against its own removal.
