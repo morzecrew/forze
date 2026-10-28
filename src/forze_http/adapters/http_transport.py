@@ -34,8 +34,14 @@ class _LeasedStream(httpx.AsyncByteStream):
         self.__lease = lease
 
     async def __aiter__(self) -> AsyncIterator[bytes]:
-        async for chunk in self.__inner:
-            yield chunk
+        # httpx closes a response only when its iteration ends normally; a failed one would
+        # hold the pooled connection until the caller remembered to close it.
+        try:
+            async for chunk in self.__inner:
+                yield chunk
+
+        finally:
+            await self.__lease.aclose()
 
     async def aclose(self) -> None:
         await self.__lease.aclose()

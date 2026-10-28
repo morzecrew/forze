@@ -29,8 +29,9 @@ http = HttpClient()
 `HttpSettings` holds the base URL, bearer token, default headers and the response cap —
 see [connection settings](index.md#connection-settings). The cap (`max_response_bytes`)
 counts the decoded body as it decodes, so a small compressed body cannot expand past it. A
-client with a cap asks only for `gzip` and `deflate`, and refuses a response in any other
-content coding.
+client with a cap asks only for `gzip` and `deflate`, unless a configured default header sets
+`Accept-Encoding` itself. Either way it refuses a response in any other content coding,
+and a compressed body that ends before its compressed stream does.
 
 ## Wire it
 

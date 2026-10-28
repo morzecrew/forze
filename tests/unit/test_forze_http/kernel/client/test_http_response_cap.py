@@ -275,3 +275,49 @@ class TestEncodedBodies:
             await client.close()
 
         assert "max_response_bytes" in str(err.value)
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("coding", "encode"),
+        [
+            ("gzip", gzip.compress),
+            ("deflate", zlib.compress),
+            ("deflate", lambda data: zlib.compress(data, wbits=-zlib.MAX_WBITS)),
+        ],
+    )
+    async def test_under_a_cap_a_truncated_body_is_refused(
+        self, coding: str, encode: Callable[[bytes], bytes]
+    ) -> None:
+        # Cut short inside the compressed stream: what decoded so far is not the body.
+        cut = encode(b'{"ok": true}' * 20)[:-6]
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(200, headers={"Content-Encoding": coding}, stream=_Chunks(cut))
+
+        client = await _client(handler, max_response_bytes=4096)
+
+        try:
+            with pytest.raises(CoreException) as err:
+                await client.request("GET", "/x")
+
+        finally:
+            await client.close()
+
+        assert err.value.kind is ExceptionKind.INFRASTRUCTURE
+        assert "ended before its content coding did" in str(err.value)
+
+    @pytest.mark.asyncio
+    async def test_under_a_cap_an_empty_encoded_body_is_returned(self) -> None:
+        # A HEAD answer or a 304 declares the coding and carries no body to finish.
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(200, headers={"Content-Encoding": "gzip"}, stream=_Chunks())
+
+        client = await _client(handler, max_response_bytes=4096)
+
+        try:
+            response = await client.request("HEAD", "/x")
+
+        finally:
+            await client.close()
+
+        assert response.content == b""

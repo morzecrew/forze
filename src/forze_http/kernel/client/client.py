@@ -113,6 +113,7 @@ class _DecodedCap:
             zlib.decompressobj(_INFLATE_WBITS[self.__coding]) if self.__coding else None
         )
         self.__first = True
+        self.__fed = False
         self.__max_bytes = max_bytes
         self.__total = 0
 
@@ -122,6 +123,7 @@ class _DecodedCap:
         """*chunk* decoded, refused once the body's decoded total passes the cap."""
 
         decoded = chunk if self.__inflate is None else self.__inflate_step(chunk)
+        self.__fed = self.__fed or bool(chunk)
         self.__total += len(decoded)
 
         if self.__total > self.__max_bytes:
@@ -130,6 +132,15 @@ class _DecodedCap:
             )
 
         return decoded
+
+    # ....................... #
+
+    def finish(self) -> None:
+        """Refuse a compressed body that ended before its compressed stream did."""
+
+        # An empty body (a HEAD answer, a 304) declares a coding and carries no stream at all.
+        if self.__inflate is not None and self.__fed and not self.__inflate.eof:
+            raise exc.infrastructure("HTTP response body ended before its content coding did")
 
     # ....................... #
 
@@ -172,6 +183,8 @@ async def _buffered(streaming: httpx.Response, max_bytes: int | None) -> httpx.R
 
         async for chunk in _raw(streaming):
             body.extend(cap.feed(chunk))
+
+        cap.finish()
 
     # The body is decoded now, so the headers stop describing an encoding: left in, httpx
     # decodes it a second time. Content-Length is dropped too and recomputed from the body.
@@ -277,6 +290,9 @@ class _WireRelay(httpx.AsyncByteStream):
                 self.__cap.feed(chunk)
 
             yield chunk
+
+        if self.__cap is not None:
+            self.__cap.finish()
 
     async def aclose(self) -> None:
         await self.__upstream.aclose()

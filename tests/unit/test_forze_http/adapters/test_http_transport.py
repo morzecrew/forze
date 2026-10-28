@@ -450,6 +450,52 @@ class TestHttpServiceTransportUnderAnSdk:
 
         assert "content coding" in str(raised.value)
 
+    async def test_a_truncated_compressed_body_is_refused_after_its_last_chunk(self) -> None:
+        cut = gzip.compress(b'{"ok": true}' * 20)[:-6]
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(200, headers={"Content-Encoding": "gzip"}, stream=_Chunks(cut))
+
+        transport, client = await _transport(handler, max_response_bytes=4096)
+
+        try:
+            async with httpx.AsyncClient(base_url=BASE, transport=transport) as sdk:
+                with pytest.raises(CoreException) as raised:
+                    await sdk.post("/chat/completions")
+
+        finally:
+            await client.aclose()
+
+        assert "ended before its content coding did" in str(raised.value)
+
+    async def test_a_failed_stream_releases_the_pooled_connection(self) -> None:
+        released: list[bool] = []
+
+        class _Failing(httpx.AsyncByteStream):
+            async def __aiter__(self) -> AsyncIterator[bytes]:
+                yield b"data: one\n"
+                raise httpx.ReadError("connection reset")
+
+            async def aclose(self) -> None:
+                released.append(True)
+
+        transport, client = await _transport(lambda _r: httpx.Response(200, stream=_Failing()))
+
+        try:
+            async with httpx.AsyncClient(base_url=BASE, transport=transport) as sdk:
+                response = await sdk.send(sdk.build_request("POST", "/chat"), stream=True)
+
+                with pytest.raises(httpx.ReadError):
+                    async for _ in response.aiter_raw():
+                        pass
+
+                # Released by the failure itself, before the SDK gets round to closing it.
+                assert released == [True]
+                await response.aclose()
+
+        finally:
+            await client.aclose()
+
 
 # ....................... #
 
