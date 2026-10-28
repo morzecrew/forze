@@ -16,7 +16,7 @@ from typing import Annotated, Any
 from uuid import UUID
 
 import pytest
-from pydantic import BaseModel, Field, StringConstraints
+from pydantic import BaseModel, Field, PlainSerializer, StringConstraints
 
 from forze.application.contracts.querying import (
     ELEM_SCALAR_FIELD,
@@ -262,6 +262,11 @@ Code = Annotated[str, StringConstraints(max_length=32)]
 Qty = Annotated[Decimal, Field(ge=0)]
 When = Annotated[datetime, Field()]
 type CodeAlias = Annotated[str, StringConstraints(max_length=32)]
+type Batch[T] = list[T]
+type Maybe[T] = T | None
+type Same[T] = T
+type Swap[K, V] = dict[V, K]
+type Shown = Annotated[int, PlainSerializer(lambda v: f"#{v}", return_type=str)]
 
 
 class _Constrained(BaseModel):
@@ -292,6 +297,14 @@ class TestAnnotatedFields:
             (When | None, "temporal"),
             (list[Code], "collection"),
             (CodeAlias | None, "string"),
+            # A generic alias applied to arguments reads as its value with them substituted.
+            (Batch[int], "collection"),
+            (Maybe[Decimal], "number"),
+            (Same[datetime] | None, "temporal"),
+            (Swap[int, str], "mapping"),
+            # A serializer may store something else entirely, so its type is not guessed.
+            (Shown | None, "unknown"),
+            (Annotated[int, PlainSerializer(str)] | None, "unknown"),
             # A genuine union stays unresolved, metadata or not.
             (Annotated[int | str, Field()] | None, "unknown"),
         ],

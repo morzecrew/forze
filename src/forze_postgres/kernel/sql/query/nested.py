@@ -7,12 +7,13 @@ from datetime import date, datetime
 from decimal import Decimal
 from enum import Enum
 from types import UnionType
-from typing import Annotated, Any, TypeAliasType, Union, get_args, get_origin
+from typing import Any, Union, get_args, get_origin
 from uuid import UUID
 
 from psycopg import sql
 from pydantic import BaseModel
 
+from forze.application.contracts.querying import unwrap_annotated
 from forze.base.exceptions import exc
 from forze.domain.constants import ID_FIELD
 from forze_postgres.kernel.catalog.introspect import PostgresColumnTypes, PostgresType
@@ -141,25 +142,6 @@ def _walk_through_ann(ann: Any, segments: list[str], *, filter_path: str | None)
 # ....................... #
 
 
-def unwrap_annotated(annotation: Any) -> Any:
-    """*annotation* without the ``Annotated`` metadata or ``type`` aliases wrapped around it.
-
-    Pydantic strips the metadata only from a bare top-level ``Annotated``: inside a union or
-    a container it stays, as in ``Annotated[Meta, ...] | None`` or ``list[Annotated[...]]``.
-    """
-
-    if isinstance(annotation, TypeAliasType):
-        return unwrap_annotated(annotation.__value__)
-
-    if get_origin(annotation) is Annotated:
-        return unwrap_annotated(get_args(annotation)[0])
-
-    return annotation
-
-
-# ....................... #
-
-
 def _unwrap_optional(annotation: Any) -> Any:
     annotation = unwrap_annotated(annotation)
     origin = get_origin(annotation)
@@ -203,7 +185,8 @@ def _is_any_like(annotation: Any) -> bool:
     origin = get_origin(annotation)
 
     if origin is Union or origin is UnionType:
-        return len(get_args(annotation)) > 2
+        # ``None`` adds no ambiguity: ``Decimal | int | None`` orders as ``Decimal | int``.
+        return len([a for a in get_args(annotation) if a is not type(None)]) > 2
 
     return False
 
@@ -296,7 +279,7 @@ def python_type_to_postgres_scalar(py_t: Any) -> PostgresType | None:
     origin = get_origin(py_t)
     args = get_args(py_t)
     if origin is Union or origin is UnionType:
-        non_none = [unwrap_annotated(a) for a in args if a is not type(None)]
+        non_none = [a for a in args if a is not type(None)]
         if len(non_none) == 1:
             return python_type_to_postgres_scalar(non_none[0])
         if non_none and all(_is_plain_numeric_type(a) for a in non_none):

@@ -78,6 +78,7 @@ from .field_types import (
     coerce_query_ord_operands,
     field_value_operators,
     is_quantifiable_field,
+    unwrap_annotated,
     validate_query_field_types,
 )
 from .grammar import filter_grammar, takes_filter_expression, without_filter_grammar
@@ -202,6 +203,7 @@ __all__ = [
     "classify_field_type",
     "field_value_operators",
     "is_quantifiable_field",
+    "unwrap_annotated",
     "QUANTIFIER_OPS",
     "FieldQuerySupport",
     "QueryDiscovery",

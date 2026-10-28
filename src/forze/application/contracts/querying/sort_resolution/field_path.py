@@ -8,7 +8,7 @@ from pydantic import BaseModel
 
 from forze.base.serialization import stored_field_names_for
 
-from ..field_types import _unwrap_annotated  # pyright: ignore[reportPrivateUsage]
+from ..field_types import unwrap_annotated
 
 # ----------------------- #
 
@@ -30,7 +30,7 @@ def read_fields_for_model(model: type[BaseModel]) -> frozenset[str]:
 def _unwrap_optional(annotation: Any) -> Any:
     # ``Annotated`` metadata survives inside a union (pydantic strips only a bare top-level
     # one), so ``Annotated[Inner, ...] | None`` must still walk into ``Inner``.
-    annotation = _unwrap_annotated(annotation)
+    annotation = unwrap_annotated(annotation)
     if get_origin(annotation) in (Union, UnionType):
         args = [a for a in get_args(annotation) if a is not type(None)]
         if len(args) == 1:

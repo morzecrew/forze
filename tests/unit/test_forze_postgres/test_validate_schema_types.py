@@ -7,7 +7,7 @@ from typing import Annotated, Any
 from uuid import UUID
 
 import pytest
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, PlainSerializer, create_model
 
 from forze.base.exceptions import CoreException
 from forze_postgres.kernel.catalog.introspect.types import PostgresType
@@ -325,6 +325,8 @@ class TestAnnotationFallbacks:
 
 
 type _OptName = str | None
+type _NullableInt = int | None
+type _Shown = Annotated[int, PlainSerializer(lambda v: f"#{v}", return_type=str)]
 
 
 class TestAnnotatedFields:
@@ -362,6 +364,36 @@ class TestAnnotatedFields:
         validate_field_nullability(
             model=Row,
             column_types={"name": _pg("text", not_null=False)},
+            omit_fields=frozenset(),
+            label="write",
+        )
+
+    @pytest.mark.parametrize(
+        "ann", [_NullableInt | str, Annotated[int | None, Field(ge=0)] | str]
+    )
+    def test_a_none_in_any_arm_allows_a_nullable_column(self, ann: Any) -> None:
+        # Only a lone member was unwrapped, so a ``None`` inside an aliased or annotated arm
+        # of a wider union went unseen and the nullable column was refused.
+        Row = create_model("Row", value=(ann, ...))
+
+        validate_field_nullability(
+            model=Row,
+            column_types={"value": _pg("text", not_null=False)},
+            omit_fields=frozenset(),
+            label="write",
+        )
+
+    @pytest.mark.parametrize(
+        "ann", [_Shown, _Shown | None, Annotated[int, PlainSerializer(str)] | None]
+    )
+    def test_a_serialized_field_is_not_held_to_its_python_type(self, ann: Any) -> None:
+        # The serializer stores text: expecting an integer column refused the right one.
+        Row = create_model("Row", shown=(ann, None))
+
+        assert expected_pg_bases_for_field(Row.model_fields["shown"]) is None
+        validate_field_type_compatibility(
+            model=Row,
+            column_types={"shown": _pg("text")},
             omit_fields=frozenset(),
             label="write",
         )

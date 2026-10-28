@@ -5,11 +5,12 @@ from __future__ import annotations
 import base64
 from datetime import date, datetime
 from decimal import Decimal
-from typing import Annotated, Any, TypeAliasType, get_args, get_origin
+from typing import Any, get_args, get_origin
 from uuid import UUID
 
 from pydantic import BaseModel
 
+from forze.application.contracts.querying import unwrap_annotated
 from forze.application.integrations.analytics.sql import (
     build_count_sql as build_count_sql,  # thin re-export of the shared builder
 )
@@ -138,13 +139,8 @@ def _unwrap_optional(annotation: Any) -> Any:
     ``Annotated[Decimal, ...] | None`` must still type a ``None`` as ``NUMERIC``.
     """
 
-    if isinstance(annotation, TypeAliasType):
-        return _unwrap_optional(annotation.__value__)
-
+    annotation = unwrap_annotated(annotation)
     args = get_args(annotation)
-
-    if get_origin(annotation) is Annotated:
-        return _unwrap_optional(args[0])
 
     if args and type(None) in args:
         non_none = [a for a in args if a is not type(None)]

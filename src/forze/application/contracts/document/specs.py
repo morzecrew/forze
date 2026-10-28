@@ -36,7 +36,7 @@ from ..querying import (
     collect_filter_field_roots,
 )
 from ..querying.field_policy import validate_field_policy
-from ..querying.field_types import _unwrap_annotated  # pyright: ignore[reportPrivateUsage]
+from ..querying.field_types import unwrap_annotated
 from ..querying.sort_resolution import read_fields_for_model, validate_sort_fields
 from .codecs import DocumentCodecs, document_codecs_for_spec
 from .write_types import DocumentWriteTypes
@@ -52,7 +52,7 @@ def _admits_none(annotation: object) -> bool:
     read through.
     """
 
-    annotation = _unwrap_annotated(annotation)
+    annotation = unwrap_annotated(annotation)
 
     if annotation is None or annotation is type(None):
         return True
@@ -221,7 +221,7 @@ def _merged(annotation: Any) -> bool:
     ``Any``.
     Only a union is looked into; a list or tuple of mappings is replaced whole."""
 
-    annotation = _unwrap_annotated(annotation)
+    annotation = unwrap_annotated(annotation)
 
     if annotation is Any:
         return True
@@ -230,6 +230,10 @@ def _merged(annotation: Any) -> bool:
 
     if origin in (Union, UnionType):
         return any(_merged(arg) for arg in get_args(annotation))
+
+    # A serializer changes what is stored, not the value an update merges into.
+    if origin is Annotated:
+        return _merged(get_args(annotation)[0])
 
     target = origin or annotation
 

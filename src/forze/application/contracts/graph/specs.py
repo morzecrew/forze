@@ -9,7 +9,7 @@ from forze.base.exceptions import exc
 
 from ..base import BaseSpec
 from ..crypto import FieldEncryption
-from ..querying.field_types import _unwrap_annotated  # pyright: ignore[reportPrivateUsage]
+from ..querying.field_types import unwrap_annotated
 from .types import GraphDirection, GraphEdgeDirectionality
 from .value_objects import GraphEdgeEndpoint
 
@@ -118,7 +118,7 @@ def _denied_key_type(candidate: type) -> type | None:
     return next((denied for denied in _DENIED_KEY_TYPES if issubclass(candidate, denied)), None)
 
 
-def _native_scalar_in(annotation: object) -> type | None:
+def _native_scalar_in(annotation: object, seen: set[int] | None = None) -> type | None:
     """The first denied native type reachable from *annotation*, if any.
 
     Walks unions rather than testing the annotation itself: ``int | None`` is a
@@ -137,10 +137,12 @@ def _native_scalar_in(annotation: object) -> type | None:
       ``Literal["a", "b"]`` stays legal: every member serializes to text.
 
     ``None`` is skipped rather than denied: an optional key is a separate question from a
-    natively-typed one, and this guard answers only the second.
+    natively-typed one, and this guard answers only the second. *seen* carries the aliases
+    the walk expanded, so a recursive one (``type Json = str | Sequence[Json]``) ends it.
     """
 
-    annotation = _unwrap_annotated(annotation)
+    seen = set() if seen is None else seen
+    annotation = unwrap_annotated(annotation, seen)
 
     if isinstance(annotation, type):
         return _denied_key_type(annotation)
@@ -171,7 +173,7 @@ def _native_scalar_in(annotation: object) -> type | None:
         if argument is type(None):
             continue
 
-        found = _native_scalar_in(argument)
+        found = _native_scalar_in(argument, seen)
 
         if found is not None:
             return found

@@ -9,7 +9,7 @@ from uuid import UUID
 
 import pytest
 from bson import Decimal128
-from pydantic import BaseModel
+from pydantic import BaseModel, PlainSerializer
 
 from forze.application.contracts.guarantees import UniqueTogether
 from forze.base.exceptions import CoreException
@@ -573,6 +573,7 @@ class TestEveryValueShapeSurvivesTheRoundTrip:
 
 
 type _StrAlias = str
+type _Shown = Annotated[int, PlainSerializer(lambda v: f"#{v}", return_type=str)]
 
 
 class _Colour(StrEnum):
@@ -626,6 +627,8 @@ class TestNamingAFieldsStoredType:
             object,  # nothing this can name
             dict[str, int],  # a stored document, whose fields are not the guarantee's
             UUID | object,  # one unresolvable arm poisons the union
+            _Shown | None,  # a serializer stores something other than its type
+            Annotated[int, PlainSerializer(str)] | None,
         ],
     )
     def test_it_refuses_what_it_cannot_name(self, annotation: object) -> None:

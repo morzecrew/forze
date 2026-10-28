@@ -21,7 +21,7 @@ from pydantic import BaseModel
 
 from forze.base.exceptions import exc
 
-from ..querying.field_types import _unwrap_annotated  # pyright: ignore[reportPrivateUsage]
+from ..querying.field_types import unwrap_annotated
 from ..querying.sort_resolution import read_fields_for_model
 from .lenient_read import IDENTITY_READ_FIELDS
 
@@ -303,7 +303,7 @@ def _admits_none(annotation: object) -> bool:
     metadata and ``type`` aliases are read through, as pydantic keeps them on the field.
     """
 
-    annotation = _unwrap_annotated(annotation)
+    annotation = unwrap_annotated(annotation)
 
     if annotation is type(None):
         return True
