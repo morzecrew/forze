@@ -235,3 +235,7 @@ entities.json
 dst-*.jsonl
 
 .repowise/
+
+# Core dumps a crashing subprocess writes to the repo root (never commit them)
+/core
+/core.*
