@@ -25,7 +25,42 @@ one_capture_per_order = SystemInvariant(
 )
 ```
 
-The law holds **per distinct scope value** — once *per order* here, because `scope_keys=("order_id",)`. Empty `scope_keys` declares a *global* law (one check over the whole `where`-filtered collection); reuse `tenant_aware` in `where` for a per-tenant scope. `holds` is a pure function of the aggregate — a `CountAll`'s cardinality or a `SumOf`'s total, as a `float` — and must be deterministic and side-effect-free, because the same predicate runs in production *and* inside the simulation.
+The law holds **per distinct scope value** — once *per order* here, because `scope_keys=("order_id",)`. Empty `scope_keys` declares a *global* law (one check over the whole `where`-filtered collection); reuse `tenant_aware` in `where` for a per-tenant scope. `holds` is a pure function of the aggregate, and must be deterministic and side-effect-free, because the same predicate runs in production *and* inside the simulation. It receives a `CountAll`'s cardinality as an `int`, and a `SumOf`'s total as an exact `Decimal` when the read model declares the field `Decimal`, else as a `float`. The type follows the declaration, not the backend, so a law sees the same value on the mock, Postgres and Mongo: lines of `0.1` and `0.2` total exactly `Decimal("0.3")`, never `0.30000000000000004`.
+
+## Compare two read-sets
+
+Some laws bound one aggregate by another: an order's lines never exceed the order's quantity, refunds never exceed sales. Declare the second side with `against`, a `Measure` scoped by the same values, and `holds` takes both aggregates:
+
+```python
+from forze.application.contracts.invariants import Measure
+
+lines_within_order = SystemInvariant(
+    name="lines-within-order",
+    read_set=ReadSet(spec=ORDER_LINE, scope_keys=("order_id",)),
+    aggregate=SumOf("qty"),
+    against=Measure(
+        read_set=ReadSet(spec=ORDER, scope_keys=("id",)),
+        aggregate=SumOf("qty"),  # the order's own field: a sum over its one row
+    ),
+    holds=lambda lines, order: lines <= order,
+)
+```
+
+The two sides' `scope_keys` pair **by position**: here each order's lines (`order_id`) meet the order whose `id` matches, so both fields must hold the same type. Runtime enforcement takes the law's own scope params (`{"order_id": ...}`) and binds the other side from them.
+
+A scope with rows on **either** side is checked, and the side with no rows there counts as `0`. That is what makes a *minimum* checkable. A one-sided law only ever sees scopes that have rows, so `CountAll` with `n >= 1` cannot notice an order whose last line was removed. Put the orders on the other side and every order becomes a scope:
+
+```python
+order_has_a_line = SystemInvariant(
+    name="order-has-a-line",
+    read_set=ReadSet(spec=ORDER_LINE, scope_keys=("order_id",)),
+    aggregate=CountAll(),
+    against=Measure(read_set=ReadSet(spec=ORDER, scope_keys=("id",)), aggregate=CountAll()),
+    holds=lambda lines, orders: orders == 0 or lines >= 1,
+)
+```
+
+Keep the side you enforce from as `read_set`: an [aggregate kit](../recipes/governed-aggregate-kit.md) reads the law's own `scope_keys` off the row it wrote, so a kit over order lines needs `order_id` there, not `id`.
 
 ## Enforce it: detective or preventive
 
@@ -77,6 +112,6 @@ simulation = Simulation(
 )
 ```
 
-By default the oracle checks the law over **final** state. `compile_oracle(law, per_commit=True)` upgrades to a per-commit trace fold: it checks the law after *every* committed transaction, catching a violation that a later transaction heals — the transient a final-state check misses. Per-commit mode reads the value trace, so it needs `SimulationConfig(capture_values=True)`.
+By default the oracle checks the law over **final** state, with one grouped aggregate per side. A one-sided law checks only the scopes that have rows; a [paired law](#compare-two-read-sets) checks every scope on either side. `compile_oracle(law, per_commit=True)` upgrades to a per-commit trace fold: it checks the law after *every* committed transaction, catching a violation that a later transaction heals — the transient a final-state check misses. Per-commit mode reads the value trace, so it needs `SimulationConfig(capture_values=True)`.
 
 This is the guarantee `propose` can't give. Where `propose` filters one write against the state it saw, the oracle drives the law through thousands of [hostile interleavings](../dst/overview.md) and proves it holds across all of them — and because the same `holds` predicate runs in production enforcement, in the dry-run, and in the oracle, what you simulate is exactly what you ship.

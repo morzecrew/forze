@@ -73,6 +73,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **SSE- and WebSocket-only apps get offline delivery without Socket.IO.** `RealtimeMailboxWriter` and its lifecycle step fill the mailbox those routes replay from, using the gateway's store code. They and the signal sources live in `forze.application.execution.realtime`; `forze_socketio` re-exports what moved.
 
+- **A `SystemInvariant` can compare two read-sets per scope.** `against=Measure(...)` bounds a sum by another sum or by a parent's field, and `holds` takes both aggregates. Every scope on either side is checked, so an order left with no lines breaks `orders == 0 or lines >= 1`.
+
 **`forze ops` for people at a shell and for backfills:**
 
 - **`forze ops` gains typed flags, JSONL batches and shell completion.** `call OP --field VALUE` takes a flat-scalar input as flags; `--batch @PATH|-` runs one call per line in one runtime, stopping at the first failure; `OP` completes in the shell. An unknown option after `OP` now exits 2 with an error object.
@@ -90,6 +92,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`local_identity_deps` wires no tenant resolver for a config that maps no tenant** (**behaviour change**). There, `forze ops call --tenant` gets `400 tenant_request_unverifiable`, not `401 tenant_mismatch`. A tenant on an API key counts and resolves, also in a config built directly.
 
 - **MCP and agent tool descriptions group filterable fields by type** (**behaviour change**). `describe_query_discovery` states the operators every field shares once, then each further operator set once, with its fields under their own types. `QueryDiscovery` and `x-forze-query` are unchanged.
+
+- **A `SystemInvariant` sums a `Decimal` field exactly** (**behaviour change**). Its `holds` gets a `Decimal` where it got a `float`, and the per-commit oracle sums one instead of refusing it. A count is now an `int`; any other sum is still a `float`, on every backend.
 
 - **The dynamic-read write refusal no longer names a READ ONLY transaction.** The message is engine-neutral and the details carry the engine's `statement_type` where it has one. A `DuckDbClient` statement timeout now carries the code `duckdb_query_timeout`.
 
