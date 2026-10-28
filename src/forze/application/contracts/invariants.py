@@ -16,6 +16,7 @@ site, never here.
 
 from __future__ import annotations
 
+import inspect
 from collections.abc import Callable, Mapping
 from decimal import Decimal
 from types import UnionType
@@ -27,11 +28,15 @@ from forze.application.contracts.document import DocumentSpec
 from forze.application.contracts.querying import (
     AggregateComputedFieldExpression,
     QueryFilterExpression,
+    classify_field_type,
 )
 from forze.application.contracts.transaction import IsolationLevel
 from forze.base.exceptions import exc
+from forze.base.logging import get_logger
 
 # ----------------------- #
+
+logger = get_logger("forze.invariants")
 
 AGGREGATE_FIELD = "__forze_aggregate__"
 """The output alias :func:`computed_aggregate` reduces into. Internal and deliberately unlikely as a
@@ -152,8 +157,9 @@ def scope_filter(read_set: ReadSet, params: Mapping[str, Any]) -> QueryFilterExp
     return read_set.where if scope_pred is None else scope_pred
 
 
-def _declares_decimal(model: Any, path: str) -> bool:
-    """Whether *model* declares the field at dotted *path* a ``Decimal`` (optionally ``None``)."""
+def _declared_type(model: Any, path: str) -> Any:
+    """The annotation *model* declares for the field at dotted *path*, without ``None`` or
+    ``Annotated``; ``None`` when the model does not describe the path."""
 
     annotation: Any = model
 
@@ -162,7 +168,7 @@ def _declares_decimal(model: Any, path: str) -> bool:
         field = fields.get(segment) if isinstance(fields, dict) else None
 
         if field is None:
-            return False
+            return None
 
         annotation = field.annotation
 
@@ -173,7 +179,42 @@ def _declares_decimal(model: Any, path: str) -> bool:
         if get_origin(annotation) is Annotated:
             annotation = get_args(annotation)[0]
 
+    return annotation
+
+
+def _declares_decimal(model: Any, path: str) -> bool:
+    """Whether *model* declares the field at dotted *path* a ``Decimal`` (optionally ``None``)."""
+
+    annotation = _declared_type(model, path)
+
     return isinstance(annotation, type) and issubclass(annotation, Decimal)
+
+
+def _comparable(own: Any, other: Any) -> bool:
+    """Whether two paired scope fields can hold the same value: the same kind of type, or a
+    ``UUID`` or ``Enum`` against a string (the oracles compare a scope by its string form)."""
+
+    kinds = {classify_field_type(own), classify_field_type(other)}
+
+    return len(kinds) == 1 or "unknown" in kinds or kinds == {"string", "scalar"}
+
+
+def _takes(holds: Callable[..., bool], count: int) -> bool:
+    """Whether *holds* takes *count* positional arguments; ``True`` when it cannot be inspected."""
+
+    try:
+        signature = inspect.signature(holds)
+
+    except (TypeError, ValueError):
+        return True
+
+    try:
+        signature.bind(*range(count))
+
+    except TypeError:
+        return False
+
+    return True
 
 
 def aggregate_value(read_set: ReadSet, reducer: Reducer, raw: Any) -> AggregateValue:
@@ -215,7 +256,11 @@ class SystemInvariant:
     With :attr:`against`, the law is **paired**: *holds* takes two arguments, this read-set's
     aggregate and the other side's, for the same scope — ``holds=lambda lines, order: lines <=
     order``. A scope with rows on either side is checked, and the side with none contributes ``0``,
-    so a parent read-set on one side makes every parent a scope, including one with no children.
+    so a parent read-set on one side makes every parent a scope, including one with no children. A
+    scope with rows on neither side does not exist and is not checked.
+
+    Declaring a law refuses a *holds* that cannot take its arguments, and paired scope fields of
+    types that can never hold the same value (an ``int`` against a ``UUID``).
     """
 
     name: str
@@ -240,15 +285,55 @@ class SystemInvariant:
     # ....................... #
 
     def __attrs_post_init__(self) -> None:
-        if self.against is not None and len(self.against.read_set.scope_keys) != len(
-            self.read_set.scope_keys
-        ):
+        arity, takes = (1, "the aggregate") if self.against is None else (2, "both aggregates")
+
+        if not _takes(self.holds, arity):
             raise exc.configuration(
-                f"system invariant {self.name!r}: against is scoped by "
-                f"{list(self.against.read_set.scope_keys)} but the law by "
-                f"{list(self.read_set.scope_keys)} — the keys pair by position, so both sides need "
-                "the same number",
+                f"system invariant {self.name!r}: holds must take {arity} positional "
+                f"argument(s), {takes}",
+                code="system_invariant_arity_mismatch",
+            )
+
+        sides = [(self.read_set, self.aggregate)]
+
+        if self.against is not None:
+            self._check_pairing(self.against)
+            sides.append((self.against.read_set, self.against.aggregate))
+
+        for read_set, reducer in sides:
+            model = read_set.spec.read
+
+            if isinstance(reducer, SumOf) and _declared_type(model, reducer.field) is None:
+                logger.warning(
+                    "System invariant %r sums %r, which %s does not declare, so holds gets its "
+                    "total as a float rather than an exact Decimal",
+                    self.name,
+                    reducer.field,
+                    model.__name__,
+                )
+
+    def _check_pairing(self, against: Measure) -> None:
+        own_keys, other_keys = self.read_set.scope_keys, against.read_set.scope_keys
+
+        if len(other_keys) != len(own_keys):
+            raise exc.configuration(
+                f"system invariant {self.name!r}: against is scoped by {list(other_keys)} but the "
+                f"law by {list(own_keys)} — the keys pair by position, so both sides need the "
+                "same number",
                 code="system_invariant_scope_mismatch",
+            )
+
+        for own, other in zip(own_keys, other_keys, strict=True):
+            own_type = _declared_type(self.read_set.spec.read, own)
+            other_type = _declared_type(against.read_set.spec.read, other)
+
+            if own_type is None or other_type is None or _comparable(own_type, other_type):
+                continue
+
+            raise exc.configuration(
+                f"system invariant {self.name!r}: scope key {own!r} ({own_type!r}) is paired with "
+                f"{other!r} ({other_type!r}), which can never hold the same value",
+                code="system_invariant_scope_type_mismatch",
             )
 
     # ....................... #

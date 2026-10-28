@@ -12,7 +12,7 @@ from uuid import UUID, uuid4
 
 import pytest
 
-from forze.application.contracts.invariants import ReadSet, SumOf, SystemInvariant
+from forze.application.contracts.invariants import Measure, ReadSet, SumOf, SystemInvariant
 from forze.application.contracts.transaction import IsolationLevel
 from forze.application.execution import ExecutionContext
 from forze.base.exceptions import exc
@@ -23,10 +23,13 @@ from tests.support.paired_invariants import (
     LINES,
     LINES_WITHIN_ORDER_QTY,
     LINES_WITHIN_ORDER_TOTAL,
+    NOTES,
     ORDER_HAS_A_LINE,
+    ORDER_HAS_A_NOTE,
     ORDERS,
     REFUNDS_WITHIN_SALES,
     LineCreate,
+    NoteCreate,
     OrderCreate,
 )
 
@@ -189,6 +192,30 @@ class TestScopeWithNoRows:
 
         assert (await evaluate(ORDER_HAS_A_LINE, ctx, {"order_id": order})).observed == 1
 
-    async def test_no_order_and_no_lines_holds(self) -> None:
-        # A scope with no rows on either side: the order is gone too, so nothing is owed.
-        assert (await evaluate(ORDER_HAS_A_LINE, _ctx(), {"order_id": uuid4()})).held
+    async def test_a_binding_with_rows_on_neither_side_is_not_checked(self) -> None:
+        # The oracles never see such a scope, so the runtime does not call holds for it either; an
+        # order with qty 0 has a row, so it is checked even though both sums are 0.
+        never = SystemInvariant(
+            name="never",
+            read_set=ReadSet(spec=LINES, scope_keys=("order_id",)),
+            aggregate=SumOf("qty"),
+            against=Measure(
+                read_set=ReadSet(spec=ORDERS, scope_keys=("id",)), aggregate=SumOf("qty")
+            ),
+            holds=lambda _lines, _order: False,
+        )
+        ctx = _ctx()
+        order = await _order(ctx)
+
+        assert (await evaluate(never, ctx, {"order_id": uuid4()})).held
+        assert not (await evaluate(never, ctx, {"order_id": order})).held
+
+    async def test_a_string_reference_binds_the_uuid_id(self) -> None:
+        ctx = _ctx()
+        noted, bare = await _order(ctx), await _order(ctx)
+        await ctx.document.command(NOTES).create(NoteCreate(order_ref=str(noted)))
+
+        result = await evaluate(ORDER_HAS_A_NOTE, ctx, {"order_ref": str(noted)})
+
+        assert (result.held, result.observed, result.against) == (True, 1, 1)
+        assert not (await evaluate(ORDER_HAS_A_NOTE, ctx, {"order_ref": str(bare)})).held

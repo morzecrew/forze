@@ -25,7 +25,11 @@ one_capture_per_order = SystemInvariant(
 )
 ```
 
-The law holds **per distinct scope value** — once *per order* here, because `scope_keys=("order_id",)`. Empty `scope_keys` declares a *global* law (one check over the whole `where`-filtered collection); reuse `tenant_aware` in `where` for a per-tenant scope. `holds` is a pure function of the aggregate, and must be deterministic and side-effect-free, because the same predicate runs in production *and* inside the simulation. It receives a `CountAll`'s cardinality as an `int`, and a `SumOf`'s total as an exact `Decimal` when the read model declares the field `Decimal`, else as a `float`. The type follows the declaration, not the backend, so a law sees the same value on the mock, Postgres and Mongo: lines of `0.1` and `0.2` total exactly `Decimal("0.3")`, never `0.30000000000000004`.
+The law holds **per distinct scope value** — once *per order* here, because `scope_keys=("order_id",)`. Empty `scope_keys` declares a *global* law (one check over the whole `where`-filtered collection); reuse `tenant_aware` in `where` for a per-tenant scope. `holds` is a pure function of the aggregate, and must be deterministic and side-effect-free, because the same predicate runs in production *and* inside the simulation. It receives a `CountAll`'s cardinality as an `int`, and a `SumOf`'s total as an exact `Decimal` when the read model declares the field `Decimal`, else as a `float`. The type follows the declaration, not the backend, so a law sees the same value on the mock, Postgres and Mongo: lines of `0.1` and `0.2` total exactly `Decimal("0.3")`, never `0.30000000000000004`. A sum the read model does not declare (a path into a `dict`) is passed as a `float`, with a warning when the law is declared.
+
+!!! warning "A `Decimal` total does not mix with float arithmetic"
+
+    Comparing a `Decimal` with an `int` or a `float` works, but arithmetic does not: `total * 1.1` raises `TypeError`. Write the factor as a `Decimal` (`total * Decimal("1.1")`). Violation messages print the value as it is, so a count reads `3`, not `3.0`.
 
 ## Compare two read-sets
 
@@ -46,9 +50,9 @@ lines_within_order = SystemInvariant(
 )
 ```
 
-The two sides' `scope_keys` pair **by position**: here each order's lines (`order_id`) meet the order whose `id` matches, so both fields must hold the same type. Runtime enforcement takes the law's own scope params (`{"order_id": ...}`) and binds the other side from them.
+The two sides' `scope_keys` pair **by position**: here each order's lines (`order_id`) meet the order whose `id` matches. The oracles match a `UUID` or an `Enum` by its string form, so a `str` reference to a `UUID` id works; a pairing that can never match, such as an `int` against a `UUID`, is refused when the law is declared, as is a `holds` that does not take two arguments. Runtime enforcement takes the law's own scope params (`{"order_id": ...}`) and binds the other side from them.
 
-A scope with rows on **either** side is checked, and the side with no rows there counts as `0`. That is what makes a *minimum* checkable. A one-sided law only ever sees scopes that have rows, so `CountAll` with `n >= 1` cannot notice an order whose last line was removed. Put the orders on the other side and every order becomes a scope:
+Every scope with rows on **either** side is checked, and the side with no rows there counts as `0`. A scope with rows on neither side does not exist, so no evaluator calls `holds` for it. That is what makes a *minimum* checkable. A one-sided law only ever sees scopes that have rows, so `CountAll` with `n >= 1` cannot notice an order whose last line was removed. Put the orders on the other side and every order becomes a scope:
 
 ```python
 order_has_a_line = SystemInvariant(
@@ -112,6 +116,6 @@ simulation = Simulation(
 )
 ```
 
-By default the oracle checks the law over **final** state, with one grouped aggregate per side. A one-sided law checks only the scopes that have rows; a [paired law](#compare-two-read-sets) checks every scope on either side. `compile_oracle(law, per_commit=True)` upgrades to a per-commit trace fold: it checks the law after *every* committed transaction, catching a violation that a later transaction heals — the transient a final-state check misses. Per-commit mode reads the value trace, so it needs `SimulationConfig(capture_values=True)`.
+By default the oracle checks the law over **final** state, with one grouped aggregate per side. A one-sided law checks only the scopes that have rows; a [paired law](#compare-two-read-sets) checks every scope with rows on either side. `compile_oracle(law, per_commit=True)` upgrades to a per-commit trace fold: it checks the law after *every* committed transaction, catching a violation that a later transaction heals — the transient a final-state check misses. Per-commit mode reads the value trace, so it needs `SimulationConfig(capture_values=True)`.
 
 This is the guarantee `propose` can't give. Where `propose` filters one write against the state it saw, the oracle drives the law through thousands of [hostile interleavings](../dst/overview.md) and proves it holds across all of them — and because the same `holds` predicate runs in production enforcement, in the dry-run, and in the oracle, what you simulate is exactly what you ship.

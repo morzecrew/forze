@@ -1,21 +1,32 @@
 """compile_oracle over paired laws, exact decimal sums, and scopes with no rows — both oracles.
 
-The final-state oracle runs one grouped aggregate per side and checks every scope present on either
-side, so an order with no lines is checked once the order side names it. The per-commit fold
-materializes both sides' routes from the value-trace and sums a ``Decimal`` exactly from the row's
-native copy. Each law here is the one the runtime tests evaluate, so the evaluators agree.
+The final-state oracle runs one grouped aggregate per side and checks every scope with rows on
+either side, so an order with no lines is checked once the order side names it. The per-commit fold
+materializes both sides' routes from the value-trace and parses a declared ``Decimal`` back from its
+JSON string exactly. Both match the two sides by the scope's string form, so a ``UUID`` id and a
+string reference to it are one scope. Each law here is the one the runtime tests evaluate.
 """
 
 from __future__ import annotations
 
 from decimal import Decimal
+from enum import StrEnum
 from typing import Any
 from uuid import UUID
 
 import pytest
 
+from forze.application.contracts.document import DocumentSpec
+from forze.application.contracts.invariants import (
+    CountAll,
+    Measure,
+    ReadSet,
+    SumOf,
+    SystemInvariant,
+)
 from forze.application.execution import ExecutionContext
 from forze.base.exceptions import exc
+from forze.domain.models import CreateDocumentCmd, Document, ReadDocument
 from forze_dst import Cluster, SimulationConfig
 from forze_dst.cluster import ClusterConfig
 from forze_dst.invariants import check, compile_oracle
@@ -28,10 +39,13 @@ from tests.support.paired_invariants import (
     LINES,
     LINES_WITHIN_ORDER_QTY,
     LINES_WITHIN_ORDER_TOTAL,
+    NOTES,
     ORDER_HAS_A_LINE,
+    ORDER_HAS_A_NOTE,
     ORDERS,
     REFUNDS_WITHIN_SALES,
     LineCreate,
+    NoteCreate,
     OrderCreate,
 )
 
@@ -117,6 +131,19 @@ class TestFinalStatePairedLaw:
         assert len(violations) == 1
         assert "against 5" in violations[0].message
 
+    async def test_a_string_reference_and_a_uuid_id_are_one_scope(self) -> None:
+        ctx = _ctx()
+        noted = await _order(ctx)
+        await _order(ctx)
+        await ctx.document.command(NOTES).create(NoteCreate(order_ref=str(noted)))
+
+        history, violations = await _final_state(ORDER_HAS_A_NOTE, ctx)
+
+        # Two orders, two scopes: a note grouped apart from its order would make three.
+        assert len(history.of_kind(SYSTEM_INVARIANT_KIND)) == 2
+        assert len(violations) == 1
+        assert str(noted) not in violations[0].message
+
 
 class TestFinalStateExactDecimals:
     async def test_tenths_sum_exactly_and_are_recorded_as_decimals(self) -> None:
@@ -156,6 +183,26 @@ class TestFinalStateScopeWithNoRows:
         assert len(violations) == 1
         assert str(without) in violations[0].message
 
+    async def test_a_scope_with_rows_on_neither_side_is_not_checked(self) -> None:
+        # As at runtime: an order with qty 0 is a scope (it has a row), a missing order is not.
+        never = SystemInvariant(
+            name="never",
+            read_set=ReadSet(spec=LINES, scope_keys=("order_id",)),
+            aggregate=SumOf("qty"),
+            against=Measure(
+                read_set=ReadSet(spec=ORDERS, scope_keys=("id",)), aggregate=SumOf("qty")
+            ),
+            holds=lambda _lines, _order: False,
+        )
+        ctx = _ctx()
+
+        history, violations = await _final_state(never, ctx)
+        assert (history.of_kind(SYSTEM_INVARIANT_KIND), violations) == ([], [])
+
+        await _order(ctx)
+        _, violations = await _final_state(never, ctx)
+        assert len(violations) == 1
+
 
 # ----------------------- #
 # Per commit, over a synthesized value-trace spanning both routes.
@@ -168,23 +215,19 @@ def _event(fields: dict[str, Any]) -> Event:
     return Event(seq=seq, kind="trace", at=float(seq), fields={**fields, "trace_seq": seq})
 
 
-def _write(tx_id: int, route: str, row: dict[str, Any], *, native: bool = True) -> Event:
-    """A captured write: the JSON ``result`` (decimals as strings) and by default the native row."""
+def _write(tx_id: int, route: str, row: dict[str, Any]) -> Event:
+    """A captured write, in the trace's JSON form: a ``Decimal`` as its string."""
 
-    json_row = {key: str(v) if isinstance(v, Decimal) else v for key, v in row.items()}
-    fields: dict[str, Any] = {
-        "trace_domain": "document",
-        "op": "update",
-        "route": route,
-        "phase": "command",
-        "tx_id": tx_id,
-        "result": json_row,
-    }
-
-    if native:
-        fields["result_native"] = row
-
-    return _event(fields)
+    return _event(
+        {
+            "trace_domain": "document",
+            "op": "update",
+            "route": route,
+            "phase": "command",
+            "tx_id": tx_id,
+            "result": {key: str(v) if isinstance(v, Decimal) else v for key, v in row.items()},
+        }
+    )
 
 
 def _kill(tx_id: int, route: str, key: str) -> Event:
@@ -248,9 +291,21 @@ class TestPerCommitPairedLaw:
 
         assert violations == []
 
+    def test_a_uuid_id_and_its_string_reference_are_one_scope(self) -> None:
+        order = UUID(int=1)  # a trace producer that kept the UUID rather than its string
+
+        violations = _per_commit(
+            ORDER_HAS_A_NOTE,
+            _write(1, ORDERS.name, {"id": order}),
+            _write(1, NOTES.name, {"id": "n1", "order_ref": str(order)}),
+            _commit(1),
+        )
+
+        assert violations == []
+
 
 class TestPerCommitExactDecimals:
-    def test_tenths_sum_exactly_from_the_native_row(self) -> None:
+    def test_tenths_sum_exactly_from_their_json_strings(self) -> None:
         violations = _per_commit(
             LINES_WITHIN_ORDER_TOTAL,
             _write(1, ORDERS.name, _order_row("o1", total="0.3")),
@@ -273,13 +328,39 @@ class TestPerCommitExactDecimals:
         assert len(violations) == 1
         assert "aggregate observed 0.31 against 0.3" in violations[0].message
 
-    def test_a_decimal_seen_only_as_its_json_string_fails_closed(self) -> None:
+    @pytest.mark.parametrize(
+        ("law", "field", "value"),
+        [
+            (LINES_WITHIN_ORDER_TOTAL, "amount", "a tenth"),  # declared Decimal, not a number
+            (LINES_WITHIN_ORDER_QTY, "qty", "2"),  # a string is parsed only for a Decimal field
+        ],
+    )
+    def test_a_string_that_is_not_a_declared_decimal_fails_closed(
+        self, law: Any, field: str, value: str
+    ) -> None:
         with pytest.raises(exc, match="must be numeric"):
             _per_commit(
-                LINES_WITHIN_ORDER_TOTAL,
-                _write(1, LINES.name, _line_row("l1", "o1", amount="0.1"), native=False),
+                law,
+                _write(1, LINES.name, {**_line_row("l1", "o1"), field: value}),
                 _commit(1),
             )
+
+
+class TestPerCommitWhere:
+    def test_a_where_on_enum_and_uuid_columns_matches_the_json_row(self) -> None:
+        # The trace carries an Enum as its value and a UUID as its string; the where still matches.
+        ticket = {"owner": str(_OWNER), "status": "open"}
+
+        violations = _per_commit(
+            ONE_OPEN_TICKET,
+            _write(1, TICKETS.name, {"id": "t1", **ticket}),
+            _write(1, TICKETS.name, {"id": "t2", **ticket}),
+            _write(1, TICKETS.name, {"id": "t3", **ticket, "status": "closed"}),
+            _commit(1),
+        )
+
+        assert len(violations) == 1
+        assert "aggregate observed 2" in violations[0].message
 
 
 class TestPerCommitScopeWithNoRows:
@@ -305,7 +386,8 @@ class TestPerCommitScopeWithNoRows:
 
 
 # ----------------------- #
-# End to end over a real run: the value-trace carries native decimals, both oracles agree.
+# End to end over a real run: the value-trace's JSON rows and the store's native rows give both
+# oracles the same answer, for exact decimals and for a where on non-string columns.
 
 _CAPTURE = SimulationConfig(seeds=range(1), cluster=ClusterConfig(nodes=1), capture_values=True)
 
@@ -344,3 +426,64 @@ class TestEndToEnd:
         for oracle in (final, per_commit):
             violations = [v for h in histories for v in check(h, list(oracle.invariants))]
             assert bool(violations) is overrun
+
+    def test_both_oracles_match_a_where_on_enum_and_uuid_columns(self) -> None:
+        final = compile_oracle(ONE_OPEN_TICKET)
+        per_commit = compile_oracle(ONE_OPEN_TICKET, per_commit=True)
+
+        async def node(_node_id: int, ctx: ExecutionContext) -> None:
+            async with ctx.tx_ctx.scope("mock"):
+                for status in (_Status.OPEN, _Status.OPEN, _Status.CLOSED):
+                    await ctx.document.command(TICKETS).create(
+                        _TicketCreate(owner=_OWNER, status=status)
+                    )
+                await ctx.document.command(TICKETS).create(_TicketCreate(owner=UUID(int=43)))
+
+        histories = _cluster(node, final.observe).histories(_CAPTURE)
+
+        for oracle in (final, per_commit):
+            violations = [v for h in histories for v in check(h, list(oracle.invariants))]
+            assert len(violations) == 1  # two open tickets for _OWNER; the closed one and 43 never
+            assert "aggregate observed 2" in violations[0].message
+
+
+class _Status(StrEnum):
+    # A plain Enum would not do: the mock store does not match a string against one at all.
+    OPEN = "open"
+    CLOSED = "closed"
+
+
+class _Ticket(Document):
+    owner: UUID
+    status: _Status = _Status.OPEN
+
+
+class _TicketCreate(CreateDocumentCmd):
+    owner: UUID
+    status: _Status = _Status.OPEN
+
+
+class _TicketRead(ReadDocument):
+    owner: UUID
+    status: _Status = _Status.OPEN
+
+
+TICKETS = DocumentSpec(
+    name="paired_tickets",
+    read=_TicketRead,
+    write={"domain": _Ticket, "create_cmd": _TicketCreate, "update_cmd": _TicketCreate},
+)
+
+_OWNER = UUID(int=42)
+
+ONE_OPEN_TICKET = SystemInvariant(
+    name="one_open_ticket",
+    read_set=ReadSet(
+        spec=TICKETS,
+        scope_keys=("owner",),
+        # A string against an Enum column, and a UUID against a UUID column.
+        where={"$values": {"status": "open", "owner": _OWNER}},
+    ),
+    aggregate=CountAll(),
+    holds=lambda n: n <= 1,
+)

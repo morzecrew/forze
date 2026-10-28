@@ -12,7 +12,7 @@ from forze_mongo.execution.deps import ConfigurableMongoDocument, MongoDocumentC
 from forze_mongo.execution.deps.keys import MongoClientDepKey
 from forze_mongo.kernel.client import MongoClient
 from tests.support.execution_context import context_from_deps
-from tests.support.paired_invariants import LINES, ORDERS, assert_paired_laws_on
+from tests.support.paired_invariants import LINES, NOTES, ORDERS, assert_paired_laws_on
 
 # ----------------------- #
 
@@ -29,8 +29,7 @@ async def test_paired_laws_over_mongo(mongo_client: MongoClient) -> None:
         )
 
     documents = {
-        ORDERS.name: _document(f"inv_orders_{suffix}"),
-        LINES.name: _document(f"inv_lines_{suffix}"),
+        spec.name: _document(f"inv_{spec.name}_{suffix}") for spec in (ORDERS, LINES, NOTES)
     }
     ctx = context_from_deps(
         Deps.plain({MongoClientDepKey: mongo_client}).merge(

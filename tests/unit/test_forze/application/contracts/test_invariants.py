@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
+import inspect
 from decimal import Decimal
+from typing import Any
+from unittest.mock import MagicMock
 
 import pytest
 from pydantic import BaseModel
 
+from forze.application.contracts import invariants
 from forze.application.contracts.document import DocumentSpec
 from forze.application.contracts.invariants import (
     CountAll,
@@ -97,6 +101,72 @@ class TestPairedDeclaration:
 
         assert law.holds_for(Decimal("0.3"), Decimal("0.3"))
         assert not law.holds_for(Decimal("0.4"), Decimal("0.3"))
+
+    @pytest.mark.parametrize(
+        ("against", "holds"),
+        [
+            (None, lambda own, other: own <= other),  # one side, two arguments
+            (Measure(read_set=READ_SET, aggregate=CountAll()), lambda n: n <= 1),  # paired, one
+        ],
+    )
+    def test_a_holds_that_cannot_take_its_arguments_is_refused(
+        self, against: Measure | None, holds: Any
+    ) -> None:
+        with pytest.raises(exc) as caught:
+            SystemInvariant(
+                name="arity", read_set=READ_SET, aggregate=CountAll(), against=against, holds=holds
+            )
+
+        assert caught.value.code == "system_invariant_arity_mismatch"
+
+    def test_a_holds_without_an_inspectable_signature_is_accepted(self) -> None:
+        with pytest.raises(ValueError):
+            inspect.signature(max)
+
+        law = SystemInvariant(name="builtin", read_set=READ_SET, aggregate=CountAll(), holds=max)
+
+        assert law.holds is max
+
+    def test_paired_scope_fields_that_never_hold_the_same_value_are_refused(self) -> None:
+        by_quantity = ReadSet(spec=SPEC, scope_keys=("quantity",))  # int
+
+        with pytest.raises(exc) as caught:
+            SystemInvariant(
+                name="int_against_uuid",
+                read_set=by_quantity,
+                aggregate=CountAll(),
+                against=Measure(
+                    read_set=ReadSet(spec=SPEC, scope_keys=("id",)), aggregate=CountAll()
+                ),
+                holds=lambda own, other: own <= other,
+            )
+
+        assert caught.value.code == "system_invariant_scope_type_mismatch"
+
+    def test_a_string_paired_with_a_uuid_is_accepted(self) -> None:
+        SystemInvariant(
+            name="str_against_uuid",
+            read_set=READ_SET,  # group: str
+            aggregate=CountAll(),
+            against=Measure(read_set=ReadSet(spec=SPEC, scope_keys=("id",)), aggregate=CountAll()),
+            holds=lambda own, other: own <= other,
+        )
+
+    def test_summing_a_path_the_read_model_does_not_declare_warns(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        spy = MagicMock()
+        monkeypatch.setattr(invariants, "logger", spy)
+
+        SystemInvariant(
+            name="undeclared",
+            read_set=READ_SET,
+            aggregate=SumOf("money.cents"),
+            holds=lambda total: total >= 0,
+        )
+
+        spy.warning.assert_called_once()
+        assert "money.cents" in spy.warning.call_args.args
 
     def test_holds_for_passes_one_value_to_a_single_law(self) -> None:
         law = SystemInvariant(

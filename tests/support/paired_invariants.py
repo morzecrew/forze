@@ -1,8 +1,9 @@
-"""Orders and their lines, and the paired system invariants that relate them.
+"""Orders, their lines and notes, and the paired system invariants that relate them.
 
-Shared by the runtime, final-state oracle, per-commit oracle and Postgres tests, so every evaluator
-is checked against the same three laws: a sum bounded by a parent's field (``qty``, an ``int``), the
-same bound over exact decimals (``amount`` against ``total``), and at least one line per order.
+Shared by the runtime, final-state oracle, per-commit oracle and backend tests, so every evaluator
+is checked against the same laws: a sum bounded by a parent's field (``qty``, an ``int``), the same
+bound over exact decimals (``amount`` against ``total``), at least one line per order, and at least
+one note per order, where a note refers to its order by the id's string (``order_ref: str``).
 """
 
 from __future__ import annotations
@@ -11,7 +12,6 @@ from decimal import Decimal
 from uuid import UUID
 
 from forze.application.contracts.document import DocumentSpec
-from forze.application.execution import ExecutionContext
 from forze.application.contracts.invariants import (
     CountAll,
     Measure,
@@ -19,6 +19,7 @@ from forze.application.contracts.invariants import (
     SumOf,
     SystemInvariant,
 )
+from forze.application.execution import ExecutionContext
 from forze.domain.models import CreateDocumentCmd, Document, ReadDocument
 from forze_dst.invariants import check, compile_oracle
 from forze_dst.oracle.recorder import Recorder, bind_recorder
@@ -76,6 +77,25 @@ LINES = DocumentSpec(
     write={"domain": Line, "create_cmd": LineCreate, "update_cmd": LineCreate},
 )
 
+
+class Note(Document):
+    order_ref: str
+
+
+class NoteCreate(CreateDocumentCmd):
+    order_ref: str
+
+
+class NoteRead(ReadDocument):
+    order_ref: str
+
+
+NOTES = DocumentSpec(
+    name="paired_notes",
+    read=NoteRead,
+    write={"domain": Note, "create_cmd": NoteCreate, "update_cmd": NoteCreate},
+)
+
 _LINES_BY_ORDER = ReadSet(spec=LINES, scope_keys=("order_id",))
 _ORDER_BY_ID = ReadSet(spec=ORDERS, scope_keys=("id",))
 
@@ -117,6 +137,15 @@ REFUNDS_WITHIN_SALES = SystemInvariant(
 )
 """A sum bounded by another sum over the same collection."""
 
+ORDER_HAS_A_NOTE = SystemInvariant(
+    name="order_has_a_note",
+    read_set=ReadSet(spec=NOTES, scope_keys=("order_ref",)),
+    aggregate=CountAll(),
+    against=Measure(read_set=_ORDER_BY_ID, aggregate=CountAll()),
+    holds=lambda notes, orders: orders == 0 or notes >= 1,
+)
+"""A ``str`` reference paired with a ``UUID`` id: one scope per order, whichever form is read."""
+
 
 # ....................... #
 
@@ -137,6 +166,8 @@ async def assert_paired_laws_on(ctx: ExecutionContext) -> None:
             LineCreate(order_id=full.id, qty=qty, amount=Decimal(amount))
         )
 
+    await ctx.document.command(NOTES).create(NoteCreate(order_ref=str(full.id)))
+
     exact = await evaluate(LINES_WITHIN_ORDER_TOTAL, ctx, {"order_id": full.id})
     counted = await evaluate(LINES_WITHIN_ORDER_QTY, ctx, {"order_id": full.id})
 
@@ -148,8 +179,11 @@ async def assert_paired_laws_on(ctx: ExecutionContext) -> None:
 
     assert (await evaluate(ORDER_HAS_A_LINE, ctx, {"order_id": full.id})).held
     assert not (await evaluate(ORDER_HAS_A_LINE, ctx, {"order_id": empty.id})).held
+    # A string reference binds the UUID id on the other side.
+    assert (await evaluate(ORDER_HAS_A_NOTE, ctx, {"order_ref": str(full.id)})).held
+    assert not (await evaluate(ORDER_HAS_A_NOTE, ctx, {"order_ref": str(empty.id)})).held
 
-    oracle = compile_oracle(ORDER_HAS_A_LINE, LINES_WITHIN_ORDER_TOTAL)
+    oracle = compile_oracle(ORDER_HAS_A_LINE, LINES_WITHIN_ORDER_TOTAL, ORDER_HAS_A_NOTE)
     recorder = Recorder(seed=0)
 
     with bind_recorder(recorder):
@@ -162,8 +196,13 @@ async def assert_paired_laws_on(ctx: ExecutionContext) -> None:
         if event.fields["name"] == LINES_WITHIN_ORDER_TOTAL.name
     ]
 
-    assert [violation.invariant for violation in violations] == [ORDER_HAS_A_LINE.name]
-    assert str(empty.id) in violations[0].message
+    # Only the order with neither a line nor a note breaks a law; the note's string reference and
+    # the order's UUID id are one scope, not two.
+    assert [violation.invariant for violation in violations] == [
+        ORDER_HAS_A_LINE.name,
+        ORDER_HAS_A_NOTE.name,
+    ]
+    assert all(str(empty.id) in violation.message for violation in violations)
     # The order with no lines is a scope too: its lines total an exact zero.
     assert totals == [Decimal("0.3"), Decimal(0)]
     assert all(isinstance(total, Decimal) for total in totals)

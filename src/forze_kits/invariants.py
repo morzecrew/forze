@@ -35,6 +35,7 @@ from forze.application.contracts.invariants import (
     computed_aggregate,
     scope_filter,
 )
+from forze.application.contracts.querying import AggregateComputedFieldExpression
 from forze.application.contracts.transaction import IsolationLevel
 from forze.application.execution import ExecutionContext
 from forze.application.execution.operations.registry import OperationRegistry
@@ -73,25 +74,38 @@ def _described(result: InvariantResult) -> str:
 # ....................... #
 
 
+_ROWS_FIELD = "__forze_rows__"
+"""The row count a sum is read with, under an alias no document field takes."""
+
+
 async def _measure(
     ctx: ExecutionContext,
     read_set: ReadSet,
     reducer: Reducer,
     params: Mapping[str, Any],
-) -> AggregateValue:
-    """Read one side's aggregate over the records *params* scope it to."""
+) -> tuple[AggregateValue, bool]:
+    """Read one side's aggregate over the records *params* scope it to, and whether any exist."""
 
     filters = scope_filter(read_set, params)
     query = ctx.document.query(read_set.spec)
 
     if isinstance(reducer, CountAll):
-        return aggregate_value(read_set, reducer, await query.count(filters))
+        count = await query.count(filters)
+
+        return aggregate_value(read_set, reducer, count), count > 0
 
     # SumOf — a no-group aggregate is the total over the scoped set (one row).
-    page = await query.aggregate_many({"$computed": computed_aggregate(reducer)}, filters=filters)
-    raw = page.hits[0].get(AGGREGATE_FIELD) if page.hits else None
+    computed: AggregateComputedFieldExpression = {
+        **computed_aggregate(reducer),
+        _ROWS_FIELD: {"$count": None},
+    }
+    page = await query.aggregate_many({"$computed": computed}, filters=filters)
+    row = page.hits[0] if page.hits else {}
 
-    return aggregate_value(read_set, reducer, raw)
+    # A port that reports no count is taken to have rows, so the law is still checked.
+    return aggregate_value(read_set, reducer, row.get(AGGREGATE_FIELD)), bool(
+        row.get(_ROWS_FIELD, 1)
+    )
 
 
 async def evaluate(
@@ -106,11 +120,12 @@ async def evaluate(
     ``invariant.holds`` to the aggregate (see
     :func:`~forze.application.contracts.invariants.aggregate_value`). A paired law reads its
     :attr:`~forze.application.contracts.invariants.SystemInvariant.against` side the same way, bound
-    to *params*' values by position. This is the kernel both :func:`enforce` and the DST oracle
-    reuse, so it stays side-effect free (it only reads).
+    to *params*' values by position; a binding with no rows on either side is not a scope, as the
+    oracles see it, so it holds without calling ``holds``. This is the kernel both :func:`enforce`
+    and the DST oracle reuse, so it stays side-effect free (it only reads).
     """
 
-    observed = await _measure(ctx, invariant.read_set, invariant.aggregate, params)
+    observed, own_rows = await _measure(ctx, invariant.read_set, invariant.aggregate, params)
     side = invariant.against
     against: AggregateValue | None = None
 
@@ -122,7 +137,12 @@ async def evaluate(
                 side.read_set.scope_keys, invariant.read_set.scope_keys, strict=True
             )
         }
-        against = await _measure(ctx, side.read_set, side.aggregate, side_params)
+        against, other_rows = await _measure(ctx, side.read_set, side.aggregate, side_params)
+
+        if not (own_rows or other_rows):
+            return InvariantResult(
+                name=invariant.name, observed=observed, against=against, held=True
+            )
 
     return InvariantResult(
         name=invariant.name,

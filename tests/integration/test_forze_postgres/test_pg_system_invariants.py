@@ -19,7 +19,7 @@ from forze_postgres.execution.deps.keys import PostgresClientDepKey, PostgresInt
 from forze_postgres.kernel.catalog.introspect import PostgresIntrospector
 from forze_postgres.kernel.client.client import PostgresClient
 from tests.support.execution_context import context_from_deps
-from tests.support.paired_invariants import LINES, ORDERS, assert_paired_laws_on
+from tests.support.paired_invariants import LINES, NOTES, ORDERS, assert_paired_laws_on
 
 # ----------------------- #
 
@@ -45,11 +45,12 @@ def _document(table: str) -> ConfigurablePostgresDocument[Any, Any, Any, Any]:
 @pytest.mark.asyncio
 async def test_paired_laws_over_postgres(pg_client: PostgresClient) -> None:
     suffix = uuid4().hex[:12]
-    orders, lines = f"inv_orders_{suffix}", f"inv_lines_{suffix}"
+    orders, lines, notes = (f"inv_{name}_{suffix}" for name in ("orders", "lines", "notes"))
 
     await pg_client.execute(
         f"CREATE TABLE {orders} ({_BOOKKEEPING} qty bigint NOT NULL, total numeric NOT NULL);"
     )
+    await pg_client.execute(f"CREATE TABLE {notes} ({_BOOKKEEPING} order_ref text NOT NULL);")
     await pg_client.execute(
         f"""
         CREATE TABLE {lines} (
@@ -62,7 +63,11 @@ async def test_paired_laws_over_postgres(pg_client: PostgresClient) -> None:
         """
     )
 
-    documents = {ORDERS.name: _document(orders), LINES.name: _document(lines)}
+    documents = {
+        ORDERS.name: _document(orders),
+        LINES.name: _document(lines),
+        NOTES.name: _document(notes),
+    }
     ctx = context_from_deps(
         Deps.plain(
             {
