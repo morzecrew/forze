@@ -5,7 +5,7 @@ from __future__ import annotations
 import base64
 from datetime import date, datetime
 from decimal import Decimal
-from typing import Any, get_args, get_origin
+from typing import Annotated, Any, TypeAliasType, get_args, get_origin
 from uuid import UUID
 
 from pydantic import BaseModel
@@ -132,13 +132,24 @@ def params_to_query_parameters(params: BaseModel | JsonDict) -> list[JsonDict]:
 
 
 def _unwrap_optional(annotation: Any) -> Any:
-    """Strip a single ``Optional[...]`` / ``X | None`` wrapper, else return as-is."""
+    """Strip ``Optional[...]`` / ``X | None``, ``Annotated`` metadata and ``type`` aliases.
+
+    Pydantic keeps ``Annotated`` metadata inside a union or a container, so
+    ``Annotated[Decimal, ...] | None`` must still type a ``None`` as ``NUMERIC``.
+    """
+
+    if isinstance(annotation, TypeAliasType):
+        return _unwrap_optional(annotation.__value__)
 
     args = get_args(annotation)
+
+    if get_origin(annotation) is Annotated:
+        return _unwrap_optional(args[0])
+
     if args and type(None) in args:
         non_none = [a for a in args if a is not type(None)]
         if len(non_none) == 1:
-            return non_none[0]
+            return _unwrap_optional(non_none[0])
 
     return annotation
 

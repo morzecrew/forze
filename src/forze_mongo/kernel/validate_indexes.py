@@ -8,7 +8,7 @@ from decimal import Decimal
 from enum import Enum
 from math import isinf, isnan
 from types import NoneType, UnionType
-from typing import Any, Final, Union, get_args, get_origin
+from typing import Annotated, Any, Final, TypeAliasType, Union, get_args, get_origin
 from uuid import UUID
 
 import attrs
@@ -263,7 +263,14 @@ def _bson_types(annotation: Any) -> tuple[str, ...] | None:
     if annotation is None:
         return None
 
+    # Pydantic keeps ``Annotated`` metadata inside a union; an alias hides its value.
+    if isinstance(annotation, TypeAliasType):
+        return _bson_types(annotation.__value__)
+
     origin = get_origin(annotation)
+
+    if origin is Annotated:
+        return _bson_types(get_args(annotation)[0])
 
     if origin is UnionType or origin is Union:
         found: list[str] = []

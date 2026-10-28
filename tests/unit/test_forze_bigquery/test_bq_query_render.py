@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 from decimal import Decimal
+from typing import Annotated
 
 import pytest
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from forze.base.exceptions import CoreException, ExceptionKind
 from forze_bigquery.kernel.client.query import (
@@ -63,6 +64,20 @@ def test_non_empty_array_param_emits_values() -> None:
     assert qps["ids"]["parameterValue"] == {
         "arrayValues": [{"value": "1"}, {"value": "2"}],
     }
+
+
+class _AnnotatedParams(BaseModel):
+    amount: Annotated[Decimal, Field(ge=0)] | None = None
+    codes: list[Annotated[str, Field(max_length=8)]] = []
+
+
+def test_annotated_params_typed_from_the_wrapped_type() -> None:
+    # Pydantic keeps the metadata inside a union or a list: a None still carries NUMERIC,
+    # and an empty list its element type, rather than STRING and a refusal.
+    qps = {q["name"]: q for q in params_to_query_parameters(_AnnotatedParams())}
+
+    assert qps["amount"]["parameterType"] == {"type": "NUMERIC"}
+    assert qps["codes"]["parameterType"] == {"type": "ARRAY", "arrayType": {"type": "STRING"}}
 
 
 class _BytesParams(BaseModel):

@@ -36,6 +36,7 @@ from ..querying import (
     collect_filter_field_roots,
 )
 from ..querying.field_policy import validate_field_policy
+from ..querying.field_types import _unwrap_annotated  # pyright: ignore[reportPrivateUsage]
 from ..querying.sort_resolution import read_fields_for_model, validate_sort_fields
 from .codecs import DocumentCodecs, document_codecs_for_spec
 from .write_types import DocumentWriteTypes
@@ -47,13 +48,18 @@ def _admits_none(annotation: object) -> bool:
     """Whether *annotation* accepts ``None`` — an optional field, however it is spelled.
 
     Walks the union rather than matching ``T | None`` textually, so an alias, a nested union
-    and ``Optional[T]`` all read the same.
+    and ``Optional[T]`` all read the same; ``Annotated`` metadata and ``type`` aliases are
+    read through.
     """
+
+    annotation = _unwrap_annotated(annotation)
 
     if annotation is None or annotation is type(None):
         return True
 
-    return any(arg is type(None) for arg in get_args(annotation))
+    return get_origin(annotation) in (Union, UnionType) and any(
+        _admits_none(arg) for arg in get_args(annotation)
+    )
 
 
 R = TypeVar("R", bound=BaseModel)
@@ -215,6 +221,8 @@ def _merged(annotation: Any) -> bool:
     ``Any``.
     Only a union is looked into; a list or tuple of mappings is replaced whole."""
 
+    annotation = _unwrap_annotated(annotation)
+
     if annotation is Any:
         return True
 
@@ -222,9 +230,6 @@ def _merged(annotation: Any) -> bool:
 
     if origin in (Union, UnionType):
         return any(_merged(arg) for arg in get_args(annotation))
-
-    if origin is Annotated:
-        return _merged(get_args(annotation)[0])
 
     target = origin or annotation
 

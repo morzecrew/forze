@@ -10,7 +10,7 @@ from datetime import date
 from decimal import Decimal
 from enum import Enum
 from types import NoneType, UnionType
-from typing import Annotated, Any, Final, Literal, Union, get_args, get_origin
+from typing import Annotated, Any, Final, Literal, TypeAliasType, Union, get_args, get_origin
 from uuid import UUID
 
 from pydantic import BaseModel
@@ -163,7 +163,11 @@ def parse_flags(args: list[str], table: FlagTable) -> dict[str, Any]:
 
 
 def _unwrap(annotation: Any) -> Any:
-    """*annotation* without ``Annotated`` metadata, and without ``None`` when optional."""
+    """*annotation* without ``Annotated`` metadata or ``type`` aliases, and without ``None``
+    when optional."""
+
+    if isinstance(annotation, TypeAliasType):
+        return _unwrap(annotation.__value__)
 
     if get_origin(annotation) is Annotated:
         return _unwrap(get_args(annotation)[0])

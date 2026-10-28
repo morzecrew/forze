@@ -3,6 +3,7 @@
 from datetime import UTC, date, datetime
 from decimal import Decimal
 from enum import IntEnum, StrEnum
+from typing import Annotated
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import UUID
 
@@ -571,6 +572,9 @@ class TestEveryValueShapeSurvivesTheRoundTrip:
 # ....................... #
 
 
+type _StrAlias = str
+
+
 class _Colour(StrEnum):
     RED = "red"
 
@@ -600,6 +604,8 @@ class TestNamingAFieldsStoredType:
             (date, ("date",)),
             (bytes, ("binData",)),
             (UUID | None, ("string",)),  # the optional wrapper is stripped
+            (Annotated[str, "m"] | None, ("string",)),  # metadata kept inside a union
+            (_StrAlias | None, ("string",)),  # a type alias hides its value
             (str | int, ("string", "int", "long")),
             (list[str], ("array",)),
             (_Colour, ("string",)),

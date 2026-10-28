@@ -7,7 +7,7 @@ from datetime import date, datetime
 from decimal import Decimal
 from enum import Enum
 from types import UnionType
-from typing import Any, Union, get_args, get_origin
+from typing import Annotated, Any, TypeAliasType, Union, get_args, get_origin
 from uuid import UUID
 
 from psycopg import sql
@@ -141,14 +141,34 @@ def _walk_through_ann(ann: Any, segments: list[str], *, filter_path: str | None)
 # ....................... #
 
 
+def unwrap_annotated(annotation: Any) -> Any:
+    """*annotation* without the ``Annotated`` metadata or ``type`` aliases wrapped around it.
+
+    Pydantic strips the metadata only from a bare top-level ``Annotated``: inside a union or
+    a container it stays, as in ``Annotated[Meta, ...] | None`` or ``list[Annotated[...]]``.
+    """
+
+    if isinstance(annotation, TypeAliasType):
+        return unwrap_annotated(annotation.__value__)
+
+    if get_origin(annotation) is Annotated:
+        return unwrap_annotated(get_args(annotation)[0])
+
+    return annotation
+
+
+# ....................... #
+
+
 def _unwrap_optional(annotation: Any) -> Any:
+    annotation = unwrap_annotated(annotation)
     origin = get_origin(annotation)
     args = get_args(annotation)
 
     if origin is Union or origin is UnionType:
         non_none = [a for a in args if a is not type(None)]
         if len(non_none) == 1:
-            return non_none[0]
+            return _unwrap_optional(non_none[0])
     return annotation
 
 
@@ -267,6 +287,8 @@ def _is_plain_numeric_type(t: Any) -> bool:
 
 def python_type_to_postgres_scalar(py_t: Any) -> PostgresType | None:
     """Map a Python type to a :class:`PostgresType` for JSON text extraction casts."""
+
+    py_t = unwrap_annotated(py_t)
 
     if py_t is Any:
         return None

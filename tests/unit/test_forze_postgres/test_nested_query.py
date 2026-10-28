@@ -6,11 +6,11 @@ from collections.abc import Mapping
 from datetime import date, datetime
 from decimal import Decimal
 from enum import Enum
-from typing import Any, Union
+from typing import Annotated, Any, Union
 from uuid import UUID
 
 import pytest
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from forze.base.exceptions import CoreException
 from forze_postgres.kernel.catalog.introspect import PostgresType
@@ -569,3 +569,29 @@ def test_walk_str_keyed_mapping_with_filter_path_ok() -> None:
         )
         is int
     )
+
+
+type _InnerAlias = _Inner
+
+
+class _AnnotatedRow(BaseModel):
+    meta: Annotated[_Inner, "m"] | None = None
+    by_key: dict[str, Annotated[_Inner, "m"]] = {}
+    items: list[Annotated[_Inner, "m"]] = []
+    aliased: _InnerAlias | None = None
+
+
+@pytest.mark.parametrize(
+    "path",
+    [["meta", "score"], ["by_key", "k", "score"], ["items", "score"], ["aliased", "score"]],
+)
+def test_walk_reads_through_annotated_and_aliases(path: list[str]) -> None:
+    # Pydantic keeps the metadata inside a union or a container; the walk stopped there,
+    # and a filter on the path failed as "not found" (an internal error).
+    assert walk_pydantic_path(_AnnotatedRow, path) is int
+
+
+def test_annotated_decimal_leaf_maps_to_numeric() -> None:
+    pg = python_type_to_postgres_scalar(Annotated[Decimal, Field(ge=0)] | None)
+
+    assert pg is not None and pg.base == "numeric"

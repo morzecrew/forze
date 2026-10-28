@@ -9,6 +9,7 @@ from forze.base.exceptions import exc
 
 from ..base import BaseSpec
 from ..crypto import FieldEncryption
+from ..querying.field_types import _unwrap_annotated  # pyright: ignore[reportPrivateUsage]
 from .types import GraphDirection, GraphEdgeDirectionality
 from .value_objects import GraphEdgeEndpoint
 
@@ -123,8 +124,8 @@ def _native_scalar_in(annotation: object) -> type | None:
     Walks unions rather than testing the annotation itself: ``int | None`` is a
     ``UnionType``, not a ``type``, so an ``isinstance(..., type)`` guard skipped it
     outright and an optional int key sailed through to fail silently on the engine.
-    (``Annotated[int, ...]`` needs no unwrapping — pydantic resolves the metadata away
-    before ``annotation`` is read — but the walk covers it for free.)
+    ``Annotated`` metadata and ``type`` aliases are read through first: pydantic keeps
+    them inside a union, and an alias hides its value from the argument walk.
 
     Two constructs must be inspected *before* that walk, because walking their arguments
     reaches the wrong answer rather than no answer:
@@ -138,6 +139,8 @@ def _native_scalar_in(annotation: object) -> type | None:
     ``None`` is skipped rather than denied: an optional key is a separate question from a
     natively-typed one, and this guard answers only the second.
     """
+
+    annotation = _unwrap_annotated(annotation)
 
     if isinstance(annotation, type):
         return _denied_key_type(annotation)

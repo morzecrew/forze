@@ -131,6 +131,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Filters and sorts see through `Annotated` fields** (**behaviour change**). `Annotated[str, ...] | None` and list elements took any operator unchecked; now they get their type's and a string bound is cast. A sort into an annotated submodel resolves; Postgres compares annotated `Decimal` elements to an int numerically.
 
+- **Backends and spec checks read `Annotated` and `type` aliases as their type** (**behaviour change**). A Postgres filter or sort through `Annotated[Model, ...] | None` returned 500. Schema, index, nullability and graph-key checks, BigQuery parameters and `forze ops` flags misread them; a mismatch now fails at startup.
+
 ### Security
 
 - **A guarded hub or federated search authorizes each member it reads** (**Breaking**). New `AuthzSearchMembers` checks each member's read action; the adapter then refuses a request naming a forbidden member and skips one it only reaches. The registry refuses to freeze a guarded search without that search's hook.

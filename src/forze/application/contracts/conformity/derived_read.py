@@ -21,6 +21,7 @@ from pydantic import BaseModel
 
 from forze.base.exceptions import exc
 
+from ..querying.field_types import _unwrap_annotated  # pyright: ignore[reportPrivateUsage]
 from ..querying.sort_resolution import read_fields_for_model
 from .lenient_read import IDENTITY_READ_FIELDS
 
@@ -298,13 +299,16 @@ def _admits_none(annotation: object) -> bool:
     Deliberately not ``FieldInfo.is_required()``: a field with a default is not the
     same as a field that may hold ``None``. ``note: str = ""`` is a perfectly good join
     key, and treating it as nullable refused a legitimate shape — caught by the
-    itself-derived guardrail's own test, which uses exactly that field.
+    itself-derived guardrail's own test, which uses exactly that field. ``Annotated``
+    metadata and ``type`` aliases are read through, as pydantic keeps them on the field.
     """
+
+    annotation = _unwrap_annotated(annotation)
 
     if annotation is type(None):
         return True
 
     if get_origin(annotation) in (Union, types.UnionType):
-        return type(None) in get_args(annotation)
+        return any(_admits_none(arg) for arg in get_args(annotation))
 
     return False

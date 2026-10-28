@@ -13,6 +13,7 @@ import os
 import subprocess
 import sys
 from pathlib import Path
+from typing import Annotated
 from uuid import UUID
 
 import pytest
@@ -909,3 +910,20 @@ class TestStateResetIsTotal:
 
         assert state.lock is lock
         assert state.rotating_credential_locks is stripes
+
+
+type _OptParent = UUID | None
+
+
+class TestAcceptsNone:
+    def test_an_aliased_or_annotated_optional_accepts_none(self) -> None:
+        from forze_mock.seeding.apply import _accepts_none  # pyright: ignore[reportPrivateUsage]
+
+        class _Cmd(BaseModel):
+            parent: _OptParent
+            other: Annotated[UUID, "m"] | None = None
+            required: Annotated[UUID, "m"]
+
+        assert _accepts_none(_Cmd, "parent") is True
+        assert _accepts_none(_Cmd, "other") is True
+        assert _accepts_none(_Cmd, "required") is False

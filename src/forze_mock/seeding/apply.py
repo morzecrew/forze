@@ -4,7 +4,8 @@ from __future__ import annotations
 
 from contextlib import ExitStack
 from random import Random
-from typing import TYPE_CHECKING, Any, get_args
+from types import UnionType
+from typing import TYPE_CHECKING, Annotated, Any, TypeAliasType, Union, get_args, get_origin
 from uuid import UUID
 
 from forze.application.contracts.deps import backend_of
@@ -31,12 +32,29 @@ if TYPE_CHECKING:
 # ----------------------- #
 
 
+def _admits_none(annotation: Any) -> bool:
+    """Whether *annotation* accepts ``None``, through ``Annotated`` and ``type`` aliases."""
+
+    if isinstance(annotation, TypeAliasType):
+        return _admits_none(annotation.__value__)
+
+    origin = get_origin(annotation)
+
+    if origin is Annotated:
+        return _admits_none(get_args(annotation)[0])
+
+    if origin is Union or origin is UnionType:
+        return any(_admits_none(arg) for arg in get_args(annotation))
+
+    return annotation is type(None)
+
+
 def _accepts_none(create_cmd: type[Any], field: str) -> bool:
     """Whether the create command's *field* may be ``None``."""
 
     info = create_cmd.model_fields.get(field)
 
-    return info is not None and type(None) in get_args(info.annotation)
+    return info is not None and _admits_none(info.annotation)
 
 
 # ....................... #

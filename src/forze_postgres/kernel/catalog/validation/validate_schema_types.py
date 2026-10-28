@@ -5,7 +5,7 @@ from __future__ import annotations
 import types
 from datetime import date, datetime, time
 from decimal import Decimal
-from typing import Any, Union, get_args, get_origin
+from typing import Annotated, Any, TypeAliasType, Union, get_args, get_origin
 from uuid import UUID
 
 from pydantic import BaseModel
@@ -40,6 +40,22 @@ _SCALAR_PG_BASES: dict[type[Any], frozenset[str]] = {
 _JSON_PG_BASES = frozenset({"json", "jsonb"})
 
 
+def _unwrap_annotated(annotation: Any) -> Any:
+    """*annotation* without the ``Annotated`` metadata or ``type`` aliases wrapped around it.
+
+    Pydantic keeps the metadata inside a union or a container, so ``Annotated[int, ...] |
+    None`` and ``list[Annotated[int, ...]]`` must still validate against their column.
+    """
+
+    if isinstance(annotation, TypeAliasType):
+        return _unwrap_annotated(annotation.__value__)
+
+    if get_origin(annotation) is Annotated:
+        return _unwrap_annotated(get_args(annotation)[0])
+
+    return annotation
+
+
 def _unwrap_optional(annotation: Any) -> tuple[Any, bool]:
     """Return (inner annotation, is_optional).
 
@@ -49,6 +65,7 @@ def _unwrap_optional(annotation: Any) -> tuple[Any, bool]:
     the column was never validated at all.
     """
 
+    annotation = _unwrap_annotated(annotation)
     origin = get_origin(annotation)
 
     if origin is Union or origin is types.UnionType:
@@ -89,6 +106,8 @@ def expected_pg_bases_for_field(field: FieldInfo) -> frozenset[str] | None:
 
 def expected_pg_bases_for_annotation(annotation: Any) -> frozenset[str] | None:
     """Return acceptable Postgres bases for a Python type annotation."""
+
+    annotation = _unwrap_annotated(annotation)
 
     if annotation is Any:
         return None

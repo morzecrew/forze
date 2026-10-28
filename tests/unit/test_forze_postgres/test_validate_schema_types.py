@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 from datetime import datetime, time
-from typing import Any
+from typing import Annotated, Any
 from uuid import UUID
 
 import pytest
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from forze.base.exceptions import CoreException
 from forze_postgres.kernel.catalog.introspect.types import PostgresType
@@ -322,3 +322,46 @@ class TestAnnotationFallbacks:
 
         assert expected_pg_bases_for_field(Row.model_fields["bare"]) is None
         assert expected_pg_bases_for_field(Row.model_fields["weird"]) is None
+
+
+type _OptName = str | None
+
+
+class TestAnnotatedFields:
+    """``Annotated`` metadata and ``type`` aliases are validated as the type they wrap.
+
+    Pydantic keeps the metadata inside a union or a container, where the column check
+    skipped the field, and an alias hid an optional field from the nullability check.
+    """
+
+    def test_an_annotated_field_is_checked_against_its_column(self) -> None:
+        class Row(BaseModel):
+            score: Annotated[int, Field(ge=0)] | None = None
+            tags: list[Annotated[int, Field(ge=0)]] = []
+
+        with pytest.raises(CoreException, match="score"):
+            validate_field_type_compatibility(
+                model=Row,
+                column_types={"score": _pg("text")},
+                omit_fields=frozenset(),
+                label="write",
+            )
+
+        with pytest.raises(CoreException, match="tags"):
+            validate_field_type_compatibility(
+                model=Row,
+                column_types={"tags": _pg("text", is_array=True)},
+                omit_fields=frozenset(),
+                label="write",
+            )
+
+    def test_an_aliased_optional_field_allows_a_nullable_column(self) -> None:
+        class Row(BaseModel):
+            name: _OptName
+
+        validate_field_nullability(
+            model=Row,
+            column_types={"name": _pg("text", not_null=False)},
+            omit_fields=frozenset(),
+            label="write",
+        )
