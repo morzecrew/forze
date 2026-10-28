@@ -158,6 +158,19 @@ def test_adapt_value_for_write_stores_an_enum_member_as_its_value() -> None:
     assert gw.adapt_value_for_write(_Mixed.OPEN, t=text) == "open"
 
 
+class _Unset(Enum):
+    NONE = None
+
+
+@pytest.mark.parametrize("base", ["jsonb", "json", "text"])
+def test_adapt_value_for_write_stores_a_none_valued_member_as_sql_null(base: str) -> None:
+    gw, _ = _build_gateway()
+
+    t = PostgresType(base=base, is_array=False, not_null=False)
+
+    assert gw.adapt_value_for_write(_Unset.NONE, t=t) is None
+
+
 def test_adapt_value_for_write_keeps_a_sequence_holding_no_enum_member() -> None:
     gw, _ = _build_gateway()
     text = PostgresType(base="text", is_array=False, not_null=True)

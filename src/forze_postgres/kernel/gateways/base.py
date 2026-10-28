@@ -448,12 +448,13 @@ class PostgresGateway[M: BaseModel](
         if t is None:
             return v
 
+        # A member as its value, which the read model decodes: ``str()`` names a plain member
+        # (``Status.OPEN``), and psycopg dumps its bare name. Before the ``None`` check, so a
+        # member whose value is ``None`` is SQL ``NULL``, not JSON ``null``.
+        v = enum_values(v)
+
         if v is None:
             return None
-
-        # A member as its value, which the read model decodes: ``str()`` names a plain member
-        # (``Status.OPEN``), and psycopg dumps its bare name.
-        v = enum_values(v)
 
         # Before the array branch: a ``jsonb[]`` / ``json[]`` element needs its wrapper too.
         if t.base in {"jsonb", "json"}:
