@@ -550,16 +550,20 @@ class MvccTx:
 
 @attrs.define(slots=True)
 class StatementLocks:
-    """The per-owner write locks one write outside a transaction holds.
+    """The per-owner write locks and row locks one write outside a transaction holds.
 
     Such a write is a transaction of one statement, and it contends the way one does: it holds
-    every owner it touches at once, and another transaction deciding whether to wait on it has
-    to be able to see it — what it holds and what it is waiting for — or a cycle through it is a
-    hang nobody detects. Shaped like :class:`MvccTx`'s own two fields so either can be read.
+    every owner and row it touches at once, and another transaction deciding whether to wait on
+    it has to be able to see it — what it holds and what it is waiting for — or a cycle through
+    it is a hang nobody detects. Shaped like :class:`MvccTx`'s own lock fields so either can be
+    read.
     """
 
     write_locks: dict[int, Any] = attrs.field(factory=dict)
     waiting_for: int | None = attrs.field(default=None)
+    held_rows: list[tuple[str, Any]] = attrs.field(factory=list)
+    row_waiting_for: tuple[str, Any] | None = None
+    ended: asyncio.Event = attrs.field(factory=asyncio.Event)
 
 
 # ....................... #
@@ -592,24 +596,24 @@ def _on_simulation_loop() -> bool:
 # ....................... #
 
 
-def release_row_locks(tx: MvccTx, state: Any) -> None:
-    """Give back every row lock *tx* holds, then wake whoever is parked on it."""
+def release_row_locks(holder: MvccTx | StatementLocks, state: Any) -> None:
+    """Give back every row lock *holder* holds, then wake whoever is parked on it."""
 
-    if tx.held_rows:
+    if holder.held_rows:
         # The loop running this is the one the rows were taken on: ``finish`` runs in the same
-        # coroutine as ``begin``, and rows are only taken on the simulation loop, which is
-        # single-threaded and refuses threads — no other loop can share the transaction.
+        # coroutine as ``begin``, a statement releases in the call that took them, and rows are
+        # only taken on the simulation loop, which is single-threaded and refuses threads — no
+        # other loop can share the holder.
         holders = state.row_locks.holders()
 
-        for key in tx.held_rows:
-            if holders.get(key) is tx:
-                del holders[key]
+        for key in holder.held_rows:
+            holders.pop(key, None)
 
-        tx.held_rows.clear()
+        holder.held_rows.clear()
 
     # After the release, never before: a waiter woken to a row still marked held would park on
     # an event already set, and spin.
-    tx.ended.set()
+    holder.ended.set()
 
 
 # ....................... #
@@ -705,17 +709,19 @@ async def acquire_row_locks(
     keys: Callable[[], Sequence[tuple[str, Any]]],
     *,
     block_statement: bool,
+    holder: MvccTx | StatementLocks | None = None,
 ) -> bool:
     """Hold every row lock *keys* names, waiting out each live holder, in blocking mode.
 
     A no-op in the default claim mode, and off a simulation loop, where a wait could hang: the
-    claim then stands in, as it always has. A transaction takes each free row and keeps it until it
-    ends; a statement outside one holds nothing and only waits for its rows to be free, and only
-    when *block_statement* says its own module blocks — a claim-mode module sharing the state with
-    a blocking one never waits. *keys* is
-    asked again after every wait, so a row deleted or moved meanwhile drops out and the caller
-    proceeds against what the holder committed — read committed's re-read. A snapshot transaction
-    is refused instead when the row changed since its snapshot (see :func:`_refuse_stale_lock`).
+    claim then stands in, as it always has. A transaction takes each free row and keeps it until
+    it ends. Outside one, a write passes its *holder* and keeps its rows until it gives them back
+    with its owner locks, right before it writes; a read passes none and holds its row for this
+    call only. Outside a transaction it blocks only when *block_statement* says its own module
+    does — a claim-mode module sharing the state with a blocking one never waits. *keys* is asked
+    again after every wait, so a row deleted or moved meanwhile drops out and the caller proceeds
+    against what the holder committed — read committed's re-read. A snapshot transaction is
+    refused instead when the row changed since its snapshot (see :func:`_refuse_stale_lock`).
 
     Waiters park on the holder's :attr:`MvccTx.ended` and wake in the order the loop runs them,
     which the simulation's scheduler fixes from the seed; no wall clock is read.
@@ -733,40 +739,40 @@ async def acquire_row_locks(
         return False
 
     holders = state.row_locks.holders()
-
-    if tx is None and not holders:
-        return False
-
+    taker = tx if tx is not None else holder if holder is not None else StatementLocks()
     waited = False
 
-    while pending := [key for key in keys() if holders.get(key) is not tx]:
-        for key in pending:
-            holder = holders.get(key)
+    try:
+        while pending := [key for key in keys() if holders.get(key) is not taker]:
+            for key in pending:
+                other = holders.get(key)
 
-            if holder is None:
-                # Only a transaction finds a free row pending: a statement has nothing to take.
-                if tx is not None:
-                    _refuse_stale_lock(state, tx, key)
-                    holders[key] = tx
-                    tx.held_rows.append(key)
+                if other is None:
+                    if tx is not None:
+                        _refuse_stale_lock(state, tx, key)
 
-                continue
+                    holders[key] = taker
+                    taker.held_rows.append(key)
+                    continue
 
-            if tx is not None:
-                if (cycle := wait_cycle_rows(state, tx, holder)) is not None:
+                if (cycle := wait_cycle_rows(state, taker, other)) is not None:
                     raise_row_deadlock([key, *cycle])
 
-                tx.row_waiting_for = key
+                taker.row_waiting_for = key
 
-            try:
-                await holder.ended.wait()
+                try:
+                    await other.ended.wait()
 
-            finally:
-                if tx is not None:
-                    tx.row_waiting_for = None
+                finally:
+                    taker.row_waiting_for = None
 
-            waited = True
-            break
+                waited = True
+                break
+
+    finally:
+        if taker is not tx and taker is not holder:
+            # A read outside a transaction: its statement ends with this call.
+            release_row_locks(taker, state)
 
     return waited
 

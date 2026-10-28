@@ -77,7 +77,12 @@ from forze_mock.adapters._derived import (
     staged_for,
 )
 from forze_mock.adapters._journal import JournalingStore
-from forze_mock.adapters._mvcc import acquire_row_locks, current_mvcc_tx
+from forze_mock.adapters._mvcc import (
+    MvccTx,
+    StatementLocks,
+    acquire_row_locks,
+    current_mvcc_tx,
+)
 from forze_mock.adapters.derived_values import MockDerivedSource
 from forze_mock.adapters.query_params import MockQueryParamsSource
 from forze_mock.query._types import (
@@ -347,13 +352,17 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
 
     # ....................... #
 
-    async def _lock_rows(self, pks: Callable[[], Sequence[UUID]]) -> bool:
+    async def _lock_rows(
+        self,
+        pks: Callable[[], Sequence[UUID]],
+        holder: MvccTx | StatementLocks | None = None,
+    ) -> bool:
         """Hold the row lock on each visible row *pks* names, under ``row_locks="block"``.
 
         A no-op returning ``False`` in the default claim mode and off a simulation loop (see
-        :func:`~forze_mock.adapters._mvcc.acquire_row_locks`). Only a row this statement can see
-        is locked, as on Postgres: one a concurrent transaction inserted and has not committed is
-        absent, not waited on.
+        :func:`~forze_mock.adapters._mvcc.acquire_row_locks`, which says what *holder* keeps).
+        Only a row this statement can see is locked, as on Postgres: one a concurrent
+        transaction inserted and has not committed is absent, not waited on.
 
         :returns: Whether it waited for another transaction, so a read re-evaluates its row.
         """
@@ -364,7 +373,9 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
 
             return [(ns, pk) for pk in pks() if pk in store]
 
-        return await acquire_row_locks(self.state, keys, block_statement=self.block_rows)
+        return await acquire_row_locks(
+            self.state, keys, block_statement=self.block_rows, holder=holder
+        )
 
     # ....................... #
 

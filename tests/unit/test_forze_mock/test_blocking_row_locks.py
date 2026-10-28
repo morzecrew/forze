@@ -58,20 +58,26 @@ SPEC = DocumentSpec[_AccountRead, _Account, _AccountCreate, _AccountUpdate](
 
 class _Booking(Document):
     owner: str
+    value: int = 0
 
 
 class _BookingRead(ReadDocument):
     owner: str
+    value: int = 0
 
 
 class _BookingCreate(CreateDocumentCmd):
     owner: str
 
 
-BOOKINGS = DocumentSpec[_BookingRead, _Booking, _BookingCreate, BaseDTO](
+class _BookingUpdate(BaseDTO):
+    value: int | None = None
+
+
+BOOKINGS = DocumentSpec[_BookingRead, _Booking, _BookingCreate, _BookingUpdate](
     name="bookings",
     read=_BookingRead,
-    write=DocumentWriteTypes(domain=_Booking, create_cmd=_BookingCreate, update_cmd=BaseDTO),
+    write=DocumentWriteTypes(domain=_Booking, create_cmd=_BookingCreate, update_cmd=_BookingUpdate),
     guarantees=(SerializedBy(key=("owner",)),),
 )
 """Writes serialized per owner: a create holds its owner's lock until the transaction ends."""
@@ -459,6 +465,67 @@ class TestRetriesDoNotNest:
         run_simulation(scenario, seed=0)
 
         assert out["found"] is None
+
+
+# ....................... #
+
+
+class TestStatementKeepsItsRows:
+    def test_a_statement_waiting_for_an_owner_keeps_its_row(self) -> None:
+        # The statement takes the row, then waits for the owner a transaction holds. A locker
+        # arriving meanwhile must wait for the statement, not lock the row under it and lose
+        # the statement's write.
+        log: list[str] = []
+        out: dict[str, int] = {}
+
+        async def scenario() -> None:
+            module = MockDepsModule(state=MockState(), row_locks="block")
+            ctx = context_from_modules(module)
+            row = await ctx.doc.command(BOOKINGS).create(_BookingCreate(owner="o1"))
+
+            async def owner_holder() -> None:
+                octx = context_from_modules(module)
+
+                async with octx.tx_ctx.scope("mock"):
+                    await octx.doc.command(BOOKINGS).create(_BookingCreate(owner="o1"))
+                    await asyncio.sleep(1)
+
+                log.append("owner:committed")
+
+            async def statement() -> None:
+                await asyncio.sleep(0.1)
+                await (
+                    context_from_modules(module)
+                    .doc.command(BOOKINGS)
+                    .update(row.id, row.rev, _BookingUpdate(value=10))
+                )
+                log.append("statement:wrote")
+
+            async def locker() -> None:
+                await asyncio.sleep(0.2)
+                lctx = context_from_modules(module)
+
+                try:
+                    async with lctx.tx_ctx.scope("mock"):
+                        got = await lctx.doc.query(BOOKINGS).get(row.id, for_update=True)
+                        log.append(f"locker:read {got.value}")
+                        await lctx.doc.command(BOOKINGS).update(
+                            got.id, got.rev, _BookingUpdate(value=got.value + 1)
+                        )
+
+                    log.append("locker:committed")
+
+                except CoreException:
+                    log.append("locker:refused")
+
+            await asyncio.gather(owner_holder(), statement(), locker())
+            out["value"] = (await ctx.doc.query(BOOKINGS).get(row.id)).value
+            out["held"] = len(module.state.row_locks.holders())
+
+        run_simulation(scenario, seed=0)
+
+        assert log == ["owner:committed", "statement:wrote", "locker:read 10", "locker:committed"]
+        assert out == {"value": 11, "held": 0}
 
 
 # ....................... #
