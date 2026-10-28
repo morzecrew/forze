@@ -13,8 +13,10 @@ across releases.
 ```text
 forze ops list      [--app REF] [--json]
 forze ops describe  [--app REF] OP [--json]
-forze ops call      [--app REF] OP [--input JSON|@PATH|-] [--tenant UUID]
-                    [--idempotency-key KEY] [--timeout SECONDS] [--grace SECONDS]
+forze ops call      [--app REF] OP
+                    [--input JSON|@PATH|- | --FIELD VALUE ... | --batch @PATH|-]
+                    [--tenant UUID] [--idempotency-key KEY]
+                    [--timeout SECONDS] [--grace SECONDS]
                     [--correlation-id UUID] [--causation-id UUID]
                     [--api-key-file PATH] [--pretty]
 ```
@@ -23,16 +25,24 @@ forze ops call      [--app REF] OP [--input JSON|@PATH|-] [--tenant UUID]
 `module:attribute`, or a zero-argument callable returning one, and falls back to
 `FORZE_OPS_APP`. A group from `build_ops_cli(app)` has the declaration bound and no `--app`.
 
+`OP` completes in the shell after `describe` and `call` once completion is installed with
+`forze --install-completion`. Completion loads the declaration from `--app` or
+`FORZE_OPS_APP` as `list` does, never builds the runtime, and offers nothing when the
+declaration cannot load. A group from `build_ops_cli` completes from its own declaration,
+installed by your root CLI's `--install-completion`. Every TAB imports the application
+module, so its import side effects run in the operator's shell.
+
 `list` and `describe` never build the runtime. They write text, or JSON with `--json`.
 `describe` shows the title and description, the kind, the declared authn requirement and
-permissions, idempotency support, the deadline, the query surface, and the input and output
-JSON Schemas.
+permissions, idempotency support, the deadline, the typed flags, the query surface, and the
+input and output JSON Schemas.
 
 ## `call` options
 
 | Option | Effect | Refused when |
 |---|---|---|
 | `--input JSON` / `@PATH` / `-` | the input object, inline, from a file, or from stdin; validated into the operation's input DTO, unknown keys refused | the operation takes no input; the JSON does not parse (`NaN` and `Infinity` included) or is not an object; the file cannot be read; the input is inline and the DTO declares a `SecretStr` or `SecretBytes` field |
+| `--batch @PATH` / `-` | one call per line of a JSONL file or of stdin, in one runtime; see [Batches](#batches) | the value is neither `@PATH` nor `-`; combined with `--input`, typed flags, `--idempotency-key` or `--pretty` |
 | `--tenant UUID` | a requested tenant, validated against the principal's membership, or matching the key's own tenant | the identity is not an API key; nothing can validate it |
 | `--idempotency-key KEY` | binds the key: a repeat with the same input replays the stored result | the operation does not support one |
 | `--timeout SECONDS` | bounds the operation; only ever tightens its declared deadline | not a positive, finite number |
@@ -41,8 +51,68 @@ JSON Schemas.
 | `--api-key-file PATH` | reads the API key from a file instead of the environment | the identity is not an API key; the file cannot be read |
 | `--pretty` | indents the result | |
 
-A malformed `--timeout`, `--grace`, `--tenant` or id is a parse error: Click's usage text on
-stderr, exit 2, nothing on stdout. Every other refusal is an error object.
+A malformed `--timeout`, `--grace`, `--tenant`, `--batch` or id is a parse error: Click's usage text on
+stderr, exit 2, nothing on stdout. Every other refusal is an error object, an option `call`
+does not have included: it is read as a typed flag.
+
+## Typed flags
+
+An operation whose input is flat scalars also takes that input as flags after `OP`, instead of
+`--input`:
+
+```console
+$ forze ops call notes.create --title "Quarterly report"
+```
+
+| Field type | Flag |
+|---|---|
+| `str`, `int`, `float`, `Decimal`, `UUID`, `date`, `datetime`, an `Enum` of strings, an `IntEnum`, a `Literal` of strings; optional or constrained ones too | `--field-name VALUE`, or `--field-name=VALUE` |
+| `bool` | `--field-name` sets it, `--no-field-name` clears it |
+
+- **Spelling.** A field's flag is its name with `-` for `_`. An alias never is.
+- **Validation.** The flags build the object `--input` would carry, and it is validated the same
+  way: each value is the string you typed, coerced by the DTO; an omitted flag takes the
+  field's default; a missing required field or a bad value exits 4 and is never echoed.
+- **A value that looks like a flag.** `--title --pretty` gives `--pretty` to `call`, and
+  `--title --draft` is refused: the token after a flag that needs a value cannot start with
+  `--`. Write `--title=--pretty`.
+- **On argv.** Every value is on the command line, where `ps` and shell history show it. A
+  secret field is refused; pass any other sensitive value with `--input @PATH`.
+- **All or none.** An input takes no flags when one of its fields is anything else (a list, a
+  model, a union), when it declares a `SecretStr` or `SecretBytes` field, or when a flag would
+  be spelled like a `call` option (`--timeout`, `--input`, …) or like another field's. A `call`
+  option means the same for every operation. `describe` lists the flags, or says why there are
+  none.
+- **Exclusive.** Typed flags and `--input` cannot be combined.
+
+## Batches
+
+`--batch @PATH` or `--batch -` calls the operation once per line of a JSONL file, or of stdin,
+inside one runtime: one startup and one shutdown for the whole batch. Each line is an input
+object, as `--input` would carry; blank lines are skipped.
+
+```console
+$ forze ops call notes.create --batch @notes.jsonl
+{"line": 1, "result": {"id": "…", "title": "a", …}, "execution_id": "…", "correlation_id": "…"}
+{"line": 2, "result": {"id": "…", "title": "b", …}, "execution_id": "…", "correlation_id": "…"}
+```
+
+- **Validated first.** Every line is read and validated before the runtime is built. A line
+  that does not parse or validate is the only line written, and nothing runs. The whole input
+  is held in memory, so split a file too large for that.
+- **One line out per call.** Stdout holds one JSON document per line that ran, in order, each
+  written as its call finishes: `{"line": N, "result": …}` or the error object with
+  `"line": N`. Each carries its own `execution_id`; all share one `correlation_id`, the
+  `--correlation-id` given or one minted for the batch. Each line is a governed call: its
+  identity is verified and its tenant resolved again.
+- **Stops at the first failure.** The failed line is the last one written, and its exit code,
+  by the table below, is the batch's. Exit 0 means every line succeeded.
+- **No idempotency key.** One key would claim every line, so `--idempotency-key` is refused. A
+  retryable failure therefore exits 75 from a query and 69 from a command.
+- **Signals.** A signal stops the batch: the line in flight gets `--grace` as a single call
+  does, and no line starts after it. When lines remained, the batch exits 130 or 143.
+- **The batch as a whole.** A refusal before any line runs (a conflicting option, an unreadable
+  file, a runtime that does not start) is one error object without `line`.
 
 ## Output
 
@@ -104,10 +174,13 @@ retryable kinds are `concurrency`, `throttled` and `infrastructure`.
 | Code | Kind | Exit | Raised when |
 |---|---|---|---|
 | `cli_unknown_operation` | `validation` | 2 | the operation is unknown, or not exposed |
-| `cli_input_not_accepted` | `validation` | 2 | `--input` is given to an operation that takes none |
-| `cli_input_unreadable` | `validation` | 2 | the `@PATH` file cannot be read |
-| `cli_malformed_input` | `validation` | 2 | the input is not JSON, or not an object |
-| `cli_inline_secret` | `validation` | 2 | the input declares a secret and was given inline |
+| `cli_input_not_accepted` | `validation` | 2 | `--input`, typed flags or `--batch` given to an operation that takes none |
+| `cli_option_conflict` | `validation` | 2 | typed flags given with `--input`; `--batch` given with `--input`, typed flags, `--idempotency-key` or `--pretty` |
+| `cli_flags_unsupported` | `validation` | 2 | typed flags given to an operation whose input takes none; the detail says why |
+| `cli_malformed_flags` | `validation` | 2 | the typed flags do not parse: an unknown flag, a missing value or one spelled like a flag, a value to a switch, a field given twice, or an argument that is not a flag |
+| `cli_input_unreadable` | `validation` | 2 | the `@PATH` file of `--input` or `--batch` cannot be read |
+| `cli_malformed_input` | `validation` | 2 | the input, or a batch line, is not JSON, or not an object |
+| `cli_inline_secret` | `validation` | 2 | the input declares a secret and was given inline or as typed flags |
 | `cli_idempotency_unsupported` | `validation` | 2 | `--idempotency-key` on an operation that does not support one |
 | `cli_tenant_unverifiable` | `validation` | 2 | `--tenant` with an anonymous or static identity |
 | `tenant_request_unverifiable` | `precondition` | 2 | `--tenant` that neither a resolver nor the key's own tenant can validate |

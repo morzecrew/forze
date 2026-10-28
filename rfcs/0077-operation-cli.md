@@ -1,10 +1,12 @@
 # RFC 0077 — Operation CLI: governed operations from the command line
 
-- **Status:** ✅ Complete (P1, P2). P1, the shared ingress core, landed on 2026-10-23, and
-  P2, `forze ops`, on 2026-10-24; the "As built" notes in §5.7 and §5.8 record where each
-  departs from the plan. P3 stays demand-gated (§12); its commit-ambiguity item was built on
-  2026-10-27 (§5.6, "As built (P3)"). The three questions were answered on
-  2026-10-22 (§10, decisions 14, 16 and 17).
+- **Status:** ✅ Complete (P1, P2, and four P3 items). P1, the shared ingress core, landed on
+  2026-10-23, and P2, `forze ops`, on 2026-10-24; the "As built" notes in §5.7 and §5.8 record
+  where each departs from the plan. Three P3 items landed on 2026-10-27, on a demand the
+  maintainer named: typed flags, JSONL batch and shell completion ("As built (P3)" in §5.8).
+  The commit-ambiguity item was built the same day (§5.6, "As built (P3)"). The rest of P3
+  stays demand-gated (§12). The three questions were answered on 2026-10-22 (§10, decisions
+  14, 16 and 17).
 - **Scope:** A `forze ops` command group in the existing `forze_cli` package. It lists,
   describes and invokes the operations of an application's frozen registry, in process,
   through the same governed path HTTP and MCP use. The RFC also covers the transport-agnostic
@@ -622,6 +624,29 @@ forze ops call      [--app REF] OP [--input JSON|@PATH|-] [--tenant UUID]
   - **Skills.** No reference file was added. A section with an import block went into
     `fastapi-generated-routes`, the route RFC 0041 §6.1 sets for content without a file, and
     `forze_cli` moved from D3 to D1.
+- **As built (P3).** Three §12 items. The execution-log unit "RFC 0077 P3 — CLI items" records
+  each decision, including the amendment of decision 15 they need; none is yet a row in §11.
+  - **Typed flags.** `call OP --field VALUE` takes the input as flags when every field is a
+    scalar: `str`, `int`, `float`, `Decimal`, `UUID`, `date`, `datetime`, an `Enum` of strings,
+    an `IntEnum` or a `Literal` of strings, optional or constrained. A `bool` is `--name` / `--no-name`. The
+    flags only spell the raw object, which goes through `validate_operation_input` with
+    `forbid_unknown=True` and `by_name=True`. `call` accepts options it does not have and
+    parses `ctx.args`, so its own options always win. An input with a field spelled like one
+    of them, a field that is not a scalar, or a secret therefore takes no flags at all, and
+    `describe` says why. MCP's flat signature (§8) was not reused: it takes any field type.
+    One consequence: an unknown option after `OP` is an error object with exit 2, not Click's
+    usage text.
+  - **JSONL batch.** `call OP --batch @PATH|-` validates every line before the runtime is
+    built. It then runs each line in one `runtime.scope()` and writes one JSON line per call,
+    `{"line": N, "result": …}` or the error object with `"line": N`, each with its own
+    `execution_id` and the batch's `correlation_id`. The first failure stops the batch and
+    sets its exit code. `--idempotency-key` and `--pretty` are refused with it. After a
+    signal, the line in flight finishes or is cancelled as one call would be, no line starts,
+    and unrun lines make the exit 128 plus the signal number. This departs from decision 8's
+    one document only when `--batch` is given.
+  - **Completion.** `OP` completes after `describe` and `call` from the declaration that
+    `--app` or `FORZE_OPS_APP` names, builds no runtime, and offers nothing when the
+    declaration cannot load. The root's `--install-completion` was already on.
 
 ### 5.9 Alternatives considered
 
@@ -829,9 +854,9 @@ answer took the recorded lean.
   the skills census move, and the `SERVERLESS` docstring extension (decision 14).
   Changelog: Added.
 - **P3: demand-gated, each on a named consumer:**
-  - typed flags for flat scalar DTOs;
-  - JSONL batch in one scope;
-  - shell completion of operation names;
+  - typed flags for flat scalar DTOs (landed 2026-10-27, §5.8 "As built (P3)");
+  - JSONL batch in one scope (landed 2026-10-27);
+  - shell completion of operation names (landed 2026-10-27);
   - the surface field (its own RFC);
   - moving FastAPI, Socket.IO and the WS route onto `ingress`. FastAPI and the WS route
     moved where a step agrees (§5.7, "As built (P3)"). Socket.IO mints its metadata, and its

@@ -15,9 +15,14 @@ runner = CliRunner()
 _APP = "examples.recipes.ops_cli.app:ops"
 
 
-def _ops(*args: str, key: str | None = "demo-operator-key") -> tuple[int, str]:
+def _ops(
+    *args: str, key: str | None = "demo-operator-key", stdin: str | None = None
+) -> tuple[int, str]:
     result = runner.invoke(
-        app, ["ops", *args, "--app", _APP], env={"FORZE_API_KEY": key, "FORZE_OPS_APP": None}
+        app,
+        ["ops", *args, "--app", _APP],
+        env={"FORZE_API_KEY": key, "FORZE_OPS_APP": None},
+        input=stdin,
     )
 
     return result.exit_code, result.stdout
@@ -50,6 +55,20 @@ class TestOpsCliExample:
 
         assert code == 0
         assert json.loads(out)["title"] == "hi"
+
+    def test_creates_with_typed_flags(self) -> None:
+        code, out = _ops("call", "notes.create", "--title", "hi")
+
+        assert code == 0
+        assert json.loads(out)["title"] == "hi"
+
+    def test_creates_a_batch_in_one_runtime(self) -> None:
+        code, out = _ops(
+            "call", "notes.create", "--batch", "-", stdin='{"title": "a"}\n{"title": "b"}\n'
+        )
+
+        assert code == 0
+        assert [json.loads(line)["result"]["title"] for line in out.splitlines()] == ["a", "b"]
 
     def test_an_unknown_key_is_denied(self) -> None:
         code, out = _ops("call", "notes.list", key="not-a-key")

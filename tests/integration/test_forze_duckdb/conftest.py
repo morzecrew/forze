@@ -14,6 +14,23 @@ pytest.importorskip("testcontainers")
 
 from tests.support.rustfs import RustfsContainer
 
+
+def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
+    """Skip ``lake_slow`` tests unless the marker expression names them.
+
+    ``just test -m integration`` replaces the recipe's ``not lake_slow``, since pytest keeps
+    the last ``-m``, so the exclusion alone would run the 17-minute expiry battery.
+    """
+
+    if "lake_slow" in (config.getoption("markexpr") or ""):
+        return
+
+    skip = pytest.mark.skip(reason="lake_slow runs only when selected: `just lake-slow`")
+
+    for item in items:
+        if item.get_closest_marker("lake_slow") is not None:
+            item.add_marker(skip)
+
 S3_ACCESS_KEY = "minioadmin"
 S3_SECRET_KEY = "minioadmin"
 

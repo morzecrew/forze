@@ -187,6 +187,42 @@ class TestSignals:
         assert document["error"]["code"] == error_code
 
 
+class TestBatchSignals:
+    def _source(self, tmp_path: Path, *lines: str) -> str:
+        source = tmp_path / "lines.jsonl"
+        source.write_text("".join(line + "\n" for line in lines))
+
+        return f"@{source}"
+
+    def test_a_first_signal_lets_the_line_finish_and_runs_no_more(self, tmp_path: Path) -> None:
+        source = self._source(tmp_path, *[_slow(0.5)] * 3)
+        process = _spawn("probe.slow", "--batch", source, "--grace", "20")
+        seen = _wait_for(process)
+        process.send_signal(signal.SIGTERM)
+
+        code, document, stderr = _finish(process, seen)
+
+        assert code == 143
+        assert document["line"] == 1
+        assert document["result"] is None
+        assert "ops-sample: shutdown ran" in stderr
+
+    def test_a_second_signal_interrupts_the_line_in_flight(self, tmp_path: Path) -> None:
+        source = self._source(tmp_path, *[_slow(60)] * 2)
+        process = _spawn("probe.slow", "--batch", source, "--grace", "60")
+        seen = _wait_for(process)
+        process.send_signal(signal.SIGINT)
+        time.sleep(0.2)
+        process.send_signal(signal.SIGINT)
+
+        code, document, stderr = _finish(process, seen)
+
+        assert code == 130
+        assert document["line"] == 1
+        assert document["error"]["kind"] == "interrupted"
+        assert "ops-sample: shutdown ran" in stderr
+
+
 class TestCrashOutput:
     def test_an_unhandled_failure_prints_no_locals(self) -> None:
         process = _spawn("probe.bound", app_name="BROKEN_RUNTIME")

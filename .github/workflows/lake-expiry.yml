@@ -1,0 +1,64 @@
+# RFC 0078 battery 11b/11c: what a lake read does once a credential it was given expires.
+#
+# The store hands out vended credentials that live at least 900 s, so the only way to show a
+# statement running after one expired is to wait one out. With the catalog token's expiry
+# leg, the battery takes about 20 minutes, which no pull request should wait on. The tests are
+# `lake_slow`-marked, excluded from `just test`, and run here instead.
+#
+# This is its own workflow rather than a job in nightly.yml (EXECUTION-LOG D-006). A red run
+# here means "the lake read path mishandled an expired credential", not "the simulator found
+# an interleaving".
+name: Lake credential expiry
+
+on:
+  schedule:
+    # 05:30 UTC: after the nightly DST matrix (04:00) and the skills link sweep (05:00).
+    - cron: "30 5 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: lake-expiry-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  expiry:
+    name: Battery 11b/11c
+    runs-on: ubuntu-latest
+    # The battery sleeps about 17 minutes by design: one 900 s vended credential, then the
+    # catalog token's lifespan plus Lakekeeper's 60 s leeway. Image pulls, the stack start and
+    # seeding add a few more. The test's own timeout (30 min) fires before this one does.
+    timeout-minutes: 40
+    permissions:
+      contents: read
+
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
+        with:
+          egress-policy: audit
+
+      - name: Checkout code # zizmor: ignore[artipacked] no workspace/.git is uploaded as an artifact
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          enable-cache: true
+          cache-dependency-glob: |
+            uv.lock
+            pyproject.toml
+
+      - name: Install just
+        uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4.0.0
+        with:
+          just-version: "1.58.0"
+
+      - name: Install dependencies
+        run: uv sync --all-groups --all-extras
+
+      # The same line `just lake-slow` runs on a laptop.
+      - name: Run the expiry battery
+        run: just lake-slow

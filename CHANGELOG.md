@@ -39,6 +39,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **A transaction manager can say its store refused writes in a read-only root.** Implement `ReadOnlyAware.read_only_enforced()`, as Postgres and the mock's `journal` and `strict` managers do; that root then marks no commit point.
 
+**`forze ops` for people at a shell and for backfills:**
+
+- **`forze ops` gains typed flags, JSONL batches and shell completion.** `call OP --field VALUE` takes a flat-scalar input as flags; `--batch @PATH|-` runs one call per line in one runtime, stopping at the first failure; `OP` completes in the shell. An unknown option after `OP` now exits 2 with an error object.
+
 ### Changed
 
 - **HTTP error bodies carry the error's `code` and `kind`** (**behaviour change**). The body is `{"detail", "code", "kind", "context"}`, so a client tells `revision_mismatch` from other 400s; a whole-body comparison breaks. An unhandled 500 now also sends `X-Error-Code: core.internal`.

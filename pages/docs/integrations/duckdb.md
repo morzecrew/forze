@@ -233,7 +233,9 @@ Operating it:
   catalog, the IdP and the store. An `s3://` path inside the tenant's prefix
   with no vended secret behind it goes, unsigned, to the public AWS endpoint.
 - **Keep `sts-token-validity-seconds` well above the longest statement.**
-  The engine does not re-vend a credential that expires mid-statement.
+  The engine does not re-vend a credential that expires mid-statement: the
+  statement fails with an HTTP 400 from the store. A statement that starts
+  after expiry loads the table again and gets a fresh credential.
 
 ## What it provides
 

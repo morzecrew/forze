@@ -381,6 +381,9 @@ Use fixtures from `tests/integration/conftest.py` (shared Docker check via `test
 - `perf` — performance benchmarks under `tests/perf/`; **excluded from default `just test` (CI)**.
   Run with `just perf`. Perf measures overall throughput/latency; many perf tests use Docker
   testcontainers, but not all (e.g. codec micro-benchmarks are in-process only).
+- `lake_slow` — the lake credential-expiry battery (RFC 0078 11b/11c), which waits out a
+  900 s vended credential; **excluded from default `just test` (CI)**. Run with
+  `just lake-slow`; `.github/workflows/lake-expiry.yml` runs it daily.
 
 **CI vs perf:** `just test` runs unit + integration (`-m "not perf"`). `just perf` runs
 `@pytest.mark.perf` with pytest-benchmark (`--benchmark-only`).
