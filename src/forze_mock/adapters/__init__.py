@@ -3,6 +3,11 @@
 from __future__ import annotations
 
 from forze_mock.adapters.analytics import MockAnalyticsAdapter
+from forze_mock.adapters.analytics_resolvers import (
+    MockAnalyticsRegistry,
+    MockAnalyticsResolver,
+    MockAnalyticsView,
+)
 from forze_mock.adapters.cache import MockCacheAdapter
 from forze_mock.adapters.counter import MockCounterAdapter, MockCounterAdminAdapter
 from forze_mock.adapters.crypto import MockKeyManagement
@@ -120,6 +125,9 @@ __all__ = [
     "MockCommitStreamGroupAdapter",
     "MockCommitStreamGroupAdminAdapter",
     "MockAnalyticsAdapter",
+    "MockAnalyticsRegistry",
+    "MockAnalyticsResolver",
+    "MockAnalyticsView",
     "MockDynamicReadAdapter",
     "MockDynamicReadHandler",
     "MockDynamicReadRegistry",

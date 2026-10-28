@@ -54,4 +54,6 @@ analytical data is immutable facts. To recompute a rollup over an ingested batch
 
 The full spec and method surface is the
 [analytics reference](../reference/contracts/analytics.md); the worked data-lake flow is the
-[analytics-over-a-data-lake](../recipes/analytics-over-a-data-lake.md) recipe.
+[analytics-over-a-data-lake](../recipes/analytics-over-a-data-lake.md) recipe. To answer a
+query from the mock's current documents in tests and simulations, see
+[Testing](../testing/overview.md#analytics-answered-from-current-state).

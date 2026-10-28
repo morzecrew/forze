@@ -77,6 +77,13 @@ Uncovered planes are declared rather than omitted, which is the part worth readi
 Read that table as the honest complement to the green matrices above: those planes are tested,
 they are simply not *compared*.
 
+The `analytics` gap asks whether the engines agree with each other. A narrower question has a
+helper: does a mock resolver agree with the SQL it stands in for?
+`forze_dst.conformance.compare_analytics_query` loads one seed into the mock and into a real
+engine, runs the query on both, and reports each row only one side returned. It is a test you
+write per query, not a plane leg, so the gap stays declared (see
+[Testing](../testing/overview.md#analytics-answered-from-current-state)).
+
 Deriving the requirement from the code is what keeps that table honest, and one plane needed
 help to manage it. Field encryption's ports are *resolved* by the adapters that seal values
 rather than registered by a backend, so the census sees no providers for them — and a

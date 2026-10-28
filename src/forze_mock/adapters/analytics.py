@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import AsyncGenerator, Sequence
+from collections.abc import AsyncGenerator, Mapping, Sequence
 from typing import (
     Any,
     Literal,
@@ -43,6 +43,7 @@ from forze.application.integrations.analytics.adapter_common import (
 from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict
 from forze.base.serialization import default_model_codec
+from forze_mock.adapters.analytics_resolvers import MockAnalyticsRegistry, MockAnalyticsView
 from forze_mock.query._types import T
 from forze_mock.query.cursors import (
     _mock_cursor_start_and_limit,  # pyright: ignore[reportPrivateUsage]
@@ -59,10 +60,18 @@ class MockAnalyticsAdapter[R: BaseModel, Ing: BaseModel](
     AnalyticsQueryPort[R],
     AnalyticsIngestPort[Ing],
 ):
-    """In-memory analytics adapter over seeded query hits and an ingest log."""
+    """In-memory analytics adapter over seeded query hits, resolvers and an ingest log."""
 
     state: MockState
     spec: AnalyticsSpec[R, Ing]
+
+    resolvers: MockAnalyticsRegistry | None = None
+    """Resolvers computing a query's rows from current documents; ``None`` answers every query
+    from the seeded hits."""
+
+    view: MockAnalyticsView | None = None
+    """The document view handed to a resolver; ``None`` reads each spec's rows from the
+    namespace named after it, unpartitioned."""
 
     # ....................... #
 
@@ -91,10 +100,30 @@ class MockAnalyticsAdapter[R: BaseModel, Ing: BaseModel](
 
     # ....................... #
 
-    def _query_rows(self, query_key: str) -> list[JsonDict]:
-        with self.state.lock:
-            route_store = self.state.analytics_query_hits.setdefault(self._route(), {})
-            return [dict(row) for row in route_store.get(query_key, [])]
+    def _query_rows(self, query_key: str, params: BaseModel) -> list[JsonDict]:
+        resolver = (
+            None
+            if self.resolvers is None
+            else self.resolvers.resolver_for(str(self.spec.name), query_key)
+        )
+
+        if resolver is None:
+            with self.state.lock:
+                route_store = self.state.analytics_query_hits.setdefault(self._route(), {})
+                return [dict(row) for row in route_store.get(query_key, [])]
+
+        rows: list[JsonDict] = []
+
+        for row in resolver(self.view or MockAnalyticsView(state=self.state), params):
+            if not isinstance(row, Mapping):  # pyright: ignore[reportUnnecessaryIsInstance]
+                raise exc.internal(
+                    f"Mock analytics resolver for {str(self.spec.name)!r}/{query_key!r} must "
+                    f"return row mappings, got {type(row).__name__}.",
+                )
+
+            rows.append(dict(row))
+
+        return rows
 
     # ....................... #
 
@@ -153,14 +182,14 @@ class MockAnalyticsAdapter[R: BaseModel, Ing: BaseModel](
         return_type: type[T] | None,
         return_fields: Sequence[str] | None,
     ) -> CountlessPage[Any] | Page[Any]:
-        _ = self._validated_params(query_key, params)
+        params = self._validated_params(query_key, params)
         if self._dry_run(options):
             empty: list[Any] = []
             if return_count:
                 return page_from_limit_offset(empty, pagination, total=0)
             return page_from_limit_offset(empty, pagination, total=None)
 
-        rows = self._apply_max_rows(self._query_rows(query_key), options)
+        rows = self._apply_max_rows(self._query_rows(query_key, params), options)
         data = await decrypt_and_shape_rows(
             rows,
             read_codec=self.spec.resolved_read_codec,
@@ -185,7 +214,7 @@ class MockAnalyticsAdapter[R: BaseModel, Ing: BaseModel](
         return_type: type[T] | None,
         return_fields: Sequence[str] | None,
     ) -> CursorPage[Any]:
-        _ = self._validated_params(query_key, params)
+        params = self._validated_params(query_key, params)
         if self._dry_run(options):
             return CursorPage(
                 hits=[],
@@ -194,7 +223,7 @@ class MockAnalyticsAdapter[R: BaseModel, Ing: BaseModel](
                 has_more=False,
             )
 
-        rows = self._apply_max_rows(self._query_rows(query_key), options)
+        rows = self._apply_max_rows(self._query_rows(query_key, params), options)
         start, lim = _mock_cursor_start_and_limit(cursor)
         window = rows[start : start + lim + 1]
         has_more = len(window) > lim

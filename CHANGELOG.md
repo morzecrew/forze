@@ -55,6 +55,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **`postgres_document_schema_specs(registry, deps)` validates every bound Postgres document.** It pairs each route with its catalogued `DocumentSpec` for `schema_specs`, and refuses a route with no such spec or a read-write route over a read-only one. `exclude=` skips routes; a per-tenant one is skipped with a warning.
 
+- **The mock can compute an analytics query from its current documents.** Register `fn(view, params)` with `MockDepsModule(analytics=MockAnalyticsRegistry().on(spec, query_key, fn))`; `view.rows(spec)` reads stored rows as the caller's transaction sees them. A query with no resolver keeps its seeded rows.
+
+- **`forze_dst.conformance.compare_analytics_query` checks a mock resolver against the SQL it stands in for.** It loads one seed into both engines, runs the query on each and lists every differing row. `query_invariant(spec, query_key, holds=...)` turns the same query into a DST oracle.
+
 **`forze ops` for people at a shell and for backfills:**
 
 - **`forze ops` gains typed flags, JSONL batches and shell completion.** `call OP --field VALUE` takes a flat-scalar input as flags; `--batch @PATH|-` runs one call per line in one runtime, stopping at the first failure; `OP` completes in the shell. An unknown option after `OP` now exits 2 with an error object.

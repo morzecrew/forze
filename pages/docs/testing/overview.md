@@ -85,6 +85,49 @@ Each disagreement is one `DerivedMismatch` for one field on one row, holding bot
 
 Keep the plan's `instant` pinned (the default), so both stores create the same ids. Leave `SpecSeed.derived` out of the plan: the real store has no column to write those values to, and the point is to test the join or callback your tests use, not a value you supplied. For a tenant-aware spec, pass `tenant=TenantIdentity(...)`; it is bound on both contexts for the seed and the reads.
 
+## Analytics answered from current state
+
+By default the mock answers an [analytics](../data-events/analytics.md) query from rows you seed into `MockState.analytics_query_hits`. Those rows never change. A handler that reads a query to decide what to do sees the same numbers after every write, so under simulation it never takes the branch the real numbers would send it down.
+
+Register a resolver instead, and the mock computes the query on each call from the documents it holds:
+
+```python
+from forze_mock import MockAnalyticsRegistry, MockDepsModule
+
+
+def totals_by_customer(view, params):
+    sums = defaultdict(int)
+    for row in view.rows(ORDERS):
+        sums[row["customer"]] += row["amount"]
+    return [{"customer": c, "total": t} for c, t in sums.items() if t >= params.min_total]
+
+
+MockDepsModule(
+    analytics=MockAnalyticsRegistry().on(TOTALS, "by_customer", totals_by_customer),
+)
+```
+
+`view.rows(spec)` returns a document spec's stored rows in storage form: the columns a SQL query over the table would see. You get the rows the calling transaction sees. Inside a transaction, its own uncommitted writes are included and a concurrent transaction's are not. Outside one, you get the committed rows. The resolver receives the call's validated params. Its rows then go through the same `max_rows` cap and read-model decoding as seeded rows. A query with no resolver keeps its seeded rows. `on()` refuses a query key the spec does not declare.
+
+A resolver is a second implementation of the query, and only a test keeps it in step with the SQL. `forze_dst.conformance.compare_analytics_query` is that test. It loads one seed into the mock and into the real engine, runs the query on both, and diffs the rows:
+
+```python
+from forze_dst.conformance import compare_analytics_query
+from forze_mock.seeding import apply_seed
+
+comparison = await compare_analytics_query(
+    TOTALS,
+    "by_customer",
+    MinTotal(min_total=10),
+    mock=mock_ctx,
+    real=postgres_ctx,
+    seed=lambda ctx: apply_seed(ctx, plan),
+)
+assert comparison.agrees, comparison.render()
+```
+
+Rows are compared as a multiset after the read model, so a `Decimal` from the engine and an `int` from the resolver agree when the read model types the field. Pass `ordered=True` only for a query with an `ORDER BY`. `render()` prints one line for each row that only one side returned, or, in ordered mode, for each position that differs. To use the same query as a simulation invariant, see [`query_invariant`](../dst/invariants.md#what-must-always-hold).
+
 ## Transaction rollback in tests
 
 Mock transactions are **faithful by default**: a write inside a transaction that rolls back is undone, so a "forgot to run it in the same transaction" bug fails in your unit test exactly as it would in production. No flag needed.

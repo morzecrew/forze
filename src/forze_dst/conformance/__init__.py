@@ -21,13 +21,16 @@ across the publish-then-crash window), and the **realtime gateway's ack-stream d
 crash** (:func:`run_gateway_crash_delivery`: exactly-once emit + store-then-forward atomicity across
 the bridge-then-crash windows, with the real gateway bridge injected by the test). Beside them,
 :func:`run_derived_fidelity` diffs one spec's **derived read fields** — the mock's join or
-fixture callback against the real view — per field and per row over one seed. A general
+fixture callback against the real view — per field and per row over one seed, and
+:func:`compare_analytics_query` diffs one analytics query's rows between a mock resolver and the
+real engine it stands in for, so a resolver that drifts from its SQL fails a test. A general
 "mock ≡ real for every port" matrix stays out — it has no shared equivalence relation and would
 drown in false positives.
 """
 
 from __future__ import annotations
 
+from .analytics import AnalyticsComparison, RowDifference, compare_analytics_query
 from .anomalies import BATTERY, AnomalyCase, expected_verdict
 from .catalog import (
     PLANE_DIVERGENCES,
@@ -121,6 +124,9 @@ from .transfer import (
 # ----------------------- #
 
 __all__ = [
+    "AnalyticsComparison",
+    "RowDifference",
+    "compare_analytics_query",
     "AnomalyCase",
     "BATTERY",
     "expected_verdict",
