@@ -3,7 +3,7 @@
 from collections.abc import AsyncGenerator
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from contextvars import ContextVar
-from typing import TYPE_CHECKING, final
+from typing import TYPE_CHECKING, Literal, final
 
 import attrs
 
@@ -278,6 +278,9 @@ class MockJournalTxManagerAdapter(TransactionManagerPort):
 
     state: "MockState"
 
+    row_locks: Literal["claim", "block"] = "claim"
+    """How a row lock meets a concurrent transaction — see ``MockDepsModule.row_locks``."""
+
     # ....................... #
 
     @property
@@ -341,6 +344,7 @@ class MockJournalTxManagerAdapter(TransactionManagerPort):
                 self.state,
                 serializable=isolation is IsolationLevel.SERIALIZABLE,
                 read_committed=isolation in (None, IsolationLevel.READ_COMMITTED),
+                block_rows=self.row_locks == "block",
             )
             if is_root
             else None

@@ -11,6 +11,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Federated search takes `member_filters`, a filter for one member's leg alone.** It joins `filters` with `$and` on that leg, and a hub refuses it. New `SearchMemberGrant`, `bind_search_member_grant`, `OperationDescriptor.members` and `AuthorizesMembers` back member authorization.
 
+- **`MockDepsModule(row_locks="block")` makes a held row lock wait under simulation, as Postgres does.** Two transactions taking rows in one order now both succeed. Opposite orders abort one with `deadlock_detected`, and DST reports a `no_lock_order_deadlock` violation naming the rows.
+
 - **DuckDB serves trusted dynamic reads over a per-tenant Iceberg lake.** `RoutedDuckDbClient` gives each tenant a locked-down instance holding its catalog principal and the S3 credentials vended per statement, and serves nothing from one that fails its attestation. Wire routes with `DuckDbDepsModule(dynamic_reads=...)`.
 
 - **`attach_readiness_route` takes a runtime provider.** Pass a zero-argument callable returning the runtime, or `None` before it exists; it is asked on every request. No runtime, or a provider that raises, answers `503 unavailable`.

@@ -215,5 +215,20 @@ restores a global snapshot on rollback, so concurrent root transactions serializ
 `transactions="none"` is the legacy no-op (writes persist through a rollback) kept
 only for comparison.
 
+Row locks — a `for_update` read, and the lock a write takes on the row it changes —
+are claims by default: nobody waits, and of two transactions over a locked row the
+one that commits second is aborted with a conflict. That is safe, but it cannot tell
+a correct lock order from a deadlock-prone one, since both abort under contention.
+`MockDepsModule(row_locks="block")` makes the contender wait instead, as Postgres
+does: it parks until the holder commits or rolls back, then carries on against the
+committed row. A wait that would close a cycle — two transactions taking the same
+rows in opposite orders — aborts the waiter with `exc.concurrency`
+(`code="deadlock_detected"`, the rows in its details), and a
+[simulation](../dst/invariants.md#transactional-isolation) reports it as a
+`no_lock_order_deadlock` violation. The mock only blocks on the simulation loop,
+where a wait nothing ends is reported rather than hung; on any other loop it falls
+back to claims. It needs the default `transactions="journal"`, and `"nowait"` /
+`"skip_locked"` wait like a plain `for_update`.
+
 A transaction rolls back when an operation raises; what those failures are, and how a
 raised error becomes a response, is [Errors](errors.md).

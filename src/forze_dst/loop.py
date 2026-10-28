@@ -24,7 +24,7 @@ import random
 import selectors
 import weakref
 from collections.abc import Mapping
-from typing import Any, cast, final
+from typing import Any, ClassVar, cast, final
 
 import attrs
 
@@ -150,6 +150,12 @@ class SimulationEventLoop(asyncio.BaseEventLoop):
     seam, so a schedule can be varied without changing application values, and vice versa.
     Same seed → same interleaving, so any bug surfaced reproduces.
     """
+
+    raises_on_quiescence: ClassVar[bool] = True
+    """A wait nothing will end raises :class:`SimulationDeadlock` here instead of hanging.
+
+    Read by name, not by type, by the mock's blocking row locks (``forze_mock`` may not import this
+    package): they park a contender only on a loop where a stuck wait is reported, not hung."""
 
     def __init__(
         self,

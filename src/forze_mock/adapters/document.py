@@ -77,7 +77,7 @@ from forze_mock.adapters._derived import (
     staged_for,
 )
 from forze_mock.adapters._journal import JournalingStore
-from forze_mock.adapters._mvcc import current_mvcc_tx
+from forze_mock.adapters._mvcc import acquire_row_locks, current_mvcc_tx
 from forze_mock.adapters.derived_values import MockDerivedSource
 from forze_mock.adapters.query_params import MockQueryParamsSource
 from forze_mock.query._types import (
@@ -329,7 +329,8 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
         committer then wrote is aborted (abort-vs-block, normalized by the conformance differential),
         preventing the lost update / write skew a bare read would let through. Reuses the claim
         machinery (:attr:`~forze_mock.adapters._mvcc.MvccTx.rev_guarded`) — a lock is a claim on the
-        row just like a rev-guarded write.
+        row just like a rev-guarded write. Under ``row_locks="block"`` the read has already waited
+        in :meth:`_lock_rows`, so the claim is taken after the holder committed and stays quiet.
         """
 
         mvcc = current_mvcc_tx()
@@ -340,13 +341,37 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
 
     # ....................... #
 
-    def _mark_locked_row_from(self, hit: Any) -> None:
-        """Claim a ``FOR UPDATE`` lock on a predicate read's row, keyed by its id when discoverable.
+    async def _lock_rows(self, pks: Callable[[], Sequence[UUID]]) -> bool:
+        """Hold the row lock on each visible row *pks* names, under ``row_locks="block"``.
+
+        A no-op returning ``False`` in the default claim mode and off a simulation loop (see
+        :func:`~forze_mock.adapters._mvcc.acquire_row_locks`). Only a row this statement can see
+        is locked, as on Postgres: one a concurrent transaction inserted and has not committed is
+        absent, not waited on.
+
+        :returns: Whether it waited for another transaction, so a read re-evaluates its row.
+        """
+
+        def keys() -> list[tuple[str, Any]]:
+            ns = partition_namespace(self.require_tenant_if_aware(), self.namespace)
+            store = self._store()
+
+            return [(ns, pk) for pk in pks() if pk in store]
+
+        return await acquire_row_locks(self.state, keys)
+
+    # ....................... #
+
+    async def _lock_hit(self, hit: Any) -> bool:
+        """Take a ``FOR UPDATE`` lock on a predicate read's row, keyed by its id when discoverable.
 
         ``get`` locks by an explicit pk; ``find``/``project``/``select`` lock the returned row,
         whose id is read from the model attribute or the projected mapping. A projection that
         excludes the id (or a custom ``select`` type without one) cannot be claimed — a best-effort
         gap, not a lost update: the common id-addressable path (``get``, full-row ``find``) is exact.
+
+        :returns: Whether blocking mode waited out another holder first, in which case nothing is
+            claimed and the caller reads again against what the holder committed.
         """
 
         raw = getattr(hit, ID_FIELD, None)
@@ -357,11 +382,16 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
             )
 
         if raw is None:
-            return
+            return False
 
-        self._mark_row_locked(
-            raw if isinstance(raw, UUID) else UUID(str(raw))  # pyright: ignore[reportUnknownArgumentType]
-        )
+        pk = raw if isinstance(raw, UUID) else UUID(str(raw))  # pyright: ignore[reportUnknownArgumentType]
+
+        if await self._lock_rows(lambda: [pk]):
+            return True
+
+        self._mark_row_locked(pk)
+
+        return False
 
     # ....................... #
 
@@ -666,6 +696,11 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
         if self.bound_params is not None:
             return self._to_read(self._param_doc_by_pk(pk))
 
+        if for_update:
+            # Blocking mode parks here on a held row; the read below then sees what its holder
+            # committed, and the claim is anchored after the wait rather than before it.
+            await self._lock_rows(lambda: [pk])
+
         with self.state.lock:
             doc = dict(self._ensure_exists(pk))
             # ``FOR UPDATE`` (any truthy mode): claim the row so a concurrent writer conflicts, the
@@ -771,8 +806,10 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
 
         hit = page.hits[0]
 
-        if for_update:
-            self._mark_locked_row_from(hit)
+        if for_update and await self._lock_hit(hit):
+            # Waited out a holder: read again against what it committed, as read committed
+            # re-evaluates a locked row whose holder changed it.
+            return await self.find(filters, for_update=for_update)
 
         return hit
 
@@ -796,8 +833,8 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
 
         hit = page.hits[0]
 
-        if for_update:
-            self._mark_locked_row_from(hit)
+        if for_update and await self._lock_hit(hit):
+            return await self.project(filters, fields, for_update=for_update)
 
         return hit
 
@@ -821,8 +858,8 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
 
         hit = page.hits[0]
 
-        if for_update:
-            self._mark_locked_row_from(hit)
+        if for_update and await self._lock_hit(hit):
+            return await self.select(filters, return_type, for_update=for_update)
 
         return hit
 

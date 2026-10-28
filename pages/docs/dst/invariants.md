@@ -105,6 +105,14 @@ An isolation oracle has a trap the others don't: a green result is meaningless i
 
 One failure needs no invariant at all: a **deadlock**. If an interleaving drives the workload to a standstill — every task blocked, with no ready work and no timer to advance — that is always a bug, so DST reports it on its own. It minimises to the smallest workload that still stalls and comes back as a `no_deadlock` violation, exactly like an asserted one, instead of aborting the sweep. You catch it for free, even with no invariants declared.
 
+A **lock-order deadlock** is reported the same way once the mock's row locks block. Wire
+`MockDepsModule(row_locks="block")` and a transaction that meets a held row waits for it,
+as on Postgres, so two handlers locking rows A and B in one order both succeed. Lock them
+in opposite orders and the cycle aborts one transaction (`code="deadlock_detected"`); the
+sweep reports a `no_lock_order_deadlock` violation naming both rows, and minimises it to
+the pair of operations that collide. See
+[Transactions under the mock](../writing-operation/transactions.md#transactions-under-the-mock).
+
 A last cross-cutting claim is **convergence**. If an operation declares itself order-independent, `commutative_convergence(build, final_state=…, schedule_seeds=…)` reruns the workload across a band of schedules and flags a declared-commutative op whose interleavings reach *different* end states, naming the seed that diverged — a cross-history check, like reachability, not a per-run invariant.
 
 !!! note "Value-level invariants need `capture_values`"

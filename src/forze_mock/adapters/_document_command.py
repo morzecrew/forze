@@ -75,6 +75,7 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
         def _ensure_exists(self, pk: UUID) -> JsonDict: ...
         def _check_rev(self, current_rev: int, expected_rev: int | None) -> None: ...
         def _mark_rev_guarded(self, pk: UUID) -> None: ...
+        def _lock_rows(self, pks: Callable[[], Sequence[UUID]]) -> Awaitable[bool]: ...
         def _mark_guarantee_recheck(self, pk: UUID) -> None: ...
         def _mark_created(self, pk: UUID) -> None: ...
         def _create_codec(self) -> ModelCodec[D, Any]: ...
@@ -753,6 +754,7 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
     ) -> R | None:
         self._ensure_writable()
         patch = self._encode_patch(update)
+        await self._lock_rows(lambda: [id])
 
         # Every owner either arm could touch — the row's, the one the update would move it to,
         # and the one a create would write — since which arm runs is decided below.
@@ -899,6 +901,8 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
     ) -> R | JsonDict | tuple[R, JsonDict] | None:
         self._ensure_writable()
         patch = self._encode_patch(dto)
+        # Row before owner: once the row is held it cannot move, so the owners read next are final.
+        await self._lock_rows(lambda: [pk])
         await self._serialize_writes(lambda: self._sides(pk, patch))
 
         with self.state.lock:
@@ -1098,6 +1102,9 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
 
         selects = self._matcher(filters)
 
+        # A set-based update locks each row it selects, as one statement does on a real store.
+        await self._lock_rows(lambda: [pk for pk, raw in self._store().items() if selects(raw)])
+
         # Every owner the filter selects, and every owner the patch would move a selected row
         # to, before the section rather than inside it: a set-based update is one statement on a
         # real store and takes every lock it needs up front.
@@ -1256,6 +1263,7 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
 
     async def touch(self, pk: UUID, *, return_new: bool = True) -> R | None:
         self._ensure_writable()
+        await self._lock_rows(lambda: [pk])
         await self._serialize_stored(pk)
 
         with self.state.lock:
@@ -1313,6 +1321,7 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
     async def kill(self, pk: UUID) -> None:
         self.spec.require_hard_delete()
         self._ensure_writable()
+        await self._lock_rows(lambda: [pk])
         await self._serialize_stored(pk)
 
         with self.state.lock:
@@ -1364,6 +1373,7 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
         if not self._supports_soft_delete():
             raise exc.internal("Soft deletion is not supported for this model")
 
+        await self._lock_rows(lambda: [pk])
         await self._serialize_stored(pk)
 
         with self.state.lock:
@@ -1459,6 +1469,7 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
         if not self._supports_soft_delete():
             raise exc.internal("Soft deletion is not supported for this model")
 
+        await self._lock_rows(lambda: [pk])
         await self._serialize_stored(pk)
 
         with self.state.lock:

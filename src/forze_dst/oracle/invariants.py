@@ -90,15 +90,40 @@ def _deadlock_violations(history: History) -> list[Violation]:
     ]
 
 
+def _lock_order_deadlock_violations(history: History) -> list[Violation]:
+    """A row-lock cycle the mock broke by aborting one transaction — a latent production deadlock.
+
+    Only ``MockDepsModule(row_locks="block")`` records one (a ``lock``/``deadlock`` trace event
+    naming the cycle's rows): two transactions took the same rows in opposite orders, and a real
+    database would abort one of them too. Locking in one order makes it go away.
+    """
+
+    return [
+        Violation(
+            invariant="no_lock_order_deadlock",
+            message="lock-order deadlock over rows "
+            + ", ".join(str(row) for row in (event.fields.get("payload") or {}).get("rows", ()))
+            + " — one transaction was aborted as its victim",
+            events=(event,),
+        )
+        for event in history.of_kind("trace")
+        if event.fields.get("trace_domain") == "lock" and event.fields.get("op") == "deadlock"
+    ]
+
+
 def check(history: History, invariants: Sequence[Invariant]) -> list[Violation]:
     """Run every invariant over *history* and collect all violations.
 
     A recorded deadlock is reported regardless of the declared invariants — a workload that
     cannot make progress is a bug on any app — so it surfaces here even uninstrumented, the way a
-    sweep catches an unexpected crash.
+    sweep catches an unexpected crash. So is a lock-order deadlock the mock's blocking row locks
+    broke by aborting a victim: the same workload deadlocks against a real database.
     """
 
-    violations: list[Violation] = _deadlock_violations(history)
+    violations: list[Violation] = [
+        *_deadlock_violations(history),
+        *_lock_order_deadlock_violations(history),
+    ]
 
     for invariant in invariants:
         violations.extend(invariant(history))
