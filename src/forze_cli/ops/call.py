@@ -224,6 +224,10 @@ def execute(
                 code="cli_runtime_not_serverless",
             )
 
+        # Nothing to run: no startup, no shutdown.
+        if calls == []:
+            return None, EXIT_OK
+
         call = functools.partial(
             _attempt,
             ops=ops,

@@ -169,6 +169,7 @@ class TestMalformedFlags:
             ["--text", "x", "-x"],
             ["--text", "--loud"],
             ["--text", "--count=3"],
+            ["--text", "--stray-marker-81c0"],
         ],
     )
     def test_is_usage(self, flags: list[str]) -> None:

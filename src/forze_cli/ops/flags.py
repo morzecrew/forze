@@ -149,9 +149,9 @@ def parse_flags(args: list[str], table: FlagTable) -> dict[str, Any]:
             if following is None:
                 raise ValueError(f"{spelling} needs a value")
 
-            # A forgotten value would swallow the next flag; --name=VALUE spells one that
-            # looks like a flag.
-            if following.partition("=")[0] in table:
+            # A forgotten value would swallow the next flag, a misspelt one included;
+            # --name=VALUE spells a value that looks like a flag.
+            if following.startswith("--"):
                 raise ValueError(f"{spelling} needs a value, not the flag after it")
 
             raw[name] = following

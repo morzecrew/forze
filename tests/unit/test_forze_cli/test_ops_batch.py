@@ -140,6 +140,7 @@ class TestBatch:
 
         assert result.exit_code == 0
         assert result.stdout == ""
+        assert sample.SHUTDOWNS == []
 
     def test_from_a_file(self, tmp_path: Path) -> None:
         source = tmp_path / "lines.jsonl"

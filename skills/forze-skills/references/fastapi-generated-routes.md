@@ -167,7 +167,7 @@ ops = OpsApp(
 )
 ```
 
-Run it with `FORZE_OPS_APP=myapp.ops:ops forze ops call projects.get --input '{"id": "..."}'`, the key in `FORZE_API_KEY` (never argv). `call` prints exactly one JSON document — the result or a masked error object with `execution_id` / `correlation_id` — and exits with a stable code: 0 ok, 2 usage, 3 not found, 4 rejected, 5 denied, 6 timeout, 75 safe to retry, 69 retryable but a write may have landed, 78 configuration. An input of flat scalars also takes typed flags (`--id ...`) instead of `--input`, `--batch @rows.jsonl` runs one call per line in one runtime and stops at the first failure, and `forze --install-completion` completes operation names. `build_ops_cli(ops)` mounts the same group in your own Typer CLI; set `pretty_exceptions_show_locals=False` on its root.
+Run it with `FORZE_OPS_APP=myapp.ops:ops forze ops call projects.get --input '{"id": "..."}'`, the key in `FORZE_API_KEY` (never argv). `call` prints exactly one JSON document — the result or a masked error object with `execution_id` / `correlation_id` — and exits with a stable code: 0 ok, 2 usage, 3 not found, 4 rejected, 5 denied, 6 timeout, 75 safe to retry, 69 retryable but a write may have landed, 78 configuration. An input of flat scalars usually also takes typed flags (`--id ...`) instead of `--input` (`describe` says when it does not), `--batch @rows.jsonl` runs one call per line in one runtime and stops at the first failure, and `forze --install-completion` completes operation names. `build_ops_cli(ops)` mounts the same group in your own Typer CLI; set `pretty_exceptions_show_locals=False` on its root.
 
 ## Anti-patterns
 

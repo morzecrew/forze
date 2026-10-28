@@ -2337,9 +2337,8 @@ rows a batch touches (decisions 9, 10 and 12), folded into D-092 and D-093.
   answers.
 - **Class:** `spec-gap`.
 - **Consequence:** `describe` lists the flags or says why there are none (`typed_flags` in
-  `--json`). A value spelled like a call option, or like one of the input's flags, needs
-  `--field=VALUE`; a bare one spelled like an input flag is refused, since a forgotten value
-  would swallow the next flag. A float flag accepts `nan` exactly as `--input` accepts the
+  `--json`). A value that starts with `--` needs `--field=VALUE`; a bare one is refused,
+  since a forgotten value would swallow the next flag, a misspelt one included. A float flag accepts `nan` exactly as `--input` accepts the
   string `"nan"`: flags match `--input`'s string form, and only the JSON literal `NaN` is
   refused there. Values on argv are visible to `ps` and shell history; the docs send any
   sensitive value that is not a declared secret to `--input @PATH`.
@@ -2449,3 +2448,16 @@ rows a batch touches (decisions 9, 10 and 12), folded into D-092 and D-093.
   effects run at completion time too (§9, "Import side effects").
 - **Proposed row (RFC 0077):** `ASSUMED` — completion loads the declaration as `list` does,
   builds no runtime, and offers nothing, silently, when the declaration cannot load.
+
+## Review findings — 2026-10-28
+
+PR #692. Three findings from CodeRabbit and CodeAnt, all fixed. R-1 amends D-089's
+consequence in place; no proposed row changes.
+
+| # | Severity | Finding | Status |
+|---|---|---|---|
+| R-1 | Medium | A flag that needs a value took the next token unless it was one of the input's flags, so `--title --tilte` ran the operation with the title `--tilte` (CodeRabbit) | Fixed — any next token that starts with `--` is refused; `--title=--tilte` still spells that value |
+| R-2 | Medium | A batch of blank lines built the runtime and ran its startup and shutdown with nothing to call (CodeAnt) | Fixed — an empty batch exits 0 after the key and the runtime profile are checked, and never enters the runtime's scope |
+| R-3 | Low | The app-author skill said every flat-scalar input takes typed flags, though a secret field or a colliding spelling disables them (CodeAnt) | Fixed — it says "usually" and points at `describe` |
+
+Each fix was checked against its own removal.

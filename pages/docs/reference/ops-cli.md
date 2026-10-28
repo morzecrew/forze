@@ -74,8 +74,8 @@ $ forze ops call notes.create --title "Quarterly report"
   way: each value is the string you typed, coerced by the DTO; an omitted flag takes the
   field's default; a missing required field or a bad value exits 4 and is never echoed.
 - **A value that looks like a flag.** `--title --pretty` gives `--pretty` to `call`, and
-  `--title --draft` is refused when `--draft` is one of the input's flags. Write
-  `--title=--pretty`.
+  `--title --draft` is refused: the token after a flag that needs a value cannot start with
+  `--`. Write `--title=--pretty`.
 - **On argv.** Every value is on the command line, where `ps` and shell history show it. A
   secret field is refused; pass any other sensitive value with `--input @PATH`.
 - **All or none.** An input takes no flags when one of its fields is anything else (a list, a
