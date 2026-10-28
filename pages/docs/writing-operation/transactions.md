@@ -228,7 +228,7 @@ taking the same rows in opposite orders — aborts the waiter with `exc.concurre
 (`code="deadlock_detected"`, the rows in its details), and a
 [simulation](../dst/invariants.md#transactional-isolation) reports it as a
 `no_lock_order_deadlock` violation. The mock only blocks on the simulation loop,
-where a wait nothing ends is reported rather than hung; on any other loop it falls
+which reports a wait that never ends instead of hanging; on any other loop it falls
 back to claims. It needs the default `transactions="journal"`.
 
 `"nowait"` and `"skip_locked"` are a mock divergence in either mode. On Postgres, `NOWAIT`

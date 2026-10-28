@@ -720,7 +720,7 @@ class TestNothingHangs:
         assert log == ["holder took b"]
 
     async def test_off_the_simulation_loop_block_falls_back_to_claim(self) -> None:
-        # A plain loop cannot report a wait nothing ends, so nothing waits there.
+        # A plain loop cannot report a wait that never ends, so nothing waits there.
         module = MockDepsModule(state=MockState(), row_locks="block")
         (pk,) = await _seed(module, 1)
         log: list[str] = []
