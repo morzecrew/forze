@@ -10324,6 +10324,9 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <p><strong><code>local_identity_deps</code> wires no tenant resolver for a config that maps no tenant</strong> (<strong>behaviour change</strong>). There, <code>forze ops call --tenant</code> gets <code>400 tenant_request_unverifiable</code>, not <code>401 tenant_mismatch</code>. A tenant on an API key counts and resolves, also in a config built directly.</p>
 </li>
 <li>
+<p><strong><abbr title="Model Context Protocol">MCP</abbr> and agent tool descriptions group filterable fields by type</strong> (<strong>behaviour change</strong>). <code>describe_query_discovery</code> states the operators every field shares once, then each further operator set once, with its fields under their own types. <code>QueryDiscovery</code> and <code>x-forze-query</code> are unchanged.</p>
+</li>
+<li>
 <p><strong>The dynamic-read write refusal no longer names a READ ONLY transaction.</strong> The message is engine-neutral and the details carry the engine's <code>statement_type</code> where it has one. A <code>DuckDbClient</code> statement timeout now carries the code <code>duckdb_query_timeout</code>.</p>
 </li>
 </ul>
@@ -10403,6 +10406,15 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 </li>
 <li>
 <p><strong>Postgres startup no longer warns about a <code>tenant_id</code> column the document model maps itself.</strong> Such a table stores the tenant as data, as identity's sessions and tenant memberships do, so the column is not an unused isolation column.</p>
+</li>
+<li>
+<p><strong>A filter on an <code>Annotated</code> field is checked against the type it wraps</strong> (<strong>behaviour change</strong>). <code>Annotated[str, ...] | None</code> and its list elements resolved to no type, so discovery advertised every operator and <code>$gt</code> passed. They now get their type's operators; a string bound on an annotated number or date is cast.</p>
+</li>
+<li>
+<p><strong>Filters and sorts see through <code>Annotated</code> fields</strong> (<strong>behaviour change</strong>). <code>Annotated[str, ...] | None</code> and list elements took any operator unchecked; now they get their type's and a string bound is cast. A sort into an annotated submodel resolves; Postgres compares annotated <code>Decimal</code> elements to an int numerically.</p>
+</li>
+<li>
+<p><strong>Backends and spec checks see through <code>Annotated</code> and <code>type</code> aliases</strong> (<strong>behaviour change</strong>). A Postgres filter via <code>Annotated[M, ...] | None</code> returned 500; BigQuery parameters and <code>forze ops</code> flags misread them. A schema, index, null or graph-key mismatch fails at startup; a mock seed nulls an aliased optional link.</p>
 </li>
 </ul>
 <h3 id="security">Security<a class="headerlink" href="#security" title="Permanent link">&para;</a></h3>

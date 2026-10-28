@@ -6806,7 +6806,8 @@ check steps aside and the DTO decides.</p>
 <p>A filter-accepting operation's input schema says a filter may be sent; it cannot
 say <em>which fields</em>, because the DSL's expression types are field-agnostic by
 design. So the projected description carries the read model's filter surface —
-the filterable fields with the operators each one accepts, what may be sorted,
+the filterable fields with the operators each one accepts (grouped by type, so
+each operator list is stated once), what may be sorted,
 what may be grouped — taken from the spec's query policy rather than from the
 model's field list. A field the policy withholds is not advertised, and a model
 that reads the description gets its first filter right instead of discovering

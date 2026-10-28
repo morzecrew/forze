@@ -6808,10 +6808,14 @@ nothing in the palette to call.</p>
 JSON Schema taken from the operation's own input DTO, and a description. For a filter-accepting operation that description also spells out the
 filter surface:</p>
 <blockquote>
-<p>List documents by filters and sorts (offset pagination). Filterable fields — category
-(string: <code>$eq</code>, <code>$ilike</code>, <code>$in</code>, <code>$like</code>, <code>$neq</code>, <code>$nin</code>, <code>$null</code>, <code>$regex</code>); title
-(string: …). Sortable by: title. Aggregatable by: category.</p>
+<p>List documents by filters and sorts (offset pagination). Filterable fields — <code>$eq</code>,
+<code>$ilike</code>, <code>$in</code>, <code>$like</code>, <code>$neq</code>, <code>$nin</code>, <code>$null</code>, <code>$regex</code> on every field; string:
+category, title. Sortable by: title. Aggregatable by: category.</p>
 </blockquote>
+<p>The operators every field shares come first, then fields are grouped by the rest of their
+operator set, so each list is stated once, not once per field. Each field stays under its
+own type: <code>number (also $gt, $gte, $lt, $lte): price; temporal (as number): created_at</code>
+on a wider model.</p>
 <p>That sentence is the read model's <em>policy</em>, not its field list — <code>body</code> is readable and
 absent from it. It is the same sentence the <a href="../../integrations/mcp/"><abbr title="Model Context Protocol">MCP</abbr></a> surface hands
 an external agent, from the same source, so the two cannot tell one model two different
