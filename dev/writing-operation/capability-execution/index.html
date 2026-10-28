@@ -6736,6 +6736,10 @@ it commits.</p>
 </table>
 <p>You author these on the registry's scope binders — <code>bind_outer()</code> for the outer
 scope, <code>bind_tx().set_route(...)</code> for the transactional one — then <code>freeze()</code>.</p>
+<p>A <code>wrap</code> may pass narrowed arguments on, as a document-scope authorization wrap
+does. Everything inside it then sees what it passes on: <code>prepare</code>, the
+transactional stages and the handler. Stages outside it see the arguments the
+operation was called with.</p>
 <h2 id="the-handler-owns-the-result">The handler owns the result<a class="headerlink" href="#the-handler-owns-the-result" title="Permanent link">&para;</a></h2>
 <p>One principle keeps the pipeline honest: <strong>the handler defines the result;
 stages never replace it.</strong> They observe, guard, and react — they don't substitute

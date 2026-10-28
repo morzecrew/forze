@@ -10381,6 +10381,9 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <h3 id="security">Security<a class="headerlink" href="#security" title="Permanent link">&para;</a></h3>
 <ul>
 <li>
+<p><strong><code>AuthzDocumentScopeWrap</code> in an operation's outer scope applies its row filter</strong> (<strong>behaviour change</strong>). A wrap bound with <code>bind_outer().wrap(...)</code>, as the authz recipe does, now hands the handler the arguments it passes on, so a scoped list returns only the rows the policy allows.</p>
+</li>
+<li>
 <p><strong>A realtime connection needs a tenant once tenancy is wired</strong> (<strong>behaviour change</strong>). Socket.IO, WebSocket and <abbr title="Server-Side Encryption">SSE</abbr> refuse one without a tenant (<code>tenant_required</code>), and Socket.IO an anonymous one, instead of admitting it to the untenanted rooms. Socket.IO checks this at the connect when given the new <code>ctx_dep</code>.</p>
 </li>
 <li>
