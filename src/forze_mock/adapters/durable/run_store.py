@@ -121,6 +121,7 @@ class MockDurableRunStore(DurableRunStorePort, DurableRunAdminPort, DurableRunCo
                         return _to_record(data)
 
             run_id = str(uuid7())
+            now = utcnow()
             data = {
                 "run_id": run_id,
                 "name": name,
@@ -134,7 +135,8 @@ class MockDurableRunStore(DurableRunStorePort, DurableRunAdminPort, DurableRunCo
                 "attempts": 0,
                 "leased_until": None,
                 "available_at": available_at,
-                "created_at": utcnow(),
+                "created_at": now,
+                "updated_at": now,
                 "cancel_requested_at": None,
                 "cancel_refused_at": None,
             }
@@ -316,6 +318,8 @@ class MockDurableRunStore(DurableRunStorePort, DurableRunAdminPort, DurableRunCo
             if data["cancel_refused_at"] is None:
                 data["cancel_refused_at"] = utcnow()
 
+            data["updated_at"] = utcnow()
+
     # ....................... #
 
     async def request_cancel(self, run_id: str) -> bool:
@@ -349,6 +353,8 @@ class MockDurableRunStore(DurableRunStorePort, DurableRunAdminPort, DurableRunCo
             if status == DurableRunStatus.PENDING.value and data["attempts"] == 0:
                 data["status"] = DurableRunStatus.CANCELLED.value
                 data["leased_until"] = None
+
+            data["updated_at"] = utcnow()
 
             return True
 
@@ -429,17 +435,18 @@ class MockDurableRunStore(DurableRunStorePort, DurableRunAdminPort, DurableRunCo
         wanted = {str(status) for status in statuses}
 
         with self.state.lock:
-            # Scoped like ``list_runs``, oldest first like the Postgres ``ORDER BY``.
+            # Scoped like ``list_runs``, oldest landing first like the Postgres ``ORDER BY``:
+            # the window starts when the run finished, not when it was submitted.
             doomed = sorted(
                 (
                     data
                     for data in self.state.durable_runs.values()
                     if data["status"] in wanted
-                    and data["created_at"] < cutoff
+                    and _updated_at(data) < cutoff
                     and (bound_tenant is None or data["tenant_id"] == bound_tenant)
                     and (name is None or data["name"] == name)
                 ),
-                key=lambda data: (data["created_at"], data["run_id"]),
+                key=lambda data: (_updated_at(data), data["run_id"]),
             )[:limit]
 
             for data in doomed:
@@ -516,6 +523,7 @@ class MockDurableRunStore(DurableRunStorePort, DurableRunAdminPort, DurableRunCo
         data["status"] = DurableRunStatus.RUNNING.value
         data["attempts"] += 1
         data["leased_until"] = utcnow() + lease_for
+        data["updated_at"] = utcnow()
 
     # ....................... #
 
@@ -548,6 +556,7 @@ class MockDurableRunStore(DurableRunStorePort, DurableRunAdminPort, DurableRunCo
             data["output"] = output
             data["error"] = error
             data["leased_until"] = None
+            data["updated_at"] = utcnow()
 
             # A retry goes back to PENDING due at *available_at*; a terminal write leaves
             # ``available_at`` as it is.
@@ -573,6 +582,12 @@ def _requeue(runs: list[dict[str, Any]]) -> None:
     for data in runs:
         data["status"] = DurableRunStatus.PENDING.value
         data["available_at"] = None
+        data["updated_at"] = utcnow()
+
+
+def _updated_at(data: dict[str, Any]) -> Any:
+    # A run put into the state by hand (a test, a restored snapshot) may carry no stamp.
+    return data.get("updated_at") or data["created_at"]
 
 
 def _is_abandoned(data: dict[str, Any], now: Any) -> bool:

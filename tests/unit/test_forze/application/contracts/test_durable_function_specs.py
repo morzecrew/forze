@@ -3,8 +3,6 @@
 import pytest
 from pydantic import BaseModel
 
-from forze.base.exceptions import CoreException
-
 from forze.application.contracts.durable.function import (
     DurableFunctionCronTrigger,
     DurableFunctionEventSpec,
@@ -12,6 +10,7 @@ from forze.application.contracts.durable.function import (
     DurableFunctionInvokeSpec,
     DurableFunctionSpec,
 )
+from forze.base.exceptions import CoreException
 from forze.base.serialization import PydanticModelCodec
 
 
@@ -78,6 +77,18 @@ class TestDurableFunctionCronTrigger:
         assert trigger.tz is None
         assert trigger.input is None
         assert trigger.encode_input(_In) is None
+
+    @pytest.mark.parametrize("zone", ["Mars/Olympus_Mons", "../etc/passwd", ""])
+    def test_an_unknown_timezone_fails_the_declaration(self, zone: str) -> None:
+        with pytest.raises(CoreException) as raised:
+            DurableFunctionCronTrigger(expression="0 2 * * *", tz=zone)
+
+        assert raised.value.kind == "configuration"
+
+    def test_a_known_timezone_is_kept(self) -> None:
+        assert (
+            DurableFunctionCronTrigger(expression="0 2 * * *", tz="Asia/Tokyo").tz == "Asia/Tokyo"
+        )
 
     def test_a_dict_input_is_validated_and_encoded(self) -> None:
         trigger = DurableFunctionCronTrigger(expression="0 2 * * *", input={"n": "3"})

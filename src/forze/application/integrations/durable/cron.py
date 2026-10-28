@@ -47,6 +47,11 @@ def next_cron_fire(
     schedule is evaluated in that timezone (e.g. ``"0 3 * * *"`` = 03:00 local) and the
     result is normalised back to UTC for storage.
 
+    Across a daylight-saving change, as cron does: a wall time the clocks skip fires once,
+    when the gap ends (``"30 2 * * *"`` at 03:00 on the spring-forward day), and a wall time
+    the clocks repeat fires once, at its first occurrence — unless the expression runs every
+    hour, which fires in each real hour, both passes included.
+
     *after* must be timezone-aware: a naive datetime would be read in the host timezone,
     making the schedule environment-dependent.
     """
@@ -57,7 +62,17 @@ def next_cron_fire(
             "(a naive value would be read in the host timezone)."
         )
 
-    base = after if tz is None else after.astimezone(ZoneInfo(tz))
-    fire = croniter(expression, base).get_next(datetime)
+    if tz is None:
+        return croniter(expression, after).get_next(datetime).astimezone(UTC)
 
-    return fire.astimezone(UTC)
+    zone = ZoneInfo(tz)
+    occurrences = croniter(expression, after.astimezone(zone))
+    every_hour = occurrences.expanded[1] == ["*"]
+
+    while True:
+        fire = occurrences.get_next(datetime).astimezone(UTC)
+
+        # The second pass through a repeated wall time: an expression naming its hours fired
+        # at the first one already, so firing again would run a daily job twice.
+        if every_hour or not fire.astimezone(zone).fold:
+            return fire

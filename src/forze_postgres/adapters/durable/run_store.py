@@ -175,6 +175,10 @@ class PostgresDurableRunStore(
         -- tenant, so lead the index with tenant_id to skip other tenants' rows:
         CREATE INDEX ON <relation> (tenant_id, status, created_at);
 
+        -- Recommended where runs are purged: purge_finished filters on status and
+        -- updated_at (when the run landed) and deletes the oldest landings first.
+        CREATE INDEX ON <relation> (status, updated_at);
+
         -- Recommended: back the admin listing (list_runs), which orders newest-first by
         -- (created_at DESC, run_id DESC) and keyset-seeks on (created_at, run_id). Without a
         -- matching index it seq-scans + sorts the whole relation. On a namespace (per-tenant)
@@ -197,7 +201,12 @@ class PostgresDurableRunStore(
 
     step_config: PostgresDurableStepConfig | None = None
     """The step journal :meth:`purge_finished` deletes a purged run's steps from, in the same
-    statement. ``PostgresDepsModule`` passes its ``durable_step``; ``None`` leaves steps."""
+    statement. ``PostgresDepsModule`` passes its ``durable_step``."""
+
+    journal: bool = True
+    """Whether runs on this table journal steps. While ``True`` and no :attr:`step_config` is
+    given, :meth:`purge_finished` refuses rather than leave each purged run's steps behind.
+    ``PostgresDepsModule`` sets it from whether ``durable_step`` is wired."""
 
     # ....................... #
 
@@ -865,15 +874,23 @@ class PostgresDurableRunStore(
     ) -> int:
         check_purge(older_than, statuses, limit)
 
+        if self.journal and self.step_config is None:
+            raise exc.configuration(
+                "Purging durable runs would leave their step journal behind: pass the run "
+                "store its step_config, or journal=False if its runs journal no steps.",
+            )
+
         table = await self._table()
         params: dict[str, object] = {
             "statuses": [str(status) for status in statuses],
-            "cutoff": utcnow() - older_than,
+            "older_than": older_than,
             "limit": limit,
         }
+        # ``updated_at`` is the landing: every terminal write sets it from the database
+        # clock, so the window starts when the run finished, not when it was submitted.
         clauses: list[sql.Composable] = [
             sql.SQL("status = ANY(%(statuses)s)"),
-            sql.SQL("created_at < %(cutoff)s"),
+            sql.SQL("updated_at < now() - %(older_than)s"),
         ]
 
         # Scoped like ``list_runs``.
@@ -897,13 +914,13 @@ class PostgresDurableRunStore(
 
         # One statement locks the batch, deletes it and its journal: a run requeued meanwhile
         # holds its row lock, so SKIP LOCKED leaves it and its steps, and no crash between
-        # the two deletes can orphan a journal. Oldest first, on the recovery scan's index.
+        # the two deletes can orphan a journal. Oldest landing first.
         row = await self.client.fetch_one(
             sql.SQL(
                 """
                 WITH doomed AS (
                     SELECT run_id FROM {table} WHERE {where}
-                    ORDER BY created_at
+                    ORDER BY updated_at
                     LIMIT %(limit)s
                     FOR UPDATE SKIP LOCKED
                 ), gone AS (

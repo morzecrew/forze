@@ -23,6 +23,7 @@ rule, written twice: reading the code proves nothing here and only running both 
 # covers: DurableRunStorePort.mark_timed_out
 # covers: DurableRunAdminPort.requeue_quarantined
 # covers: DurableRunAdminPort.purge_finished
+# covers: DurableScheduleStorePort.set_input
 """
 
 from __future__ import annotations
@@ -61,21 +62,27 @@ from tests.support.durable_cancel_races import (
 from tests.support.durable_conformance import (
     COALESCE_OUTCOME,
     PURGE_OUTCOME,
+    PURGE_WINDOW_OUTCOME,
     QUARANTINE_ADMIN_OUTCOME,
     REQUEUE_FAILED_OUTCOME,
     RETRY_OUTCOME,
+    SCHEDULE_INPUT_RACE_OUTCOME,
     FirstCallRuns,
     mock_quarantine,
     run_claim_scenario,
+    run_coalesce_race_scenario,
     run_coalesce_scenario,
     run_control_scenario,
     run_lifecycle_scenario,
     run_list_scenario,
+    run_purge_race_scenario,
     run_purge_scenario,
+    run_purge_window_scenario,
     run_quarantine_admin_scenario,
     run_requeue_failed_scenario,
     run_requeue_race_scenario,
     run_retry_scenario,
+    run_schedule_input_race_scenario,
     run_schedule_scenario,
     run_tenancy_scenario,
     tenant_provider_for,
@@ -463,6 +470,70 @@ class TestDurableMockVsMongo:
         )
 
         assert mock_out == mongo_out == COALESCE_OUTCOME
+
+    async def test_mock_matches_mongo_for_the_purge_window(
+        self,
+        mongo_client: MongoClient,
+        run_collection: tuple[str, str],
+        step_collection: tuple[str, str],
+    ) -> None:
+        mock_out = await run_purge_window_scenario(MockDurableRunStore(state=MockState()))
+        mongo_out = await run_purge_window_scenario(
+            MongoDurableRunStore(
+                client=mongo_client,
+                config=MongoDurableRunConfig(collection=run_collection),
+                step_config=MongoDurableStepConfig(collection=step_collection),
+            )
+        )
+
+        assert mock_out == mongo_out == PURGE_WINDOW_OUTCOME
+
+    async def test_mock_matches_mongo_for_a_purge_racing_a_requeue(
+        self,
+        mongo_client: MongoClient,
+        run_collection: tuple[str, str],
+        step_collection: tuple[str, str],
+    ) -> None:
+        mock_state = MockState()
+        mock_out = await run_purge_race_scenario(
+            MockDurableRunStore(state=mock_state),
+            lambda: MockDurableFunctionStepAdapter(state=mock_state),
+        )
+
+        steps = MongoDurableStepConfig(collection=step_collection)
+        mongo_out = await run_purge_race_scenario(
+            MongoDurableRunStore(
+                client=mongo_client,
+                config=MongoDurableRunConfig(collection=run_collection),
+                step_config=steps,
+            ),
+            lambda: MongoDurableFunctionStepAdapter(client=mongo_client, config=steps),
+        )
+
+        assert mock_out == mongo_out == {"rounds": 20, "journal_follows_run": True}
+
+    async def test_mock_matches_mongo_for_a_coalesce_racing_a_claim(
+        self, mongo_client: MongoClient, run_collection: tuple[str, str]
+    ) -> None:
+        mock_out = await run_coalesce_race_scenario(MockDurableRunStore(state=MockState()))
+        mongo_out = await run_coalesce_race_scenario(_mongo_store(mongo_client, run_collection))
+
+        assert mock_out == mongo_out == {"rounds": 30, "invariant_held": True}
+
+    async def test_mock_matches_mongo_for_an_input_change_racing_a_fire(
+        self, mongo_client: MongoClient, schedule_collection: tuple[str, str]
+    ) -> None:
+        mock_out = await run_schedule_input_race_scenario(
+            MockDurableScheduleStore(state=MockState())
+        )
+        mongo_out = await run_schedule_input_race_scenario(
+            MongoDurableScheduleStore(
+                client=mongo_client,
+                config=MongoDurableScheduleConfig(collection=schedule_collection),
+            )
+        )
+
+        assert mock_out == mongo_out == SCHEDULE_INPUT_RACE_OUTCOME
 
     async def test_an_unnamed_requeue_leaves_a_run_tagged_after_its_check(
         self, mongo_client: MongoClient, run_collection: tuple[str, str]

@@ -57,15 +57,18 @@ CREATE INDEX ON public.durable_run (status, created_at);
 -- on a shared tagged table a bound scan also filters tenant_id
 CREATE INDEX ON public.durable_run (tenant_id, status, created_at);
 
+-- where runs are purged: purge_finished filters on status and updated_at (when the run
+-- landed) and deletes the oldest landings first
+CREATE INDEX ON public.durable_run (status, updated_at);
+
 -- the admin listing (list_runs) orders newest first and seeks on (created_at, run_id)
 CREATE INDEX ON public.durable_run (created_at DESC, run_id DESC);
 -- on a shared tagged table a bound listing also filters tenant_id
 CREATE INDEX ON public.durable_run (tenant_id, created_at DESC, run_id DESC);
 ```
 
-Without them, the recovery scan and the listing scan and sort the whole table as it grows.
-The retention purge (`purge_finished`) filters on `status` and `created_at`, oldest first, so
-it uses the first index too.
+Without them, the recovery scan, the purge and the listing scan and sort the whole table
+as it grows.
 
 ### Steps
 
@@ -118,6 +121,10 @@ CREATE INDEX ON public.durable_schedule (tenant_id, next_fire_at) WHERE enabled;
 ```
 
 ### Migrations
+
+**Purging runs reads `updated_at`.** The column exists already; where you run the
+retention purge, add the `(status, updated_at)` index recommended above, built
+`CONCURRENTLY` so the table stays writable meanwhile.
 
 **Coalescing enqueue needs a column and an index.** Only `enqueue(coalesce_key=...)` reads
 them, so add both before the first such call; nothing else changes:
@@ -188,6 +195,8 @@ db.durable_run.createIndex({ created_at: -1, _id: -1 })
 // on a shared tagged collection a bound scan and listing also filter tenant_id
 db.durable_run.createIndex({ tenant_id: 1, status: 1, created_at: 1 })
 db.durable_run.createIndex({ tenant_id: 1, created_at: -1, _id: -1 })
+// where runs are purged: status and updated_at (when the run landed), oldest first
+db.durable_run.createIndex({ status: 1, updated_at: 1 })
 // sparse: only a run some scan has claimed carries a token
 db.durable_run.createIndex({ claim_token: 1 }, { sparse: true })
 
@@ -198,8 +207,11 @@ db.durable_schedule.createIndex({ tenant_id: 1, enabled: 1, next_fire_at: 1 })
 
 The step journal needs no index for correctness: its `_id` composes the run and the step,
 so a concurrent duplicate of one step serialises on the primary key. Where runs are purged,
-index `run_id`, which the purge deletes a run's steps by:
+index `run_id`, by which the purge marks, deletes and unmarks a run's steps, and the
+`purge_pending` mark, by which the next purge finds the steps of runs an interrupted one
+deleted:
 
 ```javascript
 db.durable_step.createIndex({ run_id: 1 })
+db.durable_step.createIndex({ purge_pending: 1 }, { sparse: true })
 ```

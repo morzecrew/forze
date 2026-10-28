@@ -1,4 +1,5 @@
 from typing import Any, Generic, TypeVar, final
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import attrs
 from pydantic import BaseModel, ValidationError
@@ -76,7 +77,8 @@ class DurableFunctionCronTrigger:
     """Cron expression interpreted by the provider."""
 
     tz: str | None = None
-    """IANA timezone the expression is evaluated in (``None`` = UTC)."""
+    """IANA timezone the expression is evaluated in (``None`` = UTC); an unknown zone fails
+    the declaration."""
 
     # Kept out of the hash: a dict (or an unfrozen model) does not hash.
     input: JsonDict | BaseModel | None = attrs.field(default=None, hash=False)
@@ -84,6 +86,18 @@ class DurableFunctionCronTrigger:
 
     Checked against :attr:`DurableFunctionInvokeSpec.args_type` when the spec is declared, so
     a payload no run could accept fails at import rather than on the first fire."""
+
+    # ....................... #
+
+    def __attrs_post_init__(self) -> None:
+        if self.tz is None:
+            return
+
+        try:
+            ZoneInfo(self.tz)
+
+        except (ZoneInfoNotFoundError, ValueError) as error:
+            raise exc.configuration(f"Cron trigger timezone {self.tz!r} is unknown.") from error
 
     # ....................... #
 

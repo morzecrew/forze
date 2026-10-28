@@ -83,12 +83,16 @@ class ConfigurableMongoDurableRun:
     step_config: MongoDurableStepConfig | None = None
     """The step journal a purge deletes a purged run's steps from."""
 
+    journal: bool = True
+    """Whether runs journal steps; see :attr:`MongoDurableRunStore.journal`."""
+
     def __call__(self, ctx: ExecutionContext) -> MongoDurableRunStore:
         return MongoDurableRunStore(
             client=ctx.deps.provide(MongoClientDepKey),
             config=self.config,
             cipher=_cipher(ctx, encrypt=self.config.encrypt, what="run"),
             step_config=self.step_config,
+            journal=self.journal,
             tenant_aware=self.config.tenant_aware,
             tenant_provider=ctx.inv_ctx.get_tenant,
         )

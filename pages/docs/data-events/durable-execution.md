@@ -118,8 +118,9 @@ loop, so later replicas scan too, and one that starts while another holds the lo
 `run_at=<when>` for a **delayed** run — the scan skips it until it's due.
 
 To **coalesce** "recompute after a change", enqueue with a `coalesce_key`: a submit joins the
-run waiting unclaimed under that key, keeping its input and its `run_at`, and records a new
-run once that one is claimed. A burst of changes then causes one run, and a change that lands
+run waiting unclaimed under that key and records a new run once that one is claimed. A
+joined submit's own input and `run_at` are discarded — the record returned is the joined run,
+with its own — so the run should read the state it recomputes rather than carry it. A burst of changes then causes one run, and a change that lands
 after the run started causes another, which reads it. A run waiting for a retry, or requeued,
 is not joined. The join is atomic at the store — a partial unique index — and needs the
 column and index in the [schema](../reference/durable-schema.md); it cannot be combined with
@@ -185,6 +186,12 @@ register_operation_functions(
 Authn and authz then decide for that principal as for any caller, and audit records it.
 Nothing verifies it — no key is checked, expired or revoked — so the acknowledgment is
 required. The run's tenant still comes from the run.
+
+Running as no one shows wherever a body reads the principal: audit records no actor, a
+document created through `CreatorIdMappingStep` gets no creator, a progress job started in
+the body has no actor, and a saga's guarded steps refuse. That holds for every durable body
+— a hand-written one, a saga, the secrets rotator and credential sweep — as it always did
+for a recovered run; a service identity covers only the operation-backed bodies.
 
 ### Retrying a failed run
 
@@ -387,15 +394,19 @@ lifecycle = [
 
 Each sweep calls `DurableRunAdminPort.purge_finished(older_than, statuses=..., name=None,
 limit=1000)` until a batch comes short, at most `max_batches_per_tick` times, then sleeps
-`interval`. It deletes only `completed`, `cancelled`, `failed` and `timed_out` runs created
-more than `older_than` ago, oldest first, each with its step journal; `quarantined` and
-`forward_incomplete` runs still owe work and cannot be named. The step needs the admin port
-(`admin=True` on the run config). Purging a run frees its idempotency key: a later submit
-under that key starts a new run.
+`interval`. It deletes only `completed`, `cancelled`, `failed` and `timed_out` runs that
+landed more than `older_than` ago (by `updated_at`, which every terminal write sets), oldest
+first, each with its step journal; `quarantined` and `forward_incomplete` runs still owe work
+and cannot be named. The step needs the admin port (`admin=True` on the run config). Purging
+a run frees its idempotency key: a later submit under that key starts a new run, so keep the
+window longer than any client keeps retrying a key.
 
-On Postgres the batch, its rows and its journal go in one statement that skips any row
-another transaction holds, so a run being requeued keeps its steps. Concurrent sweepers skip
-each other's rows, so run the step on every replica.
+A run store built by hand refuses to purge without its `step_config`, unless you pass
+`journal=False` because its runs journal no steps; the deps modules set both. On Postgres the
+batch, its rows and its journal go in one statement that skips any row another transaction
+holds, so a run being requeued keeps its steps. Mongo has no such statement: the purge marks
+the batch's steps first, and the next purge deletes the marked steps of runs an interrupted
+one removed. Concurrent sweepers skip each other's rows, so run the step on every replica.
 
 ### Crash-resumable sagas
 
@@ -460,9 +471,14 @@ spec = DurableFunctionSpec(
 durable_scheduler_background_lifecycle_step(scheduler=scheduler, specs=[spec])
 ```
 
-`tz` names the IANA zone the expression runs in (UTC when unset). `input` is what each fire
-hands the run: a dict or an instance of the spec's `args_type`, checked against it when the
-spec is declared. On Inngest, `tz` maps to its `TZ=` prefix, and an `input` is refused,
+`tz` names the IANA zone the expression runs in (UTC when unset); an unknown zone fails the
+declaration. Across a daylight-saving change it behaves as cron does: a wall time the clocks
+skip fires once, when the gap ends (`30 2 * * *` fires at 03:00 on the spring-forward day),
+and a wall time the clocks repeat fires once, at its first occurrence — except an
+every-hour expression, which fires in each real hour, both passes included.
+
+`input` is what each fire hands the run: a dict or an instance of the spec's `args_type`,
+checked against it when the spec is declared. On Inngest, `tz` maps to its `TZ=` prefix, and an `input` is refused,
 since an Inngest cron run receives no data.
 
 Auto-registration is **idempotent** — a restart re-uses an unchanged schedule (so it never

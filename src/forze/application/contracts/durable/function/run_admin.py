@@ -395,23 +395,27 @@ class DurableRunAdminPort(Protocol):
         name: str | None = None,
         limit: int = 1000,
     ) -> Awaitable[int]:
-        """Delete up to *limit* finished runs created more than *older_than* ago; return how
+        """Delete up to *limit* runs that finished more than *older_than* ago; return how
         many were deleted.
 
-        Oldest first. Each deleted run takes its step journal with it when the store knows
-        the journal's relation, as one wired through a deps module does. Only the states in
-        :data:`PURGEABLE_STATUSES` can be named, so a run that still owes work is never
-        deleted; a ``FAILED`` run requeued while the purge runs is kept, with its journal.
+        The window runs from when the run landed (its last write, which every terminal write
+        is), not from when it was submitted, so a long or retried run is kept for the whole
+        window after it finishes. Oldest landing first. Each deleted run takes its step
+        journal with it; a store that knows no journal relation refuses (``configuration``)
+        unless its runs journal no steps. Only the states in :data:`PURGEABLE_STATUSES` can
+        be named, so a run that still owes work is never deleted; a ``FAILED`` run requeued
+        while the purge runs is kept, with its journal.
 
         Purging a run frees its idempotency key: a later submit under it starts a new run.
 
         Scoped like :meth:`list_runs`: bound, only that tenant's runs; unbound, any tenant's.
 
-        :param older_than: Keep runs created within this window.
+        :param older_than: Keep runs that landed within this window.
         :param statuses: Delete only runs in these states.
         :param name: Delete only runs of this function.
         :param limit: The most runs one call deletes.
         :returns: How many runs were deleted.
-        :raises CoreException: ``validation`` from :func:`check_purge`.
+        :raises CoreException: ``validation`` from :func:`check_purge`; ``configuration``
+            when the store would leave the purged runs' step journal behind.
         """
         ...  # pragma: no cover

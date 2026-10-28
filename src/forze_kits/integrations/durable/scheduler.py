@@ -236,12 +236,13 @@ class DurableScheduler:
                 if existing.input_json == input_json:
                     return existing
 
-                # Only the input changed: keep the next fire and the pause state, so a
-                # restart that edits a payload neither skips nor un-pauses anything.
-                updated = attrs.evolve(existing, input_json=input_json)
-                await resolve_durable_schedule_store(ctx).put(updated)
+                # Only the input changed: write the input alone, so a fire or a pause that
+                # lands meanwhile is kept rather than overwritten with what was just read.
+                await resolve_durable_schedule_store(ctx).set_input(
+                    schedule_id, input_json=input_json
+                )
 
-                return updated
+                return attrs.evolve(existing, input_json=input_json)
 
             return await self.put(
                 ctx,

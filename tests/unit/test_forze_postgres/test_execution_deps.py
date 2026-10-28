@@ -176,6 +176,35 @@ class TestPostgresDepsModule:
         assert not deps.exists(DurableRunAdminDepKey)
         # The run store learns the journal, so a purge deletes a run's steps with it.
         assert deps.plain_deps[DurableRunStoreDepKey].step_config is module.durable_step
+        assert deps.plain_deps[DurableRunStoreDepKey].journal is True
+
+    def test_a_run_store_without_a_journal_wired_purges_as_journal_free(self) -> None:
+        from forze.application.contracts.durable.function import DurableRunStoreDepKey
+        from forze_postgres.execution.deps.configs import PostgresDurableRunConfig
+
+        deps = PostgresDepsModule(
+            client=MagicMock(spec=PostgresClient),
+            durable_run=PostgresDurableRunConfig(relation=("public", "durable_run")),
+        )()
+
+        assert deps.plain_deps[DurableRunStoreDepKey].journal is False
+
+    async def test_a_hand_built_run_store_refuses_to_purge_without_its_journal(self) -> None:
+        from datetime import timedelta
+
+        from forze.base.exceptions import CoreException
+        from forze_postgres.adapters.durable import PostgresDurableRunStore
+        from forze_postgres.execution.deps.configs import PostgresDurableRunConfig
+
+        store = PostgresDurableRunStore(
+            client=MagicMock(spec=PostgresClient),
+            config=PostgresDurableRunConfig(relation=("public", "durable_run")),
+        )
+
+        with pytest.raises(CoreException) as raised:
+            await store.purge_finished(timedelta(days=1))
+
+        assert raised.value.kind.value == "configuration"
 
     def test_registers_run_admin_when_opted_in(self) -> None:
         from forze.application.contracts.durable.function import (

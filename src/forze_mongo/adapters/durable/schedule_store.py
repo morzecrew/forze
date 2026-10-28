@@ -189,6 +189,17 @@ class MongoDurableScheduleStore(TenancyMixin, DurableScheduleStorePort):
 
     # ....................... #
 
+    async def set_input(self, schedule_id: str, *, input_json: JsonDict | None) -> bool:
+        matched = await self.client.update_one(
+            await self._collection(),
+            {"_id": scope_id(schedule_id, self._tenant_id_for_resolve())},
+            {"$set": {"input": input_json, "updated_at": utcnow()}},
+        )
+
+        return bool(matched)
+
+    # ....................... #
+
     async def load(self, schedule_id: str) -> DurableScheduleRecord | None:
         coll = await self._collection()
         stored_sid = scope_id(schedule_id, self._tenant_id_for_resolve())

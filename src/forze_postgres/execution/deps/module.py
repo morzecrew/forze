@@ -956,7 +956,9 @@ class PostgresDepsModule(DepsModule):
             # The dual-port store implements both the run store and the admin/list port; the
             # same factory registers under both keys when admin listing is opted in.
             run_factory = ConfigurablePostgresDurableRun(
-                config=self.durable_run, step_config=self.durable_step
+                config=self.durable_run,
+                step_config=self.durable_step,
+                journal=self.durable_step is not None,
             )
             run_registrations: dict[DepKey[Any], Any] = {DurableRunStoreDepKey: run_factory}
 

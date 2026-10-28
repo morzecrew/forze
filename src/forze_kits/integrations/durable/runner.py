@@ -217,9 +217,10 @@ class DurableFunctionRunner:
         """Record a new ``PENDING`` run (idempotency-key re-submits converge on one run).
 
         *run_at* delays when the recovery scan may claim it (a scheduled/delayed run).
-        *coalesce_key* joins the run already waiting unclaimed under that key, keeping its
-        input and due time, and records a new one once that run is claimed — "recompute after
-        a change", where a burst of changes causes one run and none is missed.
+        *coalesce_key* joins the run already waiting unclaimed under that key and records a
+        new one once that run is claimed — "recompute after a change", where a burst of
+        changes causes one run and none is missed. A joined submit's *input_json* and
+        *run_at* are discarded: the record returned is the joined run, with its own.
         """
 
         store = resolve_durable_run_store(ctx)

@@ -81,11 +81,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 **Self-hosted durable functions:**
 
-- **A cron trigger declares a timezone and an input.** `DurableFunctionCronTrigger(expression, tz=..., input=...)` registers its schedule with both; the input is checked against the spec's `args_type` at declaration. A changed input alone keeps the next fire; Inngest maps `tz` to `TZ=` and refuses an input.
+- **A cron trigger declares a timezone and an input.** `DurableFunctionCronTrigger(expression, tz=..., input=...)` registers its schedule with both; an unknown zone or an input not of the spec's `args_type` fails the declaration. A changed input alone keeps the next fire; Inngest maps `tz` to `TZ=` and refuses an input.
 
-- **Finished runs can be purged past a retention window.** `DurableRunAdminPort.purge_finished(older_than, ...)` deletes up to `limit` completed, cancelled, failed or timed-out runs with their step journal, freeing their idempotency keys. `durable_run_retention_lifecycle_step` runs it in bounded sweeps.
+- **Finished runs can be purged past a retention window.** `DurableRunAdminPort.purge_finished(older_than, ...)` deletes up to `limit` runs that landed before the window, with their step journal, freeing their idempotency keys. `durable_run_retention_lifecycle_step` sweeps; a hand-built store needs `step_config`.
 
-- **An enqueue can coalesce onto the run waiting unclaimed.** `enqueue(..., coalesce_key=...)` joins a `pending` run never claimed under that key and records a new one once it is claimed. **Migration:** add the `coalesce_key` column and its partial unique index (see the durable schema page) before using it.
+- **An enqueue can coalesce onto the run waiting unclaimed.** `enqueue(..., coalesce_key=...)` joins a `pending` run never claimed under that key, dropping the submit's own input and `run_at`, and records a new run once it is claimed. **Migration:** add the `coalesce_key` column and its partial unique index first.
 
 - **An operation-backed function can run as a service principal.** `register_operation_functions(..., identity=DurableServiceIdentity(...))` binds it around the operation, so `AuthnRequired`, authz and audit see it; the identity must be acknowledged as unverified. Without one, a guarded operation refuses the run.
 
@@ -103,9 +103,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **`HttpServicePort` requires `stream`** (**behaviour change**). A hand-written implementation or test stub must add it, or it fails type checks and `isinstance` against the runtime-checkable port.
 
-- **A durable body never inherits the caller's principal** (**behaviour change**). `DurableFunctionRunner` binds none for an untagged run too, so `run_now` inside a request runs it as no one, as recovery always did. Name a principal with `DurableServiceIdentity`.
+- **A durable body never inherits the caller's principal** (**behaviour change**). `run_now` inside a request now runs an untagged run as no one, as recovery always did: audit, `CreatorIdMappingStep` and progress jobs record no actor, and guarded saga steps refuse. Name a principal with `DurableServiceIdentity`.
 
-- **`DurableRunAdminPort` requires `purge_finished`, and `DurableRunStorePort.enqueue` takes `coalesce_key`** (**behaviour change**). A hand-written durable run store must add both; `DurableFunctionRunner.enqueue` always passes `coalesce_key`.
+- **Durable store ports gain members** (**behaviour change**). `DurableRunAdminPort` requires `purge_finished`, `DurableScheduleStorePort` requires `set_input`, and `DurableRunStorePort.enqueue` takes `coalesce_key`, which `DurableFunctionRunner.enqueue` always passes. A hand-written store must add them.
 
 - **`local_identity_deps` wires no tenant resolver for a config that maps no tenant** (**behaviour change**). There, `forze ops call --tenant` gets `400 tenant_request_unverifiable`, not `401 tenant_mismatch`. A tenant on an API key counts and resolves, also in a config built directly.
 
@@ -124,6 +124,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **A datetime `SerializedBy` key locks its UTC instant** (**behaviour change**). One owner's create and update no longer lock apart by offset; naive reads as UTC (right in a UTC session), an out-of-range instant is refused. Drain writers of naive or non-UTC keys while deploying, or accept a brief unlocked window.
 
 - **An operation span stays clean on a failure the caller can handle** (**behaviour change**). OpenTelemetry's own handling marked every failed operation's span `ERROR` whatever its kind and recorded a server error's exception twice. Now only a server-side failure sets `ERROR`, with one exception event, as port spans do.
+
+- **A timezoned durable schedule no longer fires twice when the clocks fall back.** A wall time the clocks repeat fires at its first occurrence only, unless the expression runs every hour; a wall time they skip still fires once, when the gap ends.
 
 - **A warning logged before `configure_logging` carries the invocation's ids.** The fallback renderer now merges the bound logging context, as the configured chain does.
 

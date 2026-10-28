@@ -112,6 +112,15 @@ class DurableScheduleStorePort(Protocol):
         """
         ...  # pragma: no cover
 
+    def set_input(self, schedule_id: str, *, input_json: JsonDict | None) -> Awaitable[bool]:
+        """Replace only the schedule's input; return ``True`` iff a schedule was updated.
+
+        Leaves ``next_fire_at`` and ``enabled`` as they are, so a fire or a pause that lands
+        while the caller decided on the new input is kept, where a :meth:`put` of the record
+        it read would write the old values back. Scoped to the tenant like :meth:`advance`.
+        """
+        ...  # pragma: no cover
+
     def load(self, schedule_id: str) -> Awaitable[DurableScheduleRecord | None]:
         """Return the schedule record, or ``None`` if unknown."""
         ...  # pragma: no cover

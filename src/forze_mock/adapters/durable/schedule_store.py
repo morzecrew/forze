@@ -14,6 +14,7 @@ from forze.application.contracts.durable.function import (
     DurableScheduleStorePort,
 )
 from forze.application.contracts.tenancy import TenantProviderPort, effective_tenant
+from forze.base.primitives import JsonDict
 from forze_mock.state import MockState
 
 # ----------------------- #
@@ -111,6 +112,21 @@ class MockDurableScheduleStore(DurableScheduleStorePort):
                 return False
 
             data["next_fire_at"] = to_fire_at
+
+            return True
+
+    # ....................... #
+
+    async def set_input(self, schedule_id: str, *, input_json: JsonDict | None) -> bool:
+        with self.state.lock:
+            data = self.state.durable_run_schedules.get(
+                _scoped_key(schedule_id, self._bound_tenant())
+            )
+
+            if data is None:
+                return False
+
+            data["input"] = input_json
 
             return True
 

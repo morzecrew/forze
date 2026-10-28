@@ -13,6 +13,7 @@ first already written.
 # covers: DurableRunStorePort.claim_abandoned
 # covers: DurableRunAdminPort.requeue_quarantined
 # covers: DurableRunAdminPort.request_cancel
+# covers: DurableRunAdminPort.purge_finished
 """
 
 from __future__ import annotations
@@ -44,6 +45,7 @@ from forze_mongo.adapters.durable import MongoDurableRunStore, MongoDurableSched
 from forze_mongo.execution.deps.configs import (
     MongoDurableRunConfig,
     MongoDurableScheduleConfig,
+    MongoDurableStepConfig,
 )
 from forze_mongo.kernel.client import MongoClient
 from tests.support.durable_conformance import (
@@ -412,7 +414,6 @@ async def test_a_run_recovery_keeps_failing_to_open_is_quarantined_until_requeue
     assert await run_quarantine_scenario(store_for, expire, lease_left) == QUARANTINE_OUTCOME
 
 
-
 async def test_a_pending_run_with_no_attempts_field_is_cancelled_at_once(
     mongo_client: MongoClient, run_collection: tuple[str, str]
 ) -> None:
@@ -430,6 +431,7 @@ async def test_a_pending_run_with_no_attempts_field_is_cancelled_at_once(
 
     assert landed is not None
     assert (landed.status, landed.attempts) == (DurableRunStatus.CANCELLED, 0)
+
 
 async def test_a_scan_quarantines_only_a_run_it_still_holds(
     mongo_client: MongoClient, run_collection: tuple[str, str]
@@ -543,6 +545,7 @@ async def test_a_bound_scheduler_claims_only_its_own_due_schedules(
     assert await store(_TENANT_A).delete("nightly")
     assert await store(_TENANT_B).load("nightly") is not None
 
+
 async def test_an_untagged_run_completed_under_a_binding_still_decrypts(
     mongo_client: MongoClient, run_collection: tuple[str, str]
 ) -> None:
@@ -581,3 +584,45 @@ async def test_an_untagged_run_completed_under_a_binding_still_decrypts(
     assert loaded.tenant_id is None
     assert loaded.status.value == "completed"
     assert loaded.output_json == {"secret": "out"}
+
+
+async def test_a_purge_settles_the_steps_an_interrupted_one_left(
+    mongo_client: MongoClient, run_collection: tuple[str, str]
+) -> None:
+    """Mongo deletes runs and steps in two writes, so a purge marks the steps first.
+
+    A purge that died after deleting its runs leaves their steps marked; the next purge
+    deletes those, and unmarks the steps of a marked run that is still there (one an
+    operator requeued meanwhile), which keep replaying.
+    """
+
+    db_name = run_collection[0]
+    step_collection = (db_name, f"durable_step_{uuid4().hex[:8]}")
+    store = MongoDurableRunStore(
+        client=mongo_client,
+        config=MongoDurableRunConfig(collection=run_collection),
+        step_config=MongoDurableStepConfig(collection=step_collection),
+    )
+    kept = await store.enqueue("fn", input_json=None)
+    steps = await mongo_client.collection(step_collection[1], db_name=db_name)
+    now = utcnow()
+
+    await mongo_client.insert_many(
+        steps,
+        [
+            # The steps of a run an interrupted purge already deleted.
+            {"_id": "gone|s1", "run_id": "gone", "step_id": "s1", "purge_pending": True},
+            # The step of a run it marked but never deleted.
+            {"_id": "kept|s1", "run_id": kept.run_id, "step_id": "s1", "purge_pending": True},
+            # A step no purge touched.
+            {"_id": "other|s1", "run_id": "other", "step_id": "s1", "created_at": now},
+        ],
+    )
+
+    assert await store.purge_finished(timedelta(days=1)) == 0
+
+    left = await mongo_client.find_many(steps, {}, sort=[("_id", 1)])
+    assert [(doc["_id"], doc.get("purge_pending")) for doc in left] == [
+        ("kept|s1", None),
+        ("other|s1", None),
+    ]

@@ -484,3 +484,33 @@ async def test_the_mock_coalesces_onto_the_unclaimed_run() -> None:
         )
         == COALESCE_OUTCOME
     )
+
+
+async def test_the_mock_answers_the_purge_window_and_the_races() -> None:
+    from forze_mock.adapters.durable import MockDurableRunStore, MockDurableScheduleStore
+    from tests.support.durable_conformance import (
+        PURGE_WINDOW_OUTCOME,
+        SCHEDULE_INPUT_RACE_OUTCOME,
+        run_coalesce_race_scenario,
+        run_purge_race_scenario,
+        run_purge_window_scenario,
+        run_schedule_input_race_scenario,
+    )
+
+    state = MockState()
+
+    assert (
+        await run_purge_window_scenario(MockDurableRunStore(state=MockState()))
+        == PURGE_WINDOW_OUTCOME
+    )
+    assert await run_purge_race_scenario(
+        MockDurableRunStore(state=state), lambda: MockDurableFunctionStepAdapter(state=state)
+    ) == {"rounds": 20, "journal_follows_run": True}
+    assert await run_coalesce_race_scenario(MockDurableRunStore(state=MockState())) == {
+        "rounds": 30,
+        "invariant_held": True,
+    }
+    assert (
+        await run_schedule_input_race_scenario(MockDurableScheduleStore(state=MockState()))
+        == SCHEDULE_INPUT_RACE_OUTCOME
+    )

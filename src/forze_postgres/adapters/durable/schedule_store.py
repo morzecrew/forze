@@ -16,7 +16,7 @@ from forze.application.contracts.durable.function import (
     DurableScheduleStorePort,
 )
 from forze.application.contracts.tenancy import TenancyMixin
-from forze.base.primitives import utcnow
+from forze.base.primitives import JsonDict, utcnow
 from forze_postgres.execution.deps.configs.durable import PostgresDurableScheduleConfig
 from forze_postgres.kernel.client import PostgresClientPort
 from forze_postgres.kernel.gateways.base import PostgresQualifiedName
@@ -230,6 +230,26 @@ class PostgresDurableScheduleStore(TenancyMixin, DurableScheduleStorePort):
                 from_fire=sql.Placeholder("from_fire"),
             ),
             {"to": to_fire_at, "sid": stored_sid, "from_fire": from_fire_at},
+            return_rowcount=True,
+        )
+
+        return bool(rowcount)
+
+    # ....................... #
+
+    async def set_input(self, schedule_id: str, *, input_json: JsonDict | None) -> bool:
+        table = await self._table()
+        stored_sid = _scope_schedule_id(schedule_id, self._tenant_id_for_resolve())
+
+        rowcount = await self.client.execute(
+            sql.SQL(
+                "UPDATE {table} SET input = {input}, updated_at = now() WHERE schedule_id = {sid}"
+            ).format(
+                table=table.ident(),
+                input=sql.Placeholder("input"),
+                sid=sql.Placeholder("sid"),
+            ),
+            {"input": None if input_json is None else Jsonb(input_json), "sid": stored_sid},
             return_rowcount=True,
         )
 

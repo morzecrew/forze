@@ -153,6 +153,10 @@ class MongoDurableRunStore(
         db.<collection>.createIndex({tenant_id: 1, status: 1, created_at: 1})
         db.<collection>.createIndex({tenant_id: 1, created_at: -1, _id: -1})
 
+        // Recommended where runs are purged: purge_finished filters on status and
+        // updated_at (when the run landed) and deletes the oldest landings first.
+        db.<collection>.createIndex({status: 1, updated_at: 1})
+
         // Read-back of a batch claim, which every recovery cycle performs. Recommended for
         // the same reason as the scan itself: without it the read-back collection-scans.
         // Sparse, because only a run some scan has claimed carries a token at all.
@@ -169,7 +173,12 @@ class MongoDurableRunStore(
 
     step_config: MongoDurableStepConfig | None = None
     """The step journal :meth:`purge_finished` deletes a purged run's steps from.
-    ``MongoDepsModule`` passes its ``durable_step``; ``None`` leaves steps."""
+    ``MongoDepsModule`` passes its ``durable_step``."""
+
+    journal: bool = True
+    """Whether runs in this collection journal steps. While ``True`` and no
+    :attr:`step_config` is given, :meth:`purge_finished` refuses rather than leave each purged
+    run's steps behind. ``MongoDepsModule`` sets it from whether ``durable_step`` is wired."""
 
     # ....................... #
 
@@ -826,12 +835,30 @@ class MongoDurableRunStore(
     ) -> int:
         check_purge(older_than, statuses, limit)
 
-        coll = await self._collection()
+        if self.journal and self.step_config is None:
+            raise exc.configuration(
+                "Purging durable runs would leave their step journal behind: pass the run "
+                "store its step_config, or journal=False if its runs journal no steps.",
+            )
 
-        # Scoped like ``list_runs``.
+        coll = await self._collection()
+        steps = await self._step_collection()
+
+        # Finish what an interrupted purge left: its marked steps, before marking more.
+        if steps is not None:
+            marked = await self.client.find_many(
+                steps,
+                {"purge_pending": True, **self._tenant_filter()},
+                projection={"run_id": 1},
+                limit=limit,
+            )
+            await self._settle_steps(coll, steps, list({doc["run_id"] for doc in marked}))
+
+        # Scoped like ``list_runs``. ``updated_at`` is the landing: every terminal write sets
+        # it, so the window starts when the run finished, not when it was submitted.
         finished: dict[str, Any] = {
             "status": {"$in": [str(status) for status in statuses]},
-            "created_at": {"$lt": utcnow() - older_than},
+            "updated_at": {"$lt": utcnow() - older_than},
             **self._tenant_filter(),
         }
 
@@ -842,7 +869,7 @@ class MongoDurableRunStore(
             coll,
             finished,
             projection={"_id": 1},
-            sort=[("created_at", 1)],
+            sort=[("updated_at", 1)],
             limit=limit,
         )
         run_ids = [doc["_id"] for doc in candidates]
@@ -850,26 +877,62 @@ class MongoDurableRunStore(
         if not run_ids:
             return 0
 
+        # Mark the journal first, with no transaction to delete both together: a crash after
+        # the runs go leaves marked steps, which the next purge settles above.
+        if steps is not None:
+            await self.client.update_many(
+                steps, {"run_id": {"$in": run_ids}}, {"$set": {"purge_pending": True}}
+            )
+
         # The filter is re-checked per document as it deletes, so a run requeued since the
         # read is kept.
         deleted = await self.client.delete_many(coll, {"_id": {"$in": run_ids}, **finished})
 
-        if deleted and self.step_config is not None:
-            # A kept run keeps its journal: only the steps of runs now gone go. A crash before
-            # this leaves steps no run can read again, since run ids are never reused.
-            kept = await self.client.find_many(
-                coll, {"_id": {"$in": run_ids}}, projection={"_id": 1}
-            )
-            kept_ids = {doc["_id"] for doc in kept}
-            db_name, coll_name = await resolve_mongo_collection(
-                self.step_config.collection, self._tenant_id_for_resolve()
-            )
-            await self.client.delete_many(
-                await self.client.collection(coll_name, db_name=db_name),
-                {"run_id": {"$in": [run_id for run_id in run_ids if run_id not in kept_ids]}},
-            )
+        if steps is not None:
+            await self._settle_steps(coll, steps, run_ids)
 
         return deleted
+
+    # ....................... #
+
+    async def _step_collection(self) -> AsyncCollection[JsonDict] | None:
+        if self.step_config is None:
+            return None
+
+        db_name, coll_name = await resolve_mongo_collection(
+            self.step_config.collection, self._tenant_id_for_resolve()
+        )
+
+        return await self.client.collection(coll_name, db_name=db_name)
+
+    # ....................... #
+
+    async def _settle_steps(
+        self,
+        coll: AsyncCollection[JsonDict],
+        steps: AsyncCollection[JsonDict],
+        run_ids: Sequence[str],
+    ) -> None:
+        """Delete the steps of the runs in *run_ids* that are gone; unmark the rest.
+
+        A run kept — requeued while the purge ran — keeps its journal, so its steps replay.
+        Run ids are never reused, so a step whose run is gone is read by nothing again.
+        """
+
+        if not run_ids:
+            return
+
+        kept = await self.client.find_many(coll, {"_id": {"$in": run_ids}}, projection={"_id": 1})
+        kept_ids = {doc["_id"] for doc in kept}
+        gone = [run_id for run_id in run_ids if run_id not in kept_ids]
+
+        if gone:
+            await self.client.delete_many(steps, {"run_id": {"$in": gone}})
+
+        if kept_ids:
+            await self.client.update_many(
+                steps, {"run_id": {"$in": list(kept_ids)}}, {"$unset": {"purge_pending": ""}}
+            )
 
     # ....................... #
 

@@ -247,8 +247,10 @@ class DurableRunStorePort(Protocol):
         recovery scan may claim it (``None`` = immediately).
 
         When *coalesce_key* is set and a ``PENDING`` run never claimed (``attempts`` of 0)
-        exists for it, that run is returned unchanged, keeping its input and its
-        ``available_at``; otherwise a new run is recorded under the key. So a burst of
+        exists for it, that run is returned unchanged: this submit's *input_json* and
+        *available_at* are discarded, and the record returned carries the joined run's own
+        (and its own ``run_id``, which is how a caller tells it joined). Otherwise a new
+        run is recorded under the key. So a burst of
         submits causes one run, and a submit after the run was claimed causes another,
         which reads whatever changed meanwhile. A run waiting for a retry, or requeued, is
         never joined: its journaled steps replay rather than re-read. Atomic at the store

@@ -63,6 +63,75 @@ class TestCronNextFire:
             next_cron_fire("* * * * *", after=datetime(2026, 1, 1, 0, 0))
 
 
+class TestCronAcrossDst:
+    """America/New_York: clocks spring forward 2026-03-08 02:00 EST -> 03:00 EDT (07:00 UTC)
+    and fall back 2026-11-01 02:00 EDT -> 01:00 EST (06:00 UTC)."""
+
+    @staticmethod
+    def _fires(expression: str, after: datetime, until: datetime) -> list[datetime]:
+        fires: list[datetime] = []
+
+        while (after := next_cron_fire(expression, after=after, tz="America/New_York")) < until:
+            fires.append(after)
+
+        return fires
+
+    def test_a_time_the_clocks_skip_fires_once_when_the_gap_ends(self) -> None:
+        fires = self._fires(
+            "30 2 * * *",
+            datetime(2026, 3, 7, 12, tzinfo=UTC),
+            datetime(2026, 3, 9, 12, tzinfo=UTC),
+        )
+
+        # 02:30 does not exist on the 8th: the run is not skipped, it fires at 03:00 EDT.
+        assert fires == [
+            datetime(2026, 3, 8, 7, tzinfo=UTC),
+            datetime(2026, 3, 9, 6, 30, tzinfo=UTC),
+        ]
+
+    def test_a_daily_time_the_clocks_repeat_fires_once(self) -> None:
+        fires = self._fires(
+            "30 1 * * *",
+            datetime(2026, 10, 31, 12, tzinfo=UTC),
+            datetime(2026, 11, 2, 12, tzinfo=UTC),
+        )
+
+        # 01:30 happens twice on the 1st; a schedule naming its hour fires at the first only.
+        assert fires == [
+            datetime(2026, 11, 1, 5, 30, tzinfo=UTC),
+            datetime(2026, 11, 2, 6, 30, tzinfo=UTC),
+        ]
+
+    def test_a_daily_time_outside_the_change_keeps_its_wall_clock(self) -> None:
+        fires = self._fires(
+            "30 2 * * *",
+            datetime(2026, 10, 31, 12, tzinfo=UTC),
+            datetime(2026, 11, 2, 12, tzinfo=UTC),
+        )
+
+        assert fires == [
+            datetime(2026, 11, 1, 7, 30, tzinfo=UTC),
+            datetime(2026, 11, 2, 7, 30, tzinfo=UTC),
+        ]
+
+    def test_an_hourly_schedule_fires_every_real_hour_across_both_changes(self) -> None:
+        spring = self._fires(
+            "30 * * * *",
+            datetime(2026, 3, 8, 5, tzinfo=UTC),
+            datetime(2026, 3, 8, 9, tzinfo=UTC),
+        )
+        fall = self._fires(
+            "30 * * * *",
+            datetime(2026, 11, 1, 4, tzinfo=UTC),
+            datetime(2026, 11, 1, 9, tzinfo=UTC),
+        )
+
+        # 02:30 local does not exist in spring; 01:30 local happens twice in the fall, and an
+        # every-hour schedule fires at both.
+        assert spring == [datetime(2026, 3, 8, h, 30, tzinfo=UTC) for h in (5, 6, 7, 8)]
+        assert fall == [datetime(2026, 11, 1, h, 30, tzinfo=UTC) for h in (4, 5, 6, 7, 8)]
+
+
 class TestDurableScheduler:
     async def test_put_computes_first_fire(self) -> None:
         ctx = context_from_modules(MockDepsModule())
