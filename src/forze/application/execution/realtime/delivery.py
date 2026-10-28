@@ -9,9 +9,10 @@ none, for the SSE and WebSocket routes. Two writers of one mailbox with two copi
 rules would drift, and the mailbox is the delivery guarantee.
 """
 
-from collections.abc import Callable
-from contextlib import AbstractContextManager, nullcontext
-from typing import Protocol, final
+import threading
+from collections.abc import Callable, Iterator
+from contextlib import AbstractContextManager, contextmanager, nullcontext
+from typing import Literal, Protocol, final
 from uuid import UUID
 
 import attrs
@@ -27,7 +28,7 @@ from forze.application.contracts.realtime import (
 from forze.application.contracts.tenancy import TenantIdentity
 from forze.application.execution import ExecutionContext
 from forze.application.integrations.realtime import RealtimeMailbox
-from forze.base.exceptions import CoreException, ExceptionKind
+from forze.base.exceptions import CoreException, ExceptionKind, exc
 from forze.base.logging import Logger
 from forze.base.primitives import HlcTimestamp, StrKey
 
@@ -98,6 +99,67 @@ class GatewayDedup:
 
     tx_route: StrKey
     """Transaction route the dedup mark commits on."""
+
+
+# ....................... #
+
+
+DedupInboxConsumer = Literal["RealtimeGateway", "RealtimeMailboxWriter"]
+"""The two kinds of consumer that mark a dedup inbox."""
+
+_inbox_holders: dict[str, dict[DedupInboxConsumer, int]] = {}
+"""Running consumers per dedup inbox name in this process, by kind."""
+
+_inbox_holders_lock = threading.Lock()
+
+
+# ....................... #
+
+
+@contextmanager
+def claim_dedup_inbox(dedup: GatewayDedup, consumer: DedupInboxConsumer) -> Iterator[None]:
+    """Hold *dedup*'s inbox for one running *consumer* until the block exits.
+
+    A gateway and a mailbox writer must not share a dedup inbox: whichever marks a durable
+    signal first owns it, so a gateway that loses the race skips its live emit and a
+    writer that loses it never stores the offline row. Consumers of one kind may share an
+    inbox (that is how several nodes split a group). This only sees the current process;
+    across processes keeping them apart is the deployment's job.
+
+    :param dedup: The consumer's dedup settings.
+    :param consumer: Which kind of consumer is starting.
+    :raises CoreException: ``configuration`` (``realtime_dedup_inbox_shared``) when the
+        other kind already runs on the same inbox in this process.
+    """
+
+    name = str(dedup.inbox_spec.name)
+
+    with _inbox_holders_lock:
+        holders = _inbox_holders.setdefault(name, {})
+        others = sorted(kind for kind, count in holders.items() if count and kind != consumer)
+
+        if others:
+            raise exc.configuration(
+                f"A {consumer} cannot share the dedup inbox {name!r} with the {others[0]} "
+                "already running in this process: whichever marks a durable signal first "
+                "owns it, so the gateway would skip live emits or the writer would never "
+                "store offline rows. Give each its own dedup inbox, or run only one of them.",
+                code="realtime_dedup_inbox_shared",
+                details={"inbox": name},
+            )
+
+        holders[consumer] = holders.get(consumer, 0) + 1
+
+    try:
+        yield
+
+    finally:
+        with _inbox_holders_lock:
+            holders = _inbox_holders[name]
+            holders[consumer] -= 1
+
+            if not any(holders.values()):
+                del _inbox_holders[name]
 
 
 # ....................... #

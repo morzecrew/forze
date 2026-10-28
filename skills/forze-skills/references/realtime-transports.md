@@ -126,8 +126,10 @@ writer = RealtimeMailboxWriter(
 step = realtime_mailbox_writer_lifecycle_step(writer)
 ```
 
-Run it on every node with one consumer group, but never beside a mailboxing Socket.IO
-gateway on the same dedup inbox: whichever marks a signal first owns it.
+Run it on every node with one consumer group, but never beside a Socket.IO gateway that
+shares its dedup inbox, mailbox or not: whichever marks a signal first owns it. Rows are
+replayed above the device's cursor but not stored in HLC order, so a row stored late (a
+reclaim, another node) below an acked cursor is never replayed — the gateway's window too.
 
 ## Authenticating the connection
 

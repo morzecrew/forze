@@ -541,17 +541,27 @@ lifecycle = [
 
 - **Any number of nodes.** Give every node's writer the same consumer group: each signal
   goes to one writer, a crashed node's unacked entries are reclaimed, and a redelivery
-  finds the dedup mark. Rows are ordered by the signal's carried HLC, not by which node
-  stored them.
+  finds the dedup mark.
+- **Replay follows the HLC; storage does not.** A row is stored at the signal's carried
+  HLC, and a reconnect replays the rows above the device's cursor. Rows are not stored in
+  HLC order: a reclaimed entry, another node, or an out-of-order append can store a row
+  below a cursor the device has already acked past, and that row is never replayed. One
+  writer per stream or tenant shard narrows the window to reclaims and out-of-order
+  appends but does not close it. A storing gateway has the same window.
 - **Instead of the gateway, not beside it.** Never run the writer next to a Socket.IO
-  gateway that has a mailbox and shares its dedup inbox. Whichever marks a signal first
-  owns it, and a gateway that loses the race skips its live emit.
+  gateway that shares its dedup inbox, with or without a mailbox. Whichever marks a signal
+  first owns it: the gateway skips its live emit, or the writer never stores the row. In
+  one process the second to start is refused (`realtime_dedup_inbox_shared`); across
+  processes, keeping them apart is your wiring. A gateway with its own inbox can run
+  beside the writer.
 - **Store only.** Ephemeral, topic and `offline_delivery=False` signals are left alone and
   unmarked; live delivery stays with the hub.
-- **Tenancy as on the gateway.** `bind_tenant_from_headers` is opt-in (the header is
-  untrusted), and `require_tenant` follows it. For a `tenant_aware` stream route use
-  `TenantShardedSignalSource(shard=shard)` with
-  `realtime_tenant_group_ensure_lifecycle_step`. A `PubSubSignalSource` is refused
+- **Tenancy as on the gateway.** `bind_tenant_from_headers` is opt-in, and `require_tenant`
+  follows it. The header is not authenticated: on a tenant-global stream, whoever can
+  append to the stream chooses the tenant whose mailbox a signal is stored in, so enable
+  it only where every producer is trusted to assert tenancy. Otherwise wire the stream
+  route `tenant_aware` and use `TenantShardedSignalSource(shard=shard)` with
+  `realtime_tenant_group_ensure_lifecycle_step`, which take the tenant from the stream. A `PubSubSignalSource` is refused
   (`realtime_mailbox_writer_source_unsupported`): pub/sub keeps nothing for a writer that
   was not subscribed.
 - **Counters.** Hand one `RealtimeGatewayStats` to the writer and its source, then call

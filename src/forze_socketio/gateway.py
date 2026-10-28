@@ -29,6 +29,7 @@ require_socketio()
 
 import asyncio
 from collections.abc import Callable
+from contextlib import nullcontext
 from datetime import timedelta
 from typing import TYPE_CHECKING, final
 from uuid import UUID
@@ -49,7 +50,11 @@ from forze.application.execution.realtime import (
 from forze.application.execution.realtime import (
     PubSubSignalSource as PubSubSignalSource,  # re-export: established home
 )
-from forze.application.execution.realtime import RealtimeDelivery, RealtimeGatewayStats
+from forze.application.execution.realtime import (
+    RealtimeDelivery,
+    RealtimeGatewayStats,
+    claim_dedup_inbox,
+)
 from forze.application.execution.realtime import (
     RealtimeSignalSource as RealtimeSignalSource,  # re-export: established home
 )
@@ -222,7 +227,8 @@ class RealtimeGateway:
     bind_tenant_from_headers: bool = False
     """Opt-in: bind each signal's ``forze_tenant_id`` header so a tenant-aware mailbox
     scopes by it. Off by default because the header is untrusted/forgeable — enable only
-    on brokers where every producer is trusted to assert tenancy (see :func:`_bind_tenant`)."""
+    on brokers where every producer is trusted to assert tenancy: whoever writes the header
+    chooses the tenant whose mailbox a signal is stored in."""
 
     require_tenant: bool | None = None
     """Refuse (drop, loudly) any signal that resolves **no tenant**, instead of emitting it
@@ -286,6 +292,9 @@ class RealtimeGateway:
 
         A stop request is honored at the source's unit boundary (an in-flight batch
         finishes and acks first), so a graceful shutdown never abandons a signal mid-bridge.
+
+        :raises CoreException: ``configuration`` (``realtime_dedup_inbox_shared``) when a
+            mailbox writer already runs on this gateway's dedup inbox in this process.
         """
 
         self._refuse_node_local_presence_on_backplane()
@@ -301,7 +310,15 @@ class RealtimeGateway:
         ) -> None:
             await self._handle(ctx, mailbox, signal, tenant, dedup_id, hlc)
 
-        await _with_gateway_logger(self.source).run(ctx, handle, stop=stop)
+        # A deduping gateway and a mailbox writer on one inbox steal each other's signals.
+        claim = (
+            claim_dedup_inbox(self.dedup, "RealtimeGateway")
+            if self.dedup is not None
+            else nullcontext()
+        )
+
+        with claim:
+            await _with_gateway_logger(self.source).run(ctx, handle, stop=stop)
 
     # ....................... #
 

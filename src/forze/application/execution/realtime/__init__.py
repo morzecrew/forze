@@ -7,7 +7,13 @@ deployments) cannot drift. It sits in the execution layer because it needs the
 :class:`~forze.application.execution.ExecutionContext`, the drain gate and supervision.
 """
 
-from .delivery import GatewayDedup, LiveEmit, RealtimeDelivery
+from .delivery import (
+    DedupInboxConsumer,
+    GatewayDedup,
+    LiveEmit,
+    RealtimeDelivery,
+    claim_dedup_inbox,
+)
 from .observability import RealtimeGatewayStats, instrument_realtime_gateway
 from .sources import (
     PubSubSignalSource,
@@ -22,6 +28,7 @@ from .writer import RealtimeMailboxWriter, realtime_mailbox_writer_lifecycle_ste
 # ----------------------- #
 
 __all__ = [
+    "DedupInboxConsumer",
     "GatewayDedup",
     "LiveEmit",
     "PubSubSignalSource",
@@ -32,6 +39,7 @@ __all__ = [
     "SignalHandler",
     "StreamGroupSignalSource",
     "TenantShardedSignalSource",
+    "claim_dedup_inbox",
     "instrument_realtime_gateway",
     "realtime_mailbox_writer_lifecycle_step",
     "require_tenant_global_source",

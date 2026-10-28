@@ -2,7 +2,7 @@
 
 # covers: forze_socketio.gateway (_bind_tenant enabled, mailbox-store re-raise, post-commit
 #         config fail-fast, presence-skip stat, loop-level retry, config fail-fast in loop,
-#         delivery logs kept under socketio.errors),
+#         delivery logs kept under socketio.errors, dedup inbox shared with a writer),
 #         forze_socketio.gateway_lifecycle (duplicate startup)
 """
 
@@ -24,9 +24,11 @@ from forze.application.contracts.realtime import (
     RealtimeSignal,
 )
 from forze.application.execution import DepsRegistry, ExecutionRuntime
+from forze.application.execution.realtime import RealtimeMailboxWriter
 from forze.application.execution.realtime.delivery import (
     _bind_tenant,  # pyright: ignore[reportPrivateUsage]
 )
+from forze.application.integrations.realtime import InMemoryRealtimeMailbox
 from forze.base.exceptions import CoreException, exc
 from forze.base.primitives import HlcTimestamp, utcnow
 from forze_kits.integrations.realtime import (
@@ -372,3 +374,48 @@ async def test_the_gateway_keeps_its_delivery_logs_under_socketio_errors(
     logged = error_log_buf.getvalue()
     assert "Realtime signal rejected: event not in catalog" in logged
     assert "Realtime bridge failed" in logged
+
+
+async def test_a_deduping_gateway_cannot_start_on_a_running_writers_inbox() -> None:
+    # Same process, same dedup inbox: the gateway would mark signals the writer must store
+    # (or the reverse), so the second to start is refused — mailbox or not.
+    spec = realtime_stream_spec()
+    fast = timedelta(milliseconds=10)
+    writer = RealtimeMailboxWriter(
+        source=StreamGroupSignalSource(stream_spec=spec, poll_interval=fast),
+        dedup=GatewayDedup(inbox_spec=realtime_inbox_spec(), tx_route="mock"),
+        mailbox_factory=lambda _ctx: InMemoryRealtimeMailbox(),
+    )
+    deduping = _gateway(_StubSio())  # dedup set, no mailbox
+    live_only = RealtimeGateway(
+        sio=_StubSio(),  # pyright: ignore[reportArgumentType]
+        source=StreamGroupSignalSource(stream_spec=spec, poll_interval=fast),
+    )
+
+    runtime = _runtime()
+    async with runtime.scope():
+        ctx = runtime.get_context()
+        running = asyncio.create_task(writer.run(ctx))
+        await asyncio.sleep(0.03)
+
+        with pytest.raises(CoreException) as caught:
+            await deduping.run(ctx)
+
+        beside = asyncio.create_task(live_only.run(ctx))  # no dedup: nothing to steal
+        await asyncio.sleep(0.03)
+        assert not beside.done()
+
+        for task in (running, beside):
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+
+        # the writer's claim went with it: the gateway starts now
+        after = asyncio.create_task(deduping.run(ctx))
+        await asyncio.sleep(0.03)
+        assert not after.done()
+        after.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await after
+
+    assert caught.value.code == "realtime_dedup_inbox_shared"

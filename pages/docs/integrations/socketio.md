@@ -229,8 +229,10 @@ per-device cursors, trimming, and opting an event out (`offline_delivery=False`)
 The gateway's store half is shared code. A deployment with no Socket.IO server runs it
 alone as `RealtimeMailboxWriter`, filling the mailbox the SSE and raw-WebSocket routes
 replay from (see [offline delivery without Socket.IO](fastapi.md#offline-delivery-without-socketio)).
-Run one or the other against a dedup inbox, never both: whichever marks a signal first
-owns it, and a gateway that loses the race skips its live emit.
+Never let a gateway with `dedup` set, mailbox or not, share a dedup inbox with a writer:
+whichever marks a signal first owns it, so the gateway skips its live emit or the writer
+never stores the row. In one process the second to start is refused
+(`realtime_dedup_inbox_shared`); across processes it is the deployment's to avoid.
 
 Operational hardening around the loop:
 

@@ -37,6 +37,33 @@ from forze.application.execution.realtime import (
 from forze.application.execution.realtime import (
     instrument_realtime_gateway as instrument_realtime_gateway,  # re-export: established home
 )
+from forze.application.execution.realtime.observability import (  # re-exports: established home
+    GATEWAY_ADMISSION_REJECTED_COUNTER as GATEWAY_ADMISSION_REJECTED_COUNTER,
+)
+from forze.application.execution.realtime.observability import (
+    GATEWAY_BRIDGE_FAILED_COUNTER as GATEWAY_BRIDGE_FAILED_COUNTER,
+)
+from forze.application.execution.realtime.observability import (
+    GATEWAY_DEDUP_SKIPPED_COUNTER as GATEWAY_DEDUP_SKIPPED_COUNTER,
+)
+from forze.application.execution.realtime.observability import (
+    GATEWAY_EMIT_FAILED_COUNTER as GATEWAY_EMIT_FAILED_COUNTER,
+)
+from forze.application.execution.realtime.observability import (
+    GATEWAY_EMITTED_COUNTER as GATEWAY_EMITTED_COUNTER,
+)
+from forze.application.execution.realtime.observability import (
+    GATEWAY_MAILBOXED_COUNTER as GATEWAY_MAILBOXED_COUNTER,
+)
+from forze.application.execution.realtime.observability import (
+    GATEWAY_POISONED_COUNTER as GATEWAY_POISONED_COUNTER,
+)
+from forze.application.execution.realtime.observability import (
+    GATEWAY_PRESENCE_SKIPPED_COUNTER as GATEWAY_PRESENCE_SKIPPED_COUNTER,
+)
+from forze.application.execution.realtime.observability import (
+    GATEWAY_UNTENANTED_DROPPED_COUNTER as GATEWAY_UNTENANTED_DROPPED_COUNTER,
+)
 from forze.base.primitives import utcnow
 
 if TYPE_CHECKING:

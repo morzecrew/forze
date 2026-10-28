@@ -2,6 +2,7 @@
 
 # covers: forze.application.execution.realtime.writer (RealtimeMailboxWriter,
 #         realtime_mailbox_writer_lifecycle_step), forze.application.execution.realtime.delivery
+#         (RealtimeDelivery, claim_dedup_inbox)
 
 The writer runs the same delivery core as the Socket.IO gateway (the crash-delivery battery
 in ``test_realtime_delivery_battery.py`` drives both through one scenario); these tests pin
@@ -40,6 +41,7 @@ from forze.application.execution.realtime import (
     RealtimeSignalSource,
     StreamGroupSignalSource,
     TenantShardedSignalSource,
+    claim_dedup_inbox,
     realtime_mailbox_writer_lifecycle_step,
 )
 from forze.application.integrations.realtime import InMemoryRealtimeMailbox, RealtimeMailbox
@@ -215,9 +217,7 @@ class TestRealtimeMailboxWriter:
             other = asyncio.create_task(_node("node-2").run(ctx))
 
             try:
-                await _run_until(
-                    _node("node-1"), ctx, lambda: _counted(stats, "dedup_skipped", n)
-                )
+                await _run_until(_node("node-1"), ctx, lambda: _counted(stats, "dedup_skipped", n))
 
             finally:
                 other.cancel()
@@ -405,6 +405,62 @@ class TestRealtimeMailboxWriter:
             )
 
         assert caught.value.code == "realtime_mailbox_writer_source_unsupported"
+
+
+# ....................... #
+
+
+class TestClaimDedupInbox:
+    """A gateway and a writer on one dedup inbox steal each other's signals; one process
+    refuses the pairing, consumers of one kind share freely."""
+
+    def test_a_gateway_and_a_writer_cannot_hold_one_inbox(self) -> None:
+        with (
+            claim_dedup_inbox(_dedup(), "RealtimeGateway"),
+            pytest.raises(CoreException) as caught,
+            claim_dedup_inbox(_dedup(), "RealtimeMailboxWriter"),
+        ):
+            pass  # pragma: no cover
+
+        assert caught.value.code == "realtime_dedup_inbox_shared"
+        assert caught.value.kind is ExceptionKind.CONFIGURATION
+
+        with (
+            claim_dedup_inbox(_dedup(), "RealtimeMailboxWriter"),
+            pytest.raises(CoreException),
+            claim_dedup_inbox(_dedup(), "RealtimeGateway"),
+        ):
+            pass  # pragma: no cover
+
+    def test_one_kind_shares_and_the_claim_is_released_on_exit(self) -> None:
+        other_inbox = GatewayDedup(inbox_spec=realtime_inbox_spec("other-inbox"), tx_route="mock")
+
+        with (
+            claim_dedup_inbox(_dedup(), "RealtimeMailboxWriter"),
+            claim_dedup_inbox(_dedup(), "RealtimeMailboxWriter"),  # a second node
+            claim_dedup_inbox(other_inbox, "RealtimeGateway"),  # on its own inbox
+        ):
+            pass
+
+        with claim_dedup_inbox(_dedup(), "RealtimeGateway"):  # both writers released
+            pass
+
+    async def test_the_writer_refuses_to_run_on_a_gateways_inbox(self) -> None:
+        writer = RealtimeMailboxWriter(
+            source=_NullSource(),
+            dedup=_dedup(),
+            mailbox_factory=lambda _ctx: InMemoryRealtimeMailbox(),
+        )
+
+        runtime = _runtime()
+        async with runtime.scope():
+            with (
+                claim_dedup_inbox(_dedup(), "RealtimeGateway"),
+                pytest.raises(CoreException) as caught,
+            ):
+                await writer.run(runtime.get_context())
+
+        assert caught.value.code == "realtime_dedup_inbox_shared"
 
 
 # ....................... #

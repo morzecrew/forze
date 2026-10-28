@@ -29,7 +29,7 @@ from forze.application.integrations.realtime import RealtimeMailbox
 from forze.base.exceptions import CoreException, exc
 from forze.base.primitives import HlcTimestamp, StrKey
 
-from .delivery import GatewayDedup, RealtimeDelivery
+from .delivery import GatewayDedup, RealtimeDelivery, claim_dedup_inbox
 from .observability import RealtimeGatewayStats
 from .sources import PubSubSignalSource, RealtimeSignalSource, require_tenant_global_source
 
@@ -76,10 +76,19 @@ class RealtimeMailboxWriter:
     Delivery is the gateway's: at-least-once off the consumer group, exactly one mailbox row
     per signal through the dedup mark, a mark that never stands without its row. Run it on
     as many nodes as you like with one consumer group — a signal goes to one of them, a
-    crashed node's entries are reclaimed, and a redelivery finds the mark. Run it **instead
-    of** a mailboxing ``RealtimeGateway``, never beside one on the same dedup inbox:
-    whichever marks a signal first owns it, and a gateway that loses the race skips its live
-    emit.
+    crashed node's entries are reclaimed, and a redelivery finds the mark.
+
+    Ordering is the gateway's too. A row is stored at the signal's carried HLC, and replay
+    serves the rows above a device's cursor, but rows are not stored in HLC order: a
+    reclaimed entry, another node, or an out-of-order append can store a row below a cursor
+    the device has already acked past, and that row is never replayed. One writer per
+    stream or tenant shard narrows this window to reclaims and out-of-order appends; it
+    does not close it.
+
+    Never run it beside a ``RealtimeGateway`` that shares its dedup inbox, with or without
+    a mailbox: whichever marks a signal first owns it, so the gateway skips its live emit or
+    the writer never stores the row. In one process the second to start is refused
+    (``realtime_dedup_inbox_shared``); across processes it is the deployment's to avoid.
     """
 
     source: RealtimeSignalSource
@@ -101,8 +110,10 @@ class RealtimeMailboxWriter:
 
     bind_tenant_from_headers: bool = False
     """Opt-in: bind each signal's ``forze_tenant_id`` header so a tenant-aware mailbox
-    scopes by it. Off by default because the header is untrusted and forgeable — enable only
-    on brokers where every producer is trusted to assert tenancy."""
+    scopes by it. The header is not authenticated: on a tenant-global stream, whoever can
+    append to the stream chooses the tenant whose mailbox a signal is stored in. Enable it
+    only where every producer is trusted to assert tenancy, the gateway's posture; otherwise
+    use ``TenantShardedSignalSource``, which takes the tenant from the stream itself."""
 
     require_tenant: bool | None = None
     """Drop, loudly, a signal that resolves no tenant. ``None`` follows
@@ -148,6 +159,9 @@ class RealtimeMailboxWriter:
 
         A stop request is honored at the source's unit boundary (an in-flight batch
         finishes and acks first).
+
+        :raises CoreException: ``configuration`` (``realtime_dedup_inbox_shared``) when a
+            gateway already runs on the same dedup inbox in this process.
         """
 
         # resolve the mailbox's ports once, against the run ctx (worker-resolved-once)
@@ -161,7 +175,8 @@ class RealtimeMailboxWriter:
         ) -> None:
             await self._handle(ctx, mailbox, signal, tenant, dedup_id, hlc)
 
-        await self.source.run(ctx, handle, stop=stop)
+        with claim_dedup_inbox(self.dedup, "RealtimeMailboxWriter"):
+            await self.source.run(ctx, handle, stop=stop)
 
     # ....................... #
 
