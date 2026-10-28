@@ -17,6 +17,7 @@ from uuid import UUID
 import pytest
 
 from forze.application.contracts.document import DocumentSpec, DocumentWriteTypes
+from forze.application.contracts.guarantees import SerializedBy
 from forze.base.exceptions import CoreException, ExceptionKind
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
 from forze.testing import context_from_modules
@@ -49,6 +50,27 @@ SPEC = DocumentSpec[_AccountRead, _Account, _AccountCreate, _AccountUpdate](
     read=_AccountRead,
     write=DocumentWriteTypes(domain=_Account, create_cmd=_AccountCreate, update_cmd=_AccountUpdate),
 )
+
+
+class _Booking(Document):
+    owner: str
+
+
+class _BookingRead(ReadDocument):
+    owner: str
+
+
+class _BookingCreate(CreateDocumentCmd):
+    owner: str
+
+
+BOOKINGS = DocumentSpec[_BookingRead, _Booking, _BookingCreate, BaseDTO](
+    name="bookings",
+    read=_BookingRead,
+    write=DocumentWriteTypes(domain=_Booking, create_cmd=_BookingCreate, update_cmd=BaseDTO),
+    guarantees=(SerializedBy(key=("owner",)),),
+)
+"""Writes serialized per owner: a create holds its owner's lock until the transaction ends."""
 
 
 async def _seed(module: MockDepsModule, n: int) -> list[UUID]:
@@ -238,6 +260,10 @@ async def _statement_write(module: MockDepsModule, pk: UUID, log: list[str]) -> 
     log.append("contender:wrote")
 
 
+async def _claim_statement_write(module: MockDepsModule, pk: UUID, log: list[str]) -> None:
+    await _statement_write(MockDepsModule(state=module.state), pk, log)
+
+
 class TestWhoWaits:
     def test_a_locking_read_waits_and_reads_the_commit(self) -> None:
         log, _ = _race("block", _locking_read)
@@ -267,6 +293,92 @@ class TestWhoWaits:
         log, _ = _race("claim", _locking_read)
 
         assert log == ["holder:locked", "contender:read 0", "holder:committed"]
+
+    def test_a_claim_module_sharing_the_state_never_waits(self) -> None:
+        # The holder blocks; the statement comes from a claim-mode module over the same state.
+        log, _ = _race("block", _claim_statement_write)
+
+        assert log == ["holder:locked", "contender:wrote", "holder:committed"]
+
+
+# ....................... #
+
+
+def _mixed_cycle(closing: Literal["owner", "row"]) -> dict[str, Any]:
+    """A cycle of one row lock and one ``SerializedBy`` owner lock, closed by *closing*'s wait.
+
+    ``first`` takes one lock and parks on the other, which ``second`` holds; ``second`` then
+    asks for what ``first`` holds, so the wait that closes the cycle is of the *closing* kind.
+    """
+
+    out: dict[str, Any] = {}
+
+    async def scenario() -> None:
+        module = MockDepsModule(state=MockState(), row_locks="block")
+        (row,) = await _seed(module, 1)
+        out["row"] = f"accounts/{row}"
+
+        async def lock_row(ctx: Any) -> None:
+            await ctx.doc.query(SPEC).get(row, for_update=True)
+
+        async def take_owner(ctx: Any) -> None:
+            await ctx.doc.command(BOOKINGS).create(_BookingCreate(owner="o1"))
+
+        held, wanted = (take_owner, lock_row) if closing == "owner" else (lock_row, take_owner)
+        first_holds, second_holds = asyncio.Event(), asyncio.Event()
+
+        async def first() -> None:
+            ctx = context_from_modules(module)
+            await second_holds.wait()
+
+            try:
+                async with ctx.tx_ctx.scope("mock"):
+                    await held(ctx)
+                    first_holds.set()
+                    await wanted(ctx)
+
+                out["first"] = "committed"
+
+            except CoreException as error:
+                out["first"] = error
+
+        async def second() -> None:
+            ctx = context_from_modules(module)
+
+            try:
+                async with ctx.tx_ctx.scope("mock"):
+                    await wanted(ctx)
+                    second_holds.set()
+                    await first_holds.wait()
+                    await asyncio.sleep(0.1)  # first is parked on what this holds by now
+                    await held(ctx)
+
+                out["second"] = "committed"
+
+            except CoreException as error:
+                out["second"] = error
+
+        await asyncio.gather(first(), second())
+
+    run_simulation(scenario, seed=0)
+
+    return out
+
+
+class TestMixedCycles:
+    @pytest.mark.parametrize("closing", ["owner", "row"])
+    def test_the_closing_side_is_refused_naming_the_row(
+        self, closing: Literal["owner", "row"]
+    ) -> None:
+        out = _mixed_cycle(closing)
+
+        assert out["first"] == "committed"
+
+        error = out["second"]
+
+        assert isinstance(error, CoreException), f"no victim: {out}"
+        assert error.code == "deadlock_detected"
+        assert error.details["rows"] == [out["row"]]
 
 
 # ....................... #
@@ -357,3 +469,10 @@ class TestConfiguration:
             MockDepsModule(row_locks="block", **kwargs)
 
         assert caught.value.code == "mock_row_locks_need_journal"
+
+    def test_an_unknown_mode_is_refused(self) -> None:
+        # A typo must not run claim mode silently.
+        with pytest.raises(CoreException) as caught:
+            MockDepsModule(row_locks="blocking")  # type: ignore[arg-type]
+
+        assert caught.value.code == "mock_row_locks_unknown"

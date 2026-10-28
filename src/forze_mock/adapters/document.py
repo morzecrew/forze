@@ -170,6 +170,12 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
     discoverable. A registered source is consulted for every row, which is what makes
     a row the workload itself created readable."""
 
+    block_rows: bool = False
+    """Whether a statement outside a transaction waits for a row a blocking transaction holds.
+
+    Set from ``MockDepsModule(row_locks="block")``; a transaction's own waits follow its manager's
+    mode instead. Off, a claim-mode module sharing the state with a blocking one never waits."""
+
     # ....................... #
 
     def with_parameters(self, params: BaseModel) -> MockDocumentAdapter[R, D, C, U]:
@@ -358,7 +364,7 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
 
             return [(ns, pk) for pk in pks() if pk in store]
 
-        return await acquire_row_locks(self.state, keys)
+        return await acquire_row_locks(self.state, keys, block_statement=self.block_rows)
 
     # ....................... #
 

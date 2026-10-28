@@ -227,8 +227,13 @@ rows in opposite orders — aborts the waiter with `exc.concurrency`
 [simulation](../dst/invariants.md#transactional-isolation) reports it as a
 `no_lock_order_deadlock` violation. The mock only blocks on the simulation loop,
 where a wait nothing ends is reported rather than hung; on any other loop it falls
-back to claims. It needs the default `transactions="journal"`, and `"nowait"` /
-`"skip_locked"` wait like a plain `for_update`.
+back to claims. It needs the default `transactions="journal"`.
+
+`"nowait"` and `"skip_locked"` are a mock divergence in either mode. On Postgres, `NOWAIT`
+raises instead of waiting and `SKIP LOCKED` passes over a held row; the mock gives both
+plain `for_update` behaviour, as the `RowLockMode` contract allows for backends without
+them, so in blocking mode they wait. The mechanism divergences on
+[Fidelity](../dst/fidelity.md) list `skip-locked-degrades-to-for-update`.
 
 A transaction rolls back when an operation raises; what those failures are, and how a
 raised error becomes a response, is [Errors](errors.md).

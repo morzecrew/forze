@@ -437,6 +437,7 @@ class ConfigurableMockDocument(_MockFactoryBase):
                 name for name, declared in spec.derived_read_fields.items() if not declared.resolved
             ),
             derived_source=derived_source,
+            block_rows=self.module.row_locks == "block",
         )
 
 

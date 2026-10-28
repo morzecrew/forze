@@ -429,6 +429,13 @@ class MockDepsModule(DepsModule):
         check_permission_providers(self.permission_providers)
         check_provider_timeout(self.permission_provider_timeout)
 
+        if self.row_locks not in ("claim", "block"):
+            # A typo would otherwise run claim mode silently, the opposite of what was asked.
+            raise exc.configuration(
+                f'row_locks must be "claim" or "block", not {self.row_locks!r}.',
+                code="mock_row_locks_unknown",
+            )
+
         if self.row_locks == "block" and (self.strict_tx or self.transactions != "journal"):
             # Strict roots never run together and "none" has no transaction: nothing would block.
             raise exc.configuration(

@@ -34,7 +34,9 @@ from forze_mock.adapters._mvcc import (
     MvccTx,
     StatementLocks,
     current_mvcc_tx,
+    raise_row_deadlock,
     release_write_locks,
+    wait_cycle_rows,
 )
 from forze_mock.adapters.tx import ensure_mock_tx_writable
 from forze_mock.query._types import C, D, R, U
@@ -393,16 +395,20 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
     def _refuse_lock_cycle(self, holder: MvccTx | StatementLocks, key: int) -> None:
         """Refuse a wait that would close a cycle, instead of joining one.
 
-        Walks from whoever holds *key* to whatever that writer is itself waiting for, and on to
-        its holder. A chain arriving back at a key *holder* already holds is a deadlock: neither
-        side can release first, and without this both would sit there until an operation deadline
-        fired — a hang where the store being modelled detects the cycle and aborts one of them.
+        Walks from whoever holds *key* to whatever that writer is itself waiting for — an owner,
+        or under ``row_locks="block"`` a row — and on to its holder. A chain arriving back at
+        *holder* is a deadlock: neither side can release first, and without this both would sit
+        there until an operation deadline fired — a hang where the store being modelled detects
+        the cycle and aborts one of them.
 
         Refused on the side about to *join* the cycle, which is the side that can still give up
         without having blocked anyone.
 
         :raises CoreException: ``concurrency`` naming the owner — the kind Postgres gives the
             same cycle when it detects the deadlock, so a caller's retry policy treats both alike.
+            A cycle through a row lock is refused as the row side refuses it, with
+            ``code="deadlock_detected"`` and the rows (see
+            :func:`~forze_mock.adapters._mvcc.raise_row_deadlock`).
         """
 
         holders = self.state.write_serialization
@@ -426,6 +432,15 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
                 # As the backends' mapped deadlock: its details are not the client's.
                 deadlock.expose_details = False
                 raise deadlock
+
+            if (row := getattr(other, "row_waiting_for", None)) is not None:
+                # Parked on a row: the rest of the chain may mix both kinds of wait.
+                start = self.state.row_locks.holders().get(row)
+
+                if (cycle := wait_cycle_rows(self.state, holder, start)) is not None:
+                    raise_row_deadlock([row, *cycle])
+
+                return
 
             cursor = other.waiting_for
 
@@ -901,7 +916,8 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
     ) -> R | JsonDict | tuple[R, JsonDict] | None:
         self._ensure_writable()
         patch = self._encode_patch(dto)
-        # Row before owner: once the row is held it cannot move, so the owners read next are final.
+        # Row before owner keeps the owners read next final, since a held row cannot move. Not a
+        # deadlock-detection need: both cycle walks follow row and owner waits alike.
         await self._lock_rows(lambda: [pk])
         await self._serialize_writes(lambda: self._sides(pk, patch))
 

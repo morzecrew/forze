@@ -44,7 +44,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Callable, Iterator, Sequence
 from contextvars import ContextVar
-from typing import Any
+from typing import Any, NoReturn
 
 import attrs
 
@@ -596,6 +596,9 @@ def release_row_locks(tx: MvccTx, state: Any) -> None:
     """Give back every row lock *tx* holds, then wake whoever is parked on it."""
 
     if tx.held_rows:
+        # The loop running this is the one the rows were taken on: ``finish`` runs in the same
+        # coroutine as ``begin``, and rows are only taken on the simulation loop, which is
+        # single-threaded and refuses threads — no other loop can share the transaction.
         holders = state.row_locks.holders()
 
         for key in tx.held_rows:
@@ -612,50 +615,64 @@ def release_row_locks(tx: MvccTx, state: Any) -> None:
 # ....................... #
 
 
-def _refuse_row_deadlock(state: Any, waiter: MvccTx, key: tuple[str, Any]) -> None:
-    """Refuse a row wait that would close a cycle in the wait-for graph, instead of joining it.
+def wait_cycle_rows(state: Any, waiter: Any, holder: Any) -> list[tuple[str, Any]] | None:
+    """The rows on the wait-for path from *holder* back to *waiter*, or ``None`` with no cycle.
 
-    Walks from the holder of *key* to the row (or ``SerializedBy`` owner) that holder is parked
-    on, and on to its holder. Arriving back at *waiter* is a lock-order deadlock: neither side can
-    finish first. Postgres aborts one transaction of such a cycle; this refuses the one about to
-    close it, which under one seed and schedule is always the same transaction.
+    Each step goes from a transaction to whoever holds what it is parked on: a row
+    (``row_waiting_for``) or a ``SerializedBy`` owner (``waiting_for``). Following both is what
+    catches a cycle mixing the two, whichever kind of wait closes it. An empty list means the path
+    arrived back through owner waits alone.
+    """
+
+    path: list[tuple[str, Any]] = []
+    seen: set[int] = set()
+
+    while holder is not None and id(holder) not in seen:
+        if holder is waiter:
+            return path
+
+        seen.add(id(holder))
+        row = getattr(holder, "row_waiting_for", None)
+
+        if row is not None:
+            path.append(row)
+            holder = state.row_locks.holders().get(row)
+
+        else:
+            owner = holder.waiting_for
+            holder = None if owner is None else state.write_serialization.holder_of(owner)
+
+    return None
+
+
+# ....................... #
+
+
+def raise_row_deadlock(rows: Sequence[tuple[str, Any]]) -> NoReturn:
+    """Refuse the transaction closing a cycle through row locks, naming the rows.
+
+    Postgres aborts one transaction of such a cycle; this refuses the one about to close it,
+    which under one seed and schedule is always the same transaction.
 
     :raises CoreException: ``concurrency`` with ``code="deadlock_detected"`` and the cycle's rows
         in its details; the same rows go on the runtime trace for the simulation's oracle.
     """
 
-    holders = state.row_locks.holders()
-    cycle = [key]
-    holder = holders.get(key)
-    seen: set[int] = set()
+    named = [f"{namespace}/{pk}" for namespace, pk in rows]
+    record(domain="lock", op="deadlock", key=named[0], outcome="refused", payload={"rows": named})
+    deadlock = exc.concurrency(
+        "Deadlock detected: this transaction and another each hold a row the other is waiting "
+        "for. This one is refused rather than both waiting; taking the rows in one order "
+        "avoids it.",
+        code="deadlock_detected",
+        details={"rows": named},
+    )
+    # As the backends' mapped deadlock: its details are not the client's.
+    deadlock.expose_details = False
+    raise deadlock
 
-    while holder is not None and id(holder) not in seen:
-        if holder is waiter:
-            rows = [f"{namespace}/{pk}" for namespace, pk in cycle]
-            record(
-                domain="lock", op="deadlock", key=rows[0], outcome="refused", payload={"rows": rows}
-            )
-            deadlock = exc.concurrency(
-                "Deadlock detected: this transaction and another each hold a row the other is "
-                "waiting for. This one is refused rather than both waiting; taking the rows in "
-                "one order avoids it.",
-                code="deadlock_detected",
-                details={"rows": rows},
-            )
-            # As the backends' mapped deadlock: its details are not the client's.
-            deadlock.expose_details = False
-            raise deadlock
 
-        seen.add(id(holder))
-        wanted = getattr(holder, "row_waiting_for", None)
-
-        if wanted is not None:
-            cycle.append(wanted)
-            holder = holders.get(wanted)
-
-        else:
-            owner = holder.waiting_for
-            holder = None if owner is None else state.write_serialization.holder_of(owner)
+# ....................... #
 
 
 # ....................... #
@@ -664,12 +681,16 @@ def _refuse_row_deadlock(state: Any, waiter: MvccTx, key: tuple[str, Any]) -> No
 async def acquire_row_locks(
     state: Any,
     keys: Callable[[], Sequence[tuple[str, Any]]],
+    *,
+    block_statement: bool,
 ) -> bool:
     """Hold every row lock *keys* names, waiting out each live holder, in blocking mode.
 
     A no-op in the default claim mode, and off a simulation loop, where a wait could hang: the
     claim then stands in, as it always has. A transaction takes each free row and keeps it until it
-    ends; a statement outside one holds nothing and only waits for its rows to be free. *keys* is
+    ends; a statement outside one holds nothing and only waits for its rows to be free, and only
+    when *block_statement* says its own module blocks — a claim-mode module sharing the state with
+    a blocking one never waits. *keys* is
     asked again after every wait, so a row deleted or moved meanwhile drops out and the caller
     proceeds against what the holder committed — read committed's re-read.
 
@@ -678,12 +699,13 @@ async def acquire_row_locks(
 
     :returns: Whether it waited, so a predicate read re-evaluates against the committed row.
     :raises CoreException: ``concurrency`` with ``code="deadlock_detected"`` when a wait would
-        close a cycle (see :func:`_refuse_row_deadlock`).
+        close a cycle (see :func:`wait_cycle_rows` and :func:`raise_row_deadlock`).
     """
 
     tx = current_mvcc_tx()
+    blocks = tx.block_rows if tx is not None else block_statement
 
-    if (tx is not None and not tx.block_rows) or not _on_simulation_loop():
+    if not blocks or not _on_simulation_loop():
         return False
 
     holders = state.row_locks.holders()
@@ -706,7 +728,9 @@ async def acquire_row_locks(
                 continue
 
             if tx is not None:
-                _refuse_row_deadlock(state, tx, key)
+                if (cycle := wait_cycle_rows(state, tx, holder)) is not None:
+                    raise_row_deadlock([key, *cycle])
+
                 tx.row_waiting_for = key
 
             try:
