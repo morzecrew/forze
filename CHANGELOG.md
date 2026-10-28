@@ -79,9 +79,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **A durable cron trigger declares a timezone and an input.** `DurableFunctionCronTrigger(expression, tz=..., input=...)` registers its schedule with both; the input is checked against the spec's `args_type` at declaration. A changed input alone keeps the next fire; Inngest maps `tz` to `TZ=` and refuses an input.
 
-- **Finished durable runs can be purged past a retention window.** `DurableRunAdminPort.purge_finished(older_than, ...)` deletes up to `limit` completed, cancelled, failed or timed-out runs with their step journal, freeing their idempotency keys. `durable_run_retention_lifecycle_step` runs it in bounded sweeps.
+**Self-hosted durable functions:**
 
-- **A durable enqueue can coalesce onto the run waiting unclaimed.** `enqueue(..., coalesce_key=...)` joins a `pending` run never claimed under that key and records a new one once it is claimed. **Migration:** add the `coalesce_key` column and its partial unique index (see the durable schema page) before using it.
+- **A cron trigger declares a timezone and an input.** `DurableFunctionCronTrigger(expression, tz=..., input=...)` registers its schedule with both; the input is checked against the spec's `args_type` at declaration. A changed input alone keeps the next fire; Inngest maps `tz` to `TZ=` and refuses an input.
+
+- **Finished runs can be purged past a retention window.** `DurableRunAdminPort.purge_finished(older_than, ...)` deletes up to `limit` completed, cancelled, failed or timed-out runs with their step journal, freeing their idempotency keys. `durable_run_retention_lifecycle_step` runs it in bounded sweeps.
+
+- **An enqueue can coalesce onto the run waiting unclaimed.** `enqueue(..., coalesce_key=...)` joins a `pending` run never claimed under that key and records a new one once it is claimed. **Migration:** add the `coalesce_key` column and its partial unique index (see the durable schema page) before using it.
+
+- **An operation-backed function can run as a service principal.** `register_operation_functions(..., identity=DurableServiceIdentity(...))` binds it around the operation, so `AuthnRequired`, authz and audit see it; the identity must be acknowledged as unverified. Without one, a guarded operation refuses the run.
 
 **`forze ops` for people at a shell and for backfills:**
 
@@ -96,6 +102,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **The `duckdb` extra takes DuckDB 1.5 or 2** (**behaviour change**). It now requires `duckdb>=1.5.6,<3`, so releases before 1.5.6 no longer install with it. `DuckDbClient` and `RoutedDuckDbClient` run on both majors with the same code.
 
 - **`HttpServicePort` requires `stream`** (**behaviour change**). A hand-written implementation or test stub must add it, or it fails type checks and `isinstance` against the runtime-checkable port.
+
+- **A durable body never inherits the caller's principal** (**behaviour change**). `DurableFunctionRunner` binds none for an untagged run too, so `run_now` inside a request runs it as no one, as recovery always did. Name a principal with `DurableServiceIdentity`.
 
 - **`DurableRunAdminPort` requires `purge_finished`, and `DurableRunStorePort.enqueue` takes `coalesce_key`** (**behaviour change**). A hand-written durable run store must add both; `DurableFunctionRunner.enqueue` always passes `coalesce_key`.
 

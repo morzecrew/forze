@@ -162,6 +162,30 @@ than passing on the strength of the other planes. Note the coupling that creates
 cross-tenant sweep runs, so a deployment declaring `tagged` runs per-tenant recovery
 (`tenants=…`) instead.
 
+### Who a run executes as
+
+A durable body runs as **no one**: the runner binds the run's tenant and no principal, so
+a run started by `run_now` inside a request does not inherit the caller, and a recovered
+run behaves the same. A spec whose `operation` names a registry operation registers with
+`register_operation_functions`; an operation guarded by `AuthnRequired` then refuses the run
+until you name a service principal for it:
+
+```python
+register_operation_functions(
+    registry,
+    specs,
+    operations=operations,
+    identity=DurableServiceIdentity(
+        authn=AuthnIdentity(principal_id=REPORTS_SERVICE_ID),
+        acknowledge_unverified_identity=True,
+    ),
+)
+```
+
+Authn and authz then decide for that principal as for any caller, and audit records it.
+Nothing verifies it — no key is checked, expired or revoked — so the acknowledgment is
+required. The run's tenant still comes from the run.
+
 ### Retrying a failed run
 
 A step that raises writes no journal row, and by default the run lands `FAILED`. Give the

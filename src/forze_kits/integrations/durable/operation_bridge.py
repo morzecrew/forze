@@ -9,18 +9,19 @@ that twin — one call registers every operation-backed spec on the
 :class:`~forze_kits.integrations.durable.registry.DurableFunctionRegistry` the
 runner and recovery scanner read.
 
-Identity note: a durable run executes under whatever the runner's scope binds —
-there is **no principal**. An operation guarded by
-:class:`~forze.application.hooks.authn.AuthnRequired` will therefore refuse a
-scheduled or recovered run; see the guard's documentation before pointing a spec at
-a guarded operation.
+Identity note: a durable run executes with **no principal** — the runner binds none,
+whether the run started under a request or was recovered — so an operation guarded by
+:class:`~forze.application.hooks.authn.AuthnRequired` refuses it. Name who runs it with
+:class:`DurableServiceIdentity`; the run's tenant still comes from the run.
 """
 
-from typing import Any
+from typing import Any, final
 
+import attrs
 from pydantic import BaseModel, ValidationError
 from pydantic_core import PydanticSerializationError, to_jsonable_python
 
+from forze.application.contracts.authn import AuthnIdentity
 from forze.application.contracts.durable.function import DurableFunctionSpec
 from forze.application.execution.context import ExecutionContext
 from forze.application.execution.operations import FrozenOperationRegistry
@@ -33,14 +34,49 @@ from .registry import DurableFunctionHandler, DurableFunctionRegistry
 # ----------------------- #
 
 __all__ = [
+    "DurableServiceIdentity",
     "operation_durable_handler",
     "register_operation_functions",
 ]
 
 
+@final
+@attrs.frozen(kw_only=True)
+class DurableServiceIdentity:
+    """Run an operation-backed durable body as a fixed service principal nothing verifies.
+
+    A scheduled or recovered run presents no credential, so whoever it runs as is the
+    application's word: authn and authz decide for it as for any caller, and audit records
+    it as the actor, but no key is checked, expired or revoked. The run's tenant still
+    comes from the run, never from here.
+
+    :param authn: The principal the body runs as.
+    :param acknowledge_unverified_identity: Must be ``True``; anything else raises
+        ``configuration``, so the choice is never made by accident.
+    """
+
+    authn: AuthnIdentity
+    acknowledge_unverified_identity: bool = False
+
+    # ....................... #
+
+    def __attrs_post_init__(self) -> None:
+        if self.acknowledge_unverified_identity is not True:
+            raise exc.configuration(
+                "DurableServiceIdentity binds a principal nothing verifies: pass "
+                "acknowledge_unverified_identity=True to accept that",
+                code="durable_unverified_identity_unacknowledged",
+            )
+
+
+# ....................... #
+
+
 def operation_durable_handler(
     spec: DurableFunctionSpec[Any, Any],
     operations: FrozenOperationRegistry,
+    *,
+    identity: DurableServiceIdentity | None = None,
 ) -> DurableFunctionHandler:
     """Build the durable body for a spec whose ``operation`` names a registry op.
 
@@ -52,6 +88,9 @@ def operation_durable_handler(
     dict, or ``None`` is refused here (``durable_output_invalid``) rather than
     during result persistence, where the operation's work would already be
     committed.
+
+    *identity* is the principal the operation runs as; ``None`` runs it as no one, so a
+    guarded operation refuses the run. The ambient principal is never inherited.
     """
 
     if spec.operation is None:
@@ -73,7 +112,11 @@ def operation_durable_handler(
                 code="durable_input_invalid",
             ) from error
 
-        output = await run_durable_function(spec, operations, ctx, args)
+        # Exactly the declared principal, or none: never whoever enqueued the run.
+        authn = None if identity is None else identity.authn
+
+        with ctx.inv_ctx.bind_identity(authn=authn, tenant=ctx.inv_ctx.get_tenant()):
+            output = await run_durable_function(spec, operations, ctx, args)
 
         if output is None:
             return None
@@ -116,12 +159,17 @@ def register_operation_functions(
     specs: list[DurableFunctionSpec[Any, Any]] | tuple[DurableFunctionSpec[Any, Any], ...],
     *,
     operations: FrozenOperationRegistry,
+    identity: DurableServiceIdentity | None = None,
 ) -> None:
     """Register every operation-backed spec in *specs* on *registry*.
 
     Specs without an ``operation`` are refused rather than skipped: a silent skip
     would leave their runs unresumable (no registered body) and read as "wired".
+    *identity* is passed to :func:`operation_durable_handler` for each.
     """
 
     for spec in specs:
-        registry.register(str(spec.name), operation_durable_handler(spec, operations))
+        registry.register(
+            str(spec.name),
+            operation_durable_handler(spec, operations, identity=identity),
+        )
