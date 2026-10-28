@@ -424,6 +424,8 @@ class TestMongoDurableWiring:
         assert deps.exists(DurableFunctionStepDepKey)
         assert deps.exists(DurableRunStoreDepKey)
         assert deps.exists(DurableScheduleStoreDepKey)
+        # The run store learns the journal, so a purge deletes a run's steps with it.
+        assert deps.plain_deps[DurableRunStoreDepKey].step_config is module.durable_step
 
     def test_nothing_is_registered_by_default(self) -> None:
         deps = MongoDepsModule(client=MagicMock(spec=MongoClient))()

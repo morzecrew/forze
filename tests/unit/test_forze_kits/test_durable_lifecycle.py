@@ -2,6 +2,7 @@
 
 # covers: durable_recovery_background_lifecycle_step
 # covers: durable_scheduler_background_lifecycle_step
+# covers: durable_run_retention_lifecycle_step
 """
 
 from __future__ import annotations
@@ -19,6 +20,7 @@ from forze.application.contracts.durable.function import (
     DurableFunctionCronTrigger,
     DurableFunctionInvokeSpec,
     DurableFunctionSpec,
+    DurableRunStatus,
 )
 from forze.application.execution import DeploymentProfile
 from forze.application.execution.lifecycle import LifecyclePlan
@@ -30,12 +32,15 @@ from forze_kits.integrations.durable import (
     DurableFunctionRunner,
     DurableScheduler,
     durable_recovery_background_lifecycle_step,
+    durable_run_retention_lifecycle_step,
     durable_scheduler_background_lifecycle_step,
+    resolve_durable_run_store,
 )
 from forze_kits.integrations.durable import lifecycle as lifecycle_mod
 from forze_kits.integrations.durable.lifecycle import (
     _DurableRecoveryBackgroundShutdown,
     _DurableRecoveryBackgroundStartup,
+    _DurableRetentionBackgroundStartup,
     _DurableSchedulerBackgroundShutdown,
     _DurableSchedulerBackgroundStartup,
 )
@@ -106,6 +111,10 @@ class TestServerlessRefusal:
             pytest.param(
                 lambda: durable_scheduler_background_lifecycle_step(scheduler=DurableScheduler()),
                 id="scheduler",
+            ),
+            pytest.param(
+                lambda: durable_run_retention_lifecycle_step(older_than=timedelta(days=7)),
+                id="retention",
             ),
         ],
     )
@@ -387,6 +396,72 @@ class TestSchedulerTaskLifecycle:
             await shutdown(ctx)
 
         assert log.exception.called
+
+
+# ....................... #
+
+
+class TestRetention:
+    @pytest.mark.parametrize(
+        "over,match",
+        [
+            ({"interval": timedelta(0)}, "Interval"),
+            ({"jitter": 1.0}, "Jitter"),
+            ({"max_batches_per_tick": 0}, "Max batches"),
+            ({"limit": 0}, "limit"),
+            ({"older_than": timedelta(0)}, "older_than"),
+            ({"statuses": [DurableRunStatus.RUNNING]}, "finished"),
+            ({"statuses": [DurableRunStatus.FORWARD_INCOMPLETE]}, "finished"),
+        ],
+    )
+    def test_rejects_bad_config(self, over: dict[str, Any], match: str) -> None:
+        kwargs: dict[str, Any] = {"older_than": timedelta(days=7), **over}
+
+        with pytest.raises(CoreException, match=match):
+            durable_run_retention_lifecycle_step(**kwargs)
+
+    async def test_drain_loops_until_a_short_batch_and_stops_at_the_cap(self) -> None:
+        admin = MagicMock()
+        admin.purge_finished = AsyncMock(side_effect=[5, 5, 3, 5, 5, 5])
+        startup = _DurableRetentionBackgroundStartup(
+            older_than=timedelta(days=1),
+            statuses=(DurableRunStatus.COMPLETED,),
+            interval=timedelta(hours=1),
+            jitter=0.0,
+            limit=5,
+            max_batches_per_tick=2,
+        )
+
+        with patch.object(lifecycle_mod, "resolve_durable_run_admin", return_value=admin):
+            await startup._drain(MagicMock())  # capped at two full batches
+            await startup._drain(MagicMock())  # 3 < 5: short, stops after one
+
+        assert admin.purge_finished.await_count == 3
+        admin.purge_finished.assert_awaited_with(
+            timedelta(days=1), statuses=(DurableRunStatus.COMPLETED,), limit=5
+        )
+
+    async def test_the_step_purges_finished_runs_and_keeps_live_ones(self) -> None:
+        ctx = context_from_modules(MockDepsModule())
+        store = resolve_durable_run_store(ctx)
+        done = await store.enqueue("done", input_json=None)
+        await store.begin(done.run_id, lease_for=timedelta(minutes=5))
+        await store.complete(done.run_id, output_json=None)
+        live = await store.enqueue("live", input_json=None)
+
+        step = durable_run_retention_lifecycle_step(
+            older_than=timedelta(microseconds=1), interval=timedelta(hours=1)
+        )
+
+        await step.startup(ctx)
+        for _ in range(50):
+            if await store.load(done.run_id) is None:
+                break
+            await asyncio.sleep(0.01)
+        await step.shutdown(ctx)
+
+        assert await store.load(done.run_id) is None
+        assert await store.load(live.run_id) is not None
 
 
 # ....................... #

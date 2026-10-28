@@ -22,6 +22,7 @@ rule, written twice: reading the code proves nothing here and only running both 
 # covers: DurableRunStorePort.refuse_cancel
 # covers: DurableRunStorePort.mark_timed_out
 # covers: DurableRunAdminPort.requeue_quarantined
+# covers: DurableRunAdminPort.purge_finished
 """
 
 from __future__ import annotations
@@ -58,6 +59,7 @@ from tests.support.durable_cancel_races import (
     run_stale_holder_race,
 )
 from tests.support.durable_conformance import (
+    PURGE_OUTCOME,
     QUARANTINE_ADMIN_OUTCOME,
     REQUEUE_FAILED_OUTCOME,
     RETRY_OUTCOME,
@@ -67,6 +69,7 @@ from tests.support.durable_conformance import (
     run_control_scenario,
     run_lifecycle_scenario,
     run_list_scenario,
+    run_purge_scenario,
     run_quarantine_admin_scenario,
     run_requeue_failed_scenario,
     run_requeue_race_scenario,
@@ -400,6 +403,34 @@ class TestDurableMockVsMongo:
         )
 
         assert mock_out == mongo_out == REQUEUE_FAILED_OUTCOME
+
+    async def test_mock_matches_mongo_for_purged_runs(
+        self,
+        mongo_client: MongoClient,
+        run_collection: tuple[str, str],
+        step_collection: tuple[str, str],
+    ) -> None:
+        mock_state = MockState()
+        mock_out = await run_purge_scenario(
+            lambda tenant: MockDurableRunStore(
+                state=mock_state,
+                tenant_provider=tenant_provider_for(tenant),
+            ),
+            lambda: MockDurableFunctionStepAdapter(state=mock_state),
+        )
+
+        steps = MongoDurableStepConfig(collection=step_collection)
+        mongo_out = await run_purge_scenario(
+            lambda tenant: MongoDurableRunStore(
+                client=mongo_client,
+                config=MongoDurableRunConfig(collection=run_collection),
+                step_config=steps,
+                tenant_provider=tenant_provider_for(tenant),
+            ),
+            lambda: MongoDurableFunctionStepAdapter(client=mongo_client, config=steps),
+        )
+
+        assert mock_out == mongo_out == PURGE_OUTCOME
 
     async def test_an_unnamed_requeue_leaves_a_run_tagged_after_its_check(
         self, mongo_client: MongoClient, run_collection: tuple[str, str]

@@ -333,6 +333,30 @@ journal instead of re-executing. Keep durable bodies deterministic too — read 
 through `utcnow` / `uuid7` and do work in steps — and the simulator explores the crash-point
 space for you.
 
+### Keeping the run table bounded
+
+Finished runs are kept until you delete them, with their input, output and step journal. A
+retention step deletes them past a window:
+
+```python
+lifecycle = [
+    durable_run_retention_lifecycle_step(older_than=timedelta(days=30)),
+    durable_recovery_background_lifecycle_step(runner=runner),
+]
+```
+
+Each sweep calls `DurableRunAdminPort.purge_finished(older_than, statuses=..., name=None,
+limit=1000)` until a batch comes short, at most `max_batches_per_tick` times, then sleeps
+`interval`. It deletes only `completed`, `cancelled`, `failed` and `timed_out` runs created
+more than `older_than` ago, oldest first, each with its step journal; `quarantined` and
+`forward_incomplete` runs still owe work and cannot be named. The step needs the admin port
+(`admin=True` on the run config). Purging a run frees its idempotency key: a later submit
+under that key starts a new run.
+
+On Postgres the batch, its rows and its journal go in one statement that skips any row
+another transaction holds, so a run being requeued keeps its steps. Concurrent sweepers skip
+each other's rows, so run the step on every replica.
+
 ### Crash-resumable sagas
 
 The self-hosted tier closes the "an in-process saga is not crash-resumable" gap. Swap the

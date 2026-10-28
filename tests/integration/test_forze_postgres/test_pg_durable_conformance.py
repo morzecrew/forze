@@ -19,6 +19,7 @@ the code proves nothing and only running both does.
 # covers: DurableRunStorePort.refuse_cancel
 # covers: DurableRunStorePort.mark_timed_out
 # covers: DurableRunAdminPort.requeue_quarantined
+# covers: DurableRunAdminPort.purge_finished
 """
 
 from __future__ import annotations
@@ -57,6 +58,7 @@ from tests.support.durable_cancel_races import (
     run_stale_holder_race,
 )
 from tests.support.durable_conformance import (
+    PURGE_OUTCOME,
     QUARANTINE_ADMIN_OUTCOME,
     REQUEUE_FAILED_OUTCOME,
     RETRY_OUTCOME,
@@ -66,6 +68,7 @@ from tests.support.durable_conformance import (
     run_control_scenario,
     run_lifecycle_scenario,
     run_list_scenario,
+    run_purge_scenario,
     run_quarantine_admin_scenario,
     run_requeue_failed_scenario,
     run_requeue_race_scenario,
@@ -407,6 +410,31 @@ class TestDurableMockVsPostgres:
         )
 
         assert mock_out == pg_out == REQUEUE_FAILED_OUTCOME
+
+    async def test_mock_matches_postgres_for_purged_runs(
+        self, pg_client: PostgresClient, run_table: str, step_table: str
+    ) -> None:
+        mock_state = MockState()
+        mock_out = await run_purge_scenario(
+            lambda tenant: MockDurableRunStore(
+                state=mock_state,
+                tenant_provider=tenant_provider_for(tenant),
+            ),
+            lambda: MockDurableFunctionStepAdapter(state=mock_state),
+        )
+
+        steps = PostgresDurableStepConfig(relation=("public", step_table))
+        pg_out = await run_purge_scenario(
+            lambda tenant: PostgresDurableRunStore(
+                client=pg_client,
+                config=PostgresDurableRunConfig(relation=("public", run_table)),
+                step_config=steps,
+                tenant_provider=tenant_provider_for(tenant),
+            ),
+            lambda: PostgresDurableFunctionStepAdapter(client=pg_client, config=steps),
+        )
+
+        assert mock_out == pg_out == PURGE_OUTCOME
 
     async def test_an_unnamed_requeue_leaves_a_run_tagged_after_its_check(
         self, pg_client: PostgresClient, run_table: str

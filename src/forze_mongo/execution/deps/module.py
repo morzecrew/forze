@@ -483,7 +483,9 @@ class MongoDepsModule(DepsModule):
         if self.durable_run is not None:
             # One store implements both ports; the same factory registers under the admin
             # key when the ops plane is opted in.
-            run_factory = ConfigurableMongoDurableRun(config=self.durable_run)
+            run_factory = ConfigurableMongoDurableRun(
+                config=self.durable_run, step_config=self.durable_step
+            )
             registrations[DurableRunStoreDepKey] = run_factory
 
             if self.durable_run.admin:

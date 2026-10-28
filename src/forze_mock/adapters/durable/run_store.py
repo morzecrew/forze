@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Collection, Sequence
 from datetime import datetime, timedelta
 from typing import Any, final
 from uuid import UUID
@@ -10,6 +10,7 @@ from uuid import UUID
 import attrs
 
 from forze.application.contracts.durable.function import (
+    PURGEABLE_STATUSES,
     DurableLeaseRenewal,
     DurableRunAdminPort,
     DurableRunControlAware,
@@ -19,6 +20,7 @@ from forze.application.contracts.durable.function import (
     DurableRunStatus,
     DurableRunStorePort,
     build_run_page,
+    check_purge,
     decode_run_cursor,
     requeue_failed_unnamed_error,
     requeue_unscoped_error,
@@ -393,6 +395,48 @@ class MockDurableRunStore(DurableRunStorePort, DurableRunAdminPort, DurableRunCo
             _requeue(failed)
 
         return len(failed)
+
+    # ....................... #
+
+    async def purge_finished(
+        self,
+        older_than: timedelta,
+        *,
+        statuses: Collection[DurableRunStatus] = PURGEABLE_STATUSES,
+        name: str | None = None,
+        limit: int = 1000,
+    ) -> int:
+        check_purge(older_than, statuses, limit)
+
+        bound_tenant = self._bound_tenant()
+        cutoff = utcnow() - older_than
+        wanted = {str(status) for status in statuses}
+
+        with self.state.lock:
+            # Scoped like ``list_runs``, oldest first like the Postgres ``ORDER BY``.
+            doomed = sorted(
+                (
+                    data
+                    for data in self.state.durable_runs.values()
+                    if data["status"] in wanted
+                    and data["created_at"] < cutoff
+                    and (bound_tenant is None or data["tenant_id"] == bound_tenant)
+                    and (name is None or data["name"] == name)
+                ),
+                key=lambda data: (data["created_at"], data["run_id"]),
+            )[:limit]
+
+            for data in doomed:
+                del self.state.durable_runs[data["run_id"]]
+
+            # The step memo is keyed ``{run_id}:{step_id}``; a uuid7 run id holds no colon.
+            prefixes = tuple(f"{data['run_id']}:" for data in doomed)
+            memo = self.state.durable_step_memo
+
+            for key in [key for key in memo if key.startswith(prefixes)]:
+                del memo[key]
+
+        return len(doomed)
 
     # ....................... #
 

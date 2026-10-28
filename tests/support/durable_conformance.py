@@ -1321,6 +1321,135 @@ async def run_tenancy_scenario(
 # ....................... #
 
 
+async def run_purge_scenario(
+    store_for: Callable[[UUID | None], DurableRunStorePort],
+    step_of: Callable[[], DurableFunctionStepPort],
+) -> dict[str, Any]:
+    """Purge finished runs past a window and collect plane-independent observables.
+
+    Only ``COMPLETED``, ``CANCELLED``, ``FAILED`` and ``TIMED_OUT`` runs go, oldest first and
+    at most *limit* per call, each with its step journal; a run that still owes work stays,
+    with its journal. A purged run frees its idempotency key. *store_for* must hand out
+    stores wired to the journal *step_of* writes.
+    """
+
+    lease = timedelta(minutes=5)
+    past = timedelta(microseconds=1)
+    tenant = UUID("00000000-0000-0000-0000-00000000000a")
+    store = store_for(None)
+    admin = cast(DurableRunAdminPort, store)
+    out: dict[str, Any] = {}
+
+    async def journaled(run_id: str) -> int:
+        """Run step ``s1`` of *run_id*; return 1 when its body ran, 0 when it replayed."""
+
+        calls: list[int] = []
+
+        async def work() -> int:
+            calls.append(1)
+            return 1
+
+        token = bind_durable_run(DurableRunContext(run_id=run_id, name="fn"))
+        try:
+            await step_of().run("s1", work)
+        finally:
+            reset_durable_run(token)
+
+        return len(calls)
+
+    async def held(name: str, **enqueue: Any) -> tuple[str, int]:
+        run = await store.enqueue(name, input_json=None, **enqueue)
+        claimed = await store.begin(run.run_id, lease_for=lease)
+        assert claimed is not None
+        return run.run_id, claimed.attempts
+
+    done, fence = await held("done", idempotency_key="k")
+    await journaled(done)
+    await store.complete(done, output_json={"ok": True}, fence=fence)
+
+    failed, fence = await held("failed")
+    await store.fail(failed, error="boom", fence=fence)
+
+    timed, fence = await held("timed")
+    await store.mark_timed_out(timed, error="deadline", fence=fence)
+
+    cancelled = (await store.enqueue("cancelled", input_json=None)).run_id
+    await admin.request_cancel(cancelled)
+
+    forward, fence = await held("forward")
+    await journaled(forward)
+    await store.mark_forward_incomplete(forward, error="pivot", fence=fence)
+
+    pending = (await store.enqueue("pending", input_json=None)).run_id
+    running, _ = await held("running")
+
+    owned, fence = await held("owned", tenant_id=tenant)
+    await store.complete(owned, output_json=None, fence=fence)
+
+    out["within_window"] = await admin.purge_finished(timedelta(hours=1))
+    out["other_name"] = await admin.purge_finished(past, name="nope")
+
+    refused: list[str] = []
+
+    for statuses, older_than, limit in (
+        ([DurableRunStatus.RUNNING], past, 10),
+        ([DurableRunStatus.FORWARD_INCOMPLETE], past, 10),
+        ([DurableRunStatus.QUARANTINED], past, 10),
+        ([DurableRunStatus.COMPLETED], timedelta(0), 10),
+        ([DurableRunStatus.COMPLETED], past, 0),
+    ):
+        try:
+            await admin.purge_finished(older_than, statuses=statuses, limit=limit)
+        except CoreException as error:
+            refused.append(error.kind.value)
+
+    out["refused"] = refused
+
+    # Bound, only the tenant's own finished run goes.
+    out["bound_purge"] = await cast(DurableRunAdminPort, store_for(tenant)).purge_finished(past)
+    out["owned_gone"] = await store.load(owned) is None
+
+    out["first_batch"] = await admin.purge_finished(past, limit=2)
+    out["after_first_batch"] = [
+        name
+        for name, run_id in (("done", done), ("failed", failed), ("timed", timed))
+        if await store.load(run_id) is not None
+    ]
+    out["rest"] = await admin.purge_finished(past)
+
+    survivors = [done, failed, timed, cancelled, forward, pending, running]
+    loaded = [await store.load(run_id) for run_id in survivors]
+    out["statuses_left"] = [None if r is None else r.status.value for r in loaded]
+
+    out["purged_journal_reruns"] = await journaled(done)
+    out["kept_journal_reruns"] = await journaled(forward)
+
+    again = await store.enqueue("done", input_json=None, idempotency_key="k")
+    out["key_freed"] = again.run_id != done
+
+    return out
+
+
+PURGE_OUTCOME: dict[str, Any] = {
+    "within_window": 0,
+    "other_name": 0,
+    "refused": ["validation"] * 5,
+    "bound_purge": 1,
+    "owned_gone": True,
+    "first_batch": 2,
+    "after_first_batch": ["timed"],
+    "rest": 2,
+    "statuses_left": [None, None, None, None, "forward_incomplete", "pending", "running"],
+    "purged_journal_reruns": 1,
+    "kept_journal_reruns": 0,
+    "key_freed": True,
+}
+"""What :func:`run_purge_scenario` answers on every engine, the mock included."""
+
+
+# ....................... #
+
+
 async def run_schedule_scenario(store: DurableScheduleStorePort) -> dict[str, Any]:
     """Drive the recurring-schedule store and collect plane-independent observables.
 

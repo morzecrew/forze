@@ -81,6 +81,9 @@ class ConfigurablePostgresDurableRun:
     config: PostgresDurableRunConfig
     """Postgres-specific configuration for the durable run store."""
 
+    step_config: PostgresDurableStepConfig | None = None
+    """The step journal a purge deletes a purged run's steps from."""
+
     def __call__(
         self,
         ctx: ExecutionContext,
@@ -102,6 +105,7 @@ class ConfigurablePostgresDurableRun:
             client=client,
             config=self.config,
             cipher=cipher,
+            step_config=self.step_config,
             tenant_provider=ctx.inv_ctx.get_tenant,
         )
 

@@ -126,6 +126,7 @@ def test_the_page_recommends_the_postgres_indexes_the_adapter_documents(
     ("collection", "adapter"),
     [
         ("durable_run", MongoDurableRunStore),
+        ("durable_step", MongoDurableFunctionStepAdapter),
         ("durable_schedule", MongoDurableScheduleStore),
     ],
 )
@@ -142,7 +143,7 @@ def test_the_page_documents_every_postgres_table_it_names() -> None:
         "public.durable_schedule",
     }
     assert set(_indexes(_PAGE_TEXT)) == {"public.durable_run", "public.durable_schedule"}
-    assert set(_mongo_indexes(_PAGE_TEXT)) == {"durable_run", "durable_schedule"}
+    assert set(_mongo_indexes(_PAGE_TEXT)) == {"durable_run", "durable_step", "durable_schedule"}
 
 
 @pytest.mark.parametrize("source", sorted(_SOURCES))

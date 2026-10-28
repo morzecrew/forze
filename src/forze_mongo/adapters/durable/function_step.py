@@ -71,6 +71,11 @@ class MongoDurableFunctionStepAdapter(TenancyMixin, DurableFunctionStepPort):
     idempotency stores use. The length prefix keeps the composition unambiguous for any
     id contents (``a|b`` + ``c`` cannot collide with ``a`` + ``b|c``). ``write_token`` is
     how a caller tells its own insert from a document it merely read back.
+
+    Recommended where runs are purged (``purge_finished`` deletes a run's steps by
+    ``run_id``), so the delete does not collection-scan the journal::
+
+        db.<collection>.createIndex({run_id: 1})
     """
 
     client: MongoClientPort

@@ -8,7 +8,7 @@ require_mongo()
 
 # ....................... #
 
-from collections.abc import Sequence
+from collections.abc import Collection, Sequence
 from datetime import datetime, timedelta
 from typing import Any, final
 from uuid import UUID
@@ -18,6 +18,7 @@ from pymongo.asynchronous.collection import AsyncCollection
 
 from forze.application.contracts.crypto import BytesCipherPort
 from forze.application.contracts.durable.function import (
+    PURGEABLE_STATUSES,
     DurableLeaseRenewal,
     DurableRunAdminPort,
     DurableRunControlAware,
@@ -27,6 +28,7 @@ from forze.application.contracts.durable.function import (
     DurableRunStatus,
     DurableRunStorePort,
     build_run_page,
+    check_purge,
     decode_run_cursor,
     requeue_failed_unnamed_error,
     requeue_unscoped_error,
@@ -47,7 +49,10 @@ from forze.base.primitives import JsonDict, utcnow, uuid4, uuid7
 from forze_mongo.adapters._logger import logger
 from forze_mongo.adapters.durable._ids import as_uuid, scope_id, unscope_id
 from forze_mongo.adapters.durable.function_step import DURABLE_PAYLOAD_DOMAIN
-from forze_mongo.execution.deps.configs.durable import MongoDurableRunConfig
+from forze_mongo.execution.deps.configs.durable import (
+    MongoDurableRunConfig,
+    MongoDurableStepConfig,
+)
 from forze_mongo.kernel.client import MongoClientPort
 from forze_mongo.kernel.relation import resolve_mongo_collection
 
@@ -104,8 +109,8 @@ class MongoDurableRunStore(
     What a bound caller reaches splits by verb. :meth:`begin`, :meth:`renew`, :meth:`load`,
     :meth:`mark_retry` and every terminal write reach that tenant's runs and untagged ones (see
     :meth:`_worker_scope`); :meth:`claim_abandoned`, :meth:`list_runs`,
-    :meth:`request_cancel`, :meth:`requeue_quarantined`, :meth:`requeue_failed` and
-    :meth:`refuse_cancel` match the tenant exactly.
+    :meth:`request_cancel`, :meth:`requeue_quarantined`, :meth:`requeue_failed`,
+    :meth:`purge_finished` and :meth:`refuse_cancel` match the tenant exactly.
     :meth:`enqueue` resolves one effective tenant for the collection, the tag and the scoped
     key together, and refuses an explicit tenant that contradicts the binding.
 
@@ -146,6 +151,10 @@ class MongoDurableRunStore(
     client: MongoClientPort
     config: MongoDurableRunConfig
     cipher: BytesCipherPort | None = None
+
+    step_config: MongoDurableStepConfig | None = None
+    """The step journal :meth:`purge_finished` deletes a purged run's steps from.
+    ``MongoDepsModule`` passes its ``durable_step``; ``None`` leaves steps."""
 
     # ....................... #
 
@@ -737,6 +746,63 @@ class MongoDurableRunStore(
         )
 
         return existing is not None
+
+    # ....................... #
+
+    async def purge_finished(
+        self,
+        older_than: timedelta,
+        *,
+        statuses: Collection[DurableRunStatus] = PURGEABLE_STATUSES,
+        name: str | None = None,
+        limit: int = 1000,
+    ) -> int:
+        check_purge(older_than, statuses, limit)
+
+        coll = await self._collection()
+
+        # Scoped like ``list_runs``.
+        finished: dict[str, Any] = {
+            "status": {"$in": [str(status) for status in statuses]},
+            "created_at": {"$lt": utcnow() - older_than},
+            **self._tenant_filter(),
+        }
+
+        if name is not None:
+            finished["name"] = name
+
+        candidates = await self.client.find_many(
+            coll,
+            finished,
+            projection={"_id": 1},
+            sort=[("created_at", 1)],
+            limit=limit,
+        )
+        run_ids = [doc["_id"] for doc in candidates]
+
+        if not run_ids:
+            return 0
+
+        # The filter is re-checked per document as it deletes, so a run requeued since the
+        # read is kept.
+        deleted = await self.client.delete_many(coll, {"_id": {"$in": run_ids}, **finished})
+
+        if deleted and self.step_config is not None:
+            # A kept run keeps its journal: only the steps of runs now gone go. A crash before
+            # this leaves steps no run can read again, since run ids are never reused.
+            kept = await self.client.find_many(
+                coll, {"_id": {"$in": run_ids}}, projection={"_id": 1}
+            )
+            kept_ids = {doc["_id"] for doc in kept}
+            db_name, coll_name = await resolve_mongo_collection(
+                self.step_config.collection, self._tenant_id_for_resolve()
+            )
+            await self.client.delete_many(
+                await self.client.collection(coll_name, db_name=db_name),
+                {"run_id": {"$in": [run_id for run_id in run_ids if run_id not in kept_ids]}},
+            )
+
+        return deleted
 
     # ....................... #
 

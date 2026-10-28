@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Collection, Sequence
 from datetime import datetime, timedelta
 from typing import Any, final
 from uuid import UUID
@@ -13,6 +13,7 @@ from psycopg.types.json import Jsonb
 
 from forze.application.contracts.crypto import BytesCipherPort
 from forze.application.contracts.durable.function import (
+    PURGEABLE_STATUSES,
     DurableLeaseRenewal,
     DurableRunAdminPort,
     DurableRunControlAware,
@@ -22,6 +23,7 @@ from forze.application.contracts.durable.function import (
     DurableRunStatus,
     DurableRunStorePort,
     build_run_page,
+    check_purge,
     decode_run_cursor,
     requeue_failed_unnamed_error,
     requeue_unscoped_error,
@@ -41,7 +43,10 @@ from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict, utcnow, uuid7
 from forze_postgres.adapters._logger import logger
 from forze_postgres.adapters.durable.function_step import DURABLE_PAYLOAD_DOMAIN
-from forze_postgres.execution.deps.configs.durable import PostgresDurableRunConfig
+from forze_postgres.execution.deps.configs.durable import (
+    PostgresDurableRunConfig,
+    PostgresDurableStepConfig,
+)
 from forze_postgres.kernel.client import PostgresClientPort
 from forze_postgres.kernel.gateways.base import PostgresQualifiedName
 from forze_postgres.kernel.relation import resolve_postgres_qname
@@ -116,8 +121,8 @@ class PostgresDurableRunStore(
     What a bound caller reaches splits by verb. ``begin``, ``renew``, ``load``, ``mark_retry``
     and every terminal write reach that tenant's runs and untagged ones (see
     :meth:`_worker_scope`); ``claim_abandoned``, ``list_runs``, ``request_cancel``,
-    ``requeue_quarantined``, ``requeue_failed`` and ``refuse_cancel`` match the tenant
-    exactly. ``enqueue`` resolves one effective tenant for the table, the tag and the scoped
+    ``requeue_quarantined``, ``requeue_failed``, ``purge_finished`` and ``refuse_cancel``
+    match the tenant exactly. ``enqueue`` resolves one effective tenant for the table, the tag and the scoped
     key together, and refuses an explicit tenant that contradicts the binding.
 
     The table is provided by the application, with its migrations in
@@ -182,6 +187,10 @@ class PostgresDurableRunStore(
     client: PostgresClientPort
     config: PostgresDurableRunConfig
     cipher: BytesCipherPort | None = None
+
+    step_config: PostgresDurableStepConfig | None = None
+    """The step journal :meth:`purge_finished` deletes a purged run's steps from, in the same
+    statement. ``PostgresDepsModule`` passes its ``durable_step``; ``None`` leaves steps."""
 
     # ....................... #
 
@@ -809,6 +818,77 @@ class PostgresDurableRunStore(
         )
 
         return row is not None
+
+    # ....................... #
+
+    async def purge_finished(
+        self,
+        older_than: timedelta,
+        *,
+        statuses: Collection[DurableRunStatus] = PURGEABLE_STATUSES,
+        name: str | None = None,
+        limit: int = 1000,
+    ) -> int:
+        check_purge(older_than, statuses, limit)
+
+        table = await self._table()
+        params: dict[str, object] = {
+            "statuses": [str(status) for status in statuses],
+            "cutoff": utcnow() - older_than,
+            "limit": limit,
+        }
+        clauses: list[sql.Composable] = [
+            sql.SQL("status = ANY(%(statuses)s)"),
+            sql.SQL("created_at < %(cutoff)s"),
+        ]
+
+        # Scoped like ``list_runs``.
+        tenant_id = self._tenant_id_for_resolve()
+
+        if tenant_id is not None:
+            clauses.append(sql.SQL("tenant_id = %(tenant_id)s"))
+            params["tenant_id"] = tenant_id
+
+        if name is not None:
+            clauses.append(sql.SQL("name = %(name)s"))
+            params["name"] = name
+
+        journal: sql.Composable = sql.SQL("")
+
+        if self.step_config is not None:
+            steps = await resolve_postgres_qname(self.step_config.relation, tenant_id)
+            journal = sql.SQL(
+                ", journal AS (DELETE FROM {steps} AS s USING gone WHERE s.run_id = gone.run_id)"
+            ).format(steps=steps.ident())
+
+        # One statement locks the batch, deletes it and its journal: a run requeued meanwhile
+        # holds its row lock, so SKIP LOCKED leaves it and its steps, and no crash between
+        # the two deletes can orphan a journal. Oldest first, on the recovery scan's index.
+        row = await self.client.fetch_one(
+            sql.SQL(
+                """
+                WITH doomed AS (
+                    SELECT run_id FROM {table} WHERE {where}
+                    ORDER BY created_at
+                    LIMIT %(limit)s
+                    FOR UPDATE SKIP LOCKED
+                ), gone AS (
+                    DELETE FROM {table} AS t USING doomed
+                    WHERE t.run_id = doomed.run_id
+                    RETURNING t.run_id
+                ){journal}
+                SELECT count(*) FROM gone
+                """
+            ).format(
+                table=table.ident(),
+                where=sql.SQL(" AND ").join(clauses),
+                journal=journal,
+            ),
+            params,
+            row_factory="tuple",
+        )
+
+        return 0 if row is None else int(row[0])
 
     # ....................... #
 

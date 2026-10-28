@@ -55,13 +55,13 @@ class PostgresDurableRunConfig(TenantAwareIntegrationConfig):
     registers ``DurableRunAdminDepKey`` alongside the run store — a CQRS ``QUERY`` handler can
     ``list_runs`` without acquiring the claim/write store.
 
-    **Not read-only.** The port also carries two verbs that mutate run state.
+    **Not read-only.** The port also carries verbs that mutate run state.
     ``request_cancel`` lands a ``PENDING`` run never claimed in ``CANCELLED`` outright and
     stamps any other live one for its holder or the runner to decide. ``requeue_quarantined``
-    returns quarantined runs to the recovery scan. Enabling this therefore grants run
-    *control*, not just visibility — both are tenant-scoped and unfenced, so anyone who can
-    resolve this key can stop or requeue any run their tenant can list. Wire it where that is
-    intended.
+    and ``requeue_failed`` return runs to the recovery scan, and ``purge_finished`` deletes
+    finished ones. Enabling this therefore grants run *control*, not just visibility — all
+    are tenant-scoped and unfenced, so anyone who can resolve this key can stop, requeue or
+    delete any run their tenant can list. Wire it where that is intended.
     """
 
 

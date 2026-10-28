@@ -59,6 +59,8 @@ CREATE INDEX ON public.durable_run (tenant_id, created_at DESC, run_id DESC);
 ```
 
 Without them, the recovery scan and the listing scan and sort the whole table as it grows.
+The retention purge (`purge_finished`) filters on `status` and `created_at`, oldest first, so
+it uses the first index too.
 
 ### Steps
 
@@ -75,7 +77,8 @@ CREATE TABLE public.durable_step (
 );
 ```
 
-The primary key is the journal's dedup key, so it needs no other index.
+The primary key is the journal's dedup key, so it needs no other index; a purge deletes a
+run's steps by `run_id`, which the key leads with.
 
 ### Schedules
 
@@ -162,5 +165,10 @@ db.durable_schedule.createIndex({ enabled: 1, next_fire_at: 1 })
 db.durable_schedule.createIndex({ tenant_id: 1, enabled: 1, next_fire_at: 1 })
 ```
 
-The step journal needs no index: its `_id` composes the run and the step, so a concurrent
-duplicate of one step serialises on the primary key.
+The step journal needs no index for correctness: its `_id` composes the run and the step,
+so a concurrent duplicate of one step serialises on the primary key. Where runs are purged,
+index `run_id`, which the purge deletes a run's steps by:
+
+```javascript
+db.durable_step.createIndex({ run_id: 1 })
+```

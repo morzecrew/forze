@@ -174,6 +174,8 @@ class TestPostgresDepsModule:
         assert deps.exists(DurableScheduleStoreDepKey)
         # The read-only admin plane is opt-in, so it is off unless admin=True.
         assert not deps.exists(DurableRunAdminDepKey)
+        # The run store learns the journal, so a purge deletes a run's steps with it.
+        assert deps.plain_deps[DurableRunStoreDepKey].step_config is module.durable_step
 
     def test_registers_run_admin_when_opted_in(self) -> None:
         from forze.application.contracts.durable.function import (

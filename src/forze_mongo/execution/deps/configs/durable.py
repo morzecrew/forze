@@ -58,10 +58,11 @@ class MongoDurableRunConfig(TenantAwareIntegrationConfig):
 
     Opt-in so a deployment publishes the ops plane explicitly. **Not read-only**: the port
     carries ``request_cancel``, which lands a ``PENDING`` run never claimed in ``CANCELLED``
-    and stamps any other live one for its holder or the runner to decide, and
-    ``requeue_quarantined``, which returns quarantined runs to the recovery scan. Enabling it
-    grants run *control*, not just visibility — both are tenant-scoped and unfenced, so
-    anyone who can resolve this key can stop or requeue any run their tenant can list.
+    and stamps any other live one for its holder or the runner to decide,
+    ``requeue_quarantined`` and ``requeue_failed``, which return runs to the recovery scan,
+    and ``purge_finished``, which deletes finished ones. Enabling it grants run *control*,
+    not just visibility — all are tenant-scoped and unfenced, so anyone who can resolve this
+    key can stop, requeue or delete any run their tenant can list.
     """
 
 

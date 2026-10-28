@@ -79,6 +79,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **A durable cron trigger declares a timezone and an input.** `DurableFunctionCronTrigger(expression, tz=..., input=...)` registers its schedule with both; the input is checked against the spec's `args_type` at declaration. A changed input alone keeps the next fire; Inngest maps `tz` to `TZ=` and refuses an input.
 
+- **Finished durable runs can be purged past a retention window.** `DurableRunAdminPort.purge_finished(older_than, ...)` deletes up to `limit` completed, cancelled, failed or timed-out runs with their step journal, freeing their idempotency keys. `durable_run_retention_lifecycle_step` runs it in bounded sweeps.
+
 **`forze ops` for people at a shell and for backfills:**
 
 - **`forze ops` gains typed flags, JSONL batches and shell completion.** `call OP --field VALUE` takes a flat-scalar input as flags; `--batch @PATH|-` runs one call per line in one runtime, stopping at the first failure; `OP` completes in the shell. An unknown option after `OP` now exits 2 with an error object.
