@@ -16,6 +16,7 @@ from __future__ import annotations
 import pytest
 
 from forze_postgres.kernel.catalog.validation.validate_schema import (
+    _forced_non_null,  # pyright: ignore[reportPrivateUsage]
     _predicate_names,  # pyright: ignore[reportPrivateUsage]
 )
 
@@ -62,3 +63,41 @@ class TestAnIdentifierIsNotASubstring:
 
     def test_a_quoted_identifier_counts(self) -> None:
         assert _predicate_names('("is_current" IS TRUE)', "is_current")
+
+
+# ....................... #
+
+
+class TestAFilterThatRulesOutNulls:
+    """The fields a guarantee's `where` holds non-null, which then need no NULLS NOT DISTINCT."""
+
+    @pytest.mark.parametrize(
+        "where",
+        [
+            {"$values": {"code": {"$null": False}}},
+            {"$values": {"code": "a"}},
+            {"$values": {"code": {"$in": ["a", "b"]}}},
+            {"$values": {"code": {"$gte": "a"}}},
+            {"$and": [{"$values": {"is_current": True}}, {"$values": {"code": {"$lt": "z"}}}]},
+        ],
+    )
+    def test_a_conjunct_no_null_satisfies_counts(self, where: dict[str, object]) -> None:
+        assert "code" in _forced_non_null(where)  # type: ignore[arg-type]
+
+    @pytest.mark.parametrize(
+        "where",
+        [
+            {"$values": {"code": {"$null": True}}},
+            {"$values": {"code": {"$neq": "a"}}},
+            {"$values": {"code": {"$in": ["a", None]}}},
+            {"$or": [{"$values": {"code": "a"}}, {"$values": {"is_current": True}}]},
+            {"$not": {"$values": {"code": {"$null": True}}}},
+        ],
+    )
+    def test_anything_a_null_can_pass_does_not(self, where: dict[str, object]) -> None:
+        # A field this cannot prove non-null keeps the stricter reading: refusing a correct
+        # index is a migration to explain, accepting a wrong one is a parity break.
+        assert "code" not in _forced_non_null(where)  # type: ignore[arg-type]
+
+    def test_no_filter_rules_out_nothing(self) -> None:
+        assert _forced_non_null(None) == frozenset()

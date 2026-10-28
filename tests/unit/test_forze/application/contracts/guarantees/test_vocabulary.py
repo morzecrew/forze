@@ -1,5 +1,6 @@
 """The vocabulary, and the reconciliation that refuses a guarantee no store can keep."""
 
+import attrs
 import pytest
 
 from forze.application.contracts.deps.proxy import PortProxy
@@ -252,14 +253,16 @@ class TestWiringAMomentAgainstEachBackend:
 
     PARTIAL_AT_COMMIT = (
         UniqueTogether(fields=("a",), where={"$values": {"x": 1}}, holds="commit"),
-        UniqueTogether(fields=("a",), skip_null=True, holds="commit"),
+        UniqueTogether(
+            fields=("a",), where={"$values": {"x": 1}}, skip_null=True, holds="commit"
+        ),
     )
 
     @staticmethod
     def _validate(guarantee: object, port: object, backend: str) -> None:
         validate_storage_guarantees((guarantee,), port, spec_name="items", backend=backend)  # type: ignore[arg-type]
 
-    @pytest.mark.parametrize("guarantee", PARTIAL_AT_COMMIT, ids=["where", "skip_null"])
+    @pytest.mark.parametrize("guarantee", PARTIAL_AT_COMMIT, ids=["where", "where-skip_null"])
     def test_a_partial_uniqueness_at_commit_is_refused_on_postgres(
         self, guarantee: UniqueTogether
     ) -> None:
@@ -272,7 +275,7 @@ class TestWiringAMomentAgainstEachBackend:
         assert "a partial uniqueness" in caught.value.summary
         assert "holding only at commit" not in caught.value.summary
 
-    @pytest.mark.parametrize("guarantee", PARTIAL_AT_COMMIT, ids=["where", "skip_null"])
+    @pytest.mark.parametrize("guarantee", PARTIAL_AT_COMMIT, ids=["where", "where-skip_null"])
     def test_the_same_declaration_is_kept_by_the_mock(self, guarantee: UniqueTogether) -> None:
         from forze_mock.adapters.document import MockDocumentAdapter
 
@@ -283,11 +286,31 @@ class TestWiringAMomentAgainstEachBackend:
 
         for guarantee in (
             UniqueTogether(fields=("a", "b"), holds="commit"),
+            # A plain unique constraint already treats a tuple holding a null as distinct, so
+            # the exemption needs no predicate and the constraint can be deferred.
+            UniqueTogether(fields=("a", "b"), skip_null=True, holds="commit"),
             NonOverlapping(
                 key=("a",), period=("s", "e"), where={"$values": {"x": 1}}, holds="commit"
             ),
         ):
             self._validate(guarantee, PostgresDocumentAdapter, "postgres")
+
+    def test_skip_null_at_commit_is_partial_unless_the_store_says_otherwise(self) -> None:
+        # Where a plain uniqueness counts nulls as values, the exemption is a predicate, and a
+        # store that cannot defer a partial uniqueness cannot defer this one either.
+        store = StorageGuaranteeCapabilities(
+            unique_together=True,
+            unique_together_skip_null=True,
+            checks_deferred_to_commit=True,
+        )
+        at_commit = UniqueTogether(fields=("a",), skip_null=True, holds="commit")
+
+        assert store.unmet(at_commit) == (
+            "a partial uniqueness (`where` or `skip_null`) that holds only at commit",
+        )
+        assert (
+            attrs.evolve(store, unique_together_skip_null_at_commit=True).unmet(at_commit) == ()
+        )
 
     def test_mongo_checks_every_write_and_cannot_defer(self) -> None:
         from forze_mongo.adapters.document import MongoDocumentAdapter

@@ -49,6 +49,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **`forze_fastapi.run_startup_checks(app)` runs every FastAPI startup check in one call.** It checks the app and each Starlette or FastAPI app mounted beneath it, and `runtime_lifespan` calls it. An app with its own lifespan calls it there, on the outermost app: Starlette never runs a mounted app's lifespan.
 
+- **Postgres startup warns about a unique index or `EXCLUDE` constraint that no guarantee declares.** The in-memory store does not enforce it, so a test run accepts writes the database refuses. The warning names it and suggests the declaration; the primary key and the conflict target are left out.
+
 **`forze ops` for people at a shell and for backfills:**
 
 - **`forze ops` gains typed flags, JSONL batches and shell completion.** `call OP --field VALUE` takes a flat-scalar input as flags; `--batch @PATH|-` runs one call per line in one runtime, stopping at the first failure; `OP` completes in the shell. An unknown option after `OP` now exits 2 with an error object.
@@ -112,6 +114,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **A Postgres document field stored in a native `jsonb[]` or `json[]` column can be written.** Create, update and upsert, single and batch, failed with `cannot adapt type 'dict'`; each element is now sent as JSON, a `None` one as SQL `NULL`, and reads back as written.
 
 - **A Postgres locking read works when the read relation differs from the write relation (a view, typically).** `get`, `find`, `project` and `select` with `for_update` failed on a view that joins with `LEFT JOIN`. They now lock the row on the write table, honouring `nowait` and `skip_locked`, then read.
+
+- **Postgres startup accepts a plain unique index for a `skip_null` guarantee.** Postgres already treats a tuple holding a null as distinct, so no predicate is needed, and a deferred constraint keeps `skip_null` at commit. A `where` ruling out nulls in a column no longer demands `NULLS NOT DISTINCT`.
 
 ### Security
 

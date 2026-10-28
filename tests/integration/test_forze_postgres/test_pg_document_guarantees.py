@@ -17,6 +17,7 @@ from __future__ import annotations
 
 from datetime import date
 from typing import Any
+from unittest.mock import patch
 from uuid import UUID, uuid4
 
 import pytest
@@ -641,6 +642,9 @@ async def _nullable_table(pg_client: PostgresClient) -> str:
     return name
 
 
+SKIP_NULL = UniqueTogether(fields=("root_id",), skip_null=True)
+
+
 class TestNullsAreValuesUnlessExempted:
     """`skip_null=False` counts a null as a value; Postgres does not, unless told to.
 
@@ -677,32 +681,143 @@ class TestNullsAreValuesUnlessExempted:
 
         await _validate(pg_client, table, ONE_EVER)
 
-    async def test_skip_null_asks_for_a_partial_index_instead(
+    async def test_skip_null_is_kept_by_a_plain_index(self, pg_client: PostgresClient) -> None:
+        # The exemption is how Postgres compares nulls already: an ordinary unique index never
+        # matches a tuple holding one, so it is exactly the mechanism and needs no predicate.
+        table = await _nullable_table(pg_client)
+        await pg_client.execute(f"ALTER TABLE {table} ADD UNIQUE (root_id);")
+
+        await _validate_nullable(pg_client, table, SKIP_NULL)
+
+    async def test_skip_null_is_also_kept_by_a_predicate_dropping_the_nulls(
         self,
         pg_client: PostgresClient,
     ) -> None:
-        # With the exemption declared, the mechanism is a predicate that drops the null rows —
-        # so the predicate has to mention the guarantee's own field, not just any field.
+        table = await _nullable_table(pg_client)
+        await pg_client.execute(
+            f"CREATE UNIQUE INDEX ON {table} (root_id) WHERE root_id IS NOT NULL;"
+        )
+
+        await _validate_nullable(pg_client, table, SKIP_NULL)
+
+    async def test_the_predicate_need_not_name_a_not_null_field(
+        self,
+        pg_client: PostgresClient,
+    ) -> None:
+        # is_current is NOT NULL, so a tuple can only hold a null in root_id — the one field a
+        # predicate dropping the exempt rows has to mention.
+        table = await _nullable_table(pg_client)
+        await pg_client.execute(
+            f"CREATE UNIQUE INDEX ON {table} (is_current, root_id) WHERE root_id IS NOT NULL;"
+        )
+
+        await _validate_nullable(
+            pg_client,
+            table,
+            UniqueTogether(fields=("is_current", "root_id"), skip_null=True),
+        )
+
+    async def test_skip_null_is_not_kept_by_a_predicate_over_another_field(
+        self,
+        pg_client: PostgresClient,
+    ) -> None:
+        # Two current rows sharing a root_id are covered by the guarantee and outside this
+        # index, so the exemption is no licence for a predicate that drops rows holding no null.
+        table = await _nullable_table(pg_client)
+        await pg_client.execute(f"CREATE UNIQUE INDEX ON {table} (root_id) WHERE NOT is_current;")
+
+        with pytest.raises(CoreException, match="no valid unique index"):
+            await _validate_nullable(pg_client, table, SKIP_NULL)
+
+    async def test_skip_null_is_not_kept_by_nulls_not_distinct(
+        self,
+        pg_client: PostgresClient,
+    ) -> None:
+        # The reverse divergence: this index refuses the second row with a null root_id, which
+        # the exemption lets through and the in-memory store accepts.
+        table = await _nullable_table(pg_client)
+        await pg_client.execute(f"ALTER TABLE {table} ADD UNIQUE NULLS NOT DISTINCT (root_id);")
+
+        with pytest.raises(CoreException, match="leaves nulls distinct") as caught:
+            await _validate_nullable(pg_client, table, SKIP_NULL)
+
+        assert f"ALTER TABLE public.{table} ADD UNIQUE (root_id);" in caught.value.summary
+
+    async def test_nulls_not_distinct_counts_once_the_predicate_drops_the_nulls(
+        self,
+        pg_client: PostgresClient,
+    ) -> None:
+        table = await _nullable_table(pg_client)
+        await pg_client.execute(
+            f"CREATE UNIQUE INDEX ON {table} (root_id) NULLS NOT DISTINCT "
+            "WHERE root_id IS NOT NULL;"
+        )
+
+        await _validate_nullable(pg_client, table, SKIP_NULL)
+
+    async def test_skip_null_with_a_where_wants_only_the_filter_in_the_predicate(
+        self,
+        pg_client: PostgresClient,
+    ) -> None:
+        table = await _nullable_table(pg_client)
+        await pg_client.execute(f"CREATE UNIQUE INDEX ON {table} (root_id) WHERE is_current;")
+
+        await _validate_nullable(
+            pg_client,
+            table,
+            UniqueTogether(
+                fields=("root_id",), where={"$values": {"is_current": True}}, skip_null=True
+            ),
+        )
+
+    async def test_a_where_ruling_out_nulls_needs_no_nulls_not_distinct(
+        self,
+        pg_client: PostgresClient,
+    ) -> None:
+        # No row the filter selects holds a null in root_id, so the two readings of a null
+        # cannot differ there — the argument that already spares a NOT NULL column.
         table = await _nullable_table(pg_client)
         await pg_client.execute(
             f"CREATE UNIQUE INDEX ON {table} (root_id) WHERE root_id IS NOT NULL;"
         )
 
         await _validate_nullable(
-            pg_client, table, UniqueTogether(fields=("root_id",), skip_null=True)
+            pg_client,
+            table,
+            UniqueTogether(fields=("root_id",), where={"$values": {"root_id": {"$null": False}}}),
         )
 
-    async def test_skip_null_is_not_satisfied_by_a_plain_index(
+    async def test_a_where_over_another_field_still_needs_it(
         self,
         pg_client: PostgresClient,
     ) -> None:
         table = await _nullable_table(pg_client)
-        await pg_client.execute(f"ALTER TABLE {table} ADD UNIQUE (root_id);")
+        await pg_client.execute(f"CREATE UNIQUE INDEX ON {table} (root_id) WHERE is_current;")
 
-        with pytest.raises(CoreException, match="no valid partial unique index"):
+        with pytest.raises(CoreException, match="NULLS NOT DISTINCT"):
             await _validate_nullable(
-                pg_client, table, UniqueTogether(fields=("root_id",), skip_null=True)
+                pg_client,
+                table,
+                UniqueTogether(fields=("root_id",), where={"$values": {"is_current": True}}),
             )
+
+    async def test_skip_null_at_commit_is_kept_by_a_deferred_constraint(
+        self,
+        pg_client: PostgresClient,
+    ) -> None:
+        at_commit = UniqueTogether(fields=("root_id",), skip_null=True, holds="commit")
+        table = await _nullable_table(pg_client)
+
+        with pytest.raises(CoreException, match="no valid unique index") as caught:
+            await _validate_nullable(pg_client, table, at_commit)
+
+        assert "ADD UNIQUE (root_id) DEFERRABLE INITIALLY DEFERRED;" in caught.value.summary
+
+        await pg_client.execute(
+            f"ALTER TABLE {table} ADD UNIQUE (root_id) DEFERRABLE INITIALLY DEFERRED;"
+        )
+
+        await _validate_nullable(pg_client, table, at_commit)
 
 
 # ....................... #
@@ -848,6 +963,32 @@ class TestMockAndPostgresRefuseTheSameWay:
 
         assert rows[0]["n"] == 2
         assert row.root_id is None
+
+    async def test_both_stores_exempt_a_null_tuple_under_a_plain_index(
+        self,
+        pg_client: PostgresClient,
+    ) -> None:
+        # The mechanism startup accepts for `skip_null`, checked against the store that defines
+        # the property: two null root_ids land in both, a repeated value is refused by both.
+        table = await _nullable_table(pg_client)
+        await pg_client.execute(f"ALTER TABLE {table} ADD UNIQUE (root_id);")
+        insert = (
+            f"INSERT INTO {table} (id, rev, created_at, last_update_at, root_id, is_current)"
+            " VALUES (%s, 1, now(), now(), %s, true);"
+        )
+        command = context_from_modules(MockDepsModule()).doc.command(_nullable_spec(SKIP_NULL))
+
+        for root_id in (None, None, "r1"):
+            await pg_client.execute(insert, [uuid4(), root_id])
+            await command.create(_NullableCreate(root_id=root_id))
+
+        with pytest.raises(CoreException) as from_postgres:
+            await pg_client.execute(insert, [uuid4(), "r1"])
+
+        with pytest.raises(CoreException) as from_mock:
+            await command.create(_NullableCreate(root_id="r1"))
+
+        assert from_mock.value.kind is from_postgres.value.kind
 
     async def test_both_stores_agree_on_the_touching_boundary(
         self,
@@ -1185,3 +1326,57 @@ class TestBothStoresLetATransactionPassThroughAViolation:
 
         assert from_mock.value.kind is from_postgres.value.kind
         assert from_mock.value.kind.value == "conflict"
+
+
+# ....................... #
+
+
+class TestAnUndeclaredMechanismIsReported:
+    """The reverse of the refusals: an index no guarantee declares is one the in-memory store
+    does not enforce, so Postgres refuses a write a test run accepted. A warning, not a refusal —
+    the index is not wrong, the declaration is missing."""
+
+    @staticmethod
+    async def _warnings(
+        pg_client: PostgresClient,
+        table: str,
+        *guarantees: UniqueTogether | NonOverlapping,
+    ) -> list[str]:
+        with patch("forze_postgres.kernel.catalog.validation.validate_schema.logger") as log:
+            await _validate(pg_client, table, *guarantees)
+
+        return [call.args[0] % call.args[1:] for call in log.warning.call_args_list]
+
+    async def test_an_undeclared_unique_index_is_named(self, pg_client: PostgresClient) -> None:
+        table = await _table(pg_client)
+        await pg_client.execute(
+            f"CREATE UNIQUE INDEX {table}_extra ON {table} (root_id) WHERE is_current;"
+        )
+
+        warnings = await self._warnings(pg_client, table)
+
+        # One: the primary key, which is also the conflict target, is not reported.
+        assert len(warnings) == 1
+        assert f"{table}_extra" in warnings[0]
+        assert "UniqueTogether(fields=('root_id',))" in warnings[0]
+        assert "(is_current)" in warnings[0]
+
+    async def test_a_declared_index_is_not(self, pg_client: PostgresClient) -> None:
+        table = await _table(pg_client)
+        await pg_client.execute(f"ALTER TABLE {table} ADD UNIQUE (root_id);")
+
+        assert await self._warnings(pg_client, table, ONE_EVER) == []
+
+    async def test_an_undeclared_exclusion_constraint_is_named(
+        self, pg_client: PostgresClient
+    ) -> None:
+        table = await _table(pg_client)
+        await _exclude(pg_client, table, bounds="[]")
+
+        warnings = await self._warnings(pg_client, table)
+
+        assert len(warnings) == 1
+        assert "NonOverlapping(key=('root_id',)" in warnings[0]
+        assert "daterange(valid_from, valid_to, '[]'::text)" in warnings[0]
+
+        assert await self._warnings(pg_client, table, NO_OVERLAP) == []

@@ -71,11 +71,13 @@ class PostgresDocumentAdapter(DocumentAdapter[R, D, C, U]):
         non_overlapping_filtered=True,
         serialized_by=True,
         checks_deferred_to_commit=True,
+        unique_together_skip_null_at_commit=True,
     )
     """What this store enforces, given the index or constraint the deployment migrated.
 
-    The three uniqueness axes are a unique index: plain for the unfiltered form, partial
-    (``WHERE ...``) for the other two. Non-overlap is an exclusion constraint over a range
+    The three uniqueness axes are a unique index: plain for the unfiltered form and for
+    ``skip_null`` — Postgres already treats a tuple holding a null as distinct — and partial
+    (``WHERE ...``) for a ``where``. Non-overlap is an exclusion constraint over a range
     type, which is a different mechanism for the same kind of promise — and a violation of any
     of them arrives as ``conflict`` through the client's error mapping, the same refusal the
     in-memory store raises, which is what makes the parity battery meaningful rather than a
@@ -85,11 +87,12 @@ class PostgresDocumentAdapter(DocumentAdapter[R, D, C, U]):
     before every write, which needs nothing migrated.
 
     A guarantee holding at commit is a constraint declared ``DEFERRABLE INITIALLY DEFERRED``,
-    which the database checks when the transaction commits. Not for a *partial* uniqueness
-    (``where`` or ``skip_null``): deferral belongs to constraints, a partial uniqueness is only an
-    index, and a unique constraint cannot be partial — so that pair is refused here, where the
-    mock, which can keep it, is not. An exclusion constraint can be both, so a filtered
-    non-overlap holding at commit is kept.
+    which the database checks when the transaction commits. Not for a uniqueness filtered by
+    ``where``: deferral belongs to constraints, a partial uniqueness is only an index, and a
+    unique constraint cannot be partial — so that pair is refused here, where the mock, which
+    can keep it, is not. ``skip_null`` needs no predicate, so a deferred plain constraint keeps
+    it at commit. An exclusion constraint can be both, so a filtered non-overlap holding at
+    commit is kept.
     """
 
     batch_size: int = 200
