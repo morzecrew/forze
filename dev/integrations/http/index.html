@@ -4249,6 +4249,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#hand-a-vendor-sdk-the-service" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Hand a vendor SDK the service
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#errors" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -6623,6 +6634,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#hand-a-vendor-sdk-the-service" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Hand a vendor SDK the service
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#errors" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -6755,7 +6777,11 @@ and call it from handlers through the context, never touching httpx directly.</p
 <p><code>RoutedHttpClient</code> resolves per-tenant base URLs and credentials from secrets.</p>
 <h3 id="settings">Settings<a class="headerlink" href="#settings" title="Permanent link">&para;</a></h3>
 <p><code>HttpSettings</code> holds the base URL, bearer token, default headers and the response cap —
-see <a href="../#connection-settings">connection settings</a>.</p>
+see <a href="../#connection-settings">connection settings</a>. The cap (<code>max_response_bytes</code>)
+counts the decoded body as it decodes, so a small compressed body cannot expand past it. A
+client with a cap asks only for <code>gzip</code> and <code>deflate</code>, unless a configured default header sets
+<code>Accept-Encoding</code> itself. Either way it refuses a response in any other content coding,
+and a compressed body that ends before its compressed stream does.</p>
 <h2 id="wire-it">Wire it<a class="headerlink" href="#wire-it" title="Permanent link">&para;</a></h2>
 <p>Register a service config per <code>HttpServiceSpec.name</code>:</p>
 <div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">forze.application.execution</span><span class="w"> </span><span class="kn">import</span> <span class="n">DepsRegistry</span><span class="p">,</span> <span class="n">LifecyclePlan</span>
@@ -6818,6 +6844,57 @@ apply. What changes is when things happen:</p>
   end; the one a service config builds from <code>secret_ref_for_tenant</code> is unguarded. See
   <a href="../../identity-tenancy-enc/multi-tenancy/#routed-clients-dedicated">routed clients</a>.</li>
 </ul>
+<h2 id="hand-a-vendor-sdk-the-service">Hand a vendor SDK the service<a class="headerlink" href="#hand-a-vendor-sdk-the-service" title="Permanent link">&para;</a></h2>
+<p>A vendor SDK, such as a model provider's client or an agent framework built on one, takes an
+<code>httpx.AsyncClient</code> and builds its own requests, so <code>invoke</code> never sees them. Give that
+client a transport over the declared service:</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">httpx</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">forze_http</span><span class="w"> </span><span class="kn">import</span> <span class="n">http_service_transport</span>
+
+<span class="n">transport</span> <span class="o">=</span> <span class="n">http_service_transport</span><span class="p">(</span><span class="n">ctx</span><span class="p">,</span> <span class="n">llm_spec</span><span class="p">)</span>
+<span class="n">sdk_http</span> <span class="o">=</span> <span class="n">httpx</span><span class="o">.</span><span class="n">AsyncClient</span><span class="p">(</span><span class="n">base_url</span><span class="o">=</span><span class="s2">"https://api.llm.example.com/v1"</span><span class="p">,</span> <span class="n">transport</span><span class="o">=</span><span class="n">transport</span><span class="p">)</span>
+</code></pre></div>
+<p>Pass <code>sdk_http</code> wherever the SDK accepts an <code>httpx.AsyncClient</code>. Every request it sends then
+leaves the way a declared operation does:</p>
+<ul>
+<li><strong>It is held to the service's route.</strong> The URL must be the service's <code>base_url</code>, or a path
+  below it, on the same scheme, host and port. On a tenant-routed service it must be under
+  the current tenant's route instead. Anything else is refused with <code>http_request_off_route</code>
+  before it is sent. That includes another host, a path outside the prefix, a dot segment
+  (percent-encoded or not), a <code>;</code> path parameter, an escaped <code>%</code> (<code>%25</code>) and userinfo in the
+  URL. Point the SDK at the same base URL. The
+  pooled client never follows a redirect: the SDK's client follows it if configured to, and
+  the next hop is held to the route again.</li>
+<li><strong>The service's headers replace the SDK's headers of the same names.</strong> The service's
+  <code>default_headers</code> and credential override them, and so do the pooled client's own default
+  headers, which on a routed service carry the tenant's credential. You can therefore build
+  the SDK with a placeholder key and keep the real one in the service config or the tenant's
+  secret. Replacement goes by name only: a credential the SDK sends under another header
+  name, such as <code>x-api-key</code> beside the service's <code>Authorization</code>, still goes out to the
+  pinned host. Give the SDK a placeholder under every header it fills in.</li>
+<li><strong>The deadline budget, the trace context and the egress tag apply</strong> as they do for
+  <code>invoke</code>. A deadline that is already spent is refused with <code>deadline_exceeded</code>, and nothing
+  is sent. As with <code>stream</code>, the budget travels when the request opens and does not bound
+  the body. The invocation deadline itself cancels a call still running.</li>
+<li><strong>It goes out on the service's pooled client, and the response comes back as sent:</strong>
+  status, headers and the body undecoded. Status handling, retries and error types stay the
+  SDK's, and forze's error mapping does not apply. The SDK's timeouts apply, not the
+  service's <code>timeout</code>. When the client sets <code>max_response_bytes</code>, the cap bounds every
+  body's <em>decoded</em> size, counted chunk by chunk before the SDK sees the chunk, so it also
+  cuts off a long stream and a small compressed body that would expand past it. A capped
+  client asks only for <code>gzip</code> and <code>deflate</code> and refuses a response in any other content
+  coding. On a tenant-routed service, evicting a tenant's client fails a response still
+  streaming, unless the routed client is built with <code>guarded=True</code>, as for
+  <a href="#stream-a-response"><code>stream</code></a>.</li>
+<li><strong>Only a declared service yields one.</strong> The transport is resolved through the service's
+  dep key, so an undeclared service is refused. An <code>egress_sensitive</code> service exists only
+  with <code>acknowledge_data_egress</code>, so the wiring gate has already run.</li>
+</ul>
+<p>A refusal raises inside the SDK's call. An SDK may retry it and then wrap it in its own
+connection error, with forze's exception as the cause. Closing the SDK's client leaves the
+pooled client open, because the lifecycle owns it. <code>HttpServiceTransport</code> is the class, if
+you build one yourself from a client and a config.</p>
 <h2 id="errors">Errors<a class="headerlink" href="#errors" title="Permanent link">&para;</a></h2>
 <p>A failed call raises a <code>CoreException</code> whose kind follows the counterparty's answer:</p>
 <table>
@@ -6922,10 +6999,11 @@ loop stops for good on <code>configuration</code>, so a rotated credential would
   also tag their span <code>forze.egress.sensitive</code>, so sensitive egress is queryable in
   <a href="../../running-in-prod/observability/">observability</a> rather than only visible in
   review. Both halves cover the services you declare: a bare <code>HttpClient</code> you point at
-  a provider yourself — handing it to their SDK, say — has no service config and
-  therefore no declaration to gate, because a shared transport carries no destination
-  of its own. Declare the hop as a service if you want it governed — a streamed answer
-  included, through <a href="#stream-a-response"><code>stream</code></a>. Routes that leave
+  a provider yourself has no service config and therefore no declaration to gate,
+  because a shared client carries no destination of its own. Declare the hop as a
+  service if you want it governed — a streamed answer included, through
+  <a href="#stream-a-response"><code>stream</code></a>, and a vendor SDK's own requests through
+  <a href="#hand-a-vendor-sdk-the-service">a transport over the service</a>. Routes that leave
   both fields alone are unaffected, and an inference route is always sensitive and
   always requires the acknowledgement, which is the same gate. <a href="../../recipes/query-agent/">Build a question-answering
   agent</a> declares such a route for a model call.</li>

@@ -6872,9 +6872,10 @@ the data and noting it in a comment. Calls through the route also tag their span
 <code>forze.egress.sensitive</code>, so sensitive egress is queryable in
 <a href="../../running-in-prod/observability/">observability</a>.</p>
 <p>This is a governance marker and a conscious-choice gate — nothing inspects a payload.
-And it covers the hops you <em>declare</em>: if you hand a bare <code>HttpClient</code> to a provider's own
-SDK, that call has no service config and therefore nothing to gate. Declaring the hop as
-a service is what puts it inside the marker.</p>
+And it covers the hops you <em>declare</em>: a bare <code>HttpClient</code> handed to a provider's own SDK
+has no service config and therefore nothing to gate. Declaring the hop as a service is what
+puts it inside the marker, and the SDK can still make the call, through a
+<a href="../../integrations/http/#hand-a-vendor-sdk-the-service">transport over the service</a>.</p>
 <p>The example itself never reaches a transport — the handler below answers the service call
 in-process — so this config is what a deployment wires rather than something the run
 exercises. Its test constructs it, and constructs it without the acknowledgement to see
@@ -7043,12 +7044,15 @@ test drive the whole recipe:</p>
 <div class="highlight"><pre><span></span><code>uv<span class="w"> </span>run<span class="w"> </span>python<span class="w"> </span>-m<span class="w"> </span>examples.recipes.query_agent.app
 uv<span class="w"> </span>run<span class="w"> </span>pytest<span class="w"> </span>tests/unit/test_examples/test_query_agent.py
 </code></pre></div>
-<p>Swapping in a real provider means pointing the service at the provider's real base URL and
-describing its endpoint as an <code>HttpOperationSpec</code>. The loop, the palette, the egress
-declaration and the streamed answer all stay as they are — you write the request and
-response models and parse the provider's events instead of importing an SDK. A vendor's
-SDK brings its own transport, and a hop made through it is not a declared service, so the
-marker does not cover it.</p>
+<p>Swapping in a real provider means pointing the service at the provider's real base URL.
+Then either describe its endpoint as an <code>HttpOperationSpec</code>, writing the request and
+response models and parsing the provider's events yourself, or keep the provider's SDK. To
+keep the SDK, give its <code>httpx.AsyncClient</code> the transport from
+<code>http_service_transport(ctx, spec)</code> — see
+<a href="../../integrations/http/#hand-a-vendor-sdk-the-service">Hand a vendor SDK the service</a>. The
+SDK's requests then carry the same acknowledgement, egress tag, credential and deadline
+budget, and a request that leaves the service's base URL is refused. The loop, the palette
+and the egress declaration stay as they are either way.</p>
 <h2 id="notes">Notes<a class="headerlink" href="#notes" title="Permanent link">&para;</a></h2>
 <ul>
 <li><strong>Without a query policy every read field is advertised</strong>, bookkeeping columns
