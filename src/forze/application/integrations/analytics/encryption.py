@@ -77,8 +77,9 @@ def resolve_analytics_codecs_spec(
             searchable_fields=encryption.searchable,
             deterministic=deterministic,
             tenant_provider=tenant_provider,
-            # Bound to the owning document's name so a query over its table opens its rows.
-            label=encryption.document or DEFAULT_FIELD_LABEL,
+            # A spec with sealed_by has no ingest (refused at construction), so only reads
+            # of a document's table ever take the document's label.
+            label=spec.sealed_by or DEFAULT_FIELD_LABEL,
             reject_plaintext=encryption.reject_plaintext,
         )
 

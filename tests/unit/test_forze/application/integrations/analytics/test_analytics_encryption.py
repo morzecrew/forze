@@ -201,15 +201,18 @@ def test_spec_reject_plaintext_reaches_analytics_codecs() -> None:
 
 
 # ....................... #
+# reads of a document's table (sealed_by)
+
+_POLICY = FieldEncryption(encrypted=frozenset({"email"}))
 
 
-def _document_sealed_row(keyring: Keyring, policy: FieldEncryption) -> dict[str, object]:
-    """A row as the document plane stores it: the email sealed under the document's name."""
+def _document_sealed_row(keyring: Keyring) -> dict[str, object]:
+    """A row as the document port stores it: the email sealed under the document's name."""
 
     codecs = resolve_document_codecs(
-        DocumentSpec(name="events", read=_DocRow, encryption=policy).resolved_codecs,
-        spec_name="events",
-        encryption=policy,
+        DocumentSpec(name="events_doc", read=_DocRow, encryption=_POLICY).resolved_codecs,
+        spec_name="events_doc",
+        encryption=_POLICY,
         keyring=keyring,
         deterministic=None,
         tenant_provider=lambda: None,
@@ -221,42 +224,57 @@ def _document_sealed_row(keyring: Keyring, policy: FieldEncryption) -> dict[str,
     return read.encrypt_mapping({"id": "1", "region": "eu", "email": "a@b.co"})
 
 
-def _analytics_read(keyring: Keyring, policy: FieldEncryption) -> EncryptingModelCodec[_Row]:
-    spec = resolve_analytics_codecs_spec(
-        _spec(encryption=policy), keyring=keyring, deterministic=None, tenant_provider=lambda: None
+def _query_only(**kw: object) -> AnalyticsSpec[_Row, _Row]:
+    return AnalyticsSpec(
+        name="events",
+        read=_Row,
+        queries={"all": AnalyticsQueryDefinition(params=_Params)},
+        encryption=_POLICY,
+        **kw,  # type: ignore[arg-type]
     )
-    return spec.resolved_read_codec  # type: ignore[return-value]
 
 
 @pytest.mark.asyncio
-async def test_policy_naming_the_document_opens_its_sealed_rows() -> None:
-    """A warehouse query over a document's table decrypts what the document port sealed."""
+@pytest.mark.parametrize("sealed_by", ["events_doc", None])
+async def test_a_query_opens_a_documents_rows_only_when_sealed_by_names_it(
+    sealed_by: str | None,
+) -> None:
+    """Sealed by the real document codec, not by the analytics codec: naming the document
+    opens the row; without the name it fails authentication, never opened under another."""
 
     keyring = _keyring()
     await keyring.warm(None)
-    policy = FieldEncryption(encrypted=frozenset({"email"}), document="events")
-    row = _document_sealed_row(keyring, policy)
+    row = _document_sealed_row(keyring)
     assert is_envelope(base64.b64decode(str(row["email"])))
 
-    read = _analytics_read(keyring, policy)
-    await read.prepare_decrypt([row])
-    assert read.decode_mapping(row) == _Row(id="1", region="eu", email="a@b.co")
+    read = resolve_analytics_codecs_spec(
+        _query_only(sealed_by=sealed_by),
+        keyring=keyring,
+        deterministic=None,
+        tenant_provider=lambda: None,
+    ).resolved_read_codec
+    await read.prepare_decrypt([row])  # type: ignore[attr-defined]
 
-
-@pytest.mark.asyncio
-async def test_policy_without_the_document_name_refuses_its_rows() -> None:
-    """No silent cross-namespace open: an unnamed policy keeps the analytics AAD, so the
-    document's ciphertext fails authentication instead of being accepted."""
-
-    keyring = _keyring()
-    await keyring.warm(None)
-    policy = FieldEncryption(encrypted=frozenset({"email"}))
-    row = _document_sealed_row(keyring, policy)
-
-    read = _analytics_read(keyring, policy)
-    await read.prepare_decrypt([row])
+    if sealed_by is not None:
+        assert read.decode_mapping(row) == _Row(id="1", region="eu", email="a@b.co")
+        return
 
     with pytest.raises(CoreException) as ei:
         read.decode_mapping(row)
 
     assert ei.value.code == "core.crypto.aead_auth_failed"
+
+
+def test_sealed_by_with_ingest_is_refused() -> None:
+    """Ingest seals under the analytics label, which a sealed_by read codec cannot open."""
+
+    with pytest.raises(CoreException) as ei:
+        _query_only(sealed_by="events_doc", ingest=_Row)
+
+    assert ei.value.kind is ExceptionKind.CONFIGURATION
+    assert "sealed_by and ingest" in str(ei.value)
+
+
+def test_empty_sealed_by_is_rejected() -> None:
+    with pytest.raises(ValueError, match="sealed_by"):
+        _query_only(sealed_by="")

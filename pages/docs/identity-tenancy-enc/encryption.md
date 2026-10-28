@@ -145,21 +145,28 @@ policy you share with those, or give them their own.
 
 A document's ciphertext is also bound to the **document spec's name**, so it can't be
 moved between aggregates. A search or analytics spec that reads the document's table in
-place — Postgres or Mongo search, a warehouse query over that table — must bind the same
-name, so name the document on the shared policy:
+place — Postgres or Mongo search, a warehouse query over that table — names that document
+with `sealed_by`, and its read codec binds the same name:
 
 ```python
-PATIENT_FIELDS = FieldEncryption(encrypted=frozenset({"ssn"}), document="patients")
+PATIENT_FIELDS = FieldEncryption(encrypted=frozenset({"ssn"}))
 
 DocumentSpec(name="patients", read=Patient, encryption=PATIENT_FIELDS)
-AnalyticsSpec(name="patient_report", read=Report, queries=..., encryption=PATIENT_FIELDS)
+AnalyticsSpec(
+    name="patient_report",
+    read=Report,
+    queries=...,
+    encryption=PATIENT_FIELDS,
+    sealed_by="patients",
+)
 ```
 
-Without `document`, those reads fail with `core.crypto.aead_auth_failed`: a
-ciphertext is never opened under another name. A document spec with a different name
-refuses a policy that names `patients`. Leave `document` unset for data a plane seals
-itself (an external search index, warehouse ingest); setting it later changes that
-data's AAD, so rebuild or re-ingest it.
+Without `sealed_by`, those reads fail with `core.crypto.aead_auth_failed`: a ciphertext
+is never opened under another name. Data a plane seals itself keeps the plane's own label,
+so an external index (Meilisearch) and an `AnalyticsSpec` with `ingest` refuse
+`sealed_by`. A `HubSearchSpec` names its hub relation's document; each federated member
+names its own. Graph and procedure params read no document table, so they have no
+`sealed_by`.
 
 The downstream caches inherit it: when a search route encrypts, its result-snapshot
 runs (the frozen models kept for stable re-pagination) are sealed at rest too, so the

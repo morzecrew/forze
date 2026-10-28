@@ -688,14 +688,6 @@ class DocumentSpec(BaseSpec, Generic[R, D, C, U]):
                 spec_name=self.name,
             )
 
-            if self.encryption.document not in (None, str(self.name)):
-                raise exc.configuration(
-                    f"DocumentSpec {self.name!r} uses a FieldEncryption policy that names "
-                    f"document {self.encryption.document!r}. Its ciphertext is bound to "
-                    f"{self.name!r}, so the search/analytics specs sharing the policy could not "
-                    "open it. Give this spec its own policy."
-                )
-
         if self.query_params is not None and not (
             isinstance(self.query_params, type)  # pyright: ignore[reportUnnecessaryIsInstance]
             and issubclass(self.query_params, BaseModel)  # pyright: ignore[reportUnnecessaryIsInstance]

@@ -15,7 +15,7 @@ from forze.application.contracts.crypto import (
     StaticKeyDirectory,
 )
 from forze.application.contracts.document import DocumentSpec
-from forze.application.contracts.search import SearchSpec
+from forze.application.contracts.search import HubSearchSpec, SearchSpec
 from forze.application.integrations.crypto import (
     DeterministicFieldCipher,
     EncryptingModelCodec,
@@ -23,7 +23,9 @@ from forze.application.integrations.crypto import (
     resolve_document_codecs,
 )
 from forze.application.integrations.search import (
+    assert_search_encryption_parity,
     decrypt_search_rows,
+    refuse_index_sealed_by,
     resolve_search_read_codec_spec,
 )
 from forze.base.crypto import is_envelope
@@ -106,21 +108,16 @@ class _DocRead(ReadDocument):
     secret: str
 
 
-@pytest.mark.asyncio
-@pytest.mark.parametrize("named", [True, False])
-async def test_in_place_search_opens_the_document_codecs_rows_only_when_named(
-    named: bool,
-) -> None:
-    """Sealed by the real document codec (AAD bound to the document spec's name), not by the
-    search codec: the policy naming the document opens it; an unnamed one is refused."""
+_POLICY = FieldEncryption(encrypted=frozenset({"secret"}))
 
-    keyring = _keyring()
-    await keyring.warm(None)
-    policy = FieldEncryption(encrypted=frozenset({"secret"}), document="docs" if named else None)
+
+def _document_sealed_row(keyring: Keyring) -> dict[str, object]:
+    """A row as the document port stores it: the secret sealed under the document's name."""
+
     document = resolve_document_codecs(
-        DocumentSpec(name="docs", read=_DocRead, encryption=policy).resolved_codecs,
+        DocumentSpec(name="docs", read=_DocRead, encryption=_POLICY).resolved_codecs,
         spec_name="docs",
-        encryption=policy,
+        encryption=_POLICY,
         keyring=keyring,
         deterministic=None,
         tenant_provider=lambda: None,
@@ -128,14 +125,35 @@ async def test_in_place_search_opens_the_document_codecs_rows_only_when_named(
         code="test.encryption_wiring",
     ).read
     assert isinstance(document, EncryptingModelCodec)
-    row = document.encrypt_mapping({"id": "1", "title": "t", "secret": "s3cr3t"})
+    return document.encrypt_mapping({"id": "1", "title": "t", "secret": "s3cr3t"})
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("hub", [False, True])
+@pytest.mark.parametrize("sealed_by", ["docs", None])
+async def test_in_place_search_opens_a_documents_rows_only_when_sealed_by_names_it(
+    sealed_by: str | None, hub: bool
+) -> None:
+    """Sealed by the real document codec, not by the search codec: naming the document opens
+    the row (a hub names its hub relation's); without it the row fails authentication."""
+
+    keyring = _keyring()
+    await keyring.warm(None)
+    row = _document_sealed_row(keyring)
+    spec: SearchSpec[_Doc] | HubSearchSpec[_Doc] = (
+        HubSearchSpec(
+            name="hub", model_type=_Doc, members=[_spec()], encryption=_POLICY, sealed_by=sealed_by
+        )
+        if hub
+        else _spec(encryption=_POLICY, sealed_by=sealed_by)
+    )
 
     codec = resolve_search_read_codec_spec(
-        _spec(encryption=policy), keyring=keyring, deterministic=None, tenant_provider=lambda: None
+        spec, keyring=keyring, deterministic=None, tenant_provider=lambda: None
     ).resolved_read_codec
     await codec.prepare_decrypt([row])  # type: ignore[attr-defined]
 
-    if named:
+    if sealed_by is not None:
         assert codec.decode_mapping(row) == _Doc(id="1", title="t", secret="s3cr3t")
         return
 
@@ -143,6 +161,35 @@ async def test_in_place_search_opens_the_document_codecs_rows_only_when_named(
         codec.decode_mapping(row)
 
     assert ei.value.code == "core.crypto.aead_auth_failed"
+
+
+def test_empty_sealed_by_is_rejected() -> None:
+    with pytest.raises(ValueError, match="sealed_by"):
+        _spec(encryption=_POLICY, sealed_by="")
+
+
+def test_an_index_that_seals_its_own_fields_refuses_sealed_by() -> None:
+    refuse_index_sealed_by(_spec(encryption=_POLICY), backend="Test")
+
+    with pytest.raises(CoreException) as ei:
+        refuse_index_sealed_by(_spec(encryption=_POLICY, sealed_by="docs"), backend="Test")
+
+    assert ei.value.code == "core.search.encryption_wiring"
+
+
+def test_parity_refuses_sealed_by_naming_another_document() -> None:
+    document = DocumentSpec(name="docs", read=_DocRead, encryption=_POLICY)
+
+    assert_search_encryption_parity(
+        document=document, search=_spec(encryption=_POLICY, sealed_by="docs")
+    )
+
+    with pytest.raises(CoreException) as ei:
+        assert_search_encryption_parity(
+            document=document, search=_spec(encryption=_POLICY, sealed_by="other")
+        )
+
+    assert ei.value.code == "search_encryption_parity_mismatch"
 
 
 class _Projection(BaseModel):

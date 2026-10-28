@@ -87,6 +87,7 @@ from forze.application.integrations.pubsub import encrypting_pubsub_command
 from forze.application.integrations.queue import encrypting_queue_command
 from forze.application.integrations.search import (
     SearchResultSnapshot,
+    refuse_index_sealed_by,
     resolve_search_read_codec_spec,
     resolve_snapshot_cipher,
     search_spec_encrypts,
@@ -638,6 +639,7 @@ class ConfigurableMockSearchCommand(_MockFactoryBase):
         context: ExecutionContext,
         spec: SearchSpec[Any],
     ) -> MockSearchCommandAdapter:
+        refuse_index_sealed_by(spec, backend="Mock")
         cfg = self._route(spec.name)
         keyring, deterministic = _field_ciphers(context)
         return MockSearchCommandAdapter(
@@ -663,6 +665,7 @@ class ConfigurableMockSearchManagement(_MockFactoryBase):
         context: ExecutionContext,
         spec: SearchSpec[Any],
     ) -> MockSearchManagementAdapter:
+        refuse_index_sealed_by(spec, backend="Mock")
         cfg = self._route(spec.name)
         keyring, deterministic = _field_ciphers(context)
         return MockSearchManagementAdapter(
@@ -703,6 +706,21 @@ class ConfigurableMockHubSearch(_MockFactoryBase):
         context: ExecutionContext,
         spec: HubSearchSpec[Any],
     ) -> MockHubSearchAdapter[Any]:
+        # The mock hub decodes its members' stored rows with the hub codec (Postgres reads one
+        # hub relation), so they must have been sealed under the hub's label.
+        if search_spec_encrypts(spec) and (
+            disagree := sorted(
+                str(m.name)
+                for m in spec.members
+                if search_spec_encrypts(m) and m.sealed_by != spec.sealed_by
+            )
+        ):
+            raise exc.configuration(
+                f"Mock hub search {spec.name!r} is sealed_by {spec.sealed_by!r}, but members "
+                f"{disagree} declare another sealed_by; the mock hub decodes member rows with "
+                "the hub codec, so they must agree.",
+            )
+
         legs: list[tuple[str, MockSearchAdapter[Any]]] = []
         search_factory = ConfigurableMockSearch(module=self.module)
 

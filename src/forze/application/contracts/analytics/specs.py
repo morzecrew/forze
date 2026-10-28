@@ -93,6 +93,17 @@ class AnalyticsSpec(BaseSpec, Generic[R, Ing]):
     a wired keyring; ``binds_record_id`` is unsupported here (analytics rows have no stable id).
     ``None`` (default) = no encryption."""
 
+    sealed_by: str | None = attrs.field(
+        default=None,
+        validator=attrs.validators.optional(attrs.validators.min_len(1)),
+    )
+    """Name of the document spec that sealed the encrypted columns this spec's queries read
+    (a warehouse query over a document's table). The document port binds its ciphertext to
+    its spec name, so the read codec binds the same name to open it. ``None`` (default) keeps
+    the analytics plane's own label, for rows it ingested itself. Refused together with
+    :attr:`ingest`: ingest seals under the analytics label, which this read codec would not
+    open."""
+
     # ....................... #
 
     def __attrs_post_init__(self) -> None:
@@ -145,6 +156,13 @@ def validate_analytics_spec(spec: AnalyticsSpec[Any, Any]) -> None:
 
         spec.encryption.validate_fields_exist(
             stored_field_names_for(spec.read), spec_name=spec.name
+        )
+
+    if spec.sealed_by is not None and spec.ingest is not None:
+        raise exc.configuration(
+            f"AnalyticsSpec {spec.name!r} sets both sealed_by and ingest: ingested rows are "
+            f"sealed under the analytics label, but sealed_by makes reads open document "
+            f"{spec.sealed_by!r}'s. Split the document-backed reads into their own spec."
         )
 
     if not issubclass(spec.read, BaseModel):

@@ -39,7 +39,8 @@ result-set snapshots.
 | `read_conformity` | `"strict" \| "lenient"` | `"strict"` | `"lenient"` auto-derives `lenient_read_fields` (every statically-defaulted, non-identity, non-indexed, non-`materialized` field); explicit fields added on top |
 | `lenient_read_fields` | `frozenset[str]` | `∅` | returned read-model fields with **no** backing column: dropped from the result projection, hydrated from their default, and excluded from sort keys (mirror of [`DocumentSpec.lenient_read_fields`](document.md#lenient-read-fields); must **not** be an indexed `fields` member) |
 | `snapshot` | `SearchResultSnapshotSpec \| None` | `None` | result-ID snapshotting defaults (stable re-pagination) |
-| `encryption` | `FieldEncryption \| None` | `None` | field [encryption](../../identity-tenancy-enc/encryption.md) — **the same policy** as the document table's, with `document` set to the document spec's name, so in-place search reproduces its AAD |
+| `encryption` | `FieldEncryption \| None` | `None` | field [encryption](../../identity-tenancy-enc/encryption.md) — **the same policy** as the document table's, so in-place search reproduces its AAD |
+| `sealed_by` | `str \| None` | `None` | in-place search only: the document spec whose port sealed the table's fields, so the read codec binds its name in the AAD. `HubSearchSpec` takes its own for the hub relation; Meilisearch refuses it (the index seals its own) |
 | `sensitive` | `bool` | `False` | model carries secrets; generated surfaces refuse to project it |
 | `read_codec` | `ModelCodec \| None` | `None` | row codec override (auto-derived otherwise) |
 

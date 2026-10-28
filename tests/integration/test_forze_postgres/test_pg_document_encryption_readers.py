@@ -1,9 +1,9 @@
 """A document's sealed column, read back by the planes that query its table in place.
 
 The document port binds each ciphertext to the document spec's name. An analytics query or
-an in-place search over the same table opens it only when their shared ``FieldEncryption``
-names that document; without the name the rows are refused, never accepted under another
-namespace. Each reader runs in its own context (its own keyring), so every read is cold.
+an in-place search over the same table opens it only when its spec's ``sealed_by`` names that
+document; without the name the rows are refused, never accepted under another namespace. Each
+reader runs in its own context (its own keyring), so every read is cold.
 """
 
 from __future__ import annotations
@@ -66,8 +66,11 @@ class _Params(BaseModel):
     pass
 
 
+_POLICY = FieldEncryption(encrypted=frozenset({"secret"}))
+
+
 def _specs(
-    policy: FieldEncryption,
+    sealed_by: str | None = None,
 ) -> tuple[
     DocumentSpec[_VaultRead, _Vault, _VaultCreate, _VaultUpdate],
     AnalyticsSpec[_Report, _Report],
@@ -82,15 +85,22 @@ def _specs(
                 "create_cmd": _VaultCreate,
                 "update_cmd": _VaultUpdate,
             },
-            encryption=policy,
+            encryption=_POLICY,
         ),
         AnalyticsSpec(
             name="vault_report",
             read=_Report,
             queries={"all": AnalyticsQueryDefinition(params=_Params)},
-            encryption=policy,
+            encryption=_POLICY,
+            sealed_by=sealed_by,
         ),
-        SearchSpec(name="vault", model_type=_VaultRead, fields=["title"], encryption=policy),
+        SearchSpec(
+            name="vault",
+            model_type=_VaultRead,
+            fields=["title"],
+            encryption=_POLICY,
+            sealed_by=sealed_by,
+        ),
     )
 
 
@@ -130,7 +140,7 @@ def _ctx(pg_client: PostgresClient, table: str) -> ExecutionContext:
     return context_from_deps(Deps.merge(crypto(), module()))
 
 
-async def _write_sealed(pg_client: PostgresClient, policy: FieldEncryption) -> str:
+async def _write_sealed(pg_client: PostgresClient) -> str:
     table = f"vault_{uuid4().hex[:12]}"
     # table name is a test-local literal, never caller input
     await pg_client.execute(
@@ -147,7 +157,7 @@ async def _write_sealed(pg_client: PostgresClient, policy: FieldEncryption) -> s
             USING gin (to_tsvector('english', coalesce(title, '')));
         """
     )
-    document, _, _ = _specs(policy)
+    document, _, _ = _specs()
     writer = _ctx(pg_client, table).document.command(document)
     await writer.create(_VaultCreate(title="ledger one", secret="plain-1"))
 
@@ -160,12 +170,11 @@ async def _write_sealed(pg_client: PostgresClient, policy: FieldEncryption) -> s
 
 
 @pytest.mark.asyncio
-async def test_readers_open_the_document_rows_when_the_policy_names_it(
+async def test_readers_open_the_document_rows_when_sealed_by_names_it(
     pg_client: PostgresClient,
 ) -> None:
-    policy = FieldEncryption(encrypted=frozenset({"secret"}), document="vault")
-    table = await _write_sealed(pg_client, policy)
-    _, analytics, search = _specs(policy)
+    table = await _write_sealed(pg_client)
+    _, analytics, search = _specs(sealed_by="vault")
 
     page = await _ctx(pg_client, table).analytics.query(analytics).run_page("all", _Params())
     assert [hit.secret for hit in page.hits] == ["plain-1"]
@@ -176,12 +185,11 @@ async def test_readers_open_the_document_rows_when_the_policy_names_it(
 
 
 @pytest.mark.asyncio
-async def test_readers_refuse_the_document_rows_when_the_policy_does_not_name_it(
+async def test_readers_refuse_the_document_rows_without_sealed_by(
     pg_client: PostgresClient,
 ) -> None:
-    policy = FieldEncryption(encrypted=frozenset({"secret"}))
-    table = await _write_sealed(pg_client, policy)
-    _, analytics, search = _specs(policy)
+    table = await _write_sealed(pg_client)
+    _, analytics, search = _specs()
 
     with pytest.raises(CoreException) as refused:
         await _ctx(pg_client, table).analytics.query(analytics).run_page("all", _Params())

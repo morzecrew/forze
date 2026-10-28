@@ -23,6 +23,7 @@ from forze.application.contracts.search import (
 from forze.application.execution import ExecutionContext
 from forze.application.integrations.search import (
     SearchResultSnapshot,
+    refuse_index_sealed_by,
     resolve_search_read_codec_spec,
     resolve_snapshot_cipher,
     search_spec_encrypts,
@@ -73,6 +74,8 @@ def result_snapshot(
 def _encrypting_spec[M: BaseModel](context: ExecutionContext, spec: SearchSpec[M]) -> SearchSpec[M]:
     """Wrap the read codec so encrypted/searchable fields are sealed in the index and
     decrypted on read (shared resolver — default AAD label, fail-closed)."""
+
+    refuse_index_sealed_by(spec, backend="Meilisearch")
 
     return resolve_search_read_codec_spec(
         spec,

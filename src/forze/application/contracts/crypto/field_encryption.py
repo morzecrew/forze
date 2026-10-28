@@ -82,19 +82,6 @@ class FieldEncryption:
     - record-id binding (:attr:`binds_record_id`) stops falling back to the legacy
       id-less AAD, so a pre-binding ciphertext is no longer accepted."""
 
-    document: str | None = None
-    """Name of the document spec whose table holds these sealed fields.
-
-    The document plane binds every ciphertext it writes to its own spec name (in the AAD), so
-    a ciphertext cannot move between aggregates. A search or analytics spec that reads that
-    table directly (in-place Postgres/Mongo search, a warehouse query over it) must bind the
-    same name to open what the document wrote: set this to the document spec's name on the
-    policy they share. A document spec with any other name refuses the policy.
-
-    ``None`` (default) keeps search and analytics in their own namespace — right for data
-    they seal themselves (an external index, warehouse ingest). Setting it on a surface
-    that already holds its own ciphertext changes that surface's AAD: rebuild or re-ingest."""
-
     # ....................... #
 
     def __attrs_post_init__(self) -> None:

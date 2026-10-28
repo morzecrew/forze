@@ -414,6 +414,16 @@ class SearchSpec[M: BaseModel](BaseSpec):
     any backend — the stored value is ciphertext, so content matching over it can never
     hit (rejected at spec construction). ``None`` (default) = no field encryption."""
 
+    sealed_by: str | None = attrs.field(
+        default=None,
+        validator=attrs.validators.optional(attrs.validators.min_len(1)),
+    )
+    """Name of the document spec that sealed the encrypted fields of the relation this spec
+    searches **in place** (Postgres/Mongo over a document table). The document port binds its
+    ciphertext to its spec name, so the read codec binds the same name to open it. ``None``
+    (default) keeps the search plane's own label, for an index it seals itself. An external
+    index (Meilisearch) refuses it."""
+
     max_results: int | None = None
     """Server-side cap on offset-search results when a caller passes **no** ``limit``.
 
@@ -629,6 +639,14 @@ class HubSearchSpec[M: BaseModel](BaseSpec):
     encryption: FieldEncryption | None = None
     """Field-encryption policy for hub-row fields (see :class:`FieldEncryption`), decrypted
     out of hub search results. Mirror of the hub read model's ``DocumentSpec.encryption``."""
+
+    sealed_by: str | None = attrs.field(
+        default=None,
+        validator=attrs.validators.optional(attrs.validators.min_len(1)),
+    )
+    """Name of the document spec that sealed the hub relation's encrypted fields (see
+    :attr:`SearchSpec.sealed_by`). Hub rows are read from that one relation, so one name
+    covers them; each member leg declares its own."""
 
     facetable_fields: frozenset[str] = attrs.field(
         factory=frozenset,

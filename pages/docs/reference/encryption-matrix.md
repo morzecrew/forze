@@ -18,8 +18,11 @@ A single `FieldEncryption` policy — `encrypted` (randomized AEAD) and `searcha
 `reject_plaintext` — is declared once on the document spec and **carried to search,
 analytics, graph, and procedure params** by pointing their spec at the same policy, so
 the planes can't drift. Document ciphertext is also bound to the document spec's name: a
-search or analytics spec that reads the document's table in place opens it only when the
-policy sets `document` to that name (otherwise `core.crypto.aead_auth_failed`).
+search or analytics spec that reads the document's table in place sets `sealed_by` to that
+name (otherwise `core.crypto.aead_auth_failed`). An external index and ingested warehouse
+rows keep their own label, so Meilisearch and an `AnalyticsSpec` with `ingest` refuse it.
+Graph (its own Neo4j store) and procedure params (sealed before the SQL) read no document
+table.
 
 | Surface | Backends | `searchable` | `binds_record_id` | Fail-closed code |
 |---------|----------|--------------|-------------------|------------------|
