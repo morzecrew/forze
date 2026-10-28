@@ -125,7 +125,10 @@ All of this was verified against main at `1e03f15ea`, and every `path:line` poin
   files under `tests/` construct it.
 - `get_execution_id`'s docstring draws a trust line: the execution id is minted server-side,
   while the correlation id "arrives in a client header and could be forged"
-  (`invocation.py:95-104`). It now holds at every framework boundary. Since #683, Inngest
+  (`invocation.py:95-104`). It now holds at every framework boundary that binds metadata.
+  Two bind none, so a run there has no execution id at all: the self-hosted durable runner,
+  and the inbox for a message without a correlation header (below). P1 closes both
+  (§5.3). Since #683, Inngest
   mints its own execution id for each handler call and records the envelope's as the
   causation (`forze_inngest/execution/registration.py:161-168`).
 
@@ -272,8 +275,11 @@ class InvocationSurface(StrEnum):
 - **Open, validated.** The field is a `str`, so an application's own boundary, such as a gRPC
   server or its own queue worker, passes its own token. The token must match
   `^[a-z][a-z0-9_]{0,31}$`, checked at construction. Anything else raises `configuration` with
-  code `invocation_surface_invalid`. The pattern keeps the value short, safe to log and free of
-  personal data. It bounds a value's shape, not the number of distinct values. The framework
+  code `invocation_surface_invalid`. The pattern keeps the value short and safe to log. It
+  cannot keep personal data out, since `customer_123` matches it, and it bounds a value's
+  shape, not the number of distinct values. The docs forbid a token that names a person, a
+  tenant or a customer: the value reaches logs, spans and an unsealed audit column, and lives
+  as long as they do. The framework
   contributes the nine above; an application adds as many as its own boundaries pass. The
   docs say to pass literals, never a value computed from a request, and that is the only
   bound on the count.
@@ -318,8 +324,10 @@ def mint_invocation_metadata(
 - **A keyword with a default.** No existing constructor breaks. The default, `unknown`, is
   honest and easy to grep for. A P1 test asserts that every framework call site passes its own
   value (§6).
-- **One accessor.** `ctx.inv_ctx.get_metadata().surface`. There is no new context variable:
-  the surface lives and ends with the metadata.
+- **One accessor.** `InvocationMetadata.surface`, read through `ctx.inv_ctx.get_metadata()`.
+  That returns `None` outside an invocation, and a reader then takes the surface as
+  `unknown`, as the audit hook does (§5.6). There is no new context variable: the surface
+  lives and ends with the metadata.
 
 ### 5.3 Minting at each boundary (P1)
 
@@ -427,7 +435,7 @@ class AuditEntry:
 
 | Backend | Change | Rows written before |
 |---|---|---|
-| Postgres | **a required migration:** `ALTER TABLE audit_events ADD COLUMN surface text, ADD COLUMN execution_id uuid, ADD COLUMN correlation_id uuid;`. Until it runs, startup schema validation refuses the table; without validation, every audited operation fails closed. For query-by-surface the docs suggest an index such as `CREATE INDEX ON audit_events (surface, at);`, with `tenant_id` first when the trail is tenant-aware | `NULL` |
+| Postgres | **a required migration** on the trail's table, `audit_events` unless `audit_record_spec(name=…)` names another: `ALTER TABLE audit_events ADD COLUMN surface text, ADD COLUMN execution_id uuid, ADD COLUMN correlation_id uuid;`, with the table name replaced. Until it runs, startup schema validation refuses the table; without validation, every audited operation fails closed. For query-by-surface the docs suggest an index such as `CREATE INDEX ON audit_events (surface, at);`, with `tenant_id` first when the trail is tenant-aware | `NULL` |
 | MongoDB | none | the fields are absent and read back as `None`. `{"$values": {"surface": {"$null": true}}}` matches them, as the `actor_ids` note shows (`audit.md:167-173`) |
 | mock | none | — |
 | a custom `AuditPort` | reads the new fields if it wants them | its own |
@@ -460,8 +468,10 @@ RFC 0060 §5.6's field list then stands superseded by that row.
 
 ### 5.8 Security and privacy
 
-- **Not secret, not personal data.** The value is one of a few tokens fixed in code. It needs
-  no scrubbing and no sealing.
+- **Not secret, and kept free of personal data by rule.** The framework's values are tokens
+  fixed in code. An application's own token is its choice, and the pattern cannot stop
+  `customer_123`, so the docs forbid one that names a person, a tenant or a customer (§5.1).
+  It needs no scrubbing and no sealing.
 - **Not spoofable by a caller.** No framework code reads the surface from input (§5.2), and
   the tests send the obvious forgeries (§6). Application code is a different matter: it can
   construct metadata with any valid token, and the only mitigation is documentation.
@@ -482,7 +492,7 @@ RFC 0060 §5.6's field list then stands superseded by that row.
 | the new log key and span attribute | nothing, unless a strict log schema rejects unknown keys |
 | metadata bound at the durable runner and the inbox | nothing in the API; the behaviour changes are in §9 |
 | the new `AuditEntry` fields, default `None` | nothing for constructors |
-| the `audit_events` columns | nothing in the API; **a Postgres trail refuses to start until it is migrated** |
+| the audit table's columns | nothing in the API; **a Postgres trail refuses to start until it is migrated** |
 | persisted metadata: outbox rows, Temporal headers, the Inngest envelope, broker headers | nothing; none gains the field (§5.4, §5.7), and `DurableRunRecord` persists no metadata |
 
 An application boundary that constructs `InvocationMetadata` itself keeps working, and records
@@ -572,7 +582,8 @@ An application boundary that constructs `InvocationMetadata` itself keeps workin
 10. **Postgres.** The integration battery's DDL gains the columns
     (`tests/integration/test_forze_postgres/test_pg_audit_trail.py:52-66`). A table without
     them is refused at startup with `missing columns [...]`. A row round-trips and is
-    queryable by surface.
+    queryable by surface, on the default table and on one named through
+    `audit_record_spec(name=…)`.
 11. **MongoDB.** A legacy row without the fields reads back as `None` and matches the `$null`
     query. There is no MongoDB audit battery today; this adds the first.
 12. **Sealing.** `audit_record_spec(encryption=…)` that seals `surface` is refused.
