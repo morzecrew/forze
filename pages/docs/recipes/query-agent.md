@@ -47,9 +47,13 @@ Each definition carries a name (`notes__list`: providers refuse the `.` in `note
 JSON Schema taken from the operation's own input DTO, and a description. For a filter-accepting operation that description also spells out the
 filter surface:
 
-> List documents by filters and sorts (offset pagination). Filterable fields — category
-> (string: `$eq`, `$ilike`, `$in`, `$like`, `$neq`, `$nin`, `$null`, `$regex`); title
-> (string: …). Sortable by: title. Aggregatable by: category.
+> List documents by filters and sorts (offset pagination). Filterable fields — `$eq`,
+> `$ilike`, `$in`, `$like`, `$neq`, `$nin`, `$null`, `$regex` on every field; string:
+> category, title. Sortable by: title. Aggregatable by: category.
+
+The operators every field shares come first, then fields are grouped by the rest of their
+operator set — `number, temporal and scalar (also $gt, $gte, $lt, $lte): …` on a wider
+model — so each list is stated once, not once per field.
 
 That sentence is the read model's *policy*, not its field list — `body` is readable and
 absent from it. It is the same sentence the [MCP](../integrations/mcp.md) surface hands

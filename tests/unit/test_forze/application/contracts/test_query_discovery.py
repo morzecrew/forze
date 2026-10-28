@@ -7,6 +7,7 @@ can discover the query contract up front. Backend-agnostic (type-derived upper b
 
 from __future__ import annotations
 
+import re
 from datetime import datetime
 from uuid import UUID
 
@@ -18,6 +19,7 @@ from forze.application.contracts.querying import (
     QUANTIFIER_OPS,
     build_query_discovery,
     classify_field_type,
+    describe_query_discovery,
     field_value_operators,
     is_quantifiable_field,
 )
@@ -149,3 +151,67 @@ class TestBuildDiscovery:
     def test_discovery_is_hashable(self) -> None:
         # Carried on a frozen OperationDescriptor → must hash.
         assert hash(self._discovery()) is not None
+
+
+# ....................... #
+
+
+class TestDescribeDiscovery:
+    """The prose states each operator list once, grouped by the fields that share it."""
+
+    def _describe(self, model: type[BaseModel], **kw) -> str:
+        names = set(model.model_fields)
+        return describe_query_discovery(
+            build_query_discovery(
+                model,
+                filterable=kw.get("filterable", names),
+                sortable=kw.get("sortable", set()),
+                aggregatable=kw.get("aggregatable", set()),
+            )
+        )
+
+    def test_groups_fields_by_operator_set(self) -> None:
+        # ``meta`` and ``item`` take only the universal operators, so ``$in`` / ``$nin``
+        # move into each group that has them; number, temporal and scalar share one set.
+        assert self._describe(_Doc) == (
+            "Filterable fields — $eq, $neq, $null on every field; "
+            "bool (also $in, $nin): active; "
+            "number, temporal and scalar (also $gt, $gte, $in, $lt, $lte, $nin): "
+            "age, created, ref, score; "
+            "object and mapping: item, meta; "
+            "string (also $ilike, $in, $like, $nin, $regex): name; "
+            "collection (also $disjoint, $empty, $in, $nin, $overlaps, $subset, $superset; "
+            "element quantifiers $any, $all, $none): tags."
+        )
+
+    def test_every_field_keeps_its_operators(self) -> None:
+        # Grouping changes the wording, never what a field is said to accept: read the
+        # sentence back and compare it with the per-field discovery, an unknown field too.
+        qd = build_query_discovery(
+            _Doc, filterable={*_Doc.model_fields, "ghost"}, sortable=set(), aggregatable=set()
+        )
+        body = describe_query_discovery(qd).removeprefix("Filterable fields — ").rstrip(".")
+        first, *clauses = re.split(r"; (?![^()]*\))", body)
+        common = set(first.removesuffix(" on every field").split(", "))
+        read_back: dict[str, tuple[set[str], bool]] = {}
+
+        for clause in clauses:
+            head, names = clause.rsplit(": ", 1)
+            notes = head.partition(" (")[2].rstrip(")").split("; ")
+            also = next((n.removeprefix("also ") for n in notes if n.startswith("also ")), "")
+            ops = common | (set(also.split(", ")) if also else set())
+            quantifiable = f"element quantifiers {', '.join(QUANTIFIER_OPS)}" in notes
+
+            for name in names.split(", "):
+                read_back[name] = (ops, quantifiable)
+
+        assert read_back == {f.field: (set(f.operators), f.quantifiable) for f in qd.filterable}
+
+    def test_sort_and_aggregate_follow(self) -> None:
+        assert self._describe(_Item, sortable={"sku"}, aggregatable={"sku"}) == (
+            "Filterable fields — $eq, $ilike, $in, $like, $neq, $nin, $null, $regex on every "
+            "field; string: sku. Sortable by: sku. Aggregatable by: sku."
+        )
+
+    def test_empty_surface_is_empty(self) -> None:
+        assert self._describe(_Doc, filterable=set()) == ""

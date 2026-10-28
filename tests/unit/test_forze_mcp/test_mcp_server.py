@@ -381,8 +381,7 @@ class TestQueryDiscoveryDescription:
         assert desc is not None
         assert "Filterable fields" in desc
         # the user field, typed, with its string operators (not ordering)
-        assert "title (string:" in desc
-        assert "$like" in desc
+        assert "string (also $ilike, $like, $regex): title" in desc
         assert "Sortable by:" in desc
         assert "Aggregatable by:" in desc
 
@@ -457,8 +456,7 @@ class TestQueryDiscoveryDescription:
         desc = _tool_description(reg.catalog()[list_op])
 
         assert desc is not None
-        assert "tags (collection:" in desc
-        assert "element quantifiers $any, $all, $none" in desc
+        assert "; element quantifiers $any, $all, $none): tags" in desc
 
 
 class TestResourceTemplates:
