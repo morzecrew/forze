@@ -58,7 +58,7 @@ _uv_cmd name strict *command:
 test *args='':
     {{ _uv_sync }}
 
-    uv run pytest -m "not perf and not fuzz" {{ args }}
+    uv run pytest -m "not perf and not fuzz and not lake_slow" {{ args }}
 
 # Verify the conformance manifest: every plane triaged, every declared leg collectable.
 # Offline (imports + a pytest collection pass, no containers) — this is the line `just
@@ -164,6 +164,15 @@ fuzz *args='tests/unit/test_forze_dst':
     {{ _uv_sync }}
 
     uv run pytest -m fuzz {{ args }}
+
+
+# Run the lake credential-expiry battery (RFC 0078 11b/11c; ~20 min, Docker; excluded from
+# `just test`). It waits out a vended credential, which lives at least 900 s; the scheduled
+# lake-expiry workflow runs this same line.
+lake-slow *args='tests/integration/test_forze_duckdb':
+    {{ _uv_sync }}
+
+    uv run pytest -m lake_slow {{ args }}
 
 
 # Run one cell of the nightly DST matrix (see `just dst-nightly-cells` for the names)

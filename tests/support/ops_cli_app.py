@@ -14,10 +14,12 @@ import logging
 import os
 import sys
 from collections.abc import Awaitable, Callable
-from typing import Any
+from datetime import date
+from enum import Enum, IntEnum, StrEnum
+from typing import Annotated, Any, Literal
 from uuid import UUID
 
-from pydantic import SecretStr
+from pydantic import ConfigDict, Field, SecretStr
 
 from forze.application.contracts.authn import AuthnIdentity, AuthnSpec
 from forze.application.contracts.execution import LifecycleStep
@@ -74,6 +76,9 @@ ADDED: list[str] = []
 SHUTDOWNS: list[str] = []
 """One entry per runtime shutdown."""
 
+LEFT_BOUND: list[tuple[Any, ...]] = []
+"""What the invocation context still held at each shutdown, after every call left it."""
+
 # An application may well log to stdout; the CLI must keep its document clean anyway.
 _chatty_logger = logging.getLogger("ops_cli_app")
 _chatty_logger.addHandler(logging.StreamHandler(sys.stdout))
@@ -101,7 +106,8 @@ class Count(BaseDTO):
 
 
 class Fail(BaseDTO):
-    kind: ExceptionKind
+    kind: ExceptionKind | None = None
+    """No kind succeeds, so a batch can fail on one line of several."""
 
 
 class Slow(BaseDTO):
@@ -115,6 +121,68 @@ class Secret(BaseDTO):
 
 class Deny(BaseDTO):
     resource_type: str
+
+
+class Mode(StrEnum):
+    PLAIN = "plain"
+    LOUD = "loud"
+
+
+class Rank(IntEnum):
+    """Pydantic reads an ``IntEnum`` from a string, as it reads an ``int``."""
+
+    FIRST = 1
+    SECOND = 2
+
+
+class Code(Enum):
+    """Pydantic matches a plain enum's value exactly: ``"1"`` is not ``1``."""
+
+    ONE = 1
+
+
+class Flags(BaseDTO):
+    """Flat scalars only: ``forze ops call`` takes typed flags for it."""
+
+    text: str
+    count: int = 1
+    ratio: float | None = None
+    loud: bool = False
+    day: date | None = None
+    ref: UUID | None = None
+    mode: Mode = Mode.PLAIN
+    level: Literal["low", "high"] = "low"
+    retry_after: Annotated[int, Field(ge=0)] | None = None
+    rank: Rank = Rank.FIRST
+
+
+class Nested(BaseDTO):
+    tags: list[str]
+
+
+class Collides(BaseDTO):
+    """A field spelled like a ``call`` option: no typed flags."""
+
+    timeout: float = 1.0
+
+
+class Crossed(BaseDTO):
+    """One field's alias is the other field's name, and both spellings are read."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    first: str = Field(default="unset", alias="second")
+    second: str = "unset"
+
+
+class Coded(BaseDTO):
+    code: Code = Code.ONE
+
+
+class Aliased(BaseDTO):
+    """Read by alias only; a typed flag spells the field's own name."""
+
+    display_name: str = Field(alias="displayName")
 
 
 # ....................... #
@@ -145,8 +213,18 @@ async def _echo(args: Text) -> Text:
     return args
 
 
+async def _returned(args: Any) -> Any:
+    return args
+
+
+async def _revoke(_args: Text) -> None:
+    # Revokes the key the call itself verified with: the next call must be refused.
+    STATE.identity["authn"]["main"]["api_keys"].pop(API_KEY)
+
+
 async def _fail(args: Fail) -> None:
-    raise CoreException(args.kind, f"failed as {args.kind}", code=f"probe_{args.kind}")
+    if args.kind is not None:
+        raise CoreException(args.kind, f"failed as {args.kind}", code=f"probe_{args.kind}")
 
 
 async def _deny(args: Deny) -> None:
@@ -201,6 +279,8 @@ def build_registry(*, sensitive: bool = False) -> FrozenOperationRegistry:
     reg = OperationRegistry(
         handlers={
             "probe.bound": _bound,
+            "probe.bound_input": _bound,
+            "probe.revoke": lambda _c: _revoke,
             "probe.echo": lambda _c: _echo,
             "probe.secure": lambda _c: _ok,
             "probe.tenanted": lambda _c: _ok,
@@ -212,10 +292,18 @@ def build_registry(*, sensitive: bool = False) -> FrozenOperationRegistry:
             "probe.secret": lambda _c: _secret,
             "probe.deny": lambda _c: _deny,
             "probe.cancelled": lambda _c: _cancelled,
+            "probe.flags": lambda _c: _returned,
+            "probe.nested": lambda _c: _ok,
+            "probe.collides": lambda _c: _returned,
+            "probe.aliased": lambda _c: _returned,
+            "probe.coded": lambda _c: _returned,
+            "probe.crossed": lambda _c: _returned,
             "notes.add": lambda _c: _add,
         },
         descriptors={
             "probe.bound": _descriptor(output_type=Bound, title="What a call binds"),
+            "probe.bound_input": _descriptor(Text, Bound),
+            "probe.revoke": _descriptor(Text),
             "probe.echo": _descriptor(Text, Text, description="Echo the text.\nSecond line."),
             "probe.secure": _descriptor(description="Needs a principal."),
             "probe.tenanted": _descriptor(description="Needs a tenant."),
@@ -227,6 +315,12 @@ def build_registry(*, sensitive: bool = False) -> FrozenOperationRegistry:
             "probe.secret": _descriptor(Secret, Text),
             "probe.deny": _descriptor(Deny),
             "probe.cancelled": _descriptor(),
+            "probe.flags": _descriptor(Flags, Flags),
+            "probe.nested": _descriptor(Nested),
+            "probe.collides": _descriptor(Collides, Collides),
+            "probe.aliased": _descriptor(Aliased),
+            "probe.coded": _descriptor(Coded),
+            "probe.crossed": _descriptor(Crossed),
             "notes.add": _descriptor(Text, Count, title="Add a note"),
         },
     )
@@ -239,6 +333,13 @@ def build_registry(*, sensitive: bool = False) -> FrozenOperationRegistry:
         "probe.secret",
         "probe.deny",
         "probe.cancelled",
+        "probe.flags",
+        "probe.nested",
+        "probe.collides",
+        "probe.aliased",
+        "probe.coded",
+        "probe.bound_input",
+        "probe.crossed",
     ):
         reg = reg.bind(op).as_query().finish()
 
@@ -300,9 +401,20 @@ def seed() -> None:
     STATE.identity["tenants"] = {"main": {str(TENANT): {"principals": [MEMBER], "active": True}}}
     ADDED.clear()
     SHUTDOWNS.clear()
+    LEFT_BOUND.clear()
 
 
-async def _shutdown(_ctx: ExecutionContext) -> None:
+async def _shutdown(ctx: ExecutionContext) -> None:
+    inv = ctx.inv_ctx
+    LEFT_BOUND.append(
+        (
+            inv.get_metadata(),
+            inv.get_authn(),
+            inv.get_tenant(),
+            inv.get_idempotency_key(),
+            inv.get_deadline(),
+        )
+    )
     sys.stderr.write("ops-sample: shutdown started\n")
     sys.stderr.flush()
     # A slow shutdown, for the signal tests.
@@ -383,6 +495,23 @@ NOT_SERVERLESS = OpsApp(
 
 def lazy() -> OpsApp:
     """A zero-argument callable returning a declaration."""
+
+    return ANONYMOUS
+
+
+def chatty() -> OpsApp:
+    """Prints while it builds the declaration, as an application module may on import."""
+
+    print("building the declaration")  # noqa: T201
+
+    return ANONYMOUS
+
+
+def noisy() -> OpsApp:
+    """Writes to descriptors 1 and 2 directly, past ``sys.stdout``, as a C library may."""
+
+    os.write(1, b"fd-one-noise\n")
+    os.write(2, b"fd-two-noise\n")
 
     return ANONYMOUS
 
