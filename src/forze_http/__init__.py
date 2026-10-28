@@ -1,6 +1,8 @@
 """Outbound HTTP integration for Forze."""
 
+from forze_http.adapters.http_transport import HttpServiceTransport
 from forze_http.execution.deps.configs import HttpAuthConfig, HttpServiceConfig
+from forze_http.execution.deps.factories import http_service_transport
 from forze_http.execution.deps.keys import HttpClientDepKey
 from forze_http.execution.deps.module import HttpDepsModule
 from forze_http.execution.lifecycle.pool import http_lifecycle_step
@@ -24,8 +26,10 @@ __all__ = [
     "HttpSettings",
     "HttpDepsModule",
     "HttpServiceConfig",
+    "HttpServiceTransport",
     "HttpAuthConfig",
     "HttpRoutingCredentials",
     "RoutedHttpClient",
     "http_lifecycle_step",
+    "http_service_transport",
 ]

@@ -1,5 +1,6 @@
 """Tenant-aware HTTP adapter invoke tests."""
 
+import gzip
 from unittest.mock import MagicMock
 from uuid import UUID
 
@@ -152,6 +153,47 @@ class TestFormBodyThroughTheRoutedClient:
 
         finally:
             await routed.close()
+
+
+# ....................... #
+
+
+class TestEncodedBodyThroughTheRoutedClient:
+    """A tenant's compressed answer is decoded once, as the static client's is."""
+
+    @pytest.mark.asyncio
+    async def test_a_gzip_body_reaches_the_caller_decoded(self) -> None:
+        transport = httpx.MockTransport(
+            lambda _r: httpx.Response(
+                200, headers={"Content-Encoding": "gzip"}, content=gzip.compress(b'{"ok": true}')
+            )
+        )
+
+        routed = RoutedHttpClient(
+            secrets=_SecretsStub(),
+            secret_ref_for_tenant={TENANT_ID: SecretRef(path="tenants/ping")},
+            tenant_provider=lambda: TENANT_ID,
+        )
+
+        async def initialize_client(
+            tenant_id: UUID,
+            creds: HttpRoutingCredentials,
+        ) -> HttpClient:
+            client = HttpClient()
+            await client.initialize(creds.base_url, transport=transport)
+
+            return client
+
+        routed.initialize_client = initialize_client  # type: ignore[method-assign]
+        await routed.startup()
+
+        try:
+            response = await routed.request("GET", "/ping")
+
+        finally:
+            await routed.close()
+
+        assert response.json() == {"ok": True}
 
 
 # ....................... #

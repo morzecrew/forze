@@ -160,3 +160,21 @@ class RoutedHttpClient(
             ) as response,
         ):
             yield response
+
+    # ....................... #
+
+    @asynccontextmanager
+    async def send(
+        self,
+        request: Any,
+        *,
+        base_url: str | None = None,
+        headers: Mapping[str, str] | None = None,
+    ) -> AsyncGenerator[Any]:
+        # The scope, as for `stream`: the response outlives this call, and with no base_url
+        # the request is held to the tenant's own route.
+        async with (
+            self.client_scope() as inner,
+            inner.send(request, base_url=base_url, headers=headers) as response,
+        ):
+            yield response

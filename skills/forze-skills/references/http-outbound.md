@@ -109,7 +109,7 @@ class ListOrders(Handler[ListOrdersCmd, OrdersListResponse]):
 
 ## Streaming a response
 
-`port.stream(op, args)` sends the request `invoke` sends — same route, auth, deadline header, egress gate and tag — and yields the body as `bytes` chunks as they arrive. Use it for a streamed completion (server-sent events) instead of handing a bare client to a vendor SDK, which leaves the declared service behind. A rejected response raises before the first chunk with the exception `invoke` raises; the body is not validated against `return_type`. Close it with `aclosing`:
+`port.stream(op, args)` sends the request `invoke` sends — same route, auth, deadline header, egress gate and tag — and yields the body as `bytes` chunks as they arrive. Use it for a streamed completion (server-sent events) when you parse the provider's events yourself; to keep a vendor SDK, see [Vendor SDKs](#vendor-sdks). A rejected response raises before the first chunk with the exception `invoke` raises; the body is not validated against `return_type`. Close it with `aclosing`:
 
 ```python
 from contextlib import aclosing
@@ -120,6 +120,23 @@ async with aclosing(ctx.http.service(spec).stream("complete", args)) as chunks:
 ```
 
 A port policy covering `stream` applies the breaker only — never retry, since the caller has already read part of the body.
+
+## Vendor SDKs
+
+A vendor SDK that takes an `httpx.AsyncClient` builds its own requests, so `invoke` never sees them. Give that client a transport over the declared service instead of a bare client:
+
+```python
+import httpx
+
+from forze_http import http_service_transport
+
+sdk_http = httpx.AsyncClient(
+    base_url="https://api.llm.example.com/v1",  # the service's base_url
+    transport=http_service_transport(ctx, llm_spec),
+)
+```
+
+Every request is held to the service's `base_url` (or the current tenant's route) by scheme, host, port and path prefix, and anything else is refused with `http_request_off_route` before it is sent. The service's headers and credential replace the SDK's headers of the same names, so the SDK can carry a placeholder key; a header under another name goes out as the SDK set it. The deadline budget, trace context and egress tag apply, and a spent deadline is refused with `deadline_exceeded`. The response comes back undecoded and unmapped, so status handling and retries stay the SDK's; `max_response_bytes` bounds its decoded size. Only a declared service yields a transport, so the egress acknowledgement gate still applies.
 
 ## Tenant-routed services
 

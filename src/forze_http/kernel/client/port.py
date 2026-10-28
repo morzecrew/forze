@@ -58,6 +58,36 @@ class HttpClientPort(Protocol):
         """
         ...  # pragma: no cover
 
+    def send(
+        self,
+        request: Any,
+        *,
+        base_url: str | None = None,
+        headers: Mapping[str, str] | None = None,
+    ) -> AbstractAsyncContextManager[Any]:
+        """Send an ``httpx.Request`` someone else built and yield the response, body unread.
+
+        What an httpx transport needs: the request as an SDK built it, and the response the
+        way it arrived. The body streams undecoded; when ``max_response_bytes`` is set, each
+        chunk's decoded size counts against it before the chunk is passed on, accepted or
+        not. A redirect is returned rather than followed. Transport failures stay httpx
+        exceptions. On a routed client, evicting the tenant's client fails a response still
+        streaming unless the routed client is ``guarded``, as for :meth:`stream`.
+
+        :param request: The request to send. Its URL must be *base_url* or a path below it,
+            on the same scheme, host and port, with no userinfo, ``;`` or escaped ``%``.
+        :param base_url: What the request is held to. ``None`` means the client's own base
+            URL — on a routed client, the current tenant's.
+        :param headers: Replace the request's headers of the same names, after the client's
+            own default headers — a tenant's credential — have replaced theirs. A header
+            under any other name stays as the request had it.
+        :raises CoreException: ``configuration`` with code ``http_request_off_route`` when
+            the URL is not under *base_url*, before anything is sent; ``infrastructure``
+            when the decoded body crosses ``max_response_bytes``, or arrives in a content
+            coding the cap cannot bound.
+        """
+        ...  # pragma: no cover
+
     def aclose(self) -> Awaitable[None]:
         """Close the underlying client."""
         ...  # pragma: no cover

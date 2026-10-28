@@ -4,11 +4,16 @@ from typing import final
 
 import attrs
 
-from forze.application.contracts.http import HttpServiceDepPort, HttpServiceSpec
+from forze.application.contracts.http import (
+    HttpServiceDepKey,
+    HttpServiceDepPort,
+    HttpServiceSpec,
+)
 from forze.application.contracts.secrets import SecretsDepKey
 from forze.application.execution import ExecutionContext
 from forze.base.exceptions import exc
 from forze_http.adapters.http_service import HttpServiceAdapter
+from forze_http.adapters.http_transport import HttpServiceTransport
 from forze_http.execution.deps.configs import HttpServiceConfig
 from forze_http.execution.deps.keys import HttpClientDepKey
 from forze_http.kernel.client import HttpClientPort, RoutedHttpClient
@@ -76,3 +81,36 @@ class ConfigurableHttpService(HttpServiceDepPort):
             "tenant_aware HTTP service requires secret_ref_for_tenant on the service "
             "config or a RoutedHttpClient registered at HttpClientDepKey",
         )
+
+
+# ....................... #
+
+
+def http_service_transport(ctx: ExecutionContext, spec: HttpServiceSpec) -> HttpServiceTransport:
+    """An httpx transport for a vendor SDK, over the declared HTTP service *spec*.
+
+    Resolved through the service's dep key, the way ``ctx.http.service(spec)`` is: the same
+    config, so the same egress acknowledgement already passed at wiring, and the same client,
+    routed per tenant when the service is. Pass it as ``httpx.AsyncClient(transport=...)``.
+
+    :param ctx: The execution context the service is wired in.
+    :param spec: The declared service the SDK's requests go through.
+    :returns: A transport holding every request to the service's base URL or tenant route.
+    :raises CoreException: ``configuration`` when *spec* is not wired as a ``forze_http``
+        service — undeclared, outside the spec inventory, or served by another backend.
+    """
+
+    if ctx.deps.inventory_guard is not None:
+        ctx.deps.inventory_guard(HttpServiceDepKey.name, str(spec.name))
+
+    factory = ctx.deps.provide(HttpServiceDepKey, route=spec.name)
+
+    if not isinstance(factory, ConfigurableHttpService):
+        raise exc.configuration(
+            f"HTTP service {str(spec.name)!r} is not wired through forze_http, so there is "
+            "no declared route to send an SDK's requests through",
+        )
+
+    adapter = factory(ctx, spec)
+
+    return HttpServiceTransport(client=adapter.client, config=adapter.config, spec=spec)
