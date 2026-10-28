@@ -863,4 +863,4 @@ answer took the recorded lean.
     bind-and-run waits for a registry-backed adapter;
   - ~~deciding whether a cancellation after the commit point should report `commit_ambiguous`
     at every boundary, not only the CLI (§5.6).~~ Done on 2026-10-27: every boundary
-    records it and only the CLI converts it (§5.6, "As built (P3)").
+    records it, and only the CLI and the saga executors convert it (§5.6, "As built (P3)").

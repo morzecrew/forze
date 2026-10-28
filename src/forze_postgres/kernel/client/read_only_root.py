@@ -17,9 +17,10 @@ from contextvars import ContextVar
 
 # ----------------------- #
 
-_root: ContextVar[list[bool] | None] = ContextVar("forze_pg_read_only_root", default=None)
-"""``[True]`` while the open root began ``READ ONLY`` and nothing bypassed it; a box, so a
-bypass in a nested scope or a child task clears the root's own record."""
+_roots: ContextVar[tuple[list[bool], ...]] = ContextVar("forze_pg_read_only_root", default=())
+"""One box per open read-only root, innermost last: ``[True]`` while nothing bypassed it. A
+box, so a bypass in a nested scope or a child task clears the root's own record; a bypass
+clears every open root's, since a write it lets through commits beside each of them."""
 
 
 # ....................... #
@@ -29,18 +30,19 @@ bypass in a nested scope or a child task clears the root's own record."""
 def read_only_root() -> Iterator[None]:
     """Record a root ``BEGIN … READ ONLY`` for the block."""
 
-    token = _root.set([True])
+    box = [True]
+    token = _roots.set((*_roots.get(), box))
 
     try:
         yield
 
     finally:
         try:
-            _root.reset(token)
+            _roots.reset(token)
 
         except ValueError:
             # Finalized in another context (an abandoned generator): drop the record there.
-            _root.set(None)
+            _roots.set(tuple(other for other in _roots.get() if other is not box))
 
 
 # ....................... #
@@ -49,18 +51,16 @@ def read_only_root() -> Iterator[None]:
 def read_only_root_enforced() -> bool:
     """Whether the open root began ``READ ONLY`` and nothing has bypassed it since."""
 
-    record = _root.get()
+    roots = _roots.get()
 
-    return record is not None and record[0]
+    return bool(roots) and roots[-1][0]
 
 
 # ....................... #
 
 
 def bypass_read_only_root() -> None:
-    """Clear the open root's record: a write may commit outside it."""
+    """Clear every open root's record: a write may commit outside them."""
 
-    record = _root.get()
-
-    if record is not None:
-        record[0] = False
+    for box in _roots.get():
+        box[0] = False

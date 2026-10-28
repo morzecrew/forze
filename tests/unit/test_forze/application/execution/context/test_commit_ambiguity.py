@@ -539,6 +539,36 @@ class TestCancellationAfterCommitIsRecorded:
         assert len(span.events) == 0
 
     @pytest.mark.asyncio
+    async def test_a_broken_log_still_records_the_span_event(
+        self, ctx: ExecutionContext, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        def _boom(*_args: Any, **_kwargs: Any) -> Any:
+            raise RuntimeError("logging is down")
+
+        monkeypatch.setattr(invoke_module, "logger", SimpleNamespace(warning=_boom, debug=_boom))
+        reset_commit_started()
+        tx = _tx_with(_RecordingTxManager())
+        parked = asyncio.Event()
+
+        @attrs.define(slots=True, kw_only=True, frozen=True)
+        class CommitThenWait(Handler[str, str]):
+            async def __call__(self, args: str) -> str:
+                async with tx.scope("rec"):
+                    pass
+
+                parked.set()
+                await asyncio.sleep(10)
+                return args
+
+        reg = OperationRegistry(handlers={"op": lambda _c: CommitThenWait()}).freeze()
+        tracer, exporter = self._tracer()
+        await self._cancel_while_parked(reg.resolve("op", ctx), parked, tracer)
+
+        [span] = exporter.get_finished_spans()
+        assert [event.name for event in span.events] == ["forze.commit_ambiguous"]
+        reset_commit_started()
+
+    @pytest.mark.asyncio
     @pytest.mark.parametrize("broken", ["logger", "span"])
     async def test_a_failing_record_never_replaces_the_cancellation(
         self, ctx: ExecutionContext, monkeypatch: pytest.MonkeyPatch, broken: str

@@ -251,11 +251,8 @@ def _record_commit_ambiguous(op: StrKey) -> None:
     or tracer.
     """
 
-    try:
-        # Lazy: the cancellation path is cold, and importing this module must not pull in
-        # ``opentelemetry`` (see ``observability``).
-        from opentelemetry import trace
-
+    # Two records, each on its own: a broken log must not cost the span event, nor the reverse.
+    with suppress(Exception):
         logger.warning(
             "Operation %r was cancelled at or after its transaction commit; the commit may "
             "have landed. Reconcile before re-running.",
@@ -263,6 +260,12 @@ def _record_commit_ambiguous(op: StrKey) -> None:
             code=COMMIT_AMBIGUOUS_CODE,
             operation=str(op),
         )
+
+    try:
+        # Lazy: the cancellation path is cold, and importing this module must not pull in
+        # ``opentelemetry`` (see ``observability``).
+        from opentelemetry import trace
+
         trace.get_current_span().add_event("forze.commit_ambiguous", {"forze.operation": str(op)})
 
     except Exception:

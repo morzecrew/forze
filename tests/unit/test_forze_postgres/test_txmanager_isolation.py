@@ -190,6 +190,18 @@ async def test_a_detached_scope_clears_the_claim_even_from_a_nested_scope() -> N
         assert adapter.read_only_enforced() is False
 
 
+async def test_a_bypass_in_a_nested_read_only_root_clears_the_outer_claim() -> None:
+    outer, _ = _adapter()
+    inner, _ = _adapter()
+
+    async with outer.transaction(read_only=True):
+        async with inner.transaction(read_only=True):  # another client's own root
+            async with PostgresClient().detached():
+                pass
+
+        assert outer.read_only_enforced() is False
+
+
 def test_a_record_finalized_in_another_context_is_dropped_there() -> None:
     # An abandoned generator can be finalized outside the context that entered the record.
     entered = contextvars.copy_context()

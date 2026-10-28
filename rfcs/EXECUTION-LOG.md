@@ -2845,7 +2845,7 @@ transaction scope on every surface (§5.8 P2 note). The open window was only a c
 the scope had exited: in an outer hook, a dispatched operation, or after a nested operation's
 root transaction committed.
 
-## D-095 — Every boundary records a late cancel; only the CLI converts it
+## D-095 — Every boundary records a late cancel; only the CLI and the saga executors convert it
 
 - **Touches:** RFC 0077 §5.6 (last paragraph), §12 P3, decision 10.
 - **RFC said:** reading the flag at the CLI boundary "keeps the CLI correct without changing
@@ -2950,9 +2950,10 @@ root transaction committed.
 - **Consequence:** implemented, fail-closed, as a question about the transaction actually
   opened. A new opt-in protocol, `ReadOnlyAware`, has one method, `read_only_enforced()`
   (`src/forze/application/contracts/transaction/ports.py:217`). The scope asks it just
-  before the commit and skips the mark only when three things hold (`transaction.py:463`):
+  before the commit and skips the mark only when four things hold (`transaction.py:463`):
   - the root is read-only;
-  - it is the only route entered;
+  - it is the only route a finished nested scope entered;
+  - no after-commit callback is queued;
   - the answer is exactly `True`.
 
   Skipping the mark also skips the commit-time `commit_ambiguous` conversion. The answers:
@@ -3034,9 +3035,9 @@ root transaction committed.
 
 ## Review findings — 2026-10-28
 
-PR #693. Three findings from CodeRabbit and CodeAnt, all fixed, plus the Codecov patch check.
-R-1 and R-2 add conditions to D-097's proposed row, amended in place; its consequence stays
-as written.
+PR #693. Three findings from CodeRabbit and CodeAnt, all fixed, plus the Codecov patch check,
+then four more from CodeRabbit's second pass (R-5 to R-8), all fixed. R-1 and R-3 add
+conditions to D-097's summary and proposed row, both amended in place.
 
 | # | Severity | Finding | Status |
 |---|---|---|---|
@@ -3044,5 +3045,9 @@ as written.
 | R-2 | Medium | `bound_connection()` on another client never cleared the read-only record, though the pool commits the connection's statements when it goes back (CodeRabbit) | Fixed — it clears the record before checking out the connection |
 | R-3 | Low | A nested scope on another route was recorded on entry, so one whose body failed and rolled back still cost the root its skip when the root's body caught the error (CodeAnt) | Fixed — the route is recorded once the nested body succeeds, before its commit, so a torn commit still counts |
 | R-4 | — | Patch coverage: the record's fallback for a generator finalized in another context, and a `None` branch for the route set that a nested scope never takes (Codecov) | A unit test covers the fallback; the branch is gone, since the root sets the route set with the depth |
+| R-5 | Medium | A read-only root opened directly on a second Postgres manager, inside the first, replaced the first's record. A `detached()` write inside it cleared only the inner record, so the outer root still answered `True` (CodeRabbit) | Fixed — the record holds one box per open root, and a bypass clears all of them |
+| R-6 | Low | Before `configure_logging`, the fallback renderer did not merge the bound context, so the `commit_ambiguous` warning, and every other, lost the invocation's ids (CodeRabbit) | Fixed — the fallback chain merges it after the level filter, as the configured chain does |
+| R-7 | Low | A logger that raised skipped the span event too (CodeRabbit, unverified) | Fixed — the two records are attempted separately |
+| R-8 | Low | D-095's heading named only the CLI as converting, though the saga executors convert too; D-097's summary listed three conditions where the row has four (CodeRabbit) | Fixed in place |
 
 Each fix was checked against its own removal.

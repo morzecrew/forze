@@ -652,6 +652,21 @@ def test_unconfigured_logging_goes_through_the_applications_stdlib_handlers(
     assert "\x1b[" not in message
 
 
+def test_unconfigured_logging_carries_the_bound_context(
+    stdlib_records: tuple[logging.Logger, list[logging.LogRecord]],
+) -> None:
+    """Ids bound for the invocation reach the record, as the configured chain merges them."""
+
+    _, records = stdlib_records
+
+    with bound_contextvars(execution_id="exec-7chr"):
+        Logger("forze.test").warning("late cancel")
+
+    (record,) = records
+
+    assert "execution_id=exec-7chr" in record.getMessage()
+
+
 def test_unconfigured_logging_scrubs_the_traceback(
     stdlib_records: tuple[logging.Logger, list[logging.LogRecord]],
 ) -> None:

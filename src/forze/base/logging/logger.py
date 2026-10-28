@@ -7,6 +7,7 @@ from typing import Any, Final, Self, cast, final
 import attrs
 from structlog import get_logger as _structlog_get_logger
 from structlog import is_configured, make_filtering_bound_logger, wrap_logger
+from structlog.contextvars import merge_contextvars
 from structlog.dev import ConsoleRenderer, plain_traceback
 from structlog.stdlib import filter_by_level
 from structlog.typing import ExcInfo, FilteringBoundLogger, Processor
@@ -81,6 +82,8 @@ def _scrub_rendered(_: Any, __: str, rendered: Any) -> Any:
 
 _UNCONFIGURED_PROCESSORS: Final[list[Processor]] = [
     filter_by_level,
+    # The invocation's ids, as the configured chain merges them.
+    merge_contextvars,
     EventDictSanitizer(),
     ConsoleRenderer(colors=False, exception_formatter=plain_traceback),
     _scrub_rendered,
