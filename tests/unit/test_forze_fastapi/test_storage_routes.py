@@ -1167,7 +1167,7 @@ class TestStreamingHeaderHelpers:
     async def _chunks():
         yield b"payload"
 
-    def test_full_stream_response_encrypted_omits_length_and_validators(self) -> None:
+    def test_streamed_download_response_encrypted_omits_length_and_validators(self) -> None:
         from forze.application.contracts.storage import StreamedDownload
         from forze_fastapi.routes import storage as mod
 

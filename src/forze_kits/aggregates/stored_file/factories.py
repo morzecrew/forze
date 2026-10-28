@@ -155,6 +155,9 @@ def build_stored_file_registry(
                         "Mint a time-limited URL granting direct download (GET) of a ready "
                         "stored file. The returned URL is a bearer credential — never logged."
                     ),
+                    # The result is a bearer credential: generated surfaces (MCP, agent tools,
+                    # generated routes, `forze ops`) refuse it; serve it from your own route.
+                    sensitive=True,
                 ),
             )
             .as_query()

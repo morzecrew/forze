@@ -38,6 +38,7 @@ from forze_kits.domain.stored_file import (
     StoredFileStatus,
     StoredFileUpdateCmd,
 )
+from forze_kits.integrations.agent_tools import operation_tools
 from forze_mock import MockDepsModule, MockRouteConfig, MockState
 
 # ----------------------- #
@@ -292,6 +293,29 @@ class TestDirectDownloadTenancy:
 
         assert state.storage_presigns == []
 
+    async def test_a_row_naming_another_tenants_key_streams_nothing(
+        self, ctx: ExecutionContext
+    ) -> None:
+        with ctx.inv_ctx.bind_identity(tenant=TenantIdentity(tenant_id=uuid4())):
+            theirs = await _ready(ctx, data=b"tenant-a-only")
+
+        with ctx.inv_ctx.bind_identity(tenant=TenantIdentity(tenant_id=uuid4())):
+            # A row of this tenant pointing at the other tenant's object, as a corrupted or
+            # forged row would: the read stays inside this tenant's container.
+            pending = await _not_ready(ctx, StoredFileStatus.PENDING)
+            forged = await ctx.doc.command(_KIT.document).update(
+                pk=pending.id,
+                rev=pending.rev,
+                dto=StoredFileUpdateCmd(
+                    storage_key=theirs.storage_key, status=StoredFileStatus.READY
+                ),
+            )
+
+            with pytest.raises(CoreException) as ei:
+                await run_operation(_REG, _STREAM, StoredFileIdDTO(id=forged.id), ctx)
+
+        assert ei.value.kind is ExceptionKind.NOT_FOUND
+
     async def test_the_url_is_scoped_to_the_owning_tenant(
         self, ctx: ExecutionContext, state: MockState
     ) -> None:
@@ -341,6 +365,62 @@ class TestDirectDownloadGuards:
 
         assert ei.value.kind is ExceptionKind.AUTHENTICATION
         assert state.storage_presigns == []
+
+
+# ....................... #
+
+
+class TestPresignExposure:
+    """A presigned URL is a bearer credential, so generated surfaces refuse the operation."""
+
+    def test_the_presign_descriptor_is_sensitive_and_the_stream_is_not(self) -> None:
+        catalog = _REG.catalog()
+
+        assert catalog[_PRESIGN].descriptor.sensitive is True
+        assert catalog[_STREAM].descriptor.sensitive is False
+
+    def test_mcp_refuses_a_registry_exposing_presign_by_default(self) -> None:
+        fastmcp = pytest.importorskip("fastmcp")
+        from forze_mcp.registration import register_tools
+
+        with pytest.raises(CoreException, match="sensitive") as ei:
+            register_tools(fastmcp.FastMCP("files"), _REG, lambda: None)
+
+        assert ei.value.kind is ExceptionKind.CONFIGURATION
+
+    def test_mcp_refuses_presign_named_in_an_allowlist(self) -> None:
+        fastmcp = pytest.importorskip("fastmcp")
+        from forze_mcp.registration import register_tools
+
+        with pytest.raises(CoreException, match="sensitive"):
+            register_tools(fastmcp.FastMCP("files"), _REG, lambda: None, operations=[_PRESIGN])
+
+    def test_an_mcp_allowlist_without_presign_registers(self) -> None:
+        fastmcp = pytest.importorskip("fastmcp")
+        from forze_mcp.registration import register_tools
+
+        names = register_tools(
+            fastmcp.FastMCP("files"),
+            _REG,
+            lambda: None,
+            operations=[_KEY(StoredFileKernelOp.GET), _STREAM],
+        )
+
+        assert _PRESIGN not in names
+        assert len(names) == 2
+
+    def test_agent_tools_refuse_presign(self) -> None:
+        with pytest.raises(CoreException) as ei:
+            operation_tools(_REG, include=[_KEY(StoredFileKernelOp.GET), _PRESIGN])
+
+        assert ei.value.code == "agent_tools_sensitive_operation"
+
+    def test_agent_tools_without_presign_build(self) -> None:
+        toolset = operation_tools(_REG, include=[_KEY(StoredFileKernelOp.GET)])
+
+        assert [str(entry.op) for entry in toolset.bindings.values()] == [
+            _KEY(StoredFileKernelOp.GET)
+        ]
 
 
 # ....................... #

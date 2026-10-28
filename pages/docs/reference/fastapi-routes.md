@@ -361,9 +361,23 @@ async def file_content(file_id: UUID, ctx=Depends(ctx_dep)):
 ```
 
 `presign_download` follows the storage kit's presign rules: the URL is a bearer
-credential, the storage key's tenant check applies, and a client-side-encrypting
-route refuses it. The URL saves under the object key's name, so the client takes
-the filename from `file.filename`.
+credential and the storage key's tenant check applies. The URL saves under the
+object key's name, so the client takes the filename from `file.filename`.
+
+Because its result is a credential, `presign_download` is marked sensitive.
+MCP tools, agent tools, generated routes and `forze ops` refuse it, so serve it
+from a hand-written route like the one above. An MCP server over a registry that
+enables it needs an `operations=` allowlist that leaves it out, because the
+default exposes every read-only operation and the refusal covers the whole
+registration. `download_stream` is not marked: it returns the same bytes as
+`download`, not a credential.
+
+!!! note "Known limit: encrypting routes refuse per request"
+
+    A client-side-encrypting storage route refuses `presign_download`, but only
+    when it is called. The storage adapter refuses before anything is signed. The
+    kit spec doesn't know a route's encryption config, so setting
+    `presign_downloads=True` for such a route can't fail at build time.
 
 ## Authn routes
 

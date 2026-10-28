@@ -75,7 +75,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Stored files stream and presign downloads.** The kit's `download_stream` and `presign_download` operations load the row and refuse a file that is not ready, as `download` does; bind authn and authz on them too. A hand-written route returns `forze_fastapi.routes.streamed_download_response(result.stream)`.
 
-- **Stored files can stream and presign downloads, opt-in.** `StoredFileKitSpec(stream_downloads=True, presign_downloads=True)` registers `download_stream` and `presign_download`; guard each like `download`. A hand-written route returns `forze_fastapi.routes.streamed_download_response(result.stream)`.
+- **Stored files can stream and presign downloads, opt-in.** `StoredFileKitSpec(stream_downloads=True, presign_downloads=True)` registers `download_stream` and `presign_download`; guard each like `download`. Generated surfaces refuse the sensitive `presign_download`. A route streams with `streamed_download_response`.
 
 **`forze ops` for people at a shell and for backfills:**
 
