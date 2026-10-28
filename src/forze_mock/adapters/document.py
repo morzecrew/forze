@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import AsyncGenerator, Callable, Mapping, Sequence
+from collections.abc import AsyncGenerator, Awaitable, Callable, Mapping, Sequence
 from typing import (
     Any,
     ClassVar,
@@ -398,6 +398,28 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
         self._mark_row_locked(pk)
 
         return False
+
+    # ....................... #
+
+    async def _first_hit[H](
+        self,
+        read: Callable[[], Awaitable[CountlessPage[H]]],
+        for_update: RowLockMode,
+    ) -> H | None:
+        """The first hit *read* returns, locked first when *for_update*.
+
+        A wait for another holder ends in a fresh read, as read committed re-evaluates a locked
+        row whose holder changed it. A loop rather than a retry by recursion, since a contended
+        filter can make a read wait many times over.
+        """
+
+        while (page := await read()).hits:
+            hit = page.hits[0]
+
+            if not for_update or not await self._lock_hit(hit):
+                return hit
+
+        return None
 
     # ....................... #
 
@@ -802,22 +824,9 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
         *,
         for_update: RowLockMode = False,
     ) -> R | None:
-        page = await self.find_many(
-            filters=filters,
-            pagination={"limit": 1},
+        return await self._first_hit(
+            lambda: self.find_many(filters=filters, pagination={"limit": 1}), for_update
         )
-
-        if not page.hits:
-            return None
-
-        hit = page.hits[0]
-
-        if for_update and await self._lock_hit(hit):
-            # Waited out a holder: read again against what it committed, as read committed
-            # re-evaluates a locked row whose holder changed it.
-            return await self.find(filters, for_update=for_update)
-
-        return hit
 
     # ....................... #
 
@@ -828,21 +837,10 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
         *,
         for_update: RowLockMode = False,
     ) -> JsonDict | None:
-        page = await self.project_many(
-            tuple(fields),
-            filters=filters,
-            pagination={"limit": 1},
+        return await self._first_hit(
+            lambda: self.project_many(tuple(fields), filters=filters, pagination={"limit": 1}),
+            for_update,
         )
-
-        if not page.hits:
-            return None
-
-        hit = page.hits[0]
-
-        if for_update and await self._lock_hit(hit):
-            return await self.project(filters, fields, for_update=for_update)
-
-        return hit
 
     # ....................... #
 
@@ -853,21 +851,10 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
         *,
         for_update: RowLockMode = False,
     ) -> T | None:
-        page = await self.select_many(
-            return_type,
-            filters=filters,
-            pagination={"limit": 1},
+        return await self._first_hit(
+            lambda: self.select_many(return_type, filters=filters, pagination={"limit": 1}),
+            for_update,
         )
-
-        if not page.hits:
-            return None
-
-        hit = page.hits[0]
-
-        if for_update and await self._lock_hit(hit):
-            return await self.select(filters, return_type, for_update=for_update)
-
-        return hit
 
     # ....................... #
 

@@ -10,11 +10,14 @@ the mock blocks; the fallback leg runs on a plain loop and must behave like clai
 from __future__ import annotations
 
 import asyncio
+import inspect
+import sys
 from collections.abc import Awaitable, Callable
 from typing import Any, Literal
 from uuid import UUID
 
 import pytest
+from pydantic import BaseModel
 
 from forze.application.contracts.document import DocumentSpec, DocumentWriteTypes
 from forze.application.contracts.guarantees import SerializedBy
@@ -299,6 +302,116 @@ class TestWhoWaits:
         log, _ = _race("block", _claim_statement_write)
 
         assert log == ["holder:locked", "contender:wrote", "holder:committed"]
+
+
+# ....................... #
+
+
+class _IdValue(BaseModel):
+    id: UUID
+    value: int
+
+
+def _by_id(pk: UUID) -> dict[str, Any]:
+    return {"$values": {"id": {"$eq": pk}}}
+
+
+async def _locked_value(ctx: Any, pk: UUID, reader: str) -> int:
+    """The row's value through *reader*'s ``for_update`` form."""
+
+    query = ctx.doc.query(SPEC)
+
+    if reader == "get":
+        return (await query.get(pk, for_update=True)).value
+
+    if reader == "find":
+        row = await query.find(_by_id(pk), for_update=True)
+
+    elif reader == "project":
+        return (await query.project(_by_id(pk), ["id", "value"], for_update=True))["value"]
+
+    else:
+        row = await query.select(_by_id(pk), _IdValue, for_update=True)
+
+    return row.value
+
+
+def _reading(reader: str) -> Callable[[MockDepsModule, UUID, list[str]], Awaitable[None]]:
+    """A contender that locks the row through *reader* in a transaction of its own."""
+
+    async def contender(module: MockDepsModule, pk: UUID, log: list[str]) -> None:
+        ctx = context_from_modules(module)
+
+        try:
+            async with ctx.tx_ctx.scope("mock"):
+                log.append(f"contender:read {await _locked_value(ctx, pk, reader)}")
+
+        except CoreException as error:
+            log.append(f"contender:{error.code}")
+
+    return contender
+
+
+READERS = ["get", "find", "project", "select"]
+
+
+class TestLockingReadsReread:
+    @pytest.mark.parametrize("reader", READERS)
+    def test_read_committed_waits_then_reads_the_commit(self, reader: str) -> None:
+        log, _ = _race("block", _reading(reader))
+
+        assert log == ["holder:locked", "holder:committed", "contender:read 1"]
+
+
+# ....................... #
+
+
+class TestRetriesDoNotNest:
+    def test_many_successive_waits_keep_the_stack_flat(self) -> None:
+        # Each holder changes the row the finder is parked on, so every wait ends in a re-read
+        # that finds the next row, held by the next holder. The finder runs under a recursion
+        # limit far below the number of waits: a retry that nests per wait cannot finish.
+        n = 300
+        out: dict[str, Any] = {}
+
+        async def scenario() -> None:
+            module = MockDepsModule(state=MockState(), row_locks="block")
+            await _seed(module, n)
+            unbumped = {"$values": {"value": {"$eq": 0}}}
+            page = (
+                await context_from_modules(module)
+                .doc.query(SPEC)
+                .find_many(filters=unbumped, pagination={"limit": n})
+            )
+
+            async def holder(at: int, pk: UUID) -> None:
+                ctx = context_from_modules(module)
+
+                async with ctx.tx_ctx.scope("mock"):
+                    row = await ctx.doc.query(SPEC).get(pk, for_update=True)
+                    await asyncio.sleep(at)
+                    await ctx.doc.command(SPEC).update(pk, row.rev, _AccountUpdate(value=1))
+
+            async def finder() -> None:
+                await asyncio.sleep(0.5)
+                ctx = context_from_modules(module)
+                limit = sys.getrecursionlimit()
+                sys.setrecursionlimit(len(inspect.stack(0)) + 100)
+
+                try:
+                    async with ctx.tx_ctx.scope("mock"):
+                        out["found"] = await ctx.doc.query(SPEC).find(unbumped, for_update=True)
+
+                finally:
+                    sys.setrecursionlimit(limit)
+
+            await asyncio.gather(
+                finder(), *(holder(at, hit.id) for at, hit in enumerate(page.hits, start=1))
+            )
+
+        run_simulation(scenario, seed=0)
+
+        assert out["found"] is None
 
 
 # ....................... #
