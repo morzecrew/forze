@@ -32,6 +32,11 @@ it commits.
 You author these on the registry's scope binders — `bind_outer()` for the outer
 scope, `bind_tx().set_route(...)` for the transactional one — then `freeze()`.
 
+A `wrap` may pass narrowed arguments on, as a document-scope authorization wrap
+does. Everything inside it then sees what it passes on: `prepare`, the
+transactional stages and the handler. Stages outside it see the arguments the
+operation was called with.
+
 ## The handler owns the result
 
 One principle keeps the pipeline honest: **the handler defines the result;
