@@ -6947,7 +6947,9 @@ tables bare or as <code>lake."gold.sub".&lt;table&gt;</code>.</p>
   catalog, the IdP and the store. An <code>s3://</code> path inside the tenant's prefix
   with no vended secret behind it goes, unsigned, to the public AWS endpoint.</li>
 <li><strong>Keep <code>sts-token-validity-seconds</code> well above the longest statement.</strong>
-  The engine does not re-vend a credential that expires mid-statement.</li>
+  The engine does not re-vend a credential that expires mid-statement: the
+  statement fails with an HTTP 400 from the store. A statement that starts
+  after expiry loads the table again and gets a fresh credential.</li>
 </ul>
 <h2 id="what-it-provides">What it provides<a class="headerlink" href="#what-it-provides" title="Permanent link">&para;</a></h2>
 <table>
