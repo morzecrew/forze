@@ -85,6 +85,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **A Postgres update with a changed `jsonb` field no longer answers `500` on the generated update route** (**behaviour change**). Its diff holds the values the caller set, as on the other backends: no `Jsonb` wrapper, a `StrEnum` stays a member and a datetime is as given, not coerced to the column type.
 
+- **A Postgres document field stored in a native `jsonb[]` or `json[]` column can be written.** Create, update and upsert, single and batch, failed with `cannot adapt type 'dict'`; each element is now sent as JSON, a `None` one as SQL `NULL`, and reads back as written.
+
 ### Security
 
 - **A realtime connection needs a tenant once tenancy is wired** (**behaviour change**). Socket.IO, WebSocket and SSE refuse one without a tenant (`tenant_required`), and Socket.IO an anonymous one, instead of admitting it to the untenanted rooms. Socket.IO checks this at the connect when given the new `ctx_dep`.
