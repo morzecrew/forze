@@ -817,7 +817,7 @@ answer took the recorded lean.
   - typed flags for flat scalar DTOs (landed 2026-10-27, §5.8 "As built (P3)");
   - JSONL batch in one scope (landed 2026-10-27);
   - shell completion of operation names (landed 2026-10-27);
-  - the surface field (its own RFC);
+  - the surface field (its own RFC): [RFC 0079](0079-invocation-surface.md);
   - moving FastAPI, Socket.IO and the WS route onto `ingress`. FastAPI and the WS route
     moved where a step agrees (§5.7, "As built (P3)"). Socket.IO mints its metadata, and its
     bind-and-run waits for a registry-backed adapter;

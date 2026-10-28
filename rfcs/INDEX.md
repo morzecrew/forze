@@ -7,7 +7,7 @@ work.
 
 ## Allocating a number
 
-The next free number is **0079**. Before creating an RFC, glance at the table below
+The next free number is **0080**. Before creating an RFC, glance at the table below
 (or `ls rfcs/`) and take the next unused integer — numbers collide when minted in
 parallel. Update this table in the same change.
 
@@ -98,6 +98,7 @@ only in the code, which is the failure this log exists to prevent.
 | [0076](0076-connection-rebalancing-step.md) | Connection rebalancing step | ✅ Complete | A socket.io step that sheds movable connections from a replica well above the fleet's mean once the fleet has settled. |
 | [0077](0077-operation-cli.md) | Operation CLI: governed operations from the command line | ✅ Complete | A `forze ops` group that invokes registry operations in process through `run_operation`, with a verified identity, a stable exit-code contract, and the boundary code each surface copies lifted into core first, with MCP moved onto it. |
 | [0078](0078-routed-duckdb-lake-reads.md) | Routed DuckDB lake reads: per-tenant client, vended credentials, governed dynamic read | 📝 Draft | One in-memory DuckDB instance per tenant behind the shared routed-client pool, a locked-down Lakekeeper REST-catalog `ATTACH` with vended credentials, and a trusted-only DuckDB `DynamicReadPort` adapter, so a `compiled` dynamic read runs on the lake at the `dedicated` tier. |
+| [0079](0079-invocation-surface.md) | Invocation surface: naming the boundary an invocation entered through | 📝 Draft | A field on invocation metadata naming the boundary an invocation entered through (HTTP, MCP, the CLI, a durable run), set only by that boundary, recorded in logs and spans, and in audit rows in P2. |
 
 ## Status legend
 
