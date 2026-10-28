@@ -357,6 +357,11 @@ def _advisory_bytes(part: object) -> bytes:
 def advisory_lock_key(*parts: object) -> int:
     """A stable 64-bit lock key for *parts*, equal in every process and every release.
 
+    One exception across releases: a datetime keys on its UTC instant, where earlier releases
+    kept its own offset, so a naive or non-UTC datetime key changed. A rolling deployment that
+    crosses that change must drain the writers of such keys first, or old and new nodes will
+    not contend.
+
     A digest rather than :func:`hash`, which is salted per interpreter: two workers deriving a
     key for the same owner would take *different* keys and serialize against nobody, which is
     the one deployment such a lock exists for. Salting is invisible inside a single process, so
