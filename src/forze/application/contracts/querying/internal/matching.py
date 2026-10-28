@@ -64,10 +64,22 @@ def _value_is_empty(value: Any) -> bool:
 def _coerce_set(value: Any) -> set[Any]:
     items = value if isinstance(value, (list, tuple, set, frozenset)) else (value,)
 
-    return {
-        instant_key(_plain(item))
-        for item in items  # pyright: ignore[reportUnknownVariableType]
-    }
+    return {_set_key(item) for item in items}  # pyright: ignore[reportUnknownVariableType]
+
+
+def _set_key(item: Any) -> Any:
+    """*item* as a set member: an ``Enum`` member as its value, or as itself when the value
+    cannot be hashed (a list)."""
+
+    plain = _plain(item)
+
+    try:
+        hash(plain)
+
+    except TypeError:
+        plain = item
+
+    return instant_key(plain)
 
 
 _EPOCH: Final = datetime(1970, 1, 1, tzinfo=UTC)
@@ -113,10 +125,8 @@ def _pair(left: Any, right: Any) -> tuple[Any, Any]:
     """*left* and *right* as instants when both are aware datetimes; otherwise as they are.
 
     Both or neither: a lone distance would compare cleanly against a ``timedelta`` operand,
-    which a store refuses. An ``Enum`` member compares as its value.
+    which a store refuses.
     """
-
-    left, right = _plain(left), _plain(right)
 
     if _is_aware(left) and _is_aware(right):
         return left - _EPOCH, right - _EPOCH
@@ -125,10 +135,12 @@ def _pair(left: Any, right: Any) -> tuple[Any, Any]:
 
 
 def _ordered(compare: Callable[[Any, Any], bool], left: Any, right: Any) -> bool:
-    return compare(*_pair(left, right))
+    return compare(*_pair(_plain(left), _plain(right)))
 
 
 def _eq(left: Any, right: Any) -> bool:
+    left, right = _plain(left), _plain(right)
+
     if operator.eq(*_pair(left, right)):
         return True
 

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from decimal import Decimal
+from enum import Enum, IntEnum
 from uuid import UUID, uuid4
 
 import pytest
@@ -79,6 +80,44 @@ async def test_append_and_query(clickhouse_client, analytics_table) -> None:
     page = await adapter.run_page("all", _Params())
     assert page.count >= 1
     assert any(hit.event == "signup" and hit.value == 42 for hit in page.hits)
+
+
+class _Event(Enum):
+    SIGNUP = "signup"
+
+
+class _Value(IntEnum):
+    ONE = 1
+
+
+class _EnumRow(BaseModel):
+    event: _Event
+    value: _Value
+
+
+@pytest.mark.asyncio
+async def test_append_stores_an_enum_member_as_its_value(
+    clickhouse_client,
+    analytics_table,
+) -> None:
+    """clickhouse-connect refuses a plain member in a ``String`` column."""
+
+    database_id, table_id = analytics_table
+    adapter = ClickHouseAnalyticsAdapter(
+        client=clickhouse_client,
+        spec=AnalyticsSpec(
+            name="events",
+            read=_Row,
+            queries={"all": AnalyticsQueryDefinition(params=_Params)},
+            ingest=_EnumRow,
+        ),
+        config=_config(database_id, table_id),
+    )
+
+    await adapter.append([_EnumRow(event=_Event.SIGNUP, value=_Value.ONE)])
+
+    page = await adapter.run_page("all", _Params())
+    assert [(hit.event, hit.value) for hit in page.hits] == [("signup", 1)]
 
 
 @pytest.mark.asyncio

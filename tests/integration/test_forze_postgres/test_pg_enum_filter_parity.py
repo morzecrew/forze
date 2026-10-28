@@ -1,6 +1,8 @@
 """Postgres matches a filter on a plain ``Enum`` field by its value, as the mock does.
 
-The mock twin is ``tests/unit/test_forze_mock/test_mock_enum_filter_parity.py``.
+The rows are seeded with raw SQL, as data written outside forze would be; the write path is
+covered by the plain-Enum cases of the DSL corpus (``tests/support/query_dsl_corpus.py``). The
+mock twin is ``tests/unit/test_forze_mock/test_mock_enum_filter_parity.py``.
 """
 
 from __future__ import annotations
@@ -41,7 +43,7 @@ async def test_enum_filters_match_on_postgres(pg_client: PostgresClient) -> None
         """
     )
 
-    # The rows go in as SQL, holding each value as the column stores it.
+    # Each row holds its values as the columns store them.
     ids = {key: uuid4() for key in ROWS}
 
     for key, row in ROWS.items():

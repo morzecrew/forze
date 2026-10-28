@@ -683,11 +683,14 @@ class TestMongoKillNotFound:
 class _Plain(Enum):
     OPEN = "open"
 
+
 class _Text(StrEnum):
     OPEN = "open"
 
+
 class _Number(IntEnum):
     ONE = 1
+
 
 def test_an_enum_member_is_stored_as_its_value() -> None:
     """A plain member, which BSON cannot encode, as its value; a StrEnum or IntEnum member as

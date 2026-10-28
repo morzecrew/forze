@@ -120,14 +120,22 @@ def test_adapt_value_for_write_refuses_a_json_array_value_that_is_not_a_list(val
                 value, t=PostgresType(base=base, is_array=True, not_null=False)
             )
 
+
 class _Plain(Enum):
     OPEN = "open"
+
 
 class _Text(StrEnum):
     OPEN = "open"
 
+
 class _Number(IntEnum):
     ONE = 1
+
+
+class _Mixed(str, Enum):
+    OPEN = "open"
+
 
 def test_adapt_value_for_write_stores_an_enum_member_as_its_value() -> None:
     gw, _ = _build_gateway()
@@ -145,6 +153,17 @@ def test_adapt_value_for_write_stores_an_enum_member_as_its_value() -> None:
     assert gw.adapt_value_for_write(
         _Number.ONE, t=PostgresType(base="int8", is_array=False, not_null=True)
     ) == 1
+    # A (str, Enum) member that is no StrEnum changes: str() wrote "_Mixed.OPEN", unreadable.
+    assert str(_Mixed.OPEN) == "_Mixed.OPEN"
+    assert gw.adapt_value_for_write(_Mixed.OPEN, t=text) == "open"
+
+
+def test_adapt_value_for_write_keeps_a_sequence_holding_no_enum_member() -> None:
+    gw, _ = _build_gateway()
+    text = PostgresType(base="text", is_array=False, not_null=True)
+
+    assert gw.adapt_value_for_write(("a", 1), t=text) == str(("a", 1))
+
 
 def test_json_write_dumps_stores_decimal_exact_and_rejects_unknown_types() -> None:
     """The jsonb write encoder stores a Decimal as its exact string form; anything

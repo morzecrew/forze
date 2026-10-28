@@ -8,7 +8,6 @@ require_psycopg()
 
 from collections.abc import Mapping, Sequence
 from decimal import Decimal
-from enum import Enum
 from typing import Any, final
 from uuid import UUID
 
@@ -34,7 +33,7 @@ from forze.application.integrations.persistence import (
 )
 from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict, OnceCell, projection_roots
-from forze.base.serialization import ModelCodec, default_model_codec
+from forze.base.serialization import ModelCodec, default_model_codec, enum_values
 from forze.domain.constants import ID_FIELD
 from forze_postgres.kernel.catalog.introspect import (
     PostgresColumnTypes,
@@ -73,26 +72,6 @@ def _json_write_default(obj: Any) -> Any:
 
 def _json_write_dumps(v: Any) -> bytes:
     return orjson.dumps(v, default=_json_write_default)
-
-
-def _enum_values(v: Any) -> Any:
-    """*v* with an ``Enum`` member, or each one in a list, as its value.
-
-    The read model decodes the value back to the member. ``str()`` names a plain member
-    (``Status.OPEN``) and psycopg dumps its bare name, which no read decodes; a ``StrEnum``
-    or ``IntEnum`` member's value is the same text or number it was written as.
-    """
-
-    if isinstance(v, Enum):
-        return v.value
-
-    if isinstance(v, (list, tuple)):
-        return [
-            x.value if isinstance(x, Enum) else x
-            for x in v  # pyright: ignore[reportUnknownVariableType]
-        ]
-
-    return v
 
 
 # ....................... #
@@ -472,7 +451,9 @@ class PostgresGateway[M: BaseModel](
         if v is None:
             return None
 
-        v = _enum_values(v)
+        # A member as its value, which the read model decodes: ``str()`` names a plain member
+        # (``Status.OPEN``), and psycopg dumps its bare name.
+        v = enum_values(v)
 
         # Before the array branch: a ``jsonb[]`` / ``json[]`` element needs its wrapper too.
         if t.base in {"jsonb", "json"}:
