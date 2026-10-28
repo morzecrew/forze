@@ -213,6 +213,16 @@ class TestFallback:
 
 
 class TestRegistration:
+    def test_a_second_resolver_for_one_query_is_refused(self) -> None:
+        registry = MockAnalyticsRegistry().on(TOTALS, "by_customer", _totals)
+
+        with pytest.raises(CoreException) as caught:
+            registry.on(TOTALS, "by_customer", lambda view, params: [])
+
+        assert caught.value.kind is ExceptionKind.CONFIGURATION
+        assert caught.value.code == "mock.analytics.duplicate_resolver"
+        assert registry.resolver_for("order_totals", "by_customer") is _totals
+
     def test_an_unknown_query_key_is_refused(self) -> None:
         with pytest.raises(CoreException) as caught:
             MockAnalyticsRegistry().on(TOTALS, "by_custmer", _totals)
@@ -324,6 +334,31 @@ class TestTenancy:
 
         with ctx.inv_ctx.bind_identity(tenant=second):
             await _order(ctx, "bob", 3)
+            assert await _totals_of(ctx) == {"bob": 3}
+
+        with pytest.raises(CoreException) as caught:
+            await _totals_of(ctx)
+
+        assert caught.value.code == "tenant_required"
+
+    async def test_a_tenant_aware_analytics_route_sees_only_its_tenant_s_rows(self) -> None:
+        # One unpartitioned namespace holding two tenants' rows (and one with no owner): the
+        # analytics route's tenancy must not lean on the document side being partitioned.
+        first, second = uuid4(), uuid4()
+        state = MockState()
+        state.documents["orders"] = {
+            uuid4(): {"customer": "ada", "amount": 10, "tenant_id": str(first)},
+            uuid4(): {"customer": "bob", "amount": 3, "tenant_id": str(second)},
+            uuid4(): {"customer": "nobody", "amount": 1},
+        }
+        ctx = context_from_modules(
+            _module(state=state, routes={"order_totals": MockRouteConfig(tenant_aware=True)})
+        )
+
+        with ctx.inv_ctx.bind_identity(tenant=TenantIdentity(tenant_id=first)):
+            assert await _totals_of(ctx) == {"ada": 10}
+
+        with ctx.inv_ctx.bind_identity(tenant=TenantIdentity(tenant_id=second)):
             assert await _totals_of(ctx) == {"bob": 3}
 
         with pytest.raises(CoreException) as caught:

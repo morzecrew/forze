@@ -18,7 +18,7 @@ from __future__ import annotations
 from collections.abc import Callable, Sequence
 from typing import Any
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 from forze.application.contracts.analytics import AnalyticsSpec
 from forze.application.execution import ExecutionContext
@@ -59,8 +59,13 @@ def query_invariant(
         holds. A query that lists violations takes ``lambda rows: not rows``.
     :param params: Params for the run; defaults to the query's params model built with no
         arguments.
-    :param name: The invariant's name; defaults to ``"<spec>.<query_key>"``.
-    :raises exc.configuration: when *spec* declares no query named *query_key*.
+    :param name: The invariant's name; defaults to ``"<spec>.<query_key>"``. Give each
+        oracle a distinct one: its invariant reads every recorded outcome under its name, so
+        two oracles sharing a name each report the other's failures too. Names meet only where
+        you combine the invariants into a simulation, which rejects duplicates when invariant
+        accounting is on and cannot otherwise tell them apart.
+    :raises exc.configuration: when *spec* declares no query named *query_key*, or *params*
+        is omitted and the query's params model has required fields.
     """
 
     if query_key not in spec.queries:
@@ -69,7 +74,18 @@ def query_invariant(
             code="unknown_analytics_query",
         )
 
-    bound = params if params is not None else spec.queries[query_key].params()
+    if params is None:
+        try:
+            params = spec.queries[query_key].params()
+
+        except ValidationError as error:
+            raise exc.configuration(
+                f"query_invariant: query {str(spec.name)!r}/{query_key!r} has required params; "
+                "pass params=.",
+                code="query_invariant_params_required",
+            ) from error
+
+    bound = params
     law = name or f"{spec.name}.{query_key}"
 
     async def observe(ctx: ExecutionContext) -> None:

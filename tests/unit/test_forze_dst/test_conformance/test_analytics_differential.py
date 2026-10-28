@@ -128,3 +128,42 @@ async def test_an_ordered_comparison_reports_a_missing_tail() -> None:
     assert [difference.render() for difference in comparison.differences] == [
         'row 0: only on real: {"customer": "ada", "total": 1}',
     ]
+
+
+async def test_the_unordered_report_does_not_follow_the_engine_s_row_order() -> None:
+    ada, bob = {"customer": "ada", "total": 1}, {"customer": "bob", "total": 2}
+
+    comparisons = [
+        await compare_analytics_query(
+            TOTALS, "by_customer", PARAMS, mock=_ctx(_fixed()), real=_ctx(_fixed(*rows))
+        )
+        for rows in ((ada, bob), (bob, ada))
+    ]
+
+    assert comparisons[0].render() == comparisons[1].render()
+    assert [difference.real for difference in comparisons[1].differences] == [ada, bob]
+
+
+async def test_two_empty_answers_do_not_agree_by_default() -> None:
+    comparison = await compare_analytics_query(
+        TOTALS, "by_customer", PARAMS, mock=_ctx(_fixed()), real=_ctx(_fixed())
+    )
+
+    assert comparison.differences == ()
+    assert not comparison.agrees
+    assert "both engines returned no rows" in comparison.render()
+    assert "allow_empty=True" in comparison.render()
+
+
+async def test_two_empty_answers_agree_when_empty_is_the_right_answer() -> None:
+    comparison = await compare_analytics_query(
+        TOTALS,
+        "by_customer",
+        PARAMS,
+        mock=_ctx(_fixed()),
+        real=_ctx(_fixed()),
+        allow_empty=True,
+    )
+
+    assert comparison.agrees
+    assert comparison.render().endswith("mock and real agree on 0 row(s)")

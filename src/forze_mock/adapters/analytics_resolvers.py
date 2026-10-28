@@ -16,6 +16,7 @@ from __future__ import annotations
 import copy
 from collections.abc import Callable, Iterable, Mapping
 from typing import Any, final
+from uuid import UUID
 
 import attrs
 from pydantic import BaseModel
@@ -46,13 +47,23 @@ class MockAnalyticsView:
     namespace_for: Callable[[str], str] = attrs.field(default=lambda name: name)
     """Map a document spec name to the namespace its rows live in, for the calling tenant."""
 
+    tenant_id: UUID | None = None
+    """When set, only rows whose ``tenant_id`` names this tenant are returned.
+
+    Set by a tenant-aware analytics route, on top of the document route's partition: a
+    document route that is not partitioned holds every tenant's rows in one namespace, and the
+    route's tenancy must not depend on how the document side happens to be wired. A row with no
+    ``tenant_id`` is left out, fail closed."""
+
     # ....................... #
 
     def rows(self, spec: DocumentSpec[Any, Any, Any, Any] | str) -> list[JsonDict]:
         """Every stored row of *spec* (a document spec or its name), as stored.
 
         Rows are in storage form, the shape a SQL query over the table would see: no read-model
-        decoding, no derived fields, soft-deleted rows included.
+        decoding, no derived fields, soft-deleted rows included. A field the document spec
+        seals arrives as its ciphertext, exactly as SQL sees the column; the analytics read path
+        decrypts it on the way out only if the analytics spec declares it encrypted too.
         """
 
         namespace = self.namespace_for(spec if isinstance(spec, str) else str(spec.name))
@@ -62,7 +73,17 @@ class MockAnalyticsView:
             mvcc = current_mvcc_tx()
             store = live if mvcc is None else mvcc.view(namespace, live)
 
-            return [copy.deepcopy(row) for row in store.values()]
+            return [copy.deepcopy(row) for row in store.values() if self._visible(row)]
+
+    # ....................... #
+
+    def _visible(self, row: JsonDict) -> bool:
+        if self.tenant_id is None:
+            return True
+
+        owner = row.get("tenant_id")
+
+        return owner is not None and str(owner) == str(self.tenant_id)
 
 
 # ....................... #
@@ -94,9 +115,10 @@ class MockAnalyticsRegistry:
     ) -> MockAnalyticsRegistry:
         """Register *resolver* for *query_key* on *spec*. Returns self (chainable).
 
-        :raises exc.configuration: when *spec* is not an analytics spec, or declares no query
-            named *query_key*. A resolver nothing can call is a typo, and found here it costs
-            one line; found at run time it costs a simulation that silently read seeded rows.
+        :raises exc.configuration: when *spec* is not an analytics spec, declares no query
+            named *query_key*, or already has a resolver for it. A resolver nothing can call is
+            a typo, and a second one silently replaces the first; found here either costs one
+            line, found at run time it costs a simulation that answered from the wrong rows.
         """
 
         if not isinstance(spec, AnalyticsSpec):  # pyright: ignore[reportUnnecessaryIsInstance]
@@ -112,7 +134,16 @@ class MockAnalyticsRegistry:
                 code="mock.analytics.unknown_query",
             )
 
-        self._resolvers[(str(spec.name), query_key)] = resolver
+        key = (str(spec.name), query_key)
+
+        if key in self._resolvers:
+            raise exc.configuration(
+                f"Analytics query {str(spec.name)!r}/{query_key!r} already has a resolver; "
+                "register each query once.",
+                code="mock.analytics.duplicate_resolver",
+            )
+
+        self._resolvers[key] = resolver
         return self
 
     def resolver_for(self, spec: str, query_key: str) -> MockAnalyticsResolver | None:

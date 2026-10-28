@@ -107,7 +107,11 @@ MockDepsModule(
 )
 ```
 
-`view.rows(spec)` returns a document spec's stored rows in storage form: the columns a SQL query over the table would see. You get the rows the calling transaction sees. Inside a transaction, its own uncommitted writes are included and a concurrent transaction's are not. Outside one, you get the committed rows. The resolver receives the call's validated params. Its rows then go through the same `max_rows` cap and read-model decoding as seeded rows. A query with no resolver keeps its seeded rows. `on()` refuses a query key the spec does not declare.
+`view.rows(spec)` returns a document spec's stored rows in storage form: the columns a SQL query over the table would see. You get the rows the calling transaction sees. Inside a transaction, its own uncommitted writes are included and a concurrent transaction's are not. Outside one, you get the committed rows. A field the document spec seals arrives encrypted, exactly as SQL sees the column. It is decrypted on the way out only if the analytics spec declares it encrypted too.
+
+On a tenant-aware analytics route, a call with no tenant bound is refused with `tenant_required`. Otherwise `view.rows` returns only rows whose `tenant_id` names the bound tenant, even when the document route keeps every tenant in one namespace.
+
+The resolver receives the call's validated params. Its rows then go through the same `max_rows` cap and read-model decoding as seeded rows. A query with no resolver keeps its seeded rows. `on()` refuses a query key the spec does not declare, and a second resolver for the same query.
 
 A resolver is a second implementation of the query, and only a test keeps it in step with the SQL. `forze_dst.conformance.compare_analytics_query` is that test. It loads one seed into the mock and into the real engine, runs the query on both, and diffs the rows:
 
@@ -126,7 +130,7 @@ comparison = await compare_analytics_query(
 assert comparison.agrees, comparison.render()
 ```
 
-Rows are compared as a multiset after the read model, so a `Decimal` from the engine and an `int` from the resolver agree when the read model types the field. Pass `ordered=True` only for a query with an `ORDER BY`. `render()` prints one line for each row that only one side returned, or, in ordered mode, for each position that differs. To use the same query as a simulation invariant, see [`query_invariant`](../dst/invariants.md#what-must-always-hold).
+Rows are compared as a multiset after the read model, so a `Decimal` from the engine and an `int` from the resolver agree when the read model types the field. Pass `ordered=True` only for a query with an `ORDER BY`. `render()` prints one line for each row that only one side returned, or, in ordered mode, for each position that differs. Two empty answers do not agree: a seed that produced no rows the query selects would pass any resolver. Pass `allow_empty=True` only for a query whose correct answer is empty. To use the same query as a simulation invariant, see [`query_invariant`](../dst/invariants.md#what-must-always-hold).
 
 ## Transaction rollback in tests
 

@@ -116,7 +116,7 @@ oracle = query_invariant(BALANCES, "overdrawn", holds=lambda rows: not rows)
 Simulation(..., observe=oracle.observe, invariants=[*oracle.invariants])
 ```
 
-Like `compile_oracle` without `per_commit`, it sees only the end state, so it misses a violation that a later transaction heals.
+Like `compile_oracle` without `per_commit`, it sees only the end state, so it misses a violation that a later transaction heals. Give each oracle a distinct `name` (the default is `"<spec>.<query_key>"`). An invariant reads every outcome recorded under its name, so two oracles that share one each report the other's failures too.
 
 !!! note "Value-level invariants need `capture_values`"
 

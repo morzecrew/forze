@@ -112,9 +112,15 @@ class MockAnalyticsAdapter[R: BaseModel, Ing: BaseModel](
                 route_store = self.state.analytics_query_hits.setdefault(self._route(), {})
                 return [dict(row) for row in route_store.get(query_key, [])]
 
+        # A tenant-aware route refuses with no tenant bound, and narrows the view to the bound
+        # tenant's rows whatever the document route's partitioning.
+        view = attrs.evolve(
+            self.view or MockAnalyticsView(state=self.state),
+            tenant_id=self.require_tenant_if_aware(),
+        )
         rows: list[JsonDict] = []
 
-        for row in resolver(self.view or MockAnalyticsView(state=self.state), params):
+        for row in resolver(view, params):
             if not isinstance(row, Mapping):  # pyright: ignore[reportUnnecessaryIsInstance]
                 raise exc.internal(
                     f"Mock analytics resolver for {str(self.spec.name)!r}/{query_key!r} must "

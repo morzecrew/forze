@@ -69,15 +69,31 @@ class AnalyticsComparison:
     real_rows: tuple[JsonDict, ...]
     differences: tuple[RowDifference, ...]
 
+    allow_empty: bool = False
+    """Whether both engines returning no rows counts as agreement."""
+
+    @property
+    def vacuous(self) -> bool:
+        """Both engines returned nothing and that was not declared the right answer."""
+
+        return not self.allow_empty and not self.mock_rows and not self.real_rows
+
     @property
     def agrees(self) -> bool:
-        return not self.differences
+        return not self.differences and not self.vacuous
 
     def render(self) -> str:
         """A readable report: one header line, then one line per differing row."""
 
         mode = "ordered" if self.ordered else "unordered"
         head = f"analytics {self.spec!r} query {self.query_key!r} ({mode}): "
+
+        if self.vacuous:
+            return (
+                f"{head}both engines returned no rows, so nothing was compared; make the seed "
+                "produce rows the query selects, or pass allow_empty=True for a query whose "
+                "correct answer is empty"
+            )
 
         if self.agrees:
             return f"{head}mock and real agree on {len(self.real_rows)} row(s)"
@@ -102,6 +118,7 @@ async def compare_analytics_query(
     real: ExecutionContext,
     seed: Callable[[ExecutionContext], Awaitable[object]] | None = None,
     ordered: bool = False,
+    allow_empty: bool = False,
 ) -> AnalyticsComparison:
     """Run *query_key* on *mock* and on *real*, after loading the same seed into both.
 
@@ -115,6 +132,9 @@ async def compare_analytics_query(
         first, then on *real*. ``None`` when both are seeded already.
     :param ordered: Compare row by row in order. Pass it only when the query declares an
         order (an ``ORDER BY``); by default rows are compared as a multiset.
+    :param allow_empty: Count no rows on both sides as agreement. Off by default, because two
+        empty answers agree about nothing: a seed that never materialized the rows the query
+        selects would pass every resolver. Pass it for a query whose correct answer is empty.
     :returns: The comparison; :attr:`AnalyticsComparison.agrees` is the verdict and
         :meth:`AnalyticsComparison.render` the report.
     """
@@ -138,6 +158,7 @@ async def compare_analytics_query(
         mock_rows=mock_rows,
         real_rows=real_rows,
         differences=differences,
+        allow_empty=allow_empty,
     )
 
 
@@ -174,8 +195,9 @@ def _unordered_differences(
     mock_rows: Sequence[JsonDict],
     real_rows: Sequence[JsonDict],
 ) -> tuple[RowDifference, ...]:
-    only_mock = _surplus(mock_rows, real_rows)
-    only_real = _surplus(real_rows, mock_rows)
+    # Sorted, so the report does not depend on the order an engine happened to return rows in.
+    only_mock = sorted(_surplus(mock_rows, real_rows), key=_text)
+    only_real = sorted(_surplus(real_rows, mock_rows), key=_text)
 
     return (
         *(RowDifference(position=None, mock=row, real=None) for row in only_mock),

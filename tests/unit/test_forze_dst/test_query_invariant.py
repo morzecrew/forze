@@ -150,6 +150,26 @@ async def test_the_predicate_receives_read_models() -> None:
     assert seen == [Balance(account="a", balance=-1)]
 
 
+def test_required_params_must_be_passed() -> None:
+    class Window(BaseModel):
+        days: int
+
+    spec = AnalyticsSpec(
+        name="windowed",
+        read=Balance,
+        queries={"recent": AnalyticsQueryDefinition(params=Window)},
+    )
+
+    with pytest.raises(CoreException) as caught:
+        query_invariant(spec, "recent", holds=lambda rows: not rows)
+
+    assert caught.value.kind is ExceptionKind.CONFIGURATION
+    assert caught.value.code == "query_invariant_params_required"
+    assert "params=" in str(caught.value)
+
+    assert query_invariant(spec, "recent", holds=lambda rows: not rows, params=Window(days=7))
+
+
 def test_an_unknown_query_key_is_refused() -> None:
     with pytest.raises(CoreException) as caught:
         query_invariant(BALANCES, "nope", holds=lambda rows: not rows)
