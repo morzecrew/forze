@@ -12,9 +12,9 @@ required field is the ordinary case — a joined display name is rarely optional
 """
 
 import types
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from enum import StrEnum
-from typing import Any, Union, get_args, get_origin
+from typing import Any, Union, cast, get_args, get_origin
 
 import attrs
 from pydantic import BaseModel
@@ -25,6 +25,22 @@ from ..querying.sort_resolution import read_fields_for_model
 from .lenient_read import IDENTITY_READ_FIELDS
 
 # ----------------------- #
+
+
+def _as_fields(value: Iterable[str] | None) -> tuple[str, ...] | None:
+    """Keep *fields* as a tuple, so a list cannot break hashing of this frozen class.
+
+    A bare string passes through untouched for :meth:`DerivedReadField.__attrs_post_init__`
+    to refuse; ``tuple("name")`` would silently be one key per character.
+    """
+
+    if value is None or isinstance(value, str):
+        return cast("tuple[str, ...] | None", value)
+
+    return tuple(value)
+
+
+# ....................... #
 
 
 @attrs.define(slots=True, kw_only=True, frozen=True)
@@ -66,14 +82,20 @@ class DerivedReadField:
     field: str | None = None
     """Field on the source's read model whose value lands here."""
 
-    fields: tuple[str, ...] | None = None
+    fields: tuple[str, ...] | None = attrs.field(default=None, converter=_as_fields)
     """Fields on the source's read model projected into a nested object here.
 
     The expanded-reference form of :attr:`field`, and exclusive with it: the value is
     ``{name: value, ...}`` over these names, read from the one joined row, so the read
-    model types the field as a nested model or a mapping. The object is ``None`` as a
-    whole where :attr:`optional` lets the join find no row — never an object of ``None``
-    values, which no view built from a ``LEFT JOIN`` produces either.
+    model types the field as a nested model or a mapping. Any iterable of names is kept
+    as a tuple.
+
+    Where :attr:`optional` lets the join find no row, the mock yields ``None`` for the
+    whole object, never an object of ``None`` values. That matches a view that guards the
+    object (``CASE WHEN w.id IS NULL THEN NULL ELSE jsonb_build_object(...) END``). A bare
+    ``jsonb_build_object`` over an unmatched ``LEFT JOIN`` yields ``{"id": null, ...}``
+    instead, and the derived-read fidelity check
+    (``forze_dst.conformance.run_derived_fidelity``) reports that difference.
     """
 
     optional: bool = False
@@ -108,6 +130,12 @@ class DerivedReadField:
             raise exc.configuration(
                 f"DerivedReadField fields={self.fields!r} is a string; pass a tuple of "
                 "field names, or use field= to read a single value.",
+            )
+
+        if self.fields is not None and not all(isinstance(name, str) for name in self.fields):
+            raise exc.configuration(
+                f"DerivedReadField fields {list(self.fields)!r} holds a value that is not a "
+                "field name; each entry names a field of the source row.",
             )
 
         if self.fields is not None and not self.fields:

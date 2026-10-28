@@ -134,10 +134,13 @@ validates it into the nested type. `field` and `fields` are exclusive.
 One hop, by primary key, no predicates and no ordering. Declare `optional=True` when
 the join key is nullable; a key that resolves to no row is refused rather than
 quietly `None`. With `optional=True`, an unset key or a missing row yields `None` for
-the whole field — for an expanded reference, `None` rather than an object of `None`s,
-which is what a `LEFT JOIN` view produces too. A derived field is not filterable,
-sortable or sealable either way, because this aggregate holds no column of its own
-for it.
+the whole field — for an expanded reference, `None` rather than an object of `None`s.
+That matches a view that guards the object with
+`CASE WHEN w.id IS NULL THEN NULL ELSE jsonb_build_object(...) END`. A bare
+`jsonb_build_object` over an unmatched `LEFT JOIN` yields `{"id": null, "name": null}`
+instead, and the fidelity check below reports the difference. A derived field is not
+filterable, sortable or sealable either way, because this aggregate holds no column of
+its own for it.
 
 The join or callback the mock uses is a second implementation of the view, and
 nothing ties the two together on its own. To check them against each other on a real

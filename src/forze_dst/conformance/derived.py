@@ -22,12 +22,14 @@ compare a fixture with the view rather than the stand-in the tests actually run 
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable, Mapping, Sequence
+from contextlib import ExitStack
 from typing import Any, Protocol, final
 from uuid import UUID
 
 import attrs
 
 from forze.application.contracts.document import DocumentQueryPort, DocumentSpec
+from forze.application.contracts.tenancy import TenantIdentity
 from forze.application.execution import ExecutionContext
 from forze.base.exceptions import CoreException, exc
 
@@ -53,7 +55,8 @@ class ReadRefused:
     """A read that raised instead of returning the row, standing in for every value on it.
 
     Kept as a value rather than raised, so one refused row is a finding next to the others
-    instead of the end of the run. Compared by kind only: messages are backend prose.
+    instead of the end of the run. Compared by kind only: messages are backend prose. The
+    kind is the exception kind for a framework exception and the class name for any other.
     """
 
     kind: str
@@ -81,6 +84,30 @@ class DerivedMismatch:
 
 @final
 @attrs.frozen(kw_only=True)
+class DerivedFieldTally:
+    """How much one field's agreement is evidence of.
+
+    Every row lands in exactly one of :attr:`compared`, :attr:`null_on_both` and
+    :attr:`refused_on_both`. Only the first is a comparison of values: a field that is
+    ``None`` on both sides, or a row both sides refused, agrees without having tested the
+    join at all.
+    """
+
+    field: str
+    compared: int
+    """Rows where at least one side produced a value or refused alone."""
+
+    null_on_both: int
+    refused_on_both: int
+    diverged: int
+    """Rows reported as a :class:`DerivedMismatch` for this field."""
+
+
+# ....................... #
+
+
+@final
+@attrs.frozen(kw_only=True)
 class DerivedFidelityReport:
     """Every derived field of one spec, compared on every seeded row."""
 
@@ -88,12 +115,18 @@ class DerivedFidelityReport:
     fields: tuple[str, ...]
     ids: tuple[UUID, ...]
     mismatches: tuple[DerivedMismatch, ...]
+    tallies: tuple[DerivedFieldTally, ...]
+    """One per field, in :attr:`fields` order — read them before trusting :attr:`agrees`."""
 
     # ....................... #
 
     @property
     def agrees(self) -> bool:
-        """Whether every derived field matched on every row."""
+        """Whether no field mismatched on any row.
+
+        Not proof by itself: a field ``None`` or refused on both sides agrees vacuously, so
+        check :attr:`DerivedFieldTally.compared` as well.
+        """
 
         return not self.mismatches
 
@@ -105,13 +138,14 @@ class DerivedFidelityReport:
         lines = [
             f"# Derived-read fidelity: `{self.spec}` ({len(self.ids)} rows)",
             "",
-            "| field | agree | diverge |",
-            "|---|---|---|",
+            "| field | compared | null on both | refused on both | diverged |",
+            "|---|---|---|---|---|",
         ]
-
-        for name in self.fields:
-            diverge = sum(1 for mismatch in self.mismatches if mismatch.field == name)
-            lines.append(f"| `{name}` | {len(self.ids) - diverge} | {diverge} |")
+        lines += [
+            f"| `{t.field}` | {t.compared} | {t.null_on_both} | {t.refused_on_both} "
+            f"| {t.diverged} |"
+            for t in self.tallies
+        ]
 
         if self.mismatches:
             lines += ["", "| field | id | real | mock |", "|---|---|---|---|"]
@@ -136,11 +170,33 @@ async def _derived_values(
     except CoreException as error:
         return dict.fromkeys(fields, ReadRefused(kind=str(error.kind)))
 
+    except Exception as error:
+        # Any raise is this row's finding, not the end of the run.
+        return dict.fromkeys(fields, ReadRefused(kind=type(error).__name__))
+
     # JSON mode, so a nested model, a UUID and a datetime compare as the same value
     # whichever backend's decode produced them.
     dumped = row.model_dump(mode="json", include=set(fields))
 
     return {name: dumped.get(name) for name in fields}
+
+
+# ....................... #
+
+
+def _tally(field: str, pairs: Sequence[tuple[Any, Any]]) -> DerivedFieldTally:
+    null_on_both = sum(1 for real, mock in pairs if real is None and mock is None)
+    refused_on_both = sum(
+        1 for real, mock in pairs if isinstance(real, ReadRefused) and isinstance(mock, ReadRefused)
+    )
+
+    return DerivedFieldTally(
+        field=field,
+        compared=len(pairs) - null_on_both - refused_on_both,
+        null_on_both=null_on_both,
+        refused_on_both=refused_on_both,
+        diverged=sum(1 for real, mock in pairs if real != mock),
+    )
 
 
 # ....................... #
@@ -152,6 +208,7 @@ async def run_derived_fidelity(
     seed: SeedFn,
     real: ExecutionContext,
     mock: ExecutionContext,
+    tenant: TenantIdentity | None = None,
 ) -> DerivedFidelityReport:
     """Seed both stores with *seed*, read the same rows of *spec*, and diff its derived fields.
 
@@ -159,6 +216,10 @@ async def run_derived_fidelity(
     view); *mock* against the mock, with whatever resolves them there — a join declared on the
     spec, or a ``MockDerivedRegistry`` source on the module. Each store must start without the
     seeded rows.
+
+    *tenant* is bound on both contexts for the seed and the reads, which is what a
+    tenant-aware spec needs: each context carries its own invocation identity, so binding it
+    on one side only would seed and read the other side unpartitioned.
 
     :raises exc.configuration: when *spec* declares no derived fields, the seed creates no row
         of it, or the two stores minted different ids, so their rows cannot be paired.
@@ -172,29 +233,48 @@ async def run_derived_fidelity(
         )
 
     name = str(spec.name)
-    ids = tuple((await seed(real))[name])
-    mock_ids = tuple((await seed(mock))[name])
 
-    if not ids:
-        raise exc.configuration(f"The seed creates no rows of spec {name!r} to compare.")
+    with ExitStack() as scope:
+        if tenant is not None:
+            for ctx in (real, mock):
+                scope.enter_context(ctx.inv_ctx.bind_identity(tenant=tenant))
 
-    if ids != mock_ids:
-        raise exc.configuration(
-            f"The real store and the mock minted different ids for one seed of {name!r}, so "
-            "their rows cannot be paired. Keep the plan's instant pinned (the default), or "
-            "give the fixtures explicit ids.",
-        )
+        ids = tuple((await seed(real))[name])
+        mock_ids = tuple((await seed(mock))[name])
 
-    real_port, mock_port = real.doc.query(spec), mock.doc.query(spec)
-    mismatches: list[DerivedMismatch] = []
+        if not ids:
+            raise exc.configuration(f"The seed creates no rows of spec {name!r} to compare.")
 
-    for pk in ids:
-        theirs = await _derived_values(real_port, pk, fields)
-        ours = await _derived_values(mock_port, pk, fields)
-        mismatches.extend(
-            DerivedMismatch(field=field, id=pk, real=theirs[field], mock=ours[field])
-            for field in fields
-            if theirs[field] != ours[field]
-        )
+        # Paired by id, not by position: creation order is an artefact of the seed, and the
+        # id is what both reads are keyed by.
+        if set(ids) != set(mock_ids):
+            raise exc.configuration(
+                f"The real store and the mock minted different ids for one seed of {name!r}, "
+                "so their rows cannot be paired. The seed must create the same ids on both: "
+                "pin the plan's instant (the default) or give the fixtures explicit ids.",
+            )
 
-    return DerivedFidelityReport(spec=name, fields=fields, ids=ids, mismatches=tuple(mismatches))
+        real_port, mock_port = real.doc.query(spec), mock.doc.query(spec)
+        values = [
+            (
+                pk,
+                await _derived_values(real_port, pk, fields),
+                await _derived_values(mock_port, pk, fields),
+            )
+            for pk in ids
+        ]
+
+    mismatches = tuple(
+        DerivedMismatch(field=field, id=pk, real=theirs[field], mock=ours[field])
+        for pk, theirs, ours in values
+        for field in fields
+        if theirs[field] != ours[field]
+    )
+    tallies = tuple(
+        _tally(field, [(theirs[field], ours[field]) for _, theirs, ours in values])
+        for field in fields
+    )
+
+    return DerivedFidelityReport(
+        spec=name, fields=fields, ids=ids, mismatches=mismatches, tallies=tallies
+    )

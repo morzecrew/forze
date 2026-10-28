@@ -180,6 +180,16 @@ class TestDeclaration:
         with pytest.raises(CoreException, match="is a string"):
             DerivedReadField(source="s", via="v", fields="name")  # type: ignore[arg-type]
 
+    def test_a_list_is_kept_as_a_tuple(self) -> None:
+        declared = DerivedReadField(source="s", via="v", fields=["id", "name"])  # type: ignore[arg-type]
+
+        assert declared.fields == ("id", "name")
+        assert hash(declared) == hash(DerivedReadField(source="s", via="v", fields=("id", "name")))
+
+    def test_a_non_string_name_is_refused(self) -> None:
+        with pytest.raises(CoreException, match="not a field name"):
+            DerivedReadField(source="s", via="v", fields=(1,))  # type: ignore[arg-type]
+
     def test_an_empty_tuple_is_refused(self) -> None:
         with pytest.raises(CoreException, match="empty fields"):
             DerivedReadField(source="s", via="v", fields=())

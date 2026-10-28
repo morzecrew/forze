@@ -188,7 +188,10 @@ async def test_a_resolved_reference_matches_the_view(pg_client: PostgresClient) 
     )
 
     assert report.agrees, report.render_markdown()
-    assert len(report.ids) == 4
+    # Agreement on the two matched rows is the evidence; the unset key and the missing
+    # target are None on both sides, which the tally keeps apart from a comparison.
+    [tally] = report.tallies
+    assert (tally.compared, tally.null_on_both, tally.refused_on_both) == (2, 2, 0)
 
 
 async def test_a_wrong_hand_written_join_is_reported(pg_client: PostgresClient) -> None:
@@ -216,4 +219,4 @@ async def test_a_wrong_hand_written_join_is_reported(pg_client: PostgresClient) 
     assert report.mismatches[0].real == {"id": str(SOUTH), "name": "South"}
     assert report.mismatches[0].mock == {"id": str(SOUTH), "name": "North"}
     assert report.mismatches[1].real is None
-    assert "| `warehouse` | 2 | 2 |" in report.render_markdown()
+    assert "| `warehouse` | 3 | 1 | 0 | 2 |" in report.render_markdown()

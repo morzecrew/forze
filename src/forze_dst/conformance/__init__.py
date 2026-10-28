@@ -58,6 +58,7 @@ from .delivery import (
 )
 from .derived import (
     DerivedFidelityReport,
+    DerivedFieldTally,
     DerivedMismatch,
     ReadRefused,
     SeededIds,
@@ -162,6 +163,7 @@ __all__ = [
     "is_serialization_conflict",
     "record_outcome",
     "DerivedFidelityReport",
+    "DerivedFieldTally",
     "DerivedMismatch",
     "ReadRefused",
     "SeededIds",
