@@ -10,10 +10,13 @@ All routes need an active `ExecutionRuntime.scope()` and a `ctx_dep` that return
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
+from forze_fastapi import run_startup_checks
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    run_startup_checks(app)  # what runtime_lifespan(runtime) does for you
+
     async with runtime.scope():
         yield
 
@@ -55,8 +58,8 @@ register_scalar_docs(app, path="/docs")
 Three middleware settings you will need:
 
 - **`anonymous_paths={"/auth/login", "/auth/refresh", "/auth/password-reset/request", "/auth/password-reset/confirm"}`** — exact mounted paths where a missing credential or an *authentication-kind* failure binds no identity instead of 401ing (add `/auth/logout` in cookie mode, and `/docs`, `/openapi.json` if they are public). Everywhere else a request no ingress authenticates is refused (`AuthnRequirement(required=True)`, the default; a real CORS preflight passes, for a CORS layer to answer), and a stale credential (a cookie especially) would be refused on the very route that replaces it. A valid credential still binds; every other failure kind still errors. Exact paths, never prefixes.
-- **`bypass_paths=DEFAULT_HEALTH_PATHS`** (from `forze.base.logging`) — exact HTTP paths neither middleware runs for. Both resolve the execution context on every request, so in front of `/livez` they answer 500 while the runtime scope is not yet open — the window a liveness probe exists to observe. A bypassed path serves with no identity, tenant or envelope bound and no error shaping: probe and scrape paths only. Exact full mounted paths, never prefixes — `check_bypass_paths` fails the boot if a bypassed path serves a generated operation route, if the two middlewares disagree, or if the set matches no route at all.
-- **`allowed_websocket_paths={"/realtime/ws"}`** — both middlewares **refuse raw WebSocket scopes** unless the exact mounted path (router prefixes included) is allowlisted, because identity and tenancy resolve for HTTP scopes only. The boot check fails if an allowlisted path does not serve exactly one governed route. `allow_raw_websockets=True` opts out app-wide and hands you identity, tenancy and error shaping on every socket.
+- **`bypass_paths=DEFAULT_HEALTH_PATHS`** (from `forze.base.logging`) — exact HTTP paths neither middleware runs for. Both resolve the execution context on every request, so in front of `/livez` they answer 500 while the runtime scope is not yet open — the window a liveness probe exists to observe. A bypassed path serves with no identity, tenant or envelope bound and no error shaping: probe and scrape paths only. Exact paths with every router prefix, never prefixes; on an app mounted under a prefix, the full path or the path relative to the mount — `check_bypass_paths` fails the boot if a bypassed path serves a generated operation route, if the two middlewares disagree, or if the set matches no route at all.
+- **`allowed_websocket_paths={"/realtime/ws"}`** — both middlewares **refuse raw WebSocket scopes** unless the exact path (router prefixes included; on a mounted app, full or relative to the mount) is allowlisted, because identity and tenancy resolve for HTTP scopes only. The boot check fails if an allowlisted path does not serve exactly one governed route. `allow_raw_websockets=True` opts out app-wide and hands you identity, tenancy and error shaping on every socket.
 
 For browser clients, `attach_authn_routes(cookies=AuthnCookieCarrier(...))` puts the tokens in `HttpOnly` cookies instead of the response body; pair it with `anonymous_paths` as above. The realtime SSE and WebSocket routes (`attach_realtime_sse_route`, `attach_realtime_ws_route`) and the AsyncAPI document (`attach_asyncapi_route`) are in [realtime transports](realtime-transports.md).
 
@@ -98,10 +101,13 @@ app.include_router(router)
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
+from forze_fastapi import run_startup_checks
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    run_startup_checks(app)  # what runtime_lifespan(runtime) does for you
+
     async with runtime.scope():
         yield
 
@@ -113,6 +119,7 @@ app = FastAPI(lifespan=lifespan)
 
 - **Creating `ExecutionContext` per request by hand** — use `runtime.get_context()` via `ctx_dep`.
 - **Calling `runtime.get_context()` outside lifespan scope** — it raises at runtime.
+- **A lifespan on a mounted app** — Starlette never runs it, so neither the runtime nor the startup checks start. Give it to the outermost app; `run_startup_checks` walks the mounted apps from there.
 - **Catching `CoreException` manually in routes** — register the built-in exception handlers.
 - Passing unfrozen registry to FastAPI attach — call `.freeze()` after plan binding.
 - **Missing `ctx_dep` on FastAPI routers** — each request needs a context from the active scope.

@@ -157,19 +157,18 @@ class TestCheckBypassPaths:
         with pytest.raises(CoreException), TestClient(_app(bypass={"/notes"})):
             pass  # pragma: no cover - startup is what raises
 
-    def test_a_mounted_sub_application_is_out_of_reach(self) -> None:
-        # Documented limitation, pinned: routes inside a mounted app are invisible to a
-        # check that runs on the outer one, so bypassing them there reads as inert.
+    def test_a_route_of_a_mounted_sub_application_is_seen(self) -> None:
+        # Refused before as invisible: the check now walks mounted apps, so a bypass on
+        # the outer app is held against the routes it reaches through the mount.
         sub = FastAPI()
         sub_router = APIRouter()
         attach_liveness_route(sub_router)
         sub.include_router(sub_router)
 
-        app = _app(bypass={"/sub/livez"}, notes=False)
+        app = _app(bypass={"/sub/livez"}, notes=False, probes=False)
         app.mount("/sub", sub)
 
-        assert "not one of those paths is routed" in _refused(app)
-        assert "mounted sub-application" in _refused(app)
+        check_bypass_paths(app)
 
     def test_a_nested_router_resolves_to_its_effective_path(self) -> None:
         # Two levels of include: the route's own `path` keeps only the innermost

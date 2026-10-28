@@ -21,6 +21,7 @@ from forze.base.exceptions import CoreException, ExceptionKind, exc
 from ..exceptions import build_core_exception_response
 from ..security import AuthnRequirement, resolve_authn_ingress, resolve_tenant_identity
 from ..security.resolvers import COOKIE_CSRF_SCOPE_KEY, cookie_csrf_gates
+from ._routes import path_is_listed
 from .raw_websocket import refuse_raw_websocket, websocket_scope_refused
 
 # ----------------------- #
@@ -34,37 +35,6 @@ def _is_cors_preflight(request: Request) -> bool:
         and "origin" in request.headers
         and "access-control-request-method" in request.headers
     )
-
-
-def is_anonymous_path(anonymous_paths: frozenset[str], scope: Scope) -> bool:
-    """Whether the request path is listed in *anonymous_paths*, as
-    :attr:`SecurityContextMiddleware.anonymous_paths` reads them.
-
-    Reads the percent-decoded ``scope["path"]`` routing reads, never ``request.url``:
-    that is re-split from it, so an encoded ``?`` or ``#`` would end its path early and
-    borrow an anonymous one.
-    """
-
-    path: str = scope.get("path", "")
-
-    if path in anonymous_paths:
-        return True
-
-    # Strip the mount exactly as Starlette's router does, so the relative path is
-    # the one the request is routed by — never a different route.
-    root: str = scope.get("root_path", "")
-
-    if not root or not path.startswith(root) or path[len(root) : len(root) + 1] != "/":
-        return False
-
-    relative = path[len(root) :]
-
-    # Led by the prefix's path segments, it could also be another route's full path:
-    # an entry that reads both ways only ever counts as full (checked above).
-    if relative == root or relative.startswith(root + "/"):
-        return False
-
-    return relative in anonymous_paths
 
 
 # ....................... #
@@ -138,7 +108,9 @@ class SecurityContextMiddleware:
     The narrow alternative to the app-wide ``allow_raw_websockets`` hatch: list the
     framework-attached websocket routes (e.g. ``attach_realtime_ws_route``'s path),
     which resolve identity at connect themselves. Exact paths, never prefixes — a
-    prefix is one refactor away from an ungoverned hole.
+    prefix is one refactor away from an ungoverned hole. Entries are the full path
+    (router prefixes included) or, on a mounted application, the path relative to the
+    mount, read as ``anonymous_paths`` reads them.
     """
 
     bypass_paths: frozenset[str] = attrs.field(
@@ -153,12 +125,14 @@ class SecurityContextMiddleware:
     identity and no tenant bound** and no error shaping — list probe and scrape
     paths, never anything that reads or writes tenant data (``anonymous_paths`` is
     the softer tool: it still runs this middleware and still binds a *valid*
-    credential). Entries are the **full mounted path** (router prefixes included),
-    the same as ``allowed_websocket_paths``: this middleware runs before routing, so
-    a prefix mismatch simply never matches and the probe goes on failing.
-    :func:`~forze_fastapi.middlewares.check_bypass_paths` (run by ``runtime_lifespan``)
-    fails the boot on that, on a bypassed path that serves a generated operation route,
-    and on the two middlewares carrying different sets."""
+    credential). Entries are the **full path** (router prefixes included) or, on a
+    mounted application, the path relative to the mount — read as ``anonymous_paths``
+    reads them: this middleware runs before routing, so a router-prefix mismatch simply
+    never matches and the probe goes on failing.
+    :func:`~forze_fastapi.middlewares.check_bypass_paths` (run by
+    :func:`~forze_fastapi.run_startup_checks`) fails the boot on that, on a bypassed path
+    that serves a generated operation route, and on the two middlewares carrying different
+    sets."""
 
     # ....................... #
 
@@ -213,7 +187,7 @@ class SecurityContextMiddleware:
             await self.app(scope, receive, send)
             return
 
-        if scope.get("path") in self.bypass_paths:
+        if path_is_listed(self.bypass_paths, scope):
             await self.app(scope, receive, send)
             return
 
@@ -224,7 +198,7 @@ class SecurityContextMiddleware:
 
         request = Request(scope, receive)
         ctx = self.ctx_dep()
-        anonymous = is_anonymous_path(self.anonymous_paths, scope)
+        anonymous = path_is_listed(self.anonymous_paths, scope)
 
         try:
             # A preflight carries no credential, so an ingress's own `required` must not

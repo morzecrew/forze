@@ -45,6 +45,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **`run_derived_fidelity` checks the mock's derived fields against the real view.** It loads one seed into a real backend and the mock, reads the same ids through both, and reports each derived field that differs, per row. Import it from `forze_dst.conformance`.
 
+- **`forze_fastapi.run_startup_checks(app)` runs every FastAPI startup check in one call.** It checks the app and each Starlette or FastAPI app mounted beneath it, and `runtime_lifespan` calls it. An app with its own lifespan calls it there, on the outermost app: Starlette never runs a mounted app's lifespan.
+
 **`forze ops` for people at a shell and for backfills:**
 
 - **`forze ops` gains typed flags, JSONL batches and shell completion.** `call OP --field VALUE` takes a flat-scalar input as flags; `--batch @PATH|-` runs one call per line in one runtime, stopping at the first failure; `OP` completes in the shell. An unknown option after `OP` now exits 2 with an error object.
@@ -105,6 +107,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **A Postgres document field stored in a native `jsonb[]` or `json[]` column can be written.** Create, update and upsert, single and batch, failed with `cannot adapt type 'dict'`; each element is now sent as JSON, a `None` one as SQL `NULL`, and reads back as written.
 
+- **On a mounted FastAPI app, `bypass_paths` and `allowed_websocket_paths` also match the path relative to the mount, as `anonymous_paths` does** (**behaviour change**). `/livez` now bypasses `/api/livez` under `/api`, so the entry the check accepted no longer answers 500, and a full-path entry no longer fails the check.
+
 - **A Postgres locking read works when the read relation differs from the write relation (a view, typically).** `get`, `find`, `project` and `select` with `for_update` failed on a view that joins with `LEFT JOIN`. They now lock the row on the write table, honouring `nowait` and `skip_locked`, then read.
 
 ### Security
@@ -114,6 +118,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **A realtime connection needs a tenant once tenancy is wired** (**behaviour change**). Socket.IO, WebSocket and SSE refuse one without a tenant (`tenant_required`), and Socket.IO an anonymous one, instead of admitting it to the untenanted rooms. Socket.IO checks this at the connect when given the new `ctx_dep`.
 
 - **A stale access cookie could keep a cookie-mode logout from ending the session.** `runtime_lifespan` now refuses an app whose `anonymous_paths` misses a cookie-mode login, refresh or logout route (`check_authn_cookie_paths`, **behaviour change**).
+
+- **The FastAPI startup checks cover mounted apps** (**behaviour change**). They check every Starlette or FastAPI app mounted beneath the one checked, so a bypass reaching a mounted generated route fails the boot. A parent app's bypass or websocket allowlist naming a mounted route is verified, not refused.
 
 - **Postgres dynamic-read routes refuse an unknown `provenance` value** (**Breaking**). `PostgresDynamicReadConfig` accepts only `"trusted"` or `"untrusted"` (`postgres_dynamic_read_provenance_invalid`); a config with any other value now fails at startup. New `validate_dynamic_read_provenance`.
 
