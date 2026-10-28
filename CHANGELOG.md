@@ -27,7 +27,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **A declared HTTP service can stream a response.** `HttpServicePort.stream(op, args)` yields the body as it arrives, governed as `invoke` is, and raises a rejection before the first chunk. `HttpClient.stream` and `RoutedHttpClient.stream` do the same at the client.
 
-- **A vendor SDK's requests can go through a declared HTTP service.** `http_service_transport(ctx, spec)` returns an `HttpServiceTransport` for `httpx.AsyncClient`: requests are held to the service's route and carry its credential, deadline budget, trace context and egress tag. `HttpClientPort` gains `send`.
+- **A vendor SDK's requests can go through a declared HTTP service.** `http_service_transport(ctx, spec)` gives an `HttpServiceTransport` for `httpx.AsyncClient`: requests stay on the service's route, its headers replace same-named ones, and deadline, trace and egress tag apply. Custom `HttpClientPort`s must add `send`.
 
 - **Agent tools can state the filter grammar once.** `operation_tools(shared_filter_grammar=True)` strips it from tool schemas as MCP does; `OperationToolset.filter_grammar` holds it for the system prompt. `forze.application.contracts.querying` gains `filter_grammar`, `without_filter_grammar`, `takes_filter_expression`.
 
@@ -69,7 +69,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- **`HttpClient` reads a compressed response.** A gzip, deflate, zstd or brotli body no longer fails `request`, or a rejected response from `stream`, as an infrastructure error. `RoutedHttpClient` and declared services are fixed with it.
+- **`HttpClient` reads a compressed response.** A gzip or deflate body, and with no cap a zstd or brotli one, no longer fails `request`, or a rejected response from `stream`, as an infrastructure error. `RoutedHttpClient` and declared services are fixed with it.
 
 - **A warning logged before `configure_logging` carries the invocation's ids.** The fallback renderer now merges the bound logging context, as the configured chain does.
 
@@ -116,6 +116,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Security
 
 - **`AuthzDocumentScopeWrap` in an operation's outer scope applies its row filter** (**behaviour change**). A wrap bound with `bind_outer().wrap(...)`, as the authz recipe does, now hands the handler the arguments it passes on, so a scoped list returns only the rows the policy allows.
+
+- **`max_response_bytes` bounds a compressed body's decoded size.** (**behaviour change**) Decoding stops one byte past the cap, so a small compressed body cannot expand beyond it. A client with a cap asks only for `gzip` and `deflate` and refuses any other content coding.
 
 - **A realtime connection needs a tenant once tenancy is wired** (**behaviour change**). Socket.IO, WebSocket and SSE refuse one without a tenant (`tenant_required`), and Socket.IO an anonymous one, instead of admitting it to the untenanted rooms. Socket.IO checks this at the connect when given the new `ctx_dep`.
 

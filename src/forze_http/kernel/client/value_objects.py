@@ -29,10 +29,12 @@ class HttpConfig:
     previous unbounded behaviour. When set, a response whose ``Content-Length``
     exceeds the cap is refused before the body is read, and a chunked/unsized
     response is aborted once the accumulated body crosses the cap — so a large or
-    attacker-influenced upstream cannot blow up app memory (×concurrent calls). A
-    ``stream`` holds only a rejected body to it: an accepted one is never buffered. ``send``
-    — what a service transport uses — holds every body to it, counted as it arrives on the
-    wire, before any content decoding."""
+    attacker-influenced upstream cannot blow up app memory (×concurrent calls). The cap
+    counts the *decoded* body, decoded a step at a time, so a small compressed body cannot
+    expand past it; with a cap set the client asks only for ``gzip`` and ``deflate`` and
+    refuses a response in any other content coding. A ``stream`` holds only a rejected body
+    to it: an accepted one is never buffered. ``send`` — what a service transport uses —
+    holds every body to it, accepted or not."""
 
     # ....................... #
 

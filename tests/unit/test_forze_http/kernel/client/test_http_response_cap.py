@@ -2,8 +2,9 @@
 
 import contextlib
 import gzip
+import tracemalloc
 import zlib
-from collections.abc import Callable
+from collections.abc import AsyncIterator, Callable
 
 import httpx
 import pytest
@@ -99,6 +100,17 @@ async def test_no_cap_allows_large_body() -> None:
 # ....................... #
 
 
+class _Chunks(httpx.AsyncByteStream):
+    """A body served as these chunks, unread until the client reads it."""
+
+    def __init__(self, *chunks: bytes) -> None:
+        self._chunks = chunks
+
+    async def __aiter__(self) -> AsyncIterator[bytes]:
+        for chunk in self._chunks:
+            yield chunk
+
+
 def _encoders() -> list[tuple[str, Callable[[bytes], bytes]]]:
     """Every content coding httpx can decode in this environment, with an encoder for it."""
 
@@ -135,7 +147,7 @@ class TestEncodedBodies:
         def handler(request: httpx.Request) -> httpx.Response:
             return httpx.Response(200, headers={"Content-Encoding": coding}, content=encode(body))
 
-        client = await _client(handler, max_response_bytes=1024)
+        client = await _client(handler, max_response_bytes=None)
 
         try:
             response = await client.request("GET", "/x")
@@ -146,6 +158,82 @@ class TestEncodedBodies:
         assert response.json() == {"ok": True}
         assert "content-encoding" not in response.headers
         assert response.headers["content-length"] == str(len(body))
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("coding", "encode"),
+        [
+            ("gzip", gzip.compress),
+            ("deflate", zlib.compress),
+            # A raw deflate stream with no zlib header, which httpx accepts too.
+            ("deflate", lambda data: zlib.compress(data, wbits=-zlib.MAX_WBITS)),
+        ],
+    )
+    async def test_under_a_cap_gzip_and_deflate_are_decoded(
+        self, coding: str, encode: Callable[[bytes], bytes]
+    ) -> None:
+        seen: list[str | None] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen.append(request.headers.get("accept-encoding"))
+            return httpx.Response(
+                200, headers={"Content-Encoding": coding}, content=encode(b'{"ok": true}')
+            )
+
+        client = await _client(handler, max_response_bytes=1024)
+
+        try:
+            response = await client.request("GET", "/x")
+
+        finally:
+            await client.close()
+
+        assert response.json() == {"ok": True}
+        # A capped client asks only for the codings it can bound as they decode.
+        assert seen == ["gzip, deflate"]
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("coding", ["br", "zstd", "gzip, gzip"])
+    async def test_under_a_cap_a_coding_it_cannot_bound_is_refused(self, coding: str) -> None:
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(200, headers={"Content-Encoding": coding}, stream=_Chunks(b"?"))
+
+        client = await _client(handler, max_response_bytes=1024)
+
+        try:
+            with pytest.raises(CoreException) as err:
+                await client.request("GET", "/x")
+
+        finally:
+            await client.close()
+
+        assert err.value.kind is ExceptionKind.INFRASTRUCTURE
+        assert "content coding" in str(err.value)
+
+    @pytest.mark.asyncio
+    async def test_one_compressed_chunk_cannot_expand_past_the_cap(self) -> None:
+        # 20 MB of zeros arrives as one 20 KB chunk. Decoding it whole before checking the
+        # cap would hold all 20 MB; decoding it a step at a time holds about the cap.
+        bomb = gzip.compress(bytes(20_000_000))
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(200, headers={"Content-Encoding": "gzip"}, stream=_Chunks(bomb))
+
+        client = await _client(handler, max_response_bytes=1000)
+        tracemalloc.start()
+
+        try:
+            with pytest.raises(CoreException) as err:
+                await client.request("GET", "/x")
+
+            peak = tracemalloc.get_traced_memory()[1]
+
+        finally:
+            tracemalloc.stop()
+            await client.close()
+
+        assert "max_response_bytes" in str(err.value)
+        assert peak < 2_000_000
 
     @pytest.mark.asyncio
     async def test_an_encoded_rejection_keeps_its_status(self) -> None:

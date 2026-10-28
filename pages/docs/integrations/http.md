@@ -27,7 +27,10 @@ http = HttpClient()
 ### Settings
 
 `HttpSettings` holds the base URL, bearer token, default headers and the response cap —
-see [connection settings](index.md#connection-settings).
+see [connection settings](index.md#connection-settings). The cap (`max_response_bytes`)
+counts the decoded body as it decodes, so a small compressed body cannot expand past it. A
+client with a cap asks only for `gzip` and `deflate`, and refuses a response in any other
+content coding.
 
 ## Wire it
 
@@ -113,14 +116,17 @@ leaves the way a declared operation does:
   below it, on the same scheme, host and port. On a tenant-routed service it must be under
   the current tenant's route instead. Anything else is refused with `http_request_off_route`
   before it is sent. That includes another host, a path outside the prefix, a dot segment
-  (percent-encoded or not) and userinfo in the URL. Point the SDK at the same base URL. The
+  (percent-encoded or not), a `;` path parameter, an escaped `%` (`%25`) and userinfo in the
+  URL. Point the SDK at the same base URL. The
   pooled client never follows a redirect: the SDK's client follows it if configured to, and
   the next hop is held to the route again.
-- **The service's headers replace the SDK's.** The service's `default_headers` and
-  credential override the SDK's headers of the same names. So do the pooled client's own
-  default headers, which on a routed service carry the tenant's credential. You can therefore
-  build the SDK with a placeholder key and keep the real one in the service config or the tenant's
-  secret.
+- **The service's headers replace the SDK's headers of the same names.** The service's
+  `default_headers` and credential override them, and so do the pooled client's own default
+  headers, which on a routed service carry the tenant's credential. You can therefore build
+  the SDK with a placeholder key and keep the real one in the service config or the tenant's
+  secret. Replacement goes by name only: a credential the SDK sends under another header
+  name, such as `x-api-key` beside the service's `Authorization`, still goes out to the
+  pinned host. Give the SDK a placeholder under every header it fills in.
 - **The deadline budget, the trace context and the egress tag apply** as they do for
   `invoke`. A deadline that is already spent is refused with `deadline_exceeded`, and nothing
   is sent. As with `stream`, the budget travels when the request opens and does not bound
@@ -128,8 +134,13 @@ leaves the way a declared operation does:
 - **It goes out on the service's pooled client, and the response comes back as sent:**
   status, headers and the body undecoded. Status handling, retries and error types stay the
   SDK's, and forze's error mapping does not apply. The SDK's timeouts apply, not the
-  service's `timeout`. When the client sets `max_response_bytes`, the cap holds every body,
-  counted on the wire, so it also cuts off a long stream.
+  service's `timeout`. When the client sets `max_response_bytes`, the cap bounds every
+  body's *decoded* size, counted chunk by chunk before the SDK sees the chunk, so it also
+  cuts off a long stream and a small compressed body that would expand past it. A capped
+  client asks only for `gzip` and `deflate` and refuses a response in any other content
+  coding. On a tenant-routed service, evicting a tenant's client fails a response still
+  streaming, unless the routed client is built with `guarded=True`, as for
+  [`stream`](#stream-a-response).
 - **Only a declared service yields one.** The transport is resolved through the service's
   dep key, so an undeclared service is refused. An `egress_sensitive` service exists only
   with `acknowledge_data_egress`, so the wiring gate has already run.

@@ -8,6 +8,7 @@ the SDK still gets back the response the counterparty sent.
 """
 
 import gzip
+import tracemalloc
 from collections.abc import AsyncIterator, Callable
 from typing import Any
 from uuid import UUID
@@ -89,6 +90,17 @@ async def _send(transport: HttpServiceTransport, url: str, **kwargs: Any) -> htt
 
     async with httpx.AsyncClient(transport=transport) as sdk:
         return await sdk.post(url, **kwargs)
+
+
+class _Chunks(httpx.AsyncByteStream):
+    """A body served as these chunks, unread until the client reads it."""
+
+    def __init__(self, *chunks: bytes) -> None:
+        self._chunks = chunks
+
+    async def __aiter__(self) -> AsyncIterator[bytes]:
+        for chunk in self._chunks:
+            yield chunk
 
 
 # ....................... #
@@ -215,6 +227,10 @@ class TestHttpServiceTransport:
             "https://api.example.com/v1/%2e%2e/admin",
             "https://api.example.com/v1/..%2Fadmin",
             "https://api.example.com/v1/..%5Cadmin",
+            "https://api.example.com/v1/..;/admin",
+            "https://api.example.com/v1/chat;jsessionid=1",
+            "https://api.example.com/v1/..%3B/admin",
+            "https://api.example.com/v1/%252e%252e/admin",
             "https://user:pass@api.example.com/v1/chat",
             "https://api.example.com@evil.example.com/v1/chat",
         ],
@@ -360,8 +376,11 @@ class TestHttpServiceTransportUnderAnSdk:
                 content=gzip.compress(b'{"ok": true}'),
             )
 
+        # A cap, so the decoded-size count runs alongside the stream without holding it up.
         transport, client = await _transport(
-            handler, auth=HttpAuthConfig(kind="bearer", token="governed-key")
+            handler,
+            max_response_bytes=4096,
+            auth=HttpAuthConfig(kind="bearer", token="governed-key"),
         )
 
         try:
@@ -386,6 +405,50 @@ class TestHttpServiceTransportUnderAnSdk:
         # Lines cut across chunks come out whole: the SDK reads the stream, not a buffer.
         assert lines == ["data: one", "", "data: two", ""]
         assert {r.headers["authorization"] for r in seen} == {"Bearer governed-key"}
+        # The SDK's own Accept-Encoding is replaced by the codings a capped client can bound.
+        assert {r.headers["accept-encoding"] for r in seen} == {"gzip, deflate"}
+
+    async def test_a_compression_bomb_never_reaches_the_sdks_decoder(self) -> None:
+        # 10 MB of zeros in one 10 KB chunk, under a 100 KB cap counted on the wire. The SDK
+        # decodes what it receives, so the cap has to count what the chunk decodes to.
+        bomb = gzip.compress(bytes(10_000_000))
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(200, headers={"Content-Encoding": "gzip"}, stream=_Chunks(bomb))
+
+        transport, client = await _transport(handler, max_response_bytes=100_000)
+        tracemalloc.start()
+
+        try:
+            async with httpx.AsyncClient(base_url=BASE, transport=transport) as sdk:
+                with pytest.raises(CoreException) as raised:
+                    await sdk.post("/chat/completions")
+
+            peak = tracemalloc.get_traced_memory()[1]
+
+        finally:
+            tracemalloc.stop()
+            await client.aclose()
+
+        assert raised.value.kind is ExceptionKind.INFRASTRUCTURE
+        assert "max_response_bytes" in str(raised.value)
+        assert peak < 3_000_000
+
+    async def test_a_coding_the_cap_cannot_bound_is_refused(self) -> None:
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(200, headers={"Content-Encoding": "br"}, stream=_Chunks(b"?"))
+
+        transport, client = await _transport(handler, max_response_bytes=4096)
+
+        try:
+            async with httpx.AsyncClient(base_url=BASE, transport=transport) as sdk:
+                with pytest.raises(CoreException) as raised:
+                    await sdk.post("/chat/completions")
+
+        finally:
+            await client.aclose()
+
+        assert "content coding" in str(raised.value)
 
 
 # ....................... #
@@ -516,6 +579,9 @@ class TestIsUnder:
             ("https://api.example.com/v1/./x", False),
             ("https://api.example.com/v1x", False),
             ("https://api.example.com:notaport/v1", False),
+            ("https://api.example.com/v1/..;/admin", False),
+            ("https://api.example.com/v1/%252e%252e/admin", False),
+            ("https://api.example.com/v1/%2525", False),
             ("HTTPS://API.EXAMPLE.COM/v1/x", True),
         ],
     )

@@ -1,8 +1,9 @@
 """Async HTTP client wrapper using httpx."""
 
+import zlib
 from collections.abc import AsyncGenerator, AsyncIterator, Mapping
 from contextlib import asynccontextmanager
-from typing import Any, cast, final
+from typing import Any, Final, cast, final
 from urllib.parse import SplitResult, unquote, urlsplit, urlunsplit
 
 from forze_http._compat import require_http
@@ -59,17 +60,118 @@ def _redact_url(url: str | None) -> str | None:
 # ....................... #
 
 
+_INFLATE_WBITS: Final = {"gzip": zlib.MAX_WBITS | 16, "deflate": zlib.MAX_WBITS}
+"""The codings a cap can be held on as they decode, with their zlib window bits."""
+
+_DECODED_CODINGS: Final = frozenset({*_INFLATE_WBITS, "br", "zstd"})
+"""Every content coding httpx decodes; it passes any other through as it arrived."""
+
+_ACCEPT_ENCODING_UNDER_CAP: Final = "gzip, deflate"
+"""What a client with ``max_response_bytes`` set asks for: the codings it can bound."""
+
+
+# ....................... #
+
+
+def _raw(response: httpx.Response) -> AsyncIterator[bytes]:
+    """*response*'s body as it arrived, not decoded.
+
+    The stream itself rather than ``aiter_raw``, which refuses a body already read: an
+    in-memory response (a mock, an ASGI app) arrives read, and its stream still holds the
+    bytes as they were sent.
+    """
+
+    return aiter(cast(httpx.AsyncByteStream, response.stream))
+
+
+# ....................... #
+
+
+@final
+class _DecodedCap:
+    """A body's decoded size, counted as it arrives and refused once it passes *max_bytes*.
+
+    Decodes as httpx does — gzip, and deflate with or without its zlib header — but never
+    more than one byte past the cap in a step, so a small compressed chunk cannot expand
+    far past it first. A coding it cannot bound (``br``, ``zstd``, or a stack of codings)
+    is refused rather than left for httpx to decode unbounded.
+    """
+
+    def __init__(self, headers: httpx.Headers, max_bytes: int) -> None:
+        declared = headers.get("content-encoding", "")
+        codings = [c.strip().lower() for c in declared.split(",")]
+        decoded = [c for c in codings if c in _DECODED_CODINGS]
+
+        if len(decoded) > 1 or (decoded and decoded[0] not in _INFLATE_WBITS):
+            raise exc.infrastructure(
+                f"HTTP response content coding {declared!r} cannot be held to "
+                f"max_response_bytes {max_bytes}"
+            )
+
+        self.__coding = decoded[0] if decoded else None
+        self.__inflate = (
+            zlib.decompressobj(_INFLATE_WBITS[self.__coding]) if self.__coding else None
+        )
+        self.__first = True
+        self.__max_bytes = max_bytes
+        self.__total = 0
+
+    # ....................... #
+
+    def feed(self, chunk: bytes) -> bytes:
+        """*chunk* decoded, refused once the body's decoded total passes the cap."""
+
+        decoded = chunk if self.__inflate is None else self.__inflate_step(chunk)
+        self.__total += len(decoded)
+
+        if self.__total > self.__max_bytes:
+            raise exc.infrastructure(
+                f"HTTP response body exceeded max_response_bytes {self.__max_bytes}"
+            )
+
+        return decoded
+
+    # ....................... #
+
+    def __inflate_step(self, chunk: bytes) -> bytes:
+        # One byte of room past the cap: output that fills it is over the cap and refused,
+        # and output that does not means the whole chunk was consumed, so nothing is left
+        # pending for a later step or a flush.
+        room = self.__max_bytes - self.__total + 1
+        first, self.__first = self.__first, False
+        inflate = cast(Any, self.__inflate)
+
+        try:
+            return cast(bytes, inflate.decompress(chunk, room))
+
+        except zlib.error as error:
+            if first and self.__coding == "deflate":
+                # A raw deflate stream with no zlib header, which httpx accepts as well.
+                self.__inflate = zlib.decompressobj(-zlib.MAX_WBITS)
+
+                return self.__inflate_step(chunk)
+
+            raise exc.infrastructure("HTTP response body could not be decoded") from error
+
+
+# ....................... #
+
+
 async def _buffered(streaming: httpx.Response, max_bytes: int | None) -> httpx.Response:
     """*streaming* read whole, refused once it crosses *max_bytes*, as an in-memory response."""
 
     _refuse_declared_oversize(streaming, max_bytes)
     body = bytearray()
 
-    async for chunk in streaming.aiter_bytes():
-        body.extend(chunk)
+    if max_bytes is None:
+        async for chunk in streaming.aiter_bytes():
+            body.extend(chunk)
 
-        if max_bytes is not None and len(body) > max_bytes:
-            raise exc.infrastructure(f"HTTP response body exceeded max_response_bytes {max_bytes}")
+    else:
+        cap = _DecodedCap(streaming.headers, max_bytes)
+
+        async for chunk in _raw(streaming):
+            body.extend(cap.feed(chunk))
 
     # The body is decoded now, so the headers stop describing an encoding: left in, httpx
     # decodes it a second time. Content-Length is dropped too and recomputed from the body.
@@ -122,7 +224,9 @@ def _is_under(url: str, base_url: str) -> bool:
     Compared part by part after parsing, never as text: ``https://api.example.com.evil.net``
     starts with ``https://api.example.com`` and is somewhere else. Fails closed on whatever
     could read differently at the far end — userinfo, a dot segment hidden behind percent
-    encoding, a backslash some servers take for a slash, a port that does not parse.
+    encoding, a backslash some servers take for a slash, a port that does not parse, a
+    ``;`` path parameter (servers that strip ``..;`` resolve it upward), and an escaped
+    ``%`` (a server that decodes twice reads ``%252e%252e`` as ``..``).
     """
 
     try:
@@ -137,7 +241,12 @@ def _is_under(url: str, base_url: str) -> bool:
     if target.username is not None or target.password is not None:
         return False
 
-    if {".", ".."} & set(unquote(target.path).replace("\\", "/").split("/")):
+    if "%25" in target.path:
+        return False
+
+    decoded = unquote(target.path)
+
+    if ";" in decoded or {".", ".."} & set(decoded.replace("\\", "/").split("/")):
         return False
 
     # Segment by segment, on the path as sent: `/v1` must not admit `/v1-admin`, and an
@@ -152,25 +261,20 @@ def _is_under(url: str, base_url: str) -> bool:
 
 @final
 class _WireRelay(httpx.AsyncByteStream):
-    """*upstream*'s body as it arrived — not decoded — cut off once it crosses *max_bytes*."""
+    """*upstream*'s body as it arrived — not decoded — cut off once *cap* refuses it.
 
-    def __init__(self, upstream: httpx.Response, max_bytes: int | None) -> None:
+    Each chunk is decoded into *cap* before it is passed on, so whoever decodes it next
+    never holds more than the cap allows: the decoded size is what costs memory.
+    """
+
+    def __init__(self, upstream: httpx.Response, cap: _DecodedCap | None) -> None:
         self.__upstream = upstream
-        self.__max_bytes = max_bytes
+        self.__cap = cap
 
     async def __aiter__(self) -> AsyncIterator[bytes]:
-        seen = 0
-
-        # The stream itself rather than `aiter_raw`, which refuses a body already read: an
-        # in-memory response (a mock, an ASGI app) arrives read, and its stream still holds
-        # the bytes as they were sent.
-        async for chunk in cast(httpx.AsyncByteStream, self.__upstream.stream):
-            seen += len(chunk)
-
-            if self.__max_bytes is not None and seen > self.__max_bytes:
-                raise exc.infrastructure(
-                    f"HTTP response body exceeded max_response_bytes {self.__max_bytes}"
-                )
+        async for chunk in _raw(self.__upstream):
+            if self.__cap is not None:
+                self.__cap.feed(chunk)
 
             yield chunk
 
@@ -207,6 +311,13 @@ class HttpClient(HttpClientPort):
             self.__base_url = base_url
             self.__max_response_bytes = cfg.max_response_bytes
             self.__default_headers = dict(default_headers or {})
+
+            # A cap holds only on codings decoded here step by step, so ask for no other.
+            if cfg.max_response_bytes is not None and not any(
+                name.lower() == "accept-encoding" for name in self.__default_headers
+            ):
+                self.__default_headers["Accept-Encoding"] = _ACCEPT_ENCODING_UNDER_CAP
+
             timeout = httpx.Timeout(cfg.timeout.total_seconds())
             client_kwargs: dict[str, Any] = {
                 "timeout": timeout,
@@ -386,12 +497,14 @@ class HttpClient(HttpClientPort):
         upstream = await client.send(request, stream=True, follow_redirects=False)
 
         try:
-            _refuse_declared_oversize(upstream, self.__max_response_bytes)
+            max_bytes = self.__max_response_bytes
+            _refuse_declared_oversize(upstream, max_bytes)
+            cap = None if max_bytes is None else _DecodedCap(upstream.headers, max_bytes)
 
             yield httpx.Response(
                 status_code=upstream.status_code,
                 headers=upstream.headers,
-                stream=_WireRelay(upstream, self.__max_response_bytes),
+                stream=_WireRelay(upstream, cap),
                 extensions=upstream.extensions,
             )
 

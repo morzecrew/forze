@@ -53,9 +53,10 @@ class HttpServiceTransport(httpx.AsyncBaseTransport):
     ``httpx.AsyncClient(transport=...)`` with this transport, from
     :func:`~forze_http.http_service_transport`, and each request leaves the way a declared
     operation does. It is held to the service's ``base_url`` (or the current tenant's route),
-    carries the service's headers and credential in place of the SDK's, forwards the deadline
-    budget and the trace context, and marks the current span when the route is
-    egress-sensitive. It goes out on the service's pooled client.
+    its headers of the same names as the service's — the credential among them — are
+    replaced by the service's, it forwards the deadline budget and the trace context, and it
+    marks the current span when the route is egress-sensitive. It goes out on the service's
+    pooled client. A header the SDK sends under another name goes out as the SDK set it.
 
     The response comes back as it arrived — status, headers, undecoded body — so status
     handling, retries and error types stay the SDK's. Closing the SDK's client does not close
