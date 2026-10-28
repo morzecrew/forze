@@ -14,7 +14,7 @@ from uuid import UUID, uuid4
 
 import attrs
 import pytest
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from forze.application.contracts.conformity import DerivedReadField
 from forze.application.contracts.document import DocumentSpec, DocumentWriteTypes
@@ -24,7 +24,7 @@ from forze.base.exceptions import CoreException
 from forze.base.primitives import JsonDict
 from forze.domain.models import CreateDocumentCmd, Document, ReadDocument
 from forze.testing import context_from_modules
-from forze_dst.conformance import ReadRefused, run_derived_fidelity
+from forze_dst.conformance import ReadRefused, Unserializable, run_derived_fidelity
 from forze_mock import MockDepsModule, MockDerivedRegistry
 from forze_mock.execution.configs import MockRouteConfig
 from forze_mock.seeding import SeedPlan, SeedResult, SpecSeed
@@ -273,6 +273,62 @@ class TestDivergence:
         [mismatch] = report.mismatches
         assert mismatch.id == report.ids[1]
         assert mismatch.mock == ReadRefused(kind="RuntimeError")
+
+
+class _AnyRead(ReadDocument):
+    warehouse_id: UUID | None = None
+    warehouse: Any = None
+
+
+class _HiddenRead(ReadDocument):
+    warehouse_id: UUID | None = None
+    warehouse: _Ref | None = Field(default=None, exclude=True)
+
+
+def _marked(read: type[ReadDocument]) -> DocumentSpec:
+    return attrs.evolve(MARKED, read=read)
+
+
+class TestSerialization:
+    async def test_an_unserializable_value_is_a_mismatch_not_a_crash(self) -> None:
+        def odd(row: JsonDict) -> dict[str, Any]:
+            if str(row.get("warehouse_id")) == str(SOUTH):
+                return {"warehouse": object()}
+
+            return _ref(row, NAMES)
+
+        spec = _marked(_AnyRead)
+        report = await run_derived_fidelity(
+            spec=spec,
+            seed=_seed(_plan(spec)),
+            real=_ctx(lambda row: _ref(row, NAMES)),
+            mock=_ctx(odd),
+        )
+
+        [mismatch] = report.mismatches
+        assert mismatch.id == report.ids[1]
+        assert isinstance(mismatch.mock, Unserializable)
+        [tally] = report.tallies
+        assert (tally.compared, tally.refused_on_both, tally.diverged) == (2, 0, 1)
+
+    async def test_two_unserializable_values_never_agree(self) -> None:
+        spec = _marked(_AnyRead)
+        odd = lambda row: {"warehouse": object()}  # noqa: E731
+        report = await run_derived_fidelity(
+            spec=spec, seed=_seed(_plan(spec)), real=_ctx(odd), mock=_ctx(odd)
+        )
+
+        assert not report.agrees
+        assert report.tallies[0].diverged == 3
+
+    async def test_a_derived_field_excluded_from_serialization_is_refused(self) -> None:
+        spec = _marked(_HiddenRead)
+        source = lambda row: _ref(row, NAMES)  # noqa: E731
+
+        with pytest.raises(CoreException, match="excluded from the read model"):
+            await run_derived_fidelity(
+                spec=spec, seed=_seed(_plan(spec)), real=_ctx(source), mock=_ctx(source)
+            )
 
 
 class TestVacuousAgreement:

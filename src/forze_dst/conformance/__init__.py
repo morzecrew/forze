@@ -63,6 +63,7 @@ from .derived import (
     ReadRefused,
     SeededIds,
     SeedFn,
+    Unserializable,
     run_derived_fidelity,
 )
 from .divergence import (
@@ -168,6 +169,7 @@ __all__ = [
     "ReadRefused",
     "SeededIds",
     "SeedFn",
+    "Unserializable",
     "run_derived_fidelity",
     "ContractStrengthening",
     "MechanismDivergence",

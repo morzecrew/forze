@@ -79,7 +79,7 @@ async def test_orders_match_the_view(postgres_ctx, plan) -> None:
     assert all(tally.compared for tally in report.tallies), report.render_markdown()
 ```
 
-Each disagreement is one `DerivedMismatch` for one field on one row, holding both values. A read that raises on one side is recorded as a `ReadRefused` value, so one bad row does not hide the rest.
+Each disagreement is one `DerivedMismatch` for one field on one row, holding both values. A read that raises on one side is recorded as a `ReadRefused` value, so one bad row does not hide the rest. A value that JSON serialization refuses is recorded as `Unserializable`, which never agrees with anything. A derived field the read model excludes from serialization is refused up front, since it could only ever agree as `None`.
 
 `agrees` means only that nothing mismatched. A field that is `None` on both sides, or a row both sides refused, agrees without testing the join. So also check the per-field `tallies`: each one counts the rows actually `compared`, the rows `null_on_both` and the rows `refused_on_both`, and `render_markdown()` prints them.
 

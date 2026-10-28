@@ -66,6 +66,21 @@ class ReadRefused:
 
 
 @final
+@attrs.frozen(kw_only=True, eq=False)
+class Unserializable:
+    """A value the row returned that JSON serialization refused, standing in for that value.
+
+    Equal only to itself, so it is always a mismatch: unlike a refused read, it is a value
+    nobody could compare, and two of them must not agree. The kind is the error's class name.
+    """
+
+    kind: str
+
+
+# ....................... #
+
+
+@final
 @attrs.frozen(kw_only=True)
 class DerivedMismatch:
     """One derived field on one row where the mock and the real backend disagree."""
@@ -73,10 +88,12 @@ class DerivedMismatch:
     field: str
     id: UUID
     real: Any
-    """The real backend's value, JSON-normalised, or a :class:`ReadRefused`."""
+    """The real backend's value, JSON-normalised, or a :class:`ReadRefused` or
+    :class:`Unserializable`."""
 
     mock: Any
-    """The mock's value, JSON-normalised, or a :class:`ReadRefused`."""
+    """The mock's value, JSON-normalised, or a :class:`ReadRefused` or
+    :class:`Unserializable`."""
 
 
 # ....................... #
@@ -95,7 +112,8 @@ class DerivedFieldTally:
 
     field: str
     compared: int
-    """Rows where at least one side produced a value or refused alone."""
+    """Rows where at least one side produced a value or refused alone; a value that could
+    not be serialized counts here, always as diverged."""
 
     null_on_both: int
     refused_on_both: int
@@ -174,11 +192,29 @@ async def _derived_values(
         # Any raise is this row's finding, not the end of the run.
         return dict.fromkeys(fields, ReadRefused(kind=type(error).__name__))
 
-    # JSON mode, so a nested model, a UUID and a datetime compare as the same value
-    # whichever backend's decode produced them.
-    dumped = row.model_dump(mode="json", include=set(fields))
+    values: dict[str, Any] = {}
 
-    return {name: dumped.get(name) for name in fields}
+    for name in fields:
+        # JSON mode, so a nested model, a UUID and a datetime compare as the same value
+        # whichever backend's decode produced them. One field at a time, so a value that
+        # cannot be serialized spoils only itself.
+        try:
+            dumped = row.model_dump(mode="json", include={name})
+
+        except Exception as error:
+            values[name] = Unserializable(kind=type(error).__name__)
+            continue
+
+        # Read as None on both sides, an excluded field would agree without being compared.
+        if name not in dumped:
+            raise exc.configuration(
+                f"Derived field {name!r} is excluded from the read model's serialization, so "
+                "its values cannot be compared.",
+            )
+
+        values[name] = dumped[name]
+
+    return values
 
 
 # ....................... #
@@ -221,8 +257,9 @@ async def run_derived_fidelity(
     tenant-aware spec needs: each context carries its own invocation identity, so binding it
     on one side only would seed and read the other side unpartitioned.
 
-    :raises exc.configuration: when *spec* declares no derived fields, the seed creates no row
-        of it, or the two stores minted different ids, so their rows cannot be paired.
+    :raises exc.configuration: when *spec* declares no derived fields, a derived field is
+        excluded from the read model's serialization, the seed creates no row of it, or the two
+        stores minted different ids, so their rows cannot be paired.
     """
 
     fields = tuple(sorted(spec.derived_read_fields))
