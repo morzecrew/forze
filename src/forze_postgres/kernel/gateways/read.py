@@ -44,6 +44,7 @@ from forze.base.primitives import JsonDict, build_projection
 from forze.domain.constants import ID_FIELD
 from forze_postgres.kernel._logger import logger
 from forze_postgres.kernel.client import undo_local_settings_on_exit
+from forze_postgres.kernel.relation import RelationSpec, resolve_postgres_qname
 from forze_postgres.kernel.sql import (
     build_order_by_sql,
     build_seek_condition,
@@ -123,6 +124,10 @@ class PostgresReadGateway[M: BaseModel](
 
     bound_params: BaseModel | None = attrs.field(default=None, kw_only=True)
     """Query parameters bound via ``with_parameters``; applied as session settings per read."""
+
+    lock_relation: RelationSpec | None = attrs.field(default=None, kw_only=True)
+    """Write relation a locking read takes its row lock on, set when it differs from
+    :attr:`relation`. A view that joins references with ``LEFT JOIN`` refuses ``FOR UPDATE``."""
 
     # ....................... #
 
@@ -361,24 +366,103 @@ class PostgresReadGateway[M: BaseModel](
 
         where_sql, where_params = self._add_tenant_where(where_sql, where_params)  # type: ignore[assignment]
 
-        stmt = sql.SQL("SELECT {cols} FROM {table} WHERE {where}").format(
-            cols=self.return_clause(),
-            table=(await self._qname()).ident(),
-            where=where_sql,
-        )
-
-        fu = _for_update_sql(for_update)
-
-        if fu is not None:
-            self.client.require_transaction()
-            stmt += fu
-
-        row = await self._read_one(stmt, where_params, row_factory="dict")
+        row = await self._select_one(self.return_clause(), where_sql, where_params, for_update)
 
         if row is None:
             raise exc.not_found(f"Record not found: {pk}")
 
         return await self._adecode_row(row)
+
+    # ....................... #
+
+    async def _select_one(
+        self,
+        cols: sql.Composable,
+        where: sql.Composable,
+        params: list[Any],
+        for_update: RowLockMode,
+    ) -> JsonDict | None:
+        """Read the first row matching *where*, row-locked when *for_update* asks for it.
+
+        With a :attr:`lock_relation`, the lock statement picks the matching ids here and locks
+        their rows there (tenant-scoped like the read), and the row is read only after its lock
+        is held, so it comes back as locked rather than as an earlier snapshot saw it. A row that
+        no longer matches once locked (it changed while the lock was awaited) is skipped, as
+        Postgres skips a row that fails its recheck, and the next match is tried.
+
+        :param cols: Select list.
+        :param where: Predicate over :attr:`relation`, tenant condition included.
+        :param params: Parameters of *where*.
+        :param for_update: Row lock mode.
+        :returns: The row, or ``None`` when nothing matches (or every match is locked, with
+            ``skip_locked``).
+        """
+
+        fu = _for_update_sql(for_update)
+        table = (await self._qname()).ident()
+        stmt = sql.SQL("SELECT {cols} FROM {table} WHERE {where} LIMIT 1").format(
+            cols=cols,
+            table=table,
+            where=where,
+        )
+
+        if fu is None:
+            return await self._read_one(stmt, params)
+
+        self.client.require_transaction()
+
+        if self.lock_relation is None:
+            return await self._read_one(stmt + fu, params)
+
+        lock_table = await resolve_postgres_qname(
+            self.lock_relation,
+            self._tenant_id_for_resolve(),
+        )
+        lock_pk = sql.Identifier("t", ID_FIELD)
+        not_skipped, tenant_params = self._add_tenant_where(
+            sql.SQL("NOT ({pk} = ANY({ph}))").format(pk=lock_pk, ph=sql.Placeholder()),
+            [],
+            table_alias="t",
+        )
+        # Plain FOR UPDATE locks only ``t``: the read relation sits in a sublink, not in FROM.
+        lock_stmt = (
+            sql.SQL(
+                "SELECT {lock_pk} FROM {lock} AS t "
+                "WHERE {lock_pk} IN (SELECT {pk} FROM {table} WHERE {where}) AND {not_skipped} "
+                "LIMIT 1"
+            ).format(
+                lock_pk=lock_pk,
+                lock=lock_table.ident(),
+                pk=self.ident_pk(),
+                table=table,
+                where=where,
+                not_skipped=not_skipped,
+            )
+            + fu
+        )
+        read_stmt = sql.SQL(
+            "SELECT {cols} FROM {table} WHERE {where} AND {pk} = {ph} LIMIT 1"
+        ).format(
+            cols=cols,
+            table=table,
+            where=where,
+            pk=self.ident_pk(),
+            ph=sql.Placeholder(),
+        )
+        skipped: list[UUID] = []
+
+        # Each miss excludes one more id, so the loop ends within the number of matching rows.
+        while (
+            pk := await self._read_value(lock_stmt, [*params, skipped, *tenant_params])
+        ) is not None:
+            row = await self._read_one(read_stmt, [*params, pk])
+
+            if row is not None:
+                return row
+
+            skipped.append(pk)
+
+        return None
 
     # ....................... #
 
@@ -466,19 +550,12 @@ class PostgresReadGateway[M: BaseModel](
         # tenant id supplied by where clause
         where, params = await self.where_clause(filters)
 
-        stmt = sql.SQL("SELECT {cols} FROM {table} WHERE {where} LIMIT 1").format(
-            cols=self.return_clause(return_model, return_fields),
-            table=(await self._qname()).ident(),
-            where=where,
+        row = await self._select_one(
+            self.return_clause(return_model, return_fields),
+            where,
+            params,
+            for_update,
         )
-
-        fu = _for_update_sql(for_update)
-
-        if fu is not None:
-            self.client.require_transaction()
-            stmt += fu
-
-        row = await self._read_one(stmt, params, row_factory="dict")
 
         if row is None:
             return None

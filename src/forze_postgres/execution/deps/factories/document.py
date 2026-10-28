@@ -207,6 +207,7 @@ class ConfigurablePostgresDocument(DocumentCommandDepPort[R, D, C, U]):
             params_required=spec.query_params is not None,
             lenient_read_fields=spec.resolved_lenient_read_fields,
             sealed_fields=_sealed_fields(spec),
+            lock_relation=self.config.write if self.config.write != self.config.read else None,
         )
 
         history_relation = self.config.history
