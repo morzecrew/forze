@@ -11,6 +11,11 @@ resolver honest to that SQL.
 Final-state only, like :func:`~forze_dst.oracle.system_invariants.compile_oracle` without
 ``per_commit``: the observe hook runs the query once over a clean context after all work, so a
 violation a later transaction healed is not seen.
+
+The answer must be computed from what the run wrote. On the mock a query with no resolver would
+answer from seeded rows, or from nothing, and ``not rows`` would pass without reading a document;
+the hook runs the query under
+:func:`~forze.application.integrations.analytics.require_computed_rows`, so the mock refuses it.
 """
 
 from __future__ import annotations
@@ -22,6 +27,9 @@ from pydantic import BaseModel, ValidationError
 
 from forze.application.contracts.analytics import AnalyticsSpec
 from forze.application.execution import ExecutionContext
+from forze.application.execution.deps.port_instrumentation import sensitive_fields
+from forze.application.execution.tracing.port_proxy import REDACTED
+from forze.application.integrations.analytics import require_computed_rows
 from forze.base.exceptions import exc
 
 from .invariants import Violation, named
@@ -34,7 +42,7 @@ QUERY_INVARIANT_KIND = "query_invariant"
 """The recorder event kind the observe hook stamps with each query's outcome."""
 
 _SHOWN_ROWS = 3
-"""How many returned rows a violation message quotes."""
+"""How many returned rows the observe hook records and a violation message quotes."""
 
 
 # ....................... #
@@ -65,7 +73,8 @@ def query_invariant(
         you combine the invariants into a simulation, which rejects duplicates when invariant
         accounting is on and cannot otherwise tell them apart.
     :raises exc.configuration: when *spec* declares no query named *query_key*, or *params*
-        is omitted and the query's params model has required fields.
+        is omitted and the query's params model has required fields. The observe hook raises
+        it too when the mock has no resolver for the query.
     """
 
     if query_key not in spec.queries:
@@ -87,14 +96,25 @@ def query_invariant(
 
     bound = params
     law = name or f"{spec.name}.{query_key}"
+    # Masked as value capture masks a trace: the read model may hold fields it decrypted.
+    hidden = sensitive_fields(spec)
 
     async def observe(ctx: ExecutionContext) -> None:
-        page = await ctx.analytics.query(spec).run(query_key, bound)
+        with require_computed_rows():
+            page = await ctx.analytics.query(spec).run(query_key, bound)
+
         record_event(
             QUERY_INVARIANT_KIND,
             name=law,
             held=bool(holds(page.hits)),
-            rows=[hit.model_dump(mode="json") for hit in page.hits],
+            count=len(page.hits),
+            rows=[
+                {
+                    field: REDACTED if field in hidden else value
+                    for field, value in hit.model_dump(mode="json").items()
+                }
+                for hit in page.hits[:_SHOWN_ROWS]
+            ],
         )
 
     def _check(history: History) -> list[Violation]:
@@ -103,8 +123,7 @@ def query_invariant(
                 invariant=law,
                 message=(
                     f"query invariant {law!r} failed: {query_key!r} returned "
-                    f"{len(event.fields['rows'])} row(s), first "
-                    f"{event.fields['rows'][:_SHOWN_ROWS]}"
+                    f"{event.fields['count']} row(s), first {event.fields['rows']}"
                 ),
                 events=(event,),
             )

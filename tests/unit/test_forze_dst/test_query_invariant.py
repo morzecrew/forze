@@ -16,6 +16,7 @@ import pytest
 from pydantic import BaseModel
 
 from forze.application.contracts.analytics import AnalyticsQueryDefinition, AnalyticsSpec
+from forze.application.contracts.crypto import FieldEncryption
 from forze.application.contracts.document import DocumentSpec
 from forze.application.execution import ExecutionContext
 from forze.base.exceptions import CoreException, ExceptionKind
@@ -23,7 +24,7 @@ from forze.domain.models import CreateDocumentCmd, Document, ReadDocument
 from forze_dst.invariants import check, query_invariant
 from forze_dst.oracle.query_invariants import QUERY_INVARIANT_KIND
 from forze_dst.oracle.recorder import Recorder, bind_recorder
-from forze_mock import MockAnalyticsRegistry, MockAnalyticsView, MockDepsModule
+from forze_mock import MockAnalyticsRegistry, MockAnalyticsView, MockDepsModule, MockState
 from tests.support.execution_context import context_from_modules
 
 # ----------------------- #
@@ -64,6 +65,22 @@ BALANCES = AnalyticsSpec(
     name="balances",
     read=Balance,
     queries={"below": AnalyticsQueryDefinition(params=Floor)},
+)
+
+OTHER = AnalyticsSpec(
+    name="other",
+    read=Balance,
+    queries={"any": AnalyticsQueryDefinition(params=Floor)},
+)
+
+# The account is sealed at rest: ingest seals it, and the analytics read opens it again, so the
+# predicate sees plaintext.
+SEALED_BALANCES = AnalyticsSpec(
+    name="sealed_balances",
+    read=Balance,
+    queries={"below": AnalyticsQueryDefinition(params=Floor)},
+    ingest=Balance,
+    encryption=FieldEncryption(encrypted=frozenset({"account"})),
 )
 
 
@@ -176,3 +193,95 @@ def test_an_unknown_query_key_is_refused() -> None:
 
     assert caught.value.kind is ExceptionKind.CONFIGURATION
     assert caught.value.code == "unknown_analytics_query"
+
+
+# ....................... #
+
+
+@pytest.mark.parametrize(
+    "module",
+    [
+        pytest.param(lambda: MockDepsModule(), id="no-registry"),
+        pytest.param(
+            lambda: MockDepsModule(analytics=MockAnalyticsRegistry().on(OTHER, "any", _below)),
+            id="registry-without-this-query",
+        ),
+    ],
+)
+async def test_a_query_the_mock_cannot_compute_is_refused(module: Any) -> None:
+    # Without a resolver the mock answers from seeded rows that no write moves, or from nothing,
+    # and ``not rows`` would pass without a document read.
+    ctx = context_from_modules(module())
+    await _post(ctx, "b", -3)
+
+    with pytest.raises(CoreException) as caught:
+        await _run(query_invariant(BALANCES, "below", holds=lambda rows: not rows), ctx)
+
+    assert caught.value.kind is ExceptionKind.CONFIGURATION
+    assert caught.value.code == "mock.analytics.resolver_required"
+
+
+async def test_seeded_rows_are_refused_too() -> None:
+    state = MockState()
+    state.analytics_query_hits["balances"] = {"below": [{"account": "seeded", "balance": 1}]}
+    ctx = context_from_modules(MockDepsModule(state=state))
+
+    with pytest.raises(CoreException) as caught:
+        await _run(query_invariant(BALANCES, "below", holds=lambda rows: True), ctx)
+
+    assert caught.value.code == "mock.analytics.resolver_required"
+    # Only the invariant demands a computed answer; an ordinary query keeps the seeded rows.
+    page = await ctx.analytics.query(BALANCES).run("below", Floor())
+    assert [hit.account for hit in page.hits] == ["seeded"]
+
+
+async def test_the_record_keeps_the_count_and_a_bounded_sample() -> None:
+    ctx = _ctx()
+    for account in "abcde":
+        await _post(ctx, account, -1)
+    seen: list[Any] = []
+
+    def holds(rows: Any) -> bool:
+        seen.extend(rows)
+        return False
+
+    recorder = Recorder(seed=0)
+    oracle = query_invariant(BALANCES, "below", holds=holds)
+    with bind_recorder(recorder):
+        await oracle.observe(ctx)
+
+    (event,) = recorder.history.of_kind(QUERY_INVARIANT_KIND)
+    assert len(seen) == 5
+    assert event.fields["count"] == 5
+    assert [row["account"] for row in event.fields["rows"]] == ["a", "b", "c"]
+
+    (violation,) = check(recorder.history, list(oracle.invariants))
+    assert "returned 5 row(s)" in violation.message
+
+
+async def test_a_sealed_field_never_reaches_the_report() -> None:
+    def overdrawn(view: MockAnalyticsView, params: BaseModel) -> Iterable[dict[str, Any]]:
+        ingested = view.state.analytics_ingest_log["sealed_balances"]
+        return [row for row in ingested if row["balance"] < 0]
+
+    ctx = context_from_modules(
+        MockDepsModule(analytics=MockAnalyticsRegistry().on(SEALED_BALANCES, "below", overdrawn))
+    )
+    await ctx.analytics.ingest(SEALED_BALANCES).append([Balance(account="ada-iban", balance=-3)])
+    seen: list[Any] = []
+
+    def holds(rows: Any) -> bool:
+        seen.extend(rows)
+        return not rows
+
+    recorder = Recorder(seed=0)
+    oracle = query_invariant(SEALED_BALANCES, "below", holds=holds)
+    with bind_recorder(recorder):
+        await oracle.observe(ctx)
+    (violation,) = check(recorder.history, list(oracle.invariants))
+
+    assert seen == [Balance(account="ada-iban", balance=-3)]
+    assert "ada-iban" not in violation.message
+    assert "ada-iban" not in repr(violation.events[0].fields)
+    assert "'account': '<redacted>'" in violation.message
+    assert "'balance': -3" in violation.message

@@ -116,6 +116,8 @@ oracle = query_invariant(BALANCES, "overdrawn", holds=lambda rows: not rows)
 Simulation(..., observe=oracle.observe, invariants=[*oracle.invariants])
 ```
 
+On the mock the query must have a resolver. Without one, the hook raises a configuration error instead of testing the law against seeded rows or no rows. A violation quotes the row count and the first three rows, with the spec's encrypted fields shown as `<redacted>`.
+
 Like `compile_oracle` without `per_commit`, it sees only the end state, so it misses a violation that a later transaction heals. Give each oracle a distinct `name` (the default is `"<spec>.<query_key>"`). An invariant reads every outcome recorded under its name, so two oracles that share one each report the other's failures too.
 
 !!! note "Value-level invariants need `capture_values`"

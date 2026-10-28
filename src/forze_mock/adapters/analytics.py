@@ -37,6 +37,7 @@ from forze.application.integrations.analytics import (
     encode_ingest_payloads,
 )
 from forze.application.integrations.analytics.adapter_common import (
+    computed_rows_required,
     dry_run_enabled,
     validate_fetch_batch_size,
 )
@@ -108,6 +109,16 @@ class MockAnalyticsAdapter[R: BaseModel, Ing: BaseModel](
         )
 
         if resolver is None:
+            if computed_rows_required():
+                raise exc.configuration(
+                    f"Analytics query {str(self.spec.name)!r}/{query_key!r} has no mock "
+                    "resolver, so the mock would answer it from seeded rows (or none) that no "
+                    "write moves. Register one with MockAnalyticsRegistry.on() for a caller "
+                    "that needs the answer computed from current documents, such as "
+                    "query_invariant.",
+                    code="mock.analytics.resolver_required",
+                )
+
             with self.state.lock:
                 route_store = self.state.analytics_query_hits.setdefault(self._route(), {})
                 return [dict(row) for row in route_store.get(query_key, [])]
