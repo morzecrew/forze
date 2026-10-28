@@ -10271,6 +10271,12 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <li>
 <p><strong>A throttled HTTP error tells the client when to come back.</strong> Its <code>retry_after</code> (seconds) or else <code>retry_at</code> (aware <code>datetime</code>) detail becomes a <code>Retry-After</code> header, which <code>AllowlistCORSMiddleware</code> exposes; other details stay withheld. No header when neither key is usable.</p>
 </li>
+<li>
+<p><strong>A cancel after an operation's commit point is recorded on every surface.</strong> The operation logs a <code>commit_ambiguous</code> warning carrying its name and invocation ids, adds a <code>forze.commit_ambiguous</code> span event, and re-raises the cancellation. <code>forze ops call</code> still reports it as an error.</p>
+</li>
+<li>
+<p><strong>A transaction manager can say its store refused writes in a read-only root.</strong> Implement <code>ReadOnlyAware.read_only_enforced()</code>, as Postgres and the mock's <code>journal</code> and <code>strict</code> managers do; that root then marks no commit point.</p>
+</li>
 </ul>
 <p><strong><code>forze ops</code> for people at a shell and for backfills:</strong></p>
 <ul>
@@ -10294,6 +10300,9 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <h3 id="fixed">Fixed<a class="headerlink" href="#fixed" title="Permanent link">&para;</a></h3>
 <ul>
 <li>
+<p><strong>A warning logged before <code>configure_logging</code> carries the invocation's ids.</strong> The fallback renderer now merges the bound logging context, as the configured chain does.</p>
+</li>
+<li>
 <p><strong><code>register_scalar_docs</code> loads the document the app actually serves</strong> (<strong>behaviour change</strong>). It fetched <code>/openapi.json</code> whatever <code>openapi_url</code> said, so a versioned app got an empty <code>/docs</code>. It now defaults to <code>app.openapi_url</code> and takes <code>openapi_url=</code>; an app serving no document fails at startup unless it passes one.</p>
 </li>
 <li>
@@ -10310,6 +10319,9 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 </li>
 <li>
 <p><strong><code>AuthnDepsModule</code> refuses an override that would never be registered</strong> (<strong>behaviour change</strong>). That is one for a route <code>authn</code> does not name, or a verifier override for a method its route does not enable. It registered nothing, so the route silently kept its default.</p>
+</li>
+<li>
+<p><strong>A query interrupted after its read no longer reports <code>commit_ambiguous</code> on Postgres or the mock's <code>journal</code> and <code>strict</code> managers</strong> (<strong>behaviour change</strong>). When its read-only transaction was the only one it entered, it reports <code>deadline_exceeded</code> (CLI exit 6) or <code>interrupted</code>, and is safe to re-run.</p>
 </li>
 <li>
 <p><strong>A Postgres dynamic read no longer collapses duplicate column names.</strong> <code>SELECT a.id, b.id</code> came back as one <code>id</code> holding the second value. A result with rows now fails with <code>dynamic_read_statement_invalid</code>, naming the duplicates; an empty one still returns no rows.</p>
@@ -10343,6 +10355,9 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 </li>
 <li>
 <p><strong>A Postgres update with a changed <code>jsonb</code> field no longer answers <code>500</code> on the generated update route</strong> (<strong>behaviour change</strong>). Its diff holds the values the caller set, as on the other backends: no <code>Jsonb</code> wrapper, a <code>StrEnum</code> stays a member and a datetime is as given, not coerced to the column type.</p>
+</li>
+<li>
+<p><strong>A Postgres document field stored in a native <code>jsonb[]</code> or <code>json[]</code> column can be written.</strong> Create, update and upsert, single and batch, failed with <code>cannot adapt type 'dict'</code>; each element is now sent as JSON, a <code>None</code> one as SQL <code>NULL</code>, and reads back as written.</p>
 </li>
 </ul>
 <h3 id="security">Security<a class="headerlink" href="#security" title="Permanent link">&para;</a></h3>
