@@ -51,7 +51,8 @@ def coerce_firestore_value(value: Any) -> Any:
     if isinstance(value, float) and not math.isfinite(value):
         raise exc.precondition(f"Non-finite float not allowed: {value!r}")
 
-    if isinstance(value, list):
+    # A tuple too: the client stores either as an array.
+    if isinstance(value, (list, tuple)):
         return [
             coerce_firestore_value(x)
             for x in value  # pyright: ignore[reportUnknownVariableType]

@@ -104,3 +104,11 @@ def test_an_enum_member_coerces_to_its_value() -> None:
 
     assert out == {"plain": "open", "text": "open", "number": 1, "list": ["open"]}
     assert [type(out[k]) for k in ("plain", "text", "number")] == [str, str, int]
+
+
+def test_a_tuple_is_coerced_element_by_element_as_a_list_is() -> None:
+    u = uuid4()
+
+    assert coerce_firestore_value({"t": (_Plain.OPEN, u, Decimal("1.5"))}) == {
+        "t": ["open", str(u), 1.5]
+    }

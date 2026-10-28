@@ -271,7 +271,8 @@ class MongoGateway[M: BaseModel](
                     f"digits, exponent -6176..6111): {value!r}"
                 ) from error
 
-        if isinstance(value, list):
+        # A tuple too: BSON stores either as an array.
+        if isinstance(value, (list, tuple)):
             return [
                 self._coerce_query_value(x)
                 for x in value  # pyright: ignore[reportUnknownVariableType]

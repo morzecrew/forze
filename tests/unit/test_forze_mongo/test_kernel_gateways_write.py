@@ -717,3 +717,19 @@ def test_an_enum_member_is_stored_as_its_value() -> None:
 
     assert out == {"plain": "open", "text": "open", "number": 1, "nested": [{"s": "open"}]}
     assert [type(out[k]) for k in ("plain", "text", "number")] == [str, str, int]
+
+
+def test_a_tuple_is_coerced_element_by_element_as_a_list_is() -> None:
+    client = _build_client()
+    gw = MongoWriteGateway(
+        relation=("test_db", "docs"),
+        client=client,
+        read_gw=_build_read(client),
+        create_cmd_type=MyCreateDoc,
+        update_cmd_type=MyUpdateDoc,
+        model_type=MyDoc,
+        **_WRITE_CODECS,
+    )
+    u = uuid4()
+
+    assert gw._coerce_query_value({"t": (_Plain.OPEN, u)}) == {"t": ["open", str(u)]}
