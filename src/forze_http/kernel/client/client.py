@@ -1,9 +1,9 @@
 """Async HTTP client wrapper using httpx."""
 
-from collections.abc import AsyncGenerator, Mapping
+from collections.abc import AsyncGenerator, AsyncIterator, Mapping
 from contextlib import asynccontextmanager
-from typing import Any, final
-from urllib.parse import urlsplit, urlunsplit
+from typing import Any, cast, final
+from urllib.parse import SplitResult, unquote, urlsplit, urlunsplit
 
 from forze_http._compat import require_http
 
@@ -62,14 +62,7 @@ def _redact_url(url: str | None) -> str | None:
 async def _buffered(streaming: httpx.Response, max_bytes: int | None) -> httpx.Response:
     """*streaming* read whole, refused once it crosses *max_bytes*, as an in-memory response."""
 
-    if max_bytes is not None:
-        declared = streaming.headers.get("content-length")
-
-        if declared is not None and int(declared) > max_bytes:
-            raise exc.infrastructure(
-                f"HTTP response Content-Length {declared} exceeds max_response_bytes {max_bytes}"
-            )
-
+    _refuse_declared_oversize(streaming, max_bytes)
     body = bytearray()
 
     async for chunk in streaming.aiter_bytes():
@@ -89,6 +82,99 @@ async def _buffered(streaming: httpx.Response, max_bytes: int | None) -> httpx.R
 # ....................... #
 
 
+def _refuse_declared_oversize(streaming: httpx.Response, max_bytes: int | None) -> None:
+    """Refuse *streaming* before its body is read when it declares more than *max_bytes*."""
+
+    if max_bytes is not None:
+        declared = streaming.headers.get("content-length")
+
+        if declared is not None and int(declared) > max_bytes:
+            raise exc.infrastructure(
+                f"HTTP response Content-Length {declared} exceeds max_response_bytes {max_bytes}"
+            )
+
+
+# ....................... #
+
+
+def _origin(parts: SplitResult) -> tuple[str, str | None, int | None]:
+    """Scheme, host and port of *parts*, the port filled in from the scheme when omitted."""
+
+    return (
+        parts.scheme,
+        parts.hostname,
+        parts.port or {"http": 80, "https": 443}.get(parts.scheme),
+    )
+
+
+# ....................... #
+
+
+def _is_under(url: str, base_url: str) -> bool:
+    """Whether *url* is *base_url* or a path below it, on the same scheme, host and port.
+
+    Compared part by part after parsing, never as text: ``https://api.example.com.evil.net``
+    starts with ``https://api.example.com`` and is somewhere else. Fails closed on whatever
+    could read differently at the far end — userinfo, a dot segment hidden behind percent
+    encoding, a backslash some servers take for a slash, a port that does not parse.
+    """
+
+    try:
+        target, base = urlsplit(url), urlsplit(base_url)
+
+        if _origin(target) != _origin(base):
+            return False
+
+    except ValueError:
+        return False
+
+    if target.username is not None or target.password is not None:
+        return False
+
+    if {".", ".."} & set(unquote(target.path).replace("\\", "/").split("/")):
+        return False
+
+    # Segment by segment, on the path as sent: `/v1` must not admit `/v1-admin`, and an
+    # encoded slash in a segment stays part of that segment rather than opening a new one.
+    prefix = base.path.rstrip("/").split("/")
+
+    return target.path.split("/")[: len(prefix)] == prefix
+
+
+# ....................... #
+
+
+@final
+class _WireRelay(httpx.AsyncByteStream):
+    """*upstream*'s body as it arrived — not decoded — cut off once it crosses *max_bytes*."""
+
+    def __init__(self, upstream: httpx.Response, max_bytes: int | None) -> None:
+        self.__upstream = upstream
+        self.__max_bytes = max_bytes
+
+    async def __aiter__(self) -> AsyncIterator[bytes]:
+        seen = 0
+
+        # The stream itself rather than `aiter_raw`, which refuses a body already read: an
+        # in-memory response (a mock, an ASGI app) arrives read, and its stream still holds
+        # the bytes as they were sent.
+        async for chunk in cast(httpx.AsyncByteStream, self.__upstream.stream):
+            seen += len(chunk)
+
+            if self.__max_bytes is not None and seen > self.__max_bytes:
+                raise exc.infrastructure(
+                    f"HTTP response body exceeded max_response_bytes {self.__max_bytes}"
+                )
+
+            yield chunk
+
+    async def aclose(self) -> None:
+        await self.__upstream.aclose()
+
+
+# ....................... #
+
+
 @final
 @attrs.define(slots=True)
 class HttpClient(HttpClientPort):
@@ -97,6 +183,7 @@ class HttpClient(HttpClientPort):
     __client: httpx.AsyncClient | None = attrs.field(default=None, init=False)
     __base_url: str | None = attrs.field(default=None, init=False)
     __max_response_bytes: int | None = attrs.field(default=None, init=False)
+    __default_headers: dict[str, str] = attrs.field(factory=dict, init=False)
     __lifecycle: GuardedLifecycle = attrs.field(factory=GuardedLifecycle, init=False)
 
     # ....................... #
@@ -113,11 +200,12 @@ class HttpClient(HttpClientPort):
             cfg = config or HttpConfig()
             self.__base_url = base_url
             self.__max_response_bytes = cfg.max_response_bytes
+            self.__default_headers = dict(default_headers or {})
             timeout = httpx.Timeout(cfg.timeout.total_seconds())
             client_kwargs: dict[str, Any] = {
                 "timeout": timeout,
                 "follow_redirects": cfg.follow_redirects,
-                "headers": dict(default_headers or {}),
+                "headers": self.__default_headers,
             }
 
             if base_url is not None:
@@ -255,3 +343,51 @@ class HttpClient(HttpClientPort):
                 # A failed read surfaces in the caller's block, past the interceptor's
                 # enter, so it is mapped here the way `request` maps one.
                 reraise_mapped(exc_interceptor.mapper, error, site="httpx.stream")
+
+    # ....................... #
+
+    @asynccontextmanager
+    async def send(
+        self,
+        request: httpx.Request,
+        *,
+        base_url: str | None = None,
+        headers: Mapping[str, str] | None = None,
+    ) -> AsyncGenerator[httpx.Response]:
+        client = self._require_client()
+        pinned = base_url if base_url is not None else self.__base_url
+
+        if pinned is None:
+            raise exc.configuration("A prepared HTTP request needs a base_url to be held to")
+
+        if not _is_under(str(request.url), pinned):
+            parts = urlsplit(str(request.url))
+
+            raise exc.configuration(
+                "HTTP request refused: its URL is not under the service's base URL",
+                code="http_request_off_route",
+                # Origin and path only: a query can carry a key, and userinfo is a credential.
+                details={"url": f"{parts.scheme}://{parts.netloc.rpartition('@')[2]}{parts.path}"},
+            )
+
+        # The client's own headers — a routed tenant's credential — and then the caller's
+        # replace whatever the request brought, so a placeholder key in an SDK never leaves.
+        request.headers.update(self.__default_headers)
+        request.headers.update(headers or {})
+
+        # Never followed here: a redirect goes back to whoever built the request, and its
+        # next hop is held to the base URL again on the way out.
+        upstream = await client.send(request, stream=True, follow_redirects=False)
+
+        try:
+            _refuse_declared_oversize(upstream, self.__max_response_bytes)
+
+            yield httpx.Response(
+                status_code=upstream.status_code,
+                headers=upstream.headers,
+                stream=_WireRelay(upstream, self.__max_response_bytes),
+                extensions=upstream.extensions,
+            )
+
+        finally:
+            await upstream.aclose()

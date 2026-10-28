@@ -30,7 +30,9 @@ class HttpConfig:
     exceeds the cap is refused before the body is read, and a chunked/unsized
     response is aborted once the accumulated body crosses the cap — so a large or
     attacker-influenced upstream cannot blow up app memory (×concurrent calls). A
-    ``stream`` holds only a rejected body to it: an accepted one is never buffered."""
+    ``stream`` holds only a rejected body to it: an accepted one is never buffered. ``send``
+    — what a service transport uses — holds every body to it, counted as it arrives on the
+    wire, before any content decoding."""
 
     # ....................... #
 

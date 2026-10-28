@@ -91,6 +91,54 @@ apply. What changes is when things happen:
   end; the one a service config builds from `secret_ref_for_tenant` is unguarded. See
   [routed clients](../identity-tenancy-enc/multi-tenancy.md#routed-clients-dedicated).
 
+## Hand a vendor SDK the service
+
+A vendor SDK, such as a model provider's client or an agent framework built on one, takes an
+`httpx.AsyncClient` and builds its own requests, so `invoke` never sees them. Give that
+client a transport over the declared service:
+
+```python
+import httpx
+
+from forze_http import http_service_transport
+
+transport = http_service_transport(ctx, llm_spec)
+sdk_http = httpx.AsyncClient(base_url="https://api.llm.example.com/v1", transport=transport)
+```
+
+Pass `sdk_http` wherever the SDK accepts an `httpx.AsyncClient`. Every request it sends then
+leaves the way a declared operation does:
+
+- **It is held to the service's route.** The URL must be the service's `base_url`, or a path
+  below it, on the same scheme, host and port. On a tenant-routed service it must be under
+  the current tenant's route instead. Anything else is refused with `http_request_off_route`
+  before it is sent. That includes another host, a path outside the prefix, a dot segment
+  (percent-encoded or not) and userinfo in the URL. Point the SDK at the same base URL. The
+  pooled client never follows a redirect: the SDK's client follows it if configured to, and
+  the next hop is held to the route again.
+- **The service's headers replace the SDK's.** The service's `default_headers` and
+  credential override the SDK's headers of the same names. So do the pooled client's own
+  default headers, which on a routed service carry the tenant's credential. You can therefore
+  build the SDK with a placeholder key and keep the real one in the service config or the tenant's
+  secret.
+- **The deadline budget, the trace context and the egress tag apply** as they do for
+  `invoke`. A deadline that is already spent is refused with `deadline_exceeded`, and nothing
+  is sent. As with `stream`, the budget travels when the request opens and does not bound
+  the body. The invocation deadline itself cancels a call still running.
+- **It goes out on the service's pooled client, and the response comes back as sent:**
+  status, headers and the body undecoded. Status handling, retries and error types stay the
+  SDK's, and forze's error mapping does not apply. The SDK's timeouts apply, not the
+  service's `timeout`. When the client sets `max_response_bytes`, the cap holds every body,
+  counted on the wire, so it also cuts off a long stream.
+- **Only a declared service yields one.** The transport is resolved through the service's
+  dep key, so an undeclared service is refused. An `egress_sensitive` service exists only
+  with `acknowledge_data_egress`, so the wiring gate has already run.
+
+A refusal raises inside the SDK's call. An SDK may retry it and then wrap it in its own
+connection error, with forze's exception as the cause. Closing the SDK's client leaves the
+pooled client open, because the lifecycle owns it. `HttpServiceTransport` is the class, if
+you build one yourself from a client and a config.
+
 ## Errors
 
 A failed call raises a `CoreException` whose kind follows the counterparty's answer:
@@ -163,10 +211,11 @@ The details stay on the exception for your code; a client sees none of them.
   also tag their span `forze.egress.sensitive`, so sensitive egress is queryable in
   [observability](../running-in-prod/observability.md) rather than only visible in
   review. Both halves cover the services you declare: a bare `HttpClient` you point at
-  a provider yourself — handing it to their SDK, say — has no service config and
-  therefore no declaration to gate, because a shared transport carries no destination
-  of its own. Declare the hop as a service if you want it governed — a streamed answer
-  included, through [`stream`](#stream-a-response). Routes that leave
+  a provider yourself has no service config and therefore no declaration to gate,
+  because a shared client carries no destination of its own. Declare the hop as a
+  service if you want it governed — a streamed answer included, through
+  [`stream`](#stream-a-response), and a vendor SDK's own requests through
+  [a transport over the service](#hand-a-vendor-sdk-the-service). Routes that leave
   both fields alone are unaffected, and an inference route is always sensitive and
   always requires the acknowledgement, which is the same gate. [Build a question-answering
   agent](../recipes/query-agent.md) declares such a route for a model call.

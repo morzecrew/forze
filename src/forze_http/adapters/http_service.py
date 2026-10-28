@@ -79,6 +79,71 @@ def _declared_error(
 # ....................... #
 
 
+def service_headers(config: HttpServiceConfig) -> dict[str, str]:
+    """The headers *config* sends on every request: its defaults, then its credential."""
+
+    headers = dict(config.default_headers)
+
+    if config.auth is not None:
+        headers.update(config.auth.auth_headers())
+
+    return headers
+
+
+# ....................... #
+
+
+def governed_headers(
+    config: HttpServiceConfig,
+    headers: dict[str, str] | None,
+) -> dict[str, str]:
+    """*headers* with the deadline budget and the trace context added, for a call that leaves.
+
+    Also marks the current span when *config* declares the route egress-sensitive. Shared by
+    the service adapter and :class:`~forze_http.adapters.http_transport.HttpServiceTransport`,
+    so a declared operation and a vendor SDK's request leave the same way.
+    """
+
+    if config.propagate_deadline:
+        budget = remaining_time()
+
+        if budget is not None:
+            headers = {
+                **(headers or {}),
+                HTTP_HEADER_DEADLINE_BUDGET: f"{budget:.3f}",
+            }
+
+    # Continue the distributed trace into the downstream service: inject the active span's W3C
+    # context (traceparent + tracestate, via the global propagator so an app's choice is
+    # honoured) into the outgoing headers. A no-op when no span is active (uninstrumented app);
+    # if the app also instruments httpx, that instrumentation may overwrite with its own
+    # client-span id — the trace linkage is preserved either way. No flag needed (the messaging
+    # side gates on a column migration; HTTP carries no schema).
+    headers = dict(headers or {})
+    propagate.inject(headers)
+
+    # Mark the call as leaving the trust boundary, so sensitive egress is queryable
+    # rather than only reviewable in the wiring. The attribute lands on whichever
+    # span is current — the port's CLIENT span where per-port spans are enabled, the
+    # enclosing operation span otherwise (and always for `stream`: the port proxy opens
+    # no span over a generator) — and on an uninstrumented app the non-recording span
+    # drops it. There is nothing for forze_http to create: it has never opened a span
+    # of its own.
+    #
+    # This marks the calls made through a declared service. A bare HttpClient an
+    # app points at a provider itself has no HttpServiceConfig behind it, so it
+    # carries neither the tag nor the wiring gate — and there is nowhere to put
+    # one, since HttpConfig configures a transport and names no destination. The
+    # governed unit is the service, which is what declares where data goes.
+    if config.egress_sensitive:
+        trace.get_current_span().set_attribute(EGRESS_SENSITIVE_ATTRIBUTE, True)
+
+    return headers
+
+
+# ....................... #
+
+
 @final
 @attrs.define(slots=True, kw_only=True)
 class HttpServiceAdapter(HttpServicePort):
@@ -238,40 +303,7 @@ class HttpServiceAdapter(HttpServicePort):
 
         url, headers = self._resolve_url_and_headers(path)
         details["url"] = url
-
-        if self.config.propagate_deadline:
-            budget = remaining_time()
-
-            if budget is not None:
-                headers = {
-                    **(headers or {}),
-                    HTTP_HEADER_DEADLINE_BUDGET: f"{budget:.3f}",
-                }
-
-        # Continue the distributed trace into the downstream service: inject the active span's W3C
-        # context (traceparent + tracestate, via the global propagator so an app's choice is
-        # honoured) into the outgoing headers. A no-op when no span is active (uninstrumented app);
-        # if the app also instruments httpx, that instrumentation may overwrite with its own
-        # client-span id — the trace linkage is preserved either way. No flag needed (the messaging
-        # side gates on a column migration; HTTP carries no schema).
-        headers = dict(headers or {})
-        propagate.inject(headers)
-
-        # Mark the call as leaving the trust boundary, so sensitive egress is queryable
-        # rather than only reviewable in the wiring. The attribute lands on whichever
-        # span is current — the port's CLIENT span where per-port spans are enabled, the
-        # enclosing operation span otherwise (and always for `stream`: the port proxy opens
-        # no span over a generator) — and on an uninstrumented app the non-recording span
-        # drops it. There is nothing for forze_http to create: it has never opened a span
-        # of its own.
-        #
-        # This marks the calls made through a declared service. A bare HttpClient an
-        # app points at a provider itself has no HttpServiceConfig behind it, so it
-        # carries neither the tag nor the wiring gate — and there is nowhere to put
-        # one, since HttpConfig configures a transport and names no destination. The
-        # governed unit is the service, which is what declares where data goes.
-        if self.config.egress_sensitive:
-            trace.get_current_span().set_attribute(EGRESS_SENSITIVE_ATTRIBUTE, True)
+        headers = governed_headers(self.config, headers)
 
         form = operation.body_encoding == "form"
 
@@ -288,7 +320,7 @@ class HttpServiceAdapter(HttpServicePort):
     # ....................... #
 
     def _resolve_url_and_headers(self, path: str) -> tuple[str, dict[str, str] | None]:
-        headers = self._static_headers()
+        headers = service_headers(self.config)
 
         if self.config.tenant_aware:
             return path, headers or None
@@ -302,13 +334,3 @@ class HttpServiceAdapter(HttpServicePort):
 
         url = f"{base.rstrip('/')}/{path.lstrip('/')}"
         return url, headers or None
-
-    # ....................... #
-
-    def _static_headers(self) -> dict[str, str]:
-        headers = dict(self.config.default_headers)
-
-        if self.config.auth is not None:
-            headers.update(self.config.auth.auth_headers())
-
-        return headers

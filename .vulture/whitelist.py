@@ -731,3 +731,4 @@ payloads_unreadable  # unused variable (src/forze/application/contracts/durable/
 _.mirror  # unused method (src/forze/application/contracts/document/value_objects.py:199)
 _.__pydantic_fields_set__  # unused attribute (src/forze/application/contracts/document/value_objects.py:160) — read by pydantic
 list_operations  # unused function (src/forze_cli/ops/commands.py:187) — a Typer command callback
+_.handle_async_request  # unused method (src/forze_http/adapters/http_transport.py:76) — called by httpx.AsyncClient

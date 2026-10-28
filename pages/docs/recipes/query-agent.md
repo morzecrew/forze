@@ -74,9 +74,10 @@ the data and noting it in a comment. Calls through the route also tag their span
 [observability](../running-in-prod/observability.md).
 
 This is a governance marker and a conscious-choice gate — nothing inspects a payload.
-And it covers the hops you *declare*: if you hand a bare `HttpClient` to a provider's own
-SDK, that call has no service config and therefore nothing to gate. Declaring the hop as
-a service is what puts it inside the marker.
+And it covers the hops you *declare*: a bare `HttpClient` handed to a provider's own SDK
+has no service config and therefore nothing to gate. Declaring the hop as a service is what
+puts it inside the marker, and the SDK can still make the call, through a
+[transport over the service](../integrations/http.md#hand-a-vendor-sdk-the-service).
 
 The example itself never reaches a transport — the handler below answers the service call
 in-process — so this config is what a deployment wires rather than something the run
@@ -143,12 +144,15 @@ uv run python -m examples.recipes.query_agent.app
 uv run pytest tests/unit/test_examples/test_query_agent.py
 ```
 
-Swapping in a real provider means pointing the service at the provider's real base URL and
-describing its endpoint as an `HttpOperationSpec`. The loop, the palette, the egress
-declaration and the streamed answer all stay as they are — you write the request and
-response models and parse the provider's events instead of importing an SDK. A vendor's
-SDK brings its own transport, and a hop made through it is not a declared service, so the
-marker does not cover it.
+Swapping in a real provider means pointing the service at the provider's real base URL.
+Then either describe its endpoint as an `HttpOperationSpec`, writing the request and
+response models and parsing the provider's events yourself, or keep the provider's SDK. To
+keep the SDK, give its `httpx.AsyncClient` the transport from
+`http_service_transport(ctx, spec)` — see
+[Hand a vendor SDK the service](../integrations/http.md#hand-a-vendor-sdk-the-service). The
+SDK's requests then carry the same acknowledgement, egress tag, credential and deadline
+budget, and a request that leaves the service's base URL is refused. The loop, the palette
+and the egress declaration stay as they are either way.
 
 ## Notes
 

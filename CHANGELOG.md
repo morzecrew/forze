@@ -27,6 +27,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **A declared HTTP service can stream a response.** `HttpServicePort.stream(op, args)` yields the body as it arrives, governed as `invoke` is, and raises a rejection before the first chunk. `HttpClient.stream` and `RoutedHttpClient.stream` do the same at the client.
 
+- **A vendor SDK's requests can go through a declared HTTP service.** `http_service_transport(ctx, spec)` returns an `HttpServiceTransport` for `httpx.AsyncClient`: requests are held to the service's route and carry its credential, deadline budget, trace context and egress tag. `HttpClientPort` gains `send`.
+
 - **Agent tools can state the filter grammar once.** `operation_tools(shared_filter_grammar=True)` strips it from tool schemas as MCP does; `OperationToolset.filter_grammar` holds it for the system prompt. `forze.application.contracts.querying` gains `filter_grammar`, `without_filter_grammar`, `takes_filter_expression`.
 
 - **An `openai_chat` route can serve a host that refuses a schema constraint, such as DeepSeek.** `structured_output="json_object"` puts the output model's schema in the system message, asks for valid JSON, and refuses a reply that does not fit as `inference_output_mismatch`. `json_schema` stays the default.
