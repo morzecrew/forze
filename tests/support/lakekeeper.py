@@ -253,11 +253,14 @@ def _realm_env_var(client_id: str) -> str:
     return "LAKE_CLIENT_SECRET_" + client_id.upper().replace("-", "_")
 
 
-def _realm(client_ids: Iterable[str]) -> dict[str, Any]:
+def _realm(
+    client_ids: Iterable[str], *, tenant_token_lifespan: int | None = None
+) -> dict[str, Any]:
     """A realm with one confidential service-account client per principal.
 
     Each secret is a placeholder Keycloak resolves from its own environment at import, so the
-    file on disk holds none.
+    file on disk holds none. ``tenant_token_lifespan`` overrides the access-token lifespan of
+    the tenant principals only, so the operator's seeding never meets an expired token.
     """
 
     return {
@@ -274,6 +277,11 @@ def _realm(client_ids: Iterable[str]) -> dict[str, Any]:
                 "serviceAccountsEnabled": True,
                 "standardFlowEnabled": False,
                 "directAccessGrantsEnabled": False,
+                "attributes": (
+                    {"access.token.lifespan": str(tenant_token_lifespan)}
+                    if tenant_token_lifespan is not None and client_id in _TENANTS
+                    else {}
+                ),
                 "protocolMappers": [
                     {
                         "name": "lakekeeper-audience",
@@ -354,8 +362,18 @@ def _skip_unless_gateway_reachable(url: str) -> None:
 
 
 @contextmanager
-def lake_vending_stack() -> Iterator[LakeVendingStack]:
-    """Start the whole stack, bootstrap it, seed both tenants, and yield its addresses."""
+def lake_vending_stack(
+    *,
+    tenant_token_lifespan: int | None = None,
+    sts_token_validity_seconds: int | None = None,
+) -> Iterator[LakeVendingStack]:
+    """Start the whole stack, bootstrap it, seed both tenants, and yield its addresses.
+
+    :param tenant_token_lifespan: Access-token lifespan of the tenant principals, in seconds;
+        ``None`` keeps the realm's 600.
+    :param sts_token_validity_seconds: The warehouses' ``sts-token-validity-seconds``; ``None``
+        keeps Lakekeeper's default.
+    """
 
     client_ids = (_ADMIN, *_TENANTS, _UNGRANTED)
     client_secrets = {name: secrets.token_hex(16) for name in client_ids}
@@ -363,7 +381,8 @@ def lake_vending_stack() -> Iterator[LakeVendingStack]:
     _install_extensions()
 
     with ExitStack() as stack, tempfile.TemporaryDirectory() as realm_dir:
-        Path(realm_dir, "realm.json").write_text(json.dumps(_realm(client_ids)))
+        realm = _realm(client_ids, tenant_token_lifespan=tenant_token_lifespan)
+        Path(realm_dir, "realm.json").write_text(json.dumps(realm))
         Path(realm_dir).chmod(0o755)
         Path(realm_dir, "realm.json").chmod(0o644)
 
@@ -502,6 +521,11 @@ def lake_vending_stack() -> Iterator[LakeVendingStack]:
                             "flavor": "s3-compat",
                             "sts-enabled": True,
                             "remote-signing-enabled": False,
+                            **(
+                                {"sts-token-validity-seconds": sts_token_validity_seconds}
+                                if sts_token_validity_seconds is not None
+                                else {}
+                            ),
                         },
                         "storage-credential": {
                             "type": "s3",
