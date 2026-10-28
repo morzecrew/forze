@@ -10233,6 +10233,9 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <h3 id="added">Added<a class="headerlink" href="#added" title="Permanent link">&para;</a></h3>
 <ul>
 <li>
+<p><strong>Federated search takes <code>member_filters</code>, a filter for one member's leg alone.</strong> It joins <code>filters</code> with <code>$and</code> on that leg, and a hub refuses it. New <code>SearchMemberGrant</code>, <code>bind_search_member_grant</code>, <code>OperationDescriptor.members</code> and <code>AuthorizesMembers</code> back member authorization.</p>
+</li>
+<li>
 <p><strong>DuckDB serves trusted dynamic reads over a per-tenant Iceberg lake.</strong> <code>RoutedDuckDbClient</code> gives each tenant a locked-down instance holding its catalog principal and the S3 credentials vended per statement, and serves nothing from one that fails its attestation. Wire routes with <code>DuckDbDepsModule(dynamic_reads=...)</code>.</p>
 </li>
 <li>
@@ -10324,6 +10327,9 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <p><strong><code>HttpClient</code> reads a compressed response.</strong> A gzip or deflate body, and with no cap a zstd or brotli one, no longer fails <code>request</code>, or a rejected response from <code>stream</code>, as an infrastructure error. <code>RoutedHttpClient</code> and declared services are fixed with it.</p>
 </li>
 <li>
+<p><strong>A federated result snapshot replays only for the same members and member filters.</strong> Its fingerprint now covers each member's weight and leg filters, and a thin replay drops a row its member's filters no longer match.</p>
+</li>
+<li>
 <p><strong>A warning logged before <code>configure_logging</code> carries the invocation's ids.</strong> The fallback renderer now merges the bound logging context, as the configured chain does.</p>
 </li>
 <li>
@@ -10389,6 +10395,9 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 </ul>
 <h3 id="security">Security<a class="headerlink" href="#security" title="Permanent link">&para;</a></h3>
 <ul>
+<li>
+<p><strong>A guarded hub or federated search authorizes each member it reads</strong> (<strong>Breaking</strong>). New <code>AuthzSearchMembers</code> checks each member's read action; the adapter then refuses a request naming a forbidden member and skips one it only reaches. The registry refuses to freeze a guarded search without that search's hook.</p>
+</li>
 <li>
 <p><strong><code>AuthzDocumentScopeWrap</code> in an operation's outer scope applies its row filter</strong> (<strong>behaviour change</strong>). A wrap bound with <code>bind_outer().wrap(...)</code>, as the authz recipe does, now hands the handler the arguments it passes on, so a scoped list returns only the rows the policy allows.</p>
 </li>

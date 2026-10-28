@@ -4813,6 +4813,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Enforce on operations">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#hub-and-federated-search" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Hub and federated search
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -6557,6 +6574,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Enforce on operations">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#hub-and-federated-search" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Hub and federated search
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -6830,6 +6864,53 @@ first-page row — rows there mean <code>not_permitted</code>, none mean <code>n
 probe's rows never reach the caller, only whether any exist. Off by default;
 note that <code>not_permitted</code> discloses that hidden rows exist, so surfacing it to
 end users is your API's disclosure decision.</p>
+<h3 id="hub-and-federated-search">Hub and federated search<a class="headerlink" href="#hub-and-federated-search" title="Permanent link">&para;</a></h3>
+<p>A hub or federated search reads several members under one operation, so an
+action on the operation would let a caller read a member it may not. Attach
+<code>AuthzSearchMembers</code>, which checks each member the request reaches against
+that member's own read action:</p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">forze.application.hooks.authz</span><span class="w"> </span><span class="kn">import</span> <span class="n">AuthzSearchMembers</span>
+
+<span class="n">SEARCH</span> <span class="o">=</span> <span class="n">EVERYTHING</span><span class="o">.</span><span class="n">default_namespace</span><span class="o">.</span><span class="n">key</span><span class="p">(</span><span class="n">SearchKernelOp</span><span class="o">.</span><span class="n">TYPED</span><span class="p">)</span>
+
+<span class="n">registry</span> <span class="o">=</span> <span class="p">(</span>
+    <span class="n">build_federated_search_registry</span><span class="p">(</span><span class="n">EVERYTHING</span><span class="p">)</span>  <span class="c1"># members: orders, invoices</span>
+    <span class="o">.</span><span class="n">bind</span><span class="p">(</span><span class="n">SEARCH</span><span class="p">)</span>
+        <span class="o">.</span><span class="n">bind_outer</span><span class="p">()</span>
+        <span class="o">.</span><span class="n">before</span><span class="p">(</span><span class="n">AuthnRequired</span><span class="p">()</span><span class="o">.</span><span class="n">to_step</span><span class="p">())</span>
+        <span class="o">.</span><span class="n">wrap</span><span class="p">(</span>
+            <span class="n">AuthzSearchMembers</span><span class="p">(</span>
+                <span class="n">spec</span><span class="o">=</span><span class="n">AUTHZ</span><span class="p">,</span>
+                <span class="n">search</span><span class="o">=</span><span class="n">EVERYTHING</span><span class="p">,</span>
+                <span class="n">actions</span><span class="o">=</span><span class="p">{</span><span class="s2">"orders"</span><span class="p">:</span> <span class="s2">"orders:read"</span><span class="p">,</span> <span class="s2">"invoices"</span><span class="p">:</span> <span class="s2">"invoices:read"</span><span class="p">},</span>
+                <span class="n">scope_operation</span><span class="o">=</span><span class="s2">"search"</span><span class="p">,</span>
+            <span class="p">)</span><span class="o">.</span><span class="n">to_step</span><span class="p">()</span>
+        <span class="p">)</span>
+        <span class="o">.</span><span class="n">finish</span><span class="p">(</span><span class="n">deep</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+    <span class="o">.</span><span class="n">freeze</span><span class="p">()</span>
+<span class="p">)</span>
+</code></pre></div>
+<ul>
+<li><strong>A request that names its members</strong> (<code>members</code>, or <code>member_weights</code> above
+  zero) is refused with <code>403</code> when it names one the caller may not read.</li>
+<li><strong>A request that names none</strong> searches the members the search runs by
+  default (on a hub, those with a default weight above zero). It is narrowed to
+  the members the caller may read, and refused only when none remains.</li>
+<li><strong><code>scope_operation</code></strong> (federated only) also asks the scope port for each
+  member's row filter and applies it to that member's leg alone. The request
+  names the member as its <code>document_name</code>, unless <code>scope_documents</code> maps the
+  member to another document.</li>
+</ul>
+<p>The hook decides before the handler runs and binds the result as a
+<code>SearchMemberGrant</code>. The adapter applies that grant to the request it actually
+receives, so a request mapper in <code>SearchMappers</code> cannot widen it: a member the
+mapper adds is refused or skipped by the same two rules, and the policy filters
+stay on their legs.</p>
+<p><code>actions</code> must name every member. The registry refuses to freeze a hub or
+federated search operation that has an authz hook but no <code>AuthzSearchMembers</code>,
+or that also carries an <code>IdempotencyWrap</code>, whose replayed result would skip the
+check. To let one action read every member, map each member to it. Two
+<code>AuthzSearchMembers</code> on one operation both apply: a member must pass each.</p>
 <h2 id="http-login-endpoints">HTTP login endpoints<a class="headerlink" href="#http-login-endpoints" title="Permanent link">&para;</a></h2>
 <p>The login flows themselves come for free: <code>build_authn_registry</code> registers the
 password-login, refresh, logout, change-password and password-reset operations,
