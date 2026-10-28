@@ -18,7 +18,7 @@ from forze.base.primitives import (
     str_key_selector,
 )
 
-from ..descriptors import OperationCatalogEntry, OperationDescriptor
+from ..descriptors import OperationCatalogEntry, OperationDescriptor, refuse_dropped_members
 from ..planning import FrozenOperationPlan, OperationKind, OperationPlan
 from ..run import DispatchedOperation, ResolvedOperation
 from .binder import OperationRegistryBinder
@@ -158,6 +158,7 @@ class OperationRegistry:
         if op in self._descriptors and not override:
             raise exc.internal(f"Descriptor already set for operation: {op}")
 
+        refuse_dropped_members(op, self._descriptors.get(op), descriptor)
         new_descriptors = dict(self._descriptors)
         new_descriptors[op] = descriptor
 
@@ -183,6 +184,7 @@ class OperationRegistry:
             if op in new_descriptors and not override:
                 raise exc.internal(f"Descriptor already set for operation: {op}")
 
+            refuse_dropped_members(op, new_descriptors.get(op), descriptor)
             new_descriptors[op] = descriptor
 
         return attrs.evolve(self, descriptors=new_descriptors)

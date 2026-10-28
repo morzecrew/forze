@@ -396,6 +396,26 @@ async def test_thin_executor_paginates_window() -> None:
 
 
 @pytest.mark.asyncio
+async def test_thin_snapshot_replay_drops_a_hit_its_leg_filters_no_longer_match() -> None:
+    # A policy scope that now excludes a frozen hit must keep it out of the replayed page.
+    state = MockState()
+    leg_a, leg_b = await _two_legs(state)
+    rehydrate = federated_snapshot_rehydrator(
+        ports={
+            "a": MockSearchAdapter(state=state, spec=leg_a),
+            "b": MockSearchAdapter(state=state, spec=leg_b),
+        },
+        leg_opts=None,
+        run_legs=_gather,
+        leg_filters={"a": {"$values": {"id": "1"}}, "b": None},
+    )
+
+    replayed = await rehydrate([("a", "1"), ("a", "2"), ("b", "3")])
+
+    assert [(h.member, h.hit.id) for h in replayed] == [("a", "1"), ("b", "3")]
+
+
+@pytest.mark.asyncio
 async def test_thin_snapshot_write_and_replay_round_trip() -> None:
     state = MockState()
     leg_a, leg_b = await _two_legs(state)

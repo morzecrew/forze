@@ -520,7 +520,8 @@ class AuthzSearchMembers(MiddlewareFactory):
 
     Any authz-guarded hub or federated search operation needs this hook (or another
     :class:`~forze.application.contracts.execution.AuthorizesMembers` one): without it the
-    registry refuses to freeze.
+    registry refuses to freeze. Two such hooks on one operation, or on nested ones, both
+    apply: their grants intersect.
     """
 
     spec: AuthzSpec
@@ -598,18 +599,23 @@ class AuthzSearchMembers(MiddlewareFactory):
             denials: dict[str, CoreException] = {}
             policy_filters: dict[str, Any] = {}
 
+            # One decision per action, which the port answers alike for every member mapped to it.
+            verdicts: dict[str, CoreException | None] = {}
+
             # Every member, not only those the request reaches: a request mapper runs after
             # this hook and may reach others, which the bound grant must answer for too.
             for member in self.search.members:
                 name = member.name
+                action = self.actions[name]
 
                 try:
-                    await authorize_action(
-                        ctx,
-                        decision_port,
-                        self.actions[name],
-                        delegation_port=delegation_port,
-                    )
+                    if action not in verdicts:
+                        verdicts[action] = await self._decide(
+                            ctx, decision_port, delegation_port, action
+                        )
+
+                    if (denial := verdicts[action]) is not None:
+                        raise denial
 
                     if scope_port is not None:
                         filters = await self._member_filters(
@@ -639,6 +645,28 @@ class AuthzSearchMembers(MiddlewareFactory):
                 return await next(args)
 
         return _wrap
+
+    # ....................... #
+
+    @staticmethod
+    async def _decide(
+        ctx: ExecutionContext,
+        decision_port: AuthzDecisionPort,
+        delegation_port: DelegationPort | None,
+        action: str,
+    ) -> CoreException | None:
+        """The denial of *action* for the caller, or ``None`` when it is allowed."""
+
+        try:
+            await authorize_action(ctx, decision_port, action, delegation_port=delegation_port)
+
+        except CoreException as error:
+            if error.kind is not ExceptionKind.AUTHORIZATION:
+                raise
+
+            return error
+
+        return None
 
     # ....................... #
 

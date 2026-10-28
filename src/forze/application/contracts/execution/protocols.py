@@ -205,6 +205,12 @@ class AuthorizesMembers(Protocol):  # pragma: no cover
     member's rows under one operation. When its plan declares authz (:class:`DeclaresAuthz`),
     hooks of this kind must together cover every member, or the registry refuses to freeze, so
     a permission on the operation alone never reaches a member's rows.
+
+    The gate trusts the marker: a hook claiming a member is believed to authorize it, so an
+    app's own hook of this kind must check each member it names. The gate also refuses a plan
+    with a wrap that can replay a stored result (``ProvidesIdempotency``), which would answer
+    without the check. An app's own wrap that answers without calling the next one skips the
+    member check too, and the gate cannot see it.
     """
 
     def authorized_members(self) -> frozenset[str]: ...

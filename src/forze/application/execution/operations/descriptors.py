@@ -18,6 +18,7 @@ import attrs
 from pydantic import BaseModel, TypeAdapter
 
 from forze.application.contracts.querying import QueryDiscovery
+from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict, StrKey
 
 from .planning import OperationKind
@@ -94,6 +95,30 @@ class OperationDescriptor:
 
         # A model's schema is the same either way, so its operation fingerprint is unchanged.
         return TypeAdapter[Any](self.output_type).json_schema()
+
+
+# ....................... #
+
+
+def refuse_dropped_members(
+    op: StrKey,
+    current: OperationDescriptor | None,
+    replacement: OperationDescriptor,
+) -> None:
+    """Refuse replacing *current* with a descriptor naming fewer :attr:`~OperationDescriptor.members`.
+
+    The member authorization gate reads them, so an override dropping one would let the
+    operation freeze without that member's check.
+
+    :raises exc.configuration: *replacement* leaves out a member *current* names.
+    """
+
+    if current is not None and (missing := sorted(set(current.members) - set(replacement.members))):
+        raise exc.configuration(
+            f"Descriptor override for operation {op!r} drops member(s) {missing}, which the "
+            "member authorization check reads; keep them (attrs.evolve the descriptor).",
+            code="descriptor_members_dropped",
+        )
 
 
 # ....................... #

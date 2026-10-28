@@ -16,26 +16,34 @@ from forze.application.contracts.authz import (
     AuthzDocumentScope,
     AuthzSpec,
 )
+from forze.application.contracts.idempotency import IdempotencySpec
 from forze.application.contracts.search import (
     FederatedSearchQueryDepKey,
     FederatedSearchSpec,
     HubSearchQueryDepKey,
     HubSearchSpec,
     MultiSourceSearchOptions,
+    SearchMemberGrant,
     SearchSpec,
+    bind_search_member_grant,
+    search_member_grant,
 )
 from forze.application.execution import Deps, ExecutionContext, InvocationMetadata
 from forze.application.hooks.authn import AuthnRequired
+from forze.application.execution.operations import OperationDescriptor
+from forze.application.execution.operations.registry import OperationRegistry
 from forze.application.hooks.authz import (
     AuthzBeforeAuthorize,
     AuthzDocumentScopeWrap,
     AuthzSearchMembers,
 )
-from forze.base.exceptions import CoreException, ExceptionKind
+from forze.application.hooks.idempotency import IdempotencyWrap
+from forze.base.exceptions import CoreException, ExceptionKind, exc
 from forze_kits.aggregates.search import (
     SearchFacade,
     SearchKernelOp,
     SearchMappers,
+    SearchPaginated,
     SearchRequestDTO,
     build_federated_search_registry,
     build_hub_search_registry,
@@ -80,8 +88,11 @@ class _Role:
     """A decision port granting exactly the listed actions."""
 
     allowed: frozenset[str]
+    asked: list[str] = attrs.field(factory=list)
 
     async def authorize(self, request: Any) -> AuthzDecision:
+        self.asked.append(request.action)
+
         if request.action in self.allowed:
             return AuthzDecision(allowed=True, matched_permission_key=request.action)
 
@@ -504,3 +515,102 @@ async def test_scope_documents_names_a_members_policy_document() -> None:
 
     assert hits == {("orders", "o1"), ("invoices", "i2")}
     assert {r.document_name for r in scope.requests} == {"orders", "invoice_docs"}
+
+
+# ....................... #
+# Stacked and nested grants, decisions per action, and what the freeze gate refuses.
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("strict_priority", [40, 50])
+async def test_stacked_member_hooks_allow_only_what_both_allow(strict_priority: int) -> None:
+    ctx = _ctx(await _state())
+    strict = AuthzSearchMembers(spec=AUTHZ, search=FED, actions=FED_ACTIONS)
+    broad = AuthzSearchMembers(
+        spec=AUTHZ, search=FED, actions=dict.fromkeys(FED_ACTIONS, "search:read")
+    )
+    registry = _guarded(
+        build_federated_search_registry(FED),
+        FED,
+        strict.to_step(step_id="authz.strict", priority=strict_priority),
+        broad.to_step(step_id="authz.broad", priority=90 - strict_priority),
+    )
+    role = _Role(allowed=frozenset({"orders:read", "search:read"}))
+
+    assert await _search(ctx, registry, FED, role=role) == {("orders", "o1")}
+
+    with pytest.raises(CoreException) as exc_info:
+        await _search(ctx, registry, FED, role=role, members=["invoices"])
+
+    assert exc_info.value.code == "permission_denied"
+
+
+def test_a_nested_grant_intersects_with_the_bound_one() -> None:
+    denial = exc.authorization("no invoices", code="permission_denied")
+    outer = SearchMemberGrant(
+        allowed=frozenset({"orders"}),
+        denials={"invoices": denial},
+        filters={"orders": {"$values": {"a": 1}}},
+    )
+    inner = SearchMemberGrant(
+        allowed=frozenset({"orders", "invoices"}),
+        filters={"orders": {"$values": {"b": 2}}},
+    )
+
+    with bind_search_member_grant(FED.name, outer), bind_search_member_grant(FED.name, inner):
+        grant = search_member_grant(FED.name)
+
+        assert grant is not None
+        assert grant.allowed == {"orders"}
+        assert grant.denials["invoices"] is denial
+        assert grant.filters == {"orders": {"$and": [{"$values": {"a": 1}}, {"$values": {"b": 2}}]}}
+
+    assert search_member_grant(FED.name) is None
+
+
+@pytest.mark.asyncio
+async def test_members_sharing_an_action_take_one_decision() -> None:
+    ctx = _ctx(await _state())
+    members = AuthzSearchMembers(
+        spec=AUTHZ, search=FED, actions=dict.fromkeys(FED_ACTIONS, "search:read")
+    )
+    registry = _guarded(build_federated_search_registry(FED), FED, members.to_step())
+    role = _Role(allowed=frozenset({"search:read"}))
+
+    await _search(ctx, registry, FED, role=role)
+
+    assert role.asked == ["search:read"]
+
+
+def test_a_descriptor_override_dropping_members_is_refused() -> None:
+    key = FED.default_namespace.key(SearchKernelOp.TYPED)
+    registry = build_federated_search_registry(FED)
+    bare = OperationDescriptor(description="search")
+
+    with pytest.raises(CoreException) as exc_info:
+        registry.set_descriptor(key, bare, override=True)
+
+    assert exc_info.value.code == "descriptor_members_dropped"
+
+    with pytest.raises(CoreException, match="drops member"):
+        registry.set_descriptors({key: bare}, override=True)
+
+    with pytest.raises(CoreException, match="drops member"):
+        OperationRegistry.merge(
+            registry, OperationRegistry().set_descriptor(key, bare), override=True
+        )
+
+    kept = attrs.evolve(registry.get_descriptors()[key], description="search")
+    registry.set_descriptor(key, kept, override=True)
+
+
+def test_a_replaying_wrap_on_a_member_guarded_search_refuses_to_freeze() -> None:
+    replay = IdempotencyWrap(
+        op="search", spec=IdempotencySpec(name="search"), result_type=SearchPaginated
+    )
+    members = AuthzSearchMembers(spec=AUTHZ, search=FED, actions=FED_ACTIONS)
+
+    with pytest.raises(CoreException) as exc_info:
+        _guarded(build_federated_search_registry(FED), FED, replay.to_step(), members.to_step())
+
+    assert exc_info.value.code == "member_authz_replay"

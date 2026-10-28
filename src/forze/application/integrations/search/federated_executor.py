@@ -173,11 +173,14 @@ def federated_snapshot_rehydrator(
     ports: dict[str, SearchQueryPort[Any]],
     leg_opts: SearchOptions | None,
     run_legs: RunLegs,
+    leg_filters: Mapping[str, QueryFilterExpression | None] | None = None,  # type: ignore[valid-type]
 ) -> Callable[[Sequence[tuple[str, str]]], Awaitable[Sequence[FederatedSearchReadModel[Any]]]]:
-    """A re-fetch-by-id callback for thin-snapshot replay (current content, by id only).
+    """A re-fetch-by-id callback for thin-snapshot replay (current content, by id).
 
-    Replay re-fetches each key's hit by id (no query/filters: the snapshot froze the
-    identities, not the matcher), so the returned content is current."""
+    Replay re-fetches each key's hit by id with no query (the snapshot froze the identities,
+    not the ranking), so the returned content is current. *leg_filters*, each member's
+    filters for this request, drop a hit they no longer match, such as one a policy scope
+    now excludes, as a deleted hit drops out."""
 
     async def _rehydrate(
         ordered_keys: Sequence[tuple[str, str]],
@@ -189,6 +192,7 @@ def federated_snapshot_rehydrator(
             filters=None,
             leg_opts=leg_opts,
             run_legs=run_legs,
+            leg_filters=leg_filters,
         )
 
     return _rehydrate

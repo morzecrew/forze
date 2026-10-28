@@ -809,3 +809,29 @@ async def test_federated_member_filters_and_selection_bind_legs_and_snapshots(
 
     assert idents(granted) == {(leg_a, first_a)}
     assert refused.value.code == "permission_denied"
+
+    # A thin replay re-reads its rows under each leg's filters: one the policy no longer
+    # matches drops out of the replayed page.
+    scoped = SearchMemberGrant(
+        allowed=frozenset(legs), filters={leg_a: {"$values": {"label": "mftok"}}}
+    )
+
+    with bind_search_member_grant(f"fed_mf_{suffix}", scoped):
+        written = await fed.search_page("mftok", pagination={"limit": 10})
+        assert written.snapshot is not None
+        assert len(written.hits) == 4
+
+        await pg_client.execute(
+            f"UPDATE {leg_a} SET label = 'mftok moved' WHERE id = %(id)s", {"id": first_a}
+        )
+        replayed = await fed.search_page(
+            "mftok",
+            pagination={"limit": 10},
+            snapshot={"id": written.snapshot.id, "fingerprint": written.snapshot.fingerprint},
+        )
+
+    assert replayed.snapshot is not None
+    assert replayed.snapshot.id == written.snapshot.id
+
+    if thin_merge:
+        assert idents(replayed) == idents(written) - {(leg_a, first_a)}

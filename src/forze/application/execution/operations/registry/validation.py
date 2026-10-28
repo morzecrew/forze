@@ -248,6 +248,14 @@ class RegistryFreezeValidator:
             if not any(isinstance(factory, DeclaresAuthz) for factory in factories):
                 continue
 
+            if plan.supports_idempotency_key():
+                # A replayed result answers without running the member check.
+                raise exc.configuration(
+                    f"Operation {op!r} reads members under authorization but carries a wrap "
+                    "that replays stored results; drop the idempotency wrap from it.",
+                    code="member_authz_replay",
+                )
+
             covered: set[str] = set()
 
             for factory in factories:

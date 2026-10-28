@@ -73,7 +73,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **`HttpClient` reads a compressed response.** A gzip or deflate body, and with no cap a zstd or brotli one, no longer fails `request`, or a rejected response from `stream`, as an infrastructure error. `RoutedHttpClient` and declared services are fixed with it.
 
-- **A federated result snapshot replays only for the same members and member filters.** Its fingerprint now covers each member's weight and `member_filters`, so a request searching fewer members runs fresh.
+- **A federated result snapshot replays only for the same members and member filters.** Its fingerprint now covers each member's weight and leg filters, and a thin replay drops a row its member's filters no longer match.
 
 - **A warning logged before `configure_logging` carries the invocation's ids.** The fallback renderer now merges the bound logging context, as the configured chain does.
 
@@ -119,7 +119,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
-- **A guarded hub or federated search authorizes each member it reads** (**Breaking**). The new `AuthzSearchMembers` checks each member's read action; after any request mapper, the adapter refuses a request naming a forbidden member and skips one it only reaches. The registry refuses to freeze a guarded one without it.
+- **A guarded hub or federated search authorizes each member it reads** (**Breaking**). New `AuthzSearchMembers` checks each member's read action; the adapter then refuses a request naming a forbidden member and skips one it only reaches. The registry refuses to freeze a guarded one without it.
 
 - **`AuthzDocumentScopeWrap` in an operation's outer scope applies its row filter** (**behaviour change**). A wrap bound with `bind_outer().wrap(...)`, as the authz recipe does, now hands the handler the arguments it passes on, so a scoped list returns only the rows the policy allows.
 

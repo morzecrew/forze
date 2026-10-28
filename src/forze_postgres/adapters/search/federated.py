@@ -308,6 +308,7 @@ class PostgresFederatedSearchAdapter[M: BaseModel](
                             ports=dict(self.legs),
                             leg_opts=leg_opts,
                             run_legs=self._run_legs,
+                            leg_filters=leg_filters,
                         ),
                     )
                 )

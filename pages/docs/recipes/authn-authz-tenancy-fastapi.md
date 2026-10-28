@@ -185,8 +185,10 @@ mapper adds is refused or skipped by the same two rules, and the policy filters
 stay on their legs.
 
 `actions` must name every member. The registry refuses to freeze a hub or
-federated search operation that has an authz hook but no `AuthzSearchMembers`.
-To let one action read every member, map each member to it.
+federated search operation that has an authz hook but no `AuthzSearchMembers`,
+or that also carries an `IdempotencyWrap`, whose replayed result would skip the
+check. To let one action read every member, map each member to it. Two
+`AuthzSearchMembers` on one operation both apply: a member must pass each.
 
 ## HTTP login endpoints
 
