@@ -428,7 +428,7 @@ class PostgresReadGateway[M: BaseModel](
         lock_stmt = (
             sql.SQL(
                 "SELECT {lock_pk} FROM {lock} AS t "
-                "WHERE {lock_pk} IN (SELECT {pk} FROM {table} WHERE {where}) AND {not_skipped} "
+                "WHERE {lock_pk} IN (SELECT {pk} FROM {table} WHERE ({where})) AND {not_skipped} "
                 "LIMIT 1"
             ).format(
                 lock_pk=lock_pk,
@@ -441,7 +441,7 @@ class PostgresReadGateway[M: BaseModel](
             + fu
         )
         read_stmt = sql.SQL(
-            "SELECT {cols} FROM {table} WHERE {where} AND {pk} = {ph} LIMIT 1"
+            "SELECT {cols} FROM {table} WHERE ({where}) AND {pk} = {ph} LIMIT 1"
         ).format(
             cols=cols,
             table=table,
@@ -452,6 +452,9 @@ class PostgresReadGateway[M: BaseModel](
         skipped: list[UUID] = []
 
         # Each miss excludes one more id, so the loop ends within the number of matching rows.
+        # A miss needs read committed: under repeatable read or serializable the lock statement
+        # fails with a serialization error on a row changed after the snapshot, which the
+        # re-read shares.
         while (
             pk := await self._read_value(lock_stmt, [*params, skipped, *tenant_params])
         ) is not None:

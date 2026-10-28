@@ -130,12 +130,13 @@ lifecycle = LifecyclePlan.from_modules(
   module so the catalog cache partitions by tenant.
 - **Relations** can be static `(schema, table)` tuples or per-tenant resolvers —
   see [Multi-tenancy](../identity-tenancy-enc/multi-tenancy.md).
-- **Locking reads through a view.** When `read` differs from `write`, a read with
+- **Locking reads when `read` differs from `write`** (a view, typically). A read with
   `for_update` locks the matching row on the `write` table, by id and tenant, and then reads
   it from `read`. Postgres refuses `FOR UPDATE` on a view that joins with `LEFT JOIN`, and
   reading after the lock returns the row as locked. A row that stops matching while its lock
-  is awaited stays locked and is skipped for the next match. A read-only document has no
-  `write` table, so its locking read still goes to `read`.
+  is awaited is skipped for the next match, but stays locked until the transaction ends, as
+  in Postgres. A read-only document has no `write` table, so its locking read still goes to
+  `read`.
 - **Indexes for sorted pages.** A sort on a `NOT NULL` column, or on the record `id`,
   renders without a null placement, so a plain btree index serves it in either direction,
   through a view too. A nullable column keeps the canonical placement (ascending nulls

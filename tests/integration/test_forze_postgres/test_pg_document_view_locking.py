@@ -30,7 +30,7 @@ from forze_postgres.execution.deps import ConfigurablePostgresDocument, postgres
 from forze_postgres.execution.deps.configs import PostgresDocumentConfig
 from forze_postgres.execution.deps.keys import PostgresClientDepKey, PostgresIntrospectorDepKey
 from forze_postgres.kernel.catalog.introspect import PostgresIntrospector
-from forze_postgres.kernel.client.client import PostgresClient
+from forze_postgres.kernel.client.client import PostgresClient, PostgresTransactionOptions
 from tests.support.execution_context import context_from_deps
 
 # ----------------------- #
@@ -82,20 +82,22 @@ async def _setup(
     suffix = uuid4().hex[:12]
     table, warehouses, view = f"vl_{suffix}", f"vl_w_{suffix}", f"vl_v_{suffix}"
     tenant_col = "tenant_id uuid NOT NULL," if tenant_aware else "tenant_id uuid,"
+    key = "id, tenant_id" if tenant_aware else "id"
     warehouse = uuid4()
 
     await pg_client.execute(
         f"""
         CREATE TABLE {warehouses} (id uuid PRIMARY KEY, name text NOT NULL);
         CREATE TABLE {table} (
-            id uuid PRIMARY KEY,
+            id uuid NOT NULL,
             {tenant_col}
             rev integer NOT NULL,
             created_at timestamptz NOT NULL,
             last_update_at timestamptz NOT NULL,
             title text NOT NULL,
             warehouse_id uuid,
-            parent_id uuid
+            parent_id uuid,
+            PRIMARY KEY ({key})
         );
         CREATE VIEW {view} AS
             SELECT d.*, w.name AS warehouse, p.title AS parent_title
@@ -129,22 +131,21 @@ async def _setup(
 
 
 def _dsn(postgres_container: Any) -> str:
-    return postgres_container.get_connection_url().replace(
-        "postgresql+psycopg://", "postgresql://"
-    )
+    return postgres_container.get_connection_url().replace("postgresql+psycopg://", "postgresql://")
 
 
-async def _held_by_someone(dsn: str, table: str, pk: UUID) -> bool:
-    """Whether a second session finds the row on *table* locked."""
+async def _held_by_someone(dsn: str, table: str, pk: UUID, tenant: UUID | None = None) -> bool:
+    """Whether a second session finds the row on *table* (of *tenant*, when given) locked."""
 
     other = await psycopg.AsyncConnection.connect(dsn, connect_timeout=5)
+    scope, params = ("", [pk]) if tenant is None else (" AND tenant_id = %s", [pk, tenant])
 
     async with other:
         try:
             async with other.transaction():
                 await other.execute(
-                    f"SELECT id FROM {table} WHERE id = %s FOR UPDATE NOWAIT",  # type: ignore[arg-type]
-                    [pk],
+                    f"SELECT id FROM {table} WHERE id = %s{scope} FOR UPDATE NOWAIT",  # type: ignore[arg-type]
+                    params,
                 )
         except psycopg.errors.LockNotAvailable:
             return True
@@ -152,13 +153,20 @@ async def _held_by_someone(dsn: str, table: str, pk: UUID) -> bool:
     return False
 
 
-async def _wait_until_blocked(dsn: str, table: str) -> None:
-    """Return once a backend waits on a lock in a statement naming *table*."""
+async def _wait_until_blocked(dsn: str, table: str, task: asyncio.Task[Any]) -> None:
+    """Return once a backend waits on a lock in a statement naming *table*.
+
+    A *task* that ends first is awaited, so its own error surfaces instead of a timeout.
+    """
 
     watcher = await psycopg.AsyncConnection.connect(dsn, connect_timeout=5, autocommit=True)
 
     async with watcher:
         for _ in range(200):
+            if task.done():
+                await task
+                raise AssertionError("the locking read finished without blocking")
+
             cur = await watcher.execute(
                 "SELECT count(*) FROM pg_stat_activity "
                 "WHERE wait_event_type = 'Lock' AND query LIKE %s",
@@ -281,7 +289,7 @@ async def test_skip_locked_passes_over_a_held_row(
             assert caught.value.kind is ExceptionKind.NOT_FOUND
 
 
-async def test_a_writer_on_the_base_row_waits_for_the_lock(
+async def test_a_writer_cannot_take_a_locked_row_until_the_lock_is_released(
     pg_client: PostgresClient,
     postgres_container: Any,
 ) -> None:
@@ -325,7 +333,7 @@ async def test_a_read_that_waited_for_its_lock_returns_the_committed_row(
         async with other.transaction():
             await other.execute(f"UPDATE {table} SET title = 'after' WHERE id = %s", [row.id])  # type: ignore[arg-type]
             task = asyncio.create_task(locking_get())
-            await _wait_until_blocked(dsn, table)
+            await _wait_until_blocked(dsn, table, task)
 
         got = await task
 
@@ -347,7 +355,9 @@ async def test_a_row_that_stops_matching_while_awaited_is_skipped(
 
     async def claim() -> tuple[_Read | None, bool]:
         async with ctx.tx_ctx.scope("main"):
-            got = await ctx.doc.query(_SPEC).find({"$values": {"title": "pending"}}, for_update=True)
+            got = await ctx.doc.query(_SPEC).find(
+                {"$values": {"title": "pending"}}, for_update=True
+            )
 
             return got, await _held_by_someone(dsn, table, first.id)
 
@@ -359,7 +369,7 @@ async def test_a_row_that_stops_matching_while_awaited_is_skipped(
                 [second.id],
             )
             task = asyncio.create_task(claim())
-            await _wait_until_blocked(dsn, table)
+            await _wait_until_blocked(dsn, table, task)
 
         got, first_still_held = await task
 
@@ -372,32 +382,64 @@ async def test_a_tenant_scoped_locking_read_never_reaches_another_tenant(
     pg_client: PostgresClient,
     postgres_container: Any,
 ) -> None:
-    ctx, table, _ = await _setup(pg_client, tenant_aware=True)
-    tenants = uuid4(), uuid4()
+    """Another tenant's row with the same id stays free.
 
-    def bind(tenant: UUID) -> Any:
-        return ctx.inv_ctx.bind(
-            metadata=InvocationMetadata(execution_id=uuid4(), correlation_id=uuid4()),
-            authn=AuthnIdentity(principal_id=uuid4()),
-            tenant=TenantIdentity(tenant_id=tenant),
+    The table keys on ``(id, tenant_id)``, so the view's tenant filter alone would let the lock
+    statement's ``id IN (...)`` reach the other tenant's row: only its own tenant predicate on
+    the write table keeps the lock in this tenant.
+    """
+
+    ctx, table, _ = await _setup(pg_client, tenant_aware=True)
+    mine, theirs = uuid4(), uuid4()
+
+    with ctx.inv_ctx.bind(
+        metadata=InvocationMetadata(execution_id=uuid4(), correlation_id=uuid4()),
+        authn=AuthnIdentity(principal_id=uuid4()),
+        tenant=TenantIdentity(tenant_id=mine),
+    ):
+        row = await ctx.doc.command(_SPEC).create(_Create(title="shared"))
+        await pg_client.execute(
+            f"INSERT INTO {table} (id, tenant_id, rev, created_at, last_update_at, title) "  # type: ignore[arg-type]
+            "VALUES (%s, %s, 1, now(), now(), 'shared')",
+            [row.id, theirs],
         )
 
-    rows = []
-
-    for tenant in tenants:
-        with bind(tenant):
-            rows.append(await ctx.doc.command(_SPEC).create(_Create(title="shared")))
-
-    with bind(tenants[0]):
         async with ctx.tx_ctx.scope("main"):
             query = ctx.doc.query(_SPEC)
 
             got = await query.find({"$values": {"title": "shared"}}, for_update=True)
-            assert got is not None and got.id == rows[0].id
+            assert got is not None and got.id == row.id
+            assert (await query.get(row.id, for_update=True)).id == row.id
 
-            with pytest.raises(CoreException) as caught:
-                await query.get(rows[1].id, for_update=True)
+            dsn = _dsn(postgres_container)
+            assert await _held_by_someone(dsn, table, row.id, mine)
+            assert not await _held_by_someone(dsn, table, row.id, theirs)
 
-            assert caught.value.kind is ExceptionKind.NOT_FOUND
-            assert await _held_by_someone(_dsn(postgres_container), table, rows[0].id)
-            assert not await _held_by_someone(_dsn(postgres_container), table, rows[1].id)
+
+async def test_under_repeatable_read_a_row_changed_after_the_snapshot_is_refused(
+    pg_client: PostgresClient,
+    postgres_container: Any,
+) -> None:
+    """The lock statement fails on the changed row, so the re-read never silently misses it."""
+
+    ctx, table, _ = await _setup(pg_client)
+    row = await ctx.doc.command(_SPEC).create(_Create(title="before"))
+    query = ctx.doc.query(_SPEC)
+    other = await psycopg.AsyncConnection.connect(
+        _dsn(postgres_container), connect_timeout=5, autocommit=True
+    )
+
+    async with other:
+        with pytest.raises(CoreException) as caught:
+            async with pg_client.transaction(
+                options=PostgresTransactionOptions(isolation="repeatable_read"),
+            ):
+                await query.get(row.id)  # pins the snapshot
+                await other.execute(
+                    f"UPDATE {table} SET title = 'after' WHERE id = %s",  # type: ignore[arg-type]
+                    [row.id],
+                )
+                await query.get(row.id, for_update=True)
+
+    assert caught.value.kind is ExceptionKind.CONCURRENCY
+    assert "serialization" in str(caught.value).lower()
