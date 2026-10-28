@@ -10,8 +10,10 @@ the mock blocks; the fallback leg runs on a plain loop and must behave like clai
 from __future__ import annotations
 
 import asyncio
+import gc
 import inspect
 import sys
+import weakref
 from collections.abc import Awaitable, Callable
 from typing import Any, Literal
 from uuid import UUID
@@ -27,6 +29,7 @@ from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocume
 from forze.testing import context_from_modules
 from forze_dst.runtime import run_simulation
 from forze_mock import MockDepsModule, MockState
+from forze_mock.state import RowLockTable
 
 # ----------------------- #
 
@@ -526,6 +529,64 @@ class TestStatementKeepsItsRows:
 
         assert log == ["owner:committed", "statement:wrote", "locker:read 10", "locker:committed"]
         assert out == {"value": 11, "held": 0}
+
+    def test_an_owner_holder_parked_on_a_row_is_waited_for(self) -> None:
+        # second wants the owner first holds; first is parked on a row a third holds. The walk
+        # follows first's row wait, finds no way back to second, so second waits: no deadlock.
+        log: list[str] = []
+
+        async def scenario() -> None:
+            module = MockDepsModule(state=MockState(), row_locks="block")
+            (pk,) = await _seed(module, 1)
+
+            async def booking(name: str, at: float, *, lock: bool = False) -> None:
+                await asyncio.sleep(at)
+                ctx = context_from_modules(module)
+
+                async with ctx.tx_ctx.scope("mock"):
+                    await ctx.doc.command(BOOKINGS).create(_BookingCreate(owner="o1"))
+
+                    if lock:
+                        await ctx.doc.query(SPEC).get(pk, for_update=True)
+
+                log.append(f"{name}:committed")
+
+            await asyncio.gather(
+                _hold_then(module, pk, log),
+                booking("first", 0.1, lock=True),
+                booking("second", 0.2),
+            )
+
+        run_simulation(scenario, seed=0)
+
+        assert log == ["holder:locked", "holder:committed", "first:committed", "second:committed"]
+
+
+# ....................... #
+
+
+class TestRowLockTable:
+    def test_a_closed_loop_is_not_kept_alive(self) -> None:
+        # A run that ended with a holder still in its map must not pin that loop for good.
+        table = RowLockTable()
+
+        async def hold() -> None:
+            table.holders()[("accounts", 1)] = object()
+
+        async def look() -> dict[tuple[str, Any], Any]:
+            return table.holders()
+
+        loop = asyncio.new_event_loop()
+        loop.run_until_complete(hold())
+        loop.close()
+        ref = weakref.ref(loop)
+        del loop
+
+        assert asyncio.run(look()) == {}
+
+        gc.collect()
+
+        assert ref() is None
 
 
 # ....................... #
