@@ -395,10 +395,11 @@ class MockDepsModule(DepsModule):
       second over a claimed row is aborted with a conflict. Safe, but two transactions locking
       rows A and B in the same order and in opposite orders look alike: both abort.
     - ``"block"`` — the contender parks until the holder commits or rolls back, then proceeds
-      against the committed row, as Postgres does. A wait that would close a cycle aborts the
-      waiter with ``exc.concurrency(code="deadlock_detected")`` naming the rows, which a simulation
-      reports as a ``no_lock_order_deadlock`` violation. Blocks only on a simulation loop, where a
-      wait cannot hang; anywhere else the claim stands in.
+      against the committed row, as Postgres does; at snapshot or serializable isolation a row
+      changed since the snapshot fails with ``serialization_failure`` instead. A wait that would
+      close a cycle aborts the waiter with ``exc.concurrency(code="deadlock_detected")`` naming
+      the rows, which a simulation reports as a ``no_lock_order_deadlock`` violation. Blocks only
+      on a simulation loop, where a wait cannot hang; anywhere else the claim stands in.
     """
 
     permission_providers: tuple[PermissionProvider, ...] = attrs.field(

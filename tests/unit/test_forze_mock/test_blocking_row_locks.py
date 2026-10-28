@@ -21,6 +21,7 @@ from pydantic import BaseModel
 
 from forze.application.contracts.document import DocumentSpec, DocumentWriteTypes
 from forze.application.contracts.guarantees import SerializedBy
+from forze.application.contracts.transaction import IsolationLevel
 from forze.base.exceptions import CoreException, ExceptionKind
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
 from forze.testing import context_from_modules
@@ -185,8 +186,9 @@ async def _hold_then(
     log: list[str],
     *,
     fail: bool = False,
+    write: bool = True,
 ) -> None:
-    """Lock *pk*, write it, keep it a while, then commit (or roll back when *fail*)."""
+    """Lock *pk*, write it when *write*, keep it a while, then commit (or roll back when *fail*)."""
 
     ctx = context_from_modules(module)
 
@@ -194,7 +196,12 @@ async def _hold_then(
         async with ctx.tx_ctx.scope("mock"):
             row = await ctx.doc.query(SPEC).get(pk, for_update=True)
             log.append("holder:locked")
-            await ctx.doc.command(SPEC).update(row.id, row.rev, _AccountUpdate(value=row.value + 1))
+
+            if write:
+                await ctx.doc.command(SPEC).update(
+                    row.id, row.rev, _AccountUpdate(value=row.value + 1)
+                )
+
             await asyncio.sleep(1)
 
             if fail:
@@ -211,6 +218,7 @@ def _race(
     contender: Callable[[MockDepsModule, UUID, list[str]], Awaitable[None]],
     *,
     fail: bool = False,
+    write: bool = True,
 ) -> tuple[list[str], int]:
     """A holder locks one row and keeps it; *contender* arrives while it is held."""
 
@@ -225,7 +233,7 @@ def _race(
             await asyncio.sleep(0.1)
             await contender(module, pk, log)
 
-        await asyncio.gather(_hold_then(module, pk, log, fail=fail), late())
+        await asyncio.gather(_hold_then(module, pk, log, fail=fail, write=write), late())
 
         out["value"] = (await context_from_modules(module).doc.query(SPEC).get(pk)).value
 
@@ -336,14 +344,20 @@ async def _locked_value(ctx: Any, pk: UUID, reader: str) -> int:
     return row.value
 
 
-def _reading(reader: str) -> Callable[[MockDepsModule, UUID, list[str]], Awaitable[None]]:
-    """A contender that locks the row through *reader* in a transaction of its own."""
+def _reading(
+    reader: str,
+    isolation: IsolationLevel = IsolationLevel.READ_COMMITTED,
+    *,
+    pause: float = 0,
+) -> Callable[[MockDepsModule, UUID, list[str]], Awaitable[None]]:
+    """A contender that opens a transaction at *isolation*, waits *pause*, then locks the row."""
 
     async def contender(module: MockDepsModule, pk: UUID, log: list[str]) -> None:
         ctx = context_from_modules(module)
 
         try:
-            async with ctx.tx_ctx.scope("mock"):
+            async with ctx.tx_ctx.scope("mock", isolation=isolation):
+                await asyncio.sleep(pause)
                 log.append(f"contender:read {await _locked_value(ctx, pk, reader)}")
 
         except CoreException as error:
@@ -353,6 +367,7 @@ def _reading(reader: str) -> Callable[[MockDepsModule, UUID, list[str]], Awaitab
 
 
 READERS = ["get", "find", "project", "select"]
+SNAPSHOT_LEVELS = [IsolationLevel.SNAPSHOT, IsolationLevel.SERIALIZABLE]
 
 
 class TestLockingReadsReread:
@@ -361,6 +376,38 @@ class TestLockingReadsReread:
         log, _ = _race("block", _reading(reader))
 
         assert log == ["holder:locked", "holder:committed", "contender:read 1"]
+
+    @pytest.mark.parametrize("isolation", SNAPSHOT_LEVELS)
+    @pytest.mark.parametrize("reader", READERS)
+    def test_a_snapshot_lock_on_a_row_changed_while_waiting_fails(
+        self, reader: str, isolation: IsolationLevel
+    ) -> None:
+        # Postgres: "could not serialize access due to concurrent update", not the stale row.
+        log, value = _race("block", _reading(reader, isolation))
+
+        assert log == ["holder:locked", "holder:committed", "contender:serialization_failure"]
+        assert value == 1
+
+    @pytest.mark.parametrize("isolation", SNAPSHOT_LEVELS)
+    def test_a_snapshot_lock_on_a_row_changed_before_it_fails_too(
+        self, isolation: IsolationLevel
+    ) -> None:
+        # No wait at all: the holder committed between this snapshot and the lock.
+        log, _ = _race("block", _reading("get", isolation, pause=2))
+
+        assert log == ["holder:locked", "holder:committed", "contender:serialization_failure"]
+
+    @pytest.mark.parametrize(
+        ("fail", "write", "outcome"),
+        [(True, True, "rolled back"), (False, False, "committed")],
+    )
+    def test_a_snapshot_lock_on_an_unchanged_row_proceeds(
+        self, fail: bool, write: bool, outcome: str
+    ) -> None:
+        # A holder that rolled back, or only locked, changed nothing: Postgres goes ahead.
+        log, _ = _race("block", _reading("get", IsolationLevel.SNAPSHOT), fail=fail, write=write)
+
+        assert log == ["holder:locked", f"holder:{outcome}", "contender:read 0"]
 
 
 # ....................... #

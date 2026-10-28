@@ -675,6 +675,28 @@ def raise_row_deadlock(rows: Sequence[tuple[str, Any]]) -> NoReturn:
 # ....................... #
 
 
+def _refuse_stale_lock(state: Any, tx: MvccTx, key: tuple[str, Any]) -> None:
+    """Refuse a snapshot transaction's lock on a row written since its snapshot was taken.
+
+    What Postgres does at ``REPEATABLE READ`` and ``SERIALIZABLE``: the version the snapshot
+    sees is no longer the latest, and a lock on it would act on a stale row. Rows are replaced
+    on every write, never mutated in place, so a changed or deleted row is one whose live entry
+    is no longer the snapshot's. Read committed keeps no snapshot, so it is never refused here.
+
+    :raises CoreException: ``concurrency`` with ``code="serialization_failure"``.
+    """
+
+    namespace, pk = key
+    seen = tx.snapshots.get(namespace, {}).get(pk)
+
+    if seen is not None and (state.documents.get(namespace) or {}).get(pk) is not seen:
+        raise exc.concurrency(
+            "Could not serialize access due to concurrent update: a row this transaction "
+            "locks was changed after its snapshot was taken",
+            code="serialization_failure",
+        )
+
+
 # ....................... #
 
 
@@ -692,14 +714,16 @@ async def acquire_row_locks(
     when *block_statement* says its own module blocks — a claim-mode module sharing the state with
     a blocking one never waits. *keys* is
     asked again after every wait, so a row deleted or moved meanwhile drops out and the caller
-    proceeds against what the holder committed — read committed's re-read.
+    proceeds against what the holder committed — read committed's re-read. A snapshot transaction
+    is refused instead when the row changed since its snapshot (see :func:`_refuse_stale_lock`).
 
     Waiters park on the holder's :attr:`MvccTx.ended` and wake in the order the loop runs them,
     which the simulation's scheduler fixes from the seed; no wall clock is read.
 
     :returns: Whether it waited, so a predicate read re-evaluates against the committed row.
     :raises CoreException: ``concurrency`` with ``code="deadlock_detected"`` when a wait would
-        close a cycle (see :func:`wait_cycle_rows` and :func:`raise_row_deadlock`).
+        close a cycle (see :func:`wait_cycle_rows` and :func:`raise_row_deadlock`), or with
+        ``code="serialization_failure"`` for a snapshot transaction's stale row.
     """
 
     tx = current_mvcc_tx()
@@ -722,6 +746,7 @@ async def acquire_row_locks(
             if holder is None:
                 # Only a transaction finds a free row pending: a statement has nothing to take.
                 if tx is not None:
+                    _refuse_stale_lock(state, tx, key)
                     holders[key] = tx
                     tx.held_rows.append(key)
 
