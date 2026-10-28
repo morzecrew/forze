@@ -10280,6 +10280,12 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <li>
 <p><strong>A transaction manager can say its store refused writes in a read-only root.</strong> Implement <code>ReadOnlyAware.read_only_enforced()</code>, as Postgres and the mock's <code>journal</code> and <code>strict</code> managers do; that root then marks no commit point.</p>
 </li>
+<li>
+<p><strong>A derived read field can resolve an expanded reference.</strong> <code>DerivedReadField(source=..., via=..., fields=("id", "name"))</code> makes the mock build a nested object from the one joined row, under <code>field</code>'s one-hop and <code>optional</code> rules. An optional join that finds no row yields <code>None</code> for the whole object.</p>
+</li>
+<li>
+<p><strong><code>run_derived_fidelity</code> checks the mock's derived fields against the real view.</strong> It loads one seed into a real backend and the mock, reads the same ids through both, and reports each derived field that differs, per row. Import it from <code>forze_dst.conformance</code>.</p>
+</li>
 </ul>
 <p><strong><code>forze ops</code> for people at a shell and for backfills:</strong></p>
 <ul>

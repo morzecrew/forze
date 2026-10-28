@@ -6825,10 +6825,29 @@ a second query engine with divergences of its own.</p>
     <span class="s2">"catalog_code"</span><span class="p">:</span> <span class="n">DerivedReadField</span><span class="p">(</span><span class="n">source</span><span class="o">=</span><span class="s2">"catalogs"</span><span class="p">,</span> <span class="n">via</span><span class="o">=</span><span class="s2">"catalog_id"</span><span class="p">,</span> <span class="n">field</span><span class="o">=</span><span class="s2">"code"</span><span class="p">),</span>
 <span class="p">}</span>
 </code></pre></div>
+<p>An <strong>expanded reference</strong> — a nested object built from a few columns of the joined
+row, the most common derived field in a view — resolves the same way with <code>fields</code>
+in place of <code>field</code>:</p>
+<div class="highlight"><pre><span></span><code><span class="n">derived_read_fields</span><span class="o">=</span><span class="p">{</span>
+    <span class="c1"># read model: `warehouse: WarehouseRef`, where WarehouseRef has `id` and `name`</span>
+    <span class="s2">"warehouse"</span><span class="p">:</span> <span class="n">DerivedReadField</span><span class="p">(</span><span class="n">source</span><span class="o">=</span><span class="s2">"warehouses"</span><span class="p">,</span> <span class="n">via</span><span class="o">=</span><span class="s2">"warehouse_id"</span><span class="p">,</span> <span class="n">fields</span><span class="o">=</span><span class="p">(</span><span class="s2">"id"</span><span class="p">,</span> <span class="s2">"name"</span><span class="p">)),</span>
+<span class="p">}</span>
+</code></pre></div>
+<p>The mock builds <code>{"id": ..., "name": ...}</code> from the one source row and the read model
+validates it into the nested type. <code>field</code> and <code>fields</code> are exclusive.</p>
 <p>One hop, by primary key, no predicates and no ordering. Declare <code>optional=True</code> when
 the join key is nullable; a key that resolves to no row is refused rather than
-quietly <code>None</code>. A derived field is not filterable, sortable or sealable either way,
-because this aggregate holds no column of its own for it.</p>
+quietly <code>None</code>. With <code>optional=True</code>, an unset key or a missing row yields <code>None</code> for
+the whole field — for an expanded reference, <code>None</code> rather than an object of <code>None</code>s.
+That matches a view that guards the object with
+<code>CASE WHEN w.id IS NULL THEN NULL ELSE jsonb_build_object(...) END</code>. A bare
+<code>jsonb_build_object</code> over an unmatched <code>LEFT JOIN</code> yields <code>{"id": null, "name": null}</code>
+instead, and the fidelity check below reports the difference. A derived field is not
+filterable, sortable or sealable either way, because this aggregate holds no column of
+its own for it.</p>
+<p>The join or callback the mock uses is a second implementation of the view, and
+nothing ties the two together on its own. To check them against each other on a real
+backend, see <a href="../../testing/overview/#checking-derived-fields-against-the-real-view">checking derived fields against the real view</a>.</p>
 <h2 id="searching">Searching<a class="headerlink" href="#searching" title="Permanent link">&para;</a></h2>
 <p>Full-text and vector search are a parallel surface, through the <strong>search query
 port</strong> — the same shape × pagination naming, but results come back <strong>ranked</strong>:</p>

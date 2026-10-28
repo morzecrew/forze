@@ -7407,6 +7407,15 @@ because the race lives in document-port code rather than stream code, so no sche
 explorer drives will interleave it. The leg drives that interleaving directly against the mock,
 Postgres and Mongo, and its controls reconstruct the fault by truncating the replay — so the
 check is known to fail when the guarantee does, rather than merely passing today.</p>
+<p>The <code>derived_reads</code> plane checks something that only applications can define. A
+<a href="../../data-events/reading-data/#read-fields-storage-doesnt-hold">derived read field</a> has two
+implementations by design: the view's column, and the mock's copy of it, which is a declared
+join or a fixture callback. <code>run_derived_fidelity</code> loads one seed into Postgres and into the
+mock, reads the same ids through both, and reports each derived field that disagrees, per row.
+The leg runs it on an expanded reference built by a <code>LEFT JOIN</code>, and also on a hand-written
+callback that is wrong on purpose. The helper is shipped, so an app can run the same check
+against its own views, as <a href="../../testing/overview/#checking-derived-fields-against-the-real-view">the testing guide</a>
+shows.</p>
 <p>One divergence there is worth reading as a pattern rather than an entry. The inference port is
 <strong>declarative</strong>: each adapter publishes an <code>InferenceCapabilities</code> and the shared validators gate
 requests against it, so "does this call get through?" is a property of the declaration, not of the
