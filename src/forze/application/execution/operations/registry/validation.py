@@ -259,8 +259,20 @@ class RegistryFreezeValidator:
             covered: set[str] = set()
 
             for factory in factories:
-                if isinstance(factory, AuthorizesMembers):
-                    covered |= factory.authorized_members()
+                if not isinstance(factory, AuthorizesMembers):
+                    continue
+
+                # The hook binds its grant under its own search's name, and the adapter reads
+                # it under the operation's: another search's hook would leave this one unchecked.
+                if factory.members_of() != descriptor.members_of:
+                    raise exc.configuration(
+                        f"Operation {op!r} reads the members of {descriptor.members_of!r} but "
+                        f"carries a member authorization hook for {factory.members_of()!r}; "
+                        "attach a hook for the search the operation runs.",
+                        code="member_authz_search_mismatch",
+                    )
+
+                covered |= factory.authorized_members()
 
             if missing := sorted(set(descriptor.members) - covered):
                 raise exc.configuration(

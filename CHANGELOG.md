@@ -119,11 +119,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
-- **A guarded hub or federated search authorizes each member it reads** (**Breaking**). New `AuthzSearchMembers` checks each member's read action; the adapter then refuses a request naming a forbidden member and skips one it only reaches. The registry refuses to freeze a guarded one without it.
+- **A guarded hub or federated search authorizes each member it reads** (**Breaking**). New `AuthzSearchMembers` checks each member's read action; the adapter then refuses a request naming a forbidden member and skips one it only reaches. The registry refuses to freeze a guarded search without that search's hook.
 
 - **`AuthzDocumentScopeWrap` in an operation's outer scope applies its row filter** (**behaviour change**). A wrap bound with `bind_outer().wrap(...)`, as the authz recipe does, now hands the handler the arguments it passes on, so a scoped list returns only the rows the policy allows.
 
 - **`max_response_bytes` bounds a compressed body's decoded size.** (**behaviour change**) Decoding stops one byte past the cap, so a small compressed body cannot expand beyond it. A client with a cap asks only for `gzip` and `deflate`, and refuses any other content coding or a truncated compressed body.
+
 - **A realtime connection needs a tenant once tenancy is wired** (**behaviour change**). Socket.IO, WebSocket and SSE refuse one without a tenant (`tenant_required`), and Socket.IO an anonymous one, instead of admitting it to the untenanted rooms. Socket.IO checks this at the connect when given the new `ctx_dep`.
 
 - **A stale access cookie could keep a cookie-mode logout from ending the session.** `runtime_lifespan` now refuses an app whose `anonymous_paths` misses a cookie-mode login, refresh or logout route (`check_authn_cookie_paths`, **behaviour change**).

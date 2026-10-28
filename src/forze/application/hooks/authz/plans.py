@@ -723,6 +723,13 @@ class AuthzSearchMembers(MiddlewareFactory):
 
     # ....................... #
 
+    def members_of(self) -> str:
+        """Marker (``AuthorizesMembers``): :attr:`search`, under whose name the grant binds."""
+
+        return str(self.search.name)
+
+    # ....................... #
+
     def to_step(
         self,
         *,

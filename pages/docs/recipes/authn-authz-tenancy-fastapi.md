@@ -171,7 +171,8 @@ registry = (
 
 - **A request that names its members** (`members`, or `member_weights` above
   zero) is refused with `403` when it names one the caller may not read.
-- **A request that names none** searches every member, so it is narrowed to
+- **A request that names none** searches the members the search runs by
+  default (on a hub, those with a default weight above zero). It is narrowed to
   the members the caller may read, and refused only when none remains.
 - **`scope_operation`** (federated only) also asks the scope port for each
   member's row filter and applies it to that member's leg alone. The request

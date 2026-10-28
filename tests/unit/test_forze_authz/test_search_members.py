@@ -614,3 +614,50 @@ def test_a_replaying_wrap_on_a_member_guarded_search_refuses_to_freeze() -> None
         _guarded(build_federated_search_registry(FED), FED, replay.to_step(), members.to_step())
 
     assert exc_info.value.code == "member_authz_replay"
+
+
+@pytest.mark.parametrize(
+    ("spec", "build", "other"),
+    [
+        (FED, build_federated_search_registry, FederatedSearchSpec(name="elsewhere", members=[ORDERS, INVOICES])),
+        (HUB, build_hub_search_registry, HubSearchSpec(name="other_hub", model_type=_Order, members=[ORDERS, NOTES])),
+    ],
+)
+def test_a_member_hook_for_another_search_refuses_to_freeze(
+    spec: Any, build: Any, other: Any
+) -> None:
+    # Same member names, another search: its grant binds under the other search's name,
+    # where this operation's adapter never reads it.
+    actions = FED_ACTIONS if spec is FED else HUB_ACTIONS
+    members = AuthzSearchMembers(spec=AUTHZ, search=other, actions=actions)
+
+    with pytest.raises(CoreException) as exc_info:
+        _guarded(build(spec), spec, members.to_step())
+
+    assert exc_info.value.kind is ExceptionKind.CONFIGURATION
+    assert exc_info.value.code == "member_authz_search_mismatch"
+
+
+def test_a_descriptor_override_changing_the_search_is_refused() -> None:
+    key = FED.default_namespace.key(SearchKernelOp.TYPED)
+    registry = build_federated_search_registry(FED)
+    moved = attrs.evolve(registry.get_descriptors()[key], members_of="elsewhere")
+
+    with pytest.raises(CoreException) as exc_info:
+        registry.set_descriptor(key, moved, override=True)
+
+    assert exc_info.value.code == "descriptor_members_of_changed"
+
+
+def test_the_operation_fingerprint_covers_the_members() -> None:
+    key = FED.default_namespace.key(SearchKernelOp.TYPED)
+    registry = build_federated_search_registry(FED)
+    before = registry.freeze().operation_fingerprint(key)
+    wider = attrs.evolve(
+        registry.get_descriptors()[key],
+        members=(*registry.get_descriptors()[key].members, "archive"),
+    )
+
+    after = registry.set_descriptor(key, wider, override=True).freeze().operation_fingerprint(key)
+
+    assert after != before

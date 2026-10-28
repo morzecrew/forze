@@ -652,7 +652,7 @@ class FrozenOperationRegistry:
     @staticmethod
     def _operation_shape(entry: OperationCatalogEntry) -> dict[str, Any]:
         descriptor = entry.descriptor
-        return {
+        shape: dict[str, Any] = {
             "kind": str(entry.kind),
             "input": descriptor.input_schema() if descriptor is not None else None,
             "output": descriptor.output_schema() if descriptor is not None else None,
@@ -664,11 +664,19 @@ class FrozenOperationRegistry:
             "deadline_s": (entry.deadline.total_seconds() if entry.deadline is not None else None),
         }
 
+        # Only a multi-source operation carries these, so every other fingerprint is unchanged.
+        if descriptor is not None and descriptor.members:
+            shape["members"] = sorted(descriptor.members)
+            shape["members_of"] = descriptor.members_of
+
+        return shape
+
     def operation_fingerprint(self, op: StrKey) -> str:
         """Stable structural fingerprint of a single operation's contract + plan facts.
 
         Covers the operation's kind, input/output JSON schema, declared idempotency /
-        authn / authz-permission / deadline facts, and catalog tags. Intended as a
+        authn / authz-permission / deadline facts, catalog tags, and a multi-source
+        operation's members and the search they belong to. Intended as a
         version tag: if it changes, the operation's observable contract changed.
 
         It is *structural*, not behavioral — it does NOT hash handler code or a hook's

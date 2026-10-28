@@ -206,6 +206,10 @@ class AuthorizesMembers(Protocol):  # pragma: no cover
     hooks of this kind must together cover every member, or the registry refuses to freeze, so
     a permission on the operation alone never reaches a member's rows.
 
+    Each hook names the search whose members it authorizes (:meth:`members_of`), and the gate
+    refuses one naming another search than the operation's ``members_of``: its grant would
+    bind where that operation never reads it.
+
     The gate trusts the marker: a hook claiming a member is believed to authorize it, so an
     app's own hook of this kind must check each member it names. The gate also refuses a plan
     with a wrap that can replay a stored result (``ProvidesIdempotency``), which would answer
@@ -214,6 +218,8 @@ class AuthorizesMembers(Protocol):  # pragma: no cover
     """
 
     def authorized_members(self) -> frozenset[str]: ...
+
+    def members_of(self) -> str: ...
 
 
 # ....................... #
