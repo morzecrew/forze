@@ -3,12 +3,12 @@
 from __future__ import annotations
 
 from decimal import Decimal
-from typing import Any
+from typing import Annotated, Any
 from uuid import uuid4
 
 import pytest
 from psycopg import sql
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from forze.application.contracts.document import (
     DocumentSpec,
@@ -383,6 +383,66 @@ async def test_element_any_int_operand_on_decimal_typed_jsonb_array(
 
     eq_filt = {"$values": {"amounts": {"$any": {"$eq": 3}}}}
     assert await query.count(eq_filt) == 1
+
+
+_Amount = Annotated[Decimal, Field(ge=0)]
+
+
+@pytest.mark.asyncio
+async def test_element_any_int_operand_on_annotated_decimal_jsonb_array(
+    pg_client: PostgresClient,
+) -> None:
+    """An ``Annotated`` Decimal element is still a Decimal: an int operand compares
+    numerically with the stored decimal strings instead of matching none of them."""
+
+    t = f"elem_dec_ann_{uuid4().hex[:12]}"
+
+    class _Doc(Document):
+        title: str
+        amounts: list[_Amount]
+
+    class _Create(CreateDocumentCmd):
+        title: str
+        amounts: list[_Amount]
+
+    class _Update(BaseDTO):
+        title: str | None = None
+        amounts: list[_Amount] | None = None
+
+    class _Read(ReadDocument):
+        title: str
+        amounts: list[_Amount]
+
+    await pg_client.execute(
+        f"""
+        CREATE TABLE {t} (
+            id uuid PRIMARY KEY,
+            rev integer NOT NULL,
+            created_at timestamptz NOT NULL,
+            last_update_at timestamptz NOT NULL,
+            title text NOT NULL,
+            amounts jsonb NOT NULL
+        );
+        """
+    )
+    spec = DocumentSpec(
+        name="elem_dec_ann_ns",
+        read=_Read,
+        write={"domain": _Doc, "create_cmd": _Create, "update_cmd": _Update},
+    )
+    ctx = document_context(pg_client, t)
+    cmd = ctx.document.command(spec)
+    query = ctx.document.query(spec)
+
+    await cmd.create(_Create(title="high", amounts=[Decimal("10.5"), Decimal("2")]))
+    await cmd.create(_Create(title="low", amounts=[Decimal("1.5"), Decimal("3")]))
+
+    filt = {"$values": {"amounts": {"$any": {"$gte": 5}}}}
+    assert await query.count(filt) == 1
+    row = await query.find(filt)
+    assert row is not None and row.title == "high"
+
+    assert await query.count({"$values": {"amounts": {"$any": {"$eq": 3}}}}) == 1
 
 
 @pytest.mark.asyncio

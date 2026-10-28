@@ -1,6 +1,7 @@
 """Tests for :mod:`forze.application.contracts.querying.sort_resolution`."""
 
 from datetime import datetime
+from typing import Annotated
 
 import pytest
 from pydantic import BaseModel
@@ -236,6 +237,39 @@ class TestFieldPathResolves:
     )
     def test_resolves(self, field: str, expected: bool) -> None:
         assert field_path_resolves(_Doc, field) is expected
+
+
+type _InnerAlias = Annotated[_Inner, "alias"]
+
+
+class _AnnotatedDoc(BaseModel):
+    addr: Annotated[_Inner, "doc"] | None = None
+    aliased: _InnerAlias | None = None
+    by_key: dict[str, Annotated[_Inner, "doc"]] = {}
+    meta: Annotated[dict[str, str], "doc"] | None = None
+
+
+class TestFieldPathResolvesThroughAnnotated:
+    """``Annotated`` metadata and ``type`` aliases are walked through like the type they wrap.
+
+    Pydantic drops the metadata only from a bare top-level ``Annotated``, so an optional
+    nested model spelled ``Annotated[Inner, ...] | None`` keeps it.
+    """
+
+    @pytest.mark.parametrize(
+        ("field", "expected"),
+        [
+            ("addr.city", True),
+            ("addr.zip", False),
+            ("aliased.city", True),
+            ("aliased.zip", False),
+            ("by_key.k.city", True),
+            ("by_key.k.zip", False),
+            ("meta.anykey", True),
+        ],
+    )
+    def test_resolves(self, field: str, expected: bool) -> None:
+        assert field_path_resolves(_AnnotatedDoc, field) is expected
 
 
 def test_field_path_resolves_excludes_computed_field() -> None:

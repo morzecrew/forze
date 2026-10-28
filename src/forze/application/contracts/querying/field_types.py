@@ -125,6 +125,18 @@ _CLASS_LABEL: Final[dict[str, str]] = {
 # ....................... #
 
 
+def _unwrap_annotated(ann: Any) -> Any:
+    """*ann* without the ``Annotated`` metadata or ``type`` aliases wrapped around it."""
+
+    if isinstance(ann, TypeAliasType):
+        return _unwrap_annotated(ann.__value__)
+
+    if get_origin(ann) is Annotated:
+        return _unwrap_annotated(get_args(ann)[0])
+
+    return ann
+
+
 def _strip_optional(ann: Any) -> Any:
     """Return *ann* with ``None`` removed from a union, or ``Any`` if still ambiguous.
 
@@ -134,13 +146,8 @@ def _strip_optional(ann: Any) -> Any:
     ``str`` — pydantic strips the metadata only from a bare top-level ``Annotated``.
     """
 
-    if isinstance(ann, TypeAliasType):
-        return _strip_optional(ann.__value__)
-
+    ann = _unwrap_annotated(ann)
     origin = get_origin(ann)
-
-    if origin is Annotated:
-        return _strip_optional(get_args(ann)[0])
 
     if origin is Union or origin is UnionType:
         members = [a for a in get_args(ann) if a is not type(None)]

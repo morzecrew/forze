@@ -129,6 +129,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **A filter on an `Annotated` field is checked against the type it wraps** (**behaviour change**). `Annotated[str, ...] | None` and its list elements resolved to no type, so discovery advertised every operator and `$gt` passed. They now get their type's operators; a string bound on an annotated number or date is cast.
 
+- **Filters and sorts see through `Annotated` fields** (**behaviour change**). `Annotated[str, ...] | None` and list elements took any operator unchecked; now they get their type's and a string bound is cast. A sort into an annotated submodel resolves; Postgres compares annotated `Decimal` elements to an int numerically.
+
 ### Security
 
 - **A guarded hub or federated search authorizes each member it reads** (**Breaking**). New `AuthzSearchMembers` checks each member's read action; the adapter then refuses a request naming a forbidden member and skips one it only reaches. The registry refuses to freeze a guarded search without that search's hook.

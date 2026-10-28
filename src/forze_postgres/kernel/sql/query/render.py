@@ -11,7 +11,7 @@ from collections.abc import Mapping
 from datetime import date, datetime, timedelta
 from decimal import Decimal
 from types import UnionType
-from typing import Any, Union, get_args, get_origin
+from typing import Annotated, Any, TypeAliasType, Union, get_args, get_origin
 from uuid import UUID
 
 import attrs
@@ -138,9 +138,19 @@ def _compares_numerically(value: Any, *, decimal_elem: bool) -> bool:
 
 
 def _scalar_ann_may_hold_decimal(ann: Any) -> bool:
-    """Whether the scalar reached by unwrapping lists/unions in *ann* can be a ``Decimal``."""
+    """Whether the scalar reached by unwrapping lists/unions in *ann* can be a ``Decimal``.
+
+    ``Annotated`` metadata and ``type`` aliases are unwrapped too: pydantic keeps them
+    inside a union or a container, as in ``list[Annotated[Decimal, Field(ge=0)]]``.
+    """
+
+    if isinstance(ann, TypeAliasType):
+        return _scalar_ann_may_hold_decimal(ann.__value__)
 
     origin = get_origin(ann)
+
+    if origin is Annotated:
+        return _scalar_ann_may_hold_decimal(get_args(ann)[0])
 
     if origin is list:
         args = get_args(ann)
