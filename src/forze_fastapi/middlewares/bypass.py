@@ -58,9 +58,10 @@ def check_bypass_paths(app: Any) -> None:
     is judged under every path its middleware may see (with and without the app's own
     ``root_path``): bypassed under any of them counts for the governed-route refusal,
     and only bypassed under all of them counts as a match. A bypassed path that could
-    reach any other mounted ASGI app (a metrics or static-files app, say) cannot be
-    verified and is refused, whatever else the set matches: serve the probe as a route of
-    the gated app, or mount that app on an outer app, outside these middlewares.
+    reach any other mounted ASGI app (a metrics app, say) cannot be verified and is
+    refused, whatever else the set matches: serve the probe as a route of the gated app,
+    or mount that app on an outer app, outside these middlewares. A ``StaticFiles`` mount
+    serves no governed operation and is not refused for this.
 
     A no-op when no middleware configures a bypass.
     :func:`~forze_fastapi.run_startup_checks` runs it (``runtime_lifespan`` calls that) at

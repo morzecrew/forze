@@ -13,6 +13,7 @@ application from the outermost one, holding each one's gates against what they s
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -21,7 +22,10 @@ pytest.importorskip("fastapi")
 
 from fastapi import APIRouter, FastAPI, WebSocket
 from fastapi.testclient import TestClient
+from starlette.applications import Starlette
 from starlette.routing import Mount, Route
+from starlette.staticfiles import StaticFiles
+from starlette.websockets import WebSocketDisconnect
 
 from forze.application.contracts.authn import AuthnSpec
 from forze.application.contracts.document import DocumentSpec, DocumentWriteTypes
@@ -268,11 +272,24 @@ class TestBypassIntoAnUninspectableMount:
 
         assert "cannot see into it" in _refused(check_bypass_paths, root)
 
-    def test_a_mount_at_the_root_is_reached_by_every_entry(self) -> None:
+    def test_an_unknown_app_at_the_root_is_reached_by_every_entry(self) -> None:
         root = _gate(_probes(FastAPI()), bypass_paths={"/livez"})
         root.mount("/", _opaque)
 
         assert "'/'" in _refused(check_bypass_paths, root)
+
+    def test_an_spa_mounted_at_the_root_keeps_the_probe_bypass(self, tmp_path: Path) -> None:
+        # StaticFiles serves files and no governed operation: not refused for that.
+        (tmp_path / "index.html").write_text("<html>spa</html>")
+        root = _gate(_probes(FastAPI()), bypass_paths={"/livez"})
+        root.mount("/", StaticFiles(directory=tmp_path, html=True))
+
+        run_startup_checks(root)
+
+        response = TestClient(root).get("/livez")
+
+        assert response.status_code == 200
+        assert "spa" not in response.text
 
     def test_entries_that_cannot_reach_it_pass(self) -> None:
         # /metrics is not under /raw/, and a request for /raw itself is redirected by
@@ -421,6 +438,25 @@ class TestWebsocketAllowlistOnAMountedApp:
         root.mount("/", _opaque)
 
         assert "cannot see into it" in _refused(check_websocket_allowlist, root)
+
+    def test_a_governed_route_beside_static_files_at_the_root_passes(self, tmp_path: Path) -> None:
+        root = _gate(_realtime(FastAPI()), allowed_websocket_paths={"/realtime/ws"})
+        root.mount("/", StaticFiles(directory=tmp_path))
+
+        check_websocket_allowlist(root)
+
+    def test_an_entry_reaching_only_static_files_routes_nothing(self, tmp_path: Path) -> None:
+        root = _gate(FastAPI(), allowed_websocket_paths={"/assets/ws"})
+        root.mount("/", StaticFiles(directory=tmp_path))
+
+        assert "no websocket route" in _refused(check_websocket_allowlist, root)
+
+    def test_static_files_admits_no_websocket(self, tmp_path: Path) -> None:
+        # What the exemption relies on: StaticFiles closes every websocket scope.
+        app = Starlette(routes=[Mount("/", StaticFiles(directory=tmp_path))])
+
+        with pytest.raises(WebSocketDisconnect), TestClient(app).websocket_connect("/ws"):
+            pass  # pragma: no cover - the handshake is refused
 
 
 # ....................... #

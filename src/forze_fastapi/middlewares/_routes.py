@@ -11,6 +11,7 @@ from typing import Any
 from fastapi.routing import iter_route_contexts
 from starlette.applications import Starlette
 from starlette.routing import Host, Mount, Router
+from starlette.staticfiles import StaticFiles
 from starlette.types import Scope
 
 from forze.base.exceptions import exc
@@ -168,14 +169,15 @@ def entry_into_opaque_mount(
     """The first entry of *paths* that admits a request into a mounted ASGI app the checks
     cannot see into (neither a Starlette or FastAPI app nor a router), with the mount's path.
 
-    Routing order is not modelled: an entry that could reach such a mount counts even when
-    a route declared before it would serve the request.
+    ``StaticFiles`` is not one: it serves files, no governed operation, and closes every
+    websocket scope. Routing order is not modelled: an entry that could reach such a mount
+    counts even when a route declared before it would serve the request.
     """
 
     mounts = [
         (path, route)
         for path, route in iter_effective_routes(app)
-        if isinstance(route, (Mount, Host))
+        if isinstance(route, (Mount, Host)) and not isinstance(route.app, StaticFiles)
     ]
 
     if not mounts:

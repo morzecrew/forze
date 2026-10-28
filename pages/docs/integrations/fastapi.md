@@ -175,10 +175,13 @@ they reach, at the path they see. A bypass on the outer app that reaches a gener
 route of a mounted one fails the boot too.
 
 The checks cannot see into any other mounted ASGI app, such as a Prometheus
-`make_asgi_app()` or a `StaticFiles` mount. A bypass or websocket allowlist entry that
-could admit a request into one fails the boot, even when it also names a visible route:
-routing order decides which one serves it, and the checks do not model that. A mount at
-`/` or a `Host` route is reached by every entry. Two layouts pass:
+`make_asgi_app()`. A bypass or websocket allowlist entry that could admit a request into
+one fails the boot, even when it also names a visible route: routing order decides which
+one serves it, and the checks do not model that. A mount at `/` or a `Host` route is
+reached by every entry. A `StaticFiles` mount is the exception: it serves files and no
+governed operation, and closes every websocket, so a single-page app mounted at `/` with
+`StaticFiles(html=True)` keeps its `/livez` bypass. Mount it after the probe routes. For
+any other app, two layouts pass:
 
 - serve the probe or scrape endpoint as a route of the gated app (`attach_metrics_route`
   for Prometheus), and bypass that route;
