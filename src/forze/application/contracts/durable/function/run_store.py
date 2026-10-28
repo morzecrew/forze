@@ -17,9 +17,26 @@ from uuid import UUID
 
 import attrs
 
+from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict
 
 # ----------------------- #
+
+
+def check_enqueue_keys(idempotency_key: str | None, coalesce_key: str | None) -> None:
+    """Refuse an enqueue naming both keys: one converges forever, the other only while the
+    run waits unclaimed, and a run cannot honour both.
+
+    :raises CoreException: ``validation`` when both are set.
+    """
+
+    if idempotency_key is not None and coalesce_key is not None:
+        raise exc.validation(
+            "A durable run takes an idempotency_key or a coalesce_key, not both.",
+        )
+
+
+# ....................... #
 
 
 class DurableRunStatus(StrEnum):
@@ -220,6 +237,7 @@ class DurableRunStorePort(Protocol):
         idempotency_key: str | None = None,
         tenant_id: UUID | None = None,
         available_at: datetime | None = None,
+        coalesce_key: str | None = None,
     ) -> Awaitable[DurableRunRecord]:
         """Record a new ``PENDING`` run and return it.
 
@@ -227,6 +245,15 @@ class DurableRunStorePort(Protocol):
         returned unchanged (re-submits converge on one run). Convergence is **per tenant**:
         two tenants reusing one key stay distinct runs. *available_at* delays when the
         recovery scan may claim it (``None`` = immediately).
+
+        When *coalesce_key* is set and a ``PENDING`` run never claimed (``attempts`` of 0)
+        exists for it, that run is returned unchanged, keeping its input and its
+        ``available_at``; otherwise a new run is recorded under the key. So a burst of
+        submits causes one run, and a submit after the run was claimed causes another,
+        which reads whatever changed meanwhile. A run waiting for a retry, or requeued, is
+        never joined: its journaled steps replay rather than re-read. Atomic at the store
+        (a unique key over unclaimed pending runs) and **per tenant**, like the
+        idempotency key; the two cannot be combined (see :func:`check_enqueue_keys`).
         """
         ...  # pragma: no cover
 

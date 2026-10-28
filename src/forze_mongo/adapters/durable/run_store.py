@@ -28,6 +28,7 @@ from forze.application.contracts.durable.function import (
     DurableRunStatus,
     DurableRunStorePort,
     build_run_page,
+    check_enqueue_keys,
     check_purge,
     decode_run_cursor,
     requeue_failed_unnamed_error,
@@ -129,6 +130,20 @@ class MongoDurableRunStore(
             {unique: true, partialFilterExpression: {idempotency_key: {$type: "string"}}},
         )
 
+        // Coalescing: required before enqueue(coalesce_key=...) is used, so a burst of
+        // submits joins one unclaimed pending run instead of inserting several.
+        db.<collection>.createIndex(
+            {coalesce_key: 1},
+            {
+                unique: true,
+                partialFilterExpression: {
+                    coalesce_key: {$type: "string"},
+                    status: "pending",
+                    attempts: 0,
+                },
+            },
+        )
+
         // Recovery scan + admin listing. Recommended, not required: without it the scan
         // collection-scans as the collection grows.
         db.<collection>.createIndex({status: 1, created_at: 1})
@@ -222,7 +237,10 @@ class MongoDurableRunStore(
         idempotency_key: str | None = None,
         tenant_id: UUID | None = None,
         available_at: datetime | None = None,
+        coalesce_key: str | None = None,
     ) -> DurableRunRecord:
+        check_enqueue_keys(idempotency_key, coalesce_key)
+
         # One effective tenant for the document's field, its scoped idempotency key *and*
         # the collection it lands in — resolving the collection from the binding while
         # tagging from the argument is how a document ends up where nobody looks for it.
@@ -250,6 +268,11 @@ class MongoDurableRunStore(
             "cancel_requested_at": None,
             "cancel_refused_at": None,
         }
+
+        if coalesce_key is not None:
+            document["coalesce_key"] = scope_id(coalesce_key, tenant_id)
+
+            return await self._enqueue_coalesced(coll, document, input_json)
 
         if stored_idem is None:
             # No key, nothing to converge on: a plain insert, and every call is its own run.
@@ -296,6 +319,50 @@ class MongoDurableRunStore(
             return self._record_from_document(document, input_json=input_json)
 
         return await self._record_from_row(existing)
+
+    # ....................... #
+
+    async def _enqueue_coalesced(
+        self,
+        coll: AsyncCollection[JsonDict],
+        document: dict[str, Any],
+        input_json: JsonDict | None,
+    ) -> DurableRunRecord:
+        # Join-or-insert in one findAndModify on the unclaimed pending run for the key. A
+        # claim moves that run out of the filter (and out of the partial unique index), so
+        # a submit after it inserts a new run.
+        waiting = {
+            "coalesce_key": document["coalesce_key"],
+            "status": _PENDING,
+            "attempts": 0,
+        }
+
+        for attempt in range(3):
+            try:
+                existing = await self.client.find_one_and_update(
+                    coll,
+                    waiting,
+                    {"$setOnInsert": document},
+                    upsert=True,
+                )
+
+            except CoreException as error:
+                # Two submits raced to insert and the unique index refused this one: the
+                # next pass joins the winner, or inserts if a claim took it meanwhile.
+                if error.kind is not ExceptionKind.CONFLICT or attempt == 2:
+                    raise
+
+                continue
+
+            if existing is None:  # pragma: no cover - the driver always returns the document
+                raise exc.internal("Durable run enqueue returned no document.")
+
+            if existing["_id"] == document["_id"]:
+                return self._record_from_document(document, input_json=input_json)
+
+            return await self._record_from_row(existing)
+
+        raise AssertionError("unreachable")  # pragma: no cover
 
     # ....................... #
 

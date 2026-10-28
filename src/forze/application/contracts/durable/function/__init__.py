@@ -44,6 +44,7 @@ from .run_store import (
     DurableRunRecord,
     DurableRunStatus,
     DurableRunStorePort,
+    check_enqueue_keys,
 )
 from .schedule_store import (
     DurableScheduleRecord,
@@ -96,6 +97,7 @@ __all__ = [
     "bind_durable_cancel_signal",
     "bind_durable_run",
     "build_run_page",
+    "check_enqueue_keys",
     "check_purge",
     "current_durable_cancel_signal",
     "current_durable_run",

@@ -20,6 +20,7 @@ from forze.application.contracts.durable.function import (
     DurableRunStatus,
     DurableRunStorePort,
     build_run_page,
+    check_enqueue_keys,
     check_purge,
     decode_run_cursor,
     requeue_failed_unnamed_error,
@@ -88,7 +89,10 @@ class MockDurableRunStore(DurableRunStorePort, DurableRunAdminPort, DurableRunCo
         idempotency_key: str | None = None,
         tenant_id: UUID | None = None,
         available_at: datetime | None = None,
+        coalesce_key: str | None = None,
     ) -> DurableRunRecord:
+        check_enqueue_keys(idempotency_key, coalesce_key)
+
         # One effective tenant for the stored tag and for convergence — the same rule the
         # relational stores apply to their relation, tag and scoped key together.
         tenant_id = effective_tenant(bound=self._bound_tenant(), requested=tenant_id)
@@ -105,12 +109,24 @@ class MockDurableRunStore(DurableRunStorePort, DurableRunAdminPort, DurableRunCo
                     ):
                         return _to_record(data)
 
+            if coalesce_key is not None:
+                # Joins only a run nothing has claimed yet, like the Postgres partial index.
+                for data in self.state.durable_runs.values():
+                    if (
+                        data.get("coalesce_key") == coalesce_key
+                        and data["tenant_id"] == tenant_id
+                        and data["status"] == DurableRunStatus.PENDING.value
+                        and data["attempts"] == 0
+                    ):
+                        return _to_record(data)
+
             run_id = str(uuid7())
             data = {
                 "run_id": run_id,
                 "name": name,
                 "status": DurableRunStatus.PENDING.value,
                 "idempotency_key": idempotency_key,
+                "coalesce_key": coalesce_key,
                 "input": input_json,
                 "output": None,
                 "error": None,

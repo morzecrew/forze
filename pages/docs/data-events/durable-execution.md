@@ -117,6 +117,22 @@ loop, so later replicas scan too, and one that starts while another holds the lo
 `max_concurrency` bounds how many runs a sweep recovers at once. Enqueue with
 `run_at=<when>` for a **delayed** run — the scan skips it until it's due.
 
+To **coalesce** "recompute after a change", enqueue with a `coalesce_key`: a submit joins the
+run waiting unclaimed under that key, keeping its input and its `run_at`, and records a new
+run once that one is claimed. A burst of changes then causes one run, and a change that lands
+after the run started causes another, which reads it. A run waiting for a retry, or requeued,
+is not joined. The join is atomic at the store — a partial unique index — and needs the
+column and index in the [schema](../reference/durable-schema.md); it cannot be combined with
+an `idempotency_key`.
+
+```python
+await runner.enqueue(
+    ctx, "reindex-catalog", {"catalog_id": str(catalog_id)},
+    coalesce_key=f"catalog:{catalog_id}",
+    run_at=utcnow() + timedelta(seconds=30),
+)
+```
+
 **Multi-tenant.** The stores resolve their table under the bound tenant. On a **tagged**
 shared table (a `tenant_id` column), an unbound scanner recovers every tenant's runs and the
 runner re-binds each run's tenant to execute it. On a **namespace** store (a per-tenant

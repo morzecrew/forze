@@ -18,6 +18,7 @@ DURABLE_RUN_COLUMNS: LiteralString = """
     name                text        NOT NULL,
     status              text        NOT NULL,
     idempotency_key     text,
+    coalesce_key        text,
     input               jsonb,
     output              jsonb,
     error               text,
@@ -32,6 +33,11 @@ DURABLE_RUN_COLUMNS: LiteralString = """
     PRIMARY KEY (run_id),
     UNIQUE (idempotency_key)
 """
+
+DURABLE_RUN_COALESCE_INDEX: LiteralString = (
+    "CREATE UNIQUE INDEX ON {table} (coalesce_key) WHERE status = 'pending' AND attempts = 0"
+)
+"""The partial unique index ``enqueue(coalesce_key=...)`` converges on."""
 
 DURABLE_STEP_COLUMNS: LiteralString = """
     run_id     text        NOT NULL,
@@ -64,6 +70,9 @@ async def create_durable_table(
     columns: LiteralString,
     table: sql.Identifier,
 ) -> None:
-    """Create *table* with one of the column lists above."""
+    """Create *table* with one of the column lists above (a run table with its index)."""
 
     await client.execute(sql.SQL("CREATE TABLE {table} (" + columns + ")").format(table=table))
+
+    if columns is DURABLE_RUN_COLUMNS:
+        await client.execute(sql.SQL(DURABLE_RUN_COALESCE_INDEX).format(table=table))

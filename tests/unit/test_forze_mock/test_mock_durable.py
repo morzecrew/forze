@@ -439,3 +439,48 @@ async def test_the_mock_requeues_failed_and_timed_out_runs() -> None:
         )
         == REQUEUE_FAILED_OUTCOME
     )
+
+
+async def test_the_mock_purges_finished_runs_with_their_journal() -> None:
+    """# covers: DurableRunAdminPort.purge_finished"""
+
+    from forze_mock.adapters.durable import MockDurableRunStore
+    from tests.support.durable_conformance import (
+        PURGE_OUTCOME,
+        run_purge_scenario,
+        tenant_provider_for,
+    )
+
+    state = MockState()
+
+    assert (
+        await run_purge_scenario(
+            lambda tenant: MockDurableRunStore(
+                state=state, tenant_provider=tenant_provider_for(tenant)
+            ),
+            lambda: MockDurableFunctionStepAdapter(state=state),
+        )
+        == PURGE_OUTCOME
+    )
+
+
+async def test_the_mock_coalesces_onto_the_unclaimed_run() -> None:
+    """# covers: DurableRunStorePort.enqueue"""
+
+    from forze_mock.adapters.durable import MockDurableRunStore
+    from tests.support.durable_conformance import (
+        COALESCE_OUTCOME,
+        run_coalesce_scenario,
+        tenant_provider_for,
+    )
+
+    state = MockState()
+
+    assert (
+        await run_coalesce_scenario(
+            lambda tenant: MockDurableRunStore(
+                state=state, tenant_provider=tenant_provider_for(tenant)
+            )
+        )
+        == COALESCE_OUTCOME
+    )

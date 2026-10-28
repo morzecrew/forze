@@ -13,6 +13,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Awaitable, Callable
 from datetime import timedelta
 from typing import Any
@@ -566,3 +567,45 @@ class TestPostgresDurableRunStore:
         assert await store.purge_finished(past) == 1
         assert await store.load(run.run_id) is None
         assert await steps_left() == 0
+
+    async def test_a_coalescing_enqueue_racing_a_claim_joins_or_inserts_never_fails(
+        self, pg_client: PostgresClient, durable_run_table: str
+    ) -> None:
+        """The join's row lock and the claim's update race on one row, round after round.
+
+        Whichever lands first, the submit is covered: joined before the claim, the claimed
+        run reads its change; after it, the submit is a new waiting run; while the join
+        holds the row, the claim skips it and the run stays waiting. One unclaimed run per
+        key at most, and neither side errors.
+        """
+
+        store = _store(pg_client, durable_run_table)
+        waiting = await store.enqueue("fn", input_json=None, coalesce_key="x")
+
+        for _ in range(30):
+            claimed, submitted = await asyncio.gather(
+                store.begin(waiting.run_id, lease_for=timedelta(minutes=5)),
+                store.enqueue("fn", input_json=None, coalesce_key="x"),
+            )
+
+            joined = submitted.run_id == waiting.run_id
+            # A claim skips the row only while the join holds it.
+            assert claimed is not None or joined
+            assert submitted.status is DurableRunStatus.PENDING
+
+            row = await pg_client.fetch_one(
+                sql.SQL(
+                    "SELECT count(*) FROM {table} "
+                    "WHERE coalesce_key = 'x' AND status = 'pending' AND attempts = 0"
+                ).format(table=sql.Identifier("public", durable_run_table)),
+                row_factory="tuple",
+            )
+            assert row is not None
+            assert row[0] == (0 if claimed is not None and joined else 1)
+
+            if claimed is not None:
+                waiting = (
+                    await store.enqueue("fn", input_json=None, coalesce_key="x")
+                    if joined
+                    else submitted
+                )

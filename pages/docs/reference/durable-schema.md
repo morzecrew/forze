@@ -20,6 +20,7 @@ CREATE TABLE public.durable_run (
     name                text        NOT NULL,
     status              text        NOT NULL,
     idempotency_key     text,
+    coalesce_key        text,
     input               jsonb,
     output              jsonb,
     error               text,
@@ -34,11 +35,15 @@ CREATE TABLE public.durable_run (
     PRIMARY KEY (run_id),
     UNIQUE (idempotency_key)
 );
+
+CREATE UNIQUE INDEX ON public.durable_run (coalesce_key) WHERE status = 'pending' AND attempts = 0;
 ```
 
 - `UNIQUE (idempotency_key)` makes two submits of one key converge on a single run. The
   key is stored tenant-scoped, so two tenants reusing a key on a shared table stay
   distinct runs.
+- The partial unique index on `coalesce_key` admits one unclaimed `pending` run per key,
+  which `enqueue(coalesce_key=...)` joins. It is stored tenant-scoped too.
 - `attempts` is the fence token: each claim advances it under a row lock, and a terminal
   write is fenced against a reclaimed lease.
 - `available_at` delays when a `pending` run may be claimed (`NULL`: claimable now).
@@ -114,6 +119,15 @@ CREATE INDEX ON public.durable_schedule (tenant_id, next_fire_at) WHERE enabled;
 
 ### Migrations
 
+**Coalescing enqueue needs a column and an index.** Only `enqueue(coalesce_key=...)` reads
+them, so add both before the first such call; nothing else changes:
+
+```sql
+ALTER TABLE public.durable_run ADD COLUMN coalesce_key text;
+CREATE UNIQUE INDEX CONCURRENTLY ON public.durable_run (coalesce_key)
+    WHERE status = 'pending' AND attempts = 0;
+```
+
 **0.6.0 added run cancellation.** Both cancel columns are nullable with no default, so an
 existing `durable_run` table migrates with no rewrite:
 
@@ -145,6 +159,23 @@ The run collection needs one index for correctness:
 db.durable_run.createIndex(
     { idempotency_key: 1 },
     { unique: true, partialFilterExpression: { idempotency_key: { $type: "string" } } },
+)
+```
+
+Coalescing (`enqueue(coalesce_key=...)`) needs one more, so a burst of submits joins one
+unclaimed run rather than racing to insert several:
+
+```javascript
+db.durable_run.createIndex(
+    { coalesce_key: 1 },
+    {
+        unique: true,
+        partialFilterExpression: {
+            coalesce_key: { $type: "string" },
+            status: "pending",
+            attempts: 0,
+        },
+    },
 )
 ```
 

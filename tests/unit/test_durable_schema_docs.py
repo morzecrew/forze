@@ -23,6 +23,7 @@ from forze_postgres.adapters.durable import (
     PostgresDurableScheduleStore,
 )
 from tests.support.durable_schema import (
+    DURABLE_RUN_COALESCE_INDEX,
     DURABLE_RUN_COLUMNS,
     DURABLE_SCHEDULE_COLUMNS,
     DURABLE_STEP_COLUMNS,
@@ -37,6 +38,7 @@ _PAGE: Final[Path] = (
 _TABLE: Final[re.Pattern[str]] = re.compile(r"CREATE TABLE (\S+) \((.*?)\n\s*\);?", re.DOTALL)
 _INDEX: Final[re.Pattern[str]] = re.compile(r"CREATE INDEX ON (\S+) (\(.*?\)(?: WHERE \w+)?);")
 _MONGO_INDEX: Final[re.Pattern[str]] = re.compile(r"db\.(\S+?)\.createIndex\(([^()]*)\)")
+_UNIQUE_INDEX: Final[re.Pattern[str]] = re.compile(r"CREATE UNIQUE INDEX ON (\S+) (.*?);")
 
 
 def _words(text: str) -> str:
@@ -155,3 +157,11 @@ def test_every_statement_in_every_source_is_one_the_comparisons_read(source: str
     assert text.count("CREATE TABLE") == len(_TABLE.findall(text))
     assert text.count("CREATE INDEX") == len(_INDEX.findall(text))
     assert text.count("createIndex") == len(_MONGO_INDEX.findall(text))
+
+
+def test_the_coalesce_index_reads_the_same_on_the_page_the_adapter_and_the_tests() -> None:
+    page = dict(_UNIQUE_INDEX.findall(_PAGE_TEXT))
+    adapter = dict(_UNIQUE_INDEX.findall(_doc(PostgresDurableRunStore)))
+    tests = dict(_UNIQUE_INDEX.findall(DURABLE_RUN_COALESCE_INDEX + ";"))
+
+    assert page["public.durable_run"] == adapter["<relation>"] == tests["{table}"]

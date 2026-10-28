@@ -23,6 +23,7 @@ The forced-schedule race batteries live next door in ``durable_cancel_races``.
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Awaitable, Callable
 from datetime import timedelta
 from typing import Any, cast
@@ -1445,6 +1446,87 @@ PURGE_OUTCOME: dict[str, Any] = {
     "key_freed": True,
 }
 """What :func:`run_purge_scenario` answers on every engine, the mock included."""
+
+
+# ....................... #
+
+
+async def run_coalesce_scenario(
+    store_for: Callable[[UUID | None], DurableRunStorePort],
+) -> dict[str, Any]:
+    """Coalesce submits onto the run waiting unclaimed under one key.
+
+    A submit joins a ``PENDING`` run nothing has claimed, keeping its input and due time; a
+    claimed, retrying, cancelled or other tenant's run is never joined, so the submit after
+    a claim records a new run. Twenty concurrent submits of one key converge on one run.
+    """
+
+    lease = timedelta(minutes=5)
+    store = store_for(None)
+    # Whole seconds: Mongo keeps milliseconds, and the joined run is read back from it.
+    later = utcnow().replace(microsecond=0) + timedelta(hours=1)
+    out: dict[str, Any] = {}
+
+    first = await store.enqueue("fn", input_json={"n": 1}, coalesce_key="x", available_at=later)
+    joined = await store.enqueue("fn", input_json={"n": 2}, coalesce_key="x")
+    out["burst_joins"] = joined.run_id == first.run_id
+    out["joined_keeps_input_and_due"] = (
+        joined.input_json == {"n": 1} and joined.available_at == first.available_at
+    )
+
+    other = await store_for(UUID("00000000-0000-0000-0000-00000000000b")).enqueue(
+        "fn", input_json=None, coalesce_key="x"
+    )
+    out["other_tenant_distinct"] = other.run_id != first.run_id
+
+    claimed = await store.begin(first.run_id, lease_for=lease)
+    assert claimed is not None
+    after_claim = await store.enqueue("fn", input_json=None, coalesce_key="x")
+    out["after_claim_is_new"] = after_claim.run_id != first.run_id
+    out["after_claim_joined"] = (
+        await store.enqueue("fn", input_json=None, coalesce_key="x")
+    ).run_id == after_claim.run_id
+
+    await cast(DurableRunAdminPort, store).request_cancel(after_claim.run_id)
+    after_cancel = await store.enqueue("fn", input_json=None, coalesce_key="x")
+    out["after_cancel_is_new"] = after_cancel.run_id != after_claim.run_id
+
+    retrying = await store.begin(after_cancel.run_id, lease_for=lease)
+    assert retrying is not None
+    await store.mark_retry(
+        after_cancel.run_id, error="blip", available_at=utcnow(), fence=retrying.attempts
+    )
+    out["retrying_not_joined"] = (
+        await store.enqueue("fn", input_json=None, coalesce_key="x")
+    ).run_id != after_cancel.run_id
+
+    try:
+        await store.enqueue("fn", input_json=None, idempotency_key="k", coalesce_key="y")
+    except CoreException as error:
+        out["both_keys"] = error.kind.value
+    else:  # pragma: no cover - a store that allows it is the failure being pinned
+        out["both_keys"] = "allowed"
+
+    burst = await asyncio.gather(
+        *(store.enqueue("fn", input_json=None, coalesce_key="race") for _ in range(20))
+    )
+    out["concurrent_runs"] = len({record.run_id for record in burst})
+
+    return out
+
+
+COALESCE_OUTCOME: dict[str, Any] = {
+    "burst_joins": True,
+    "joined_keeps_input_and_due": True,
+    "other_tenant_distinct": True,
+    "after_claim_is_new": True,
+    "after_claim_joined": True,
+    "after_cancel_is_new": True,
+    "retrying_not_joined": True,
+    "both_keys": "validation",
+    "concurrent_runs": 1,
+}
+"""What :func:`run_coalesce_scenario` answers on every engine, the mock included."""
 
 
 # ....................... #

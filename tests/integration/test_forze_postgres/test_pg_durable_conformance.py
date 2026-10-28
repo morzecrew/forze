@@ -58,6 +58,7 @@ from tests.support.durable_cancel_races import (
     run_stale_holder_race,
 )
 from tests.support.durable_conformance import (
+    COALESCE_OUTCOME,
     PURGE_OUTCOME,
     QUARANTINE_ADMIN_OUTCOME,
     REQUEUE_FAILED_OUTCOME,
@@ -65,6 +66,7 @@ from tests.support.durable_conformance import (
     FirstCallRuns,
     mock_quarantine,
     run_claim_scenario,
+    run_coalesce_scenario,
     run_control_scenario,
     run_lifecycle_scenario,
     run_list_scenario,
@@ -435,6 +437,27 @@ class TestDurableMockVsPostgres:
         )
 
         assert mock_out == pg_out == PURGE_OUTCOME
+
+    async def test_mock_matches_postgres_for_coalesced_enqueues(
+        self, pg_client: PostgresClient, run_table: str
+    ) -> None:
+        mock_state = MockState()
+        mock_out = await run_coalesce_scenario(
+            lambda tenant: MockDurableRunStore(
+                state=mock_state,
+                tenant_provider=tenant_provider_for(tenant),
+            )
+        )
+
+        pg_out = await run_coalesce_scenario(
+            lambda tenant: PostgresDurableRunStore(
+                client=pg_client,
+                config=PostgresDurableRunConfig(relation=("public", run_table)),
+                tenant_provider=tenant_provider_for(tenant),
+            )
+        )
+
+        assert mock_out == pg_out == COALESCE_OUTCOME
 
     async def test_an_unnamed_requeue_leaves_a_run_tagged_after_its_check(
         self, pg_client: PostgresClient, run_table: str

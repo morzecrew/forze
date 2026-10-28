@@ -59,6 +59,7 @@ from tests.support.durable_cancel_races import (
     run_stale_holder_race,
 )
 from tests.support.durable_conformance import (
+    COALESCE_OUTCOME,
     PURGE_OUTCOME,
     QUARANTINE_ADMIN_OUTCOME,
     REQUEUE_FAILED_OUTCOME,
@@ -66,6 +67,7 @@ from tests.support.durable_conformance import (
     FirstCallRuns,
     mock_quarantine,
     run_claim_scenario,
+    run_coalesce_scenario,
     run_control_scenario,
     run_lifecycle_scenario,
     run_list_scenario,
@@ -86,11 +88,12 @@ pytestmark = [pytest.mark.integration, pytest.mark.asyncio]
 
 @pytest_asyncio.fixture
 async def run_collection(mongo_client: MongoClient) -> tuple[str, str]:
-    """A run collection carrying the one index the store needs for correctness.
+    """A run collection carrying the indexes the store needs for correctness.
 
     The partial unique index on ``idempotency_key`` is what makes two simultaneous enqueues
     of one key converge on a single run; partial because a run without a key must not
-    collide with every other keyless run.
+    collide with every other keyless run. The one on ``coalesce_key`` does the same for the
+    unclaimed pending run a coalescing enqueue joins.
     """
 
     db_name = (await mongo_client.db()).name
@@ -100,6 +103,15 @@ async def run_collection(mongo_client: MongoClient) -> tuple[str, str]:
         [("idempotency_key", 1)],
         unique=True,
         partialFilterExpression={"idempotency_key": {"$type": "string"}},
+    )
+    await coll.create_index(
+        [("coalesce_key", 1)],
+        unique=True,
+        partialFilterExpression={
+            "coalesce_key": {"$type": "string"},
+            "status": "pending",
+            "attempts": 0,
+        },
     )
 
     return db_name, name
@@ -431,6 +443,26 @@ class TestDurableMockVsMongo:
         )
 
         assert mock_out == mongo_out == PURGE_OUTCOME
+
+    async def test_mock_matches_mongo_for_coalesced_enqueues(
+        self, mongo_client: MongoClient, run_collection: tuple[str, str]
+    ) -> None:
+        mock_state = MockState()
+        mock_out = await run_coalesce_scenario(
+            lambda tenant: MockDurableRunStore(
+                state=mock_state,
+                tenant_provider=tenant_provider_for(tenant),
+            )
+        )
+        mongo_out = await run_coalesce_scenario(
+            lambda tenant: MongoDurableRunStore(
+                client=mongo_client,
+                config=MongoDurableRunConfig(collection=run_collection),
+                tenant_provider=tenant_provider_for(tenant),
+            )
+        )
+
+        assert mock_out == mongo_out == COALESCE_OUTCOME
 
     async def test_an_unnamed_requeue_leaves_a_run_tagged_after_its_check(
         self, mongo_client: MongoClient, run_collection: tuple[str, str]

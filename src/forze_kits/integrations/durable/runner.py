@@ -212,10 +212,14 @@ class DurableFunctionRunner:
         idempotency_key: str | None = None,
         tenant_id: UUID | None = None,
         run_at: datetime | None = None,
+        coalesce_key: str | None = None,
     ) -> DurableRunRecord:
         """Record a new ``PENDING`` run (idempotency-key re-submits converge on one run).
 
         *run_at* delays when the recovery scan may claim it (a scheduled/delayed run).
+        *coalesce_key* joins the run already waiting unclaimed under that key, keeping its
+        input and due time, and records a new one once that run is claimed — "recompute after
+        a change", where a burst of changes causes one run and none is missed.
         """
 
         store = resolve_durable_run_store(ctx)
@@ -226,6 +230,7 @@ class DurableFunctionRunner:
             idempotency_key=idempotency_key,
             tenant_id=tenant_id,
             available_at=run_at,
+            coalesce_key=coalesce_key,
         )
 
     # ....................... #
