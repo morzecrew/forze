@@ -57,3 +57,13 @@ async def test_an_absent_column_marker_belongs_to_its_introspector(
         await two.incr(ttl=timedelta(minutes=1))
 
     assert rereads == [one.introspector, two.introspector], "each re-read its own catalog"
+
+
+def test_a_per_tenant_table_reports_expiry_without_a_catalog_read() -> None:
+    counter = PostgresCounterAdapter(
+        client=PostgresClient(),
+        config=PostgresCounterConfig(relation=lambda tenant: ("public", f"counters_{tenant}")),
+        route="orders",
+    )
+
+    assert counter_capabilities(counter).expiry is True
