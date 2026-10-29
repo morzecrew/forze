@@ -20,7 +20,9 @@ analytics, graph, and procedure params** by pointing their spec at the same poli
 the planes can't drift. Document ciphertext is also bound to the document spec's name: a
 search or analytics spec that reads the document's table in place sets `sealed_by` to that
 name (otherwise `core.crypto.aead_auth_failed`). An external index and ingested warehouse
-rows keep their own label, so Meilisearch and an `AnalyticsSpec` with `ingest` refuse it.
+rows keep their own label, so Meilisearch, index sync and rebuild, and an `AnalyticsSpec`
+with `ingest` refuse it. A hub's `sealed_by` governs its rows; a member's must be unset or
+equal to it.
 Graph (its own Neo4j store) and procedure params (sealed before the SQL) read no document
 table.
 

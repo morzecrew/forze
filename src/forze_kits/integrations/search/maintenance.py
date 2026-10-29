@@ -21,7 +21,10 @@ from typing import TYPE_CHECKING, Any, final
 
 import attrs
 
-from forze.application.integrations.search import assert_search_encryption_parity
+from forze.application.integrations.search import (
+    assert_search_encryption_parity,
+    refuse_index_sealed_by,
+)
 from forze_kits.domain.soft_deletion.constants import SOFT_DELETE_FIELD
 
 if TYPE_CHECKING:
@@ -121,6 +124,8 @@ async def rebuild_search_index(
     # write sealed fields to an external index in clear has to be refused. Checked before the
     # first row is read, so a mismatch costs nothing and can never half-fill an index.
     assert_search_encryption_parity(document=document, search=search)
+    # Only a separate index is rebuilt; an in-place search (sealed_by) reads the table itself.
+    refuse_index_sealed_by(search, backend="Rebuilt")
 
     indexed = 0
     removed = 0

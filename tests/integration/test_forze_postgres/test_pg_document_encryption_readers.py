@@ -16,7 +16,7 @@ from pydantic import BaseModel
 from forze.application.contracts.analytics import AnalyticsQueryDefinition, AnalyticsSpec
 from forze.application.contracts.crypto import FieldEncryption, KeyRef, StaticKeyDirectory
 from forze.application.contracts.document import DocumentSpec
-from forze.application.contracts.search import SearchSpec
+from forze.application.contracts.search import HubSearchSpec, SearchSpec
 from forze.application.execution import CryptoDepsModule, Deps, ExecutionContext
 from forze.base.exceptions import CoreException
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
@@ -26,6 +26,8 @@ from forze_postgres.execution.deps.configs import (
     FtsEngine,
     PostgresAnalyticsConfig,
     PostgresDocumentConfig,
+    PostgresHubSearchConfig,
+    PostgresHubSearchMemberConfig,
     PostgresQueryConfig,
     PostgresSearchConfig,
 )
@@ -104,6 +106,19 @@ def _specs(
     )
 
 
+def _hub(sealed_by: str | None = None) -> HubSearchSpec[_VaultRead]:
+    """A hub over the document table: its hub rows are decoded under the hub's sealed_by."""
+
+    leg = SearchSpec(name="vault_leg", model_type=_VaultRead, fields=["title"])
+    return HubSearchSpec(
+        name="vault_hub",
+        model_type=_VaultRead,
+        members=[leg],
+        encryption=_POLICY,
+        sealed_by=sealed_by,
+    )
+
+
 def _ctx(pg_client: PostgresClient, table: str) -> ExecutionContext:
     """A fresh context with its OWN keyring (a separate process, so reads start cold)."""
 
@@ -131,6 +146,19 @@ def _ctx(pg_client: PostgresClient, table: str) -> ExecutionContext:
                 engine=FtsEngine(groups={"A": ("title",)}),
                 index=("public", f"idx_{table}"),
                 read=("public", table),
+            )
+        },
+        hub_searches={
+            "vault_hub": PostgresHubSearchConfig(
+                hub=("public", table),
+                members={
+                    "vault_leg": PostgresHubSearchMemberConfig(
+                        engine=FtsEngine(groups={"A": ("title",)}),
+                        index=("public", f"idx_{table}"),
+                        read=("public", table),
+                        hub_fk="id",
+                    )
+                },
             )
         },
     )
@@ -200,5 +228,24 @@ async def test_readers_refuse_the_document_rows_without_sealed_by(
 
     with pytest.raises(CoreException) as refused:
         await searcher.search_page("ledger", pagination={"limit": 5})
+
+    assert refused.value.code == "core.crypto.aead_auth_failed"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("sealed_by", ["vault", None])
+async def test_a_hub_decodes_the_document_rows_under_its_own_sealed_by(
+    pg_client: PostgresClient, sealed_by: str | None
+) -> None:
+    table = await _write_sealed(pg_client)
+    hub = _ctx(pg_client, table).search.hub(_hub(sealed_by=sealed_by))
+
+    if sealed_by is not None:
+        found = await hub.search_page("ledger", pagination={"limit": 5})
+        assert [hit.secret for hit in found.hits] == ["plain-1"]
+        return
+
+    with pytest.raises(CoreException) as refused:
+        await hub.search_page("ledger", pagination={"limit": 5})
 
     assert refused.value.code == "core.crypto.aead_auth_failed"

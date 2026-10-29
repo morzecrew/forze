@@ -36,7 +36,10 @@ from forze.application.contracts.inbox import InboxSpec
 from forze.application.contracts.outbox import OutboxDestination, OutboxSpec
 from forze.application.contracts.queue import QueueMessage, QueueSpec
 from forze.application.contracts.search import SearchSpec
-from forze.application.integrations.search import assert_search_encryption_parity
+from forze.application.integrations.search import (
+    assert_search_encryption_parity,
+    refuse_index_sealed_by,
+)
 from forze.base.exceptions import CoreException, ExceptionKind
 from forze.base.primitives import StrKey
 from forze.base.serialization import PydanticModelCodec
@@ -372,6 +375,8 @@ def bind_search_sync_outbox(
     """
 
     assert_search_encryption_parity(document=document, search=search)
+    # Only a separate index is synced; an in-place search (sealed_by) reads the table itself.
+    refuse_index_sealed_by(search, backend="Outbox-synced")
 
     route = config.resolved_route(search)
     codec = PydanticModelCodec(SearchSyncMarker)

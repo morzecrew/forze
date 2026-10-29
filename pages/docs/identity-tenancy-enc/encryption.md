@@ -163,10 +163,11 @@ AnalyticsSpec(
 
 Without `sealed_by`, those reads fail with `core.crypto.aead_auth_failed`: a ciphertext
 is never opened under another name. Data a plane seals itself keeps the plane's own label,
-so an external index (Meilisearch) and an `AnalyticsSpec` with `ingest` refuse
-`sealed_by`. A `HubSearchSpec` names its hub relation's document; each federated member
-names its own. Graph and procedure params read no document table, so they have no
-`sealed_by`.
+so an external index (Meilisearch), the kit's index sync, outbox sync and rebuild, and an
+`AnalyticsSpec` with `ingest` refuse `sealed_by`. A `HubSearchSpec`'s `sealed_by` governs
+every hub row it decodes: a member's `sealed_by` must be unset or equal to the hub's, and
+any other is refused when the spec is built. Each federated member names its own. Graph
+and procedure params read no document table, so they have no `sealed_by`.
 
 The downstream caches inherit it: when a search route encrypts, its result-snapshot
 runs (the frozen models kept for stable re-pagination) are sealed at rest too, so the

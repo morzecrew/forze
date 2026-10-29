@@ -163,9 +163,33 @@ async def test_in_place_search_opens_a_documents_rows_only_when_sealed_by_names_
     assert ei.value.code == "core.crypto.aead_auth_failed"
 
 
-def test_empty_sealed_by_is_rejected() -> None:
-    with pytest.raises(ValueError, match="sealed_by"):
-        _spec(encryption=_POLICY, sealed_by="")
+@pytest.mark.parametrize("blank", ["", "   "])
+def test_blank_sealed_by_is_rejected(blank: str) -> None:
+    with pytest.raises(CoreException, match="sealed_by") as ei:
+        _spec(encryption=_POLICY, sealed_by=blank)
+
+    assert ei.value.kind is ExceptionKind.CONFIGURATION
+
+
+@pytest.mark.parametrize("member", [None, "docs"])
+def test_hub_members_leave_sealed_by_unset_or_equal_to_the_hubs(member: str | None) -> None:
+    """The hub's sealed_by governs every hub row it decodes, on every backend."""
+
+    def hub(member_sealed_by: str | None) -> HubSearchSpec[_Doc]:
+        return HubSearchSpec(
+            name="hub",
+            model_type=_Doc,
+            members=[_spec(encryption=_POLICY, sealed_by=member_sealed_by)],
+            encryption=_POLICY,
+            sealed_by="docs",
+        )
+
+    assert hub(member).sealed_by == "docs"
+
+    with pytest.raises(CoreException, match="name another document") as ei:
+        hub("other")
+
+    assert ei.value.kind is ExceptionKind.CONFIGURATION
 
 
 def test_an_index_that_seals_its_own_fields_refuses_sealed_by() -> None:

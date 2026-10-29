@@ -11,6 +11,7 @@ fills synchronously).
 
 from __future__ import annotations
 
+from typing import Any
 from uuid import uuid4
 
 import pytest
@@ -28,6 +29,7 @@ from forze.application.contracts.search import (
     HubSearchQueryDepKey,
     HubSearchSpec,
     SearchCommandDepKey,
+    SearchManagementDepKey,
     SearchSpec,
 )
 from forze.application.execution import ExecutionContext
@@ -232,35 +234,27 @@ async def test_federated_members_each_open_their_own_documents_rows(
 
 
 @pytest.mark.asyncio
-async def test_mock_hub_opens_rows_its_members_agree_on_and_refuses_otherwise(
+async def test_mock_hub_decodes_its_rows_under_the_hubs_sealed_by(
     ctx: ExecutionContext,
 ) -> None:
-    """The mock hub decodes its members' rows with the hub codec, so their sealed_by must
-    match the hub's."""
+    """The hub's sealed_by governs the rows it decodes; a member may leave its own unset."""
 
     await _write_note(ctx, "alpha")
+    hub = HubSearchSpec(
+        name="hub",
+        model_type=_NoteRead,
+        members=[_note_search("alpha", None)],
+        encryption=_NOTE_POLICY,
+        sealed_by="alpha",
+    )
 
-    def hub(*members: SearchSpec[_NoteRead]) -> HubSearchSpec[_NoteRead]:
-        return HubSearchSpec(
-            name="hub",
-            model_type=_NoteRead,
-            members=list(members),
-            encryption=_NOTE_POLICY,
-            sealed_by="alpha",
-        )
-
-    port = ctx.deps.provide(HubSearchQueryDepKey)(ctx, hub(_note_search("alpha", "alpha")))
-    page = await port.search("ledger")
+    page = await ctx.deps.provide(HubSearchQueryDepKey)(ctx, hub).search("ledger")
     assert [h.body for h in page.hits] == ["alpha-pii"]
 
-    with pytest.raises(CoreException, match="must agree"):
-        ctx.deps.provide(HubSearchQueryDepKey)(
-            ctx, hub(_note_search("alpha", "alpha"), _note_search("beta", "beta"))
-        )
 
-
-def test_mock_index_write_path_refuses_sealed_by(ctx: ExecutionContext) -> None:
+@pytest.mark.parametrize("key", [SearchCommandDepKey, SearchManagementDepKey])
+def test_mock_index_write_path_refuses_sealed_by(ctx: ExecutionContext, key: Any) -> None:
     with pytest.raises(CoreException) as refused:
-        ctx.deps.provide(SearchCommandDepKey)(ctx, _note_search("notes", "notes"))
+        ctx.deps.provide(key)(ctx, _note_search("notes", "notes"))
 
     assert refused.value.code == "core.search.encryption_wiring"

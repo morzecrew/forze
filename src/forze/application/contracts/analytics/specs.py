@@ -16,7 +16,7 @@ from forze.base.serialization import (
 )
 
 from ..base import BaseSpec
-from ..crypto import FieldEncryption
+from ..crypto import FieldEncryption, validate_sealed_by
 from .value_objects import AnalyticsProvenance
 
 # ----------------------- #
@@ -93,10 +93,7 @@ class AnalyticsSpec(BaseSpec, Generic[R, Ing]):
     a wired keyring; ``binds_record_id`` is unsupported here (analytics rows have no stable id).
     ``None`` (default) = no encryption."""
 
-    sealed_by: str | None = attrs.field(
-        default=None,
-        validator=attrs.validators.optional(attrs.validators.min_len(1)),
-    )
+    sealed_by: str | None = attrs.field(default=None, validator=validate_sealed_by)
     """Name of the document spec that sealed the encrypted columns this spec's queries read
     (a warehouse query over a document's table). The document port binds its ciphertext to
     its spec name, so the read codec binds the same name to open it. ``None`` (default) keeps

@@ -19,7 +19,7 @@ from ..conformity import (
     validate_lenient_read_fields,
     validate_materialized_computed,
 )
-from ..crypto import FieldEncryption
+from ..crypto import FieldEncryption, validate_sealed_by
 from ..querying import QueryFilterLimits, QuerySortExpression
 from ..querying.sort_resolution import read_fields_for_model, validate_sort_fields
 from .types import SearchCountPolicy
@@ -414,10 +414,7 @@ class SearchSpec[M: BaseModel](BaseSpec):
     any backend — the stored value is ciphertext, so content matching over it can never
     hit (rejected at spec construction). ``None`` (default) = no field encryption."""
 
-    sealed_by: str | None = attrs.field(
-        default=None,
-        validator=attrs.validators.optional(attrs.validators.min_len(1)),
-    )
+    sealed_by: str | None = attrs.field(default=None, validator=validate_sealed_by)
     """Name of the document spec that sealed the encrypted fields of the relation this spec
     searches **in place** (Postgres/Mongo over a document table). The document port binds its
     ciphertext to its spec name, so the read codec binds the same name to open it. ``None``
@@ -640,13 +637,10 @@ class HubSearchSpec[M: BaseModel](BaseSpec):
     """Field-encryption policy for hub-row fields (see :class:`FieldEncryption`), decrypted
     out of hub search results. Mirror of the hub read model's ``DocumentSpec.encryption``."""
 
-    sealed_by: str | None = attrs.field(
-        default=None,
-        validator=attrs.validators.optional(attrs.validators.min_len(1)),
-    )
+    sealed_by: str | None = attrs.field(default=None, validator=validate_sealed_by)
     """Name of the document spec that sealed the hub relation's encrypted fields (see
-    :attr:`SearchSpec.sealed_by`). Hub rows are read from that one relation, so one name
-    covers them; each member leg declares its own."""
+    :attr:`SearchSpec.sealed_by`). The hub's name governs every hub row it decodes, so a
+    member's ``sealed_by`` must be unset or equal to it (refused otherwise)."""
 
     facetable_fields: frozenset[str] = attrs.field(
         factory=frozenset,
@@ -746,6 +740,15 @@ class HubSearchSpec[M: BaseModel](BaseSpec):
         if len(names) != len(set(names)):
             raise exc.configuration(
                 "Each hub search member must use a SearchSpec with a distinct name."
+            )
+
+        if disagree := sorted(
+            str(m.name) for m in self.members if m.sealed_by not in (None, self.sealed_by)
+        ):
+            raise exc.configuration(
+                f"Hub search {self.name!r} is sealed_by {self.sealed_by!r}, but members "
+                f"{disagree} name another document. The hub's sealed_by governs the rows it "
+                "decodes: leave the members' unset or equal to it."
             )
 
         if self.default_member_weights:

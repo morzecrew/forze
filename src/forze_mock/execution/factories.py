@@ -606,6 +606,14 @@ class ConfigurableMockDynamicRead(_MockFactoryBase):
 @final
 @attrs.define(slots=True, kw_only=True)
 class ConfigurableMockSearch(_MockFactoryBase):
+    """Mock search query port: stands in for an external index *and* an in-place search.
+
+    So it accepts ``sealed_by`` (only the index write side refuses it, as Meilisearch does).
+    shortcut: a ``sealed_by`` that does not match how the rows were written (document port
+    vs. search upsert) fails at read time with ``aead_auth_failed``, not at wiring; a mock
+    split into index and in-place query factories would catch it earlier.
+    """
+
     def __call__(
         self,
         context: ExecutionContext,
@@ -706,21 +714,6 @@ class ConfigurableMockHubSearch(_MockFactoryBase):
         context: ExecutionContext,
         spec: HubSearchSpec[Any],
     ) -> MockHubSearchAdapter[Any]:
-        # The mock hub decodes its members' stored rows with the hub codec (Postgres reads one
-        # hub relation), so they must have been sealed under the hub's label.
-        if search_spec_encrypts(spec) and (
-            disagree := sorted(
-                str(m.name)
-                for m in spec.members
-                if search_spec_encrypts(m) and m.sealed_by != spec.sealed_by
-            )
-        ):
-            raise exc.configuration(
-                f"Mock hub search {spec.name!r} is sealed_by {spec.sealed_by!r}, but members "
-                f"{disagree} declare another sealed_by; the mock hub decodes member rows with "
-                "the hub codec, so they must agree.",
-            )
-
         legs: list[tuple[str, MockSearchAdapter[Any]]] = []
         search_factory = ConfigurableMockSearch(module=self.module)
 

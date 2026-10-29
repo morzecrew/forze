@@ -275,6 +275,9 @@ def test_sealed_by_with_ingest_is_refused() -> None:
     assert "sealed_by and ingest" in str(ei.value)
 
 
-def test_empty_sealed_by_is_rejected() -> None:
-    with pytest.raises(ValueError, match="sealed_by"):
-        _query_only(sealed_by="")
+@pytest.mark.parametrize("blank", ["", "   "])
+def test_blank_sealed_by_is_rejected(blank: str) -> None:
+    with pytest.raises(CoreException, match="sealed_by") as ei:
+        _query_only(sealed_by=blank)
+
+    assert ei.value.kind is ExceptionKind.CONFIGURATION
