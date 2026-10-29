@@ -655,9 +655,12 @@ class _DurableRetentionBackgroundStartup(LifecycleHook):
 
     async def __call__(self, ctx: ExecutionContext) -> None:
         tenants = list(self.tenants()) if self.tenants is not None else None
+        # Resolved for a shard too: a missing port would otherwise fail each tenant's sweep
+        # as that tenant's error, logged and retried forever, while startup succeeded.
+        admin = resolve_durable_run_admin(ctx)
 
         if tenants is None:
-            require_tenant_global(resolve_durable_run_admin(ctx), what="Durable run retention")
+            require_tenant_global(admin, what="Durable run retention")
 
         async def _loop() -> None:
             while True:

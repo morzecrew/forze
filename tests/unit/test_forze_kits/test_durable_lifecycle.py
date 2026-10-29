@@ -464,6 +464,18 @@ class TestRetention:
         assert await store.load(live.run_id) is not None
 
 
+    @pytest.mark.parametrize("shard", [None, [uuid4()]], ids=["unbound", "sharded"])
+    async def test_startup_fails_without_the_admin_port(self, shard: list[Any] | None) -> None:
+        step = durable_run_retention_lifecycle_step(
+            older_than=timedelta(days=1), tenants=None if shard is None else lambda: shard
+        )
+
+        with pytest.raises(CoreException) as raised:
+            await step.startup(context_from_modules())
+
+        assert raised.value.kind is ExceptionKind.CONFIGURATION
+
+
 # ....................... #
 
 
