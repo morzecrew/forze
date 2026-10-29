@@ -241,9 +241,9 @@ def operation_tools(
         # did not.
         if entry.descriptor is not None and entry.descriptor.sensitive:
             raise exc.validation(
-                f"{op!r} projects a sensitive read model (its spec is marked "
-                "sensitive=True; credential/secret material must not reach an agent) "
-                "and cannot be projected as a tool",
+                f"{op!r} is sensitive (its result carries credential or secret "
+                "material, which must not reach an agent) and cannot be projected as a "
+                "tool; leave it out of include",
                 code="agent_tools_sensitive_operation",
                 details={"op": str(op)},
             )

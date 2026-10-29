@@ -1012,9 +1012,9 @@ def attach_operation_routes(
         if descriptor is not None and descriptor.sensitive:
             raise exc.configuration(
                 f"Refusing to attach routes under namespace '{ns.prefix}': "
-                f"operation '{op}' projects a sensitive read model (its spec is "
-                "marked sensitive=True; credential/secret material must not be "
-                "exposed on generated external surfaces)"
+                f"operation '{op}' is sensitive (its result carries credential or "
+                "secret material, which a generated route must not serve). Leave it "
+                "out with include=, or serve it from your own guarded route"
             )
 
         input_type = descriptor.input_type if descriptor is not None else None
