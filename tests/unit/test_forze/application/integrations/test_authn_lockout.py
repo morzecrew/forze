@@ -163,6 +163,25 @@ class TestLoginLockoutGuard:
         with bind_time_source(FrozenTimeSource(end)):
             assert await guard.locked_until(DIGEST) is None
 
+    @pytest.mark.parametrize(
+        "window",
+        [timedelta(milliseconds=500), timedelta(seconds=1.5)],
+        ids=["sub-second", "fractional"],
+    )
+    async def test_a_window_keeps_its_sub_second_part(self, window: timedelta) -> None:
+        # Truncated to whole seconds, 500 ms divided by zero and 1.5 s counted as 1 s.
+        guard, _counter = _guard(threshold=1, window=window)
+
+        with bind_time_source(FrozenTimeSource(T0)):  # T0 is on a boundary of both windows
+            await guard.record_failure(DIGEST)
+            assert await guard.locked_until(DIGEST) == T0 + window
+
+        with bind_time_source(FrozenTimeSource(T0 + window - timedelta(microseconds=1))):
+            assert await guard.is_locked(DIGEST) is True
+
+        with bind_time_source(FrozenTimeSource(T0 + window)):
+            assert await guard.is_locked(DIGEST) is False
+
     async def test_digests_are_isolated(self) -> None:
         guard, _counter = _guard(threshold=1)
         other = login_digest("bob")

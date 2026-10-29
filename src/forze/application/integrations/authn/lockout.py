@@ -117,15 +117,16 @@ class LoginLockoutGuard:
 
     # ....................... #
 
-    def _window_seconds(self) -> int:
-        return int(self.config.window.total_seconds())
+    def _window_seconds(self) -> float:
+        # Not truncated to whole seconds: a sub-second window would divide by zero.
+        return self.config.window.total_seconds()
 
     # ....................... #
 
     def _bucket(self) -> int:
         """The current fixed-window bucket number."""
 
-        return int(utcnow().timestamp()) // self._window_seconds()
+        return int(utcnow().timestamp() // self._window_seconds())
 
     # ....................... #
 
