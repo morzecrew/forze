@@ -49,6 +49,7 @@ from forze.base.exceptions import CoreException, ExceptionKind
 from forze.base.primitives import HlcTimestamp
 from forze_kits.integrations.realtime import (
     build_realtime_mailbox,
+    realtime_group_ensure_lifecycle_step,
     realtime_inbox_spec,
     realtime_mailbox_spec,
     realtime_pubsub_spec,
@@ -433,6 +434,35 @@ class TestRealtimeMailboxWriter:
         assert caught.value.code == "tenant_aware_required"
         assert caught.value.kind is ExceptionKind.CONFIGURATION
         assert (t1, t2) == ([], [])
+
+    @pytest.mark.parametrize(
+        ("start_id", "stored"),
+        [("0", ["evt-1", "evt-2"]), ("$", ["evt-2"])],
+        ids=["from-zero", "from-tail"],
+    )
+    async def test_a_group_created_after_appends_stores_them_only_from_zero(
+        self, start_id: str, stored: list[str]
+    ) -> None:
+        # The writer's first deploy: evt-1 was appended before its group existed.
+        mailbox = InMemoryRealtimeMailbox()
+        spec = realtime_stream_spec()
+        writer = RealtimeMailboxWriter(
+            source=StreamGroupSignalSource(stream_spec=spec, poll_interval=_FAST),
+            dedup=_dedup(),
+            mailbox_factory=lambda _ctx: mailbox,
+        )
+        ensure = realtime_group_ensure_lifecycle_step(stream_spec=spec, start_id=start_id)
+
+        runtime = _runtime()
+        async with runtime.scope():
+            ctx = runtime.get_context()
+            await _append(ctx, _principal(), event_id="evt-1")
+            await ensure.startup(ctx)  # type: ignore[misc]
+            await _append(ctx, _principal(), event_id="evt-2")
+            await _run_until(writer, ctx, lambda: _stored(mailbox, len(stored)))
+
+        rows = await mailbox.read_since(principal="u1", since=None)
+        assert [entry.event_id for entry in rows] == stored
 
     def test_a_pubsub_source_is_refused(self) -> None:
         with pytest.raises(CoreException) as caught:

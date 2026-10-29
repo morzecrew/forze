@@ -531,7 +531,8 @@ writer = RealtimeMailboxWriter(
     ),
 )
 lifecycle = [
-    realtime_group_ensure_lifecycle_step(stream_spec=transport.stream_spec),  # before serving
+    # before serving; "0" so a group created after the first appends still stores them
+    realtime_group_ensure_lifecycle_step(stream_spec=transport.stream_spec, start_id="0"),
     realtime_relay_lifecycle_step(
         outbox_spec=transport.outbox_spec, stream_spec=transport.stream_spec,
     ),
@@ -540,6 +541,14 @@ lifecycle = [
 ]
 ```
 
+- **Create its group at `0`.** The group-ensure step defaults to `start_id="$"`, which suits
+  the gateway: a new group should not emit an old backlog live. A writer whose group is
+  created at `$` skips every entry appended before that, such as signals relayed before
+  the writer's first deploy, and those never reach the mailbox. At `"0"` the new group
+  reads every entry the stream still holds. The dedup inbox stops a double store, and the
+  stream's retention cap bounds the one-time catch-up. It only applies when the group is
+  created; an existing group keeps its position. With `TenantShardedSignalSource`, pass
+  `start_id="0"` to `realtime_tenant_group_ensure_lifecycle_step` too.
 - **Any number of nodes.** Give every node's writer the same consumer group: each signal
   goes to one writer, a crashed node's unacked entries are reclaimed, and a redelivery
   finds the dedup mark.

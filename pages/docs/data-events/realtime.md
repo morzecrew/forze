@@ -90,7 +90,8 @@ mailbox is the source of truth, and the live emit is just a latency optimization
 on top. In a live app the Socket.IO gateway does this store as it processes the signal.
 A deployment that serves only SSE or the raw WebSocket route runs the
 [mailbox writer](../integrations/fastapi.md#offline-delivery-without-socketio) instead:
-the same store, with no live emit.
+the same store, with no live emit. Create the writer's consumer group at `start_id="0"`,
+not the default `"$"`, so signals appended before its first deploy still reach the mailbox.
 
 ```python
 --8<-- "recipes/realtime_offline/app.py:emit"

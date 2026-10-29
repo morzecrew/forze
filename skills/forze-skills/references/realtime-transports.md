@@ -122,7 +122,8 @@ writer = RealtimeMailboxWriter(
     dedup=GatewayDedup(inbox_spec=transport.inbox_spec, tx_route="..."),
     mailbox_factory=mailbox_factory,  # the factory the routes replay from
 )
-# alongside realtime_group_ensure_lifecycle_step and realtime_relay_lifecycle_step
+# alongside realtime_group_ensure_lifecycle_step(..., start_id="0") and
+# realtime_relay_lifecycle_step; "0" so entries appended before the group existed are stored
 step = realtime_mailbox_writer_lifecycle_step(writer)
 ```
 

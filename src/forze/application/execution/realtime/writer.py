@@ -298,7 +298,9 @@ def realtime_mailbox_writer_lifecycle_step(
     """Build the supervised lifecycle step that runs *writer* for the process lifetime.
 
     Register it where no mailboxing Socket.IO gateway runs, beside the consumer group's
-    ensure step and the outbox relay. Supervision matches the gateway's: restart on crash
+    ensure step and the outbox relay. Give the ensure step ``start_id="0"``: at the default
+    ``"$"`` a group created after the first appends skips them, and those signals never
+    reach the mailbox. Supervision matches the gateway's: restart on crash
     with jittered backoff, terminal on a configuration error, stop at a batch boundary,
     drained before lifecycle teardown.
 

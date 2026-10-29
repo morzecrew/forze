@@ -467,9 +467,11 @@ class StreamGroupSignalSource(RealtimeSignalSource):
     """A signal source backed by a stream **consumer group** (exactly-once delivery).
 
     Each signal goes to exactly one consumer in *group*, so multiple gateway
-    instances share the load without double-emitting. A handler that raises is
-    logged and the message is still acknowledged (ephemeral is at-most-once; the
-    durable path dedupes downstream), so one bad signal cannot wedge the stream.
+    instances share the load without double-emitting. A handler that raises is logged.
+    An ephemeral signal is acknowledged anyway (at-most-once). A durable one stays
+    pending and is reclaimed and retried, deduped downstream, until
+    :attr:`max_deliveries` acks and drops it, so one bad signal cannot wedge the stream.
+    A configuration error or a draining refusal acks nothing and stops the loop.
     """
 
     stream_spec: StreamSpec[RealtimeSignal]
