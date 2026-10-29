@@ -19,7 +19,7 @@ It drains first:
 1. If nothing drained the scope yet, its drain phases run, while operations are
    still admitted — see [Graceful deploys](#graceful-deploys).
 2. The scope stops admitting new top-level invocations. They fail with a
-   **retryable** `throttled` (`code="draining"`) — a **429** at the FastAPI
+   **retryable** `unavailable` (`code="draining"`) — a **503** at the FastAPI
    edge, a requeue-worthy nack for a queue consumer.
 3. In-flight operations get a bounded window — `drain_timeout`, default 10
    seconds — to finish before lifecycle teardown closes the clients they

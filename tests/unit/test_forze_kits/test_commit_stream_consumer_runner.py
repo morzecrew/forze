@@ -497,7 +497,7 @@ async def test_rejects_bad_config() -> None:
 @pytest.mark.asyncio
 async def test_draining_refusal_stops_without_dead_lettering() -> None:
     # A rolling deploy flips the drain gate before the loop's stop event: the
-    # handler's dispatch is refused with THROTTLED/code="draining". That is a
+    # handler's dispatch is refused with UNAVAILABLE/code="draining". That is a
     # shutdown artifact, not a handler defect — burning max_attempts on the one-way
     # gate and dead-lettering would park a HEALTHY message as poison and commit the
     # offset past an effect that never ran. The runner must stop instead, leaving
@@ -515,7 +515,7 @@ async def test_draining_refusal_stops_without_dead_lettering() -> None:
         calls.append(msg.payload.value)
 
         if msg.payload.value == "1":
-            raise exc.throttled("Runtime is draining", code="draining")
+            raise exc.unavailable("Runtime is draining", code="draining")
 
     result = await _consumer(handler, dlq_stream="orders.dlq", max_attempts=3).run(
         ctx, timeout=_IDLE

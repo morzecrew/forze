@@ -172,7 +172,7 @@ class TestFailurePolicy:
         runtime = _runtime()
 
         async def draining(*args: Any) -> None:
-            raise exc.throttled("Runtime scope is draining; rejected", code="draining")
+            raise exc.unavailable("Runtime scope is draining; rejected", code="draining")
 
         source = _source()
 

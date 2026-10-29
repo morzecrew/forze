@@ -47,6 +47,7 @@ from forze.base.primitives import (
 
 from ..context.active_operation import continue_operation_on_task
 from ..context.deadline import remaining_time
+from ..context.drain import is_draining_refusal
 from ..tracing import record
 from .backoff import compute_delay, retry_after
 from .limiter import Gradient2Limiter
@@ -953,7 +954,10 @@ class InProcessResilienceExecutor:
 
             except CoreException as error:
                 retryable = (
-                    error.kind in strat.retry_on and exception_egress_policy(error.kind).retryable
+                    error.kind in strat.retry_on
+                    and exception_egress_policy(error.kind).retryable
+                    # The drain gate never reopens in this process: a retry only waits on it.
+                    and not is_draining_refusal(error)
                 )
 
                 if not retryable or attempt >= strat.max_attempts:

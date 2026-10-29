@@ -15,8 +15,8 @@ its own new task — is a fresh top-level driver: admitted, counted, and
 rejectable.
 
 :meth:`ExecutionRuntime.shutdown` flips the gate before running lifecycle
-teardown: new invocations are rejected with a retryable ``THROTTLED`` error
-(``code="draining"``; **429** at the FastAPI edge, a requeue-worthy nack for
+teardown: new invocations are rejected with a retryable ``UNAVAILABLE`` error
+(``code="draining"``; **503** at the FastAPI edge, a requeue-worthy nack for
 queue consumers) and in-flight operations get a bounded window to finish
 before the clients they depend on are closed.
 """
@@ -125,13 +125,13 @@ class OperationDrainGate:
     def admit(self, op: StrKey) -> None:
         """Admit a top-level invocation of *op*, or reject it while draining.
 
-        :raises CoreException: ``THROTTLED`` (``code="draining"``) once the
+        :raises CoreException: ``UNAVAILABLE`` (``code="draining"``) once the
             scope is draining — retryable by contract: the request can be
             replayed against another instance or after a restart.
         """
 
         if self._draining:
-            raise exc.throttled(
+            raise exc.unavailable(
                 f"Runtime scope is draining; operation {str(op)!r} rejected",
                 code=_DRAINING_CODE,
                 details={"op": str(op)},

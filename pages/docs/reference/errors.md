@@ -45,7 +45,7 @@ policy.
 | `infrastructure` | a backing system failed | — | ✅ | 500 | `core.infrastructure` |
 | `throttled` | a rate limit rejected the call | — | ✅ | 429 | `core.throttled` |
 | `timeout` | the invocation's [time budget](../running-in-prod/deadlines.md) ran out | — | — | 504 | `core.timeout` |
-| `unavailable` | it works, but is switched off right now (a feature flag, a maintenance window) | — | ✅ | 503 | `core.unavailable` |
+| `unavailable` | it works, but is switched off right now (a feature flag, a maintenance window, an instance draining for shutdown) | — | ✅ | 503 | `core.unavailable` |
 | `internal` | an unexpected bug | — | — | 500 | `core.internal` |
 
 `unavailable`'s summary and code reach clients unmasked, as a 4xx kind's do, so keep the

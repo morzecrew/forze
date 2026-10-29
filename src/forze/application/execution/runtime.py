@@ -151,7 +151,7 @@ class ExecutionRuntime:
     """Bounded wait for in-flight operations during :meth:`shutdown`.
 
     Shutdown first flips the scope's drain gate — new top-level invocations
-    fail with a retryable ``THROTTLED`` (``code="draining"``) — then waits up
+    fail with a retryable ``UNAVAILABLE`` (``code="draining"``) — then waits up
     to this long for in-flight operations to finish before running lifecycle
     teardown (which closes the clients they depend on). ``0.0`` skips the
     wait (still rejects new work); expiry proceeds with a logged warning, it
