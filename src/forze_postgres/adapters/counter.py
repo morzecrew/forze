@@ -240,7 +240,9 @@ class PostgresCounterAdapter(_PostgresCounterBase, CounterPort):
     except one that passes a ``ttl``, which is refused with ``configuration``. With it a
     lapsed row reads as absent and the next increment overwrites it from zero; the row stays
     until :meth:`PostgresCounterAdminAdapter.purge_expired` or a scheduled ``DELETE``
-    removes it. Lifetimes run on the database's clock (``now()``).
+    removes it. Lifetimes run on the database's clock, read when the row is processed
+    (``clock_timestamp()``) rather than when the statement began (``now()``): a write that
+    waited on a row lock still sees a lapse that happened meanwhile and gets its whole ``ttl``.
     """
 
     def capabilities(self) -> CounterCapabilities:
@@ -287,7 +289,7 @@ class PostgresCounterAdapter(_PostgresCounterBase, CounterPort):
             "LEFT JOIN {table} AS cur ON cur.tenant_id = {tenant} AND cur.suffix = {suffix} "
             "LEFT JOIN {table} AS old ON old.tenant_id = {tenant} AND old.suffix = {legacy}"
         ).format(
-            lapsed=sql.SQL("WHEN cur.expires_at <= now() THEN 0 " if expiry else ""),
+            lapsed=sql.SQL("WHEN cur.expires_at <= clock_timestamp() THEN 0 " if expiry else ""),
             table=table.ident(),
             tenant=sql.Placeholder("tenant"),
             suffix=sql.Placeholder("suffix"),
@@ -320,19 +322,22 @@ class PostgresCounterAdapter(_PostgresCounterBase, CounterPort):
         #
         # With ``expires_at``, a lapsed row is overwritten as if it were absent — from
         # ``by``, with the new lifetime — and a live one keeps the lifetime it was created
-        # with, so a fixed window is never extended by the traffic inside it.
+        # with, so a fixed window is never extended by the traffic inside it. The update reads
+        # the clock once, after the row lock is taken, so both columns judge the same instant.
         if expiry:
             upsert = (
                 "INSERT INTO {table} (tenant_id, suffix, value, expires_at) "
                 "VALUES ({tenant}, {suffix}, "
                 "  COALESCE("
                 "    (SELECT value FROM {table} WHERE tenant_id = {tenant} AND suffix = {legacy}), 0"
-                "  ) + {by}, now() + {ttl}::interval) "
-                "ON CONFLICT (tenant_id, suffix) DO UPDATE SET "
-                "value = CASE WHEN {table}.expires_at <= now() THEN {by} "
-                "  ELSE {table}.value + {by} END, "
-                "expires_at = CASE WHEN {table}.expires_at <= now() THEN EXCLUDED.expires_at "
-                "  ELSE {table}.expires_at END "
+                "  ) + {by}, clock_timestamp() + {ttl}::interval) "
+                "ON CONFLICT (tenant_id, suffix) DO UPDATE SET (value, expires_at) = ("
+                "  SELECT CASE WHEN {table}.expires_at <= clock.at THEN {by} "
+                "    ELSE {table}.value + {by} END, "
+                "  CASE WHEN {table}.expires_at <= clock.at THEN clock.at + {ttl}::interval "
+                "    ELSE {table}.expires_at END "
+                "  FROM (SELECT clock_timestamp() AS at) AS clock"
+                ") "
                 "RETURNING value"
             )
         else:
@@ -439,9 +444,9 @@ class PostgresCounterAdapter(_PostgresCounterBase, CounterPort):
         if expiry:
             upsert = (
                 "INSERT INTO {table} (tenant_id, suffix, value, expires_at) "
-                "VALUES ({tenant}, {suffix}, {value}, now() + {ttl}::interval) "
+                "VALUES ({tenant}, {suffix}, {value}, clock_timestamp() + {ttl}::interval) "
                 "ON CONFLICT (tenant_id, suffix) DO UPDATE "
-                "SET value = EXCLUDED.value, expires_at = EXCLUDED.expires_at "
+                "SET value = EXCLUDED.value, expires_at = clock_timestamp() + {ttl}::interval "
                 "RETURNING value"
             )
         else:
@@ -499,7 +504,9 @@ class PostgresCounterAdminAdapter(_PostgresCounterBase, CounterAdminPort):
             table=table.ident(),
             tenant=sql.Placeholder(),
             route=sql.Placeholder(),
-            live=sql.SQL("AND (expires_at IS NULL OR expires_at > now()) " if expiry else ""),
+            live=sql.SQL(
+                "AND (expires_at IS NULL OR expires_at > clock_timestamp()) " if expiry else ""
+            ),
         )
 
         async with self.client.detached():
@@ -546,7 +553,7 @@ class PostgresCounterAdminAdapter(_PostgresCounterBase, CounterAdminPort):
             "), gone AS ("
             "  DELETE FROM {table} AS t USING batch "
             "  WHERE t.tenant_id = batch.tenant_id AND t.suffix = batch.suffix "
-            "  AND t.expires_at <= now() RETURNING 1"
+            "  AND t.expires_at <= clock_timestamp() RETURNING 1"
             ") "
             "SELECT (SELECT count(*) FROM batch), (SELECT max(suffix) FROM batch), "
             "(SELECT count(*) FROM gone)"

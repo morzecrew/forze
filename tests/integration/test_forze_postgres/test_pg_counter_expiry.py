@@ -10,6 +10,7 @@ for, the migration can land under a running process, and lapsed rows stay until 
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
@@ -66,6 +67,44 @@ async def _lapse_all(pg_client: PostgresClient, table: str) -> None:
         sql.SQL(
             "UPDATE {t} SET expires_at = now() - interval '1 second' WHERE expires_at IS NOT NULL"
         ).format(t=sql.Identifier("public", table))
+    )
+
+
+async def _behind_a_row_lock(
+    pg_client: PostgresClient, table: str, write: Callable[[], Awaitable[int]]
+) -> tuple[int, datetime]:
+    """Run *write* while another transaction holds *table*'s rows, which lapse during the hold.
+
+    Returns what *write* returned and the database instant just before the rows were released,
+    so a write that judged its row by the statement's start instant shows against it.
+    """
+
+    t = sql.Identifier("public", table)
+
+    async with pg_client.transaction():
+        await pg_client.execute(
+            sql.SQL("UPDATE {t} SET expires_at = clock_timestamp() + interval '1 second'").format(
+                t=t
+            )
+        )
+        task = asyncio.create_task(write())
+
+        async with asyncio.timeout(10):  # until the write is queued behind the row lock
+            while not await pg_client.fetch_value(
+                "SELECT EXISTS (SELECT 1 FROM pg_locks "
+                "WHERE NOT granted AND pg_backend_pid() = ANY(pg_blocking_pids(pid)))"
+            ):
+                await asyncio.sleep(0.01)
+
+        await pg_client.execute("SELECT pg_sleep(1.2)")  # past the lifetime set above
+        released = await pg_client.fetch_value("SELECT clock_timestamp()")
+
+    return await task, released
+
+
+async def _expires_at(pg_client: PostgresClient, table: str) -> datetime:
+    return await pg_client.fetch_value(
+        sql.SQL("SELECT expires_at FROM {t}").format(t=sql.Identifier("public", table))
     )
 
 
@@ -194,6 +233,38 @@ async def test_the_migration_can_land_under_a_running_process(
     await _lapse_all(pg_client, legacy_table)
 
     assert await counter.incr(by=0) == 0
+
+
+async def test_a_bump_held_up_by_a_row_lock_sees_the_lapse_that_happened_meanwhile(
+    pg_client: PostgresClient, table: str
+) -> None:
+    """The lapse is judged, and the new lifetime started, when the row is processed.
+
+    ``now()`` is the statement's start: a bump that waited out the lapse on a row lock would
+    add onto the lapsed value and start the new lifetime in the past.
+    """
+
+    counter = _counter(pg_client, table)
+    await counter.incr(by=5, ttl=TTL)
+
+    value, released = await _behind_a_row_lock(pg_client, table, lambda: counter.incr(ttl=TTL))
+
+    assert value == 1, "the lapsed 5 was overwritten, not added onto"
+    assert await _expires_at(pg_client, table) >= released + TTL
+
+
+async def test_a_reset_held_up_by_a_row_lock_gets_its_whole_ttl(
+    pg_client: PostgresClient, table: str
+) -> None:
+    counter = _counter(pg_client, table)
+    await counter.incr(ttl=TTL)
+
+    value, released = await _behind_a_row_lock(
+        pg_client, table, lambda: counter.reset(7, ttl=TTL)
+    )
+
+    assert value == 7
+    assert await _expires_at(pg_client, table) >= released + TTL, "no part spent waiting"
 
 
 async def test_a_read_falls_back_to_a_legacy_row_only_while_the_counter_is_absent(
