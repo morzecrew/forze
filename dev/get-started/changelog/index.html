@@ -10339,6 +10339,9 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <p><strong>A federated result snapshot replays only for the same members and member filters.</strong> Its fingerprint now covers each member's weight and leg filters, and a thin replay drops a row its member's filters no longer match.</p>
 </li>
 <li>
+<p><strong>A datetime <code>SerializedBy</code> key locks its UTC instant</strong> (<strong>behaviour change</strong>). One owner's create and update no longer lock apart by offset; naive reads as UTC (right in a UTC session), an out-of-range instant is refused. Drain writers of naive or non-UTC keys while deploying, or accept a brief unlocked window.</p>
+</li>
+<li>
 <p><strong>A warning logged before <code>configure_logging</code> carries the invocation's ids.</strong> The fallback renderer now merges the bound logging context, as the configured chain does.</p>
 </li>
 <li>
