@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Counters can expire: every write verb takes `ttl`.** An increment that creates a counter starts a fixed lifetime no later write extends, and `reset` replaces it; a lapsed counter reads as absent. Postgres needs an optional `expires_at` column, and `counter_capabilities(port).expiry` reports support.
+
+- **`LockoutConfig.lock_for` keeps a locked login locked past its window.** The failure that reaches the threshold stores an unlock instant on a separate lock key. The login unlocks at the later of the window's end and that instant, and `Retry-After` carries the later one.
+
+- **`postgres_counter_purge_lifecycle_step` deletes lapsed Postgres counter rows on an interval.** It calls `purge_expired()` for each route in `specs`, and binds each tenant in turn with `tenants=`.
+
 - **Federated search takes `member_filters`, a filter for one member's leg alone.** It joins `filters` with `$and` on that leg, and a hub refuses it. New `SearchMemberGrant`, `bind_search_member_grant`, `OperationDescriptor.members` and `AuthorizesMembers` back member authorization.
 
 - **`MockDepsModule(row_locks="block")` makes a held row lock wait under simulation, as Postgres does.** Two transactions taking rows in one order now both succeed. Opposite orders abort one with `deadlock_detected`, and DST reports a `no_lock_order_deadlock` violation naming the rows.
@@ -111,6 +117,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Postgres schema validation reports every refused document in one `postgres_schema_documents_refused` error** (**behaviour change**). Its `details["failures"]` lists each; a single refused document still raises its own error. A connection or partition error stops the checks and raises the refusals found before it.
 
+- **`incr(by=0)` no longer creates the counter it reads** (**behaviour change**). An absent counter reads 0 and stays absent, so `list_counters` and a portable export no longer show it at 0.
+
 - **HTTP error bodies carry the error's `code` and `kind`** (**behaviour change**). The body is `{"detail", "code", "kind", "context"}`, so a client tells `revision_mismatch` from other 400s; a whole-body comparison breaks. An unhandled 500 now also sends `X-Error-Code: core.internal`.
 
 - **The DuckDB lake session no longer disables any filesystem** (**behaviour change**). On 1.5 as on 2 it relies on an allowlist of the tenant's prefix, the catalog's tree and the token endpoint, plus attested settings. That tree is shared by every tenant, and analytics SQL can send it unauthenticated requests.
@@ -136,6 +144,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Firestore `update_many` and `touch_many` work inside a transaction.** They read every row before writing any, as a Firestore transaction requires; a second row used to fail with a read-after-write error.
 
 - **Postgres schema validation accepts the required fields of a view-backed read model.** Postgres records `NOT NULL` on tables only, so a read relation that is a view or a materialized view no longer has its nullability checked. Write and history relations keep the check.
+
+- **The login lockout writes a key only for a failed attempt or a reset** (**behaviour change**). Each lives a window plus a minute from creation; Redis drops it, Postgres, Mongo and Firestore need a purge or TTL setup. On a Postgres table without `expires_at` keys get no ttl and pile up, with a warning per table.
+
+- **The login lockout no longer grows its counter store without bound** (**behaviour change**). A check writes no key, and a window's bucket lapses a minute after the window; Redis, the Postgres purge step, a Mongo TTL index or a Firestore TTL policy reclaims it. Without Postgres `expires_at` it writes no ttl and warns.
 
 - **`HttpClient` reads a compressed response.** A gzip or deflate body, and with no cap a zstd or brotli one, no longer fails `request`, or a rejected response from `stream`, as an infrastructure error. `RoutedHttpClient` and declared services are fixed with it.
 

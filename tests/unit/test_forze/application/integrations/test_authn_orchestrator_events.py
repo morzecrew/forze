@@ -103,6 +103,14 @@ class _MemoryCounter(CounterPort):
         return value
 
 
+class _LockWriteFails(_MemoryCounter):
+    async def reset(self, value: int = 1, *, suffix: str | None = None) -> int:
+        if suffix is not None and suffix.endswith(":lock"):
+            raise exc.infrastructure("counter store unavailable")
+
+        return await super().reset(value, suffix=suffix)
+
+
 def _orchestrator(
     *,
     verifier: _SpyVerifier | None = None,
@@ -237,6 +245,54 @@ class TestPasswordLockout:
         kinds = [event.kind for event in sink.events]
         assert kinds == [AuthnEventKind.LOGIN_FAILED] * 3 + [AuthnEventKind.LOGIN_LOCKED]
         assert sink.events[-1].login_digest == login_digest("alice")
+
+    async def test_retry_at_is_the_lock_for_end_when_it_outlives_the_window(self) -> None:
+        lock_for = timedelta(hours=1)
+        guard = LoginLockoutGuard(
+            counter=_MemoryCounter(),
+            config=LockoutConfig(threshold=2, window=timedelta(minutes=15), lock_for=lock_for),
+        )
+        orchestrator, verifier = _orchestrator(lockout=guard)
+
+        with bind_time_source(FrozenTimeSource(T0)):
+            for _ in range(2):
+                with pytest.raises(CoreException):
+                    await orchestrator.authenticate_with_password(BAD)
+
+        with bind_time_source(FrozenTimeSource(T0 + timedelta(minutes=15))):
+            with pytest.raises(CoreException) as ei:
+                await orchestrator.authenticate_with_password(GOOD)
+
+            assert ei.value.kind is ExceptionKind.THROTTLED
+            assert ei.value.details == {"retry_at": T0 + lock_for}
+            assert verifier.calls == 2
+
+        with bind_time_source(FrozenTimeSource(T0 + lock_for)):
+            result = await orchestrator.authenticate_with_password(GOOD)
+            assert result.identity.principal_id == PRINCIPAL
+
+    async def test_a_failed_lock_write_fails_a_real_and_an_unknown_login_alike(self) -> None:
+        # The threshold attempt's error turns into the store's, the same for either login.
+        errors: list[tuple[ExceptionKind, str, str]] = []
+
+        for login in ("alice", "nobody-by-this-name"):
+            guard = LoginLockoutGuard(
+                counter=_LockWriteFails(),
+                config=LockoutConfig(
+                    threshold=1, window=timedelta(minutes=15), lock_for=timedelta(hours=1)
+                ),
+            )
+            orchestrator, _verifier = _orchestrator(lockout=guard)
+
+            with bind_time_source(FrozenTimeSource(T0)), pytest.raises(CoreException) as ei:
+                await orchestrator.authenticate_with_password(
+                    PasswordCredentials(login=login, password="nope")
+                )
+
+            errors.append((ei.value.kind, ei.value.code, str(ei.value)))
+
+        assert errors[0] == errors[1]
+        assert errors[0][0] is ExceptionKind.INFRASTRUCTURE
 
     async def test_normal_failures_keep_timing_posture(self) -> None:
         """Below the threshold the verifier always runs — no early exit exists."""

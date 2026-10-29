@@ -6,17 +6,22 @@ require_redis()
 
 # ....................... #
 
+import math
 from collections.abc import Sequence
+from datetime import timedelta
 from typing import Final, final
 
 from forze.application.contracts.counter import (
     CounterAdminPort,
+    CounterCapabilities,
     CounterEntry,
     CounterPort,
+    validate_counter_ttl,
     validate_counter_value,
 )
 from forze.base.exceptions import exc
 
+from ..kernel.scripts import INCR_COUNTER_WITH_TTL
 from ._logger import logger
 from .base import RedisBaseAdapter
 from .codecs import KEY_SEP
@@ -54,11 +59,23 @@ def _glob_escape(literal: str) -> str:
 # ....................... #
 
 
+def _ttl_ms(ttl: timedelta) -> int:
+    """*ttl* in whole milliseconds, rounded up so a sub-millisecond lifetime is not zero."""
+
+    return math.ceil(ttl.total_seconds() * 1000)
+
+
+# ....................... #
+
+
 @final
 class RedisCounterAdapter(CounterPort, RedisBaseAdapter):
     """Redis implementation of :class:`~forze.application.contracts.counter.CounterPort`.
 
-    Uses ``INCRBY`` / ``DECRBY`` / ``GETSET`` for atomic counter operations.
+    Uses ``INCRBY`` / ``DECRBY`` / ``GETSET`` for atomic counter operations. A ``ttl`` is a
+    native key expiry: an increment that creates the key sets it in the same script
+    (:data:`~forze_redis.kernel.scripts.INCR_COUNTER_WITH_TTL`), and a reset writes it with
+    ``SET ... PX``. A zero step is a ``GET``, so a read never creates the key.
     """
 
     def __key(self, suffix: str | None) -> str:
@@ -66,13 +83,40 @@ class RedisCounterAdapter(CounterPort, RedisBaseAdapter):
 
     # ....................... #
 
-    async def incr(self, by: int = 1, *, suffix: str | None = None) -> int:
+    def capabilities(self) -> CounterCapabilities:
+        """Report expiry support (native key TTL)."""
+
+        return CounterCapabilities(expiry=True)
+
+    # ....................... #
+
+    async def _bump(self, by: int, suffix: str | None, ttl: timedelta | None) -> int:
+        validate_counter_ttl(ttl)
+
         await self._prepare_keys()
         key = self.__key(suffix)
 
-        logger.debug("Incrementing counter '%s' by %s", key, by)
+        if by == 0:
+            raw = await self.client.get(key)
+            return int(raw) if raw is not None else 0
 
-        return await self.client.incr(key, by)
+        if ttl is None:
+            return await self.client.incr(key, by)
+
+        return int(await self.client.run_script(INCR_COUNTER_WITH_TTL, [key], [by, _ttl_ms(ttl)]))
+
+    # ....................... #
+
+    async def incr(
+        self,
+        by: int = 1,
+        *,
+        suffix: str | None = None,
+        ttl: timedelta | None = None,
+    ) -> int:
+        logger.debug("Incrementing counter suffix '%s' by %s", suffix, by)
+
+        return await self._bump(by, suffix, ttl)
 
     # ....................... #
 
@@ -81,47 +125,60 @@ class RedisCounterAdapter(CounterPort, RedisBaseAdapter):
         size: int = 2,
         *,
         suffix: str | None = None,
+        ttl: timedelta | None = None,
     ) -> list[int]:
         if size < 1:
             raise exc.precondition("Batch size must be at least 1")
 
-        await self._prepare_keys()
-        key = self.__key(suffix)
-
         logger.debug(
-            "Incrementing counter '%s' by %s, returning batch range",
-            key,
+            "Incrementing counter suffix '%s' by %s, returning batch range",
+            suffix,
             size,
         )
 
-        max_cnt = await self.client.incr(key, size)
+        max_cnt = await self._bump(size, suffix, ttl)
 
         return list(range(max_cnt - size + 1, max_cnt + 1))
 
     # ....................... #
 
-    async def decr(self, by: int = 1, *, suffix: str | None = None) -> int:
-        await self._prepare_keys()
-        key = self.__key(suffix)
+    async def decr(
+        self,
+        by: int = 1,
+        *,
+        suffix: str | None = None,
+        ttl: timedelta | None = None,
+    ) -> int:
+        logger.debug("Decrementing counter suffix '%s' by %s", suffix, by)
 
-        logger.debug("Decrementing counter '%s' by %s", key, by)
-
-        return await self.client.decr(key, by)
+        return await self._bump(-by, suffix, ttl)
 
     # ....................... #
 
-    async def reset(self, value: int = 1, *, suffix: str | None = None) -> int:
+    async def reset(
+        self,
+        value: int = 1,
+        *,
+        suffix: str | None = None,
+        ttl: timedelta | None = None,
+    ) -> int:
         # Known up front, so it is refused here rather than by the backend — or, on
         # Redis, silently accepted and left to break the *next* allocation.
         validate_counter_value(value, operation="reset")
+        validate_counter_ttl(ttl)
 
         await self._prepare_keys()
         key = self.__key(suffix)
 
         logger.debug("Resetting counter '%s' to %s", key, value)
 
+        if ttl is not None:
+            await self.client.set(key, str(value), px=_ttl_ms(ttl))
+            return value
+
         # ``GETSET`` swaps atomically but hands back the *previous* value; the port
-        # contract returns the value the counter now holds.
+        # contract returns the value the counter now holds. Like any ``SET`` it drops an
+        # expiry the key had, which is what a reset without a ttl means.
         await self.client.reset(key, value)
         return value
 

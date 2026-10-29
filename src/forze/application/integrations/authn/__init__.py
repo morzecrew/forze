@@ -4,6 +4,7 @@ from .lockout import (
     LOCKED_LOGIN_CODE,
     LOCKED_LOGIN_MSG,
     LOCKOUT_COUNTER_ROUTE,
+    LOCKOUT_TTL_SKEW,
     LockoutConfig,
     LoginLockoutGuard,
 )
@@ -15,6 +16,7 @@ __all__ = [
     "LOCKED_LOGIN_CODE",
     "LOCKED_LOGIN_MSG",
     "LOCKOUT_COUNTER_ROUTE",
+    "LOCKOUT_TTL_SKEW",
     "LockoutConfig",
     "LoggingAuthnEventSink",
     "LoginLockoutGuard",

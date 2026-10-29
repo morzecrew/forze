@@ -293,6 +293,49 @@ sends as `Retry-After`; the body still withholds the details. It counts
 preserving the no-enumeration posture. The unlock instant is the same for every login
 string, so the header discloses nothing either.
 
+Set `lock_for` to keep a locked login locked past its window, for example
+`LockoutConfig(threshold=5, window=timedelta(minutes=15), lock_for=timedelta(hours=1))`. The
+attempt that reaches the threshold writes the unlock instant to a separate lock key. The login
+stays locked until the window's end or that instant, whichever is later, and `retry_at` (so
+`Retry-After`) carries the later one. With `lock_for` the header also shows when the threshold
+was reached. That instant is the same for a real and an unknown login, so it still discloses
+no account. A lock is never extended, and a success does not lift it. If the lock write fails,
+the attempt fails with the store's error, the same for a real and an unknown login, and the
+next check writes the lock, counted from that check.
+
+The stored instant decides when the login unlocks, so a counter that cannot expire keys
+unlocks on time too. The lock key gets a `ttl` of `lock_for` plus `LOCKOUT_TTL_SKEW`. Redis and
+Postgres time that `ttl` on their own clock. If the node that wrote the lock runs ahead of the
+others by more than the skew, the key can lapse first. The lock then ends `lock_for` plus the
+skew after it started: never shorter than `lock_for`, but before the announced `Retry-After`.
+
+The lockout keeps its counter store bounded. The check that runs on every attempt reads
+with `incr(0)`, which creates nothing, so only a failed attempt (or a success resetting
+one) writes a key. Each window's key is written with a [`ttl`](../reference/contracts/stores.md#lifetimes-ttl)
+of the window plus `LOCKOUT_TTL_SKEW`, counted from the key's creation, so it lapses once
+the window is over. The minute covers clock spread between application nodes: a fast node
+can create a window's key at its very start while a slow node still counts that window at
+its end. The store's own clock offset does not matter. A lapsed key reads as absent at
+once; its storage is reclaimed by Redis itself, or by the purge, TTL index or TTL policy you
+set up on Postgres, Mongo or Firestore. On Postgres, schedule the purge with
+`postgres_counter_purge_lifecycle_step(specs=[CounterSpec(name=LOCKOUT_COUNTER_ROUTE)])`; see
+[Postgres](../integrations/postgres.md#notes).
+
+A counter that cannot expire keys never breaks a login. On a Postgres counter table without
+the optional `expires_at timestamptz` column, the lockout writes its keys without a `ttl` and
+logs a warning once per refusing table naming it and the `ALTER TABLE` to run; it still
+counts and locks, and its old window keys keep growing until the column is added. Adding the
+column does not reach the rows already written: they keep a `NULL` expiry, which the purge
+never deletes. If the lockout has a table of its own, give them one once after the migration,
+long enough to outlast any window and lock you configure:
+
+```sql
+UPDATE <lockout_counters> SET expires_at = now() + interval '1 day' WHERE expires_at IS NULL;
+```
+
+Do not run it on a table other counters share: there a `NULL` expiry is a counter that never
+lapses. A custom counter backend that does not report expiry gets no `ttl` either.
+
 ## The identity plane
 
 All of this lives in `forze_identity`, separate from the core: `authn`, `authz`,

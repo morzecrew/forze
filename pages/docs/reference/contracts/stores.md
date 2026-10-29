@@ -55,10 +55,10 @@ namespace (`CounterSpec` carries only a name). `suffix` partitions counters unde
 
 | Method | Signature | Notes |
 |--------|-----------|-------|
-| `incr` | `incr(by=1, *, suffix=None)` | increment, return the new value |
-| `incr_batch` | `incr_batch(size=2, *, suffix=None)` | allocate `size` sequential values at once |
-| `decr` | `decr(by=1, *, suffix=None)` | decrement, return the new value |
-| `reset` | `reset(value=1, *, suffix=None)` | reset, return `value` |
+| `incr` | `incr(by=1, *, suffix=None, ttl=None)` | increment, return the new value |
+| `incr_batch` | `incr_batch(size=2, *, suffix=None, ttl=None)` | allocate `size` sequential values at once |
+| `decr` | `decr(by=1, *, suffix=None, ttl=None)` | decrement, return the new value |
+| `reset` | `reset(value=1, *, suffix=None, ttl=None)` | reset, return `value` |
 
 There is **no read verb**, deliberately: a counter's value is only meaningful at the
 instant it is allocated, so a handler that read one would be holding a number another
@@ -76,7 +76,8 @@ because one shared conformance battery asserts them against each:
 - counters are **not** required to be non-negative: `decr` below zero is legal, and a
   negative `by` is an ordinary decrease;
 - `incr(by=0)` returns the current value without moving it — the one read the port offers.
-  It still creates the counter at 0 if it did not exist.
+  It does **not** create the counter: reading an absent one returns 0 and leaves nothing
+  behind, so a guard that reads on every request does not grow the key space.
 
 The value domain is the reason the mock enforces a bound it could easily exceed: a mock
 that accepts allocations no real store can hold certifies bugs instead of catching them.
@@ -92,6 +93,51 @@ Postgres, Mongo and Firestore client ports must preserve this.
 
 Backends: Redis, Postgres, Mongo, Firestore, mock. Postgres needs an app-migrated
 counter table.
+
+### Lifetimes (`ttl`)
+
+A counter keyed by period — a lockout window, a daily quota (`quota:{user}:{date}`), a
+monthly sequence — is dead once its period ends. Pass `ttl` and it expires on its own
+instead of staying in the store forever:
+
+```python
+from datetime import timedelta
+
+used = await ctx.counter(QUOTA).incr(suffix=f"{user_id}:{today}", ttl=timedelta(days=1))
+```
+
+The lifetime is a **fixed window**, set when the counter is created:
+
+- an increment (`incr`, `incr_batch`, `decr`) that **creates** the counter starts its
+  lifetime: it expires `ttl` later. A counter whose lifetime has ended counts as absent, so
+  the next increment creates it again;
+- no later increment moves the lifetime, with or without a `ttl`. A busy window still ends
+  when it was created to end, and a counter created without a `ttl` never gains one;
+- `reset` replaces the counter whole, value **and** lifetime: `reset(v, ttl=t)` expires `t`
+  after the reset, and `reset(v)` leaves a counter that never expires;
+- a lapsed counter reads as 0, restarts from 0, and is not listed by `list_counters`;
+- a zero or negative `ttl`, or one longer than `COUNTER_MAX_TTL` (about a century), is
+  refused (`precondition`). A counter meant to outlive that takes no `ttl`.
+
+Expiry is a capability. `counter_capabilities(port).expiry` says whether a backend honours a
+`ttl`; one that cannot refuses it with `configuration` (code `counter_ttl_unsupported`)
+rather than storing a counter that outlives what you asked for. Every shipped backend
+reports it. Postgres reports `False` only for a table it has just found without the
+`expires_at` column; until then a `ttl` call there can still be refused. Reclaiming lapsed
+storage is the backend's own business, and on Postgres, Mongo and Firestore it needs a step
+from you:
+
+| Backend | How a lapsed counter is reclaimed | Clock |
+|---------|-----------------------------------|-------|
+| Redis | native key expiry | Redis server |
+| Postgres | `postgres_counter_purge_lifecycle_step`, or a scheduled `DELETE` | database `clock_timestamp()` |
+| Mongo | a TTL index on `expires_at` | application `utcnow()` |
+| Firestore | a TTL policy on `expires_at` | application `utcnow()` |
+| mock | dropped when next touched | bound time source |
+
+Postgres and Mongo need a schema step; see [Postgres](../../integrations/postgres.md) and
+[Mongo](../../integrations/mongo.md). The mock reads the bound time source, so a frozen or
+simulated clock drives its expiry.
 
 ### Enumerating counters (admin)
 
@@ -117,7 +163,9 @@ for entry in await source.counter.admin(INVOICES).list_counters():
 ```
 
 The value is the last number **handed out**, so the target's next `incr` continues the
-sequence rather than repeating its final number. Enumerate a counter you intend to carry only
+sequence rather than repeating its final number. A lapsed counter is not listed, and an
+entry carries no lifetime: a carried counter that had a `ttl` never expires on the target
+unless you `reset` it with one. Enumerate a counter you intend to carry only
 when nothing is allocating from it (a stopped fleet) — a value read while the source is live
 is stale the moment it is read. The whole set is returned at once, so a spec partitioned into
 millions of suffixes is not yet in scope.

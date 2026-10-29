@@ -3,19 +3,30 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 
 import pytest
 
 from forze.application.contracts.authn import login_digest
-from forze.application.contracts.counter import CounterPort
+from forze.application.contracts.counter import (
+    COUNTER_MAX_TTL,
+    CounterCapabilities,
+    CounterPort,
+    counter_capabilities,
+    counter_ttl_unsupported,
+)
 from forze.application.integrations.authn import (
     LOCKED_LOGIN_CODE,
     LOCKED_LOGIN_MSG,
+    LOCKOUT_TTL_SKEW,
     LockoutConfig,
     LoginLockoutGuard,
 )
-from forze.base.exceptions import CoreException
-from forze.base.primitives import FrozenTimeSource, bind_time_source
+from forze.application.integrations.authn import lockout as lockout_module
+from forze.base.exceptions import CoreException, ExceptionKind, exc
+from forze.base.primitives import CacheLane, FrozenTimeSource, bind_time_source
+from forze_mock.adapters.counter import MockCounterAdapter, MockCounterAdminAdapter
+from forze_mock.state import MockState
 
 pytestmark = pytest.mark.unit
 
@@ -78,6 +89,22 @@ class TestLockoutConfig:
     def test_rejects_non_positive_window(self) -> None:
         with pytest.raises(CoreException, match="window"):
             LockoutConfig(window=timedelta(0))
+
+    def test_rejects_a_window_the_counter_cannot_hold(self) -> None:
+        # Its buckets live window + LOCKOUT_TTL_SKEW, which the counter refuses past its cap.
+        with pytest.raises(CoreException, match="window"):
+            LockoutConfig(window=COUNTER_MAX_TTL)
+
+        assert LockoutConfig(window=COUNTER_MAX_TTL - LOCKOUT_TTL_SKEW).window
+
+    @pytest.mark.parametrize(
+        "lock_for",
+        [timedelta(0), -WINDOW, COUNTER_MAX_TTL],
+        ids=["zero", "negative", "past-the-counter-cap"],
+    )
+    def test_rejects_a_lock_for_the_counter_cannot_hold(self, lock_for: timedelta) -> None:
+        with pytest.raises(CoreException, match="lock_for"):
+            LockoutConfig(lock_for=lock_for)
 
     def test_error_constants_shape(self) -> None:
         assert LOCKED_LOGIN_CODE == "login_locked"
@@ -213,3 +240,338 @@ class TestLoginLockoutGuard:
 
             assert suffix == f"authn_lockout:{DIGEST}:{bucket}"
             assert "alice" not in suffix
+
+
+# ....................... #
+
+
+def _expiring_guard(
+    threshold: int = 3, lock_for: timedelta | None = None
+) -> tuple[LoginLockoutGuard, MockState]:
+    """A guard over the in-memory counter, which reports expiry and honours the frozen clock."""
+
+    state = MockState()
+    guard = LoginLockoutGuard(
+        counter=MockCounterAdapter(state=state, namespace="lockout"),
+        config=LockoutConfig(threshold=threshold, window=WINDOW, lock_for=lock_for),
+    )
+    return guard, state
+
+
+class TestLockoutKeyGrowth:
+    """Every login attempt reads the counter; only a failure (or a reset) may write one, and
+    whatever is written expires once its window is over."""
+
+    async def test_checking_a_login_creates_no_key(self) -> None:
+        guard, state = _expiring_guard()
+
+        with bind_time_source(FrozenTimeSource(T0)):
+            for login in ("alice", "nobody-by-this-name", "x" * 200):
+                assert await guard.locked_until(login_digest(login)) is None
+
+        assert state.counters == {}, "a lockout check must not materialize a key"
+
+    async def test_a_bucket_lives_one_window_plus_the_skew(self) -> None:
+        guard, state = _expiring_guard()
+
+        with bind_time_source(FrozenTimeSource(T0)):
+            await guard.record_failure(DIGEST)
+            await guard.record_failure(DIGEST)
+
+        assert list(state.counter_expiry.values()) == [T0 + WINDOW + LOCKOUT_TTL_SKEW]
+
+    async def test_a_reset_bucket_expires_too(self) -> None:
+        guard, state = _expiring_guard()
+
+        with bind_time_source(FrozenTimeSource(T0)):
+            await guard.record_success(DIGEST)
+
+        assert list(state.counter_expiry.values()) == [T0 + WINDOW + LOCKOUT_TTL_SKEW]
+
+    async def test_old_buckets_are_gone_once_their_lifetime_ends(self) -> None:
+        guard, state = _expiring_guard(threshold=3)
+        admin = MockCounterAdminAdapter(state=state, namespace="lockout")
+
+        with bind_time_source(FrozenTimeSource(T0)):
+            for _ in range(3):
+                await guard.record_failure(DIGEST)
+
+            assert await guard.is_locked(DIGEST) is True
+
+        with bind_time_source(FrozenTimeSource(T0 + WINDOW + LOCKOUT_TTL_SKEW)):
+            assert await guard.is_locked(DIGEST) is False
+            assert await admin.list_counters() == [], "the old bucket must not linger"
+
+    async def test_a_bucket_outlives_its_window(self) -> None:
+        """Created at the first instant of its window, still locking at the last one.
+
+        The lifetime starts at creation, so a bucket created at its window's start is the one
+        closest to lapsing early; ``window + LOCKOUT_TTL_SKEW`` keeps it past the window's
+        end by the skew allowed between nodes.
+        """
+
+        guard, state = _expiring_guard(threshold=1)
+        window_s = WINDOW.total_seconds()
+        start = datetime.fromtimestamp((T0.timestamp() // window_s) * window_s, tz=UTC)
+
+        with bind_time_source(FrozenTimeSource(start)):
+            await guard.record_failure(DIGEST)
+
+        (expires_at,) = state.counter_expiry.values()
+
+        assert expires_at - (start + WINDOW) == LOCKOUT_TTL_SKEW
+
+        with bind_time_source(FrozenTimeSource(start + WINDOW - timedelta(microseconds=1))):
+            assert await guard.is_locked(DIGEST) is True
+
+    async def test_a_counter_that_cannot_expire_is_written_without_a_ttl(self) -> None:
+        # ``_MemoryCounter`` reports no capabilities and its verbs take no ``ttl`` keyword, so
+        # passing one — even ``None`` — would raise ``TypeError`` here.
+        guard, counter = _guard(threshold=1)
+
+        with bind_time_source(FrozenTimeSource(T0)):
+            await guard.record_failure(DIGEST)
+            assert await guard.is_locked(DIGEST) is True
+
+            await guard.record_success(DIGEST)
+            assert await guard.is_locked(DIGEST) is False
+
+        assert counter_capabilities(counter).expiry is False
+
+
+# ....................... #
+
+
+class _RefusingCounter(_MemoryCounter):
+    """Reports expiry but refuses every ttl — a Postgres table without ``expires_at``."""
+
+    def __init__(self, error: CoreException) -> None:
+        super().__init__()
+        self.error = error
+
+    def capabilities(self) -> CounterCapabilities:
+        return CounterCapabilities(expiry=True)
+
+    async def incr(self, by: int = 1, *, suffix: str | None = None, **kw: object) -> int:
+        if kw.get("ttl") is not None:
+            raise self.error
+
+        return await super().incr(by, suffix=suffix)
+
+    async def reset(self, value: int = 1, *, suffix: str | None = None, **kw: object) -> int:
+        if kw.get("ttl") is not None:
+            raise self.error
+
+        return await super().reset(value, suffix=suffix)
+
+
+class TestLockoutOnACounterThatRefusesTheTtl:
+    """Login availability outranks key growth: the lockout degrades, it does not fail."""
+
+    async def test_it_still_counts_and_locks_and_warns_once(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        warnings: list[str] = []
+        monkeypatch.setattr(lockout_module, "_TTL_REFUSALS_REPORTED", CacheLane(max_entries=8))
+        monkeypatch.setattr(
+            lockout_module,
+            "_logger",
+            SimpleNamespace(warning=lambda event, **extras: warnings.append(extras["reason"])),
+        )
+        counter = _RefusingCounter(counter_ttl_unsupported("the table has no expires_at"))
+        guard = LoginLockoutGuard(counter=counter, config=LockoutConfig(threshold=2))
+
+        with bind_time_source(FrozenTimeSource(T0)):
+            await guard.record_failure(DIGEST)
+            await guard.record_failure(DIGEST)
+            assert await guard.is_locked(DIGEST) is True
+
+            await guard.record_success(DIGEST)
+            assert await guard.is_locked(DIGEST) is False
+
+        assert len(warnings) == 1, "warned once per process, not once per write"
+        assert "expires_at" in warnings[0]
+
+    async def test_each_refusing_table_is_reported(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Once per process would hide a second tenant's or route's table behind the first."""
+
+        warnings: list[str] = []
+        monkeypatch.setattr(lockout_module, "_TTL_REFUSALS_REPORTED", CacheLane(max_entries=8))
+        monkeypatch.setattr(
+            lockout_module,
+            "_logger",
+            SimpleNamespace(warning=lambda event, **extras: warnings.append(extras["reason"])),
+        )
+
+        for relation in ("public.lockout_a", "public.lockout_a", "public.lockout_b"):
+            refusal = counter_ttl_unsupported("no expires_at", details={"relation": relation})
+            guard = LoginLockoutGuard(counter=_RefusingCounter(refusal))
+
+            with bind_time_source(FrozenTimeSource(T0)):
+                await guard.record_failure(DIGEST)
+
+        assert len(warnings) == 2, "one warning per refusing table"
+
+    async def test_any_other_refusal_still_fails_the_write(self) -> None:
+        counter = _RefusingCounter(exc.configuration("the counter route is not wired"))
+        guard = LoginLockoutGuard(counter=counter)
+
+        with bind_time_source(FrozenTimeSource(T0)), pytest.raises(CoreException):
+            await guard.record_failure(DIGEST)
+
+
+# ....................... #
+
+
+class _LockWriteFailsOnce(_MemoryCounter):
+    """Refuses the first lock-key write as a store outage would."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.outage = True
+
+    async def reset(self, value: int = 1, *, suffix: str | None = None) -> int:
+        if self.outage and suffix is not None and suffix.endswith(":lock"):
+            self.outage = False
+            raise exc.infrastructure("counter store unavailable")
+
+        return await super().reset(value, suffix=suffix)
+
+
+class TestLockFor:
+    """``lock_for`` holds a login past its window; the window still holds it past a short lock."""
+
+    async def test_a_lock_outlives_the_window_that_set_it(self) -> None:
+        lock_for = timedelta(hours=1)
+        guard, state = _expiring_guard(threshold=2, lock_for=lock_for)
+        hit = T0 + timedelta(minutes=1)  # T0 starts a window, which ends at T0 + WINDOW
+
+        with bind_time_source(FrozenTimeSource(hit)):
+            await guard.record_failure(DIGEST)
+            assert await guard.locked_until(DIGEST) is None
+
+            await guard.record_failure(DIGEST)
+            assert await guard.locked_until(DIGEST) == hit + lock_for
+
+        # The lock key lives past its instant, so the instant decides when it unlocks.
+        assert max(state.counter_expiry.values()) == hit + lock_for + LOCKOUT_TTL_SKEW
+
+        with bind_time_source(FrozenTimeSource(T0 + WINDOW)):
+            assert await guard.locked_until(DIGEST) == hit + lock_for, "next window, still locked"
+
+        with bind_time_source(FrozenTimeSource(hit + lock_for - timedelta(seconds=1))):
+            assert await guard.is_locked(DIGEST) is True
+
+        with bind_time_source(FrozenTimeSource(hit + lock_for)):
+            assert await guard.is_locked(DIGEST) is False
+
+    async def test_a_lock_shorter_than_the_window_unlocks_with_the_window(self) -> None:
+        guard, _state = _expiring_guard(threshold=1, lock_for=timedelta(minutes=1))
+
+        with bind_time_source(FrozenTimeSource(T0)):
+            await guard.record_failure(DIGEST)
+            assert await guard.locked_until(DIGEST) == T0 + WINDOW
+
+        with bind_time_source(FrozenTimeSource(T0 + timedelta(minutes=2))):
+            assert await guard.locked_until(DIGEST) == T0 + WINDOW
+
+    async def test_a_failure_past_the_threshold_leaves_the_lock(self) -> None:
+        # A failure racing past the gate after the lock started must not extend it.
+        lock_for = timedelta(hours=1)
+        guard, _state = _expiring_guard(threshold=2, lock_for=lock_for)
+
+        with bind_time_source(FrozenTimeSource(T0)):
+            await guard.record_failure(DIGEST)
+            await guard.record_failure(DIGEST)
+
+        with bind_time_source(FrozenTimeSource(T0 + timedelta(minutes=5))):
+            await guard.record_failure(DIGEST)
+            assert await guard.locked_until(DIGEST) == T0 + lock_for
+
+    async def test_a_success_leaves_a_running_lock(self) -> None:
+        # Only a success racing the attempt that started the lock can meet one.
+        lock_for = timedelta(hours=1)
+        guard, _state = _expiring_guard(threshold=2, lock_for=lock_for)
+
+        with bind_time_source(FrozenTimeSource(T0)):
+            await guard.record_failure(DIGEST)
+            await guard.record_failure(DIGEST)
+            await guard.record_success(DIGEST)
+
+            assert await guard.locked_until(DIGEST) == T0 + lock_for
+
+        with bind_time_source(FrozenTimeSource(T0 + WINDOW)):
+            assert await guard.locked_until(DIGEST) == T0 + lock_for
+
+    async def test_a_lock_whose_write_failed_is_written_by_the_next_check(self) -> None:
+        lock_for = timedelta(hours=1)
+        counter = _LockWriteFailsOnce()
+        guard = LoginLockoutGuard(
+            counter=counter,
+            config=LockoutConfig(threshold=2, window=WINDOW, lock_for=lock_for),
+        )
+
+        with bind_time_source(FrozenTimeSource(T0)):
+            await guard.record_failure(DIGEST)
+
+            with pytest.raises(CoreException) as error:
+                await guard.record_failure(DIGEST)
+
+        assert error.value.kind is ExceptionKind.INFRASTRUCTURE
+
+        # The full window still locks, and the check writes the missing lock from now on.
+        retry = T0 + timedelta(minutes=2)
+
+        with bind_time_source(FrozenTimeSource(retry)):
+            assert await guard.locked_until(DIGEST) == retry + lock_for
+
+        with bind_time_source(FrozenTimeSource(retry + timedelta(minutes=1))):
+            assert await guard.locked_until(DIGEST) == retry + lock_for, "never extended"
+
+    async def test_a_slower_write_from_the_previous_window_is_repaired(self) -> None:
+        # Threshold hits on both sides of a window boundary finish out of order, so the
+        # earlier lock instant lands last and would shorten the later lock.
+        lock_for = timedelta(hours=1)
+        guard, state = _expiring_guard(threshold=1, lock_for=lock_for)
+        earlier = T0 + WINDOW - timedelta(seconds=1)
+
+        with bind_time_source(FrozenTimeSource(T0 + WINDOW)):
+            await guard.record_failure(DIGEST)
+            await MockCounterAdapter(state=state, namespace="lockout").reset(
+                int((earlier + lock_for).timestamp()),
+                suffix=f"authn_lockout:{DIGEST}:lock",
+                ttl=lock_for,
+            )
+
+        check = T0 + WINDOW + timedelta(minutes=1)
+
+        with bind_time_source(FrozenTimeSource(check)):
+            assert await guard.locked_until(DIGEST) == check + lock_for
+
+    async def test_a_check_creates_no_lock_key(self) -> None:
+        guard, state = _expiring_guard(lock_for=timedelta(hours=1))
+
+        with bind_time_source(FrozenTimeSource(T0)):
+            assert await guard.locked_until(DIGEST) is None
+
+        assert state.counters == {}
+
+    async def test_a_lock_ends_on_time_on_a_counter_that_cannot_expire(self) -> None:
+        # Nothing removes the lock key here: the stored instant alone unlocks the login.
+        lock_for = timedelta(hours=1)
+        counter = _MemoryCounter()
+        guard = LoginLockoutGuard(
+            counter=counter,
+            config=LockoutConfig(threshold=1, window=WINDOW, lock_for=lock_for),
+        )
+
+        with bind_time_source(FrozenTimeSource(T0)):
+            await guard.record_failure(DIGEST)
+
+        with bind_time_source(FrozenTimeSource(T0 + lock_for - timedelta(seconds=1))):
+            assert await guard.is_locked(DIGEST) is True
+
+        with bind_time_source(FrozenTimeSource(T0 + lock_for)):
+            assert await guard.is_locked(DIGEST) is False
+
+        assert counter.values[f"authn_lockout:{DIGEST}:lock"] == int((T0 + lock_for).timestamp())

@@ -80,6 +80,7 @@ PERSIST_FIELDS: Final = frozenset(
     {
         "documents",
         "counters",
+        "counter_expiry",
         "cache_kv",
         "cache_pointers",
         "cache_bodies",

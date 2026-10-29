@@ -14,7 +14,7 @@ import pytest
 import pytest_asyncio
 
 from forze.application.contracts.tenancy import TenantIdentity
-from forze_firestore.adapters import FirestoreCounterAdapter
+from forze_firestore.adapters import FirestoreCounterAdapter, FirestoreCounterAdminAdapter
 from forze_firestore.execution.deps.configs import FirestoreCounterConfig
 from forze_firestore.kernel.client import FirestoreClient
 from tests.support.counter_conformance import COUNTER_BATTERY, Check, CounterHarness
@@ -40,6 +40,11 @@ async def harness(
             tenant_provider=lambda: TenantIdentity(tenant_id=tenant),
         )
 
+    async def _legacy(suffix: str, value: int) -> None:
+        # The pre-route document id: no route tag, ``s:`` + the suffix, no tenant.
+        coll = await firestore_client.collection(unique_collection, database="(default)")
+        await firestore_client.set_document(coll, f"s:{suffix}", {"value": value})
+
     return CounterHarness(
         counter=FirestoreCounterAdapter(
             client=firestore_client,
@@ -47,6 +52,12 @@ async def harness(
             route="conformance",
         ),
         suffix=lambda name: f"{name}-{run}",
+        admin=FirestoreCounterAdminAdapter(
+            client=firestore_client,
+            config=config,
+            route="conformance",
+        ),
+        legacy=_legacy,
         for_tenant=_for_tenant,
     )
 

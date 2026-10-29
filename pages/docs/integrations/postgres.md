@@ -169,6 +169,50 @@ PostgresLifecycleModule(
 - **You own the schema.** Forze *introspects* existing relations; it never
   creates application tables. Provision read / write / history / search relations
   (and extensions) with your migration tool first.
+- **Counter lifetimes need one column.** A counter written with a `ttl` stores its lapse
+  instant in an optional `expires_at timestamptz` column:
+
+    ```sql
+    ALTER TABLE <counters> ADD COLUMN expires_at timestamptz;
+    ```
+
+    A table without it keeps working for every call that does not pass a `ttl`; a call
+    that does is refused with `configuration` (`counter_ttl_unsupported`) until the column
+    exists. The login lockout is the exception: it writes without a `ttl` instead and warns
+    once, so logins keep working while its old keys pile up. After the migration a `ttl`
+    call picks the column up within a minute, without a restart. A
+    lapsed row reads as absent but stays in the table. To delete lapsed rows on a schedule,
+    add `postgres_counter_purge_lifecycle_step`. It calls
+    `PostgresCounterAdminAdapter.purge_expired()` for each route on an interval, which walks
+    the primary key in batches and needs no other index:
+
+    ```python
+    from forze.application.contracts.counter import CounterSpec
+    from forze_postgres import postgres_counter_purge_lifecycle_step
+
+    lifecycle = lifecycle.with_steps(
+        postgres_counter_purge_lifecycle_step(
+            specs=[CounterSpec(name="quota")],
+            interval=timedelta(minutes=10),  # the default
+        ),
+    )
+    ```
+
+    Each route must be wired in `counters=`, or startup fails with `configuration`. On
+    per-tenant routes (`tenant_aware`, a per-tenant table or a database per tenant) pass
+    `tenants=`, such as `lambda: shard.tenants`, to purge each tenant's rows in turn; without
+    it the step refuses them at startup. With it, a tenant-global route is refused, because
+    every tenant's pass would walk the same rows: purge it in a step without `tenants=`. An
+    empty shard logs a warning and purges nothing. Racing purges are safe, so run the step on
+    every replica. Or schedule a table-wide purge (for example with pg_cron), with a partial
+    index so it does not scan the live rows:
+
+    ```sql
+    CREATE INDEX ON <counters> (expires_at) WHERE expires_at IS NOT NULL;
+    DELETE FROM <counters> WHERE expires_at <= now();
+    ```
+
+    See [Lifetimes](../reference/contracts/stores.md#lifetimes-ttl).
 - **Bookkeeping.** `bookkeeping_strategy="application"` bumps `rev` /
   `last_update_at` in the write gateway; `"database"` defers to a `BEFORE UPDATE`
   trigger you supply.

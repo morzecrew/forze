@@ -76,6 +76,23 @@ Execution requires the lock owner to be provided as the first argument and the T
 Returns 1 if the lock was reset, 0 if the lock was not owned by the provided owner.
 """
 
+INCR_COUNTER_WITH_TTL: Final = """
+local fresh = redis.call('EXISTS', KEYS[1]) == 0
+redis.call('INCRBY', KEYS[1], ARGV[1])
+if fresh then
+    redis.call('PEXPIRE', KEYS[1], ARGV[2])
+end
+return redis.call('GET', KEYS[1])
+"""
+"""Increment a counter, starting its lifetime only if this call creates it.
+
+KEYS[1] is the counter key. ARGV[1] is the step, ARGV[2] the TTL in milliseconds. A key that
+already exists keeps the expiry it has (or none), so a fixed window is never extended by the
+traffic inside it — ``EXPIRE ... NX`` would instead put an expiry on a live counter written
+without one. Returns the new value as the stored string: a Lua number is a double, which
+cannot hold every int64. An ``INCRBY`` that would overflow fails before anything is written.
+"""
+
 # Atomic multi-key SET with shared EX/PX and optional NX/XX (all keys succeed or none).
 MSET_BULK_SET: Final = """
 local n = #KEYS

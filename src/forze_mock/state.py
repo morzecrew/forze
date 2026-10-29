@@ -4,6 +4,7 @@ import asyncio
 import copy
 import threading
 from collections import OrderedDict
+from datetime import datetime
 from typing import TYPE_CHECKING, Any, ClassVar, final
 
 import attrs
@@ -163,8 +164,8 @@ class MockState:
     - ``streams`` / ``stream_ack`` — stream backends
     - ``storage`` / ``storage_bytes`` / ``storage_buckets`` — object storage (S3/GCS)
     - ``cache_kv`` / ``cache_pointers`` / ``cache_bodies`` — cache (Redis)
-    - ``counters``, ``dlocks`` / ``dlock_fences``, ``fleets``, ``revocation_states`` —
-      Redis-backed
+    - ``counters`` / ``counter_expiry``, ``dlocks`` / ``dlock_fences``, ``fleets``,
+      ``revocation_states`` — Redis-backed
     - ``search_snapshots`` / ``search_snapshot_chunks`` — search engine
       (Meilisearch); search reads in mock project off ``documents`` anyway
     - ``analytics_query_hits`` / ``analytics_ingest_log`` — warehouses
@@ -186,6 +187,8 @@ class MockState:
 
     documents: dict[str, dict[Any, dict[str, Any]]] = attrs.field(factory=dict)
     counters: dict[tuple[str, str | None], int] = attrs.field(factory=dict)
+    counter_expiry: dict[tuple[str, str | None], datetime] = attrs.field(factory=dict)
+    """When each counter written with a ``ttl`` lapses, keyed like :attr:`counters`."""
     cache_kv: dict[str, dict[str, Any]] = attrs.field(factory=dict)
     cache_pointers: dict[str, dict[str, str]] = attrs.field(factory=dict)
     cache_bodies: dict[str, dict[tuple[str, str], Any]] = attrs.field(factory=dict)

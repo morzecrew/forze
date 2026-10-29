@@ -16,7 +16,7 @@ import pytest_asyncio
 pytest.importorskip("pymongo")
 
 from forze.application.contracts.tenancy import TenantIdentity
-from forze_mongo.adapters.counter import MongoCounterAdapter
+from forze_mongo.adapters.counter import MongoCounterAdapter, MongoCounterAdminAdapter
 from forze_mongo.execution.deps.configs import MongoCounterConfig
 from tests.support.counter_conformance import COUNTER_BATTERY, Check, CounterHarness
 
@@ -39,9 +39,16 @@ async def harness(mongo_client) -> CounterHarness:
             tenant_provider=lambda: TenantIdentity(tenant_id=tenant),
         )
 
+    async def _legacy(suffix: str, value: int) -> None:
+        # The pre-route ``_id``: no route tag, ``s:`` + the suffix, no tenant.
+        coll = await mongo_client.collection(f"counter_conf_{run}", db_name=db_name)
+        await mongo_client.insert_one(coll, {"_id": f"s:{suffix}", "value": value})
+
     return CounterHarness(
         counter=MongoCounterAdapter(client=mongo_client, config=config, route="conformance"),
         suffix=lambda name: f"{name}-{run}",
+        admin=MongoCounterAdminAdapter(client=mongo_client, config=config, route="conformance"),
+        legacy=_legacy,
         for_tenant=_for_tenant,
     )
 

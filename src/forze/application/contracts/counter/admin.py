@@ -69,5 +69,9 @@ class CounterAdminPort(Protocol):
 
         Scoped to the ambient tenant like every other counter call — a tenant-aware route
         enumerates that tenant's counters, so a full export walks it once per tenant.
+
+        A counter whose ``ttl`` has lapsed is not listed, even where the store still holds it
+        until a purge: it reads as absent everywhere else, and an export that carried it would
+        revive a dead window on import.
         """
         ...  # pragma: no cover

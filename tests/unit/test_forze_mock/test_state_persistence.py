@@ -33,9 +33,10 @@ from forze.application.contracts.dlock import DistributedLockSpec
 from forze.application.contracts.tenancy import TenantIdentity
 from forze.application.execution.lifecycle import LifecyclePlan
 from forze.base.exceptions import CoreException
+from forze.base.primitives import FrozenTimeSource, bind_time_source
 from forze_mock import MockDepsModule, MockRoutedStateRegistry
 from forze_mock import persistence as persistence_module
-from forze_mock.adapters.counter import MockCounterAdapter
+from forze_mock.adapters.counter import MockCounterAdapter, MockCounterAdminAdapter
 from forze_mock.adapters.dlock import MockDistributedLockAdapter
 from forze_mock.adapters.idempotency import MockIdempotencyAdapter
 from forze_mock.adapters.storage import MockStorageAdapter
@@ -73,10 +74,18 @@ async def _populated_by_the_batteries(state: MockState) -> None:
     """
 
     run = uuid4().hex[:8]
+    # A frozen clock the lifetime checks advance instead of sleeping through real time; the
+    # lifetimes they leave behind are a shape of the counters store like any other.
+    clock = FrozenTimeSource(datetime(2026, 1, 1, tzinfo=UTC))
+
+    async def _advance(delta: timedelta) -> None:
+        clock.instant += delta
 
     counters = CounterHarness(
         counter=MockCounterAdapter(state=state, namespace="conformance"),
         suffix=lambda name: f"{name}-{run}",
+        admin=MockCounterAdminAdapter(state=state, namespace="conformance"),
+        wait=_advance,
         # Supplied so the tenant-partition leg runs rather than skipping: partitioned keys
         # are a shape of the counters store, and a shape that never reached the file would
         # not have been noticed by a round-trip over unpartitioned ones.
@@ -88,8 +97,12 @@ async def _populated_by_the_batteries(state: MockState) -> None:
         ),
     )
 
-    for check in COUNTER_BATTERY:
-        await check(counters)
+    with bind_time_source(clock):
+        for check in COUNTER_BATTERY:
+            try:
+                await check(counters)
+            except pytest.skip.Exception:
+                continue  # a check that needs a store's past (legacy rows) the mock lacks
 
     storage_port = MockStorageAdapter(state=state, bucket="files")
     storage = StorageHarness(
