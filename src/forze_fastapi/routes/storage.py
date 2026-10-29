@@ -75,6 +75,12 @@ DEFAULT_MAX_UPLOAD_SIZE: Final[int] = 64 * 1024 * 1024
 _UPLOAD_CHUNK_SIZE: Final[int] = 1024 * 1024
 """Chunk size (1 MiB) for streaming uploads into memory under the cap."""
 
+_DECIMAL: Final = re.compile(r"[0-9]+")
+"""A position or length in a ``Range`` or ``Content-Length`` header: ASCII digits only."""
+
+_SATURATED: Final[int] = 2**63
+"""What a decimal past 19 digits reads as: larger than any object, so a range still resolves."""
+
 # ....................... #
 
 
@@ -157,7 +163,9 @@ def _upload_endpoint(
         if max_upload_size is not None:
             declared = request.headers.get("content-length")
 
-            if declared is not None and declared.isdigit() and int(declared) > max_upload_size:
+            size = _decimal(declared) if declared is not None else None
+
+            if size is not None and size > max_upload_size:
                 raise _upload_too_large(max_upload_size)
 
         payload = validate_payload(
@@ -369,6 +377,20 @@ def _ranged_response(
     )
 
 
+def _decimal(text: str) -> int | None:
+    """*text* as a non-negative integer, or ``None`` unless it is ASCII digits.
+
+    ``str.isdigit`` also accepts digits ``int`` refuses (``"²"``), and a long enough run of
+    digits trips the interpreter's conversion limit: either would surface as a 500. Past 19
+    digits the value saturates, so an out-of-range position still answers 416 or clamps.
+    """
+
+    if not _DECIMAL.fullmatch(text):
+        return None
+
+    return int(text) if len(text) <= 19 else _SATURATED
+
+
 def _parse_range_spec(range_header: str) -> _RangeSpec | None:
     """Parse a single ``bytes=`` range **syntactically** — no object size needed.
 
@@ -391,17 +413,21 @@ def _parse_range_spec(range_header: str) -> _RangeSpec | None:
     first, _, last = spec.partition("-")
 
     if first == "":
-        return _SuffixRange(length=int(last)) if last.isdigit() else None
+        length = _decimal(last)
 
-    if not first.isdigit():
+        return _SuffixRange(length=length) if length is not None else None
+
+    start = _decimal(first)
+
+    if start is None:
         return None
-
-    start = int(first)
 
     if last == "":
         return start, None
 
-    return (start, int(last)) if last.isdigit() else None
+    end = _decimal(last)
+
+    return (start, end) if end is not None else None
 
 
 def _resolve_range_spec(

@@ -407,12 +407,35 @@ class TestStorageDownloadRangeAndConditional:
         client = TestClient(_build_app("rest"))
         stored = self._upload(client)
 
-        for bad in ("bytes=abc-5", "items=0-3", "bytes=0-2,5-7", "garbage"):
+        # Digits ``str.isdigit`` accepts but ``int`` refuses.
+        for bad in (
+            "bytes=abc-5",
+            "items=0-3",
+            "bytes=0-2,5-7",
+            "garbage",
+            "bytes=\u00b2-5".encode("latin-1"),
+            "bytes=0-\u00b2".encode("latin-1"),
+            "bytes=-\u00b2".encode("latin-1"),
+        ):
             resp = client.get(f"/files/{stored['key']}", headers={"Range": bad})
 
             assert resp.status_code == 200, bad
             assert resp.content == b"0123456789"
             assert "content-range" not in resp.headers
+
+    def test_a_position_past_19_digits_still_resolves(self) -> None:
+        # Past the interpreter's conversion limit too: larger than any object, not malformed.
+        client = TestClient(_build_app("rest"))
+        stored = self._upload(client)
+        huge = "9" * 5000
+
+        start = client.get(f"/files/{stored['key']}", headers={"Range": f"bytes={huge}-"})
+        end = client.get(f"/files/{stored['key']}", headers={"Range": f"bytes=7-{huge}"})
+        suffix = client.get(f"/files/{stored['key']}", headers={"Range": f"bytes=-{huge}"})
+
+        assert start.status_code == 416
+        assert (end.status_code, end.content) == (206, b"789")
+        assert (suffix.status_code, suffix.content) == (206, b"0123456789")
 
     def test_suffix_range_on_empty_body_returns_416(self) -> None:
         client = TestClient(_build_app("rest"))
