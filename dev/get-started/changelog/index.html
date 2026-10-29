@@ -10419,6 +10419,15 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <li>
 <p><strong>Backends and spec checks see through <code>Annotated</code> and <code>type</code> aliases</strong> (<strong>behaviour change</strong>). A Postgres filter via <code>Annotated[M, ...] | None</code> returned 500; BigQuery parameters and <code>forze ops</code> flags misread them. A schema, index, null or graph-key mismatch fails at startup; a mock seed nulls an aliased optional link.</p>
 </li>
+<li>
+<p><strong>The mock matches a plain <code>Enum</code> field by its value, as Postgres does.</strong> A filter naming <code>"open"</code> matched no row holding <code>Status.OPEN</code> unless <code>Status</code> was a <code>StrEnum</code>. Equality, membership, ordering and set operators now compare the value, in arrays and nested objects too, as do the <abbr title="Deterministic Simulation Testing">DST</abbr> oracles.</p>
+</li>
+<li>
+<p><strong>A plain <code>Enum</code> document field is stored as its value on Postgres, MongoDB and Firestore.</strong> Postgres wrote <code>Status.OPEN</code>, as it did for a <code>(str, Enum)</code> class, which no read could decode; MongoDB and Firestore refused it. A <code>StrEnum</code> or <code>IntEnum</code> is stored as before.</p>
+</li>
+<li>
+<p><strong>Analytics ingest stores a plain <code>Enum</code> member as its value, as a document row does</strong> (<strong>behaviour change</strong>). Postgres wrote its name (<code>OPEN</code>), and ClickHouse refused it. Rows ingested earlier keep the name until rewritten.</p>
+</li>
 </ul>
 <h3 id="security">Security<a class="headerlink" href="#security" title="Permanent link">&para;</a></h3>
 <ul>
