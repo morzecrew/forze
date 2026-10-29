@@ -6956,20 +6956,62 @@ cross-tenant sweep runs, so a deployment declaring <code>tagged</code> runs per-
 a run started by <code>run_now</code> inside a request does not inherit the caller, and a recovered
 run behaves the same. A spec whose <code>operation</code> names a registry operation registers with
 <code>register_operation_functions</code>; an operation guarded by <code>AuthnRequired</code> then refuses the run
-until you name a service principal for it:</p>
+until you name a service principal for it. Back the principal with an API key, read from
+the secrets backend and verified on every run:</p>
 <div class="highlight"><pre><span></span><code><span class="n">register_operation_functions</span><span class="p">(</span>
     <span class="n">registry</span><span class="p">,</span>
     <span class="n">specs</span><span class="p">,</span>
     <span class="n">operations</span><span class="o">=</span><span class="n">operations</span><span class="p">,</span>
     <span class="n">identity</span><span class="o">=</span><span class="n">DurableServiceIdentity</span><span class="p">(</span>
         <span class="n">authn</span><span class="o">=</span><span class="n">AuthnIdentity</span><span class="p">(</span><span class="n">principal_id</span><span class="o">=</span><span class="n">REPORTS_SERVICE_ID</span><span class="p">),</span>
-        <span class="n">acknowledge_unverified_identity</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+        <span class="n">api_key</span><span class="o">=</span><span class="n">SecretRef</span><span class="p">(</span><span class="n">path</span><span class="o">=</span><span class="s2">"durable/reports-service-key"</span><span class="p">),</span>
+        <span class="n">authn_spec</span><span class="o">=</span><span class="n">AuthnSpec</span><span class="p">(</span><span class="n">name</span><span class="o">=</span><span class="s2">"main"</span><span class="p">,</span> <span class="n">enabled_methods</span><span class="o">=</span><span class="nb">frozenset</span><span class="p">({</span><span class="s2">"api_key"</span><span class="p">})),</span>
     <span class="p">),</span>
 <span class="p">)</span>
 </code></pre></div>
-<p>Authn and authz then decide for that principal as for any caller, and audit records it.
-Nothing verifies it — no key is checked, expired or revoked — so the acknowledgment is
-required. The run's tenant still comes from the run.</p>
+<p>Before each run, and again on each retry or recovery, the bridge resolves the secret and
+authenticates it through the same authn port HTTP uses. The body runs as the identity the
+verifier returns, not the one declared: its roles and claims are the principal's current
+ones, and authn, authz and audit see it as any caller. The run fails with <code>authentication</code>
+and is not retried when:</p>
+<ul>
+<li>the key is unknown, revoked or expired, or its principal is disabled;</li>
+<li>the key authenticates a principal other than <code>authn</code> (<code>durable_service_identity_mismatch</code>);</li>
+<li>the key acts on behalf of another principal (<code>durable_service_identity_delegated</code>): a
+  service identity acts as itself, so a delegation key is refused;</li>
+<li>the run belongs to a tenant the principal is not a member of (<code>tenant_mismatch</code>), or the
+  key carries a tenant other than the run's (<code>tenant_conflict</code>).</li>
+</ul>
+<p>A tagged run's tenant is checked as the HTTP edge checks a requested tenant: through the
+tenancy resolver on <code>tenancy_route</code>, which defaults to the authn spec's name. A service
+principal that runs work for several tenants must be a member of each of them. With no
+resolver on that route, only a key issued for the run's tenant runs it; any other key fails
+with <code>precondition</code> (<code>tenant_request_unverifiable</code>). An untagged run needs a key that
+carries no tenant.</p>
+<p>Revoking the key stops the schedule at its next fire. One exception: a verifier that reads
+cached key states (<code>RevocationStates</code> with <code>key_mac</code>) admits a revoked key for up to the
+states' <code>ttl</code> when the revocation's write-through never lands, or when the revocation was
+made by a process configured without the states.</p>
+<p>An <code>authentication</code> refusal is logged as a warning that the identity did not verify. Any
+other failure, such as a secrets backend or authn store being down, is logged as one that
+could not be checked. Both log only the error's kind and code, and the run lands <code>FAILED</code>
+unless a retry strategy retries that kind. The failure keeps its kind and code under a
+message of its own, and an error that is not a <code>CoreException</code> becomes <code>internal</code>
+(<code>durable_service_identity_unchecked</code>) and keeps only its type name. That way a message
+quoting the key never reaches the run row or the log. A missing secret fails the run
+with <code>not_found</code> on the env, directory, mapping and Vault backends.</p>
+<p>The key's admission, which the identity plane's verifier records so that a credential issued
+later re-checks the key, applies to the body only. It is not left behind in the task that
+called <code>run_now</code> or the handler. A body without a verified key carries no admission, even
+under a request that authenticated with one.</p>
+<p>Without <code>api_key</code>, the principal is the wiring's word alone. No key is checked, expired or
+revoked, so <code>acknowledge_unverified_identity=True</code> is required:</p>
+<div class="highlight"><pre><span></span><code><span class="n">DurableServiceIdentity</span><span class="p">(</span>
+    <span class="n">authn</span><span class="o">=</span><span class="n">AuthnIdentity</span><span class="p">(</span><span class="n">principal_id</span><span class="o">=</span><span class="n">REPORTS_SERVICE_ID</span><span class="p">),</span>
+    <span class="n">acknowledge_unverified_identity</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+<span class="p">)</span>
+</code></pre></div>
+<p>Either way the run's tenant comes from the run.</p>
 <p>Running as no one shows wherever a body reads the principal: audit records no actor, a
 document created through <code>CreatorIdMappingStep</code> gets no creator, a progress job started in
 the body has no actor, and a saga's guarded steps refuse. That holds for every durable body

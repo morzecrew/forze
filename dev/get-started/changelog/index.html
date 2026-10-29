@@ -10370,6 +10370,9 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <li>
 <p><strong>A presigned upload and a multipart completion can refuse to replace an object</strong> (<strong>Breaking</strong>). <code>create_only=True</code> (never with <code>if_match</code>) makes <code>presign_upload</code> sign <code>If-None-Match: *</code> or <code>x-goog-if-generation-match: 0</code>, and <code>complete_upload</code> refuse an existing key. A custom <code>ObjectStorageClientPort</code> must accept it.</p>
 </li>
+<li>
+<p><strong>A durable service identity can be an API key verified on every run.</strong> <code>DurableServiceIdentity(api_key=SecretRef(...), authn_spec=...)</code> runs the body as the key's principal, a member of the run's tenant. A revoked, expired or delegated key fails the run, within cached key states' <code>ttl</code> if a revocation's write is lost.</p>
+</li>
 </ul>
 <p><strong><code>forze ops</code> for people at a shell and for backfills:</strong></p>
 <ul>
