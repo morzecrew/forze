@@ -101,6 +101,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **A presigned upload and a multipart completion can refuse to replace an object** (**Breaking**). `create_only=True` (never with `if_match`) makes `presign_upload` sign `If-None-Match: *` or `x-goog-if-generation-match: 0`, and `complete_upload` refuse an existing key. A custom `ObjectStorageClientPort` must accept it.
 
+- **A durable service identity can be an API key verified on every run.** `DurableServiceIdentity(api_key=SecretRef(...), authn_spec=...)` reads the key at run time and runs the body as the principal it authenticates. A revoked, expired or foreign key fails the run with `authentication`, never retried.
+
 **`forze ops` for people at a shell and for backfills:**
 
 - **`forze ops` gains typed flags, JSONL batches and shell completion.** `call OP --field VALUE` takes a flat-scalar input as flags; `--batch @PATH|-` runs one call per line in one runtime, stopping at the first failure; `OP` completes in the shell. An unknown option after `OP` now exits 2 with an error object.

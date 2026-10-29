@@ -171,7 +171,8 @@ A durable body runs as **no one**: the runner binds the run's tenant and no prin
 a run started by `run_now` inside a request does not inherit the caller, and a recovered
 run behaves the same. A spec whose `operation` names a registry operation registers with
 `register_operation_functions`; an operation guarded by `AuthnRequired` then refuses the run
-until you name a service principal for it:
+until you name a service principal for it. Back the principal with an API key, read from
+the secrets backend and verified on every run:
 
 ```python
 register_operation_functions(
@@ -180,14 +181,38 @@ register_operation_functions(
     operations=operations,
     identity=DurableServiceIdentity(
         authn=AuthnIdentity(principal_id=REPORTS_SERVICE_ID),
-        acknowledge_unverified_identity=True,
+        api_key=SecretRef(path="durable/reports-service-key"),
+        authn_spec=AuthnSpec(name="main", enabled_methods=frozenset({"api_key"})),
     ),
 )
 ```
 
-Authn and authz then decide for that principal as for any caller, and audit records it.
-Nothing verifies it — no key is checked, expired or revoked — so the acknowledgment is
-required. The run's tenant still comes from the run.
+Before each run, and again on each retry or recovery, the bridge resolves the secret and
+authenticates it through the same authn port HTTP uses. The body runs as the principal the
+verifier returns, and authn, authz and audit see that principal as for any caller. The run
+fails with `authentication` and is not retried when:
+
+- the key is unknown, revoked or expired, or its principal is disabled;
+- the key authenticates a principal other than `authn` (`durable_service_identity_mismatch`);
+- the key carries a tenant and the run belongs to another tenant or to none
+  (`tenant_conflict`).
+
+So revoking the key stops the schedule at its next fire. The refusal is logged as a warning
+with the error's kind and code, and the run lands `FAILED`. The key is never written to a
+run or schedule row or to the log. A missing secret fails the run with the secrets
+backend's error.
+
+Without `api_key`, the principal is the wiring's word alone. No key is checked, expired or
+revoked, so `acknowledge_unverified_identity=True` is required:
+
+```python
+DurableServiceIdentity(
+    authn=AuthnIdentity(principal_id=REPORTS_SERVICE_ID),
+    acknowledge_unverified_identity=True,
+)
+```
+
+Either way the run's tenant comes from the run.
 
 Running as no one shows wherever a body reads the principal: audit records no actor, a
 document created through `CreatorIdMappingStep` gets no creator, a progress job started in

@@ -10,22 +10,28 @@ self-hosted app stops hand-writing the same body.
 
 from __future__ import annotations
 
+import secrets
+from datetime import timedelta
 from typing import Any
+from unittest.mock import patch
 from uuid import UUID
 
 import pytest
 from pydantic import BaseModel, Field, RootModel
 
-from forze.application.contracts.authn import AuthnIdentity
+from forze.application.contracts.authn import AuthnIdentity, AuthnSpec
 from forze.application.contracts.durable.function import (
     DurableFunctionCronTrigger,
     DurableFunctionInvokeSpec,
     DurableFunctionSpec,
+    DurableRunStatus,
 )
+from forze.application.contracts.resilience import BackoffStrategy, RetryStrategy
+from forze.application.contracts.secrets import SecretRef
 from forze.application.contracts.tenancy import TenantIdentity
 from forze.application.execution.operations import OperationRegistry
 from forze.application.hooks.authn import AuthnRequired
-from forze.base.exceptions import CoreException
+from forze.base.exceptions import CoreException, ExceptionKind
 from forze.base.primitives import str_key_selector
 from forze_kits.integrations.durable import (
     DurableFunctionRegistry,
@@ -34,7 +40,8 @@ from forze_kits.integrations.durable import (
     operation_durable_handler,
     register_operation_functions,
 )
-from forze_mock import MockDepsModule
+from forze_kits.integrations.durable import operation_bridge as bridge_module
+from forze_mock import MockDepsModule, MockState
 from tests.support.execution_context import context_from_modules
 
 # ----------------------- #
@@ -294,3 +301,158 @@ async def test_a_cron_input_reaches_the_operation_as_declared(args: BaseModel) -
     await handler(ctx, spec.triggers[0].encode_input(type(args)))  # type: ignore[union-attr]
 
     assert received == [args]
+
+
+# ....................... #
+# A service identity backed by an API key, verified on every run.
+
+_AUTHN_SPEC = AuthnSpec(name="main", enabled_methods=frozenset({"api_key"}))
+_KEY_REF = SecretRef(path="durable/reports-key")
+
+
+def _keyed_state(
+    key: str,
+    *,
+    principal: UUID = _SERVICE.principal_id,
+    tenant: UUID | None = None,
+) -> MockState:
+    """A mock whose secrets hold *key*, which authenticates *principal* on the main route."""
+
+    state = MockState()
+    state.identity["secrets"] = {_KEY_REF.path: key}
+    entry: dict[str, Any] = {"subject": "reports-service"}
+
+    if tenant is not None:
+        entry["issuer_tenant_hint"] = str(tenant)
+
+    state.identity["authn"] = {
+        "main": {
+            "api_keys": {key: entry},
+            "principal_map": {"reports-service": str(principal)},
+        }
+    }
+
+    return state
+
+
+def _keyed_identity() -> DurableServiceIdentity:
+    return DurableServiceIdentity(authn=_SERVICE, api_key=_KEY_REF, authn_spec=_AUTHN_SPEC)
+
+
+def _revoke(state: MockState, key: str) -> None:
+    del state.identity["authn"]["main"]["api_keys"][key]
+
+
+def test_a_key_needs_its_authn_route() -> None:
+    with pytest.raises(CoreException) as caught:
+        DurableServiceIdentity(authn=_SERVICE, api_key=_KEY_REF)
+
+    assert caught.value.code == "durable_service_identity_incomplete"
+
+
+def test_a_keyed_identity_needs_no_acknowledgment() -> None:
+    assert _keyed_identity().acknowledge_unverified_identity is False
+
+
+@pytest.mark.asyncio
+async def test_a_verified_key_runs_the_guarded_operation_as_its_principal() -> None:
+    seen: list[Any] = []
+    handler = operation_durable_handler(_spec(), _guarded(seen), identity=_keyed_identity())
+    ctx = context_from_modules(MockDepsModule(state=_keyed_state(secrets.token_hex(16))))
+
+    with ctx.inv_ctx.bind_identity(authn=_CALLER, tenant=_TENANT):
+        output = await handler(ctx, {"order_id": "o-1"})
+
+    assert output == {"handled": "o-1"}
+    assert seen == [(_SERVICE, _TENANT)]
+
+
+@pytest.mark.asyncio
+async def test_a_revoked_key_fails_the_next_run_without_a_retry() -> None:
+    key = secrets.token_hex(16)
+    state = _keyed_state(key)
+    seen: list[Any] = []
+    registry = DurableFunctionRegistry()
+    register_operation_functions(
+        registry, [_spec()], operations=_guarded(seen), identity=_keyed_identity()
+    )
+    runner = DurableFunctionRunner(
+        registry=registry,
+        retry=RetryStrategy(
+            max_attempts=5,
+            backoff=BackoffStrategy(
+                base=timedelta(milliseconds=1), max=timedelta(seconds=1), jitter="none"
+            ),
+            retry_on=frozenset({ExceptionKind.INFRASTRUCTURE}),
+        ),
+    )
+    ctx = context_from_modules(MockDepsModule(state=state))
+
+    first = await runner.run_now(ctx, "sync", {"order_id": "o-1"})
+    assert first.status is DurableRunStatus.COMPLETED
+
+    _revoke(state, key)
+
+    with patch.object(bridge_module, "logger") as log:
+        with pytest.raises(CoreException) as caught:
+            await runner.run_now(ctx, "sync", {"order_id": "o-2"})
+
+    assert caught.value.kind is ExceptionKind.AUTHENTICATION
+    assert len(seen) == 1  # the operation never ran for the second run
+    failed = [row for row in state.durable_runs.values() if row["status"] == "failed"]
+    assert len(failed) == 1 and failed[0]["attempts"] == 1
+    log.warning.assert_called_once()
+    assert key not in repr(log.warning.call_args)
+
+
+@pytest.mark.asyncio
+async def test_a_key_of_another_principal_is_refused() -> None:
+    seen: list[Any] = []
+    handler = operation_durable_handler(_spec(), _guarded(seen), identity=_keyed_identity())
+    state = _keyed_state(secrets.token_hex(16), principal=_CALLER.principal_id)
+    ctx = context_from_modules(MockDepsModule(state=state))
+
+    with pytest.raises(CoreException) as caught:
+        await handler(ctx, {"order_id": "o-1"})
+
+    assert caught.value.kind is ExceptionKind.AUTHENTICATION
+    assert caught.value.code == "durable_service_identity_mismatch"
+    assert seen == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("run_tenant", [None, _TENANT], ids=["untagged", "other-tenant"])
+async def test_a_tenant_bound_key_runs_only_its_tenant(run_tenant: TenantIdentity | None) -> None:
+    seen: list[Any] = []
+    handler = operation_durable_handler(_spec(), _guarded(seen), identity=_keyed_identity())
+    state = _keyed_state(secrets.token_hex(16), tenant=UUID(int=0xB1))
+    ctx = context_from_modules(MockDepsModule(state=state))
+
+    with ctx.inv_ctx.bind_identity(tenant=run_tenant):
+        with pytest.raises(CoreException) as caught:
+            await handler(ctx, {"order_id": "o-1"})
+
+    assert caught.value.code == "tenant_conflict"
+    assert seen == []
+
+
+@pytest.mark.asyncio
+async def test_the_key_never_reaches_a_stored_row() -> None:
+    key = secrets.token_hex(16)
+    state = _keyed_state(key)
+    registry = DurableFunctionRegistry()
+    register_operation_functions(
+        registry, [_spec()], operations=_guarded([]), identity=_keyed_identity()
+    )
+    runner = DurableFunctionRunner(registry=registry)
+    ctx = context_from_modules(MockDepsModule(state=state))
+
+    await runner.run_now(ctx, "sync", {"order_id": "o-1"})
+    _revoke(state, key)
+
+    with pytest.raises(CoreException):
+        await runner.run_now(ctx, "sync", {"order_id": "o-2"})
+
+    stored = repr((state.durable_runs, state.durable_step_memo, state.durable_run_schedules))
+    assert "o-2" in stored  # the failed run's row is there to search
+    assert key not in stored
