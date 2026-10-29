@@ -293,15 +293,16 @@ class PasswordResetAdapter(PasswordResetPort):
         except CoreException as e:
             raise exc.authentication(INVALID_RESET_TOKEN_MSG) from e
 
+        # Hashed before the account is locked, so a deactivation never queues behind it.
+        new_hash = await self.password_svc.hash_password(new_password)
         account = await find_password_account_by_principal_id(
             self.pa_qry,
             reset.principal_id,
+            lock=True,
         )
 
         if account is None or not account.is_active:
             raise exc.authentication(INVALID_RESET_TOKEN_MSG)
-
-        new_hash = await self.password_svc.hash_password(new_password)
 
         await self.pa_cmd.update(
             account.id,

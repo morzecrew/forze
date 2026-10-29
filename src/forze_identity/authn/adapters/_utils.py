@@ -10,6 +10,7 @@ from forze.application.contracts.document import (
 )
 from forze.base.exceptions import CoreException, ExceptionKind, exc
 from forze.base.primitives import utcnow
+from forze_identity._transaction import enlisted
 
 from ..domain.models.account import ReadApiKeyAccount, ReadPasswordAccount
 from ..domain.models.invite import ReadPasswordInvite
@@ -56,13 +57,24 @@ async def find_password_account_by_login(
 async def find_password_account_by_principal_id(
     qry: DocumentQueryPort[ReadPasswordAccount],
     principal_id: UUID,
+    *,
+    lock: bool = False,
 ) -> ReadPasswordAccount | None:
+    """The principal's password account.
+
+    :param lock: Read it row-locked when the open transaction holds the store, as a password
+        change, a reset and a deactivation do right before they write it: a concurrent one then
+        waits and reads the account as this one left it, instead of failing on its revision. A
+        store that cannot report its enlistment is read without the lock.
+    """
+
     return await qry.find(
         filters={
             "$values": {
                 "principal_id": principal_id,
             },
-        }
+        },
+        for_update=lock and enlisted(qry),
     )
 
 
@@ -145,8 +157,9 @@ async def find_api_key_accounts_by_principal(
 _REVOKE_BATCH = 1_000
 """Sessions revoked per round trip."""
 
-_STALE_RETRIES = 3
-"""Consecutive batches a concurrent write may make stale before the revocation gives up."""
+STALE_RETRIES = 3
+"""Consecutive writes a concurrent write may make stale before a revocation or a deactivation
+gives up."""
 
 
 def detected_stale(error: CoreException) -> bool:
@@ -238,7 +251,7 @@ async def revoke_sessions_matching(
             await session_cmd.update_many(upds, return_new=False)
 
         except CoreException as error:
-            if not detected_stale(error) or stale >= _STALE_RETRIES:
+            if not detected_stale(error) or stale >= STALE_RETRIES:
                 raise
 
             stale += 1

@@ -235,6 +235,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **`If-None-Match: *` answers 304 for an object without an ETag.** The streaming storage download route served it a 200; per RFC 9110 the wildcard matches any existing object, on the stored-file download route too.
 
+- **A password change or reset racing its principal's deactivation no longer fails on `revision_mismatch`, nor does the deactivation.** In a Postgres transaction they lock the account (a `read` view must accept `FOR UPDATE`), so the second waits; elsewhere the deactivation rereads a stale credential and closes it.
+
 ### Security
 
 - **A document query policy checks `$having` and aggregate sorts against their source fields** (**Breaking**). Refused now: `$having` over a field that is not filterable, and a sort by an alias whose field is not sortable. Allowed now: a sort by a `$count` alias, or by an alias whose field is sortable.

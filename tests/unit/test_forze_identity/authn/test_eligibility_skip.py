@@ -487,7 +487,7 @@ async def test_a_logout_locks_the_principal_only_where_an_issue_does(
 ) -> None:
     # As on Postgres. Under allow_all an issue locks no principal, so a raise has no order to match.
     monkeypatch.setattr(authn_deps, "_locks_exclude", lambda principals: True)
-    monkeypatch.setattr(revocation_states, "_enlisted", lambda port: True)
+    monkeypatch.setattr(revocation_states, "enlisted", lambda port: True)
     stack = _stack(eligibility=eligibility)
     principal = await stack.principal()
     stack.principal_reads.clear()
