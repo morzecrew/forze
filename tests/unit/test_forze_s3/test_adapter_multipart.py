@@ -26,7 +26,7 @@ from forze.application.integrations.storage.client import (
     ObjectStorageHead,
     ObjectStoragePartInfo,
 )
-from forze.base.exceptions import CoreException
+from forze.base.exceptions import CoreException, ExceptionKind
 from forze_mock import MockKeyManagement
 from forze_s3.adapters import S3StorageAdapter
 from forze_s3.execution.deps import S3DepsModule
@@ -130,6 +130,10 @@ class _FakeClient:
         self, *, bucket: str, key: str, upload_id: str
     ) -> None:
         self.abort_calls.append({"bucket": bucket, "key": key, "upload_id": upload_id})
+
+    async def list_multipart_uploads(self, *, bucket: str, key: str) -> list[str]:
+        self.list_calls.append({"bucket": bucket, "key": key})
+        return ["U1", "U2"]
 
     async def head_object(
         self, *, bucket: str, key: str, include_tags: bool = False
@@ -259,6 +263,28 @@ async def test_complete_requires_parts() -> None:
 
 
 @pytest.mark.asyncio
+async def test_list_uploads_maps_sessions_on_the_resolved_bucket() -> None:
+    client = _FakeClient()
+    adapter = _adapter(client)
+
+    sessions = await adapter.list_uploads("k")
+
+    assert [(s.key, s.upload_id, s.bucket) for s in sessions] == [
+        ("k", "U1", "bkt"),
+        ("k", "U2", "bkt"),
+    ]
+    assert client.list_calls == [{"bucket": "bkt", "key": "k"}]
+
+
+@pytest.mark.asyncio
+async def test_list_uploads_validates_key() -> None:
+    adapter = _adapter(_FakeClient())
+
+    with pytest.raises(CoreException):
+        await adapter.list_uploads("../escape")
+
+
+@pytest.mark.asyncio
 async def test_abort_forwards() -> None:
     client = _FakeClient()
     adapter = _adapter(client)
@@ -373,6 +399,16 @@ async def test_begin_upload_refused_on_encrypting_route() -> None:
         await uploads.begin_upload("k")
 
     assert "encryption" in str(ei.value).lower()
+
+
+@pytest.mark.asyncio
+async def test_list_uploads_refused_on_encrypting_route() -> None:
+    uploads = _encrypting_ctx().storage.uploads(StorageSpec(name="docs"))
+
+    with pytest.raises(CoreException) as ei:
+        await uploads.list_uploads("k")
+
+    assert ei.value.kind is ExceptionKind.CONFIGURATION
 
 
 @pytest.mark.asyncio

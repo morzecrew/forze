@@ -19,6 +19,7 @@ from forze.application.contracts.tenancy import TenantIdentity
 from forze.application.execution import CryptoDepsModule, ExecutionContext
 from forze.application.execution.operations import run_operation
 from forze.base.exceptions import CoreException, ExceptionKind
+from forze.base.primitives import FrozenTimeSource, bind_time_source, utcnow
 from forze.testing import context_from_modules
 from forze_fastapi.exceptions import register_exception_handlers
 from forze_fastapi.routes import attach_stored_file_download_route
@@ -32,8 +33,14 @@ from forze_kits.aggregates.stored_file import (
     StoredFileKernelOp,
     UploadStoredFileRequestDTO,
     freeze_stored_file_registry,
+    stored_file_pending_sweep_lifecycle_step,
 )
-from forze_kits.domain.stored_file import StoredFileKitSpec, StoredFileRead, StoredFileStatus
+from forze_kits.domain.stored_file import (
+    StoredFileCreateCmd,
+    StoredFileKitSpec,
+    StoredFileRead,
+    StoredFileStatus,
+)
 from forze_mock import MockDepsModule, MockKeyManagement, MockRouteConfig, MockState
 from forze_s3.execution.deps.configs import S3StorageConfig
 from forze_s3.execution.deps.module import S3DepsModule
@@ -308,7 +315,8 @@ async def test_an_encrypting_route_refuses_a_direct_upload_before_any_row(
     with pytest.raises(CoreException) as ei:
         await _initiate(ctx, 4, multipart=multipart)
 
-    assert ei.value.kind in (ExceptionKind.PRECONDITION, ExceptionKind.CONFIGURATION)
+    # Refused when the operation resolves its storage, before the adapter is reached.
+    assert ei.value.code == "storage_direct_transfer_encrypted"
     assert await ctx.doc.query(_KIT.document).count() == 0
 
 
@@ -363,3 +371,75 @@ async def test_multipart_completion_does_not_replace_an_existing_object(
 
     assert ei.value.kind is ExceptionKind.CONFLICT
     assert body.data == b"hello"
+
+
+async def test_the_pending_sweep_cleans_an_abandoned_put_and_session(
+    s3_client: S3Client, s3_bucket: str
+) -> None:
+    ctx = _ctx(s3_client, s3_bucket)
+
+    with bind_time_source(FrozenTimeSource(instant=utcnow() - timedelta(hours=25))):
+        put = await _initiate(ctx, 5)
+        mpu = await _initiate(ctx, 6 * MIB, multipart=True)
+        # Minted then too: each part URL touches the row, keeping it fresh.
+        part = await run_operation(
+            _REG,
+            _NS.key(StoredFileKernelOp.PRESIGN_UPLOAD_PART),
+            PresignStoredFileUploadPartRequestDTO(
+                id=mpu.file.id, upload_id=mpu.upload_id, part_number=1
+            ),
+            ctx,
+        )
+
+    async with httpx.AsyncClient() as http:
+        put_resp = await http.put(
+            put.presigned.url, content=b"hello", headers=put.presigned.headers
+        )
+        part_resp = await http.put(part.url, content=b"abandoned-part", headers=part.headers)
+
+    uploads = ctx.storage.uploads(_KIT.resolved_storage)
+    assert (put_resp.status_code, part_resp.status_code) == (200, 200)
+    assert [s.upload_id for s in await uploads.list_uploads(mpu.file.storage_key)] == [
+        mpu.upload_id
+    ]
+
+    sweep = stored_file_pending_sweep_lifecycle_step(_KIT).startup
+    await sweep._drain(ctx)  # type: ignore[attr-defined]  # pyright: ignore[reportAttributeAccessIssue]
+
+    for started in (put, mpu):
+        row = await ctx.doc.query(_KIT.document).get(started.file.id)
+        assert row.status is StoredFileStatus.FAILED
+
+    with pytest.raises(CoreException) as gone:
+        await ctx.storage.query(_KIT.resolved_storage).head(put.file.storage_key)
+
+    assert gone.value.kind is ExceptionKind.NOT_FOUND
+    assert await uploads.list_uploads(mpu.file.storage_key) == []
+
+
+async def test_the_pending_sweep_skips_a_row_an_encrypting_route_refuses(
+    s3_client: S3Client, s3_bucket: str
+) -> None:
+    # Direct uploads began before the route started encrypting: their rows still hold keys.
+    ctx = _ctx(s3_client, s3_bucket, encrypt=True)
+    file_id = uuid4()
+    key = str(file_id)
+
+    with bind_time_source(FrozenTimeSource(instant=utcnow() - timedelta(hours=25))):
+        await ctx.doc.command(_KIT.document).create(
+            StoredFileCreateCmd(filename="a.bin", size=5, storage_key=key), id=file_id
+        )
+
+    async with s3_client.client():
+        await s3_client.upload_bytes(s3_bucket, key, b"hello")
+
+    sweep = stored_file_pending_sweep_lifecycle_step(_KIT).startup
+    await sweep._drain(ctx)  # type: ignore[attr-defined]  # pyright: ignore[reportAttributeAccessIssue]
+
+    row = await ctx.doc.query(_KIT.document).get(file_id)
+    assert (row.status, row.storage_key) == (StoredFileStatus.FAILED, key)  # retried later
+
+    with pytest.raises(CoreException) as gone:
+        await ctx.storage.query(_KIT.resolved_storage).head(key)
+
+    assert gone.value.kind is ExceptionKind.NOT_FOUND

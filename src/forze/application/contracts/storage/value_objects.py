@@ -387,7 +387,8 @@ class UploadSession:
     """Opaque, backend-specific upload credential (S3 ``UploadId`` / GCS temp
     namespace token). Excluded from ``repr`` — treat it as a secret. The
     application **must** persist it (or hand it to the client) to resume,
-    complete, or abort the session later; it is not otherwise recoverable."""
+    complete, or abort the session later; only
+    :meth:`StorageUploadSessionPort.list_uploads` recovers it, for an abort."""
 
     bucket: str | None = None
     """Resolved physical bucket the upload targets, when the adapter chooses to

@@ -14,6 +14,8 @@ from forze.application.contracts.crypto import (
     EncryptionTier,
     validate_required_encryption,
 )
+from forze.application.contracts.storage import StorageSpec
+from forze.base.exceptions import exc
 from forze.base.primitives import StrKey, StrKeyMapping
 
 # ----------------------- #
@@ -50,4 +52,26 @@ def validate_storage_encryption_wiring(
             required=required_encryption,
             code=validation_failed_code,
             max_supported="envelope",
+        )
+
+
+# ....................... #
+
+
+def refuse_direct_transfer_when_encrypted(spec: StorageSpec, *, encrypt: bool) -> None:
+    """Refuse a :attr:`~StorageSpec.direct_transfer` spec on a client-side-encrypting route.
+
+    Called by each backend's port factory, where the spec meets the route's config, so the
+    refusal comes when the port is resolved rather than when a URL is first asked for.
+
+    :raises CoreException: ``configuration`` (``storage_direct_transfer_encrypted``).
+    """
+
+    if spec.direct_transfer and encrypt:
+        raise exc.configuration(
+            f"Storage route {str(spec.name)!r} encrypts client-side, so it cannot serve "
+            "presigned URLs or upload sessions: their bytes reach the store without passing "
+            "through the application, which cannot encrypt them. Route direct transfers to a "
+            "route without encrypt=True (server-side encryption is compatible).",
+            code="storage_direct_transfer_encrypted",
         )

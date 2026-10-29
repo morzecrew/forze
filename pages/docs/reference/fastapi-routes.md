@@ -332,7 +332,7 @@ error.
 
 | Operation | Input | Result |
 |-----------|-------|--------|
-| `download` | `StoredFileIdDTO` | `StoredFileDownloadDTO`: the whole object in memory, for small files |
+| `download` | `StoredFileIdDTO` | `StoredFileDownloadDTO`: the whole object in memory, for small files and tests |
 | `download_stream` | `StoredFileIdDTO` | `StoredFileStream`: the row plus a bounded-memory `StreamedDownload` named after the stored filename |
 | `download_range` | `DownloadStoredFileRangeRequestDTO` (`id`, inclusive `start`, `end` or `None` for the end) | `StoredFileRangeDTO`: the row plus the window's bytes, `content_range` and `total_size`; a start past the end is a precondition error |
 | `presign_download` | `PresignStoredFileDownloadRequestDTO` (`id`, `expires_in` up to 7 days) | `StoredFilePresignedDownloadDTO`: the row plus a presigned `GET` URL |
@@ -408,18 +408,22 @@ default exposes every read-only operation and the refusal covers the whole
 registration. `download_stream` is not marked sensitive: it returns the same
 bytes as `download`, not a credential.
 
-`download_stream` returns a byte stream and `download_range` raw bytes, not
-JSON, so their descriptors set `streams=True`. MCP tools and resource templates, agent tools, `forze ops` and
-`attach_operation_routes` can't carry it. The MCP and `forze ops` defaults leave
-it out, and naming it anywhere is refused. Serve it from a route that calls
+`download_stream` returns a byte stream, and `download` and `download_range`
+return raw bytes, not JSON, so their descriptors set `streams=True`. JSON can't
+carry a binary file: its bytes aren't UTF-8, so encoding them fails. MCP tools
+and resource templates, agent tools, `forze ops` and `attach_operation_routes`
+can't carry these operations. The MCP and `forze ops` defaults leave them out,
+and naming one anywhere is refused. Serve them from a route that calls
 `streamed_download_response`, like the one above.
 
-!!! note "Known limit: encrypting routes refuse per request"
-
-    A client-side-encrypting storage route refuses `presign_download`, but only
-    when it is called. The storage adapter refuses before anything is signed. The
-    kit spec doesn't know a route's encryption config, so setting
-    `presign_downloads=True` for such a route can't fail at build time.
+A client-side-encrypting storage route can't serve `presign_download`: the
+bytes would leave the store without passing through the app, which decrypts
+them. The kit resolves that operation's storage as
+`StorageSpec(direct_transfer=True)`, and the route refuses such a spec with a
+`configuration` error (`storage_direct_transfer_encrypted`). So `check_wiring`
+reports the operation before anything runs, and without `check_wiring` its
+first call fails before the handler runs. The kit's other operations keep
+working on that route.
 
 ### Stored-file direct uploads
 
@@ -431,7 +435,7 @@ presigned URLs. Bind authn and authz on each one, as you do on `upload`.
 | Operation | Input | Result |
 |-----------|-------|--------|
 | `initiate_upload` | `InitiateStoredFileUploadRequestDTO` (`filename`, exact `size`, `content_type`, `multipart`, and `expires_in` for a single `PUT`: 15 minutes by default, at most 1 hour) | `StoredFileUploadSessionDTO`: the `pending` row plus a presigned `PUT` (`presigned`) or a multipart `upload_id` |
-| `presign_upload_part` | `PresignStoredFileUploadPartRequestDTO` (`id`, `upload_id`, `part_number`, `expires_in` with the same bounds) | `PresignedUrlDTO` for one part |
+| `presign_upload_part` | `PresignStoredFileUploadPartRequestDTO` (`id`, `upload_id`, `part_number`, `expires_in` with the same bounds) | `PresignedUrlDTO` for one part; it touches the row, bumping its revision, and parallel calls retry the touch |
 | `complete_upload` | `CompleteStoredFileUploadRequestDTO` (`id`, plus `upload_id` and `parts` for a multipart upload) | the `ready` row |
 
 1. `initiate_upload` mints the storage key, `{tenant}/{file_id}`, and writes a
@@ -467,27 +471,60 @@ so generated surfaces refuse them; serve them from your own routes.
 `upload`, and leaves `complete_upload` outside one, so the `failed` mark
 survives the refusal raised after it.
 
-A client-side-encrypting route refuses `initiate_upload` before any row is
-written: the app never sees the bytes, so it can't encrypt them.
+A client-side-encrypting route can't serve the three direct-upload commands:
+the app never sees the bytes, so it can't encrypt them. As with
+`presign_download`, the kit resolves their storage with `direct_transfer=True`,
+so `check_wiring` reports them and a call fails before any row is written.
 
-!!! note "Known limit: abandoned uploads are not swept"
+#### Sweeping abandoned uploads
 
-    A client that initiates and never completes leaves a `pending` row, and
-    possibly an object or an unfinished multipart upload. Nothing reaps them
-    yet. Deleting the row purges the object at its key, but not multipart
-    parts. A refused upload leaves its key free, so the single `PUT` URL can
-    still create an object there until it expires; the row stays `failed`.
+A client that initiates and never completes leaves a `pending` row, and
+possibly an object or an unfinished multipart upload. A buffered `upload`
+whose process died between its commit and the after-commit stage leaves a
+`pending` row too. `stored_file_pending_sweep_lifecycle_step` cleans them up
+on an interval (10 minutes by default):
 
-    - **S3.** `initiate_upload` opens the multipart upload inside its
-      transaction, so a rollback after that leaves an empty upload behind, and
-      an abandoned one keeps its parts. Add a bucket lifecycle rule that aborts
-      incomplete multipart uploads (`AbortIncompleteMultipartUpload`).
-    - **GCS.** There is no native session: an abandoned upload's parts are
-      objects named `{key}.__forze_mpu__/{upload_id}/{n}`, next to each file's
-      own key. A lifecycle rule matches only a name prefix or suffix, so none
-      can single them out from the files; they stay until the session is
-      aborted. A rollback leaves nothing on GCS, because opening a session
-      writes nothing.
+```python
+from forze_kits.aggregates.stored_file import stored_file_pending_sweep_lifecycle_step
+
+lifecycle_steps.append(stored_file_pending_sweep_lifecycle_step(kit))
+```
+
+A row's age counts from its last update. `initiate_upload` creates the row,
+and each `presign_upload_part` touches it. Each sweep reads the `pending` rows
+not updated for `older_than` (24 hours by default), in `id` order and in
+batches. For each row, the sweep:
+
+1. Marks the row `failed`, with the revision check that `complete_upload` uses
+   when it refuses an upload. If a `complete_upload` races the sweep, one of
+   them wins cleanly: the sweep leaves a completed file alone, and a complete
+   that lost raises `revision_mismatch`.
+2. Aborts every multipart upload still open at the row's key.
+3. Deletes the object at the key, if one landed.
+4. Clears the row's `storage_key`.
+
+The sweep then repeats steps 2 to 4 for the `failed` rows not updated for
+`older_than` that still hold a key. Those are rows whose cleanup failed after
+the mark, and rows `complete_upload` refused, whose single `PUT` URL could
+still land an object after the refusal.
+
+`older_than` must be longer than 1 hour, the longest a direct-upload URL
+lives. Every URL is signed before the update that records it:
+`initiate_upload` signs before it creates the row, and `presign_upload_part`
+signs, then touches the row, and hands the URL out only if the touch succeeds.
+So every URL handed out expires within 1 hour of the row's last update, and
+none still works once the row is past the cutoff. Concurrent sweeps can't fail a row twice, so
+run the step on every replica, unwrapped. Pass `tenants=` for tenant-aware
+document and storage routes. A missing route fails startup. Only a wiring
+error, such as `tenant_global_required`, stops the loop. Any other error,
+including a configuration error, is logged for its row or tenant, and the row
+is retried on a later sweep.
+
+On S3, `initiate_upload` opens the multipart upload inside its transaction, so
+a rollback after that leaves an empty upload with no row for the sweep to
+find. Keep a bucket lifecycle rule that aborts incomplete multipart uploads
+(`AbortIncompleteMultipartUpload`). On GCS a rollback leaves nothing, because
+opening a session writes nothing.
 
 ## Authn routes
 

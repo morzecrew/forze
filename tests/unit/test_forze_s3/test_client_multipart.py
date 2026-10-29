@@ -170,6 +170,27 @@ async def test_list_parts_parses_pages() -> None:
 
 
 @pytest.mark.asyncio
+async def test_list_uploads_keeps_only_the_exact_key() -> None:
+    api = _FakeApi()
+    api.list_pages = [
+        {"Uploads": [{"Key": "k", "UploadId": "U1"}, {"Key": "k2", "UploadId": "OTHER"}]},
+        {"Uploads": [{"Key": "k", "UploadId": "U2"}]},
+        {},
+    ]
+    client, tok = _client_with(api)
+
+    try:
+        upload_ids = await client.list_multipart_uploads("b", "k")
+    finally:
+        client._S3Client__ctx_client.reset(tok)
+
+    # ListMultipartUploads matches a prefix: "k2" shares it and is dropped.
+    assert upload_ids == ["U1", "U2"]
+    assert api.paginator is not None
+    assert api.paginator.paginate_kwargs == {"Bucket": "b", "Prefix": "k"}
+
+
+@pytest.mark.asyncio
 async def test_complete_sends_sorted_quoted_etags() -> None:
     api = _FakeApi()
     client, tok = _client_with(api)

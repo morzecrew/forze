@@ -34,6 +34,7 @@ from .handlers import (
     SoftDeleteStoredFile,
     UploadStoredFile,
 )
+from .lifecycle import DEFAULT_PENDING_MAX_AGE, stored_file_pending_sweep_lifecycle_step
 from .operations import StoredFileKernelOp
 from .stages import (
     stored_file_complete_upload_after_commit_factory,
@@ -48,11 +49,13 @@ __all__ = [
     "StoredFileFacade",
     "StoredFileKernelOp",
     "StoredFileOutboxPayload",
+    "DEFAULT_PENDING_MAX_AGE",
     "bind_stored_file_writes",
     "build_stored_file_registry",
     "freeze_stored_file_registry",
     "stored_file_complete_upload_after_commit_factory",
     "stored_file_outbox_flush_factory",
+    "stored_file_pending_sweep_lifecycle_step",
     "stored_file_purge_blob_after_commit_factory",
     "CompleteStoredFileUploadRequestDTO",
     "DownloadStoredFileRangeRequestDTO",

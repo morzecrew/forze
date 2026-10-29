@@ -23,6 +23,7 @@ from forze_kits.aggregates.stored_file import (
     CompleteStoredFileUploadRequestDTO,
     InitiateStoredFileUpload,
     InitiateStoredFileUploadRequestDTO,
+    PresignStoredFileUploadPart,
     PresignStoredFileUploadPartRequestDTO,
     StoredFileFacade,
     StoredFileIdDTO,
@@ -325,6 +326,95 @@ class TestCompleteSinglePutUpload:
 
 
 # ....................... #
+
+
+class _YieldBeforeTouch:
+    """A command port that yields before each touch, so concurrent part requests all read and
+    sign before any of them touches the row: what parallel part uploads produce."""
+
+    def __init__(self, inner: Any, calls: list[str] | None = None) -> None:
+        self.inner = inner
+        self.calls = calls if calls is not None else []
+
+    async def touch(self, *args: Any, **kwargs: Any) -> Any:
+        self.calls.append("touch")
+        await asyncio.sleep(0)
+        return await self.inner.touch(*args, **kwargs)
+
+
+def _part_args(started: Any, part_number: int) -> PresignStoredFileUploadPartRequestDTO:
+    return PresignStoredFileUploadPartRequestDTO(
+        id=started.file.id,
+        upload_id=started.upload_id,
+        part_number=part_number,
+        expires_in=timedelta(minutes=5),
+    )
+
+
+class TestParallelPartUrls:
+    async def test_concurrent_part_urls_for_one_file_all_succeed(
+        self, ctx: ExecutionContext
+    ) -> None:
+        started = await run_operation(_REG, _INITIATE, _initiate_args(multipart=True), ctx)
+        handler = PresignStoredFileUploadPart(
+            doc=_YieldBeforeTouch(ctx.doc.command(_KIT.document)),  # type: ignore[arg-type]
+            reads=ctx.doc.query(_KIT.document),
+            uploads=ctx.storage.uploads(_KIT.resolved_storage),
+        )
+
+        urls = await asyncio.gather(*(handler(_part_args(started, n)) for n in range(1, 7)))
+
+        assert len({u.url for u in urls}) == 6
+        assert (await _row(ctx, started.file.id)).rev == started.file.rev + 6
+
+    async def test_the_url_is_signed_before_the_touch_records_it(
+        self, ctx: ExecutionContext
+    ) -> None:
+        started = await run_operation(_REG, _INITIATE, _initiate_args(multipart=True), ctx)
+        calls: list[str] = []
+        real = ctx.storage.uploads(_KIT.resolved_storage)
+
+        async def _sign(*args: Any, **kwargs: Any) -> Any:
+            calls.append("sign")
+            return await real.presign_part(*args, **kwargs)
+
+        uploads = MagicMock(wraps=real)
+        uploads.presign_part = _sign
+        handler = PresignStoredFileUploadPart(
+            doc=_YieldBeforeTouch(ctx.doc.command(_KIT.document), calls),  # type: ignore[arg-type]
+            reads=ctx.doc.query(_KIT.document),
+            uploads=uploads,
+        )
+
+        await handler(_part_args(started, 1))
+
+        # Signed first: the URL's expiry stays within its lifetime of the touch.
+        assert calls == ["sign", "touch"]
+
+    @pytest.mark.parametrize(
+        ("error", "touches"),
+        [(exc.precondition("stale", code="revision_mismatch"), 8), (exc.infrastructure("down"), 1)],
+        ids=["revision-race-every-time", "other-error"],
+    )
+    async def test_a_touch_that_keeps_failing_hands_out_no_url(
+        self, ctx: ExecutionContext, error: CoreException, touches: int
+    ) -> None:
+        started = await run_operation(_REG, _INITIATE, _initiate_args(multipart=True), ctx)
+        doc = MagicMock()
+        doc.touch = AsyncMock(side_effect=error)
+        reads = MagicMock(wraps=ctx.doc.query(_KIT.document))
+        reads.get = AsyncMock(side_effect=ctx.doc.query(_KIT.document).get)
+        handler = PresignStoredFileUploadPart(
+            doc=doc, reads=reads, uploads=ctx.storage.uploads(_KIT.resolved_storage)
+        )
+
+        with pytest.raises(CoreException) as ei:
+            await handler(_part_args(started, 1))
+
+        # A lost race re-reads and retries, up to the bound; any other error is not retried.
+        assert ei.value is error
+        assert doc.touch.await_count == touches
+        assert reads.get.await_count == touches
 
 
 class TestMultipartUpload:
@@ -639,3 +729,42 @@ class TestMultipartSizeBeforeAssembly:
         spy.complete_upload.assert_not_awaited()
         spy.abort_upload.assert_awaited_once()
         assert (await _row(ctx, started.file.id)).status is StoredFileStatus.FAILED
+
+
+# ....................... #
+
+
+class TestEncryptingRouteRefusedAtResolve:
+    """A client-side-encrypting route can serve no presigned URL or upload session, so the
+    operations that need one refuse to build: ``check_wiring`` reports them before any call."""
+
+    def test_check_wiring_names_exactly_the_direct_transfer_operations(self) -> None:
+        from forze.application.contracts.crypto import KeyRef, StaticKeyDirectory
+        from forze.application.execution import CryptoDepsModule, check_wiring
+        from forze_mock import MockKeyManagement
+        from forze_s3.execution.deps import S3DepsModule, S3StorageConfig
+        from forze_s3.kernel.client import S3ClientPort
+
+        kit = StoredFileKitSpec(name="files", direct_uploads=True, presign_downloads=True)
+        registry = freeze_stored_file_registry(kit, tx_route="mock")
+
+        def _ctx() -> ExecutionContext:
+            return context_from_modules(
+                MockDepsModule(),
+                CryptoDepsModule(
+                    kms=MockKeyManagement(), directory=StaticKeyDirectory(KeyRef(key_id="cmk"))
+                ),
+                S3DepsModule(
+                    client=MagicMock(spec=S3ClientPort),
+                    storages={"files": S3StorageConfig(bucket="b", encrypt=True)},
+                ),
+            )
+
+        report = check_wiring(registry, _ctx)
+
+        assert {str(f.op) for f in report.failures} == {
+            *_DIRECT,
+            _KEY(StoredFileKernelOp.PRESIGN_DOWNLOAD),
+        }
+        assert {f.code for f in report.failures} == {"storage_direct_transfer_encrypted"}
+        assert all(f.is_wiring for f in report.failures)

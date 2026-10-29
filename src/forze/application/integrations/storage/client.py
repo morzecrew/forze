@@ -712,6 +712,19 @@ class ObjectStorageClientPort(Protocol):
         """
         ...  # pragma: no cover
 
+    def list_multipart_uploads(
+        self,
+        bucket: str,
+        key: str,
+    ) -> Awaitable[list[str]]:
+        """List the upload ids of the unfinished multipart uploads targeting exactly *key*.
+
+        S3 ``ListMultipartUploads`` under the key, keeping only exact matches; GCS lists the
+        temp part namespaces under the key, so a session that has no part yet is missing (it
+        holds nothing to free). Used to abort uploads whose handle was lost.
+        """
+        ...  # pragma: no cover
+
     def complete_multipart_upload(
         self,
         bucket: str,

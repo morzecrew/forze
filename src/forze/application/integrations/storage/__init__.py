@@ -16,7 +16,7 @@ from .client import (
 )
 from .codec import ObjectStoragePathCodec, default_path_codec
 from .deps_module import ObjectStorageDepsModule
-from .encryption import validate_storage_encryption_wiring
+from .encryption import refuse_direct_transfer_when_encrypted, validate_storage_encryption_wiring
 from .metadata import object_metadata_from_user_metadata
 from .provisioning import ObjectStorageTenantProvisioner
 from .routed_client import RoutedObjectStorageClientBase
@@ -45,6 +45,7 @@ __all__ = [
     "guess_content_type_with_magic",
     "object_metadata_from_user_metadata",
     "presign_expiry_seconds",
+    "refuse_direct_transfer_when_encrypted",
     "reject_contradictory_write_conditions",
     "validate_storage_encryption_wiring",
     "validate_storage_tenancy_wiring",

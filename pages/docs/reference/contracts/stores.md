@@ -173,8 +173,11 @@ millions of suffixes is not yet in scope.
 ## Storage
 
 Object storage splits into query and command ports —
-`ctx.storage.query(spec)` / `ctx.storage.command(spec)` (`StorageSpec` carries only a
-name). Objects are addressed by string `key`.
+`ctx.storage.query(spec)` / `ctx.storage.command(spec)`. `StorageSpec` carries a name and
+`direct_transfer`: set it when the ports hand the client the store directly (presigned URLs,
+upload sessions), and a client-side-encrypting route refuses to resolve the spec with a
+`configuration` error (`storage_direct_transfer_encrypted`). Objects are addressed by string
+`key`.
 
 | Port | Method | Signature | Notes |
 |------|--------|-----------|-------|
@@ -194,7 +197,9 @@ name). Objects are addressed by string `key`.
 | command | `put_object_tags` | `put_object_tags(key, tags)` | full tag replacement |
 
 A third port, `StorageUploadSessionPort`, drives resumable multipart uploads
-(begin / presign part / list parts / complete / abort) — its HTTP projection is
+(begin / presign part / list parts / complete / abort). `list_uploads(key)` finds the
+sessions still open at a key, so a cleanup that lost their handles can abort them. Its HTTP
+projection is
 on the [FastAPI route generators](../fastapi-routes.md#direct-resumable-uploads)
 page. Ranged reads work over chunked-AEAD encrypted objects (only the covering
 chunks are fetched and decrypted); a legacy whole-payload envelope cannot be

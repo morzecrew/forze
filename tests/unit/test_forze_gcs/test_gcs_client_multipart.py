@@ -86,6 +86,51 @@ async def test_list_parts_reads_temp_objects_with_their_sizes() -> None:
     assert fake.list_objects.await_args_list[1].kwargs["params"]["pageToken"] == "next"
 
 
+@pytest.mark.asyncio
+async def test_list_uploads_reads_the_session_namespaces_under_the_key() -> None:
+    prefix = f"k.{MPU_NAMESPACE}/"
+    fake = _fake_storage()
+    fake.list_objects = AsyncMock(
+        side_effect=[
+            {
+                "items": [{"name": f"{prefix}S1/1"}, {"name": f"{prefix}S1/2"}],
+                "nextPageToken": "next",
+            },
+            {"items": [{"name": f"{prefix}S2/__compose__"}, {"name": f"{prefix}stray"}]},
+        ]
+    )
+    client = _client(fake)
+
+    upload_ids = await client.list_multipart_uploads("b", "k")
+
+    # One id per session, in listing order, every page read; a name with no session is skipped.
+    assert upload_ids == ["S1", "S2"]
+    assert fake.list_objects.await_args_list[0].kwargs["params"] == {
+        "prefix": prefix,
+        "pageToken": "",
+    }
+    assert fake.list_objects.await_args_list[1].kwargs["params"]["pageToken"] == "next"
+
+
+@pytest.mark.asyncio
+async def test_list_uploads_does_not_match_a_key_that_extends_it() -> None:
+    names = [
+        "k",
+        "kx",
+        f"kx.{MPU_NAMESPACE}/OTHER/1",  # a session of key "kx", which starts with "k"
+        f"k.{MPU_NAMESPACE}/S1/1",
+    ]
+
+    async def _list_objects(bucket: str, *, params: dict[str, str], timeout: Any) -> Any:
+        # What GCS does with ``prefix``: a plain string-prefix match on the object name.
+        return {"items": [{"name": n} for n in names if n.startswith(params["prefix"])]}
+
+    fake = _fake_storage()
+    fake.list_objects = AsyncMock(side_effect=_list_objects)
+
+    assert await _client(fake).list_multipart_uploads("b", "k") == ["S1"]
+
+
 def _status_error(status: int) -> Exception:
     from aiohttp import ClientResponseError, RequestInfo
     from yarl import URL

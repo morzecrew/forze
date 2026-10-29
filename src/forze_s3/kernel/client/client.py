@@ -1183,6 +1183,28 @@ class S3Client(S3ClientPort):
 
     # ....................... #
 
+    @exc_interceptor.coroutine("s3.list_multipart_uploads")
+    async def list_multipart_uploads(self, bucket: str, key: str) -> list[str]:
+        """Upload ids of the in-progress uploads targeting exactly *key*.
+
+        ``ListMultipartUploads`` filters by prefix only, so another key that starts with
+        *key* is dropped here.
+        """
+
+        c = self.__require_client()
+
+        paginator = c.get_paginator("list_multipart_uploads")
+        iterator = paginator.paginate(Bucket=bucket, Prefix=key)
+
+        return [
+            str(entry["UploadId"])
+            async for page in iterator
+            for entry in page.get("Uploads") or []
+            if entry.get("Key") == key and entry.get("UploadId")
+        ]
+
+    # ....................... #
+
     @exc_interceptor.coroutine("s3.complete_multipart_upload")
     async def complete_multipart_upload(
         self,

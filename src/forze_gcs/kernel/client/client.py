@@ -1050,6 +1050,41 @@ class GCSClient(GCSClientPort):
 
     # ....................... #
 
+    @exc_interceptor.coroutine("gcs.list_multipart_uploads")
+    async def list_multipart_uploads(self, bucket: str, key: str) -> list[str]:
+        """The session namespaces under *key* that hold temp objects.
+
+        A session writes nothing until its first part lands, so one with no part yet is not
+        listed; it has nothing to free.
+        """
+
+        storage = self.__require_storage()
+        prefix = f"{key}.{MPU_NAMESPACE}/"
+        sessions: dict[str, None] = {}
+        page_token = ""  # nosec B105 - GCS pagination cursor, not a credential
+
+        while True:
+            content = await storage.list_objects(
+                bucket,
+                params={"prefix": prefix, "pageToken": page_token},
+                timeout=self.__timeout(),
+            )
+
+            for obj in content.get("items", []):
+                session, sep, _ = str(obj.get("name") or "")[len(prefix) :].partition("/")
+
+                if session and sep:
+                    sessions[session] = None
+
+            page_token = content.get("nextPageToken", "")
+
+            if not page_token:
+                break
+
+        return list(sessions)
+
+    # ....................... #
+
     @exc_interceptor.coroutine("gcs.complete_multipart_upload")
     async def complete_multipart_upload(
         self,

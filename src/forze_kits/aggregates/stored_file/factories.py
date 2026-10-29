@@ -118,10 +118,14 @@ def build_stored_file_registry(
                 output_type=_parametrized(Paginated, StoredFileRead),
                 description="List stored files with an optional prefix filter.",
             ),
+            # Raw bytes, like download_range: JSON cannot carry a binary file (pydantic
+            # refuses bytes that are not UTF-8), so JSON surfaces (MCP, agent tools,
+            # generated routes, `forze ops`) leave it out.
             StoredFileKernelOp.DOWNLOAD: OperationDescriptor(
                 input_type=StoredFileIdDTO,
                 output_type=StoredFileDownloadDTO,
                 description="Download blob bytes for a ready stored file.",
+                streams=True,
             ),
             StoredFileKernelOp.DELETE: OperationDescriptor(
                 input_type=StoredFileIdRevDTO,
@@ -182,7 +186,7 @@ def build_stored_file_registry(
                 ns.key(StoredFileKernelOp.PRESIGN_DOWNLOAD),
                 lambda ctx: PresignStoredFileDownload(
                     doc=ctx.doc.query(doc_spec),
-                    storage=ctx.storage.query(kit.resolved_storage),
+                    storage=ctx.storage.query(kit.direct_storage),
                 ),
                 descriptor=OperationDescriptor(
                     input_type=PresignStoredFileDownloadRequestDTO,
@@ -236,7 +240,7 @@ def _register_direct_uploads(
     """Register the three direct-upload commands (the ``direct_uploads`` opt-in)."""
 
     doc_spec = kit.document
-    storage = kit.resolved_storage
+    storage = kit.direct_storage
 
     # Both presign results are credentials (a bearer write URL, a multipart session id), so
     # generated surfaces (MCP, agent tools, generated routes, `forze ops`) refuse them.
@@ -264,7 +268,8 @@ def _register_direct_uploads(
     reg = reg.register(
         ns.key(StoredFileKernelOp.PRESIGN_UPLOAD_PART),
         lambda ctx: PresignStoredFileUploadPart(
-            doc=ctx.doc.query(doc_spec),
+            doc=ctx.doc.command(doc_spec),
+            reads=ctx.doc.query(doc_spec),
             uploads=ctx.storage.uploads(storage),
         ),
         descriptor=OperationDescriptor(

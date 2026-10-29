@@ -12,6 +12,7 @@ from forze.application.contracts.storage import (
     StorageUploadSessionDepPort,
 )
 from forze.application.execution import ExecutionContext
+from forze.application.integrations.storage import refuse_direct_transfer_when_encrypted
 from forze.application.integrations.storage.client import ObjectStorageSSE
 
 from ....adapters import S3StorageAdapter
@@ -40,8 +41,10 @@ def _build_sse(config: S3ServerSideEncryption) -> ObjectStorageSSE | None:
 def _build_adapter(
     ctx: ExecutionContext,
     config: S3StorageConfig,
+    spec: StorageSpec,
 ) -> S3StorageAdapter:
     client = ctx.deps.provide(S3ClientDepKey)
+    refuse_direct_transfer_when_encrypted(spec, encrypt=config.encrypt)
     cipher = ctx.deps.provide(KeyringDepKey) if config.encrypt else None
 
     return S3StorageAdapter(
@@ -70,7 +73,7 @@ class ConfigurableS3StorageQuery(StorageQueryDepPort):
     # ....................... #
 
     def __call__(self, ctx: ExecutionContext, spec: StorageSpec) -> S3StorageAdapter:
-        return _build_adapter(ctx, self.config)
+        return _build_adapter(ctx, self.config, spec)
 
 
 # ....................... #
@@ -89,7 +92,7 @@ class ConfigurableS3StorageCommand(StorageCommandDepPort):
     # ....................... #
 
     def __call__(self, ctx: ExecutionContext, spec: StorageSpec) -> S3StorageAdapter:
-        return _build_adapter(ctx, self.config)
+        return _build_adapter(ctx, self.config, spec)
 
 
 # ....................... #
@@ -108,4 +111,4 @@ class ConfigurableS3StorageUploads(StorageUploadSessionDepPort):
     # ....................... #
 
     def __call__(self, ctx: ExecutionContext, spec: StorageSpec) -> S3StorageAdapter:
-        return _build_adapter(ctx, self.config)
+        return _build_adapter(ctx, self.config, spec)

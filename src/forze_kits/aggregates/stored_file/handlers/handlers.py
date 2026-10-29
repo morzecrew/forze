@@ -1,4 +1,5 @@
 from collections.abc import Callable, Sequence
+from typing import Final
 
 import attrs
 
@@ -66,6 +67,12 @@ from ._helpers import (
 )
 
 # ----------------------- #
+
+_PART_TOUCH_ATTEMPTS: Final[int] = 8
+"""Touches one ``presign_upload_part`` tries before it gives up: enough for a client asking
+for that many part URLs of one file at once, each lost race being another call's win."""
+
+# ....................... #
 
 
 @attrs.define(slots=True, kw_only=True, frozen=True)
@@ -236,7 +243,8 @@ class PresignStoredFileDownload(
 
     Same checks as :class:`DownloadStoredFile`, so no URL is minted for a row the caller
     cannot read or that is not ready. The URL saves the download under the stored filename.
-    The storage adapter refuses on a client-side-encrypting route.
+    The registry resolves its storage as ``direct_transfer``, so a client-side-encrypting
+    route refuses to build it.
     """
 
     doc: DocumentQueryPort[StoredFileRead]
@@ -269,9 +277,10 @@ class InitiateStoredFileUpload(
     """Create a pending row for a direct upload and hand back where its bytes go.
 
     The kit mints the storage key (``{tenant}/{file_id}``); the caller never names one. The
-    URL or session is minted before the row is written, so a client-side-encrypting route,
-    whose adapter refuses both, leaves no row behind. Nothing is trusted yet: the declared
-    size is checked against ``max_bytes`` here, and the object itself on completion.
+    URL or session is minted before the row is written, so a storage refusal leaves no row
+    behind. (The registry resolves its storage as ``direct_transfer``, so a
+    client-side-encrypting route refuses to build it at all.) Nothing is trusted yet: the
+    declared size is checked against ``max_bytes`` here, and the object itself on completion.
     """
 
     doc: DocumentCommandPort[
@@ -343,16 +352,28 @@ class InitiateStoredFileUpload(
 class PresignStoredFileUploadPart(Handler[PresignStoredFileUploadPartRequestDTO, PresignedUrlDTO]):
     """Mint a presigned PUT for one part of a pending direct multipart upload.
 
-    The session targets the key on the row, never one the caller names.
+    The session targets the key on the row, never one the caller names. The URL is signed
+    first and handed out only once a revision-checked touch of the row succeeds, so it expires
+    within its lifetime (at most 1 hour) of the row's last update, which the pending sweep
+    counts its age from; a row the sweep failed in between hands out none. Parallel calls for
+    one file race on the revision, so a lost touch re-reads the row and retries.
+    ``complete_upload`` reloads the row, so the revision bump is invisible to it unless it runs
+    concurrently.
     """
 
-    doc: DocumentQueryPort[StoredFileRead]
+    doc: DocumentCommandPort[
+        StoredFileRead,
+        StoredFileDocument,
+        StoredFileCreateCmd,
+        StoredFileUpdateCmd,
+    ]
+    reads: DocumentQueryPort[StoredFileRead]
     uploads: StorageUploadSessionPort
 
     # ....................... #
 
     async def __call__(self, args: PresignStoredFileUploadPartRequestDTO) -> PresignedUrlDTO:
-        file = await self.doc.get(pk=args.id)
+        file = await self.reads.get(pk=args.id)
         session = UploadSession(
             key=ensure_awaiting_upload(file),
             upload_id=args.upload_id,
@@ -363,8 +384,30 @@ class PresignStoredFileUploadPart(Handler[PresignStoredFileUploadPartRequestDTO,
             args.part_number,
             expires_in=args.expires_in,
         )
+        await self._touch(file)
 
         return presigned_to_dto(url)
+
+    # ....................... #
+
+    async def _touch(self, file: StoredFileRead) -> None:
+        """Touch *file* at its revision, re-reading it after each lost race; a row that left
+        ``pending`` meanwhile raises ``precondition``."""
+
+        attempt = 1
+
+        while True:
+            try:
+                await self.doc.touch(file.id, rev=file.rev, return_new=False)
+                return
+
+            except CoreException as error:
+                if error.code != "revision_mismatch" or attempt == _PART_TOUCH_ATTEMPTS:
+                    raise
+
+            attempt += 1
+            file = await self.reads.get(pk=file.id, skip_cache=True)
+            ensure_awaiting_upload(file)
 
 
 # ....................... #
