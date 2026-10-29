@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from zoneinfo import ZoneInfo
 
 import pytest
 
@@ -49,6 +50,12 @@ class TestCronNextFire:
             "0 3 * * *", after=datetime(2026, 1, 1, 0, 0, tzinfo=UTC), tz="Europe/Moscow"
         )
         assert got == datetime(2026, 1, 2, 0, 0, tzinfo=UTC)
+
+    def test_without_a_timezone_a_non_utc_after_is_read_in_utc(self) -> None:
+        # 08:00 in New York is 13:00 UTC, so the next 09:00 UTC is the following day.
+        after = datetime(2026, 1, 1, 8, tzinfo=ZoneInfo("America/New_York"))
+
+        assert next_cron_fire("0 9 * * *", after=after) == datetime(2026, 1, 2, 9, tzinfo=UTC)
 
     def test_validate_rejects_bad_expression_and_tz(self) -> None:
         with pytest.raises(CoreException, match="cron"):

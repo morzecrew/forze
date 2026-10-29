@@ -124,6 +124,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **An operation span stays clean on a failure the caller can handle** (**behaviour change**). OpenTelemetry's own handling marked every failed operation's span `ERROR` whatever its kind and recorded a server error's exception twice. Now only a server-side failure sets `ERROR`, with one exception event, as port spans do.
 
+- **A durable schedule with no timezone fires in UTC whatever zone `now` is given in.** A non-UTC `now` passed to `DurableScheduler.put` or `tick` moved its fires by that zone's offset.
+
 - **A timezoned durable schedule no longer fires twice when the clocks fall back.** A wall time the clocks repeat fires at its first occurrence only, unless the expression runs every hour; a wall time they skip still fires once, when the gap ends.
 
 - **A warning logged before `configure_logging` carries the invocation's ids.** The fallback renderer now merges the bound logging context, as the configured chain does.

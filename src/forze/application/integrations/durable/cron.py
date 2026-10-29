@@ -63,7 +63,8 @@ def next_cron_fire(
         )
 
     if tz is None:
-        return croniter(expression, after).get_next(datetime).astimezone(UTC)
+        # croniter evaluates in the base's own zone, and no timezone means UTC.
+        return croniter(expression, after.astimezone(UTC)).get_next(datetime).astimezone(UTC)
 
     zone = ZoneInfo(tz)
     occurrences = croniter(expression, after.astimezone(zone))
