@@ -20,7 +20,7 @@ from forze.application.contracts.querying import (
 from forze.application.contracts.querying.internal.nodes import QueryAnd, QueryField
 from forze.application.contracts.querying.internal.parse import QueryFilterExpressionParser
 from forze.application.contracts.tenancy import TENANT_ID_FIELD
-from forze.base.exceptions import exc
+from forze.base.exceptions import CoreException, ExceptionKind, exc
 from forze.base.serialization import stored_field_names_for
 from forze.domain.models import DocumentHistory
 from forze_postgres.kernel._logger import logger
@@ -170,8 +170,19 @@ async def _validate_relation_models(
     schema: str,
     relation: str,
     models: Sequence[tuple[type[BaseModel], frozenset[str], str]],
+    read: bool = False,
 ) -> None:
     column_types = await introspector.get_column_types(schema=schema, relation=relation)
+    # Postgres records NOT NULL on tables only: every column of a view or a materialized view
+    # reads nullable, and neither takes a NOT NULL or CHECK constraint. Which view columns
+    # cannot be null is known only to the view's parse tree (an outer join nulls a NOT NULL
+    # base column), whose stored form is internal to each Postgres version. Only a read
+    # relation is let off: a write or history relation that is a view keeps the rule, since
+    # a write through it needs every required value.
+    unchecked = read and await introspector.get_relation(schema=schema, relation=relation) in (
+        "view",
+        "materialized_view",
+    )
 
     for model, omit_fields, label in models:
         validate_field_type_compatibility(
@@ -180,6 +191,17 @@ async def _validate_relation_models(
             omit_fields=omit_fields,
             label=label,
         )
+
+        if unchecked:
+            logger.debug(
+                "Postgres schema validation for %r: %s.%s is a view, which records no NOT NULL; "
+                "required fields are not checked against column nullability.",
+                label,
+                schema,
+                relation,
+            )
+            continue
+
         validate_field_nullability(
             model=model,
             column_types=column_types,
@@ -1208,163 +1230,230 @@ async def _warn_undeclared_mechanisms(
 # ....................... #
 
 
-async def validate_postgres_document_schemas(
+async def _validate_document(
     introspector: PostgresIntrospector,
-    specs: Sequence[PostgresDocumentSchemaSpec],
+    spec: PostgresDocumentSchemaSpec,
 ) -> None:
-    """Assert each spec's relations expose the columns implied by the Pydantic models."""
+    """Assert one spec's relations expose the columns implied by its Pydantic models."""
 
-    for spec in specs:
-        declared = await _require_guarantee_mechanisms(
-            introspector, spec
-        ) | await _require_overlap_mechanisms(introspector, spec)
+    declared = await _require_guarantee_mechanisms(
+        introspector, spec
+    ) | await _require_overlap_mechanisms(introspector, spec)
 
-        read_need = frozenset(
-            (stored_field_names_for(spec.read_model, include_computed=False) | spec.materialized)
-            - spec.read_omit_fields,
-        )
+    read_need = frozenset(
+        (stored_field_names_for(spec.read_model, include_computed=False) | spec.materialized)
+        - spec.read_omit_fields,
+    )
+    await _require_columns(
+        introspector,
+        schema=spec.read_relation[0],
+        relation=spec.read_relation[1],
+        required=read_need,
+        label=f"{spec.name} read",
+    )
+
+    await _validate_relation_models(
+        introspector,
+        schema=spec.read_relation[0],
+        relation=spec.read_relation[1],
+        models=[
+            (
+                spec.read_model,
+                spec.read_omit_fields,
+                f"{spec.name} read",
+            ),
+        ],
+        read=True,
+    )
+
+    if spec.write_relation is not None:
+        if spec.write_domain_model is None or spec.write_create_model is None:
+            raise exc.internal(
+                f"Document {spec.name!r}: write_relation requires "
+                "write_domain_model and write_create_model.",
+            )
+
+        write_need = (
+            _write_field_names_union(
+                spec.write_domain_model,
+                spec.write_create_model,
+                spec.write_update_model,
+            )
+            | spec.materialized
+        ) - spec.write_omit_fields
+
+        if spec.tenant_aware:
+            write_need = write_need | {TENANT_ID_FIELD}
+
         await _require_columns(
             introspector,
-            schema=spec.read_relation[0],
-            relation=spec.read_relation[1],
-            required=read_need,
-            label=f"{spec.name} read",
+            schema=spec.write_relation[0],
+            relation=spec.write_relation[1],
+            required=write_need,
+            label=f"{spec.name} write",
+        )
+
+        write_models: list[tuple[type[BaseModel], frozenset[str], str]] = [
+            (
+                spec.write_domain_model,
+                spec.write_omit_fields,
+                f"{spec.name} write domain",
+            ),
+            (
+                spec.write_create_model,
+                spec.write_omit_fields,
+                f"{spec.name} write create",
+            ),
+        ]
+
+        if spec.write_update_model is not None:
+            write_models.append(
+                (
+                    spec.write_update_model,
+                    spec.write_omit_fields,
+                    f"{spec.name} write update",
+                ),
+            )
+
+        await _validate_relation_models(
+            introspector,
+            schema=spec.write_relation[0],
+            relation=spec.write_relation[1],
+            models=write_models,
+        )
+
+        if spec.tenant_aware:
+            await _validate_tenant_column(
+                introspector,
+                schema=spec.write_relation[0],
+                relation=spec.write_relation[1],
+                label=f"{spec.name} write",
+            )
+
+        write_types = await introspector.get_column_types(
+            schema=spec.write_relation[0],
+            relation=spec.write_relation[1],
+        )
+        _warn_read_not_subset_of_write(spec=spec, write_column_types=write_types)
+        _warn_unused_tenant_column(spec=spec, write_column_types=write_types)
+
+        conflict_target = await resolve_write_conflict_target(
+            introspector,
+            schema=spec.write_relation[0],
+            relation=spec.write_relation[1],
+            configured=spec.conflict_target,
+            document_label=spec.name,
+        )
+        await _warn_undeclared_mechanisms(
+            introspector,
+            spec,
+            write_relation=spec.write_relation,
+            write_column_types=write_types,
+            conflict_target=conflict_target,
+            declared=declared,
+        )
+
+    if spec.history_relation is not None:
+        hist_need = (
+            frozenset(stored_field_names_for(DocumentHistory, include_computed=False))
+            - spec.history_omit_fields
+        )
+
+        if spec.tenant_aware:
+            hist_need = hist_need | {TENANT_ID_FIELD}
+
+        await _require_columns(
+            introspector,
+            schema=spec.history_relation[0],
+            relation=spec.history_relation[1],
+            required=hist_need,
+            label=f"{spec.name} history",
         )
 
         await _validate_relation_models(
             introspector,
-            schema=spec.read_relation[0],
-            relation=spec.read_relation[1],
+            schema=spec.history_relation[0],
+            relation=spec.history_relation[1],
             models=[
                 (
-                    spec.read_model,
-                    spec.read_omit_fields,
-                    f"{spec.name} read",
+                    DocumentHistory,
+                    spec.history_omit_fields,
+                    f"{spec.name} history",
                 ),
             ],
         )
 
-        if spec.write_relation is not None:
-            if spec.write_domain_model is None or spec.write_create_model is None:
-                raise exc.internal(
-                    f"Document {spec.name!r}: write_relation requires "
-                    "write_domain_model and write_create_model.",
-                )
-
-            write_need = (
-                _write_field_names_union(
-                    spec.write_domain_model,
-                    spec.write_create_model,
-                    spec.write_update_model,
-                )
-                | spec.materialized
-            ) - spec.write_omit_fields
-
-            if spec.tenant_aware:
-                write_need = write_need | {TENANT_ID_FIELD}
-
-            await _require_columns(
-                introspector,
-                schema=spec.write_relation[0],
-                relation=spec.write_relation[1],
-                required=write_need,
-                label=f"{spec.name} write",
-            )
-
-            write_models: list[tuple[type[BaseModel], frozenset[str], str]] = [
-                (
-                    spec.write_domain_model,
-                    spec.write_omit_fields,
-                    f"{spec.name} write domain",
-                ),
-                (
-                    spec.write_create_model,
-                    spec.write_omit_fields,
-                    f"{spec.name} write create",
-                ),
-            ]
-
-            if spec.write_update_model is not None:
-                write_models.append(
-                    (
-                        spec.write_update_model,
-                        spec.write_omit_fields,
-                        f"{spec.name} write update",
-                    ),
-                )
-
-            await _validate_relation_models(
-                introspector,
-                schema=spec.write_relation[0],
-                relation=spec.write_relation[1],
-                models=write_models,
-            )
-
-            if spec.tenant_aware:
-                await _validate_tenant_column(
-                    introspector,
-                    schema=spec.write_relation[0],
-                    relation=spec.write_relation[1],
-                    label=f"{spec.name} write",
-                )
-
-            write_types = await introspector.get_column_types(
-                schema=spec.write_relation[0],
-                relation=spec.write_relation[1],
-            )
-            _warn_read_not_subset_of_write(spec=spec, write_column_types=write_types)
-            _warn_unused_tenant_column(spec=spec, write_column_types=write_types)
-
-            conflict_target = await resolve_write_conflict_target(
-                introspector,
-                schema=spec.write_relation[0],
-                relation=spec.write_relation[1],
-                configured=spec.conflict_target,
-                document_label=spec.name,
-            )
-            await _warn_undeclared_mechanisms(
-                introspector,
-                spec,
-                write_relation=spec.write_relation,
-                write_column_types=write_types,
-                conflict_target=conflict_target,
-                declared=declared,
-            )
-
-        if spec.history_relation is not None:
-            hist_need = (
-                frozenset(stored_field_names_for(DocumentHistory, include_computed=False))
-                - spec.history_omit_fields
-            )
-
-            if spec.tenant_aware:
-                hist_need = hist_need | {TENANT_ID_FIELD}
-
-            await _require_columns(
+        if spec.tenant_aware:
+            await _validate_tenant_column(
                 introspector,
                 schema=spec.history_relation[0],
                 relation=spec.history_relation[1],
-                required=hist_need,
                 label=f"{spec.name} history",
             )
 
-            await _validate_relation_models(
-                introspector,
-                schema=spec.history_relation[0],
-                relation=spec.history_relation[1],
-                models=[
-                    (
-                        DocumentHistory,
-                        spec.history_omit_fields,
-                        f"{spec.name} history",
-                    ),
-                ],
-            )
 
-            if spec.tenant_aware:
-                await _validate_tenant_column(
-                    introspector,
-                    schema=spec.history_relation[0],
-                    relation=spec.history_relation[1],
-                    label=f"{spec.name} history",
-                )
+# ....................... #
+
+_DOCUMENT_REFUSAL_KINDS: Final = frozenset({ExceptionKind.INTERNAL, ExceptionKind.CONFIGURATION})
+"""Kinds one document's refusal is raised as; an error of another kind is not about a document."""
+
+
+def _refusal(failures: Sequence[tuple[str, CoreException]]) -> CoreException:
+    """The one refusal as it is, or several as one error naming each document."""
+
+    if len(failures) == 1:
+        return failures[0][1]
+
+    return exc.internal(
+        f"Postgres schema validation refused {len(failures)} documents:"
+        + "".join(f"\n  - {name}: {e.summary}" for name, e in failures),
+        code="postgres_schema_documents_refused",
+        details={
+            "failures": [
+                {"document": name, "code": e.code, "summary": e.summary, "details": e.details}
+                for name, e in failures
+            ],
+        },
+    )
+
+
+async def validate_postgres_document_schemas(
+    introspector: PostgresIntrospector,
+    specs: Sequence[PostgresDocumentSchemaSpec],
+) -> None:
+    """Assert each spec's relations expose the columns implied by the Pydantic models.
+
+    Every spec is checked, so one startup names every document refused. A single refusal is
+    raised as it is. An error that is not about one document, such as a lost connection or a
+    missing introspection partition, stops the checks at once; the refusals found before it
+    are raised in its place, chained from it.
+
+    :param introspector: Catalog introspector for the database the specs map to.
+    :param specs: The documents to check.
+    :raises CoreException: ``internal``, code ``postgres_schema_documents_refused``, when
+        several documents are refused: ``details["failures"]`` lists each one's ``document``,
+        ``code``, ``summary`` and ``details``.
+    """
+
+    failures: list[tuple[str, CoreException]] = []
+
+    for spec in specs:
+        try:
+            await _validate_document(introspector, spec)
+
+        except exc as e:
+            if (
+                e.kind not in _DOCUMENT_REFUSAL_KINDS
+                or e.code == "introspection_partition_required"
+            ):
+                # The hook skips on a missing partition: a document already refused must not
+                # be skipped with it.
+                if failures:
+                    raise _refusal(failures) from e
+
+                raise
+
+            failures.append((spec.name, e))
+
+    if failures:
+        raise _refusal(failures)

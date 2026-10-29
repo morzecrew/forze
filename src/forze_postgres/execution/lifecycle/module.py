@@ -55,19 +55,22 @@ class PostgresLifecycleModule(LifecycleModule):
         default=None,
         converter=MappingConverter.to_str_key_frozen,  # type: ignore[misc]
     )
-    """When set, registers catalog warmup for these search routes."""
+    """When set, registers catalog warmup for these search routes. Pass the deps module's own
+    :attr:`~..deps.module.PostgresDepsModule.searches`, so a search added there is warmed too."""
 
     hub_searches: StrKeyMapping[PostgresHubSearchConfig] | None = attrs.field(
         default=None,
         converter=MappingConverter.to_str_key_frozen,  # type: ignore[misc]
     )
-    """When set, registers catalog warmup for hub search routes."""
+    """When set, registers catalog warmup for hub search routes (pass the deps module's
+    ``hub_searches``)."""
 
     federated_searches: StrKeyMapping[PostgresFederatedSearchConfig] | None = attrs.field(
         default=None,
         converter=MappingConverter.to_str_key_frozen,  # type: ignore[misc]
     )
-    """When set, registers catalog warmup for federated search routes."""
+    """When set, registers catalog warmup for federated search routes (pass the deps module's
+    ``federated_searches``)."""
 
     schema_specs: Sequence[PostgresDocumentSchemaSpec] = attrs.field(factory=tuple)
     """When non-empty, registers document schema validation at startup. Build it with

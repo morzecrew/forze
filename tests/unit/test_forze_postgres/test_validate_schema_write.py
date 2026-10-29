@@ -360,3 +360,250 @@ async def test_the_suggestion_carries_skip_null_and_holds_commit() -> None:
     assert len(reported) == 1
     assert "skip_null=True" in reported[0]
     assert 'holds="commit"' in reported[0]
+
+
+# ....................... #
+
+
+def _nullable() -> PostgresType:
+    return PostgresType(base="text", is_array=False, not_null=False)
+
+
+def _read_only(name: str, relation: str) -> PostgresDocumentSchemaSpec:
+    return PostgresDocumentSchemaSpec(
+        name=name, read_model=_Read, read_relation=("public", relation)
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind", ["view", "materialized_view"])
+async def test_a_view_column_read_as_nullable_does_not_refuse_a_required_field(kind: str) -> None:
+    # Postgres records NOT NULL on tables only: every view column reads nullable.
+    intro = MagicMock(spec=PostgresIntrospector)
+    intro.get_column_types = AsyncMock(return_value={"id": _nullable(), "name": _nullable()})
+    intro.get_relation = AsyncMock(return_value=kind)
+
+    await validate_postgres_document_schemas(intro, [_read_only("doc", "v")])
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind", ["table", "partitioned_table"])
+async def test_a_nullable_table_column_still_refuses_a_required_field(kind: str) -> None:
+    intro = MagicMock(spec=PostgresIntrospector)
+    intro.get_column_types = AsyncMock(return_value={"id": _col("id"), "name": _nullable()})
+    intro.get_relation = AsyncMock(return_value=kind)
+
+    with pytest.raises(CoreException, match="nullable column") as caught:
+        await validate_postgres_document_schemas(intro, [_read_only("doc", "t")])
+
+    assert caught.value.code == "postgres_schema_validation_failed"
+
+
+@pytest.mark.asyncio
+async def test_every_failing_document_is_reported_in_one_error() -> None:
+    intro = MagicMock(spec=PostgresIntrospector)
+    columns = {
+        "t_ok": {"id": _col("id"), "name": _col("name")},
+        "t_nullable": {"id": _col("id"), "name": _nullable()},
+        "t_missing": {"id": _col("id")},
+    }
+
+    async def _types(*, schema: str, relation: str) -> dict[str, PostgresType]:
+        return columns[relation]
+
+    intro.get_column_types = AsyncMock(side_effect=_types)
+    intro.get_relation = AsyncMock(return_value="table")
+    specs = [
+        _read_only("nullable", "t_nullable"),
+        _read_only("ok", "t_ok"),
+        _read_only("missing", "t_missing"),
+    ]
+
+    with pytest.raises(CoreException) as caught:
+        await validate_postgres_document_schemas(intro, specs)
+
+    assert caught.value.code == "postgres_schema_documents_refused"
+    assert caught.value.details is not None
+    failures = caught.value.details["failures"]
+    assert [f["document"] for f in failures] == ["nullable", "missing"]
+    assert failures[0]["code"] == "postgres_schema_validation_failed"
+    assert failures[0]["details"]["field"] == "name"
+    assert "missing columns" in failures[1]["summary"]
+    assert "nullable: " in caught.value.summary
+    assert "missing: " in caught.value.summary
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "error",
+    [
+        CoreException.infrastructure("Database connection error."),
+        CoreException.internal("No tenant.", code="introspection_partition_required"),
+    ],
+)
+async def test_an_error_of_no_one_document_stops_the_validation_at_once(
+    error: CoreException,
+) -> None:
+    intro = MagicMock(spec=PostgresIntrospector)
+    intro.get_column_types = AsyncMock(side_effect=error)
+
+    with pytest.raises(CoreException) as caught:
+        await validate_postgres_document_schemas(
+            intro, [_read_only("a", "t"), _read_only("b", "t")]
+        )
+
+    assert caught.value is error
+    assert intro.get_column_types.await_count == 1
+
+
+def _stop_error(kind: str) -> CoreException:
+    if kind == "partition":
+        return CoreException.internal("No tenant.", code="introspection_partition_required")
+
+    return CoreException.infrastructure("Database connection error.")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stop", ["partition", "infrastructure"])
+@pytest.mark.parametrize("refused", [1, 2])
+async def test_refusals_found_before_an_error_of_no_one_document_are_raised(
+    stop: str,
+    refused: int,
+) -> None:
+    # The hook skips on a missing partition, so the refusal must not be lost to it.
+    error = _stop_error(stop)
+    intro = MagicMock(spec=PostgresIntrospector)
+
+    async def _types(*, schema: str, relation: str) -> dict[str, PostgresType]:
+        if relation == "t_nullable":
+            return {"id": _col("id"), "name": _nullable()}
+
+        raise error
+
+    intro.get_column_types = AsyncMock(side_effect=_types)
+    intro.get_relation = AsyncMock(return_value="table")
+    specs = [_read_only(f"nullable{i}", "t_nullable") for i in range(refused)]
+    specs += [_read_only("stops", "t"), _read_only("never", "t_nullable")]
+
+    with pytest.raises(CoreException) as caught:
+        await validate_postgres_document_schemas(intro, specs)
+
+    assert caught.value.__cause__ is error
+    assert caught.value.details is not None
+
+    if refused == 1:
+        assert caught.value.code == "postgres_schema_validation_failed"
+        assert caught.value.details["field"] == "name"
+
+    else:
+        assert caught.value.code == "postgres_schema_documents_refused"
+        assert [f["document"] for f in caught.value.details["failures"]] == [
+            "nullable0",
+            "nullable1",
+        ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("side", ["write", "history"])
+async def test_a_write_or_history_view_keeps_the_nullability_rule(side: str) -> None:
+    # Only a read relation is let off: a write through a view needs every required value.
+    intro = MagicMock(spec=PostgresIntrospector)
+    not_null = {
+        base: PostgresType(base=base, is_array=False, not_null=True)
+        for base in ("uuid", "int4", "timestamptz", "jsonb")
+    }
+    columns = {
+        "v": {"id": _nullable(), "name": _nullable()},
+        "w": {"id": _col("id"), "name": _nullable(), "rev": not_null["int4"]},
+        "h": {
+            "source": _nullable(),
+            "id": not_null["uuid"],
+            "rev": not_null["int4"],
+            "created_at": not_null["timestamptz"],
+            "data": not_null["jsonb"],
+        },
+    }
+
+    async def _types(*, schema: str, relation: str) -> dict[str, PostgresType]:
+        return columns[relation]
+
+    intro.get_column_types = AsyncMock(side_effect=_types)
+    intro.get_relation = AsyncMock(return_value="view")
+    relations: dict[str, Any] = (
+        {
+            "write_domain_model": _Domain,
+            "write_create_model": _Create,
+            "write_relation": ("public", "w"),
+        }
+        if side == "write"
+        else {"history_enabled": True, "history_relation": ("public", "h")}
+    )
+    spec = PostgresDocumentSchemaSpec(
+        name="doc", read_model=_Read, read_relation=("public", "v"), **relations
+    )
+
+    with pytest.raises(CoreException, match="nullable column") as caught:
+        await validate_postgres_document_schemas(intro, [spec])
+
+    assert caught.value.details is not None
+    assert caught.value.details["label"].startswith(f"doc {side}")
+
+
+# ....................... #
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("missing", [None, "w", "h"])
+async def test_a_tenant_aware_write_and_history_check_their_tenant_columns(
+    missing: str | None,
+) -> None:
+    tenant = PostgresType(base="uuid", is_array=False, not_null=True)
+    not_null = {
+        base: PostgresType(base=base, is_array=False, not_null=True)
+        for base in ("uuid", "int4", "timestamptz", "jsonb")
+    }
+    columns: dict[str, dict[str, PostgresType]] = {
+        "v": {"id": _col("id"), "name": _col("name")},
+        "w": {"id": _col("id"), "name": _col("name"), "rev": not_null["int4"]},
+        "h": {
+            "source": _col("source"),
+            "id": not_null["uuid"],
+            "rev": not_null["int4"],
+            "created_at": not_null["timestamptz"],
+            "data": not_null["jsonb"],
+        },
+    }
+
+    for relation, cols in columns.items():
+        if relation != missing:
+            cols[TENANT_ID_FIELD] = tenant
+
+    async def _types(*, schema: str, relation: str) -> dict[str, PostgresType]:
+        return columns[relation]
+
+    intro = MagicMock(spec=PostgresIntrospector)
+    intro.get_column_types = AsyncMock(side_effect=_types)
+    intro.get_relation = AsyncMock(return_value="table")
+    spec = PostgresDocumentSchemaSpec(
+        name="doc",
+        read_model=_Read,
+        read_relation=("public", "v"),
+        tenant_aware=True,
+        write_domain_model=_Domain,
+        write_create_model=_Create,
+        write_relation=("public", "w"),
+        history_enabled=True,
+        history_relation=("public", "h"),
+    )
+
+    if missing is None:
+        await validate_postgres_document_schemas(intro, [spec])
+
+        return
+
+    with pytest.raises(CoreException, match=TENANT_ID_FIELD) as caught:
+        await validate_postgres_document_schemas(intro, [spec])
+
+    side = "write" if missing == "w" else "history"
+    assert caught.value.details is not None
+    assert caught.value.details["document"] == f"doc {side}"
