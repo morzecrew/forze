@@ -157,7 +157,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **The login lockout no longer grows its counter store without bound** (**behaviour change**). A check writes no key, and a window's bucket lapses a minute after the window; Redis, the Postgres purge step, a Mongo TTL index or a Firestore TTL policy reclaims it. Without Postgres `expires_at` it writes no ttl and warns.
 
-- **`download_stream` on S3 and GCS no longer mixes two versions of an object** (**behaviour change**). An overwrite mid-stream fails the next read with `conflict` (`READ_PRECONDITION_FAILED_CODE`). A hand-written `ObjectStorageClientPort` must accept `if_match` on `download_range_bytes`.
+- **S3 and GCS streams and encrypted ranged reads no longer mix two versions of an object** (**Breaking**). A replacement mid-read, or a GCS metadata-only change, fails the next read with `conflict` (`READ_PRECONDITION_FAILED_CODE`). A custom `ObjectStorageClientPort` must accept `if_match` on `download_range_bytes`.
 
 - **`HttpClient` reads a compressed response.** A gzip or deflate body, and with no cap a zstd or brotli one, no longer fails `request`, or a rejected response from `stream`, as an infrastructure error. `RoutedHttpClient` and declared services are fixed with it.
 

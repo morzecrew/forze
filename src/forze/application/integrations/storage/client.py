@@ -213,6 +213,23 @@ def read_precondition_failed(key: str) -> CoreException:
 # ....................... #
 
 
+def unpinnable_read(key: str) -> CoreException:
+    """Build the error for a pinned read whose backend names no version to pin it to.
+
+    S3 and GCS always report an ETag (and GCS a generation), so this is a backend that
+    breaks the contract. The read is refused rather than left unpinned, which could
+    splice two versions.
+    """
+
+    return exc.internal(
+        f"Read of {key!r} refused: the backend reported no ETag or generation to pin it to",
+        code="core.storage.read_unpinnable",
+    )
+
+
+# ....................... #
+
+
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class ObjectStorageSSE:
@@ -440,7 +457,8 @@ class ObjectStorageClientPort(Protocol):
         sends ``If-Match``; **GCS** compares the ETag and pins the media ``GET`` with
         ``ifGenerationMatch``. A changed object raises ``conflict`` with code
         :data:`~forze.application.contracts.storage.READ_PRECONDITION_FAILED_CODE`; a
-        deleted one raises ``not_found``. ``None`` reads whatever version is current.
+        deleted one raises ``not_found``; a response naming no version to check
+        raises :func:`unpinnable_read`. ``None`` reads whatever version is current.
 
         :returns: ``(body, content_range, total_size)`` where *body* carries the
             range slice and its content type (``body.metadata`` may be empty for

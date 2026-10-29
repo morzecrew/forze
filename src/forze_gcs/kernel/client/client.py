@@ -30,6 +30,7 @@ from forze.application.integrations.storage.client import (
     presign_expiry_seconds,
     read_precondition_failed,
     reject_contradictory_write_conditions,
+    unpinnable_read,
     unsatisfiable_range,
     validate_range,
 )
@@ -399,8 +400,9 @@ class GCSClient(GCSClientPort):
         *if_match* is checked against that metadata head's ETag, and the head's
         generation rides the media ``GET`` as ``ifGenerationMatch``, so an object
         replaced in between answers 412. Either mismatch raises ``conflict``
-        (:func:`read_precondition_failed`). A GCS ETag also changes on a metadata-only
-        update, so a tag change mid-stream fails the stream too.
+        (:func:`read_precondition_failed`); an object with no generation raises
+        :func:`unpinnable_read`. A GCS ETag also changes on a metadata-only update, so a
+        tag change mid-stream fails the stream too.
 
         :returns: ``(body, content_range, total_size)`` — the body's content
             type comes from the already-fetched metadata head; its metadata is
@@ -419,8 +421,10 @@ class GCSClient(GCSClientPort):
             if head.etag != if_match.strip('"'):
                 raise read_precondition_failed(key)
 
-            if generation := raw.get("generation"):
-                params["ifGenerationMatch"] = str(generation)
+            if not (generation := raw.get("generation")):
+                raise unpinnable_read(key)
+
+            params["ifGenerationMatch"] = str(generation)
 
         if total == 0 or start >= total:
             raise unsatisfiable_range(start, total)

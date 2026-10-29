@@ -125,6 +125,23 @@ async def test_download_range_if_match_refuses_a_changed_etag() -> None:
 
 
 @pytest.mark.asyncio
+async def test_download_range_if_match_refuses_an_object_with_no_generation() -> None:
+    # Without a generation the media GET cannot be pinned: refuse rather than read unpinned.
+    fake = MagicMock()
+    fake.download_metadata = AsyncMock(
+        return_value={"contentType": "text/plain", "size": 10, "etag": "E1"},
+    )
+    fake._download = AsyncMock()
+    client = _client(fake)
+
+    with pytest.raises(CoreException) as ei:
+        await client.download_range_bytes("b", "k", start=0, end=4, if_match="E1")
+
+    assert ei.value.code == "core.storage.read_unpinnable"
+    fake._download.assert_not_called()
+
+
+@pytest.mark.asyncio
 async def test_download_range_if_match_412_maps_to_conflict() -> None:
     fake = MagicMock()
     fake.download_metadata = AsyncMock(

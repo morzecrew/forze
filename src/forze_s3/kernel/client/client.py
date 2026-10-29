@@ -44,6 +44,7 @@ from forze.application.integrations.storage.client import (
     presign_expiry_seconds,
     read_precondition_failed,
     reject_contradictory_write_conditions,
+    unpinnable_read,
     unsatisfiable_range,
     validate_range,
 )
@@ -540,7 +541,8 @@ class S3Client(S3ClientPort):
         :param start: First byte offset (inclusive, ``>= 0``).
         :param end: Last byte offset (inclusive), or ``None`` for EOF.
         :param if_match: Sent as ``If-Match``; a 412, or a response carrying another
-            ETag, raises ``conflict`` (:func:`read_precondition_failed`).
+            ETag, raises ``conflict`` (:func:`read_precondition_failed`), and a response
+            carrying none raises :func:`unpinnable_read`.
         :returns: ``(body, content_range, total_size)`` where *body* carries the
             range slice and its content type (metadata may be empty for ranges).
         """
@@ -572,12 +574,13 @@ class S3Client(S3ClientPort):
 
             raise
 
-        # A server that ignores If-Match still names the version it served.
+        # A server that ignores If-Match still names the version it served; one that names
+        # none cannot show it served the pinned one.
         served = str(resp.get("ETag") or "")
 
-        if if_match is not None and served and _quote_etag(served) != _quote_etag(if_match):
-            resp["Body"].close()
-            raise read_precondition_failed(key)
+        if if_match is not None and (not served or _quote_etag(served) != _quote_etag(if_match)):
+            resp["Body"].close()  # aiohttp's ClientResponse.close is synchronous
+            raise read_precondition_failed(key) if served else unpinnable_read(key)
 
         body = resp["Body"]
         data = await body.read()

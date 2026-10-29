@@ -292,6 +292,37 @@ async def test_download_stream_fails_when_the_object_changes_mid_stream() -> Non
     assert ei.value.code == READ_PRECONDITION_FAILED_CODE
 
 
+class _NoEtagClient(_FakeClient):
+    """A backend whose head names no version: nothing to pin a read to."""
+
+    async def head_object(
+        self, bucket: str, key: str, *, include_tags: bool = False
+    ) -> ObjectStorageHead:
+        return attrs.evolve(await super().head_object(bucket, key), etag="")
+
+
+async def test_download_stream_refuses_an_object_with_no_etag() -> None:
+    client = _NoEtagClient()
+    client.objects["docs/k"] = b"a" * 4096
+
+    with pytest.raises(CoreException) as ei:
+        await _adapter(client).download_stream("docs/k")
+
+    assert ei.value.code == "core.storage.read_unpinnable"
+    assert client.range_reads == []  # refused before any byte is read
+
+
+async def test_encrypted_ranged_read_refuses_an_object_with_no_etag() -> None:
+    client = _NoEtagClient()
+    adapter = _adapter(client, cipher=_keyring())
+    stored = await adapter.upload_stream(_aiter(b"x" * 300), filename="f.bin", chunk_size=32)
+
+    with pytest.raises(CoreException) as ei:
+        await adapter.download_range(stored.key, start=0, end=9)
+
+    assert ei.value.code == "core.storage.read_unpinnable"
+
+
 async def test_download_stream_back_compat_whole_payload_envelope() -> None:
     """A legacy whole-payload (FZEv) encrypted object still streams (buffered decrypt)."""
 
@@ -376,6 +407,27 @@ async def test_streaming_cipher_required_when_encrypting() -> None:
 
 # ....................... #
 # ranged reads over encrypted (chunked) objects (Phase 5)
+
+
+async def test_encrypted_ranged_read_fails_when_the_object_changes_between_reads() -> None:
+    # The probe classifies one version; the chunk reads must not serve another.
+    client = _FakeClient()
+    adapter = _adapter(client, cipher=_keyring())
+    first = await adapter.upload_stream(_aiter(b"a" * 300), filename="f.bin", chunk_size=32)
+    second = await adapter.upload_stream(_aiter(b"b" * 300), filename="f.bin", chunk_size=32)
+    probe = client.download_range_bytes
+
+    async def overwrite_after_the_probe(*args: object, **kwargs: object) -> object:
+        result = await probe(*args, **kwargs)  # type: ignore[arg-type]
+        client.objects[first.key] = client.objects[second.key]
+        return result
+
+    client.download_range_bytes = overwrite_after_the_probe  # type: ignore[method-assign]
+
+    with pytest.raises(CoreException) as ei:
+        await adapter.download_range(first.key, start=0, end=9)
+
+    assert ei.value.code == READ_PRECONDITION_FAILED_CODE
 
 
 @pytest.mark.parametrize(
