@@ -232,6 +232,150 @@ class TestGuardAggregates:
         guard.check(aggregates=_AGG)
 
 
+class TestGuardAggregateAliases:
+    """`$having` and aggregate sorts name output aliases; each is checked as its source."""
+
+    _GUARD = QueryFieldGuard(
+        policy=QueryFieldPolicy(
+            filterable={"category"},
+            sortable={"category"},
+            aggregatable={"category", "price", "created_at"},
+        ),
+        spec_name="orders",
+    )
+
+    @pytest.mark.parametrize(
+        ("having", "source"),
+        [
+            ({"$values": {"p": {"$gt": 10}}}, "price"),  # group alias over `price`
+            ({"$values": {"total": {"$gt": 10}}}, "price"),  # `$sum` of `price`
+            ({"$values": {"total.x": {"$gt": 10}}}, "price"),  # dotted, by its root
+            ({"$values": {"p90": {"$gt": 10}}}, "price"),  # `$percentile` with `p`
+            ({"$values": {"day": {"$gte": "2026-01-01T00:00:00Z"}}}, "created_at"),  # `$trunc`
+            (
+                {"$or": [{"$values": {"c": "x"}}, {"$values": {"total": {"$gt": 10}}}]},
+                "price",
+            ),
+            ({"$not": {"$values": {"total": {"$gt": 10}}}}, "price"),
+            ({"$fields": {"n": {"$gt": "total"}}}, "price"),  # right-hand side of a compare
+        ],
+    )
+    def test_having_needs_a_filterable_source(
+        self, having: dict[str, object], source: str
+    ) -> None:
+        aggregates = {
+            "$groups": {
+                "c": "category",
+                "p": "price",
+                "day": {"$trunc": {"field": "created_at", "unit": "day"}},
+            },
+            "$computed": {
+                "n": {"$count": None},
+                "total": {"$sum": "price"},
+                "p90": {"$percentile": {"field": "price", "p": 0.9}},
+            },
+            "$having": having,
+        }
+
+        with pytest.raises(CoreException) as ei:
+            self._GUARD.check(aggregates=aggregates)
+
+        assert ei.value.code == "field_not_filterable"
+        assert repr(source) in str(ei.value)
+
+    def test_having_on_a_filterable_source_or_a_count_passes(self) -> None:
+        self._GUARD.check(
+            aggregates={
+                "$groups": {"c": "category"},
+                "$computed": {"n": {"$count": None}, "top": {"$max": "category"}},
+                "$having": {"$values": {"c": "x", "n": {"$gt": 1}, "top": "y"}},
+            }
+        )
+
+    def test_list_form_groups_check_their_own_field(self) -> None:
+        self._GUARD.check(
+            aggregates={
+                "$groups": ["category"],
+                "$computed": {"n": {"$count": None}},
+                "$having": {"$values": {"category": "x"}},
+            },
+            sorts={"category": "asc"},
+        )
+
+    @pytest.mark.parametrize(
+        ("aggregates", "sorts"),
+        [
+            # A group alias named like a sortable field, over `price`.
+            (
+                {"$groups": {"category": "price"}, "$computed": {"n": {"$count": None}}},
+                {"category": "asc"},
+            ),
+            # A computed alias named like one.
+            (
+                {"$groups": {"c": "category"}, "$computed": {"category": {"$sum": "price"}}},
+                {"category": "desc"},
+            ),
+            # List-form groups: the alias is the field.
+            ({"$groups": ["price"], "$computed": {"n": {"$count": None}}}, {"price": "asc"}),
+            # A dotted key on an alias, by its root.
+            ({"$groups": {"p": "price"}, "$computed": {"n": {"$count": None}}}, {"p.x": "asc"}),
+            (
+                {"$computed": {"p90": {"$percentile": {"field": "price", "p": 0.9}}}},
+                {"p90": "desc"},
+            ),
+        ],
+    )
+    def test_sort_needs_a_sortable_source(
+        self, aggregates: dict[str, object], sorts: dict[str, str]
+    ) -> None:
+        with pytest.raises(CoreException) as ei:
+            self._GUARD.check(aggregates=aggregates, sorts=sorts)
+
+        assert ei.value.code == "field_not_sortable"
+        assert "'price'" in str(ei.value)
+
+    def test_sort_on_a_trunc_group_needs_its_source_sortable(self) -> None:
+        with pytest.raises(CoreException) as ei:
+            self._GUARD.check(
+                aggregates={
+                    "$groups": {"day": {"$trunc": {"field": "created_at", "unit": "day"}}},
+                    "$computed": {"n": {"$count": None}},
+                },
+                sorts={"day": "asc"},
+            )
+
+        assert ei.value.code == "field_not_sortable"
+        assert "'created_at'" in str(ei.value)
+
+    @pytest.mark.parametrize("sorts", ["category", ["category"]])
+    def test_a_sort_that_is_not_a_mapping_is_refused(self, sorts: object) -> None:
+        with pytest.raises(CoreException, match="must be an object") as ei:
+            self._GUARD.check(sorts=sorts)  # type: ignore[arg-type]
+
+        assert ei.value.kind is ExceptionKind.PRECONDITION
+
+    def test_having_through_a_shadowing_alias_is_refused(self) -> None:
+        with pytest.raises(CoreException) as ei:
+            self._GUARD.check(
+                aggregates={
+                    "$groups": {"category": "price"},
+                    "$computed": {"n": {"$count": None}},
+                    "$having": {"$values": {"category": {"$gt": 5}}},
+                }
+            )
+
+        assert ei.value.code == "field_not_filterable"
+
+    def test_sort_on_a_sortable_source_or_a_count_passes(self) -> None:
+        self._GUARD.check(
+            aggregates={
+                "$groups": {"c": "category"},
+                "$computed": {"n": {"$count": None}},
+            },
+            sorts={"c": "asc", "c.x": "asc", "n": "desc"},
+        )
+
+
 class TestValidateRuntimeFilterFields:
     def test_known_fields_pass(self) -> None:
         from pydantic import BaseModel, computed_field

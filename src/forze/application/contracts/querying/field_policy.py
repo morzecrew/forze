@@ -8,7 +8,7 @@ per-aggregate contract, distinct from authorization row-scoping (a dynamic, per-
 policy): the two compose, neither replaces the other.
 """
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 
 import attrs
 from pydantic import BaseModel
@@ -20,7 +20,7 @@ from .expressions import (
     QueryFilterExpression,
     QuerySortExpression,
 )
-from .internal.aggregate import AggregatesExpressionParser
+from .internal.aggregate import AggregatesExpressionParser, ParsedAggregates
 from .internal.nodes import (
     ELEM_SCALAR_FIELD,
     QueryAnd,
@@ -40,6 +40,21 @@ def _root(path: str) -> str:
     """Top-level field segment of a (possibly dotted) field path."""
 
     return path.split(".", 1)[0]
+
+
+def _refuse_outside(
+    fields: frozenset[str],
+    *,
+    allowed: frozenset[str],
+    spec_name: str,
+    action: str,
+    code: str,
+) -> None:
+    if forbidden := fields - allowed:
+        raise exc.precondition(
+            f"{action} on field(s) {sorted(forbidden)} is not allowed for {spec_name!r}.",
+            code=code,
+        )
 
 
 def collect_filter_field_roots(
@@ -68,6 +83,14 @@ def _field_roots(
 ) -> tuple[frozenset[str], frozenset[str]]:
     """Every referenced root, and the ones that are the right-hand side of a field compare."""
 
+    return _expr_roots(
+        parser.parse_filter(expr) if parser is not None else QueryFilterExpressionParser.parse(expr)
+    )
+
+
+def _expr_roots(expr: QueryExpr) -> tuple[frozenset[str], frozenset[str]]:
+    """:func:`_field_roots` over an already parsed AST."""
+
     roots: set[str] = set()
     compared: set[str] = set()
 
@@ -95,9 +118,7 @@ def _field_roots(
             case _:
                 pass
 
-    _walk(
-        parser.parse_filter(expr) if parser is not None else QueryFilterExpressionParser.parse(expr)
-    )
+    _walk(expr)
 
     return frozenset(roots), frozenset(compared)
 
@@ -117,13 +138,13 @@ def validate_filterable_fields(
     if filters is None:
         return
 
-    forbidden = collect_filter_field_roots(filters, parser=parser) - allowed
-
-    if forbidden:
-        raise exc.precondition(
-            f"Filtering on field(s) {sorted(forbidden)} is not allowed for {spec_name!r}.",
-            code="field_not_filterable",
-        )
+    _refuse_outside(
+        collect_filter_field_roots(filters, parser=parser),
+        allowed=allowed,
+        spec_name=spec_name,
+        action="Filtering",
+        code="field_not_filterable",
+    )
 
 
 def validate_runtime_filter_fields(
@@ -210,13 +231,13 @@ def validate_sortable_fields(
     if not sorts:
         return
 
-    forbidden = {_root(field) for field in sorts} - allowed
-
-    if forbidden:
-        raise exc.precondition(
-            f"Sorting on field(s) {sorted(forbidden)} is not allowed for {spec_name!r}.",
-            code="field_not_sortable",
-        )
+    _refuse_outside(
+        frozenset(_root(field) for field in sorts),
+        allowed=allowed,
+        spec_name=spec_name,
+        action="Sorting",
+        code="field_not_sortable",
+    )
 
 
 # ....................... #
@@ -274,6 +295,31 @@ def validate_aggregatable_fields(
             f"Aggregating on field(s) {sorted(forbidden)} is not allowed for {spec_name!r}.",
             code="field_not_aggregatable",
         )
+
+
+def _alias_sources(parsed: ParsedAggregates) -> dict[str, str | None]:
+    """Each output alias mapped to the root field it derives from; ``None`` for a ``$count``."""
+
+    sources: dict[str, str | None] = {
+        group.alias: _root(group.expr.field) for group in parsed.groups
+    }
+    sources |= {
+        field.alias: None if field.field is None else _root(field.field)
+        for field in parsed.computed_fields
+    }
+
+    return sources
+
+
+def _source_roots(names: Iterable[str], sources: Mapping[str, str | None]) -> frozenset[str]:
+    """Roots of *names*, each output alias in *sources* replaced by the field it derives from.
+
+    An alias may be named like a model field, so it is never taken as that field.
+    """
+
+    roots = {_root(name) for name in names}
+
+    return frozenset(source for root in roots if (source := sources.get(root, root)) is not None)
 
 
 def _to_frozenset(value: Iterable[str] | None) -> frozenset[str] | None:
@@ -349,10 +395,12 @@ class QueryFieldGuard:
     ) -> None:
         """Validate caller *filters* / *sorts* / *aggregates* against the policy.
 
-        Filters (top-level *and* per-metric aggregate filters) are checked against the
-        filterable axis; sorts against sortable; group/computed-metric fields against
-        aggregatable. Raises on the first violation; axes whose allow-set is ``None`` are
-        skipped.
+        Filters (top-level, per-metric aggregate filters *and* ``$having``) are checked
+        against the filterable axis; sorts against sortable; group/computed-metric fields
+        against aggregatable. ``$having`` and the sorts of an aggregate name output aliases,
+        so each alias is checked as the field it derives from: a group's field, or a metric's
+        (a sum is filtered or sorted only where its field may be); a ``$count`` derives from
+        no field. Raises on the first violation; axes whose allow-set is ``None`` are skipped.
         """
 
         parser = (
@@ -360,6 +408,12 @@ class QueryFieldGuard:
             if self.filter_limits is not None
             else None
         )
+        parsed = (
+            AggregatesExpressionParser.parse(aggregates, filter_parser=parser)
+            if aggregates is not None
+            else None
+        )
+        sources = _alias_sources(parsed) if parsed is not None else {}
 
         if self.policy.filterable is not None:
             validate_filterable_fields(
@@ -377,8 +431,30 @@ class QueryFieldGuard:
                         parser=parser,
                     )
 
-        if self.policy.sortable is not None:
-            validate_sortable_fields(sorts, allowed=self.policy.sortable, spec_name=self.spec_name)
+            if parsed is not None and parsed.having is not None:
+                _refuse_outside(
+                    _source_roots(_expr_roots(parsed.having)[0], sources),
+                    allowed=self.policy.filterable,
+                    spec_name=self.spec_name,
+                    action="Filtering",
+                    code="field_not_filterable",
+                )
+
+        if self.policy.sortable is not None and sorts is not None:
+            # Iterated below, a string would be checked one character at a time.
+            if not isinstance(sorts, Mapping):
+                raise exc.precondition(
+                    "A sort expression must be an object mapping fields to directions, "
+                    f"got {type(sorts).__name__}",
+                )
+
+            _refuse_outside(
+                _source_roots(sorts, sources),
+                allowed=self.policy.sortable,
+                spec_name=self.spec_name,
+                action="Sorting",
+                code="field_not_sortable",
+            )
 
         if self.policy.aggregatable is not None:
             validate_aggregatable_fields(

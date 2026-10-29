@@ -350,7 +350,8 @@ class AggregatedListDocuments(Handler[Alr, ProjectedPaginated]):
 
     query_guard: QueryFieldGuard | None = attrs.field(default=None)
     """Optional boundary guard rejecting filters/sorts/aggregate fields outside the spec's
-    allow-sets (group-by + computed-metric fields and per-metric filters are checked too)."""
+    allow-sets (group-by + computed-metric fields and per-metric filters are checked too, and
+    ``$having`` and sorts as the fields their aliases derive from)."""
 
     # ....................... #
 

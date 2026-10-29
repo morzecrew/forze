@@ -52,6 +52,25 @@ plus per-aggregate policy:
 `write` is a `DocumentWriteTypes` TypedDict — `domain` (the `Document` subclass),
 `create_cmd`, and an optional `update_cmd`.
 
+### Query policy
+
+`QueryFieldPolicy` takes three allow-sets of read-model field names: `filterable`,
+`sortable` and `aggregatable`. Each one is `None` by default, which allows every read
+field. The generated document list operations enforce the policy, and so does every
+HTTP, MCP or agent-tool surface built on them. The query port does not, so internal code
+is not restricted. A search spec has no query policy. A refused query raises
+`field_not_filterable`, `field_not_sortable` or `field_not_aggregatable`.
+
+On a document aggregate (`agg_list`), groups and measures are checked against
+`aggregatable`, and each metric's `filter` against `filterable`. `$having` and `sorts`
+name output aliases, so each alias is checked as the field it comes from, whatever it is
+called:
+
+- `$having` needs that field filterable, and a sort needs it sortable.
+- A measure counts as its field: a `$having` on the `$sum` of `salary` needs `salary`
+  filterable.
+- A `$count` comes from no field, so it can always be filtered and sorted on.
+
 ### Lenient read fields
 
 By default every read-model field must map to a stored column, and a relational
