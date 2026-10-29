@@ -169,6 +169,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Analytics ingest stores a plain `Enum` member as its value, as a document row does** (**behaviour change**). Postgres wrote its name (`OPEN`), and ClickHouse refused it. Rows ingested earlier keep the name until rewritten.
 
+- **A download's `Content-Disposition` encodes `/` in `filename*`.** The generated storage download routes and `streamed_download_response` encode every character outside RFC 5987 `attr-char`, so a name such as `q3/rëport.pdf` stays valid and clients keep it.
+
 ### Security
 
 - **A document query policy checks `$having` and aggregate sorts against their source fields** (**Breaking**). Refused now: `$having` over a field that is not filterable, and a sort by an alias whose field is not sortable. Allowed now: a sort by a `$count` alias, or by an alias whose field is sortable.

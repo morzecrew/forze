@@ -441,16 +441,21 @@ def _parse_byte_range(
 
 # ....................... #
 
+_ATTR_CHAR_PUNCTUATION: Final[str] = "!#$&+-.^_`|~"
+"""RFC 5987 ``attr-char`` beyond letters and digits: what ``filename*`` may carry unencoded."""
+
 
 def _content_disposition(filename: str) -> str:
     """RFC 6266 attachment header for a client-supplied filename.
 
     Percent-encoding neutralizes header-injection characters (CR/LF, quotes,
-    delimiters); names that needed encoding are carried in ``filename*``.
+    delimiters); names that needed encoding are carried in ``filename*``. Everything
+    outside RFC 5987 ``attr-char`` is encoded, ``/`` included, so ``filename*`` stays
+    valid and clients keep the name.
     """
 
     filename = filename or "download"
-    quoted = quote(filename)
+    quoted = quote(filename, safe=_ATTR_CHAR_PUNCTUATION)
 
     if quoted == filename:
         return f'attachment; filename="{filename}"'
