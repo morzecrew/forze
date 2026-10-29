@@ -42,6 +42,7 @@ LOCKOUT = CounterSpec(name="authn_lockout")
 class _Purges:
     calls: list[tuple[str, UUID | None]] = attrs.field(factory=list)
     fail_for: UUID | None = None
+    fail_route: str | None = None
 
 
 @pytest.fixture
@@ -52,7 +53,9 @@ def purges(monkeypatch: pytest.MonkeyPatch) -> _Purges:
         tenant = self.tenant_provider() if self.tenant_provider is not None else None
         tenant_id = tenant.tenant_id if tenant is not None else None
 
-        if tenant_id is not None and tenant_id == record.fail_for:
+        if (tenant_id is not None and tenant_id == record.fail_for) or (
+            self.route == record.fail_route
+        ):
             raise exc.infrastructure("database unavailable")
 
         record.calls.append((self.route, tenant_id))
@@ -224,6 +227,19 @@ class TestTick:
         await step.startup._purge_tick(ctx, [t1, t2])  # type: ignore[attr-defined]
 
         assert purges.calls == [("orders", t2)]
+
+    @pytest.mark.parametrize("per_tenant", [False, True], ids=["unbound", "per-tenant"])
+    async def test_one_route_failing_does_not_stop_the_others(
+        self, purges: _Purges, per_tenant: bool
+    ) -> None:
+        purges.fail_route = str(ORDERS.name)
+        tenants = [uuid4(), uuid4()] if per_tenant else None
+        ctx = _context(tenant_aware=per_tenant)
+        step = postgres_counter_purge_lifecycle_step(specs=[ORDERS, LOCKOUT])
+
+        await step.startup._purge_tick(ctx, tenants)  # type: ignore[attr-defined]
+
+        assert purges.calls == [("authn_lockout", tenant) for tenant in tenants or [None]]
 
     async def test_a_configuration_error_ends_the_tick(self) -> None:
         step = postgres_counter_purge_lifecycle_step(specs=[ORDERS], tenants=lambda: [uuid4()])

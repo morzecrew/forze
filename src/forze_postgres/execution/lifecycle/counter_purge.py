@@ -112,12 +112,32 @@ class _CounterPurgeStartup(LifecycleHook):
 
     # ....................... #
 
-    async def _purge(self, ctx: ExecutionContext) -> None:
+    async def _purge(self, ctx: ExecutionContext, tenant: UUID | None = None) -> None:
         for spec in self.specs:
-            purged = await self._purger(ctx, spec).purge_expired()
+            route = str(spec.name)
+
+            try:
+                purged = await self._purger(ctx, spec).purge_expired()
+
+            except asyncio.CancelledError:
+                raise
+
+            except Exception as error:
+                # A wiring error (misrouted spec, missing dep) does not fix itself by
+                # moving to the next route or tenant — terminate loudly. Operational
+                # failures stay isolated per route and tenant.
+                if isinstance(error, CoreException) and error.kind is ExceptionKind.CONFIGURATION:
+                    raise
+
+                logger.exception(
+                    "Postgres counter purge failed",
+                    route=route,
+                    tenant=str(tenant) if tenant is not None else None,
+                )
+                continue
 
             if purged:
-                logger.info("Postgres counter purge", route=str(spec.name), purged=purged)
+                logger.info("Postgres counter purge", route=route, purged=purged)
 
     # ....................... #
 
@@ -127,24 +147,8 @@ class _CounterPurgeStartup(LifecycleHook):
             return
 
         for tenant in tenants:
-            try:
-                with ctx.inv_ctx.bind_identity(tenant=TenantIdentity(tenant_id=tenant)):
-                    await self._purge(ctx)
-
-            except asyncio.CancelledError:
-                raise
-
-            except CoreException as error:
-                # A wiring error (misrouted spec, missing dep) does not fix itself by
-                # moving to the next tenant — terminate loudly. Operational failures
-                # stay isolated per tenant.
-                if error.kind is ExceptionKind.CONFIGURATION:
-                    raise
-
-                logger.exception("Postgres counter purge failed for tenant", tenant=str(tenant))
-
-            except Exception:
-                logger.exception("Postgres counter purge failed for tenant", tenant=str(tenant))
+            with ctx.inv_ctx.bind_identity(tenant=TenantIdentity(tenant_id=tenant)):
+                await self._purge(ctx, tenant)
 
     # ....................... #
 
