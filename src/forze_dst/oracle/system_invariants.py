@@ -23,9 +23,10 @@ A **paired** law (:attr:`~forze.application.contracts.invariants.SystemInvariant
 grouped aggregate per side and checks every scope present on **either** side, with ``0`` for the
 side that has no rows there. With a parent read-set on one side, every parent is a scope, so a
 parent left with no children is checked — the minimum-style law bound (2) would otherwise miss.
-The sides are matched by each scope value's string form (:func:`_canonical`), so a ``UUID`` id and
-a string reference to it are one scope. Runtime evaluation of one binding reads the same two
-values and, like the oracle, does not check a binding with rows on neither side, so they agree.
+The sides are matched by each scope value's canonical form (:func:`_canonical`), so a ``UUID`` id
+and a string reference to it are one scope, as are a plain ``Enum`` member and its value. Runtime
+evaluation of one binding reads the same two values and, like the oracle, does not check a binding
+with rows on neither side, so they agree. A paired global law over two empty sides has no scope.
 
 **v1 — per-commit trace fold** (``compile_oracle(per_commit=True)``). Instead of querying final
 state, it reads the value-trace (needs ``SimulationConfig.capture_values``), reconstructs the
@@ -53,6 +54,7 @@ import attrs
 
 from forze.application.contracts.invariants import (
     AGGREGATE_FIELD,
+    ROWS_FIELD,
     AggregateValue,
     CountAll,
     ReadSet,
@@ -134,10 +136,14 @@ async def _grouped(
     Groups by the read-set's ``scope_keys`` (a global law — empty keys — yields one whole-collection
     row), filtered by its constant ``where``. The reducer is shared with runtime evaluation via
     :func:`~forze.application.contracts.invariants.computed_aggregate`, so oracle and enforcement
-    measure the same thing.
+    measure the same thing. A paired side drops that whole-collection row when it counts no rows,
+    as runtime evaluation does: an empty side is no scope.
     """
 
     computed = computed_aggregate(reducer)
+
+    if law.against is not None:
+        computed = {**computed, ROWS_FIELD: {"$count": None}}
 
     aggregates: AggregatesExpression = {"$computed": computed}
 
@@ -159,6 +165,9 @@ async def _grouped(
                 f"system invariant {law.name!r}: grouped aggregate returned a row missing "
                 f"scope key(s) {missing} — {row!r}"
             )
+
+        if not row.get(ROWS_FIELD, 1):
+            continue
 
         scope = tuple(row[key] for key in read_set.scope_keys)
         value = aggregate_value(read_set, reducer, row.get(AGGREGATE_FIELD))
@@ -243,7 +252,7 @@ def _invariant_for(law: SystemInvariant) -> Invariant:
 # not the ``setup`` hook — so establish any state the fold must see in the node (or use run_recorded).
 # A ``Decimal`` reaches the trace as its JSON string; the fold parses it back exactly for a field
 # the read model declares ``Decimal``, so every trace producer works. A paired law folds both
-# routes, and matches the two sides by each scope value's string form, as the final-state oracle.
+# routes, and matches the two sides by each scope value's canonical form, as the final-state oracle.
 
 _TX_DOMAIN = "tx"
 _COMMAND_PHASE = "command"

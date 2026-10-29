@@ -3,14 +3,14 @@
 The final-state oracle runs one grouped aggregate per side and checks every scope with rows on
 either side, so an order with no lines is checked once the order side names it. The per-commit fold
 materializes both sides' routes from the value-trace and parses a declared ``Decimal`` back from its
-JSON string exactly. Both match the two sides by the scope's string form, so a ``UUID`` id and a
+JSON string exactly. Both match the two sides by the scope's canonical form, so a ``UUID`` id and a
 string reference to it are one scope. Each law here is the one the runtime tests evaluate.
 """
 
 from __future__ import annotations
 
 from decimal import Decimal
-from enum import StrEnum
+from enum import Enum, StrEnum
 from typing import Any
 from uuid import UUID
 
@@ -31,7 +31,11 @@ from forze_dst import Cluster, SimulationConfig
 from forze_dst.cluster import ClusterConfig
 from forze_dst.invariants import check, compile_oracle
 from forze_dst.oracle.recorder import Event, History, Recorder, bind_recorder
-from forze_dst.oracle.system_invariants import SYSTEM_INVARIANT_KIND
+from forze_dst.oracle.system_invariants import (
+    SYSTEM_INVARIANT_KIND,
+    _exact_sum,  # pyright: ignore[reportPrivateUsage]
+)
+from forze_kits.invariants import evaluate
 from forze_mock import MockDepsModule
 from forze_mock.state import MockState
 from tests.support.execution_context import context_from_deps
@@ -204,6 +208,118 @@ class TestFinalStateScopeWithNoRows:
         assert len(violations) == 1
 
 
+class TestFinalStateGlobalLaw:
+    @pytest.mark.parametrize("aggregate", [CountAll(), SumOf("qty")])
+    async def test_empty_global_sides_are_not_a_scope(self, aggregate: Any) -> None:
+        # A no-group aggregate over no rows still returns one row; like the runtime, the oracle
+        # does not check it. Once either side has a row, the one global scope is checked.
+        law = SystemInvariant(
+            name="global_never",
+            read_set=ReadSet(spec=LINES),
+            aggregate=aggregate,
+            against=Measure(read_set=ReadSet(spec=ORDERS), aggregate=aggregate),
+            holds=lambda _lines, _orders: False,
+        )
+        ctx = _ctx()
+
+        history, violations = await _final_state(law, ctx)
+        assert (history.of_kind(SYSTEM_INVARIANT_KIND), violations) == ([], [])
+        assert (await evaluate(law, ctx, {})).held
+
+        await _order(ctx)
+        _, violations = await _final_state(law, ctx)
+        assert len(violations) == 1
+        assert not (await evaluate(law, ctx, {})).held
+
+    async def test_an_empty_global_law_over_one_read_set_is_still_checked(self) -> None:
+        law = SystemInvariant(
+            name="global_single",
+            read_set=ReadSet(spec=LINES),
+            aggregate=CountAll(),
+            holds=lambda n: n >= 1,
+        )
+
+        _, violations = await _final_state(law, _ctx())
+
+        assert len(violations) == 1
+
+
+class _Phase(Enum):
+    # A plain Enum: the mock keeps the member, a filter and a string field hold its value.
+    OPEN = "open"
+
+
+class _Shift(Document):
+    phase: _Phase
+
+
+class _ShiftCreate(CreateDocumentCmd):
+    phase: _Phase
+
+
+class _ShiftRead(ReadDocument):
+    phase: _Phase
+
+
+class _Booking(Document):
+    phase_ref: str
+
+
+class _BookingCreate(CreateDocumentCmd):
+    phase_ref: str
+
+
+class _BookingRead(ReadDocument):
+    phase_ref: str
+
+
+SHIFTS = DocumentSpec(
+    name="paired_shifts",
+    read=_ShiftRead,
+    write={"domain": _Shift, "create_cmd": _ShiftCreate, "update_cmd": _ShiftCreate},
+)
+
+BOOKINGS = DocumentSpec(
+    name="paired_bookings",
+    read=_BookingRead,
+    write={"domain": _Booking, "create_cmd": _BookingCreate, "update_cmd": _BookingCreate},
+)
+
+_BY_SHIFT = ReadSet(spec=SHIFTS, scope_keys=("phase",))
+_BY_BOOKING = ReadSet(spec=BOOKINGS, scope_keys=("phase_ref",))
+
+
+class TestPlainEnumScope:
+    async def test_runtime_and_oracle_pair_a_plain_enum_with_its_string_value(self) -> None:
+        bookings_within_shifts = SystemInvariant(
+            name="bookings_within_shifts",
+            read_set=_BY_BOOKING,
+            aggregate=CountAll(),
+            against=Measure(read_set=_BY_SHIFT, aggregate=CountAll()),
+            holds=lambda bookings, shifts: bookings <= shifts,
+        )
+        shift_is_booked = SystemInvariant(
+            name="shift_is_booked",
+            read_set=_BY_SHIFT,
+            aggregate=CountAll(),
+            against=Measure(read_set=_BY_BOOKING, aggregate=CountAll()),
+            holds=lambda shifts, bookings: bookings >= shifts,
+        )
+        ctx = _ctx()
+        await ctx.document.command(SHIFTS).create(_ShiftCreate(phase=_Phase.OPEN))
+        await ctx.document.command(BOOKINGS).create(_BookingCreate(phase_ref="open"))
+
+        by_ref = await evaluate(bookings_within_shifts, ctx, {"phase_ref": "open"})
+        by_member = await evaluate(shift_is_booked, ctx, {"phase": _Phase.OPEN})
+
+        assert (by_ref.observed, by_ref.against, by_ref.held) == (1, 1, True)
+        assert (by_member.observed, by_member.against, by_member.held) == (1, 1, True)
+
+        for law in (bookings_within_shifts, shift_is_booked):
+            history, violations = await _final_state(law, ctx)
+            assert (len(history.of_kind(SYSTEM_INVARIANT_KIND)), violations) == (1, [])
+
+
 # ----------------------- #
 # Per commit, over a synthesized value-trace spanning both routes.
 
@@ -346,6 +462,14 @@ class TestPerCommitExactDecimals:
             )
 
 
+class TestPerCommitSum:
+    def test_a_float_among_the_values_sums_in_float_as_a_store_does(self) -> None:
+        total = _exact_sum([Decimal("0.5"), 0.25, 1])
+
+        assert total == 1.75
+        assert type(total) is float
+
+
 class TestPerCommitWhere:
     def test_a_where_on_enum_and_uuid_columns_matches_the_json_row(self) -> None:
         # The trace carries an Enum as its value and a UUID as its string; the where still matches.
@@ -448,7 +572,6 @@ class TestEndToEnd:
 
 
 class _Status(StrEnum):
-    # A plain Enum would not do: the mock store does not match a string against one at all.
     OPEN = "open"
     CLOSED = "closed"
 

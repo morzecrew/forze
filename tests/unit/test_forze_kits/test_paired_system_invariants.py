@@ -8,6 +8,7 @@ oracle never sees unless the order side names it. ``evaluate`` reads both sides 
 from __future__ import annotations
 
 from decimal import Decimal
+from typing import Any
 from uuid import UUID, uuid4
 
 import pytest
@@ -16,6 +17,7 @@ from forze.application.contracts.invariants import Measure, ReadSet, SumOf, Syst
 from forze.application.contracts.transaction import IsolationLevel
 from forze.application.execution import ExecutionContext
 from forze.base.exceptions import exc
+from forze_kits import invariants
 from forze_kits.invariants import enforce_preventive, evaluate
 from forze_mock import MockDepsModule
 from tests.support.execution_context import context_from_deps
@@ -219,3 +221,61 @@ class TestScopeWithNoRows:
 
         assert (result.held, result.observed, result.against) == (True, 1, 1)
         assert not (await evaluate(ORDER_HAS_A_NOTE, ctx, {"order_ref": str(bare)})).held
+
+
+class TestConcurrentWrite:
+    """A write committing between the two sides' reads must not pair values from two states."""
+
+    @staticmethod
+    def _racing(monkeypatch: pytest.MonkeyPatch, commit: Any, *, every: bool) -> None:
+        """Commit *commit* after the refunds side is read: once, or after every read of it."""
+
+        real = invariants._measure  # pyright: ignore[reportPrivateUsage]
+        reads = 0
+
+        async def racing(ctx: ExecutionContext, read_set: Any, *args: Any) -> Any:
+            nonlocal reads
+            value = await real(ctx, read_set, *args)
+
+            if read_set is REFUNDS_WITHIN_SALES.read_set and (every or not reads):
+                reads += 1
+                await commit(ctx)
+
+            return value
+
+        monkeypatch.setattr(invariants, "_measure", racing)
+
+    async def test_a_violation_on_both_sides_of_a_commit_is_not_hidden(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Refunds 6 > sales 5 before the commit, 11 > 10 after it; 6 against 10 would hold.
+        ctx = _ctx()
+        order = await _order(ctx)
+        await _line(ctx, order, amount="5", kind="sale")
+        await _line(ctx, order, amount="6", kind="refund")
+
+        async def commit(ctx: ExecutionContext) -> None:
+            await _line(ctx, order, amount="5", kind="sale")
+            await _line(ctx, order, amount="5", kind="refund")
+
+        self._racing(monkeypatch, commit, every=False)
+        result = await evaluate(REFUNDS_WITHIN_SALES, ctx, {"order_id": order})
+
+        assert not result.held
+        assert (result.observed, result.against) == (Decimal(11), Decimal(10))
+
+    async def test_sides_that_never_settle_fail_closed(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        ctx = _ctx()
+        order = await _order(ctx)
+
+        async def commit(ctx: ExecutionContext) -> None:
+            await _line(ctx, order, amount="1", kind="refund")
+
+        self._racing(monkeypatch, commit, every=True)
+
+        with pytest.raises(exc) as caught:
+            await evaluate(REFUNDS_WITHIN_SALES, ctx, {"order_id": order})
+
+        assert caught.value.code == "system_invariant_unstable_read"

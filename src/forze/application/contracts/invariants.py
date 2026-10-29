@@ -18,9 +18,12 @@ from __future__ import annotations
 
 import inspect
 from collections.abc import Callable, Mapping
+from datetime import date, datetime, time
 from decimal import Decimal
+from enum import Enum
 from types import UnionType
 from typing import Annotated, Any, Union, cast, final, get_args, get_origin
+from uuid import UUID
 
 import attrs
 
@@ -42,6 +45,10 @@ AGGREGATE_FIELD = "__forze_aggregate__"
 """The output alias :func:`computed_aggregate` reduces into. Internal and deliberately unlikely as a
 real document field, so it never collides with a grouped query's :attr:`~ReadSet.scope_keys` aliases
 in the same result row (a scope key named ``"value"`` would have)."""
+
+ROWS_FIELD = "__forze_rows__"
+"""The alias a paired law's sides count their rows into, beside :data:`AGGREGATE_FIELD`: a side
+with no rows has no scope there (see :attr:`SystemInvariant.against`)."""
 
 # ----------------------- #
 # Aggregates — the closed set of reducers that collapse a read-set to one comparable number. Closed
@@ -107,8 +114,9 @@ class Measure:
     See :attr:`SystemInvariant.against`. Its :attr:`~ReadSet.scope_keys` pair with the law's own
     **by position**, so a law over order lines scoped by ``("order_id",)`` against
     ``ReadSet(spec=ORDERS, scope_keys=("id",))`` reads, for each order, the order whose ``id`` is the
-    lines' ``order_id``. Both sides' scope fields must hold the same type, since the oracle matches
-    their values by equality.
+    lines' ``order_id``. Both sides' scope fields must hold their values in one form, since every
+    evaluator matches them by equality: a ``UUID`` against a ``str`` is matched by its string, a
+    plain ``Enum`` by its value.
     """
 
     read_set: ReadSet
@@ -148,7 +156,11 @@ def scope_filter(read_set: ReadSet, params: Mapping[str, Any]) -> QueryFilterExp
             code="missing_scope_key",
         )
 
-    scope_values = {key: params[key] for key in read_set.scope_keys}
+    # A member is stored, and matched, as its value; the filter grammar takes no plain member.
+    scope_values = {
+        key: value.value if isinstance(value := params[key], Enum) else value
+        for key in read_set.scope_keys
+    }
     scope_pred: QueryFilterExpression | None = {"$values": scope_values} if scope_values else None
 
     if read_set.where is not None and scope_pred is not None:
@@ -190,13 +202,35 @@ def _declares_decimal(model: Any, path: str) -> bool:
     return isinstance(annotation, type) and issubclass(annotation, Decimal)
 
 
+def _scope_form(annotation: Any) -> Any:
+    """The form every evaluator matches a paired scope field's values in.
+
+    A ``UUID`` as a string, and a plain ``Enum`` of string values as one too, since each is
+    matched by its string. A date, datetime or time only as its own class, as Python compares
+    them. Any other plain ``Enum`` only as itself: Postgres compares its JSON path as text, so
+    ``1`` would meet ``"1"`` there and nowhere else. Otherwise the field's kind of type.
+    """
+
+    kind = classify_field_type(annotation)
+
+    if kind == "temporal":
+        return next(base for base in (datetime, date, time) if issubclass(annotation, base))
+
+    if kind != "scalar":
+        return kind
+
+    if issubclass(annotation, UUID) or all(isinstance(m.value, str) for m in annotation):
+        return "string"
+
+    return annotation
+
+
 def _comparable(own: Any, other: Any) -> bool:
-    """Whether two paired scope fields can hold the same value: the same kind of type, or a
-    ``UUID`` or ``Enum`` against a string (the oracles compare a scope by its string form)."""
+    """Whether two paired scope fields hold their values in one form (see :func:`_scope_form`)."""
 
-    kinds = {classify_field_type(own), classify_field_type(other)}
+    forms = {_scope_form(own), _scope_form(other)}
 
-    return len(kinds) == 1 or "unknown" in kinds or kinds == {"string", "scalar"}
+    return len(forms) == 1 or "unknown" in forms
 
 
 def _takes(holds: Callable[..., bool], count: int) -> bool:
@@ -259,8 +293,8 @@ class SystemInvariant:
     so a parent read-set on one side makes every parent a scope, including one with no children. A
     scope with rows on neither side does not exist and is not checked.
 
-    Declaring a law refuses a *holds* that cannot take its arguments, and paired scope fields of
-    types that can never hold the same value (an ``int`` against a ``UUID``).
+    Declaring a law refuses a *holds* that cannot take its arguments, and paired scope fields
+    whose values no evaluator would match (an ``int`` against a ``UUID`` or a ``str``).
     """
 
     name: str

@@ -22,8 +22,8 @@ from forze.application.contracts.invariants import (
 from forze.application.execution import ExecutionContext
 from forze.domain.models import CreateDocumentCmd, Document, ReadDocument
 from forze_dst.invariants import check, compile_oracle
-from forze_dst.oracle.recorder import Recorder, bind_recorder
-from forze_dst.oracle.system_invariants import SYSTEM_INVARIANT_KIND
+from forze_dst.oracle.recorder import Event, Recorder, bind_recorder
+from forze_dst.oracle.system_invariants import SYSTEM_INVARIANT_KIND, CompiledOracle
 from forze_kits.invariants import evaluate
 
 # ----------------------- #
@@ -146,6 +146,15 @@ ORDER_HAS_A_NOTE = SystemInvariant(
 )
 """A ``str`` reference paired with a ``UUID`` id: one scope per order, whichever form is read."""
 
+LINES_NEED_AN_ORDER = SystemInvariant(
+    name="lines_need_an_order",
+    read_set=ReadSet(spec=LINES),
+    aggregate=SumOf("amount"),
+    against=Measure(read_set=ReadSet(spec=ORDERS), aggregate=CountAll()),
+    holds=lambda _lines, orders: orders >= 1,
+)
+"""A global law: with no lines and no orders it has no scope, so ``holds`` is never called."""
+
 
 # ....................... #
 
@@ -157,6 +166,10 @@ async def assert_paired_laws_on(ctx: ExecutionContext) -> None:
     ``Decimal128``), so the value a law receives must follow the read model's declaration. The
     runtime check and the final-state oracle must also agree on which order breaks the law.
     """
+
+    # A store returns one row for a no-group aggregate over nothing; it is no scope on either path.
+    assert (await evaluate(LINES_NEED_AN_ORDER, ctx, {})).held
+    assert await _recorded(compile_oracle(LINES_NEED_AN_ORDER), ctx) == []
 
     full = await ctx.document.command(ORDERS).create(OrderCreate(qty=3, total=Decimal("0.3")))
     empty = await ctx.document.command(ORDERS).create(OrderCreate(qty=1, total=Decimal("1")))
@@ -183,7 +196,9 @@ async def assert_paired_laws_on(ctx: ExecutionContext) -> None:
     assert (await evaluate(ORDER_HAS_A_NOTE, ctx, {"order_ref": str(full.id)})).held
     assert not (await evaluate(ORDER_HAS_A_NOTE, ctx, {"order_ref": str(empty.id)})).held
 
-    oracle = compile_oracle(ORDER_HAS_A_LINE, LINES_WITHIN_ORDER_TOTAL, ORDER_HAS_A_NOTE)
+    oracle = compile_oracle(
+        ORDER_HAS_A_LINE, LINES_WITHIN_ORDER_TOTAL, ORDER_HAS_A_NOTE, LINES_NEED_AN_ORDER
+    )
     recorder = Recorder(seed=0)
 
     with bind_recorder(recorder):
@@ -195,6 +210,7 @@ async def assert_paired_laws_on(ctx: ExecutionContext) -> None:
         for event in recorder.history.of_kind(SYSTEM_INVARIANT_KIND)
         if event.fields["name"] == LINES_WITHIN_ORDER_TOTAL.name
     ]
+    checked = [event.fields["name"] for event in recorder.history.of_kind(SYSTEM_INVARIANT_KIND)]
 
     # Only the order with neither a line nor a note breaks a law; the note's string reference and
     # the order's UUID id are one scope, not two.
@@ -206,3 +222,14 @@ async def assert_paired_laws_on(ctx: ExecutionContext) -> None:
     # The order with no lines is a scope too: its lines total an exact zero.
     assert totals == [Decimal("0.3"), Decimal(0)]
     assert all(isinstance(total, Decimal) for total in totals)
+    # With rows, the global law has its one scope.
+    assert checked.count(LINES_NEED_AN_ORDER.name) == 1
+
+
+async def _recorded(oracle: CompiledOracle, ctx: ExecutionContext) -> list[Event]:
+    recorder = Recorder(seed=0)
+
+    with bind_recorder(recorder):
+        await oracle.observe(ctx)
+
+    return list(recorder.history.of_kind(SYSTEM_INVARIANT_KIND))

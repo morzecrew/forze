@@ -50,7 +50,9 @@ lines_within_order = SystemInvariant(
 )
 ```
 
-The two sides' `scope_keys` pair **by position**: here each order's lines (`order_id`) meet the order whose `id` matches. The oracles match a `UUID` or an `Enum` by its string form, so a `str` reference to a `UUID` id works; a pairing that can never match, such as an `int` against a `UUID`, is refused when the law is declared, as is a `holds` that does not take two arguments. Runtime enforcement takes the law's own scope params (`{"order_id": ...}`) and binds the other side from them.
+The two sides' `scope_keys` pair **by position**: here each order's lines (`order_id`) meet the order whose `id` matches. Every evaluator matches a `UUID` by its string and a plain `Enum` member by its value, so a `str` field can refer to a `UUID` id or to a string-valued `Enum`. A pairing no evaluator would match, such as an `int` against a `str` or a `UUID`, or a `date` against a `datetime`, is refused when the law is declared, as is a `holds` that does not take two arguments. Runtime enforcement takes the law's own scope params (`{"order_id": ...}`) and binds the other side from them.
+
+The two sides are separate reads, and a detective check runs outside any transaction, so a write can commit between them. Runtime evaluation therefore reads the law's own side again after the other, and uses the pair only if that side did not change. If it changes on each of three reads, evaluation raises `exc.concurrency` with the code `system_invariant_unstable_read` rather than judge values no committed state held.
 
 Every scope with rows on **either** side is checked, and the side with no rows there counts as `0`. A scope with rows on neither side does not exist, so no evaluator calls `holds` for it. That is what makes a *minimum* checkable. A one-sided law only ever sees scopes that have rows, so `CountAll` with `n >= 1` cannot notice an order whose last line was removed. Put the orders on the other side and every order becomes a scope:
 
