@@ -293,6 +293,16 @@ sends as `Retry-After`; the body still withholds the details. It counts
 preserving the no-enumeration posture. The unlock instant is the same for every login
 string, so the header discloses nothing either.
 
+Set `lock_for` to keep a locked login locked past its window, for example
+`LockoutConfig(threshold=5, window=timedelta(minutes=15), lock_for=timedelta(hours=1))`. The
+attempt that reaches the threshold writes the unlock instant to a separate lock key. The login
+stays locked until the window's end or that instant, whichever is later, and `retry_at` (so
+`Retry-After`) carries the later one. With `lock_for` the header also shows when the threshold
+was reached. That instant is the same for a real and an unknown login, so it still discloses
+no account. The lock key gets a `ttl` of `lock_for` plus `LOCKOUT_TTL_SKEW`, but the stored
+instant decides when the login unlocks, so a counter that cannot expire keys unlocks on time
+too.
+
 The lockout keeps its counter store bounded. The check that runs on every attempt reads
 with `incr(0)`, which creates nothing, so only a failed attempt (or a success resetting
 one) writes a key. Each window's key is written with a [`ttl`](../reference/contracts/stores.md#lifetimes-ttl)

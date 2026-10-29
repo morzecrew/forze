@@ -238,6 +238,31 @@ class TestPasswordLockout:
         assert kinds == [AuthnEventKind.LOGIN_FAILED] * 3 + [AuthnEventKind.LOGIN_LOCKED]
         assert sink.events[-1].login_digest == login_digest("alice")
 
+    async def test_retry_at_is_the_lock_for_end_when_it_outlives_the_window(self) -> None:
+        lock_for = timedelta(hours=1)
+        guard = LoginLockoutGuard(
+            counter=_MemoryCounter(),
+            config=LockoutConfig(threshold=2, window=timedelta(minutes=15), lock_for=lock_for),
+        )
+        orchestrator, verifier = _orchestrator(lockout=guard)
+
+        with bind_time_source(FrozenTimeSource(T0)):
+            for _ in range(2):
+                with pytest.raises(CoreException):
+                    await orchestrator.authenticate_with_password(BAD)
+
+        with bind_time_source(FrozenTimeSource(T0 + timedelta(minutes=15))):
+            with pytest.raises(CoreException) as ei:
+                await orchestrator.authenticate_with_password(GOOD)
+
+            assert ei.value.kind is ExceptionKind.THROTTLED
+            assert ei.value.details == {"retry_at": T0 + lock_for}
+            assert verifier.calls == 2
+
+        with bind_time_source(FrozenTimeSource(T0 + lock_for)):
+            result = await orchestrator.authenticate_with_password(GOOD)
+            assert result.identity.principal_id == PRINCIPAL
+
     async def test_normal_failures_keep_timing_posture(self) -> None:
         """Below the threshold the verifier always runs — no early exit exists."""
 

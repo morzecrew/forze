@@ -29,8 +29,16 @@ refuses this ttl (``counter_ttl_unsupported`` — a Postgres counter table witho
 its ``expires_at`` column), the write is retried without one and a warning is
 logged once per refusing table. Login availability outranks key growth, which is
 what every deployment had before counters could expire.
+
+**Lock duration.** With :attr:`LockoutConfig.lock_for` set, the failure that reaches the
+threshold also writes the unlock instant (whole Unix seconds) to the digest's lock key,
+``authn_lockout:{login_digest}:lock``, with ``ttl = lock_for + LOCKOUT_TTL_SKEW``. The check
+reads that key with ``incr(0)`` too, and a login stays locked until the later of the window's
+end and that instant. The stored instant decides, not the key's lifetime, so a backend that
+cannot expire keys still unlocks on time.
 """
 
+import math
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
 from typing import Final, final
@@ -38,6 +46,7 @@ from typing import Final, final
 import attrs
 
 from forze.application.contracts.counter import (
+    COUNTER_MAX_TTL,
     COUNTER_TTL_UNSUPPORTED_CODE,
     CounterPort,
     counter_capabilities,
@@ -86,9 +95,13 @@ class LockoutConfig:
     """Login lockout policy.
 
     ``threshold`` failed attempts within the current fixed ``window`` lock the
-    login string until the window rolls over. There is no separate ``lock_for``
-    duration: a locked login unlocks at the window boundary, which is the same
-    instant for every login string, so ``Retry-After`` discloses nothing.
+    login string until the window rolls over, or until ``lock_for`` after the attempt
+    that reached the threshold if that is later.
+
+    Without ``lock_for`` a locked login unlocks at the window boundary, which is the
+    same instant for every login string, so ``Retry-After`` discloses nothing. With it,
+    ``Retry-After`` also shows when the threshold was reached; that instant is the same
+    for a real and an unknown login, so it still discloses no account.
     """
 
     threshold: int = attrs.field(default=5)
@@ -96,6 +109,13 @@ class LockoutConfig:
 
     window: timedelta = attrs.field(default=timedelta(minutes=15))
     """Fixed counting window; a locked login unlocks when the window rolls over."""
+
+    lock_for: timedelta | None = attrs.field(default=None)
+    """How long a login stays locked after the attempt that reached ``threshold``.
+
+    ``None`` (default) unlocks at the window boundary. A lock that would end before the
+    window does changes nothing: the login unlocks at the later of the two.
+    """
 
     # ....................... #
 
@@ -105,6 +125,15 @@ class LockoutConfig:
 
         if self.window <= timedelta(0):
             raise exc.configuration("LockoutConfig.window must be positive")
+
+        # The lock key lives lock_for + LOCKOUT_TTL_SKEW, which the counter refuses past its cap.
+        if self.lock_for is not None and not (
+            timedelta(0) < self.lock_for <= COUNTER_MAX_TTL - LOCKOUT_TTL_SKEW
+        ):
+            raise exc.configuration(
+                "LockoutConfig.lock_for must be positive and at most "
+                f"{COUNTER_MAX_TTL - LOCKOUT_TTL_SKEW!r}"
+            )
 
 
 # ....................... #
@@ -121,7 +150,8 @@ class LoginLockoutGuard:
     1. :meth:`locked_until` — reject the attempt with
        ``exc.throttled(LOCKED_LOGIN_MSG, code=LOCKED_LOGIN_CODE)``, carrying the
        unlock instant as ``details["retry_at"]``, when the current window already
-       holds ``threshold`` failures (:meth:`is_locked` answers the same as a bool);
+       holds ``threshold`` failures or a ``lock_for`` lock is running (:meth:`is_locked`
+       answers the same as a bool);
     2. :meth:`record_failure` after a failed verification;
     3. :meth:`record_success` after a successful one (resets the current bucket).
 
@@ -156,8 +186,8 @@ class LoginLockoutGuard:
 
     # ....................... #
 
-    def _lifetime(self) -> dict[str, timedelta]:
-        """The ``ttl`` keyword for a bucket write, or none on a backend that cannot expire.
+    def _lifetime(self, ttl: timedelta) -> dict[str, timedelta]:
+        """The ``ttl`` keyword for a write, or none on a backend that cannot expire.
 
         Left out rather than passed as ``None`` there, so a counter port written before the
         keyword existed keeps working.
@@ -166,7 +196,7 @@ class LoginLockoutGuard:
         if not counter_capabilities(self.counter).expiry:
             return {}
 
-        return {"ttl": self.config.window + LOCKOUT_TTL_SKEW}
+        return {"ttl": ttl}
 
     # ....................... #
 
@@ -184,47 +214,75 @@ class LoginLockoutGuard:
 
     # ....................... #
 
-    async def locked_until(self, login_digest: str) -> datetime | None:
-        """When a locked login unlocks — the current window's end — or :obj:`None` if not locked.
+    @staticmethod
+    def _lock_suffix(login_digest: str) -> str:
+        """Counter suffix holding the digest's ``lock_for`` unlock instant, in Unix seconds."""
 
-        The instant depends only on the clock and :attr:`LockoutConfig.window`, never on the
-        login or the account, so disclosing it (as ``Retry-After``) tells a client nothing it
-        could not work out itself.
+        return f"authn_lockout:{login_digest}:lock"
+
+    # ....................... #
+
+    async def locked_until(self, login_digest: str) -> datetime | None:
+        """When a locked login unlocks, or :obj:`None` if it is not locked.
+
+        That is the current window's end once it holds ``threshold`` failures, or the
+        ``lock_for`` unlock instant while that is in the future, whichever is later.
+
+        The window's end depends only on the clock and :attr:`LockoutConfig.window`, never on
+        the login or the account, so disclosing it (as ``Retry-After``) tells a client nothing
+        it could not work out itself. A ``lock_for`` instant also shows when the threshold was
+        reached, which is no account information either.
         """
 
         bucket = self._bucket()
         current = await self.counter.incr(0, suffix=self._suffix(login_digest, bucket))
+        until = (
+            datetime.fromtimestamp((bucket + 1) * self._window_seconds(), tz=UTC)
+            if current >= self.config.threshold
+            else None
+        )
 
-        if current < self.config.threshold:
-            return None
+        if self.config.lock_for is None:
+            return until
 
-        return datetime.fromtimestamp((bucket + 1) * self._window_seconds(), tz=UTC)
+        # Read in every window: the lock can outlive the window whose bucket set it.
+        locked = await self.counter.incr(0, suffix=self._lock_suffix(login_digest))
+
+        if locked <= utcnow().timestamp():
+            return until
+
+        lock_end = datetime.fromtimestamp(locked, tz=UTC)
+
+        return lock_end if until is None else max(until, lock_end)
 
     # ....................... #
 
     async def is_locked(self, login_digest: str) -> bool:
-        """Whether the current window already holds ``threshold`` failures."""
+        """Whether the login is locked now (see :meth:`locked_until`)."""
 
         return await self.locked_until(login_digest) is not None
 
     # ....................... #
 
-    async def _write_bucket(
+    async def _write_key(
         self,
         write: Callable[..., Awaitable[int]],
         value: int,
         suffix: str,
-    ) -> None:
-        """Write one bucket with its lifetime, or without one if the counter refuses it.
+        ttl: timedelta,
+    ) -> int:
+        """Write one key with its lifetime, or without one if the counter refuses it.
 
         Only the ``counter_ttl_unsupported`` refusal is absorbed, and only here: a caller
         that asks a counter for a ttl directly still gets the ``configuration`` error.
+
+        :returns: The counter's value after the write.
         """
 
-        lifetime = self._lifetime()
+        lifetime = self._lifetime(ttl)
 
         try:
-            await write(value, suffix=suffix, **lifetime)
+            return await write(value, suffix=suffix, **lifetime)
 
         except CoreException as error:
             if not lifetime or error.code != COUNTER_TTL_UNSUPPORTED_CODE:
@@ -240,18 +298,45 @@ class LoginLockoutGuard:
                     reason=str(error),
                 )
 
-            await write(value, suffix=suffix)
+            return await write(value, suffix=suffix)
 
     # ....................... #
 
     async def record_failure(self, login_digest: str) -> None:
-        """Count one failed attempt in the current window."""
+        """Count one failed attempt in the current window.
 
-        await self._write_bucket(self.counter.incr, 1, self._suffix(login_digest))
+        The attempt that reaches ``threshold`` also starts the ``lock_for`` lock, if one is
+        configured. Exactly one attempt sees the count equal ``threshold``, since the
+        increment is atomic, so racing failures start one lock and a later one never
+        extends it.
+        """
+
+        window_ttl = self.config.window + LOCKOUT_TTL_SKEW
+        failures = await self._write_key(
+            self.counter.incr, 1, self._suffix(login_digest), window_ttl
+        )
+        lock_for = self.config.lock_for
+
+        if lock_for is None or failures != self.config.threshold:
+            return
+
+        # Rounded up, so the lock never ends before lock_for has passed.
+        until = math.ceil((utcnow() + lock_for).timestamp())
+        await self._write_key(
+            self.counter.reset,
+            until,
+            self._lock_suffix(login_digest),
+            lock_for + LOCKOUT_TTL_SKEW,
+        )
 
     # ....................... #
 
     async def record_success(self, login_digest: str) -> None:
         """Reset the current window bucket after a successful login."""
 
-        await self._write_bucket(self.counter.reset, 0, self._suffix(login_digest))
+        await self._write_key(
+            self.counter.reset,
+            0,
+            self._suffix(login_digest),
+            self.config.window + LOCKOUT_TTL_SKEW,
+        )
