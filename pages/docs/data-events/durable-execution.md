@@ -188,19 +188,42 @@ register_operation_functions(
 ```
 
 Before each run, and again on each retry or recovery, the bridge resolves the secret and
-authenticates it through the same authn port HTTP uses. The body runs as the principal the
-verifier returns, and authn, authz and audit see that principal as for any caller. The run
-fails with `authentication` and is not retried when:
+authenticates it through the same authn port HTTP uses. The body runs as the identity the
+verifier returns, not the one declared: its roles and claims are the principal's current
+ones, and authn, authz and audit see it as any caller. The run fails with `authentication`
+and is not retried when:
 
 - the key is unknown, revoked or expired, or its principal is disabled;
 - the key authenticates a principal other than `authn` (`durable_service_identity_mismatch`);
-- the key carries a tenant and the run belongs to another tenant or to none
-  (`tenant_conflict`).
+- the key acts on behalf of another principal (`durable_service_identity_delegated`): a
+  service identity acts as itself, so a delegation key is refused;
+- the run belongs to a tenant the principal is not a member of (`tenant_mismatch`), or the
+  key carries a tenant other than the run's (`tenant_conflict`).
 
-So revoking the key stops the schedule at its next fire. The refusal is logged as a warning
-with the error's kind and code, and the run lands `FAILED`. The key is never written to a
-run or schedule row or to the log. A missing secret fails the run with the secrets
-backend's error.
+A tagged run's tenant is checked as the HTTP edge checks a requested tenant: through the
+tenancy resolver on `tenancy_route`, which defaults to the authn spec's name. A service
+principal that runs work for several tenants must be a member of each of them. With no
+resolver on that route, only a key issued for the run's tenant runs it; any other key fails
+with `precondition` (`tenant_request_unverifiable`). An untagged run needs a key that
+carries no tenant.
+
+Revoking the key stops the schedule at its next fire. One exception: a verifier that reads
+cached key states (`RevocationStates` with `key_mac`) admits a revoked key for up to the
+states' `ttl` when the revocation's write-through never lands, or when the revocation was
+made by a process configured without the states.
+
+An `authentication` refusal is logged as a warning that the identity did not verify. Any
+other failure, such as a secrets backend or authn store being down, is logged as one that
+could not be checked. Both log only the error's kind and code, and the run lands `FAILED`
+unless a retry strategy retries that kind. An error that is not a `CoreException` becomes
+`internal` (`durable_service_identity_unchecked`) and keeps only its type name. That way a
+message quoting the key never reaches the run row or the log. A missing secret fails the run
+with `not_found` on the env, directory, mapping and Vault backends.
+
+The key's admission, which the identity plane's verifier records so that a credential issued
+later re-checks the key, applies to the body only. It is not left behind in the task that
+called `run_now` or the handler. A body without a verified key carries no admission, even
+under a request that authenticated with one.
 
 Without `api_key`, the principal is the wiring's word alone. No key is checked, expired or
 revoked, so `acknowledge_unverified_identity=True` is required:

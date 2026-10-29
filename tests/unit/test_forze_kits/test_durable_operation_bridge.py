@@ -19,7 +19,13 @@ from uuid import UUID
 import pytest
 from pydantic import BaseModel, Field, RootModel
 
-from forze.application.contracts.authn import AuthnIdentity, AuthnSpec
+from forze.application.contracts.authn import (
+    AuthnIdentity,
+    AuthnSpec,
+    bind_authn_admission,
+    current_authn_admission,
+    record_authn_admission,
+)
 from forze.application.contracts.durable.function import (
     DurableFunctionCronTrigger,
     DurableFunctionInvokeSpec,
@@ -42,6 +48,8 @@ from forze_kits.integrations.durable import (
 )
 from forze_kits.integrations.durable import operation_bridge as bridge_module
 from forze_mock import MockDepsModule, MockState
+from forze_mock.adapters.identity.authn import MockApiKeyVerifierPort
+from forze_mock.adapters.identity.secrets import MockSecretsPort
 from tests.support.execution_context import context_from_modules
 
 # ----------------------- #
@@ -183,7 +191,6 @@ async def test_register_operation_functions_registers_each_body() -> None:
     assert output == {"handled": "o-2"}
 
 
-
 # ....................... #
 
 _SERVICE = AuthnIdentity(principal_id=UUID("00000000-0000-0000-0000-00000000005e"))
@@ -238,9 +245,7 @@ async def test_a_service_identity_runs_the_guarded_operation_as_itself() -> None
     seen: list[Any] = []
     identity = DurableServiceIdentity(authn=_SERVICE, acknowledge_unverified_identity=True)
     registry = DurableFunctionRegistry()
-    register_operation_functions(
-        registry, [_spec()], operations=_guarded(seen), identity=identity
-    )
+    register_operation_functions(registry, [_spec()], operations=_guarded(seen), identity=identity)
     ctx = context_from_modules(MockDepsModule())
 
     with ctx.inv_ctx.bind_identity(authn=_CALLER, tenant=_TENANT):
@@ -315,12 +320,18 @@ def _keyed_state(
     *,
     principal: UUID = _SERVICE.principal_id,
     tenant: UUID | None = None,
+    member_of: tuple[TenantIdentity, ...] = (_TENANT,),
+    claims: dict[str, Any] | None = None,
 ) -> MockState:
-    """A mock whose secrets hold *key*, which authenticates *principal* on the main route."""
+    """A mock whose secrets hold *key*, which authenticates *principal* on the main route.
+
+    *tenant* is the tenant the key itself carries; *member_of* the tenants the principal
+    belongs to, as the tenancy resolver sees them.
+    """
 
     state = MockState()
     state.identity["secrets"] = {_KEY_REF.path: key}
-    entry: dict[str, Any] = {"subject": "reports-service"}
+    entry: dict[str, Any] = {"subject": "reports-service", "claims": claims or {}}
 
     if tenant is not None:
         entry["issuer_tenant_hint"] = str(tenant)
@@ -330,6 +341,9 @@ def _keyed_state(
             "api_keys": {key: entry},
             "principal_map": {"reports-service": str(principal)},
         }
+    }
+    state.identity["tenants"] = {
+        "main": {str(t.tenant_id): {"principals": [principal]} for t in member_of}
     }
 
     return state
@@ -434,6 +448,174 @@ async def test_a_tenant_bound_key_runs_only_its_tenant(run_tenant: TenantIdentit
 
     assert caught.value.code == "tenant_conflict"
     assert seen == []
+
+
+@pytest.mark.asyncio
+async def test_a_tenantless_key_runs_only_tenants_its_principal_belongs_to() -> None:
+    seen: list[Any] = []
+    handler = operation_durable_handler(_spec(), _guarded(seen), identity=_keyed_identity())
+    state = _keyed_state(secrets.token_hex(16), member_of=())
+    ctx = context_from_modules(MockDepsModule(state=state))
+
+    with ctx.inv_ctx.bind_identity(tenant=_TENANT):
+        with pytest.raises(CoreException) as caught:
+            await handler(ctx, {"order_id": "o-1"})
+
+    assert caught.value.kind is ExceptionKind.AUTHENTICATION
+    assert caught.value.code == "tenant_mismatch"
+    assert seen == []
+
+
+@pytest.mark.asyncio
+async def test_a_tenantless_key_runs_untagged_work() -> None:
+    seen: list[Any] = []
+    handler = operation_durable_handler(_spec(), _guarded(seen), identity=_keyed_identity())
+    ctx = context_from_modules(MockDepsModule(state=_keyed_state(secrets.token_hex(16))))
+
+    await handler(ctx, {"order_id": "o-1"})
+
+    assert seen == [(_SERVICE, None)]
+
+
+@pytest.mark.asyncio
+async def test_a_delegated_key_is_refused() -> None:
+    seen: list[Any] = []
+    handler = operation_durable_handler(_spec(), _guarded(seen), identity=_keyed_identity())
+    state = _keyed_state(secrets.token_hex(16), claims={"act": {"sub": "agent"}})
+    ctx = context_from_modules(MockDepsModule(state=state))
+
+    with pytest.raises(CoreException) as caught:
+        await handler(ctx, {"order_id": "o-1"})
+
+    assert caught.value.kind is ExceptionKind.AUTHENTICATION
+    assert caught.value.code == "durable_service_identity_delegated"
+    assert seen == []
+
+
+_ADMISSION = object()
+"""The admission the enqueuing request authenticated with."""
+
+
+def _recording_admissions(monkeypatch: pytest.MonkeyPatch, admitted: object) -> list[object | None]:
+    """Make the mock verifier record *admitted*, as the identity plane's does, and return
+    the list the guarded operation appends its admission to."""
+
+    original = MockApiKeyVerifierPort.verify_api_key
+
+    async def verify(self: Any, credentials: Any) -> Any:
+        assertion = await original(self, credentials)
+        record_authn_admission(admitted)
+        return assertion
+
+    monkeypatch.setattr(MockApiKeyVerifierPort, "verify_api_key", verify)
+
+    return []
+
+
+def _admission_spy(admissions: list[object | None]) -> Any:
+    def factory(ctx: Any) -> Any:
+        async def _run(args: _Args) -> _Out:
+            admissions.append(current_authn_admission())
+            return _Out(handled=args.order_id)
+
+        return _run
+
+    return OperationRegistry(handlers={"sync.run": factory}).freeze()
+
+
+@pytest.mark.asyncio
+async def test_the_key_admission_is_scoped_to_the_body(monkeypatch: pytest.MonkeyPatch) -> None:
+    key_admission = object()
+    admissions = _recording_admissions(monkeypatch, key_admission)
+    handler = operation_durable_handler(
+        _spec(), _admission_spy(admissions), identity=_keyed_identity()
+    )
+    ctx = context_from_modules(MockDepsModule(state=_keyed_state(secrets.token_hex(16))))
+
+    with bind_authn_admission(_ADMISSION):
+        await handler(ctx, {"order_id": "o-1"})
+
+        # The caller's task still holds its own credential's admission.
+        assert current_authn_admission() is _ADMISSION
+
+    assert admissions == [key_admission]
+
+
+@pytest.mark.asyncio
+async def test_run_now_keeps_the_callers_admission(monkeypatch: pytest.MonkeyPatch) -> None:
+    key_admission = object()
+    admissions = _recording_admissions(monkeypatch, key_admission)
+    registry = DurableFunctionRegistry()
+    register_operation_functions(
+        registry, [_spec()], operations=_admission_spy(admissions), identity=_keyed_identity()
+    )
+    ctx = context_from_modules(MockDepsModule(state=_keyed_state(secrets.token_hex(16))))
+
+    with bind_authn_admission(_ADMISSION):
+        await DurableFunctionRunner(registry=registry).run_now(ctx, "sync", {"order_id": "o-1"})
+
+        assert current_authn_admission() is _ADMISSION
+
+    assert admissions == [key_admission]
+
+
+@pytest.mark.asyncio
+async def test_an_unverified_body_carries_no_admission() -> None:
+    admissions: list[object | None] = []
+    identity = DurableServiceIdentity(authn=_SERVICE, acknowledge_unverified_identity=True)
+    handler = operation_durable_handler(_spec(), _admission_spy(admissions), identity=identity)
+    ctx = context_from_modules(MockDepsModule())
+
+    with bind_authn_admission(_ADMISSION):
+        await handler(ctx, {"order_id": "o-1"})
+
+    assert admissions == [None]
+
+
+@pytest.mark.asyncio
+async def test_an_outage_is_not_logged_as_a_bad_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def down(self: Any, ref: Any) -> str:
+        raise CoreException.infrastructure("Secrets backend unreachable")
+
+    monkeypatch.setattr(MockSecretsPort, "resolve_str", down)
+    handler = operation_durable_handler(_spec(), _guarded([]), identity=_keyed_identity())
+    ctx = context_from_modules(MockDepsModule(state=_keyed_state(secrets.token_hex(16))))
+
+    with patch.object(bridge_module, "logger") as log:
+        with pytest.raises(CoreException) as caught:
+            await handler(ctx, {"order_id": "o-1"})
+
+    assert caught.value.kind is ExceptionKind.INFRASTRUCTURE
+    log.warning.assert_called_once()
+    assert "did not verify" not in log.warning.call_args.args[0]
+
+
+@pytest.mark.asyncio
+async def test_a_foreign_error_quoting_the_key_reaches_no_row_or_log(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    key = secrets.token_hex(16)
+
+    async def leaky(self: Any, credentials: Any) -> Any:
+        raise RuntimeError(f"cannot parse {credentials.key}")
+
+    monkeypatch.setattr(MockApiKeyVerifierPort, "verify_api_key", leaky)
+    state = _keyed_state(key)
+    registry = DurableFunctionRegistry()
+    register_operation_functions(
+        registry, [_spec()], operations=_guarded([]), identity=_keyed_identity()
+    )
+    ctx = context_from_modules(MockDepsModule(state=state))
+
+    with patch.object(bridge_module, "logger") as log:
+        with pytest.raises(CoreException) as caught:
+            await DurableFunctionRunner(registry=registry).run_now(ctx, "sync", {"order_id": "o"})
+
+    assert caught.value.kind is ExceptionKind.INTERNAL
+    assert key not in str(caught.value)
+    assert key not in repr(state.durable_runs)
+    log.warning.assert_called_once()
+    assert key not in repr(log.warning.call_args)
 
 
 @pytest.mark.asyncio
