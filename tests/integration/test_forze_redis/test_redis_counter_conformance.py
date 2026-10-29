@@ -14,7 +14,7 @@ import pytest
 import pytest_asyncio
 
 from forze.application.contracts.tenancy import TenantIdentity
-from forze_redis.adapters.counter import RedisCounterAdapter
+from forze_redis.adapters.counter import RedisCounterAdapter, RedisCounterAdminAdapter
 from tests.support.counter_conformance import COUNTER_BATTERY, Check, CounterHarness
 
 # ----------------------- #
@@ -37,6 +37,7 @@ async def harness(redis_client) -> CounterHarness:
     return CounterHarness(
         counter=RedisCounterAdapter(client=redis_client, namespace=namespace),
         suffix=lambda name: f"{name}-{run}",
+        admin=RedisCounterAdminAdapter(client=redis_client, namespace=namespace),
         for_tenant=_for_tenant,
     )
 

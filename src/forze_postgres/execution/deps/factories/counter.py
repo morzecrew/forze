@@ -8,7 +8,7 @@ import attrs
 
 from ....adapters.counter import PostgresCounterAdapter, PostgresCounterAdminAdapter
 from ..configs.counter import PostgresCounterConfig
-from ..keys import PostgresClientDepKey
+from ..keys import PostgresClientDepKey, PostgresIntrospectorDepKey
 
 if TYPE_CHECKING:
     from forze.application.contracts.counter import CounterSpec
@@ -40,6 +40,7 @@ class ConfigurablePostgresCounter(_ConfigurablePostgresCounterBase):
     ) -> PostgresCounterAdapter:
         return PostgresCounterAdapter(
             client=ctx.deps.provide(PostgresClientDepKey),
+            introspector=ctx.deps.provide(PostgresIntrospectorDepKey),
             config=self.config,
             route=str(spec.name),
             tenant_aware=self.config.tenant_aware,
@@ -67,6 +68,7 @@ class ConfigurablePostgresCounterAdmin(_ConfigurablePostgresCounterBase):
     ) -> PostgresCounterAdminAdapter:
         return PostgresCounterAdminAdapter(
             client=ctx.deps.provide(PostgresClientDepKey),
+            introspector=ctx.deps.provide(PostgresIntrospectorDepKey),
             config=self.config,
             route=str(spec.name),
             tenant_aware=self.config.tenant_aware,

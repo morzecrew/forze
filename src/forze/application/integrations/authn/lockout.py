@@ -5,21 +5,24 @@
 :func:`~forze.base.primitives.utcnow` time source — so it lives in the
 integrations layer next to the orchestrator that consumes it.
 
-**Why a fixed window.** :class:`CounterPort` exposes
-``incr``/``incr_batch``/``decr``/``reset`` and nothing else — no TTL/expiry
-surface (verified against the port and both shipped adapters). Without
-key expiry, a sliding window or an explicit ``lock_for`` duration would need
-per-key timestamps the port cannot store, so v1 uses fixed windows: failures
-accumulate in the bucket ``floor(unix_now / window_seconds)`` and a locked
-login unlocks at the window boundary. A ``lock_for`` override and counter-port
-TTL (which would also let the Redis adapter expire stale buckets instead of
-leaving dead keys behind) are noted as future counter-port capabilities.
+**Why a fixed window.** Failures accumulate in the bucket
+``floor(unix_now / window_seconds)`` and a locked login unlocks at the window
+boundary. A sliding window would need per-attempt timestamps the counter port
+cannot store; a fixed window needs one integer per bucket.
 
 **Keying.** Counter suffix =
 ``authn_lockout:{login_digest}:{window_bucket}`` — the
 :func:`~forze.application.contracts.authn.login_digest` pseudonym, never the
-raw login, so counter key spaces never materialize logins. Old buckets become
-dead keys (value-only, no credential material); see the TTL note above.
+raw login, so counter key spaces never materialize logins.
+
+**Expiry.** Each bucket is written with ``ttl = window + LOCKOUT_TTL_SKEW``, so it
+expires on its own once its window is over instead of staying behind as a dead
+key, and the check that runs on every attempt reads with ``incr(0)``, which does
+not create a counter. Only a failed attempt (or a success resetting one) writes a
+key. On a counter backend that cannot expire keys (one that does not report
+:class:`~forze.application.contracts.counter.CounterCapabilities` with
+``expiry=True``) buckets are written without a ttl and old ones stay behind, as
+they did before counters could expire.
 """
 
 from datetime import UTC, datetime, timedelta
@@ -27,7 +30,7 @@ from typing import Final, final
 
 import attrs
 
-from forze.application.contracts.counter import CounterPort
+from forze.application.contracts.counter import CounterPort, counter_capabilities
 from forze.base.exceptions import exc
 from forze.base.primitives import StrKey, utcnow
 
@@ -42,6 +45,14 @@ LOCKED_LOGIN_CODE: Final = "login_locked"
 LOCKOUT_COUNTER_ROUTE: Final[StrKey] = "authn_lockout"
 """Default counter route the lockout guard resolves its ``CounterPort`` from."""
 
+LOCKOUT_TTL_SKEW: Final[timedelta] = timedelta(minutes=1)
+"""Lifetime a bucket gets beyond its window, for clock skew.
+
+A bucket is chosen by the application's clock and expired by the store's. Created at the
+start of its window on the fastest clock, a bucket living exactly one window would lapse
+while a slower node still counts that window as current, and a locked login would unlock
+early there. The margin covers that skew; past it a bucket is dead either way."""
+
 # ....................... #
 
 
@@ -51,10 +62,9 @@ class LockoutConfig:
     """Login lockout policy.
 
     ``threshold`` failed attempts within the current fixed ``window`` lock the
-    login string until the window rolls over. There is deliberately no
-    ``lock_for`` knob in v1: :class:`~forze.application.contracts.counter.CounterPort`
-    has no TTL surface, so unlock-at-window-end is the only duration the port
-    can express (see the module docstring).
+    login string until the window rolls over. There is no separate ``lock_for``
+    duration: a locked login unlocks at the window boundary, which is the same
+    instant for every login string, so ``Retry-After`` discloses nothing.
     """
 
     threshold: int = attrs.field(default=5)
@@ -103,10 +113,9 @@ class LoginLockoutGuard:
     .. note::
        ``CounterPort`` is command-style with no read method, so :meth:`locked_until`
        reads via ``incr(0)``. That a zero increment returns the current value without
-       moving it is now a pinned contract property rather than an observation about the
-       adapters that happened to ship — the shared counter conformance battery asserts it
-       on every backend. It does still *create* the counter at zero when absent, so a
-       lockout check on an unseen digest materializes a partition.
+       moving it — and without creating the counter — is a pinned contract property the
+       shared counter conformance battery asserts on every backend, so a check on an
+       unseen digest leaves no key behind.
     """
 
     counter: CounterPort
@@ -120,6 +129,20 @@ class LoginLockoutGuard:
     def _window_seconds(self) -> float:
         # Not truncated to whole seconds: a sub-second window would divide by zero.
         return self.config.window.total_seconds()
+
+    # ....................... #
+
+    def _lifetime(self) -> dict[str, timedelta]:
+        """The ``ttl`` keyword for a bucket write, or none on a backend that cannot expire.
+
+        Left out rather than passed as ``None`` there, so a counter port written before the
+        keyword existed keeps working.
+        """
+
+        if not counter_capabilities(self.counter).expiry:
+            return {}
+
+        return {"ttl": self.config.window + LOCKOUT_TTL_SKEW}
 
     # ....................... #
 
@@ -165,11 +188,11 @@ class LoginLockoutGuard:
     async def record_failure(self, login_digest: str) -> None:
         """Count one failed attempt in the current window."""
 
-        await self.counter.incr(1, suffix=self._suffix(login_digest))
+        await self.counter.incr(1, suffix=self._suffix(login_digest), **self._lifetime())
 
     # ....................... #
 
     async def record_success(self, login_digest: str) -> None:
         """Reset the current window bucket after a successful login."""
 
-        await self.counter.reset(0, suffix=self._suffix(login_digest))
+        await self.counter.reset(0, suffix=self._suffix(login_digest), **self._lifetime())

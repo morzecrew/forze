@@ -100,6 +100,12 @@ lifecycle = LifecyclePlan.from_steps(
   survives the rollback of the operation it guards. Expired claims are reclaimed
   in place; a TTL index on `expires_at` is optional cleanup for keys that are
   never reused.
+- **Counter lifetimes** need no migration: a counter written with a `ttl` stores an
+  `expires_at` date, and one past it reads as absent. To reclaim the documents, create a
+  TTL index (you own the indexes):
+  `db.<collection>.createIndex({expires_at: 1}, {expireAfterSeconds: 0})`. A counter
+  without a `ttl` stores a null there and is never removed. See
+  [Lifetimes](../reference/contracts/stores.md#lifetimes-ttl).
 - **Durable execution needs one index**, and only one: a partial unique index on
   the run collection's `idempotency_key`
   (`partialFilterExpression: {idempotency_key: {$type: "string"}}`). Without it

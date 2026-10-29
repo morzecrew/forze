@@ -13,6 +13,14 @@ from .deps import (
     CounterDepPort,
     CounterDeps,
 )
+from .expiry import (
+    COUNTER_TTL_UNSUPPORTED_CODE,
+    CounterCapabilities,
+    CounterExpiryAware,
+    counter_capabilities,
+    counter_ttl_unsupported,
+    validate_counter_ttl,
+)
 from .ports import CounterPort
 from .specs import CounterSpec
 
@@ -34,4 +42,11 @@ __all__ = [
     "COUNTER_VALUE_OUT_OF_RANGE_CODE",
     "counter_out_of_range",
     "validate_counter_value",
+    # expiry
+    "COUNTER_TTL_UNSUPPORTED_CODE",
+    "CounterCapabilities",
+    "CounterExpiryAware",
+    "counter_capabilities",
+    "counter_ttl_unsupported",
+    "validate_counter_ttl",
 ]

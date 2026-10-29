@@ -1,3 +1,4 @@
+from datetime import timedelta
 from unittest.mock import AsyncMock, Mock
 from uuid import UUID
 
@@ -42,11 +43,11 @@ async def test_redis_counter_adapter_with_tenant(redis_mock: Mock) -> None:
         1,
     )
 
-    redis_mock.decr = AsyncMock(return_value=1)
+    # A decrement is a negative ``INCRBY`` — one path for every step, with or without a ttl.
     await counter.decr(suffix="my-suffix")
-    redis_mock.decr.assert_called_once_with(
+    redis_mock.incr.assert_called_with(
         f"tenant:{tid}:counter:ns:my-suffix",
-        1,
+        -1,
     )
 
     redis_mock.reset = AsyncMock(return_value=0)
@@ -69,3 +70,30 @@ async def test_redis_counter_incr_batch_returns_range(redis_mock: Mock) -> None:
 
     redis_mock.incr.assert_called_once_with("counter:ns:b", 3)
     assert batch == [8, 9, 10]
+
+
+@pytest.mark.asyncio
+async def test_redis_counter_zero_step_reads_without_writing(redis_mock: Mock) -> None:
+    counter = RedisCounterAdapter(client=redis_mock, namespace="ns")
+    redis_mock.get = AsyncMock(side_effect=[b"7", None])
+    redis_mock.incr = AsyncMock()
+
+    assert await counter.incr(0, suffix="r") == 7
+    assert await counter.decr(0, suffix="absent") == 0
+
+    redis_mock.incr.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_redis_counter_ttl_rounds_up_to_whole_milliseconds(redis_mock: Mock) -> None:
+    counter = RedisCounterAdapter(client=redis_mock, namespace="ns")
+    redis_mock.run_script = AsyncMock(return_value="1")
+    redis_mock.set = AsyncMock(return_value=True)
+
+    assert await counter.incr(suffix="t", ttl=timedelta(microseconds=1)) == 1
+    _, keys, args = redis_mock.run_script.call_args.args
+    assert keys == ["counter:ns:t"]
+    assert args == [1, 1]  # a sub-millisecond lifetime is 1 ms, never 0 (no expiry)
+
+    assert await counter.reset(4, suffix="t", ttl=timedelta(seconds=1.5)) == 4
+    redis_mock.set.assert_called_once_with("counter:ns:t", "4", px=1500)

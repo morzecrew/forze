@@ -15,8 +15,8 @@ The claims, in the order a reader should meet them:
 
 1. **a fresh counter starts at zero** — the first ``incr()`` returns 1, and nothing has to
    create it first;
-2. **``incr(by=0)`` reads without moving** — the only read the port offers, which the login
-   lockout guard depends on;
+2. **``incr(by=0)`` reads without moving, and without creating** — the only read the port
+   offers, which the login lockout guard runs on every attempt;
 3. **allocations are distinct and ascending**, singly and in batches;
 4. **negative values are legal** — ``decr`` below zero, and a negative ``by``. Every backend
    already agreed here; nothing pinned it, so nothing stopped one from drifting;
@@ -30,7 +30,14 @@ The claims, in the order a reader should meet them:
 8. **two tenants across two suffixes are four disjoint sequences** — tenant and route live
    in the key, on a store that actually holds both tenants' rows;
 9. **an allocation that overshoots the ceiling is refused whole**, next to one that lands
-   exactly on it and is allowed.
+   exactly on it and is allowed;
+10. **a ``ttl`` is a lifetime fixed when the counter is created** — a lapsed counter reads as
+    absent, restarts from zero and is not enumerated; no later increment extends it; a
+    ``reset`` replaces it; and a ``ttl`` that has already ended is refused.
+
+The lifetime checks need time to pass. Each leg says how through :attr:`CounterHarness.wait`:
+the live backends sleep through a short real lifetime, and the mock advances a frozen clock,
+which is also the proof that its expiry follows the bound time source.
 
 On (6) and (9) the battery asserts what every backend can honestly promise: the allocation
 is refused and the stored value is untouched. Measured against live servers, no engine
@@ -44,7 +51,9 @@ than papered over with error-message sniffing.
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Awaitable, Callable
+from datetime import timedelta
 from typing import Any, final
 from uuid import UUID, uuid4
 
@@ -56,7 +65,7 @@ from forze.application.contracts.counter import (
     COUNTER_MIN_VALUE,
     COUNTER_VALUE_OUT_OF_RANGE_CODE,
 )
-from forze.base.exceptions import CoreException
+from forze.base.exceptions import CoreException, ExceptionKind
 from forze_dst.conformance.counters import (
     EXPECTED_ALLOCATION,
     EXPECTED_CEILING_PORTABLE,
@@ -67,6 +76,20 @@ from forze_dst.conformance.counters import (
 )
 
 # ----------------------- #
+
+TTL = timedelta(seconds=1.5)
+"""The lifetime the expiry checks use — short enough to wait out on a live backend, long
+enough that a write a few round trips later still lands inside it."""
+
+LAPSE = TTL + timedelta(milliseconds=400)
+"""How long the checks wait for a :data:`TTL` lifetime to end: the lifetime plus a margin."""
+
+
+async def _sleep(delta: timedelta) -> None:
+    await asyncio.sleep(delta.total_seconds())
+
+
+# ....................... #
 
 
 @final
@@ -86,6 +109,10 @@ class CounterHarness:
 
     admin: Any = None
     """Optional :class:`CounterAdminPort`; checks that need it skip when absent."""
+
+    wait: Callable[[timedelta], Awaitable[None]] = _sleep
+    """Let this much of the backend's clock pass. Live backends sleep; the mock leg advances
+    the frozen clock it binds, so its lifetimes run on the time source like everything else."""
 
     for_tenant: Callable[[UUID], Any] | None = None
     """Optional factory building a counter bound to a given tenant, over the SAME store.
@@ -115,9 +142,7 @@ async def check_a_fresh_counter_starts_at_zero(h: CounterHarness) -> None:
 async def check_incr_by_zero_reads_without_moving(h: CounterHarness) -> None:
     """The port has no read verb, so ``incr(0)`` is the read — and the lockout guard uses it.
 
-    It must not advance the counter. It *does* create it at zero if absent, which is a real
-    side effect worth knowing: a pure-looking read materializes a partition that then shows
-    up in enumeration and in portable exports.
+    It must not advance the counter (whether it creates one is the next check's business).
     """
 
     suffix = h.suffix("read")
@@ -126,6 +151,31 @@ async def check_incr_by_zero_reads_without_moving(h: CounterHarness) -> None:
     assert await h.counter.incr(by=0, suffix=suffix) == 7
     assert await h.counter.incr(by=0, suffix=suffix) == 7
     assert await h.counter.incr(suffix=suffix) == 8
+
+
+# ....................... #
+
+
+async def check_a_zero_increment_creates_nothing(h: CounterHarness) -> None:
+    """A read of an absent counter leaves nothing behind.
+
+    The lockout guard reads on every login attempt, under a suffix derived from whatever
+    login string the client sent. A read that created the counter turned every attempt —
+    for a login that does not exist, which never failed — into a key that is never removed,
+    and handed an unauthenticated client the size of the key space.
+    """
+
+    suffix = h.suffix("zero")
+
+    assert await h.counter.incr(by=0, suffix=suffix) == 0
+    assert await h.counter.decr(by=0, suffix=suffix) == 0
+
+    if h.admin is not None:
+        listed = {entry.suffix for entry in await h.admin.list_counters()}
+
+        assert suffix not in listed, "a read must not materialize a partition"
+
+    assert await h.counter.incr(suffix=suffix) == 1
 
 
 # ....................... #
@@ -325,9 +375,119 @@ async def check_crossing_the_ceiling_is_refused_whole(h: CounterHarness) -> None
     assert outcome.portable() == EXPECTED_CEILING_PORTABLE
 
 
+# ....................... #
+
+
+async def check_a_lapsed_counter_reads_as_absent(h: CounterHarness) -> None:
+    """Past its lifetime a counter is gone: it reads 0, restarts from 0, and is not listed.
+
+    Every write verb takes the ``ttl`` — ``incr``, ``incr_batch`` and ``decr`` alike — and a
+    later write *without* one leaves the lifetime the counter was created with.
+    """
+
+    one, batch, down, kept = (h.suffix(name) for name in ("lapse1", "lapse2", "lapse3", "kept"))
+
+    assert await h.counter.incr(by=5, suffix=one, ttl=TTL) == 5
+    assert await h.counter.incr(suffix=one) == 6, "a live counter keeps counting"
+    assert await h.counter.incr_batch(3, suffix=batch, ttl=TTL) == [1, 2, 3]
+    assert await h.counter.decr(suffix=down, ttl=TTL) == -1
+    assert await h.counter.incr(suffix=kept) == 1
+
+    await h.wait(LAPSE)
+
+    for suffix in (one, batch, down):
+        assert await h.counter.incr(by=0, suffix=suffix) == 0, "a lapsed counter reads as 0"
+
+    if h.admin is not None:
+        listed = {entry.suffix for entry in await h.admin.list_counters()}
+
+        assert kept in listed
+        assert not listed & {one, batch, down}, "a lapsed counter must not be enumerated"
+
+    assert await h.counter.incr(suffix=one, ttl=TTL) == 1, "and restarts from zero"
+    assert await h.counter.incr(suffix=kept) == 2, "a counter without a ttl never lapses"
+
+
+# ....................... #
+
+
+async def check_later_writes_do_not_extend_a_lifetime(h: CounterHarness) -> None:
+    """The lifetime is fixed at creation — the fixed-window rule.
+
+    A busy window that refreshed its expiry on every write would never end while traffic
+    kept arriving, which for a lockout means a login under steady attack stays locked past
+    every window boundary. Nor does a ``ttl`` on a later write put a lifetime on a counter
+    created without one: a permanent sequence must not start expiring because one caller
+    passed a ``ttl``.
+    """
+
+    window, permanent = h.suffix("window"), h.suffix("permanent")
+
+    assert await h.counter.incr(suffix=window, ttl=TTL) == 1
+    assert await h.counter.incr(suffix=permanent) == 1
+    assert await h.counter.incr(suffix=permanent, ttl=TTL) == 2
+
+    await h.wait(TTL / 2)
+
+    assert await h.counter.incr(suffix=window, ttl=TTL) == 2
+    assert await h.counter.incr_batch(2, suffix=window, ttl=TTL) == [3, 4]
+
+    # Past the creation lifetime, still inside the one a refresh would have granted.
+    await h.wait(LAPSE - TTL / 2)
+
+    assert await h.counter.incr(by=0, suffix=window) == 0, "the lifetime was extended"
+    assert await h.counter.incr(by=0, suffix=permanent) == 2, "a later ttl was applied"
+
+
+# ....................... #
+
+
+async def check_reset_replaces_the_lifetime(h: CounterHarness) -> None:
+    """``reset`` is absolute in value *and* lifetime: its ``ttl`` starts afresh, and a reset
+    without one leaves a counter that never expires."""
+
+    timed, cleared = h.suffix("rttl"), h.suffix("rclear")
+
+    assert await h.counter.reset(7, suffix=timed, ttl=TTL) == 7
+    assert await h.counter.incr(suffix=cleared, ttl=TTL) == 1
+    assert await h.counter.reset(3, suffix=cleared) == 3
+
+    await h.wait(LAPSE)
+
+    assert await h.counter.incr(by=0, suffix=timed) == 0
+    assert await h.counter.incr(by=0, suffix=cleared) == 3
+
+
+# ....................... #
+
+
+async def check_a_ttl_that_has_already_ended_is_refused(h: CounterHarness) -> None:
+    """A zero or negative lifetime would store a counter expired as it is written; every
+    backend refuses it the same way, before anything is stored."""
+
+    suffix = h.suffix("badttl")
+
+    writes = (
+        (h.counter.incr, {}),
+        (h.counter.incr_batch, {"size": 2}),
+        (h.counter.decr, {}),
+        (h.counter.reset, {"value": 5}),
+    )
+
+    for ttl in (timedelta(0), timedelta(seconds=-1)):
+        for write, args in writes:
+            with pytest.raises(CoreException) as refused:
+                await write(suffix=suffix, ttl=ttl, **args)
+
+            assert refused.value.kind is ExceptionKind.PRECONDITION
+
+    assert await h.counter.incr(suffix=suffix) == 1, "nothing was stored"
+
+
 COUNTER_BATTERY: tuple[Check, ...] = (
     check_a_fresh_counter_starts_at_zero,
     check_incr_by_zero_reads_without_moving,
+    check_a_zero_increment_creates_nothing,
     check_allocations_are_distinct_and_ascending,
     check_a_batch_of_one_is_legal_and_zero_is_not,
     check_counters_may_go_negative,
@@ -338,5 +498,9 @@ COUNTER_BATTERY: tuple[Check, ...] = (
     check_suffixes_are_independent_partitions,
     check_tenants_and_suffixes_are_four_disjoint_sequences,
     check_the_frozen_allocation_script_gives_one_answer,
+    check_a_lapsed_counter_reads_as_absent,
+    check_later_writes_do_not_extend_a_lifetime,
+    check_reset_replaces_the_lifetime,
+    check_a_ttl_that_has_already_ended_is_refused,
 )
 """Every check. The mock runs them as a unit test; each real backend runs them live."""

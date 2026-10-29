@@ -3,20 +3,25 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import Final, final
+from datetime import timedelta
+from typing import Any, Final, final
 
 import attrs
 from psycopg import sql
 
 from forze.application.contracts.counter import (
     CounterAdminPort,
+    CounterCapabilities,
     CounterEntry,
     CounterPort,
+    counter_ttl_unsupported,
+    validate_counter_ttl,
     validate_counter_value,
 )
 from forze.application.contracts.tenancy import TenancyMixin
 from forze.base.exceptions import exc
 from forze_postgres.execution.deps.configs.counter import PostgresCounterConfig
+from forze_postgres.kernel.catalog.introspect import PostgresIntrospector
 from forze_postgres.kernel.client import PostgresClientPort
 from forze_postgres.kernel.gateways.base import PostgresQualifiedName
 from forze_postgres.kernel.relation import resolve_postgres_qname
@@ -34,6 +39,12 @@ unsuffixed sentinel."""
 
 _NO_TENANT: Final[str] = ""
 """Stored ``tenant_id`` when no tenant is bound — the primary key column cannot hold ``NULL``."""
+
+_EXPIRY_COLUMN: Final[str] = "expires_at"
+"""Optional column holding the instant a counter lapses (``NULL`` = never)."""
+
+_PURGE_BATCH: Final[int] = 1000
+"""Rows one purge statement deletes, so a large backlog never holds one long lock."""
 
 
 def _route_prefix(route: str) -> str:
@@ -85,6 +96,14 @@ class _PostgresCounterBase(TenancyMixin):
     """The counter spec's route — folded into the stored key so two specs sharing one
     table do not merge (see :func:`_encode_suffix`)."""
 
+    introspector: PostgresIntrospector | None = None
+    """Catalog access used to detect the optional ``expires_at`` column.
+
+    ``None`` — a direct construction rather than the wired factory — means no detection is
+    possible, so the adapter keeps the statements of a table without the column and refuses
+    a ``ttl``. Wiring always supplies one.
+    """
+
     # ....................... #
 
     async def _table(self) -> PostgresQualifiedName:
@@ -102,6 +121,56 @@ class _PostgresCounterBase(TenancyMixin):
         # ``suffix`` alone would collide two tenants' sequences silently.
         tenant_id = self.require_tenant_if_aware()
         return str(tenant_id) if tenant_id is not None else _NO_TENANT
+
+    # ....................... #
+
+    async def _has_expiry(self, table: PostgresQualifiedName, *, required: bool) -> bool:
+        """Whether *table* carries the optional ``expires_at`` column.
+
+        The answer picks between two statement shapes, because a statement naming a column
+        the table lacks does not execute at all. A table created before counters could
+        expire keeps working for every call that does not ask for a ``ttl``; a call that
+        does (*required*) is refused with ``configuration``.
+
+        A present column is answered from the introspector's cache. An absent one is re-read
+        past the cache only when *required*, so the migration can be applied to a running
+        deployment and the next ``ttl`` call picks it up.
+        """
+
+        if self.introspector is not None:
+            columns = await self.introspector.get_column_types(
+                schema=table.schema,
+                relation=table.name,
+            )
+
+            if _EXPIRY_COLUMN in columns:
+                return True
+
+            if required:
+                self.introspector.invalidate_relation(schema=table.schema, relation=table.name)
+                columns = await self.introspector.get_column_types(
+                    schema=table.schema,
+                    relation=table.name,
+                )
+
+                if _EXPIRY_COLUMN in columns:
+                    return True
+
+        if not required:
+            # shortcut: a process that cached the table before the column was added keeps
+            # the column-less statements for ttl-less calls until a ttl call or a restart.
+            return False
+
+        if self.introspector is None:
+            raise counter_ttl_unsupported(
+                "this Postgres counter was built without catalog access, so it cannot "
+                f"detect the {_EXPIRY_COLUMN!r} column"
+            )
+
+        raise counter_ttl_unsupported(
+            f"the counters table {table.string()!r} has no {_EXPIRY_COLUMN!r} column (add it "
+            f"with ALTER TABLE {table.string()} ADD COLUMN {_EXPIRY_COLUMN} timestamptz)"
+        )
 
 
 # ....................... #
@@ -122,18 +191,76 @@ class PostgresCounterAdapter(_PostgresCounterBase, CounterPort):
     The table is provided by the application; expected schema::
 
         CREATE TABLE <relation> (
-            tenant_id text   NOT NULL,   -- '' = no tenant bound
-            suffix    text   NOT NULL,   -- '<len>:<route>' + ('' | 's:<suffix>')
-            value     bigint NOT NULL,
+            tenant_id  text        NOT NULL,   -- '' = no tenant bound
+            suffix     text        NOT NULL,   -- '<len>:<route>' + ('' | 's:<suffix>')
+            value      bigint      NOT NULL,
+            expires_at timestamptz,            -- optional; NULL = never expires
             PRIMARY KEY (tenant_id, suffix)
         );
 
     The ``suffix`` column folds the spec's route into its key (see :func:`_encode_suffix`),
     so several counter specs may share one table without merging.
+
+    ``expires_at`` is **optional and additive**: ``ALTER TABLE <relation> ADD COLUMN
+    expires_at timestamptz;`` is the whole migration. Without it every call works as before
+    except one that passes a ``ttl``, which is refused with ``configuration``. With it a
+    lapsed row reads as absent and the next increment overwrites it from zero; the row stays
+    until :meth:`PostgresCounterAdminAdapter.purge_expired` or a scheduled ``DELETE``
+    removes it. Lifetimes run on the database's clock (``now()``).
     """
 
-    async def _bump(self, by: int, suffix: str | None) -> int:
+    def capabilities(self) -> CounterCapabilities:
+        """Report expiry support (a ``ttl`` still needs the ``expires_at`` column)."""
+
+        return CounterCapabilities(expiry=True)
+
+    # ....................... #
+
+    def _keys(self, suffix: str | None) -> dict[str, Any]:
+        return {
+            "tenant": self._tenant_value(),
+            "suffix": _encode_suffix(self.route, suffix),
+            "legacy": _legacy_suffix(suffix),
+        }
+
+    # ....................... #
+
+    async def _read(self, table: PostgresQualifiedName, suffix: str | None, expiry: bool) -> int:
+        """The counter's current value, without creating it.
+
+        Falls back to the pre-route legacy row only when the current row is absent — the
+        first-touch rule the allocation path seeds by — and a lapsed row reads as 0.
+        """
+
+        stmt = sql.SQL(
+            "SELECT CASE WHEN cur.suffix IS NULL THEN COALESCE(old.value, 0) "
+            "{lapsed}ELSE cur.value END "
+            "FROM (SELECT 1) AS anchor "
+            "LEFT JOIN {table} AS cur ON cur.tenant_id = {tenant} AND cur.suffix = {suffix} "
+            "LEFT JOIN {table} AS old ON old.tenant_id = {tenant} AND old.suffix = {legacy}"
+        ).format(
+            lapsed=sql.SQL("WHEN cur.expires_at <= now() THEN 0 " if expiry else ""),
+            table=table.ident(),
+            tenant=sql.Placeholder("tenant"),
+            suffix=sql.Placeholder("suffix"),
+            legacy=sql.Placeholder("legacy"),
+        )
+
+        async with self.client.detached():
+            value = await self.client.fetch_value(stmt, self._keys(suffix), default=0)
+
+        return int(value)
+
+    # ....................... #
+
+    async def _bump(self, by: int, suffix: str | None, ttl: timedelta | None) -> int:
+        validate_counter_ttl(ttl)
+
         table = await self._table()
+        expiry = await self._has_expiry(table, required=ttl is not None)
+
+        if by == 0:
+            return await self._read(table, suffix, expiry)
 
         # On the first touch of the new route-prefixed row, seed its value from the
         # pre-route legacy row (``COALESCE(… , 0)``) so an existing sequence continues
@@ -142,32 +269,49 @@ class PostgresCounterAdapter(_PostgresCounterBase, CounterPort):
         # adds only ``by`` (not ``EXCLUDED.value``, which carries the one-time seed) so a
         # subsequent bump never re-adds the legacy value. The legacy row is left in place
         # (route-filtered out of enumeration); it is simply never read again.
-        stmt = sql.SQL(
-            "INSERT INTO {table} (tenant_id, suffix, value) "
-            "VALUES ({tenant}, {suffix}, "
-            "  COALESCE("
-            "    (SELECT value FROM {table} WHERE tenant_id = {tenant} AND suffix = {legacy}), 0"
-            "  ) + {by}) "
-            "ON CONFLICT (tenant_id, suffix) "
-            "DO UPDATE SET value = {table}.value + {by} "
-            "RETURNING value"
-        ).format(
+        #
+        # With ``expires_at``, a lapsed row is overwritten as if it were absent — from
+        # ``by``, with the new lifetime — and a live one keeps the lifetime it was created
+        # with, so a fixed window is never extended by the traffic inside it.
+        if expiry:
+            upsert = (
+                "INSERT INTO {table} (tenant_id, suffix, value, expires_at) "
+                "VALUES ({tenant}, {suffix}, "
+                "  COALESCE("
+                "    (SELECT value FROM {table} WHERE tenant_id = {tenant} AND suffix = {legacy}), 0"
+                "  ) + {by}, now() + {ttl}::interval) "
+                "ON CONFLICT (tenant_id, suffix) DO UPDATE SET "
+                "value = CASE WHEN {table}.expires_at <= now() THEN {by} "
+                "  ELSE {table}.value + {by} END, "
+                "expires_at = CASE WHEN {table}.expires_at <= now() THEN EXCLUDED.expires_at "
+                "  ELSE {table}.expires_at END "
+                "RETURNING value"
+            )
+        else:
+            upsert = (
+                "INSERT INTO {table} (tenant_id, suffix, value) "
+                "VALUES ({tenant}, {suffix}, "
+                "  COALESCE("
+                "    (SELECT value FROM {table} WHERE tenant_id = {tenant} AND suffix = {legacy}), 0"
+                "  ) + {by}) "
+                "ON CONFLICT (tenant_id, suffix) "
+                "DO UPDATE SET value = {table}.value + {by} "
+                "RETURNING value"
+            )
+
+        stmt = sql.SQL(upsert).format(
             table=table.ident(),
             tenant=sql.Placeholder("tenant"),
             suffix=sql.Placeholder("suffix"),
             legacy=sql.Placeholder("legacy"),
             by=sql.Placeholder("by"),
+            ttl=sql.Placeholder("ttl"),
         )
 
         async with self.client.detached():
             row = await self.client.fetch_one(
                 stmt,
-                {
-                    "tenant": self._tenant_value(),
-                    "suffix": _encode_suffix(self.route, suffix),
-                    "legacy": _legacy_suffix(suffix),
-                    "by": by,
-                },
+                {**self._keys(suffix), "by": by, "ttl": ttl},
                 row_factory="tuple",
             )
 
@@ -178,10 +322,16 @@ class PostgresCounterAdapter(_PostgresCounterBase, CounterPort):
 
     # ....................... #
 
-    async def incr(self, by: int = 1, *, suffix: str | None = None) -> int:
+    async def incr(
+        self,
+        by: int = 1,
+        *,
+        suffix: str | None = None,
+        ttl: timedelta | None = None,
+    ) -> int:
         logger.debug("Incrementing counter suffix '%s' by %s", suffix, by)
 
-        return await self._bump(by, suffix)
+        return await self._bump(by, suffix, ttl)
 
     # ....................... #
 
@@ -190,6 +340,7 @@ class PostgresCounterAdapter(_PostgresCounterBase, CounterPort):
         size: int = 2,
         *,
         suffix: str | None = None,
+        ttl: timedelta | None = None,
     ) -> list[int]:
         if size < 1:
             raise exc.precondition("Batch size must be at least 1")
@@ -200,44 +351,76 @@ class PostgresCounterAdapter(_PostgresCounterBase, CounterPort):
             size,
         )
 
-        max_cnt = await self._bump(size, suffix)
+        max_cnt = await self._bump(size, suffix, ttl)
 
         return list(range(max_cnt - size + 1, max_cnt + 1))
 
     # ....................... #
 
-    async def decr(self, by: int = 1, *, suffix: str | None = None) -> int:
+    async def decr(
+        self,
+        by: int = 1,
+        *,
+        suffix: str | None = None,
+        ttl: timedelta | None = None,
+    ) -> int:
         logger.debug("Decrementing counter suffix '%s' by %s", suffix, by)
 
-        return await self._bump(-by, suffix)
+        return await self._bump(-by, suffix, ttl)
 
     # ....................... #
 
-    async def reset(self, value: int = 1, *, suffix: str | None = None) -> int:
+    async def reset(
+        self,
+        value: int = 1,
+        *,
+        suffix: str | None = None,
+        ttl: timedelta | None = None,
+    ) -> int:
         # Known up front, so it is refused here rather than by the backend — or, on
         # Redis, silently accepted and left to break the *next* allocation.
         validate_counter_value(value, operation="reset")
+        validate_counter_ttl(ttl)
 
         table = await self._table()
+        expiry = await self._has_expiry(table, required=ttl is not None)
 
         logger.debug("Resetting counter suffix '%s' to %s", suffix, value)
 
-        stmt = sql.SQL(
-            "INSERT INTO {table} (tenant_id, suffix, value) "
-            "VALUES ({tenant}, {suffix}, {value}) "
-            "ON CONFLICT (tenant_id, suffix) DO UPDATE SET value = EXCLUDED.value "
-            "RETURNING value"
-        ).format(
+        # A reset replaces the lifetime along with the value: no ttl clears it.
+        if expiry:
+            upsert = (
+                "INSERT INTO {table} (tenant_id, suffix, value, expires_at) "
+                "VALUES ({tenant}, {suffix}, {value}, now() + {ttl}::interval) "
+                "ON CONFLICT (tenant_id, suffix) DO UPDATE "
+                "SET value = EXCLUDED.value, expires_at = EXCLUDED.expires_at "
+                "RETURNING value"
+            )
+        else:
+            upsert = (
+                "INSERT INTO {table} (tenant_id, suffix, value) "
+                "VALUES ({tenant}, {suffix}, {value}) "
+                "ON CONFLICT (tenant_id, suffix) DO UPDATE SET value = EXCLUDED.value "
+                "RETURNING value"
+            )
+
+        stmt = sql.SQL(upsert).format(
             table=table.ident(),
-            tenant=sql.Placeholder(),
-            suffix=sql.Placeholder(),
-            value=sql.Placeholder(),
+            tenant=sql.Placeholder("tenant"),
+            suffix=sql.Placeholder("suffix"),
+            value=sql.Placeholder("value"),
+            ttl=sql.Placeholder("ttl"),
         )
 
         async with self.client.detached():
             await self.client.fetch_one(
                 stmt,
-                [self._tenant_value(), _encode_suffix(self.route, suffix), value],
+                {
+                    "tenant": self._tenant_value(),
+                    "suffix": _encode_suffix(self.route, suffix),
+                    "value": value,
+                    "ttl": ttl,
+                },
                 row_factory="tuple",
             )
 
@@ -254,6 +437,7 @@ class PostgresCounterAdminAdapter(_PostgresCounterBase, CounterAdminPort):
 
     async def list_counters(self) -> Sequence[CounterEntry]:
         table = await self._table()
+        expiry = await self._has_expiry(table, required=False)
 
         # Filtered on the stored tenant key *and* the route prefix, so a shared table
         # only ever reports the bound tenant's counters for *this* spec — never another
@@ -261,9 +445,14 @@ class PostgresCounterAdminAdapter(_PostgresCounterBase, CounterAdminPort):
         # escaping; the length-prefixed route tag makes it an exact route boundary.
         stmt = sql.SQL(
             "SELECT suffix, value FROM {table} "
-            "WHERE tenant_id = {tenant} AND starts_with(suffix, {route}) "
+            "WHERE tenant_id = {tenant} AND starts_with(suffix, {route}) {live}"
             "ORDER BY suffix"
-        ).format(table=table.ident(), tenant=sql.Placeholder(), route=sql.Placeholder())
+        ).format(
+            table=table.ident(),
+            tenant=sql.Placeholder(),
+            route=sql.Placeholder(),
+            live=sql.SQL("AND (expires_at IS NULL OR expires_at > now()) " if expiry else ""),
+        )
 
         async with self.client.detached():
             rows = await self.client.fetch_all(
@@ -276,3 +465,51 @@ class PostgresCounterAdminAdapter(_PostgresCounterBase, CounterAdminPort):
             CounterEntry(suffix=_decode_suffix(self.route, str(suffix)), value=int(value))
             for suffix, value in rows
         ]
+
+    # ....................... #
+
+    async def purge_expired(self) -> int:
+        """Delete this spec's lapsed counters for the bound tenant and return how many.
+
+        A lapsed row already reads as absent, so this reclaims storage and changes no
+        answer. Scoped like :meth:`list_counters` — tenant and route — and deleted in
+        batches of :data:`_PURGE_BATCH` so a large backlog never holds one long lock. The
+        outer ``expires_at`` test is re-checked against a row an increment revived between
+        a batch's ``SELECT`` and its ``DELETE``, so a live counter is never removed.
+
+        A table without ``expires_at`` holds nothing that can lapse, and returns 0. To purge
+        a whole table across tenants and routes, schedule
+        ``DELETE FROM <relation> WHERE expires_at <= now()`` instead (e.g. with pg_cron).
+        """
+
+        table = await self._table()
+
+        if not await self._has_expiry(table, required=False):
+            return 0
+
+        stmt = sql.SQL(
+            "DELETE FROM {table} WHERE (tenant_id, suffix) IN ("
+            "  SELECT tenant_id, suffix FROM {table} "
+            "  WHERE tenant_id = {tenant} AND starts_with(suffix, {route}) "
+            "  AND expires_at <= now() LIMIT {batch}"
+            ") AND expires_at <= now()"
+        ).format(
+            table=table.ident(),
+            tenant=sql.Placeholder("tenant"),
+            route=sql.Placeholder("route"),
+            batch=sql.Placeholder("batch"),
+        )
+        params = {
+            "tenant": self._tenant_value(),
+            "route": _route_prefix(self.route),
+            "batch": _PURGE_BATCH,
+        }
+        purged = 0
+
+        async with self.client.detached():
+            while True:
+                deleted = await self.client.execute(stmt, params, return_rowcount=True)
+                purged += deleted
+
+                if deleted < _PURGE_BATCH:
+                    return purged

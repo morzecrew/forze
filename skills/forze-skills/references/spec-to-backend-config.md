@@ -94,7 +94,7 @@ redis_module = RedisDepsModule(
 
 For FastAPI idempotency, either register a plain `idempotency` config or use a routed map whose key matches the `IdempotencySpec.name` / endpoint feature route.
 
-**Counters are not Redis-only.** Postgres, Mongo and Firestore also implement `CounterPort` — map the same `CounterSpec.name` through that module's `counters={...}` instead, which keeps sequences next to the data rather than adding Redis for one plane. Postgres needs an app-migrated counter table. Whichever backend you pick, an allocation runs on its own connection and **never joins the caller's transaction**: a rollback does not hand the number back.
+**Counters are not Redis-only.** Postgres, Mongo and Firestore also implement `CounterPort` — map the same `CounterSpec.name` through that module's `counters={...}` instead, which keeps sequences next to the data rather than adding Redis for one plane. Postgres needs an app-migrated counter table. Whichever backend you pick, an allocation runs on its own connection and **never joins the caller's transaction**: a rollback does not hand the number back. A counter keyed by period (`quota:{user}:{date}`, a lockout window) should pass `ttl=` so dead periods expire instead of piling up; the lifetime is fixed when the counter is created, and on Postgres a `ttl` needs the optional `expires_at timestamptz` column on the counter table.
 
 ## Storage, queue, and workflow routes
 

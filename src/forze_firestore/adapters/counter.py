@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from datetime import timedelta
+from datetime import datetime, timedelta
 from typing import Final, final
 from uuid import UUID
 
@@ -13,8 +13,10 @@ from google.cloud.firestore_v1.base_query import And, FieldFilter
 
 from forze.application.contracts.counter import (
     CounterAdminPort,
+    CounterCapabilities,
     CounterEntry,
     CounterPort,
+    validate_counter_ttl,
     validate_counter_value,
 )
 from forze.application.contracts.resilience import (
@@ -31,7 +33,7 @@ from forze.application.execution.resilience import (
     occ_retry,
 )
 from forze.base.exceptions import ExceptionKind, exc
-from forze.base.primitives import JsonDict
+from forze.base.primitives import JsonDict, utcnow
 from forze_firestore.execution.deps.configs import FirestoreCounterConfig
 from forze_firestore.kernel.client import FirestoreClientPort
 from forze_firestore.kernel.relation import resolve_firestore_collection
@@ -62,6 +64,17 @@ Redis-backed counter. Only Firestore needs this: Postgres allocates with
 ``INSERT … ON CONFLICT … RETURNING`` and Mongo with ``$inc`` + ``find_one_and_update`` —
 single atomic statements that never contend at this layer.
 """
+
+
+def _lapsed(doc: JsonDict, now: datetime) -> bool:
+    """Whether *doc* carries a lifetime that has ended at *now* (no ``expires_at``: never)."""
+
+    expires_at = doc.get("expires_at")
+
+    return expires_at is not None and expires_at <= now
+
+
+# ....................... #
 
 
 def _counter_resilience_executor() -> ResilienceExecutorPort:
@@ -150,7 +163,13 @@ class _FirestoreCounterBase(TenancyMixin):
 
     # ....................... #
 
-    def _doc_body(self, value: int, suffix: str | None, tenant_id: UUID | None) -> JsonDict:
+    def _doc_body(
+        self,
+        value: int,
+        suffix: str | None,
+        tenant_id: UUID | None,
+        expires_at: datetime | None,
+    ) -> JsonDict:
         # ``suffix``/``tenant_id``/``route`` are carried as plain fields so enumeration
         # reads fields instead of parsing the id composition.
         return {
@@ -158,6 +177,7 @@ class _FirestoreCounterBase(TenancyMixin):
             "suffix": suffix,
             "tenant_id": (str(tenant_id) if tenant_id is not None else None),
             "route": self.route,
+            "expires_at": expires_at,
         }
 
 
@@ -179,14 +199,27 @@ class FirestoreCounterAdapter(_FirestoreCounterBase, CounterPort):
     **Throughput caveat**: Firestore sustains roughly one write per second per document,
     so a hot counter contends and retries. Allocate blocks with :meth:`incr_batch` to
     amortize the ceiling, or route high-rate counters to a Redis-backed adapter.
+
+    A ``ttl`` is stored as an ``expires_at`` timestamp (null for a counter that never
+    expires). A lapsed document reads as absent and the next increment overwrites it from
+    zero; a Firestore TTL policy on ``expires_at`` reclaims it natively, typically within a
+    day of lapsing. Lifetimes run on the application's clock
+    (:func:`~forze.base.primitives.utcnow`).
     """
 
     resilience: ResilienceExecutorPort = attrs.field(factory=_counter_resilience_executor)
 
     # ....................... #
 
+    def capabilities(self) -> CounterCapabilities:
+        """Report expiry support."""
+
+        return CounterCapabilities(expiry=True)
+
+    # ....................... #
+
     @occ_retry
-    async def _bump(self, by: int, suffix: str | None) -> int:
+    async def _bump(self, by: int, suffix: str | None, ttl: timedelta | None) -> int:
         coll = await self._collection()
         tenant_id = self.require_tenant_if_aware()
         doc_id = self._doc_id(suffix, tenant_id)
@@ -199,9 +232,18 @@ class FirestoreCounterAdapter(_FirestoreCounterBase, CounterPort):
             # document so an existing sequence continues instead of restarting at zero
             # (which would reissue numbers already handed out). The legacy document is
             # retired in the same transaction; once migrated the fallback read finds none.
+            now = utcnow()
             current = await self.client.get_document(coll, doc_id)
             legacy = None if current else await self.client.get_document(coll, legacy_id)
-            base = int(current["value"]) if current else (int(legacy["value"]) if legacy else 0)
+
+            # A lapsed document is overwritten as if absent, with the new lifetime; a live
+            # one keeps the lifetime it was created with, so no increment extends it.
+            if current and not _lapsed(current, now):
+                base, expires_at = int(current["value"]), current.get("expires_at")
+            else:
+                base = int(legacy["value"]) if legacy else 0
+                expires_at = now + ttl if ttl is not None else None
+
             new_value = base + by
             # Unlike the other backends, the arithmetic happens here in Python rather than
             # in the store, so an out-of-range result would only surface as a serialization
@@ -212,7 +254,7 @@ class FirestoreCounterAdapter(_FirestoreCounterBase, CounterPort):
             await self.client.set_document(
                 coll,
                 doc_id,
-                self._doc_body(new_value, suffix, tenant_id),
+                self._doc_body(new_value, suffix, tenant_id, expires_at),
             )
 
             if legacy is not None:
@@ -222,10 +264,46 @@ class FirestoreCounterAdapter(_FirestoreCounterBase, CounterPort):
 
     # ....................... #
 
-    async def incr(self, by: int = 1, *, suffix: str | None = None) -> int:
+    async def _read(self, suffix: str | None) -> int:
+        """The counter's current value, without creating it (0 when absent or lapsed)."""
+
+        coll = await self._collection()
+        tenant_id = self.require_tenant_if_aware()
+
+        async with self.client.detached():
+            doc = await self.client.get_document(coll, self._doc_id(suffix, tenant_id))
+
+            if doc is None:
+                # First-touch rule: the legacy document stands in only for an absent one.
+                doc = await self.client.get_document(coll, self._legacy_doc_id(suffix, tenant_id))
+
+        if doc is None or _lapsed(doc, utcnow()):
+            return 0
+
+        return int(doc["value"])
+
+    # ....................... #
+
+    async def _step(self, by: int, suffix: str | None, ttl: timedelta | None) -> int:
+        validate_counter_ttl(ttl)
+
+        if by == 0:
+            return await self._read(suffix)
+
+        return await self._bump(by, suffix, ttl)
+
+    # ....................... #
+
+    async def incr(
+        self,
+        by: int = 1,
+        *,
+        suffix: str | None = None,
+        ttl: timedelta | None = None,
+    ) -> int:
         logger.debug("Incrementing counter suffix '%s' by %s", suffix, by)
 
-        return await self._bump(by, suffix)
+        return await self._step(by, suffix, ttl)
 
     # ....................... #
 
@@ -234,6 +312,7 @@ class FirestoreCounterAdapter(_FirestoreCounterBase, CounterPort):
         size: int = 2,
         *,
         suffix: str | None = None,
+        ttl: timedelta | None = None,
     ) -> list[int]:
         if size < 1:
             raise exc.precondition("Batch size must be at least 1")
@@ -244,35 +323,54 @@ class FirestoreCounterAdapter(_FirestoreCounterBase, CounterPort):
             size,
         )
 
-        max_cnt = await self._bump(size, suffix)
+        max_cnt = await self._step(size, suffix, ttl)
 
         return list(range(max_cnt - size + 1, max_cnt + 1))
 
     # ....................... #
 
-    async def decr(self, by: int = 1, *, suffix: str | None = None) -> int:
+    async def decr(
+        self,
+        by: int = 1,
+        *,
+        suffix: str | None = None,
+        ttl: timedelta | None = None,
+    ) -> int:
         logger.debug("Decrementing counter suffix '%s' by %s", suffix, by)
 
-        return await self._bump(-by, suffix)
+        return await self._step(-by, suffix, ttl)
 
     # ....................... #
 
-    async def reset(self, value: int = 1, *, suffix: str | None = None) -> int:
+    async def reset(
+        self,
+        value: int = 1,
+        *,
+        suffix: str | None = None,
+        ttl: timedelta | None = None,
+    ) -> int:
         # Known up front, so it is refused here rather than by the backend — or, on
         # Redis, silently accepted and left to break the *next* allocation.
         validate_counter_value(value, operation="reset")
+        validate_counter_ttl(ttl)
 
         coll = await self._collection()
         tenant_id = self.require_tenant_if_aware()
 
         logger.debug("Resetting counter suffix '%s' to %s", suffix, value)
 
-        # A blind absolute set is atomic on its own — no transaction needed.
+        # A blind absolute set is atomic on its own — no transaction needed. It replaces
+        # the lifetime along with the value: no ttl clears it.
         async with self.client.detached():
             await self.client.set_document(
                 coll,
                 self._doc_id(suffix, tenant_id),
-                self._doc_body(value, suffix, tenant_id),
+                self._doc_body(
+                    value,
+                    suffix,
+                    tenant_id,
+                    utcnow() + ttl if ttl is not None else None,
+                ),
             )
 
         return value
@@ -310,10 +408,15 @@ class FirestoreCounterAdminAdapter(_FirestoreCounterBase, CounterAdminPort):
                 ),
             )
 
+        # Lapsed documents are dropped here rather than in the query: matching "null or in
+        # the future" server-side needs an OR across an inequality and a composite index.
+        now = utcnow()
+
         return [
             CounterEntry(
                 suffix=(str(doc["suffix"]) if doc.get("suffix") is not None else None),
                 value=int(doc["value"]),
             )
             for doc in docs
+            if not _lapsed(doc, now)
         ]

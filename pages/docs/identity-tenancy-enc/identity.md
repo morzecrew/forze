@@ -293,6 +293,15 @@ sends as `Retry-After`; the body still withholds the details. It counts
 preserving the no-enumeration posture. The unlock instant is the same for every login
 string, so the header discloses nothing either.
 
+The lockout keeps its counter store bounded. The check that runs on every attempt reads
+with `incr(0)`, which creates nothing, so only a failed attempt (or a success resetting
+one) writes a key. Each window's key is written with a [`ttl`](../reference/contracts/stores.md#lifetimes-ttl)
+of the window plus `LOCKOUT_TTL_SKEW` (one minute, for clock skew between nodes and the
+store), so it expires on its own once the window is over. On Postgres the lockout's counter
+table needs the optional `expires_at timestamptz` column; without it a login fails with
+`configuration` (`counter_ttl_unsupported`). A custom counter backend that does not report
+expiry gets no `ttl`, and its old window keys stay behind.
+
 ## The identity plane
 
 All of this lives in `forze_identity`, separate from the core: `authn`, `authz`,

@@ -7,15 +7,18 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from forze.application.contracts.authn import login_digest
-from forze.application.contracts.counter import CounterPort
+from forze.application.contracts.counter import CounterPort, counter_capabilities
 from forze.application.integrations.authn import (
     LOCKED_LOGIN_CODE,
     LOCKED_LOGIN_MSG,
+    LOCKOUT_TTL_SKEW,
     LockoutConfig,
     LoginLockoutGuard,
 )
 from forze.base.exceptions import CoreException
 from forze.base.primitives import FrozenTimeSource, bind_time_source
+from forze_mock.adapters.counter import MockCounterAdapter, MockCounterAdminAdapter
+from forze_mock.state import MockState
 
 pytestmark = pytest.mark.unit
 
@@ -213,3 +216,76 @@ class TestLoginLockoutGuard:
 
             assert suffix == f"authn_lockout:{DIGEST}:{bucket}"
             assert "alice" not in suffix
+
+
+# ....................... #
+
+
+def _expiring_guard(threshold: int = 3) -> tuple[LoginLockoutGuard, MockState]:
+    """A guard over the in-memory counter, which reports expiry and honours the frozen clock."""
+
+    state = MockState()
+    guard = LoginLockoutGuard(
+        counter=MockCounterAdapter(state=state, namespace="lockout"),
+        config=LockoutConfig(threshold=threshold, window=WINDOW),
+    )
+    return guard, state
+
+
+class TestLockoutKeyGrowth:
+    """Every login attempt reads the counter; only a failure (or a reset) may write one, and
+    whatever is written expires once its window is over."""
+
+    async def test_checking_a_login_creates_no_key(self) -> None:
+        guard, state = _expiring_guard()
+
+        with bind_time_source(FrozenTimeSource(T0)):
+            for login in ("alice", "nobody-by-this-name", "x" * 200):
+                assert await guard.locked_until(login_digest(login)) is None
+
+        assert state.counters == {}, "a lockout check must not materialize a key"
+
+    async def test_a_bucket_lives_one_window_plus_the_skew(self) -> None:
+        guard, state = _expiring_guard()
+
+        with bind_time_source(FrozenTimeSource(T0)):
+            await guard.record_failure(DIGEST)
+            await guard.record_failure(DIGEST)
+
+        assert list(state.counter_expiry.values()) == [T0 + WINDOW + LOCKOUT_TTL_SKEW]
+
+    async def test_a_reset_bucket_expires_too(self) -> None:
+        guard, state = _expiring_guard()
+
+        with bind_time_source(FrozenTimeSource(T0)):
+            await guard.record_success(DIGEST)
+
+        assert list(state.counter_expiry.values()) == [T0 + WINDOW + LOCKOUT_TTL_SKEW]
+
+    async def test_old_buckets_are_gone_once_their_lifetime_ends(self) -> None:
+        guard, state = _expiring_guard(threshold=3)
+        admin = MockCounterAdminAdapter(state=state, namespace="lockout")
+
+        with bind_time_source(FrozenTimeSource(T0)):
+            for _ in range(3):
+                await guard.record_failure(DIGEST)
+
+            assert await guard.is_locked(DIGEST) is True
+
+        with bind_time_source(FrozenTimeSource(T0 + WINDOW + LOCKOUT_TTL_SKEW)):
+            assert await guard.is_locked(DIGEST) is False
+            assert await admin.list_counters() == [], "the old bucket must not linger"
+
+    async def test_a_counter_that_cannot_expire_is_written_without_a_ttl(self) -> None:
+        # ``_MemoryCounter`` reports no capabilities and its verbs take no ``ttl`` keyword, so
+        # passing one — even ``None`` — would raise ``TypeError`` here.
+        guard, counter = _guard(threshold=1)
+
+        with bind_time_source(FrozenTimeSource(T0)):
+            await guard.record_failure(DIGEST)
+            assert await guard.is_locked(DIGEST) is True
+
+            await guard.record_success(DIGEST)
+            assert await guard.is_locked(DIGEST) is False
+
+        assert counter_capabilities(counter).expiry is False

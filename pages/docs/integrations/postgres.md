@@ -169,6 +169,20 @@ PostgresLifecycleModule(
 - **You own the schema.** Forze *introspects* existing relations; it never
   creates application tables. Provision read / write / history / search relations
   (and extensions) with your migration tool first.
+- **Counter lifetimes need one column.** A counter written with a `ttl` stores its lapse
+  instant in an optional `expires_at timestamptz` column:
+
+    ```sql
+    ALTER TABLE <counters> ADD COLUMN expires_at timestamptz;
+    ```
+
+    A table without it keeps working for every call that does not pass a `ttl`; a call
+    that does is refused with `configuration` (`counter_ttl_unsupported`) until the column
+    exists, and the next `ttl` call after the migration picks it up without a restart. A
+    lapsed row reads as absent but stays in the table: purge a route's lapsed rows with
+    `PostgresCounterAdminAdapter.purge_expired()`, or schedule
+    `DELETE FROM <counters> WHERE expires_at <= now()` (for example with pg_cron). See
+    [Lifetimes](../reference/contracts/stores.md#lifetimes-ttl).
 - **Bookkeeping.** `bookkeeping_strategy="application"` bumps `rev` /
   `last_update_at` in the write gateway; `"database"` defers to a `BEFORE UPDATE`
   trigger you supply.
