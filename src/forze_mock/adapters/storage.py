@@ -536,6 +536,7 @@ class MockStorageAdapter(
         *,
         expires_in: timedelta,
         content_type: str | None = None,
+        create_only: bool = False,
     ) -> PresignedUrl:
         """Issue a deterministic fake upload URL and record it on the state.
 
@@ -543,7 +544,9 @@ class MockStorageAdapter(
         and a bound *content_type* is echoed in
         :attr:`PresignedUrl.headers`. ``expires_at`` derives from the ambient
         :class:`~forze.base.primitives.TimeSource`, so frozen time makes the
-        URL fully deterministic.
+        URL fully deterministic. *create_only* adds the S3-shaped
+        ``If-None-Match: *`` header and is recorded as ``create_only``; the mock
+        performs no PUT, so nothing enforces it here.
         """
 
         return self.__presign(
@@ -551,6 +554,7 @@ class MockStorageAdapter(
             expires_in=expires_in,
             method="PUT",
             content_type=content_type,
+            create_only=create_only,
         )
 
     # ....................... #
@@ -563,6 +567,7 @@ class MockStorageAdapter(
         method: Literal["GET", "PUT"],
         content_type: str | None = None,
         content_disposition: str | None = None,
+        create_only: bool = False,
     ) -> PresignedUrl:
         seconds = presign_expiry_seconds(expires_in)
         bucket = self._bucket()
@@ -578,6 +583,9 @@ class MockStorageAdapter(
 
         if content_type is not None:
             headers["Content-Type"] = content_type
+
+        if create_only:
+            headers["If-None-Match"] = "*"
 
         # Mirror the real S3 adapter: an SSE-KMS presigned PUT returns the SSE
         # request headers the uploader must send; SSE-S3 / off add none. (GCS
@@ -601,6 +609,9 @@ class MockStorageAdapter(
 
             if content_disposition is not None:
                 record["content_disposition"] = content_disposition
+
+            if create_only:
+                record["create_only"] = True
 
             if method == "PUT":
                 record["sse"] = sse_record
@@ -918,13 +929,17 @@ class MockStorageAdapter(
         self,
         session: UploadSession,
         parts: Sequence[UploadPart],
+        *,
+        create_only: bool = False,
     ) -> ObjectHead:
         """Assemble deposited parts in part-number order into the stored object.
 
         The *parts* argument selects which deposited parts to assemble (in
         ascending ``part_number`` order); the resulting object's bytes are the
         concatenation. Head fields (etag/size) are computed like
-        :meth:`upload`, ``last_modified`` from the bound ``TimeSource``.
+        :meth:`upload`, ``last_modified`` from the bound ``TimeSource``. With
+        *create_only* an existing object at the key refuses the assembly, as the
+        backends' conditional completion does.
         """
 
         if not parts:
@@ -946,6 +961,9 @@ class MockStorageAdapter(
                 raise exc.not_found(
                     f"Unknown upload session: {session.upload_id}",
                 )
+
+            if create_only and session.key in self._objects():
+                raise overwrite_precondition_failed(session.key)
 
             deposited = sessions[session.upload_id]
             ordered = sorted(parts, key=lambda p: p.part_number)

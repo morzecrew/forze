@@ -227,6 +227,7 @@ class RoutedObjectStorageClientBase[C: _RoutedStorageInnerClient](
         expires_in: timedelta,
         content_type: str | None = None,
         sse: ObjectStorageSSE | None = None,
+        create_only: bool = False,
     ) -> PresignedUrl:
         inner = await self._get_client()
 
@@ -237,6 +238,7 @@ class RoutedObjectStorageClientBase[C: _RoutedStorageInnerClient](
                 expires_in=expires_in,
                 content_type=content_type,
                 sse=sse,
+                create_only=create_only,
             )
 
     # ....................... #
@@ -331,6 +333,7 @@ class RoutedObjectStorageClientBase[C: _RoutedStorageInnerClient](
         metadata: Mapping[str, str] | None = None,
         sse: ObjectStorageSSE | None = None,
         if_match: str | None = None,
+        create_only: bool = False,
     ) -> None:
         inner = await self._get_client()
 
@@ -344,6 +347,7 @@ class RoutedObjectStorageClientBase[C: _RoutedStorageInnerClient](
                 metadata=metadata,
                 sse=sse,
                 if_match=if_match,
+                create_only=create_only,
             )
 
     async def abort_multipart_upload(

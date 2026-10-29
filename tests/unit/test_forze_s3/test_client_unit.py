@@ -830,6 +830,26 @@ async def test_presign_download_url_signs_the_content_disposition_override() -> 
 
 
 @pytest.mark.asyncio
+async def test_a_create_only_presigned_put_signs_if_none_match() -> None:
+    from datetime import timedelta
+
+    client = S3Client()
+    api = _PresignApi()
+    tok = client._S3Client__ctx_client.set(api)  # type: ignore[arg-type]
+    try:
+        vo = await client.presign_upload_url(
+            "b", "k", expires_in=timedelta(minutes=5), create_only=True
+        )
+    finally:
+        client._S3Client__ctx_client.reset(tok)
+
+    # Signed in, so a PUT without the header fails the signature and one with it fails
+    # once an object holds the key.
+    assert api.presign_calls[0]["Params"]["IfNoneMatch"] == "*"
+    assert dict(vo.headers) == {"If-None-Match": "*"}
+
+
+@pytest.mark.asyncio
 async def test_presign_upload_url_binds_content_type() -> None:
     from datetime import timedelta
 

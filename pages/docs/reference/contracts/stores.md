@@ -140,7 +140,7 @@ name). Objects are addressed by string `key`.
 | command | `upload` | `upload(obj)` | takes an `UploadedObject`, returns `StoredObject` metadata |
 | command | `upload_stream` | `upload_stream(chunks, *, filename, ...)` | bounded-memory multipart upload from an async chunk iterator; an encrypting route seals it chunk by chunk |
 | command | `overwrite_stream` | `overwrite_stream(key, chunks, *, ...)` | replace an existing key in place, in bounded memory (the re-encryption seam) |
-| command | `presign_upload` | `presign_upload(key, *, expires_in, content_type=None)` | time-limited direct-`PUT` URL — a **write grant**, so it lives on the command port |
+| command | `presign_upload` | `presign_upload(key, *, expires_in, content_type=None, create_only=False)` | time-limited direct-`PUT` URL — a **write grant**, so it lives on the command port. `create_only` signs in a precondition that no object holds the key, so the URL can never replace one |
 | command | `delete` | `delete(key)` | remove by key |
 | command | `copy` / `move` | `copy(src_key, dst_key)` | server-side, same-bucket; `move` is copy-then-delete (non-atomic) |
 | command | `put_object_tags` | `put_object_tags(key, tags)` | full tag replacement |

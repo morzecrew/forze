@@ -240,6 +240,7 @@ class TestAdapterPresignDelegation:
             "expires_in": timedelta(minutes=15),
             "content_type": "text/plain",
             "sse": None,
+            "create_only": False,
         }
         assert vo.method == "PUT"
 

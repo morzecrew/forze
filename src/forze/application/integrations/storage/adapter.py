@@ -1378,6 +1378,7 @@ class ObjectStorageAdapter(
         *,
         expires_in: timedelta,
         content_type: str | None = None,
+        create_only: bool = False,
     ) -> PresignedUrl:
         """Mint a time-limited direct-upload URL for a caller-supplied key.
 
@@ -1409,6 +1410,7 @@ class ObjectStorageAdapter(
                 expires_in=expires_in,
                 content_type=content_type,
                 sse=self.sse,
+                create_only=create_only,
             )
 
     # ....................... #
@@ -1749,6 +1751,8 @@ class ObjectStorageAdapter(
         self,
         session: UploadSession,
         parts: Sequence[UploadPart],
+        *,
+        create_only: bool = False,
     ) -> ObjectHead:
         """Assemble *parts* into the final object and return its head.
 
@@ -1788,6 +1792,7 @@ class ObjectStorageAdapter(
                 parts=client_parts,
                 content_type=session.content_type,
                 sse=self.sse,
+                create_only=create_only,
             )
 
             h = await self.client.head_object(bucket=bucket, key=session.key)

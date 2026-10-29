@@ -206,3 +206,22 @@ async def test_abort_sends_upload_id() -> None:
         client._S3Client__ctx_client.reset(tok)
 
     assert api.abort_calls[0] == {"Bucket": "b", "Key": "k", "UploadId": "UID"}
+
+
+@pytest.mark.asyncio
+async def test_a_create_only_complete_sends_if_none_match() -> None:
+    api = _FakeApi()
+    client, tok = _client_with(api)
+
+    try:
+        await client.complete_multipart_upload(
+            "b",
+            "k",
+            upload_id="UID",
+            parts=[ObjectStoragePartInfo(part_number=1, etag="e1")],
+            create_only=True,
+        )
+    finally:
+        client._S3Client__ctx_client.reset(tok)
+
+    assert api.complete_calls[0]["IfNoneMatch"] == "*"

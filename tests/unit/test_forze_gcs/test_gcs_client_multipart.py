@@ -56,16 +56,60 @@ async def test_part_key_layout() -> None:
 
 
 @pytest.mark.asyncio
-async def test_list_parts_reads_temp_objects() -> None:
+async def test_list_parts_reads_temp_objects_with_their_sizes() -> None:
     prefix = f"k.{MPU_NAMESPACE}/SID/"
-    fake = _fake_storage([f"{prefix}2", f"{prefix}1", f"{prefix}notanint"])
+    fake = _fake_storage()
+    fake.list_objects = AsyncMock(
+        side_effect=[
+            {
+                "items": [{"name": f"{prefix}2", "size": "7"}],
+                "nextPageToken": "next",
+            },
+            {
+                "items": [
+                    {"name": f"{prefix}1", "size": "5"},
+                    {"name": f"{prefix}notanint", "size": "1"},
+                ]
+            },
+        ]
+    )
     client = _client(fake)
 
     parts = await client.list_multipart_parts("b", "k", upload_id="SID")
 
-    # Only numeric suffixes, ascending.
-    assert [p.part_number for p in parts] == [1, 2]
-    fake.get_bucket.return_value.list_blobs.assert_awaited_once_with(prefix=prefix)
+    # Only numeric suffixes, ascending, every page read, each with its stored size.
+    assert [(p.part_number, p.size) for p in parts] == [(1, 5), (2, 7)]
+    assert fake.list_objects.await_args_list[0].kwargs["params"] == {
+        "prefix": prefix,
+        "pageToken": "",
+    }
+    assert fake.list_objects.await_args_list[1].kwargs["params"]["pageToken"] == "next"
+
+
+def _status_error(status: int) -> Exception:
+    from aiohttp import ClientResponseError, RequestInfo
+    from yarl import URL
+
+    url = URL("http://example.com/storage/v1/b/b/o/k")
+    request_info = RequestInfo(url=url, method="GET", headers={}, real_url=url)
+
+    return ClientResponseError(
+        request_info=request_info, history=(), status=status, message="", headers={}
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_create_only_complete_composes_on_generation_zero() -> None:
+    fake = _fake_storage()
+    fake.download_metadata = AsyncMock(side_effect=_status_error(404))
+    client = _client(fake)
+
+    parts = [ObjectStoragePartInfo(part_number=n) for n in (1, 2)]
+    await client.complete_multipart_upload(
+        "b", "k", upload_id="SID", parts=parts, create_only=True
+    )
+
+    assert fake.compose.await_args.kwargs["params"] == {"ifGenerationMatch": "0"}
 
 
 @pytest.mark.asyncio
@@ -311,3 +355,24 @@ async def test_upload_multipart_part_writes_temp_part_object() -> None:
     assert args.args[0] == "b"
     assert args.args[1] == part_key
     assert args.args[2] == b"chunk-bytes"
+
+
+@pytest.mark.asyncio
+async def test_a_create_only_complete_refuses_an_existing_destination() -> None:
+    from forze.base.exceptions import CoreException, ExceptionKind
+
+    fake = _fake_storage()
+    fake.download_metadata = AsyncMock(return_value={"etag": '"E1"', "generation": "7"})
+    client = _client(fake)
+
+    with pytest.raises(CoreException) as e:
+        await client.complete_multipart_upload(
+            "b",
+            "k",
+            upload_id="SID",
+            parts=[ObjectStoragePartInfo(part_number=n) for n in (1, 2)],
+            create_only=True,
+        )
+
+    assert e.value.kind == ExceptionKind.CONFLICT
+    fake.compose.assert_not_awaited()

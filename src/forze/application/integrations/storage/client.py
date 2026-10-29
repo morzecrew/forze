@@ -525,8 +525,14 @@ class ObjectStorageClientPort(Protocol):
         expires_in: timedelta,
         content_type: str | None = None,
         sse: ObjectStorageSSE | None = None,
+        create_only: bool = False,
     ) -> Awaitable[PresignedUrl]:
         """Sign a time-limited ``PUT`` URL for *key* in *bucket*.
+
+        With *create_only* the signature binds a precondition that no object holds
+        *key* (S3 ``If-None-Match: *``, GCS ``x-goog-if-generation-match: 0``), returned
+        in :attr:`PresignedUrl.headers`: the URL can create the object but never
+        replace it.
 
         Signing is local on both backends (no API round-trip); the URL grants
         unauthenticated write access until expiry — see
@@ -653,8 +659,13 @@ class ObjectStorageClientPort(Protocol):
         metadata: Mapping[str, str] | None = None,
         sse: ObjectStorageSSE | None = None,
         if_match: str | None = None,
+        create_only: bool = False,
     ) -> Awaitable[None]:
         """Assemble the uploaded parts into the final object.
+
+        *create_only* refuses to assemble over an existing object (S3 ``If-None-Match:
+        *`` on ``CompleteMultipartUpload``, GCS ``ifGenerationMatch=0`` on the final
+        write) with the shared overwrite-precondition ``conflict``.
 
         *metadata* is consumed by **GCS** only (the composed destination carries no
         metadata from the temp parts); **S3** binds it at

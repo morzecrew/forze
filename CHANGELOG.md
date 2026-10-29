@@ -99,6 +99,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Stored files can upload straight to the bucket, opt-in.** `StoredFileKitSpec(direct_uploads=True)` registers `initiate_upload`, `presign_upload_part` and `complete_upload`: a key the kit mints, then a presigned PUT or parts. Completion checks size, content type and `max_bytes`, and fails the row on a mismatch.
 
+- **A presigned upload and a multipart completion can refuse to replace an object.** `presign_upload(..., create_only=True)` signs `If-None-Match: *` (S3) or `x-goog-if-generation-match: 0` (GCS) into the URL, and `complete_upload(..., create_only=True)` refuses a key that already holds an object.
+
 **`forze ops` for people at a shell and for backfills:**
 
 - **`forze ops` gains typed flags, JSONL batches and shell completion.** `call OP --field VALUE` takes a flat-scalar input as flags; `--batch @PATH|-` runs one call per line in one runtime, stopping at the first failure; `OP` completes in the shell. An unknown option after `OP` now exits 2 with an error object.
@@ -204,6 +206,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Analytics ingest stores a plain `Enum` member as its value, as a document row does** (**behaviour change**). Postgres wrote its name (`OPEN`), and ClickHouse refused it. Rows ingested earlier keep the name until rewritten.
 
 - **A download's `Content-Disposition` encodes `/` in `filename*`.** The generated storage download routes and `streamed_download_response` encode every character outside RFC 5987 `attr-char`, so a name such as `q3/rëport.pdf` stays valid and clients keep it.
+
+- **GCS `list_parts` reports each part's stored size.** It reported `0` for every part, so a caller resuming or bounding a multipart upload could not tell how much had landed.
 
 ### Security
 

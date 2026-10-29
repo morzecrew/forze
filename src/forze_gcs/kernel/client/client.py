@@ -730,6 +730,7 @@ class GCSClient(GCSClientPort):
         expires_in: timedelta,
         content_type: str | None = None,
         sse: ObjectStorageSSE | None = None,
+        create_only: bool = False,
     ) -> PresignedUrl:
         """Sign a time-limited ``PUT`` URL for the blob (V4 query auth).
 
@@ -751,6 +752,8 @@ class GCSClient(GCSClientPort):
         :param content_type: Optional MIME type to bind into the signature.
         :param sse: Accepted for port symmetry; not bound on GCS presign (see
             above — CMEK rides the bucket default for direct PUTs).
+        :param create_only: Sign ``x-goog-if-generation-match: 0`` in, so GCS refuses
+            the PUT (412) once an object holds the key.
         :raises CoreException: ``validation`` when *expires_in* is out of
             range; ``configuration`` when the bound credentials cannot sign.
         """
@@ -763,6 +766,7 @@ class GCSClient(GCSClientPort):
             expires_in=expires_in,
             method="PUT",
             content_type=content_type,
+            extra_headers={"x-goog-if-generation-match": "0"} if create_only else None,
         )
 
     # ....................... #
@@ -776,11 +780,13 @@ class GCSClient(GCSClientPort):
         method: Literal["GET", "PUT"],
         content_type: str | None,
         query_params: dict[str, str] | None = None,
+        extra_headers: dict[str, str] | None = None,
     ) -> PresignedUrl:
         """Build a V4 signed URL via :meth:`gcloud.aio.storage.Blob.get_signed_url`.
 
         *query_params* are signed into the canonical query (e.g. a response
-        ``Content-Disposition`` override).
+        ``Content-Disposition`` override); *extra_headers* become signed headers the
+        client must send, like the content type.
 
         **Credential requirements.** V4 signing needs signing material:
 
@@ -827,12 +833,13 @@ class GCSClient(GCSClientPort):
                 "key) cannot sign URLs."
             )
 
-        signed_headers: dict[str, str] | None = None
         out_headers: dict[str, str] = {}
 
         if content_type is not None:
-            signed_headers = {"content-type": content_type}
             out_headers["Content-Type"] = content_type
+
+        out_headers |= extra_headers or {}
+        signed_headers = {k.lower(): v for k, v in out_headers.items()} or None
 
         blob = Blob(storage.get_bucket(bucket), key, {"size": 0})
 
@@ -981,23 +988,35 @@ class GCSClient(GCSClientPort):
         *,
         upload_id: str,
     ) -> list[ObjectStoragePartInfo]:
-        """List the temp part objects of the session (the resume primitive)."""
+        """List the temp part objects of the session, with their stored sizes (the
+        resume primitive, and what a caller sums to bound an upload before assembly)."""
 
         storage = self.__require_storage()
-        bucket_ref = storage.get_bucket(bucket)
         prefix = self._mpu_prefix(key, upload_id)
-
-        keys = await bucket_ref.list_blobs(prefix=prefix)
-
         parts: list[ObjectStoragePartInfo] = []
+        page_token = ""  # nosec B105 - GCS pagination cursor, not a credential
 
-        for blob_key in keys:
-            suffix = blob_key[len(prefix) :]
+        while True:
+            content = await storage.list_objects(
+                bucket,
+                params={"prefix": prefix, "pageToken": page_token},
+                timeout=self.__timeout(),
+            )
 
-            if not suffix.isdigit():
-                continue
+            for obj in content.get("items", []):
+                suffix = str(obj.get("name") or "")[len(prefix) :]
 
-            parts.append(ObjectStoragePartInfo(part_number=int(suffix)))
+                if not suffix.isdigit():
+                    continue
+
+                parts.append(
+                    ObjectStoragePartInfo(part_number=int(suffix), size=int(obj.get("size") or 0))
+                )
+
+            page_token = content.get("nextPageToken", "")
+
+            if not page_token:
+                break
 
         parts.sort(key=lambda p: p.part_number)
 
@@ -1017,6 +1036,7 @@ class GCSClient(GCSClientPort):
         metadata: Mapping[str, str] | None = None,
         sse: ObjectStorageSSE | None = None,
         if_match: str | None = None,
+        create_only: bool = False,
     ) -> None:
         """Compose the temp parts in order into *key*, then delete the temps.
 
@@ -1052,6 +1072,10 @@ class GCSClient(GCSClientPort):
         compose paths patch it pinned (``ifGenerationMatch``) to the generation
         the final compose produced — a concurrent overwrite in between answers
         412, mapped to the same ``conflict`` instead of inheriting the metadata.
+
+        *create_only* refuses up front when the destination already exists, and passes
+        ``ifGenerationMatch=0`` on the final write, so GCS also refuses an object that
+        appears in between (412); both answer the same ``conflict``.
         """
 
         storage = self.__require_storage()
@@ -1076,6 +1100,21 @@ class GCSClient(GCSClientPort):
                 raise overwrite_precondition_failed(key)
 
             precondition = {"ifGenerationMatch": str(current.get("generation") or "")}
+
+        elif create_only:
+            # Refused here when an object already holds the key, as if_match refuses an ETag
+            # mismatch here; ifGenerationMatch=0 then closes the window up to the write.
+            try:
+                await storage.download_metadata(bucket, key, timeout=timeout)
+
+            except aiohttp.ClientResponseError as e:
+                if e.status != 404:
+                    raise
+
+            else:
+                raise overwrite_precondition_failed(key)
+
+            precondition = {"ifGenerationMatch": "0"}
 
         dest_params = {**(cmek_params or {}), **precondition} if precondition else cmek_params
 
@@ -1185,7 +1224,7 @@ class GCSClient(GCSClientPort):
             # destination's generation changed between the metadata read above
             # and the compose/rewrite — the same "object is no longer what the
             # caller saw" outcome as the client-side ETag refusal.
-            if if_match is not None and e.status == 412:
+            if precondition is not None and e.status == 412:
                 raise overwrite_precondition_failed(key) from e
 
             raise
@@ -1199,7 +1238,7 @@ class GCSClient(GCSClientPort):
             # 412 instead of inheriting this caller's metadata.
             patch_params: dict[str, str] | None = None
 
-            if if_match is not None:
+            if precondition is not None:
                 generation = str(final_resource.get("generation") or "")
                 patch_params = {"ifGenerationMatch": generation} if generation else None
 
