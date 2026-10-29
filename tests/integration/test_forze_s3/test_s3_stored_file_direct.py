@@ -308,7 +308,8 @@ async def test_an_encrypting_route_refuses_a_direct_upload_before_any_row(
     with pytest.raises(CoreException) as ei:
         await _initiate(ctx, 4, multipart=multipart)
 
-    assert ei.value.kind in (ExceptionKind.PRECONDITION, ExceptionKind.CONFIGURATION)
+    # Refused when the operation resolves its storage, before the adapter is reached.
+    assert ei.value.code == "storage_direct_transfer_encrypted"
     assert await ctx.doc.query(_KIT.document).count() == 0
 
 

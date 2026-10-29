@@ -12,6 +12,7 @@ from forze.application.contracts.storage import (
     StorageUploadSessionDepPort,
 )
 from forze.application.execution import ExecutionContext
+from forze.application.integrations.storage import refuse_direct_transfer_when_encrypted
 from forze.application.integrations.storage.client import ObjectStorageSSE
 
 from ....adapters import GCSStorageAdapter
@@ -40,8 +41,10 @@ def _build_sse(config: GCSStorageConfig) -> ObjectStorageSSE | None:
 def _build_adapter(
     ctx: ExecutionContext,
     config: GCSStorageConfig,
+    spec: StorageSpec,
 ) -> GCSStorageAdapter:
     client = ctx.deps.provide(GCSClientDepKey)
+    refuse_direct_transfer_when_encrypted(spec, encrypt=config.encrypt)
     cipher = ctx.deps.provide(KeyringDepKey) if config.encrypt else None
 
     return GCSStorageAdapter(
@@ -70,7 +73,7 @@ class ConfigurableGCSStorageQuery(StorageQueryDepPort):
     # ....................... #
 
     def __call__(self, ctx: ExecutionContext, spec: StorageSpec) -> GCSStorageAdapter:
-        return _build_adapter(ctx, self.config)
+        return _build_adapter(ctx, self.config, spec)
 
 
 # ....................... #
@@ -89,7 +92,7 @@ class ConfigurableGCSStorageCommand(StorageCommandDepPort):
     # ....................... #
 
     def __call__(self, ctx: ExecutionContext, spec: StorageSpec) -> GCSStorageAdapter:
-        return _build_adapter(ctx, self.config)
+        return _build_adapter(ctx, self.config, spec)
 
 
 # ....................... #
@@ -108,4 +111,4 @@ class ConfigurableGCSStorageUploads(StorageUploadSessionDepPort):
     # ....................... #
 
     def __call__(self, ctx: ExecutionContext, spec: StorageSpec) -> GCSStorageAdapter:
-        return _build_adapter(ctx, self.config)
+        return _build_adapter(ctx, self.config, spec)

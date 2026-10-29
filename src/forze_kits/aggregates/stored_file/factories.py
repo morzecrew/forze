@@ -186,7 +186,7 @@ def build_stored_file_registry(
                 ns.key(StoredFileKernelOp.PRESIGN_DOWNLOAD),
                 lambda ctx: PresignStoredFileDownload(
                     doc=ctx.doc.query(doc_spec),
-                    storage=ctx.storage.query(kit.resolved_storage),
+                    storage=ctx.storage.query(kit.direct_storage),
                 ),
                 descriptor=OperationDescriptor(
                     input_type=PresignStoredFileDownloadRequestDTO,
@@ -240,7 +240,7 @@ def _register_direct_uploads(
     """Register the three direct-upload commands (the ``direct_uploads`` opt-in)."""
 
     doc_spec = kit.document
-    storage = kit.resolved_storage
+    storage = kit.direct_storage
 
     # Both presign results are credentials (a bearer write URL, a multipart session id), so
     # generated surfaces (MCP, agent tools, generated routes, `forze ops`) refuse them.

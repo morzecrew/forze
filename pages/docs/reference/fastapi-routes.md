@@ -416,12 +416,14 @@ can't carry these operations. The MCP and `forze ops` defaults leave them out,
 and naming one anywhere is refused. Serve them from a route that calls
 `streamed_download_response`, like the one above.
 
-!!! note "Known limit: encrypting routes refuse per request"
-
-    A client-side-encrypting storage route refuses `presign_download`, but only
-    when it is called. The storage adapter refuses before anything is signed. The
-    kit spec doesn't know a route's encryption config, so setting
-    `presign_downloads=True` for such a route can't fail at build time.
+A client-side-encrypting storage route can't serve `presign_download`: the
+bytes would leave the store without passing through the app, which decrypts
+them. The kit resolves that operation's storage as
+`StorageSpec(direct_transfer=True)`, and the route refuses such a spec with a
+`configuration` error (`storage_direct_transfer_encrypted`). So `check_wiring`
+reports the operation before anything runs, and without `check_wiring` its
+first call fails before the handler runs. The kit's other operations keep
+working on that route.
 
 ### Stored-file direct uploads
 
@@ -469,8 +471,10 @@ so generated surfaces refuse them; serve them from your own routes.
 `upload`, and leaves `complete_upload` outside one, so the `failed` mark
 survives the refusal raised after it.
 
-A client-side-encrypting route refuses `initiate_upload` before any row is
-written: the app never sees the bytes, so it can't encrypt them.
+A client-side-encrypting route can't serve the three direct-upload commands:
+the app never sees the bytes, so it can't encrypt them. As with
+`presign_download`, the kit resolves their storage with `direct_transfer=True`,
+so `check_wiring` reports them and a call fails before any row is written.
 
 !!! note "Known limit: abandoned uploads are not swept"
 

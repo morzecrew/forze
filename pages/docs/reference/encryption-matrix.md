@@ -62,7 +62,9 @@ table.
 | Idempotency result | whole cached result (`encrypt_result=True`) | at rest (sealed on commit, opened on replay; metadata stays plaintext) | Redis, Postgres |
 
 - **Object storage caveat:** multipart / presigned uploads are **blocked** when a route
-  encrypts — the client would write bytes the app never sees, landing as plaintext. Use
+  encrypts — the client would write bytes the app never sees, landing as plaintext. A
+  `StorageSpec(direct_transfer=True)` is refused when it resolves on such a route, so
+  `check_wiring` catches the stored-file kit's direct operations up front. Use
   a single-shot `upload()` or `upload_stream()` (seals chunk-by-chunk in bounded
   memory). Ranged reads decrypt stream-uploaded objects; whole-payload envelopes
   can't be sliced and must be read back whole.

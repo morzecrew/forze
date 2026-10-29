@@ -145,6 +145,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **The dynamic-read write refusal no longer names a READ ONLY transaction.** The message is engine-neutral and the details carry the engine's `statement_type` where it has one. A `DuckDbClient` statement timeout now carries the code `duckdb_query_timeout`.
 
+- **An encrypting storage route refuses the stored-file kit's direct operations at resolve** (**behaviour change**). `presign_download` and the direct uploads resolve storage as the new `StorageSpec(direct_transfer=True)`, which a client-side-encrypting route refuses (`configuration`), so `check_wiring` reports them.
+
 - **The stored-file kit's buffered `download` sets `streams=True`** (**behaviour change**). JSON cannot carry a binary file, so MCP and `forze ops` failed on one; they now leave `download` out by default, and they, agent tools and generated routes refuse it by name.
 
 ### Fixed

@@ -173,8 +173,11 @@ millions of suffixes is not yet in scope.
 ## Storage
 
 Object storage splits into query and command ports —
-`ctx.storage.query(spec)` / `ctx.storage.command(spec)` (`StorageSpec` carries only a
-name). Objects are addressed by string `key`.
+`ctx.storage.query(spec)` / `ctx.storage.command(spec)`. `StorageSpec` carries a name and
+`direct_transfer`: set it when the ports hand the client the store directly (presigned URLs,
+upload sessions), and a client-side-encrypting route refuses to resolve the spec with a
+`configuration` error (`storage_direct_transfer_encrypted`). Objects are addressed by string
+`key`.
 
 | Port | Method | Signature | Notes |
 |------|--------|-----------|-------|

@@ -236,7 +236,8 @@ class PresignStoredFileDownload(
 
     Same checks as :class:`DownloadStoredFile`, so no URL is minted for a row the caller
     cannot read or that is not ready. The URL saves the download under the stored filename.
-    The storage adapter refuses on a client-side-encrypting route.
+    The registry resolves its storage as ``direct_transfer``, so a client-side-encrypting
+    route refuses to build it.
     """
 
     doc: DocumentQueryPort[StoredFileRead]
@@ -269,9 +270,10 @@ class InitiateStoredFileUpload(
     """Create a pending row for a direct upload and hand back where its bytes go.
 
     The kit mints the storage key (``{tenant}/{file_id}``); the caller never names one. The
-    URL or session is minted before the row is written, so a client-side-encrypting route,
-    whose adapter refuses both, leaves no row behind. Nothing is trusted yet: the declared
-    size is checked against ``max_bytes`` here, and the object itself on completion.
+    URL or session is minted before the row is written, so a storage refusal leaves no row
+    behind. (The registry resolves its storage as ``direct_transfer``, so a
+    client-side-encrypting route refuses to build it at all.) Nothing is trusted yet: the
+    declared size is checked against ``max_bytes`` here, and the object itself on completion.
     """
 
     doc: DocumentCommandPort[

@@ -639,3 +639,42 @@ class TestMultipartSizeBeforeAssembly:
         spy.complete_upload.assert_not_awaited()
         spy.abort_upload.assert_awaited_once()
         assert (await _row(ctx, started.file.id)).status is StoredFileStatus.FAILED
+
+
+# ....................... #
+
+
+class TestEncryptingRouteRefusedAtResolve:
+    """A client-side-encrypting route can serve no presigned URL or upload session, so the
+    operations that need one refuse to build: ``check_wiring`` reports them before any call."""
+
+    def test_check_wiring_names_exactly_the_direct_transfer_operations(self) -> None:
+        from forze.application.contracts.crypto import KeyRef, StaticKeyDirectory
+        from forze.application.execution import CryptoDepsModule, check_wiring
+        from forze_mock import MockKeyManagement
+        from forze_s3.execution.deps import S3DepsModule, S3StorageConfig
+        from forze_s3.kernel.client import S3ClientPort
+
+        kit = StoredFileKitSpec(name="files", direct_uploads=True, presign_downloads=True)
+        registry = freeze_stored_file_registry(kit, tx_route="mock")
+
+        def _ctx() -> ExecutionContext:
+            return context_from_modules(
+                MockDepsModule(),
+                CryptoDepsModule(
+                    kms=MockKeyManagement(), directory=StaticKeyDirectory(KeyRef(key_id="cmk"))
+                ),
+                S3DepsModule(
+                    client=MagicMock(spec=S3ClientPort),
+                    storages={"files": S3StorageConfig(bucket="b", encrypt=True)},
+                ),
+            )
+
+        report = check_wiring(registry, _ctx)
+
+        assert {str(f.op) for f in report.failures} == {
+            *_DIRECT,
+            _KEY(StoredFileKernelOp.PRESIGN_DOWNLOAD),
+        }
+        assert {f.code for f in report.failures} == {"storage_direct_transfer_encrypted"}
+        assert all(f.is_wiring for f in report.failures)

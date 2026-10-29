@@ -57,14 +57,15 @@ class StoredFileKitSpec:
 
     presign_downloads: bool = attrs.field(default=False)
     """Register the ``presign_download`` operation, which mints a bearer URL for direct download.
-    Off by default; bind authn and authz on it before exposing it."""
+    Off by default; bind authn and authz on it before exposing it. A client-side-encrypting
+    route refuses to resolve it."""
 
     direct_uploads: bool = attrs.field(default=False)
     """Register ``initiate_upload``, ``presign_upload_part`` and ``complete_upload``: the client
     sends the bytes straight to the store through create-only presigned URLs, and
     ``complete_upload`` checks them against :attr:`max_bytes` and the declared size and content
     type. Off by default; bind authn and authz on each before exposing it. A
-    client-side-encrypting route refuses them."""
+    client-side-encrypting route refuses to resolve them."""
 
     # ....................... #
 
@@ -89,6 +90,16 @@ class StoredFileKitSpec:
             return self.storage
 
         return StorageSpec(name=self.name)
+
+    # ....................... #
+
+    @property
+    def direct_storage(self) -> StorageSpec:
+        """:attr:`resolved_storage` marked :attr:`~StorageSpec.direct_transfer`, for the
+        operations that hand the client the store: ``presign_download`` and the direct uploads.
+        A client-side-encrypting route then refuses to resolve them."""
+
+        return attrs.evolve(self.resolved_storage, direct_transfer=True)
 
     # ....................... #
 
