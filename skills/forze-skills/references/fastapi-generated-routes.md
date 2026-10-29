@@ -111,6 +111,8 @@ A stored-file download route runs the kit's `download_stream` operation (`Stored
 
 For `Range` and conditional requests, enable `range_downloads=True` as well and call `attach_stored_file_download_route(router, registry=..., ns=kit.document.default_namespace, ctx_dep=...)` (from `forze_fastapi.routes`): `GET {id}/content` runs `download_stream` and `download_range` and answers `206`, `416` and `304` like the storage download route. On a client-side-encrypting route a range can't slice the kit's buffered uploads, so the route serves the whole file.
 
+For a large upload, enable `direct_uploads=True`: `initiate_upload` (`filename`, exact `size`, `content_type`, `multipart`, `expires_in`) writes a pending row under a key the kit mints and returns a presigned PUT or a multipart `upload_id`; `presign_upload_part` presigns each part; `complete_upload` checks the object's size and content type against the declared ones and `max_bytes`, then marks the row ready, or deletes the object and fails the row. The first two are sensitive, so serve them from hand-written routes. A client-side-encrypting route refuses them.
+
 ## Readiness and deadline headers
 
 - `attach_readiness_route(router, runtime)` (from `forze_fastapi.routes`) adds

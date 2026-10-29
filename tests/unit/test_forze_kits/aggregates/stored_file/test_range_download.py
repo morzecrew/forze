@@ -337,9 +337,7 @@ class TestStoredFileDownloadRoute:
 
         assert ei.value.kind is ExceptionKind.CONFIGURATION
 
-    @pytest.mark.parametrize(
-        ("path", "max_range_bytes"), [("/content", 100), ("/{id}/content", 0)]
-    )
+    @pytest.mark.parametrize(("path", "max_range_bytes"), [("/content", 100), ("/{id}/content", 0)])
     def test_a_bad_path_or_cap_is_refused(self, path: str, max_range_bytes: int) -> None:
         with pytest.raises(CoreException) as ei:
             attach_stored_file_download_route(

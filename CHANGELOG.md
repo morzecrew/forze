@@ -97,6 +97,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Stored files can serve byte ranges, opt-in.** `StoredFileKitSpec(range_downloads=True)` registers `download_range`, with `download`'s row checks. `attach_stored_file_download_route` serves `GET {id}/content` and answers `Range` and conditional requests as the storage download route does.
 
+- **Stored files can upload straight to the bucket, opt-in.** `StoredFileKitSpec(direct_uploads=True)` registers `initiate_upload`, `presign_upload_part` and `complete_upload`: a key the kit mints, then a presigned PUT or parts. Completion checks size, content type and `max_bytes`, and fails the row on a mismatch.
+
 **`forze ops` for people at a shell and for backfills:**
 
 - **`forze ops` gains typed flags, JSONL batches and shell completion.** `call OP --field VALUE` takes a flat-scalar input as flags; `--batch @PATH|-` runs one call per line in one runtime, stopping at the first failure; `OP` completes in the shell. An unknown option after `OP` now exits 2 with an error object.

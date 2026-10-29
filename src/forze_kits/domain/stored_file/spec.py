@@ -59,6 +59,12 @@ class StoredFileKitSpec:
     """Register the ``presign_download`` operation, which mints a bearer URL for direct download.
     Off by default; bind authn and authz on it before exposing it."""
 
+    direct_uploads: bool = attrs.field(default=False)
+    """Register ``initiate_upload``, ``presign_upload_part`` and ``complete_upload``: the client
+    sends the bytes straight to the store through presigned URLs, and ``complete_upload`` checks
+    them against :attr:`max_bytes` and the declared size and content type. Off by default; bind
+    authn and authz on each before exposing it. A client-side-encrypting route refuses them."""
+
     # ....................... #
 
     def __attrs_post_init__(self) -> None:

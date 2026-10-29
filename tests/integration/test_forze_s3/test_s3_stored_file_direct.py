@@ -1,9 +1,13 @@
-"""Integration test (RustFS and floci): stored-file ranged reads on S3.
+"""Integration test (RustFS and floci): stored-file ranged reads and direct uploads on S3.
 
 The stored-file rows live in the mock document store; the blobs live in a real bucket behind the
-S3 storage adapter, so ranged reads, cache validators and the encryption paths are the real
-adapter's.
+S3 storage adapter, so ranged reads, cache validators, presigned PUTs, multipart sessions, tenant
+key checks and the encryption paths are the real adapter's. The client's PUTs go over plain HTTP
+with only the signed URL.
 """
+
+from datetime import timedelta
+from uuid import uuid4
 
 import httpx
 import pytest
@@ -11,20 +15,26 @@ from fastapi import APIRouter, FastAPI
 
 from forze.application.contracts.crypto import KeyRef, StaticKeyDirectory
 from forze.application.contracts.storage import RANGE_WHOLE_PAYLOAD_UNSUPPORTED_CODE
+from forze.application.contracts.tenancy import TenantIdentity
 from forze.application.execution import CryptoDepsModule, ExecutionContext
 from forze.application.execution.operations import run_operation
-from forze.base.exceptions import CoreException
+from forze.base.exceptions import CoreException, ExceptionKind
 from forze.testing import context_from_modules
 from forze_fastapi.exceptions import register_exception_handlers
 from forze_fastapi.routes import attach_stored_file_download_route
+from forze_kits.aggregates.storage.dto import UploadPartDTO
 from forze_kits.aggregates.stored_file import (
+    CompleteStoredFileUploadRequestDTO,
     DownloadStoredFileRangeRequestDTO,
+    InitiateStoredFileUploadRequestDTO,
+    PresignStoredFileUploadPartRequestDTO,
+    StoredFileIdDTO,
     StoredFileKernelOp,
     UploadStoredFileRequestDTO,
     freeze_stored_file_registry,
 )
-from forze_kits.domain.stored_file import StoredFileKitSpec, StoredFileRead
-from forze_mock import MockDepsModule, MockKeyManagement, MockState
+from forze_kits.domain.stored_file import StoredFileKitSpec, StoredFileRead, StoredFileStatus
+from forze_mock import MockDepsModule, MockKeyManagement, MockRouteConfig, MockState
 from forze_s3.execution.deps.configs import S3StorageConfig
 from forze_s3.execution.deps.module import S3DepsModule
 from forze_s3.kernel.client import S3Client
@@ -33,17 +43,34 @@ from forze_s3.kernel.client import S3Client
 
 MIB = 1024 * 1024
 
-_KIT = StoredFileKitSpec(name="files", stream_downloads=True, range_downloads=True)
+_KIT = StoredFileKitSpec(
+    name="files",
+    stream_downloads=True,
+    range_downloads=True,
+    direct_uploads=True,
+    max_bytes=16 * MIB,
+)
 _NS = _KIT.document.default_namespace
 _REG = freeze_stored_file_registry(_KIT, tx_route="mock")
 
 
-def _ctx(s3_client: S3Client, bucket: str, *, encrypt: bool = False) -> ExecutionContext:
+def _ctx(
+    s3_client: S3Client,
+    bucket: str,
+    *,
+    encrypt: bool = False,
+    tenant_aware: bool = False,
+) -> ExecutionContext:
     modules = [
-        MockDepsModule(state=MockState()),
+        MockDepsModule(
+            state=MockState(),
+            routes={"files": MockRouteConfig(tenant_aware=tenant_aware)},
+        ),
         S3DepsModule(
             client=s3_client,
-            storages={"files": S3StorageConfig(bucket=bucket, encrypt=encrypt)},
+            storages={
+                "files": S3StorageConfig(bucket=bucket, encrypt=encrypt, tenant_aware=tenant_aware)
+            },
         ),
     ]
 
@@ -154,3 +181,132 @@ async def test_an_encrypted_upload_cannot_be_sliced_so_the_route_serves_it_whole
     assert ei.value.code == RANGE_WHOLE_PAYLOAD_UNSUPPORTED_CODE
     assert resp.status_code == 200
     assert resp.content == _DATA
+
+
+# ....................... #
+
+
+async def _initiate(ctx: ExecutionContext, size: int, *, multipart: bool = False):
+    return await run_operation(
+        _REG,
+        _NS.key(StoredFileKernelOp.INITIATE_UPLOAD),
+        InitiateStoredFileUploadRequestDTO(
+            filename="upload.bin",
+            size=size,
+            content_type="application/octet-stream",
+            multipart=multipart,
+            expires_in=None if multipart else timedelta(minutes=5),
+        ),
+        ctx,
+    )
+
+
+async def _complete(ctx: ExecutionContext, args: CompleteStoredFileUploadRequestDTO):
+    return await run_operation(_REG, _NS.key(StoredFileKernelOp.COMPLETE_UPLOAD), args, ctx)
+
+
+async def _download(ctx: ExecutionContext, file_id) -> bytes:
+    result = await run_operation(
+        _REG, _NS.key(StoredFileKernelOp.DOWNLOAD), StoredFileIdDTO(id=file_id), ctx
+    )
+    return result.data
+
+
+@pytest.mark.parametrize("tenant_aware", [False, True], ids=["global", "tenant"])
+async def test_a_presigned_put_becomes_a_ready_file(
+    s3_client: S3Client, s3_bucket: str, tenant_aware: bool
+) -> None:
+    ctx = _ctx(s3_client, s3_bucket, tenant_aware=tenant_aware)
+    data = b"direct-upload-bytes"
+    tenant = TenantIdentity(tenant_id=uuid4())
+
+    with ctx.inv_ctx.bind_identity(tenant=tenant if tenant_aware else None):
+        started = await _initiate(ctx, len(data))
+
+        async with httpx.AsyncClient() as http:
+            resp = await http.put(
+                started.presigned.url, content=data, headers=started.presigned.headers
+            )
+
+        ready = await _complete(ctx, CompleteStoredFileUploadRequestDTO(id=started.file.id))
+        downloaded = await _download(ctx, ready.id)
+
+    assert resp.status_code == 200
+    assert ready.status is StoredFileStatus.READY
+    assert ready.size == len(data)
+    assert downloaded == data
+
+    if tenant_aware:
+        assert ready.storage_key == f"tenant_{tenant.tenant_id}/{ready.id}"
+
+
+async def test_multipart_parts_become_a_ready_file(s3_client: S3Client, s3_bucket: str) -> None:
+    ctx = _ctx(s3_client, s3_bucket)
+    parts = [bytes(range(256)) * (5 * MIB // 256), b"last-part"]  # every part but the last >= 5 MiB
+    started = await _initiate(ctx, sum(map(len, parts)), multipart=True)
+    landed: list[UploadPartDTO] = []
+
+    async with httpx.AsyncClient() as http:
+        for number, body in enumerate(parts, start=1):
+            url = await run_operation(
+                _REG,
+                _NS.key(StoredFileKernelOp.PRESIGN_UPLOAD_PART),
+                PresignStoredFileUploadPartRequestDTO(
+                    id=started.file.id,
+                    upload_id=started.upload_id,
+                    part_number=number,
+                    expires_in=timedelta(minutes=5),
+                ),
+                ctx,
+            )
+            resp = await http.put(url.url, content=body, headers=url.headers)
+            assert resp.status_code == 200
+            landed.append(UploadPartDTO(part_number=number, etag=resp.headers["etag"].strip('"')))
+
+    ready = await _complete(
+        ctx,
+        CompleteStoredFileUploadRequestDTO(
+            id=started.file.id, upload_id=started.upload_id, parts=landed
+        ),
+    )
+
+    assert ready.status is StoredFileStatus.READY
+    assert await _download(ctx, ready.id) == b"".join(parts)
+
+
+async def test_an_upload_larger_than_declared_is_deleted_and_failed(
+    s3_client: S3Client, s3_bucket: str
+) -> None:
+    ctx = _ctx(s3_client, s3_bucket)
+    started = await _initiate(ctx, 4)
+
+    async with httpx.AsyncClient() as http:
+        await http.put(
+            started.presigned.url, content=b"much more than 4", headers=started.presigned.headers
+        )
+
+    with pytest.raises(CoreException) as ei:
+        await _complete(ctx, CompleteStoredFileUploadRequestDTO(id=started.file.id))
+
+    assert ei.value.code == "upload_mismatch"
+    assert (
+        await ctx.doc.query(_KIT.document).get(started.file.id)
+    ).status is StoredFileStatus.FAILED
+
+    with pytest.raises(CoreException) as gone:
+        await ctx.storage.query(_KIT.resolved_storage).head(started.file.storage_key)
+
+    assert gone.value.kind is ExceptionKind.NOT_FOUND
+
+
+@pytest.mark.parametrize("multipart", [False, True], ids=["single-put", "multipart"])
+async def test_an_encrypting_route_refuses_a_direct_upload_before_any_row(
+    s3_client: S3Client, s3_bucket: str, multipart: bool
+) -> None:
+    ctx = _ctx(s3_client, s3_bucket, encrypt=True)
+
+    with pytest.raises(CoreException) as ei:
+        await _initiate(ctx, 4, multipart=multipart)
+
+    assert ei.value.kind in (ExceptionKind.PRECONDITION, ExceptionKind.CONFIGURATION)
+    assert await ctx.doc.query(_KIT.document).count() == 0

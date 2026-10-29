@@ -39,6 +39,7 @@ from forze.application.contracts.storage.value_objects import (
     UploadedObject,
     UploadPart,
     UploadSession,
+    tenant_key_prefix,
     validate_distinct_copy_keys,
 )
 from forze.application.contracts.tenancy import TenancyMixin, TenantIdentity
@@ -289,7 +290,7 @@ class ObjectStorageAdapter(
     def __tenant_prefix(self) -> str | None:
         tenant_id = self.require_tenant_if_aware()
 
-        return f"tenant_{tenant_id}" if tenant_id is not None else None
+        return tenant_key_prefix(tenant_id) if tenant_id is not None else None
 
     # ....................... #
 

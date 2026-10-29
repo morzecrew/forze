@@ -118,6 +118,9 @@ class StoredFileCreateCmd(CreateDocumentCmd):
     size: int = 0
     """Expected size in bytes (typically ``len(data)`` from the upload request)."""
 
+    storage_key: str | None = None
+    """Object-storage key, set up front only by a direct upload (the kit mints it)."""
+
     prefix: str | None = None
     """Optional logical key prefix."""
 

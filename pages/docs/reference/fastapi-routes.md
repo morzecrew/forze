@@ -421,6 +421,50 @@ it out, and naming it anywhere is refused. Serve it from a route that calls
     kit spec doesn't know a route's encryption config, so setting
     `presign_downloads=True` for such a route can't fail at build time.
 
+### Stored-file direct uploads
+
+`upload` takes the whole file in the request body. For large files,
+`StoredFileKitSpec(direct_uploads=True)` registers three commands that keep the
+bytes out of the app: the client sends them straight to the bucket through
+presigned URLs. Bind authn and authz on each one, as you do on `upload`.
+
+| Operation | Input | Result |
+|-----------|-------|--------|
+| `initiate_upload` | `InitiateStoredFileUploadRequestDTO` (`filename`, exact `size`, `content_type`, `multipart`, and `expires_in` for a single `PUT`) | `StoredFileUploadSessionDTO`: the `pending` row plus a presigned `PUT` (`presigned`) or a multipart `upload_id` |
+| `presign_upload_part` | `PresignStoredFileUploadPartRequestDTO` (`id`, `upload_id`, `part_number`, `expires_in`) | `PresignedUrlDTO` for one part |
+| `complete_upload` | `CompleteStoredFileUploadRequestDTO` (`id`, plus `upload_id` and `parts` for a multipart upload) | the `ready` row |
+
+1. `initiate_upload` mints the storage key, `{tenant}/{file_id}`, and writes a
+   `pending` row that holds it. The client never names a key. A declared size
+   over `max_bytes` is refused before anything is minted.
+2. The client `PUT`s the bytes to `presigned.url` with `presigned.headers`, which
+   carry the signed content type. For a multipart upload it asks
+   `presign_upload_part` for each part instead, and keeps each part's `ETag`. S3
+   needs the ETags, and every part but the last must be at least 5 MiB there.
+3. `complete_upload` assembles a multipart upload, then reads the object's head.
+   The object's size must equal the declared size and stay within `max_bytes`,
+   and its content type must equal the declared one. A match marks the row
+   `ready`. A mismatch deletes the object, marks the row `failed`, and raises
+   `upload_mismatch` or `upload_too_large`. If nothing has been uploaded yet, it
+   raises `upload_incomplete` and the row stays `pending`.
+
+`initiate_upload` and `presign_upload_part` return credentials: a bearer write
+URL, or a session id that lets its holder add parts. Both are marked sensitive,
+so generated surfaces refuse them; serve them from your own routes.
+`bind_stored_file_writes` runs `initiate_upload` in a transaction, as it does
+`upload`, and leaves `complete_upload` outside one, so the `failed` mark
+survives the refusal raised after it.
+
+A client-side-encrypting route refuses `initiate_upload` before any row is
+written: the app never sees the bytes, so it can't encrypt them.
+
+!!! note "Known limit: abandoned uploads are not swept"
+
+    A client that initiates and never completes leaves a `pending` row, and
+    possibly an object or an unfinished multipart upload. Nothing reaps them
+    yet. Deleting the row purges the object at its key. On S3, a bucket
+    lifecycle rule for incomplete multipart uploads reaps unfinished parts.
+
 ## Authn routes
 
 `attach_authn_routes` projects an authn registry (`build_authn_registry`) the
