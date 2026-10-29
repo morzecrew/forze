@@ -145,6 +145,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **The dynamic-read write refusal no longer names a READ ONLY transaction.** The message is engine-neutral and the details carry the engine's `statement_type` where it has one. A `DuckDbClient` statement timeout now carries the code `duckdb_query_timeout`.
 
+- **The stored-file kit's buffered `download` sets `streams=True`** (**behaviour change**). JSON cannot carry a binary file, so MCP and `forze ops` failed on one; they now leave `download` out by default, and they, agent tools and generated routes refuse it by name.
+
 ### Fixed
 
 - **A storage download no longer fails with a 500 on an odd `Range`.** A position in non-ASCII digits is malformed and serves the whole file; one too long to convert reads as past the end, so it answers 416 or clamps. An upload's `Content-Length` is read the same way.

@@ -8,6 +8,7 @@ import httpx
 import pytest
 from fastapi import FastAPI
 from pydantic import ValidationError
+from pydantic_core import PydanticSerializationError
 
 from forze.application.contracts.storage import StorageQueryPort, StreamedDownload
 from forze.application.contracts.tenancy import TenantIdentity
@@ -407,7 +408,7 @@ class TestPresignExposure:
             fastmcp.FastMCP("files"),
             _REG,
             lambda: None,
-            operations=[_KEY(StoredFileKernelOp.GET), _KEY(StoredFileKernelOp.DOWNLOAD)],
+            operations=[_KEY(StoredFileKernelOp.GET), _KEY(StoredFileKernelOp.LIST)],
         )
 
         assert _PRESIGN not in names
@@ -431,28 +432,46 @@ class TestPresignExposure:
 
 
 class TestStreamExposure:
-    """``download_stream`` returns a byte stream, which no JSON surface can carry."""
+    """``download_stream`` returns a byte stream and ``download`` raw bytes, which no JSON
+    surface can carry: a binary file's bytes are not UTF-8, so JSON encoding refuses them."""
 
     # Stream only: the sensitive presign would refuse every default projection on its own.
     _REG = freeze_stored_file_registry(
         StoredFileKitSpec(name="files", stream_downloads=True), tx_route="mock"
     )
-    _JSON_OPS = [_KEY(StoredFileKernelOp.GET), _KEY(StoredFileKernelOp.DOWNLOAD)]
+    _DOWNLOAD = _KEY(StoredFileKernelOp.DOWNLOAD)
+    _JSON_OPS = [_KEY(StoredFileKernelOp.GET), _KEY(StoredFileKernelOp.LIST)]
 
-    def test_the_stream_descriptor_streams_and_download_does_not(self) -> None:
+    def test_both_download_descriptors_stream(self) -> None:
         catalog = self._REG.catalog()
 
         assert catalog[_STREAM].descriptor.streams is True
-        assert catalog[_KEY(StoredFileKernelOp.DOWNLOAD)].descriptor.streams is False
+        assert catalog[self._DOWNLOAD].descriptor.streams is True
 
-    def test_mcp_leaves_the_stream_out_by_default(self) -> None:
+    async def test_a_binary_download_is_not_json(self, ctx: ExecutionContext) -> None:
+        ready = await _ready(ctx, data=b"\x89PNG\r\n\x1a\n\xff")
+        downloaded = await run_operation(_REG, self._DOWNLOAD, StoredFileIdDTO(id=ready.id), ctx)
+
+        with pytest.raises(PydanticSerializationError):
+            downloaded.model_dump_json()
+
+    def test_mcp_leaves_the_downloads_out_by_default(self) -> None:
         fastmcp = pytest.importorskip("fastmcp")
         from forze_mcp.registration import register_tools
 
         names = register_tools(fastmcp.FastMCP("files"), self._REG, lambda: None)
 
-        assert _STREAM not in names
+        assert not {_STREAM, self._DOWNLOAD} & set(names)
         assert set(self._JSON_OPS) <= set(names)
+
+    def test_mcp_refuses_the_buffered_download_named_in_an_allowlist(self) -> None:
+        fastmcp = pytest.importorskip("fastmcp")
+        from forze_mcp.registration import register_tools
+
+        with pytest.raises(CoreException, match="byte stream"):
+            register_tools(
+                fastmcp.FastMCP("files"), self._REG, lambda: None, operations=[self._DOWNLOAD]
+            )
 
     def test_mcp_refuses_the_stream_named_in_an_allowlist(self) -> None:
         fastmcp = pytest.importorskip("fastmcp")
@@ -483,7 +502,7 @@ class TestStreamExposure:
 
         ops = OpsApp(registry=self._REG, runtime=lambda: None, identity=AnonymousIdentity())
 
-        assert _STREAM not in ops.exposed
+        assert not {_STREAM, self._DOWNLOAD} & set(ops.exposed)
         assert set(self._JSON_OPS) <= set(ops.exposed)
 
     def test_forze_ops_refuses_the_stream_named_in_an_allowlist(self) -> None:

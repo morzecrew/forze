@@ -118,10 +118,14 @@ def build_stored_file_registry(
                 output_type=_parametrized(Paginated, StoredFileRead),
                 description="List stored files with an optional prefix filter.",
             ),
+            # Raw bytes, like download_range: JSON cannot carry a binary file (pydantic
+            # refuses bytes that are not UTF-8), so JSON surfaces (MCP, agent tools,
+            # generated routes, `forze ops`) leave it out.
             StoredFileKernelOp.DOWNLOAD: OperationDescriptor(
                 input_type=StoredFileIdDTO,
                 output_type=StoredFileDownloadDTO,
                 description="Download blob bytes for a ready stored file.",
+                streams=True,
             ),
             StoredFileKernelOp.DELETE: OperationDescriptor(
                 input_type=StoredFileIdRevDTO,

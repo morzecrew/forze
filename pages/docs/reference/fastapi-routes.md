@@ -332,7 +332,7 @@ error.
 
 | Operation | Input | Result |
 |-----------|-------|--------|
-| `download` | `StoredFileIdDTO` | `StoredFileDownloadDTO`: the whole object in memory, for small files |
+| `download` | `StoredFileIdDTO` | `StoredFileDownloadDTO`: the whole object in memory, for small files and tests |
 | `download_stream` | `StoredFileIdDTO` | `StoredFileStream`: the row plus a bounded-memory `StreamedDownload` named after the stored filename |
 | `download_range` | `DownloadStoredFileRangeRequestDTO` (`id`, inclusive `start`, `end` or `None` for the end) | `StoredFileRangeDTO`: the row plus the window's bytes, `content_range` and `total_size`; a start past the end is a precondition error |
 | `presign_download` | `PresignStoredFileDownloadRequestDTO` (`id`, `expires_in` up to 7 days) | `StoredFilePresignedDownloadDTO`: the row plus a presigned `GET` URL |
@@ -408,10 +408,12 @@ default exposes every read-only operation and the refusal covers the whole
 registration. `download_stream` is not marked sensitive: it returns the same
 bytes as `download`, not a credential.
 
-`download_stream` returns a byte stream and `download_range` raw bytes, not
-JSON, so their descriptors set `streams=True`. MCP tools and resource templates, agent tools, `forze ops` and
-`attach_operation_routes` can't carry it. The MCP and `forze ops` defaults leave
-it out, and naming it anywhere is refused. Serve it from a route that calls
+`download_stream` returns a byte stream, and `download` and `download_range`
+return raw bytes, not JSON, so their descriptors set `streams=True`. JSON can't
+carry a binary file: its bytes aren't UTF-8, so encoding them fails. MCP tools
+and resource templates, agent tools, `forze ops` and `attach_operation_routes`
+can't carry these operations. The MCP and `forze ops` defaults leave them out,
+and naming one anywhere is refused. Serve them from a route that calls
 `streamed_download_response`, like the one above.
 
 !!! note "Known limit: encrypting routes refuse per request"
