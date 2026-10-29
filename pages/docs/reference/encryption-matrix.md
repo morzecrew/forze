@@ -28,7 +28,7 @@ table.
 
 | Surface | Backends | `searchable` | `binds_record_id` | Fail-closed code |
 |---------|----------|--------------|-------------------|------------------|
-| Document fields | Postgres, Mongo, Firestore, mock | yes | yes (randomized fields only) | `core.document.encryption_wiring` |
+| Document fields | Postgres, Mongo, Firestore, mock | yes | yes (randomized fields only) | `<backend>.document.encryption_wiring` (`postgres`, `mongo`, `firestore`, `mock`) |
 | Search | Postgres, Mongo, Meilisearch, mock | yes (rewrites equality filters) | inherited | `core.search.encryption_wiring` |
 | Analytics / warehouse | Postgres, ClickHouse, BigQuery, DuckDB, mock | yes (equality only) | with `sealed_by` only — each query returns the document's `id`; **rejected** otherwise (ingested rows have no id) | `core.analytics.encryption_wiring` |
 | Graph | Neo4j, mock | yes | nodes + key-addressed edges; **rejected** for endpoint-identity edges | `core.graph.encryption_wiring` |

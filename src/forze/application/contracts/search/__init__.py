@@ -75,6 +75,7 @@ from .search_options import (
     search_options_for_simple_adapter,
 )
 from .specs import (
+    SEARCH_ENCRYPTION_WIRING_CODE,
     FederatedSearchMemberSpec,
     FederatedSearchSpec,
     HubSearchSpec,
@@ -107,6 +108,7 @@ from .value_objects import (
 # ----------------------- #
 
 __all__ = [
+    "SEARCH_ENCRYPTION_WIRING_CODE",
     "DEFAULT_SEARCH_CAPABILITIES",
     "FULL_SEARCH_CAPABILITIES",
     "FilteredAnnKind",

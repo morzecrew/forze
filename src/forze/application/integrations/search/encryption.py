@@ -27,7 +27,7 @@ from forze.application.contracts.crypto import (
     KeyringPort,
 )
 from forze.application.contracts.document import DocumentSpec
-from forze.application.contracts.search import SearchSpec
+from forze.application.contracts.search import SEARCH_ENCRYPTION_WIRING_CODE, SearchSpec
 from forze.application.contracts.tenancy import TenantIdentity
 from forze.application.integrations.crypto import (
     DEFAULT_FIELD_LABEL,
@@ -41,7 +41,7 @@ from forze.domain.constants import ID_FIELD
 
 # ----------------------- #
 
-_WIRING_CODE = "core.search.encryption_wiring"
+_WIRING_CODE = SEARCH_ENCRYPTION_WIRING_CODE
 
 _NO_ENCRYPTION = FieldEncryption()
 """The canonical "nothing is sealed" policy.

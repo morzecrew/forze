@@ -17,6 +17,11 @@ from ..crypto import FieldEncryption
 
 # ----------------------- #
 
+PROCEDURE_ENCRYPTION_WIRING_CODE = "core.procedures.encryption_wiring"
+"""The procedure plane's encryption refusal code, at spec construction and at wiring."""
+
+# ....................... #
+
 
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
@@ -141,7 +146,8 @@ def validate_procedure_spec(spec: ProcedureSpec[Any, Any]) -> None:
         if spec.encryption.binds_record_id:
             raise exc.configuration(
                 "ProcedureSpec.encryption cannot set binds_record_id: procedure params have no "
-                "stable record id to bind into the AAD. Use a FieldEncryption without it."
+                "stable record id to bind into the AAD. Use a FieldEncryption without it.",
+                code=PROCEDURE_ENCRYPTION_WIRING_CODE,
             )
 
         spec.encryption.validate_fields_exist(

@@ -109,6 +109,7 @@ def test_binds_record_id_without_sealed_by_rejected_at_construction() -> None:
 
     assert ei.value.kind is ExceptionKind.CONFIGURATION
     assert "binds_record_id without sealed_by" in str(ei.value)
+    assert ei.value.code == "core.analytics.encryption_wiring"
 
 
 def test_searchable_without_deterministic_fails_closed() -> None:
@@ -302,6 +303,7 @@ def test_sealed_by_with_ingest_is_refused() -> None:
 
     assert ei.value.kind is ExceptionKind.CONFIGURATION
     assert "sealed_by and ingest" in str(ei.value)
+    assert ei.value.code == "core.analytics.encryption_wiring"
 
 
 @pytest.mark.parametrize("blank", ["", "   "])

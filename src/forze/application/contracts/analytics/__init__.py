@@ -13,6 +13,7 @@ from .ports import (
     BaseAnalyticsPort,
 )
 from .specs import (
+    ANALYTICS_ENCRYPTION_WIRING_CODE,
     AnalyticsQueryDefinition,
     AnalyticsSpec,
     validate_analytics_spec,
@@ -28,6 +29,7 @@ from .value_objects import (
 # ----------------------- #
 
 __all__ = [
+    "ANALYTICS_ENCRYPTION_WIRING_CODE",
     "AnalyticsAppendResult",
     "AnalyticsProvenance",
     "IngestSpec",
