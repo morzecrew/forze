@@ -10383,6 +10383,9 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <p><strong>Stored files can upload straight to the bucket, opt-in.</strong> <code>StoredFileKitSpec(direct_uploads=True)</code> registers <code>initiate_upload</code>, <code>presign_upload_part</code> and <code>complete_upload</code>: a key the kit mints, then a create-only presigned PUT or parts. Completion checks size, type and <code>max_bytes</code>, and fails the row on a mismatch.</p>
 </li>
 <li>
+<p><strong><code>stored_file_pending_sweep_lifecycle_step</code> fails abandoned stored-file uploads and frees their bytes.</strong> A row <code>pending</code> with no update for <code>older_than</code> (24 hours) is marked <code>failed</code> at its revision, then its multipart uploads, object and key go; a failed cleanup is retried. <code>presign_upload_part</code> touches the row.</p>
+</li>
+<li>
 <p><strong>A presigned upload and a multipart completion can refuse to replace an object</strong> (<strong>Breaking</strong>). <code>create_only=True</code> (never with <code>if_match</code>) makes <code>presign_upload</code> sign <code>If-None-Match: *</code> or <code>x-goog-if-generation-match: 0</code>, and <code>complete_upload</code> refuse an existing key. A custom <code>ObjectStorageClientPort</code> must accept it.</p>
 </li>
 <li>
@@ -10433,6 +10436,18 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 </li>
 <li>
 <p><strong>The dynamic-read write refusal no longer names a READ ONLY transaction.</strong> The message is engine-neutral and the details carry the engine's <code>statement_type</code> where it has one. A <code>DuckDbClient</code> statement timeout now carries the code <code>duckdb_query_timeout</code>.</p>
+</li>
+<li>
+<p><strong>An encrypting storage route refuses the stored-file kit's direct operations at resolve</strong> (<strong>behaviour change</strong>). <code>presign_download</code> and the direct uploads resolve storage as the new <code>StorageSpec(direct_transfer=True)</code>, which a client-side-encrypting route refuses (<code>configuration</code>), so <code>check_wiring</code> reports them.</p>
+</li>
+<li>
+<p><strong>The stored-file kit's buffered <code>download</code> sets <code>streams=True</code></strong> (<strong>behaviour change</strong>). JSON cannot carry a binary file, so <abbr title="Model Context Protocol">MCP</abbr> and <code>forze ops</code> failed on one. Both now leave <code>download</code> out by default, and <abbr title="Model Context Protocol">MCP</abbr>, <code>forze ops</code>, agent tools and <code>attach_operation_routes</code> refuse it when named.</p>
+</li>
+<li>
+<p><strong><code>StorageSpec</code> gains <code>direct_transfer</code>, so every storage spec's inventory fingerprint changes</strong> (<strong>behaviour change</strong>). Portability archives and <code>migrate</code> fingerprints taken before the upgrade no longer match; take them again after it. The new field defaults to <code>False</code>.</p>
+</li>
+<li>
+<p><strong><code>StorageUploadSessionPort</code> requires <code>list_uploads</code></strong> (<strong>Breaking</strong>). <code>list_uploads(key)</code> returns the sessions open at a key, so a cleanup that lost their handles can abort them; S3, GCS and the mock have it. A custom port, or an <code>ObjectStorageClientPort</code> (<code>list_multipart_uploads</code>), must add it.</p>
 </li>
 </ul>
 <h3 id="fixed">Fixed<a class="headerlink" href="#fixed" title="Permanent link">&para;</a></h3>

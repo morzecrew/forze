@@ -6283,6 +6283,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Stored-file direct uploads">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#sweeping-abandoned-uploads" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Sweeping abandoned uploads
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
         
       </ul>
@@ -6766,6 +6783,23 @@
       </span>
     </span>
   </a>
+  
+    <nav class="md-nav" aria-label="Stored-file direct uploads">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#sweeping-abandoned-uploads" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Sweeping abandoned uploads
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
   
 </li>
         
@@ -7303,7 +7337,7 @@ error.</p>
 <tr>
 <td><code>download</code></td>
 <td><code>StoredFileIdDTO</code></td>
-<td><code>StoredFileDownloadDTO</code>: the whole object in memory, for small files</td>
+<td><code>StoredFileDownloadDTO</code>: the whole object in memory, for small files and tests</td>
 </tr>
 <tr>
 <td><code>download_stream</code></td>
@@ -7383,18 +7417,21 @@ enables it needs an <code>operations=</code> allowlist that leaves it out, becau
 default exposes every read-only operation and the refusal covers the whole
 registration. <code>download_stream</code> is not marked sensitive: it returns the same
 bytes as <code>download</code>, not a credential.</p>
-<p><code>download_stream</code> returns a byte stream and <code>download_range</code> raw bytes, not
-JSON, so their descriptors set <code>streams=True</code>. <abbr title="Model Context Protocol">MCP</abbr> tools and resource templates, agent tools, <code>forze ops</code> and
-<code>attach_operation_routes</code> can't carry it. The <abbr title="Model Context Protocol">MCP</abbr> and <code>forze ops</code> defaults leave
-it out, and naming it anywhere is refused. Serve it from a route that calls
+<p><code>download_stream</code> returns a byte stream, and <code>download</code> and <code>download_range</code>
+return raw bytes, not JSON, so their descriptors set <code>streams=True</code>. JSON can't
+carry a binary file: its bytes aren't UTF-8, so encoding them fails. <abbr title="Model Context Protocol">MCP</abbr> tools
+and resource templates, agent tools, <code>forze ops</code> and <code>attach_operation_routes</code>
+can't carry these operations. The <abbr title="Model Context Protocol">MCP</abbr> and <code>forze ops</code> defaults leave them out,
+and naming one anywhere is refused. Serve them from a route that calls
 <code>streamed_download_response</code>, like the one above.</p>
-<div class="admonition note">
-<p class="admonition-title">Known limit: encrypting routes refuse per request</p>
-<p>A client-side-encrypting storage route refuses <code>presign_download</code>, but only
-when it is called. The storage adapter refuses before anything is signed. The
-kit spec doesn't know a route's encryption config, so setting
-<code>presign_downloads=True</code> for such a route can't fail at build time.</p>
-</div>
+<p>A client-side-encrypting storage route can't serve <code>presign_download</code>: the
+bytes would leave the store without passing through the app, which decrypts
+them. The kit resolves that operation's storage as
+<code>StorageSpec(direct_transfer=True)</code>, and the route refuses such a spec with a
+<code>configuration</code> error (<code>storage_direct_transfer_encrypted</code>). So <code>check_wiring</code>
+reports the operation before anything runs, and without <code>check_wiring</code> its
+first call fails before the handler runs. The kit's other operations keep
+working on that route.</p>
 <h3 id="stored-file-direct-uploads">Stored-file direct uploads<a class="headerlink" href="#stored-file-direct-uploads" title="Permanent link">&para;</a></h3>
 <p><code>upload</code> takes the whole file in the request body. For large files,
 <code>StoredFileKitSpec(direct_uploads=True)</code> registers three commands that keep the
@@ -7417,7 +7454,7 @@ presigned URLs. Bind authn and authz on each one, as you do on <code>upload</cod
 <tr>
 <td><code>presign_upload_part</code></td>
 <td><code>PresignStoredFileUploadPartRequestDTO</code> (<code>id</code>, <code>upload_id</code>, <code>part_number</code>, <code>expires_in</code> with the same bounds)</td>
-<td><code>PresignedUrlDTO</code> for one part</td>
+<td><code>PresignedUrlDTO</code> for one part; it touches the row, bumping its revision, and parallel calls retry the touch</td>
 </tr>
 <tr>
 <td><code>complete_upload</code></td>
@@ -7458,28 +7495,53 @@ so generated surfaces refuse them; serve them from your own routes.
 <code>bind_stored_file_writes</code> runs <code>initiate_upload</code> in a transaction, as it does
 <code>upload</code>, and leaves <code>complete_upload</code> outside one, so the <code>failed</code> mark
 survives the refusal raised after it.</p>
-<p>A client-side-encrypting route refuses <code>initiate_upload</code> before any row is
-written: the app never sees the bytes, so it can't encrypt them.</p>
-<div class="admonition note">
-<p class="admonition-title">Known limit: abandoned uploads are not swept</p>
+<p>A client-side-encrypting route can't serve the three direct-upload commands:
+the app never sees the bytes, so it can't encrypt them. As with
+<code>presign_download</code>, the kit resolves their storage with <code>direct_transfer=True</code>,
+so <code>check_wiring</code> reports them and a call fails before any row is written.</p>
+<h4 id="sweeping-abandoned-uploads">Sweeping abandoned uploads<a class="headerlink" href="#sweeping-abandoned-uploads" title="Permanent link">&para;</a></h4>
 <p>A client that initiates and never completes leaves a <code>pending</code> row, and
-possibly an object or an unfinished multipart upload. Nothing reaps them
-yet. Deleting the row purges the object at its key, but not multipart
-parts. A refused upload leaves its key free, so the single <code>PUT</code> URL can
-still create an object there until it expires; the row stays <code>failed</code>.</p>
-<ul>
-<li><strong>S3.</strong> <code>initiate_upload</code> opens the multipart upload inside its
-  transaction, so a rollback after that leaves an empty upload behind, and
-  an abandoned one keeps its parts. Add a bucket lifecycle rule that aborts
-  incomplete multipart uploads (<code>AbortIncompleteMultipartUpload</code>).</li>
-<li><strong>GCS.</strong> There is no native session: an abandoned upload's parts are
-  objects named <code>{key}.__forze_mpu__/{upload_id}/{n}</code>, next to each file's
-  own key. A lifecycle rule matches only a name prefix or suffix, so none
-  can single them out from the files; they stay until the session is
-  aborted. A rollback leaves nothing on GCS, because opening a session
-  writes nothing.</li>
-</ul>
-</div>
+possibly an object or an unfinished multipart upload. A buffered <code>upload</code>
+whose process died between its commit and the after-commit stage leaves a
+<code>pending</code> row too. <code>stored_file_pending_sweep_lifecycle_step</code> cleans them up
+on an interval (10 minutes by default):</p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">forze_kits.aggregates.stored_file</span><span class="w"> </span><span class="kn">import</span> <span class="n">stored_file_pending_sweep_lifecycle_step</span>
+
+<span class="n">lifecycle_steps</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">stored_file_pending_sweep_lifecycle_step</span><span class="p">(</span><span class="n">kit</span><span class="p">))</span>
+</code></pre></div>
+<p>A row's age counts from its last update. <code>initiate_upload</code> creates the row,
+and each <code>presign_upload_part</code> touches it. Each sweep reads the <code>pending</code> rows
+not updated for <code>older_than</code> (24 hours by default), in <code>id</code> order and in
+batches. For each row, the sweep:</p>
+<ol>
+<li>Marks the row <code>failed</code>, with the revision check that <code>complete_upload</code> uses
+   when it refuses an upload. If a <code>complete_upload</code> races the sweep, one of
+   them wins cleanly: the sweep leaves a completed file alone, and a complete
+   that lost raises <code>revision_mismatch</code>.</li>
+<li>Aborts every multipart upload still open at the row's key.</li>
+<li>Deletes the object at the key, if one landed.</li>
+<li>Clears the row's <code>storage_key</code>.</li>
+</ol>
+<p>The sweep then repeats steps 2 to 4 for the <code>failed</code> rows not updated for
+<code>older_than</code> that still hold a key. Those are rows whose cleanup failed after
+the mark, and rows <code>complete_upload</code> refused, whose single <code>PUT</code> URL could
+still land an object after the refusal.</p>
+<p><code>older_than</code> must be longer than 1 hour, the longest a direct-upload URL
+lives. Every URL is signed before the update that records it:
+<code>initiate_upload</code> signs before it creates the row, and <code>presign_upload_part</code>
+signs, then touches the row, and hands the URL out only if the touch succeeds.
+So every URL handed out expires within 1 hour of the row's last update, and
+none still works once the row is past the cutoff. Concurrent sweeps can't fail a row twice, so
+run the step on every replica, unwrapped. Pass <code>tenants=</code> for tenant-aware
+document and storage routes. A missing route fails startup. Only a wiring
+error, such as <code>tenant_global_required</code>, stops the loop. Any other error,
+including a configuration error, is logged for its row or tenant, and the row
+is retried on a later sweep.</p>
+<p>On S3, <code>initiate_upload</code> opens the multipart upload inside its transaction, so
+a rollback after that leaves an empty upload with no row for the sweep to
+find. Keep a bucket lifecycle rule that aborts incomplete multipart uploads
+(<code>AbortIncompleteMultipartUpload</code>). On GCS a rollback leaves nothing, because
+opening a session writes nothing.</p>
 <h2 id="authn-routes">Authn routes<a class="headerlink" href="#authn-routes" title="Permanent link">&para;</a></h2>
 <p><code>attach_authn_routes</code> projects an authn registry (<code>build_authn_registry</code>) the
 same way. Authn flows are RPC-shaped with one natural surface each, so there is

@@ -6757,7 +6757,9 @@ table.</p>
 </table>
 <ul>
 <li><strong>Object storage caveat:</strong> multipart / presigned uploads are <strong>blocked</strong> when a route
-  encrypts — the client would write bytes the app never sees, landing as plaintext. Use
+  encrypts — the client would write bytes the app never sees, landing as plaintext. A
+  <code>StorageSpec(direct_transfer=True)</code> is refused when it resolves on such a route, so
+  <code>check_wiring</code> catches the stored-file kit's direct operations up front. Use
   a single-shot <code>upload()</code> or <code>upload_stream()</code> (seals chunk-by-chunk in bounded
   memory). Ranged reads decrypt stream-uploaded objects; whole-payload envelopes
   can't be sliced and must be read back whole.</li>
