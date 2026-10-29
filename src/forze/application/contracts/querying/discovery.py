@@ -22,6 +22,7 @@ from collections.abc import Iterable
 import attrs
 from pydantic import BaseModel
 
+from .field_policy import QueryFieldPolicy
 from .field_types import (
     classify_field_type,
     field_value_operators,
@@ -117,6 +118,32 @@ def build_query_discovery(
         filterable=tuple(supports),
         sortable=tuple(sorted(sortable)),
         aggregatable=tuple(sorted(aggregatable)),
+    )
+
+
+# ....................... #
+
+
+def narrow_query_discovery(discovery: QueryDiscovery, policy: QueryFieldPolicy) -> QueryDiscovery:
+    """*discovery* restricted to *policy*'s allow-sets, for a surface that advertises less.
+
+    An axis whose allow-set is ``None`` keeps every field *discovery* names. The result is an
+    intersection, so it never names a field *discovery* does not: a narrower surface cannot
+    advertise more than the operation accepts.
+    """
+
+    def kept(names: tuple[str, ...], allowed: frozenset[str] | None) -> tuple[str, ...]:
+        return names if allowed is None else tuple(name for name in names if name in allowed)
+
+    return attrs.evolve(
+        discovery,
+        filterable=tuple(
+            f
+            for f in discovery.filterable
+            if policy.filterable is None or f.field in policy.filterable
+        ),
+        sortable=kept(discovery.sortable, policy.sortable),
+        aggregatable=kept(discovery.aggregatable, policy.aggregatable),
     )
 
 

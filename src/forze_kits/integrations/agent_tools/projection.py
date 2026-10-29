@@ -15,17 +15,21 @@ import re
 from collections.abc import Callable, Iterable, Mapping
 
 from forze.application.contracts.querying import (
+    QueryFieldGuard,
+    QueryFieldPolicy,
     describe_query_discovery,
     filter_grammar,
+    narrow_query_discovery,
     takes_filter_expression,
     without_filter_grammar,
 )
+from forze.application.execution.ingress import query_policy_guards
 from forze.application.execution.operations import (
     FrozenOperationRegistry,
     OperationCatalogEntry,
 )
 from forze.base.exceptions import exc
-from forze.base.primitives import JsonDict, StrKey
+from forze.base.primitives import JsonDict, StrKey, StrKeyMapping
 
 from .value_objects import OperationToolset, ToolDef
 
@@ -133,8 +137,12 @@ def _input_schema(entry: OperationCatalogEntry) -> JsonDict:
 # ....................... #
 
 
-def _description(entry: OperationCatalogEntry) -> str | None:
-    """*entry*'s own description, plus its filter surface when it accepts one.
+def _description(
+    entry: OperationCatalogEntry,
+    guard: QueryFieldGuard | None = None,
+) -> str | None:
+    """*entry*'s own description, plus its filter surface when it accepts one — narrowed to
+    *guard*'s policy when the palette narrows it.
 
     A filter-accepting operation's input schema says a filter may be sent; it does not say
     which fields and operators the read model allows, because the DSL's expression types
@@ -155,6 +163,10 @@ def _description(entry: OperationCatalogEntry) -> str | None:
         return None
 
     discovery = descriptor.query_discovery
+
+    if discovery is not None and guard is not None:
+        discovery = narrow_query_discovery(discovery, guard.policy)
+
     sentence = describe_query_discovery(discovery) if discovery is not None else None
 
     # Joined by what is actually there: a descriptor carrying no description, or a
@@ -173,6 +185,7 @@ def operation_tools(
     read_only: bool = True,
     name: Callable[[str], str] = provider_safe_tool_name,
     shared_filter_grammar: bool = False,
+    query_policies: StrKeyMapping[QueryFieldPolicy] | None = None,
 ) -> OperationToolset:
     """Project the allowlisted operations of *registry* into a tool palette.
 
@@ -189,6 +202,11 @@ def operation_tools(
         object in the tool's schema, as on MCP, and the grammar is
         :attr:`~.value_objects.OperationToolset.filter_grammar`, for the system prompt.
         Dispatch validates a call against the full grammar either way.
+    :param query_policies: Operation key → a narrower policy for that tool: its description
+        names only the fields the policy allows, and dispatch refuses a call that filters,
+        sorts or aggregates on any other, so the palette accepts what it advertises. Each
+        allow-set must be a subset of the operation's own; an axis left ``None`` keeps the
+        operation's. The operation itself, served elsewhere, keeps its full allow-set.
     :returns: The palette: :attr:`~.value_objects.OperationToolset.defs` for the agent's
         SDK, and the bindings dispatch resolves names against.
     :raises CoreException: When *include* is empty, names an operation the registry does
@@ -196,7 +214,10 @@ def operation_tools(
         that projects a sensitive read model or returns a byte stream; or, as a
         ``configuration`` error, when a
         tool name is not a string matching ``^[A-Za-z0-9_-]{1,64}$``, or two operations
-        share one — an operation's own key counting as one of its names.
+        share one — an operation's own key counting as one of its names; or, as a
+        ``configuration`` error, when *query_policies* names an operation outside
+        *include* or one that takes no filter, widens one of its allow-sets, or narrows an
+        axis its input does not carry.
     """
 
     catalog = registry.catalog()
@@ -265,6 +286,7 @@ def operation_tools(
     # configuration error rather than fail on hashing.
     policy_names: dict[str, object] = {op: name(op) for op in entries}
     names = _checked_names(policy_names)
+    guards = query_policy_guards(catalog, entries, query_policies, surface="agent tool")
     schemas = {op: _input_schema(entry) for op, entry in entries.items()}
     # Only a tool that takes a filter changes; the grammar is stated when one does.
     filtered = [
@@ -279,7 +301,7 @@ def operation_tools(
     defs = tuple(
         ToolDef(
             name=names[op],
-            description=_description(entry),
+            description=_description(entry, guards.get(op)),
             input_schema=schemas[op],
         )
         for op, entry in entries.items()
@@ -291,4 +313,5 @@ def operation_tools(
         defs=defs,
         bindings=bindings,
         filter_grammar=_grammar_note() if filtered else None,
+        query_guards=guards,
     )

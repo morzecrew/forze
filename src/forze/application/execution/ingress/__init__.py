@@ -7,7 +7,12 @@ execution layer because it needs :class:`~forze.application.execution.ExecutionC
 
 from .arguments import accepted_input_names, validate_operation_input
 from .authn import api_key_credentials, authenticate_api_key, resolve_principal_tenant
-from .exposure import refuse_sensitive, select_operations
+from .exposure import (
+    check_query_policy,
+    query_policy_guards,
+    refuse_sensitive,
+    select_operations,
+)
 from .identity import IngressIdentityResolver, StaticIdentityResolver
 from .invoke import invoke_at_ingress, mint_invocation_metadata
 
@@ -19,8 +24,10 @@ __all__ = [
     "accepted_input_names",
     "api_key_credentials",
     "authenticate_api_key",
+    "check_query_policy",
     "invoke_at_ingress",
     "mint_invocation_metadata",
+    "query_policy_guards",
     "refuse_sensitive",
     "resolve_principal_tenant",
     "select_operations",

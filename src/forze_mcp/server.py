@@ -11,9 +11,10 @@ from contextlib import AbstractAsyncContextManager
 from fastmcp import FastMCP
 from fastmcp.server.auth import AuthProvider
 
+from forze.application.contracts.querying import QueryFieldPolicy
 from forze.application.execution.context import ExecutionContextFactory
 from forze.application.execution.operations import FrozenOperationRegistry
-from forze.base.primitives import StrKey
+from forze.base.primitives import StrKey, StrKeyMapping
 
 from .identity import MCPIdentityResolver
 from .registration import register_tools
@@ -34,6 +35,7 @@ def build_mcp_server(
     operations: Iterable[StrKey] | None = None,
     output_schemas: bool = True,
     shared_filter_grammar: bool = False,
+    query_policies: StrKeyMapping[QueryFieldPolicy] | None = None,
 ) -> FastMCP:
     """Build a FastMCP server with the registry's exposed operations registered as tools.
 
@@ -67,10 +69,10 @@ def build_mcp_server(
     construct your own :class:`FastMCP` and call
     :func:`~forze_mcp.registration.register_tools` instead.
 
-    *operations*, *output_schemas* and *shared_filter_grammar* shape the tool list as in
-    :func:`~forze_mcp.registration.register_tools`. Pass the server's *instructions* here
-    rather than assigning them to the built server: the shared filter grammar is appended
-    to them, and an assignment afterwards replaces it.
+    *operations*, *output_schemas*, *shared_filter_grammar* and *query_policies* shape the
+    tool list as in :func:`~forze_mcp.registration.register_tools`. Pass the server's
+    *instructions* here rather than assigning them to the built server: the shared filter
+    grammar is appended to them, and an assignment afterwards replaces it.
     """
 
     # ``mask_error_details=True``: an *unexpected* exception (anything that isn't a translated
@@ -91,6 +93,7 @@ def build_mcp_server(
         operations=operations,
         output_schemas=output_schemas,
         shared_filter_grammar=shared_filter_grammar,
+        query_policies=query_policies,
     )
 
     return server

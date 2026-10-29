@@ -46,9 +46,11 @@ that died of budget exhaustion. For a custom FastMCP server, use
 ## Keep the tool list small
 
 An agent reads every tool's schema on each turn, and a registry exposes more than one
-agent needs. Three options, on both `build_mcp_server` and `register_tools`, trim it:
+agent needs. Four options, on both `build_mcp_server` and `register_tools`, trim it:
 
 ```python
+from forze.application.contracts.querying import QueryFieldPolicy
+
 server = build_mcp_server(
     registry,
     ctx_factory=lambda: runtime.get_context(),
@@ -57,6 +59,9 @@ server = build_mcp_server(
     operations=["orders.list", "orders.get"],  # only these become tools
     shared_filter_grammar=True,                # state the filter grammar once
     output_schemas=False,                      # leave result schemas out
+    query_policies={                           # advertise and accept fewer fields
+        "orders.list": QueryFieldPolicy(filterable={"status", "customer_id"}),
+    },
 )
 ```
 
@@ -75,6 +80,13 @@ server = build_mcp_server(
 - `output_schemas=False` drops each tool's output schema. A call still returns its result
   as text, but a list or scalar result then carries no structured content, and an object
   comes back as a plain mapping rather than a typed model.
+- `query_policies` gives a tool a narrower `QueryFieldPolicy` than its spec's. The tool's
+  description names only those fields, and a call that filters, sorts or aggregates on
+  any other is refused (`field_not_filterable`). An axis left `None` keeps the spec's. A
+  policy can only narrow: one that names a field outside the operation's own allow-set,
+  an operation that is not exposed or takes no filter, or an axis the operation's input
+  does not carry is refused when the server is built. The
+  [agent-tool bridge](../data-events/agent-tools.md) takes the same option.
 
 Set the server's instructions before the tools are registered: pass `instructions=` to
 `build_mcp_server`, or to your own `FastMCP` before `register_tools`. Assigning

@@ -4,7 +4,9 @@ Dispatch goes through the front door: :func:`run_operation` on the caller's live
 context, so tenancy, permission keys, ownership checks, the deadline, resilience,
 interceptors and audit all apply exactly as they do to an HTTP or MCP call of the same
 operation. This module enforces nothing of its own — an agent that cannot reach an
-operation is an agent whose bound principal cannot reach it.
+operation is an agent whose bound principal cannot reach it. The one addition is the
+palette's: a tool built with a narrower query policy refuses a field outside it, so the
+tool accepts no more than its description advertises.
 
 Two failure kinds are kept apart on purpose. A **governed** failure (validation,
 authorization, a precondition) is something the model can act on, so it comes back as a
@@ -19,7 +21,7 @@ from typing import Any
 from pydantic import BaseModel, ValidationError
 
 from forze.application.execution.context import ExecutionContext
-from forze.application.execution.ingress import accepted_input_names
+from forze.application.execution.ingress import accepted_input_names, check_query_policy
 from forze.application.execution.operations import (
     OperationCatalogEntry,
     run_operation,
@@ -195,6 +197,7 @@ async def dispatch_tool_use(
 
     try:
         args = _validated_args(entry, tool_use.input)
+        check_query_policy(tools.query_guards.get(str(entry.op)), args)
         result = await run_operation(tools.registry, entry.op, args, ctx)
 
     except CoreException as error:

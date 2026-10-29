@@ -20,6 +20,7 @@ from .discovery import (
     QueryDiscovery,
     build_query_discovery,
     describe_query_discovery,
+    narrow_query_discovery,
 )
 from .expressions import (
     AggregateComputedFieldExpression,
@@ -209,6 +210,7 @@ __all__ = [
     "QueryDiscovery",
     "build_query_discovery",
     "describe_query_discovery",
+    "narrow_query_discovery",
     "filter_grammar",
     "takes_filter_expression",
     "without_filter_grammar",

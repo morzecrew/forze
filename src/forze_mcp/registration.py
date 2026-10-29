@@ -21,19 +21,22 @@ from mcp.types import ToolAnnotations
 from pydantic.json_schema import PydanticJsonSchemaWarning
 
 from forze.application.contracts.querying import (
+    QueryFieldGuard,
+    QueryFieldPolicy,
     describe_query_discovery,
     filter_grammar,
+    narrow_query_discovery,
     without_filter_grammar,
 )
 from forze.application.execution.context import ExecutionContextFactory
-from forze.application.execution.ingress import refuse_sensitive
+from forze.application.execution.ingress import query_policy_guards, refuse_sensitive
 from forze.application.execution.operations import (
     FrozenOperationRegistry,
     OperationCatalogEntry,
     OperationDescriptor,
 )
 from forze.base.exceptions import CoreException
-from forze.base.primitives import StrKey
+from forze.base.primitives import StrKey, StrKeyMapping
 
 # ----------------------- #
 
@@ -64,6 +67,7 @@ def _flat_tool_handler(
     identity: MCPIdentityResolver,
     op: StrKey,
     descriptor: OperationDescriptor | None,
+    query_guard: QueryFieldGuard | None = None,
 ) -> Callable[..., Awaitable[Any]]:
     """Build a tool callable whose signature is the operation's input-DTO fields.
 
@@ -92,6 +96,7 @@ def _flat_tool_handler(
                 op=op,
                 descriptor=descriptor,
                 arguments=arguments,
+                query_guard=query_guard,
             )
         except CoreException as e:
             # Shared egress-masked translation (see :mod:`forze_mcp._errors`): a caller-caused
@@ -141,7 +146,10 @@ def _flat_tool_handler(
 # ....................... #
 
 
-def _tool_description(entry: OperationCatalogEntry) -> str | None:
+def _tool_description(
+    entry: OperationCatalogEntry,
+    query_guard: QueryFieldGuard | None = None,
+) -> str | None:
     """Tool description: descriptor text plus catalog-derived suffix sentences.
 
     Write operations whose plan carries an idempotency wrap advertise key-based
@@ -151,7 +159,8 @@ def _tool_description(entry: OperationCatalogEntry) -> str | None:
     introspection only, **not** a complete security statement: an operation may
     enforce authorization inside its handler invisibly. A plan-declared deadline
     documents the call's time budget so agents can set client timeouts and avoid
-    retrying a call that failed by running out of budget.
+    retrying a call that failed by running out of budget. The filter surface is narrowed
+    to *query_guard*'s policy when the tool was registered with one.
     """
 
     parts: list[str] = []
@@ -189,7 +198,12 @@ def _tool_description(entry: OperationCatalogEntry) -> str | None:
         # is empty — appending that would leave a trailing space on the description, or
         # turn an operation with nothing else to say into an empty string rather than no
         # description at all.
-        sentence = describe_query_discovery(entry.descriptor.query_discovery)
+        discovery = entry.descriptor.query_discovery
+
+        if query_guard is not None:
+            discovery = narrow_query_discovery(discovery, query_guard.policy)
+
+        sentence = describe_query_discovery(discovery)
 
         if sentence:
             parts.append(sentence)
@@ -245,6 +259,7 @@ def register_tools(
     operations: Iterable[StrKey] | None = None,
     output_schemas: bool = True,
     shared_filter_grammar: bool = False,
+    query_policies: StrKeyMapping[QueryFieldPolicy] | None = None,
 ) -> list[str]:
     """Add the registry's exposed operations to *server* as MCP tools.
 
@@ -271,10 +286,17 @@ def register_tools(
         instructions and published at :data:`FILTER_GRAMMAR_URI`. Set the instructions
         before registering: assigning them afterwards replaces the grammar (the tools still
         point at the resource). A call is validated against the full grammar either way.
+    :param query_policies: Operation key → a narrower policy for that tool: its description
+        names only the fields the policy allows, and a call that filters, sorts or
+        aggregates on any other is refused, so the tool accepts what it advertises. Each
+        allow-set must be a subset of the operation's own; an axis left ``None`` keeps the
+        operation's. The operation itself, served elsewhere, keeps its full allow-set.
     :returns: The list of registered tool names.
     :raises CoreException: When an exposed operation projects a sensitive read model
-        (its spec is marked ``sensitive=True``), or *operations* names an operation it
-        cannot expose.
+        (its spec is marked ``sensitive=True``), *operations* names an operation it
+        cannot expose, or *query_policies* names an operation that is not exposed or takes
+        no filter, widens one of its allow-sets, or narrows an axis its input does not
+        carry.
     """
 
     catalog = registry.catalog()
@@ -284,6 +306,7 @@ def register_tools(
     # Refuse sensitive operations up front (before any tool is added) so a
     # credential-bearing read model can never leak through a generated tool.
     refuse_sensitive(catalog, exposed.values(), surface="MCP tool")
+    guards = query_policy_guards(catalog, exposed.values(), query_policies, surface="MCP tool")
 
     tools: list[FunctionTool] = []
     shared = False
@@ -291,6 +314,7 @@ def register_tools(
     for tool_name, op in exposed.items():
         entry = catalog[op]
         descriptor = entry.descriptor
+        guard = guards.get(str(op))
 
         with warnings.catch_warnings():
             # A ``default_factory`` field carries no fixed default (it is stripped to the ``_UNSET``
@@ -304,9 +328,10 @@ def register_tools(
                     identity=resolver,
                     op=op,
                     descriptor=descriptor,
+                    query_guard=guard,
                 ),
                 name=tool_name,
-                description=_tool_description(entry),
+                description=_tool_description(entry, guard),
                 annotations=ToolAnnotations(
                     read_only_hint=entry.is_read_only,
                     destructive_hint=not entry.is_read_only,
