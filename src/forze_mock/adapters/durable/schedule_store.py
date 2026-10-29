@@ -12,18 +12,13 @@ import attrs
 from forze.application.contracts.durable.function import (
     DurableScheduleRecord,
     DurableScheduleStorePort,
+    scope_tenant_key,
 )
 from forze.application.contracts.tenancy import TenantProviderPort, effective_tenant
 from forze.base.primitives import JsonDict
 from forze_mock.state import MockState
 
 # ----------------------- #
-
-
-def _scoped_key(schedule_id: str, tenant_id: UUID | None) -> str:
-    """Tenant-scope the storage key so two tenants reusing one schedule id stay distinct
-    (mirrors the Postgres store's tenant-scoped ``schedule_id`` primary key)."""
-    return schedule_id if tenant_id is None else f"{tenant_id}:{schedule_id}"
 
 
 @final
@@ -57,7 +52,7 @@ class MockDurableScheduleStore(DurableScheduleStorePort):
         tenant_id = effective_tenant(bound=self._bound_tenant(), requested=record.tenant_id)
 
         with self.state.lock:
-            self.state.durable_run_schedules[_scoped_key(record.schedule_id, tenant_id)] = {
+            self.state.durable_run_schedules[scope_tenant_key(record.schedule_id, tenant_id)] = {
                 "schedule_id": record.schedule_id,
                 "name": record.name,
                 "cron": record.cron,
@@ -104,7 +99,7 @@ class MockDurableScheduleStore(DurableScheduleStorePort):
         to_fire_at: datetime,
     ) -> bool:
         with self.state.lock:
-            key = _scoped_key(schedule_id, self._bound_tenant())
+            key = scope_tenant_key(schedule_id, self._bound_tenant())
             data = self.state.durable_run_schedules.get(key)
 
             # Compare-and-set: only the scheduler that still sees the fired instant advances.
@@ -127,7 +122,7 @@ class MockDurableScheduleStore(DurableScheduleStorePort):
     ) -> bool:
         with self.state.lock:
             data = self.state.durable_run_schedules.get(
-                _scoped_key(schedule_id, self._bound_tenant())
+                scope_tenant_key(schedule_id, self._bound_tenant())
             )
 
             if data is None or (data["cron"], data["tz"]) != (expected_cron, expected_tz):
@@ -141,7 +136,7 @@ class MockDurableScheduleStore(DurableScheduleStorePort):
 
     async def load(self, schedule_id: str) -> DurableScheduleRecord | None:
         with self.state.lock:
-            key = _scoped_key(schedule_id, self._bound_tenant())
+            key = scope_tenant_key(schedule_id, self._bound_tenant())
             data = self.state.durable_run_schedules.get(key)
 
             return None if data is None else _to_record(data)
@@ -150,7 +145,7 @@ class MockDurableScheduleStore(DurableScheduleStorePort):
 
     async def delete(self, schedule_id: str) -> bool:
         with self.state.lock:
-            key = _scoped_key(schedule_id, self._bound_tenant())
+            key = scope_tenant_key(schedule_id, self._bound_tenant())
 
             return self.state.durable_run_schedules.pop(key, None) is not None
 

@@ -36,15 +36,27 @@ def check_enqueue_keys(idempotency_key: str | None, coalesce_key: str | None) ->
         )
 
 
-def scope_coalesce_key(coalesce_key: str, tenant_id: UUID | None) -> str:
-    """Return *coalesce_key* as a store keys it: ``{tenant}:{key}``, or ``:{key}`` untagged.
+def scope_tenant_key(key: str, tenant_id: UUID | None) -> str:
+    """Return *key* as a store keys it: ``{tenant}:{key}``, or ``:{key}`` untagged.
 
-    Untagged keys get the separator too, so no untagged key can be spelled like a tenant's
-    scoped one: a tenant's starts with its id, an untagged one with ``:``. One tenant's
-    keys never reach another's run, nor an untagged caller's.
+    For every caller-chosen key a durable store holds in one key space for all tenants: the
+    idempotency and coalesce keys, and the schedule id. Untagged keys get the separator
+    too, so no untagged key can be spelled like a tenant's scoped one: a tenant's starts
+    with its id, an untagged one with ``:``. One tenant's keys never reach another's
+    record, nor an untagged caller's.
     """
 
-    return f"{'' if tenant_id is None else tenant_id}:{coalesce_key}"
+    return f"{'' if tenant_id is None else tenant_id}:{key}"
+
+
+def unscope_tenant_key(stored: str, tenant_id: UUID | None) -> str:
+    """Strip the prefix :func:`scope_tenant_key` added, so a record surfaces the caller's key.
+
+    The prefix is fixed for a tenant (its id and ``:``, or ``:`` alone), so the strip is
+    exact.
+    """
+
+    return stored.removeprefix(scope_tenant_key("", tenant_id))
 
 
 # ....................... #

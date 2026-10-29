@@ -39,12 +39,11 @@ CREATE TABLE public.durable_run (
 CREATE UNIQUE INDEX ON public.durable_run (coalesce_key) WHERE status = 'pending' AND attempts = 0;
 ```
 
-- `UNIQUE (idempotency_key)` makes two submits of one key converge on a single run. The
-  key is stored tenant-scoped, so two tenants reusing a key on a shared table stay
-  distinct runs.
+- `UNIQUE (idempotency_key)` makes two submits of one key converge on a single run.
 - The partial unique index on `coalesce_key` admits one unclaimed `pending` run per key,
-  which `enqueue(coalesce_key=...)` joins. It is stored as `{tenant_id}:{key}`, or
-  `:{key}` untagged, so no key reaches another tenant's run.
+  which `enqueue(coalesce_key=...)` joins.
+- Both keys are stored as `{tenant_id}:{key}`, or `:{key}` untagged, so no key reaches
+  another tenant's run. Records return the key as the caller passed it.
 - `attempts` is the fence token: each claim advances it under a row lock, and a terminal
   write is fenced against a reclaimed lease.
 - `available_at` delays when a `pending` run may be claimed (`NULL`: claimable now).
@@ -109,8 +108,9 @@ CREATE TABLE public.durable_schedule (
 );
 ```
 
-On a shared tagged table, `schedule_id` is stored as `{tenant_id}:{schedule_id}`, so two
-tenants registering one id stay distinct schedules.
+`schedule_id` is stored as `{tenant_id}:{schedule_id}`, or `:{schedule_id}` untagged, so
+two tenants registering one id stay distinct schedules and no id reaches another tenant's
+schedule. Records return the id as the caller registered it.
 
 Recommended indexes:
 

@@ -486,6 +486,31 @@ async def test_the_mock_coalesces_onto_the_unclaimed_run() -> None:
     )
 
 
+async def test_the_mock_keeps_untagged_lookalike_keys_off_a_tenants_records() -> None:
+    """# covers: DurableRunStorePort.enqueue, DurableScheduleStorePort.put"""
+
+    from forze_mock.adapters.durable import MockDurableRunStore, MockDurableScheduleStore
+    from tests.support.durable_conformance import (
+        LOOKALIKE_OUTCOME,
+        run_lookalike_scenario,
+        tenant_provider_for,
+    )
+
+    state = MockState()
+
+    assert (
+        await run_lookalike_scenario(
+            lambda tenant: MockDurableRunStore(
+                state=state, tenant_provider=tenant_provider_for(tenant)
+            ),
+            lambda tenant: MockDurableScheduleStore(
+                state=state, tenant_provider=tenant_provider_for(tenant)
+            ),
+        )
+        == LOOKALIKE_OUTCOME
+    )
+
+
 async def test_the_mock_answers_the_purge_window_and_the_race_scenarios_serially() -> None:
     """The mock store never suspends mid-call, so each gathered pair runs one after the other.
 

@@ -28,7 +28,8 @@ from forze.application.contracts.durable.function import (
     decode_run_cursor,
     requeue_failed_unnamed_error,
     requeue_unscoped_error,
-    scope_coalesce_key,
+    scope_tenant_key,
+    unscope_tenant_key,
 )
 from forze.application.contracts.tenancy import TenancyMixin
 from forze.application.integrations.crypto.payload import (
@@ -73,27 +74,19 @@ resolve the ``run_id`` shared with the ``picked`` CTE); column names stay unqual
 def _scope_idem(idempotency_key: str | None, tenant_id: UUID | None) -> str | None:
     """Namespace an idempotency key under its tenant for the stored ``idempotency_key``.
 
-    A shared **tagged** table has one global ``UNIQUE (idempotency_key)``; prefixing the key
-    with the tenant scopes convergence per tenant, so two tenants reusing one key (e.g. a
-    scheduler's ``{schedule_id}:{fire_epoch}``) stay distinct runs. Single-tenant keys
-    (``tenant_id is None``) are stored verbatim — unchanged on-disk shape — and a ``None``
-    key is never namespaced (no idempotency; ``NULL`` stays globally distinct).
+    A shared **tagged** table has one global ``UNIQUE (idempotency_key)``; the
+    :func:`scope_tenant_key` form scopes convergence per tenant, so two tenants reusing one
+    key (e.g. a scheduler's ``{schedule_id}:{fire_epoch}``) stay distinct runs, and an
+    untagged key never meets a tenant's. A ``None`` key is never namespaced (no idempotency;
+    ``NULL`` stays globally distinct).
     """
-    if idempotency_key is None or tenant_id is None:
-        return idempotency_key
-
-    return f"{tenant_id}:{idempotency_key}"
+    return None if idempotency_key is None else scope_tenant_key(idempotency_key, tenant_id)
 
 
 def _unscope_idem(stored: str | None, tenant_id: UUID | None) -> str | None:
-    """Strip the tenant prefix :func:`_scope_idem` added, so a record surfaces the key the
-    caller passed (the fixed-width ``{uuid}:`` prefix makes the strip exact)."""
-    if stored is None or tenant_id is None:
-        return stored
-
-    prefix = f"{tenant_id}:"
-
-    return stored[len(prefix) :] if stored.startswith(prefix) else stored
+    """Strip the prefix :func:`_scope_idem` added, so a record surfaces the key the caller
+    passed."""
+    return None if stored is None else unscope_tenant_key(stored, tenant_id)
 
 
 @final
@@ -293,7 +286,7 @@ class PostgresDurableRunStore(
                 "DO UPDATE SET coalesce_key = EXCLUDED.coalesce_key"
             )
             returning = sql.SQL(_COLUMNS)
-            key = scope_coalesce_key(coalesce_key, tenant_id)
+            key = scope_tenant_key(coalesce_key, tenant_id)
 
         row = await self.client.fetch_one(
             sql.SQL(
