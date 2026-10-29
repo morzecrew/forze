@@ -10462,6 +10462,9 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <h3 id="security">Security<a class="headerlink" href="#security" title="Permanent link">&para;</a></h3>
 <ul>
 <li>
+<p><strong>A document query policy checks <code>$having</code> and aggregate sorts against their source fields</strong> (<strong>Breaking</strong>). Refused now: <code>$having</code> over a field that is not filterable, and a sort by an alias whose field is not sortable. Allowed now: a sort by a <code>$count</code> alias, or by an alias whose field is sortable.</p>
+</li>
+<li>
 <p><strong>A guarded hub or federated search authorizes each member it reads</strong> (<strong>Breaking</strong>). New <code>AuthzSearchMembers</code> checks each member's read action; the adapter then refuses a request naming a forbidden member and skips one it only reaches. The registry refuses to freeze a guarded search without that search's hook.</p>
 </li>
 <li>

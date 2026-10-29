@@ -5546,6 +5546,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#query-policy" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Query policy
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#lenient-read-fields" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -6638,6 +6649,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#query-policy" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Query policy
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#lenient-read-fields" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -7040,6 +7062,23 @@ plus per-aggregate policy:</p>
 </table>
 <p><code>write</code> is a <code>DocumentWriteTypes</code> TypedDict — <code>domain</code> (the <code>Document</code> subclass),
 <code>create_cmd</code>, and an optional <code>update_cmd</code>.</p>
+<h3 id="query-policy">Query policy<a class="headerlink" href="#query-policy" title="Permanent link">&para;</a></h3>
+<p><code>QueryFieldPolicy</code> takes three allow-sets of read-model field names: <code>filterable</code>,
+<code>sortable</code> and <code>aggregatable</code>. Each one is <code>None</code> by default, which allows every read
+field. The generated document list operations enforce the policy, and so does every
+HTTP, <abbr title="Model Context Protocol">MCP</abbr> or agent-tool surface built on them. The query port does not, so internal code
+is not restricted. A search spec has no query policy. A refused query raises
+<code>field_not_filterable</code>, <code>field_not_sortable</code> or <code>field_not_aggregatable</code>.</p>
+<p>On a document aggregate (<code>agg_list</code>), groups and measures are checked against
+<code>aggregatable</code>, and each metric's <code>filter</code> against <code>filterable</code>. <code>$having</code> and <code>sorts</code>
+name output aliases, so each alias is checked as the field it comes from, whatever it is
+called:</p>
+<ul>
+<li><code>$having</code> needs that field filterable, and a sort needs it sortable.</li>
+<li>A measure counts as its field: a <code>$having</code> on the <code>$sum</code> of <code>salary</code> needs <code>salary</code>
+  filterable.</li>
+<li>A <code>$count</code> comes from no field, so it can always be filtered and sorted on.</li>
+</ul>
 <h3 id="lenient-read-fields">Lenient read fields<a class="headerlink" href="#lenient-read-fields" title="Permanent link">&para;</a></h3>
 <p>By default every read-model field must map to a stored column, and a relational
 backend fails at startup if one is missing — drift is caught at boot, not on the
