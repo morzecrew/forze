@@ -20,6 +20,7 @@ from forze.testing import context_from_modules
 from forze_kits.aggregates.stored_file import (
     PresignStoredFileDownloadRequestDTO,
     StoredFileIdDTO,
+    StoredFileIdRevDTO,
     StoredFileKernelOp,
     UploadStoredFileRequestDTO,
     freeze_stored_file_registry,
@@ -108,6 +109,31 @@ async def test_a_ready_file_streams_from_the_bucket(
     assert result.stream.filename == "report.bin"
     assert result.stream.size == (None if encrypt else len(data))
     assert b"".join([chunk async for chunk in result.stream.chunks]) == data
+
+
+async def test_a_delete_mid_download_fails_the_stream(s3_client: S3Client, s3_bucket: str) -> None:
+    # The stream issues one ranged GET per part as it is read. A purge between two parts
+    # makes the next GET raise, so a transport aborts the response rather than ending it short.
+    ctx = _ctx(s3_client, s3_bucket)
+    data = bytes(range(256)) * (9 * MIB // 256)  # two 8 MiB stream parts
+    file = await _ready(ctx, data)
+
+    result = await run_operation(
+        _REG, _KEY(StoredFileKernelOp.DOWNLOAD_STREAM), StoredFileIdDTO(id=file.id), ctx
+    )
+    chunks = aiter(result.stream.chunks)
+    first = await anext(chunks)
+
+    await run_operation(
+        _REG, _KEY(StoredFileKernelOp.DELETE), StoredFileIdRevDTO(id=file.id, rev=file.rev), ctx
+    )
+
+    with pytest.raises(CoreException) as ei:
+        async for _ in chunks:
+            pass
+
+    assert len(first) < len(data)
+    assert ei.value.kind is ExceptionKind.NOT_FOUND
 
 
 async def test_the_presigned_url_fetches_the_file_without_credentials(

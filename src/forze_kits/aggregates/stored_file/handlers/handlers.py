@@ -155,6 +155,9 @@ class DownloadStoredFileStream(Handler[StoredFileIdDTO, StoredFileStream]):
 
     Same checks as :class:`DownloadStoredFile`. The stream's chunks are consumed by the
     transport after this operation returns; the storage client behind them is app-lifetime.
+    The object is read in parts as it is consumed, so a file deleted mid-download fails the
+    next read with ``not_found`` and the transport cuts the response short. A stored file's
+    key is never reused, so a stream cannot mix two files.
     """
 
     doc: DocumentQueryPort[StoredFileRead]

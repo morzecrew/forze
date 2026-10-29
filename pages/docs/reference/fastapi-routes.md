@@ -360,6 +360,12 @@ async def file_content(file_id: UUID, ctx=Depends(ctx_dep)):
     return streamed_download_response(result.stream)
 ```
 
+The stream reads the object in parts while the response is sent. If the file is
+deleted mid-download, the next read fails with `not_found`. The status is already
+sent, so the response is cut short: the client gets fewer bytes than
+`Content-Length`, or a chunked body with no final chunk. A stored file's key is
+never reused, so a stream can't mix two files.
+
 `presign_download` follows the storage kit's presign rules: the URL is a bearer
 credential and the storage key's tenant check applies. The URL saves under the
 object key's name, so the client takes the filename from `file.filename`.

@@ -73,8 +73,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **SSE- and WebSocket-only apps get offline delivery without Socket.IO.** `RealtimeMailboxWriter` and its lifecycle step fill the mailbox those routes replay from, using the gateway's store code. They and the signal sources live in `forze.application.execution.realtime`; `forze_socketio` re-exports what moved.
 
-- **Stored files stream and presign downloads.** The kit's `download_stream` and `presign_download` operations load the row and refuse a file that is not ready, as `download` does; bind authn and authz on them too. A hand-written route returns `forze_fastapi.routes.streamed_download_response(result.stream)`.
-
 - **Stored files can stream and presign downloads, opt-in.** `StoredFileKitSpec(stream_downloads=True, presign_downloads=True)` registers `download_stream` and `presign_download`; guard each like `download`. Generated surfaces refuse the sensitive `presign_download`. A route streams with `streamed_download_response`.
 
 - **`OperationDescriptor(streams=True)` keeps a byte-stream result off JSON surfaces.** MCP and `forze ops` leave such an operation out by default; they, agent tools and `attach_operation_routes` refuse it by name. The storage and stored-file kits' `download_stream` set it (**behaviour change**).
