@@ -324,8 +324,17 @@ set up on Postgres, Mongo or Firestore. On Postgres, schedule the purge with
 A counter that cannot expire keys never breaks a login. On a Postgres counter table without
 the optional `expires_at timestamptz` column, the lockout writes its keys without a `ttl` and
 logs a warning once per refusing table naming it and the `ALTER TABLE` to run; it still
-counts and locks, and its old window keys keep growing until the column is added. A custom
-counter backend that does not report expiry gets no `ttl` either.
+counts and locks, and its old window keys keep growing until the column is added. Adding the
+column does not reach the rows already written: they keep a `NULL` expiry, which the purge
+never deletes. If the lockout has a table of its own, give them one once after the migration,
+long enough to outlast any window and lock you configure:
+
+```sql
+UPDATE <lockout_counters> SET expires_at = now() + interval '1 day' WHERE expires_at IS NULL;
+```
+
+Do not run it on a table other counters share: there a `NULL` expiry is a counter that never
+lapses. A custom counter backend that does not report expiry gets no `ttl` either.
 
 ## The identity plane
 
