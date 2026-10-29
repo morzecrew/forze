@@ -149,7 +149,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **An encrypting storage route refuses the stored-file kit's direct operations at resolve** (**behaviour change**). `presign_download` and the direct uploads resolve storage as the new `StorageSpec(direct_transfer=True)`, which a client-side-encrypting route refuses (`configuration`), so `check_wiring` reports them.
 
-- **The stored-file kit's buffered `download` sets `streams=True`** (**behaviour change**). JSON cannot carry a binary file, so MCP and `forze ops` failed on one; they now leave `download` out by default, and they, agent tools and generated routes refuse it by name.
+- **The stored-file kit's buffered `download` sets `streams=True`** (**behaviour change**). JSON cannot carry a binary file, so MCP and `forze ops` failed on one. Both now leave `download` out by default, and MCP, `forze ops`, agent tools and `attach_operation_routes` refuse it when named.
+
+- **`StorageSpec` gains `direct_transfer`, so every storage spec's inventory fingerprint changes** (**behaviour change**). Portability archives and `migrate` fingerprints taken before the upgrade no longer match; take them again after it. The new field defaults to `False`.
 
 - **`StorageUploadSessionPort` requires `list_uploads`** (**Breaking**). `list_uploads(key)` returns the sessions open at a key, so a cleanup that lost their handles can abort them; S3, GCS and the mock have it. A custom port, or an `ObjectStorageClientPort` (`list_multipart_uploads`), must add it.
 

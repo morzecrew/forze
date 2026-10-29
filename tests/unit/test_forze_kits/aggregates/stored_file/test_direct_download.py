@@ -524,6 +524,38 @@ class TestStreamExposure:
 
         assert ei.value.code == "agent_tools_streaming_operation"
 
+    def test_agent_tools_ops_and_generated_routes_refuse_the_buffered_download(self) -> None:
+        from fastapi import APIRouter
+
+        from forze_cli.ops import AnonymousIdentity, OpsApp
+        from forze_fastapi.routes import RouteBinding, attach_operation_routes, id_endpoint
+
+        with pytest.raises(CoreException) as tools:
+            operation_tools(self._REG, include=[self._DOWNLOAD])
+
+        with pytest.raises(CoreException, match="byte stream"):
+            OpsApp(
+                registry=self._REG,
+                runtime=lambda: None,
+                identity=AnonymousIdentity(),
+                operations=[self._DOWNLOAD],
+            )
+
+        with pytest.raises(CoreException, match="byte stream"):
+            attach_operation_routes(
+                APIRouter(),
+                registry=self._REG,
+                ns=_KIT.document.default_namespace,
+                ctx_dep=lambda: None,
+                bindings={
+                    StoredFileKernelOp.DOWNLOAD: RouteBinding(
+                        method="GET", path="/{id}/bytes", build=id_endpoint
+                    )
+                },
+            )
+
+        assert tools.value.code == "agent_tools_streaming_operation"
+
     def test_agent_tools_project_the_json_reads(self) -> None:
         toolset = operation_tools(self._REG, include=self._JSON_OPS)
 
