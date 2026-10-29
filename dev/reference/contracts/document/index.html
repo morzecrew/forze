@@ -7170,10 +7170,37 @@ table, which holds <code>max_locks_per_transaction</code> × (<code>max_connecti
 locks. A request touches a few owners; a bulk load or a seed that writes under thousands in one
 transaction can fill the table and fail with <code>out of shared memory</code>. Commit such a load in batches,
 so a transaction holds only its own batch's owners.</p>
-<p>It <strong>serializes, it does not validate</strong>, and the difference is worth stating twice: the lock is
-taken before the <em>write</em>, so a handler that reads, decides, and then writes still made its
-decision on an unprotected read. What the declaration removes is two writes landing at once;
-making a read-then-write atomic is a different property, and reads are never serialized by this.</p>
+<p>It <strong>serializes, it does not validate</strong>. A write takes the lock just before it writes, which
+covers the write and nothing before it. A handler that reads, decides and then writes takes the
+lock first with <code>hold</code>, inside its transaction, so it decides on a read no other writer for
+that owner can change:</p>
+<div class="highlight"><pre><span></span><code><span class="k">async</span> <span class="k">with</span> <span class="n">ctx</span><span class="o">.</span><span class="n">tx_ctx</span><span class="o">.</span><span class="n">scope</span><span class="p">(</span><span class="s2">"orders"</span><span class="p">):</span>
+    <span class="n">lines</span> <span class="o">=</span> <span class="n">ctx</span><span class="o">.</span><span class="n">document</span><span class="o">.</span><span class="n">command</span><span class="p">(</span><span class="n">line_spec</span><span class="p">)</span>
+    <span class="k">await</span> <span class="n">lines</span><span class="o">.</span><span class="n">hold</span><span class="p">({</span><span class="s2">"order_id"</span><span class="p">:</span> <span class="n">order_id</span><span class="p">})</span>  <span class="c1"># the lock every write for the order takes</span>
+    <span class="o">...</span>  <span class="c1"># read the order's lines, decide, then write: held until commit</span>
+</code></pre></div>
+<p><code>hold</code> writes nothing. Each argument names the fields of one declared key. A value is validated
+against the field's type and constraints, so an id passed as a string locks the same owner. A
+second handler for the order waits at its own <code>hold</code> until the first commits, and the first
+handler's writes take the lock again without waiting.</p>
+<p><code>hold</code> refuses as <code>configuration</code>:</p>
+<ul>
+<li>a spec that declares no <code>SerializedBy</code>, or an argument naming other fields;</li>
+<li>a datetime key field: a write keys it as the database returns it, in the session's time zone;</li>
+<li>a key field the domain validates with a field validator of its own, or any domain with a
+  model validator: a write keys the value after them, and <code>hold</code> does not run them;</li>
+<li>a key field with a serializer of its own (<code>PlainSerializer</code>, <code>WrapSerializer</code>,
+  <code>@field_serializer</code>), or any domain with a model serializer: a write can key the stored
+  form they produce.</li>
+</ul>
+<p>A call outside a transaction is refused (<code>document_hold_outside_transaction</code>), since its lock
+would end with its statement. Mongo and Firestore keep no write lock and refuse the call.</p>
+<p>One call takes its owners in sorted order. Two calls, or a hold and then a write for another
+owner, can take owners in another order than a concurrent transaction does. Postgres refuses
+that deadlock on one side as a retryable <code>concurrency</code>, and the in-memory store refuses the same
+cycle. Pass every owner a handler needs to one <code>hold</code> call.</p>
+<p>The declaration itself refuses no write: where the rule can also be a hard stop, that is a
+second guarantee beside this one.</p>
 <p><code>UniqueTogether</code> and <code>NonOverlapping</code> also say <strong>when</strong> they hold: <code>holds="always"</code>, the default,
 means after every write; <code>holds="commit"</code> means once the transaction commits, so a transaction may
 pass through a violation it resolves before committing — inserting at the top of a positioned list
@@ -7525,12 +7552,12 @@ value, a mirror's too. On the domain path, a mirror whose create sets a frozen f
 <tbody>
 <tr>
 <td><code>update</code></td>
-<td><code>update(pk, rev, dto, *, return_new=True, return_diff=False)</code></td>
-<td>optimistic — a stale <code>rev</code> raises <code>conflict</code>; <code>return_diff</code> adds the change <code>JsonDict</code>, a merge patch holding the values the caller set on every backend (a <code>StrEnum</code> stays a member, a datetime is as given), not the store's column coercion</td>
+<td><code>update(pk, rev, dto, *, return_new=True, return_diff=False, merge=True)</code></td>
+<td>optimistic — a stale <code>rev</code> is merged through history, or refused (<code>revision_mismatch</code>) without history or with <code>merge=False</code> (<a href="../../../writing-operation/concurrency-conflicts/#refusing-any-change-since-you-read">details</a>); <code>return_diff</code> adds the change <code>JsonDict</code>, a merge patch holding the values the caller set on every backend (a <code>StrEnum</code> stays a member, a datetime is as given), not the store's column coercion</td>
 </tr>
 <tr>
 <td><code>update_many</code></td>
-<td><code>update_many(updates, *, return_new=True, return_diff=False)</code></td>
+<td><code>update_many(updates, *, return_new=True, return_diff=False, merge=True)</code></td>
 <td>per-row update (<code>KeyedUpdate</code>: id, rev, dto) with <abbr title="Optimistic Concurrency Control">OCC</abbr></td>
 </tr>
 <tr>
@@ -7545,8 +7572,8 @@ value, a mirror's too. On the domain path, a mirror whose create sets a frozen f
 </tr>
 <tr>
 <td><code>touch</code> / <code>touch_many</code></td>
-<td><code>touch(pk, *, return_new=True)</code></td>
-<td>bump <code>last_update_at</code> only</td>
+<td><code>touch(pk, *, rev=None, return_new=True)</code></td>
+<td>bump <code>rev</code> and <code>last_update_at</code> only; with <code>rev</code> (<code>revs=</code> per id on <code>touch_many</code>), only a document still at it</td>
 </tr>
 </tbody>
 </table>

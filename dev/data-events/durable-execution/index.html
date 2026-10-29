@@ -6928,8 +6928,11 @@ again. <code>registry.register(name, body, retry=...)</code> gives one function 
   asked of a waiting run is stamped and lands when the retry comes due, without running the
   body (a saga runs again and decides by its pivot); that claim spends an attempt.</li>
 <li><strong>When it is due</strong> it keeps its <code>created_at</code>, so the scan, oldest first, claims it ahead of
-  fresh runs. A <code>throttled</code> failure with a <code>retry_after</code> (an upstream <code>429</code>'s <code>Retry-After</code>)
-  is due no sooner than that, even past the backoff's <code>max</code>.</li>
+  fresh runs. A <code>throttled</code> or <code>unavailable</code> failure with a <code>retry_after</code> (an upstream <code>429</code>'s
+  <code>Retry-After</code>) or a <code>retry_at</code> is due no sooner than that, even past the backoff's <code>max</code>.
+  A hint too far off to schedule — infinite, or past what a <code>datetime</code> holds — means never:
+  the run lands <code>FAILED</code> at once, where an alert sees it and <code>requeue_failed</code> can bring it
+  back.</li>
 </ul>
 <p>An attempt that sends its run back counts under the <code>retrying</code> outcome, and the last one
 under <code>failed</code>: alert on <code>failed</code>.</p>

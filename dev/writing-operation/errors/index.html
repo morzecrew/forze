@@ -6741,6 +6741,10 @@ end to end.</p>
 <td>the invocation's <a href="../../running-in-prod/deadlines/">time budget</a> ran out (final — the budget is spent)</td>
 </tr>
 <tr>
+<td><code>unavailable</code></td>
+<td>it works, but is switched off right now — a feature flag, a maintenance window (transient)</td>
+</tr>
+<tr>
 <td><code>internal</code></td>
 <td>an unexpected bug</td>
 </tr>
@@ -6760,11 +6764,11 @@ a raise — a <code>finally_</code> hook, say — it receives an <code>Outcome</
 <ul>
 <li><strong><code>expose_details</code></strong> — are the details safe to show a caller? (<code>internal</code>,
   <code>authentication</code>, <code>authorization</code>, <code>configuration</code>, <code>infrastructure</code>,
-  <code>throttled</code>, and <code>timeout</code> say no.) An error an integration translated from its
+  <code>throttled</code>, <code>timeout</code>, and <code>unavailable</code> say no.) An error an integration translated from its
   backend's never shows its details, whatever its kind: they describe the failed
   call, and stay on the exception for your code and your logs.</li>
 <li><strong><code>retryable</code></strong> — is this transient? Only <strong><code>concurrency</code></strong>,
-  <strong><code>infrastructure</code></strong>, and <strong><code>throttled</code></strong> are. This flag is what the
+  <strong><code>infrastructure</code></strong>, <strong><code>throttled</code></strong>, and <strong><code>unavailable</code></strong> are. This flag is what the
   <a href="../../running-in-prod/resilience/">resilience</a> retry policies key on — you can only retry a kind
   that declares itself retryable. (<code>timeout</code> is deliberately <em>not</em> retryable:
   within one invocation the budget is spent; a fresh invocation carries a
@@ -6774,7 +6778,9 @@ a raise — a <code>finally_</code> hook, say — it receives an <code>Outcome</
 <p>Core stays transport-neutral — it never picks an HTTP status. The
 <a href="../../integrations/fastapi/">FastAPI integration</a> turns a <code>CoreException</code> into a response,
 exposing details only when the kind's policy allows and logging the rest
-server-side.</p>
+server-side. Raise <code>unavailable</code> rather than <code>infrastructure</code> for something an
+operator switched off: it answers 503, but its summary reaches the client and it
+is not logged as a server error, since nothing is broken.</p>
 
 
 

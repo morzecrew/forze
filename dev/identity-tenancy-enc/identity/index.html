@@ -7147,9 +7147,12 @@ untouched. Events carry <code>login_digest</code> (a SHA-256 of the login), neve
 pseudonymization to keep logins out of logs and counter key spaces, not secrecy.</p>
 <p><strong>Lockout</strong> is a fixed window over <code>CounterPort</code>: after <code>threshold</code> failed attempts
 within the window, further attempts raise <code>throttled</code> (<code>code="login_locked"</code>, HTTP 429)
-<em>before</em> password verification, and unlock when the window rolls over. It counts
+<em>before</em> password verification, and unlock when the window rolls over. The error carries
+that unlock instant as <code>details["retry_at"]</code>, which the <a href="../../integrations/fastapi/#map-errors-to-http">FastAPI edge</a>
+sends as <code>Retry-After</code>; the body still withholds the details. It counts
 <strong>login strings, not accounts</strong>, so a nonexistent login locks exactly like a real one —
-preserving the no-enumeration posture.</p>
+preserving the no-enumeration posture. The unlock instant is the same for every login
+string, so the header discloses nothing either.</p>
 <h2 id="the-identity-plane">The identity plane<a class="headerlink" href="#the-identity-plane" title="Permanent link">&para;</a></h2>
 <p>All of this lives in <code>forze_identity</code>, separate from the core: <code>authn</code>, <code>authz</code>,
 <code>tenancy</code>, <code>oidc</code>, and <code>oauth</code> subpackages, wired per route via the same deps

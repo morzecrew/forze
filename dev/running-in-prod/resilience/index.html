@@ -6840,7 +6840,7 @@ circuit breaker → retry → timeout), plus optional fallback and hedge:</p>
 </tbody>
 </table>
 <p>Retry only fires on kinds that declare themselves <strong>retryable</strong> —
-<code>concurrency</code>, <code>infrastructure</code>, and <code>throttled</code> (see
+<code>concurrency</code>, <code>infrastructure</code>, <code>throttled</code>, and <code>unavailable</code> (see
 <a href="../../writing-operation/errors/">Errors &amp; failures</a>). You can't retry a <code>validation</code> or <code>domain</code>
 failure, by design.</p>
 <p>When the invocation carries a <a href="../deadlines/">deadline</a>, it gates the whole

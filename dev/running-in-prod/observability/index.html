@@ -6888,8 +6888,11 @@ this is built in. You only bring an exporter.</p>
 default; pass <code>tracer=</code> / <code>meter=</code> to target your own.</p>
 <h2 id="what-you-get">What you get<a class="headerlink" href="#what-you-get" title="Permanent link">&para;</a></h2>
 <p>Every operation produces a <strong>span</strong>, named by its operation key and nested under
-whatever span is already active (an incoming HTTP request, say). A failure
-records the exception and sets the span status to <code>ERROR</code> — then re-raises it
+whatever span is already active (an incoming HTTP request, say). A server-side
+failure — an internal, infrastructure, configuration or timeout error, or any
+exception that is not a <code>CoreException</code> — records the exception and sets the span
+status to <code>ERROR</code>; a failure the caller can handle, such as not-found, validation or
+<code>unavailable</code>, leaves the span clean. Either way the exception is re-raised
 unchanged. The span carries:</p>
 <table>
 <thead>
@@ -6915,7 +6918,12 @@ unchanged. The span carries:</p>
 </table>
 <p>Alongside each span, two <strong>metrics</strong> — <code>forze.operations</code> (a counter) and
 <code>forze.operation.duration</code> (a histogram, in ms) — labelled by operation, kind,
-and outcome.</p>
+and outcome: <code>success</code>, <code>failed</code> for a failure the caller can handle, or <code>error</code>.</p>
+<p>An <code>unavailable</code> error — something an operator switched off — counts as <code>failed</code>, not
+<code>error</code>, and no transport logs it as a server error, so an error-rate alert on
+<code>forze.outcome="error"</code> leaves it out. The operation metrics carry no error code, so if
+switch-offs matter to you, track them at the edge: count responses whose <code>X-Error-Code</code> is
+the code your app raises with <code>exc.unavailable</code>, or 503s at your proxy.</p>
 <h2 id="trace-every-outbound-call">Trace every outbound call<a class="headerlink" href="#trace-every-outbound-call" title="Permanent link">&para;</a></h2>
 <p>The operation span tells you <em>that</em> an operation ran and how long it took; to see
 <em>where</em> the time went — which database read, which cache call, which outbound

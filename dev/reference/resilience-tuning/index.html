@@ -6860,7 +6860,7 @@ immediately (no queuing) with <code>exc.throttled(code="rate_limited")</code>. S
 </table>
 <h2 id="retry-backoff">Retry &amp; backoff<a class="headerlink" href="#retry-backoff" title="Permanent link">&para;</a></h2>
 <p><code>RetryStrategy</code> re-runs on classified-<strong>retryable</strong> kinds only (<code>concurrency</code>,
-<code>infrastructure</code>, <code>throttled</code>); a non-retryable kind in <code>retry_on</code> fails at wiring.</p>
+<code>infrastructure</code>, <code>throttled</code>, <code>unavailable</code>); a non-retryable kind in <code>retry_on</code> fails at wiring.</p>
 <table>
 <thead>
 <tr>
@@ -6892,10 +6892,12 @@ immediately (no queuing) with <code>exc.throttled(code="rate_limited")</code>. S
 </tr>
 </tbody>
 </table>
-<p>A <code>throttled</code> error carrying <code>details["retry_after"]</code> (an upstream <code>429</code>'s <code>Retry-After</code>,
-in seconds) waits at least that long before the next attempt. One longer than
+<p>A <code>throttled</code> or <code>unavailable</code> error carrying <code>details["retry_after"]</code> (an upstream <code>429</code>'s
+<code>Retry-After</code>, in seconds) or <code>details["retry_at"]</code> (an aware <code>datetime</code>) waits at least that
+long before the next attempt; the keys are read as the <a href="../../integrations/fastapi/#map-errors-to-http">FastAPI edge</a>
+reads them for <code>Retry-After</code>. One longer than
 <code>backoff.max</code>, or one that would outlive the invocation deadline, is not retried: the
-throttled error is raised at once (event <code>retry_after_exceeds_max</code> or
+error is raised at once (event <code>retry_after_exceeds_max</code> or
 <code>retry_deadline_exhausted</code>).</p>
 <h2 id="timeout">Timeout<a class="headerlink" href="#timeout" title="Permanent link">&para;</a></h2>
 <p><code>TimeoutStrategy(timeout=…)</code> — a per-attempt timeout; cancellation on expiry.</p>

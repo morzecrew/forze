@@ -1258,6 +1258,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#refusing-any-change-since-you-read" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Refusing any change since you read
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#related-write-helpers" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -6511,6 +6522,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#refusing-any-change-since-you-read" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Refusing any change since you read
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#related-write-helpers" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -6667,13 +6689,43 @@ a <a href="../errors/">conflict</a> for the caller to resolve.</p>
 <p>The three-way merge needs document history enabled. Without it, <em>any</em>
 revision mismatch is a <code>precondition</code> error rather than a merge attempt.</p>
 </div>
+<h2 id="refusing-any-change-since-you-read">Refusing any change since you read<a class="headerlink" href="#refusing-any-change-since-you-read" title="Permanent link">&para;</a></h2>
+<p>The merge is right for ordinary edits and wrong for an action that approves one
+version: confirming an order as reviewed, signing off a document, accepting a
+quote. Any change since the reviewer read it should send them back. Pass
+<code>merge=False</code> to refuse every revision but the stored one, history or not:</p>
+<div class="highlight"><pre><span></span><code><span class="k">await</span> <span class="n">ctx</span><span class="o">.</span><span class="n">document</span><span class="o">.</span><span class="n">command</span><span class="p">(</span><span class="n">order_spec</span><span class="p">)</span><span class="o">.</span><span class="n">update</span><span class="p">(</span>
+    <span class="n">order</span><span class="o">.</span><span class="n">id</span><span class="p">,</span> <span class="n">order</span><span class="o">.</span><span class="n">rev</span><span class="p">,</span> <span class="n">OrderUpdate</span><span class="p">(</span><span class="n">status</span><span class="o">=</span><span class="s2">"confirmed"</span><span class="p">),</span> <span class="n">merge</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
+<span class="p">)</span>
+</code></pre></div>
+<p>To record the sign-off without changing any field, touch it at the revision you read:</p>
+<div class="highlight"><pre><span></span><code><span class="k">await</span> <span class="n">ctx</span><span class="o">.</span><span class="n">document</span><span class="o">.</span><span class="n">command</span><span class="p">(</span><span class="n">order_spec</span><span class="p">)</span><span class="o">.</span><span class="n">touch</span><span class="p">(</span><span class="n">order</span><span class="o">.</span><span class="n">id</span><span class="p">,</span> <span class="n">rev</span><span class="o">=</span><span class="n">order</span><span class="o">.</span><span class="n">rev</span><span class="p">)</span>
+</code></pre></div>
+<p>A stale <code>rev</code> raises <code>exc.precondition</code> (<code>revision_mismatch</code>), even for an update
+that changes nothing. The check is atomic: the write matches the revision you
+passed, so a writer committing between the store's read and its write makes it
+fail too. <code>merge=False</code> with no revision to check is refused as <code>configuration</code>.</p>
+<p>An update that changes nothing writes nothing. Postgres checks its revision under
+a row lock, and Firestore in its transaction's read; both keep the row until
+commit. Mongo checks the revision it read and keeps nothing, since it locks a
+document only by writing it. Inside a Mongo transaction that read is the
+transaction's snapshot, so a writer can still commit before yours. Touch at the
+revision when the check must last until commit there.</p>
+<p><code>update_many(..., merge=False)</code> applies the check to every row, and
+<code>touch_many(pks, revs=...)</code> takes one revision per id. Every row is checked
+before any is written. A row a concurrent writer moves after that check is
+refused at its own write, and only a transaction undoes the rows written before
+it. Postgres opens one of its own; Mongo, Firestore and the in-memory store do
+not. Run a strict bulk write in a transaction when it must be all or nothing.
+The in-memory store keeps no history, so it is always this strict.</p>
 <h2 id="related-write-helpers">Related write helpers<a class="headerlink" href="#related-write-helpers" title="Permanent link">&para;</a></h2>
 <ul>
 <li><code>Document.validate_historical_consistency(old, patch)</code> is the check behind the
   merge — <code>True</code> when the concurrent change and yours touch disjoint fields.</li>
 <li><code>Document.historical_update(old, patch)</code> is what the merge writes: the part of
   <code>patch</code> that changes <code>old</code>, or <code>None</code> on a conflict.</li>
-<li><code>command.touch(pk)</code> bumps <code>last_update_at</code> and <code>rev</code> without other changes.</li>
+<li><code>command.touch(pk)</code> bumps <code>last_update_at</code> and <code>rev</code> without other changes;
+  <code>touch(pk, rev=rev)</code> bumps only a document still at <code>rev</code>.</li>
 </ul>
 <p>Retrying a conflict safely is only half the story — a retried write must also
 not apply twice. That guarantee is <a href="../idempotency/">Idempotency</a>.</p>

@@ -7090,8 +7090,8 @@ Branch on <code>code</code>, never on <code>detail</code>: a stale <code>?rev=</
 <code>400 {"code": "revision_mismatch", ...}</code>, which no other 400 shares. A server-side
 error keeps its code and gets a generic <code>detail</code>; an exception that is not a
 <code>CoreException</code> answers <code>core.internal</code>.</p>
-<p>A <code>throttled</code> error withholds its details, but it can still tell the client when to
-come back: the response carries a <code>Retry-After</code> header read from two <code>details</code> keys.</p>
+<p>A <code>throttled</code> or <code>unavailable</code> error withholds its details, but it can still tell the client
+when to come back: the response carries a <code>Retry-After</code> header read from two <code>details</code> keys.</p>
 <table>
 <thead>
 <tr>
@@ -7115,7 +7115,8 @@ come back: the response carries a <code>Retry-After</code> header read from two 
 </table>
 <p>A usable <code>retry_after</code> wins when both are set; an unusable one — a negative or non-finite
 number, a string — falls through to <code>retry_at</code>. When neither is usable (a naive <code>datetime</code>
-is not), no header is sent, never an error. <code>retry_after</code> is also what the
+is not, nor one whose zone raises), no header is sent, never an error. The <a href="../../reference/resilience-tuning/#retry-backoff">retry layers</a>
+read the same keys the same way, through <code>retry_hint</code>. <code>retry_after</code> is also what the
 <a href="../http/">HTTP client</a> puts on an upstream <code>429</code>, so a throttle passed through keeps its
 hint — but the client caps it at 3600 seconds, so a longer upstream wait arrives as 3600.</p>
 <h2 id="readiness-probe">Readiness probe<a class="headerlink" href="#readiness-probe" title="Permanent link">&para;</a></h2>

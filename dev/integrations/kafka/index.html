@@ -6977,7 +6977,9 @@ handling is offset-shaped:</p>
   unavailable or throttled while unwrapping a cold data key is crash-shaped: the
   consumer commits the successes so far and raises, and the supervisor restarts
   it with backoff; the message is redelivered once the blip clears. Only a
-  <em>non-retryable</em> decrypt failure pauses.</li>
+  <em>non-retryable</em> decrypt failure pauses. A retryable fault — <code>unavailable</code> and
+  <code>throttled</code> included — restarts the consumer with no cap, so pair a long-lived
+  switch-off of the <abbr title="Key Management Service">KMS</abbr> with pausing the consumer.</li>
 <li><strong>Pause is consumer-wide.</strong> A pause stops every subscribed topic of that
   consumer, and the supervisor deliberately does <strong>not</strong> restart it (a restart
   would re-fetch the same poison and pause again) — it alerts and waits for an

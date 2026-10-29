@@ -7007,6 +7007,16 @@ on the backend reporting <code>QueueMessage.delivery_count</code> (SQS
 when it's <code>None</code>, parking never triggers and a poison message keeps
 redelivering until the broker's policy catches it.</p>
 </div>
+<div class="admonition note">
+<p class="admonition-title">A dependency switched off for a while</p>
+<p>A handler failing with <code>unavailable</code> or <code>throttled</code> is nacked back like any other
+failure. Forze sets no cap on that redelivery without <code>max_deliveries</code>, but the
+broker's redrive or DLX policy still can: a long switch-off then dead-letters healthy
+messages, as <code>max_deliveries</code> would park them. A message the keyring could not decrypt
+because its <abbr title="Key Management Service">KMS</abbr> answered <code>unavailable</code> or <code>throttled</code> is never parked — parking is
+checked after decrypt — so only the broker's policy caps it. Pair a long-lived
+switch-off with pausing the consumer.</p>
+</div>
 <p>Transient blips can also be retried in-process before the message goes back to
 the broker: pass <code>retry_policy="my-policy"</code> and the runner wraps each process
 step (dedup mark + handler, one fresh transaction per attempt) in

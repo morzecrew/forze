@@ -10239,6 +10239,12 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <p><strong><code>MockDepsModule(row_locks="block")</code> makes a held row lock wait under simulation, as Postgres does.</strong> Two transactions taking rows in one order now both succeed. Opposite orders abort one with <code>deadlock_detected</code>, and <abbr title="Deterministic Simulation Testing">DST</abbr> reports a <code>no_lock_order_deadlock</code> violation naming the rows.</p>
 </li>
 <li>
+<p><strong>A document write can refuse any stale revision, history or not.</strong> <code>update(..., merge=False)</code> and <code>update_many(..., merge=False)</code> raise <code>revision_mismatch</code> for any <code>rev</code> but the stored one, even for a no-op, instead of merging it. <code>touch(pk, rev=...)</code> and <code>touch_many(pks, revs=...)</code> bump only rows still at it.</p>
+</li>
+<li>
+<p><strong>A handler can take a spec's <code>SerializedBy</code> lock before it reads.</strong> <code>hold({"order_id": order_id})</code> on the document command port takes the lock its writes take, without writing, until the transaction ends. Refused outside a transaction, for a datetime, validator-rewritten or serialized key, and on Mongo and Firestore.</p>
+</li>
+<li>
 <p><strong>DuckDB serves trusted dynamic reads over a per-tenant Iceberg lake.</strong> <code>RoutedDuckDbClient</code> gives each tenant a locked-down instance holding its catalog principal and the S3 credentials vended per statement, and serves nothing from one that fails its attestation. Wire routes with <code>DuckDbDepsModule(dynamic_reads=...)</code>.</p>
 </li>
 <li>
@@ -10279,6 +10285,15 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 </li>
 <li>
 <p><strong>A throttled HTTP error tells the client when to come back.</strong> Its <code>retry_after</code> (seconds) or else <code>retry_at</code> (aware <code>datetime</code>) detail becomes a <code>Retry-After</code> header, which <code>AllowlistCORSMiddleware</code> exposes; other details stay withheld. No header when neither key is usable.</p>
+</li>
+<li>
+<p><strong>A locked login's 429 tells the client when to try again.</strong> The <code>login_locked</code> throttle carries the window's end as <code>details["retry_at"]</code>, which FastAPI sends as <code>Retry-After</code>; the body still withholds details. <code>LoginLockoutGuard.locked_until(digest)</code> returns that instant, or <code>None</code> when the login is not locked.</p>
+</li>
+<li>
+<p><strong>An <code>unavailable</code> error kind answers 503 for something switched off right now.</strong> <code>exc.unavailable(...)</code> is retryable, keeps its summary and code on every transport, and is not logged as a server error; details stay withheld. A <code>retry_after</code> or <code>retry_at</code> detail sets <code>Retry-After</code>, as on a throttle.</p>
+</li>
+<li>
+<p><strong>Retries wait out a <code>retry_at</code> hint too.</strong> A throttled or unavailable error's aware <code>retry_at</code> detail now delays the resilience, saga and durable retries until that instant, read as the <code>Retry-After</code> header reads it. <code>retry_hint(error)</code> in <code>forze.application.execution.resilience.backoff</code> returns the hint as given.</p>
 </li>
 <li>
 <p><strong><code>RoutedDuckDbClient(ca_cert_file=...)</code> lets a lake session use HTTPS on DuckDB 2.</strong> The file must hold a PEM certificate, and any statement on the instance can read it. A dynamic read calling a table function other than <code>range</code>, <code>generate_series</code> or <code>unnest</code>, naming a path, or naming an unattached catalog is refused.</p>
@@ -10342,6 +10357,9 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <h3 id="fixed">Fixed<a class="headerlink" href="#fixed" title="Permanent link">&para;</a></h3>
 <ul>
 <li>
+<p><strong>Firestore <code>update_many</code> and <code>touch_many</code> work inside a transaction.</strong> They read every row before writing any, as a Firestore transaction requires; a second row used to fail with a read-after-write error.</p>
+</li>
+<li>
 <p><strong><code>HttpClient</code> reads a compressed response.</strong> A gzip or deflate body, and with no cap a zstd or brotli one, no longer fails <code>request</code>, or a rejected response from <code>stream</code>, as an infrastructure error. <code>RoutedHttpClient</code> and declared services are fixed with it.</p>
 </li>
 <li>
@@ -10349,6 +10367,9 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 </li>
 <li>
 <p><strong>A datetime <code>SerializedBy</code> key locks its UTC instant</strong> (<strong>behaviour change</strong>). One owner's create and update no longer lock apart by offset; naive reads as UTC (right in a UTC session), an out-of-range instant is refused. Drain writers of naive or non-UTC keys while deploying, or accept a brief unlocked window.</p>
+</li>
+<li>
+<p><strong>An operation span stays clean on a failure the caller can handle</strong> (<strong>behaviour change</strong>). OpenTelemetry's own handling marked every failed operation's span <code>ERROR</code> whatever its kind and recorded a server error's exception twice. Now only a server-side failure sets <code>ERROR</code>, with one exception event, as port spans do.</p>
 </li>
 <li>
 <p><strong>A warning logged before <code>configure_logging</code> carries the invocation's ids.</strong> The fallback renderer now merges the bound logging context, as the configured chain does.</p>

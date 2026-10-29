@@ -6782,6 +6782,14 @@ policy.</p>
 <td><code>core.timeout</code></td>
 </tr>
 <tr>
+<td><code>unavailable</code></td>
+<td>it works, but is switched off right now (a feature flag, a maintenance window)</td>
+<td style="text-align: center;">—</td>
+<td style="text-align: center;">✅</td>
+<td style="text-align: center;">503</td>
+<td><code>core.unavailable</code></td>
+</tr>
+<tr>
 <td><code>internal</code></td>
 <td>an unexpected bug</td>
 <td style="text-align: center;">—</td>
@@ -6791,6 +6799,11 @@ policy.</p>
 </tr>
 </tbody>
 </table>
+<p><code>unavailable</code>'s summary and code reach clients unmasked, as a 4xx kind's do, so keep the
+summary generic. Being retryable, it is redelivered like <code>throttled</code>: a
+<a href="../../recipes/transactional-outbox/#consuming-on-the-other-side">queue consumer</a> or a
+<a href="../../integrations/kafka/#poison-and-rebalance">commit-stream consumer</a> retries it with no
+cap of its own on some paths, so pair a long-lived switch-off with pausing the consumer.</p>
 <h2 id="outcomes">Outcomes<a class="headerlink" href="#outcomes" title="Permanent link">&para;</a></h2>
 <p>Handlers return a result or raise. Where code needs the <em>outcome</em> rather than a
 raise — a <code>finally_</code> stage hook — it receives an <code>Outcome</code>: <code>Success(value)</code> or
@@ -6801,7 +6814,10 @@ raise — a <code>finally_</code> stage hook — it receives an <code>Outcome</c
 <a href="../../integrations/fastapi/">FastAPI</a> exception handlers turn a <code>CoreException</code>
 into a response — the status from the kind, the <code>code</code> on an error-code header,
 and details exposed only when <code>expose_details</code> is set; kinds with no status of
-their own (<code>configuration</code>, <code>infrastructure</code>, <code>internal</code>) map to <code>500</code>.</p>
+their own (<code>configuration</code>, <code>infrastructure</code>, <code>internal</code>) map to <code>500</code>. Every
+transport masks a <code>&gt;= 500</code> error's summary and logs it as a server error, except
+<code>unavailable</code>: its 503 reports a state an operator chose, not a fault, so its
+summary reaches the client and nothing is logged as an error.</p>
 <h2 id="non-disclosing-denials">Non-disclosing denials<a class="headerlink" href="#non-disclosing-denials" title="Permanent link">&para;</a></h2>
 <p>A 403 for a row you may not see and a 404 for a row that does not exist tell a caller which
 ids exist. A <code>DenialPosture</code> closes that: for the resource types it names, a denial and a
