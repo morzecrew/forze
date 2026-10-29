@@ -6906,6 +6906,26 @@ declared <a href="#isolation">isolation</a> level through its MVCC overlay.</p>
 restores a global snapshot on rollback, so concurrent root transactions serialize;
 <code>transactions="none"</code> is the legacy no-op (writes persist through a rollback) kept
 only for comparison.</p>
+<p>Row locks — a <code>for_update</code> read, and the lock a write takes on the row it changes —
+are claims by default: nobody waits, and of two transactions over a locked row the
+one that commits second is aborted with a conflict. That is safe, but it cannot tell
+a correct lock order from a deadlock-prone one, since both abort under contention.
+<code>MockDepsModule(row_locks="block")</code> makes the contender wait instead, as Postgres
+does: it parks until the holder commits or rolls back, then carries on against the
+committed row. At <code>SNAPSHOT</code> or <code>SERIALIZABLE</code> isolation, a row changed since the
+transaction's snapshot fails with <code>exc.concurrency(code="serialization_failure")</code>
+instead, as Postgres refuses it. A wait that would close a cycle — two transactions
+taking the same rows in opposite orders — aborts the waiter with <code>exc.concurrency</code>
+(<code>code="deadlock_detected"</code>, the rows in its details), and a
+<a href="../../dst/invariants/#transactional-isolation">simulation</a> reports it as a
+<code>no_lock_order_deadlock</code> violation. The mock only blocks on the simulation loop,
+which reports a wait that never ends instead of hanging; on any other loop it falls
+back to claims. It needs the default <code>transactions="journal"</code>.</p>
+<p><code>"nowait"</code> and <code>"skip_locked"</code> are a mock divergence in either mode. On Postgres, <code>NOWAIT</code>
+raises instead of waiting and <code>SKIP LOCKED</code> passes over a held row; the mock gives both
+plain <code>for_update</code> behaviour, as the <code>RowLockMode</code> contract allows for backends without
+them, so in blocking mode they wait. The mechanism divergences on
+<a href="../../dst/fidelity/">Fidelity</a> list <code>skip-locked-degrades-to-for-update</code>.</p>
 <p>A transaction rolls back when an operation raises; what those failures are, and how a
 raised error becomes a response, is <a href="../errors/">Errors</a>.</p>
 

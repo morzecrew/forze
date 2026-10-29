@@ -6745,6 +6745,13 @@
 </code></pre></div>
 <p>An isolation oracle has a trap the others don't: a green result is meaningless if the run never <strong>contended</strong>. <code>had_isolation_conflict(history)</code> answers the prerequisite — did two concurrent committed transactions actually touch the same key, the teeth the oracle needs? Assert <code>any(had_isolation_conflict(h) for h in histories)</code> across the sweep, the same way you assert <a href="#what-must-sometimes-happen">reachability</a>, so a clean isolation result rests on a run that genuinely stressed it.</p>
 <p>One failure needs no invariant at all: a <strong>deadlock</strong>. If an interleaving drives the workload to a standstill — every task blocked, with no ready work and no timer to advance — that is always a bug, so <abbr title="Deterministic Simulation Testing">DST</abbr> reports it on its own. It minimises to the smallest workload that still stalls and comes back as a <code>no_deadlock</code> violation, exactly like an asserted one, instead of aborting the sweep. You catch it for free, even with no invariants declared.</p>
+<p>A <strong>lock-order deadlock</strong> is reported the same way once the mock's row locks block. Wire
+<code>MockDepsModule(row_locks="block")</code> and a transaction that meets a held row waits for it,
+as on Postgres, so two handlers locking rows A and B in one order both succeed. Lock them
+in opposite orders and the cycle aborts one transaction (<code>code="deadlock_detected"</code>); the
+sweep reports a <code>no_lock_order_deadlock</code> violation naming both rows, and minimises it to
+the pair of operations that collide. See
+<a href="../../writing-operation/transactions/#transactions-under-the-mock">Transactions under the mock</a>.</p>
 <p>A last cross-cutting claim is <strong>convergence</strong>. If an operation declares itself order-independent, <code>commutative_convergence(build, final_state=…, schedule_seeds=…)</code> reruns the workload across a band of schedules and flags a declared-commutative op whose interleavings reach <em>different</em> end states, naming the seed that diverged — a cross-history check, like reachability, not a per-run invariant.</p>
 <div class="admonition note">
 <p class="admonition-title">Value-level invariants need <code>capture_values</code></p>

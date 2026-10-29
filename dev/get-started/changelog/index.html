@@ -10236,6 +10236,9 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <p><strong>Federated search takes <code>member_filters</code>, a filter for one member's leg alone.</strong> It joins <code>filters</code> with <code>$and</code> on that leg, and a hub refuses it. New <code>SearchMemberGrant</code>, <code>bind_search_member_grant</code>, <code>OperationDescriptor.members</code> and <code>AuthorizesMembers</code> back member authorization.</p>
 </li>
 <li>
+<p><strong><code>MockDepsModule(row_locks="block")</code> makes a held row lock wait under simulation, as Postgres does.</strong> Two transactions taking rows in one order now both succeed. Opposite orders abort one with <code>deadlock_detected</code>, and <abbr title="Deterministic Simulation Testing">DST</abbr> reports a <code>no_lock_order_deadlock</code> violation naming the rows.</p>
+</li>
+<li>
 <p><strong>DuckDB serves trusted dynamic reads over a per-tenant Iceberg lake.</strong> <code>RoutedDuckDbClient</code> gives each tenant a locked-down instance holding its catalog principal and the S3 credentials vended per statement, and serves nothing from one that fails its attestation. Wire routes with <code>DuckDbDepsModule(dynamic_reads=...)</code>.</p>
 </li>
 <li>
