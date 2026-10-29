@@ -109,7 +109,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Stored files can upload straight to the bucket, opt-in.** `StoredFileKitSpec(direct_uploads=True)` registers `initiate_upload`, `presign_upload_part` and `complete_upload`: a key the kit mints, then a create-only presigned PUT or parts. Completion checks size, type and `max_bytes`, and fails the row on a mismatch.
 
-- **`stored_file_pending_sweep_lifecycle_step` fails abandoned stored-file uploads and frees their bytes.** A row left `pending` past `older_than` (24 hours by default) is marked `failed` at its revision, so a racing `complete_upload` wins or loses cleanly; then its multipart uploads are aborted and its object deleted.
+- **`stored_file_pending_sweep_lifecycle_step` fails abandoned stored-file uploads and frees their bytes.** A row `pending` with no update for `older_than` (24 hours) is marked `failed` at its revision, then its multipart uploads, object and key go; a failed cleanup is retried. `presign_upload_part` touches the row.
 
 - **A presigned upload and a multipart completion can refuse to replace an object** (**Breaking**). `create_only=True` (never with `if_match`) makes `presign_upload` sign `If-None-Match: *` or `x-goog-if-generation-match: 0`, and `complete_upload` refuse an existing key. A custom `ObjectStorageClientPort` must accept it.
 

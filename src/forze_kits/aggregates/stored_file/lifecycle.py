@@ -4,7 +4,8 @@ A direct upload's row stays ``pending`` from ``initiate_upload`` until ``complet
 client that never completes leaves it there for good, with whatever object it sent and any
 multipart session it opened. So does a buffered ``upload`` whose process died between the
 commit and the after-commit stage that stores its bytes. Nothing in the request path looks at
-such a row again, so this step does, on an interval.
+such a row again, so this step does, on an interval: it fails the row, then frees its bytes,
+and retries the freeing on a later sweep if it fails.
 """
 
 from __future__ import annotations
@@ -17,7 +18,7 @@ from uuid import UUID
 
 import attrs
 
-from forze.application.contracts.document import DocumentCommandPort
+from forze.application.contracts.document import DocumentCommandPort, DocumentQueryPort
 from forze.application.contracts.execution import LifecycleHook, LifecycleStep
 from forze.application.contracts.storage import StorageCommandPort, StorageUploadSessionPort
 from forze.application.contracts.tenancy import TenantIdentity, require_tenant_global
@@ -27,7 +28,7 @@ from forze.application.execution.background import (
     BackgroundLoopControl,
 )
 from forze.base.exceptions import CoreException, ExceptionKind, exc
-from forze.base.primitives import StrKey, current_entropy_source, utcnow
+from forze.base.primitives import JsonDict, StrKey, current_entropy_source, utcnow
 from forze_kits.aggregates._logger import logger
 from forze_kits.domain.stored_file import (
     StoredFileCreateCmd,
@@ -37,14 +38,16 @@ from forze_kits.domain.stored_file import (
     StoredFileStatus,
     StoredFileUpdateCmd,
 )
+from forze_kits.integrations._wiring import is_wiring_error
 
 from .dto import _UPLOAD_URL_MAX_EXPIRY  # pyright: ignore[reportPrivateUsage]
 
 # ----------------------- #
 
 DEFAULT_PENDING_MAX_AGE: Final[timedelta] = timedelta(hours=24)
-"""How old a ``pending`` row must be before the sweep fails it: well past the longest a
-direct-upload URL lives (1 hour), so no URL handed out for it still works."""
+"""How long a ``pending`` row must go without an update before the sweep fails it: well past
+the longest a direct-upload URL lives (1 hour). Minting a URL updates the row, so no URL
+handed out for it still works."""
 
 _StoredFileCommands = DocumentCommandPort[
     StoredFileRead,
@@ -52,6 +55,27 @@ _StoredFileCommands = DocumentCommandPort[
     StoredFileCreateCmd,
     StoredFileUpdateCmd,
 ]
+
+
+# ....................... #
+
+
+async def _update_at_rev(
+    doc: _StoredFileCommands,
+    file: StoredFileRead,
+    dto: StoredFileUpdateCmd,
+) -> StoredFileRead | None:
+    """*file* updated at the revision read, or ``None`` when another writer moved it first:
+    what is left is then theirs to finish."""
+
+    try:
+        return await doc.update(pk=file.id, rev=file.rev, dto=dto)
+
+    except CoreException as error:
+        if error.code == "revision_mismatch" or error.kind is ExceptionKind.NOT_FOUND:
+            return None
+
+        raise
 
 
 # ....................... #
@@ -94,8 +118,8 @@ class _PendingSweepStartup(LifecycleHook):
     # ....................... #
 
     async def stop(self, *, deadline: float) -> bool:
-        """Stop between ticks. Idempotent. A sweep still running at the deadline is cancelled,
-        which can leave behind the bytes of the row it was cleaning."""
+        """Stop between ticks. Idempotent. A sweep still running at the deadline is cancelled;
+        the row it was cleaning keeps its key, so a later sweep finishes it."""
 
         return await self.control.stop(deadline=deadline)
 
@@ -108,54 +132,64 @@ class _PendingSweepStartup(LifecycleHook):
         blobs: StorageCommandPort,
         uploads: StorageUploadSessionPort,
     ) -> bool:
-        """Fail *file*, then free its bytes; ``False`` when another writer moved it first."""
+        """Fail *file* if it is pending, then free its bytes; ``False`` when another writer
+        moved it first."""
 
-        # Marked first, at the revision read, as complete_upload's refusal does: a racing
-        # complete or a sibling sweeper either wins (this raises, nothing is touched) or loses.
-        try:
-            await doc.update(
-                pk=file.id,
-                rev=file.rev,
-                dto=StoredFileUpdateCmd(status=StoredFileStatus.FAILED),
+        if file.status is StoredFileStatus.PENDING:
+            # Marked first, at the revision read, as complete_upload's refusal does: a racing
+            # complete or a sibling sweeper either wins, and the row is left to it, or loses.
+            marked = await _update_at_rev(
+                doc, file, StoredFileUpdateCmd(status=StoredFileStatus.FAILED)
             )
 
-        except CoreException as error:
-            if error.code == "revision_mismatch" or error.kind is ExceptionKind.NOT_FOUND:
+            if marked is None:
                 return False
 
-            raise
+            file = marked
 
-        if file.storage_key:
-            # Sessions before the object: a complete assembles only through an open session,
-            # so once they are aborted nothing can land after the delete.
+        if not file.storage_key:
+            return True
+
+        try:
+            # Sessions before the object: a complete assembles only through an open session, so
+            # once they are aborted nothing can land after the delete.
             for session in await uploads.list_uploads(file.storage_key):
                 await uploads.abort_upload(session)
 
+        finally:
+            # Deleted even when the sessions could not be listed; the key stays, so a later
+            # sweep retries both.
             await blobs.delete(file.storage_key)
+
+        # Cleared once both are gone, so the failed-row pass stops reading the row.
+        await _update_at_rev(doc, file, StoredFileUpdateCmd(storage_key=None))
 
         return True
 
     # ....................... #
 
-    async def _drain(self, ctx: ExecutionContext) -> None:
-        """Fail stale rows under whatever tenant is bound, until a batch comes short."""
+    async def _scan(
+        self,
+        values: JsonDict,
+        reads: DocumentQueryPort[StoredFileRead],
+        doc: _StoredFileCommands,
+        blobs: StorageCommandPort,
+        uploads: StorageUploadSessionPort,
+    ) -> int:
+        """Sweep the rows matching *values* in ``id`` order, a batch at a time; how many moved.
 
-        reads = ctx.doc.query(self.kit.document)
-        doc = ctx.doc.command(self.kit.document)
-        blobs = ctx.storage.command(self.kit.resolved_storage)
-        uploads = ctx.storage.uploads(self.kit.resolved_storage)
-        cutoff = utcnow() - self.older_than
+        Keyset on ``id``: a row whose sweep keeps failing still matches, and an offsetless
+        query would read it again at the head of every batch, ahead of the rows behind it.
+        """
+
+        after: UUID | None = None
         swept = 0
 
         for _ in range(self.max_batches_per_tick):
             page = await reads.find_many(
-                filters={
-                    "$values": {
-                        "status": StoredFileStatus.PENDING.value,
-                        "created_at": {"$lt": cutoff},
-                    }
-                },
+                filters={"$values": values if after is None else {**values, "id": {"$gt": after}}},
                 pagination={"limit": self.limit},
+                sorts={"id": "asc"},
             )
 
             for file in page.hits:
@@ -165,23 +199,50 @@ class _PendingSweepStartup(LifecycleHook):
                 except asyncio.CancelledError:
                     raise
 
-                except CoreException as error:
-                    if error.kind is ExceptionKind.CONFIGURATION:
+                except Exception as error:
+                    if is_wiring_error(error):
                         raise
 
-                    logger.exception("Stored-file pending sweep failed a row", file_id=str(file.id))
-
-                except Exception:
-                    logger.exception("Stored-file pending sweep failed a row", file_id=str(file.id))
+                    # One row's failure, a configuration one included (a route that started
+                    # encrypting refuses its sessions), stays with that row.
+                    logger.exception(
+                        "Stored-file pending sweep skipped a row", file_id=str(file.id)
+                    )
 
             if len(page.hits) < self.limit:
                 break
 
-        if swept:
+            after = page.hits[-1].id
+
+        return swept
+
+    # ....................... #
+
+    async def _drain(self, ctx: ExecutionContext) -> None:
+        """Fail stale pending rows, then retry the cleanup of stale failed rows that still hold
+        a key, under whatever tenant is bound."""
+
+        ports = (
+            ctx.doc.query(self.kit.document),
+            ctx.doc.command(self.kit.document),
+            ctx.storage.command(self.kit.resolved_storage),
+            ctx.storage.uploads(self.kit.resolved_storage),
+        )
+        stale: JsonDict = {"last_update_at": {"$lt": utcnow() - self.older_than}}
+        failed = await self._scan({**stale, "status": StoredFileStatus.PENDING.value}, *ports)
+        # A failed row keeps its key until its bytes are gone: a cleanup that failed after the
+        # mark, or a complete_upload refusal whose PUT URL could still land an object then.
+        cleaned = await self._scan(
+            {**stale, "status": StoredFileStatus.FAILED.value, "storage_key": {"$null": False}},
+            *ports,
+        )
+
+        if failed or cleaned:
             logger.info(
-                "Stored-file pending sweep failed stale uploads",
+                "Stored-file pending sweep failed stale uploads and freed their bytes",
                 kit=str(self.kit.name),
-                swept=swept,
+                failed=failed,
+                cleaned=cleaned,
             )
 
     # ....................... #
@@ -199,15 +260,12 @@ class _PendingSweepStartup(LifecycleHook):
             except asyncio.CancelledError:
                 raise
 
-            except CoreException as error:
-                # Wiring does not fix itself on the next tenant: stop loudly. Operational
-                # failures stay with their tenant.
-                if error.kind is ExceptionKind.CONFIGURATION:
+            except Exception as error:
+                # Wiring does not fix itself on the next tenant: stop loudly. Anything else,
+                # a tenant's own configuration error included, stays with that tenant.
+                if is_wiring_error(error):
                     raise
 
-                logger.exception("Stored-file pending sweep failed for tenant", tenant=str(tenant))
-
-            except Exception:
                 logger.exception("Stored-file pending sweep failed for tenant", tenant=str(tenant))
 
     # ....................... #
@@ -222,6 +280,9 @@ class _PendingSweepStartup(LifecycleHook):
         # Resolved for a shard too, so a missing route fails startup rather than every tick.
         reads = ctx.doc.query(self.kit.document)
         storage = ctx.storage.query(self.kit.resolved_storage)
+        ctx.doc.command(self.kit.document)
+        ctx.storage.command(self.kit.resolved_storage)
+        ctx.storage.uploads(self.kit.resolved_storage)
 
         if tenants is None:
             require_tenant_global(reads, what="Stored-file pending sweep")
@@ -237,17 +298,14 @@ class _PendingSweepStartup(LifecycleHook):
                 except asyncio.CancelledError:
                     raise
 
-                except CoreException as error:
-                    if error.kind is ExceptionKind.CONFIGURATION:
+                except Exception as error:
+                    if is_wiring_error(error):
                         logger.exception(
-                            "Stored-file pending sweep hit a configuration error; loop "
-                            "stopped — fix the wiring and restart"
+                            "Stored-file pending sweep hit a wiring error; loop stopped — fix "
+                            "the wiring and restart"
                         )
                         return
 
-                    logger.exception("Stored-file pending sweep failed")
-
-                except Exception:
                     logger.exception("Stored-file pending sweep failed")
 
                 # Jitter only spreads replicas out; concurrent sweeps are safe (see the step).
@@ -308,36 +366,43 @@ def stored_file_pending_sweep_lifecycle_step(
 ) -> LifecycleStep:
     """Fail the stored files left ``pending`` longer than *older_than*, and free their bytes.
 
-    Each sweep reads ``pending`` rows created before the cutoff in batches of *limit*, until
-    one comes short or *max_batches_per_tick* have run, then sleeps *interval* with
-    multiplicative *jitter*. For each row it:
+    A row's age counts from its last update: ``initiate_upload`` creates it and each
+    ``presign_upload_part`` touches it. Each sweep reads the ``pending`` rows not updated since
+    the cutoff in ``id`` order, in batches of *limit*, until one comes short or
+    *max_batches_per_tick* have run. For each row it:
 
     1. marks the row ``failed`` at the revision it read, as ``complete_upload`` does when it
        refuses an upload, so a racing ``complete_upload`` either wins (the sweep leaves the
        row alone) or loses with ``revision_mismatch``;
     2. aborts every multipart session open at the row's key;
-    3. deletes the object at the key, if one landed.
+    3. deletes the object at the key, if one landed;
+    4. clears the row's ``storage_key``.
 
-    A buffered ``upload``'s pending row has no key yet, so it is only marked failed.
+    It then retries steps 2 to 4 for the ``failed`` rows not updated since the cutoff that
+    still hold a key: a cleanup that failed after the mark, or a ``complete_upload`` refusal
+    whose single ``PUT`` URL could still land an object afterwards. A buffered ``upload``'s
+    pending row has no key yet, so it is only marked failed. Then the sweep sleeps *interval*
+    with multiplicative *jitter*.
 
-    *older_than* must exceed the longest a direct-upload URL lives (1 hour), or a client
-    could still upload into a key the sweep has cleaned. Raise it above your longest
-    multipart upload, which can keep asking for part URLs while its row is pending.
+    *older_than* must exceed the longest a direct-upload URL lives (1 hour). Each URL is
+    minted after the row's last update, so none still works once the row is past the cutoff.
 
     Concurrent sweepers never fail a row twice: the revision check lets one win, and the
     cleanup is idempotent. So run the step unwrapped on every replica. *tenants* works as on
     :func:`~forze_kits.integrations.realtime.realtime_mailbox_retention_lifecycle_step`: pass
     it for tenant-aware document and storage routes; ``None`` sweeps once with no tenant
     bound, and fails startup over a tenant-scoped route (``tenant_global_required``). A
-    ``configuration`` error stops the loop; any other error is logged, per row and per
-    tenant, and retried on the next sweep.
+    missing route fails startup too. Only a wiring error (``tenant_global_required`` and the
+    like) stops the loop; any other error, a configuration error included, is logged for its
+    row or tenant and retried on a later sweep.
 
     :param kit: The stored-file kit spec whose rows and objects to sweep.
-    :param older_than: Age past which a ``pending`` row counts as abandoned (default 24 hours).
+    :param older_than: How long a ``pending`` row may go without an update before it counts
+        as abandoned (default 24 hours).
     :param interval: Time between sweeps.
     :param jitter: Multiplicative jitter on *interval*, in ``[0, 1)``.
     :param limit: Rows read per batch.
-    :param max_batches_per_tick: Batches one sweep runs at most.
+    :param max_batches_per_tick: Batches each pass of one sweep runs at most.
     :param tenants: The tenants to sweep, each with its tenant bound.
     :param step_id: Lifecycle step id; derived from the kit name by default.
     :returns: The lifecycle step.

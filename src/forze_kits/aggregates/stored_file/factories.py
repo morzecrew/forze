@@ -268,7 +268,8 @@ def _register_direct_uploads(
     reg = reg.register(
         ns.key(StoredFileKernelOp.PRESIGN_UPLOAD_PART),
         lambda ctx: PresignStoredFileUploadPart(
-            doc=ctx.doc.query(doc_spec),
+            doc=ctx.doc.command(doc_spec),
+            reads=ctx.doc.query(doc_spec),
             uploads=ctx.storage.uploads(storage),
         ),
         descriptor=OperationDescriptor(

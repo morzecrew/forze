@@ -435,7 +435,7 @@ presigned URLs. Bind authn and authz on each one, as you do on `upload`.
 | Operation | Input | Result |
 |-----------|-------|--------|
 | `initiate_upload` | `InitiateStoredFileUploadRequestDTO` (`filename`, exact `size`, `content_type`, `multipart`, and `expires_in` for a single `PUT`: 15 minutes by default, at most 1 hour) | `StoredFileUploadSessionDTO`: the `pending` row plus a presigned `PUT` (`presigned`) or a multipart `upload_id` |
-| `presign_upload_part` | `PresignStoredFileUploadPartRequestDTO` (`id`, `upload_id`, `part_number`, `expires_in` with the same bounds) | `PresignedUrlDTO` for one part |
+| `presign_upload_part` | `PresignStoredFileUploadPartRequestDTO` (`id`, `upload_id`, `part_number`, `expires_in` with the same bounds) | `PresignedUrlDTO` for one part; it touches the row, bumping its revision |
 | `complete_upload` | `CompleteStoredFileUploadRequestDTO` (`id`, plus `upload_id` and `parts` for a multipart upload) | the `ready` row |
 
 1. `initiate_upload` mints the storage key, `{tenant}/{file_id}`, and writes a
@@ -490,8 +490,10 @@ from forze_kits.aggregates.stored_file import stored_file_pending_sweep_lifecycl
 lifecycle_steps.append(stored_file_pending_sweep_lifecycle_step(kit))
 ```
 
-Each sweep reads the `pending` rows created more than `older_than` ago (24
-hours by default), in batches. For each row, the sweep:
+A row's age counts from its last update. `initiate_upload` creates the row,
+and each `presign_upload_part` touches it. Each sweep reads the `pending` rows
+not updated for `older_than` (24 hours by default), in `id` order and in
+batches. For each row, the sweep:
 
 1. Marks the row `failed`, with the revision check that `complete_upload` uses
    when it refuses an upload. If a `complete_upload` races the sweep, one of
@@ -499,26 +501,27 @@ hours by default), in batches. For each row, the sweep:
    that lost raises `revision_mismatch`.
 2. Aborts every multipart upload still open at the row's key.
 3. Deletes the object at the key, if one landed.
+4. Clears the row's `storage_key`.
+
+The sweep then repeats steps 2 to 4 for the `failed` rows not updated for
+`older_than` that still hold a key. Those are rows whose cleanup failed after
+the mark, and rows `complete_upload` refused, whose single `PUT` URL could
+still land an object after the refusal.
 
 `older_than` must be longer than 1 hour, the longest a direct-upload URL
-lives, so no URL handed out for a swept row still works. Set it longer than
-your longest multipart upload, which keeps asking for part URLs while its row
-is `pending`. Concurrent sweeps can't fail a row twice, so run the step on
-every replica, unwrapped. Pass `tenants=` for tenant-aware document and
-storage routes. A `configuration` error stops the loop. Any other error is
-logged, for that row or tenant, and retried on the next sweep.
+lives. Every URL is minted after the row's last update, so none still works
+once the row is past the cutoff. Concurrent sweeps can't fail a row twice, so
+run the step on every replica, unwrapped. Pass `tenants=` for tenant-aware
+document and storage routes. A missing route fails startup. Only a wiring
+error, such as `tenant_global_required`, stops the loop. Any other error,
+including a configuration error, is logged for its row or tenant, and the row
+is retried on a later sweep.
 
-Some leftovers have no row for the sweep to find:
-
-- A refused upload leaves its key free, so the single `PUT` URL can still
-  create an object there until it expires. The row stays `failed`.
-- If a row's cleanup fails after the `failed` mark, its object stays: the
-  sweep reads only `pending` rows.
-- **S3.** `initiate_upload` opens the multipart upload inside its
-  transaction, so a rollback after that leaves an empty upload with no row.
-  Keep a bucket lifecycle rule that aborts incomplete multipart uploads
-  (`AbortIncompleteMultipartUpload`). On GCS a rollback leaves nothing,
-  because opening a session writes nothing.
+On S3, `initiate_upload` opens the multipart upload inside its transaction, so
+a rollback after that leaves an empty upload with no row for the sweep to
+find. Keep a bucket lifecycle rule that aborts incomplete multipart uploads
+(`AbortIncompleteMultipartUpload`). On GCS a rollback leaves nothing, because
+opening a session writes nothing.
 
 ## Authn routes
 

@@ -340,18 +340,18 @@ async def test_the_pending_sweep_cleans_an_abandoned_put_and_session(
     with bind_time_source(FrozenTimeSource(instant=utcnow() - timedelta(hours=25))):
         put = await _initiate(ctx, 5)
         mpu = await _initiate(ctx, 64, multipart=True)
-
-    part = await run_operation(
-        _REG,
-        _NS.key(StoredFileKernelOp.PRESIGN_UPLOAD_PART),
-        PresignStoredFileUploadPartRequestDTO(
-            id=mpu.file.id,
-            upload_id=mpu.upload_id,
-            part_number=1,
-            expires_in=timedelta(minutes=5),
-        ),
-        ctx,
-    )
+        # Minted then too: each part URL touches the row, keeping it fresh.
+        part = await run_operation(
+            _REG,
+            _NS.key(StoredFileKernelOp.PRESIGN_UPLOAD_PART),
+            PresignStoredFileUploadPartRequestDTO(
+                id=mpu.file.id,
+                upload_id=mpu.upload_id,
+                part_number=1,
+                expires_in=timedelta(minutes=5),
+            ),
+            ctx,
+        )
     put_resp = await _put(put.presigned.url, put.presigned.headers, b"hello", fake_gcs_container)
     part_resp = await _put(part.url, part.headers, b"abandoned-part", fake_gcs_container)
 

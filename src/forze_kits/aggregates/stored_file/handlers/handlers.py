@@ -345,18 +345,29 @@ class InitiateStoredFileUpload(
 class PresignStoredFileUploadPart(Handler[PresignStoredFileUploadPartRequestDTO, PresignedUrlDTO]):
     """Mint a presigned PUT for one part of a pending direct multipart upload.
 
-    The session targets the key on the row, never one the caller names.
+    The session targets the key on the row, never one the caller names. The row is touched
+    first, at the revision read, so the pending sweep counts its age from the newest part URL
+    and a row the sweep has already failed mints none. The touch bumps the row's revision;
+    ``complete_upload`` reloads the row, so it is unaffected unless it runs concurrently.
     """
 
-    doc: DocumentQueryPort[StoredFileRead]
+    doc: DocumentCommandPort[
+        StoredFileRead,
+        StoredFileDocument,
+        StoredFileCreateCmd,
+        StoredFileUpdateCmd,
+    ]
+    reads: DocumentQueryPort[StoredFileRead]
     uploads: StorageUploadSessionPort
 
     # ....................... #
 
     async def __call__(self, args: PresignStoredFileUploadPartRequestDTO) -> PresignedUrlDTO:
-        file = await self.doc.get(pk=args.id)
+        file = await self.reads.get(pk=args.id)
+        key = ensure_awaiting_upload(file)
+        await self.doc.touch(file.id, rev=file.rev, return_new=False)
         session = UploadSession(
-            key=ensure_awaiting_upload(file),
+            key=key,
             upload_id=args.upload_id,
             content_type=file.content_type,
         )

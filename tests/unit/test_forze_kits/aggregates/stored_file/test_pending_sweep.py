@@ -14,7 +14,7 @@ from uuid import UUID
 import pytest
 
 from forze.application.contracts.storage import UploadSession
-from forze.application.contracts.tenancy import TenantIdentity
+from forze.application.contracts.tenancy import TENANT_GLOBAL_REQUIRED_CODE, TenantIdentity
 from forze.application.execution import DepsRegistry, ExecutionContext, ExecutionRuntime
 from forze.application.execution.operations import run_operation
 from forze.base.exceptions import CoreException, ExceptionKind, exc
@@ -24,6 +24,7 @@ from forze_kits.aggregates.stored_file import (
     CompleteStoredFileUpload,
     CompleteStoredFileUploadRequestDTO,
     InitiateStoredFileUploadRequestDTO,
+    PresignStoredFileUploadPartRequestDTO,
     StoredFileKernelOp,
     StoredFileUploadSessionDTO,
     freeze_stored_file_registry,
@@ -38,13 +39,15 @@ from forze_kits.domain.stored_file import (
     StoredFileRead,
     StoredFileStatus,
 )
-from forze_mock import MockDepsModule, MockRouteConfig, MockState
+from forze_mock import MockDepsModule, MockRouteConfig, MockState, MockStorageAdapter
 
 # ----------------------- #
 
 _KIT = StoredFileKitSpec(name="files", direct_uploads=True)
 _REG = freeze_stored_file_registry(_KIT, tx_route="mock")
 _INITIATE = _KIT.document.default_namespace.key(StoredFileKernelOp.INITIATE_UPLOAD)
+_PART = _KIT.document.default_namespace.key(StoredFileKernelOp.PRESIGN_UPLOAD_PART)
+_COMPLETE = _KIT.document.default_namespace.key(StoredFileKernelOp.COMPLETE_UPLOAD)
 
 _STALE = timedelta(hours=25)
 _FAST = timedelta(milliseconds=10)
@@ -67,15 +70,19 @@ async def _initiate(
         multipart=multipart,
     )
 
-    with bind_time_source(FrozenTimeSource(instant=utcnow() - age)):
+    with _ago(age):
         return await run_operation(_REG, _INITIATE, args, ctx)
 
 
-async def _put(ctx: ExecutionContext, key: str) -> None:
+def _ago(age: timedelta):  # type: ignore[no-untyped-def]
+    return bind_time_source(FrozenTimeSource(instant=utcnow() - age))
+
+
+async def _put(ctx: ExecutionContext, key: str, data: bytes = b"hello") -> None:
     """What the client's PUT to the presigned URL does to the store."""
 
     async def _chunks():  # type: ignore[no-untyped-def]
-        yield b"hello"
+        yield data
 
     storage = ctx.storage.command(_KIT.resolved_storage)
     await storage.overwrite_stream(key, _chunks(), content_type="text/plain")
@@ -125,7 +132,9 @@ class TestSweep:
 
         await _startup()._drain(ctx)  # pyright: ignore[reportPrivateUsage]
 
-        assert (await _row(ctx, started.file.id)).status is StoredFileStatus.FAILED
+        row = await _row(ctx, started.file.id)
+        assert row.status is StoredFileStatus.FAILED
+        assert row.storage_key is None  # freed, so the failed-row pass never reads it again
         assert not await _object_exists(ctx, started.file.storage_key)
 
     async def test_a_fresh_upload_is_kept(self, ctx: ExecutionContext) -> None:
@@ -211,6 +220,157 @@ class TestSweep:
 
         statuses = {(await _row(ctx, r.file.id)).status for r in (first, second)}
         assert statuses == {StoredFileStatus.PENDING, StoredFileStatus.FAILED}
+
+    async def test_rows_behind_a_page_that_keeps_failing_are_still_swept(
+        self, ctx: ExecutionContext, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        rows = sorted([await _initiate(ctx) for _ in range(5)], key=lambda r: r.file.id)
+        poisoned = {r.file.id for r in rows[:2]}  # a whole first page of limit=2
+        real = _PendingSweepStartup._sweep_row  # pyright: ignore[reportPrivateUsage]
+
+        async def _poisoned(self: _PendingSweepStartup, file: StoredFileRead, *args: Any) -> bool:
+            if file.id in poisoned:
+                raise exc.infrastructure("row keeps failing")
+
+            return await real(self, file, *args)
+
+        monkeypatch.setattr(_PendingSweepStartup, "_sweep_row", _poisoned)
+        await _startup(limit=2)._drain(ctx)  # pyright: ignore[reportPrivateUsage]
+
+        statuses = [(await _row(ctx, r.file.id)).status for r in rows]
+        assert statuses == [StoredFileStatus.PENDING] * 2 + [StoredFileStatus.FAILED] * 3
+
+    async def test_an_encrypting_routes_refusal_skips_the_row_not_the_sweep(
+        self, ctx: ExecutionContext, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # A route that started encrypting after the uploads began refuses their sessions.
+        async def _refuse(self: MockStorageAdapter, key: str) -> list[UploadSession]:
+            raise exc.configuration("Multipart upload sessions are unavailable when encrypting")
+
+        rows = [await _initiate(ctx) for _ in range(2)]
+
+        for r in rows:
+            await _put(ctx, r.file.storage_key)
+
+        monkeypatch.setattr(MockStorageAdapter, "list_uploads", _refuse)
+        await _startup()._drain(ctx)  # pyright: ignore[reportPrivateUsage]
+
+        for r in rows:
+            row = await _row(ctx, r.file.id)
+            assert row.status is StoredFileStatus.FAILED
+            assert row.storage_key == r.file.storage_key  # kept, so a later sweep retries
+            assert not await _object_exists(ctx, r.file.storage_key)  # deleted all the same
+
+
+# ....................... #
+
+
+class TestCleanupRetry:
+    async def test_a_cleanup_that_failed_after_the_mark_is_retried_once_stale(
+        self, ctx: ExecutionContext, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        started = await _initiate(ctx, age=timedelta(hours=50))
+        key = started.file.storage_key
+        await _put(ctx, key)
+
+        async def _down(self: MockStorageAdapter, key: str) -> None:
+            raise exc.infrastructure("store down")
+
+        with monkeypatch.context() as patch, _ago(timedelta(hours=25)):
+            patch.setattr(MockStorageAdapter, "delete", _down)
+            await _startup()._drain(ctx)  # pyright: ignore[reportPrivateUsage]
+
+        marked = await _row(ctx, started.file.id)
+        assert (marked.status, marked.storage_key) == (StoredFileStatus.FAILED, key)
+        assert await _object_exists(ctx, key)
+
+        await _startup()._drain(ctx)  # pyright: ignore[reportPrivateUsage]
+
+        assert (await _row(ctx, started.file.id)).storage_key is None
+        assert not await _object_exists(ctx, key)
+
+    async def test_an_object_landing_after_a_refusal_is_freed_once_stale(
+        self, ctx: ExecutionContext
+    ) -> None:
+        started = await _initiate(ctx, age=timedelta(hours=50))
+        key = started.file.storage_key
+        await _put(ctx, key, b"wrong size")
+
+        with _ago(timedelta(hours=25)), pytest.raises(CoreException):
+            await run_operation(
+                _REG, _COMPLETE, CompleteStoredFileUploadRequestDTO(id=started.file.id), ctx
+            )
+
+        await _put(ctx, key)  # the single PUT URL still worked after the refusal
+
+        await _startup()._drain(ctx)  # pyright: ignore[reportPrivateUsage]
+
+        row = await _row(ctx, started.file.id)
+        assert (row.status, row.storage_key) == (StoredFileStatus.FAILED, None)
+        assert not await _object_exists(ctx, key)
+
+    async def test_a_recently_refused_upload_keeps_its_key(self, ctx: ExecutionContext) -> None:
+        started = await _initiate(ctx, age=timedelta(minutes=5))
+        key = started.file.storage_key
+        await _put(ctx, key, b"wrong size")
+
+        with pytest.raises(CoreException):
+            await run_operation(
+                _REG, _COMPLETE, CompleteStoredFileUploadRequestDTO(id=started.file.id), ctx
+            )
+
+        await _put(ctx, key)  # its PUT URL may still be live, so freeing it now would not hold
+        await _startup()._drain(ctx)  # pyright: ignore[reportPrivateUsage]
+
+        row = await _row(ctx, started.file.id)
+        assert (row.status, row.storage_key) == (StoredFileStatus.FAILED, key)
+        assert await _object_exists(ctx, key)
+
+
+# ....................... #
+
+
+class TestPartUrlsKeepTheRowFresh:
+    async def test_a_part_url_minted_late_keeps_the_row_pending(
+        self, ctx: ExecutionContext
+    ) -> None:
+        started = await _initiate(ctx, multipart=True)  # created past the cutoff
+
+        await run_operation(
+            _REG,
+            _PART,
+            PresignStoredFileUploadPartRequestDTO(
+                id=started.file.id,
+                upload_id=started.upload_id,
+                part_number=1,
+                expires_in=timedelta(minutes=5),
+            ),
+            ctx,
+        )
+        await _startup()._drain(ctx)  # pyright: ignore[reportPrivateUsage]
+
+        row = await _row(ctx, started.file.id)
+        assert row.status is StoredFileStatus.PENDING
+        assert row.rev == started.file.rev + 1  # the URL touched the row
+
+    async def test_a_row_the_sweep_failed_mints_no_part_url(self, ctx: ExecutionContext) -> None:
+        started = await _initiate(ctx, multipart=True)
+        await _startup()._drain(ctx)  # pyright: ignore[reportPrivateUsage]
+
+        with pytest.raises(CoreException) as ei:
+            await run_operation(
+                _REG,
+                _PART,
+                PresignStoredFileUploadPartRequestDTO(
+                    id=started.file.id,
+                    upload_id=started.upload_id,
+                    part_number=1,
+                    expires_in=timedelta(minutes=5),
+                ),
+                ctx,
+            )
+
+        assert ei.value.kind is ExceptionKind.PRECONDITION
 
 
 # ....................... #
@@ -354,13 +514,13 @@ class TestStep:
             await step.shutdown(ctx)
 
     @pytest.mark.parametrize("tenants", [None, (_T1,)], ids=["tenant-global", "per-tenant"])
-    async def test_a_configuration_error_stops_the_loop(
+    async def test_a_wiring_error_stops_the_loop(
         self, monkeypatch: pytest.MonkeyPatch, tenants: tuple[UUID, ...] | None
     ) -> None:
-        async def _config_error(self: _PendingSweepStartup, ctx: ExecutionContext) -> None:
-            raise exc.configuration("route is not wired")
+        async def _wiring_error(self: _PendingSweepStartup, ctx: ExecutionContext) -> None:
+            raise exc.configuration("no tenant bound", code=TENANT_GLOBAL_REQUIRED_CODE)
 
-        monkeypatch.setattr(_PendingSweepStartup, "_drain", _config_error)
+        monkeypatch.setattr(_PendingSweepStartup, "_drain", _wiring_error)
         step = stored_file_pending_sweep_lifecycle_step(
             _KIT,
             interval=_FAST,
@@ -381,6 +541,39 @@ class TestStep:
 
             assert await _wait_until(_stopped)
             assert not task.cancelled()
+
+            await step.shutdown(ctx)
+
+    @pytest.mark.parametrize("tenants", [None, (_T1,)], ids=["tenant-global", "per-tenant"])
+    async def test_another_configuration_error_keeps_the_loop_running(
+        self, monkeypatch: pytest.MonkeyPatch, tenants: tuple[UUID, ...] | None
+    ) -> None:
+        calls = {"n": 0}
+
+        async def _config_error(self: _PendingSweepStartup, ctx: ExecutionContext) -> None:
+            calls["n"] += 1
+            raise exc.configuration("this tenant's key is disabled")
+
+        monkeypatch.setattr(_PendingSweepStartup, "_drain", _config_error)
+        step = stored_file_pending_sweep_lifecycle_step(
+            _KIT,
+            interval=_FAST,
+            jitter=0.0,
+            tenants=(lambda: tenants) if tenants is not None else None,
+        )
+        runtime = _runtime(MockState(), tenant_aware=tenants is not None)
+
+        async with runtime.scope():
+            ctx = runtime.get_context()
+            await step.startup(ctx)
+
+            async def _retried() -> bool:
+                return calls["n"] >= 3
+
+            assert await _wait_until(_retried)
+
+            task = cast(_PendingSweepStartup, step.startup).task
+            assert task is not None and not task.done()
 
             await step.shutdown(ctx)
 
