@@ -6818,6 +6818,12 @@ models follows.</p>
   survives the rollback of the operation it guards. Expired claims are reclaimed
   in place; a TTL index on <code>expires_at</code> is optional cleanup for keys that are
   never reused.</li>
+<li><strong>Counter lifetimes</strong> need no migration: a counter written with a <code>ttl</code> stores an
+  <code>expires_at</code> date, and one past it reads as absent. To reclaim the documents, create a
+  TTL index (you own the indexes):
+  <code>db.&lt;collection&gt;.createIndex({expires_at: 1}, {expireAfterSeconds: 0})</code>. A counter
+  without a <code>ttl</code> stores a null there and is never removed. See
+  <a href="../../reference/contracts/stores/#lifetimes-ttl">Lifetimes</a>.</li>
 <li><strong>Durable execution needs one index</strong>, and only one: a partial unique index on
   the run collection's <code>idempotency_key</code>
   (<code>partialFilterExpression: {idempotency_key: {$type: "string"}}</code>). Without it

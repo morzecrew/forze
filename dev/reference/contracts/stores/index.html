@@ -5713,6 +5713,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#lifetimes-ttl" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Lifetimes (<code>ttl</code>)
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#enumerating-counters-admin" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -6554,6 +6565,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#lifetimes-ttl" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Lifetimes (<code>ttl</code>)
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#enumerating-counters-admin" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -6834,22 +6856,22 @@ namespace (<code>CounterSpec</code> carries only a name). <code>suffix</code> pa
 <tbody>
 <tr>
 <td><code>incr</code></td>
-<td><code>incr(by=1, *, suffix=None)</code></td>
+<td><code>incr(by=1, *, suffix=None, ttl=None)</code></td>
 <td>increment, return the new value</td>
 </tr>
 <tr>
 <td><code>incr_batch</code></td>
-<td><code>incr_batch(size=2, *, suffix=None)</code></td>
+<td><code>incr_batch(size=2, *, suffix=None, ttl=None)</code></td>
 <td>allocate <code>size</code> sequential values at once</td>
 </tr>
 <tr>
 <td><code>decr</code></td>
-<td><code>decr(by=1, *, suffix=None)</code></td>
+<td><code>decr(by=1, *, suffix=None, ttl=None)</code></td>
 <td>decrement, return the new value</td>
 </tr>
 <tr>
 <td><code>reset</code></td>
-<td><code>reset(value=1, *, suffix=None)</code></td>
+<td><code>reset(value=1, *, suffix=None, ttl=None)</code></td>
 <td>reset, return <code>value</code></td>
 </tr>
 </tbody>
@@ -6868,7 +6890,8 @@ because one shared conformance battery asserts them against each:</p>
 <li>counters are <strong>not</strong> required to be non-negative: <code>decr</code> below zero is legal, and a
   negative <code>by</code> is an ordinary decrease;</li>
 <li><code>incr(by=0)</code> returns the current value without moving it — the one read the port offers.
-  It still creates the counter at 0 if it did not exist.</li>
+  It does <strong>not</strong> create the counter: reading an absent one returns 0 and leaves nothing
+  behind, so a guard that reads on every request does not grow the key space.</li>
 </ul>
 <p>The value domain is the reason the mock enforces a bound it could easily exceed: a mock
 that accepts allocations no real store can hold certifies bugs instead of catching them.
@@ -6882,6 +6905,73 @@ reissue a number already given out; gaps are the correct trade. Implementers of 
 Postgres, Mongo and Firestore client ports must preserve this.</p>
 <p>Backends: Redis, Postgres, Mongo, Firestore, mock. Postgres needs an app-migrated
 counter table.</p>
+<h3 id="lifetimes-ttl">Lifetimes (<code>ttl</code>)<a class="headerlink" href="#lifetimes-ttl" title="Permanent link">&para;</a></h3>
+<p>A counter keyed by period — a lockout window, a daily quota (<code>quota:{user}:{date}</code>), a
+monthly sequence — is dead once its period ends. Pass <code>ttl</code> and it expires on its own
+instead of staying in the store forever:</p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">datetime</span><span class="w"> </span><span class="kn">import</span> <span class="n">timedelta</span>
+
+<span class="n">used</span> <span class="o">=</span> <span class="k">await</span> <span class="n">ctx</span><span class="o">.</span><span class="n">counter</span><span class="p">(</span><span class="n">QUOTA</span><span class="p">)</span><span class="o">.</span><span class="n">incr</span><span class="p">(</span><span class="n">suffix</span><span class="o">=</span><span class="sa">f</span><span class="s2">"</span><span class="si">{</span><span class="n">user_id</span><span class="si">}</span><span class="s2">:</span><span class="si">{</span><span class="n">today</span><span class="si">}</span><span class="s2">"</span><span class="p">,</span> <span class="n">ttl</span><span class="o">=</span><span class="n">timedelta</span><span class="p">(</span><span class="n">days</span><span class="o">=</span><span class="mi">1</span><span class="p">))</span>
+</code></pre></div>
+<p>The lifetime is a <strong>fixed window</strong>, set when the counter is created:</p>
+<ul>
+<li>an increment (<code>incr</code>, <code>incr_batch</code>, <code>decr</code>) that <strong>creates</strong> the counter starts its
+  lifetime: it expires <code>ttl</code> later. A counter whose lifetime has ended counts as absent, so
+  the next increment creates it again;</li>
+<li>no later increment moves the lifetime, with or without a <code>ttl</code>. A busy window still ends
+  when it was created to end, and a counter created without a <code>ttl</code> never gains one;</li>
+<li><code>reset</code> replaces the counter whole, value <strong>and</strong> lifetime: <code>reset(v, ttl=t)</code> expires <code>t</code>
+  after the reset, and <code>reset(v)</code> leaves a counter that never expires;</li>
+<li>a lapsed counter reads as 0, restarts from 0, and is not listed by <code>list_counters</code>;</li>
+<li>a zero or negative <code>ttl</code>, or one longer than <code>COUNTER_MAX_TTL</code> (about a century), is
+  refused (<code>precondition</code>). A counter meant to outlive that takes no <code>ttl</code>.</li>
+</ul>
+<p>Expiry is a capability. <code>counter_capabilities(port).expiry</code> says whether a backend honours a
+<code>ttl</code>; one that cannot refuses it with <code>configuration</code> (code <code>counter_ttl_unsupported</code>)
+rather than storing a counter that outlives what you asked for. Every shipped backend
+reports it. Postgres reports <code>False</code> only for a table it has just found without the
+<code>expires_at</code> column; until then a <code>ttl</code> call there can still be refused. Reclaiming lapsed
+storage is the backend's own business, and on Postgres, Mongo and Firestore it needs a step
+from you:</p>
+<table>
+<thead>
+<tr>
+<th>Backend</th>
+<th>How a lapsed counter is reclaimed</th>
+<th>Clock</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Redis</td>
+<td>native key expiry</td>
+<td>Redis server</td>
+</tr>
+<tr>
+<td>Postgres</td>
+<td><code>postgres_counter_purge_lifecycle_step</code>, or a scheduled <code>DELETE</code></td>
+<td>database <code>clock_timestamp()</code></td>
+</tr>
+<tr>
+<td>Mongo</td>
+<td>a TTL index on <code>expires_at</code></td>
+<td>application <code>utcnow()</code></td>
+</tr>
+<tr>
+<td>Firestore</td>
+<td>a TTL policy on <code>expires_at</code></td>
+<td>application <code>utcnow()</code></td>
+</tr>
+<tr>
+<td>mock</td>
+<td>dropped when next touched</td>
+<td>bound time source</td>
+</tr>
+</tbody>
+</table>
+<p>Postgres and Mongo need a schema step; see <a href="../../../integrations/postgres/">Postgres</a> and
+<a href="../../../integrations/mongo/">Mongo</a>. The mock reads the bound time source, so a frozen or
+simulated clock drives its expiry.</p>
 <h3 id="enumerating-counters-admin">Enumerating counters (admin)<a class="headerlink" href="#enumerating-counters-admin" title="Permanent link">&para;</a></h3>
 <p><code>ctx.counter.admin(spec)</code> returns a <code>CounterAdminPort</code>. It exists because the missing read
 verb, correct as it is for handlers, left counters as the one plane that is <strong>durable state
@@ -6912,7 +7002,9 @@ separate acquisition, and it cannot allocate), while operators and a portable ex
     <span class="k">await</span> <span class="n">target</span><span class="o">.</span><span class="n">counter</span><span class="p">(</span><span class="n">INVOICES</span><span class="p">)</span><span class="o">.</span><span class="n">reset</span><span class="p">(</span><span class="n">entry</span><span class="o">.</span><span class="n">value</span><span class="p">,</span> <span class="n">suffix</span><span class="o">=</span><span class="n">entry</span><span class="o">.</span><span class="n">suffix</span><span class="p">)</span>
 </code></pre></div>
 <p>The value is the last number <strong>handed out</strong>, so the target's next <code>incr</code> continues the
-sequence rather than repeating its final number. Enumerate a counter you intend to carry only
+sequence rather than repeating its final number. A lapsed counter is not listed, and an
+entry carries no lifetime: a carried counter that had a <code>ttl</code> never expires on the target
+unless you <code>reset</code> it with one. Enumerate a counter you intend to carry only
 when nothing is allocating from it (a stopped fleet) — a value read while the source is live
 is stale the moment it is read. The whole set is returned at once, so a spec partitioned into
 millions of suffixes is not yet in scope.</p>

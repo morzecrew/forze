@@ -7153,6 +7153,42 @@ sends as <code>Retry-After</code>; the body still withholds the details. It coun
 <strong>login strings, not accounts</strong>, so a nonexistent login locks exactly like a real one —
 preserving the no-enumeration posture. The unlock instant is the same for every login
 string, so the header discloses nothing either.</p>
+<p>Set <code>lock_for</code> to keep a locked login locked past its window, for example
+<code>LockoutConfig(threshold=5, window=timedelta(minutes=15), lock_for=timedelta(hours=1))</code>. The
+attempt that reaches the threshold writes the unlock instant to a separate lock key. The login
+stays locked until the window's end or that instant, whichever is later, and <code>retry_at</code> (so
+<code>Retry-After</code>) carries the later one. With <code>lock_for</code> the header also shows when the threshold
+was reached. That instant is the same for a real and an unknown login, so it still discloses
+no account. A lock is never extended, and a success does not lift it. If the lock write fails,
+the attempt fails with the store's error, the same for a real and an unknown login, and the
+next check writes the lock, counted from that check.</p>
+<p>The stored instant decides when the login unlocks, so a counter that cannot expire keys
+unlocks on time too. The lock key gets a <code>ttl</code> of <code>lock_for</code> plus <code>LOCKOUT_TTL_SKEW</code>. Redis and
+Postgres time that <code>ttl</code> on their own clock. If the node that wrote the lock runs ahead of the
+others by more than the skew, the key can lapse first. The lock then ends <code>lock_for</code> plus the
+skew after it started: never shorter than <code>lock_for</code>, but before the announced <code>Retry-After</code>.</p>
+<p>The lockout keeps its counter store bounded. The check that runs on every attempt reads
+with <code>incr(0)</code>, which creates nothing, so only a failed attempt (or a success resetting
+one) writes a key. Each window's key is written with a <a href="../../reference/contracts/stores/#lifetimes-ttl"><code>ttl</code></a>
+of the window plus <code>LOCKOUT_TTL_SKEW</code>, counted from the key's creation, so it lapses once
+the window is over. The minute covers clock spread between application nodes: a fast node
+can create a window's key at its very start while a slow node still counts that window at
+its end. The store's own clock offset does not matter. A lapsed key reads as absent at
+once; its storage is reclaimed by Redis itself, or by the purge, TTL index or TTL policy you
+set up on Postgres, Mongo or Firestore. On Postgres, schedule the purge with
+<code>postgres_counter_purge_lifecycle_step(specs=[CounterSpec(name=LOCKOUT_COUNTER_ROUTE)])</code>; see
+<a href="../../integrations/postgres/#notes">Postgres</a>.</p>
+<p>A counter that cannot expire keys never breaks a login. On a Postgres counter table without
+the optional <code>expires_at timestamptz</code> column, the lockout writes its keys without a <code>ttl</code> and
+logs a warning once per refusing table naming it and the <code>ALTER TABLE</code> to run; it still
+counts and locks, and its old window keys keep growing until the column is added. Adding the
+column does not reach the rows already written: they keep a <code>NULL</code> expiry, which the purge
+never deletes. If the lockout has a table of its own, give them one once after the migration,
+long enough to outlast any window and lock you configure:</p>
+<div class="highlight"><pre><span></span><code><span class="k">UPDATE</span><span class="w"> </span><span class="o">&lt;</span><span class="n">lockout_counters</span><span class="o">&gt;</span><span class="w"> </span><span class="k">SET</span><span class="w"> </span><span class="n">expires_at</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">now</span><span class="p">()</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="nb">interval</span><span class="w"> </span><span class="s1">'1 day'</span><span class="w"> </span><span class="k">WHERE</span><span class="w"> </span><span class="n">expires_at</span><span class="w"> </span><span class="k">IS</span><span class="w"> </span><span class="k">NULL</span><span class="p">;</span>
+</code></pre></div>
+<p>Do not run it on a table other counters share: there a <code>NULL</code> expiry is a counter that never
+lapses. A custom counter backend that does not report expiry gets no <code>ttl</code> either.</p>
 <h2 id="the-identity-plane">The identity plane<a class="headerlink" href="#the-identity-plane" title="Permanent link">&para;</a></h2>
 <p>All of this lives in <code>forze_identity</code>, separate from the core: <code>authn</code>, <code>authz</code>,
 <code>tenancy</code>, <code>oidc</code>, and <code>oauth</code> subpackages, wired per route via the same deps

@@ -6766,6 +6766,11 @@ environment variable).</p>
   one write per second per document — a hot counter contends and retries. Allocate
   blocks with <code>incr_batch</code> to amortize the ceiling, or route high-rate counters to
   a Redis-backed adapter.</li>
+<li><strong>Counter lifetimes</strong> store an <code>expires_at</code> timestamp, and a counter past it reads as
+  absent. To reclaim the documents, enable a TTL policy on that field for the counters
+  collection group (<code>gcloud firestore fields ttls update expires_at
+  --collection-group=&lt;collection&gt; --enable-ttl</code>); Firestore deletes expired documents
+  typically within a day. See <a href="../../reference/contracts/stores/#lifetimes-ttl">Lifetimes</a>.</li>
 <li><strong><code>Decimal</code> fields are stored as doubles</strong> — Firestore has no decimal type, so a
   <code>Decimal</code> is written as a <code>double</code> (numeric ordering in range filters, at the cost
   of binary-float precision). A non-finite value (<code>NaN</code>/<code>±Infinity</code>) or a <code>Decimal</code>

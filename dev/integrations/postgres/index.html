@@ -6893,47 +6893,82 @@ search added later is warmed too:</p>
 <li><strong>You own the schema.</strong> Forze <em>introspects</em> existing relations; it never
   creates application tables. Provision read / write / history / search relations
   (and extensions) with your migration tool first.</li>
-<li><strong>Bookkeeping.</strong> <code>bookkeeping_strategy="application"</code> bumps <code>rev</code> /
+<li>
+<p><strong>Counter lifetimes need one column.</strong> A counter written with a <code>ttl</code> stores its lapse
+  instant in an optional <code>expires_at timestamptz</code> column:</p>
+<div class="highlight"><pre><span></span><code><span class="k">ALTER</span><span class="w"> </span><span class="k">TABLE</span><span class="w"> </span><span class="o">&lt;</span><span class="n">counters</span><span class="o">&gt;</span><span class="w"> </span><span class="k">ADD</span><span class="w"> </span><span class="k">COLUMN</span><span class="w"> </span><span class="n">expires_at</span><span class="w"> </span><span class="n">timestamptz</span><span class="p">;</span>
+</code></pre></div>
+<p>A table without it keeps working for every call that does not pass a <code>ttl</code>; a call
+that does is refused with <code>configuration</code> (<code>counter_ttl_unsupported</code>) until the column
+exists. The login lockout is the exception: it writes without a <code>ttl</code> instead and warns
+once, so logins keep working while its old keys pile up. After the migration a <code>ttl</code>
+call picks the column up within a minute, without a restart. A
+lapsed row reads as absent but stays in the table. To delete lapsed rows on a schedule,
+add <code>postgres_counter_purge_lifecycle_step</code>. It calls
+<code>PostgresCounterAdminAdapter.purge_expired()</code> for each route on an interval, which walks
+the primary key in batches and needs no other index:</p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">forze.application.contracts.counter</span><span class="w"> </span><span class="kn">import</span> <span class="n">CounterSpec</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">forze_postgres</span><span class="w"> </span><span class="kn">import</span> <span class="n">postgres_counter_purge_lifecycle_step</span>
+
+<span class="n">lifecycle</span> <span class="o">=</span> <span class="n">lifecycle</span><span class="o">.</span><span class="n">with_steps</span><span class="p">(</span>
+    <span class="n">postgres_counter_purge_lifecycle_step</span><span class="p">(</span>
+        <span class="n">specs</span><span class="o">=</span><span class="p">[</span><span class="n">CounterSpec</span><span class="p">(</span><span class="n">name</span><span class="o">=</span><span class="s2">"quota"</span><span class="p">)],</span>
+        <span class="n">interval</span><span class="o">=</span><span class="n">timedelta</span><span class="p">(</span><span class="n">minutes</span><span class="o">=</span><span class="mi">10</span><span class="p">),</span>  <span class="c1"># the default</span>
+    <span class="p">),</span>
+<span class="p">)</span>
+</code></pre></div>
+<p>Each route must be wired in <code>counters=</code>, or startup fails with <code>configuration</code>. On
+per-tenant routes (<code>tenant_aware</code>, a per-tenant table or a database per tenant) pass
+<code>tenants=</code>, such as <code>lambda: shard.tenants</code>, to purge each tenant's rows in turn; without
+it the step refuses them at startup. With it, a tenant-global route is refused, because
+every tenant's pass would walk the same rows: purge it in a step without <code>tenants=</code>. An
+empty shard logs a warning and purges nothing. Racing purges are safe, so run the step on
+every replica. Or schedule a table-wide purge (for example with pg_cron), with a partial
+index so it does not scan the live rows:</p>
+<div class="highlight"><pre><span></span><code><span class="k">CREATE</span><span class="w"> </span><span class="k">INDEX</span><span class="w"> </span><span class="k">ON</span><span class="w"> </span><span class="o">&lt;</span><span class="n">counters</span><span class="o">&gt;</span><span class="w"> </span><span class="p">(</span><span class="n">expires_at</span><span class="p">)</span><span class="w"> </span><span class="k">WHERE</span><span class="w"> </span><span class="n">expires_at</span><span class="w"> </span><span class="k">IS</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="p">;</span>
+<span class="k">DELETE</span><span class="w"> </span><span class="k">FROM</span><span class="w"> </span><span class="o">&lt;</span><span class="n">counters</span><span class="o">&gt;</span><span class="w"> </span><span class="k">WHERE</span><span class="w"> </span><span class="n">expires_at</span><span class="w"> </span><span class="o">&lt;=</span><span class="w"> </span><span class="n">now</span><span class="p">();</span>
+</code></pre></div>
+<p>See <a href="../../reference/contracts/stores/#lifetimes-ttl">Lifetimes</a>.
+- <strong>Bookkeeping.</strong> <code>bookkeeping_strategy="application"</code> bumps <code>rev</code> /
   <code>last_update_at</code> in the write gateway; <code>"database"</code> defers to a <code>BEFORE UPDATE</code>
-  trigger you supply.</li>
-<li><strong>Routed clients</strong> require <code>introspector_cache_partition_key</code> on the deps
-  module so the catalog cache partitions by tenant.</li>
-<li><strong>Relations</strong> can be static <code>(schema, table)</code> tuples or per-tenant resolvers —
-  see <a href="../../identity-tenancy-enc/multi-tenancy/">Multi-tenancy</a>.</li>
-<li><strong>Locking reads when <code>read</code> differs from <code>write</code></strong> (a view, typically). A read with
+  trigger you supply.
+- <strong>Routed clients</strong> require <code>introspector_cache_partition_key</code> on the deps
+  module so the catalog cache partitions by tenant.
+- <strong>Relations</strong> can be static <code>(schema, table)</code> tuples or per-tenant resolvers —
+  see <a href="../../identity-tenancy-enc/multi-tenancy/">Multi-tenancy</a>.
+- <strong>Locking reads when <code>read</code> differs from <code>write</code></strong> (a view, typically). A read with
   <code>for_update</code> locks the matching row on the <code>write</code> table, by id and tenant, and then reads
   it from <code>read</code>. Postgres refuses <code>FOR UPDATE</code> on a view that joins with <code>LEFT JOIN</code>, and
   reading after the lock returns the row as locked. A row that stops matching while its lock
   is awaited is skipped for the next match, but stays locked until the transaction ends, as
   in Postgres. A read-only document has no <code>write</code> table, so its locking read still goes to
-  <code>read</code>.</li>
-<li><strong>Plain <code>Enum</code> fields.</strong> A document or ingest column holds the member's value, as for a
+  <code>read</code>.
+- <strong>Plain <code>Enum</code> fields.</strong> A document or ingest column holds the member's value, as for a
   <code>StrEnum</code> or <code>IntEnum</code>, and a filter names that value. Earlier versions wrote
   <code>Status.OPEN</code> to a document column and <code>OPEN</code> to an ingest one; rewrite those rows, for
-  example <code>UPDATE orders SET status = 'open' WHERE status = 'Status.OPEN'</code>.</li>
-<li><strong>Indexes for sorted pages.</strong> A sort on a <code>NOT NULL</code> column, or on the record <code>id</code>,
+  example <code>UPDATE orders SET status = 'open' WHERE status = 'Status.OPEN'</code>.
+- <strong>Indexes for sorted pages.</strong> A sort on a <code>NOT NULL</code> column, or on the record <code>id</code>,
   renders without a null placement, so a plain btree index serves it in either direction,
   through a view too. A nullable column keeps the canonical placement (ascending nulls
   first, descending nulls last), which a plain index does not hold: index it with the
   placement your pages use, for example <code>(created_at DESC NULLS LAST)</code>. A view's columns
-  other than the <code>id</code> all read as nullable.</li>
-<li><strong>Partial indexes and bound filters.</strong> Filter values are sent as parameters, including the
+  other than the <code>id</code> all read as nullable.
+- <strong>Partial indexes and bound filters.</strong> Filter values are sent as parameters, including the
   <code>is_deleted = false</code> and <code>is_current = true</code> that the soft-deletion and versioned kits
   add. A generic plan, made without the values, cannot prove a partial index's predicate
   such as <code>WHERE is_deleted = false</code>. Under the default <code>plan_cache_mode</code>, Postgres picks a
   generic plan for a prepared statement only when it estimates no costlier than planning with
   the values, and one that loses such an index usually costs more: in a 100,000-row test the
   index was used on every execution. With <code>plan_cache_mode = force_generic_plan</code> the index is
-  never used, so keep the default where such indexes matter, or index without the predicate.</li>
-<li><strong>PGroonga indexes.</strong> Index the searched columns as one column, <code>USING pgroonga (title)</code>,
+  never used, so keep the default where such indexes matter, or index without the predicate.
+- <strong>PGroonga indexes.</strong> Index the searched columns as one column, <code>USING pgroonga (title)</code>,
   or as an array, <code>USING pgroonga ((ARRAY[title, content]))</code>; each element is a column,
   optionally wrapped in casts or <code>COALESCE(col, '')</code>. The search matches against the
   index's own expression, so the planner can use the index. What matches, and in what
   order, is then the index's own tokenizer and normalizer: with the default ones, <code>python</code>
   matches the word <code>python</code> and not <code>pythonic</code>. An index with any other kind of element,
-  such as a transform like <code>lower(title)</code>, is refused when the search first runs.</li>
-<li>
-<p><strong>PGroonga and text outside ASCII.</strong> The default normalizer folds case for ASCII only: on
+  such as a transform like <code>lower(title)</code>, is refused when the search first runs.
+- <strong>PGroonga and text outside ASCII.</strong> The default normalizer folds case for ASCII only: on
   PGroonga 4.0.6, <code>плата</code> does not match <code>Плата</code>, while <code>plata</code> matches <code>PLATA</code>. For
   Cyrillic or other non-ASCII text, declare a Unicode-aware normalizer on the index, and
   the search, which follows the index's own options, matches regardless of case:</p>
