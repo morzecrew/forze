@@ -70,6 +70,7 @@ from forze_dst.oracle.linearizability import (
     record_operation,
     sequential,
 )
+from forze_dst.oracle.query_invariants import query_invariant
 from forze_dst.oracle.reachability import (
     ReachabilityReport,
     assess_reachability,
@@ -182,6 +183,8 @@ __all__ = [
     # cross-aggregate system-invariant oracle
     "compile_oracle",
     "CompiledOracle",
+    # an invariant stated as an analytics query
+    "query_invariant",
     # reachability
     "sometimes",
     "reached",

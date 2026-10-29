@@ -115,6 +115,19 @@ the pair of operations that collide. See
 
 A last cross-cutting claim is **convergence**. If an operation declares itself order-independent, `commutative_convergence(build, final_state=…, schedule_seeds=…)` reruns the workload across a band of schedules and flags a declared-commutative op whose interleavings reach *different* end states, naming the seed that diverged — a cross-history check, like reachability, not a per-run invariant.
 
+An integrity check your app already runs as an analytics query becomes an invariant with `query_invariant(spec, query_key, holds=...)`. Like [`compile_oracle`](../writing-operation/system-invariants.md), it returns an `observe` hook and its invariants. The hook runs the query once over final state, where the query's [mock resolver](../testing/overview.md#analytics-answered-from-current-state) answers it from the documents the run wrote. The invariant fails when `holds` rejects the rows. Production applies the same predicate to the rows the SQL returns, so you write the law once:
+
+```python
+from forze_dst.invariants import query_invariant
+
+oracle = query_invariant(BALANCES, "overdrawn", holds=lambda rows: not rows)
+Simulation(..., observe=oracle.observe, invariants=[*oracle.invariants])
+```
+
+On the mock the query must have a resolver. Without one, the hook raises a configuration error instead of testing the law against seeded rows or no rows. A violation quotes the row count and the first three rows, with the spec's encrypted fields shown as `<redacted>`.
+
+Like `compile_oracle` without `per_commit`, it sees only the end state, so it misses a violation that a later transaction heals. Give each oracle a distinct `name` (the default is `"<spec>.<query_key>"`). An invariant reads every outcome recorded under its name, so two oracles that share one each report the other's failures too.
+
 !!! note "Value-level invariants need `capture_values`"
 
     By default the trace is **id-only** — it records *which* key and outcome, never the value (no

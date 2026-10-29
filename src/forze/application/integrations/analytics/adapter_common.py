@@ -1,6 +1,16 @@
 """Shared helpers for warehouse analytics adapters."""
 
-from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Mapping, Sequence
+from collections.abc import (
+    AsyncGenerator,
+    AsyncIterator,
+    Awaitable,
+    Callable,
+    Generator,
+    Mapping,
+    Sequence,
+)
+from contextlib import contextmanager
+from contextvars import ContextVar
 from typing import (
     Any,
     TypeVar,
@@ -114,6 +124,42 @@ def dry_run_enabled(options: AnalyticsRunOptions | None) -> bool:
     refuse_unknown_keys(options, AnalyticsRunOptions)
 
     return bool((options or {}).get("dry_run"))
+
+
+# ....................... #
+
+# Module-level (immortal), per the codebase rule for cross-cutting markers; see
+# ``forze.application.execution.context.active_operation``.
+_computed_rows_required: ContextVar[bool] = ContextVar(
+    "forze_analytics_computed_rows_required",
+    default=False,
+)
+
+
+@contextmanager
+def require_computed_rows() -> Generator[None]:
+    """Refuse, for the queries run in this block, an answer not computed from current data.
+
+    A fixture adapter (the in-memory mock) answers a query it has no computation for from rows
+    written down before the run, or from nothing. A caller that reads the answer as evidence
+    about the data — a DST query invariant, whose ``not rows`` would pass on an empty answer —
+    enters this block, and such a query raises instead. A real engine always computes its
+    answer and has nothing to refuse.
+    """
+
+    token = _computed_rows_required.set(True)
+
+    try:
+        yield
+
+    finally:
+        _computed_rows_required.reset(token)
+
+
+def computed_rows_required() -> bool:
+    """Whether the caller is inside :func:`require_computed_rows`."""
+
+    return _computed_rows_required.get()
 
 
 # ....................... #

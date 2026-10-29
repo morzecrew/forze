@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import AsyncGenerator, Sequence
+from collections.abc import AsyncGenerator, Mapping, Sequence
 from typing import (
     Any,
     Literal,
@@ -21,7 +21,6 @@ from forze.application.contracts.analytics import (
     AnalyticsRunOptions,
     AnalyticsSpec,
 )
-from forze.application.contracts.analytics.specs import AnalyticsQueryDefinition
 from forze.application.contracts.base import (
     CountlessPage,
     CursorPage,
@@ -37,12 +36,14 @@ from forze.application.integrations.analytics import (
     encode_ingest_payloads,
 )
 from forze.application.integrations.analytics.adapter_common import (
+    computed_rows_required,
     dry_run_enabled,
     validate_fetch_batch_size,
+    validated_params,
 )
 from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict
-from forze.base.serialization import default_model_codec
+from forze_mock.adapters.analytics_resolvers import MockAnalyticsRegistry, MockAnalyticsView
 from forze_mock.query._types import T
 from forze_mock.query.cursors import (
     _mock_cursor_start_and_limit,  # pyright: ignore[reportPrivateUsage]
@@ -59,10 +60,18 @@ class MockAnalyticsAdapter[R: BaseModel, Ing: BaseModel](
     AnalyticsQueryPort[R],
     AnalyticsIngestPort[Ing],
 ):
-    """In-memory analytics adapter over seeded query hits and an ingest log."""
+    """In-memory analytics adapter over seeded query hits, resolvers and an ingest log."""
 
     state: MockState
     spec: AnalyticsSpec[R, Ing]
+
+    resolvers: MockAnalyticsRegistry | None = None
+    """Resolvers computing a query's rows from current documents; ``None`` answers every query
+    from the seeded hits."""
+
+    view: MockAnalyticsView | None = None
+    """The document view handed to a resolver; ``None`` reads each spec's rows from the
+    namespace named after it, unpartitioned."""
 
     # ....................... #
 
@@ -71,30 +80,52 @@ class MockAnalyticsAdapter[R: BaseModel, Ing: BaseModel](
 
     # ....................... #
 
-    def _definition(self, query_key: str) -> AnalyticsQueryDefinition:
-        try:
-            return self.spec.queries[query_key]
-        except KeyError as e:
-            raise exc.internal(f"Unknown analytics query key: {query_key!r}") from e
-
-    # ....................... #
-
     def _validated_params(self, query_key: str, params: BaseModel) -> BaseModel:
-        defn = self._definition(query_key)
-        if isinstance(params, defn.params):
-            return params
-        if isinstance(params, BaseModel):  # pyright: ignore[reportUnnecessaryIsInstance]
-            return default_model_codec(defn.params).decode_mapping(
-                params.model_dump(),
-            )
-        raise exc.internal("Analytics params must be a Pydantic model instance.")
+        # The real adapters' helper, so an undeclared key is the same configuration error.
+        return validated_params(self.spec, query_key, params)
 
     # ....................... #
 
-    def _query_rows(self, query_key: str) -> list[JsonDict]:
-        with self.state.lock:
-            route_store = self.state.analytics_query_hits.setdefault(self._route(), {})
-            return [dict(row) for row in route_store.get(query_key, [])]
+    def _query_rows(self, query_key: str, params: BaseModel) -> list[JsonDict]:
+        resolver = (
+            None
+            if self.resolvers is None
+            else self.resolvers.resolver_for(str(self.spec.name), query_key)
+        )
+
+        if resolver is None:
+            if computed_rows_required():
+                raise exc.configuration(
+                    f"Analytics query {str(self.spec.name)!r}/{query_key!r} has no mock "
+                    "resolver, so the mock would answer it from seeded rows (or none) that no "
+                    "write moves. Register one with MockAnalyticsRegistry.on() for a caller "
+                    "that needs the answer computed from current documents, such as "
+                    "query_invariant.",
+                    code="mock.analytics.resolver_required",
+                )
+
+            with self.state.lock:
+                route_store = self.state.analytics_query_hits.setdefault(self._route(), {})
+                return [dict(row) for row in route_store.get(query_key, [])]
+
+        # A tenant-aware route refuses with no tenant bound, and narrows the view to the bound
+        # tenant's rows whatever the document route's partitioning.
+        view = attrs.evolve(
+            self.view or MockAnalyticsView(state=self.state),
+            tenant_id=self.require_tenant_if_aware(),
+        )
+        rows: list[JsonDict] = []
+
+        for row in resolver(view, params):
+            if not isinstance(row, Mapping):  # pyright: ignore[reportUnnecessaryIsInstance]
+                raise exc.internal(
+                    f"Mock analytics resolver for {str(self.spec.name)!r}/{query_key!r} must "
+                    f"return row mappings, got {type(row).__name__}.",
+                )
+
+            rows.append(dict(row))
+
+        return rows
 
     # ....................... #
 
@@ -153,14 +184,14 @@ class MockAnalyticsAdapter[R: BaseModel, Ing: BaseModel](
         return_type: type[T] | None,
         return_fields: Sequence[str] | None,
     ) -> CountlessPage[Any] | Page[Any]:
-        _ = self._validated_params(query_key, params)
+        params = self._validated_params(query_key, params)
         if self._dry_run(options):
             empty: list[Any] = []
             if return_count:
                 return page_from_limit_offset(empty, pagination, total=0)
             return page_from_limit_offset(empty, pagination, total=None)
 
-        rows = self._apply_max_rows(self._query_rows(query_key), options)
+        rows = self._apply_max_rows(self._query_rows(query_key, params), options)
         data = await decrypt_and_shape_rows(
             rows,
             read_codec=self.spec.resolved_read_codec,
@@ -185,7 +216,7 @@ class MockAnalyticsAdapter[R: BaseModel, Ing: BaseModel](
         return_type: type[T] | None,
         return_fields: Sequence[str] | None,
     ) -> CursorPage[Any]:
-        _ = self._validated_params(query_key, params)
+        params = self._validated_params(query_key, params)
         if self._dry_run(options):
             return CursorPage(
                 hits=[],
@@ -194,7 +225,7 @@ class MockAnalyticsAdapter[R: BaseModel, Ing: BaseModel](
                 has_more=False,
             )
 
-        rows = self._apply_max_rows(self._query_rows(query_key), options)
+        rows = self._apply_max_rows(self._query_rows(query_key, params), options)
         start, lim = _mock_cursor_start_and_limit(cursor)
         window = rows[start : start + lim + 1]
         has_more = len(window) > lim

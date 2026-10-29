@@ -164,6 +164,7 @@ from forze.application.integrations.crypto import DeterministicFieldCipher, Keyr
 from forze.base.exceptions import exc
 from forze.base.primitives import MappingConverter, StrKey, StrKeyMapping
 from forze_mock.adapters import (
+    MockAnalyticsRegistry,
     MockDerivedRegistry,
     MockDynamicReadRegistry,
     MockHttpRegistry,
@@ -331,6 +332,14 @@ class MockDepsModule(DepsModule):
     plane — a write refused by a read-only transaction, a second command refused by the wire
     protocol — is deliberately absent: the mock cannot detect a write in a string and does not
     pretend to, so those refusals are pinned against real Postgres instead."""
+
+    analytics: MockAnalyticsRegistry | None = attrs.field(default=None)
+    """Programmable resolvers computing analytics query rows from the mock's current documents.
+
+    ``None`` answers every query from the rows seeded in ``MockState.analytics_query_hits``,
+    which never move. Pass a :class:`MockAnalyticsRegistry` and a registered query is computed
+    per call from the stored rows, as the calling transaction sees them, and the call's params;
+    a query with no resolver keeps its seeded rows."""
 
     derived_values: MockDerivedRegistry | None = attrs.field(default=None)
     """Programmable stand-ins for the relations that produce marked ``derived_read_fields``.

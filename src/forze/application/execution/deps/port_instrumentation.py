@@ -116,7 +116,7 @@ def maybe_wrap_configurable(
         tx_depth_getter=ctx.tx_ctx.depth,
         tx_id_getter=ctx.tx_ctx.tx_id,
         capture=capture,
-        redact=_sensitive_fields(spec) if capture else frozenset(),
+        redact=sensitive_fields(spec) if capture else frozenset(),
         text_arg_key=getattr(spec, "trace_text_arg_key", None) if capture else None,
     )
 
@@ -164,7 +164,7 @@ def maybe_wrap_otel_spans(
 # ....................... #
 
 
-def _sensitive_fields(spec: BaseSpec) -> frozenset[str]:
+def sensitive_fields(spec: BaseSpec) -> frozenset[str]:
     """The spec's declared-sensitive field names — what value capture redacts.
 
     Two signals, unioned:

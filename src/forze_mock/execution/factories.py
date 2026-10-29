@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Iterable
 from datetime import timedelta
 from typing import TYPE_CHECKING, Any, final
+from uuid import UUID
 
 import attrs
 
@@ -66,7 +67,7 @@ from forze.application.contracts.storage import (
 )
 from forze.application.contracts.stream import StreamCommandPort
 from forze.application.contracts.stream.specs import StreamSpec
-from forze.application.contracts.tenancy import TenantProviderPort
+from forze.application.contracts.tenancy import TenancyMixin, TenantProviderPort
 from forze.application.contracts.transaction import TransactionManagerPort
 from forze.application.execution import ExecutionContext
 from forze.application.execution.crypto import enforce_required_reach
@@ -144,6 +145,7 @@ from forze_mock.adapters import (
     MockTxManagerAdapter,
 )
 from forze_mock.adapters._derived import ResolvedDerivedRead
+from forze_mock.adapters.analytics_resolvers import MockAnalyticsView
 from forze_mock.adapters.embeddings import MockHashEmbeddingsProvider
 from forze_mock.adapters.identity import (
     MockAuthzDecisionPort,
@@ -154,7 +156,7 @@ from forze_mock.adapters.identity import (
 )
 from forze_mock.adapters.outbox import MockOutboxStore
 from forze_mock.adapters.revocation import MockRevocationStates
-from forze_mock.tenancy import resolve_mock_namespace_sync
+from forze_mock.tenancy import partition_namespace, resolve_mock_namespace_sync
 
 from .configs import MockRouteConfig
 from .keys import MockStateDepKey
@@ -467,9 +469,10 @@ class ConfigurableMockAnalytics(_MockFactoryBase):
         spec: AnalyticsSpec[Any, Any],
     ) -> MockAnalyticsAdapter[Any, Any]:
         cfg = self._route(spec.name)
+        state = self._state(context)
         keyring, deterministic = _field_ciphers(context)
         return MockAnalyticsAdapter(
-            state=self._state(context),
+            state=state,
             # Wrap read & ingest codecs for field encryption (shared, fail-closed),
             # exactly as the ClickHouse/BigQuery/Postgres analytics factories do.
             spec=resolve_analytics_codecs_spec(
@@ -480,6 +483,33 @@ class ConfigurableMockAnalytics(_MockFactoryBase):
             ),
             tenant_aware=cfg.tenant_aware if cfg else False,
             tenant_provider=_tenant_provider(context),
+            resolvers=self.module.analytics,
+            view=MockAnalyticsView(
+                state=state,
+                scope_for=lambda name: self._document_scope(context, name),
+            ),
+        )
+
+    # ....................... #
+
+    def _document_scope(self, ctx: ExecutionContext, spec_name: str) -> tuple[str, UUID | None]:
+        """The namespace the document adapter for *spec_name* keeps this caller's rows in, and
+        the tenant it narrows them to.
+
+        Resolved the way :class:`ConfigurableMockDocument` resolves its own, tenant partition
+        and row filter included, so a resolver reads the rows a document read would — and a
+        tenant-aware document route with no tenant bound refuses here, as it refuses there.
+        """
+
+        cfg = self._route(spec_name)
+        tenant_id = TenancyMixin(
+            tenant_aware=cfg.tenant_aware if cfg else False,
+            tenant_provider=_tenant_provider(ctx),
+        ).require_tenant_if_aware()
+
+        return (
+            partition_namespace(tenant_id, self._namespace_for(ctx, spec_name, default=spec_name)),
+            tenant_id,
         )
 
 
