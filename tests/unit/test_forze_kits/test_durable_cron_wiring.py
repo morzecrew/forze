@@ -184,6 +184,33 @@ class TestEnsureSchedule:
         assert loaded.next_fire_at == created.next_fire_at
         assert loaded.enabled is False
 
+    async def test_an_input_change_recreates_a_schedule_deleted_after_the_read(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        state = MockState()
+        ctx = context_from_modules(MockDepsModule(state=state))
+        scheduler = DurableScheduler()
+        await scheduler.ensure_schedule(ctx, "s", "fn", "* * * * *", input_json={"n": 1}, now=_T0)
+
+        store_type = type(resolve_durable_schedule_store(ctx))
+        load = store_type.load
+
+        async def load_then_lose_the_row(self: object, schedule_id: str) -> object:
+            loaded = await load(self, schedule_id)  # type: ignore[arg-type]
+            state.durable_run_schedules.clear()  # another caller removes it meanwhile
+            return loaded
+
+        monkeypatch.setattr(store_type, "load", load_then_lose_the_row)
+
+        ensured = await scheduler.ensure_schedule(
+            ctx, "s", "fn", "* * * * *", input_json={"n": 2}, now=_T0
+        )
+
+        monkeypatch.undo()
+        loaded = await resolve_durable_schedule_store(ctx).load("s")
+        assert loaded == ensured
+        assert loaded is not None and loaded.input_json == {"n": 2}
+
     async def test_reregisters_when_tz_changes(self) -> None:
         ctx = context_from_modules(MockDepsModule())
         scheduler = DurableScheduler()
