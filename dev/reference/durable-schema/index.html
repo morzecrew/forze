@@ -6718,12 +6718,11 @@ in <a href="../../data-events/durable-execution/">Durable execution</a>.</p>
 <span class="k">CREATE</span><span class="w"> </span><span class="k">UNIQUE</span><span class="w"> </span><span class="k">INDEX</span><span class="w"> </span><span class="k">ON</span><span class="w"> </span><span class="k">public</span><span class="p">.</span><span class="n">durable_run</span><span class="w"> </span><span class="p">(</span><span class="n">coalesce_key</span><span class="p">)</span><span class="w"> </span><span class="k">WHERE</span><span class="w"> </span><span class="n">status</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s1">'pending'</span><span class="w"> </span><span class="k">AND</span><span class="w"> </span><span class="n">attempts</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span>
 </code></pre></div>
 <ul>
-<li><code>UNIQUE (idempotency_key)</code> makes two submits of one key converge on a single run. The
-  key is stored tenant-scoped, so two tenants reusing a key on a shared table stay
-  distinct runs.</li>
+<li><code>UNIQUE (idempotency_key)</code> makes two submits of one key converge on a single run.</li>
 <li>The partial unique index on <code>coalesce_key</code> admits one unclaimed <code>pending</code> run per key,
-  which <code>enqueue(coalesce_key=...)</code> joins. It is stored as <code>{tenant_id}:{key}</code>, or
-  <code>:{key}</code> untagged, so no key reaches another tenant's run.</li>
+  which <code>enqueue(coalesce_key=...)</code> joins.</li>
+<li>Both keys are stored as <code>{tenant_id}:{key}</code>, or <code>:{key}</code> untagged, so no key reaches
+  another tenant's run. Records return the key as the caller passed it.</li>
 <li><code>attempts</code> is the fence token: each claim advances it under a row lock, and a terminal
   write is fenced against a reclaimed lease.</li>
 <li><code>available_at</code> delays when a <code>pending</code> run may be claimed (<code>NULL</code>: claimable now).</li>
@@ -6775,8 +6774,9 @@ run's steps by <code>run_id</code>, which the key leads with.</p>
 <span class="w">    </span><span class="k">PRIMARY</span><span class="w"> </span><span class="k">KEY</span><span class="w"> </span><span class="p">(</span><span class="n">schedule_id</span><span class="p">)</span>
 <span class="p">);</span>
 </code></pre></div>
-<p>On a shared tagged table, <code>schedule_id</code> is stored as <code>{tenant_id}:{schedule_id}</code>, so two
-tenants registering one id stay distinct schedules.</p>
+<p><code>schedule_id</code> is stored as <code>{tenant_id}:{schedule_id}</code>, or <code>:{schedule_id}</code> untagged, so
+two tenants registering one id stay distinct schedules and no id reaches another tenant's
+schedule. Records return the id as the caller registered it.</p>
 <p>Recommended indexes:</p>
 <div class="highlight"><pre><span></span><code><span class="c1">-- claim_due scans enabled schedules due now, oldest first, under FOR UPDATE SKIP LOCKED</span>
 <span class="k">CREATE</span><span class="w"> </span><span class="k">INDEX</span><span class="w"> </span><span class="k">ON</span><span class="w"> </span><span class="k">public</span><span class="p">.</span><span class="n">durable_schedule</span><span class="w"> </span><span class="p">(</span><span class="n">next_fire_at</span><span class="p">)</span><span class="w"> </span><span class="k">WHERE</span><span class="w"> </span><span class="n">enabled</span><span class="p">;</span>

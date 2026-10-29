@@ -10600,6 +10600,9 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <h3 id="security">Security<a class="headerlink" href="#security" title="Permanent link">&para;</a></h3>
 <ul>
 <li>
+<p><strong>An untagged caller can no longer match a tenant's durable idempotency key or schedule id</strong> (<strong>Breaking</strong>). Every untagged key and id, deployments without tenancy included, is now stored as <code>:{key}</code>; rows written before keep the old form. A resubmit of an in-flight key written before the upgrade starts a second run.</p>
+</li>
+<li>
 <p><strong>A document query policy checks <code>$having</code> and aggregate sorts against their source fields</strong> (<strong>Breaking</strong>). Refused now: <code>$having</code> over a field that is not filterable, and a sort by an alias whose field is not sortable. Allowed now: a sort by a <code>$count</code> alias, or by an alias whose field is sortable.</p>
 </li>
 <li>
