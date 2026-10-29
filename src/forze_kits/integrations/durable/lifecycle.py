@@ -739,7 +739,7 @@ def durable_run_retention_lifecycle_step(
 
     *tenants* works as on :func:`durable_recovery_background_lifecycle_step`: set it for a
     namespace-tier store, omit it for a tagged one (one unbound sweep purges every tenant's
-    runs). Concurrent sweepers skip each other's rows, so run it unwrapped on every replica.
+    runs). Concurrent sweepers never delete a run twice, so run it unwrapped on every replica.
     """
 
     startup = _DurableRetentionBackgroundStartup(

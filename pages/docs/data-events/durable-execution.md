@@ -408,7 +408,9 @@ A run store built by hand refuses to purge without its `step_config`, unless you
 batch, its rows and its journal go in one statement that skips any row another transaction
 holds, so a run being requeued keeps its steps. Mongo has no such statement: the purge marks
 the batch's steps first, and the next purge deletes the marked steps of runs an interrupted
-one removed. Concurrent sweepers skip each other's rows, so run the step on every replica.
+one removed. Concurrent sweepers skip each other's rows on Postgres; on Mongo they can pick
+the same batch, and the second delete finds nothing, so it repeats work but loses none. Run
+the step on every replica either way.
 
 ### Crash-resumable sagas
 

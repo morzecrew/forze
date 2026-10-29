@@ -626,3 +626,35 @@ async def test_a_purge_settles_the_steps_an_interrupted_one_left(
         ("kept|s1", None),
         ("other|s1", None),
     ]
+
+
+async def test_concurrent_purges_of_one_batch_delete_each_run_once(
+    mongo_client: MongoClient, run_collection: tuple[str, str]
+) -> None:
+    """Mongo reserves nothing, so two sweeps can pick the same batch: one deletes it."""
+
+    db_name = run_collection[0]
+    step_collection = (db_name, f"durable_step_{uuid4().hex[:8]}")
+    store = MongoDurableRunStore(
+        client=mongo_client,
+        config=MongoDurableRunConfig(collection=run_collection),
+        step_config=MongoDurableStepConfig(collection=step_collection),
+    )
+    steps = await mongo_client.collection(step_collection[1], db_name=db_name)
+
+    for index in range(5):
+        run = await store.enqueue("fn", input_json=None)
+        claimed = await store.begin(run.run_id, lease_for=timedelta(minutes=5))
+        assert claimed is not None
+        await store.complete(run.run_id, output_json=None, fence=claimed.attempts)
+        await mongo_client.insert_one(
+            steps, {"_id": f"{run.run_id}|s{index}", "run_id": run.run_id, "step_id": "s1"}
+        )
+
+    purged = await asyncio.gather(
+        store.purge_finished(timedelta(microseconds=1)),
+        store.purge_finished(timedelta(microseconds=1)),
+    )
+
+    assert sum(purged) == 5
+    assert await mongo_client.find_many(steps, {}) == []
