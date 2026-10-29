@@ -7032,7 +7032,7 @@ name). Objects are addressed by string <code>key</code>.</p>
 <td>query</td>
 <td><code>download_stream</code></td>
 <td><code>download_stream(key)</code></td>
-<td>a <code>StreamedDownload</code> — single-use async chunk iterator, never buffers the whole object; encrypted objects decrypt chunk by chunk</td>
+<td>a <code>StreamedDownload</code> — single-use async chunk iterator, never buffers the whole object; encrypted objects decrypt chunk by chunk. An object replaced mid-stream fails the next read with <code>conflict</code> (<code>READ_PRECONDITION_FAILED_CODE</code>), never mixing two versions</td>
 </tr>
 <tr>
 <td>query</td>

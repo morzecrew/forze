@@ -10453,6 +10453,9 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <p><strong>The login lockout no longer grows its counter store without bound</strong> (<strong>behaviour change</strong>). A check writes no key, and a window's bucket lapses a minute after the window; Redis, the Postgres purge step, a Mongo TTL index or a Firestore TTL policy reclaims it. Without Postgres <code>expires_at</code> it writes no ttl and warns.</p>
 </li>
 <li>
+<p><strong>S3 and GCS streams and encrypted ranged reads no longer mix two versions of an object</strong> (<strong>Breaking</strong>). A replacement mid-read, or a GCS metadata-only change, fails the next read with <code>conflict</code> (<code>READ_PRECONDITION_FAILED_CODE</code>). A custom <code>ObjectStorageClientPort</code> must accept <code>if_match</code> on <code>download_range_bytes</code>.</p>
+</li>
+<li>
 <p><strong><code>HttpClient</code> reads a compressed response.</strong> A gzip or deflate body, and with no cap a zstd or brotli one, no longer fails <code>request</code>, or a rejected response from <code>stream</code>, as an infrastructure error. <code>RoutedHttpClient</code> and declared services are fixed with it.</p>
 </li>
 <li>
