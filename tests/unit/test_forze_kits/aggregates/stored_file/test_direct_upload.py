@@ -391,6 +391,31 @@ class TestParallelPartUrls:
         # Signed first: the URL's expiry stays within its lifetime of the touch.
         assert calls == ["sign", "touch"]
 
+    @pytest.mark.parametrize(
+        ("error", "touches"),
+        [(exc.precondition("stale", code="revision_mismatch"), 8), (exc.infrastructure("down"), 1)],
+        ids=["revision-race-every-time", "other-error"],
+    )
+    async def test_a_touch_that_keeps_failing_hands_out_no_url(
+        self, ctx: ExecutionContext, error: CoreException, touches: int
+    ) -> None:
+        started = await run_operation(_REG, _INITIATE, _initiate_args(multipart=True), ctx)
+        doc = MagicMock()
+        doc.touch = AsyncMock(side_effect=error)
+        reads = MagicMock(wraps=ctx.doc.query(_KIT.document))
+        reads.get = AsyncMock(side_effect=ctx.doc.query(_KIT.document).get)
+        handler = PresignStoredFileUploadPart(
+            doc=doc, reads=reads, uploads=ctx.storage.uploads(_KIT.resolved_storage)
+        )
+
+        with pytest.raises(CoreException) as ei:
+            await handler(_part_args(started, 1))
+
+        # A lost race re-reads and retries, up to the bound; any other error is not retried.
+        assert ei.value is error
+        assert doc.touch.await_count == touches
+        assert reads.get.await_count == touches
+
 
 class TestMultipartUpload:
     async def _deposit(

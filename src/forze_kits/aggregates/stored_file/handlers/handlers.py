@@ -394,7 +394,9 @@ class PresignStoredFileUploadPart(Handler[PresignStoredFileUploadPartRequestDTO,
         """Touch *file* at its revision, re-reading it after each lost race; a row that left
         ``pending`` meanwhile raises ``precondition``."""
 
-        for attempt in range(1, _PART_TOUCH_ATTEMPTS + 1):
+        attempt = 1
+
+        while True:
             try:
                 await self.doc.touch(file.id, rev=file.rev, return_new=False)
                 return
@@ -403,6 +405,7 @@ class PresignStoredFileUploadPart(Handler[PresignStoredFileUploadPartRequestDTO,
                 if error.code != "revision_mismatch" or attempt == _PART_TOUCH_ATTEMPTS:
                     raise
 
+            attempt += 1
             file = await self.reads.get(pk=file.id, skip_cache=True)
             ensure_awaiting_upload(file)
 

@@ -16,6 +16,7 @@ import pytest
 from forze.application.contracts.storage import UploadSession
 from forze.application.contracts.tenancy import TENANT_GLOBAL_REQUIRED_CODE, TenantIdentity
 from forze.application.execution import DepsRegistry, ExecutionContext, ExecutionRuntime
+from forze.application.execution.context.drainable import Drainables
 from forze.application.execution.operations import run_operation
 from forze.base.exceptions import CoreException, ExceptionKind, exc
 from forze.base.primitives import FrozenTimeSource, bind_time_source, utcnow
@@ -266,6 +267,60 @@ class TestSweep:
 # ....................... #
 
 
+class TestRowErrors:
+    async def test_a_mark_that_fails_otherwise_raises_and_leaves_the_row_pending(
+        self, ctx: ExecutionContext
+    ) -> None:
+        started = await _initiate(ctx)
+        doc = MagicMock()
+        doc.update = AsyncMock(side_effect=exc.infrastructure("store down"))
+        storage = _KIT.resolved_storage
+
+        with pytest.raises(CoreException) as ei:
+            await _startup()._sweep_row(  # pyright: ignore[reportPrivateUsage]
+                started.file, doc, ctx.storage.command(storage), ctx.storage.uploads(storage)
+            )
+
+        assert ei.value.kind is ExceptionKind.INFRASTRUCTURE
+        assert (await _row(ctx, started.file.id)).status is StoredFileStatus.PENDING
+
+    @pytest.mark.parametrize(
+        "error",
+        [
+            exc.configuration("no tenant bound", code=TENANT_GLOBAL_REQUIRED_CODE),
+            asyncio.CancelledError(),
+        ],
+        ids=["wiring", "cancelled"],
+    )
+    async def test_a_wiring_error_or_cancellation_on_a_row_ends_the_drain(
+        self, ctx: ExecutionContext, monkeypatch: pytest.MonkeyPatch, error: BaseException
+    ) -> None:
+        await _initiate(ctx)
+
+        async def _raise(self: _PendingSweepStartup, *args: Any) -> bool:
+            raise error
+
+        monkeypatch.setattr(_PendingSweepStartup, "_sweep_row", _raise)
+
+        with pytest.raises(type(error)):
+            await _startup()._drain(ctx)  # pyright: ignore[reportPrivateUsage]
+
+    async def test_cancellation_in_one_tenant_ends_the_tick(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        async def _cancelled(self: _PendingSweepStartup, ctx: ExecutionContext) -> None:
+            raise asyncio.CancelledError
+
+        monkeypatch.setattr(_PendingSweepStartup, "_drain", _cancelled)
+        ctx = context_from_modules(MockDepsModule(state=MockState()))
+
+        with pytest.raises(asyncio.CancelledError):
+            await _startup()._sweep_tick(ctx, [_T1, _T2])  # pyright: ignore[reportPrivateUsage]
+
+
+# ....................... #
+
+
 class TestCleanupRetry:
     async def test_a_cleanup_that_failed_after_the_mark_is_retried_once_stale(
         self, ctx: ExecutionContext, monkeypatch: pytest.MonkeyPatch
@@ -491,6 +546,7 @@ class TestStep:
 
             sweep = cast(_PendingSweepStartup, step.startup)
             assert sweep in ctx.drainables.loops  # type: ignore[comparison-overlap]
+            assert sweep.loop_name == "stored_file_pending_sweep"
 
             async def _failed() -> bool:
                 return (await _row(ctx, started.file.id)).status is StoredFileStatus.FAILED
@@ -608,6 +664,72 @@ class TestStep:
             assert task is not None and not task.done()
 
             await step.shutdown(ctx)
+
+    async def test_a_cancelled_tick_ends_the_loop_cancelled(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        async def _cancelled(self: _PendingSweepStartup, *args: Any) -> None:
+            raise asyncio.CancelledError
+
+        monkeypatch.setattr(_PendingSweepStartup, "_sweep_tick", _cancelled)
+        step = stored_file_pending_sweep_lifecycle_step(_KIT, interval=_FAST, jitter=0.0)
+        runtime = _runtime(MockState())
+
+        async with runtime.scope():
+            ctx = runtime.get_context()
+            await step.startup(ctx)
+            task = cast(_PendingSweepStartup, step.startup).task
+            assert task is not None
+
+            async def _done() -> bool:
+                return task.done()
+
+            assert await _wait_until(_done)
+            assert task.cancelled()
+
+            await step.shutdown(ctx)
+
+    async def test_a_failed_registration_cancels_the_started_loop(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        step = stored_file_pending_sweep_lifecycle_step(_KIT, interval=_FAST, jitter=0.0)
+        sweep = cast(_PendingSweepStartup, step.startup)
+        runtime = _runtime(MockState())
+
+        async with runtime.scope():
+            ctx = runtime.get_context()
+
+            def _refuse(self: Drainables, loop: Any) -> None:
+                raise RuntimeError("drain registry closed")
+
+            monkeypatch.setattr(Drainables, "register", _refuse)
+
+            with pytest.raises(RuntimeError):
+                await step.startup(ctx)
+
+            # Back where startup found it, so a retry is a clean start.
+            assert (sweep.control.task, sweep.control.event) == (None, None)
+
+    async def test_a_task_that_cannot_start_leaves_the_control_clean(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        step = stored_file_pending_sweep_lifecycle_step(_KIT, interval=_FAST, jitter=0.0)
+        sweep = cast(_PendingSweepStartup, step.startup)
+        runtime = _runtime(MockState())
+
+        def _no_task(coro: Any, **kwargs: Any) -> Any:
+            coro.close()
+            raise RuntimeError("event loop is closing")
+
+        async with runtime.scope():
+            ctx = runtime.get_context()
+
+            # Startup reaches create_task without suspending, so nothing else sees the patch.
+            with monkeypatch.context() as patch, pytest.raises(RuntimeError):
+                patch.setattr(asyncio, "create_task", _no_task)
+                await step.startup(ctx)
+
+            assert (sweep.control.task, sweep.control.event) == (None, None)
 
     async def test_a_tenant_scoped_route_without_tenants_fails_startup(self) -> None:
         step = stored_file_pending_sweep_lifecycle_step(_KIT)

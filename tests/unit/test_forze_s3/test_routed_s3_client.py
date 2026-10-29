@@ -143,3 +143,26 @@ def test_routed_s3_credential_fingerprint_detects_secret_rotation() -> None:
     assert fp_a != fp_b  # rotating only the secret key changes the dedup key
     assert fp_a == fp_a2  # stable for identical credentials
     assert "secret-a" not in fp_a  # raw secret never embedded
+
+
+@pytest.mark.asyncio
+async def test_routed_s3_forwards_list_multipart_uploads() -> None:
+    routed = RoutedS3Client(
+        secrets=_MemSecrets({_T1: _creds()}),
+        secret_ref_for_tenant=_ref,
+        tenant_provider=lambda: _T1,
+        max_cached_tenants=1,
+    )
+    inner = MagicMock()
+    inner.list_multipart_uploads = AsyncMock(return_value=["U1"])
+
+    @asynccontextmanager
+    async def _scope() -> object:
+        yield inner
+
+    inner.client = MagicMock(side_effect=lambda: _scope())
+
+    with patch.object(RoutedS3Client, "_get_client", AsyncMock(return_value=inner)):
+        assert await routed.list_multipart_uploads("b", "k") == ["U1"]
+
+    inner.list_multipart_uploads.assert_awaited_once_with("b", "k")
