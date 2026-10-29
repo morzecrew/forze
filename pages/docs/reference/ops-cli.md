@@ -167,7 +167,7 @@ Retryability is read from the kind's egress policy first.
 | 130 / 143 | interrupted | SIGINT / SIGTERM, cancelled before any commit started |
 
 69, 75 and 78 are `EX_UNAVAILABLE`, `EX_TEMPFAIL` and `EX_CONFIG` from `sysexits.h`. The
-retryable kinds are `concurrency`, `throttled` and `infrastructure`.
+retryable kinds are `concurrency`, `throttled`, `infrastructure` and `unavailable`.
 
 ## Error codes the CLI adds
 

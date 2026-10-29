@@ -41,6 +41,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **A throttled HTTP error tells the client when to come back.** Its `retry_after` (seconds) or else `retry_at` (aware `datetime`) detail becomes a `Retry-After` header, which `AllowlistCORSMiddleware` exposes; other details stay withheld. No header when neither key is usable.
 
+- **A locked login's 429 tells the client when to try again.** The `login_locked` throttle carries the window's end as `details["retry_at"]`, which FastAPI sends as `Retry-After`; the body still withholds details. `LoginLockoutGuard.locked_until(digest)` returns that instant, or `None` when the login is not locked.
+
+- **An `unavailable` error kind answers 503 for something switched off right now.** `exc.unavailable(...)` is retryable, keeps its summary and code on every transport, and is not logged as a server error; details stay withheld. A `retry_after` or `retry_at` detail sets `Retry-After`, as on a throttle.
+
+- **Retries wait out a `retry_at` hint too.** A throttled or unavailable error's aware `retry_at` detail now delays the resilience, saga and durable retries until that instant, read as the `Retry-After` header reads it. `retry_hint(error)` in `forze.application.execution.resilience.backoff` returns the hint as given.
+
 - **`RoutedDuckDbClient(ca_cert_file=...)` lets a lake session use HTTPS on DuckDB 2.** The file must hold a PEM certificate, and any statement on the instance can read it. A dynamic read calling a table function other than `range`, `generate_series` or `unnest`, naming a path, or naming an unattached catalog is refused.
 
 - **A cancel after an operation's commit point is recorded on every surface.** The operation logs a `commit_ambiguous` warning carrying its name and invocation ids, adds a `forze.commit_ambiguous` span event, and re-raises the cancellation. `forze ops call` still reports it as an error.
@@ -88,6 +94,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **A federated result snapshot replays only for the same members and member filters.** Its fingerprint now covers each member's weight and leg filters, and a thin replay drops a row its member's filters no longer match.
 
 - **A datetime `SerializedBy` key locks its UTC instant** (**behaviour change**). One owner's create and update no longer lock apart by offset; naive reads as UTC (right in a UTC session), an out-of-range instant is refused. Drain writers of naive or non-UTC keys while deploying, or accept a brief unlocked window.
+
+- **An operation span stays clean on a failure the caller can handle** (**behaviour change**). OpenTelemetry's own handling marked every failed operation's span `ERROR` whatever its kind and recorded a server error's exception twice. Now only a server-side failure sets `ERROR`, with one exception event, as port spans do.
 
 - **A warning logged before `configure_logging` carries the invocation's ids.** The fallback renderer now merges the bound logging context, as the configured chain does.
 

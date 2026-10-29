@@ -22,7 +22,7 @@ from forze.application.contracts.tenancy import TenantPoolStats
 # OpenTelemetry is imported lazily inside the ``instrument_*`` functions below so that
 # merely importing this module (it is re-exported from ``forze.application.execution``)
 # does not pull ``opentelemetry`` into the import path of an uninstrumented app.
-from forze.base.exceptions import CoreException, http_status_for_kind
+from forze.base.exceptions import CoreException, is_server_error_kind
 
 from .operations.registry import OperationRegistry
 from .resilience import InProcessResilienceExecutor
@@ -423,7 +423,12 @@ def _telemetry_factory(
             outcome = "success"
 
             with tracer.start_as_current_span(
-                op_name, attributes=_span_attributes(ctx, op_name, kind)
+                op_name,
+                attributes=_span_attributes(ctx, op_name, kind),
+                # Classified below, as the port spans do: OTel's own handling would mark
+                # every failure an error and record a server error's exception twice.
+                record_exception=False,
+                set_status_on_exception=False,
             ) as span:
                 try:
                     return await next(args)
@@ -434,8 +439,9 @@ def _telemetry_factory(
                     # caller may handle) is an *expected* outcome recorded as ``failed``
                     # with a clean span, so error-rate alerting on
                     # ``forze.operations{forze.outcome="error"}`` tracks genuine faults.
-                    # A 5xx CoreException or any other exception paints the span red.
-                    if isinstance(exc, CoreException) and http_status_for_kind(exc.kind) < 500:
+                    # A 5xx CoreException (but ``unavailable``, an operator-chosen
+                    # state) or any other exception paints the span red.
+                    if isinstance(exc, CoreException) and not is_server_error_kind(exc.kind):
                         outcome = "failed"
 
                     else:

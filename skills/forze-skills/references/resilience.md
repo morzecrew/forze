@@ -18,7 +18,7 @@ result = await ctx.resilience().run(              # imperative, around one call
 )
 ```
 
-Register app policies via `ResilienceDepsModule(spec=...)` (merged over the built-ins). Retry only fires on **retryable** kinds: `concurrency`, `infrastructure`, `throttled`.
+Register app policies via `ResilienceDepsModule(spec=...)` (merged over the built-ins). Retry only fires on **retryable** kinds: `concurrency`, `infrastructure`, `throttled`, `unavailable`.
 
 ### Port-level policies
 

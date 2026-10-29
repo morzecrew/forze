@@ -43,6 +43,8 @@ class TestServerErrorKindMapping:
             # Mirrors the FastAPI 409 mapping: a retryable concurrency conflict
             # is client-facing, not a leaked server error.
             ExceptionKind.CONCURRENCY,
+            # A 503, but an operator-chosen state, not a fault.
+            ExceptionKind.UNAVAILABLE,
         ):
             assert is_server_error_kind(kind) is False
 
@@ -115,6 +117,16 @@ class TestBuildCoreExceptionAck:
                 "kind": "throttled",
             }
         }
+
+    def test_unavailable_exposes_summary_and_does_not_log(
+        self, error_log_buf: io.StringIO
+    ) -> None:
+        ack = build_core_exception_ack(exc.unavailable("Chat is off", code="chat_off"))
+
+        assert ack == {
+            "error": {"detail": "Chat is off", "code": "chat_off", "kind": "unavailable"}
+        }
+        assert json_records(error_log_buf) == []
 
     def test_infrastructure_acked_generic_and_logged(
         self, error_log_buf: io.StringIO

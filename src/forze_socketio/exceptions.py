@@ -14,8 +14,9 @@ structured error ack of the shape::
     }
 
 Kinds that would map to an HTTP status ``>= 500`` (internal, infrastructure,
-configuration, unknown) are logged server-side and acked with a generic detail
-so internal diagnostics never leak to clients. ``context`` is
+configuration, timeout, unknown) are logged server-side and acked with a generic detail
+so internal diagnostics never leak to clients; ``unavailable`` (503, an operator-chosen
+state) is acked like a client error. ``context`` is
 included only for client-safe kinds whose egress policy exposes details, after
 scrubbing via :func:`forze.base.scrubbing.sanitize` with the ``egress`` context.
 """

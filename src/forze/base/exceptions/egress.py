@@ -80,6 +80,12 @@ _EXC_KIND_POLICY: Mapping[ExceptionKind, ExceptionKindEgress] = {
         expose_details=False,
         retryable=False,
     ),
+    ExceptionKind.UNAVAILABLE: ExceptionKindEgress(
+        # Switched off right now: the state is temporary, so a retry may wait it
+        # out. Details may carry wiring info, as a throttle's do.
+        expose_details=False,
+        retryable=True,
+    ),
     ExceptionKind.INTERNAL: ExceptionKindEgress(
         expose_details=False,
         retryable=False,
@@ -108,6 +114,7 @@ _EXC_KIND_HTTP_STATUS: Mapping[ExceptionKind, int] = {
     ExceptionKind.AUTHORIZATION: 403,
     ExceptionKind.THROTTLED: 429,
     ExceptionKind.TIMEOUT: 504,
+    ExceptionKind.UNAVAILABLE: 503,
 }
 
 # ....................... #

@@ -47,6 +47,8 @@ def test_is_server_error_kind() -> None:
     assert not is_server_error_kind(ExceptionKind.NOT_FOUND)
     assert not is_server_error_kind(ExceptionKind.VALIDATION)
     assert not is_server_error_kind(ExceptionKind.THROTTLED)  # 429
+    # an operator-chosen state, not a fault, despite its 503
+    assert not is_server_error_kind(ExceptionKind.UNAVAILABLE)
 
 
 # ....................... #
@@ -180,6 +182,27 @@ def test_non_exposing_kind_drops_context() -> None:
 
     assert envelope.server_error is False
     assert envelope.status == 401
+    assert envelope.context is None
+
+
+# ....................... #
+
+
+def test_unavailable_keeps_summary_and_code_but_withholds_details() -> None:
+    error = exc.unavailable(
+        "Exports are switched off for maintenance",
+        code="exports_off",
+        details={"flag": "exports_enabled"},
+    )
+
+    envelope = error_envelope(error)
+
+    assert envelope.status == 503
+    assert envelope.server_error is False
+    assert envelope.retryable is True
+    assert envelope.detail == "Exports are switched off for maintenance"
+    assert envelope.code == "exports_off"
+    assert envelope.kind is ExceptionKind.UNAVAILABLE
     assert envelope.context is None
 
 

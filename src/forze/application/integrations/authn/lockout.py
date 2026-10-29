@@ -22,7 +22,7 @@ raw login, so counter key spaces never materialize logins. Old buckets become
 dead keys (value-only, no credential material); see the TTL note above.
 """
 
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 from typing import Final, final
 
 import attrs
@@ -84,9 +84,10 @@ class LoginLockoutGuard:
     Callers (the authn orchestrator) drive the three-step protocol **before**
     password verification:
 
-    1. :meth:`is_locked` — reject the attempt with
-       ``exc.throttled(LOCKED_LOGIN_MSG, code=LOCKED_LOGIN_CODE)`` when the
-       current window already holds ``threshold`` failures;
+    1. :meth:`locked_until` — reject the attempt with
+       ``exc.throttled(LOCKED_LOGIN_MSG, code=LOCKED_LOGIN_CODE)``, carrying the
+       unlock instant as ``details["retry_at"]``, when the current window already
+       holds ``threshold`` failures (:meth:`is_locked` answers the same as a bool);
     2. :meth:`record_failure` after a failed verification;
     3. :meth:`record_success` after a successful one (resets the current bucket).
 
@@ -100,7 +101,7 @@ class LoginLockoutGuard:
     tests.
 
     .. note::
-       ``CounterPort`` is command-style with no read method, so :meth:`is_locked`
+       ``CounterPort`` is command-style with no read method, so :meth:`locked_until`
        reads via ``incr(0)``. That a zero increment returns the current value without
        moving it is now a pinned contract property rather than an observation about the
        adapters that happened to ship — the shared counter conformance battery asserts it
@@ -116,22 +117,48 @@ class LoginLockoutGuard:
 
     # ....................... #
 
-    def _suffix(self, login_digest: str) -> str:
-        """Counter suffix for the digest's current fixed-window bucket."""
+    def _window_seconds(self) -> float:
+        # Not truncated to whole seconds: a sub-second window would divide by zero.
+        return self.config.window.total_seconds()
 
-        window_seconds = int(self.config.window.total_seconds())
-        bucket = int(utcnow().timestamp()) // window_seconds
+    # ....................... #
 
-        return f"authn_lockout:{login_digest}:{bucket}"
+    def _bucket(self) -> int:
+        """The current fixed-window bucket number."""
+
+        return int(utcnow().timestamp() // self._window_seconds())
+
+    # ....................... #
+
+    def _suffix(self, login_digest: str, bucket: int | None = None) -> str:
+        """Counter suffix for the digest's fixed-window bucket (the current one by default)."""
+
+        return f"authn_lockout:{login_digest}:{self._bucket() if bucket is None else bucket}"
+
+    # ....................... #
+
+    async def locked_until(self, login_digest: str) -> datetime | None:
+        """When a locked login unlocks — the current window's end — or :obj:`None` if not locked.
+
+        The instant depends only on the clock and :attr:`LockoutConfig.window`, never on the
+        login or the account, so disclosing it (as ``Retry-After``) tells a client nothing it
+        could not work out itself.
+        """
+
+        bucket = self._bucket()
+        current = await self.counter.incr(0, suffix=self._suffix(login_digest, bucket))
+
+        if current < self.config.threshold:
+            return None
+
+        return datetime.fromtimestamp((bucket + 1) * self._window_seconds(), tz=UTC)
 
     # ....................... #
 
     async def is_locked(self, login_digest: str) -> bool:
         """Whether the current window already holds ``threshold`` failures."""
 
-        current = await self.counter.incr(0, suffix=self._suffix(login_digest))
-
-        return current >= self.config.threshold
+        return await self.locked_until(login_digest) is not None
 
     # ....................... #
 

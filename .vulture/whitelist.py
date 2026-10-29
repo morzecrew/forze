@@ -73,6 +73,7 @@ queue_backend_label  # unused variable (src/forze/application/integrations/queue
 ClsMethod  # unused variable (src/forze/base/descriptors/hybridmethod.py:16)
 InstMethod  # unused variable (src/forze/base/descriptors/hybridmethod.py:17)
 _.__doc__  # unused attribute (src/forze/base/exceptions/model.py:95)
+unavailable  # unused variable (src/forze/base/exceptions/model.py:248)
 enable  # unused variable (src/forze/base/logging/configure.py:42)
 unset  # unused variable (src/forze/base/serialization/model_codec.py:33)
 none  # unused variable (src/forze/base/serialization/model_codec.py:36)

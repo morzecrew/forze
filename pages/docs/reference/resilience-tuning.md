@@ -28,7 +28,7 @@ immediately (no queuing) with `exc.throttled(code="rate_limited")`. State is key
 ## Retry & backoff
 
 `RetryStrategy` re-runs on classified-**retryable** kinds only (`concurrency`,
-`infrastructure`, `throttled`); a non-retryable kind in `retry_on` fails at wiring.
+`infrastructure`, `throttled`, `unavailable`); a non-retryable kind in `retry_on` fails at wiring.
 
 | Param | Default | Meaning |
 |-------|---------|---------|
@@ -37,10 +37,12 @@ immediately (no queuing) with `exc.throttled(code="rate_limited")`. State is key
 | `retry_on` | — | the `ExceptionKind`s that trigger a retry (all must be retryable) |
 | `budget` | `None` | optional `RetryBudget` token-bucket cap on retries across calls |
 
-A `throttled` error carrying `details["retry_after"]` (an upstream `429`'s `Retry-After`,
-in seconds) waits at least that long before the next attempt. One longer than
+A `throttled` or `unavailable` error carrying `details["retry_after"]` (an upstream `429`'s
+`Retry-After`, in seconds) or `details["retry_at"]` (an aware `datetime`) waits at least that
+long before the next attempt; the keys are read as the [FastAPI edge](../integrations/fastapi.md#map-errors-to-http)
+reads them for `Retry-After`. One longer than
 `backoff.max`, or one that would outlive the invocation deadline, is not retried: the
-throttled error is raised at once (event `retry_after_exceeds_max` or
+error is raised at once (event `retry_after_exceeds_max` or
 `retry_deadline_exhausted`).
 
 ## Timeout

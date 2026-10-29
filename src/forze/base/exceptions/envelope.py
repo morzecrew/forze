@@ -36,7 +36,7 @@ type JsonDict = dict[str, Any]
 # ....................... #
 
 GENERIC_INTERNAL_DETAIL: Final[str] = "Internal server error"
-"""Client-facing detail substituted for any server-side (``>= 500``) error."""
+"""Client-facing detail substituted for a server-side error's summary."""
 
 INTERNAL_ERROR_CODE: Final[str] = "core.internal"
 """Error code for an unhandled, non-:class:`CoreException` error."""
@@ -48,14 +48,16 @@ NOT_FOUND_DETAIL: Final[str] = "Not found"
 
 
 def is_server_error_kind(kind: ExceptionKind) -> bool:
-    """Return whether *kind* maps to a server-side (HTTP ``>= 500``) status.
+    """Return whether *kind* is a server-side error: masked, and logged as one.
 
     Derived from the single status mapping (:func:`http_status_for_kind`) so
     every transport agrees on which errors must never expose their summary or
-    details to clients. Unknown kinds fall back to ``500`` and are server-side.
+    details to clients: every kind with a ``>= 500`` status but ``unavailable``,
+    whose ``503`` reports a state an operator chose, not a fault. Unknown kinds
+    fall back to ``500`` and are server-side.
     """
 
-    return http_status_for_kind(kind) >= 500
+    return kind is not ExceptionKind.UNAVAILABLE and http_status_for_kind(kind) >= 500
 
 
 # ....................... #
@@ -86,7 +88,7 @@ class ErrorEnvelope:
     """Whether the originating kind is retryable, per its egress policy."""
 
     server_error: bool
-    """Whether this is a server-side (``>= 500``) error.
+    """Whether this is a server-side error (see :func:`is_server_error_kind`).
 
     Transports use it to decide server-side logging and to confirm the detail
     has already been masked.
@@ -155,7 +157,7 @@ def error_envelope(exc: CoreException) -> ErrorEnvelope:
 
     policy = exception_egress_policy(exc.kind)
     status = http_status_for_kind(exc.kind)
-    server_error = status >= 500
+    server_error = is_server_error_kind(exc.kind)
 
     context: JsonDict | None = None
     if exc.details and exc.expose_details and policy.expose_details and not server_error:

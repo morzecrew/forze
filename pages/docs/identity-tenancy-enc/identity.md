@@ -286,9 +286,12 @@ pseudonymization to keep logins out of logs and counter key spaces, not secrecy.
 
 **Lockout** is a fixed window over `CounterPort`: after `threshold` failed attempts
 within the window, further attempts raise `throttled` (`code="login_locked"`, HTTP 429)
-*before* password verification, and unlock when the window rolls over. It counts
+*before* password verification, and unlock when the window rolls over. The error carries
+that unlock instant as `details["retry_at"]`, which the [FastAPI edge](../integrations/fastapi.md#map-errors-to-http)
+sends as `Retry-After`; the body still withholds the details. It counts
 **login strings, not accounts**, so a nonexistent login locks exactly like a real one —
-preserving the no-enumeration posture.
+preserving the no-enumeration posture. The unlock instant is the same for every login
+string, so the header discloses nothing either.
 
 ## The identity plane
 

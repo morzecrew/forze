@@ -230,6 +230,8 @@ class TestPasswordLockout:
 
             assert ei.value.kind is ExceptionKind.THROTTLED
             assert ei.value.code == "login_locked"
+            # T0 sits on a window boundary, so the lock lifts one window later.
+            assert ei.value.details == {"retry_at": T0 + timedelta(minutes=15)}
             assert verifier.calls == 3  # untouched: rejected pre-verification
 
         kinds = [event.kind for event in sink.events]

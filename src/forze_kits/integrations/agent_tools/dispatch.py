@@ -203,7 +203,8 @@ async def dispatch_tool_use(
         # could act on, so absorbing it into a ToolResult would hide a real failure inside
         # an agent turn: the loop would see a "handled" call and the operator would see
         # nothing at all. Those propagate, carrying their traceback to the app's own
-        # error handling.
+        # error handling. ``unavailable`` is absorbed despite its 503: it is a state an
+        # operator chose, and the model can tell the user the feature is switched off.
         if error_envelope(error).server_error:
             raise
 

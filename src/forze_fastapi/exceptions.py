@@ -6,7 +6,7 @@ require_fastapi()
 # ....................... #
 
 import math
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta
 from email.utils import format_datetime
 from typing import Final
 
@@ -14,11 +14,10 @@ from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
-from forze.application.execution.resilience.backoff import retry_after
+from forze.application.execution.resilience.backoff import retry_hint
 from forze.base.exceptions import (
     CoreException,
     ErrorEnvelope,
-    ExceptionKind,
     error_envelope,
     exc,
     unhandled_error_envelope,
@@ -66,37 +65,30 @@ def _render_envelope(envelope: ErrorEnvelope) -> JSONResponse:
 
 
 def _retry_after_header(exc: CoreException) -> str | None:
-    """The ``Retry-After`` value (RFC 9110) a throttled *exc* asks for, or :obj:`None`.
+    """The ``Retry-After`` value (RFC 9110) a throttled or unavailable *exc* asks for, or None.
 
-    ``details["retry_after"]`` — seconds, read as the retry layer reads it — is rounded up
-    to whole seconds; otherwise ``details["retry_at"]``, an aware :class:`~datetime.datetime`,
-    becomes an HTTP-date. Any other value gives no header: a bad hint never fails the response.
+    Read as the retry layers read it (:func:`retry_hint`): ``details["retry_after"]`` seconds
+    are rounded up to whole seconds, a ``details["retry_at"]`` instant becomes an HTTP-date.
+    Any other value gives no header: a bad hint never fails the response.
     """
 
-    if exc.kind is not ExceptionKind.THROTTLED:
-        return None
+    hint = retry_hint(exc)
 
-    seconds = retry_after(exc)
+    if isinstance(hint, datetime):
+        try:
+            # An HTTP-date has whole seconds; rounding down would send the client back early.
+            if hint.microsecond:
+                hint = hint.replace(microsecond=0) + timedelta(seconds=1)
 
-    if seconds is not None and math.isfinite(seconds):
-        return str(math.ceil(seconds))
+            return format_datetime(hint, usegmt=True)
 
-    at = exc.details.get("retry_at") if exc.details else None
+        except OverflowError:  # rounded past the last representable instant
+            return None
 
-    if not isinstance(at, datetime) or at.utcoffset() is None:
-        return None
+    if hint is not None and math.isfinite(hint):
+        return str(math.ceil(hint))
 
-    try:
-        at = at.astimezone(UTC)
-
-        # An HTTP-date has whole seconds; rounding down would send the client back early.
-        if at.microsecond:
-            at = at.replace(microsecond=0) + timedelta(seconds=1)
-
-        return format_datetime(at, usegmt=True)
-
-    except (OverflowError, ValueError):  # an instant UTC cannot represent
-        return None
+    return None
 
 
 # ....................... #
@@ -109,8 +101,8 @@ def build_core_exception_response(exc: CoreException) -> JSONResponse:
     projection — server-error masking and egress sanitization already applied —
     into a FastAPI :class:`JSONResponse`, logging server-side errors on the way.
     The same envelope the Socket.IO transport renders, so both stay in lock-step.
-    A throttled error's ``retry_after`` (seconds) or ``retry_at`` (aware datetime)
-    detail also sets ``Retry-After``; its other details stay withheld.
+    A throttled or unavailable error's ``retry_after`` (seconds) or ``retry_at`` (aware
+    datetime) detail also sets ``Retry-After``; its other details stay withheld.
     """
 
     envelope = error_envelope(exc)

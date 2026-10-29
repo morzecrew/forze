@@ -269,8 +269,8 @@ Branch on `code`, never on `detail`: a stale `?rev=` on an update answers
 error keeps its code and gets a generic `detail`; an exception that is not a
 `CoreException` answers `core.internal`.
 
-A `throttled` error withholds its details, but it can still tell the client when to
-come back: the response carries a `Retry-After` header read from two `details` keys.
+A `throttled` or `unavailable` error withholds its details, but it can still tell the client
+when to come back: the response carries a `Retry-After` header read from two `details` keys.
 
 | Key | Value | `Retry-After` |
 |-----|-------|---------------|
@@ -279,7 +279,8 @@ come back: the response carries a `Retry-After` header read from two `details` k
 
 A usable `retry_after` wins when both are set; an unusable one — a negative or non-finite
 number, a string — falls through to `retry_at`. When neither is usable (a naive `datetime`
-is not), no header is sent, never an error. `retry_after` is also what the
+is not, nor one whose zone raises), no header is sent, never an error. The [retry layers](../reference/resilience-tuning.md#retry-backoff)
+read the same keys the same way, through `retry_hint`. `retry_after` is also what the
 [HTTP client](http.md) puts on an upstream `429`, so a throttle passed through keeps its
 hint — but the client caps it at 3600 seconds, so a longer upstream wait arrives as 3600.
 

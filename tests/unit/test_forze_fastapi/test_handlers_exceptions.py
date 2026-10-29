@@ -3,7 +3,7 @@
 import io
 import json
 from collections.abc import Iterator
-from datetime import UTC, datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta, timezone, tzinfo
 
 import pytest
 from fastapi import FastAPI
@@ -108,6 +108,23 @@ class TestForzeExceptionHandler:
             "detail": "Rate limit exceeded",
             "code": "core.throttled",
             "kind": "throttled",
+        }
+        assert _json_records(error_log_buf) == []
+
+    @pytest.mark.asyncio
+    async def test_unavailable_returns_503_with_summary_and_no_error_log(
+        self, error_log_buf: io.StringIO
+    ) -> None:
+        # An operator switched it off: the client learns so, and nothing is logged as broken.
+        err = exc.unavailable("Exports are off", code="exports_off", details={"flag": "f"})
+        request = Request(scope={"type": "http", "path": "/", "method": "GET"})
+        response = await _forze_exception_handler(request, err)
+        assert response.status_code == 503
+        assert response.headers.get(ERROR_CODE_HEADER) == "exports_off"
+        assert json.loads(response.body) == {
+            "detail": "Exports are off",
+            "code": "exports_off",
+            "kind": "unavailable",
         }
         assert _json_records(error_log_buf) == []
 
@@ -474,6 +491,10 @@ class TestRetryAfterHeader:
             {"retry_at": datetime(2026, 10, 21, 7, 28)},
             {"retry_at": "2026-10-21T07:28:00+00:00"},
             {"retry_at": datetime(1, 1, 1, tzinfo=timezone(timedelta(hours=1)))},
+            # A zone whose utcoffset raises (a tzinfo subclass that does not implement it).
+            {"retry_at": datetime(2026, 10, 21, 7, 28, tzinfo=tzinfo())},
+            # Rounding up to the next second passes the last instant a datetime holds.
+            {"retry_at": datetime.max.replace(tzinfo=UTC)},
         ],
         ids=[
             "none",
@@ -485,6 +506,8 @@ class TestRetryAfterHeader:
             "naive-datetime",
             "string-instant",
             "out-of-range",
+            "zone-raises",
+            "rounds-past-max",
         ],
     )
     def test_an_unusable_hint_sends_no_header(self, details: dict[str, object]) -> None:
@@ -493,7 +516,15 @@ class TestRetryAfterHeader:
         assert response.status_code == 429
         assert "Retry-After" not in response.headers
 
-    def test_only_a_throttled_error_sends_it(self) -> None:
+    def test_an_unavailable_error_sends_it(self) -> None:
+        err = exc.unavailable("Switched off for maintenance", details={"retry_after": 120})
+
+        response = build_core_exception_response(err)
+
+        assert response.status_code == 503
+        assert response.headers["Retry-After"] == "120"
+
+    def test_only_a_throttled_or_unavailable_error_sends_it(self) -> None:
         err = exc.infrastructure("Upstream busy", details={"retry_after": 30})
 
         response = build_core_exception_response(err)

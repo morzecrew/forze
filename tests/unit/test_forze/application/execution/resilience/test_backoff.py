@@ -4,13 +4,14 @@ from __future__ import annotations
 
 import math
 import random
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta, timezone, tzinfo
 
 import pytest
 
 from forze.application.contracts.resilience import BackoffStrategy
-from forze.application.execution.resilience.backoff import compute_delay, retry_after
+from forze.application.execution.resilience.backoff import compute_delay, retry_after, retry_hint
 from forze.base.exceptions import CoreException, exc
+from forze.base.primitives import FrozenTimeSource, bind_time_source
 
 # ----------------------- #
 
@@ -85,10 +86,88 @@ def test_cap_holds_for_any_attempt(jitter: str, attempt: int) -> None:
         (exc.throttled("slow", details={"retry_after": float("nan")}), None),
         (exc.throttled("slow", details={"retry_after": float("inf")}), math.inf),
         (exc.throttled("slow", details={"retry_after": 10**400}), math.inf),
+        (exc.unavailable("off", details={"retry_after": 30}), 30.0),
         (exc.infrastructure("down", details={"retry_after": 5}), None),
     ],
 )
-def test_retry_after_reads_only_a_throttles_numeric_hint(
+def test_retry_after_reads_only_a_hinted_kinds_numeric_hint(
     error: CoreException, expected: float | None
 ) -> None:
     assert retry_after(error) == expected
+
+
+# ....................... #
+
+NOW = datetime(2026, 10, 21, 7, 28, tzinfo=UTC)
+
+
+@pytest.mark.parametrize(
+    ("details", "expected"),
+    [
+        ({"retry_at": NOW + timedelta(seconds=90)}, 90.0),
+        # Any aware zone reads as the same instant.
+        ({"retry_at": datetime(2026, 10, 21, 10, 29, tzinfo=timezone(timedelta(hours=3)))}, 60.0),
+        ({"retry_at": NOW - timedelta(seconds=5)}, 0.0),
+        ({"retry_after": 5, "retry_at": NOW + timedelta(seconds=90)}, 5.0),
+        # An unusable or infinite retry_after falls through to retry_at, as the header does.
+        ({"retry_after": -1, "retry_at": NOW + timedelta(seconds=90)}, 90.0),
+        ({"retry_after": float("inf"), "retry_at": NOW + timedelta(seconds=90)}, 90.0),
+        ({"retry_at": datetime(2026, 10, 21, 7, 30)}, None),
+        ({"retry_at": "2026-10-21T07:30:00+00:00"}, None),
+        ({"retry_at": datetime(1, 1, 1, tzinfo=timezone(timedelta(hours=1)))}, None),
+    ],
+    ids=[
+        "future",
+        "other-zone",
+        "past",
+        "retry-after-wins",
+        "unusable-seconds",
+        "infinite-seconds",
+        "naive",
+        "string",
+        "out-of-range",
+    ],
+)
+def test_retry_after_reads_a_retry_at_instant(
+    details: dict[str, object], expected: float | None
+) -> None:
+    with bind_time_source(FrozenTimeSource(NOW)):
+        assert retry_after(exc.unavailable("off", details=details)) == expected
+        assert retry_after(exc.throttled("slow", details=details)) == expected
+
+
+def test_retry_hint_keeps_the_instant_in_utc() -> None:
+    at = datetime(2026, 10, 21, 10, 28, tzinfo=timezone(timedelta(hours=3)))
+
+    hint = retry_hint(exc.throttled("slow", details={"retry_at": at}))
+
+    assert hint == at
+    assert isinstance(hint, datetime) and hint.tzinfo is UTC
+    assert retry_hint(exc.infrastructure("down", details={"retry_at": at})) is None
+
+
+class _BadZone(tzinfo):
+    """A zone whose ``utcoffset`` answers what a ``datetime`` refuses."""
+
+    def __init__(self, offset: object) -> None:
+        self.offset = offset
+
+    def utcoffset(self, dt: datetime | None) -> timedelta | None:
+        return self.offset  # type: ignore[return-value]
+
+
+@pytest.mark.parametrize(
+    "zone",
+    [tzinfo(), _BadZone("+03:00"), _BadZone(timedelta(hours=25))],
+    ids=["not-implemented", "not-a-timedelta", "out-of-range"],
+)
+def test_a_zone_that_raises_is_no_hint(zone: tzinfo) -> None:
+    # A tzinfo is user code: whatever its offset raises, the hint is unusable, never an error.
+    at = datetime(2026, 10, 21, 7, 28, tzinfo=zone)
+
+    assert retry_hint(exc.throttled("slow", details={"retry_at": at})) is None
+
+    # The seconds fallback still stands.
+    hint = retry_hint(exc.throttled("slow", details={"retry_after": math.inf, "retry_at": at}))
+
+    assert hint == math.inf
