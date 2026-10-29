@@ -9,7 +9,7 @@ for, the migration can land under a running process, and lapsed rows stay until 
 
 from __future__ import annotations
 
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
 import pytest
@@ -19,15 +19,22 @@ pytest.importorskip("psycopg")
 
 from psycopg import sql
 
+from forze.application.contracts.authn import login_digest
 from forze.application.contracts.counter import (
     COUNTER_TTL_UNSUPPORTED_CODE,
     CounterSpec,
     counter_capabilities,
 )
+from forze.application.integrations.authn import LockoutConfig, LoginLockoutGuard
 from forze.base.exceptions import CoreException, ExceptionKind
+from forze.base.primitives import FrozenTimeSource, bind_time_source
 from forze.testing import context_from_deps
 from forze_postgres import PostgresDepsModule
-from forze_postgres.adapters.counter import PostgresCounterAdapter, PostgresCounterAdminAdapter
+from forze_postgres.adapters.counter import (
+    _EXPIRY_RECHECK,  # pyright: ignore[reportPrivateUsage]
+    PostgresCounterAdapter,
+    PostgresCounterAdminAdapter,
+)
 from forze_postgres.execution.deps.configs import PostgresCounterConfig
 from forze_postgres.kernel.catalog.introspect import PostgresIntrospector
 from forze_postgres.kernel.client import PostgresClient
@@ -154,6 +161,13 @@ async def test_the_migration_can_land_under_a_running_process(
         )
     )
 
+    # Inside the re-check cooldown the cached answer stands, so a caller that falls back on
+    # the refusal on every call does not turn each one into a catalog query.
+    with pytest.raises(CoreException):
+        await counter.incr(ttl=TTL)
+
+    _EXPIRY_RECHECK.invalidate(("", f"public.{legacy_table}"))  # stand in for the cooldown
+
     assert await counter.incr(ttl=TTL) == 1, "the next ttl call finds the column"
 
     await _lapse_all(pg_client, legacy_table)
@@ -230,3 +244,46 @@ async def test_the_wired_route_honours_a_ttl(pg_client: PostgresClient, table: s
     await _lapse_all(pg_client, table)
 
     assert await counter.incr(by=0) == 0
+
+
+async def test_the_lockout_keeps_working_on_a_table_without_the_column(
+    pg_client: PostgresClient, legacy_table: str
+) -> None:
+    """An upgrade must not lock everyone out: the lockout writes without a ttl instead.
+
+    Its buckets then stay behind as they did before counters could expire, while a caller
+    that asks the same counter for a ttl directly is still refused.
+    """
+
+    counter = _counter(pg_client, legacy_table, route="authn_lockout")
+    guard = LoginLockoutGuard(
+        counter=counter,
+        config=LockoutConfig(threshold=2, window=timedelta(minutes=15)),
+    )
+    digest = login_digest("alice")
+    t0 = datetime(2026, 6, 12, 12, 0, tzinfo=UTC)
+
+    with bind_time_source(FrozenTimeSource(t0)):
+        assert await guard.locked_until(digest) is None
+
+        await guard.record_failure(digest)
+        await guard.record_failure(digest)
+
+        assert await guard.is_locked(digest) is True
+
+        await guard.record_success(digest)
+
+        assert await guard.is_locked(digest) is False
+
+        await guard.record_failure(digest)
+        await guard.record_failure(digest)
+
+    with bind_time_source(FrozenTimeSource(t0 + timedelta(minutes=15))):
+        assert await guard.is_locked(digest) is False, "the next window unlocks"
+
+    assert await _rows(pg_client, legacy_table) == 1, "one window was written, without expiry"
+
+    with pytest.raises(CoreException) as refused:
+        await counter.incr(suffix="direct", ttl=TTL)
+
+    assert refused.value.code == COUNTER_TTL_UNSUPPORTED_CODE

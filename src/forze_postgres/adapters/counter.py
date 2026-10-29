@@ -20,6 +20,7 @@ from forze.application.contracts.counter import (
 )
 from forze.application.contracts.tenancy import TenancyMixin
 from forze.base.exceptions import exc
+from forze.base.primitives import CacheLane
 from forze_postgres.execution.deps.configs.counter import PostgresCounterConfig
 from forze_postgres.kernel.catalog.introspect import PostgresIntrospector
 from forze_postgres.kernel.client import PostgresClientPort
@@ -45,6 +46,25 @@ _EXPIRY_COLUMN: Final[str] = "expires_at"
 
 _PURGE_BATCH: Final[int] = 1000
 """Rows one purge statement deletes, so a large backlog never holds one long lock."""
+
+_RECHECK_AFTER: Final[float] = 60.0
+"""Seconds before a table found without ``expires_at`` is read from the catalog again.
+
+The column can be added to a running deployment, so its absence is re-checked — but on a
+cooldown rather than on every ``ttl`` call. A caller that falls back on the refusal (the
+login lockout does, on every failed login) would otherwise turn each call into a catalog
+query and a cache eviction.
+"""
+
+_EXPIRY_RECHECK: Final[CacheLane[tuple[str, str], bool]] = CacheLane(
+    max_entries=2048,
+    ttl_seconds=_RECHECK_AFTER,
+)
+"""``(cache partition, table)`` pairs re-checked recently and still without the column.
+
+Keyed by the introspector's cache partition, because with database-per-tenant routing one
+tenant's answer is not another's. Capped, because table-per-tenant names are unbounded.
+"""
 
 
 def _route_prefix(route: str) -> str:
@@ -133,12 +153,15 @@ class _PostgresCounterBase(TenancyMixin):
         does (*required*) is refused with ``configuration``.
 
         A present column is answered from the introspector's cache. An absent one is re-read
-        past the cache only when *required*, so the migration can be applied to a running
-        deployment and the next ``ttl`` call picks it up.
+        past the cache only when *required*, and at most once per :data:`_RECHECK_AFTER`
+        per table, so the migration can be applied to a running deployment and a ``ttl``
+        call picks it up within that cooldown.
         """
 
-        if self.introspector is not None:
-            columns = await self.introspector.get_column_types(
+        introspector = self.introspector
+
+        if introspector is not None:
+            columns = await introspector.get_column_types(
                 schema=table.schema,
                 relation=table.name,
             )
@@ -146,14 +169,19 @@ class _PostgresCounterBase(TenancyMixin):
             if _EXPIRY_COLUMN in columns:
                 return True
 
-            if required:
-                self.introspector.invalidate_relation(schema=table.schema, relation=table.name)
-                columns = await self.introspector.get_column_types(
+            partition = introspector.cache_partition_key
+            recheck = ((partition() or "") if partition is not None else "", table.string())
+
+            if required and _EXPIRY_RECHECK.lookup(recheck) is None:
+                _EXPIRY_RECHECK.store(recheck, True)
+                introspector.invalidate_relation(schema=table.schema, relation=table.name)
+                columns = await introspector.get_column_types(
                     schema=table.schema,
                     relation=table.name,
                 )
 
                 if _EXPIRY_COLUMN in columns:
+                    _EXPIRY_RECHECK.invalidate(recheck)
                     return True
 
         if not required:

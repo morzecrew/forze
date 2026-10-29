@@ -178,7 +178,9 @@ PostgresLifecycleModule(
 
     A table without it keeps working for every call that does not pass a `ttl`; a call
     that does is refused with `configuration` (`counter_ttl_unsupported`) until the column
-    exists, and the next `ttl` call after the migration picks it up without a restart. A
+    exists. The login lockout is the exception: it writes without a `ttl` instead and warns
+    once, so logins keep working while its old keys pile up. After the migration a `ttl`
+    call picks the column up within a minute, without a restart. A
     lapsed row reads as absent but stays in the table: purge a route's lapsed rows with
     `PostgresCounterAdminAdapter.purge_expired()`, or schedule
     `DELETE FROM <counters> WHERE expires_at <= now()` (for example with pg_cron). See

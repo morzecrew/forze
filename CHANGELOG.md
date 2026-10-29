@@ -141,7 +141,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Postgres schema validation accepts the required fields of a view-backed read model.** Postgres records `NOT NULL` on tables only, so a read relation that is a view or a materialized view no longer has its nullability checked. Write and history relations keep the check.
 
-- **The login lockout no longer grows its counter store without bound** (**behaviour change**). A lockout check writes no key, and each window's bucket expires a minute after its window. A Postgres lockout counter table needs the `expires_at` column, or logins fail with `configuration`.
+- **The login lockout no longer grows its counter store without bound** (**behaviour change**). A check writes no key, and each window's bucket expires a minute after its window. On a Postgres table without `expires_at` it writes without a ttl and warns once, so old keys grow until the column is added.
 
 - **`HttpClient` reads a compressed response.** A gzip or deflate body, and with no cap a zstd or brotli one, no longer fails `request`, or a rejected response from `stream`, as an infrastructure error. `RoutedHttpClient` and declared services are fixed with it.
 

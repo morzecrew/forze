@@ -297,10 +297,13 @@ The lockout keeps its counter store bounded. The check that runs on every attemp
 with `incr(0)`, which creates nothing, so only a failed attempt (or a success resetting
 one) writes a key. Each window's key is written with a [`ttl`](../reference/contracts/stores.md#lifetimes-ttl)
 of the window plus `LOCKOUT_TTL_SKEW` (one minute, for clock skew between nodes and the
-store), so it expires on its own once the window is over. On Postgres the lockout's counter
-table needs the optional `expires_at timestamptz` column; without it a login fails with
-`configuration` (`counter_ttl_unsupported`). A custom counter backend that does not report
-expiry gets no `ttl`, and its old window keys stay behind.
+store), so it expires on its own once the window is over.
+
+A counter that cannot expire keys never breaks a login. On a Postgres counter table without
+the optional `expires_at timestamptz` column, the lockout writes its keys without a `ttl` and
+logs a warning once per process naming the table and the `ALTER TABLE` to run; it still
+counts and locks, and its old window keys keep growing until the column is added. A custom
+counter backend that does not report expiry gets no `ttl` either.
 
 ## The identity plane
 

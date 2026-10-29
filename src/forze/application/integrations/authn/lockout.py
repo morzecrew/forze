@@ -19,19 +19,32 @@ raw login, so counter key spaces never materialize logins.
 expires on its own once its window is over instead of staying behind as a dead
 key, and the check that runs on every attempt reads with ``incr(0)``, which does
 not create a counter. Only a failed attempt (or a success resetting one) writes a
-key. On a counter backend that cannot expire keys (one that does not report
+key.
+
+A lockout that cannot expire its keys keeps locking; it only keeps its old keys.
+On a counter backend that does not report
 :class:`~forze.application.contracts.counter.CounterCapabilities` with
-``expiry=True``) buckets are written without a ttl and old ones stay behind, as
-they did before counters could expire.
+``expiry=True``, buckets are written without a ttl. On one that reports expiry but
+refuses this ttl (``counter_ttl_unsupported`` — a Postgres counter table without
+its ``expires_at`` column), the write is retried without one and a warning is
+logged once per process. Login availability outranks key growth, which is what
+every deployment had before counters could expire.
 """
 
+import threading
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
 from typing import Final, final
 
 import attrs
 
-from forze.application.contracts.counter import CounterPort, counter_capabilities
-from forze.base.exceptions import exc
+from forze.application.contracts.counter import (
+    COUNTER_TTL_UNSUPPORTED_CODE,
+    CounterPort,
+    counter_capabilities,
+)
+from forze.base.exceptions import CoreException, exc
+from forze.base.logging import Logger
 from forze.base.primitives import StrKey, utcnow
 
 # ----------------------- #
@@ -52,6 +65,11 @@ A bucket is chosen by the application's clock and expired by the store's. Create
 start of its window on the fastest clock, a bucket living exactly one window would lapse
 while a slower node still counts that window as current, and a locked login would unlock
 early there. The margin covers that skew; past it a bucket is dead either way."""
+
+_logger = Logger("integrations.authn.lockout")
+
+_TTL_REFUSAL_REPORTED: Final = threading.Event()
+"""Set once the warning for a counter that refused the lockout's ttl has been logged."""
 
 # ....................... #
 
@@ -185,14 +203,47 @@ class LoginLockoutGuard:
 
     # ....................... #
 
+    async def _write_bucket(
+        self,
+        write: Callable[..., Awaitable[int]],
+        value: int,
+        suffix: str,
+    ) -> None:
+        """Write one bucket with its lifetime, or without one if the counter refuses it.
+
+        Only the ``counter_ttl_unsupported`` refusal is absorbed, and only here: a caller
+        that asks a counter for a ttl directly still gets the ``configuration`` error.
+        """
+
+        lifetime = self._lifetime()
+
+        try:
+            await write(value, suffix=suffix, **lifetime)
+
+        except CoreException as error:
+            if not lifetime or error.code != COUNTER_TTL_UNSUPPORTED_CODE:
+                raise
+
+            if not _TTL_REFUSAL_REPORTED.is_set():
+                _TTL_REFUSAL_REPORTED.set()
+                _logger.warning(
+                    "Login lockout counter refused a ttl; writing window keys without one, "
+                    "so old windows stay stored until the counter can expire them",
+                    reason=str(error),
+                )
+
+            await write(value, suffix=suffix)
+
+    # ....................... #
+
     async def record_failure(self, login_digest: str) -> None:
         """Count one failed attempt in the current window."""
 
-        await self.counter.incr(1, suffix=self._suffix(login_digest), **self._lifetime())
+        await self._write_bucket(self.counter.incr, 1, self._suffix(login_digest))
 
     # ....................... #
 
     async def record_success(self, login_digest: str) -> None:
         """Reset the current window bucket after a successful login."""
 
-        await self.counter.reset(0, suffix=self._suffix(login_digest), **self._lifetime())
+        await self._write_bucket(self.counter.reset, 0, self._suffix(login_digest))

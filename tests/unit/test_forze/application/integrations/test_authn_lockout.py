@@ -2,12 +2,19 @@
 
 from __future__ import annotations
 
+import threading
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 
 import pytest
 
 from forze.application.contracts.authn import login_digest
-from forze.application.contracts.counter import CounterPort, counter_capabilities
+from forze.application.contracts.counter import (
+    CounterCapabilities,
+    CounterPort,
+    counter_capabilities,
+    counter_ttl_unsupported,
+)
 from forze.application.integrations.authn import (
     LOCKED_LOGIN_CODE,
     LOCKED_LOGIN_MSG,
@@ -15,7 +22,8 @@ from forze.application.integrations.authn import (
     LockoutConfig,
     LoginLockoutGuard,
 )
-from forze.base.exceptions import CoreException
+from forze.application.integrations.authn import lockout as lockout_module
+from forze.base.exceptions import CoreException, exc
 from forze.base.primitives import FrozenTimeSource, bind_time_source
 from forze_mock.adapters.counter import MockCounterAdapter, MockCounterAdminAdapter
 from forze_mock.state import MockState
@@ -289,3 +297,64 @@ class TestLockoutKeyGrowth:
             assert await guard.is_locked(DIGEST) is False
 
         assert counter_capabilities(counter).expiry is False
+
+
+# ....................... #
+
+
+class _RefusingCounter(_MemoryCounter):
+    """Reports expiry but refuses every ttl — a Postgres table without ``expires_at``."""
+
+    def __init__(self, error: CoreException) -> None:
+        super().__init__()
+        self.error = error
+
+    def capabilities(self) -> CounterCapabilities:
+        return CounterCapabilities(expiry=True)
+
+    async def incr(self, by: int = 1, *, suffix: str | None = None, **kw: object) -> int:
+        if kw.get("ttl") is not None:
+            raise self.error
+
+        return await super().incr(by, suffix=suffix)
+
+    async def reset(self, value: int = 1, *, suffix: str | None = None, **kw: object) -> int:
+        if kw.get("ttl") is not None:
+            raise self.error
+
+        return await super().reset(value, suffix=suffix)
+
+
+class TestLockoutOnACounterThatRefusesTheTtl:
+    """Login availability outranks key growth: the lockout degrades, it does not fail."""
+
+    async def test_it_still_counts_and_locks_and_warns_once(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        warnings: list[str] = []
+        monkeypatch.setattr(lockout_module, "_TTL_REFUSAL_REPORTED", threading.Event())
+        monkeypatch.setattr(
+            lockout_module,
+            "_logger",
+            SimpleNamespace(warning=lambda event, **extras: warnings.append(extras["reason"])),
+        )
+        counter = _RefusingCounter(counter_ttl_unsupported("the table has no expires_at"))
+        guard = LoginLockoutGuard(counter=counter, config=LockoutConfig(threshold=2))
+
+        with bind_time_source(FrozenTimeSource(T0)):
+            await guard.record_failure(DIGEST)
+            await guard.record_failure(DIGEST)
+            assert await guard.is_locked(DIGEST) is True
+
+            await guard.record_success(DIGEST)
+            assert await guard.is_locked(DIGEST) is False
+
+        assert len(warnings) == 1, "warned once per process, not once per write"
+        assert "expires_at" in warnings[0]
+
+    async def test_any_other_refusal_still_fails_the_write(self) -> None:
+        counter = _RefusingCounter(exc.configuration("the counter route is not wired"))
+        guard = LoginLockoutGuard(counter=counter)
+
+        with bind_time_source(FrozenTimeSource(T0)), pytest.raises(CoreException):
+            await guard.record_failure(DIGEST)
