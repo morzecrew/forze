@@ -9,6 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- ...
+
+### Changed
+
+- ...
+
+### Fixed
+
+- ...
+
+## [0.17.0] - 2026-10-30
+
+### Added
+
 - **Counters can expire: every write verb takes `ttl`.** An increment that creates a counter starts a fixed lifetime no later write extends, and `reset` replaces it; a lapsed counter reads as absent. Postgres needs an optional `expires_at` column, and `counter_capabilities(port).expiry` reports support.
 
 - **`LockoutConfig.lock_for` keeps a locked login locked past its window.** The failure that reaches the threshold stores an unlock instant on a separate lock key. The login unlocks at the later of the window's end and that instant, and `Retry-After` carries the later one.
@@ -2758,7 +2772,8 @@ Execution and mapping refactor, middleware-first usecases, split search/cache/do
 
 - Packaging metadata for PyOCI classifiers.
 
-[unreleased]: https://github.com/morzecrew/forze/compare/v0.16.2...HEAD
+[unreleased]: https://github.com/morzecrew/forze/compare/v0.17.0...HEAD
+[0.17.0]: https://github.com/morzecrew/forze/compare/v0.16.2...v0.17.0
 [0.16.2]: https://github.com/morzecrew/forze/compare/v0.16.1...v0.16.2
 [0.16.1]: https://github.com/morzecrew/forze/compare/v0.16.0...v0.16.1
 [0.16.0]: https://github.com/morzecrew/forze/compare/v0.15.1...v0.16.0
