@@ -76,3 +76,15 @@ class TestBuildStoredFileRegistry:
         list_ = cat[ns.key(StoredFileKernelOp.LIST)].descriptor
         assert list_ is not None
         assert "hits" in (list_.output_schema() or {}).get("properties", {})
+
+    def test_opt_in_download_ops_are_read_only_with_descriptors(self) -> None:
+        kit = StoredFileKitSpec(name="files", stream_downloads=True, presign_downloads=True)
+        ns = kit.document.default_namespace
+        cat = build_stored_file_registry(kit).freeze().catalog()
+
+        assert cat[ns.key(StoredFileKernelOp.DOWNLOAD_STREAM)].is_read_only is True
+        assert cat[ns.key(StoredFileKernelOp.PRESIGN_DOWNLOAD)].is_read_only is True
+
+        presign = cat[ns.key(StoredFileKernelOp.PRESIGN_DOWNLOAD)].descriptor
+        assert presign is not None
+        assert {"file", "presigned"} <= set((presign.output_schema() or {}).get("properties", {}))

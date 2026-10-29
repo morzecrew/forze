@@ -317,6 +317,80 @@ flow above needs them.
     error propagates to a normal error status. **Server-side** (SSE/CMEK)
     encryption is transparent and does not refuse.
 
+### Stored-file downloads
+
+The stored-file kit ships no generated routes. It has three read-only download
+operations, and each one loads the row first: a row the caller can't read
+(another tenant's, or a missing one) answers not-found, and a `pending` or
+`failed` file is refused before storage is touched. `download` is always
+registered. The other two are opt-in, because an operation runs only the guards
+bound on its own key: enable each with
+`StoredFileKitSpec(stream_downloads=True, presign_downloads=True)`, then bind
+your authn and authz on it as you do on `download`. A `StoredFileFacade` method
+for an operation left off raises a configuration error.
+
+| Operation | Input | Result |
+|-----------|-------|--------|
+| `download` | `StoredFileIdDTO` | `StoredFileDownloadDTO`: the whole object in memory, for small files |
+| `download_stream` | `StoredFileIdDTO` | `StoredFileStream`: the row plus a bounded-memory `StreamedDownload` named after the stored filename |
+| `presign_download` | `PresignStoredFileDownloadRequestDTO` (`id`, `expires_in` up to 7 days) | `StoredFilePresignedDownloadDTO`: the row plus a presigned `GET` URL |
+
+A hand-written route hands the stream to `streamed_download_response`, which
+builds the generated download route's `200`: `Content-Disposition`, `ETag`,
+`Last-Modified`, and `Content-Length` when the size is known. It doesn't answer
+`Range` or conditional requests.
+
+```python
+from uuid import UUID
+
+from fastapi import APIRouter, Depends
+
+from forze.application.execution.operations import run_operation
+from forze_fastapi.routes import streamed_download_response
+from forze_kits.aggregates.stored_file import StoredFileIdDTO
+
+files_router = APIRouter(prefix="/files", tags=["files"])
+
+
+@files_router.get("/{file_id}/content")
+async def file_content(file_id: UUID, ctx=Depends(ctx_dep)):
+    args = StoredFileIdDTO(id=file_id)
+    result = await run_operation(registry, "files.download_stream", args, ctx)
+
+    return streamed_download_response(result.stream)
+```
+
+The stream reads the object in parts while the response is sent. If the file is
+deleted mid-download, the next read fails with `not_found`. The status is already
+sent, so the response is cut short: the client gets fewer bytes than
+`Content-Length`, or a chunked body with no final chunk. A stored file's key is
+never reused, so a stream can't mix two files.
+
+`presign_download` follows the storage kit's presign rules: the URL is a bearer
+credential and the storage key's tenant check applies. The URL saves under the
+object key's name, so the client takes the filename from `file.filename`.
+
+Because its result is a credential, `presign_download` is marked sensitive.
+MCP tools, agent tools, generated routes and `forze ops` refuse it, so serve it
+from a hand-written route like the one above. An MCP server over a registry that
+enables it needs an `operations=` allowlist that leaves it out, because the
+default exposes every read-only operation and the refusal covers the whole
+registration. `download_stream` is not marked sensitive: it returns the same
+bytes as `download`, not a credential.
+
+`download_stream` returns a byte stream, not JSON, so its descriptor sets
+`streams=True`. MCP tools and resource templates, agent tools, `forze ops` and
+`attach_operation_routes` can't carry it. The MCP and `forze ops` defaults leave
+it out, and naming it anywhere is refused. Serve it from a route that calls
+`streamed_download_response`, like the one above.
+
+!!! note "Known limit: encrypting routes refuse per request"
+
+    A client-side-encrypting storage route refuses `presign_download`, but only
+    when it is called. The storage adapter refuses before anything is signed. The
+    kit spec doesn't know a route's encryption config, so setting
+    `presign_downloads=True` for such a route can't fail at build time.
+
 ## Authn routes
 
 `attach_authn_routes` projects an authn registry (`build_authn_registry`) the

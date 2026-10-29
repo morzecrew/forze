@@ -106,8 +106,9 @@ class OpsApp:
     """What ``forze ops`` lists, describes and calls.
 
     Exposure follows MCP: queries by default, commands only with *include_writes*, an
-    optional allowlist checked like a grant, and sensitive read models refused. It is
-    checked here, so a bad declaration fails while its module imports.
+    optional allowlist checked like a grant, sensitive read models refused, and operations
+    whose result is a byte stream left out (refused when allowlisted). It is checked here,
+    so a bad declaration fails while its module imports.
 
     :param registry: The frozen operation registry.
     :param runtime: Builds the runtime a ``call`` runs on, once per call; ``list`` and
@@ -116,7 +117,8 @@ class OpsApp:
     :param include_writes: Expose command operations as well as queries.
     :param operations: Expose only these operations, by key.
     :raises CoreException: ``configuration`` for an empty allowlist, an unknown key, a
-        command without *include_writes*, or a sensitive operation.
+        command without *include_writes*, a streaming operation in the allowlist, or a
+        sensitive operation.
     """
 
     registry: FrozenOperationRegistry

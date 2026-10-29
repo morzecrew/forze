@@ -193,7 +193,8 @@ def operation_tools(
         SDK, and the bindings dispatch resolves names against.
     :raises CoreException: When *include* is empty, names an operation the registry does
         not have, names a command operation in a read-only toolset, or names an operation
-        that projects a sensitive read model; or, as a ``configuration`` error, when a
+        that projects a sensitive read model or returns a byte stream; or, as a
+        ``configuration`` error, when a
         tool name is not a string matching ``^[A-Za-z0-9_-]{1,64}$``, or two operations
         share one — an operation's own key counting as one of its names.
     """
@@ -245,6 +246,16 @@ def operation_tools(
                 "material, which must not reach an agent) and cannot be projected as a "
                 "tool; leave it out of include",
                 code="agent_tools_sensitive_operation",
+                details={"op": str(op)},
+            )
+
+        # A tool result is JSON for the model to read; a chunk iterator would reach it as
+        # an object repr and the bytes never would.
+        if entry.descriptor is not None and entry.descriptor.streams:
+            raise exc.validation(
+                f"{op!r} returns a byte stream, which a tool result cannot carry, and "
+                "cannot be projected as a tool",
+                code="agent_tools_streaming_operation",
                 details={"op": str(op)},
             )
 

@@ -71,8 +71,11 @@ def ensure_readable(file: StoredFileRead) -> None:
 # ....................... #
 
 
-def ensure_downloadable(file: StoredFileRead) -> None:
-    """Reject stored files that are not ready for download."""
+def ensure_downloadable(file: StoredFileRead) -> str:
+    """Reject stored files that are not ready for download.
+
+    :returns: The ready file's storage key.
+    """
 
     ensure_readable(file)
 
@@ -81,6 +84,8 @@ def ensure_downloadable(file: StoredFileRead) -> None:
 
     if not file.storage_key:
         raise exc.internal("Ready stored file is missing storage_key")
+
+    return file.storage_key
 
 
 # ....................... #

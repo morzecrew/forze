@@ -68,6 +68,13 @@ class TestBuildStorageRegistry:
         ):
             assert cat[ns.key(op)].is_read_only
 
+    def test_only_download_stream_is_a_streaming_op(self) -> None:
+        # Its result is a chunk iterator, so JSON surfaces (MCP, agent tools, …) leave it out.
+        cat = build_storage_registry(_FILES).freeze().catalog()
+        streaming = {str(op) for op, entry in cat.items() if entry.descriptor.streams}
+
+        assert streaming == {_FILES.default_namespace.key(StorageKernelOp.DOWNLOAD_STREAM)}
+
     def test_resolve_upload_returns_handler(
         self,
         composition_ctx,

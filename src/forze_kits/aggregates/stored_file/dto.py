@@ -1,9 +1,15 @@
 """Stored-file request and response DTOs."""
 
+from datetime import timedelta
 from uuid import UUID
 
+import attrs
+from pydantic import Field
+
 from forze.application.contracts.querying import QuerySortExpression
+from forze.application.contracts.storage import StreamedDownload
 from forze.domain.models import BaseDTO
+from forze_kits.aggregates.storage.dto import PresignedUrlDTO
 from forze_kits.domain.stored_file import StoredFileRead
 from forze_kits.dto.paginated import Pagination
 from forze_kits.dto.querying import OptionalFilterExpression
@@ -89,3 +95,49 @@ class StoredFileDownloadDTO(BaseDTO):
 
     filename: str
     """Original filename."""
+
+
+# ....................... #
+
+
+@attrs.define(slots=True, kw_only=True, frozen=True)
+class StoredFileStream:
+    """A ready stored file's metadata and a bounded-memory stream of its bytes.
+
+    Not a JSON DTO: :attr:`stream` carries a single-use async iterator that the transport
+    (e.g. a FastAPI ``StreamingResponse``) consumes after the operation returns.
+    """
+
+    file: StoredFileRead
+    """Stored-file metadata."""
+
+    stream: StreamedDownload
+    """The object's chunks, content type and cache validators; its ``filename`` is the stored
+    file's."""
+
+
+# ....................... #
+
+
+class PresignStoredFileDownloadRequestDTO(StoredFileIdDTO):
+    """Request payload for minting a presigned download (GET) URL for a stored file."""
+
+    expires_in: timedelta = Field(gt=timedelta(0), le=timedelta(days=7))
+    """How long the minted URL stays valid (positive; backends cap at 7 days)."""
+
+
+# ....................... #
+
+
+class StoredFilePresignedDownloadDTO(BaseDTO):
+    """A presigned download URL for a ready stored file, with its metadata.
+
+    :attr:`presigned` holds a bearer credential: return it to the client, never log it (see
+    :class:`~forze_kits.aggregates.storage.PresignedUrlDTO`).
+    """
+
+    file: StoredFileRead
+    """Stored-file metadata; its ``filename`` is the name to save the download under."""
+
+    presigned: PresignedUrlDTO
+    """The minted URL, its method, expiry and the headers the client must send."""

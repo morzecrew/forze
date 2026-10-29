@@ -63,6 +63,9 @@ server = build_mcp_server(
 - `operations` is an allowlist. A key the registry does not have, or a command operation
   without `include_writes=True`, is refused when the server is built, so a typo never
   quietly exposes less than you reviewed.
+- An operation whose result is a byte stream (its descriptor sets `streams=True`, like
+  `download_stream` on the storage and stored-file kits) never becomes a tool, because a
+  tool result is JSON. The default leaves it out; an allowlist naming it is refused.
 - `shared_filter_grammar=True` takes the [filter grammar](../reference/query-syntax.md),
   most of a list tool's schema, out of every tool: each `filters` (and an aggregate's
   `$having`) becomes a plain object, and the grammar is added once to the server's

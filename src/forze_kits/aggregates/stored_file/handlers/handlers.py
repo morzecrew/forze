@@ -11,6 +11,7 @@ from forze_kits.aggregates.search.dto import (
     SearchRequestDTO,
 )
 from forze_kits.aggregates.search.handlers import Search
+from forze_kits.aggregates.storage.dto import PresignedUrlDTO
 from forze_kits.domain.stored_file import (
     StoredFileCreateCmd,
     StoredFileDocument,
@@ -23,9 +24,12 @@ from forze_kits.dto.paginated import Paginated
 
 from ..dto import (
     ListStoredFilesRequestDTO,
+    PresignStoredFileDownloadRequestDTO,
     StoredFileDownloadDTO,
     StoredFileIdDTO,
     StoredFileIdRevDTO,
+    StoredFilePresignedDownloadDTO,
+    StoredFileStream,
     UploadStoredFileRequestDTO,
 )
 from ._helpers import (
@@ -132,19 +136,80 @@ class DownloadStoredFile(Handler[StoredFileIdDTO, StoredFileDownloadDTO]):
 
     async def __call__(self, args: StoredFileIdDTO) -> StoredFileDownloadDTO:
         file = await self.doc.get(pk=args.id)
-
-        ensure_downloadable(file)
-
-        if file.storage_key is None:
-            raise exc.internal("Ready stored file is missing storage_key")
-
-        downloaded = await self.storage.download(file.storage_key)
+        downloaded = await self.storage.download(ensure_downloadable(file))
 
         return StoredFileDownloadDTO(
             file=file,
             data=downloaded.data,
             content_type=downloaded.content_type,
             filename=downloaded.filename,
+        )
+
+
+# ....................... #
+
+
+@attrs.define(slots=True, kw_only=True, frozen=True)
+class DownloadStoredFileStream(Handler[StoredFileIdDTO, StoredFileStream]):
+    """Open a bounded-memory download stream for a ready stored file.
+
+    Same checks as :class:`DownloadStoredFile`. The stream's chunks are consumed by the
+    transport after this operation returns; the storage client behind them is app-lifetime.
+    The object is read in parts as it is consumed, so a file deleted mid-download fails the
+    next read with ``not_found`` and the transport cuts the response short. A stored file's
+    key is never reused, so a stream cannot mix two files.
+    """
+
+    doc: DocumentQueryPort[StoredFileRead]
+    storage: StorageQueryPort
+
+    # ....................... #
+
+    async def __call__(self, args: StoredFileIdDTO) -> StoredFileStream:
+        file = await self.doc.get(pk=args.id)
+        streamed = await self.storage.download_stream(ensure_downloadable(file))
+
+        return StoredFileStream(file=file, stream=attrs.evolve(streamed, filename=file.filename))
+
+
+# ....................... #
+
+
+@attrs.define(slots=True, kw_only=True, frozen=True)
+class PresignStoredFileDownload(
+    Handler[PresignStoredFileDownloadRequestDTO, StoredFilePresignedDownloadDTO]
+):
+    """Mint a presigned download (GET) URL for a ready stored file (read grant).
+
+    Same checks as :class:`DownloadStoredFile`, so no URL is minted for a row the caller
+    cannot read or that is not ready. The storage adapter refuses on a client-side-encrypting
+    route.
+    """
+
+    doc: DocumentQueryPort[StoredFileRead]
+    storage: StorageQueryPort
+
+    # ....................... #
+
+    async def __call__(
+        self,
+        args: PresignStoredFileDownloadRequestDTO,
+    ) -> StoredFilePresignedDownloadDTO:
+        file = await self.doc.get(pk=args.id)
+        url = await self.storage.presign_download(
+            ensure_downloadable(file),
+            expires_in=args.expires_in,
+        )
+
+        # The URL is a bearer credential: it goes back to the client, never to a log.
+        return StoredFilePresignedDownloadDTO(
+            file=file,
+            presigned=PresignedUrlDTO(
+                url=url.url,
+                method=url.method,
+                expires_at=url.expires_at,
+                headers=dict(url.headers),
+            ),
         )
 
 

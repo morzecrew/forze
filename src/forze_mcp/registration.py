@@ -258,8 +258,9 @@ def register_tools(
         no-identity :class:`StaticIdentityResolver`).
     :param include_writes: When ``False`` (default, read-only) only ``QUERY`` operations are
         exposed; when ``True`` command operations are exposed too.
-    :param operations: Expose only these operations, by key (default: every exposed one).
-        An unknown key, or a command operation without *include_writes*, is refused.
+    :param operations: Expose only these operations, by key (default: every exposed one,
+        leaving out operations whose result is a byte stream). An unknown key, a command
+        operation without *include_writes*, or a streaming operation is refused.
     :param output_schemas: Give each tool its output schema (the default). ``False`` leaves
         them out, for a smaller tool list. A call still returns its result as text, but a
         list or scalar result then carries no structured content, and an object comes back

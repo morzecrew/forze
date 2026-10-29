@@ -1167,7 +1167,7 @@ class TestStreamingHeaderHelpers:
     async def _chunks():
         yield b"payload"
 
-    def test_full_stream_response_encrypted_omits_length_and_validators(self) -> None:
+    def test_streamed_download_response_encrypted_omits_length_and_validators(self) -> None:
         from forze.application.contracts.storage import StreamedDownload
         from forze_fastapi.routes import storage as mod
 
@@ -1180,13 +1180,42 @@ class TestStreamingHeaderHelpers:
             last_modified=None,
         )
 
-        resp = mod._full_stream_response(streamed)  # pyright: ignore[reportPrivateUsage]
+        resp = mod.streamed_download_response(streamed)
 
         lower = {k.lower() for k in resp.headers}
         assert "content-length" not in lower
         assert "etag" not in lower
         assert "last-modified" not in lower
         assert resp.headers["content-disposition"]
+
+    @pytest.mark.parametrize(
+        ("filename", "disposition"),
+        [
+            # RFC 5987 attr-char excludes "/": it must be encoded along with the rest.
+            ("q3/rëport final.txt", "attachment; filename*=utf-8''q3%2Fr%C3%ABport%20final.txt"),
+            ("a/b.txt", "attachment; filename*=utf-8''a%2Fb.txt"),
+            ("r&d_v1.2~#!.txt", 'attachment; filename="r&d_v1.2~#!.txt"'),
+        ],
+        ids=["slash-non-ascii-space", "slash-only", "attr-chars-stay-plain"],
+    )
+    def test_content_disposition_encodes_outside_attr_char(
+        self, filename: str, disposition: str
+    ) -> None:
+        from forze.application.contracts.storage import StreamedDownload
+        from forze_fastapi.routes import storage as mod
+
+        streamed = StreamedDownload(
+            content_type="text/plain",
+            filename=filename,
+            chunks=self._chunks(),
+            size=None,
+            etag="",
+            last_modified=None,
+        )
+
+        assert mod.streamed_download_response(streamed).headers["content-disposition"] == (
+            disposition
+        )
 
     async def test_head_endpoint_omits_absent_validators(self) -> None:
         from forze_fastapi.routes import storage as mod

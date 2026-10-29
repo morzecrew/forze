@@ -130,8 +130,8 @@ def register_resource_templates(
         no-identity :class:`StaticIdentityResolver`).
     :returns: The list of registered URI templates.
     :raises CoreException: When an operation is missing, not read-only, projects a
-        sensitive read model, has no descriptor with an input type, or ``id_param``
-        is not a field of that input DTO.
+        sensitive read model, returns a byte stream, has no descriptor with an input
+        type, or ``id_param`` is not a field of that input DTO.
     """
 
     catalog = registry.catalog()
@@ -159,6 +159,13 @@ def register_resource_templates(
                 f"Refusing to register resource template for operation "
                 f"{template.op!r}: it is sensitive (its result carries credential "
                 "or secret material, which a generated surface must not expose).",
+            )
+
+        if descriptor is not None and descriptor.streams:
+            raise exc.configuration(
+                f"Refusing to register resource template for operation "
+                f"{template.op!r}: it returns a byte stream, which a JSON resource "
+                "cannot carry; serve it from a streaming route.",
             )
 
         if descriptor is None or descriptor.input_type is None:
