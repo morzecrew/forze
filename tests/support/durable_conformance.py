@@ -1660,11 +1660,13 @@ async def run_coalesce_race_scenario(
 
 
 async def run_schedule_input_race_scenario(store: DurableScheduleStorePort) -> dict[str, Any]:
-    """Change only a schedule's input while a scheduler fires it and an operator pauses it.
+    """Change only a schedule's input while other writers touch it between read and write.
 
     ``ensure_schedule`` reads the schedule, sees only the input differ, and writes. A fire and
     a pause landing between its read and its write must survive: a write of the record it
-    read would put the fired instant back (a second fire) and un-pause the schedule.
+    read would put the fired instant back (a second fire) and un-pause the schedule. A
+    re-registration under another cron or timezone landing there must not keep its cadence
+    under the new input: a fire would then mix fields from two registrations.
     """
 
     from forze.application.contracts.durable.function import DurableScheduleStoreDepKey
@@ -1675,8 +1677,9 @@ async def run_schedule_input_race_scenario(store: DurableScheduleStorePort) -> d
     first = utcnow().replace(microsecond=0) + timedelta(hours=1)
     fired = first + timedelta(days=1)
 
-    class _FireAndPauseAfterRead:
-        def __init__(self) -> None:
+    class _RaceAfterRead:
+        def __init__(self, race: Callable[[DurableScheduleRecord], Awaitable[None]]) -> None:
+            self.race = race
             self.raced = False
 
         def __getattr__(self, name: str) -> Any:
@@ -1687,32 +1690,52 @@ async def run_schedule_input_race_scenario(store: DurableScheduleStorePort) -> d
 
             if record is not None and not self.raced:
                 self.raced = True
-                await store.advance(schedule_id, from_fire_at=first, to_fire_at=fired)
-                await store.put(attrs.evolve(record, next_fire_at=fired, enabled=False))
+                await self.race(record)
 
             return record
 
-    racing = _FireAndPauseAfterRead()
-    ctx = context_from_deps(Deps.plain({DurableScheduleStoreDepKey: lambda _ctx: racing}))
+    async def ensure_racing(
+        schedule_id: str, race: Callable[[DurableScheduleRecord], Awaitable[None]]
+    ) -> DurableScheduleRecord:
+        racing = _RaceAfterRead(race)
+        ctx = context_from_deps(Deps.plain({DurableScheduleStoreDepKey: lambda _ctx: racing}))
 
-    await store.put(
-        DurableScheduleRecord(
-            schedule_id="nightly",
-            name="fn",
-            cron="0 3 * * *",
-            next_fire_at=first,
-            input_json={"n": 1},
+        await store.put(
+            DurableScheduleRecord(
+                schedule_id=schedule_id,
+                name="fn",
+                cron="0 3 * * *",
+                next_fire_at=first,
+                input_json={"n": 1},
+            )
         )
-    )
-    await DurableScheduler().ensure_schedule(ctx, "nightly", "fn", "0 3 * * *", input_json={"n": 2})
+        await DurableScheduler().ensure_schedule(
+            ctx, schedule_id, "fn", "0 3 * * *", input_json={"n": 2}
+        )
 
-    stored = await store.load("nightly")
-    assert stored is not None
+        stored = await store.load(schedule_id)
+        assert stored is not None
+
+        return stored
+
+    async def fire_and_pause(record: DurableScheduleRecord) -> None:
+        await store.advance(record.schedule_id, from_fire_at=first, to_fire_at=fired)
+        await store.put(attrs.evolve(record, next_fire_at=fired, enabled=False))
+
+    stored = await ensure_racing("nightly", fire_and_pause)
+    replaced = [
+        await ensure_racing(
+            f"replaced-{field}",
+            lambda record, change={field: value}: store.put(attrs.evolve(record, **change)),
+        )
+        for field, value in (("cron", "0 4 * * *"), ("tz", "Europe/Berlin"))
+    ]
 
     return {
         "input": stored.input_json,
         "kept_fire": stored.next_fire_at == fired,
         "kept_pause": stored.enabled is False,
+        "replaced": [(record.cron, record.tz, record.input_json) for record in replaced],
     }
 
 
@@ -1720,6 +1743,8 @@ SCHEDULE_INPUT_RACE_OUTCOME: dict[str, Any] = {
     "input": {"n": 2},
     "kept_fire": True,
     "kept_pause": True,
+    # The registration that wrote last wins whole, never a blend of the two.
+    "replaced": [("0 3 * * *", None, {"n": 2})] * 2,
 }
 """What :func:`run_schedule_input_race_scenario` answers on every engine, the mock included."""
 

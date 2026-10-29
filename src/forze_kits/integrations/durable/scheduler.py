@@ -238,9 +238,10 @@ class DurableScheduler:
 
                 # Only the input changed: write the input alone, so a fire or a pause that
                 # lands meanwhile is kept rather than overwritten with what was just read.
-                # A schedule removed since the read is absent now, so it is created below.
+                # A schedule removed, or re-registered under another cron or tz, since the read
+                # fails the match, so it is put whole below.
                 if await resolve_durable_schedule_store(ctx).set_input(
-                    schedule_id, input_json=input_json
+                    schedule_id, expected_cron=cron, expected_tz=tz, input_json=input_json
                 ):
                     return attrs.evolve(existing, input_json=input_json)
 

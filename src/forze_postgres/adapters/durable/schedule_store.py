@@ -237,19 +237,36 @@ class PostgresDurableScheduleStore(TenancyMixin, DurableScheduleStorePort):
 
     # ....................... #
 
-    async def set_input(self, schedule_id: str, *, input_json: JsonDict | None) -> bool:
+    async def set_input(
+        self,
+        schedule_id: str,
+        *,
+        expected_cron: str,
+        expected_tz: str | None,
+        input_json: JsonDict | None,
+    ) -> bool:
         table = await self._table()
         stored_sid = _scope_schedule_id(schedule_id, self._tenant_id_for_resolve())
 
         rowcount = await self.client.execute(
             sql.SQL(
-                "UPDATE {table} SET input = {input}, updated_at = now() WHERE schedule_id = {sid}"
+                """
+                UPDATE {table} SET input = {input}, updated_at = now()
+                WHERE schedule_id = {sid} AND cron = {cron} AND tz IS NOT DISTINCT FROM {tz}
+                """
             ).format(
                 table=table.ident(),
                 input=sql.Placeholder("input"),
                 sid=sql.Placeholder("sid"),
+                cron=sql.Placeholder("cron"),
+                tz=sql.Placeholder("tz"),
             ),
-            {"input": None if input_json is None else Jsonb(input_json), "sid": stored_sid},
+            {
+                "input": None if input_json is None else Jsonb(input_json),
+                "sid": stored_sid,
+                "cron": expected_cron,
+                "tz": expected_tz,
+            },
             return_rowcount=True,
         )
 

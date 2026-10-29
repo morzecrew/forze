@@ -112,12 +112,24 @@ class DurableScheduleStorePort(Protocol):
         """
         ...  # pragma: no cover
 
-    def set_input(self, schedule_id: str, *, input_json: JsonDict | None) -> Awaitable[bool]:
+    def set_input(
+        self,
+        schedule_id: str,
+        *,
+        expected_cron: str,
+        expected_tz: str | None,
+        input_json: JsonDict | None,
+    ) -> Awaitable[bool]:
         """Replace only the schedule's input; return ``True`` iff a schedule was updated.
 
         Leaves ``next_fire_at`` and ``enabled`` as they are, so a fire or a pause that lands
         while the caller decided on the new input is kept, where a :meth:`put` of the record
         it read would write the old values back. Scoped to the tenant like :meth:`advance`.
+
+        Updates only while the stored ``cron`` and ``tz`` still equal *expected_cron* and
+        *expected_tz* (``None`` matching an unset ``tz``), checked in the same atomic write.
+        A :meth:`put` under another cadence landing since the caller's read makes it return
+        ``False``, so the new input never fires on a cadence the caller did not see.
         """
         ...  # pragma: no cover
 

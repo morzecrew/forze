@@ -117,13 +117,20 @@ class MockDurableScheduleStore(DurableScheduleStorePort):
 
     # ....................... #
 
-    async def set_input(self, schedule_id: str, *, input_json: JsonDict | None) -> bool:
+    async def set_input(
+        self,
+        schedule_id: str,
+        *,
+        expected_cron: str,
+        expected_tz: str | None,
+        input_json: JsonDict | None,
+    ) -> bool:
         with self.state.lock:
             data = self.state.durable_run_schedules.get(
                 _scoped_key(schedule_id, self._bound_tenant())
             )
 
-            if data is None:
+            if data is None or (data["cron"], data["tz"]) != (expected_cron, expected_tz):
                 return False
 
             data["input"] = input_json
