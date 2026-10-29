@@ -386,6 +386,25 @@ class TestSignalDrain:
     # ....................... #
 
     @pytest.mark.asyncio
+    async def test_a_drain_already_cancelled_still_gives_the_phases_up(self) -> None:
+        """Its done callback can still be queued when the scope is cancelled, so ``cancel()``
+        returning ``False`` must not let the teardown take the phases back."""
+
+        runtime = build_runtime()
+        drain = SignalDrain(runtime, drain_budget=timedelta(seconds=1), announce_delay=timedelta(0))
+        task = asyncio.ensure_future(asyncio.sleep(10))
+        task.cancel()
+        await asyncio.wait({task})
+        drain._drain_task = task  # pyright: ignore[reportPrivateUsage]
+
+        async with runtime.scope():
+            await drain.cancel_drain_and_wait()
+
+            assert runtime.get_context().drain_phases.done
+
+    # ....................... #
+
+    @pytest.mark.asyncio
     @pytest.mark.parametrize("again", [signal.SIGTERM, signal.SIGINT])
     async def test_a_signal_after_the_drain_reports_the_teardown(
         self,

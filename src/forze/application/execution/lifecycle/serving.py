@@ -111,7 +111,8 @@ class SignalDrain:
 
         task = self._drain_task
 
-        if task is not None and task.cancel():
+        # Already cancelled counts too: its done callback may still be queued behind this.
+        if task is not None and (task.cancel() or task.cancelled()):
             # Not left to the done callback: a teardown that starts before it runs would take
             # back the claim the cancelled drain returns, and run the phases at length.
             await asyncio.wait({task}, timeout=DRAIN_PHASE_CANCEL_GRACE_SECONDS)
