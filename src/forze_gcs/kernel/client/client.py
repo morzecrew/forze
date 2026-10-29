@@ -28,6 +28,7 @@ from forze.application.integrations.storage.client import (
     normalize_list_window,
     overwrite_precondition_failed,
     presign_expiry_seconds,
+    reject_contradictory_write_conditions,
     unsatisfiable_range,
     validate_range,
 )
@@ -1075,8 +1076,11 @@ class GCSClient(GCSClientPort):
 
         *create_only* refuses up front when the destination already exists, and passes
         ``ifGenerationMatch=0`` on the final write, so GCS also refuses an object that
-        appears in between (412); both answer the same ``conflict``.
+        appears in between (412); both answer the same ``conflict``. Passing it with
+        *if_match* is a ``configuration`` error.
         """
+
+        reject_contradictory_write_conditions(if_match, create_only)
 
         storage = self.__require_storage()
         timeout = self.__timeout()

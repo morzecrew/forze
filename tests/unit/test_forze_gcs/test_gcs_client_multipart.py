@@ -376,3 +376,25 @@ async def test_a_create_only_complete_refuses_an_existing_destination() -> None:
 
     assert e.value.kind == ExceptionKind.CONFLICT
     fake.compose.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_create_only_with_if_match_is_refused() -> None:
+    from forze.base.exceptions import CoreException, ExceptionKind
+
+    fake = _fake_storage()
+    fake.download_metadata = AsyncMock(return_value={"etag": '"E1"', "generation": "7"})
+    client = _client(fake)
+
+    with pytest.raises(CoreException) as e:
+        await client.complete_multipart_upload(
+            "b",
+            "k",
+            upload_id="SID",
+            parts=[ObjectStoragePartInfo(part_number=n) for n in (1, 2)],
+            if_match="E1",
+            create_only=True,
+        )
+
+    assert e.value.kind == ExceptionKind.CONFIGURATION
+    fake.compose.assert_not_awaited()

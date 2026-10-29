@@ -42,6 +42,7 @@ from forze.application.integrations.storage.client import (
     normalize_list_window,
     overwrite_precondition_failed,
     presign_expiry_seconds,
+    reject_contradictory_write_conditions,
     unsatisfiable_range,
     validate_range,
 )
@@ -1196,12 +1197,15 @@ class S3Client(S3ClientPort):
         crucially **without creating the object**.
 
         *create_only* sends ``If-None-Match: *``, so the service refuses to assemble
-        over any existing object; its 412 maps to the same ``conflict``.
+        over any existing object; its 412 maps to the same ``conflict``. Passing it with
+        *if_match* is a ``configuration`` error.
         """
 
         # S3 inherits content type, metadata, and SSE from CreateMultipartUpload;
         # none is settable on complete.
         _ = (content_type, metadata, sse)
+
+        reject_contradictory_write_conditions(if_match, create_only)
 
         c = self.__require_client()
 

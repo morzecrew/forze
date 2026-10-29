@@ -157,6 +157,26 @@ def unsatisfiable_range(start: int, total: int) -> CoreException:
 # ....................... #
 
 
+def reject_contradictory_write_conditions(if_match: str | None, create_only: bool) -> None:
+    """Refuse a write conditioned both on an existing object and on there being none.
+
+    ``if_match`` requires the object at the key to carry an ETag; ``create_only`` requires
+    no object at the key. No object satisfies both, so a caller passing both has a bug, and
+    honouring either one would silently drop the other. Shared by every client.
+
+    :raises CoreException: ``configuration`` when both are given.
+    """
+
+    if if_match is not None and create_only:
+        raise exc.configuration(
+            "A conditional write takes if_match or create_only, not both: one requires an "
+            "existing object at the key and the other requires none.",
+        )
+
+
+# ....................... #
+
+
 def overwrite_precondition_failed(key: str) -> CoreException:
     """Build the conflict for a conditional write whose match token no longer holds.
 
@@ -665,7 +685,8 @@ class ObjectStorageClientPort(Protocol):
 
         *create_only* refuses to assemble over an existing object (S3 ``If-None-Match:
         *`` on ``CompleteMultipartUpload``, GCS ``ifGenerationMatch=0`` on the final
-        write) with the shared overwrite-precondition ``conflict``.
+        write) with the shared overwrite-precondition ``conflict``. It contradicts
+        *if_match*: passing both is a ``configuration`` error, raised before any call.
 
         *metadata* is consumed by **GCS** only (the composed destination carries no
         metadata from the temp parts); **S3** binds it at
