@@ -75,6 +75,13 @@ that changes nothing. The check is atomic: the write matches the revision you
 passed, so a writer committing between the store's read and its write makes it
 fail too. `merge=False` with no revision to check is refused as `configuration`.
 
+An update that changes nothing writes nothing. Postgres checks its revision under
+a row lock, and Firestore in its transaction's read; both keep the row until
+commit. Mongo checks the revision it read and keeps nothing, since it locks a
+document only by writing it. Inside a Mongo transaction that read is the
+transaction's snapshot, so a writer can still commit before yours. Touch at the
+revision when the check must last until commit there.
+
 `update_many(..., merge=False)` applies the check to every row, and
 `touch_many(pks, revs=...)` takes one revision per id. Every row is checked
 before any is written. A row a concurrent writer moves after that check is

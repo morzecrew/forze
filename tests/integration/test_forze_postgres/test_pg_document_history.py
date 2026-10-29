@@ -553,3 +553,60 @@ class TestAStrictRevisionCheck:
                 assert refused.value.code == "revision_mismatch"
 
         assert raced == [True]
+
+    @pytest.mark.parametrize("many", [False, True])
+    async def test_a_no_op_with_a_writer_committing_after_the_read_is_refused(
+        self, pg_client: PostgresClient, many: bool
+    ) -> None:
+        # No UPDATE runs for a row the call leaves unchanged, so nothing matched the presented
+        # rev: the store checks it again, under the row lock, before it reports success.
+        cmd, table = await _due_cmd(pg_client)
+        doc = await cmd.create(HistDueCreate(name="v1", due=DUE))
+        method = "get_many" if many else "get"
+        original = getattr(PostgresReadGateway, method)
+        raced: list[bool] = []
+
+        async def read_then_race(self: Any, *args: Any, **kwargs: Any) -> Any:
+            rows = await original(self, *args, **kwargs)
+
+            if not raced:
+                raced.append(True)
+                bump = f"UPDATE {table} SET rev = rev + 1, due = %s WHERE id = %s"
+                await asyncio.create_task(
+                    pg_client.execute(bump, [MOVED, doc.id]), context=contextvars.Context()
+                )
+
+            return rows
+
+        with (
+            patch.object(PostgresReadGateway, method, read_then_race),
+            pytest.raises(CoreException) as refused,
+        ):
+            if many:
+                keyed = KeyedUpdate(id=doc.id, rev=doc.rev, dto=HistDueUpdate(name="v1"))
+                await cmd.update_many([keyed], merge=False)
+
+            else:
+                await cmd.update(doc.id, doc.rev, HistDueUpdate(name="v1"), merge=False)
+
+        assert raced == [True]
+        assert refused.value.code == "revision_mismatch"
+
+    async def test_a_no_op_keeps_its_rev_until_commit(self, pg_client: PostgresClient) -> None:
+        # As a changed row's UPDATE would: another writer waits for this transaction to end.
+        cmd, table = await _due_cmd(pg_client)
+        doc = await cmd.create(HistDueCreate(name="v1", due=DUE))
+        bump = f"UPDATE {table} SET rev = rev + 1 WHERE id = %s"
+
+        async with pg_client.transaction():
+            await cmd.update(doc.id, doc.rev, HistDueUpdate(name="v1"), merge=False)
+            other = asyncio.create_task(
+                pg_client.execute(bump, [doc.id]), context=contextvars.Context()
+            )
+            await asyncio.sleep(0.3)
+            waited = not other.done()
+
+        await asyncio.wait_for(other, timeout=5)
+
+        assert waited
+        assert (await cmd.touch(doc.id)).rev == doc.rev + 2

@@ -666,3 +666,37 @@ def test_a_jsonb_array_compares_as_it_is_and_a_json_array_falls_back() -> None:
     # json has none: a json[] column takes the domain path; a json one compares as jsonb.
     assert not _comparable(json_array)
     assert _compared("t", "doc", json).as_string() == '"t"."doc"::jsonb'
+
+
+@pytest.mark.asyncio
+async def test_bulk_revisions_must_match_the_keys() -> None:
+    gw, _ = _build_gateway()
+
+    with pytest.raises(CoreException) as refused:
+        await gw.touch_many([UUID(int=1)], revs=[1, 2])
+
+    assert refused.value.kind is ExceptionKind.INTERNAL
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("name", ["same", "new"])
+async def test_only_a_strict_check_of_an_unchanged_row_locks_its_revision(name: str) -> None:
+    # The lock stands in for the UPDATE a changed row runs, and only where its rev is checked.
+    ts = datetime(2025, 1, 1, tzinfo=UTC)
+    pk = UUID(int=1)
+    gw, client = _build_gateway()
+    gw.read_gw.get_many = AsyncMock(
+        return_value=[MyDoc(id=pk, rev=1, created_at=ts, last_update_at=ts, name="same")]
+    )
+    # What each statement returns: the row at its revision, or the row the UPDATE wrote.
+    held = {"id": pk, "rev": 1} if name == "same" else {**_row(pk=pk, name="new", ts=ts), "rev": 2}
+    client.fetch_all = AsyncMock(return_value=[held])
+
+    _, merged = await gw.update_many([pk], [MyUpdateDoc(name="same")])
+    _, strict = await gw.update_many([pk], [MyUpdateDoc(name=name)], revs=[1], merge=False)
+
+    assert merged == [{}]
+    assert bool(strict[0]) is (name == "new")
+    sql = client.fetch_all.await_args.args[0].as_string()
+    assert ("FOR SHARE" in sql) is (name == "same")
+    client.fetch_all.assert_awaited_once()

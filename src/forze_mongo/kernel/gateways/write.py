@@ -536,6 +536,7 @@ class MongoWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
             written = diff
 
         if not diff:
+            # Nothing to hold a strict check with: Mongo locks a document only by writing it.
             return current, diff
 
         payload, diff = self._payload_and_diff(current, written, diff)

@@ -511,6 +511,38 @@ class PostgresWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
 
     # ....................... #
 
+    async def _hold_revisions(self, expected: Mapping[UUID, int]) -> None:
+        """Refuse unless every row of *expected* is still at its revision; hold it until commit.
+
+        For the rows a strict write leaves unchanged: no ``UPDATE ... WHERE rev`` runs to catch
+        a writer committing after the read, so ``FOR SHARE`` reads the stored revision, waiting
+        out a writer in flight, and keeps the next one off the row until this transaction ends.
+
+        :raises CoreException: ``precondition`` (``revision_mismatch``), as
+            :meth:`_require_revisions` does.
+        """
+
+        if not expected:
+            return
+
+        where, params = self._add_tenant_where(
+            sql.SQL("{pk} = ANY({ids})").format(pk=self.ident_pk(), ids=sql.Placeholder()),
+            [list(expected)],
+        )
+        stmt = sql.SQL("SELECT {pk}, {rev} FROM {table} WHERE {where} FOR SHARE").format(
+            pk=self.ident_pk(),
+            rev=self._ident_rev(),
+            table=(await self._qname()).ident(),
+            where=where,
+        )
+        rows = await self.client.fetch_all(stmt, params, row_factory="dict", commit=False)
+        stored = {row[ID_FIELD]: row[REV_FIELD] for row in rows}
+
+        if any(stored.get(pk) != rev for pk, rev in expected.items()):
+            raise exc.precondition("Revision mismatch", code="revision_mismatch")
+
+    # ....................... #
+
     async def _resolved_conflict_target(self) -> tuple[str, ...]:
         async def _factory() -> tuple[str, ...]:
             return await resolve_write_conflict_target(
@@ -1365,6 +1397,9 @@ class PostgresWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
                 written = diff
 
             if not diff:
+                if rev is not None and self._checks_strictly(merge=merge):
+                    await self._hold_revisions({current.id: rev})
+
                 return current, diff
 
             payload, diff = await self.__payload_and_diff(current, written, diff)
@@ -1621,6 +1656,15 @@ class PostgresWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
                         # always the same key so we can handle only one group
                         key = tuple(sorted(diff.keys()))
                         groups[key].append((cid, crev, diff))
+
+                if revs is not None and self._checks_strictly(merge=merge):
+                    await self._hold_revisions(
+                        {
+                            c.id: r
+                            for c, r, written in zip(currents, revs, results, strict=True)
+                            if written is None
+                        }
+                    )
 
             if not groups:
                 return currents, [{} for _ in currents]

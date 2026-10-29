@@ -634,7 +634,10 @@ class DocumentCommandPort(BaseDocumentPort[R, D, C, U], Protocol[R, D, C, U]):
             overlaps a change made since. ``False`` refuses any *rev* but the stored one
             (``revision_mismatch``), even for an update that changes nothing, and the write
             matches that revision, so a writer committing in between makes it fail too.
-            Without history every update is already this strict.
+            Without history every update is already this strict. An update that changes
+            nothing writes nothing: inside a Mongo transaction its check reads the
+            transaction's snapshot and holds nothing until commit, while :meth:`touch`
+            at *rev* writes, so it holds.
         """
         ...  # pragma: no cover
 
