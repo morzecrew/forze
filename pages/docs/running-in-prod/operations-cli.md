@@ -32,6 +32,11 @@ same module.
     An operation that relies on its route for protection has none here. The tenancy admin
     kit, for one, ships unguarded by design. When `include_writes` is on, keep an allowlist.
 
+A sensitive operation fails the declaration even when you didn't name it, because the default
+takes every query. The storage kit's `presign_download` is one, since its result is a bearer
+credential. An `OpsApp` over a registry that holds the storage kit needs an `operations=`
+allowlist that leaves it out.
+
 ## Build a one-shot runtime
 
 `runtime` is a factory. `list` and `describe` never call it, so they need no credentials and

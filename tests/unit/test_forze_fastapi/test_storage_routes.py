@@ -12,7 +12,7 @@ import pytest
 pytest.importorskip("fastapi")
 
 import starlette.datastructures
-from fastapi import APIRouter, FastAPI, UploadFile
+from fastapi import APIRouter, Depends, FastAPI, UploadFile
 from fastapi.testclient import TestClient
 
 from forze.application.contracts.storage import (
@@ -20,7 +20,7 @@ from forze.application.contracts.storage import (
     StorageSpec,
     StorageUploadSessionDepKey,
 )
-from forze.application.execution.operations import OperationRegistry
+from forze.application.execution.operations import OperationRegistry, run_operation
 from forze.base.exceptions import CoreException, ExceptionKind, exc
 from forze_fastapi.exceptions import ERROR_CODE_HEADER, register_exception_handlers
 from forze_fastapi.routes import (
@@ -28,7 +28,12 @@ from forze_fastapi.routes import (
     attach_storage_routes,
     read_upload_capped,
 )
-from forze_kits.aggregates.storage import StorageKernelOp, build_storage_registry
+from forze_kits.aggregates.storage import (
+    PresignDownloadRequestDTO,
+    PresignedUrlDTO,
+    StorageKernelOp,
+    build_storage_registry,
+)
 from forze_mock import MockDepsModule, MockState
 from forze_mock.adapters import MockStorageAdapter
 from tests.support.execution_context import context_from_modules
@@ -217,7 +222,6 @@ class TestStorageRoutes:
             "/files/list",
             "/files/download/{key}",
             "/files/delete/{key}",
-            "/files/presign_download",
             "/files/presign_upload",
             "/files/begin_upload",
             "/files/presign_part",
@@ -236,10 +240,11 @@ class TestStorageRoutes:
     def test_operation_ids_are_registry_keys_verbatim(self, style: str) -> None:
         # download_stream / download_range have no standalone route — they are consumed internally
         # by the streaming download endpoint — so they carry no route operation_id. head does get
-        # its own HTTP HEAD route.
+        # its own HTTP HEAD route. presign_download is sensitive, so no generated route serves it.
         internal = {
             StorageKernelOp.DOWNLOAD_STREAM,
             StorageKernelOp.DOWNLOAD_RANGE,
+            StorageKernelOp.PRESIGN_DOWNLOAD,
         }
         expected = {
             f"files.{op.value}" for op in StorageKernelOp if op not in internal
@@ -277,7 +282,6 @@ class TestStorageRoutes:
         paths = _build_app("rest").openapi()["paths"]
 
         for path, verb in {
-            "/files/presign/download": "post",
             "/files/presign/upload": "post",
             "/files/uploads": "post",
             "/files/uploads/parts/url": "post",
@@ -684,19 +688,44 @@ class TestReadUploadCapped:
 class TestStoragePresignRoutes:
     """Presigned-URL endpoints: the url rides the response body, never the log."""
 
-    def test_presign_download_returns_get_url_in_body(self) -> None:
-        client = TestClient(_build_app("rest"))
+    @pytest.mark.parametrize("style", ["rest", "rpc"])
+    def test_presign_download_gets_no_generated_route(self, style: str) -> None:
+        # Its result is a bearer credential, so it is sensitive: an app serves it itself.
+        paths = _build_app(style).openapi()["paths"]
 
-        resp = client.post(
+        assert not [path for path in paths if "presign/download" in path]
+        assert "/files/presign_download" not in paths
+
+    def test_including_presign_download_is_refused(self) -> None:
+        with pytest.raises(CoreException, match="presign_download"):
+            _build_app("rest", include={StorageKernelOp.PRESIGN_DOWNLOAD})
+
+    def test_hand_written_presign_download_route(self) -> None:
+        # The route the docs show in place of the generated one.
+        registry = build_storage_registry(StorageSpec(name="files")).freeze()
+
+        def ctx_dep():
+            return context_from_modules(MockDepsModule(state=MockState()))
+
+        router = APIRouter(prefix="/files")
+
+        @router.post("/presign/download")
+        async def presign_download(
+            body: PresignDownloadRequestDTO, ctx=Depends(ctx_dep)
+        ) -> PresignedUrlDTO:
+            return await run_operation(registry, "files.presign_download", body, ctx)
+
+        app = FastAPI()
+        app.include_router(router)
+
+        resp = TestClient(app).post(
             "/files/presign/download",
             json={"key": "docs/report.pdf", "expires_in": 300},
         )
 
         assert resp.status_code == 200
-        body = resp.json()
-        assert body["method"] == "GET"
-        assert body["url"]  # the credential the client needs is in the body
-        assert "docs/report.pdf" in body["url"]
+        assert resp.json()["method"] == "GET"
+        assert "docs/report.pdf" in resp.json()["url"]
 
     def test_presign_upload_returns_put_url_and_headers(self) -> None:
         client = TestClient(_build_app("rest"))
@@ -736,7 +765,7 @@ class TestStoragePresignRoutes:
         client = TestClient(app)
 
         resp = client.post(
-            "/files/presign/download",
+            "/files/presign/upload",
             json={"key": "docs/secret.pdf", "expires_in": 300},
         )
 
@@ -754,7 +783,7 @@ class TestStoragePresignRoutes:
         assert all(url not in json.dumps(rec) for rec in records)
         # Sanity: the request path was logged (so we know logging ran) — the URL
         # is carried under the ``http`` extra, never the response body.
-        assert any("/files/presign/download" in json.dumps(rec) for rec in records)
+        assert any("/files/presign/upload" in json.dumps(rec) for rec in records)
 
 
 # ....................... #

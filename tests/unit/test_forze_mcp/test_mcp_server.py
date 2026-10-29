@@ -789,6 +789,28 @@ class TestSensitiveRefusal:
 
         assert e.value.kind.value == "configuration"
 
+    def test_default_registration_refuses_storage_presign_download(self) -> None:
+        # Its result is a bearer credential, and a default registration takes every query.
+        from forze.application.contracts.storage import StorageSpec
+        from forze_kits.aggregates.storage import build_storage_registry
+
+        reg = build_storage_registry(StorageSpec(name="files")).freeze()
+
+        with pytest.raises(CoreException, match=r"files\.presign_download") as e:
+            register_tools(FastMCP("files"), reg, _ctx_factory)
+
+        assert e.value.kind.value == "configuration"
+
+    def test_storage_registry_registers_with_an_allowlist(self) -> None:
+        from forze.application.contracts.storage import StorageSpec
+        from forze_kits.aggregates.storage import StorageKernelOp, build_storage_registry
+
+        spec = StorageSpec(name="files")
+        reg = build_storage_registry(spec).freeze()
+        ops = [spec.default_namespace.key(StorageKernelOp.LIST)]
+
+        assert register_tools(FastMCP("files"), reg, _ctx_factory, operations=ops)
+
     def test_non_sensitive_specs_register_unchanged(self) -> None:
         _spec, reg, _op = _doc_setup()
         server = FastMCP("notes")

@@ -11,6 +11,7 @@ import attrs
 from forze.application.contracts.base.value_objects import CountlessPage, CursorPage
 from forze.application.contracts.deps import DepKey
 from forze.application.contracts.deps.proxy import PortProxy
+from forze.application.contracts.storage import PresignedUrl
 from forze.base.primitives import JsonDict, StrKey
 from forze.domain.constants import ID_FIELD
 
@@ -174,6 +175,10 @@ class TracingPortProxy(PortProxy):
             # callable, so the call below raises ``TypeError`` for the missing ``self`` and the
             # retry beneath raises it again: capture turns a traced read into a crash.
             return None
+
+        if isinstance(value, PresignedUrl):
+            # The URL is a bearer credential: a trace keeps its shape, never the URL itself.
+            return {**attrs.asdict(value), "url": "<redacted>"}
 
         dump = getattr(value, "model_dump", None)
 

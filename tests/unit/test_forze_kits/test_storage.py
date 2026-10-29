@@ -40,6 +40,13 @@ class TestBuildStorageRegistry:
         assert registry_has_handler(reg, ns.key(StorageKernelOp.DOWNLOAD))
         assert registry_has_handler(reg, ns.key(StorageKernelOp.DELETE))
 
+    def test_only_presign_download_is_sensitive(self) -> None:
+        # A query minting a bearer credential: every generated surface must refuse it.
+        cat = build_storage_registry(_FILES).freeze().catalog()
+        sensitive = {str(op) for op, entry in cat.items() if entry.descriptor.sensitive}
+
+        assert sensitive == {_FILES.default_namespace.key(StorageKernelOp.PRESIGN_DOWNLOAD)}
+
     def test_has_streaming_read_operations(self) -> None:
         reg = build_storage_registry(_FILES)
         ns = _FILES.default_namespace

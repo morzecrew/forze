@@ -216,8 +216,8 @@ The route is a full HTTP range/cache citizen:
 `stream=False` opts back into the legacy fully-buffered download: the whole
 object in memory, an ETag hashed from the body bytes, and `Range` served by
 slicing the buffer instead of a backend-ranged fetch. Prefer the default; if you
-must keep large objects out of the app entirely, expose `presign_download` (see
-below) so the client fetches straight from the backend. When a registry predates
+must keep large objects out of the app entirely, serve `presign_download` from a
+route of your own (see below) so the client fetches straight from the backend. When a registry predates
 the three streaming operations, the attacher quietly keeps the buffered
 endpoint, so enabling `stream` is safe on any registry.
 
@@ -230,7 +230,6 @@ the session. `build_storage_registry` already wires these ops; the same
 `attach_storage_routes` call projects them when they are registered (JSON-body
 `POST`s; `rest` paths shown):
 
-- `POST /files/presign/download` → a presigned `GET` url (`{key, expires_in}`).
 - `POST /files/presign/upload` → a presigned `PUT` url + headers
   (`{key, expires_in, content_type?}`).
 - `POST /files/uploads` (201) → a multipart session `{key, upload_id, ...}`.
@@ -256,6 +255,25 @@ The browser flow for a resumable multipart upload:
 4. **complete** — `POST /files/uploads/complete` with the session and the part
    list (each part carries the `etag` the client got back from its `PUT`); the
    response is the assembled object's head.
+
+`presign_download` gets no generated route. Its result is a bearer credential, so
+it is marked sensitive, and generated routes, MCP, agent tools and `forze ops`
+refuse it; naming it in `include` is a configuration error. Serve it from your
+own route, behind the same authn and authz as the download route:
+
+```python
+from fastapi import Depends
+
+from forze.application.execution.operations import run_operation
+from forze_kits.aggregates.storage import PresignDownloadRequestDTO, PresignedUrlDTO
+
+
+@files_router.post("/presign/download")
+async def presign_download(
+    body: PresignDownloadRequestDTO, ctx=Depends(runtime.get_context)
+) -> PresignedUrlDTO:
+    return await run_operation(storage_registry, "files.presign_download", body, ctx)
+```
 
 !!! warning "Guard these endpoints — and never log the URL"
 

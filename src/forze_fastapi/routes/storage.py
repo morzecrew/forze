@@ -204,8 +204,9 @@ def _download_endpoint(
        The ``download`` operation returns the whole object in memory, so this route
        **fully buffers** it (a ``Range`` request slices the buffered bytes — it does not
        do a ranged backend fetch), and one large object can OOM the process. Prefer the
-       default streaming route (``stream=True``); for the direct-fetch path expose
-       :attr:`~forze_kits.aggregates.storage.StorageKernelOp.PRESIGN_DOWNLOAD` so the client
+       default streaming route (``stream=True``); for the direct-fetch path serve
+       :attr:`~forze_kits.aggregates.storage.StorageKernelOp.PRESIGN_DOWNLOAD` from a route of
+       your own so the client
        fetches from the backend and the object never transits (or buffers in) the app process.
     """
 
@@ -840,9 +841,6 @@ _REST_BINDINGS: Mapping[str, RouteBinding] = {
     # catch-alls and the slash-bearing keys stay safe). The presign/multipart-
     # begin ops are command ops, so an app can bind ``AuthnRequired``/authz on
     # them — see :func:`attach_storage_routes`'s authz note.
-    StorageKernelOp.PRESIGN_DOWNLOAD: RouteBinding(
-        method="POST", path="/presign/download", build=body_endpoint
-    ),
     StorageKernelOp.PRESIGN_UPLOAD: RouteBinding(
         method="POST", path="/presign/upload", build=body_endpoint
     ),
@@ -898,11 +896,6 @@ _RPC_BINDINGS: Mapping[str, RouteBinding] = {
         param_descriptions=_KEY,
     ),
     # JSON-body POSTs named after their operation; the key/session ride the body.
-    StorageKernelOp.PRESIGN_DOWNLOAD: RouteBinding(
-        method="POST",
-        path=f"/{StorageKernelOp.PRESIGN_DOWNLOAD.value}",
-        build=body_endpoint,
-    ),
     StorageKernelOp.PRESIGN_UPLOAD: RouteBinding(
         method="POST",
         path=f"/{StorageKernelOp.PRESIGN_UPLOAD.value}",
@@ -1046,7 +1039,6 @@ def attach_storage_routes(
     multipart ops, this also attaches their JSON-body POST routes
     (``style="rest"`` paths shown; ``rpc`` uses operation-named paths):
 
-    - ``POST /presign/download`` → a presigned GET URL (read grant).
     - ``POST /presign/upload`` → a presigned PUT URL + headers (write grant).
     - ``POST /uploads`` (201) → a multipart session ``{key, upload_id, ...}``.
     - ``POST /uploads/parts/url`` → a presigned PUT URL for one part.
@@ -1057,6 +1049,10 @@ def attach_storage_routes(
     The browser/Uppy flow: begin → request part URLs → ``PUT`` parts directly
     (in parallel, app out of the data path) → complete. The client round-trips
     the session ``upload_id`` and the part list back to the app.
+
+    ``presign_download`` gets no route: it is marked sensitive (its result is a
+    bearer credential), so generated routes refuse it. Serve it from a route of
+    your own; naming it in *include* is a configuration error.
 
     **Authz posture.** These endpoints SHOULD sit behind authn/authz: minting an
     upload URL (or beginning a multipart session) **grants write to a key**, so

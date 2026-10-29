@@ -162,6 +162,9 @@ def build_storage_registry(
                     "Mint a time-limited URL granting direct download (GET) of an "
                     "object. The returned URL is a bearer credential — never logged."
                 ),
+                # The result is a bearer credential: generated surfaces (MCP, agent tools,
+                # generated routes, `forze ops`) refuse it; serve it from your own route.
+                sensitive=True,
             ),
             StorageKernelOp.PRESIGN_UPLOAD: OperationDescriptor(
                 input_type=PresignUploadRequestDTO,

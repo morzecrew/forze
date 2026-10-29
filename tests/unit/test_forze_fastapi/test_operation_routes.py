@@ -761,7 +761,7 @@ class TestTheParameterDescriptions:
         "authn": 12,
         "document": 22,
         "search": 4,
-        "storage": 24,
+        "storage": 22,
         "tenancy": 3,
         "tenancy_admin": 5,
     }

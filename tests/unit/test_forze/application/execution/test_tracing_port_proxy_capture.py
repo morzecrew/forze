@@ -77,6 +77,23 @@ class TestDump:
     def test_attrs_value(self) -> None:
         assert TracingPortProxy._dump(_AttrsValue(a=2)) == {"a": 2}
 
+    def test_presigned_url_is_redacted(self) -> None:
+        from datetime import UTC, datetime
+
+        from forze.application.contracts.storage import PresignedUrl
+
+        expires_at = datetime(2026, 1, 1, tzinfo=UTC)
+        url = PresignedUrl(
+            url="https://bucket/k?X-Amz-Signature=abc", method="GET", expires_at=expires_at
+        )
+
+        assert TracingPortProxy._dump(url) == {
+            "url": "<redacted>",
+            "method": "GET",
+            "expires_at": expires_at,
+            "headers": {},
+        }
+
     def test_mapping(self) -> None:
         assert TracingPortProxy._dump({"k": 1}) == {"k": 1}
 

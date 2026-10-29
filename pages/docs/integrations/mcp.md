@@ -163,6 +163,10 @@ forze stays the Resource Server and never runs an authorization server.
   tools as destructive. Every query in the registry becomes a tool, so an authn registry
   built with `admin_guards` exposes `list_principal_api_keys`, which lists any
   principal's API keys behind those guards; pass `operations=` to keep it off.
+- An operation marked sensitive is refused, and the refusal fails the whole registration.
+  The storage kit's `presign_download` is one, because its result is a bearer
+  credential. A server over a registry that holds the storage kit needs an `operations=`
+  allowlist that leaves it out.
 - Over the stdio transport, stdout carries the protocol. Until structlog is configured,
   forze's events go only to your stdlib logging handlers (stderr by default), so keep
   those off stdout, and pass `stream=sys.stderr` to `configure_logging` in a stdio server.
