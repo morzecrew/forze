@@ -44,9 +44,12 @@ T_co = TypeVar("T_co")
 
 
 @final
-@attrs.define(slots=True, kw_only=True)
+@attrs.define(slots=True, kw_only=True, eq=False)
 class PostgresIntrospector:
     """Cached introspector that queries Postgres system catalogs.
+
+    Compared and hashed by identity: each instance is its own cache, so it can key a
+    :class:`weakref.WeakKeyDictionary` of state scoped to it.
 
     Results for relations, columns, and indexes are cached in-memory
     and can be selectively invalidated via :meth:`invalidate_relation`,

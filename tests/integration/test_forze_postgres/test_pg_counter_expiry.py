@@ -226,7 +226,8 @@ async def test_the_migration_can_land_under_a_running_process(
     with pytest.raises(CoreException):
         await counter.incr(ttl=TTL)
 
-    _EXPIRY_RECHECK.invalidate(("", f"public.{legacy_table}"))  # stand in for the cooldown
+    # Stand in for the cooldown.
+    _EXPIRY_RECHECK[counter.introspector].invalidate(("", f"public.{legacy_table}"))
 
     assert await counter.incr(ttl=TTL) == 1, "the next ttl call finds the column"
 

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import weakref
 from collections.abc import Sequence
 from datetime import timedelta
 from typing import Any, Final, final
@@ -56,14 +57,16 @@ login lockout does, on every failed login) would otherwise turn each call into a
 query and a cache eviction.
 """
 
-_EXPIRY_RECHECK: Final[CacheLane[tuple[str, str], bool]] = CacheLane(
-    max_entries=2048,
-    ttl_seconds=_RECHECK_AFTER,
-)
-"""``(cache partition, table)`` pairs re-checked recently and still without the column.
+_EXPIRY_RECHECK: Final[
+    weakref.WeakKeyDictionary[PostgresIntrospector, CacheLane[tuple[str, str], bool]]
+] = weakref.WeakKeyDictionary()
+"""Per introspector, the ``(cache partition, table)`` pairs re-checked recently and still
+without the column.
 
-Keyed by the introspector's cache partition, because with database-per-tenant routing one
-tenant's answer is not another's. Capped, because table-per-tenant names are unbounded.
+Keyed by the introspector, because two runtimes in one process can reach different databases
+under the same partition and table name. Then by its cache partition, because with
+database-per-tenant routing one tenant's answer is not another's. Each lane is capped,
+because table-per-tenant names are unbounded.
 """
 
 
@@ -173,9 +176,10 @@ class _PostgresCounterBase(TenancyMixin):
             return True
 
         recheck = self._recheck_key(table.string())
+        rechecks = self._rechecks()
 
-        if required and _EXPIRY_RECHECK.lookup(recheck) is None:
-            _EXPIRY_RECHECK.store(recheck, True)
+        if required and rechecks.lookup(recheck) is None:
+            rechecks.store(recheck, True)
             self.introspector.invalidate_relation(schema=table.schema, relation=table.name)
             columns = await self.introspector.get_column_types(
                 schema=table.schema,
@@ -183,7 +187,7 @@ class _PostgresCounterBase(TenancyMixin):
             )
 
             if _EXPIRY_COLUMN in columns:
-                _EXPIRY_RECHECK.invalidate(recheck)
+                rechecks.invalidate(recheck)
                 return True
 
         if not required:
@@ -199,8 +203,21 @@ class _PostgresCounterBase(TenancyMixin):
 
     # ....................... #
 
+    def _rechecks(self) -> CacheLane[tuple[str, str], bool]:
+        """The introspector's lane in :data:`_EXPIRY_RECHECK`."""
+
+        lane = _EXPIRY_RECHECK.get(self.introspector)
+
+        if lane is None:
+            lane = CacheLane(max_entries=2048, ttl_seconds=_RECHECK_AFTER)
+            _EXPIRY_RECHECK[self.introspector] = lane
+
+        return lane
+
+    # ....................... #
+
     def _recheck_key(self, table: str) -> tuple[str, str]:
-        """*table*'s key in :data:`_EXPIRY_RECHECK`: the introspector's cache partition and it."""
+        """*table*'s key in its lane: the introspector's cache partition and it."""
 
         partition = self.introspector.cache_partition_key
 
@@ -260,7 +277,7 @@ class PostgresCounterAdapter(_PostgresCounterBase, CounterPort):
             return CounterCapabilities(expiry=True)
 
         schema, name = relation
-        known_absent = _EXPIRY_RECHECK.lookup(self._recheck_key(f"{schema}.{name}"))
+        known_absent = self._rechecks().lookup(self._recheck_key(f"{schema}.{name}"))
 
         return CounterCapabilities(expiry=known_absent is None)
 
