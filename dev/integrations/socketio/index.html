@@ -7109,7 +7109,9 @@ stream can stay tenant-global.</p>
 <code>StreamGroupSignalSource</code> — one consume loop per assigned tenant, each bound to the
 tenant of the stream it reads (no header trust). <code>StreamGroupSignalSource</code> and
 <code>PubSubSignalSource</code> read with no tenant bound, so over a <code>tenant_aware</code> route the gateway
-step refuses to start (<code>tenant_global_required</code>). The shard is a fixed snapshot resolved
+step refuses to start (<code>tenant_global_required</code>). The other way round, the sharded source
+refuses a route that is not <code>tenant_aware</code> (<code>tenant_aware_required</code>), because every
+tenant's loop would read the same stream. The shard is a fixed snapshot resolved
 at startup, so onboarding a new tenant needs a restart; hand the same <code>RealtimeShard</code> to
 the source, the group-ensure step (<code>realtime_tenant_group_ensure_lifecycle_step</code>), and —
 for a partitioned outbox — <code>realtime_tenant_relay_lifecycle_step</code>. The read-side rules
@@ -7135,6 +7137,13 @@ bound — and drop connections whose credential has lapsed with
 disconnect handlers, without logging it. The full store-and-forward flow —
 per-device cursors, trimming, and opting an event out (<code>offline_delivery=False</code>) — is the
 <a href="../../recipes/realtime-offline-delivery/">offline-delivery recipe</a>.</p>
+<p>The gateway's store half is shared code. A deployment with no Socket.IO server runs it
+alone as <code>RealtimeMailboxWriter</code>, filling the mailbox the <abbr title="Server-Side Encryption">SSE</abbr> and raw-WebSocket routes
+replay from (see <a href="../fastapi/#offline-delivery-without-socketio">offline delivery without Socket.IO</a>).
+Never let a gateway with <code>dedup</code> set, mailbox or not, share a dedup inbox with a writer:
+whichever marks a signal first owns it, so the gateway skips its live emit or the writer
+never stores the row. In one process the second to start is refused
+(<code>realtime_dedup_inbox_shared</code>); across processes it is the deployment's to avoid.</p>
 <p>Operational hardening around the loop:</p>
 <ul>
 <li><strong>Token rotation without a reconnect</strong> — a client sends <code>realtime.reauth</code> with its

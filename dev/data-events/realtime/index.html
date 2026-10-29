@@ -6743,7 +6743,11 @@ gateway) is written the same way.</p>
 the shipment confirms, emitting into an empty room loses the signal. So a durable,
 principal-addressed signal is also written to a per-recipient <strong>mailbox</strong> — the
 mailbox is the source of truth, and the live emit is just a latency optimization
-on top. In a live app the gateway does this store as it processes the signal:</p>
+on top. In a live app the Socket.IO gateway does this store as it processes the signal.
+A deployment that serves only <abbr title="Server-Side Encryption">SSE</abbr> or the raw WebSocket route runs the
+<a href="../../integrations/fastapi/#offline-delivery-without-socketio">mailbox writer</a> instead:
+the same store, with no live emit. Create the writer's consumer group at <code>start_id="0"</code>,
+not the default <code>"$"</code>, so signals appended before its first deploy still reach the mailbox.</p>
 <div class="highlight"><pre><span></span><code><span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">emit_while_offline</span><span class="p">(</span>
     <span class="n">mailbox</span><span class="p">:</span> <span class="n">DocumentRealtimeMailbox</span><span class="p">,</span>
     <span class="o">*</span><span class="p">,</span>

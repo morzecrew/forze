@@ -10325,6 +10325,9 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <li>
 <p><strong><code>forze_dst.conformance.compare_analytics_query</code> checks a mock resolver against the SQL it stands in for.</strong> It loads one seed into both engines, runs the query on each and lists every differing row. <code>query_invariant(spec, query_key, holds=...)</code> turns the same query into a <abbr title="Deterministic Simulation Testing">DST</abbr> oracle.</p>
 </li>
+<li>
+<p><strong><abbr title="Server-Side Encryption">SSE</abbr>- and WebSocket-only apps get offline delivery without Socket.IO.</strong> <code>RealtimeMailboxWriter</code> and its lifecycle step fill the mailbox those routes replay from, using the gateway's store code. They and the signal sources live in <code>forze.application.execution.realtime</code>; <code>forze_socketio</code> re-exports what moved.</p>
+</li>
 </ul>
 <p><strong><code>forze ops</code> for people at a shell and for backfills:</strong></p>
 <ul>
@@ -10490,6 +10493,9 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 </li>
 <li>
 <p><strong>The storage kit's <code>presign_download</code> is sensitive</strong> (<strong>Breaking</strong>). <abbr title="Model Context Protocol">MCP</abbr>, <code>forze ops</code>, agent tools and generated routes refuse it, so <code>attach_storage_routes</code> no longer serves it; an <abbr title="Model Context Protocol">MCP</abbr> server or <code>OpsApp</code> over the storage registry needs <code>operations=</code> without it. Trace capture masks presigned URLs.</p>
+</li>
+<li>
+<p><strong>A tenant-sharded realtime consumer refuses a stream route that is not <code>tenant_aware</code></strong> (<strong>behaviour change</strong>). <code>TenantShardedSignalSource</code> and <code>realtime_sse_sharded_tail_lifecycle_step</code> fail with <code>tenant_aware_required</code>, so a signal is never delivered or stored under another tenant. New <code>require_tenant_aware</code>.</p>
 </li>
 </ul>
 <h2 id="0162-2026-10-26"><a href="https://github.com/morzecrew/forze/compare/v0.16.1...v0.16.2">0.16.2</a> - 2026-10-26<a class="headerlink" href="#0162-2026-10-26" title="Permanent link">&para;</a></h2>

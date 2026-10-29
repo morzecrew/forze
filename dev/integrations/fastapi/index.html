@@ -3881,6 +3881,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Realtime egress over SSE">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#offline-delivery-without-socketio" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Offline delivery without Socket.IO
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -6713,6 +6730,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Realtime egress over SSE">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#offline-delivery-without-socketio" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Offline delivery without Socket.IO
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -7273,8 +7307,9 @@ two transports:</p>
 </code></pre></div>
 <p>The live leg reads the realtime stream with a plain (non-group) tail — broadcast
 semantics, so every node sees every signal, with zero consumer-group lifecycle —
-and is at-most-once by contract: the mailbox carries the durable guarantee, and the
-Socket.IO gateway remains its sole writer. Without a hub the endpoint is
+and is at-most-once by contract: the mailbox carries the durable guarantee, and
+something else must write it (see <a href="#offline-delivery-without-socketio">offline delivery without
+Socket.IO</a>). Without a hub the endpoint is
 catch-up-only (the browser's auto-reconnect gives long-poll-style delivery). Topics
 are subscribed per connection with <code>?topics=a,b</code> (live-only, like Socket.IO rooms)
 and are <strong>fail-closed</strong>: they require an <code>authorize_topics</code> resolver — <code>(ctx,
@@ -7292,7 +7327,8 @@ tail loop per shard tenant, each bound to its tenant, so signals fan out under t
 <strong>stream's</strong> trusted identity rather than an untrusted header (the <abbr title="Server-Side Encryption">SSE</abbr> analog of
 <code>TenantShardedSignalSource</code>). Hand it the same <code>RealtimeShard</code> the publish-side
 steps use. The plain tail reads with no tenant bound, so over a <code>tenant_aware</code> route it
-refuses to start (<code>tenant_global_required</code>).</p>
+refuses to start (<code>tenant_global_required</code>). The sharded tail refuses a route that is not
+<code>tenant_aware</code> (<code>tenant_aware_required</code>): every tenant's loop would read the same stream.</p>
 <p>Pass the <strong>same</strong> presence store the Socket.IO side uses
 (<code>attach_realtime_sse_route(..., presence=...)</code>) and open <abbr title="Server-Side Encryption">SSE</abbr> streams join their
 principal/topic rooms for the connection's lifetime — so "is this user online"
@@ -7303,6 +7339,91 @@ re-assert within the TTL. The heartbeat runs with no tenant bound, so it refuses
 on a client routed per tenant; rooms already carry their tenant. A closing stream leaves its rooms even when it closes cancelled —
 its client gone, or cut off by a drain — within 2 s; past that, a warning is logged and the
 rest expire with the store's TTL.</p>
+<h3 id="offline-delivery-without-socketio">Offline delivery without Socket.IO<a class="headerlink" href="#offline-delivery-without-socketio" title="Permanent link">&para;</a></h3>
+<p>The <abbr title="Server-Side Encryption">SSE</abbr> and WebSocket routes replay the mailbox and ack against it; they never write it.
+Something has to consume the realtime stream through a consumer group and store each
+durable, principal-addressed signal. With a Socket.IO server, its gateway does. Without
+one, run <code>RealtimeMailboxWriter</code>: the gateway's store half and nothing else. It runs
+the same delivery code as the gateway, so admission against the catalog, the
+tenancy rules, the dedup mark and the store-before-ack order are identical:</p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">datetime</span><span class="w"> </span><span class="kn">import</span> <span class="n">timedelta</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">forze.application.execution.realtime</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+    <span class="n">GatewayDedup</span><span class="p">,</span>
+    <span class="n">RealtimeMailboxWriter</span><span class="p">,</span>
+    <span class="n">StreamGroupSignalSource</span><span class="p">,</span>
+    <span class="n">realtime_mailbox_writer_lifecycle_step</span><span class="p">,</span>
+<span class="p">)</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">forze_kits.integrations.realtime</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+    <span class="n">MailboxRetention</span><span class="p">,</span>
+    <span class="n">build_realtime_mailbox</span><span class="p">,</span>
+    <span class="n">build_realtime_transport</span><span class="p">,</span>
+    <span class="n">realtime_group_ensure_lifecycle_step</span><span class="p">,</span>
+    <span class="n">realtime_mailbox_retention_lifecycle_step</span><span class="p">,</span>
+    <span class="n">realtime_relay_lifecycle_step</span><span class="p">,</span>
+<span class="p">)</span>
+
+<span class="n">transport</span> <span class="o">=</span> <span class="n">build_realtime_transport</span><span class="p">()</span>
+<span class="n">writer</span> <span class="o">=</span> <span class="n">RealtimeMailboxWriter</span><span class="p">(</span>
+    <span class="n">source</span><span class="o">=</span><span class="n">StreamGroupSignalSource</span><span class="p">(</span><span class="n">stream_spec</span><span class="o">=</span><span class="n">transport</span><span class="o">.</span><span class="n">stream_spec</span><span class="p">),</span>
+    <span class="n">dedup</span><span class="o">=</span><span class="n">GatewayDedup</span><span class="p">(</span><span class="n">inbox_spec</span><span class="o">=</span><span class="n">transport</span><span class="o">.</span><span class="n">inbox_spec</span><span class="p">,</span> <span class="n">tx_route</span><span class="o">=</span><span class="s2">"..."</span><span class="p">),</span>
+    <span class="c1"># the same mailbox the routes replay from</span>
+    <span class="n">mailbox_factory</span><span class="o">=</span><span class="k">lambda</span> <span class="n">ctx</span><span class="p">:</span> <span class="n">build_realtime_mailbox</span><span class="p">(</span>
+        <span class="n">ctx</span><span class="p">,</span> <span class="n">retention</span><span class="o">=</span><span class="n">MailboxRetention</span><span class="p">(</span><span class="n">max_age</span><span class="o">=</span><span class="n">timedelta</span><span class="p">(</span><span class="n">days</span><span class="o">=</span><span class="mi">7</span><span class="p">)),</span>
+    <span class="p">),</span>
+<span class="p">)</span>
+<span class="n">lifecycle</span> <span class="o">=</span> <span class="p">[</span>
+    <span class="c1"># before serving; "0" so a group created after the first appends still stores them</span>
+    <span class="n">realtime_group_ensure_lifecycle_step</span><span class="p">(</span><span class="n">stream_spec</span><span class="o">=</span><span class="n">transport</span><span class="o">.</span><span class="n">stream_spec</span><span class="p">,</span> <span class="n">start_id</span><span class="o">=</span><span class="s2">"0"</span><span class="p">),</span>
+    <span class="n">realtime_relay_lifecycle_step</span><span class="p">(</span>
+        <span class="n">outbox_spec</span><span class="o">=</span><span class="n">transport</span><span class="o">.</span><span class="n">outbox_spec</span><span class="p">,</span> <span class="n">stream_spec</span><span class="o">=</span><span class="n">transport</span><span class="o">.</span><span class="n">stream_spec</span><span class="p">,</span>
+    <span class="p">),</span>
+    <span class="n">realtime_mailbox_retention_lifecycle_step</span><span class="p">(</span><span class="n">max_age</span><span class="o">=</span><span class="n">timedelta</span><span class="p">(</span><span class="n">days</span><span class="o">=</span><span class="mi">7</span><span class="p">)),</span>
+    <span class="n">realtime_mailbox_writer_lifecycle_step</span><span class="p">(</span><span class="n">writer</span><span class="p">),</span>
+<span class="p">]</span>
+</code></pre></div>
+<ul>
+<li><strong>Create its group at <code>0</code>.</strong> The group-ensure step defaults to <code>start_id="$"</code>, which suits
+  the gateway: a new group should not emit an old backlog live. A writer whose group is
+  created at <code>$</code> skips every entry appended before that, such as signals relayed before
+  the writer's first deploy, and those never reach the mailbox. At <code>"0"</code> the new group
+  reads every entry the stream still holds. The dedup inbox stops a double store, and the
+  stream's retention cap bounds the one-time catch-up. It only applies when the group is
+  created; an existing group keeps its position. With <code>TenantShardedSignalSource</code>, pass
+  <code>start_id="0"</code> to <code>realtime_tenant_group_ensure_lifecycle_step</code> too.</li>
+<li><strong>Any number of nodes.</strong> Give every node's writer the same consumer group: each signal
+  goes to one writer, a crashed node's unacked entries are reclaimed, and a redelivery
+  finds the dedup mark.</li>
+<li><strong>Replay follows the <abbr title="Hybrid Logical Clock">HLC</abbr>; storage does not.</strong> A row is stored at the signal's carried
+  <abbr title="Hybrid Logical Clock">HLC</abbr>, and a reconnect replays the rows above the device's cursor. Rows are not stored in
+  <abbr title="Hybrid Logical Clock">HLC</abbr> order: a reclaimed entry, another node, or an out-of-order append can store a row
+  below a cursor the device has already acked past, and that row is never replayed. One
+  writer per stream or tenant shard narrows the window to reclaims and out-of-order
+  appends but does not close it. A storing gateway has the same window.</li>
+<li><strong>Instead of the gateway, not beside it.</strong> Never run the writer next to a Socket.IO
+  gateway that shares its dedup inbox, with or without a mailbox. Whichever marks a signal
+  first owns it: the gateway skips its live emit, or the writer never stores the row. In
+  one process the second to start is refused (<code>realtime_dedup_inbox_shared</code>); across
+  processes, keeping them apart is your wiring. A gateway with its own inbox can run
+  beside the writer.</li>
+<li><strong>Store only.</strong> Ephemeral, topic and <code>offline_delivery=False</code> signals are left alone and
+  unmarked; live delivery stays with the hub.</li>
+<li><strong>Tenancy as on the gateway.</strong> <code>bind_tenant_from_headers</code> is opt-in, and <code>require_tenant</code>
+  follows it. The header is not authenticated: on a tenant-global stream, whoever can
+  append to the stream chooses the tenant whose mailbox a signal is stored in, so enable
+  it only where every producer is trusted to assert tenancy. Otherwise wire the stream
+  route <code>tenant_aware</code> and use <code>TenantShardedSignalSource(shard=shard)</code> with
+  <code>realtime_tenant_group_ensure_lifecycle_step</code>, which take the tenant from the stream.
+  The sharded source refuses a route that is not <code>tenant_aware</code>
+  (<code>tenant_aware_required</code>). A <code>PubSubSignalSource</code> is refused
+  (<code>realtime_mailbox_writer_source_unsupported</code>): pub/sub keeps nothing for a writer that
+  was not subscribed.</li>
+<li><strong>Counters.</strong> Hand one <code>RealtimeGatewayStats</code> to the writer and its source, then call
+  <code>instrument_realtime_gateway(stats)</code>. Both live in <code>forze.application.execution.realtime</code>,
+  so no Socket.IO install is needed.</li>
+</ul>
+<p>With neither a writer nor a gateway, the mailbox stays empty. The routes still serve and
+accept acks, but a durable signal that lands while a client is disconnected is lost.</p>
 <h2 id="realtime-over-raw-websocket">Realtime over raw WebSocket<a class="headerlink" href="#realtime-over-raw-websocket" title="Permanent link">&para;</a></h2>
 <p><code>attach_realtime_ws_route</code> is the duplex sibling for clients that cannot run
 Socket.IO (strict-protocol peers, non-JS embedded clients): the same replay + live
