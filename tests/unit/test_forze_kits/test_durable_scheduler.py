@@ -131,6 +131,19 @@ class TestCronAcrossDst:
         assert spring == [datetime(2026, 3, 8, h, 30, tzinfo=UTC) for h in (5, 6, 7, 8)]
         assert fall == [datetime(2026, 11, 1, h, 30, tzinfo=UTC) for h in (4, 5, 6, 7, 8)]
 
+    @pytest.mark.parametrize(
+        "hours",
+        ["*/1", "0-23", "0-23/1", "0-11,12-23", ",".join(str(h) for h in range(24))],
+    )
+    def test_every_spelling_of_every_hour_fires_both_repeated_hours(self, hours: str) -> None:
+        fall = self._fires(
+            f"30 {hours} * * *",
+            datetime(2026, 11, 1, 4, tzinfo=UTC),
+            datetime(2026, 11, 1, 9, tzinfo=UTC),
+        )
+
+        assert fall == [datetime(2026, 11, 1, h, 30, tzinfo=UTC) for h in (4, 5, 6, 7, 8)]
+
 
 class TestDurableScheduler:
     async def test_put_computes_first_fire(self) -> None:

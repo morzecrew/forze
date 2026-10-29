@@ -67,7 +67,10 @@ def next_cron_fire(
 
     zone = ZoneInfo(tz)
     occurrences = croniter(expression, after.astimezone(zone))
-    every_hour = occurrences.expanded[1] == ["*"]
+    # croniter 6 folds every full-day spelling (``*/1``, ``0-23``, a 24-hour list) to ``*``; the
+    # set check keeps that true for any version that would not.
+    hours = occurrences.expanded[1]
+    every_hour = hours == ["*"] or {str(h) for h in hours} == {str(h) for h in range(24)}
 
     while True:
         fire = occurrences.get_next(datetime).astimezone(UTC)
