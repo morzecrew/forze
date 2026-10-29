@@ -12,7 +12,7 @@ from unittest.mock import AsyncMock, MagicMock
 import aiohttp
 import pytest
 
-from forze.base.exceptions import CoreException
+from forze.base.exceptions import CoreException, ExceptionKind
 from forze_gcs.kernel.client import GCSClient
 from forze_gcs.kernel.client.client import TAG_METADATA_PREFIX
 
@@ -43,7 +43,7 @@ async def test_download_range_sends_range_header_and_total() -> None:
     fake.download_metadata = AsyncMock(
         return_value={"contentType": "text/plain", "size": 10},
     )
-    fake.download = AsyncMock(return_value=b"2345")
+    fake._download = AsyncMock(return_value=b"2345")
     client = _client(fake)
 
     body, content_range, total = await client.download_range_bytes(
@@ -54,8 +54,9 @@ async def test_download_range_sends_range_header_and_total() -> None:
     assert body.content_type == "text/plain"
     assert content_range == "bytes 2-5/10"
     assert total == 10
-    headers = fake.download.await_args.kwargs["headers"]
+    headers = fake._download.await_args.kwargs["headers"]
     assert headers["Range"] == "bytes=2-5"
+    assert fake._download.await_args.kwargs["params"] == {"alt": "media"}
 
 
 @pytest.mark.asyncio
@@ -64,14 +65,14 @@ async def test_download_range_unsatisfiable_start_beyond_size() -> None:
     fake.download_metadata = AsyncMock(
         return_value={"contentType": "text/plain", "size": 10},
     )
-    fake.download = AsyncMock()
+    fake._download = AsyncMock()
     client = _client(fake)
 
     with pytest.raises(CoreException) as ei:
         await client.download_range_bytes("b", "k", start=99)
 
     assert ei.value.code == "range_not_satisfiable"
-    fake.download.assert_not_called()
+    fake._download.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -80,13 +81,79 @@ async def test_download_range_416_maps_to_precondition() -> None:
     fake.download_metadata = AsyncMock(
         return_value={"contentType": "text/plain", "size": 10},
     )
-    fake.download = AsyncMock(side_effect=_response_error(416))
+    fake._download = AsyncMock(side_effect=_response_error(416))
     client = _client(fake)
 
     with pytest.raises(CoreException) as ei:
         await client.download_range_bytes("b", "k", start=0, end=4)
 
     assert ei.value.code == "range_not_satisfiable"
+
+
+@pytest.mark.asyncio
+async def test_download_range_if_match_pins_the_generation() -> None:
+    fake = MagicMock()
+    fake.download_metadata = AsyncMock(
+        return_value={"contentType": "text/plain", "size": 10, "etag": "E1", "generation": "7"},
+    )
+    fake._download = AsyncMock(return_value=b"2345")
+    client = _client(fake)
+
+    await client.download_range_bytes("b", "k", start=2, end=5, if_match='"E1"')
+
+    params = fake._download.await_args.kwargs["params"]
+    assert params == {"alt": "media", "ifGenerationMatch": "7"}
+
+
+@pytest.mark.asyncio
+async def test_download_range_if_match_refuses_a_changed_etag() -> None:
+    fake = MagicMock()
+    fake.download_metadata = AsyncMock(
+        return_value={"contentType": "text/plain", "size": 10, "etag": "E2", "generation": "8"},
+    )
+    fake._download = AsyncMock()
+    client = _client(fake)
+
+    with pytest.raises(CoreException) as ei:
+        await client.download_range_bytes("b", "k", start=0, end=4, if_match="E1")
+
+    assert (ei.value.kind, ei.value.code) == (
+        ExceptionKind.CONFLICT,
+        "core.storage.read_precondition_failed",
+    )
+    fake._download.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_download_range_if_match_refuses_an_object_with_no_generation() -> None:
+    # Without a generation the media GET cannot be pinned: refuse rather than read unpinned.
+    fake = MagicMock()
+    fake.download_metadata = AsyncMock(
+        return_value={"contentType": "text/plain", "size": 10, "etag": "E1"},
+    )
+    fake._download = AsyncMock()
+    client = _client(fake)
+
+    with pytest.raises(CoreException) as ei:
+        await client.download_range_bytes("b", "k", start=0, end=4, if_match="E1")
+
+    assert ei.value.code == "core.storage.read_unpinnable"
+    fake._download.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_download_range_if_match_412_maps_to_conflict() -> None:
+    fake = MagicMock()
+    fake.download_metadata = AsyncMock(
+        return_value={"contentType": "text/plain", "size": 10, "etag": "E1", "generation": "7"},
+    )
+    fake._download = AsyncMock(side_effect=_response_error(412))
+    client = _client(fake)
+
+    with pytest.raises(CoreException) as ei:
+        await client.download_range_bytes("b", "k", start=0, end=4, if_match="E1")
+
+    assert ei.value.code == "core.storage.read_precondition_failed"
 
 
 # ----------------------- #

@@ -12,9 +12,11 @@ from collections.abc import AsyncIterator
 import pytest
 
 from forze.application.contracts.crypto import KeyRef, StaticKeyDirectory
-from forze.application.contracts.storage import StorageSpec
+from forze.application.contracts.storage import READ_PRECONDITION_FAILED_CODE, StorageSpec
 from forze.application.execution import CryptoDepsModule
 from forze.base.crypto import is_chunked_envelope
+from forze.base.exceptions import CoreException, ExceptionKind
+from forze_gcs.adapters import GCSStorageAdapter
 from forze_gcs.execution.deps.configs import GCSStorageConfig
 from forze_gcs.execution.deps.module import GCSDepsModule
 from forze_gcs.kernel.client.client import GCSClient
@@ -356,3 +358,32 @@ async def test_gcs_conditional_completion_refuses_a_stale_etag_client_side(
 
         body = await gcs_client.download_bytes(bucket=gcs_bucket, key=key)
         assert body.data == b"changed"
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_gcs_stream_fails_when_the_object_is_overwritten_mid_stream(
+    gcs_client: GCSClient, gcs_bucket: str
+) -> None:
+    """A stream reads in ranged GETs; an overwrite between two of them must fail the next
+    read, never splice the two versions into one download."""
+
+    adapter = GCSStorageAdapter(client=gcs_client, bucket_spec=gcs_bucket, stream_part_size=1024)
+
+    async with gcs_client.client():
+        await gcs_client.upload_bytes(gcs_bucket, "doc.bin", b"a" * 4096)
+
+    downloaded = await adapter.download_stream("doc.bin")
+    chunks = aiter(downloaded.chunks)
+    assert await anext(chunks) == b"a" * 1024
+
+    async with gcs_client.client():
+        await gcs_client.upload_bytes(gcs_bucket, "doc.bin", b"b" * 4096)
+
+    with pytest.raises(CoreException) as ei:
+        await anext(chunks)
+
+    assert (ei.value.kind, ei.value.code) == (
+        ExceptionKind.CONFLICT,
+        READ_PRECONDITION_FAILED_CODE,
+    )

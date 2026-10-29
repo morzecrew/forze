@@ -13,15 +13,16 @@ from collections.abc import AsyncIterator
 import pytest
 
 from forze.application.contracts.crypto import KeyRef, StaticKeyDirectory
-from forze.application.contracts.storage import StorageSpec
+from forze.application.contracts.storage import READ_PRECONDITION_FAILED_CODE, StorageSpec
 from forze.application.execution import CryptoDepsModule
 from forze.base.crypto import (
     chunk_frame_stride,
     is_chunked_envelope,
     unpack_chunked_header,
 )
-from forze.base.exceptions import CoreException
+from forze.base.exceptions import CoreException, ExceptionKind
 from forze_mock import MockKeyManagement
+from forze_s3.adapters import S3StorageAdapter
 from forze_s3.execution.deps import S3DepsModule
 from forze_s3.execution.deps.configs import S3StorageConfig
 from forze_s3.kernel.client import S3Client
@@ -236,3 +237,32 @@ async def test_upload_stream_actually_applies_tags(s3_client: S3Client, s3_bucke
 
     head = await query.head(stored.key, include_tags=True)
     assert dict(head.tags) == {"kind": "invoice", "team": "billing"}
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_s3_stream_fails_when_the_object_is_overwritten_mid_stream(
+    s3_client: S3Client, s3_bucket: str
+) -> None:
+    """A stream reads in ranged GETs; an overwrite between two of them must fail the next
+    read, never splice the two versions into one download."""
+
+    adapter = S3StorageAdapter(client=s3_client, bucket_spec=s3_bucket, stream_part_size=1024)
+
+    async with s3_client.client():
+        await s3_client.upload_bytes(s3_bucket, "doc.bin", b"a" * 4096)
+
+    downloaded = await adapter.download_stream("doc.bin")
+    chunks = aiter(downloaded.chunks)
+    assert await anext(chunks) == b"a" * 1024
+
+    async with s3_client.client():
+        await s3_client.upload_bytes(s3_bucket, "doc.bin", b"b" * 4096)
+
+    with pytest.raises(CoreException) as ei:
+        await anext(chunks)
+
+    assert (ei.value.kind, ei.value.code) == (
+        ExceptionKind.CONFLICT,
+        READ_PRECONDITION_FAILED_CODE,
+    )

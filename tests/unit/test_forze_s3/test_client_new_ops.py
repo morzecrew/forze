@@ -10,7 +10,7 @@ from typing import Any
 
 import pytest
 
-from forze.base.exceptions import CoreException
+from forze.base.exceptions import CoreException, ExceptionKind
 from forze_s3.kernel.client import S3Client
 
 # ----------------------- #
@@ -32,6 +32,9 @@ class _Body:
 
     async def read(self) -> bytes:
         return self._data
+
+    def close(self) -> None:
+        pass
 
 
 class _FakeApi:
@@ -159,6 +162,100 @@ async def test_download_range_invalid_range_maps_to_precondition() -> None:
         client._S3Client__ctx_client.reset(tok)
 
     assert ei.value.code == "range_not_satisfiable"
+
+
+@pytest.mark.asyncio
+async def test_download_range_if_match_sends_the_quoted_etag() -> None:
+    api = _FakeApi()
+    api.get_object_result = {
+        "Body": _Body(b"01234"),
+        "ContentRange": "bytes 0-4/10",
+        "ETag": '"E1"',
+    }
+    client, tok = _client_with(api)
+
+    try:
+        await client.download_range_bytes("b", "k", start=0, end=4, if_match="E1")
+    finally:
+        client._S3Client__ctx_client.reset(tok)
+
+    assert api.get_object_calls[0]["IfMatch"] == '"E1"'
+
+
+@pytest.mark.asyncio
+async def test_download_range_if_match_412_maps_to_conflict() -> None:
+    api = _FakeApi()
+    api.get_object_error = _ClientError({"Error": {"Code": "PreconditionFailed"}})
+    client, tok = _client_with(api)
+
+    try:
+        with pytest.raises(CoreException) as ei:
+            await client.download_range_bytes("b", "k", start=0, end=4, if_match="E1")
+    finally:
+        client._S3Client__ctx_client.reset(tok)
+
+    assert (ei.value.kind, ei.value.code) == (
+        ExceptionKind.CONFLICT,
+        "core.storage.read_precondition_failed",
+    )
+
+
+@pytest.mark.asyncio
+async def test_download_range_if_match_refuses_another_served_etag() -> None:
+    # A server that ignores If-Match must not hand back the new version's bytes.
+    api = _FakeApi()
+    api.get_object_result = {
+        "Body": _Body(b"new"),
+        "ContentRange": "bytes 0-2/3",
+        "ETag": '"E2"',
+    }
+    client, tok = _client_with(api)
+
+    try:
+        with pytest.raises(CoreException) as ei:
+            await client.download_range_bytes("b", "k", start=0, end=4, if_match="E1")
+    finally:
+        client._S3Client__ctx_client.reset(tok)
+
+    assert ei.value.code == "core.storage.read_precondition_failed"
+
+
+@pytest.mark.asyncio
+async def test_download_range_if_match_refuses_a_response_with_no_etag() -> None:
+    # Nothing names the version served, so the pin cannot be checked: refuse.
+    api = _FakeApi()
+    api.get_object_result = {"Body": _Body(b"01234"), "ContentRange": "bytes 0-4/10"}
+    client, tok = _client_with(api)
+
+    try:
+        with pytest.raises(CoreException) as ei:
+            await client.download_range_bytes("b", "k", start=0, end=4, if_match="E1")
+    finally:
+        client._S3Client__ctx_client.reset(tok)
+
+    assert ei.value.code == "core.storage.read_unpinnable"
+
+
+@pytest.mark.asyncio
+async def test_download_range_if_match_keeps_a_multipart_etag() -> None:
+    # head strips the quotes from a multipart ETag; If-Match must send it quoted, as served.
+    api = _FakeApi()
+    api.get_object_result = {
+        "Body": _Body(b"01234"),
+        "ContentRange": "bytes 0-4/10",
+        "ETag": '"abc-3"',
+    }
+    client, tok = _client_with(api)
+
+    try:
+        body, _range, _total = await client.download_range_bytes(
+            "b", "k", start=0, end=4, if_match="abc-3"
+        )
+    finally:
+        client._S3Client__ctx_client.reset(tok)
+
+    assert api.get_object_calls[0]["IfMatch"] == '"abc-3"'
+    assert body.data == b"01234"
 
 
 @pytest.mark.asyncio

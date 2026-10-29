@@ -290,7 +290,7 @@ async def test_download_range_refused_for_whole_payload_encrypted() -> None:
     cipher = MagicMock(spec=BytesCipherPort)
     adapter = _adapter(cipher=cipher)
     adapter.client.head_object = AsyncMock(
-        return_value=ObjectStorageHead(content_type="application/octet-stream", size=64)
+        return_value=ObjectStorageHead(content_type="application/octet-stream", size=64, etag="e1")
     )
     adapter.client.download_range_bytes = AsyncMock(
         return_value=(

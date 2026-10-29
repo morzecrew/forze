@@ -179,7 +179,7 @@ name). Objects are addressed by string `key`.
 | Port | Method | Signature | Notes |
 |------|--------|-----------|-------|
 | query | `download` | `download(key)` | the whole object, buffered — a `DownloadedObject` (bytes + metadata) |
-| query | `download_stream` | `download_stream(key)` | a `StreamedDownload` — single-use async chunk iterator, never buffers the whole object; encrypted objects decrypt chunk by chunk |
+| query | `download_stream` | `download_stream(key)` | a `StreamedDownload` — single-use async chunk iterator, never buffers the whole object; encrypted objects decrypt chunk by chunk. An object replaced mid-stream fails the next read with `conflict` (`READ_PRECONDITION_FAILED_CODE`), never mixing two versions |
 | query | `download_range` | `download_range(key, *, start, end=None)` | inclusive byte range as a `RangedDownload` (HTTP `Range` semantics); a `start` beyond the object is a precondition error (the 416 equivalent) |
 | query | `download_if_changed` | `download_if_changed(key, *, if_none_match=None, if_modified_since=None)` | `None` when unchanged (the 304 equivalent); at least one condition required |
 | query | `head` | `head(key, *, include_tags=False)` | an `ObjectHead` — size, content type, ETag, last-modified — without the body; works for raw presigned uploads too |

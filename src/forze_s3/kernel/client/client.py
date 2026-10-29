@@ -42,7 +42,9 @@ from forze.application.integrations.storage.client import (
     normalize_list_window,
     overwrite_precondition_failed,
     presign_expiry_seconds,
+    read_precondition_failed,
     reject_contradictory_write_conditions,
+    unpinnable_read,
     unsatisfiable_range,
     validate_range,
 )
@@ -524,6 +526,7 @@ class S3Client(S3ClientPort):
         *,
         start: int,
         end: int | None = None,
+        if_match: str | None = None,
     ) -> tuple[ObjectBody, str, int]:
         """Download an inclusive byte range via a ranged ``GetObject``.
 
@@ -537,6 +540,9 @@ class S3Client(S3ClientPort):
         :param key: Object key.
         :param start: First byte offset (inclusive, ``>= 0``).
         :param end: Last byte offset (inclusive), or ``None`` for EOF.
+        :param if_match: Sent as ``If-Match``; a 412, or a response carrying another
+            ETag, raises ``conflict`` (:func:`read_precondition_failed`), and a response
+            carrying none raises :func:`unpinnable_read`.
         :returns: ``(body, content_range, total_size)`` where *body* carries the
             range slice and its content type (metadata may be empty for ranges).
         """
@@ -544,12 +550,17 @@ class S3Client(S3ClientPort):
         validate_range(start, end)
         c = self.__require_client()
 
+        kwargs: dict[str, Any] = {
+            "Bucket": bucket,
+            "Key": key,
+            "Range": build_range_header(start, end),
+        }
+
+        if if_match is not None:
+            kwargs["IfMatch"] = _quote_etag(if_match)
+
         try:
-            resp = await c.get_object(
-                Bucket=bucket,
-                Key=key,
-                Range=build_range_header(start, end),
-            )
+            resp = await c.get_object(**kwargs)
 
         except c.exceptions.ClientError as e:  # type: ignore[attr-defined]
             code = (e.response or {}).get("Error", {}).get("Code")
@@ -558,7 +569,18 @@ class S3Client(S3ClientPort):
                 total = _content_length_from_error(e)
                 raise unsatisfiable_range(start, total) from e
 
+            if if_match is not None and code in {"PreconditionFailed", "412"}:
+                raise read_precondition_failed(key) from e
+
             raise
+
+        # A server that ignores If-Match still names the version it served; one that names
+        # none cannot show it served the pinned one.
+        served = str(resp.get("ETag") or "")
+
+        if if_match is not None and (not served or _quote_etag(served) != _quote_etag(if_match)):
+            resp["Body"].close()  # aiohttp's ClientResponse.close is synchronous
+            raise read_precondition_failed(key) if served else unpinnable_read(key)
 
         body = resp["Body"]
         data = await body.read()

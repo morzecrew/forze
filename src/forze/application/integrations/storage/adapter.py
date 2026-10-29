@@ -50,6 +50,7 @@ from forze.application.integrations.storage.client import (
     ObjectStoragePartInfo,
     ObjectStorageSSE,
     attachment_content_disposition,
+    unpinnable_read,
     unsatisfiable_range,
     validate_range,
 )
@@ -849,13 +850,16 @@ class ObjectStorageAdapter(
         bucket = await self._resolved_bucket()
         head = await self.head(key)
 
+        if not head.etag:  # every ranged read is pinned to it
+            raise unpinnable_read(key)
+
         filename = (
             self._filename_from_metadata(key, head.metadata)
             if head.metadata
             else self._key_basename(key)
         )
 
-        raw = self._raw_ranges(bucket, key, head.size)
+        raw = self._raw_ranges(bucket, key, head.size, head.etag)
         body = raw if self.cipher is None else self._decrypt_ranges(raw, bucket, key)
         # The plaintext size is known only for a non-encrypted object (the stored
         # size is the raw bytes; encryption/​framing makes it larger than plaintext).
@@ -872,9 +876,13 @@ class ObjectStorageAdapter(
 
     # ....................... #
 
-    async def _raw_ranges(self, bucket: str, key: str, total: int) -> AsyncIterator[bytes]:
+    async def _raw_ranges(
+        self, bucket: str, key: str, total: int, etag: str
+    ) -> AsyncIterator[bytes]:
         """Yield an object's raw bytes in ``stream_part_size`` ranged GETs.
 
+        Every GET is pinned to *etag* (from the stream's ``head``), so an overwrite
+        between two of them fails the next read instead of splicing two versions.
         Holds the client connection open across the whole iteration, so the caller
         must consume (or close) the stream promptly.
         """
@@ -885,7 +893,7 @@ class ObjectStorageAdapter(
             while offset < total:
                 end = offset + self.stream_part_size - 1
                 body, _content_range, _real_total = await self.client.download_range_bytes(
-                    bucket=bucket, key=key, start=offset, end=end
+                    bucket=bucket, key=key, start=offset, end=end, if_match=etag
                 )
 
                 if not body.data:
@@ -1087,11 +1095,11 @@ class ObjectStorageAdapter(
     # ....................... #
 
     async def _raw_download_range(
-        self, bucket: str, key: str, *, start: int, end: int | None
+        self, bucket: str, key: str, *, start: int, end: int | None, if_match: str | None = None
     ) -> RangedDownload:
         async with self.client.client():
             body, content_range, total = await self.client.download_range_bytes(
-                bucket=bucket, key=key, start=start, end=end
+                bucket=bucket, key=key, start=start, end=end, if_match=if_match
             )
 
         return RangedDownload(
@@ -1107,10 +1115,18 @@ class ObjectStorageAdapter(
     async def _encrypted_download_range(
         self, bucket: str, key: str, *, start: int, end: int | None
     ) -> RangedDownload:
-        """Serve a ranged read against a client-side-encrypted object by stored format."""
+        """Serve a ranged read against a client-side-encrypted object by stored format.
+
+        It takes several GETs (probe, last frame, covering chunks), each pinned to the
+        ``head``'s ETag, so an object replaced in between fails the read with ``conflict``
+        instead of classifying one version and serving another.
+        """
 
         head = await self.head(key)
         raw_total = head.size
+
+        if not head.etag:
+            raise unpinnable_read(key)
 
         if raw_total >= 4:  # need the 4-byte magic to classify the object
             async with self.client.client():
@@ -1119,6 +1135,7 @@ class ObjectStorageAdapter(
                     key=key,
                     start=0,
                     end=min(_HEADER_PROBE_SIZE, raw_total) - 1,
+                    if_match=head.etag,
                 )
 
             magic = probe.data[:4]
@@ -1133,6 +1150,7 @@ class ObjectStorageAdapter(
                     content_type=head.content_type,
                     filename=self._filename_from_metadata(key, head.metadata),
                     probe=probe.data,
+                    etag=head.etag,
                 )
 
             if is_envelope(magic):
@@ -1144,7 +1162,7 @@ class ObjectStorageAdapter(
                 )
 
         # Plaintext (migration tolerance) — pass the ranged GET straight through.
-        return await self._raw_download_range(bucket, key, start=start, end=end)
+        return await self._raw_download_range(bucket, key, start=start, end=end, if_match=head.etag)
 
     # ....................... #
 
@@ -1159,6 +1177,7 @@ class ObjectStorageAdapter(
         content_type: str,
         filename: str,
         probe: bytes,
+        etag: str,
     ) -> RangedDownload:
         """Decrypt only the chunks a byte range covers, then trim to the exact bytes.
 
@@ -1189,6 +1208,7 @@ class ObjectStorageAdapter(
                     key=key,
                     start=opener.header_len,
                     end=min(opener.header_len + _FRAME_PREFIX_MAX, raw_total) - 1,
+                    if_match=etag,
                 )
             stride = chunk_frame_stride(wider.data, 0)
 
@@ -1203,7 +1223,7 @@ class ObjectStorageAdapter(
         num_chunks = -(-(raw_total - opener.header_len) // stride)  # ceil division
         last_index = num_chunks - 1
         last_plaintext = await self._open_chunk_at(
-            bucket, key, opener, stride, last_index, last_index, raw_total
+            bucket, key, opener, stride, last_index, last_index, raw_total, etag
         )
         plaintext_total = last_index * chunk_size + len(last_plaintext)
 
@@ -1221,7 +1241,7 @@ class ObjectStorageAdapter(
                 last_plaintext
                 if index == last_index
                 else await self._open_chunk_at(
-                    bucket, key, opener, stride, index, last_index, raw_total
+                    bucket, key, opener, stride, index, last_index, raw_total, etag
                 )
             )
 
@@ -1247,8 +1267,9 @@ class ObjectStorageAdapter(
         index: int,
         last_index: int,
         raw_total: int,
+        etag: str,
     ) -> bytes:
-        """Fetch and decrypt a single chunk by index (ranged GET of its frame).
+        """Fetch and decrypt a single chunk by index (ranged GET of its frame, pinned to *etag*).
 
         Beyond AEAD authentication, the frame's terminator flag is checked against
         the stored layout: the last stored frame must carry it — otherwise the
@@ -1262,7 +1283,7 @@ class ObjectStorageAdapter(
 
         async with self.client.client():
             body, _cr, _t = await self.client.download_range_bytes(
-                bucket=bucket, key=key, start=offset, end=end
+                bucket=bucket, key=key, start=offset, end=end, if_match=etag
             )
 
         frame, _consumed = parse_frame(body.data, 0)
