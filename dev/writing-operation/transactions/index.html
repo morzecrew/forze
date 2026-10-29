@@ -1244,6 +1244,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#serializing-an-operation" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Serializing an operation
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#after-the-commit" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -6610,6 +6621,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#serializing-an-operation" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Serializing an operation
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#after-the-commit" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -6871,6 +6893,84 @@ SERIALIZABLE</code> — and each adapter maps it to its backend's spelling. The 
 honors all three through an in-memory MVCC overlay (it rejects the write-write,
 write-skew, and phantom conflicts the level forbids), so an isolation-dependent
 bug is catchable in a unit test or under <a href="../../dst/overview/">simulation</a>.</p>
+<h2 id="serializing-an-operation">Serializing an operation<a class="headerlink" href="#serializing-an-operation" title="Permanent link">&para;</a></h2>
+<p>Some operations must not run twice at once for the same input. A recompute of an
+order's totals reads every line and writes the sum. Two of them in parallel can
+each read a different set of lines, and the second to commit wins with a stale
+sum. Optimistic concurrency does not help when the conflict is between two
+<em>reads</em> of rows that neither write touches.</p>
+<p><code>SerializeOperation</code> makes invocations that share a key take turns. The lock is
+taken inside the operation's transaction and held until the root transaction
+commits or rolls back:</p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">forze.application.hooks.locking</span><span class="w"> </span><span class="kn">import</span> <span class="n">SerializeOperation</span>
+
+<span class="n">registry</span> <span class="o">=</span> <span class="p">(</span>
+    <span class="n">registry</span><span class="o">.</span><span class="n">bind</span><span class="p">(</span><span class="s2">"orders.recompute"</span><span class="p">)</span>
+    <span class="o">.</span><span class="n">bind_tx</span><span class="p">()</span>
+    <span class="o">.</span><span class="n">set_route</span><span class="p">(</span><span class="s2">"orders"</span><span class="p">)</span>
+    <span class="o">.</span><span class="n">before</span><span class="p">(</span><span class="n">SerializeOperation</span><span class="p">(</span><span class="n">key</span><span class="o">=</span><span class="k">lambda</span> <span class="n">args</span><span class="p">:</span> <span class="n">args</span><span class="o">.</span><span class="n">order_id</span><span class="p">)</span><span class="o">.</span><span class="n">to_step</span><span class="p">())</span>
+    <span class="o">.</span><span class="n">finish</span><span class="p">(</span><span class="n">deep</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+<span class="p">)</span>
+</code></pre></div>
+<p>A second <code>orders.recompute</code> for the same order waits at that step until the
+first one's transaction ends. Different orders, and different tenants, never
+wait on each other. The lock is keyed by the operation's registered name, the
+bound tenant and the key, so another operation never shares it. Under a
+<a href="#two-phase-handlers-work-before-the-write">two-phase handler</a> it covers <code>apply</code>
+only: <code>prepare</code> runs before the transaction opens.</p>
+<p>The key function returns one value or a tuple of values. Each must be a <code>str</code>,
+an <code>int</code>, a <code>UUID</code> or a timezone-aware <code>datetime</code>. A datetime locks on its
+instant, so two offsets of one moment take the same lock. Any other type
+(<code>None</code>, an enum member, a <code>bool</code>, a float) is refused as <code>configuration</code>
+(<code>operation_lock_key_unsupported</code>); pass an enum's <code>.value</code>. A naive datetime is
+refused as <code>validation</code> (<code>operation_lock_key_naive_datetime</code>). What the key
+function returns is known only when the operation runs, so these refuse that
+call, and the error names the operation.</p>
+<p>An operation that runs nested in another one's transaction takes the lock in a
+savepoint. If the nested operation succeeds, its lock stays until the root
+transaction ends, as its writes do. If it fails, Postgres rolls the savepoint
+back and releases the lock with the writes it guarded, while the outer
+transaction carries on. The mock keeps the lock until the root ends either way,
+which is stricter.</p>
+<p>Wiring problems surface before the first request:</p>
+<ul>
+<li>Placed in the outer scope, which runs before the transaction opens, it is
+  refused at registry freeze (<code>tx_lock_outside_transaction_scope</code>).</li>
+<li>An operation with no transaction route is refused there too
+  (<code>tx_lock_without_route</code>).</li>
+<li>A route whose backend has no transaction-scoped lock is refused when the
+  operation is resolved, on its first call or under <code>check_wiring</code>
+  (<code>tx_lock_unsupported</code>). Postgres has one; Mongo and Firestore do not. The
+  lock comes from the route's transaction manager, so it is always the lock of
+  the store that transaction runs on, whatever else is wired. It never falls
+  back to a Redis lease.</li>
+</ul>
+<p>On Postgres the lock is <code>pg_advisory_xact_lock</code> on the transaction's own
+connection. Nothing expires mid-transaction and nothing needs a fencing token,
+because only a commit or a rollback releases it. A wait counts against the
+operation's <a href="../../running-in-prod/deadlines/">deadline</a>. The mock takes the same
+per-owner write locks a <code>SerializedBy</code> write takes, under the <code>journal</code> and
+<code>strict</code> managers. <code>transactions="none"</code> opens no transaction, so it binds no
+lock and the operation is refused at resolve.</p>
+<p>To take a lock by hand inside a scope, call the port the step uses:</p>
+<div class="highlight"><pre><span></span><code><span class="k">async</span> <span class="k">with</span> <span class="n">ctx</span><span class="o">.</span><span class="n">tx_ctx</span><span class="o">.</span><span class="n">scope</span><span class="p">(</span><span class="s2">"orders"</span><span class="p">):</span>
+    <span class="k">await</span> <span class="n">ctx</span><span class="o">.</span><span class="n">tx_locks</span><span class="p">(</span><span class="s2">"orders"</span><span class="p">)</span><span class="o">.</span><span class="n">hold</span><span class="p">(</span><span class="n">key</span><span class="p">)</span>  <span class="c1"># key: a 64-bit int, e.g. advisory_lock_key(...)</span>
+</code></pre></div>
+<p>Outside a transaction it is refused (<code>tx_lock_outside_transaction</code>), since the
+lock would end with its own statement. One <code>hold</code> call takes its keys in sorted
+order. Two calls, or two transactions taking keys in opposite orders, can
+deadlock; one side is refused as a retryable <code>concurrency</code>, on Postgres and the
+mock alike.</p>
+<div class="admonition note">
+<p class="admonition-title">Which lock to reach for</p>
+<p>The <a href="../../reference/contracts/document/"><code>SerializedBy</code></a> guarantee and
+<code>command.hold(...)</code> lock a <em>document owner</em>: every write for that owner takes
+the lock, whoever wrote the code. <code>SerializeOperation</code> locks an <em>operation
+input</em>: only invocations of that operation take it, and the key need not be
+any document's field. A <a href="../../reference/contracts/coordination/#distributed-lock">distributed lock</a>
+is a lease for work outside any transaction; its release is not tied to a
+commit.</p>
+</div>
 <h2 id="after-the-commit">After the commit<a class="headerlink" href="#after-the-commit" title="Permanent link">&para;</a></h2>
 <p>Some work must happen <strong>only if</strong> the transaction commits — publishing an event,
 sending a notification, enqueuing a job. Doing it inside the scope risks acting

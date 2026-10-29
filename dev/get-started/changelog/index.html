@@ -10254,6 +10254,9 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <p><strong>A handler can take a spec's <code>SerializedBy</code> lock before it reads.</strong> <code>hold({"order_id": order_id})</code> on the document command port takes the lock its writes take, without writing, until the transaction ends. Refused outside a transaction, for a datetime, validator-rewritten or serialized key, and on Mongo and Firestore.</p>
 </li>
 <li>
+<p><strong><code>SerializeOperation(key=...)</code> makes invocations of an operation that share a key take turns, each until its transaction ends.</strong> It holds <code>ctx.tx_locks(route)</code>: <code>pg_advisory_xact_lock</code> on Postgres, the <code>SerializedBy</code> locks on the mock. Freeze refuses it without a transaction route, and resolve on Mongo or Firestore.</p>
+</li>
+<li>
 <p><strong>DuckDB serves trusted dynamic reads over a per-tenant Iceberg lake.</strong> <code>RoutedDuckDbClient</code> gives each tenant a locked-down instance holding its catalog principal and the S3 credentials vended per statement, and serves nothing from one that fails its attestation. Wire routes with <code>DuckDbDepsModule(dynamic_reads=...)</code>.</p>
 </li>
 <li>
@@ -10396,6 +10399,9 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <p><strong><code>incr(by=0)</code> no longer creates the counter it reads</strong> (<strong>behaviour change</strong>). An absent counter reads 0 and stays absent, so <code>list_counters</code> and a portable export no longer show it at 0.</p>
 </li>
 <li>
+<p><strong>A draining instance refuses new work with a 503, not a 429</strong> (<strong>behaviour change</strong>). The drain gate now raises <code>unavailable</code> with <code>code="draining"</code>, so a load balancer retries elsewhere, and no resilience retry repeats it, whatever its <code>retry_on</code>. <code>is_draining_refusal</code> still matches it, by code.</p>
+</li>
+<li>
 <p><strong>HTTP error bodies carry the error's <code>code</code> and <code>kind</code></strong> (<strong>behaviour change</strong>). The body is <code>{"detail", "code", "kind", "context"}</code>, so a client tells <code>revision_mismatch</code> from other 400s; a whole-body comparison breaks. An unhandled 500 now also sends <code>X-Error-Code: core.internal</code>.</p>
 </li>
 <li>
@@ -10428,6 +10434,9 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 </ul>
 <h3 id="fixed">Fixed<a class="headerlink" href="#fixed" title="Permanent link">&para;</a></h3>
 <ul>
+<li>
+<p><strong>A storage download no longer fails with a 500 on an odd <code>Range</code>.</strong> A position in non-ASCII digits is malformed and serves the whole file; one too long to convert reads as past the end, so it answers 416 or clamps. An upload's <code>Content-Length</code> is read the same way.</p>
+</li>
 <li>
 <p><strong>Firestore <code>update_many</code> and <code>touch_many</code> work inside a transaction.</strong> They read every row before writing any, as a Firestore transaction requires; a second row used to fail with a read-after-write error.</p>
 </li>

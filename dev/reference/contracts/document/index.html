@@ -7238,6 +7238,9 @@ would end with its statement. Mongo and Firestore keep no write lock and refuse 
 owner, can take owners in another order than a concurrent transaction does. Postgres refuses
 that deadlock on one side as a retryable <code>concurrency</code>, and the in-memory store refuses the same
 cycle. Pass every owner a handler needs to one <code>hold</code> call.</p>
+<p><code>hold</code> locks a document owner. To make an operation take turns per input instead, whatever
+documents it writes, see
+<a href="../../../writing-operation/transactions/#serializing-an-operation">Serializing an operation</a>.</p>
 <p>The declaration itself refuses no write: where the rule can also be a hard stop, that is a
 second guarantee beside this one.</p>
 <p><code>UniqueTogether</code> and <code>NonOverlapping</code> also say <strong>when</strong> they hold: <code>holds="always"</code>, the default,

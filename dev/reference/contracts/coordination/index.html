@@ -6759,6 +6759,9 @@ the outermost wrap on a keyed operation — you rarely call the port directly; s
 </table>
 <p>For a long-held critical section, use the <code>DistributedLockScope</code> kit with an <code>extend_interval</code>
 to renew the lease rather than picking a large <code>ttl</code>.</p>
+<p>A lease is released on its own schedule, not at a commit. For a lock a transaction holds until it
+ends, use the transaction-scoped lock instead:
+<a href="../../../writing-operation/transactions/#serializing-an-operation">Serializing an operation</a>.</p>
 <p>A fenced write claims its token first (<code>fence &lt; :token</code>), then accepts an equal fence
 (<code>fence &lt;= :token</code>); a lower token is always refused, and zero rows on any fenced write ends
 the term. The rule, and when to call <code>advance_fence</code>, are in

@@ -6964,7 +6964,7 @@ It drains first:</p>
 <li>If nothing drained the scope yet, its drain phases run, while operations are
    still admitted — see <a href="#graceful-deploys">Graceful deploys</a>.</li>
 <li>The scope stops admitting new top-level invocations. They fail with a
-   <strong>retryable</strong> <code>throttled</code> (<code>code="draining"</code>) — a <strong>429</strong> at the FastAPI
+   <strong>retryable</strong> <code>unavailable</code> (<code>code="draining"</code>) — a <strong>503</strong> at the FastAPI
    edge, a requeue-worthy nack for a queue consumer.</li>
 <li>In-flight operations get a bounded window — <code>drain_timeout</code>, default 10
    seconds — to finish before lifecycle teardown closes the clients they

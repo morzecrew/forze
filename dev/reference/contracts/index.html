@@ -6877,6 +6877,12 @@ the name a resolution error prints. Handlers should keep to the accessor.</p>
 <td><code>TransactionManagerDepKey</code></td>
 </tr>
 <tr>
+<td><a href="../../writing-operation/transactions/#serializing-an-operation">Transaction-scoped lock</a></td>
+<td>tx route</td>
+<td><code>ctx.tx_locks(route).hold(*keys)</code>, or <code>SerializeOperation</code> on an operation</td>
+<td><code>TransactionManagerDepKey</code>: the route's manager hands it out when it implements <code>TxLockCapable</code></td>
+</tr>
+<tr>
 <td><a href="../contracts/coordination/#idempotency">Idempotency</a></td>
 <td><code>IdempotencySpec</code></td>
 <td><code>ctx.idempotency(spec)</code></td>
