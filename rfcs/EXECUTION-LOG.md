@@ -900,14 +900,14 @@ unlisted decisions the plan needed and the document does not settle (D-017, D-01
   store's worker surface and says nothing about the schedule store. Unlisted.
 - **RFC said:** nothing. §5.1 covers `put`; the other schedule verbs are out of its frame.
 - **Found:** the schedule store has no tenant *predicate* to widen — `advance`, `load` and
-  `delete` scope the **id** (`scope_id(schedule_id, bound)`), so tenancy is expressed in the
-  key rather than in a filter. An untagged schedule is therefore stored under the bare
-  `schedule_id` and is unreachable from a bound caller, which looks like the stranding §5.2
-  exists to prevent.
+  `delete` scope the **id** (`scope_tenant_key(schedule_id, bound)`), so tenancy is expressed
+  in the key rather than in a filter. An untagged schedule is therefore stored under
+  `:{schedule_id}` and is unreachable from a bound caller, which looks like the stranding
+  §5.2 exists to prevent.
 - **Because:** it is not the same failure. A run is claimed by a scanner and *must* reach a
   terminal state or it re-runs forever; a schedule that a bound caller cannot see simply
   does not fire for that caller, and still fires for the unbound one that registered it.
-  Adding a fallback lookup would make `load` ambiguous — `sid` and `A:sid` can both exist —
+  Adding a fallback lookup would make `load` ambiguous — `:sid` and `A:sid` can both exist —
   and ambiguity in the key that `advance` compare-and-sets is how a schedule fires twice.
 - **Class:** `spec-gap` — the asymmetry is derivable from the two stores' code without
   building anything.

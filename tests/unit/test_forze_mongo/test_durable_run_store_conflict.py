@@ -58,7 +58,7 @@ def _winner() -> dict[str, Any]:
         "_id": "run-winner",
         "name": "fn",
         "status": "pending",
-        "idempotency_key": "k",
+        "idempotency_key": ":k",
         "input": {"n": 1},
         "output": None,
         "error": None,
@@ -86,7 +86,7 @@ async def test_a_lost_upsert_race_returns_the_winners_run() -> None:
     # input, not an error and not its own payload.
     assert run.run_id == "run-winner"
     assert run.input_json == {"n": 1}
-    assert client.reads == [{"idempotency_key": "k"}]
+    assert client.reads == [{"idempotency_key": ":k"}]
 
 
 async def test_a_conflict_with_no_surviving_run_is_reported_not_swallowed() -> None:

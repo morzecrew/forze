@@ -33,7 +33,8 @@ from forze.application.contracts.durable.function import (
     decode_run_cursor,
     requeue_failed_unnamed_error,
     requeue_unscoped_error,
-    scope_coalesce_key,
+    scope_tenant_key,
+    unscope_tenant_key,
 )
 from forze.application.contracts.tenancy import TenancyMixin
 from forze.application.integrations.crypto.payload import (
@@ -49,7 +50,7 @@ from forze.application.integrations.durable import (
 from forze.base.exceptions import CoreException, ExceptionKind, exc
 from forze.base.primitives import JsonDict, utcnow, uuid4, uuid7
 from forze_mongo.adapters._logger import logger
-from forze_mongo.adapters.durable._ids import as_uuid, scope_id, unscope_id
+from forze_mongo.adapters.durable._ids import as_uuid
 from forze_mongo.adapters.durable.function_step import DURABLE_PAYLOAD_DOMAIN
 from forze_mongo.execution.deps.configs.durable import (
     MongoDurableRunConfig,
@@ -62,10 +63,10 @@ from forze_mongo.kernel.relation import resolve_mongo_collection
 
 
 def _unscope_key(stored: str | None, tenant_id: UUID | None) -> str | None:
-    """:func:`unscope_id` over an optional key — ``None`` means no idempotency was asked
-    for, so there is nothing scoped and nothing to strip."""
+    """:func:`unscope_tenant_key` over an optional key — ``None`` means no idempotency was
+    asked for, so there is nothing scoped and nothing to strip."""
 
-    return None if stored is None else unscope_id(stored, tenant_id)
+    return None if stored is None else unscope_tenant_key(stored, tenant_id)
 
 
 # ....................... #
@@ -259,7 +260,9 @@ class MongoDurableRunStore(
         run_id = str(uuid7())
         now = utcnow()
         stored_input = await self._seal(input_json, run_id, "input", tenant_id)
-        stored_idem = scope_id(idempotency_key, tenant_id) if idempotency_key is not None else None
+        stored_idem = (
+            None if idempotency_key is None else scope_tenant_key(idempotency_key, tenant_id)
+        )
 
         document: dict[str, Any] = {
             "_id": run_id,
@@ -280,7 +283,7 @@ class MongoDurableRunStore(
         }
 
         if coalesce_key is not None:
-            document["coalesce_key"] = scope_coalesce_key(coalesce_key, tenant_id)
+            document["coalesce_key"] = scope_tenant_key(coalesce_key, tenant_id)
 
             return await self._enqueue_coalesced(coll, document, input_json)
 

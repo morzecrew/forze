@@ -11,6 +11,7 @@ from datetime import UTC, datetime
 from zoneinfo import ZoneInfo
 
 import pytest
+import structlog
 
 from forze.application.integrations.durable import next_cron_fire, validate_cron
 from forze.base.exceptions import CoreException
@@ -20,6 +21,7 @@ from forze_kits.integrations.durable import (
     resolve_durable_schedule_store,
 )
 from forze_mock import MockDepsModule, MockState
+from forze_mock.adapters.durable import MockDurableScheduleStore
 from tests.support.execution_context import context_from_modules
 
 # ----------------------- #
@@ -29,6 +31,14 @@ UTC = UTC
 
 def _runs_for(state: MockState, name: str) -> list[dict]:
     return [d for d in state.durable_runs.values() if d["name"] == name]
+
+
+def _stuck(logs: list[dict]) -> list[dict]:
+    return [
+        log
+        for log in logs
+        if log.get("log_level") == "warning" and "no row answers to its id" in log["event"]
+    ]
 
 
 # ....................... #
@@ -260,6 +270,60 @@ class TestDurableScheduler:
 
         assert len(_runs_for(state, "fn")) == 1  # converged, not duplicated
 
+    async def test_a_schedule_no_row_answers_for_is_reported_each_tick(self) -> None:
+        state = MockState()
+        ctx = context_from_modules(MockDepsModule(state=state))
+        scheduler = DurableScheduler()
+
+        await scheduler.put(
+            ctx, "s", "fn", "* * * * *", now=datetime(2026, 1, 1, 0, 0, 30, tzinfo=UTC)
+        )
+        # Keyed in a form the store no longer composes for the id it reads back.
+        state.durable_run_schedules["s"] = state.durable_run_schedules.pop(":s")
+
+        due = datetime(2026, 1, 1, 0, 1, 5, tzinfo=UTC)
+
+        with structlog.testing.capture_logs() as logs:
+            assert await scheduler.tick(ctx, now=due) == 1
+            assert await scheduler.tick(ctx, now=due) == 1
+
+        assert [log["event"].split(" fired")[0] for log in _stuck(logs)] == [
+            "Durable schedule s (fn)"
+        ] * 2
+
+    async def test_a_lost_advance_race_is_not_reported(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        state = MockState()
+        ctx = context_from_modules(MockDepsModule(state=state))
+        scheduler = DurableScheduler()
+        advance = MockDurableScheduleStore.advance
+
+        async def advance_after_a_peer(
+            store: MockDurableScheduleStore,
+            schedule_id: str,
+            *,
+            from_fire_at: datetime,
+            to_fire_at: datetime,
+        ) -> bool:
+            # A peer scheduler fired the same instant and advanced first.
+            await advance(store, schedule_id, from_fire_at=from_fire_at, to_fire_at=to_fire_at)
+
+            return await advance(
+                store, schedule_id, from_fire_at=from_fire_at, to_fire_at=to_fire_at
+            )
+
+        monkeypatch.setattr(MockDurableScheduleStore, "advance", advance_after_a_peer)
+
+        await scheduler.put(
+            ctx, "s", "fn", "* * * * *", now=datetime(2026, 1, 1, 0, 0, 30, tzinfo=UTC)
+        )
+
+        with structlog.testing.capture_logs() as logs:
+            assert await scheduler.tick(ctx, now=datetime(2026, 1, 1, 0, 1, 5, tzinfo=UTC)) == 1
+
+        assert _stuck(logs) == []
+
     async def test_disabled_schedule_is_not_fired(self) -> None:
         state = MockState()
         ctx = context_from_modules(MockDepsModule(state=state))
@@ -296,7 +360,7 @@ class TestDurableScheduler:
         await scheduler.put(
             ctx, "bad", "old_fn", "* * * * *", now=datetime(2026, 1, 1, 0, 0, 10, tzinfo=UTC)
         )
-        state.durable_run_schedules["bad"]["cron"] = "not a cron"
+        state.durable_run_schedules[":bad"]["cron"] = "not a cron"
 
         await scheduler.put(
             ctx, "good", "fn", "* * * * *", now=datetime(2026, 1, 1, 0, 1, 30, tzinfo=UTC)

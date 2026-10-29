@@ -14,6 +14,8 @@ from psycopg.types.json import Jsonb
 from forze.application.contracts.durable.function import (
     DurableScheduleRecord,
     DurableScheduleStorePort,
+    scope_tenant_key,
+    unscope_tenant_key,
 )
 from forze.application.contracts.tenancy import TenancyMixin
 from forze.base.primitives import JsonDict, utcnow
@@ -28,28 +30,6 @@ _COLUMNS = "schedule_id, name, cron, tz, input, next_fire_at, enabled, tenant_id
 """Row projection for schedule reads."""
 
 
-def _scope_schedule_id(schedule_id: str, tenant_id: UUID | None) -> str:
-    """Namespace a schedule id under its tenant for the stored ``schedule_id`` primary key.
-
-    A shared **tagged** table has a single-column ``PRIMARY KEY (schedule_id)``; prefixing
-    the id with the tenant scopes it per tenant, so two tenants registering the same
-    ``schedule_id`` stay distinct schedules instead of overwriting each other. Single-tenant
-    ids (``tenant_id is None``) are stored verbatim — unchanged on-disk shape.
-    """
-    return schedule_id if tenant_id is None else f"{tenant_id}:{schedule_id}"
-
-
-def _unscope_schedule_id(stored: str, tenant_id: UUID | None) -> str:
-    """Strip the tenant prefix :func:`_scope_schedule_id` added, so a record surfaces the id
-    the caller registered (the fixed-width ``{uuid}:`` prefix makes the strip exact)."""
-    if tenant_id is None:
-        return stored
-
-    prefix = f"{tenant_id}:"
-
-    return stored[len(prefix) :] if stored.startswith(prefix) else stored
-
-
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class PostgresDurableScheduleStore(TenancyMixin, DurableScheduleStorePort):
@@ -60,16 +40,18 @@ class PostgresDurableScheduleStore(TenancyMixin, DurableScheduleStorePort):
     schedulers firing the same instant converge to one advance (and one run, via the run's
     ``{schedule_id}:{fire_epoch}`` idempotency key). Tenancy mirrors the run store: the table
     resolves under the bound tenant (tagged shared or per-tenant namespace), and a bound
-    scheduler claims only that tenant's schedules. On a shared tagged table the ``schedule_id``
-    is stored **tenant-scoped**, so two tenants registering the same id stay distinct
-    schedules instead of overwriting each other.
+    scheduler claims only that tenant's schedules. The ``schedule_id`` is stored
+    **tenant-scoped** (:func:`scope_tenant_key`), so two tenants registering the same id stay
+    distinct schedules instead of overwriting each other, and an untagged id never names a
+    tenant's.
 
     Tenancy lives in that key rather than in a predicate, so :meth:`advance`, :meth:`load`
-    and :meth:`delete` reach exactly the bound tenant's schedules — there is no untagged
-    allowance of the kind the run store's worker verbs carry, because a fallback lookup would
-    let two keys answer one :meth:`load` and the compare-and-set above depends on the key
-    being exact. :meth:`put` resolves one effective tenant for the table, the tag and the key
-    together, and refuses a record naming a tenant that contradicts the binding.
+    and :meth:`delete` reach exactly the bound tenant's schedules (unbound, the untagged
+    ones) — there is no untagged allowance of the kind the run store's worker verbs carry,
+    because a fallback lookup would let two keys answer one :meth:`load` and the
+    compare-and-set above depends on the key being exact. :meth:`put` resolves one effective
+    tenant for the table, the tag and the key together, and refuses a record naming a tenant
+    that contradicts the binding.
 
     The table is provided by the application (see
     ``pages/docs/reference/durable-schema.md``); expected schema::
@@ -154,7 +136,7 @@ class PostgresDurableScheduleStore(TenancyMixin, DurableScheduleStorePort):
                 now=sql.Placeholder("now"),
             ),
             {
-                "sid": _scope_schedule_id(record.schedule_id, tenant_id),
+                "sid": scope_tenant_key(record.schedule_id, tenant_id),
                 "name": record.name,
                 "cron": record.cron,
                 "tz": record.tz,
@@ -215,7 +197,7 @@ class PostgresDurableScheduleStore(TenancyMixin, DurableScheduleStorePort):
         to_fire_at: datetime,
     ) -> bool:
         table = await self._table()
-        stored_sid = _scope_schedule_id(schedule_id, self._tenant_id_for_resolve())
+        stored_sid = scope_tenant_key(schedule_id, self._tenant_id_for_resolve())
 
         rowcount = await self.client.execute(
             sql.SQL(
@@ -246,7 +228,7 @@ class PostgresDurableScheduleStore(TenancyMixin, DurableScheduleStorePort):
         input_json: JsonDict | None,
     ) -> bool:
         table = await self._table()
-        stored_sid = _scope_schedule_id(schedule_id, self._tenant_id_for_resolve())
+        stored_sid = scope_tenant_key(schedule_id, self._tenant_id_for_resolve())
 
         rowcount = await self.client.execute(
             sql.SQL(
@@ -276,7 +258,7 @@ class PostgresDurableScheduleStore(TenancyMixin, DurableScheduleStorePort):
 
     async def load(self, schedule_id: str) -> DurableScheduleRecord | None:
         table = await self._table()
-        stored_sid = _scope_schedule_id(schedule_id, self._tenant_id_for_resolve())
+        stored_sid = scope_tenant_key(schedule_id, self._tenant_id_for_resolve())
 
         row = await self.client.fetch_one(
             sql.SQL("SELECT {columns} FROM {table} WHERE schedule_id = {sid}").format(
@@ -293,7 +275,7 @@ class PostgresDurableScheduleStore(TenancyMixin, DurableScheduleStorePort):
 
     async def delete(self, schedule_id: str) -> bool:
         table = await self._table()
-        stored_sid = _scope_schedule_id(schedule_id, self._tenant_id_for_resolve())
+        stored_sid = scope_tenant_key(schedule_id, self._tenant_id_for_resolve())
 
         rowcount = await self.client.execute(
             sql.SQL("DELETE FROM {table} WHERE schedule_id = {sid}").format(
@@ -312,7 +294,7 @@ class PostgresDurableScheduleStore(TenancyMixin, DurableScheduleStorePort):
 
 def _record_from_row(row: dict[str, Any]) -> DurableScheduleRecord:
     return DurableScheduleRecord(
-        schedule_id=_unscope_schedule_id(row["schedule_id"], row["tenant_id"]),
+        schedule_id=unscope_tenant_key(row["schedule_id"], row["tenant_id"]),
         name=row["name"],
         cron=row["cron"],
         next_fire_at=row["next_fire_at"],

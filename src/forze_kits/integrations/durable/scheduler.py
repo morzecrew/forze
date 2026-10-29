@@ -155,11 +155,22 @@ class DurableScheduler:
                         tenant_id=schedule.tenant_id,
                     )
 
-                    await schedules.advance(
+                    advanced = await schedules.advance(
                         schedule.schedule_id,
                         from_fire_at=schedule.next_fire_at,
                         to_fire_at=next_cron_fire(schedule.cron, after=moment, tz=schedule.tz),
                     )
+
+                    # A lost compare-and-set leaves a row another scheduler moved on; a row
+                    # that answers to no id this store composes stays due every tick, ahead
+                    # of the schedules behind it, so it is worth a warning.
+                    if not advanced and await schedules.load(schedule.schedule_id) is None:
+                        logger.warning(
+                            "Durable schedule %s (%s) fired but no row answers to its id, "
+                            "so it never advances",
+                            schedule.schedule_id,
+                            schedule.name,
+                        )
 
                     if self.telemetry is not None:
                         self.telemetry.record_fire(schedule.name)

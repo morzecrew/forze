@@ -1524,6 +1524,106 @@ COALESCE_OUTCOME: dict[str, Any] = {
 
 # ....................... #
 
+_LOOKALIKE_TENANT = UUID("00000000-0000-0000-0000-00000000000b")
+
+
+async def run_lookalike_scenario(
+    store_for: Callable[[UUID | None], DurableRunStorePort],
+    schedules_for: Callable[[UUID | None], DurableScheduleStorePort],
+) -> dict[str, Any]:
+    """An untagged idempotency key or schedule id spelled like a tenant's scoped one.
+
+    A shared store keeps every tenant's keys in one key space, so only the encoding keeps
+    them apart: the untagged caller must reach nothing of the tenant's — not its run, not
+    its schedule — and every key must read back as its caller wrote it.
+    """
+
+    tenant = _LOOKALIKE_TENANT
+    unbound = store_for(None)
+    out: dict[str, Any] = {}
+
+    owned = await store_for(tenant).enqueue("fn", input_json=None, idempotency_key="k")
+    untagged = await unbound.enqueue("fn", input_json=None, idempotency_key=f"{tenant}:k")
+    again = await unbound.enqueue("fn", input_json=None, idempotency_key=f"{tenant}:k")
+    out["idempotency_distinct"] = untagged.run_id != owned.run_id
+    out["idempotency_converges"] = again.run_id == untagged.run_id
+    loaded = [await unbound.load(run_id) for run_id in (owned.run_id, untagged.run_id)]
+    out["idempotency_keys"] = [
+        None if record is None else record.idempotency_key for record in loaded
+    ] + [again.idempotency_key]
+    # The tenant reaches the untagged run (the worker arm) and reads its key by the run's own
+    # tenant, not by the binding.
+    seen_by_tenant = await store_for(tenant).load(untagged.run_id)
+    out["bound_load_key"] = None if seen_by_tenant is None else seen_by_tenant.idempotency_key
+
+    owner = schedules_for(tenant)
+    schedules = schedules_for(None)
+    fire_at = utcnow().replace(microsecond=0) - timedelta(minutes=1)
+
+    def schedule(schedule_id: str, name: str) -> DurableScheduleRecord:
+        return DurableScheduleRecord(
+            schedule_id=schedule_id, name=name, cron="0 3 * * *", next_fire_at=fire_at
+        )
+
+    await owner.put(schedule("s", "owned"))
+    out["schedule_unseen"] = await schedules.load(f"{tenant}:s") is None
+
+    await schedules.put(schedule(f"{tenant}:s", "untagged"))
+    kept = await owner.load("s")
+    out["schedule_owner_kept"] = None if kept is None else kept.name
+
+    async def due(store: DurableScheduleStorePort) -> list[tuple[str, str]]:
+        claimed = await store.claim_due(now=utcnow(), limit=10)
+
+        return sorted((record.schedule_id, record.name) for record in claimed)
+
+    out["due"] = await due(schedules)
+    out["bound_due"] = await due(owner)
+
+    # Each side moves only its own row: the tenant's advance leaves the lookalike due, and
+    # each side's input lands on its own schedule.
+    later = fire_at + timedelta(days=1)
+    out["owner_advanced"] = await owner.advance("s", from_fire_at=fire_at, to_fire_at=later)
+    out["due_after_owner_advance"] = await due(schedules)
+    out["lookalike_advanced"] = await schedules.advance(
+        f"{tenant}:s", from_fire_at=fire_at, to_fire_at=later
+    )
+
+    for store, schedule_id, by in ((owner, "s", "owned"), (schedules, f"{tenant}:s", "untagged")):
+        await store.set_input(
+            schedule_id, expected_cron="0 3 * * *", expected_tz=None, input_json={"by": by}
+        )
+
+    inputs = [await owner.load("s"), await schedules.load(f"{tenant}:s")]
+    out["inputs"] = [None if record is None else record.input_json for record in inputs]
+
+    out["delete_lookalike"] = await schedules.delete(f"{tenant}:s")
+    out["owner_survives_delete"] = await owner.load("s") is not None
+
+    return out
+
+
+LOOKALIKE_OUTCOME: dict[str, Any] = {
+    "idempotency_distinct": True,
+    "idempotency_converges": True,
+    "idempotency_keys": ["k", f"{_LOOKALIKE_TENANT}:k", f"{_LOOKALIKE_TENANT}:k"],
+    "bound_load_key": f"{_LOOKALIKE_TENANT}:k",
+    "schedule_unseen": True,
+    "schedule_owner_kept": "owned",
+    "due": [(f"{_LOOKALIKE_TENANT}:s", "untagged"), ("s", "owned")],
+    "bound_due": [("s", "owned")],
+    "owner_advanced": True,
+    "due_after_owner_advance": [(f"{_LOOKALIKE_TENANT}:s", "untagged")],
+    "lookalike_advanced": True,
+    "inputs": [{"by": "owned"}, {"by": "untagged"}],
+    "delete_lookalike": True,
+    "owner_survives_delete": True,
+}
+"""What :func:`run_lookalike_scenario` answers on every engine, the mock included."""
+
+
+# ....................... #
+
 
 async def _journaled(step_of: Callable[[], DurableFunctionStepPort], run_id: str) -> int:
     """Run step ``s1`` of *run_id*; return 1 when its body ran, 0 when it replayed."""

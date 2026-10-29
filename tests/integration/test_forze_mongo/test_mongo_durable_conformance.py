@@ -61,6 +61,7 @@ from tests.support.durable_cancel_races import (
 )
 from tests.support.durable_conformance import (
     COALESCE_OUTCOME,
+    LOOKALIKE_OUTCOME,
     PURGE_OUTCOME,
     PURGE_WINDOW_OUTCOME,
     QUARANTINE_ADMIN_OUTCOME,
@@ -75,6 +76,7 @@ from tests.support.durable_conformance import (
     run_control_scenario,
     run_lifecycle_scenario,
     run_list_scenario,
+    run_lookalike_scenario,
     run_purge_race_scenario,
     run_purge_scenario,
     run_purge_window_scenario,
@@ -470,6 +472,39 @@ class TestDurableMockVsMongo:
         )
 
         assert mock_out == mongo_out == COALESCE_OUTCOME
+
+    async def test_mock_matches_mongo_for_untagged_lookalike_keys(
+        self,
+        mongo_client: MongoClient,
+        run_collection: tuple[str, str],
+        schedule_collection: tuple[str, str],
+    ) -> None:
+        mock_state = MockState()
+        mock_out = await run_lookalike_scenario(
+            lambda tenant: MockDurableRunStore(
+                state=mock_state,
+                tenant_provider=tenant_provider_for(tenant),
+            ),
+            lambda tenant: MockDurableScheduleStore(
+                state=mock_state,
+                tenant_provider=tenant_provider_for(tenant),
+            ),
+        )
+
+        mongo_out = await run_lookalike_scenario(
+            lambda tenant: MongoDurableRunStore(
+                client=mongo_client,
+                config=MongoDurableRunConfig(collection=run_collection),
+                tenant_provider=tenant_provider_for(tenant),
+            ),
+            lambda tenant: MongoDurableScheduleStore(
+                client=mongo_client,
+                config=MongoDurableScheduleConfig(collection=schedule_collection),
+                tenant_provider=tenant_provider_for(tenant),
+            ),
+        )
+
+        assert mock_out == mongo_out == LOOKALIKE_OUTCOME
 
     async def test_mock_matches_mongo_for_the_purge_window(
         self,

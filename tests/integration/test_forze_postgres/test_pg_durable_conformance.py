@@ -60,6 +60,7 @@ from tests.support.durable_cancel_races import (
 )
 from tests.support.durable_conformance import (
     COALESCE_OUTCOME,
+    LOOKALIKE_OUTCOME,
     PURGE_OUTCOME,
     PURGE_WINDOW_OUTCOME,
     QUARANTINE_ADMIN_OUTCOME,
@@ -74,6 +75,7 @@ from tests.support.durable_conformance import (
     run_control_scenario,
     run_lifecycle_scenario,
     run_list_scenario,
+    run_lookalike_scenario,
     run_purge_race_scenario,
     run_purge_scenario,
     run_purge_window_scenario,
@@ -465,6 +467,39 @@ class TestDurableMockVsPostgres:
         )
 
         assert mock_out == pg_out == COALESCE_OUTCOME
+
+    async def test_mock_matches_postgres_for_untagged_lookalike_keys(
+        self,
+        pg_client: PostgresClient,
+        run_table: str,
+        schedule_table: str,
+    ) -> None:
+        mock_state = MockState()
+        mock_out = await run_lookalike_scenario(
+            lambda tenant: MockDurableRunStore(
+                state=mock_state,
+                tenant_provider=tenant_provider_for(tenant),
+            ),
+            lambda tenant: MockDurableScheduleStore(
+                state=mock_state,
+                tenant_provider=tenant_provider_for(tenant),
+            ),
+        )
+
+        pg_out = await run_lookalike_scenario(
+            lambda tenant: PostgresDurableRunStore(
+                client=pg_client,
+                config=PostgresDurableRunConfig(relation=("public", run_table)),
+                tenant_provider=tenant_provider_for(tenant),
+            ),
+            lambda tenant: PostgresDurableScheduleStore(
+                client=pg_client,
+                config=PostgresDurableScheduleConfig(relation=("public", schedule_table)),
+                tenant_provider=tenant_provider_for(tenant),
+            ),
+        )
+
+        assert mock_out == pg_out == LOOKALIKE_OUTCOME
 
     async def test_mock_matches_postgres_for_the_purge_window(
         self, pg_client: PostgresClient, run_table: str, step_table: str
