@@ -83,6 +83,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **`OperationDescriptor(streams=True)` keeps a byte-stream result off JSON surfaces.** MCP and `forze ops` leave such an operation out by default; they, agent tools and `attach_operation_routes` refuse it by name. The storage and stored-file kits' `download_stream` set it (**behaviour change**).
 
+**Self-hosted durable functions:**
+
+- **A cron trigger declares a timezone and an input.** `DurableFunctionCronTrigger(expression, tz=..., input=...)` registers its schedule with both; an unknown zone or an input not of the spec's `args_type` fails the declaration. A changed input alone keeps the next fire; Inngest maps `tz` to `TZ=` and refuses an input.
+
+- **Finished runs can be purged past a retention window.** `DurableRunAdminPort.purge_finished(older_than, ...)` deletes up to `limit` runs that landed before the window, with their step journal, freeing their idempotency keys. `durable_run_retention_lifecycle_step` sweeps; a hand-built store needs `step_config`.
+
+- **An enqueue can coalesce onto the run waiting unclaimed.** `enqueue(..., coalesce_key=...)` joins a `pending` run never claimed under that key, dropping the submit's own input and `run_at`, and records a new run once it is claimed. **Migration:** add the `coalesce_key` column and its partial unique index first.
+
+- **An operation-backed function can run as a service principal.** `register_operation_functions(..., identity=DurableServiceIdentity(...))` binds it around the operation, so `AuthnRequired`, authz and audit see it; the identity must be acknowledged as unverified. Without one, a guarded operation refuses the run.
+
 **`forze ops` for people at a shell and for backfills:**
 
 - **`forze ops` gains typed flags, JSONL batches and shell completion.** `call OP --field VALUE` takes a flat-scalar input as flags; `--batch @PATH|-` runs one call per line in one runtime, stopping at the first failure; `OP` completes in the shell. An unknown option after `OP` now exits 2 with an error object.
@@ -96,6 +106,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **The `duckdb` extra takes DuckDB 1.5 or 2** (**behaviour change**). It now requires `duckdb>=1.5.6,<3`, so releases before 1.5.6 no longer install with it. `DuckDbClient` and `RoutedDuckDbClient` run on both majors with the same code.
 
 - **`HttpServicePort` requires `stream`** (**behaviour change**). A hand-written implementation or test stub must add it, or it fails type checks and `isinstance` against the runtime-checkable port.
+
+- **A durable body never inherits the caller's principal** (**behaviour change**). `run_now` inside a request now runs an untagged run as no one, as recovery always did: audit, `CreatorIdMappingStep` and progress jobs record no actor, and guarded saga steps refuse. Name a principal with `DurableServiceIdentity`.
+
+- **Durable store ports gain members** (**behaviour change**). `DurableRunAdminPort` requires `purge_finished`, `DurableScheduleStorePort` requires `set_input`, and `DurableRunStorePort.enqueue` takes `coalesce_key`, which `DurableFunctionRunner.enqueue` always passes. A hand-written store must add them.
 
 - **`local_identity_deps` wires no tenant resolver for a config that maps no tenant** (**behaviour change**). There, `forze ops call --tenant` gets `400 tenant_request_unverifiable`, not `401 tenant_mismatch`. A tenant on an API key counts and resolves, also in a config built directly.
 
@@ -116,6 +130,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **A datetime `SerializedBy` key locks its UTC instant** (**behaviour change**). One owner's create and update no longer lock apart by offset; naive reads as UTC (right in a UTC session), an out-of-range instant is refused. Drain writers of naive or non-UTC keys while deploying, or accept a brief unlocked window.
 
 - **An operation span stays clean on a failure the caller can handle** (**behaviour change**). OpenTelemetry's own handling marked every failed operation's span `ERROR` whatever its kind and recorded a server error's exception twice. Now only a server-side failure sets `ERROR`, with one exception event, as port spans do.
+
+- **A durable schedule with no timezone fires in UTC whatever zone `now` is given in.** A non-UTC `now` passed to `DurableScheduler.put` or `tick` moved its fires by that zone's offset.
+
+- **A timezoned durable schedule no longer fires twice when the clocks fall back.** A wall time the clocks repeat fires at its first occurrence only, unless the expression runs every hour; a wall time they skip still fires once, when the gap ends.
 
 - **A warning logged before `configure_logging` carries the invocation's ids.** The fallback renderer now merges the bound logging context, as the configured chain does.
 
@@ -200,6 +218,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **The storage kit's `presign_download` is sensitive** (**Breaking**). MCP, `forze ops`, agent tools and generated routes refuse it, so `attach_storage_routes` no longer serves it; an MCP server or `OpsApp` over the storage registry needs `operations=` without it. Trace capture masks presigned URLs.
 
 - **A tenant-sharded realtime consumer refuses a stream route that is not `tenant_aware`** (**behaviour change**). `TenantShardedSignalSource` and `realtime_sse_sharded_tail_lifecycle_step` fail with `tenant_aware_required`, so a signal is never delivered or stored under another tenant. New `require_tenant_aware`.
+
+- **A nested identity scope no longer logs the outer principal.** `bind_identity` and `bind` now clear the principal, actor and tenant log fields they do not set, and restore them when the scope ends.
 
 ## [0.16.2] - 2026-10-26
 

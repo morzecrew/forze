@@ -130,6 +130,16 @@ def _map_trigger(
         return inngest.TriggerEvent(event=str(trigger.event))
 
     if isinstance(trigger, DurableFunctionCronTrigger):  # pyright: ignore[reportUnnecessaryIsInstance]
+        # An Inngest cron run receives no event data, so a declared input would be dropped.
+        if trigger.input is not None:
+            raise exc.configuration(
+                "Inngest cron triggers carry no input; drop DurableFunctionCronTrigger.input "
+                "or fire the function from an event instead.",
+            )
+
+        if trigger.tz is not None:
+            return inngest.TriggerCron(cron=f"TZ={trigger.tz} {trigger.expression}")
+
         return inngest.TriggerCron(cron=trigger.expression)
 
     raise TypeError(f"unsupported durable function trigger: {type(trigger)!r}")

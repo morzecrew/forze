@@ -17,9 +17,37 @@ from uuid import UUID
 
 import attrs
 
+from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict
 
 # ----------------------- #
+
+
+def check_enqueue_keys(idempotency_key: str | None, coalesce_key: str | None) -> None:
+    """Refuse an enqueue naming both keys: one converges forever, the other only while the
+    run waits unclaimed, and a run cannot honour both.
+
+    :raises CoreException: ``validation`` when both are set.
+    """
+
+    if idempotency_key is not None and coalesce_key is not None:
+        raise exc.validation(
+            "A durable run takes an idempotency_key or a coalesce_key, not both.",
+        )
+
+
+def scope_coalesce_key(coalesce_key: str, tenant_id: UUID | None) -> str:
+    """Return *coalesce_key* as a store keys it: ``{tenant}:{key}``, or ``:{key}`` untagged.
+
+    Untagged keys get the separator too, so no untagged key can be spelled like a tenant's
+    scoped one: a tenant's starts with its id, an untagged one with ``:``. One tenant's
+    keys never reach another's run, nor an untagged caller's.
+    """
+
+    return f"{'' if tenant_id is None else tenant_id}:{coalesce_key}"
+
+
+# ....................... #
 
 
 class DurableRunStatus(StrEnum):
@@ -198,8 +226,8 @@ class DurableRunStorePort(Protocol):
       what keeps a run belonging to no tenant completable: without it such a run's terminal
       write would match nothing, and it would be reclaimed and re-run forever.
     - The verbs that enumerate or control — ``claim_abandoned``, ``list_runs``,
-      ``request_cancel``, ``requeue_quarantined``, ``requeue_failed``, ``refuse_cancel`` —
-      match the tenant **exactly**. Widening an enumeration is a disclosure, and none of
+      ``request_cancel``, ``requeue_quarantined``, ``requeue_failed``, ``purge_finished``,
+      ``refuse_cancel`` — match the tenant **exactly**. Widening an enumeration is a disclosure, and none of
       them has the liveness problem above.
     - Unbound reaches everything. That is the recovery and single-tenant role, and it is
       what lets one sweep serve every tenant on a tagged relation.
@@ -220,6 +248,7 @@ class DurableRunStorePort(Protocol):
         idempotency_key: str | None = None,
         tenant_id: UUID | None = None,
         available_at: datetime | None = None,
+        coalesce_key: str | None = None,
     ) -> Awaitable[DurableRunRecord]:
         """Record a new ``PENDING`` run and return it.
 
@@ -227,6 +256,17 @@ class DurableRunStorePort(Protocol):
         returned unchanged (re-submits converge on one run). Convergence is **per tenant**:
         two tenants reusing one key stay distinct runs. *available_at* delays when the
         recovery scan may claim it (``None`` = immediately).
+
+        When *coalesce_key* is set and a ``PENDING`` run never claimed (``attempts`` of 0)
+        exists for it, that run is returned unchanged: this submit's *input_json* and
+        *available_at* are discarded, and the record returned carries the joined run's own
+        (and its own ``run_id``, which is how a caller tells it joined). Otherwise a new
+        run is recorded under the key. So a burst of
+        submits causes one run, and a submit after the run was claimed causes another,
+        which reads whatever changed meanwhile. A run waiting for a retry, or requeued, is
+        never joined: its journaled steps replay rather than re-read. Atomic at the store
+        (a unique key over unclaimed pending runs) and **per tenant**, like the
+        idempotency key; the two cannot be combined (see :func:`check_enqueue_keys`).
         """
         ...  # pragma: no cover
 

@@ -4,18 +4,19 @@ Kept **separate** from the operational :class:`DurableRunStorePort` (enqueue / c
 complete) — mirroring the framework's management/data split — so a handler driving an ops
 dashboard never acquires the claim/write store. Backed by the same ``durable_run`` relation.
 
-Four verbs live here, all operator-shaped. :meth:`DurableRunAdminPort.list_runs` never
+Five verbs live here, all operator-shaped. :meth:`DurableRunAdminPort.list_runs` never
 mutates a run. :meth:`DurableRunAdminPort.request_cancel` records an *ask*, deliberately not
 on the data-plane store: anyone may ask a run to stop, but only the fence-holding runner may
 land the terminal state. :meth:`DurableRunAdminPort.requeue_quarantined` returns runs
 recovery gave up on to the scan, and :meth:`DurableRunAdminPort.requeue_failed` runs that
-failed; neither has a holder, so they need no fence.
+failed; neither has a holder, so they need no fence. :meth:`DurableRunAdminPort.purge_finished`
+deletes finished runs past a retention window.
 """
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Sequence
-from datetime import datetime
+from collections.abc import Awaitable, Collection, Sequence
+from datetime import datetime, timedelta
 from typing import Final, Protocol, final, runtime_checkable
 
 import attrs
@@ -57,6 +58,48 @@ def requeue_failed_unnamed_error() -> CoreException:
         "not something to bring back whole.",
         code=REQUEUE_UNSCOPED_CODE,
     )
+
+
+PURGEABLE_STATUSES: Final[tuple[DurableRunStatus, ...]] = (
+    DurableRunStatus.COMPLETED,
+    DurableRunStatus.CANCELLED,
+    DurableRunStatus.FAILED,
+    DurableRunStatus.TIMED_OUT,
+)
+"""The states :meth:`DurableRunAdminPort.purge_finished` may delete, and its default.
+
+``FORWARD_INCOMPLETE`` is left out on purpose: such a run committed at its pivot and waits
+for an operator to complete it by hand. So is ``QUARANTINED``, which still owes its work."""
+
+
+def check_purge(
+    older_than: timedelta,
+    statuses: Collection[DurableRunStatus],
+    limit: int,
+) -> None:
+    """Refuse a purge that could reach a live run or that names no bound.
+
+    Shared by every backend, so each refuses the same calls before touching a row.
+
+    :raises CoreException: ``validation`` for a non-positive *older_than* or *limit*, or a
+        status outside :data:`PURGEABLE_STATUSES`.
+    """
+
+    if older_than <= timedelta(0):
+        raise exc.validation("Durable run purge older_than must be positive.")
+
+    if limit < 1:
+        raise exc.validation("Durable run purge limit must be >= 1.")
+
+    refused = sorted(str(status) for status in set(statuses) - set(PURGEABLE_STATUSES))
+
+    if refused:
+        raise exc.validation(
+            f"Durable run purge can only delete finished runs, not {', '.join(refused)}.",
+        )
+
+
+# ....................... #
 
 
 def encode_run_cursor(created_at: datetime, run_id: str) -> str:
@@ -201,9 +244,9 @@ class DurableRunAdminPort(Protocol):
     Newest-first keyset pagination over the same ``durable_run`` relation the store writes.
     Tenant scoping mirrors recovery: scoped to the bound tenant when one is bound, and spans
     every tenant when unbound (an operator view over a tagged shared table) — and that
-    applies to :meth:`request_cancel`, :meth:`requeue_quarantined` and :meth:`requeue_failed`
-    too, so an operator bound to one tenant cannot stop or requeue a run it could not have
-    listed.
+    applies to :meth:`request_cancel`, :meth:`requeue_quarantined`, :meth:`requeue_failed`
+    and :meth:`purge_finished` too, so an operator bound to one tenant cannot stop, requeue
+    or delete a run it could not have listed.
     """
 
     def list_runs(
@@ -341,5 +384,38 @@ class DurableRunAdminPort(Protocol):
         :returns: How many runs moved.
         :raises CoreException: ``validation`` (:data:`REQUEUE_UNSCOPED_CODE`) for a call with
             neither *run_ids* nor *name*.
+        """
+        ...  # pragma: no cover
+
+    def purge_finished(
+        self,
+        older_than: timedelta,
+        *,
+        statuses: Collection[DurableRunStatus] = PURGEABLE_STATUSES,
+        name: str | None = None,
+        limit: int = 1000,
+    ) -> Awaitable[int]:
+        """Delete up to *limit* runs that finished more than *older_than* ago; return how
+        many were deleted.
+
+        The window runs from when the run landed (its last write, which every terminal write
+        is), not from when it was submitted, so a long or retried run is kept for the whole
+        window after it finishes. Oldest landing first. Each deleted run takes its step
+        journal with it; a store that knows no journal relation refuses (``configuration``)
+        unless its runs journal no steps. Only the states in :data:`PURGEABLE_STATUSES` can
+        be named, so a run that still owes work is never deleted; a ``FAILED`` run requeued
+        while the purge runs is kept, with its journal.
+
+        Purging a run frees its idempotency key: a later submit under it starts a new run.
+
+        Scoped like :meth:`list_runs`: bound, only that tenant's runs; unbound, any tenant's.
+
+        :param older_than: Keep runs that landed within this window.
+        :param statuses: Delete only runs in these states.
+        :param name: Delete only runs of this function.
+        :param limit: The most runs one call deletes.
+        :returns: How many runs were deleted.
+        :raises CoreException: ``validation`` from :func:`check_purge`; ``configuration``
+            when the store would leave the purged runs' step journal behind.
         """
         ...  # pragma: no cover

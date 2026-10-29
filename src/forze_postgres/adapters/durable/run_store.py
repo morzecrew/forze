@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Collection, Sequence
 from datetime import datetime, timedelta
 from typing import Any, final
 from uuid import UUID
@@ -13,6 +13,7 @@ from psycopg.types.json import Jsonb
 
 from forze.application.contracts.crypto import BytesCipherPort
 from forze.application.contracts.durable.function import (
+    PURGEABLE_STATUSES,
     DurableLeaseRenewal,
     DurableRunAdminPort,
     DurableRunControlAware,
@@ -22,9 +23,12 @@ from forze.application.contracts.durable.function import (
     DurableRunStatus,
     DurableRunStorePort,
     build_run_page,
+    check_enqueue_keys,
+    check_purge,
     decode_run_cursor,
     requeue_failed_unnamed_error,
     requeue_unscoped_error,
+    scope_coalesce_key,
 )
 from forze.application.contracts.tenancy import TenancyMixin
 from forze.application.integrations.crypto.payload import (
@@ -41,7 +45,10 @@ from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict, utcnow, uuid7
 from forze_postgres.adapters._logger import logger
 from forze_postgres.adapters.durable.function_step import DURABLE_PAYLOAD_DOMAIN
-from forze_postgres.execution.deps.configs.durable import PostgresDurableRunConfig
+from forze_postgres.execution.deps.configs.durable import (
+    PostgresDurableRunConfig,
+    PostgresDurableStepConfig,
+)
 from forze_postgres.kernel.client import PostgresClientPort
 from forze_postgres.kernel.gateways.base import PostgresQualifiedName
 from forze_postgres.kernel.relation import resolve_postgres_qname
@@ -116,8 +123,8 @@ class PostgresDurableRunStore(
     What a bound caller reaches splits by verb. ``begin``, ``renew``, ``load``, ``mark_retry``
     and every terminal write reach that tenant's runs and untagged ones (see
     :meth:`_worker_scope`); ``claim_abandoned``, ``list_runs``, ``request_cancel``,
-    ``requeue_quarantined``, ``requeue_failed`` and ``refuse_cancel`` match the tenant
-    exactly. ``enqueue`` resolves one effective tenant for the table, the tag and the scoped
+    ``requeue_quarantined``, ``requeue_failed``, ``purge_finished`` and ``refuse_cancel``
+    match the tenant exactly. ``enqueue`` resolves one effective tenant for the table, the tag and the scoped
     key together, and refuses an explicit tenant that contradicts the binding.
 
     The table is provided by the application, with its migrations in
@@ -128,6 +135,7 @@ class PostgresDurableRunStore(
             name                text        NOT NULL,
             status              text        NOT NULL,
             idempotency_key     text,
+            coalesce_key        text,
             input               jsonb,
             output              jsonb,
             error               text,
@@ -142,6 +150,11 @@ class PostgresDurableRunStore(
             PRIMARY KEY (run_id),
             UNIQUE (idempotency_key)
         );
+
+        -- Needed by enqueue(coalesce_key=...): one unclaimed pending run per key. An
+        -- existing table adds both before that call is used; nothing else reads the column:
+        --   ALTER TABLE <relation> ADD COLUMN coalesce_key text;
+        CREATE UNIQUE INDEX ON <relation> (coalesce_key) WHERE status = 'pending' AND attempts = 0;
 
         -- Both cancel columns are nullable with no default, so an existing deployment
         -- migrates with two plain ADD COLUMNs and no table rewrite:
@@ -163,6 +176,10 @@ class PostgresDurableRunStore(
         -- tenant, so lead the index with tenant_id to skip other tenants' rows:
         CREATE INDEX ON <relation> (tenant_id, status, created_at);
 
+        -- Recommended where runs are purged: purge_finished filters on status and
+        -- updated_at (when the run landed) and deletes the oldest landings first.
+        CREATE INDEX ON <relation> (status, updated_at);
+
         -- Recommended: back the admin listing (list_runs), which orders newest-first by
         -- (created_at DESC, run_id DESC) and keyset-seeks on (created_at, run_id). Without a
         -- matching index it seq-scans + sorts the whole relation. On a namespace (per-tenant)
@@ -182,6 +199,15 @@ class PostgresDurableRunStore(
     client: PostgresClientPort
     config: PostgresDurableRunConfig
     cipher: BytesCipherPort | None = None
+
+    step_config: PostgresDurableStepConfig | None = None
+    """The step journal :meth:`purge_finished` deletes a purged run's steps from, in the same
+    statement. ``PostgresDepsModule`` passes its ``durable_step``."""
+
+    journal: bool = True
+    """Whether runs on this table journal steps. While ``True`` and no :attr:`step_config` is
+    given, :meth:`purge_finished` refuses rather than leave each purged run's steps behind.
+    ``PostgresDepsModule`` sets it from whether ``durable_step`` is wired."""
 
     # ....................... #
 
@@ -237,7 +263,10 @@ class PostgresDurableRunStore(
         idempotency_key: str | None = None,
         tenant_id: UUID | None = None,
         available_at: datetime | None = None,
+        coalesce_key: str | None = None,
     ) -> DurableRunRecord:
+        check_enqueue_keys(idempotency_key, coalesce_key)
+
         # One effective tenant for the row's column, its scoped idempotency key *and* the
         # relation it lands in — resolving the relation from the binding while tagging from
         # the argument is how a row ends up where nobody looks for it.
@@ -248,39 +277,63 @@ class PostgresDurableRunStore(
         stored_input = await self._seal(input_json, run_id, "input", tenant_id)
         stored_idem = _scope_idem(idempotency_key, tenant_id)
 
+        key_column = sql.SQL("idempotency_key")
+        conflict = sql.SQL("ON CONFLICT (idempotency_key) DO NOTHING")
+        returning = sql.SQL("run_id")
+        key = stored_idem
+
+        if coalesce_key is not None:
+            # The partial unique index admits one unclaimed pending run per key. DO UPDATE
+            # (a no-op write) hands back that run under its row lock, atomically: if a claim
+            # takes it first, the row leaves the index and this insert goes ahead instead.
+            # Only this path names the column, so a table without it serves every other.
+            key_column = sql.SQL("coalesce_key")
+            conflict = sql.SQL(
+                "ON CONFLICT (coalesce_key) WHERE status = 'pending' AND attempts = 0 "
+                "DO UPDATE SET coalesce_key = EXCLUDED.coalesce_key"
+            )
+            returning = sql.SQL(_COLUMNS)
+            key = scope_coalesce_key(coalesce_key, tenant_id)
+
         row = await self.client.fetch_one(
             sql.SQL(
                 """
                 INSERT INTO {table}
-                    (run_id, name, status, idempotency_key, input, tenant_id,
+                    (run_id, name, status, {key_column}, input, tenant_id,
                      attempts, leased_until, available_at, created_at, updated_at)
                 VALUES
-                    ({run_id}, {name}, 'pending', {idem}, {input}, {tenant_id},
+                    ({run_id}, {name}, 'pending', {key}, {input}, {tenant_id},
                      0, NULL, {available_at}, {now}, {now})
-                ON CONFLICT (idempotency_key) DO NOTHING
-                RETURNING run_id
+                {conflict}
+                RETURNING {returning}
                 """
             ).format(
                 table=table.ident(),
+                key_column=key_column,
                 run_id=sql.Placeholder("run_id"),
                 name=sql.Placeholder("name"),
-                idem=sql.Placeholder("idem"),
+                key=sql.Placeholder("key"),
                 input=sql.Placeholder("input"),
                 tenant_id=sql.Placeholder("tenant_id"),
                 available_at=sql.Placeholder("available_at"),
                 now=sql.Placeholder("now"),
+                conflict=conflict,
+                returning=returning,
             ),
             {
                 "run_id": run_id,
                 "name": name,
-                "idem": stored_idem,
+                "key": key,
                 "input": None if stored_input is None else Jsonb(stored_input),
                 "tenant_id": tenant_id,
                 "available_at": available_at,
                 "now": now,
             },
-            row_factory="tuple",
         )
+
+        if row is not None and row["run_id"] != run_id:
+            # Coalesced onto the run already waiting for this key.
+            return await self._record_from_row(row)
 
         if row is not None:
             return DurableRunRecord(
@@ -809,6 +862,85 @@ class PostgresDurableRunStore(
         )
 
         return row is not None
+
+    # ....................... #
+
+    async def purge_finished(
+        self,
+        older_than: timedelta,
+        *,
+        statuses: Collection[DurableRunStatus] = PURGEABLE_STATUSES,
+        name: str | None = None,
+        limit: int = 1000,
+    ) -> int:
+        check_purge(older_than, statuses, limit)
+
+        if self.journal and self.step_config is None:
+            raise exc.configuration(
+                "Purging durable runs would leave their step journal behind: pass the run "
+                "store its step_config, or journal=False if its runs journal no steps.",
+            )
+
+        table = await self._table()
+        params: dict[str, object] = {
+            "statuses": [str(status) for status in statuses],
+            "older_than": older_than,
+            "limit": limit,
+        }
+        # ``updated_at`` is the landing: every terminal write sets it from the database
+        # clock, so the window starts when the run finished, not when it was submitted.
+        clauses: list[sql.Composable] = [
+            sql.SQL("status = ANY(%(statuses)s)"),
+            sql.SQL("updated_at < now() - %(older_than)s"),
+        ]
+
+        # Scoped like ``list_runs``.
+        tenant_id = self._tenant_id_for_resolve()
+
+        if tenant_id is not None:
+            clauses.append(sql.SQL("tenant_id = %(tenant_id)s"))
+            params["tenant_id"] = tenant_id
+
+        if name is not None:
+            clauses.append(sql.SQL("name = %(name)s"))
+            params["name"] = name
+
+        journal: sql.Composable = sql.SQL("")
+
+        if self.step_config is not None:
+            steps = await resolve_postgres_qname(self.step_config.relation, tenant_id)
+            journal = sql.SQL(
+                ", journal AS (DELETE FROM {steps} AS s USING gone WHERE s.run_id = gone.run_id)"
+            ).format(steps=steps.ident())
+
+        # One statement locks the batch, deletes it and its journal: a run requeued meanwhile
+        # holds its row lock, so SKIP LOCKED leaves it and its steps, and no crash between
+        # the two deletes can orphan a journal. Oldest landing first.
+        row = await self.client.fetch_one(
+            sql.SQL(
+                """
+                WITH doomed AS (
+                    SELECT run_id FROM {table} WHERE {where}
+                    ORDER BY updated_at
+                    LIMIT %(limit)s
+                    FOR UPDATE SKIP LOCKED
+                ), gone AS (
+                    DELETE FROM {table} AS t USING doomed
+                    WHERE t.run_id = doomed.run_id
+                    RETURNING t.run_id
+                ){journal}
+                SELECT count(*) FROM gone
+                """
+            ).format(
+                table=table.ident(),
+                where=sql.SQL(" AND ").join(clauses),
+                journal=journal,
+            ),
+            params,
+            row_factory="tuple",
+        )
+
+        return 0 if row is None else int(row[0])
 
     # ....................... #
 

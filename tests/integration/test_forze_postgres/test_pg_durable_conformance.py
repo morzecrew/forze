@@ -19,6 +19,8 @@ the code proves nothing and only running both does.
 # covers: DurableRunStorePort.refuse_cancel
 # covers: DurableRunStorePort.mark_timed_out
 # covers: DurableRunAdminPort.requeue_quarantined
+# covers: DurableRunAdminPort.purge_finished
+# covers: DurableScheduleStorePort.set_input
 """
 
 from __future__ import annotations
@@ -57,19 +59,29 @@ from tests.support.durable_cancel_races import (
     run_stale_holder_race,
 )
 from tests.support.durable_conformance import (
+    COALESCE_OUTCOME,
+    PURGE_OUTCOME,
+    PURGE_WINDOW_OUTCOME,
     QUARANTINE_ADMIN_OUTCOME,
     REQUEUE_FAILED_OUTCOME,
     RETRY_OUTCOME,
+    SCHEDULE_INPUT_RACE_OUTCOME,
     FirstCallRuns,
     mock_quarantine,
     run_claim_scenario,
+    run_coalesce_race_scenario,
+    run_coalesce_scenario,
     run_control_scenario,
     run_lifecycle_scenario,
     run_list_scenario,
+    run_purge_race_scenario,
+    run_purge_scenario,
+    run_purge_window_scenario,
     run_quarantine_admin_scenario,
     run_requeue_failed_scenario,
     run_requeue_race_scenario,
     run_retry_scenario,
+    run_schedule_input_race_scenario,
     run_schedule_scenario,
     run_tenancy_scenario,
     tenant_provider_for,
@@ -407,6 +419,115 @@ class TestDurableMockVsPostgres:
         )
 
         assert mock_out == pg_out == REQUEUE_FAILED_OUTCOME
+
+    async def test_mock_matches_postgres_for_purged_runs(
+        self, pg_client: PostgresClient, run_table: str, step_table: str
+    ) -> None:
+        mock_state = MockState()
+        mock_out = await run_purge_scenario(
+            lambda tenant: MockDurableRunStore(
+                state=mock_state,
+                tenant_provider=tenant_provider_for(tenant),
+            ),
+            lambda: MockDurableFunctionStepAdapter(state=mock_state),
+        )
+
+        steps = PostgresDurableStepConfig(relation=("public", step_table))
+        pg_out = await run_purge_scenario(
+            lambda tenant: PostgresDurableRunStore(
+                client=pg_client,
+                config=PostgresDurableRunConfig(relation=("public", run_table)),
+                step_config=steps,
+                tenant_provider=tenant_provider_for(tenant),
+            ),
+            lambda: PostgresDurableFunctionStepAdapter(client=pg_client, config=steps),
+        )
+
+        assert mock_out == pg_out == PURGE_OUTCOME
+
+    async def test_mock_matches_postgres_for_coalesced_enqueues(
+        self, pg_client: PostgresClient, run_table: str
+    ) -> None:
+        mock_state = MockState()
+        mock_out = await run_coalesce_scenario(
+            lambda tenant: MockDurableRunStore(
+                state=mock_state,
+                tenant_provider=tenant_provider_for(tenant),
+            )
+        )
+
+        pg_out = await run_coalesce_scenario(
+            lambda tenant: PostgresDurableRunStore(
+                client=pg_client,
+                config=PostgresDurableRunConfig(relation=("public", run_table)),
+                tenant_provider=tenant_provider_for(tenant),
+            )
+        )
+
+        assert mock_out == pg_out == COALESCE_OUTCOME
+
+    async def test_mock_matches_postgres_for_the_purge_window(
+        self, pg_client: PostgresClient, run_table: str, step_table: str
+    ) -> None:
+        mock_out = await run_purge_window_scenario(MockDurableRunStore(state=MockState()))
+        pg_out = await run_purge_window_scenario(
+            PostgresDurableRunStore(
+                client=pg_client,
+                config=PostgresDurableRunConfig(relation=("public", run_table)),
+                step_config=PostgresDurableStepConfig(relation=("public", step_table)),
+            )
+        )
+
+        assert mock_out == pg_out == PURGE_WINDOW_OUTCOME
+
+    async def test_mock_matches_postgres_for_a_purge_racing_a_requeue(
+        self, pg_client: PostgresClient, run_table: str, step_table: str
+    ) -> None:
+        mock_state = MockState()
+        mock_out = await run_purge_race_scenario(
+            MockDurableRunStore(state=mock_state),
+            lambda: MockDurableFunctionStepAdapter(state=mock_state),
+        )
+
+        steps = PostgresDurableStepConfig(relation=("public", step_table))
+        pg_out = await run_purge_race_scenario(
+            PostgresDurableRunStore(
+                client=pg_client,
+                config=PostgresDurableRunConfig(relation=("public", run_table)),
+                step_config=steps,
+            ),
+            lambda: PostgresDurableFunctionStepAdapter(client=pg_client, config=steps),
+        )
+
+        assert mock_out == pg_out == {"rounds": 20, "journal_follows_run": True}
+
+    async def test_mock_matches_postgres_for_a_coalesce_racing_a_claim(
+        self, pg_client: PostgresClient, run_table: str
+    ) -> None:
+        mock_out = await run_coalesce_race_scenario(MockDurableRunStore(state=MockState()))
+        pg_out = await run_coalesce_race_scenario(
+            PostgresDurableRunStore(
+                client=pg_client,
+                config=PostgresDurableRunConfig(relation=("public", run_table)),
+            )
+        )
+
+        assert mock_out == pg_out == {"rounds": 30, "invariant_held": True}
+
+    async def test_mock_matches_postgres_for_an_input_change_racing_a_fire(
+        self, pg_client: PostgresClient, schedule_table: str
+    ) -> None:
+        mock_out = await run_schedule_input_race_scenario(
+            MockDurableScheduleStore(state=MockState())
+        )
+        pg_out = await run_schedule_input_race_scenario(
+            PostgresDurableScheduleStore(
+                client=pg_client,
+                config=PostgresDurableScheduleConfig(relation=("public", schedule_table)),
+            )
+        )
+
+        assert mock_out == pg_out == SCHEDULE_INPUT_RACE_OUTCOME
 
     async def test_an_unnamed_requeue_leaves_a_run_tagged_after_its_check(
         self, pg_client: PostgresClient, run_table: str

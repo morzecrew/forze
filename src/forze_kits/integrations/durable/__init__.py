@@ -21,9 +21,14 @@ from .deps import (
 )
 from .lifecycle import (
     durable_recovery_background_lifecycle_step,
+    durable_run_retention_lifecycle_step,
     durable_scheduler_background_lifecycle_step,
 )
-from .operation_bridge import operation_durable_handler, register_operation_functions
+from .operation_bridge import (
+    DurableServiceIdentity,
+    operation_durable_handler,
+    register_operation_functions,
+)
 from .registry import DurableFunctionHandler, DurableFunctionRegistry
 from .runner import DurableFunctionRunner
 from .saga_executor import DurableSagaExecutor, durable_saga_handler
@@ -53,10 +58,12 @@ __all__ = [
     "DurableSagaExecutor",
     "DurableScheduler",
     "DurableSchedulerDepKey",
+    "DurableServiceIdentity",
     "DurableTelemetry",
     "cron_schedule_id",
     "durable_kits_deps",
     "durable_recovery_background_lifecycle_step",
+    "durable_run_retention_lifecycle_step",
     "durable_saga_handler",
     "durable_scheduler_background_lifecycle_step",
     "resolve_durable_run_admin",

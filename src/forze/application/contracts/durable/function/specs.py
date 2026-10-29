@@ -1,11 +1,12 @@
 from typing import Any, Generic, TypeVar, final
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import attrs
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 from forze.application.contracts.base import BaseSpec
 from forze.base.exceptions import exc
-from forze.base.primitives import StrKey
+from forze.base.primitives import JsonDict, StrKey
 from forze.base.serialization import ModelCodec
 
 # ----------------------- #
@@ -75,6 +76,67 @@ class DurableFunctionCronTrigger:
     expression: str
     """Cron expression interpreted by the provider."""
 
+    tz: str | None = None
+    """IANA timezone the expression is evaluated in (``None`` = UTC); an unknown zone fails
+    the declaration."""
+
+    # Kept out of the hash: a dict (or an unfrozen model) does not hash.
+    input: JsonDict | BaseModel | None = attrs.field(default=None, hash=False)
+    """Input every fire hands the run: a JSON dict or an instance of the spec's args type.
+
+    Checked against :attr:`DurableFunctionInvokeSpec.args_type` when the spec is declared, so
+    a payload no run could accept fails at import rather than on the first fire."""
+
+    # ....................... #
+
+    def __attrs_post_init__(self) -> None:
+        if self.tz is None:
+            return
+
+        try:
+            ZoneInfo(self.tz)
+
+        except (ZoneInfoNotFoundError, ValueError) as error:
+            raise exc.configuration(f"Cron trigger timezone {self.tz!r} is unknown.") from error
+
+    # ....................... #
+
+    def encode_input(self, args_type: type[BaseModel]) -> JsonDict | None:
+        """Return :attr:`input` validated against *args_type*, as the run store holds it.
+
+        The encoding is checked to validate back into *args_type*, as the run will validate
+        it, so a model whose dump it cannot read back fails here rather than on every fire.
+
+        :raises CoreException: ``configuration`` when the input is not an *args_type* or
+            its encoding does not validate as one.
+        """
+
+        if self.input is None:
+            return None
+
+        if isinstance(self.input, BaseModel) and not isinstance(self.input, args_type):
+            raise exc.configuration(
+                f"Cron trigger input is a {type(self.input).__name__}, "
+                f"not the spec's args type {args_type.__name__}.",
+            )
+
+        try:
+            model = (
+                self.input
+                if isinstance(self.input, BaseModel)
+                else args_type.model_validate(self.input)
+            )
+            # By alias: an args type that accepts only its aliases reads its own dump back.
+            encoded: JsonDict = model.model_dump(mode="json", by_alias=True)
+            args_type.model_validate(encoded)
+
+        except ValidationError as error:
+            raise exc.configuration(
+                f"Cron trigger input does not validate as {args_type.__name__}.",
+            ) from error
+
+        return encoded
+
 
 # ....................... #
 
@@ -111,3 +173,7 @@ class DurableFunctionSpec(Generic[In, Out], BaseSpec):
             raise exc.validation(
                 "DurableFunctionSpec requires at least one trigger",
             )
+
+        for trigger in self.triggers:
+            if isinstance(trigger, DurableFunctionCronTrigger):
+                trigger.encode_input(self.run.args_type)

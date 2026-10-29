@@ -439,3 +439,84 @@ async def test_the_mock_requeues_failed_and_timed_out_runs() -> None:
         )
         == REQUEUE_FAILED_OUTCOME
     )
+
+
+async def test_the_mock_purges_finished_runs_with_their_journal() -> None:
+    """# covers: DurableRunAdminPort.purge_finished"""
+
+    from forze_mock.adapters.durable import MockDurableRunStore
+    from tests.support.durable_conformance import (
+        PURGE_OUTCOME,
+        run_purge_scenario,
+        tenant_provider_for,
+    )
+
+    state = MockState()
+
+    assert (
+        await run_purge_scenario(
+            lambda tenant: MockDurableRunStore(
+                state=state, tenant_provider=tenant_provider_for(tenant)
+            ),
+            lambda: MockDurableFunctionStepAdapter(state=state),
+        )
+        == PURGE_OUTCOME
+    )
+
+
+async def test_the_mock_coalesces_onto_the_unclaimed_run() -> None:
+    """# covers: DurableRunStorePort.enqueue"""
+
+    from forze_mock.adapters.durable import MockDurableRunStore
+    from tests.support.durable_conformance import (
+        COALESCE_OUTCOME,
+        run_coalesce_scenario,
+        tenant_provider_for,
+    )
+
+    state = MockState()
+
+    assert (
+        await run_coalesce_scenario(
+            lambda tenant: MockDurableRunStore(
+                state=state, tenant_provider=tenant_provider_for(tenant)
+            )
+        )
+        == COALESCE_OUTCOME
+    )
+
+
+async def test_the_mock_answers_the_purge_window_and_the_race_scenarios_serially() -> None:
+    """The mock store never suspends mid-call, so each gathered pair runs one after the other.
+
+    This pins only the answers the conformance tests compare the engines with; the races
+    themselves run against Postgres and Mongo there.
+    """
+
+    from forze_mock.adapters.durable import MockDurableRunStore, MockDurableScheduleStore
+    from tests.support.durable_conformance import (
+        PURGE_WINDOW_OUTCOME,
+        SCHEDULE_INPUT_RACE_OUTCOME,
+        run_coalesce_race_scenario,
+        run_purge_race_scenario,
+        run_purge_window_scenario,
+        run_schedule_input_race_scenario,
+    )
+
+    state = MockState()
+
+    assert (
+        await run_purge_window_scenario(MockDurableRunStore(state=MockState()))
+        == PURGE_WINDOW_OUTCOME
+    )
+    assert await run_purge_race_scenario(
+        MockDurableRunStore(state=state), lambda: MockDurableFunctionStepAdapter(state=state)
+    ) == {"rounds": 20, "journal_follows_run": True}
+    assert await run_coalesce_race_scenario(MockDurableRunStore(state=MockState())) == {
+        "rounds": 30,
+        "invariant_held": True,
+    }
+    assert (
+        await run_schedule_input_race_scenario(MockDurableScheduleStore(state=MockState()))
+        == SCHEDULE_INPUT_RACE_OUTCOME
+    )

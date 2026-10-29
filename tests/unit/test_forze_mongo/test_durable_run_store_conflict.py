@@ -116,3 +116,37 @@ async def test_any_other_failure_still_propagates() -> None:
 
     assert ei.value.kind == ExceptionKind.INFRASTRUCTURE
     assert client.reads == []
+
+
+async def test_a_coalescing_submit_that_keeps_losing_records_its_own_run() -> None:
+    # Every pass conflicts: a run held the key's slot each time, and a claim took it
+    # before the next pass could join it. Contention alone must not refuse the submit.
+    inserted: list[dict[str, Any]] = []
+    client = _ConflictingClient(
+        existing=None,
+        error=CoreException.conflict("Duplicate key violation."),
+    )
+
+    async def insert_one(_coll: Any, document: dict[str, Any]) -> None:
+        inserted.append(document)
+
+    client.insert_one = insert_one  # type: ignore[attr-defined]
+
+    run = await _store(client).enqueue("fn", input_json={"n": 2}, coalesce_key="x")
+
+    assert [doc["_id"] for doc in inserted] == [run.run_id]
+    assert run.input_json == {"n": 2}
+    # Unjoinable: the slot belongs to the run that keeps being claimed and replaced.
+    assert "coalesce_key" not in inserted[0]
+
+
+async def test_a_coalescing_submit_still_raises_any_other_failure() -> None:
+    client = _ConflictingClient(
+        existing=None,
+        error=CoreException.infrastructure("Mongo is unreachable."),
+    )
+
+    with pytest.raises(CoreException) as ei:
+        await _store(client).enqueue("fn", input_json=None, coalesce_key="x")
+
+    assert ei.value.kind == ExceptionKind.INFRASTRUCTURE

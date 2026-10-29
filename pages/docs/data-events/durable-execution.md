@@ -117,6 +117,25 @@ loop, so later replicas scan too, and one that starts while another holds the lo
 `max_concurrency` bounds how many runs a sweep recovers at once. Enqueue with
 `run_at=<when>` for a **delayed** run — the scan skips it until it's due.
 
+To **coalesce** "recompute after a change", enqueue with a `coalesce_key`: a submit joins the
+run waiting unclaimed under that key and records a new run once that one is claimed. A
+joined submit's own input and `run_at` are discarded — the record returned is the joined run,
+with its own — so the run should read the state it recomputes rather than carry it. A burst of changes then causes one run, and a change that lands
+after the run started causes another, which reads it. A run waiting for a retry, or requeued,
+is not joined. The join is atomic at the store — a partial unique index — and needs the
+column and index in the [schema](../reference/durable-schema.md); it cannot be combined with
+an `idempotency_key`. On Mongo, a submit that keeps losing the key to runs being claimed
+records its own run, outside the key, rather than fail: contention costs an extra run, never
+a missed change.
+
+```python
+await runner.enqueue(
+    ctx, "reindex-catalog", {"catalog_id": str(catalog_id)},
+    coalesce_key=f"catalog:{catalog_id}",
+    run_at=utcnow() + timedelta(seconds=30),
+)
+```
+
 **Multi-tenant.** The stores resolve their table under the bound tenant. On a **tagged**
 shared table (a `tenant_id` column), an unbound scanner recovers every tenant's runs and the
 runner re-binds each run's tenant to execute it. On a **namespace** store (a per-tenant
@@ -145,6 +164,36 @@ than passing on the strength of the other planes. Note the coupling that creates
 `tenant_aware=True` on a run store fails closed when nothing is bound, which is how the
 cross-tenant sweep runs, so a deployment declaring `tagged` runs per-tenant recovery
 (`tenants=…`) instead.
+
+### Who a run executes as
+
+A durable body runs as **no one**: the runner binds the run's tenant and no principal, so
+a run started by `run_now` inside a request does not inherit the caller, and a recovered
+run behaves the same. A spec whose `operation` names a registry operation registers with
+`register_operation_functions`; an operation guarded by `AuthnRequired` then refuses the run
+until you name a service principal for it:
+
+```python
+register_operation_functions(
+    registry,
+    specs,
+    operations=operations,
+    identity=DurableServiceIdentity(
+        authn=AuthnIdentity(principal_id=REPORTS_SERVICE_ID),
+        acknowledge_unverified_identity=True,
+    ),
+)
+```
+
+Authn and authz then decide for that principal as for any caller, and audit records it.
+Nothing verifies it — no key is checked, expired or revoked — so the acknowledgment is
+required. The run's tenant still comes from the run.
+
+Running as no one shows wherever a body reads the principal: audit records no actor, a
+document created through `CreatorIdMappingStep` gets no creator, a progress job started in
+the body has no actor, and a saga's guarded steps refuse. That holds for every durable body
+— a hand-written one, a saga, the secrets rotator and credential sweep — as it always did
+for a recovered run; a service identity covers only the operation-backed bodies.
 
 ### Retrying a failed run
 
@@ -333,6 +382,36 @@ journal instead of re-executing. Keep durable bodies deterministic too — read 
 through `utcnow` / `uuid7` and do work in steps — and the simulator explores the crash-point
 space for you.
 
+### Keeping the run table bounded
+
+Finished runs are kept until you delete them, with their input, output and step journal. A
+retention step deletes them past a window:
+
+```python
+lifecycle = [
+    durable_run_retention_lifecycle_step(older_than=timedelta(days=30)),
+    durable_recovery_background_lifecycle_step(runner=runner),
+]
+```
+
+Each sweep calls `DurableRunAdminPort.purge_finished(older_than, statuses=..., name=None,
+limit=1000)` until a batch comes short, at most `max_batches_per_tick` times, then sleeps
+`interval`. It deletes only `completed`, `cancelled`, `failed` and `timed_out` runs that
+landed more than `older_than` ago (by `updated_at`, which every terminal write sets), oldest
+first, each with its step journal; `quarantined` and `forward_incomplete` runs still owe work
+and cannot be named. The step needs the admin port (`admin=True` on the run config). Purging
+a run frees its idempotency key: a later submit under that key starts a new run, so keep the
+window longer than any client keeps retrying a key.
+
+A run store built by hand refuses to purge without its `step_config`, unless you pass
+`journal=False` because its runs journal no steps; the deps modules set both. On Postgres the
+batch, its rows and its journal go in one statement that skips any row another transaction
+holds, so a run being requeued keeps its steps. Mongo has no such statement: the purge marks
+the batch's steps first, and the next purge deletes the marked steps of runs an interrupted
+one removed. Concurrent sweepers skip each other's rows on Postgres; on Mongo they can pick
+the same batch, and the second delete finds nothing, so it repeats work but loses none. Run
+the step on every replica either way.
+
 ### Crash-resumable sagas
 
 The self-hosted tier closes the "an in-process saga is not crash-resumable" gap. Swap the
@@ -385,13 +464,30 @@ the step — no manual `put`:
 spec = DurableFunctionSpec(
     name="report",
     run=DurableFunctionInvokeSpec(args_type=ReportArgs),
-    triggers=(DurableFunctionCronTrigger(expression="0 3 * * *"),),
+    triggers=(
+        DurableFunctionCronTrigger(
+            expression="0 3 * * *",
+            tz="Europe/Berlin",
+            input=ReportArgs(kind="daily"),
+        ),
+    ),
 )
 durable_scheduler_background_lifecycle_step(scheduler=scheduler, specs=[spec])
 ```
 
+`tz` names the IANA zone the expression runs in (UTC when unset); an unknown zone fails the
+declaration. Across a daylight-saving change it behaves as cron does: a wall time the clocks
+skip fires once, when the gap ends (`30 2 * * *` fires at 03:00 on the spring-forward day),
+and a wall time the clocks repeat fires once, at its first occurrence — except an
+every-hour expression, which fires in each real hour, both passes included.
+
+`input` is what each fire hands the run: a dict or an instance of the spec's `args_type`,
+checked against it when the spec is declared. On Inngest, `tz` maps to its `TZ=` prefix, and an `input` is refused,
+since an Inngest cron run receives no data.
+
 Auto-registration is **idempotent** — a restart re-uses an unchanged schedule (so it never
-resets `next_fire_at` and skips a due fire) and re-registers only when the cron changes.
+resets `next_fire_at` and skips a due fire) and re-registers only when the cron or timezone
+changes. A changed `input` alone replaces the stored input and keeps the next fire.
 
 Firing is **fire-once / skip-missed**: if the scheduler was down across several occurrences
 it fires once and advances to the next future one (no backfill). It's exactly-once across

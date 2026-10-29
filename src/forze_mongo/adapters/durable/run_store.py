@@ -8,7 +8,7 @@ require_mongo()
 
 # ....................... #
 
-from collections.abc import Sequence
+from collections.abc import Collection, Sequence
 from datetime import datetime, timedelta
 from typing import Any, final
 from uuid import UUID
@@ -18,6 +18,7 @@ from pymongo.asynchronous.collection import AsyncCollection
 
 from forze.application.contracts.crypto import BytesCipherPort
 from forze.application.contracts.durable.function import (
+    PURGEABLE_STATUSES,
     DurableLeaseRenewal,
     DurableRunAdminPort,
     DurableRunControlAware,
@@ -27,9 +28,12 @@ from forze.application.contracts.durable.function import (
     DurableRunStatus,
     DurableRunStorePort,
     build_run_page,
+    check_enqueue_keys,
+    check_purge,
     decode_run_cursor,
     requeue_failed_unnamed_error,
     requeue_unscoped_error,
+    scope_coalesce_key,
 )
 from forze.application.contracts.tenancy import TenancyMixin
 from forze.application.integrations.crypto.payload import (
@@ -47,7 +51,10 @@ from forze.base.primitives import JsonDict, utcnow, uuid4, uuid7
 from forze_mongo.adapters._logger import logger
 from forze_mongo.adapters.durable._ids import as_uuid, scope_id, unscope_id
 from forze_mongo.adapters.durable.function_step import DURABLE_PAYLOAD_DOMAIN
-from forze_mongo.execution.deps.configs.durable import MongoDurableRunConfig
+from forze_mongo.execution.deps.configs.durable import (
+    MongoDurableRunConfig,
+    MongoDurableStepConfig,
+)
 from forze_mongo.kernel.client import MongoClientPort
 from forze_mongo.kernel.relation import resolve_mongo_collection
 
@@ -104,8 +111,8 @@ class MongoDurableRunStore(
     What a bound caller reaches splits by verb. :meth:`begin`, :meth:`renew`, :meth:`load`,
     :meth:`mark_retry` and every terminal write reach that tenant's runs and untagged ones (see
     :meth:`_worker_scope`); :meth:`claim_abandoned`, :meth:`list_runs`,
-    :meth:`request_cancel`, :meth:`requeue_quarantined`, :meth:`requeue_failed` and
-    :meth:`refuse_cancel` match the tenant exactly.
+    :meth:`request_cancel`, :meth:`requeue_quarantined`, :meth:`requeue_failed`,
+    :meth:`purge_finished` and :meth:`refuse_cancel` match the tenant exactly.
     :meth:`enqueue` resolves one effective tenant for the collection, the tag and the scoped
     key together, and refuses an explicit tenant that contradicts the binding.
 
@@ -124,6 +131,20 @@ class MongoDurableRunStore(
             {unique: true, partialFilterExpression: {idempotency_key: {$type: "string"}}},
         )
 
+        // Coalescing: required before enqueue(coalesce_key=...) is used, so a burst of
+        // submits joins one unclaimed pending run instead of inserting several.
+        db.<collection>.createIndex(
+            {coalesce_key: 1},
+            {
+                unique: true,
+                partialFilterExpression: {
+                    coalesce_key: {$type: "string"},
+                    status: "pending",
+                    attempts: 0,
+                },
+            },
+        )
+
         // Recovery scan + admin listing. Recommended, not required: without it the scan
         // collection-scans as the collection grows.
         db.<collection>.createIndex({status: 1, created_at: 1})
@@ -132,6 +153,10 @@ class MongoDurableRunStore(
         // so lead with it to skip other tenants' runs:
         db.<collection>.createIndex({tenant_id: 1, status: 1, created_at: 1})
         db.<collection>.createIndex({tenant_id: 1, created_at: -1, _id: -1})
+
+        // Recommended where runs are purged: purge_finished filters on status and
+        // updated_at (when the run landed) and deletes the oldest landings first.
+        db.<collection>.createIndex({status: 1, updated_at: 1})
 
         // Read-back of a batch claim, which every recovery cycle performs. Recommended for
         // the same reason as the scan itself: without it the read-back collection-scans.
@@ -146,6 +171,15 @@ class MongoDurableRunStore(
     client: MongoClientPort
     config: MongoDurableRunConfig
     cipher: BytesCipherPort | None = None
+
+    step_config: MongoDurableStepConfig | None = None
+    """The step journal :meth:`purge_finished` deletes a purged run's steps from.
+    ``MongoDepsModule`` passes its ``durable_step``."""
+
+    journal: bool = True
+    """Whether runs in this collection journal steps. While ``True`` and no
+    :attr:`step_config` is given, :meth:`purge_finished` refuses rather than leave each purged
+    run's steps behind. ``MongoDepsModule`` sets it from whether ``durable_step`` is wired."""
 
     # ....................... #
 
@@ -213,7 +247,10 @@ class MongoDurableRunStore(
         idempotency_key: str | None = None,
         tenant_id: UUID | None = None,
         available_at: datetime | None = None,
+        coalesce_key: str | None = None,
     ) -> DurableRunRecord:
+        check_enqueue_keys(idempotency_key, coalesce_key)
+
         # One effective tenant for the document's field, its scoped idempotency key *and*
         # the collection it lands in — resolving the collection from the binding while
         # tagging from the argument is how a document ends up where nobody looks for it.
@@ -241,6 +278,11 @@ class MongoDurableRunStore(
             "cancel_requested_at": None,
             "cancel_refused_at": None,
         }
+
+        if coalesce_key is not None:
+            document["coalesce_key"] = scope_coalesce_key(coalesce_key, tenant_id)
+
+            return await self._enqueue_coalesced(coll, document, input_json)
 
         if stored_idem is None:
             # No key, nothing to converge on: a plain insert, and every call is its own run.
@@ -287,6 +329,56 @@ class MongoDurableRunStore(
             return self._record_from_document(document, input_json=input_json)
 
         return await self._record_from_row(existing)
+
+    # ....................... #
+
+    async def _enqueue_coalesced(
+        self,
+        coll: AsyncCollection[JsonDict],
+        document: dict[str, Any],
+        input_json: JsonDict | None,
+    ) -> DurableRunRecord:
+        # Join-or-insert in one findAndModify on the unclaimed pending run for the key. A
+        # claim moves that run out of the filter (and out of the partial unique index), so
+        # a submit after it inserts a new run.
+        waiting = {
+            "coalesce_key": document["coalesce_key"],
+            "status": _PENDING,
+            "attempts": 0,
+        }
+
+        for _ in range(3):
+            try:
+                existing = await self.client.find_one_and_update(
+                    coll,
+                    waiting,
+                    {"$setOnInsert": document},
+                    upsert=True,
+                )
+
+            except CoreException as error:
+                # Two submits raced to insert and the unique index refused this one: the
+                # next pass joins the winner, or inserts if a claim took it meanwhile.
+                if error.kind is not ExceptionKind.CONFLICT:
+                    raise
+
+                continue
+
+            if existing is None:  # pragma: no cover - the driver always returns the document
+                raise exc.internal("Durable run enqueue returned no document.")
+
+            if existing["_id"] == document["_id"]:
+                return self._record_from_document(document, input_json=input_json)
+
+            return await self._record_from_row(existing)
+
+        # Every pass lost the slot to a run that a claim then took before the next pass
+        # could join it. That is contention, not a refusal: record this submit as its own
+        # run, outside the key, so its change still runs.
+        del document["coalesce_key"]
+        await self.client.insert_one(coll, document)
+
+        return self._record_from_document(document, input_json=input_json)
 
     # ....................... #
 
@@ -737,6 +829,117 @@ class MongoDurableRunStore(
         )
 
         return existing is not None
+
+    # ....................... #
+
+    async def purge_finished(
+        self,
+        older_than: timedelta,
+        *,
+        statuses: Collection[DurableRunStatus] = PURGEABLE_STATUSES,
+        name: str | None = None,
+        limit: int = 1000,
+    ) -> int:
+        check_purge(older_than, statuses, limit)
+
+        if self.journal and self.step_config is None:
+            raise exc.configuration(
+                "Purging durable runs would leave their step journal behind: pass the run "
+                "store its step_config, or journal=False if its runs journal no steps.",
+            )
+
+        coll = await self._collection()
+        steps = await self._step_collection()
+
+        # Finish what an interrupted purge left: its marked steps, before marking more.
+        if steps is not None:
+            marked = await self.client.find_many(
+                steps,
+                {"purge_pending": True, **self._tenant_filter()},
+                projection={"run_id": 1},
+                limit=limit,
+            )
+            await self._settle_steps(coll, steps, list({doc["run_id"] for doc in marked}))
+
+        # Scoped like ``list_runs``. ``updated_at`` is the landing: every terminal write sets
+        # it, so the window starts when the run finished, not when it was submitted.
+        finished: dict[str, Any] = {
+            "status": {"$in": [str(status) for status in statuses]},
+            "updated_at": {"$lt": utcnow() - older_than},
+            **self._tenant_filter(),
+        }
+
+        if name is not None:
+            finished["name"] = name
+
+        candidates = await self.client.find_many(
+            coll,
+            finished,
+            projection={"_id": 1},
+            sort=[("updated_at", 1)],
+            limit=limit,
+        )
+        run_ids = [doc["_id"] for doc in candidates]
+
+        if not run_ids:
+            return 0
+
+        # Mark the journal first, with no transaction to delete both together: a crash after
+        # the runs go leaves marked steps, which the next purge settles above.
+        if steps is not None:
+            await self.client.update_many(
+                steps, {"run_id": {"$in": run_ids}}, {"$set": {"purge_pending": True}}
+            )
+
+        # The filter is re-checked per document as it deletes, so a run requeued since the
+        # read is kept.
+        deleted = await self.client.delete_many(coll, {"_id": {"$in": run_ids}, **finished})
+
+        if steps is not None:
+            await self._settle_steps(coll, steps, run_ids)
+
+        return deleted
+
+    # ....................... #
+
+    async def _step_collection(self) -> AsyncCollection[JsonDict] | None:
+        if self.step_config is None:
+            return None
+
+        db_name, coll_name = await resolve_mongo_collection(
+            self.step_config.collection, self._tenant_id_for_resolve()
+        )
+
+        return await self.client.collection(coll_name, db_name=db_name)
+
+    # ....................... #
+
+    async def _settle_steps(
+        self,
+        coll: AsyncCollection[JsonDict],
+        steps: AsyncCollection[JsonDict],
+        run_ids: Sequence[str],
+    ) -> None:
+        """Delete the steps of the runs in *run_ids* that are gone; unmark the rest.
+
+        A run kept — requeued while the purge ran — keeps its journal, so its steps replay.
+        Run ids are never reused, so a step whose run is gone is read by nothing again.
+        """
+
+        if not run_ids:
+            return
+
+        kept = await self.client.find_many(coll, {"_id": {"$in": run_ids}}, projection={"_id": 1})
+        kept_ids = {doc["_id"] for doc in kept}
+        gone = [run_id for run_id in run_ids if run_id not in kept_ids]
+
+        if gone:
+            await self.client.delete_many(steps, {"run_id": {"$in": gone}})
+
+        if kept_ids:
+            await self.client.update_many(
+                steps, {"run_id": {"$in": list(kept_ids)}}, {"$unset": {"purge_pending": ""}}
+            )
 
     # ....................... #
 

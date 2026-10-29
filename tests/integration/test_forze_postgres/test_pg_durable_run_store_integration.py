@@ -8,6 +8,7 @@
 # covers: DurableRunStorePort.load
 # covers: DurableRunStorePort.renew
 # covers: DurableRunAdminPort.requeue_quarantined
+# covers: DurableRunAdminPort.purge_finished
 """
 
 from __future__ import annotations
@@ -30,10 +31,14 @@ from forze.application.contracts.crypto import (
 from forze.application.contracts.durable.function import DurableRunStatus
 from forze.application.contracts.tenancy import TenantIdentity
 from forze.application.integrations.crypto import PAYLOAD_CIPHER_MISSING_CODE, Keyring
+from forze.base.exceptions import CoreException
 from forze.base.primitives import utcnow
 from forze_mock import MockKeyManagement
 from forze_postgres.adapters.durable import PostgresDurableRunStore
-from forze_postgres.execution.deps.configs import PostgresDurableRunConfig
+from forze_postgres.execution.deps.configs import (
+    PostgresDurableRunConfig,
+    PostgresDurableStepConfig,
+)
 from forze_postgres.kernel.client import PostgresClient
 from tests.support.durable_conformance import (
     QUARANTINE_OUTCOME,
@@ -44,7 +49,11 @@ from tests.support.durable_conformance import (
     run_unreadable_listing_scenario,
     tenant_provider_for,
 )
-from tests.support.durable_schema import DURABLE_RUN_COLUMNS, create_durable_table
+from tests.support.durable_schema import (
+    DURABLE_RUN_COLUMNS,
+    DURABLE_STEP_COLUMNS,
+    create_durable_table,
+)
 
 # ----------------------- #
 
@@ -496,3 +505,100 @@ class TestPostgresDurableRunStore:
         assert loaded.tenant_id is None
         assert loaded.status.value == "completed"
         assert loaded.output_json == {"secret": "out"}
+
+    async def test_a_purge_skips_a_run_another_transaction_holds_and_keeps_its_steps(
+        self, pg_client: PostgresClient, durable_run_table: str
+    ) -> None:
+        """A failed run being requeued holds its row lock; the purge must leave it whole.
+
+        Deleting it would lose a run its requeue is about to make due, and deleting its
+        journal while keeping it would make the requeued run re-run steps it already did.
+        """
+
+        step_table = f"durable_step_{uuid4().hex[:8]}"
+        await create_durable_table(
+            pg_client, DURABLE_STEP_COLUMNS, sql.Identifier("public", step_table)
+        )
+        store = PostgresDurableRunStore(
+            client=pg_client,
+            config=PostgresDurableRunConfig(relation=("public", durable_run_table)),
+            step_config=PostgresDurableStepConfig(relation=("public", step_table)),
+        )
+        run = await store.enqueue("fn", input_json=None)
+        held = await store.begin(run.run_id, lease_for=timedelta(minutes=5))
+        assert held is not None
+        await store.fail(run.run_id, error="boom", fence=held.attempts)
+        await pg_client.execute(
+            sql.SQL(
+                "INSERT INTO {steps} (run_id, step_id, result, created_at) "
+                "VALUES (%(run_id)s, 's1', '{{}}', now())"
+            ).format(steps=sql.Identifier("public", step_table)),
+            {"run_id": run.run_id},
+        )
+        past = timedelta(microseconds=1)
+
+        async def steps_left() -> int:
+            row = await pg_client.fetch_one(
+                sql.SQL("SELECT count(*) FROM {steps}").format(
+                    steps=sql.Identifier("public", step_table)
+                ),
+                row_factory="tuple",
+            )
+            assert row is not None
+            return int(row[0])
+
+        async with pg_client.transaction():
+            await pg_client.execute(
+                sql.SQL("SELECT 1 FROM {table} WHERE run_id = %(run_id)s FOR UPDATE").format(
+                    table=sql.Identifier("public", durable_run_table)
+                ),
+                {"run_id": run.run_id},
+            )
+
+            async with pg_client.detached():
+                skipped = await store.purge_finished(past)
+                kept = await store.load(run.run_id)
+                kept_steps = await steps_left()
+
+        assert skipped == 0
+        assert kept is not None and kept.status is DurableRunStatus.FAILED
+        assert kept_steps == 1
+
+        assert await store.purge_finished(past) == 1
+        assert await store.load(run.run_id) is None
+        assert await steps_left() == 0
+
+    async def test_a_table_without_the_coalesce_column_serves_every_other_call(
+        self, pg_client: PostgresClient
+    ) -> None:
+        """Only ``enqueue(coalesce_key=...)`` names the column, so an unmigrated table works."""
+
+        table = f"durable_run_{uuid4().hex[:8]}"
+        old_columns = DURABLE_RUN_COLUMNS.replace("    coalesce_key        text,\n", "")
+        assert "coalesce_key" not in old_columns
+        await create_durable_table(pg_client, old_columns, sql.Identifier("public", table))
+        store = PostgresDurableRunStore(
+            client=pg_client,
+            config=PostgresDurableRunConfig(relation=("public", table)),
+            journal=False,
+        )
+
+        run = await store.enqueue("fn", input_json={"n": 1}, idempotency_key="k")
+        again = await store.enqueue("fn", input_json={"n": 2}, idempotency_key="k")
+        plain = await store.enqueue("fn", input_json=None)
+        held = await store.begin(run.run_id, lease_for=timedelta(minutes=5))
+        assert held is not None
+        await store.complete(run.run_id, output_json={"ok": True}, fence=held.attempts)
+
+        assert again.run_id == run.run_id
+        loaded = await store.load(run.run_id)
+        assert loaded is not None and loaded.status is DurableRunStatus.COMPLETED
+        assert len((await store.list_runs()).records) == 2
+        assert await store.purge_finished(timedelta(microseconds=1)) == 1
+        assert await store.load(plain.run_id) is not None
+
+        # Coalescing needs the migration, and says so as a schema mismatch.
+        with pytest.raises(CoreException) as raised:
+            await store.enqueue("fn", input_json=None, coalesce_key="x")
+
+        assert raised.value.code == "postgres_schema_mismatch"

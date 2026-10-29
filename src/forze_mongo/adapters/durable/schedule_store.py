@@ -189,6 +189,30 @@ class MongoDurableScheduleStore(TenancyMixin, DurableScheduleStorePort):
 
     # ....................... #
 
+    async def set_input(
+        self,
+        schedule_id: str,
+        *,
+        expected_cron: str,
+        expected_tz: str | None,
+        input_json: JsonDict | None,
+    ) -> bool:
+        # ``{"tz": None}`` matches a null or absent field: the null-safe compare Postgres
+        # spells ``IS NOT DISTINCT FROM``.
+        matched = await self.client.update_one(
+            await self._collection(),
+            {
+                "_id": scope_id(schedule_id, self._tenant_id_for_resolve()),
+                "cron": expected_cron,
+                "tz": expected_tz,
+            },
+            {"$set": {"input": input_json, "updated_at": utcnow()}},
+        )
+
+        return bool(matched)
+
+    # ....................... #
+
     async def load(self, schedule_id: str) -> DurableScheduleRecord | None:
         coll = await self._collection()
         stored_sid = scope_id(schedule_id, self._tenant_id_for_resolve())

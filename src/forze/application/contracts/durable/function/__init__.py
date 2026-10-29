@@ -12,12 +12,14 @@ from .deps import (
 )
 from .ports import DurableFunctionEventCommandPort, DurableFunctionStepPort
 from .run_admin import (
+    PURGEABLE_STATUSES,
     REQUEUE_UNSCOPED_CODE,
     DurableRunAdminPort,
     DurableRunControlAware,
     DurableRunControlCapabilities,
     DurableRunPage,
     build_run_page,
+    check_purge,
     decode_run_cursor,
     durable_run_control_capabilities,
     encode_run_cursor,
@@ -42,6 +44,8 @@ from .run_store import (
     DurableRunRecord,
     DurableRunStatus,
     DurableRunStorePort,
+    check_enqueue_keys,
+    scope_coalesce_key,
 )
 from .schedule_store import (
     DurableScheduleRecord,
@@ -59,6 +63,7 @@ from .specs import (
 # ----------------------- #
 
 __all__ = [
+    "PURGEABLE_STATUSES",
     "REQUEUE_UNSCOPED_CODE",
     "DurableCancelSignal",
     "DurableFunctionCronTrigger",
@@ -93,6 +98,8 @@ __all__ = [
     "bind_durable_cancel_signal",
     "bind_durable_run",
     "build_run_page",
+    "check_enqueue_keys",
+    "check_purge",
     "current_durable_cancel_signal",
     "current_durable_run",
     "decode_run_cursor",
@@ -103,4 +110,5 @@ __all__ = [
     "require_durable_run",
     "reset_durable_cancel_signal",
     "reset_durable_run",
+    "scope_coalesce_key",
 ]

@@ -196,9 +196,10 @@ class DurableScheduler:
     ) -> DurableScheduleRecord:
         """Idempotently register a schedule.
 
-        Creates it if absent, re-registers it if its cron/timezone changed, and otherwise
-        leaves the existing schedule untouched — so calling this on every startup does **not**
-        reset ``next_fire_at`` (which would skip a due fire) or un-pause a disabled schedule.
+        Creates it if absent, re-registers it if its cron/timezone changed, replaces only its
+        input if that alone changed, and otherwise leaves the existing schedule untouched — so
+        calling this on every startup does **not** reset ``next_fire_at`` (which would skip a
+        due fire) or un-pause a disabled schedule.
 
         An explicit *tenant_id* is bound for both halves **when nothing is bound already**.
         The store scopes a schedule's key by its tenant, so reading unbound and writing for a
@@ -232,7 +233,17 @@ class DurableScheduler:
             existing = await resolve_durable_schedule_store(ctx).load(schedule_id)
 
             if existing is not None and existing.cron == cron and existing.tz == tz:
-                return existing
+                if existing.input_json == input_json:
+                    return existing
+
+                # Only the input changed: write the input alone, so a fire or a pause that
+                # lands meanwhile is kept rather than overwritten with what was just read.
+                # A schedule removed, or re-registered under another cron or tz, since the read
+                # fails the match, so it is put whole below.
+                if await resolve_durable_schedule_store(ctx).set_input(
+                    schedule_id, expected_cron=cron, expected_tz=tz, input_json=input_json
+                ):
+                    return attrs.evolve(existing, input_json=input_json)
 
             return await self.put(
                 ctx,
@@ -258,7 +269,7 @@ class DurableScheduler:
         """Register a schedule for every ``DurableFunctionCronTrigger`` on *specs*.
 
         Each cron trigger becomes a schedule keyed ``{spec.name}:cron:{index}`` that fires the
-        function ``spec.name`` (with no input — cron carries no payload). Idempotent via
+        function ``spec.name`` in the trigger's ``tz`` with its ``input``. Idempotent via
         :meth:`ensure_schedule`; event triggers are ignored. Returns the number ensured.
         """
 
@@ -274,6 +285,8 @@ class DurableScheduler:
                     cron_schedule_id(spec, index),
                     str(spec.name),
                     trigger.expression,
+                    input_json=trigger.encode_input(spec.run.args_type),
+                    tz=trigger.tz,
                     now=now,
                 )
                 ensured += 1

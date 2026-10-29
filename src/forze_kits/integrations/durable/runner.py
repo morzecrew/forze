@@ -212,10 +212,15 @@ class DurableFunctionRunner:
         idempotency_key: str | None = None,
         tenant_id: UUID | None = None,
         run_at: datetime | None = None,
+        coalesce_key: str | None = None,
     ) -> DurableRunRecord:
         """Record a new ``PENDING`` run (idempotency-key re-submits converge on one run).
 
         *run_at* delays when the recovery scan may claim it (a scheduled/delayed run).
+        *coalesce_key* joins the run already waiting unclaimed under that key and records a
+        new one once that run is claimed — "recompute after a change", where a burst of
+        changes causes one run and none is missed. A joined submit's *input_json* and
+        *run_at* are discarded: the record returned is the joined run, with its own.
         """
 
         store = resolve_durable_run_store(ctx)
@@ -226,6 +231,7 @@ class DurableFunctionRunner:
             idempotency_key=idempotency_key,
             tenant_id=tenant_id,
             available_at=run_at,
+            coalesce_key=coalesce_key,
         )
 
     # ....................... #
@@ -390,14 +396,16 @@ class DurableFunctionRunner:
     ) -> None:
         # Execute under the run's tenant so the step journal + terminal writes resolve the
         # right tenant (essential when recovery ran unbound over a tagged table; a no-op
-        # under a namespace shard already bound to this tenant).
-        binding = (
-            ctx.inv_ctx.bind_identity(tenant=TenantIdentity(tenant_id=record.tenant_id))
+        # under a namespace shard already bound to this tenant). An untagged run keeps the
+        # ambient tenant. Either way no principal is bound: a body runs as no one unless it
+        # binds a service identity, the same under ``run_now`` in a request as in recovery.
+        tenant = (
+            TenantIdentity(tenant_id=record.tenant_id)
             if record.tenant_id is not None
-            else nullcontext()
+            else ctx.inv_ctx.get_tenant()
         )
 
-        with binding:
+        with ctx.inv_ctx.bind_identity(tenant=tenant):
             await self._execute_bound(ctx, record, reraise=reraise)
 
     # ....................... #

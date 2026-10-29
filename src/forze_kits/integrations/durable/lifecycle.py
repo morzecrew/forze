@@ -1,4 +1,4 @@
-"""Lifecycle helper: a background scanner that recovers abandoned durable runs."""
+"""Lifecycle helpers: background loops that recover, schedule and purge durable runs."""
 
 from __future__ import annotations
 
@@ -10,7 +10,12 @@ from uuid import UUID
 
 import attrs
 
-from forze.application.contracts.durable.function import DurableFunctionSpec
+from forze.application.contracts.durable.function import (
+    PURGEABLE_STATUSES,
+    DurableFunctionSpec,
+    DurableRunStatus,
+    check_purge,
+)
 from forze.application.contracts.execution import LifecycleHook, LifecycleStep
 from forze.application.contracts.tenancy import TenantIdentity, require_tenant_global
 from forze.application.execution.background import (
@@ -23,7 +28,11 @@ from forze.base.primitives import StrKey, current_entropy_source
 from forze_kits.integrations._logger import logger
 from forze_kits.integrations._wiring import is_wiring_error
 
-from ._resolve import resolve_durable_run_store, resolve_durable_schedule_store
+from ._resolve import (
+    resolve_durable_run_admin,
+    resolve_durable_run_store,
+    resolve_durable_schedule_store,
+)
 from .runner import DurableFunctionRunner
 from .scheduler import DurableScheduler
 
@@ -535,5 +544,217 @@ def durable_scheduler_background_lifecycle_step(
         id=step_id,
         startup=startup,
         shutdown=shutdown,
+        requires_long_running=True,
+    )
+
+
+# ....................... #
+
+
+@final
+@attrs.define(slots=True, kw_only=True)
+class _DurableRetentionBackgroundStartup(LifecycleHook):
+    """Start a background task that periodically purges finished durable runs."""
+
+    older_than: timedelta
+    statuses: tuple[DurableRunStatus, ...]
+    interval: timedelta
+    jitter: float
+    limit: int
+    max_batches_per_tick: int
+    tenants: Callable[[], Sequence[UUID]] | None = None
+
+    control: BackgroundLoopControl = attrs.field(
+        default=attrs.Factory(
+            lambda self: BackgroundLoopControl(name="durable_retention"),
+            takes_self=True,
+        ),
+        init=False,
+    )
+    """Stop signal and bounded teardown, shared with every other background loop."""
+
+    # ....................... #
+
+    @property
+    def task(self) -> asyncio.Task[None] | None:
+        """The running loop, if any."""
+
+        return self.control.task
+
+    # ....................... #
+
+    @property
+    def loop_name(self) -> str:
+        """Satisfies ``DrainableLoop``."""
+
+        return self.control.loop_name
+
+    # ....................... #
+
+    async def stop(self, *, deadline: float) -> bool:
+        """Stop the loop at its next tick boundary. Idempotent; a purge cut short is
+        finished by the next process's first tick."""
+
+        return await self.control.stop(deadline=deadline)
+
+    # ....................... #
+
+    def __attrs_post_init__(self) -> None:
+        if self.interval.total_seconds() <= 0:
+            raise exc.configuration("Interval must be positive")
+
+        if not 0.0 <= self.jitter < 1.0:
+            raise exc.configuration("Jitter must be in [0, 1)")
+
+        if self.max_batches_per_tick < 1:
+            raise exc.configuration("Max batches per tick must be >= 1")
+
+        check_purge(self.older_than, self.statuses, self.limit)
+
+    # ....................... #
+
+    async def _drain(self, ctx: ExecutionContext) -> None:
+        """Purge (under whatever tenant is bound) until a batch comes short."""
+
+        admin = resolve_durable_run_admin(ctx)
+
+        for _ in range(self.max_batches_per_tick):
+            purged = await admin.purge_finished(
+                self.older_than, statuses=self.statuses, limit=self.limit
+            )
+
+            if purged < self.limit:
+                break
+
+    # ....................... #
+
+    async def _purge_tick(
+        self,
+        ctx: ExecutionContext,
+        tenants: Sequence[UUID] | None,
+    ) -> None:
+        if tenants is None:
+            await self._drain(ctx)
+            return
+
+        for tenant in tenants:
+            try:
+                with ctx.inv_ctx.bind_identity(tenant=TenantIdentity(tenant_id=tenant)):
+                    await self._drain(ctx)
+
+            except asyncio.CancelledError:
+                raise
+
+            except Exception as error:
+                if is_wiring_error(error):
+                    raise
+
+                logger.exception("Durable run retention failed for tenant", tenant=str(tenant))
+
+    # ....................... #
+
+    async def __call__(self, ctx: ExecutionContext) -> None:
+        tenants = list(self.tenants()) if self.tenants is not None else None
+        # Resolved for a shard too: a missing port would otherwise fail each tenant's sweep
+        # as that tenant's error, logged and retried forever, while startup succeeded.
+        admin = resolve_durable_run_admin(ctx)
+
+        if tenants is None:
+            require_tenant_global(admin, what="Durable run retention")
+
+        async def _loop() -> None:
+            while True:
+                try:
+                    await self._purge_tick(ctx, tenants)
+                except asyncio.CancelledError:
+                    raise
+                except Exception as error:
+                    if is_wiring_error(error):
+                        logger.exception(
+                            "Durable run retention hit a wiring error; loop stopped — "
+                            "fix the wiring and restart"
+                        )
+                        return
+
+                    logger.exception("Durable run retention sweep failed")
+
+                if await self.control.sleep_or_stop(
+                    self.interval.total_seconds()
+                    * (
+                        1.0
+                        + current_entropy_source().as_random().uniform(-self.jitter, self.jitter)
+                    )
+                ):
+                    return
+
+        if self.control.running:
+            logger.warning("Durable run retention already running; ignoring duplicate startup")
+            return
+
+        self.control.arm()
+        self.control.task = asyncio.create_task(_loop(), name=self.control.loop_name)
+        ctx.drainables.register(self)
+
+
+# ....................... #
+
+
+@final
+@attrs.define(slots=True, kw_only=True)
+class _DurableRetentionBackgroundShutdown(LifecycleHook):
+    """Stop the background retention loop (fallback for a hand-driven lifecycle)."""
+
+    startup: _DurableRetentionBackgroundStartup
+
+    # ....................... #
+
+    async def __call__(self, ctx: ExecutionContext) -> None:
+        clock = asyncio.get_running_loop()
+        await self.startup.stop(deadline=clock.time() + DEFAULT_STOP_GRACE_SECONDS)
+
+
+# ....................... #
+
+
+def durable_run_retention_lifecycle_step(
+    *,
+    older_than: timedelta,
+    statuses: Sequence[DurableRunStatus] = PURGEABLE_STATUSES,
+    interval: timedelta = timedelta(minutes=10),
+    jitter: float = 0.2,
+    limit: int = 1000,
+    max_batches_per_tick: int = 10,
+    tenants: Callable[[], Sequence[UUID]] | None = None,
+    step_id: StrKey = "durable_run_retention",
+) -> LifecycleStep:
+    """Build a lifecycle step that deletes finished durable runs older than *older_than*.
+
+    Each sweep calls
+    :meth:`~forze.application.contracts.durable.function.DurableRunAdminPort.purge_finished`
+    in batches of *limit* until one comes short, at most *max_batches_per_tick* times, so one
+    sweep deletes at most ``limit * max_batches_per_tick`` runs; then it sleeps *interval*
+    with multiplicative *jitter*. Only the *statuses* in ``PURGEABLE_STATUSES`` can be named,
+    so a run that still owes work is never deleted. Needs the run admin port (``admin=True``
+    on the run config). A wiring error stops the loop; any other error is logged and retried.
+
+    *tenants* works as on :func:`durable_recovery_background_lifecycle_step`: set it for a
+    namespace-tier store, omit it for a tagged one (one unbound sweep purges every tenant's
+    runs). Concurrent sweepers never delete a run twice, so run it unwrapped on every replica.
+    """
+
+    startup = _DurableRetentionBackgroundStartup(
+        older_than=older_than,
+        statuses=tuple(statuses),
+        interval=interval,
+        jitter=jitter,
+        limit=limit,
+        max_batches_per_tick=max_batches_per_tick,
+        tenants=tenants,
+    )
+
+    return LifecycleStep(
+        id=step_id,
+        startup=startup,
+        shutdown=_DurableRetentionBackgroundShutdown(startup=startup),
         requires_long_running=True,
     )

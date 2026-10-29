@@ -2,6 +2,7 @@
 
 # covers: durable_recovery_background_lifecycle_step
 # covers: durable_scheduler_background_lifecycle_step
+# covers: durable_run_retention_lifecycle_step
 """
 
 from __future__ import annotations
@@ -19,6 +20,7 @@ from forze.application.contracts.durable.function import (
     DurableFunctionCronTrigger,
     DurableFunctionInvokeSpec,
     DurableFunctionSpec,
+    DurableRunStatus,
 )
 from forze.application.execution import DeploymentProfile
 from forze.application.execution.lifecycle import LifecyclePlan
@@ -30,12 +32,15 @@ from forze_kits.integrations.durable import (
     DurableFunctionRunner,
     DurableScheduler,
     durable_recovery_background_lifecycle_step,
+    durable_run_retention_lifecycle_step,
     durable_scheduler_background_lifecycle_step,
+    resolve_durable_run_store,
 )
 from forze_kits.integrations.durable import lifecycle as lifecycle_mod
 from forze_kits.integrations.durable.lifecycle import (
     _DurableRecoveryBackgroundShutdown,
     _DurableRecoveryBackgroundStartup,
+    _DurableRetentionBackgroundStartup,
     _DurableSchedulerBackgroundShutdown,
     _DurableSchedulerBackgroundStartup,
 )
@@ -106,6 +111,10 @@ class TestServerlessRefusal:
             pytest.param(
                 lambda: durable_scheduler_background_lifecycle_step(scheduler=DurableScheduler()),
                 id="scheduler",
+            ),
+            pytest.param(
+                lambda: durable_run_retention_lifecycle_step(older_than=timedelta(days=7)),
+                id="retention",
             ),
         ],
     )
@@ -387,6 +396,161 @@ class TestSchedulerTaskLifecycle:
             await shutdown(ctx)
 
         assert log.exception.called
+
+
+# ....................... #
+
+
+class TestRetention:
+    @pytest.mark.parametrize(
+        "over,match",
+        [
+            ({"interval": timedelta(0)}, "Interval"),
+            ({"jitter": 1.0}, "Jitter"),
+            ({"max_batches_per_tick": 0}, "Max batches"),
+            ({"limit": 0}, "limit"),
+            ({"older_than": timedelta(0)}, "older_than"),
+            ({"statuses": [DurableRunStatus.RUNNING]}, "finished"),
+            ({"statuses": [DurableRunStatus.FORWARD_INCOMPLETE]}, "finished"),
+        ],
+    )
+    def test_rejects_bad_config(self, over: dict[str, Any], match: str) -> None:
+        kwargs: dict[str, Any] = {"older_than": timedelta(days=7), **over}
+
+        with pytest.raises(CoreException, match=match):
+            durable_run_retention_lifecycle_step(**kwargs)
+
+    async def test_drain_loops_until_a_short_batch_and_stops_at_the_cap(self) -> None:
+        admin = MagicMock()
+        admin.purge_finished = AsyncMock(side_effect=[5, 5, 3, 5, 5, 5])
+        startup = _DurableRetentionBackgroundStartup(
+            older_than=timedelta(days=1),
+            statuses=(DurableRunStatus.COMPLETED,),
+            interval=timedelta(hours=1),
+            jitter=0.0,
+            limit=5,
+            max_batches_per_tick=2,
+        )
+
+        with patch.object(lifecycle_mod, "resolve_durable_run_admin", return_value=admin):
+            await startup._drain(MagicMock())  # capped at two full batches
+            await startup._drain(MagicMock())  # 3 < 5: short, stops after one
+
+        assert admin.purge_finished.await_count == 3
+        admin.purge_finished.assert_awaited_with(
+            timedelta(days=1), statuses=(DurableRunStatus.COMPLETED,), limit=5
+        )
+
+    async def test_the_step_purges_finished_runs_and_keeps_live_ones(self) -> None:
+        ctx = context_from_modules(MockDepsModule())
+        store = resolve_durable_run_store(ctx)
+        done = await store.enqueue("done", input_json=None)
+        await store.begin(done.run_id, lease_for=timedelta(minutes=5))
+        await store.complete(done.run_id, output_json=None)
+        live = await store.enqueue("live", input_json=None)
+
+        step = durable_run_retention_lifecycle_step(
+            older_than=timedelta(microseconds=1), interval=timedelta(hours=1)
+        )
+
+        await step.startup(ctx)
+        for _ in range(50):
+            if await store.load(done.run_id) is None:
+                break
+            await asyncio.sleep(0.01)
+        await step.shutdown(ctx)
+
+        assert await store.load(done.run_id) is None
+        assert await store.load(live.run_id) is not None
+
+
+    @pytest.mark.parametrize("shard", [None, [uuid4()]], ids=["unbound", "sharded"])
+    async def test_startup_fails_without_the_admin_port(self, shard: list[Any] | None) -> None:
+        step = durable_run_retention_lifecycle_step(
+            older_than=timedelta(days=1), tenants=None if shard is None else lambda: shard
+        )
+
+        with pytest.raises(CoreException) as raised:
+            await step.startup(context_from_modules())
+
+        assert raised.value.kind is ExceptionKind.CONFIGURATION
+
+    @staticmethod
+    async def _ended(work: Any, tenants: Any, *, settle: float) -> bool:
+        """Run the loop against an admin whose purge awaits *work(ctx)*; return if it ended."""
+
+        class _Admin:
+            def __init__(self, ctx: Any) -> None:
+                self.ctx = ctx
+
+            async def purge_finished(self, *_args: Any, **_kwargs: Any) -> int:
+                return await work(self.ctx)
+
+        startup = _DurableRetentionBackgroundStartup(
+            older_than=timedelta(days=1),
+            statuses=(DurableRunStatus.COMPLETED,),
+            interval=timedelta(milliseconds=10),
+            jitter=0.0,
+            limit=5,
+            max_batches_per_tick=1,
+            tenants=tenants,
+        )
+        ctx = context_from_modules(MockDepsModule())
+
+        with (
+            patch.object(lifecycle_mod, "logger"),
+            patch.object(lifecycle_mod, "resolve_durable_run_admin", side_effect=_Admin),
+        ):
+            assert startup.task is None
+            await startup(ctx)
+            await startup(ctx)  # a duplicate startup is ignored
+            assert startup.loop_name == "durable_retention"
+
+            try:
+                await asyncio.wait({startup.task}, timeout=settle)  # type: ignore[arg-type]
+                return startup.task.done()  # type: ignore[union-attr]
+
+            finally:
+                await startup.stop(deadline=asyncio.get_running_loop().time() + 1)
+
+    @pytest.mark.parametrize("shard", [None, [uuid4(), uuid4()]], ids=["unbound", "sharded"])
+    async def test_a_wiring_error_ends_the_loop(self, shard: list[Any] | None) -> None:
+        broken = AsyncMock(
+            side_effect=exc.configuration("no keyring", code=PAYLOAD_CIPHER_MISSING_CODE)
+        )
+
+        assert await self._ended(broken, None if shard is None else lambda: shard, settle=0.5)
+        assert broken.await_count == 1
+
+    async def test_one_tenants_configuration_error_leaves_the_shard_running(self) -> None:
+        a, b = uuid4(), uuid4()
+        seen: list[Any] = []
+
+        async def work(ctx: Any) -> int:
+            tenant = ctx.inv_ctx.get_tenant().tenant_id
+            seen.append(tenant)
+
+            if tenant == a:
+                raise exc.configuration("AWS KMS key is disabled.")
+
+            return 0
+
+        assert not await self._ended(work, lambda: [a, b], settle=0.3)
+        assert seen.count(a) >= 2 and seen.count(b) >= 2
+
+    async def test_an_unbound_sweep_retries_a_configuration_error_that_is_not_wiring(
+        self,
+    ) -> None:
+        work = AsyncMock(side_effect=exc.configuration("AWS KMS key is disabled."))
+
+        assert not await self._ended(work, None, settle=0.3)
+        assert work.await_count >= 2
+
+    async def test_a_cancelled_tenant_sweep_ends_the_loop(self) -> None:
+        work = AsyncMock(side_effect=asyncio.CancelledError())
+
+        assert await self._ended(work, lambda: [uuid4(), uuid4()], settle=0.5)
+        assert work.await_count == 1  # not swallowed as that tenant's failure
 
 
 # ....................... #

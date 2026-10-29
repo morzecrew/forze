@@ -424,6 +424,33 @@ class TestMongoDurableWiring:
         assert deps.exists(DurableFunctionStepDepKey)
         assert deps.exists(DurableRunStoreDepKey)
         assert deps.exists(DurableScheduleStoreDepKey)
+        # The run store learns the journal, so a purge deletes a run's steps with it.
+        assert deps.plain_deps[DurableRunStoreDepKey].step_config is module.durable_step
+        assert deps.plain_deps[DurableRunStoreDepKey].journal is True
+
+    def test_a_run_store_without_a_journal_wired_purges_as_journal_free(self) -> None:
+        deps = MongoDepsModule(
+            client=MagicMock(spec=MongoClient),
+            durable_run=MongoDurableRunConfig(collection=("db", "runs")),
+        )()
+
+        assert deps.plain_deps[DurableRunStoreDepKey].journal is False
+
+    async def test_a_hand_built_run_store_refuses_to_purge_without_its_journal(self) -> None:
+        from datetime import timedelta
+
+        from forze.base.exceptions import CoreException
+        from forze_mongo.adapters.durable import MongoDurableRunStore
+
+        store = MongoDurableRunStore(
+            client=MagicMock(spec=MongoClient),
+            config=MongoDurableRunConfig(collection=("db", "runs")),
+        )
+
+        with pytest.raises(CoreException) as raised:
+            await store.purge_finished(timedelta(days=1))
+
+        assert raised.value.kind.value == "configuration"
 
     def test_nothing_is_registered_by_default(self) -> None:
         deps = MongoDepsModule(client=MagicMock(spec=MongoClient))()

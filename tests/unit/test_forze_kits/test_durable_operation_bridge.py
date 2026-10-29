@@ -10,18 +10,27 @@ self-hosted app stops hand-writing the same body.
 
 from __future__ import annotations
 
-import pytest
-from pydantic import BaseModel
+from typing import Any
+from uuid import UUID
 
+import pytest
+from pydantic import BaseModel, Field, RootModel
+
+from forze.application.contracts.authn import AuthnIdentity
 from forze.application.contracts.durable.function import (
     DurableFunctionCronTrigger,
     DurableFunctionInvokeSpec,
     DurableFunctionSpec,
 )
+from forze.application.contracts.tenancy import TenantIdentity
 from forze.application.execution.operations import OperationRegistry
+from forze.application.hooks.authn import AuthnRequired
 from forze.base.exceptions import CoreException
+from forze.base.primitives import str_key_selector
 from forze_kits.integrations.durable import (
     DurableFunctionRegistry,
+    DurableFunctionRunner,
+    DurableServiceIdentity,
     operation_durable_handler,
     register_operation_functions,
 )
@@ -165,3 +174,123 @@ async def test_register_operation_functions_registers_each_body() -> None:
     ctx = context_from_modules(MockDepsModule())
     output = await registry.get("sync")(ctx, {"order_id": "o-2"})
     assert output == {"handled": "o-2"}
+
+
+
+# ....................... #
+
+_SERVICE = AuthnIdentity(principal_id=UUID("00000000-0000-0000-0000-00000000005e"))
+_CALLER = AuthnIdentity(principal_id=UUID("00000000-0000-0000-0000-0000000000ca"))
+_TENANT = TenantIdentity(tenant_id=UUID("00000000-0000-0000-0000-00000000000a"))
+
+
+def _guarded(seen: list[Any]) -> Any:
+    """An ``AuthnRequired`` operation recording the principal and tenant it ran as."""
+
+    def factory(ctx: Any) -> Any:
+        async def _run(args: _Args) -> _Out:
+            seen.append((ctx.inv_ctx.get_authn(), ctx.inv_ctx.get_tenant()))
+            return _Out(handled=args.order_id)
+
+        return _run
+
+    return (
+        OperationRegistry(handlers={"sync.run": factory})
+        .patch(str_key_selector.exact("sync.run"))
+        .bind_outer()
+        .before(AuthnRequired().to_step())
+        .finish(deep=True)
+        .freeze()
+    )
+
+
+def test_a_service_identity_must_be_acknowledged() -> None:
+    with pytest.raises(CoreException) as caught:
+        DurableServiceIdentity(authn=_SERVICE)
+
+    assert caught.value.code == "durable_unverified_identity_unacknowledged"
+
+
+@pytest.mark.asyncio
+async def test_without_an_identity_a_guarded_operation_refuses_even_under_a_caller() -> None:
+    seen: list[Any] = []
+    handler = operation_durable_handler(_spec(), _guarded(seen))
+    ctx = context_from_modules(MockDepsModule())
+
+    # The enqueuing request's principal must not leak into the run.
+    with ctx.inv_ctx.bind_identity(authn=_CALLER):
+        with pytest.raises(CoreException) as caught:
+            await handler(ctx, {"order_id": "o-1"})
+
+    assert caught.value.code == "auth_required"
+    assert seen == []
+
+
+@pytest.mark.asyncio
+async def test_a_service_identity_runs_the_guarded_operation_as_itself() -> None:
+    seen: list[Any] = []
+    identity = DurableServiceIdentity(authn=_SERVICE, acknowledge_unverified_identity=True)
+    registry = DurableFunctionRegistry()
+    register_operation_functions(
+        registry, [_spec()], operations=_guarded(seen), identity=identity
+    )
+    ctx = context_from_modules(MockDepsModule())
+
+    with ctx.inv_ctx.bind_identity(authn=_CALLER, tenant=_TENANT):
+        output = await registry.get("sync")(ctx, {"order_id": "o-3"})
+
+    assert output == {"handled": "o-3"}
+    # The service principal, never the caller; the tenant stays the run's.
+    assert seen == [(_SERVICE, _TENANT)]
+
+
+@pytest.mark.asyncio
+async def test_the_runner_binds_no_principal_for_an_untagged_run() -> None:
+    """``run_now`` inside a request runs the body as no one, as recovery would."""
+
+    seen: list[Any] = []
+
+    async def body(ctx: Any, _input: Any) -> None:
+        seen.append((ctx.inv_ctx.get_authn(), ctx.inv_ctx.get_tenant()))
+
+    registry = DurableFunctionRegistry()
+    registry.register("plain", body)
+    ctx = context_from_modules(MockDepsModule())
+
+    # No tenant bound, so the run is untagged: a tagged run's tenant binding already
+    # cleared the principal, and this is the path that used to inherit it.
+    with ctx.inv_ctx.bind_identity(authn=_CALLER):
+        await DurableFunctionRunner(registry=registry).run_now(ctx, "plain")
+
+    assert seen == [(None, None)]
+
+
+class _Aliased(BaseModel):
+    order_id: str = Field(alias="orderId")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "args",
+    [_Aliased(orderId="o-1"), RootModel[int](root=0)],
+    ids=["alias-only", "falsy-root"],
+)
+async def test_a_cron_input_reaches_the_operation_as_declared(args: BaseModel) -> None:
+    received: list[BaseModel] = []
+
+    async def _record(value: Any) -> None:
+        received.append(value)
+
+    spec = DurableFunctionSpec(
+        name="sync",
+        run=DurableFunctionInvokeSpec(args_type=type(args)),
+        operation="sync.run",
+        triggers=(DurableFunctionCronTrigger(expression="0 * * * *", input=args),),
+    )
+    operations = OperationRegistry().set_handler("sync.run", lambda _ctx: _record).freeze()
+    handler = operation_durable_handler(spec, operations)
+    ctx = context_from_modules(MockDepsModule())
+
+    await handler(ctx, spec.triggers[0].encode_input(type(args)))  # type: ignore[union-attr]
+
+    assert received == [args]

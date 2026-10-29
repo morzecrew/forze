@@ -23,6 +23,7 @@ from forze_postgres.adapters.durable import (
     PostgresDurableScheduleStore,
 )
 from tests.support.durable_schema import (
+    DURABLE_RUN_COALESCE_INDEX,
     DURABLE_RUN_COLUMNS,
     DURABLE_SCHEDULE_COLUMNS,
     DURABLE_STEP_COLUMNS,
@@ -37,6 +38,9 @@ _PAGE: Final[Path] = (
 _TABLE: Final[re.Pattern[str]] = re.compile(r"CREATE TABLE (\S+) \((.*?)\n\s*\);?", re.DOTALL)
 _INDEX: Final[re.Pattern[str]] = re.compile(r"CREATE INDEX ON (\S+) (\(.*?\)(?: WHERE \w+)?);")
 _MONGO_INDEX: Final[re.Pattern[str]] = re.compile(r"db\.(\S+?)\.createIndex\(([^()]*)\)")
+_UNIQUE_INDEX: Final[re.Pattern[str]] = re.compile(
+    r"CREATE UNIQUE INDEX (?:CONCURRENTLY )?ON (\S+) (.*?);", re.DOTALL
+)
 
 
 def _words(text: str) -> str:
@@ -52,6 +56,15 @@ def _indexes(text: str) -> dict[str, list[str]]:
 
     for name, columns in _INDEX.findall(text):
         found.setdefault(name, []).append(_words(columns))
+
+    return found
+
+
+def _unique_indexes(text: str) -> dict[str, list[str]]:
+    found: dict[str, list[str]] = {}
+
+    for name, definition in _UNIQUE_INDEX.findall(text):
+        found.setdefault(name, []).append(_words(definition))
 
     return found
 
@@ -126,6 +139,7 @@ def test_the_page_recommends_the_postgres_indexes_the_adapter_documents(
     ("collection", "adapter"),
     [
         ("durable_run", MongoDurableRunStore),
+        ("durable_step", MongoDurableFunctionStepAdapter),
         ("durable_schedule", MongoDurableScheduleStore),
     ],
 )
@@ -142,7 +156,7 @@ def test_the_page_documents_every_postgres_table_it_names() -> None:
         "public.durable_schedule",
     }
     assert set(_indexes(_PAGE_TEXT)) == {"public.durable_run", "public.durable_schedule"}
-    assert set(_mongo_indexes(_PAGE_TEXT)) == {"durable_run", "durable_schedule"}
+    assert set(_mongo_indexes(_PAGE_TEXT)) == {"durable_run", "durable_step", "durable_schedule"}
 
 
 @pytest.mark.parametrize("source", sorted(_SOURCES))
@@ -153,4 +167,14 @@ def test_every_statement_in_every_source_is_one_the_comparisons_read(source: str
 
     assert text.count("CREATE TABLE") == len(_TABLE.findall(text))
     assert text.count("CREATE INDEX") == len(_INDEX.findall(text))
+    assert text.count("CREATE UNIQUE INDEX") == len(_UNIQUE_INDEX.findall(text))
     assert text.count("createIndex") == len(_MONGO_INDEX.findall(text))
+
+
+def test_the_coalesce_index_reads_the_same_on_the_page_the_adapter_and_the_tests() -> None:
+    page = _unique_indexes(_PAGE_TEXT)["public.durable_run"]
+    adapter = _unique_indexes(_doc(PostgresDurableRunStore))["<relation>"]
+    tests = _unique_indexes(DURABLE_RUN_COALESCE_INDEX + ";")["{table}"]
+
+    assert adapter == tests
+    assert page == adapter * 2  # the table's schema, then its migration

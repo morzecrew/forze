@@ -250,20 +250,19 @@ class InvocationContext:
         authn: AuthnIdentity | None,
         tenant: TenantIdentity | None,
     ) -> dict[str, Any]:
-        """Log fields contributed by the identity pair (shared by ``bind*`` variants)."""
+        """Log fields contributed by the identity pair (shared by ``bind*`` variants).
 
-        bound: dict[str, Any] = {}
+        Every key is set: an absent one to ``Ellipsis``, which structlog treats as unbound, so
+        a nested scope never logs the principal, actor or tenant of the scope around it.
+        """
 
-        if authn is not None:
-            bound[PRINCIPAL_ID_KEY] = authn.principal_id
+        actor = None if authn is None else authn.actor
 
-            if authn.actor is not None:
-                bound[ACTOR_ID_KEY] = authn.actor.principal_id
-
-        if tenant is not None:
-            bound[TENANT_ID_KEY] = str(tenant.tenant_id)
-
-        return bound
+        return {
+            PRINCIPAL_ID_KEY: ... if authn is None else authn.principal_id,
+            ACTOR_ID_KEY: ... if actor is None else actor.principal_id,
+            TENANT_ID_KEY: ... if tenant is None else str(tenant.tenant_id),
+        }
 
     # ....................... #
 
@@ -296,23 +295,13 @@ class InvocationContext:
         authn_token = self.__authn.set(authn)
         tenant_token = self.__tenant.set(tenant)
 
-        bound = self._identity_log_fields(authn=authn, tenant=tenant)
+        log_tokens = bind_contextvars(**self._identity_log_fields(authn=authn, tenant=tenant))
 
         try:
-            if bound:
-                log_tokens = bind_contextvars(**bound)
-
-                try:
-                    yield
-
-                finally:
-                    reset_contextvars(**log_tokens)
-
-            else:
-                # Nothing to bind: skip the structlog save/restore entirely.
-                yield
+            yield
 
         finally:
+            reset_contextvars(**log_tokens)
             self.__authn.reset(authn_token)
             self.__tenant.reset(tenant_token)
 

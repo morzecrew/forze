@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Collection, Sequence
 from datetime import datetime, timedelta
 from typing import Any, final
 from uuid import UUID
@@ -10,6 +10,7 @@ from uuid import UUID
 import attrs
 
 from forze.application.contracts.durable.function import (
+    PURGEABLE_STATUSES,
     DurableLeaseRenewal,
     DurableRunAdminPort,
     DurableRunControlAware,
@@ -19,6 +20,8 @@ from forze.application.contracts.durable.function import (
     DurableRunStatus,
     DurableRunStorePort,
     build_run_page,
+    check_enqueue_keys,
+    check_purge,
     decode_run_cursor,
     requeue_failed_unnamed_error,
     requeue_unscoped_error,
@@ -86,7 +89,10 @@ class MockDurableRunStore(DurableRunStorePort, DurableRunAdminPort, DurableRunCo
         idempotency_key: str | None = None,
         tenant_id: UUID | None = None,
         available_at: datetime | None = None,
+        coalesce_key: str | None = None,
     ) -> DurableRunRecord:
+        check_enqueue_keys(idempotency_key, coalesce_key)
+
         # One effective tenant for the stored tag and for convergence — the same rule the
         # relational stores apply to their relation, tag and scoped key together.
         tenant_id = effective_tenant(bound=self._bound_tenant(), requested=tenant_id)
@@ -103,12 +109,25 @@ class MockDurableRunStore(DurableRunStorePort, DurableRunAdminPort, DurableRunCo
                     ):
                         return _to_record(data)
 
+            if coalesce_key is not None:
+                # Joins only a run nothing has claimed yet, like the Postgres partial index.
+                for data in self.state.durable_runs.values():
+                    if (
+                        data.get("coalesce_key") == coalesce_key
+                        and data["tenant_id"] == tenant_id
+                        and data["status"] == DurableRunStatus.PENDING.value
+                        and data["attempts"] == 0
+                    ):
+                        return _to_record(data)
+
             run_id = str(uuid7())
+            now = utcnow()
             data = {
                 "run_id": run_id,
                 "name": name,
                 "status": DurableRunStatus.PENDING.value,
                 "idempotency_key": idempotency_key,
+                "coalesce_key": coalesce_key,
                 "input": input_json,
                 "output": None,
                 "error": None,
@@ -116,7 +135,8 @@ class MockDurableRunStore(DurableRunStorePort, DurableRunAdminPort, DurableRunCo
                 "attempts": 0,
                 "leased_until": None,
                 "available_at": available_at,
-                "created_at": utcnow(),
+                "created_at": now,
+                "updated_at": now,
                 "cancel_requested_at": None,
                 "cancel_refused_at": None,
             }
@@ -298,6 +318,8 @@ class MockDurableRunStore(DurableRunStorePort, DurableRunAdminPort, DurableRunCo
             if data["cancel_refused_at"] is None:
                 data["cancel_refused_at"] = utcnow()
 
+            data["updated_at"] = utcnow()
+
     # ....................... #
 
     async def request_cancel(self, run_id: str) -> bool:
@@ -331,6 +353,8 @@ class MockDurableRunStore(DurableRunStorePort, DurableRunAdminPort, DurableRunCo
             if status == DurableRunStatus.PENDING.value and data["attempts"] == 0:
                 data["status"] = DurableRunStatus.CANCELLED.value
                 data["leased_until"] = None
+
+            data["updated_at"] = utcnow()
 
             return True
 
@@ -396,6 +420,49 @@ class MockDurableRunStore(DurableRunStorePort, DurableRunAdminPort, DurableRunCo
 
     # ....................... #
 
+    async def purge_finished(
+        self,
+        older_than: timedelta,
+        *,
+        statuses: Collection[DurableRunStatus] = PURGEABLE_STATUSES,
+        name: str | None = None,
+        limit: int = 1000,
+    ) -> int:
+        check_purge(older_than, statuses, limit)
+
+        bound_tenant = self._bound_tenant()
+        cutoff = utcnow() - older_than
+        wanted = {str(status) for status in statuses}
+
+        with self.state.lock:
+            # Scoped like ``list_runs``, oldest landing first like the Postgres ``ORDER BY``:
+            # the window starts when the run finished, not when it was submitted.
+            doomed = sorted(
+                (
+                    data
+                    for data in self.state.durable_runs.values()
+                    if data["status"] in wanted
+                    and _updated_at(data) < cutoff
+                    and (bound_tenant is None or data["tenant_id"] == bound_tenant)
+                    and (name is None or data["name"] == name)
+                ),
+                key=lambda data: (_updated_at(data), data["run_id"]),
+            )[:limit]
+
+            for data in doomed:
+                del self.state.durable_runs[data["run_id"]]
+
+            # The step memo is keyed ``{run_id}:{step_id}``; a uuid7 run id holds no colon.
+            prefixes = tuple(f"{data['run_id']}:" for data in doomed)
+            memo = self.state.durable_step_memo
+
+            for key in [key for key in memo if key.startswith(prefixes)]:
+                del memo[key]
+
+        return len(doomed)
+
+    # ....................... #
+
     def control_capabilities(self) -> DurableRunControlCapabilities:
         return DurableRunControlCapabilities(supports_cancel=True)
 
@@ -456,6 +523,7 @@ class MockDurableRunStore(DurableRunStorePort, DurableRunAdminPort, DurableRunCo
         data["status"] = DurableRunStatus.RUNNING.value
         data["attempts"] += 1
         data["leased_until"] = utcnow() + lease_for
+        data["updated_at"] = utcnow()
 
     # ....................... #
 
@@ -488,6 +556,7 @@ class MockDurableRunStore(DurableRunStorePort, DurableRunAdminPort, DurableRunCo
             data["output"] = output
             data["error"] = error
             data["leased_until"] = None
+            data["updated_at"] = utcnow()
 
             # A retry goes back to PENDING due at *available_at*; a terminal write leaves
             # ``available_at`` as it is.
@@ -513,6 +582,12 @@ def _requeue(runs: list[dict[str, Any]]) -> None:
     for data in runs:
         data["status"] = DurableRunStatus.PENDING.value
         data["available_at"] = None
+        data["updated_at"] = utcnow()
+
+
+def _updated_at(data: dict[str, Any]) -> Any:
+    # A run put into the state by hand (a test, a restored snapshot) may carry no stamp.
+    return data.get("updated_at") or data["created_at"]
 
 
 def _is_abandoned(data: dict[str, Any], now: Any) -> bool:

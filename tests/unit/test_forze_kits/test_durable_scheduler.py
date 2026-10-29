@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from zoneinfo import ZoneInfo
 
 import pytest
 
@@ -50,6 +51,12 @@ class TestCronNextFire:
         )
         assert got == datetime(2026, 1, 2, 0, 0, tzinfo=UTC)
 
+    def test_without_a_timezone_a_non_utc_after_is_read_in_utc(self) -> None:
+        # 08:00 in New York is 13:00 UTC, so the next 09:00 UTC is the following day.
+        after = datetime(2026, 1, 1, 8, tzinfo=ZoneInfo("America/New_York"))
+
+        assert next_cron_fire("0 9 * * *", after=after) == datetime(2026, 1, 2, 9, tzinfo=UTC)
+
     def test_validate_rejects_bad_expression_and_tz(self) -> None:
         with pytest.raises(CoreException, match="cron"):
             validate_cron("not a cron")
@@ -61,6 +68,88 @@ class TestCronNextFire:
         # A naive datetime would be read in the host timezone (environment-dependent).
         with pytest.raises(CoreException, match="timezone-aware"):
             next_cron_fire("* * * * *", after=datetime(2026, 1, 1, 0, 0))
+
+
+class TestCronAcrossDst:
+    """America/New_York: clocks spring forward 2026-03-08 02:00 EST -> 03:00 EDT (07:00 UTC)
+    and fall back 2026-11-01 02:00 EDT -> 01:00 EST (06:00 UTC)."""
+
+    @staticmethod
+    def _fires(expression: str, after: datetime, until: datetime) -> list[datetime]:
+        fires: list[datetime] = []
+
+        while (after := next_cron_fire(expression, after=after, tz="America/New_York")) < until:
+            fires.append(after)
+
+        return fires
+
+    def test_a_time_the_clocks_skip_fires_once_when_the_gap_ends(self) -> None:
+        fires = self._fires(
+            "30 2 * * *",
+            datetime(2026, 3, 7, 12, tzinfo=UTC),
+            datetime(2026, 3, 9, 12, tzinfo=UTC),
+        )
+
+        # 02:30 does not exist on the 8th: the run is not skipped, it fires at 03:00 EDT.
+        assert fires == [
+            datetime(2026, 3, 8, 7, tzinfo=UTC),
+            datetime(2026, 3, 9, 6, 30, tzinfo=UTC),
+        ]
+
+    def test_a_daily_time_the_clocks_repeat_fires_once(self) -> None:
+        fires = self._fires(
+            "30 1 * * *",
+            datetime(2026, 10, 31, 12, tzinfo=UTC),
+            datetime(2026, 11, 2, 12, tzinfo=UTC),
+        )
+
+        # 01:30 happens twice on the 1st; a schedule naming its hour fires at the first only.
+        assert fires == [
+            datetime(2026, 11, 1, 5, 30, tzinfo=UTC),
+            datetime(2026, 11, 2, 6, 30, tzinfo=UTC),
+        ]
+
+    def test_a_daily_time_outside_the_change_keeps_its_wall_clock(self) -> None:
+        fires = self._fires(
+            "30 2 * * *",
+            datetime(2026, 10, 31, 12, tzinfo=UTC),
+            datetime(2026, 11, 2, 12, tzinfo=UTC),
+        )
+
+        assert fires == [
+            datetime(2026, 11, 1, 7, 30, tzinfo=UTC),
+            datetime(2026, 11, 2, 7, 30, tzinfo=UTC),
+        ]
+
+    def test_an_hourly_schedule_fires_every_real_hour_across_both_changes(self) -> None:
+        spring = self._fires(
+            "30 * * * *",
+            datetime(2026, 3, 8, 5, tzinfo=UTC),
+            datetime(2026, 3, 8, 9, tzinfo=UTC),
+        )
+        fall = self._fires(
+            "30 * * * *",
+            datetime(2026, 11, 1, 4, tzinfo=UTC),
+            datetime(2026, 11, 1, 9, tzinfo=UTC),
+        )
+
+        # 02:30 local does not exist in spring; 01:30 local happens twice in the fall, and an
+        # every-hour schedule fires at both.
+        assert spring == [datetime(2026, 3, 8, h, 30, tzinfo=UTC) for h in (5, 6, 7, 8)]
+        assert fall == [datetime(2026, 11, 1, h, 30, tzinfo=UTC) for h in (4, 5, 6, 7, 8)]
+
+    @pytest.mark.parametrize(
+        "hours",
+        ["*/1", "0-23", "0-23/1", "0-11,12-23", ",".join(str(h) for h in range(24))],
+    )
+    def test_every_spelling_of_every_hour_fires_both_repeated_hours(self, hours: str) -> None:
+        fall = self._fires(
+            f"30 {hours} * * *",
+            datetime(2026, 11, 1, 4, tzinfo=UTC),
+            datetime(2026, 11, 1, 9, tzinfo=UTC),
+        )
+
+        assert fall == [datetime(2026, 11, 1, h, 30, tzinfo=UTC) for h in (4, 5, 6, 7, 8)]
 
 
 class TestDurableScheduler:

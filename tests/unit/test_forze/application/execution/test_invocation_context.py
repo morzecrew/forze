@@ -147,7 +147,7 @@ def test_bind_with_identity_sans_actor_and_tenant_binds_exact_fields() -> None:
 
 
 def test_bind_identity_empty_binds_no_log_fields_and_preserves_outer() -> None:
-    """An identity bind contributing zero keys must not touch structlog state."""
+    """An identity bind with no identity logs none and leaves every other key alone."""
 
     ctx = InvocationContext()
 
@@ -173,6 +173,26 @@ def test_bind_identity_empty_resets_contextvars_on_exception() -> None:
         assert ctx.get_authn() is outer_authn
 
     assert ctx.get_authn() is None
+
+
+def test_a_nested_identity_never_logs_the_outer_one() -> None:
+    ctx = InvocationContext()
+    outer = _authn()
+    tenant = TenantIdentity(tenant_id=uuid4())
+    service = AuthnIdentity(principal_id=uuid4())  # no actor
+
+    with ctx.bind_identity(authn=outer, tenant=tenant):
+        before = _bound_log_vars()
+
+        with ctx.bind_identity():
+            assert _bound_log_vars() == {}
+
+        with ctx.bind_identity(authn=service):
+            assert _bound_log_vars() == {PRINCIPAL_ID_KEY: service.principal_id}
+
+        assert _bound_log_vars() == before
+
+    assert _bound_log_vars() == {}
 
 
 def test_bind_idempotency_none_binds_no_log_fields() -> None:

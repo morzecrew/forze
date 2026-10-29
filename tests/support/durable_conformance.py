@@ -23,6 +23,7 @@ The forced-schedule race batteries live next door in ``durable_cancel_races``.
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Awaitable, Callable
 from datetime import timedelta
 from typing import Any, cast
@@ -1316,6 +1317,436 @@ async def run_tenancy_scenario(
     out["schedule_hidden_from_other"] = await schedule_a.load("nightly-b") is None
 
     return out
+
+
+# ....................... #
+
+
+async def run_purge_scenario(
+    store_for: Callable[[UUID | None], DurableRunStorePort],
+    step_of: Callable[[], DurableFunctionStepPort],
+) -> dict[str, Any]:
+    """Purge finished runs past a window and collect plane-independent observables.
+
+    Only ``COMPLETED``, ``CANCELLED``, ``FAILED`` and ``TIMED_OUT`` runs go, oldest first and
+    at most *limit* per call, each with its step journal; a run that still owes work stays,
+    with its journal. A purged run frees its idempotency key. *store_for* must hand out
+    stores wired to the journal *step_of* writes.
+    """
+
+    lease = timedelta(minutes=5)
+    past = timedelta(microseconds=1)
+    tenant = UUID("00000000-0000-0000-0000-00000000000a")
+    store = store_for(None)
+    admin = cast(DurableRunAdminPort, store)
+    out: dict[str, Any] = {}
+
+    async def held(name: str, **enqueue: Any) -> tuple[str, int]:
+        run = await store.enqueue(name, input_json=None, **enqueue)
+        claimed = await store.begin(run.run_id, lease_for=lease)
+        assert claimed is not None
+        return run.run_id, claimed.attempts
+
+    # The batches go oldest landing first, and Mongo keeps milliseconds: a tie would let
+    # it pick either run, so each landing below waits out the last one's millisecond.
+    landing_gap = 0.002
+
+    done, fence = await held("done", idempotency_key="k")
+    await _journaled(step_of, done)
+    await store.complete(done, output_json={"ok": True}, fence=fence)
+    await asyncio.sleep(landing_gap)
+
+    failed, fence = await held("failed")
+    await store.fail(failed, error="boom", fence=fence)
+    await asyncio.sleep(landing_gap)
+
+    timed, fence = await held("timed")
+    await store.mark_timed_out(timed, error="deadline", fence=fence)
+    await asyncio.sleep(landing_gap)
+
+    cancelled = (await store.enqueue("cancelled", input_json=None)).run_id
+    await admin.request_cancel(cancelled)
+
+    forward, fence = await held("forward")
+    await _journaled(step_of, forward)
+    await store.mark_forward_incomplete(forward, error="pivot", fence=fence)
+
+    pending = (await store.enqueue("pending", input_json=None)).run_id
+    running, _ = await held("running")
+
+    owned, fence = await held("owned", tenant_id=tenant)
+    await store.complete(owned, output_json=None, fence=fence)
+
+    out["within_window"] = await admin.purge_finished(timedelta(hours=1))
+    out["other_name"] = await admin.purge_finished(past, name="nope")
+
+    refused: list[str] = []
+
+    for statuses, older_than, limit in (
+        ([DurableRunStatus.RUNNING], past, 10),
+        ([DurableRunStatus.FORWARD_INCOMPLETE], past, 10),
+        ([DurableRunStatus.QUARANTINED], past, 10),
+        ([DurableRunStatus.COMPLETED], timedelta(0), 10),
+        ([DurableRunStatus.COMPLETED], past, 0),
+    ):
+        try:
+            await admin.purge_finished(older_than, statuses=statuses, limit=limit)
+        except CoreException as error:
+            refused.append(error.kind.value)
+
+    out["refused"] = refused
+
+    # Bound, only the tenant's own finished run goes.
+    out["bound_purge"] = await cast(DurableRunAdminPort, store_for(tenant)).purge_finished(past)
+    out["owned_gone"] = await store.load(owned) is None
+
+    out["first_batch"] = await admin.purge_finished(past, limit=2)
+    out["after_first_batch"] = [
+        name
+        for name, run_id in (("done", done), ("failed", failed), ("timed", timed))
+        if await store.load(run_id) is not None
+    ]
+    out["rest"] = await admin.purge_finished(past)
+
+    survivors = [done, failed, timed, cancelled, forward, pending, running]
+    loaded = [await store.load(run_id) for run_id in survivors]
+    out["statuses_left"] = [None if r is None else r.status.value for r in loaded]
+
+    out["purged_journal_reruns"] = await _journaled(step_of, done)
+    out["kept_journal_reruns"] = await _journaled(step_of, forward)
+
+    again = await store.enqueue("done", input_json=None, idempotency_key="k")
+    out["key_freed"] = again.run_id != done
+
+    return out
+
+
+PURGE_OUTCOME: dict[str, Any] = {
+    "within_window": 0,
+    "other_name": 0,
+    "refused": ["validation"] * 5,
+    "bound_purge": 1,
+    "owned_gone": True,
+    "first_batch": 2,
+    "after_first_batch": ["timed"],
+    "rest": 2,
+    "statuses_left": [None, None, None, None, "forward_incomplete", "pending", "running"],
+    "purged_journal_reruns": 1,
+    "kept_journal_reruns": 0,
+    "key_freed": True,
+}
+"""What :func:`run_purge_scenario` answers on every engine, the mock included."""
+
+
+# ....................... #
+
+
+async def run_coalesce_scenario(
+    store_for: Callable[[UUID | None], DurableRunStorePort],
+) -> dict[str, Any]:
+    """Coalesce submits onto the run waiting unclaimed under one key.
+
+    A submit joins a ``PENDING`` run nothing has claimed, keeping its input and due time; a
+    claimed, retrying, cancelled or other tenant's run is never joined, so the submit after
+    a claim records a new run. Twenty concurrent submits of one key converge on one run.
+    """
+
+    lease = timedelta(minutes=5)
+    store = store_for(None)
+    # Whole seconds: Mongo keeps milliseconds, and the joined run is read back from it.
+    later = utcnow().replace(microsecond=0) + timedelta(hours=1)
+    out: dict[str, Any] = {}
+
+    first = await store.enqueue("fn", input_json={"n": 1}, coalesce_key="x", available_at=later)
+    joined = await store.enqueue("fn", input_json={"n": 2}, coalesce_key="x")
+    out["burst_joins"] = joined.run_id == first.run_id
+    out["joined_keeps_input_and_due"] = (
+        joined.input_json == {"n": 1} and joined.available_at == first.available_at
+    )
+
+    tenant = UUID("00000000-0000-0000-0000-00000000000b")
+    other = await store_for(tenant).enqueue("fn", input_json=None, coalesce_key="x")
+    out["other_tenant_distinct"] = other.run_id != first.run_id
+    # An untagged key spelled like the tenant's scoped one must not reach the tenant's run.
+    lookalike = await store.enqueue("fn", input_json=None, coalesce_key=f"{tenant}:x")
+    out["lookalike_key_distinct"] = lookalike.run_id != other.run_id
+
+    claimed = await store.begin(first.run_id, lease_for=lease)
+    assert claimed is not None
+    after_claim = await store.enqueue("fn", input_json=None, coalesce_key="x")
+    out["after_claim_is_new"] = after_claim.run_id != first.run_id
+    out["after_claim_joined"] = (
+        await store.enqueue("fn", input_json=None, coalesce_key="x")
+    ).run_id == after_claim.run_id
+
+    await cast(DurableRunAdminPort, store).request_cancel(after_claim.run_id)
+    after_cancel = await store.enqueue("fn", input_json=None, coalesce_key="x")
+    out["after_cancel_is_new"] = after_cancel.run_id != after_claim.run_id
+
+    retrying = await store.begin(after_cancel.run_id, lease_for=lease)
+    assert retrying is not None
+    await store.mark_retry(
+        after_cancel.run_id, error="blip", available_at=utcnow(), fence=retrying.attempts
+    )
+    out["retrying_not_joined"] = (
+        await store.enqueue("fn", input_json=None, coalesce_key="x")
+    ).run_id != after_cancel.run_id
+
+    try:
+        await store.enqueue("fn", input_json=None, idempotency_key="k", coalesce_key="y")
+    except CoreException as error:
+        out["both_keys"] = error.kind.value
+    else:  # pragma: no cover - a store that allows it is the failure being pinned
+        out["both_keys"] = "allowed"
+
+    burst = await asyncio.gather(
+        *(store.enqueue("fn", input_json=None, coalesce_key="race") for _ in range(20))
+    )
+    out["concurrent_runs"] = len({record.run_id for record in burst})
+
+    return out
+
+
+COALESCE_OUTCOME: dict[str, Any] = {
+    "burst_joins": True,
+    "joined_keeps_input_and_due": True,
+    "other_tenant_distinct": True,
+    "lookalike_key_distinct": True,
+    "after_claim_is_new": True,
+    "after_claim_joined": True,
+    "after_cancel_is_new": True,
+    "retrying_not_joined": True,
+    "both_keys": "validation",
+    "concurrent_runs": 1,
+}
+"""What :func:`run_coalesce_scenario` answers on every engine, the mock included."""
+
+
+# ....................... #
+
+
+async def _journaled(step_of: Callable[[], DurableFunctionStepPort], run_id: str) -> int:
+    """Run step ``s1`` of *run_id*; return 1 when its body ran, 0 when it replayed."""
+
+    calls: list[int] = []
+
+    async def work() -> int:
+        calls.append(1)
+        return 1
+
+    token = bind_durable_run(DurableRunContext(run_id=run_id, name="fn"))
+    try:
+        await step_of().run("s1", work)
+    finally:
+        reset_durable_run(token)
+
+    return len(calls)
+
+
+async def run_purge_window_scenario(store: DurableRunStorePort) -> dict[str, Any]:
+    """The purge window starts when a run lands, not when it was submitted.
+
+    A run submitted longer ago than the window and finished just now is kept, so its
+    idempotency key still converges a duplicate submit; once it has been landed for the
+    window, it goes. Real waits of a fraction of a second, on whichever clock the engine
+    stamps its landings with.
+    """
+
+    admin = cast(DurableRunAdminPort, store)
+    window = timedelta(milliseconds=300)
+
+    run = await store.enqueue("late", input_json=None, idempotency_key="late")
+    claimed = await store.begin(run.run_id, lease_for=timedelta(minutes=5))
+    assert claimed is not None
+    await asyncio.sleep(0.4)  # older than the window by its submission...
+    await store.complete(run.run_id, output_json=None, fence=claimed.attempts)
+
+    out: dict[str, Any] = {"landed_just_now": await admin.purge_finished(window)}
+    resubmit = await store.enqueue("late", input_json=None, idempotency_key="late")
+    out["key_still_converges"] = resubmit.run_id == run.run_id
+
+    await asyncio.sleep(0.4)  # ...and now by its landing too
+    out["landed_past_the_window"] = await admin.purge_finished(window)
+
+    return out
+
+
+PURGE_WINDOW_OUTCOME: dict[str, Any] = {
+    "landed_just_now": 0,
+    "key_still_converges": True,
+    "landed_past_the_window": 1,
+}
+"""What :func:`run_purge_window_scenario` answers on every engine, the mock included."""
+
+
+async def run_purge_race_scenario(
+    store: DurableRunStorePort,
+    step_of: Callable[[], DurableFunctionStepPort],
+    *,
+    rounds: int = 20,
+) -> dict[str, Any]:
+    """Purge a failed run while an operator requeues it and a worker claims it.
+
+    Whichever wins, the journal follows the run: a run deleted takes its steps, and a run
+    requeued keeps them, so its next claim replays rather than re-runs them.
+    """
+
+    admin = cast(DurableRunAdminPort, store)
+    lease = timedelta(minutes=5)
+    held: list[bool] = []
+
+    for _ in range(rounds):
+        run = await store.enqueue("purge-race", input_json=None)
+        claimed = await store.begin(run.run_id, lease_for=lease)
+        assert claimed is not None
+        await _journaled(step_of, run.run_id)
+        await store.fail(run.run_id, error="boom", fence=claimed.attempts)
+
+        async def requeue_and_claim(run_id: str = run.run_id) -> None:
+            if await admin.requeue_failed(run_ids=[run_id]):
+                await store.begin(run_id, lease_for=lease)
+
+        await asyncio.gather(
+            admin.purge_finished(timedelta(microseconds=1), name="purge-race"),
+            requeue_and_claim(),
+        )
+
+        gone = await store.load(run.run_id) is None
+        held.append(gone == bool(await _journaled(step_of, run.run_id)))
+
+    return {"rounds": len(held), "journal_follows_run": all(held)}
+
+
+async def run_coalesce_race_scenario(
+    store: DurableRunStorePort,
+    *,
+    rounds: int = 30,
+) -> dict[str, Any]:
+    """Race a coalescing submit against the claim of the run it would join, round after round.
+
+    Whichever lands first, the submit is covered: joined before the claim, the claimed run
+    reads its change; after it, the submit is a new waiting run; while a join holds the row,
+    the claim skips it and the run stays waiting. One unclaimed run per key, at most.
+    """
+
+    admin = cast(DurableRunAdminPort, store)
+    lease = timedelta(minutes=5)
+    waiting = await store.enqueue("coalesce-race", input_json=None, coalesce_key="r")
+    held: list[bool] = []
+
+    for _ in range(rounds):
+        claimed, submitted = await asyncio.gather(
+            store.begin(waiting.run_id, lease_for=lease),
+            store.enqueue("coalesce-race", input_json=None, coalesce_key="r"),
+        )
+        joined = submitted.run_id == waiting.run_id
+        page = await admin.list_runs(status=DurableRunStatus.PENDING, name="coalesce-race")
+        unclaimed = [record for record in page.records if record.attempts == 0]
+
+        # A claim skips the row only while the join holds it.
+        held.append(
+            (claimed is not None or joined)
+            and len(unclaimed) == (0 if claimed is not None and joined else 1)
+        )
+
+        if claimed is not None:
+            waiting = (
+                await store.enqueue("coalesce-race", input_json=None, coalesce_key="r")
+                if joined
+                else submitted
+            )
+
+    return {"rounds": len(held), "invariant_held": all(held)}
+
+
+async def run_schedule_input_race_scenario(store: DurableScheduleStorePort) -> dict[str, Any]:
+    """Change only a schedule's input while other writers touch it between read and write.
+
+    ``ensure_schedule`` reads the schedule, sees only the input differ, and writes. A fire and
+    a pause landing between its read and its write must survive: a write of the record it
+    read would put the fired instant back (a second fire) and un-pause the schedule. A
+    re-registration under another cron or timezone landing there must not keep its cadence
+    under the new input: a fire would then mix fields from two registrations.
+    """
+
+    from forze.application.contracts.durable.function import DurableScheduleStoreDepKey
+    from forze.application.execution import Deps
+    from forze.testing import context_from_deps
+    from forze_kits.integrations.durable import DurableScheduler
+
+    first = utcnow().replace(microsecond=0) + timedelta(hours=1)
+    fired = first + timedelta(days=1)
+
+    class _RaceAfterRead:
+        def __init__(self, race: Callable[[DurableScheduleRecord], Awaitable[None]]) -> None:
+            self.race = race
+            self.raced = False
+
+        def __getattr__(self, name: str) -> Any:
+            return getattr(store, name)
+
+        async def load(self, schedule_id: str) -> DurableScheduleRecord | None:
+            record = await store.load(schedule_id)
+
+            if record is not None and not self.raced:
+                self.raced = True
+                await self.race(record)
+
+            return record
+
+    async def ensure_racing(
+        schedule_id: str, race: Callable[[DurableScheduleRecord], Awaitable[None]]
+    ) -> DurableScheduleRecord:
+        racing = _RaceAfterRead(race)
+        ctx = context_from_deps(Deps.plain({DurableScheduleStoreDepKey: lambda _ctx: racing}))
+
+        await store.put(
+            DurableScheduleRecord(
+                schedule_id=schedule_id,
+                name="fn",
+                cron="0 3 * * *",
+                next_fire_at=first,
+                input_json={"n": 1},
+            )
+        )
+        await DurableScheduler().ensure_schedule(
+            ctx, schedule_id, "fn", "0 3 * * *", input_json={"n": 2}
+        )
+
+        stored = await store.load(schedule_id)
+        assert stored is not None
+
+        return stored
+
+    async def fire_and_pause(record: DurableScheduleRecord) -> None:
+        await store.advance(record.schedule_id, from_fire_at=first, to_fire_at=fired)
+        await store.put(attrs.evolve(record, next_fire_at=fired, enabled=False))
+
+    stored = await ensure_racing("nightly", fire_and_pause)
+    replaced = [
+        await ensure_racing(
+            f"replaced-{field}",
+            lambda record, change={field: value}: store.put(attrs.evolve(record, **change)),
+        )
+        for field, value in (("cron", "0 4 * * *"), ("tz", "Europe/Berlin"))
+    ]
+
+    return {
+        "input": stored.input_json,
+        "kept_fire": stored.next_fire_at == fired,
+        "kept_pause": stored.enabled is False,
+        "replaced": [(record.cron, record.tz, record.input_json) for record in replaced],
+    }
+
+
+SCHEDULE_INPUT_RACE_OUTCOME: dict[str, Any] = {
+    "input": {"n": 2},
+    "kept_fire": True,
+    "kept_pause": True,
+    # The registration that wrote last wins whole, never a blend of the two.
+    "replaced": [("0 3 * * *", None, {"n": 2})] * 2,
+}
+"""What :func:`run_schedule_input_race_scenario` answers on every engine, the mock included."""
 
 
 # ....................... #
