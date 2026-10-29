@@ -34,8 +34,20 @@ what every deployment had before counters could expire.
 threshold also writes the unlock instant (whole Unix seconds) to the digest's lock key,
 ``authn_lockout:{login_digest}:lock``, with ``ttl = lock_for + LOCKOUT_TTL_SKEW``. The check
 reads that key with ``incr(0)`` too, and a login stays locked until the later of the window's
-end and that instant. The stored instant decides, not the key's lifetime, so a backend that
-cannot expire keys still unlocks on time.
+end and that instant.
+
+A lock started in a window ends at least ``lock_for`` after that window began, so a stored
+instant earlier than that belongs to an older lock. A writer that finds this window's lock
+already stored leaves it, so a lock is never extended. A check that finds a full window
+without its lock writes the lock then. That covers a lock write that failed and a slower write
+from the previous window that replaced a later instant; the repaired lock counts from the check.
+
+The stored instant decides when the login unlocks, so a backend that cannot expire keys still
+unlocks on time. Mongo, Firestore and the mock time the key on the writer's clock, as the
+instant is. Redis and Postgres time it on their own clock, so a writer whose clock runs ahead of
+a reader's by more than the skew can see its key lapse first. The lock then ends
+``lock_for + LOCKOUT_TTL_SKEW`` after it started. That is never shorter than ``lock_for``, but
+it is before the announced ``Retry-After``.
 """
 
 import math
@@ -123,16 +135,17 @@ class LockoutConfig:
         if self.threshold < 1:
             raise exc.configuration("LockoutConfig.threshold must be >= 1")
 
-        if self.window <= timedelta(0):
-            raise exc.configuration("LockoutConfig.window must be positive")
+        # Each key lives its duration + LOCKOUT_TTL_SKEW, which the counter refuses past its cap.
+        longest = COUNTER_MAX_TTL - LOCKOUT_TTL_SKEW
 
-        # The lock key lives lock_for + LOCKOUT_TTL_SKEW, which the counter refuses past its cap.
-        if self.lock_for is not None and not (
-            timedelta(0) < self.lock_for <= COUNTER_MAX_TTL - LOCKOUT_TTL_SKEW
-        ):
+        if not timedelta(0) < self.window <= longest:
             raise exc.configuration(
-                "LockoutConfig.lock_for must be positive and at most "
-                f"{COUNTER_MAX_TTL - LOCKOUT_TTL_SKEW!r}"
+                f"LockoutConfig.window must be positive and at most {longest!r}"
+            )
+
+        if self.lock_for is not None and not timedelta(0) < self.lock_for <= longest:
+            raise exc.configuration(
+                f"LockoutConfig.lock_for must be positive and at most {longest!r}"
             )
 
 
@@ -236,17 +249,16 @@ class LoginLockoutGuard:
 
         bucket = self._bucket()
         current = await self.counter.incr(0, suffix=self._suffix(login_digest, bucket))
+        full = current >= self.config.threshold
         until = (
-            datetime.fromtimestamp((bucket + 1) * self._window_seconds(), tz=UTC)
-            if current >= self.config.threshold
-            else None
+            datetime.fromtimestamp((bucket + 1) * self._window_seconds(), tz=UTC) if full else None
         )
 
         if self.config.lock_for is None:
             return until
 
         # Read in every window: the lock can outlive the window whose bucket set it.
-        locked = await self.counter.incr(0, suffix=self._lock_suffix(login_digest))
+        locked = await self._lock(login_digest, bucket, self.config.lock_for, arm=full)
 
         if locked <= utcnow().timestamp():
             return until
@@ -261,6 +273,34 @@ class LoginLockoutGuard:
         """Whether the login is locked now (see :meth:`locked_until`)."""
 
         return await self.locked_until(login_digest) is not None
+
+    # ....................... #
+
+    async def _lock(
+        self,
+        login_digest: str,
+        bucket: int,
+        lock_for: timedelta,
+        *,
+        arm: bool,
+    ) -> int:
+        """The digest's lock instant in Unix seconds (0 if none), written first if *arm* is
+        set and *bucket*'s window has no lock stored yet. A stored lock of this window, or of
+        a later one, is left as it is.
+        """
+
+        suffix = self._lock_suffix(login_digest)
+        locked = await self.counter.incr(0, suffix=suffix)
+        started_this_window = locked >= bucket * self._window_seconds() + lock_for.total_seconds()
+
+        if not arm or started_this_window:
+            return locked
+
+        # Rounded up, so the lock never ends before lock_for has passed.
+        locked = math.ceil((utcnow() + lock_for).timestamp())
+        await self._write_key(self.counter.reset, locked, suffix, lock_for + LOCKOUT_TTL_SKEW)
+
+        return locked
 
     # ....................... #
 
@@ -305,34 +345,33 @@ class LoginLockoutGuard:
     async def record_failure(self, login_digest: str) -> None:
         """Count one failed attempt in the current window.
 
-        The attempt that reaches ``threshold`` also starts the ``lock_for`` lock, if one is
-        configured. Exactly one attempt sees the count equal ``threshold``, since the
-        increment is atomic, so racing failures start one lock and a later one never
-        extends it.
+        An attempt that reaches ``threshold`` also starts the ``lock_for`` lock, if one is
+        configured and this window has none stored yet. A failure racing past the gate after
+        the lock started leaves it as it is. A failed lock write raises here, the same for
+        a real and an unknown login, and the next check writes the lock.
         """
 
-        window_ttl = self.config.window + LOCKOUT_TTL_SKEW
+        bucket = self._bucket()
         failures = await self._write_key(
-            self.counter.incr, 1, self._suffix(login_digest), window_ttl
+            self.counter.incr,
+            1,
+            self._suffix(login_digest, bucket),
+            self.config.window + LOCKOUT_TTL_SKEW,
         )
         lock_for = self.config.lock_for
 
-        if lock_for is None or failures != self.config.threshold:
-            return
-
-        # Rounded up, so the lock never ends before lock_for has passed.
-        until = math.ceil((utcnow() + lock_for).timestamp())
-        await self._write_key(
-            self.counter.reset,
-            until,
-            self._lock_suffix(login_digest),
-            lock_for + LOCKOUT_TTL_SKEW,
-        )
+        if lock_for is not None and failures >= self.config.threshold:
+            await self._lock(login_digest, bucket, lock_for, arm=True)
 
     # ....................... #
 
     async def record_success(self, login_digest: str) -> None:
-        """Reset the current window bucket after a successful login."""
+        """Reset the current window bucket after a successful login.
+
+        A running ``lock_for`` lock survives it: the login stays locked until the lock ends,
+        which is what a lock means. A success can only meet one by racing the attempt that
+        started it, since the gate rejects every attempt while it runs.
+        """
 
         await self._write_key(
             self.counter.reset,

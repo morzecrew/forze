@@ -23,7 +23,7 @@ from forze.application.integrations.authn import (
     LoginLockoutGuard,
 )
 from forze.application.integrations.authn import lockout as lockout_module
-from forze.base.exceptions import CoreException, exc
+from forze.base.exceptions import CoreException, ExceptionKind, exc
 from forze.base.primitives import CacheLane, FrozenTimeSource, bind_time_source
 from forze_mock.adapters.counter import MockCounterAdapter, MockCounterAdminAdapter
 from forze_mock.state import MockState
@@ -89,6 +89,13 @@ class TestLockoutConfig:
     def test_rejects_non_positive_window(self) -> None:
         with pytest.raises(CoreException, match="window"):
             LockoutConfig(window=timedelta(0))
+
+    def test_rejects_a_window_the_counter_cannot_hold(self) -> None:
+        # Its buckets live window + LOCKOUT_TTL_SKEW, which the counter refuses past its cap.
+        with pytest.raises(CoreException, match="window"):
+            LockoutConfig(window=COUNTER_MAX_TTL)
+
+        assert LockoutConfig(window=COUNTER_MAX_TTL - LOCKOUT_TTL_SKEW).window
 
     @pytest.mark.parametrize(
         "lock_for",
@@ -416,6 +423,21 @@ class TestLockoutOnACounterThatRefusesTheTtl:
 # ....................... #
 
 
+class _LockWriteFailsOnce(_MemoryCounter):
+    """Refuses the first lock-key write as a store outage would."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.outage = True
+
+    async def reset(self, value: int = 1, *, suffix: str | None = None) -> int:
+        if self.outage and suffix is not None and suffix.endswith(":lock"):
+            self.outage = False
+            raise exc.infrastructure("counter store unavailable")
+
+        return await super().reset(value, suffix=suffix)
+
+
 class TestLockFor:
     """``lock_for`` holds a login past its window; the window still holds it past a short lock."""
 
@@ -453,7 +475,7 @@ class TestLockFor:
         with bind_time_source(FrozenTimeSource(T0 + timedelta(minutes=2))):
             assert await guard.locked_until(DIGEST) == T0 + WINDOW
 
-    async def test_only_the_attempt_that_reaches_the_threshold_starts_the_lock(self) -> None:
+    async def test_a_failure_past_the_threshold_leaves_the_lock(self) -> None:
         # A failure racing past the gate after the lock started must not extend it.
         lock_for = timedelta(hours=1)
         guard, _state = _expiring_guard(threshold=2, lock_for=lock_for)
@@ -465,6 +487,66 @@ class TestLockFor:
         with bind_time_source(FrozenTimeSource(T0 + timedelta(minutes=5))):
             await guard.record_failure(DIGEST)
             assert await guard.locked_until(DIGEST) == T0 + lock_for
+
+    async def test_a_success_leaves_a_running_lock(self) -> None:
+        # Only a success racing the attempt that started the lock can meet one.
+        lock_for = timedelta(hours=1)
+        guard, _state = _expiring_guard(threshold=2, lock_for=lock_for)
+
+        with bind_time_source(FrozenTimeSource(T0)):
+            await guard.record_failure(DIGEST)
+            await guard.record_failure(DIGEST)
+            await guard.record_success(DIGEST)
+
+            assert await guard.locked_until(DIGEST) == T0 + lock_for
+
+        with bind_time_source(FrozenTimeSource(T0 + WINDOW)):
+            assert await guard.locked_until(DIGEST) == T0 + lock_for
+
+    async def test_a_lock_whose_write_failed_is_written_by_the_next_check(self) -> None:
+        lock_for = timedelta(hours=1)
+        counter = _LockWriteFailsOnce()
+        guard = LoginLockoutGuard(
+            counter=counter,
+            config=LockoutConfig(threshold=2, window=WINDOW, lock_for=lock_for),
+        )
+
+        with bind_time_source(FrozenTimeSource(T0)):
+            await guard.record_failure(DIGEST)
+
+            with pytest.raises(CoreException) as error:
+                await guard.record_failure(DIGEST)
+
+        assert error.value.kind is ExceptionKind.INFRASTRUCTURE
+
+        # The full window still locks, and the check writes the missing lock from now on.
+        retry = T0 + timedelta(minutes=2)
+
+        with bind_time_source(FrozenTimeSource(retry)):
+            assert await guard.locked_until(DIGEST) == retry + lock_for
+
+        with bind_time_source(FrozenTimeSource(retry + timedelta(minutes=1))):
+            assert await guard.locked_until(DIGEST) == retry + lock_for, "never extended"
+
+    async def test_a_slower_write_from_the_previous_window_is_repaired(self) -> None:
+        # Threshold hits on both sides of a window boundary finish out of order, so the
+        # earlier lock instant lands last and would shorten the later lock.
+        lock_for = timedelta(hours=1)
+        guard, state = _expiring_guard(threshold=1, lock_for=lock_for)
+        earlier = T0 + WINDOW - timedelta(seconds=1)
+
+        with bind_time_source(FrozenTimeSource(T0 + WINDOW)):
+            await guard.record_failure(DIGEST)
+            await MockCounterAdapter(state=state, namespace="lockout").reset(
+                int((earlier + lock_for).timestamp()),
+                suffix=f"authn_lockout:{DIGEST}:lock",
+                ttl=lock_for,
+            )
+
+        check = T0 + WINDOW + timedelta(minutes=1)
+
+        with bind_time_source(FrozenTimeSource(check)):
+            assert await guard.locked_until(DIGEST) == check + lock_for
 
     async def test_a_check_creates_no_lock_key(self) -> None:
         guard, state = _expiring_guard(lock_for=timedelta(hours=1))

@@ -147,7 +147,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **The login lockout writes a key only for a failed attempt or a reset** (**behaviour change**). Each lives a window plus a minute from creation; Redis drops it, Postgres, Mongo and Firestore need a purge or TTL setup. On a Postgres table without `expires_at` keys get no ttl and pile up, with a warning per table.
 
-- **The login lockout no longer grows its counter store without bound** (**behaviour change**). A check writes no key, and a window's bucket expires a minute after the window; Postgres, Mongo and Firestore need a purge step or TTL setup for it. Without Postgres `expires_at` it writes no ttl and warns once per table.
+- **The login lockout no longer grows its counter store without bound** (**behaviour change**). A check writes no key, and a window's bucket lapses a minute after the window; Redis, the Postgres purge step, a Mongo TTL index or a Firestore TTL policy reclaims it. Without Postgres `expires_at` it writes no ttl and warns.
 
 - **`HttpClient` reads a compressed response.** A gzip or deflate body, and with no cap a zstd or brotli one, no longer fails `request`, or a rejected response from `stream`, as an infrastructure error. `RoutedHttpClient` and declared services are fixed with it.
 

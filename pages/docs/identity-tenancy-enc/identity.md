@@ -299,9 +299,15 @@ attempt that reaches the threshold writes the unlock instant to a separate lock 
 stays locked until the window's end or that instant, whichever is later, and `retry_at` (so
 `Retry-After`) carries the later one. With `lock_for` the header also shows when the threshold
 was reached. That instant is the same for a real and an unknown login, so it still discloses
-no account. The lock key gets a `ttl` of `lock_for` plus `LOCKOUT_TTL_SKEW`, but the stored
-instant decides when the login unlocks, so a counter that cannot expire keys unlocks on time
-too.
+no account. A lock is never extended, and a success does not lift it. If the lock write fails,
+the attempt fails with the store's error, the same for a real and an unknown login, and the
+next check writes the lock, counted from that check.
+
+The stored instant decides when the login unlocks, so a counter that cannot expire keys
+unlocks on time too. The lock key gets a `ttl` of `lock_for` plus `LOCKOUT_TTL_SKEW`. Redis and
+Postgres time that `ttl` on their own clock. If the node that wrote the lock runs ahead of the
+others by more than the skew, the key can lapse first. The lock then ends `lock_for` plus the
+skew after it started: never shorter than `lock_for`, but before the announced `Retry-After`.
 
 The lockout keeps its counter store bounded. The check that runs on every attempt reads
 with `incr(0)`, which creates nothing, so only a failed attempt (or a success resetting

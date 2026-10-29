@@ -103,6 +103,14 @@ class _MemoryCounter(CounterPort):
         return value
 
 
+class _LockWriteFails(_MemoryCounter):
+    async def reset(self, value: int = 1, *, suffix: str | None = None) -> int:
+        if suffix is not None and suffix.endswith(":lock"):
+            raise exc.infrastructure("counter store unavailable")
+
+        return await super().reset(value, suffix=suffix)
+
+
 def _orchestrator(
     *,
     verifier: _SpyVerifier | None = None,
@@ -262,6 +270,29 @@ class TestPasswordLockout:
         with bind_time_source(FrozenTimeSource(T0 + lock_for)):
             result = await orchestrator.authenticate_with_password(GOOD)
             assert result.identity.principal_id == PRINCIPAL
+
+    async def test_a_failed_lock_write_fails_a_real_and_an_unknown_login_alike(self) -> None:
+        # The threshold attempt's error turns into the store's, the same for either login.
+        errors: list[tuple[ExceptionKind, str, str]] = []
+
+        for login in ("alice", "nobody-by-this-name"):
+            guard = LoginLockoutGuard(
+                counter=_LockWriteFails(),
+                config=LockoutConfig(
+                    threshold=1, window=timedelta(minutes=15), lock_for=timedelta(hours=1)
+                ),
+            )
+            orchestrator, _verifier = _orchestrator(lockout=guard)
+
+            with bind_time_source(FrozenTimeSource(T0)), pytest.raises(CoreException) as ei:
+                await orchestrator.authenticate_with_password(
+                    PasswordCredentials(login=login, password="nope")
+                )
+
+            errors.append((ei.value.kind, ei.value.code, str(ei.value)))
+
+        assert errors[0] == errors[1]
+        assert errors[0][0] is ExceptionKind.INFRASTRUCTURE
 
     async def test_normal_failures_keep_timing_posture(self) -> None:
         """Below the threshold the verifier always runs — no early exit exists."""
