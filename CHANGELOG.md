@@ -210,6 +210,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **A tenant-sharded realtime consumer refuses a stream route that is not `tenant_aware`** (**behaviour change**). `TenantShardedSignalSource` and `realtime_sse_sharded_tail_lifecycle_step` fail with `tenant_aware_required`, so a signal is never delivered or stored under another tenant. New `require_tenant_aware`.
 
+- **A nested identity scope no longer logs the outer principal.** `bind_identity` and `bind` now clear the principal, actor and tenant log fields they do not set, and restore them when the scope ends.
+
 ## [0.16.2] - 2026-10-26
 
 ### Added
