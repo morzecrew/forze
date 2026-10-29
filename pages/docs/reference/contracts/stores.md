@@ -135,12 +135,12 @@ name). Objects are addressed by string `key`.
 | query | `download_range` | `download_range(key, *, start, end=None)` | inclusive byte range as a `RangedDownload` (HTTP `Range` semantics); a `start` beyond the object is a precondition error (the 416 equivalent) |
 | query | `download_if_changed` | `download_if_changed(key, *, if_none_match=None, if_modified_since=None)` | `None` when unchanged (the 304 equivalent); at least one condition required |
 | query | `head` | `head(key, *, include_tags=False)` | an `ObjectHead` — size, content type, ETag, last-modified — without the body; works for raw presigned uploads too |
-| query | `presign_download` | `presign_download(key, *, expires_in)` | time-limited direct-`GET` URL — a bearer credential, never log it |
+| query | `presign_download` | `presign_download(key, *, expires_in, response_filename=None)` | time-limited direct-`GET` URL — a bearer credential, never log it. `response_filename` signs in a `Content-Disposition` override, so the download saves under that name |
 | query | `list` | `list(limit, offset, *, prefix=None, include_tags=False, missing_ok=False)` | a `StoredObjectPage` — `objects`, `total`, `container_missing`. A missing bucket raises; `missing_ok=True` reads it as an empty page flagged `container_missing` instead, so an unprovisioned container stays distinguishable from an empty one |
 | command | `upload` | `upload(obj)` | takes an `UploadedObject`, returns `StoredObject` metadata |
 | command | `upload_stream` | `upload_stream(chunks, *, filename, ...)` | bounded-memory multipart upload from an async chunk iterator; an encrypting route seals it chunk by chunk |
 | command | `overwrite_stream` | `overwrite_stream(key, chunks, *, ...)` | replace an existing key in place, in bounded memory (the re-encryption seam) |
-| command | `presign_upload` | `presign_upload(key, *, expires_in, content_type=None)` | time-limited direct-`PUT` URL — a **write grant**, so it lives on the command port |
+| command | `presign_upload` | `presign_upload(key, *, expires_in, content_type=None, create_only=False)` | time-limited direct-`PUT` URL — a **write grant**, so it lives on the command port. `create_only` signs in a precondition that no object holds the key, so the URL can never replace one |
 | command | `delete` | `delete(key)` | remove by key |
 | command | `copy` / `move` | `copy(src_key, dst_key)` | server-side, same-bucket; `move` is copy-then-delete (non-atomic) |
 | command | `put_object_tags` | `put_object_tags(key, tags)` | full tag replacement |

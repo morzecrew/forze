@@ -51,9 +51,20 @@ class StoredFileKitSpec:
     """Register the ``download_stream`` operation. Off by default: an operation runs only the
     guards bound on its own key, so bind authn and authz on it before exposing it."""
 
+    range_downloads: bool = attrs.field(default=False)
+    """Register the ``download_range`` operation, which reads an inclusive byte range (HTTP
+    ``Range``). Off by default; bind authn and authz on it before exposing it."""
+
     presign_downloads: bool = attrs.field(default=False)
     """Register the ``presign_download`` operation, which mints a bearer URL for direct download.
     Off by default; bind authn and authz on it before exposing it."""
+
+    direct_uploads: bool = attrs.field(default=False)
+    """Register ``initiate_upload``, ``presign_upload_part`` and ``complete_upload``: the client
+    sends the bytes straight to the store through create-only presigned URLs, and
+    ``complete_upload`` checks them against :attr:`max_bytes` and the declared size and content
+    type. Off by default; bind authn and authz on each before exposing it. A
+    client-side-encrypting route refuses them."""
 
     # ....................... #
 

@@ -10,6 +10,7 @@ from typing import (
     Protocol,
     final,
 )
+from urllib.parse import quote
 
 import attrs
 
@@ -113,6 +114,33 @@ def build_range_header(start: int, end: int | None) -> str:
 
 # ....................... #
 
+_ATTR_CHAR_PUNCTUATION: Final[str] = "!#$&+-.^_`|~"
+"""RFC 5987 ``attr-char`` beyond letters and digits: what ``filename*`` may carry unencoded."""
+
+
+def attachment_content_disposition(filename: str) -> str:
+    """RFC 6266 ``attachment`` ``Content-Disposition`` value for *filename*.
+
+    Percent-encoding neutralizes header-injection characters (CR/LF, quotes, delimiters);
+    a name that needed encoding is carried in ``filename*`` (RFC 5987). Everything outside
+    ``attr-char`` is encoded, ``/`` included, so ``filename*`` stays valid and clients keep
+    the name. Shared by the download routes and the presigned-download response override.
+
+    :param filename: The name to save the download under; empty falls back to ``download``.
+    :returns: The header value.
+    """
+
+    filename = filename or "download"
+    quoted = quote(filename, safe=_ATTR_CHAR_PUNCTUATION)
+
+    if quoted == filename:
+        return f'attachment; filename="{filename}"'
+
+    return f"attachment; filename*=utf-8''{quoted}"
+
+
+# ....................... #
+
 
 def unsatisfiable_range(start: int, total: int) -> CoreException:
     """Build the precondition error for a range whose start is past the object end.
@@ -124,6 +152,26 @@ def unsatisfiable_range(start: int, total: int) -> CoreException:
         f"Requested range start {start} is beyond object size {total}",
         code=RANGE_NOT_SATISFIABLE_CODE,
     )
+
+
+# ....................... #
+
+
+def reject_contradictory_write_conditions(if_match: str | None, create_only: bool) -> None:
+    """Refuse a write conditioned both on an existing object and on there being none.
+
+    ``if_match`` requires the object at the key to carry an ETag; ``create_only`` requires
+    no object at the key. No object satisfies both, so a caller passing both has a bug, and
+    honouring either one would silently drop the other. Shared by every client.
+
+    :raises CoreException: ``configuration`` when both are given.
+    """
+
+    if if_match is not None and create_only:
+        raise exc.configuration(
+            "A conditional write takes if_match or create_only, not both: one requires an "
+            "existing object at the key and the other requires none.",
+        )
 
 
 # ....................... #
@@ -473,6 +521,7 @@ class ObjectStorageClientPort(Protocol):
         key: str,
         *,
         expires_in: timedelta,
+        content_disposition: str | None = None,
     ) -> Awaitable[PresignedUrl]:
         """Sign a time-limited ``GET`` URL for *key* in *bucket*.
 
@@ -481,6 +530,10 @@ class ObjectStorageClientPort(Protocol):
         :class:`~forze.application.contracts.storage.PresignedUrl` for the
         trust model. ``expires_in`` must be positive and within
         :data:`PRESIGN_MAX_EXPIRY` (the shared 7-day S3/GCS cap).
+
+        *content_disposition*, when given, is signed into the URL as the response
+        ``Content-Disposition`` override (S3 ``response-content-disposition``, GCS
+        the same query parameter), so the download saves under that name.
         """
         ...  # pragma: no cover
 
@@ -492,8 +545,14 @@ class ObjectStorageClientPort(Protocol):
         expires_in: timedelta,
         content_type: str | None = None,
         sse: ObjectStorageSSE | None = None,
+        create_only: bool = False,
     ) -> Awaitable[PresignedUrl]:
         """Sign a time-limited ``PUT`` URL for *key* in *bucket*.
+
+        With *create_only* the signature binds a precondition that no object holds
+        *key* (S3 ``If-None-Match: *``, GCS ``x-goog-if-generation-match: 0``), returned
+        in :attr:`PresignedUrl.headers`: the URL can create the object but never
+        replace it.
 
         Signing is local on both backends (no API round-trip); the URL grants
         unauthenticated write access until expiry — see
@@ -620,8 +679,14 @@ class ObjectStorageClientPort(Protocol):
         metadata: Mapping[str, str] | None = None,
         sse: ObjectStorageSSE | None = None,
         if_match: str | None = None,
+        create_only: bool = False,
     ) -> Awaitable[None]:
         """Assemble the uploaded parts into the final object.
+
+        *create_only* refuses to assemble over an existing object (S3 ``If-None-Match:
+        *`` on ``CompleteMultipartUpload``, GCS ``ifGenerationMatch=0`` on the final
+        write) with the shared overwrite-precondition ``conflict``. It contradicts
+        *if_match*: passing both is a ``configuration`` error, raised before any call.
 
         *metadata* is consumed by **GCS** only (the composed destination carries no
         metadata from the temp parts); **S3** binds it at

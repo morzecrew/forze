@@ -170,6 +170,7 @@ async def test_presign_upload_adds_no_cmek_header(
         expires_in: timedelta,
         method: str,
         content_type: str | None,
+        **_: Any,
     ) -> Any:
         captured["bucket"] = bucket
         from forze.application.contracts.storage import PresignedUrl

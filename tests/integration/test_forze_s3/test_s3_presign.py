@@ -49,6 +49,29 @@ async def test_presigned_download_get_over_plain_http(
 
 
 @pytest.mark.asyncio
+async def test_presigned_download_answers_with_the_signed_content_disposition(
+    s3_client: S3Client, s3_bucket: str
+) -> None:
+    disposition = "attachment; filename*=utf-8''q3%2Fr%C3%ABport.pdf"
+
+    async with s3_client.client():
+        await s3_client.upload_bytes(s3_bucket, "docs/0193f2", b"pdf-bytes")
+
+        vo = await s3_client.presign_download_url(
+            s3_bucket,
+            "docs/0193f2",
+            expires_in=timedelta(minutes=5),
+            content_disposition=disposition,
+        )
+
+    async with httpx.AsyncClient() as http:
+        resp = await http.get(vo.url)
+
+    assert resp.status_code == 200
+    assert resp.headers["content-disposition"] == disposition
+
+
+@pytest.mark.asyncio
 async def test_presigned_upload_put_with_bound_content_type(
     s3_client: S3Client, s3_bucket: str
 ) -> None:
@@ -117,16 +140,10 @@ async def test_presigned_upload_rejects_unbound_content_type(
 async def test_presigned_download_url_expires(
     s3_client: S3Client,
     s3_bucket: str,
-    s3_backend,
 ) -> None:
-    if s3_backend.name == "floci":
-        # Emulator infidelity, not an adapter concern: floci's presigned-URL
-        # verification is immature (floci-io/floci#1841) and its expiry
-        # enforcement proved environment-dependent — a 1s-expiry URL dies
-        # locally but never expires on CI runners. RustFS asserts the property
-        # on every run.
-        pytest.skip("floci presigned-URL expiry enforcement is unreliable")
-
+    # floci once looked environment-dependent here (the URL never expired on CI): CI had no
+    # region, so botocore presigned with SigV2, which floci reads as an anonymous GET. The
+    # client now always signs SigV4, and floci enforces its expiry.
     async with s3_client.client():
         await s3_client.upload_bytes(s3_bucket, "fleeting.txt", b"gone-soon")
 

@@ -206,3 +206,46 @@ async def test_abort_sends_upload_id() -> None:
         client._S3Client__ctx_client.reset(tok)
 
     assert api.abort_calls[0] == {"Bucket": "b", "Key": "k", "UploadId": "UID"}
+
+
+@pytest.mark.asyncio
+async def test_a_create_only_complete_sends_if_none_match() -> None:
+    api = _FakeApi()
+    client, tok = _client_with(api)
+
+    try:
+        await client.complete_multipart_upload(
+            "b",
+            "k",
+            upload_id="UID",
+            parts=[ObjectStoragePartInfo(part_number=1, etag="e1")],
+            create_only=True,
+        )
+    finally:
+        client._S3Client__ctx_client.reset(tok)
+
+    assert api.complete_calls[0]["IfNoneMatch"] == "*"
+
+
+@pytest.mark.asyncio
+async def test_create_only_with_if_match_is_refused() -> None:
+    from forze.base.exceptions import ExceptionKind
+
+    api = _FakeApi()
+    client, tok = _client_with(api)
+
+    try:
+        with pytest.raises(CoreException) as ei:
+            await client.complete_multipart_upload(
+                "b",
+                "k",
+                upload_id="UID",
+                parts=[ObjectStoragePartInfo(part_number=1, etag="e1")],
+                if_match="E1",
+                create_only=True,
+            )
+    finally:
+        client._S3Client__ctx_client.reset(tok)
+
+    assert ei.value.kind is ExceptionKind.CONFIGURATION
+    assert api.complete_calls == []

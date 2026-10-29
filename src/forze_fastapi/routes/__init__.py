@@ -25,6 +25,7 @@ from .storage import (
     read_upload_capped,
     streamed_download_response,
 )
+from .stored_file import attach_stored_file_download_route
 from .tenancy import attach_tenancy_routes
 from .tenancy_admin import attach_tenancy_admin_routes
 
@@ -54,6 +55,7 @@ __all__ = [
     "attach_storage_routes",
     "read_upload_capped",
     "streamed_download_response",
+    "attach_stored_file_download_route",
     "attach_tenancy_routes",
     "attach_tenancy_admin_routes",
 ]

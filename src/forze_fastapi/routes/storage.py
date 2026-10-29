@@ -22,7 +22,6 @@ from datetime import UTC, datetime
 from email.utils import format_datetime, parsedate_to_datetime
 from functools import partial
 from typing import Annotated, Any, Final, final
-from urllib.parse import quote
 
 import attrs
 from fastapi import APIRouter, Form, Request, Response, UploadFile
@@ -37,6 +36,7 @@ from forze.application.contracts.storage import (
 )
 from forze.application.execution.context import ExecutionContextFactory
 from forze.application.execution.operations import FrozenOperationRegistry
+from forze.application.integrations.storage import attachment_content_disposition
 from forze.base.exceptions import CoreException, exc
 from forze.base.primitives import StrKeyNamespace
 from forze_kits.aggregates.storage import (
@@ -218,7 +218,7 @@ def _download_endpoint(
         body: bytes = obj.data
         etag = _strong_body_etag(body)
         base_headers = {
-            "Content-Disposition": _content_disposition(obj.filename),
+            "Content-Disposition": attachment_content_disposition(obj.filename),
             "ETag": etag,
             "Accept-Ranges": "bytes",
         }
@@ -441,30 +441,6 @@ def _parse_byte_range(
 
 # ....................... #
 
-_ATTR_CHAR_PUNCTUATION: Final[str] = "!#$&+-.^_`|~"
-"""RFC 5987 ``attr-char`` beyond letters and digits: what ``filename*`` may carry unencoded."""
-
-
-def _content_disposition(filename: str) -> str:
-    """RFC 6266 attachment header for a client-supplied filename.
-
-    Percent-encoding neutralizes header-injection characters (CR/LF, quotes,
-    delimiters); names that needed encoding are carried in ``filename*``. Everything
-    outside RFC 5987 ``attr-char`` is encoded, ``/`` included, so ``filename*`` stays
-    valid and clients keep the name.
-    """
-
-    filename = filename or "download"
-    quoted = quote(filename, safe=_ATTR_CHAR_PUNCTUATION)
-
-    if quoted == filename:
-        return f'attachment; filename="{filename}"'
-
-    return f"attachment; filename*=utf-8''{quoted}"
-
-
-# ....................... #
-
 
 def _http_date(dt: datetime) -> str:
     """An RFC 1123 ``Last-Modified`` string for *dt*, normalized to UTC.
@@ -510,10 +486,12 @@ def _is_conditional_hit(request: Request, etag: str, last_modified: Any) -> bool
     """Whether a conditional request is satisfied and should answer **304**.
 
     ``If-None-Match`` (entity tag) takes precedence per RFC 7232; ``If-Modified-Since`` is the
-    time fallback, consulted only when no ``If-None-Match`` is present.
+    time fallback, consulted only when no ``If-None-Match`` is present. Called only for an
+    object that exists, so ``If-None-Match: *`` matches even when the backend has no ETag
+    (RFC 9110 §13.1.2); an empty *etag* matches no listed tag.
     """
 
-    if etag and _is_not_modified(request, etag):
+    if _is_not_modified(request, etag):
         return True
 
     return request.headers.get("if-none-match") is None and _not_modified_since(
@@ -551,7 +529,7 @@ def streamed_download_response(streamed: StreamedDownload) -> StreamingResponse:
     etag = f'"{streamed.etag}"' if streamed.etag else ""
     headers = {
         "Accept-Ranges": "bytes",
-        "Content-Disposition": _content_disposition(streamed.filename),
+        "Content-Disposition": attachment_content_disposition(streamed.filename),
         **_cache_validators(etag, streamed.last_modified),
     }
     # Plaintext size known → Content-Length; unknown (encrypted) → chunked transfer.
@@ -604,30 +582,21 @@ def _streaming_download_endpoint(
             return streamed_download_response(await stream_runner(key))
 
         head: ObjectHeadDTO = await head_runner(key)
-        etag = f'"{head.etag}"' if head.etag else ""
 
-        if _is_conditional_hit(request, etag, head.last_modified):
-            return Response(
-                status_code=304,
-                headers=_cache_validators(etag, head.last_modified),
-            )
+        def read_range(start: int, end: int) -> Awaitable[RangedDownload]:
+            return range_runner(DownloadRangeArgs(key=key, start=start, end=end))
 
-        if wants_range:
-            base_headers = {
-                "Accept-Ranges": "bytes",
-                **_cache_validators(etag, head.last_modified),
-            }
-            ranged_response = await _range_response(
-                key=key,
-                range_header=request.headers["range"],
-                base_headers=base_headers,
-                range_runner=range_runner,
-                max_range_bytes=max_range_bytes,
-            )
-            # ``None`` => malformed/unknown-unit range (ignored per RFC 7233) or a whole-payload
-            # encrypted object that can't be sliced → fall through to the full streamed body.
-            if ranged_response is not None:
-                return ranged_response
+        validated = await _validated_response(
+            request,
+            etag=head.etag,
+            last_modified=head.last_modified,
+            read_range=read_range,
+            fallback_filename=key.rsplit("/", 1)[-1],
+            max_range_bytes=max_range_bytes,
+        )
+
+        if validated is not None:
+            return validated
 
         return streamed_download_response(await stream_runner(key))
 
@@ -636,8 +605,51 @@ def _streaming_download_endpoint(
 
 # ....................... #
 
+_RangeReader = Callable[[int, int], Awaitable[RangedDownload]]
+"""Reads the inclusive window ``(start, end)`` of one object, through its governed operation."""
 
-async def _plaintext_total(key: str, *, range_runner: OperationRunner) -> int:
+
+async def _validated_response(
+    request: Request,
+    *,
+    etag: str,
+    last_modified: datetime | None,
+    read_range: _RangeReader,
+    fallback_filename: str,
+    max_range_bytes: int,
+) -> Response | None:
+    """Answer a conditional (**304**) or ``Range`` (**206** / **416**) request from an object's
+    validators, or ``None`` to serve the full streamed body.
+
+    Shared by the storage and stored-file download routes. *etag* is the backend's, unquoted;
+    *fallback_filename* names a range whose read resolved no filename.
+    """
+
+    quoted = f'"{etag}"' if etag else ""
+
+    if _is_conditional_hit(request, quoted, last_modified):
+        return Response(status_code=304, headers=_cache_validators(quoted, last_modified))
+
+    range_header = request.headers.get("range")
+
+    if range_header is None:
+        return None
+
+    # ``None`` => malformed/unknown-unit range (ignored per RFC 7233) or a whole-payload
+    # encrypted object that can't be sliced → the caller serves the full streamed body.
+    return await _range_response(
+        range_header=range_header,
+        base_headers={"Accept-Ranges": "bytes", **_cache_validators(quoted, last_modified)},
+        read_range=read_range,
+        fallback_filename=fallback_filename,
+        max_range_bytes=max_range_bytes,
+    )
+
+
+# ....................... #
+
+
+async def _plaintext_total(read_range: _RangeReader) -> int:
     """The object's plaintext length, from the only party that knows it — the adapter.
 
     A one-byte ranged read reports the object's full plaintext total
@@ -647,7 +659,7 @@ async def _plaintext_total(key: str, *, range_runner: OperationRunner) -> int:
     """
 
     try:
-        probe: RangedDownload = await range_runner(DownloadRangeArgs(key=key, start=0, end=0))
+        probe = await read_range(0, 0)
 
     except CoreException as e:
         if e.code == RANGE_NOT_SATISFIABLE_CODE:
@@ -660,10 +672,10 @@ async def _plaintext_total(key: str, *, range_runner: OperationRunner) -> int:
 
 async def _range_response(
     *,
-    key: str,
     range_header: str,
     base_headers: Mapping[str, str],
-    range_runner: OperationRunner,
+    read_range: _RangeReader,
+    fallback_filename: str,
     max_range_bytes: int,
 ) -> Response | None:
     """Build a 206/416 response for a ``Range`` header, or ``None`` to serve the full body.
@@ -688,7 +700,7 @@ async def _range_response(
         return None
 
     try:
-        window = await _resolve_window(spec, key=key, range_runner=range_runner)
+        window = await _resolve_window(spec, read_range)
 
         if window is None:
             return None
@@ -703,9 +715,7 @@ async def _range_response(
         capped = start + max_range_bytes - 1
         end = capped if open_end is None else min(open_end, capped)
 
-        ranged: RangedDownload = await range_runner(
-            DownloadRangeArgs(key=key, start=start, end=end)
-        )
+        ranged = await read_range(start, end)
 
     except CoreException as e:
         if e.code == RANGE_WHOLE_PAYLOAD_UNSUPPORTED_CODE:
@@ -713,9 +723,7 @@ async def _range_response(
 
         if e.code == RANGE_NOT_SATISFIABLE_CODE:
             # The start is past the plaintext end — where that is, only the adapter knew.
-            return _unsatisfiable_response(
-                base_headers, await _plaintext_total(key, range_runner=range_runner)
-            )
+            return _unsatisfiable_response(base_headers, await _plaintext_total(read_range))
 
         raise
 
@@ -727,11 +735,11 @@ async def _range_response(
             **base_headers,
             "Content-Range": ranged.content_range,
             "Content-Length": str(len(ranged.data)),
-            # Same filename source as the full streamed download (see streamed_download_response), so a
-            # Range and a full GET advertise the same Content-Disposition. Fall back to the key
-            # basename if the adapter resolved none.
-            "Content-Disposition": _content_disposition(
-                ranged.filename or key.rsplit("/", 1)[-1] or "download"
+            # Same filename source as the full streamed download (see streamed_download_response),
+            # so a Range and a full GET advertise the same Content-Disposition. Fall back to the
+            # caller's name (the key basename) if the read resolved none.
+            "Content-Disposition": attachment_content_disposition(
+                ranged.filename or fallback_filename
             ),
         },
     )
@@ -739,16 +747,14 @@ async def _range_response(
 
 async def _resolve_window(
     spec: _RangeSpec,
-    *,
-    key: str,
-    range_runner: OperationRunner,
+    read_range: _RangeReader,
 ) -> tuple[int, int | None] | _Unsatisfiable | None:
     """Resolve a parsed range *spec* to a concrete ``(start, end | None)`` window."""
 
     if not isinstance(spec, _SuffixRange):
         return spec
 
-    return _resolve_range_spec(spec, await _plaintext_total(key, range_runner=range_runner))
+    return _resolve_range_spec(spec, await _plaintext_total(read_range))
 
 
 def _unsatisfiable_response(base_headers: Mapping[str, str], total: int) -> Response:

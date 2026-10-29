@@ -12,6 +12,7 @@ from typing import (
     Literal,
     final,
 )
+from urllib.parse import quote
 
 import attrs
 
@@ -36,6 +37,7 @@ from forze.application.integrations.storage.adapter import (
 )
 from forze.application.integrations.storage.client import (
     ObjectStorageSSE,
+    attachment_content_disposition,
     overwrite_precondition_failed,
     presign_expiry_seconds,
     unsatisfiable_range,
@@ -501,6 +503,7 @@ class MockStorageAdapter(
         key: str,
         *,
         expires_in: timedelta,
+        response_filename: str | None = None,
     ) -> PresignedUrl:
         """Issue a deterministic fake download URL and record it on the state.
 
@@ -508,10 +511,22 @@ class MockStorageAdapter(
         checked, and the 7-day S3/GCS expiry cap is enforced. ``expires_at``
         derives from the ambient
         :class:`~forze.base.primitives.TimeSource`, so frozen time makes the
-        URL fully deterministic.
+        URL fully deterministic. A *response_filename* is rendered as the real
+        adapter renders it and carried, percent-encoded, in the URL's
+        ``response-content-disposition`` parameter and the record's
+        ``content_disposition``.
         """
 
-        return self.__presign(key, expires_in=expires_in, method="GET")
+        return self.__presign(
+            key,
+            expires_in=expires_in,
+            method="GET",
+            content_disposition=(
+                attachment_content_disposition(response_filename)
+                if response_filename is not None
+                else None
+            ),
+        )
 
     # ....................... #
 
@@ -521,6 +536,7 @@ class MockStorageAdapter(
         *,
         expires_in: timedelta,
         content_type: str | None = None,
+        create_only: bool = False,
     ) -> PresignedUrl:
         """Issue a deterministic fake upload URL and record it on the state.
 
@@ -528,7 +544,9 @@ class MockStorageAdapter(
         and a bound *content_type* is echoed in
         :attr:`PresignedUrl.headers`. ``expires_at`` derives from the ambient
         :class:`~forze.base.primitives.TimeSource`, so frozen time makes the
-        URL fully deterministic.
+        URL fully deterministic. *create_only* adds the S3-shaped
+        ``If-None-Match: *`` header and is recorded as ``create_only``; the mock
+        performs no PUT, so nothing enforces it here.
         """
 
         return self.__presign(
@@ -536,6 +554,7 @@ class MockStorageAdapter(
             expires_in=expires_in,
             method="PUT",
             content_type=content_type,
+            create_only=create_only,
         )
 
     # ....................... #
@@ -547,6 +566,8 @@ class MockStorageAdapter(
         expires_in: timedelta,
         method: Literal["GET", "PUT"],
         content_type: str | None = None,
+        content_disposition: str | None = None,
+        create_only: bool = False,
     ) -> PresignedUrl:
         seconds = presign_expiry_seconds(expires_in)
         bucket = self._bucket()
@@ -555,10 +576,16 @@ class MockStorageAdapter(
         op = "get" if method == "GET" else "put"
         url = f"mock://{bucket}/{key}?op={op}&expires={expires_at.isoformat()}"
 
+        if content_disposition is not None:
+            url += f"&response-content-disposition={quote(content_disposition, safe='')}"
+
         headers: dict[str, str] = {}
 
         if content_type is not None:
             headers["Content-Type"] = content_type
+
+        if create_only:
+            headers["If-None-Match"] = "*"
 
         # Mirror the real S3 adapter: an SSE-KMS presigned PUT returns the SSE
         # request headers the uploader must send; SSE-S3 / off add none. (GCS
@@ -579,6 +606,12 @@ class MockStorageAdapter(
                 "expires_at": expires_at,
                 "content_type": content_type,
             }
+
+            if content_disposition is not None:
+                record["content_disposition"] = content_disposition
+
+            if create_only:
+                record["create_only"] = True
 
             if method == "PUT":
                 record["sse"] = sse_record
@@ -896,13 +929,17 @@ class MockStorageAdapter(
         self,
         session: UploadSession,
         parts: Sequence[UploadPart],
+        *,
+        create_only: bool = False,
     ) -> ObjectHead:
         """Assemble deposited parts in part-number order into the stored object.
 
         The *parts* argument selects which deposited parts to assemble (in
         ascending ``part_number`` order); the resulting object's bytes are the
         concatenation. Head fields (etag/size) are computed like
-        :meth:`upload`, ``last_modified`` from the bound ``TimeSource``.
+        :meth:`upload`, ``last_modified`` from the bound ``TimeSource``. With
+        *create_only* an existing object at the key refuses the assembly, as the
+        backends' conditional completion does.
         """
 
         if not parts:
@@ -924,6 +961,9 @@ class MockStorageAdapter(
                 raise exc.not_found(
                     f"Unknown upload session: {session.upload_id}",
                 )
+
+            if create_only and session.key in self._objects():
+                raise overwrite_precondition_failed(session.key)
 
             deposited = sessions[session.upload_id]
             ordered = sorted(parts, key=lambda p: p.part_number)

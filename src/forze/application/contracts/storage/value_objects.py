@@ -1,6 +1,7 @@
 from collections.abc import AsyncIterator, Mapping
 from datetime import datetime
 from typing import Final, Literal, final
+from uuid import UUID
 
 import attrs
 
@@ -41,6 +42,23 @@ def validate_distinct_copy_keys(src_key: str, dst_key: str) -> None:
             "destination key that differs from its source.",
             code=SELF_COPY_CODE,
         )
+
+
+# ....................... #
+
+
+def tenant_key_prefix(tenant_id: UUID) -> str:
+    """The first key segment of every object a tenant-aware storage route holds for a tenant.
+
+    Keys the adapter mints carry it, and a key a caller mints itself (a presigned upload's)
+    must too: a tenant-aware adapter refuses any other key with
+    ``core.storage.key_outside_tenant``. Shared so the two cannot drift apart.
+
+    :param tenant_id: The tenant the key belongs to.
+    :returns: The prefix segment, without a trailing ``/``.
+    """
+
+    return f"tenant_{tenant_id}"
 
 
 # ....................... #

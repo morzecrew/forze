@@ -1,20 +1,32 @@
 """Stored-file request and response DTOs."""
 
 from datetime import timedelta
+from typing import Final, Self
 from uuid import UUID
 
 import attrs
-from pydantic import Field
+from pydantic import Field, model_validator
 
 from forze.application.contracts.querying import QuerySortExpression
 from forze.application.contracts.storage import StreamedDownload
 from forze.domain.models import BaseDTO
-from forze_kits.aggregates.storage.dto import PresignedUrlDTO
+from forze_kits.aggregates.storage.dto import PresignedUrlDTO, UploadPartDTO
 from forze_kits.domain.stored_file import StoredFileRead
 from forze_kits.dto.paginated import Pagination
 from forze_kits.dto.querying import OptionalFilterExpression
 
 # ----------------------- #
+
+_MEDIA_TYPE: Final[str] = r"^[A-Za-z0-9][A-Za-z0-9!#$&^_.+-]*/[A-Za-z0-9][A-Za-z0-9!#$&^_.+-]*$"
+"""An RFC 6838 ``type/subtype`` with no parameters: signed into a presigned PUT as a header."""
+
+_UPLOAD_URL_EXPIRY: Final[timedelta] = timedelta(minutes=15)
+"""Default lifetime of a direct-upload URL (a single PUT or one part)."""
+
+_UPLOAD_URL_MAX_EXPIRY: Final[timedelta] = timedelta(hours=1)
+"""Longest lifetime a direct-upload URL may ask for: a write grant stays short."""
+
+# ....................... #
 
 
 class StoredFileIdDTO(BaseDTO):
@@ -119,6 +131,41 @@ class StoredFileStream:
 # ....................... #
 
 
+class DownloadStoredFileRangeRequestDTO(StoredFileIdDTO):
+    """Request payload for reading an inclusive byte range of a stored file."""
+
+    start: int = Field(ge=0)
+    """First byte offset to read (inclusive)."""
+
+    end: int | None = Field(default=None, ge=0)
+    """Last byte offset to read (inclusive); ``None`` reads to the end of the file."""
+
+
+# ....................... #
+
+
+class StoredFileRangeDTO(BaseDTO):
+    """An inclusive byte range of a ready stored file, with its metadata."""
+
+    file: StoredFileRead
+    """Stored-file metadata; its ``filename`` is the name to save the download under."""
+
+    data: bytes
+    """The range's bytes."""
+
+    content_type: str
+    """MIME type of the file."""
+
+    content_range: str
+    """The satisfied range as an HTTP ``Content-Range`` value (``bytes start-end/total``)."""
+
+    total_size: int
+    """The whole file's size in bytes."""
+
+
+# ....................... #
+
+
 class PresignStoredFileDownloadRequestDTO(StoredFileIdDTO):
     """Request payload for minting a presigned download (GET) URL for a stored file."""
 
@@ -141,3 +188,98 @@ class StoredFilePresignedDownloadDTO(BaseDTO):
 
     presigned: PresignedUrlDTO
     """The minted URL, its method, expiry and the headers the client must send."""
+
+
+# ....................... #
+
+
+class InitiateStoredFileUploadRequestDTO(BaseDTO):
+    """Request payload for starting a direct upload of a stored file."""
+
+    filename: str
+    """Original filename."""
+
+    size: int = Field(ge=0)
+    """Exact size in bytes; completion refuses an object of any other size."""
+
+    content_type: str = Field(max_length=255, pattern=_MEDIA_TYPE)
+    """MIME type (``type/subtype``); the client must send it and completion checks it."""
+
+    description: str | None = None
+    """Optional description."""
+
+    prefix: str | None = None
+    """Optional logical prefix (the row's, not the storage key's)."""
+
+    tags: dict[str, str] | None = None
+    """Optional tags."""
+
+    multipart: bool = False
+    """Open a multipart session (parts presigned one by one) instead of a single PUT."""
+
+    expires_in: timedelta = Field(
+        default=_UPLOAD_URL_EXPIRY, gt=timedelta(0), le=_UPLOAD_URL_MAX_EXPIRY
+    )
+    """How long the single-PUT URL stays valid (15 minutes by default, at most 1 hour).
+    Unused for a multipart upload, whose parts are presigned one by one."""
+
+
+# ....................... #
+
+
+class StoredFileUploadSessionDTO(BaseDTO):
+    """A pending stored file and where its bytes go.
+
+    Holds a credential, either :attr:`presigned` (a bearer write URL) or :attr:`upload_id`
+    (the multipart session): return it to the client, never log it.
+    """
+
+    file: StoredFileRead
+    """The pending row; its ``storage_key`` is the key the kit minted."""
+
+    presigned: PresignedUrlDTO | None = None
+    """The single-PUT URL and the headers the client must send; ``None`` for multipart."""
+
+    upload_id: str | None = None
+    """The multipart session id the client returns to presign parts and complete; ``None``
+    for a single PUT."""
+
+
+# ....................... #
+
+
+class PresignStoredFileUploadPartRequestDTO(StoredFileIdDTO):
+    """Request payload for presigning one part of a direct multipart upload."""
+
+    upload_id: str = Field(min_length=1)
+    """The session id ``initiate_upload`` returned."""
+
+    part_number: int = Field(ge=1, le=10_000)
+    """1-indexed part position."""
+
+    expires_in: timedelta = Field(
+        default=_UPLOAD_URL_EXPIRY, gt=timedelta(0), le=_UPLOAD_URL_MAX_EXPIRY
+    )
+    """How long the part URL stays valid (15 minutes by default, at most 1 hour)."""
+
+
+# ....................... #
+
+
+class CompleteStoredFileUploadRequestDTO(StoredFileIdDTO):
+    """Request payload for completing a direct upload."""
+
+    upload_id: str | None = Field(default=None, min_length=1)
+    """The multipart session id; ``None`` for a single PUT."""
+
+    parts: list[UploadPartDTO] | None = Field(default=None, min_length=1)
+    """The uploaded parts (S3 needs each part's ETag); required with :attr:`upload_id`."""
+
+    # ....................... #
+
+    @model_validator(mode="after")
+    def _parts_come_with_a_session(self) -> Self:
+        if (self.upload_id is None) != (self.parts is None):
+            raise ValueError("upload_id and parts are given together, for a multipart upload")
+
+        return self

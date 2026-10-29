@@ -1241,16 +1241,16 @@ class TestStreamingHeaderHelpers:
         from forze.base.exceptions import exc
         from forze_fastapi.routes import storage as mod
 
-        async def runner(_args: object) -> object:
+        async def reader(_start: int, _end: int) -> object:
             raise exc.precondition(
                 "cannot slice", code=RANGE_WHOLE_PAYLOAD_UNSUPPORTED_CODE
             )
 
         out = await mod._range_response(  # pyright: ignore[reportPrivateUsage]
-            key="k",
             range_header="bytes=0-10",
             base_headers={},
-            range_runner=runner,
+            read_range=reader,
+            fallback_filename="k",
             max_range_bytes=16 * 1024 * 1024,
         )
 
@@ -1260,14 +1260,74 @@ class TestStreamingHeaderHelpers:
         from forze.base.exceptions import CoreException, exc
         from forze_fastapi.routes import storage as mod
 
-        async def runner(_args: object) -> object:
+        async def reader(_start: int, _end: int) -> object:
             raise exc.internal("boom")
 
         with pytest.raises(CoreException):
             await mod._range_response(  # pyright: ignore[reportPrivateUsage]
-                key="k",
                 range_header="bytes=0-10",
                 base_headers={},
-                range_runner=runner,
+                read_range=reader,
+                fallback_filename="k",
                 max_range_bytes=16 * 1024 * 1024,
             )
+
+
+class TestIfNoneMatchWildcard:
+    """``If-None-Match: *`` matches any current representation (RFC 9110 §13.1.2)."""
+
+    @staticmethod
+    def _request(**headers: str) -> Any:
+        from starlette.requests import Request
+
+        raw = [(k.replace("_", "-").encode(), v.encode()) for k, v in headers.items()]
+        return Request({"type": "http", "method": "GET", "path": "/", "headers": raw})
+
+    async def test_a_wildcard_answers_304_for_an_object_without_an_etag(self) -> None:
+        from forze_fastapi.routes import storage as mod
+        from forze_kits.aggregates.storage import ObjectHeadDTO
+
+        async def head(_key: str) -> ObjectHeadDTO:
+            return ObjectHeadDTO(size=5, content_type="text/plain", etag="")
+
+        async def unreachable(_args: object) -> object:
+            raise AssertionError("a 304 needs no body")
+
+        endpoint = mod._streaming_download_endpoint(  # pyright: ignore[reportPrivateUsage]
+            head_runner=head,
+            stream_runner=unreachable,
+            range_runner=unreachable,
+            max_range_bytes=16,
+        )
+
+        resp = await endpoint("k", self._request(if_none_match="*"))
+
+        assert resp.status_code == 304
+
+    async def test_the_shared_helper_answers_304_without_an_etag(self) -> None:
+        from forze_fastapi.routes import storage as mod
+
+        async def reader(_start: int, _end: int) -> object:
+            raise AssertionError("a 304 reads nothing")
+
+        resp = await mod._validated_response(  # pyright: ignore[reportPrivateUsage]
+            self._request(if_none_match="*"),
+            etag="",
+            last_modified=None,
+            read_range=reader,  # type: ignore[arg-type]
+            fallback_filename="k",
+            max_range_bytes=16,
+        )
+
+        assert resp is not None
+        assert resp.status_code == 304
+
+    def test_a_wildcard_answers_304_on_the_streaming_route(self) -> None:
+        client = TestClient(_build_app("rest"))
+        key = client.post(
+            "/files", files={"file": ("blob.bin", b"0123456789", "application/octet-stream")}
+        ).json()["key"]
+
+        resp = client.get(f"/files/{key}", headers={"If-None-Match": "*"})
+
+        assert resp.status_code == 304

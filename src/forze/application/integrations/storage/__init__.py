@@ -7,8 +7,10 @@ from .client import (
     ObjectStorageListedObject,
     ObjectStoragePartInfo,
     ObjectStorageSSE,
+    attachment_content_disposition,
     build_range_header,
     presign_expiry_seconds,
+    reject_contradictory_write_conditions,
     unsatisfiable_range,
     validate_range,
 )
@@ -31,6 +33,7 @@ __all__ = [
     "ObjectStorageListedObject",
     "ObjectStoragePartInfo",
     "ObjectStorageSSE",
+    "attachment_content_disposition",
     "build_range_header",
     "unsatisfiable_range",
     "validate_range",
@@ -42,6 +45,7 @@ __all__ = [
     "guess_content_type_with_magic",
     "object_metadata_from_user_metadata",
     "presign_expiry_seconds",
+    "reject_contradictory_write_conditions",
     "validate_storage_encryption_wiring",
     "validate_storage_tenancy_wiring",
 ]

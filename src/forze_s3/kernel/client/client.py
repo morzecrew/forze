@@ -42,6 +42,7 @@ from forze.application.integrations.storage.client import (
     normalize_list_window,
     overwrite_precondition_failed,
     presign_expiry_seconds,
+    reject_contradictory_write_conditions,
     unsatisfiable_range,
     validate_range,
 )
@@ -888,6 +889,7 @@ class S3Client(S3ClientPort):
         key: str,
         *,
         expires_in: timedelta,
+        content_disposition: str | None = None,
     ) -> PresignedUrl:
         """Sign a time-limited ``GET`` URL for the object (SigV4 query auth).
 
@@ -900,16 +902,23 @@ class S3Client(S3ClientPort):
         :param bucket: Bucket name.
         :param key: Object key.
         :param expires_in: URL lifetime (positive, at most 7 days).
+        :param content_disposition: Optional response ``Content-Disposition``
+            override, signed in as ``ResponseContentDisposition``.
         :raises CoreException: ``validation`` when *expires_in* is out of range.
         """
 
         c = self.__require_client()
         seconds = presign_expiry_seconds(expires_in, max_expiry=PRESIGN_MAX_EXPIRY)
 
+        params: dict[str, Any] = {"Bucket": bucket, "Key": key}
+
+        if content_disposition is not None:
+            params["ResponseContentDisposition"] = content_disposition
+
         expires_at = utcnow() + timedelta(seconds=seconds)
         url = await c.generate_presigned_url(
             "get_object",
-            Params={"Bucket": bucket, "Key": key},
+            Params=params,
             ExpiresIn=seconds,
         )
 
@@ -926,6 +935,7 @@ class S3Client(S3ClientPort):
         expires_in: timedelta,
         content_type: str | None = None,
         sse: ObjectStorageSSE | None = None,
+        create_only: bool = False,
     ) -> PresignedUrl:
         """Sign a time-limited ``PUT`` URL for the object (SigV4 query auth).
 
@@ -951,6 +961,8 @@ class S3Client(S3ClientPort):
         :param content_type: Optional MIME type to bind into the signature.
         :param sse: Optional server-side-encryption request to bind into the
             signature and surface in the returned headers.
+        :param create_only: Sign ``If-None-Match: *`` in, so S3 refuses the PUT (412)
+            once an object holds the key.
         :raises CoreException: ``validation`` when *expires_in* is out of range.
         """
 
@@ -963,6 +975,10 @@ class S3Client(S3ClientPort):
         if content_type is not None:
             params["ContentType"] = content_type
             headers["Content-Type"] = content_type
+
+        if create_only:
+            params["IfNoneMatch"] = "*"
+            headers["If-None-Match"] = "*"
 
         params |= _s3_sse_extra_args(sse)
         headers |= _s3_sse_request_headers(sse)
@@ -1157,6 +1173,7 @@ class S3Client(S3ClientPort):
         metadata: Mapping[str, str] | None = None,
         sse: ObjectStorageSSE | None = None,
         if_match: str | None = None,
+        create_only: bool = False,
     ) -> None:
         """Assemble the parts via ``CompleteMultipartUpload``.
 
@@ -1178,11 +1195,17 @@ class S3Client(S3ClientPort):
         ``conflict`` under the shared overwrite-precondition code, and a
         vanished target answers 404 → ``not_found`` via the normal mapping —
         crucially **without creating the object**.
+
+        *create_only* sends ``If-None-Match: *``, so the service refuses to assemble
+        over any existing object; its 412 maps to the same ``conflict``. Passing it with
+        *if_match* is a ``configuration`` error.
         """
 
         # S3 inherits content type, metadata, and SSE from CreateMultipartUpload;
         # none is settable on complete.
         _ = (content_type, metadata, sse)
+
+        reject_contradictory_write_conditions(if_match, create_only)
 
         c = self.__require_client()
 
@@ -1206,6 +1229,9 @@ class S3Client(S3ClientPort):
         if if_match is not None:
             kwargs["IfMatch"] = _quote_etag(if_match)
 
+        if create_only:
+            kwargs["IfNoneMatch"] = "*"
+
         try:
             await c.complete_multipart_upload(**kwargs)
 
@@ -1215,7 +1241,7 @@ class S3Client(S3ClientPort):
             # Only a completion that carried the condition can fail it; the raced
             # 409 variant means another conditional write was in flight — both
             # read as "the object is no longer what the caller saw".
-            if if_match is not None and code in {
+            if (if_match is not None or create_only) and code in {
                 "PreconditionFailed",
                 "ConditionalRequestConflict",
             }:

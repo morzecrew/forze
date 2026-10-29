@@ -57,6 +57,25 @@ def _wait_http_ok(url: str, *, timeout_s: float = 60) -> None:
     raise RuntimeError(f"S3 backend did not become healthy in time: {url}")
 
 
+@pytest.fixture(scope="session", autouse=True)
+def _no_local_aws_config(tmp_path_factory: pytest.TempPathFactory) -> Iterator[None]:
+    """Keep a developer's ``~/.aws`` and ``AWS_*`` out of the clients, as on CI.
+
+    A local region once made botocore presign with SigV4 here while CI, with none, fell
+    back to SigV2 — so floci answered differently on the two and only CI saw it.
+    """
+
+    absent = tmp_path_factory.mktemp("no-aws-config")
+
+    with pytest.MonkeyPatch.context() as env:
+        for name in ("AWS_REGION", "AWS_DEFAULT_REGION", "AWS_PROFILE"):
+            env.delenv(name, raising=False)
+
+        env.setenv("AWS_CONFIG_FILE", str(absent / "config"))
+        env.setenv("AWS_SHARED_CREDENTIALS_FILE", str(absent / "credentials"))
+        yield
+
+
 @pytest.fixture(scope="session", params=["rustfs", "floci"])
 def s3_backend(request: pytest.FixtureRequest) -> Iterator[S3Backend]:
     """One S3 implementation per param; every test runs against both."""

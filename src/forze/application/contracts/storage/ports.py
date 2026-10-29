@@ -53,6 +53,7 @@ class StorageQueryPort(Protocol):
         key: str,
         *,
         expires_in: timedelta,
+        response_filename: str | None = None,
     ) -> Awaitable[PresignedUrl]:
         """Mint a time-limited URL for downloading the object directly.
 
@@ -72,8 +73,16 @@ class StorageQueryPort(Protocol):
         (STS, instance roles) the *effective* expiry is additionally bounded
         by the session token's lifetime, regardless of ``expires_in``.
 
+        **Download name.** With ``response_filename`` the signed URL overrides the
+        response's ``Content-Disposition`` (an RFC 6266 ``attachment`` with that
+        name, RFC 5987-encoded when needed), so a browser saves the file under it
+        instead of the key's basename. S3 and GCS sign it as the
+        ``response-content-disposition`` query parameter.
+
         :param key: Storage key of the object (validated against traversal).
         :param expires_in: How long the URL stays valid.
+        :param response_filename: Name the download saves under; ``None`` keeps
+            the backend's default.
         :returns: The presigned URL with its method, expiry, and any headers
             the client must send.
         """
@@ -301,6 +310,7 @@ class StorageCommandPort(Protocol):
         *,
         expires_in: timedelta,
         content_type: str | None = None,
+        create_only: bool = False,
     ) -> Awaitable[PresignedUrl]:
         """Mint a time-limited URL for uploading the object directly.
 
@@ -334,9 +344,15 @@ class StorageCommandPort(Protocol):
         (STS, instance roles) the *effective* expiry is additionally bounded
         by the session token's lifetime, regardless of ``expires_in``.
 
+        **Create-only.** With ``create_only`` the signature also binds the
+        precondition that no object holds *key* yet, and :attr:`PresignedUrl.headers`
+        carries the header the client must send for it. The URL can then create the
+        object once but never replace it, however long it stays valid.
+
         :param key: Storage key to upload to (validated against traversal).
         :param expires_in: How long the URL stays valid.
         :param content_type: Optional MIME type to bind into the signature.
+        :param create_only: Refuse the upload when an object already holds *key*.
         :returns: The presigned URL with its method, expiry, and any headers
             the client must send.
         """
@@ -560,6 +576,8 @@ class StorageUploadSessionPort(Protocol):
         self,
         session: UploadSession,
         parts: Sequence[UploadPart],
+        *,
+        create_only: bool = False,
     ) -> Awaitable[ObjectHead]:
         """Assemble *parts* into the final object and return its head.
 
@@ -570,9 +588,14 @@ class StorageUploadSessionPort(Protocol):
         :class:`ObjectHead` is the assembled object's honest head — the same
         completion-seam shape as :meth:`StorageQueryPort.head`.
 
+        With ``create_only`` the assembly is refused, as a ``conflict`` under
+        :data:`~forze.application.contracts.storage.OVERWRITE_PRECONDITION_FAILED_CODE`,
+        when an object already holds the session's key.
+
         :param session: The session from :meth:`begin_upload`.
         :param parts: The parts to assemble (S3 needs ``part_number`` + ``etag``
             per part; GCS needs ``part_number`` only).
+        :param create_only: Refuse to replace an existing object at the key.
         :returns: The assembled object's head.
         """
         ...  # pragma: no cover

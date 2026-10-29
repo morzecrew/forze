@@ -6,8 +6,15 @@ from uuid import UUID
 from forze.application.contracts.outbox import OutboxCommandPort
 from forze.application.contracts.querying import QueryFilterExpression
 from forze.application.contracts.search import SearchCommandPort
-from forze.application.contracts.storage import UploadedObject
-from forze.base.exceptions import exc
+from forze.application.contracts.storage import (
+    ObjectHead,
+    PresignedUrl,
+    UploadedObject,
+    tenant_key_prefix,
+)
+from forze.application.contracts.tenancy import TenantIdentity
+from forze.base.exceptions import CoreException, exc
+from forze_kits.aggregates.storage.dto import PresignedUrlDTO
 from forze_kits.domain.stored_file import (
     StoredFileCreateCmd,
     StoredFileEventType,
@@ -86,6 +93,122 @@ def ensure_downloadable(file: StoredFileRead) -> str:
         raise exc.internal("Ready stored file is missing storage_key")
 
     return file.storage_key
+
+
+# ....................... #
+
+
+def upload_too_large(max_bytes: int) -> CoreException:
+    """The refusal of an upload larger than the kit's ``max_bytes``."""
+
+    return exc.validation(
+        f"Uploaded file exceeds the maximum allowed size of {max_bytes} bytes",
+        code="upload_too_large",
+        details={"max_bytes": max_bytes},
+    )
+
+
+# ....................... #
+
+
+def presigned_to_dto(url: PresignedUrl) -> PresignedUrlDTO:
+    """A presigned URL as the client receives it. A bearer credential: never log it."""
+
+    return PresignedUrlDTO(
+        url=url.url,
+        method=url.method,
+        expires_at=url.expires_at,
+        headers=dict(url.headers),
+    )
+
+
+# ....................... #
+
+
+def direct_upload_key(tenant: TenantIdentity | None, file_id: UUID) -> str:
+    """The storage key the kit mints for a direct upload: ``{tenant}/{file_id}``.
+
+    Never client-chosen. The tenant segment is the one a tenant-aware storage route requires,
+    and the file id is never reused, so the key names exactly one stored file.
+    """
+
+    if tenant is None:
+        return str(file_id)
+
+    return f"{tenant_key_prefix(tenant.tenant_id)}/{file_id}"
+
+
+# ....................... #
+
+
+def ensure_awaiting_upload(file: StoredFileRead) -> str:
+    """Reject a stored file that is not a pending direct upload.
+
+    :returns: The key the kit minted for its bytes.
+    """
+
+    ensure_readable(file)
+
+    # A buffered upload's pending row has no key yet: only initiate_upload sets one up front.
+    if file.status != StoredFileStatus.PENDING or not file.storage_key:
+        raise exc.precondition(
+            f"Stored file is not awaiting a direct upload (status={file.status!s})",
+        )
+
+    return file.storage_key
+
+
+# ....................... #
+
+
+def _upload_mismatch(file: StoredFileRead) -> CoreException:
+    return exc.validation(
+        "Uploaded object does not match the declared size and content type",
+        code="upload_mismatch",
+        details={"size": file.size, "content_type": file.content_type},
+    )
+
+
+# ....................... #
+
+
+def oversize_refusal(
+    file: StoredFileRead,
+    size: int,
+    max_bytes: int | None,
+) -> CoreException | None:
+    """Why *size* bytes cannot become *file*'s, or ``None``: over the cap or the declared size."""
+
+    if max_bytes is not None and size > max_bytes:
+        return upload_too_large(max_bytes)
+
+    if size > file.size:
+        return _upload_mismatch(file)
+
+    return None
+
+
+# ....................... #
+
+
+def direct_upload_refusal(
+    file: StoredFileRead,
+    head: ObjectHead,
+    max_bytes: int | None,
+) -> CoreException | None:
+    """Why the uploaded object must not become *file*'s bytes, or ``None`` when it may.
+
+    The client chose what it sent, so the object is checked against the kit's cap and against
+    the size and content type the row was initiated with.
+    """
+
+    if refusal := oversize_refusal(file, head.size, max_bytes):
+        return refusal
+
+    if head.size != file.size or head.content_type != file.content_type:
+        return _upload_mismatch(file)
+
+    return None
 
 
 # ....................... #

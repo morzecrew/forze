@@ -29,6 +29,7 @@ from .value_objects import (
     UploadedObject,
     UploadPart,
     UploadSession,
+    tenant_key_prefix,
     validate_distinct_copy_keys,
 )
 
@@ -49,6 +50,7 @@ __all__ = [
     "RANGE_NOT_SATISFIABLE_CODE",
     "SELF_COPY_CODE",
     "validate_distinct_copy_keys",
+    "tenant_key_prefix",
     "RANGE_WHOLE_PAYLOAD_UNSUPPORTED_CODE",
     "RangedDownload",
     "StreamedDownload",

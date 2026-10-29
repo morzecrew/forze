@@ -82,8 +82,10 @@ def bind_stored_file_writes(
 ) -> OperationRegistry:
     """Bind a stored-file registry's write operations, leaving it unfrozen.
 
-    Write operations (``upload``, ``delete``) run in a transaction. Outbox rows
-    flush on tx success; blob upload and purge run in ``after_commit`` hooks.
+    Write operations (``upload``, ``delete``, and ``initiate_upload`` when the kit enables
+    direct uploads) run in a transaction. Outbox rows flush on tx success; blob upload and
+    purge run in ``after_commit`` hooks. ``complete_upload`` runs outside a transaction, so
+    the ``failed`` mark a refused upload leaves is not rolled back.
     The registry stays open, so the app can layer its own guards (authn, authz)
     on the stored-file operations before it freezes.
 
@@ -113,6 +115,18 @@ def bind_stored_file_writes(
             factory=stored_file_complete_upload_after_commit_factory(kit),
         ),
     )
+
+    # complete_upload stays outside a transaction: a refused upload marks its row failed and
+    # then raises, and a rollback would undo that mark.
+    if kit.direct_uploads:
+        reg = _bind_write_op(
+            reg,
+            key=ns.key(StoredFileKernelOp.INITIATE_UPLOAD),
+            tx_route=tx_route,
+            kit=kit,
+            flush_step_id="stored_file_outbox_flush_initiate_upload",
+            after_commit=None,
+        )
 
     reg = _bind_write_op(
         reg,

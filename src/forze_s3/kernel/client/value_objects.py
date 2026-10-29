@@ -37,6 +37,10 @@ class S3Config:
     mapping. :meth:`S3Client.create_bucket` uses the chain-**resolved** region
     of the live client for its ``LocationConstraint`` when no region is
     configured here.
+
+    *signature_version* defaults to ``s3v4``. Left to botocore, a client with no region
+    resolvable signs presigned URLs with the legacy SigV2 query auth, which AWS regions
+    opened since 2014 refuse and some S3-compatible servers read as an anonymous request.
     """
 
     region_name: str | None = None
@@ -75,6 +79,7 @@ class S3Config:
 
         params = attrs.asdict(self, filter=lambda _attr, value: value is not None)
         params["retries"] = params.get("retries") or dict(_DEFAULT_RETRIES)
+        params.setdefault("signature_version", "s3v4")
 
         for key in ("connect_timeout", "read_timeout"):
             val = params.get(key)

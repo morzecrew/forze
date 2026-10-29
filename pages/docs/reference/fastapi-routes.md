@@ -319,20 +319,22 @@ flow above needs them.
 
 ### Stored-file downloads
 
-The stored-file kit ships no generated routes. It has three read-only download
-operations, and each one loads the row first: a row the caller can't read
-(another tenant's, or a missing one) answers not-found, and a `pending` or
+The stored-file kit ships no generated JSON routes. It has four read-only
+download operations, and each one loads the row first: a row the caller can't
+read (another tenant's, or a missing one) answers not-found, and a `pending` or
 `failed` file is refused before storage is touched. `download` is always
-registered. The other two are opt-in, because an operation runs only the guards
-bound on its own key: enable each with
-`StoredFileKitSpec(stream_downloads=True, presign_downloads=True)`, then bind
-your authn and authz on it as you do on `download`. A `StoredFileFacade` method
-for an operation left off raises a configuration error.
+registered. The other three are opt-in, because an operation runs only the
+guards bound on its own key: enable each with
+`StoredFileKitSpec(stream_downloads=True, range_downloads=True, presign_downloads=True)`,
+then bind your authn and authz on it as you do on `download`. A
+`StoredFileFacade` method for an operation left off raises a configuration
+error.
 
 | Operation | Input | Result |
 |-----------|-------|--------|
 | `download` | `StoredFileIdDTO` | `StoredFileDownloadDTO`: the whole object in memory, for small files |
 | `download_stream` | `StoredFileIdDTO` | `StoredFileStream`: the row plus a bounded-memory `StreamedDownload` named after the stored filename |
+| `download_range` | `DownloadStoredFileRangeRequestDTO` (`id`, inclusive `start`, `end` or `None` for the end) | `StoredFileRangeDTO`: the row plus the window's bytes, `content_range` and `total_size`; a start past the end is a precondition error |
 | `presign_download` | `PresignStoredFileDownloadRequestDTO` (`id`, `expires_in` up to 7 days) | `StoredFilePresignedDownloadDTO`: the row plus a presigned `GET` URL |
 
 A hand-written route hands the stream to `streamed_download_response`, which
@@ -360,6 +362,33 @@ async def file_content(file_id: UUID, ctx=Depends(ctx_dep)):
     return streamed_download_response(result.stream)
 ```
 
+`attach_stored_file_download_route` attaches the full download route instead.
+It runs `download_stream` and `download_range`, so it needs both enabled, and it
+answers like the storage kit's streaming download: `206` for a `Range`, each
+window capped at `max_range_bytes` (16 MiB by default), `416` past the end,
+`304` for a matching `If-None-Match` or `If-Modified-Since`, and the streamed
+`200` otherwise. Each request opens the stream first, which reads the object's
+head but not its body, so a `304` transfers nothing.
+
+```python
+from forze_fastapi.routes import attach_stored_file_download_route
+
+files_router = APIRouter(prefix="/files", tags=["files"])
+
+# GET /files/{id}/content
+attach_stored_file_download_route(
+    files_router,
+    registry=registry,
+    ns=kit.document.default_namespace,
+    ctx_dep=ctx_dep,
+)
+```
+
+On a client-side-encrypting route the kit's `upload` seals each file as one
+AEAD payload, which a range can't slice. `download_range` refuses such a file
+with `core.storage.range_whole_payload_unsupported`, and the route answers a
+`Range` with the whole file and a `200`.
+
 The stream reads the object in parts while the response is sent. If the file is
 deleted mid-download, the next read fails with `not_found`. The status is already
 sent, so the response is cut short: the client gets fewer bytes than
@@ -367,8 +396,9 @@ sent, so the response is cut short: the client gets fewer bytes than
 never reused, so a stream can't mix two files.
 
 `presign_download` follows the storage kit's presign rules: the URL is a bearer
-credential and the storage key's tenant check applies. The URL saves under the
-object key's name, so the client takes the filename from `file.filename`.
+credential and the storage key's tenant check applies. The URL signs in the
+stored filename as the response's `Content-Disposition`, so the download saves
+under that name rather than the object key's.
 
 Because its result is a credential, `presign_download` is marked sensitive.
 MCP tools, agent tools, generated routes and `forze ops` refuse it, so serve it
@@ -378,8 +408,8 @@ default exposes every read-only operation and the refusal covers the whole
 registration. `download_stream` is not marked sensitive: it returns the same
 bytes as `download`, not a credential.
 
-`download_stream` returns a byte stream, not JSON, so its descriptor sets
-`streams=True`. MCP tools and resource templates, agent tools, `forze ops` and
+`download_stream` returns a byte stream and `download_range` raw bytes, not
+JSON, so their descriptors set `streams=True`. MCP tools and resource templates, agent tools, `forze ops` and
 `attach_operation_routes` can't carry it. The MCP and `forze ops` defaults leave
 it out, and naming it anywhere is refused. Serve it from a route that calls
 `streamed_download_response`, like the one above.
@@ -390,6 +420,74 @@ it out, and naming it anywhere is refused. Serve it from a route that calls
     when it is called. The storage adapter refuses before anything is signed. The
     kit spec doesn't know a route's encryption config, so setting
     `presign_downloads=True` for such a route can't fail at build time.
+
+### Stored-file direct uploads
+
+`upload` takes the whole file in the request body. For large files,
+`StoredFileKitSpec(direct_uploads=True)` registers three commands that keep the
+bytes out of the app: the client sends them straight to the bucket through
+presigned URLs. Bind authn and authz on each one, as you do on `upload`.
+
+| Operation | Input | Result |
+|-----------|-------|--------|
+| `initiate_upload` | `InitiateStoredFileUploadRequestDTO` (`filename`, exact `size`, `content_type`, `multipart`, and `expires_in` for a single `PUT`: 15 minutes by default, at most 1 hour) | `StoredFileUploadSessionDTO`: the `pending` row plus a presigned `PUT` (`presigned`) or a multipart `upload_id` |
+| `presign_upload_part` | `PresignStoredFileUploadPartRequestDTO` (`id`, `upload_id`, `part_number`, `expires_in` with the same bounds) | `PresignedUrlDTO` for one part |
+| `complete_upload` | `CompleteStoredFileUploadRequestDTO` (`id`, plus `upload_id` and `parts` for a multipart upload) | the `ready` row |
+
+1. `initiate_upload` mints the storage key, `{tenant}/{file_id}`, and writes a
+   `pending` row that holds it. The client never names a key. A declared size
+   over `max_bytes` is refused before anything is minted.
+2. The client `PUT`s the bytes to `presigned.url` with every header in
+   `presigned.headers`: the signed content type, and the create-only
+   precondition (`If-None-Match: *` on S3, `x-goog-if-generation-match: 0` on
+   GCS). For a multipart upload it asks `presign_upload_part` for each part
+   instead, and keeps each part's `ETag`. S3 needs the ETags, and every part but
+   the last must be at least 5 MiB there.
+3. `complete_upload` checks a multipart upload before assembling it: the stored
+   sizes of the named parts must fit `max_bytes` and the declared size, or the
+   row is marked `failed` and the session aborted. It assembles create-only,
+   then reads the object's head. The object's size must equal the declared size
+   and stay within `max_bytes`, and its content type must equal the declared
+   one. A match marks the row `ready`. A mismatch marks the row `failed`, then
+   deletes the object, and raises `upload_mismatch` or `upload_too_large`. If
+   nothing has been uploaded yet, it raises `upload_incomplete` and the row
+   stays `pending`.
+
+An uploaded object is create-only: the single `PUT` URL creates it once and can
+never replace it, for as long as the URL stays valid, and a multipart completion
+refuses to assemble over an existing object. So the bytes `complete_upload`
+checked are the bytes the file keeps. Two `complete_upload` calls that race are
+settled by the row's revision: the loser raises `revision_mismatch`, and a loser
+that refused the object marks nothing and deletes nothing.
+
+`initiate_upload` and `presign_upload_part` return credentials: a bearer write
+URL, or a session id that lets its holder add parts. Both are marked sensitive,
+so generated surfaces refuse them; serve them from your own routes.
+`bind_stored_file_writes` runs `initiate_upload` in a transaction, as it does
+`upload`, and leaves `complete_upload` outside one, so the `failed` mark
+survives the refusal raised after it.
+
+A client-side-encrypting route refuses `initiate_upload` before any row is
+written: the app never sees the bytes, so it can't encrypt them.
+
+!!! note "Known limit: abandoned uploads are not swept"
+
+    A client that initiates and never completes leaves a `pending` row, and
+    possibly an object or an unfinished multipart upload. Nothing reaps them
+    yet. Deleting the row purges the object at its key, but not multipart
+    parts. A refused upload leaves its key free, so the single `PUT` URL can
+    still create an object there until it expires; the row stays `failed`.
+
+    - **S3.** `initiate_upload` opens the multipart upload inside its
+      transaction, so a rollback after that leaves an empty upload behind, and
+      an abandoned one keeps its parts. Add a bucket lifecycle rule that aborts
+      incomplete multipart uploads (`AbortIncompleteMultipartUpload`).
+    - **GCS.** There is no native session: an abandoned upload's parts are
+      objects named `{key}.__forze_mpu__/{upload_id}/{n}`, next to each file's
+      own key. A lifecycle rule matches only a name prefix or suffix, so none
+      can single them out from the files; they stay until the session is
+      aborted. A rollback leaves nothing on GCS, because opening a session
+      writes nothing.
 
 ## Authn routes
 

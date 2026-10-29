@@ -39,6 +39,7 @@ from forze.application.contracts.storage.value_objects import (
     UploadedObject,
     UploadPart,
     UploadSession,
+    tenant_key_prefix,
     validate_distinct_copy_keys,
 )
 from forze.application.contracts.tenancy import TenancyMixin, TenantIdentity
@@ -48,6 +49,7 @@ from forze.application.integrations.storage.client import (
     ObjectStorageListedObject,
     ObjectStoragePartInfo,
     ObjectStorageSSE,
+    attachment_content_disposition,
     unsatisfiable_range,
     validate_range,
 )
@@ -288,7 +290,7 @@ class ObjectStorageAdapter(
     def __tenant_prefix(self) -> str | None:
         tenant_id = self.require_tenant_if_aware()
 
-        return f"tenant_{tenant_id}" if tenant_id is not None else None
+        return tenant_key_prefix(tenant_id) if tenant_id is not None else None
 
     # ....................... #
 
@@ -1336,6 +1338,7 @@ class ObjectStorageAdapter(
         key: str,
         *,
         expires_in: timedelta,
+        response_filename: str | None = None,
     ) -> PresignedUrl:
         """Mint a time-limited direct-download URL for an existing key.
 
@@ -1344,6 +1347,8 @@ class ObjectStorageAdapter(
         signed) and the same tenant-aware bucket resolution, then delegates the
         signing to the client. Existence is **not** checked — signing is local
         and a ``GET`` on a missing object simply fails at request time.
+        *response_filename* is signed in as an RFC 6266 attachment
+        ``Content-Disposition`` override.
 
         Refused when client-side encryption is enabled: a direct ``GET`` would
         return ciphertext the caller cannot decrypt.
@@ -1358,6 +1363,11 @@ class ObjectStorageAdapter(
                 bucket=bucket,
                 key=key,
                 expires_in=expires_in,
+                content_disposition=(
+                    attachment_content_disposition(response_filename)
+                    if response_filename is not None
+                    else None
+                ),
             )
 
     # ....................... #
@@ -1368,6 +1378,7 @@ class ObjectStorageAdapter(
         *,
         expires_in: timedelta,
         content_type: str | None = None,
+        create_only: bool = False,
     ) -> PresignedUrl:
         """Mint a time-limited direct-upload URL for a caller-supplied key.
 
@@ -1399,6 +1410,7 @@ class ObjectStorageAdapter(
                 expires_in=expires_in,
                 content_type=content_type,
                 sse=self.sse,
+                create_only=create_only,
             )
 
     # ....................... #
@@ -1739,6 +1751,8 @@ class ObjectStorageAdapter(
         self,
         session: UploadSession,
         parts: Sequence[UploadPart],
+        *,
+        create_only: bool = False,
     ) -> ObjectHead:
         """Assemble *parts* into the final object and return its head.
 
@@ -1778,6 +1792,7 @@ class ObjectStorageAdapter(
                 parts=client_parts,
                 content_type=session.content_type,
                 sse=self.sse,
+                create_only=create_only,
             )
 
             h = await self.client.head_object(bucket=bucket, key=session.key)

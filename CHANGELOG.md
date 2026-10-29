@@ -93,6 +93,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **An operation-backed function can run as a service principal.** `register_operation_functions(..., identity=DurableServiceIdentity(...))` binds it around the operation, so `AuthnRequired`, authz and audit see it; the identity must be acknowledged as unverified. Without one, a guarded operation refuses the run.
 
+- **A presigned download can name the file it saves as.** `presign_download(key, expires_in=..., response_filename=...)` on the storage query port signs an RFC 6266 `Content-Disposition` into the URL on S3, GCS and the mock. The stored-file kit's `presign_download` passes the stored filename.
+
+- **Stored files can serve byte ranges, opt-in.** `StoredFileKitSpec(range_downloads=True)` registers `download_range`, with `download`'s row checks. JSON surfaces leave it out. `attach_stored_file_download_route` serves `GET {id}/content` and answers `Range` and conditional requests as the storage download route does.
+
+- **Stored files can upload straight to the bucket, opt-in.** `StoredFileKitSpec(direct_uploads=True)` registers `initiate_upload`, `presign_upload_part` and `complete_upload`: a key the kit mints, then a create-only presigned PUT or parts. Completion checks size, type and `max_bytes`, and fails the row on a mismatch.
+
+- **A presigned upload and a multipart completion can refuse to replace an object** (**Breaking**). `create_only=True` (never with `if_match`) makes `presign_upload` sign `If-None-Match: *` or `x-goog-if-generation-match: 0`, and `complete_upload` refuse an existing key. A custom `ObjectStorageClientPort` must accept it.
+
 **`forze ops` for people at a shell and for backfills:**
 
 - **`forze ops` gains typed flags, JSONL batches and shell completion.** `call OP --field VALUE` takes a flat-scalar input as flags; `--batch @PATH|-` runs one call per line in one runtime, stopping at the first failure; `OP` completes in the shell. An unknown option after `OP` now exits 2 with an error object.
@@ -198,6 +206,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Analytics ingest stores a plain `Enum` member as its value, as a document row does** (**behaviour change**). Postgres wrote its name (`OPEN`), and ClickHouse refused it. Rows ingested earlier keep the name until rewritten.
 
 - **A download's `Content-Disposition` encodes `/` in `filename*`.** The generated storage download routes and `streamed_download_response` encode every character outside RFC 5987 `attr-char`, so a name such as `q3/rëport.pdf` stays valid and clients keep it.
+
+- **GCS `list_parts` reports each part's stored size.** It reported `0` for every part, so a caller resuming or bounding a multipart upload could not tell how much had landed.
+
+- **S3 presigned URLs are always signed with SigV4** (**behaviour change**). With no region configured, botocore fell back to legacy SigV2, which newer AWS regions refuse and floci serves as anonymous. `S3Config(signature_version=...)` still overrides.
+
+- **`If-None-Match: *` answers 304 for an object without an ETag.** The streaming storage download route served it a 200; per RFC 9110 the wildcard matches any existing object, on the stored-file download route too.
 
 ### Security
 

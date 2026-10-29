@@ -112,7 +112,9 @@ class _FakeClient:
         parts: Any,
         content_type: str | None = None,
         sse: Any = None,
+        create_only: bool = False,
     ) -> None:
+        _ = create_only
         self.complete_calls.append(
             {
                 "bucket": bucket,
