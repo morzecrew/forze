@@ -1457,10 +1457,12 @@ async def run_coalesce_scenario(
         joined.input_json == {"n": 1} and joined.available_at == first.available_at
     )
 
-    other = await store_for(UUID("00000000-0000-0000-0000-00000000000b")).enqueue(
-        "fn", input_json=None, coalesce_key="x"
-    )
+    tenant = UUID("00000000-0000-0000-0000-00000000000b")
+    other = await store_for(tenant).enqueue("fn", input_json=None, coalesce_key="x")
     out["other_tenant_distinct"] = other.run_id != first.run_id
+    # An untagged key spelled like the tenant's scoped one must not reach the tenant's run.
+    lookalike = await store.enqueue("fn", input_json=None, coalesce_key=f"{tenant}:x")
+    out["lookalike_key_distinct"] = lookalike.run_id != other.run_id
 
     claimed = await store.begin(first.run_id, lease_for=lease)
     assert claimed is not None
@@ -1502,6 +1504,7 @@ COALESCE_OUTCOME: dict[str, Any] = {
     "burst_joins": True,
     "joined_keeps_input_and_due": True,
     "other_tenant_distinct": True,
+    "lookalike_key_distinct": True,
     "after_claim_is_new": True,
     "after_claim_joined": True,
     "after_cancel_is_new": True,

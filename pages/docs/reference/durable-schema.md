@@ -43,7 +43,8 @@ CREATE UNIQUE INDEX ON public.durable_run (coalesce_key) WHERE status = 'pending
   key is stored tenant-scoped, so two tenants reusing a key on a shared table stay
   distinct runs.
 - The partial unique index on `coalesce_key` admits one unclaimed `pending` run per key,
-  which `enqueue(coalesce_key=...)` joins. It is stored tenant-scoped too.
+  which `enqueue(coalesce_key=...)` joins. It is stored as `{tenant_id}:{key}`, or
+  `:{key}` untagged, so no key reaches another tenant's run.
 - `attempts` is the fence token: each claim advances it under a row lock, and a terminal
   write is fenced against a reclaimed lease.
 - `available_at` delays when a `pending` run may be claimed (`NULL`: claimable now).

@@ -36,6 +36,17 @@ def check_enqueue_keys(idempotency_key: str | None, coalesce_key: str | None) ->
         )
 
 
+def scope_coalesce_key(coalesce_key: str, tenant_id: UUID | None) -> str:
+    """Return *coalesce_key* as a store keys it: ``{tenant}:{key}``, or ``:{key}`` untagged.
+
+    Untagged keys get the separator too, so no untagged key can be spelled like a tenant's
+    scoped one: a tenant's starts with its id, an untagged one with ``:``. One tenant's
+    keys never reach another's run, nor an untagged caller's.
+    """
+
+    return f"{'' if tenant_id is None else tenant_id}:{coalesce_key}"
+
+
 # ....................... #
 
 

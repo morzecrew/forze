@@ -33,6 +33,7 @@ from forze.application.contracts.durable.function import (
     decode_run_cursor,
     requeue_failed_unnamed_error,
     requeue_unscoped_error,
+    scope_coalesce_key,
 )
 from forze.application.contracts.tenancy import TenancyMixin
 from forze.application.integrations.crypto.payload import (
@@ -279,7 +280,7 @@ class MongoDurableRunStore(
         }
 
         if coalesce_key is not None:
-            document["coalesce_key"] = scope_id(coalesce_key, tenant_id)
+            document["coalesce_key"] = scope_coalesce_key(coalesce_key, tenant_id)
 
             return await self._enqueue_coalesced(coll, document, input_json)
 

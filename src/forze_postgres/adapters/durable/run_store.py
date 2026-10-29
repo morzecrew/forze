@@ -28,6 +28,7 @@ from forze.application.contracts.durable.function import (
     decode_run_cursor,
     requeue_failed_unnamed_error,
     requeue_unscoped_error,
+    scope_coalesce_key,
 )
 from forze.application.contracts.tenancy import TenancyMixin
 from forze.application.integrations.crypto.payload import (
@@ -292,7 +293,7 @@ class PostgresDurableRunStore(
                 "DO UPDATE SET coalesce_key = EXCLUDED.coalesce_key"
             )
             returning = sql.SQL(_COLUMNS)
-            key = _scope_idem(coalesce_key, tenant_id)
+            key = scope_coalesce_key(coalesce_key, tenant_id)
 
         row = await self.client.fetch_one(
             sql.SQL(

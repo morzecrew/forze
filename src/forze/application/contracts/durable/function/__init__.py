@@ -45,6 +45,7 @@ from .run_store import (
     DurableRunStatus,
     DurableRunStorePort,
     check_enqueue_keys,
+    scope_coalesce_key,
 )
 from .schedule_store import (
     DurableScheduleRecord,
@@ -109,4 +110,5 @@ __all__ = [
     "require_durable_run",
     "reset_durable_cancel_signal",
     "reset_durable_run",
+    "scope_coalesce_key",
 ]
