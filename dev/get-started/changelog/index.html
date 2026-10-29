@@ -10329,6 +10329,9 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <p><strong><abbr title="Server-Side Encryption">SSE</abbr>- and WebSocket-only apps get offline delivery without Socket.IO.</strong> <code>RealtimeMailboxWriter</code> and its lifecycle step fill the mailbox those routes replay from, using the gateway's store code. They and the signal sources live in <code>forze.application.execution.realtime</code>; <code>forze_socketio</code> re-exports what moved.</p>
 </li>
 <li>
+<p><strong>A <code>SystemInvariant</code> can compare two read-sets per scope.</strong> <code>against=Measure(...)</code> bounds a sum by another sum or by a parent's field, and <code>holds</code> takes both aggregates. Every scope with rows on either side is checked, so an order left with no lines breaks <code>orders == 0 or lines &gt;= 1</code>.</p>
+</li>
+<li>
 <p><strong>Stored files can stream and presign downloads, opt-in.</strong> <code>StoredFileKitSpec(stream_downloads=True, presign_downloads=True)</code> registers <code>download_stream</code> and <code>presign_download</code>; guard each like <code>download</code>. Generated surfaces refuse the sensitive <code>presign_download</code>. A route streams with <code>streamed_download_response</code>.</p>
 </li>
 <li>
@@ -10358,6 +10361,9 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 </li>
 <li>
 <p><strong><abbr title="Model Context Protocol">MCP</abbr> and agent tool descriptions group filterable fields by type</strong> (<strong>behaviour change</strong>). <code>describe_query_discovery</code> states the operators every field shares once, then each further operator set once, with its fields under their own types. <code>QueryDiscovery</code> and <code>x-forze-query</code> are unchanged.</p>
+</li>
+<li>
+<p><strong>A <code>SystemInvariant</code> sums a <code>Decimal</code> field exactly</strong> (<strong>behaviour change</strong>). <code>holds</code> gets a <code>Decimal</code>, not a <code>float</code>, so float arithmetic in it (<code>total * 1.1</code>) raises <code>TypeError</code>; the per-commit oracle sums one instead of refusing it. A count is an <code>int</code>, printed <code>3</code> not <code>3.0</code>; other sums stay <code>float</code>.</p>
 </li>
 <li>
 <p><strong>The dynamic-read write refusal no longer names a READ ONLY transaction.</strong> The message is engine-neutral and the details carry the engine's <code>statement_type</code> where it has one. A <code>DuckDbClient</code> statement timeout now carries the code <code>duckdb_query_timeout</code>.</p>

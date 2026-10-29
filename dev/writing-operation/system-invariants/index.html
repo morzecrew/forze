@@ -1363,6 +1363,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#compare-two-read-sets" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Compare two read-sets
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#enforce-it-detective-or-preventive" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -6511,6 +6522,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#compare-two-read-sets" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Compare two read-sets
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#enforce-it-detective-or-preventive" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -6667,7 +6689,38 @@
     <span class="n">holds</span><span class="o">=</span><span class="k">lambda</span> <span class="n">n</span><span class="p">:</span> <span class="n">n</span> <span class="o">&lt;=</span> <span class="mi">1</span><span class="p">,</span>
 <span class="p">)</span>
 </code></pre></div>
-<p>The law holds <strong>per distinct scope value</strong> — once <em>per order</em> here, because <code>scope_keys=("order_id",)</code>. Empty <code>scope_keys</code> declares a <em>global</em> law (one check over the whole <code>where</code>-filtered collection); reuse <code>tenant_aware</code> in <code>where</code> for a per-tenant scope. <code>holds</code> is a pure function of the aggregate — a <code>CountAll</code>'s cardinality or a <code>SumOf</code>'s total, as a <code>float</code> — and must be deterministic and side-effect-free, because the same predicate runs in production <em>and</em> inside the simulation.</p>
+<p>The law holds <strong>per distinct scope value</strong> — once <em>per order</em> here, because <code>scope_keys=("order_id",)</code>. Empty <code>scope_keys</code> declares a <em>global</em> law (one check over the whole <code>where</code>-filtered collection); reuse <code>tenant_aware</code> in <code>where</code> for a per-tenant scope. <code>holds</code> is a pure function of the aggregate, and must be deterministic and side-effect-free, because the same predicate runs in production <em>and</em> inside the simulation. It receives a <code>CountAll</code>'s cardinality as an <code>int</code>, and a <code>SumOf</code>'s total as an exact <code>Decimal</code> when the read model declares the field <code>Decimal</code>, else as a <code>float</code>. The type follows the declaration, not the backend, so a law sees the same value on the mock, Postgres and Mongo: lines of <code>0.1</code> and <code>0.2</code> total exactly <code>Decimal("0.3")</code>, never <code>0.30000000000000004</code>. A sum the read model does not declare (a path into a <code>dict</code>) is passed as a <code>float</code>, with a warning when the law is declared.</p>
+<div class="admonition warning">
+<p class="admonition-title">A <code>Decimal</code> total does not mix with float arithmetic</p>
+<p>Comparing a <code>Decimal</code> with an <code>int</code> or a <code>float</code> works, but arithmetic does not: <code>total * 1.1</code> raises <code>TypeError</code>. Write the factor as a <code>Decimal</code> (<code>total * Decimal("1.1")</code>). Violation messages print the value as it is, so a count reads <code>3</code>, not <code>3.0</code>.</p>
+</div>
+<h2 id="compare-two-read-sets">Compare two read-sets<a class="headerlink" href="#compare-two-read-sets" title="Permanent link">&para;</a></h2>
+<p>Some laws bound one aggregate by another: an order's lines never exceed the order's quantity, refunds never exceed sales. Declare the second side with <code>against</code>, a <code>Measure</code> scoped by the same values, and <code>holds</code> takes both aggregates:</p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">forze.application.contracts.invariants</span><span class="w"> </span><span class="kn">import</span> <span class="n">Measure</span>
+
+<span class="n">lines_within_order</span> <span class="o">=</span> <span class="n">SystemInvariant</span><span class="p">(</span>
+    <span class="n">name</span><span class="o">=</span><span class="s2">"lines-within-order"</span><span class="p">,</span>
+    <span class="n">read_set</span><span class="o">=</span><span class="n">ReadSet</span><span class="p">(</span><span class="n">spec</span><span class="o">=</span><span class="n">ORDER_LINE</span><span class="p">,</span> <span class="n">scope_keys</span><span class="o">=</span><span class="p">(</span><span class="s2">"order_id"</span><span class="p">,)),</span>
+    <span class="n">aggregate</span><span class="o">=</span><span class="n">SumOf</span><span class="p">(</span><span class="s2">"qty"</span><span class="p">),</span>
+    <span class="n">against</span><span class="o">=</span><span class="n">Measure</span><span class="p">(</span>
+        <span class="n">read_set</span><span class="o">=</span><span class="n">ReadSet</span><span class="p">(</span><span class="n">spec</span><span class="o">=</span><span class="n">ORDER</span><span class="p">,</span> <span class="n">scope_keys</span><span class="o">=</span><span class="p">(</span><span class="s2">"id"</span><span class="p">,)),</span>
+        <span class="n">aggregate</span><span class="o">=</span><span class="n">SumOf</span><span class="p">(</span><span class="s2">"qty"</span><span class="p">),</span>  <span class="c1"># the order's own field: a sum over its one row</span>
+    <span class="p">),</span>
+    <span class="n">holds</span><span class="o">=</span><span class="k">lambda</span> <span class="n">lines</span><span class="p">,</span> <span class="n">order</span><span class="p">:</span> <span class="n">lines</span> <span class="o">&lt;=</span> <span class="n">order</span><span class="p">,</span>
+<span class="p">)</span>
+</code></pre></div>
+<p>The two sides' <code>scope_keys</code> pair <strong>by position</strong>: here each order's lines (<code>order_id</code>) meet the order whose <code>id</code> matches. Every evaluator matches a <code>UUID</code> by its string and a plain <code>Enum</code> member by its value, so a <code>str</code> field can refer to a <code>UUID</code> id or to a string-valued <code>Enum</code>. A pairing no evaluator would match, such as an <code>int</code> against a <code>str</code> or a <code>UUID</code>, or a <code>date</code> against a <code>datetime</code>, is refused when the law is declared, as is a <code>holds</code> that does not take two arguments. Runtime enforcement takes the law's own scope params (<code>{"order_id": ...}</code>) and binds the other side from them.</p>
+<p>The two sides are separate reads, and a detective check runs outside any transaction, so a write can commit between them. Runtime evaluation therefore reads the law's own side again after the other, and uses the pair only if that side did not change. If it changes on each of three reads, evaluation raises <code>exc.concurrency</code> with the code <code>system_invariant_unstable_read</code> rather than judge values no committed state held.</p>
+<p>Every scope with rows on <strong>either</strong> side is checked, and the side with no rows there counts as <code>0</code>. A scope with rows on neither side does not exist, so no evaluator calls <code>holds</code> for it. That is what makes a <em>minimum</em> checkable. A one-sided law only ever sees scopes that have rows, so <code>CountAll</code> with <code>n &gt;= 1</code> cannot notice an order whose last line was removed. Put the orders on the other side and every order becomes a scope:</p>
+<div class="highlight"><pre><span></span><code><span class="n">order_has_a_line</span> <span class="o">=</span> <span class="n">SystemInvariant</span><span class="p">(</span>
+    <span class="n">name</span><span class="o">=</span><span class="s2">"order-has-a-line"</span><span class="p">,</span>
+    <span class="n">read_set</span><span class="o">=</span><span class="n">ReadSet</span><span class="p">(</span><span class="n">spec</span><span class="o">=</span><span class="n">ORDER_LINE</span><span class="p">,</span> <span class="n">scope_keys</span><span class="o">=</span><span class="p">(</span><span class="s2">"order_id"</span><span class="p">,)),</span>
+    <span class="n">aggregate</span><span class="o">=</span><span class="n">CountAll</span><span class="p">(),</span>
+    <span class="n">against</span><span class="o">=</span><span class="n">Measure</span><span class="p">(</span><span class="n">read_set</span><span class="o">=</span><span class="n">ReadSet</span><span class="p">(</span><span class="n">spec</span><span class="o">=</span><span class="n">ORDER</span><span class="p">,</span> <span class="n">scope_keys</span><span class="o">=</span><span class="p">(</span><span class="s2">"id"</span><span class="p">,)),</span> <span class="n">aggregate</span><span class="o">=</span><span class="n">CountAll</span><span class="p">()),</span>
+    <span class="n">holds</span><span class="o">=</span><span class="k">lambda</span> <span class="n">lines</span><span class="p">,</span> <span class="n">orders</span><span class="p">:</span> <span class="n">orders</span> <span class="o">==</span> <span class="mi">0</span> <span class="ow">or</span> <span class="n">lines</span> <span class="o">&gt;=</span> <span class="mi">1</span><span class="p">,</span>
+<span class="p">)</span>
+</code></pre></div>
+<p>Keep the side you enforce from as <code>read_set</code>: an <a href="../../recipes/governed-aggregate-kit/">aggregate kit</a> reads the law's own <code>scope_keys</code> off the row it wrote, so a kit over order lines needs <code>order_id</code> there, not <code>id</code>.</p>
 <h2 id="enforce-it-detective-or-preventive">Enforce it: detective or preventive<a class="headerlink" href="#enforce-it-detective-or-preventive" title="Permanent link">&para;</a></h2>
 <p>Two enforcement modes, from <code>forze_kits.invariants</code>, trade timing against cost:</p>
 <ul>
@@ -6705,7 +6758,7 @@
     <span class="n">invariants</span><span class="o">=</span><span class="p">[</span><span class="o">*</span><span class="n">oracle</span><span class="o">.</span><span class="n">invariants</span><span class="p">],</span>
 <span class="p">)</span>
 </code></pre></div>
-<p>By default the oracle checks the law over <strong>final</strong> state. <code>compile_oracle(law, per_commit=True)</code> upgrades to a per-commit trace fold: it checks the law after <em>every</em> committed transaction, catching a violation that a later transaction heals — the transient a final-state check misses. Per-commit mode reads the value trace, so it needs <code>SimulationConfig(capture_values=True)</code>.</p>
+<p>By default the oracle checks the law over <strong>final</strong> state, with one grouped aggregate per side. A one-sided law checks only the scopes that have rows; a <a href="#compare-two-read-sets">paired law</a> checks every scope with rows on either side. <code>compile_oracle(law, per_commit=True)</code> upgrades to a per-commit trace fold: it checks the law after <em>every</em> committed transaction, catching a violation that a later transaction heals — the transient a final-state check misses. Per-commit mode reads the value trace, so it needs <code>SimulationConfig(capture_values=True)</code>.</p>
 <p>This is the guarantee <code>propose</code> can't give. Where <code>propose</code> filters one write against the state it saw, the oracle drives the law through thousands of <a href="../../dst/overview/">hostile interleavings</a> and proves it holds across all of them — and because the same <code>holds</code> predicate runs in production enforcement, in the dry-run, and in the oracle, what you simulate is exactly what you ship.</p>
 
 
