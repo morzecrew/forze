@@ -159,6 +159,10 @@ binds is refused by the inventory reconciliation when the runtime is built with 
   is awaited is skipped for the next match, but stays locked until the transaction ends, as
   in Postgres. A read-only document has no `write` table, so its locking read still goes to
   `read`.
+- **Plain `Enum` fields.** A document or ingest column holds the member's value, as for a
+  `StrEnum` or `IntEnum`, and a filter names that value. Earlier versions wrote
+  `Status.OPEN` to a document column and `OPEN` to an ingest one; rewrite those rows, for
+  example `UPDATE orders SET status = 'open' WHERE status = 'Status.OPEN'`.
 - **Indexes for sorted pages.** A sort on a `NOT NULL` column, or on the record `id`,
   renders without a null placement, so a plain btree index serves it in either direction,
   through a view too. A nullable column keeps the canonical placement (ascending nulls

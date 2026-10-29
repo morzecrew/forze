@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import date, datetime
 from decimal import Decimal
+from enum import Enum
 from typing import Annotated, Any, cast
 from uuid import UUID, uuid4
 
@@ -1993,6 +1994,14 @@ class TestPythonAnnToPostgresType:
         assert PsycopgQueryRenderer._python_ann_to_postgres_type(complex) is None
 
 
+class _MixedStatus(str, Enum):  # noqa: UP042 -- the case under test is not a StrEnum
+    OPEN = "open"
+
+
+class _MixedNumber(int, Enum):
+    ONE = 1
+
+
 class TestPsycopgValueCoercer:
     """Direct coverage for the value coercer used by the renderer."""
 
@@ -2072,6 +2081,27 @@ class TestPsycopgValueCoercer:
     def test_array_typed_elements_coerced(self) -> None:
         c = PsycopgValueCoercer()
         assert c.array(["1", "2"], t=_t("int4", is_array=True)) == [1, 2]
+
+    def test_an_enum_operand_binds_as_the_value_a_write_stores(self) -> None:
+        c = PsycopgValueCoercer()
+
+        assert str(_MixedStatus.OPEN) == "_MixedStatus.OPEN"
+        assert c.scalar(_MixedStatus.OPEN, t=_t("text")) == "open"
+        assert c.scalar(_MixedStatus.OPEN, t=None) == "open"
+        assert c.array([_MixedStatus.OPEN], t=_t("text", is_array=True)) == ["open"]
+        assert type(c.scalar(_MixedNumber.ONE, t=_t("int8"))) is int
+
+    def test_an_enum_eq_operand_renders_as_its_value(self) -> None:
+        types = {"status": _t("text")}
+        _, params = PsycopgQueryRenderer(types=types).render(
+            QueryField("status", "$eq", _MixedStatus.OPEN)
+        )
+        _, in_params = PsycopgQueryRenderer(types=types).render(
+            QueryField("status", "$in", [_MixedStatus.OPEN])
+        )
+
+        assert params == ["open"]
+        assert in_params == [["open"]]
 
     def test_scalar_is_a_query_value_scalar(self) -> None:
         # Sanity: the alias used by ``array`` recognizes plain scalars.

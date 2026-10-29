@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import math
 from decimal import Decimal
+from enum import Enum
 from typing import Any
 from uuid import UUID
 
@@ -25,7 +26,13 @@ def coerce_firestore_value(value: Any) -> Any:
     overflowing the double range) are refused: a stored non-finite double can never be
     matched by a filter — every filter seam already refuses non-finite operands — so
     persisting one would corrupt the system of record with an unqueryable value.
+
+    An ``Enum`` member becomes its value, which the read model decodes back: the client cannot
+    encode a plain member, and a ``StrEnum`` or ``IntEnum`` value is what it stored before.
     """
+
+    if isinstance(value, Enum):
+        return coerce_firestore_value(value.value)
 
     if isinstance(value, UUID):
         return str(value)
@@ -44,7 +51,8 @@ def coerce_firestore_value(value: Any) -> Any:
     if isinstance(value, float) and not math.isfinite(value):
         raise exc.precondition(f"Non-finite float not allowed: {value!r}")
 
-    if isinstance(value, list):
+    # A tuple too: the client stores either as an array.
+    if isinstance(value, (list, tuple)):
         return [
             coerce_firestore_value(x)
             for x in value  # pyright: ignore[reportUnknownVariableType]

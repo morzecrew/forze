@@ -25,6 +25,7 @@ from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict
 from forze.base.primitives.projection import MISSING as _MISSING
 from forze.base.primitives.projection import path_get as _path_get
+from forze.base.serialization import enum_values
 
 from .nodes import (
     ELEM_SCALAR_FIELD,
@@ -63,7 +64,25 @@ def _value_is_empty(value: Any) -> bool:
 def _coerce_set(value: Any) -> set[Any]:
     items = value if isinstance(value, (list, tuple, set, frozenset)) else (value,)
 
-    return {instant_key(item) for item in items}  # pyright: ignore[reportUnknownVariableType]
+    return {_set_key(item) for item in items}  # pyright: ignore[reportUnknownVariableType]
+
+
+def _set_key(item: Any) -> Any:
+    """*item* as a set member: an ``Enum`` member as its value, or as itself when the value
+    cannot be hashed (a list); a ``UUID`` as its text, which ``$in`` also matches it by."""
+
+    plain = _plain(item)
+
+    try:
+        hash(plain)
+
+    except TypeError:
+        plain = item
+
+    if isinstance(plain, UUID):
+        plain = str(plain)
+
+    return instant_key(plain)
 
 
 _EPOCH: Final = datetime(1970, 1, 1, tzinfo=UTC)
@@ -95,6 +114,17 @@ def instant_key(value: Any) -> Any:
     return (_INSTANT, value - _EPOCH) if _is_aware(value) else value
 
 
+def _plain(value: Any) -> Any:
+    """*value* with each ``Enum`` member in it, in containers too, as its value, as a store
+    holds it.
+
+    A row keeps the member (a ``model_dump``) while a filter names the value — the parser takes
+    no plain member operand — and a plain ``Enum`` member equals nothing but itself.
+    """
+
+    return enum_values(value)
+
+
 def _pair(left: Any, right: Any) -> tuple[Any, Any]:
     """*left* and *right* as instants when both are aware datetimes; otherwise as they are.
 
@@ -109,10 +139,12 @@ def _pair(left: Any, right: Any) -> tuple[Any, Any]:
 
 
 def _ordered(compare: Callable[[Any, Any], bool], left: Any, right: Any) -> bool:
-    return compare(*_pair(left, right))
+    return compare(*_pair(_plain(left), _plain(right)))
 
 
 def _eq(left: Any, right: Any) -> bool:
+    left, right = _plain(left), _plain(right)
+
     if operator.eq(*_pair(left, right)):
         return True
 
@@ -229,10 +261,9 @@ def _match_field(doc: JsonDict, field: QueryField) -> bool:
                 return False
 
         case "$null":
-            should_be_null = bool(field.value)
-            if should_be_null:
-                return value is _MISSING or value is None
-            return value is not _MISSING and value is not None
+            # A member whose value is ``None`` is stored as ``NULL``.
+            is_null = value is _MISSING or _plain(value) is None
+            return is_null is bool(field.value)
 
         case "$empty":
             should_be_empty = bool(field.value)

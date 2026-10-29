@@ -33,7 +33,7 @@ from forze.application.integrations.persistence import (
 )
 from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict, OnceCell, projection_roots
-from forze.base.serialization import ModelCodec, default_model_codec
+from forze.base.serialization import ModelCodec, default_model_codec, enum_values
 from forze.domain.constants import ID_FIELD
 from forze_postgres.kernel.catalog.introspect import (
     PostgresColumnTypes,
@@ -447,6 +447,11 @@ class PostgresGateway[M: BaseModel](
     def adapt_value_for_write(self, v: Any, *, t: PostgresType | None) -> Any:
         if t is None:
             return v
+
+        # A member as its value, which the read model decodes: ``str()`` names a plain member
+        # (``Status.OPEN``), and psycopg dumps its bare name. Before the ``None`` check, so a
+        # member whose value is ``None`` is SQL ``NULL``, not JSON ``null``.
+        v = enum_values(v)
 
         if v is None:
             return None

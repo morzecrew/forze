@@ -11,6 +11,7 @@ the decimal→double representation.
 from __future__ import annotations
 
 from decimal import Decimal
+from enum import Enum, IntEnum, StrEnum
 from uuid import uuid4
 
 import pytest
@@ -79,3 +80,35 @@ def test_in_range_precision_loss_still_allowed() -> None:
 
     out = coerce_firestore_value(Decimal("12345678901234567890"))
     assert out == pytest.approx(1.2345678901234567e19)
+
+
+class _Plain(Enum):
+    OPEN = "open"
+
+
+class _Text(StrEnum):
+    OPEN = "open"
+
+
+class _Number(IntEnum):
+    ONE = 1
+
+
+def test_an_enum_member_coerces_to_its_value() -> None:
+    """A plain member, which the client cannot encode, as its value; a StrEnum or IntEnum
+    member as the same string or number it was stored as before."""
+
+    out = coerce_firestore_value(
+        {"plain": _Plain.OPEN, "text": _Text.OPEN, "number": _Number.ONE, "list": [_Plain.OPEN]}
+    )
+
+    assert out == {"plain": "open", "text": "open", "number": 1, "list": ["open"]}
+    assert [type(out[k]) for k in ("plain", "text", "number")] == [str, str, int]
+
+
+def test_a_tuple_is_coerced_element_by_element_as_a_list_is() -> None:
+    u = uuid4()
+
+    assert coerce_firestore_value({"t": (_Plain.OPEN, u, Decimal("1.5"))}) == {
+        "t": ["open", str(u), 1.5]
+    }

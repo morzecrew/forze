@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import base64
 import json
+from enum import Enum, IntEnum
 from uuid import uuid4
 
 import pytest
@@ -188,6 +189,59 @@ class TestJsonColumnsThroughCopy:
         stored = await pg_client.fetch_value(f"SELECT payload FROM public.{table}")  # table name is a test-local literal, never caller input
 
         assert stored == {"nested": {"tab": "\t"}}, "JSON text must land as a document"
+
+
+# ....................... #
+
+
+class TestEnumColumnsThroughCopy:
+    """An ``Enum`` member lands as its value, as in a document row."""
+
+    @pytest.mark.asyncio
+    async def test_a_plain_enum_lands_as_its_value(
+        self,
+        pg_client: PostgresClient,
+        pg_analytics_table: str,
+    ) -> None:
+        """psycopg writes a plain member as its name (``SIGNUP``), which no read decodes."""
+
+        class _Event(Enum):
+            SIGNUP = "signup"
+
+        class _Value(IntEnum):
+            ONE = 1
+
+        class _Ingest(BaseModel):
+            event: _Event
+            value: _Value
+
+        adapter = PostgresAnalyticsAdapter(
+            client=pg_client,
+            spec=AnalyticsSpec(
+                name="events",
+                read=_Ingest,
+                queries={"all": AnalyticsQueryDefinition(params=_Params)},
+                ingest=_Ingest,
+            ),
+            config=PostgresAnalyticsConfig(
+                queries={
+                    "all": PostgresQueryConfig(
+                        sql=f"SELECT event, value FROM public.{pg_analytics_table}",  # table name is a test-local literal, never caller input
+                    ),
+                },
+                ingest=IngestSpec(("public", pg_analytics_table)),
+            ),
+        )
+
+        await adapter.append([_Ingest(event=_Event.SIGNUP, value=_Value.ONE)])
+
+        stored = await pg_client.fetch_all(
+            f"SELECT event, value FROM public.{pg_analytics_table}"  # table name is a test-local literal, never caller input
+        )
+        page = await adapter.run_page("all", _Params())
+
+        assert [(row["event"], row["value"]) for row in stored] == [("signup", 1)]
+        assert [(hit.event, hit.value) for hit in page.hits] == [(_Event.SIGNUP, _Value.ONE)]
 
 
 # ....................... #

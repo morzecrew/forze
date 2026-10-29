@@ -47,6 +47,7 @@ from forze.application.contracts.querying import (
     validate_query_capabilities,
 )
 from forze.base.exceptions import exc
+from forze.base.serialization import enum_values
 
 from ...catalog.introspect import PostgresColumnTypes, PostgresType
 from ...catalog.introspect.utils import normalize_pg_type, strip_type_modifier
@@ -222,6 +223,9 @@ class PsycopgValueCoercer:
     # ....................... #
 
     def scalar(self, v: Any, *, t: PostgresType | None) -> Any:
+        # A member binds as the value a write stores: ``str()`` names a ``(str, Enum)`` member.
+        v = enum_values(v)
+
         if v is None:
             return None
 

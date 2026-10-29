@@ -15,6 +15,7 @@ from .diff import (
     has_hybrid_patch_conflict,
     split_touches_from_merge_patch,
 )
+from .enums import enum_values
 from .model_codec import ModelCodec, ModelDumpExcludeOptions
 from .pydantic import CACHE_DUMP_EXCLUDE_OPTS, PERSISTENCE_DUMP_EXCLUDE_OPTS
 from .pydantic_codec import PydanticModelCodec
@@ -25,6 +26,7 @@ from .sets import sorted_set_items
 __all__ = [
     "apply_dict_patch",
     "decimal_text",
+    "enum_values",
     "calculate_dict_difference",
     "ModelCodec",
     "ModelDumpExcludeOptions",

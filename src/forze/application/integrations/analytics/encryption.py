@@ -25,7 +25,7 @@ from forze.application.contracts.tenancy import TenantIdentity
 from forze.application.integrations.crypto import EncryptingModelCodec
 from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict
-from forze.base.serialization import ModelCodec
+from forze.base.serialization import ModelCodec, enum_values
 
 # ----------------------- #
 
@@ -106,7 +106,8 @@ async def encode_ingest_payloads(
     - ``"python"`` (the default) keeps them as Python objects, which is what a driver that binds
       values natively wants — Postgres (psycopg) and ClickHouse (clickhouse-connect) both map
       them straight onto a ``UUID`` / ``DateTime64`` / ``Decimal`` column, and handing those
-      drivers strings instead would be a lossy round-trip through the column's own parser.
+      drivers strings instead would be a lossy round-trip through the column's own parser. An
+      ``Enum`` member is the exception: it becomes its value, as in a document row.
     - ``"json"`` is for a backend whose transport **is** JSON. BigQuery's streaming insert is an
       HTTP ``insertAll`` — the client hands the row map to a JSON serializer, which cannot encode
       a ``UUID``, a ``datetime`` or a ``Decimal`` at all, so those rows raised ``TypeError``
@@ -136,10 +137,14 @@ async def encode_ingest_payloads(
         else:
             raise exc.internal("Analytics ingest rows must be Pydantic model instances.")
 
-        out.append(
+        encoded = (
             ingest_codec.encode_persistence_mapping(model, mode=mode)
             if encrypts
             else ingest_codec.encode_mapping(model, mode=mode)
         )
+
+        # No driver binds an ``Enum`` member as its value: psycopg writes a plain one's name and
+        # clickhouse-connect refuses it. A document row holds the value, so the ingest row does.
+        out.append(enum_values(encoded) if mode == "python" else encoded)
 
     return out

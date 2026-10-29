@@ -16,6 +16,7 @@ predicate) surface as a failing parity case rather than silently.
 
 from __future__ import annotations
 
+from enum import Enum
 from typing import Any, cast
 
 import attrs
@@ -36,10 +37,18 @@ from forze.domain.models import CreateDocumentCmd, Document, ReadDocument
 # Models exercised by the corpus (scalars, scalar array, object array, nullable)
 
 
+class CorpusStatus(Enum):
+    """A plain ``Enum``, not a ``StrEnum``: a store holds its value, and a filter names it."""
+
+    OPEN = "open"
+    CLOSED = "closed"
+
+
 class CorpusItem(BaseModel):
     sku: str
     qty: int
     tags: list[str] = []  # sub-array, for nested-quantifier cases
+    status: CorpusStatus = CorpusStatus.OPEN
 
 
 class _CorpusFields(BaseModel):
@@ -51,6 +60,8 @@ class _CorpusFields(BaseModel):
     score: int | None = None
     items: list[CorpusItem] = []
     matrix: list[list[str]] = []  # scalar array-of-arrays, for `{$any:{$any}}` nesting
+    status: CorpusStatus = CorpusStatus.OPEN
+    statuses: list[CorpusStatus] = []
 
 
 class CorpusCreate(CreateDocumentCmd, _CorpusFields):
@@ -73,14 +84,16 @@ SEED: dict[str, CorpusCreate] = {
         name="alice", nick="alice", age=30, tags=["x", "y"], nums=[2, 5], score=10,
         items=[
             CorpusItem(sku="a", qty=5, tags=["hot"]),
-            CorpusItem(sku="b", qty=1, tags=["cold"]),
+            CorpusItem(sku="b", qty=1, tags=["cold"], status=CorpusStatus.CLOSED),
         ],
         matrix=[["hot", "cold"], ["hot"]],
+        statuses=[CorpusStatus.OPEN, CorpusStatus.CLOSED],
     ),
     "bob": CorpusCreate(
         name="bob", nick="robert", age=25, tags=["y", "z"], nums=[1, 3], score=None,
-        items=[CorpusItem(sku="a", qty=2, tags=["cold"])],
+        items=[CorpusItem(sku="a", qty=2, tags=["cold"], status=CorpusStatus.CLOSED)],
         matrix=[["cold", "cold"]],
+        status=CorpusStatus.CLOSED, statuses=[CorpusStatus.CLOSED],
     ),
     "carol": CorpusCreate(
         name="carol", nick="carol", age=40, tags=[], nums=[], score=5, items=[],
@@ -90,6 +103,7 @@ SEED: dict[str, CorpusCreate] = {
         name="dave", nick="dave", age=30, tags=["x"], nums=[9], score=10,
         items=[CorpusItem(sku="c", qty=9, tags=["hot", "new"])],
         matrix=[["hot", "new"], ["x"]],
+        status=CorpusStatus.CLOSED, statuses=[CorpusStatus.OPEN],
     ),
 }
 
@@ -322,6 +336,28 @@ CASES: tuple[QueryCase, ...] = (
     # Negation — rejected by Firestore MVP.
     QueryCase(name="negation", filters={"$not": {"$values": {"name": {"$eq": "alice"}}}},
               expected=frozenset({"bob", "carol", "dave"})),
+    # A plain-Enum field, named by its value: a store holds "open", the mock the member.
+    # status: alice/carol open, bob/dave closed. statuses: alice[open,closed] bob[closed]
+    # carol[] dave[open]. items[].status: alice b and bob a closed, every other item open.
+    QueryCase(name="enum_eq", filters={"$values": {"status": "open"}},
+              expected=frozenset({"alice", "carol"})),
+    QueryCase(name="enum_neq", filters={"$values": {"status": {"$neq": "open"}}},
+              expected=frozenset({"bob", "dave"})),
+    QueryCase(name="enum_in", filters={"$values": {"status": {"$in": ["closed"]}}},
+              expected=frozenset({"bob", "dave"})),
+    QueryCase(name="enum_nin", filters={"$values": {"status": {"$nin": ["closed"]}}},
+              expected=frozenset({"alice", "carol"})),
+    # Ordered as its value: "open" > "closed".
+    QueryCase(name="enum_ord_gt", filters={"$values": {"status": {"$gt": "closed"}}},
+              expected=frozenset({"alice", "carol"})),
+    QueryCase(name="enum_array_any", filters={"$values": {"statuses": {"$any": "closed"}}},
+              expected=frozenset({"alice", "bob"})),
+    QueryCase(name="enum_array_overlaps",
+              filters={"$values": {"statuses": {"$overlaps": ["open"]}}},
+              expected=frozenset({"alice", "dave"})),
+    QueryCase(name="enum_nested_any",
+              filters={"$values": {"items": {"$any": {"$values": {"status": "closed"}}}}},
+              expected=frozenset({"alice", "bob"})),
     # Combinator nesting (all-supported ops).
     QueryCase(
         name="and_quant",
