@@ -134,12 +134,17 @@ class TestParallelSweepUnderACoverageSession:
     package-wide `--cov=forze_dst` does not either, so only the real configuration pins it —
     hence a pytest subprocess rather than an in-process assertion.
 
-    The subprocess's **exit code is deliberately not asserted**: that same narrow-source
-    configuration segfaults at interpreter shutdown roughly twice in ten runs, *after* the tests
-    have reported success, with a fork context and a spawn one alike. It is the tooling's crash
-    rather than the sweep's, and CI's own `--cov=src` shape does not show it (ten clean runs), so
-    asserting the code here would buy a flaky test instead of a signal. What this asserts is what
-    it is for: the sweep ran, and nothing failed to pickle.
+    Why that configuration is special: to locate a dotted source package, coverage calls
+    `importlib.util.find_spec`, which imports the parent `forze_dst` and its dependencies, then
+    evicts every module that import added from `sys.modules`. The test run re-imports them, so
+    the process holds two copies of each — the stale stdlib class was the `PicklingError` above.
+
+    orjson is preloaded (`-p orjson`) so coverage cannot evict it. On Python 3.13+ orjson's
+    module exec hands each new module object a reference to its process-wide `Fragment` and
+    `JSONDecodeError` that it never took, so a second copy under-counts them; freeing them early
+    corrupts the heap, and the session segfaults at shutdown after its tests pass (and dumps a
+    `core` into the working tree). Preloading leaves the pickling regression reproducible and
+    lets the exit code be asserted.
     """
 
     def test_a_sweep_survives_pytest_cov_with_a_module_source(self) -> None:
@@ -157,6 +162,9 @@ class TestParallelSweepUnderACoverageSession:
                 "--cov-fail-under=0",
                 "-p",
                 "no:cacheprovider",
+                # Loaded before pytest-cov starts coverage — see the class docstring.
+                "-p",
+                "orjson",
             ],
             capture_output=True,
             text=True,
@@ -165,6 +173,8 @@ class TestParallelSweepUnderACoverageSession:
 
         assert "PicklingError" not in completed.stdout, completed.stdout[-3000:]
         assert "2 passed" in completed.stdout, completed.stdout[-3000:]
+        # A negative code is a signal: the session crashed after its tests reported success.
+        assert completed.returncode == 0, (completed.returncode, completed.stderr[-3000:])
 
 
 class TestSimulationSeedRunner:
