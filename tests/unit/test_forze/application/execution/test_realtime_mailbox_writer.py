@@ -565,6 +565,28 @@ class TestRealtimeMailboxWriterLifecycleStep:
         ] == ["evt-1"]
         assert step.startup.task is None or step.startup.task.done()  # type: ignore[attr-defined]
 
+    async def test_a_second_startup_call_keeps_the_running_loop(self) -> None:
+        writer = RealtimeMailboxWriter(
+            source=StreamGroupSignalSource(stream_spec=realtime_stream_spec(), poll_interval=_FAST),
+            dedup=_dedup(),
+            mailbox_factory=lambda _ctx: InMemoryRealtimeMailbox(),
+        )
+        step = realtime_mailbox_writer_lifecycle_step(writer)
+        runtime = _runtime()
+
+        async with runtime.scope():
+            ctx = runtime.get_context()
+            await step.startup(ctx)
+            first = step.startup.task  # type: ignore[attr-defined]
+
+            await step.startup(ctx)  # a direct double call must not orphan the first loop
+            assert step.startup.task is first  # type: ignore[attr-defined]
+
+            assert step.shutdown is not None
+            await step.shutdown(ctx)
+
+        assert first is not None and first.done()
+
     async def test_a_tenant_global_source_over_a_tenant_aware_stream_fails_startup(self) -> None:
         spec = realtime_stream_spec()
         writer = RealtimeMailboxWriter(

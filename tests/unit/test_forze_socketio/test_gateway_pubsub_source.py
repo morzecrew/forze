@@ -21,7 +21,8 @@ from uuid import UUID, uuid4
 import pytest
 from pydantic import BaseModel
 
-from forze.application.contracts.pubsub import PubSubSpec
+from forze.application.contracts.deps import Deps
+from forze.application.contracts.pubsub import PubSubQueryDepKey, PubSubSpec
 from forze.application.contracts.realtime import Audience, RealtimeEvent, RealtimeSignal
 from forze.application.contracts.tenancy import TenantIdentity
 from forze.application.execution import DepsRegistry, ExecutionRuntime
@@ -33,7 +34,7 @@ from forze_kits.integrations.realtime import (
     realtime_pubsub_spec,
 )
 from forze_mock import MockDepsModule
-from forze_socketio import PubSubSignalSource
+from forze_socketio import PubSubSignalSource, RealtimeGatewayStats
 
 # ----------------------- #
 
@@ -203,6 +204,118 @@ class TestFailurePolicy:
 
             with pytest.raises(CoreException):
                 await asyncio.wait_for(run, timeout=5)
+
+
+class _ScriptedPubSub:
+    """A pubsub port whose subscriptions follow a script, one round per subscribe.
+
+    A round yields its messages, raises an exception placed in it, then ends (the
+    backend's read timeout). Past the script a subscription idles until cancelled.
+    """
+
+    def __init__(self, *rounds: list[Any]) -> None:
+        self.rounds = list(rounds)
+        self.subscribes = 0
+
+    async def subscribe(self, channels: list[str], *, timeout: Any = None) -> Any:
+        self.subscribes += 1
+
+        if not self.rounds:
+            await asyncio.Event().wait()
+
+        for item in self.rounds.pop(0):
+            if isinstance(item, BaseException):
+                raise item
+
+            yield item
+
+
+def _message(n: int) -> Any:
+    signal = RealtimeSignal.of(Audience.topic("t"), "e", {"n": n})
+    return type("Message", (), {"payload": signal, "headers": {}})()
+
+
+def _scripted_runtime(port: _ScriptedPubSub) -> ExecutionRuntime:
+    def module() -> Deps:
+        return Deps.plain({PubSubQueryDepKey: lambda _ctx, _spec: port})
+
+    return ExecutionRuntime(deps=DepsRegistry.from_modules(module).freeze())
+
+
+class TestRunLoop:
+    async def test_an_ended_subscription_is_resubscribed_until_cancelled(self) -> None:
+        port = _ScriptedPubSub([_message(1)], [_message(2)])
+        recorder = _Recorder()
+        runtime = _scripted_runtime(port)
+
+        async with runtime.scope():
+            task = asyncio.create_task(_source().run(runtime.get_context(), recorder))
+            await _wait_for(lambda: len(recorder.received) == 2)
+
+            task.cancel()
+
+            with pytest.raises(asyncio.CancelledError):
+                await task
+
+        assert [r[0].payload["n"] for r in recorder.received] == [1, 2]
+        assert port.subscribes == 3  # the third idles until the cancel
+
+    async def test_a_transport_error_is_logged_and_resubscribed(self) -> None:
+        port = _ScriptedPubSub(
+            [exc.precondition("broker refused")], [RuntimeError("broker down")], [_message(1)]
+        )
+        recorder = _Recorder()
+        stop = asyncio.Event()
+        runtime = _scripted_runtime(port)
+
+        async with runtime.scope():
+            task = asyncio.create_task(_source().run(runtime.get_context(), recorder, stop=stop))
+            await _wait_for(lambda: len(recorder.received) == 1)
+
+            stop.set()
+            await asyncio.wait_for(task, timeout=5)
+
+        assert port.subscribes >= 3
+
+    async def test_a_stop_set_before_run_never_subscribes(self) -> None:
+        port = _ScriptedPubSub()
+        stop = asyncio.Event()
+        stop.set()
+        runtime = _scripted_runtime(port)
+
+        async with runtime.scope():
+            await _source().run(runtime.get_context(), _Recorder(), stop=stop)
+
+        assert port.subscribes == 0
+
+    @pytest.mark.parametrize("counted", [True, False], ids=["with-stats", "no-stats"])
+    async def test_bridge_failures_are_counted_and_skipped(self, counted: bool) -> None:
+        port = _ScriptedPubSub([_message(1), _message(2), _message(3)])
+        stats = RealtimeGatewayStats() if counted else None
+        received: list[int] = []
+        stop = asyncio.Event()
+
+        async def flaky(signal: RealtimeSignal, *args: Any) -> None:
+            if signal.payload["n"] == 1:
+                raise exc.precondition("bad signal")
+
+            if signal.payload["n"] == 2:
+                raise RuntimeError("bad signal")
+
+            received.append(signal.payload["n"])
+
+        runtime = _scripted_runtime(port)
+
+        async with runtime.scope():
+            source = _source(stats=stats)
+            task = asyncio.create_task(source.run(runtime.get_context(), flaky, stop=stop))
+            await _wait_for(lambda: received == [3])
+
+            stop.set()
+            await asyncio.wait_for(task, timeout=5)
+
+        assert received == [3]  # both failures skipped, the channel kept going
+        assert stats is None or stats.bridge_failed == 2
 
 
 class TestWiring:
