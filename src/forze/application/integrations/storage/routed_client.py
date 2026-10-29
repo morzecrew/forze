@@ -110,6 +110,7 @@ class RoutedObjectStorageClientBase[C: _RoutedStorageInnerClient](
         *,
         start: int,
         end: int | None = None,
+        if_match: str | None = None,
     ) -> tuple[ObjectBody, str, int]:
         inner = await self._get_client()
 
@@ -119,6 +120,7 @@ class RoutedObjectStorageClientBase[C: _RoutedStorageInnerClient](
                 key,
                 start=start,
                 end=end,
+                if_match=if_match,
             )
 
     async def download_bytes_conditional(

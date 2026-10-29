@@ -84,6 +84,15 @@ overwrite of an object that was *deleted* concurrently surfaces as ``not_found``
 
 # ....................... #
 
+READ_PRECONDITION_FAILED_CODE: Final[str] = "core.storage.read_precondition_failed"
+"""Error code (``conflict`` kind) raised when a
+:meth:`~forze.application.contracts.storage.StorageQueryPort.download_stream` finds the object
+replaced between two of its ranged reads. The stream fails rather than splice two versions
+into one download; a caller that wants the new version opens a fresh stream. An object
+*deleted* mid-stream surfaces as ``not_found`` instead."""
+
+# ....................... #
+
 
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class _InternalMetadata:

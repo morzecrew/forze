@@ -45,6 +45,12 @@ class StorageQueryPort(Protocol):
         written in the chunked format is decrypted chunk-by-chunk; a legacy
         whole-payload envelope is decrypted in one pass (correct but not bounded);
         a plaintext object streams straight through.
+
+        The stream serves one version of the object. If the object is replaced while
+        it is read, a later read raises ``conflict`` with code
+        :data:`~forze.application.contracts.storage.READ_PRECONDITION_FAILED_CODE`
+        rather than mixing two versions (the mock serves the version it opened); a
+        deleted object raises ``not_found``.
         """
         ...  # pragma: no cover
 

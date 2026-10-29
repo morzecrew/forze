@@ -9,6 +9,7 @@ tenant key-scoping.
 from __future__ import annotations
 
 import contextlib
+import hashlib
 from collections.abc import AsyncIterator
 from uuid import uuid4
 
@@ -20,6 +21,7 @@ from forze.application.contracts.crypto import (
     KeyRef,
     StaticKeyDirectory,
 )
+from forze.application.contracts.storage import READ_PRECONDITION_FAILED_CODE
 from forze.application.contracts.tenancy import TenantIdentity
 from forze.application.integrations.crypto import Keyring
 from forze.application.integrations.storage.adapter import ObjectStorageAdapter
@@ -27,6 +29,7 @@ from forze.application.integrations.storage.client import (
     ObjectBody,
     ObjectStorageHead,
     ObjectStoragePartInfo,
+    read_precondition_failed,
 )
 from forze.base.crypto import is_chunked_envelope, is_envelope
 from forze.base.exceptions import CoreException
@@ -83,13 +86,24 @@ class _FakeClient:
         return ObjectStorageHead(
             content_type=self.content_types.get(key, "application/octet-stream"),
             size=len(data),
+            etag=hashlib.sha256(data).hexdigest(),
         )
 
     async def download_range_bytes(
-        self, bucket: str, key: str, *, start: int, end: int | None = None
+        self,
+        bucket: str,
+        key: str,
+        *,
+        start: int,
+        end: int | None = None,
+        if_match: str | None = None,
     ) -> tuple[ObjectBody, str, int]:
         self.range_reads.append((start, end))
         data = self.objects[key]
+
+        if if_match is not None and if_match != hashlib.sha256(data).hexdigest():
+            raise read_precondition_failed(key)
+
         total = len(data)
         last = total - 1 if end is None else min(end, total - 1)
         chunk = data[start : last + 1]
@@ -258,6 +272,24 @@ async def test_download_stream_reads_object_with_ranged_gets() -> None:
 
     assert b"".join(pieces) == data
     assert all(len(p) <= 1000 for p in pieces)  # each range bounded by part size
+
+
+async def test_download_stream_fails_when_the_object_changes_mid_stream() -> None:
+    # Each ranged GET is pinned to the head's ETag, so two versions never splice.
+    client = _FakeClient()
+    adapter = _adapter(client, stream_part_size=1024)
+    client.objects["docs/k"] = b"a" * 4096
+
+    dl = await adapter.download_stream("docs/k")
+    chunks = aiter(dl.chunks)
+    assert await anext(chunks) == b"a" * 1024
+
+    client.objects["docs/k"] = b"b" * 4096
+
+    with pytest.raises(CoreException) as ei:
+        await anext(chunks)
+
+    assert ei.value.code == READ_PRECONDITION_FAILED_CODE
 
 
 async def test_download_stream_back_compat_whole_payload_envelope() -> None:

@@ -855,7 +855,7 @@ class ObjectStorageAdapter(
             else self._key_basename(key)
         )
 
-        raw = self._raw_ranges(bucket, key, head.size)
+        raw = self._raw_ranges(bucket, key, head.size, head.etag)
         body = raw if self.cipher is None else self._decrypt_ranges(raw, bucket, key)
         # The plaintext size is known only for a non-encrypted object (the stored
         # size is the raw bytes; encryption/​framing makes it larger than plaintext).
@@ -872,9 +872,13 @@ class ObjectStorageAdapter(
 
     # ....................... #
 
-    async def _raw_ranges(self, bucket: str, key: str, total: int) -> AsyncIterator[bytes]:
+    async def _raw_ranges(
+        self, bucket: str, key: str, total: int, etag: str
+    ) -> AsyncIterator[bytes]:
         """Yield an object's raw bytes in ``stream_part_size`` ranged GETs.
 
+        Every GET is pinned to *etag* (from the stream's ``head``), so an overwrite
+        between two of them fails the next read instead of splicing two versions.
         Holds the client connection open across the whole iteration, so the caller
         must consume (or close) the stream promptly.
         """
@@ -885,7 +889,7 @@ class ObjectStorageAdapter(
             while offset < total:
                 end = offset + self.stream_part_size - 1
                 body, _content_range, _real_total = await self.client.download_range_bytes(
-                    bucket=bucket, key=key, start=offset, end=end
+                    bucket=bucket, key=key, start=offset, end=end, if_match=etag or None
                 )
 
                 if not body.data:

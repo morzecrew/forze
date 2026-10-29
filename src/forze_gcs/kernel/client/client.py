@@ -28,6 +28,7 @@ from forze.application.integrations.storage.client import (
     normalize_list_window,
     overwrite_precondition_failed,
     presign_expiry_seconds,
+    read_precondition_failed,
     reject_contradictory_write_conditions,
     unsatisfiable_range,
     validate_range,
@@ -384,6 +385,7 @@ class GCSClient(GCSClientPort):
         *,
         start: int,
         end: int | None = None,
+        if_match: str | None = None,
     ) -> tuple[ObjectBody, str, int]:
         """Download an inclusive byte range via a ranged media ``GET``.
 
@@ -393,6 +395,12 @@ class GCSClient(GCSClientPort):
         satisfied ``Content-Range`` is synthesized from the returned slice. An
         unsatisfiable range (``start`` beyond the object) raises a precondition
         error (the 416/``RequestedRangeNotSatisfiable`` equivalent).
+
+        *if_match* is checked against that metadata head's ETag, and the head's
+        generation rides the media ``GET`` as ``ifGenerationMatch``, so an object
+        replaced in between answers 412. Either mismatch raises ``conflict``
+        (:func:`read_precondition_failed`). A GCS ETag also changes on a metadata-only
+        update, so a tag change mid-stream fails the stream too.
 
         :returns: ``(body, content_range, total_size)`` — the body's content
             type comes from the already-fetched metadata head; its metadata is
@@ -405,14 +413,24 @@ class GCSClient(GCSClientPort):
         raw = await storage.download_metadata(bucket, key, timeout=self.__timeout())
         head = _head_from_object_json(raw)
         total = head.size
+        params = {"alt": "media"}
+
+        if if_match is not None:
+            if head.etag != if_match.strip('"'):
+                raise read_precondition_failed(key)
+
+            if generation := raw.get("generation"):
+                params["ifGenerationMatch"] = str(generation)
 
         if total == 0 or start >= total:
             raise unsatisfiable_range(start, total)
 
         try:
-            data = await storage.download(
+            # `download` takes no query parameters, and the generation pin is one.
+            data = await storage._download(  # pyright: ignore[reportPrivateUsage]
                 bucket,
                 key,
+                params=params,
                 headers={"Range": build_range_header(start, end)},
                 timeout=self.__timeout(),
             )
@@ -420,6 +438,9 @@ class GCSClient(GCSClientPort):
         except aiohttp.ClientResponseError as e:
             if getattr(e, "status", None) == 416 or getattr(e, "code", None) == 416:
                 raise unsatisfiable_range(start, total) from e
+
+            if if_match is not None and e.status == 412:
+                raise read_precondition_failed(key) from e
 
             raise
 

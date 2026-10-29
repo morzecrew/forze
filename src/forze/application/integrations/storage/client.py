@@ -17,6 +17,7 @@ import attrs
 from forze.application.contracts.storage import (
     OVERWRITE_PRECONDITION_FAILED_CODE,
     RANGE_NOT_SATISFIABLE_CODE,
+    READ_PRECONDITION_FAILED_CODE,
     PresignedUrl,
 )
 from forze.base.exceptions import CoreException, exc
@@ -189,6 +190,23 @@ def overwrite_precondition_failed(key: str) -> CoreException:
     return exc.conflict(
         f"Conditional write to {key!r} failed: the object changed since it was read",
         code=OVERWRITE_PRECONDITION_FAILED_CODE,
+    )
+
+
+# ....................... #
+
+
+def read_precondition_failed(key: str) -> CoreException:
+    """Build the conflict for a conditional read whose match token no longer holds.
+
+    Mirrors the backend HTTP 412 on a ranged read carrying ``If-Match`` /
+    ``ifGenerationMatch``: the object at *key* was replaced since the reader's ``head``.
+    Shared by the S3/GCS clients so the mismatch surfaces under one code.
+    """
+
+    return exc.conflict(
+        f"Read of {key!r} failed: the object changed since the read began",
+        code=READ_PRECONDITION_FAILED_CODE,
     )
 
 
@@ -408,6 +426,7 @@ class ObjectStorageClientPort(Protocol):
         *,
         start: int,
         end: int | None = None,
+        if_match: str | None = None,
     ) -> Awaitable[tuple[ObjectBody, str, int]]:
         """Download an inclusive byte range of an object.
 
@@ -415,6 +434,13 @@ class ObjectStorageClientPort(Protocol):
         inclusive; ``end=None`` reads to EOF). An unsatisfiable range (``start``
         past the object size) raises a precondition error mirroring the backend
         416 response.
+
+        *if_match* (an ETag from :meth:`head_object`) pins the read to that version of
+        the object, so the ranged reads of one stream never mix two versions. **S3**
+        sends ``If-Match``; **GCS** compares the ETag and pins the media ``GET`` with
+        ``ifGenerationMatch``. A changed object raises ``conflict`` with code
+        :data:`~forze.application.contracts.storage.READ_PRECONDITION_FAILED_CODE`; a
+        deleted one raises ``not_found``. ``None`` reads whatever version is current.
 
         :returns: ``(body, content_range, total_size)`` where *body* carries the
             range slice and its content type (``body.metadata`` may be empty for
