@@ -277,9 +277,10 @@ def _refuse_unholdable(domain: type[Document], fields: Iterable[str], *, scope: 
     """Refuse a key whose values a hold cannot derive as the write path derives them.
 
     A write keys the value its domain model holds after every validator, read back from the
-    store for a stored row. A hold sees only the caller's value and the field's type, so a
-    validator that rewrites the value, or an instant the store returns in the session's time
-    zone, would lock an owner no write takes.
+    store for a stored row, or the stored mapping itself. A hold sees only the caller's value
+    and the field's type, so a validator that rewrites the value, a serializer that changes its
+    stored form, or an instant the store returns in the session's time zone, would lock an
+    owner no write takes.
     """
 
     if _own_decorators(domain, "model_validators") or _own_decorators(domain, "root_validators"):
@@ -289,10 +290,22 @@ def _refuse_unholdable(domain: type[Document], fields: Iterable[str], *, scope: 
             "hold could lock an owner no write takes.",
         )
 
+    if _own_decorators(domain, "model_serializers"):
+        raise exc.configuration(
+            f"Spec {scope!r} cannot hold a write lock: its domain {domain.__name__} has a model "
+            "serializer, which can change the stored form of a key field a write keys, so the "
+            "hold could lock an owner no write takes.",
+        )
+
     validated = {
         name
         for kind in ("field_validators", "validators")
         for decorator in _own_decorators(domain, kind)
+        for name in decorator.info.fields
+    }
+    serialized = {
+        name
+        for decorator in _own_decorators(domain, "field_serializers")
         for name in decorator.info.fields
     }
 
@@ -302,6 +315,17 @@ def _refuse_unholdable(domain: type[Document], fields: Iterable[str], *, scope: 
                 f"Spec {scope!r} cannot hold a write lock by {name!r}: the domain validates "
                 "that field with a validator of its own, which a hold does not run, so the hold "
                 "could lock an owner no write takes.",
+            )
+
+        if (
+            name in serialized
+            or "*" in serialized
+            or any(isinstance(m, _SERIALIZERS) for m in _field_metadata(domain.model_fields[name]))
+        ):
+            raise exc.configuration(
+                f"Spec {scope!r} cannot hold a write lock by {name!r}: the domain serializes "
+                "that field with a serializer of its own, which can change the stored form a "
+                "write keys, so the hold could lock an owner no write takes.",
             )
 
         if _holds_instant(domain.model_fields[name].annotation):
@@ -358,7 +382,8 @@ def serialization_keys(
     :returns: The keys, in the order a holder takes them.
     :raises CoreException: ``configuration`` when nothing is declared, when no owner is named,
         when an owner's fields are not exactly the fields of a declared key, or when a key
-        field is a datetime or one the domain validates with a validator of its own.
+        field is a datetime or one the domain validates or serializes with a validator or
+        serializer of its own.
     """
 
     if not declarations:

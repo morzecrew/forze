@@ -1,12 +1,19 @@
 """The vocabulary, and the reconciliation that refuses a guarantee no store can keep."""
 
 from datetime import UTC, datetime
-from typing import Annotated
+from typing import Annotated, Any
 from uuid import UUID, uuid4
 
 import attrs
 import pytest
-from pydantic import AfterValidator, field_validator, model_validator
+from pydantic import (
+    AfterValidator,
+    PlainSerializer,
+    field_serializer,
+    field_validator,
+    model_serializer,
+    model_validator,
+)
 
 from forze.application.contracts.deps.proxy import PortProxy
 from forze.application.contracts.guarantees import (
@@ -375,12 +382,47 @@ class TestTheKeysAHoldTakes:
 
         assert held == [advisory_lock_key("s", None, "owner", Shouting(owner="abc").owner)]
 
-    @pytest.mark.parametrize("name", ["datetime", "field validator", "every field", "model"])
+    @pytest.mark.parametrize(
+        "name",
+        [
+            "datetime",
+            "datetime alias",
+            "field validator",
+            "every field",
+            "model",
+            "plain serializer",
+            "field serializer",
+            "model serializer",
+        ],
+    )
     def test_a_key_a_write_derives_otherwise_is_refused(self, name: str) -> None:
-        # A write keys the value after the domain's own validators, and a stored instant as the
-        # database returns it in the session's time zone: a hold could lock nobody's owner.
+        # A write keys the value after the domain's own validators, a stored row in the form its
+        # serializers store, and a stored instant as the database returns it in the session's
+        # time zone: a hold could lock nobody's owner.
+        type Stamp = datetime
+
         class AtInstant(Document):
             owner: datetime | None = None
+
+        class AtAlias(Document):
+            owner: Stamp
+
+        class PlainSerialized(Document):
+            owner: Annotated[UUID, PlainSerializer(str)]
+
+        class FieldSerialized(Document):
+            owner: str
+
+            @field_serializer("owner")
+            def _upper(self, value: str) -> str:
+                return value.upper()
+
+        class ModelSerialized(Document):
+            owner: str
+
+            @model_serializer(mode="wrap")
+            def _same(self, handler: Any) -> Any:
+                return handler(self)
 
         class Validated(Document):
             owner: str
@@ -407,9 +449,13 @@ class TestTheKeysAHoldTakes:
 
         domain, value = {
             "datetime": (AtInstant, datetime.now(UTC)),
+            "datetime alias": (AtAlias, datetime.now(UTC)),
             "field validator": (Validated, "A"),
             "every field": (EveryField, "a"),
             "model": (Modelled, "a"),
+            "plain serializer": (PlainSerialized, uuid4()),
+            "field serializer": (FieldSerialized, "a"),
+            "model serializer": (ModelSerialized, "a"),
         }[name]
 
         with pytest.raises(CoreException) as refused:
@@ -422,7 +468,19 @@ class TestTheKeysAHoldTakes:
             )
 
         assert refused.value.kind is ExceptionKind.CONFIGURATION
-        assert "owner" in refused.value.summary or "model validator" in refused.value.summary
+        assert "'owner'" in refused.value.summary or "has a model" in refused.value.summary
+
+    def test_a_recursive_alias_without_an_instant_is_held(self) -> None:
+        type Path = str | list[Path]
+
+        class Nested(Document):
+            owner: Path
+
+        by_owner = SerializedBy(key=("owner",))
+
+        assert serialization_keys(
+            [by_owner], [{"owner": "a"}], domain=Nested, scope="s", tenant=None
+        ) == [advisory_lock_key("s", None, "owner", "a")]
 
     def test_fields_match_in_any_order_and_values_follow_the_declaration(self) -> None:
         order = uuid4()

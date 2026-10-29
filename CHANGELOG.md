@@ -15,7 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **A document write can refuse any stale revision, history or not.** `update(..., merge=False)` and `update_many(..., merge=False)` raise `revision_mismatch` for any `rev` but the stored one, even for a no-op, instead of merging it. `touch(pk, rev=...)` and `touch_many(pks, revs=...)` bump only rows still at it.
 
-- **A handler can take a spec's `SerializedBy` lock before it reads.** `hold({"order_id": order_id})` on the document command port takes the lock its writes take, writes nothing, and keeps it until the transaction ends. Refused outside a transaction, for a datetime or validator-rewritten key, and on Mongo and Firestore.
+- **A handler can take a spec's `SerializedBy` lock before it reads.** `hold({"order_id": order_id})` on the document command port takes the lock its writes take, without writing, until the transaction ends. Refused outside a transaction, for a datetime, validator-rewritten or serialized key, and on Mongo and Firestore.
 
 - **DuckDB serves trusted dynamic reads over a per-tenant Iceberg lake.** `RoutedDuckDbClient` gives each tenant a locked-down instance holding its catalog principal and the S3 credentials vended per statement, and serves nothing from one that fails its attestation. Wire routes with `DuckDbDepsModule(dynamic_reads=...)`.
 

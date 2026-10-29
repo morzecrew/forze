@@ -894,7 +894,8 @@ class DocumentCommandPort(BaseDocumentPort[R, D, C, U], Protocol[R, D, C, U]):
         Values are validated against the key fields' types and constraints, so an id passed
         as a string locks the same owner. A key the write path derives otherwise is refused:
         a datetime field, which a write keys as the store returns it, in the session's time
-        zone, and a field the domain validates with a field or model validator of its own.
+        zone, and a field the domain validates or serializes with a field or model validator
+        or serializer of its own.
 
         One call takes its owners in a fixed order. Two calls, or a hold followed by a write
         for another owner, can take owners in another order than a concurrent transaction

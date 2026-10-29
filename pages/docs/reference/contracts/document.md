@@ -171,7 +171,10 @@ handler's writes take the lock again without waiting.
 - a spec that declares no `SerializedBy`, or an argument naming other fields;
 - a datetime key field: a write keys it as the database returns it, in the session's time zone;
 - a key field the domain validates with a field validator of its own, or any domain with a
-  model validator: a write keys the value after them, and `hold` does not run them.
+  model validator: a write keys the value after them, and `hold` does not run them;
+- a key field with a serializer of its own (`PlainSerializer`, `WrapSerializer`,
+  `@field_serializer`), or any domain with a model serializer: a write can key the stored
+  form they produce.
 
 A call outside a transaction is refused (`document_hold_outside_transaction`), since its lock
 would end with its statement. Mongo and Firestore keep no write lock and refuse the call.
