@@ -26,6 +26,11 @@ from .types import SearchCountPolicy
 
 # ----------------------- #
 
+SEARCH_ENCRYPTION_WIRING_CODE = "core.search.encryption_wiring"
+"""The search plane's encryption refusal code, at spec construction and at wiring."""
+
+# ....................... #
+
 
 def _sealed_fields(encryption: FieldEncryption | None) -> frozenset[str]:
     """Fields whose stored value is ciphertext — cannot be aggregated or highlighted."""
@@ -749,7 +754,7 @@ class HubSearchSpec[M: BaseModel](BaseSpec):
                 f"Hub search {self.name!r} is sealed_by {self.sealed_by!r}, but members "
                 f"{disagree} name another document. The hub's sealed_by governs the rows it "
                 "decodes: leave the members' unset or equal to it.",
-                code="core.search.encryption_wiring",
+                code=SEARCH_ENCRYPTION_WIRING_CODE,
             )
 
         if self.default_member_weights:

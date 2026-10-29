@@ -17,7 +17,7 @@ from typing import Any, Literal
 import attrs
 from pydantic import BaseModel
 
-from forze.application.contracts.analytics import AnalyticsSpec
+from forze.application.contracts.analytics import ANALYTICS_ENCRYPTION_WIRING_CODE, AnalyticsSpec
 from forze.application.contracts.crypto import (
     DeterministicFieldCipherPort,
     FieldCipherPort,
@@ -34,7 +34,7 @@ from forze.domain.constants import ID_FIELD
 
 # ----------------------- #
 
-_WIRING_CODE = "core.analytics.encryption_wiring"
+_WIRING_CODE = ANALYTICS_ENCRYPTION_WIRING_CODE
 
 
 def resolve_analytics_codecs_spec(

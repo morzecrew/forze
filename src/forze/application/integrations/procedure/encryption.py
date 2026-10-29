@@ -14,14 +14,14 @@ from forze.application.contracts.crypto import (
     DeterministicFieldCipherPort,
     FieldCipherPort,
 )
-from forze.application.contracts.procedure import ProcedureSpec
+from forze.application.contracts.procedure import PROCEDURE_ENCRYPTION_WIRING_CODE, ProcedureSpec
 from forze.application.contracts.tenancy import TenantIdentity
 from forze.application.integrations.crypto import EncryptingModelCodec
 from forze.base.exceptions import exc
 
 # ----------------------- #
 
-_WIRING_CODE = "core.procedures.encryption_wiring"
+_WIRING_CODE = PROCEDURE_ENCRYPTION_WIRING_CODE
 
 # ....................... #
 

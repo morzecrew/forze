@@ -24,8 +24,8 @@ from .value_objects import AnalyticsProvenance
 R = TypeVar("R", bound=BaseModel)
 Ing = TypeVar("Ing", bound=BaseModel)
 
-_ENCRYPTION_WIRING_CODE = "core.analytics.encryption_wiring"
-"""The analytics plane's encryption refusal code — the same one its wiring raises."""
+ANALYTICS_ENCRYPTION_WIRING_CODE = "core.analytics.encryption_wiring"
+"""The analytics plane's encryption refusal code, at spec construction and at wiring."""
 
 # ....................... #
 
@@ -155,7 +155,7 @@ def validate_analytics_spec(spec: AnalyticsSpec[Any, Any]) -> None:
                 f"AnalyticsSpec {spec.name!r} sets binds_record_id without sealed_by: rows the "
                 f"analytics plane ingests have no stable record id to bind into the AAD. Set "
                 f"sealed_by to read a document's id-bound rows, or drop binds_record_id.",
-                code=_ENCRYPTION_WIRING_CODE,
+                code=ANALYTICS_ENCRYPTION_WIRING_CODE,
             )
 
         spec.encryption.validate_fields_exist(
@@ -167,7 +167,7 @@ def validate_analytics_spec(spec: AnalyticsSpec[Any, Any]) -> None:
             f"AnalyticsSpec {spec.name!r} sets both sealed_by and ingest: ingested rows are "
             f"sealed under the analytics label, but sealed_by makes reads open document "
             f"{spec.sealed_by!r}'s. Split the document-backed reads into their own spec.",
-            code=_ENCRYPTION_WIRING_CODE,
+            code=ANALYTICS_ENCRYPTION_WIRING_CODE,
         )
 
     if not issubclass(spec.read, BaseModel):

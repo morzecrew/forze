@@ -10,6 +10,7 @@ from .ports import (
     ProcedurePort,
 )
 from .specs import (
+    PROCEDURE_ENCRYPTION_WIRING_CODE,
     ProcedureSpec,
     validate_procedure_spec,
 )
@@ -18,6 +19,7 @@ from .value_objects import ExecResult
 # ----------------------- #
 
 __all__ = [
+    "PROCEDURE_ENCRYPTION_WIRING_CODE",
     "BaseProcedurePort",
     "ExecResult",
     "ProcedureCommandDepKey",
