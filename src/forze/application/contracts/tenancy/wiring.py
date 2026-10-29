@@ -888,3 +888,35 @@ def require_tenant_global(port: object, *, what: str) -> None:
             code=TENANT_GLOBAL_REQUIRED_CODE,
             details={"what": what, "reason": reason},
         )
+
+
+# ....................... #
+
+TENANT_AWARE_REQUIRED_CODE: Final[str] = "tenant_aware_required"
+"""Error code for a tenant-global port used by one loop per bound tenant."""
+
+
+def require_tenant_aware(port: object, *, what: str) -> None:
+    """Refuse a port that does not keep each bound tenant's data apart.
+
+    A consumer that runs one loop per tenant, each bound to its tenant, treats what a loop
+    reads as that tenant's. That holds only when the port reads a separate key or partition
+    per bound tenant. Over a tenant-global port every loop reads the same data, so each
+    would deliver the others' as its own. A client routed per tenant is not enough: a
+    deployment may route several tenants to one client, where the key is still shared.
+
+    :param port: A resolved port.
+    :param what: What uses the port, for the error.
+    :raises CoreException: ``configuration`` (``tenant_aware_required``).
+    """
+
+    if getattr(port, "tenant_aware", False) is True:
+        return
+
+    raise exc.configuration(
+        f"{what} runs one loop per tenant and treats what each loop reads as that "
+        "tenant's, but its port is not tenant-aware, so every loop would read the same "
+        "data. Wire the route tenant_aware=True.",
+        code=TENANT_AWARE_REQUIRED_CODE,
+        details={"what": what},
+    )

@@ -197,7 +197,9 @@ For **trusted** per-tenant isolation without trusting a header, put the stream o
 `StreamGroupSignalSource` — one consume loop per assigned tenant, each bound to the
 tenant of the stream it reads (no header trust). `StreamGroupSignalSource` and
 `PubSubSignalSource` read with no tenant bound, so over a `tenant_aware` route the gateway
-step refuses to start (`tenant_global_required`). The shard is a fixed snapshot resolved
+step refuses to start (`tenant_global_required`). The other way round, the sharded source
+refuses a route that is not `tenant_aware` (`tenant_aware_required`), because every
+tenant's loop would read the same stream. The shard is a fixed snapshot resolved
 at startup, so onboarding a new tenant needs a restart; hand the same `RealtimeShard` to
 the source, the group-ensure step (`realtime_tenant_group_ensure_lifecycle_step`), and —
 for a partitioned outbox — `realtime_tenant_relay_lifecycle_step`. The read-side rules

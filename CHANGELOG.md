@@ -183,6 +183,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **The storage kit's `presign_download` is sensitive** (**Breaking**). MCP, `forze ops`, agent tools and generated routes refuse it, so `attach_storage_routes` no longer serves it; an MCP server or `OpsApp` over the storage registry needs `operations=` without it. Trace capture masks presigned URLs.
 
+- **A tenant-sharded realtime consumer refuses a stream route that is not `tenant_aware`** (**behaviour change**). `TenantShardedSignalSource` and `realtime_sse_sharded_tail_lifecycle_step` fail with `tenant_aware_required`, so a signal is never delivered or stored under another tenant. New `require_tenant_aware`.
+
 ## [0.16.2] - 2026-10-26
 
 ### Added

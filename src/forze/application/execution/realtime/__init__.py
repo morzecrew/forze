@@ -21,7 +21,7 @@ from .sources import (
     SignalHandler,
     StreamGroupSignalSource,
     TenantShardedSignalSource,
-    require_tenant_global_source,
+    require_source_tenancy,
 )
 from .writer import RealtimeMailboxWriter, realtime_mailbox_writer_lifecycle_step
 
@@ -42,5 +42,5 @@ __all__ = [
     "claim_dedup_inbox",
     "instrument_realtime_gateway",
     "realtime_mailbox_writer_lifecycle_step",
-    "require_tenant_global_source",
+    "require_source_tenancy",
 ]

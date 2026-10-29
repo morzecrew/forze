@@ -27,6 +27,7 @@ from .tenant_hint import (
 from .value_objects import TenantIdentity
 from .wiring import (
     ORIGIN_ISOLATION_FLOOR_CODE,
+    TENANT_AWARE_REQUIRED_CODE,
     TENANT_GLOBAL_REQUIRED_CODE,
     IntegrationRouteWarning,
     StatementOrigin,
@@ -36,6 +37,7 @@ from .wiring import (
     derive_tenant_isolation_mode,
     isolation_satisfies,
     namespace_route_warning,
+    require_tenant_aware,
     require_tenant_global,
     required_isolation_for_origin,
     resolves_per_tenant,
@@ -79,6 +81,8 @@ __all__ = [
     "ORIGIN_ISOLATION_FLOOR_CODE",
     "TENANT_GLOBAL_REQUIRED_CODE",
     "require_tenant_global",
+    "TENANT_AWARE_REQUIRED_CODE",
+    "require_tenant_aware",
     "derive_tenant_isolation_mode",
     "isolation_satisfies",
     "required_isolation_for_origin",

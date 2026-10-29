@@ -36,7 +36,11 @@ from forze.application.contracts.realtime import (
     RealtimeSignal,
 )
 from forze.application.contracts.stream import AckStreamGroupQueryDepKey, StreamSpec
-from forze.application.contracts.tenancy import TenantIdentity, require_tenant_global
+from forze.application.contracts.tenancy import (
+    TenantIdentity,
+    require_tenant_aware,
+    require_tenant_global,
+)
 from forze.application.execution import ExecutionContext, is_draining_refusal
 from forze.application.execution.background import run_supervised
 from forze.base.exceptions import CoreException, ExceptionKind, exc
@@ -767,6 +771,10 @@ class TenantShardedSignalSource(RealtimeSignalSource):
     so one tenant's broker fault or configuration error degrades that tenant's delivery only —
     the siblings keep consuming. Assign **disjoint** tenant shards across gateway instances;
     rebalancing a running fleet is out of scope — repartition by restart.
+
+    A stream route that is not ``tenant_aware`` is refused (``tenant_aware_required``)
+    before any loop starts: every loop would read the one shared stream and hand its
+    signals on under the loop's tenant.
     """
 
     shard: RealtimeShard
@@ -840,6 +848,8 @@ class TenantShardedSignalSource(RealtimeSignalSource):
             await stop_event.wait()
             return
 
+        _require_sharded_stream(self.shard.stream_spec, ctx, what="TenantShardedSignalSource")
+
         def _tenant_runner(tenant: UUID) -> Callable[[], Awaitable[None]]:
             async def _run() -> None:
                 await self._run_tenant(ctx, tenant, handler, stop_event)
@@ -899,22 +909,52 @@ class TenantShardedSignalSource(RealtimeSignalSource):
 # ....................... #
 
 
-def require_tenant_global_source(source: object, ctx: ExecutionContext, *, what: str) -> None:
-    """Refuse a tenant-global source whose stream route is wired per tenant.
+def _require_sharded_stream(
+    stream_spec: StreamSpec[RealtimeSignal], ctx: ExecutionContext, *, what: str
+) -> None:
+    """Refuse a sharded consumer over a stream route that is not wired per tenant.
+
+    A sharded consumer binds each loop to one tenant and takes a signal's tenant from the
+    stream the loop read. Over a tenant-global route every loop reads the same stream, so
+    signals would go out under the wrong tenant.
+
+    :param stream_spec: The shard's stream.
+    :param ctx: The context its port resolves against.
+    :param what: Names the consumer in the refusal.
+    :raises CoreException: ``configuration`` (``tenant_aware_required``).
+    """
+
+    port = ctx.deps.resolve_configurable(
+        ctx, AckStreamGroupQueryDepKey, stream_spec, route=stream_spec.name
+    )
+    require_tenant_aware(port, what=what)
+
+
+# ....................... #
+
+
+def require_source_tenancy(source: object, ctx: ExecutionContext, *, what: str) -> None:
+    """Refuse a source whose stream route is wired for the other tenancy mode.
 
     The stream-group and pubsub sources read with no tenant bound, so over a
-    ``tenant_aware`` route every read would be refused; checking the resolved port at
-    startup fails the wiring instead. The sharded source binds each tenant it is assigned,
-    and a source of the app's own is the app's to check.
+    ``tenant_aware`` route every read would be refused. The sharded source binds one tenant
+    per loop, so over a tenant-global route its loops would share one stream. Checking the
+    resolved port at startup fails the wiring instead. A source of the app's own is the
+    app's to check.
 
     :param source: The source a consumer is about to run.
     :param ctx: The context its ports resolve against.
     :param what: Names the consumer in the refusal.
-    :raises CoreException: ``configuration`` (``tenant_global_required``) for a
-        ``tenant_aware`` route.
+    :raises CoreException: ``configuration`` — ``tenant_global_required`` for a tenant-global
+        source over a ``tenant_aware`` route, ``tenant_aware_required`` for the sharded
+        source over a tenant-global one.
     """
 
     port: object
+
+    if isinstance(source, TenantShardedSignalSource):
+        _require_sharded_stream(source.shard.stream_spec, ctx, what=what)
+        return
 
     if isinstance(source, StreamGroupSignalSource):
         port = ctx.deps.resolve_configurable(

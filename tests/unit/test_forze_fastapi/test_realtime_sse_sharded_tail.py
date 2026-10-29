@@ -231,6 +231,27 @@ class TestLifecycleStep:
             await step.shutdown(ctx)
             assert first.done()
 
+    async def test_a_tenant_global_stream_is_refused_at_startup(self) -> None:
+        # Every tenant loop would tail the one shared stream and publish each signal under
+        # its own tenant, so T1's connections would receive T2's signals.
+        hub = RealtimeSseHub()
+        step = realtime_sse_sharded_tail_lifecycle_step(
+            hub,
+            shard=RealtimeShard(stream_spec=realtime_stream_spec(), tenants=(_T1, _T2)),
+            poll_interval=_FAST,
+        )
+        runtime = ExecutionRuntime(deps=DepsRegistry.from_modules(MockDepsModule()).freeze())
+
+        async with runtime.scope():
+            ctx = runtime.get_context()
+
+            with pytest.raises(CoreException) as caught:
+                await step.startup(ctx)
+
+            assert step.startup.task is None  # type: ignore[attr-defined]
+
+        assert caught.value.code == "tenant_aware_required"
+
     def test_invalid_settings_are_refused(self) -> None:
         shard = RealtimeShard(stream_spec=realtime_stream_spec(), tenants=(_T1,))
 

@@ -396,6 +396,44 @@ class TestRealtimeMailboxWriter:
         assert [entry.payload["text"] for entry in t1] == ["for 1"]
         assert [entry.payload["text"] for entry in t2] == ["for 2"]
 
+    async def test_sharded_source_over_a_tenant_global_stream_stores_nothing(self) -> None:
+        # One shared stream: each tenant loop would read the other tenant's signals and
+        # store them into its own tenant's mailbox. The source refuses before reading.
+        spec = realtime_stream_spec()
+        writer = RealtimeMailboxWriter(
+            source=TenantShardedSignalSource(
+                shard=RealtimeShard(stream_spec=spec, tenants=[_T1, _T2]), poll_interval=_FAST
+            ),
+            dedup=_dedup(),
+            mailbox_factory=lambda ctx: build_realtime_mailbox(ctx, retention=UNSWEPT),
+        )
+        module = MockDepsModule(
+            routes={str(realtime_mailbox_spec().name): MockRouteConfig(tenant_aware=True)}
+        )
+
+        runtime = _runtime(module)
+        async with runtime.scope():
+            ctx = runtime.get_context()
+
+            for n, tenant in enumerate((_T1, _T2), start=1):
+                with ctx.inv_ctx.bind_identity(tenant=TenantIdentity(tenant_id=tenant)):
+                    await _append(
+                        ctx,
+                        _principal(f"for {n}"),
+                        event_id=str(UUID(int=n)),
+                        headers={HEADER_TENANT_ID: str(tenant)},
+                    )
+
+            with pytest.raises(CoreException) as caught:
+                await writer.run(ctx)
+
+            t1 = await _rows(ctx, _T1)
+            t2 = await _rows(ctx, _T2)
+
+        assert caught.value.code == "tenant_aware_required"
+        assert caught.value.kind is ExceptionKind.CONFIGURATION
+        assert (t1, t2) == ([], [])
+
     def test_a_pubsub_source_is_refused(self) -> None:
         with pytest.raises(CoreException) as caught:
             RealtimeMailboxWriter(
@@ -514,6 +552,27 @@ class TestRealtimeMailboxWriterLifecycleStep:
                 await step.startup(runtime.get_context())
 
         assert caught.value.code == "tenant_global_required"
+
+    async def test_a_sharded_source_over_a_tenant_global_stream_fails_startup(self) -> None:
+        writer = RealtimeMailboxWriter(
+            source=TenantShardedSignalSource(
+                shard=RealtimeShard(stream_spec=realtime_stream_spec(), tenants=[_T1])
+            ),
+            dedup=_dedup(),
+            mailbox_factory=lambda _ctx: InMemoryRealtimeMailbox(),
+        )
+        step = realtime_mailbox_writer_lifecycle_step(writer)
+        runtime = _runtime()
+
+        async with runtime.scope():
+            ctx = runtime.get_context()
+
+            with pytest.raises(CoreException) as caught:
+                await step.startup(ctx)
+
+            assert not ctx.drainables.loops
+
+        assert caught.value.code == "tenant_aware_required"
 
     def test_non_positive_supervision_settings_are_refused(self) -> None:
         writer = RealtimeMailboxWriter(

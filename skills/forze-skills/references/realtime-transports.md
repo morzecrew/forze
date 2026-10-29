@@ -194,7 +194,9 @@ wiring notes below.
 - On the namespace tenancy tier (a `tenant_aware` realtime stream route), use the
   sharded lifecycle steps (`realtime_sse_sharded_tail_lifecycle_step`,
   `realtime_tenant_relay_lifecycle_step`) so signals fan out under the stream's
-  trusted identity rather than an untrusted header.
+  trusted identity rather than an untrusted header. The sharded tail and
+  `TenantShardedSignalSource` refuse a route that is not `tenant_aware`
+  (`tenant_aware_required`).
 - Realtime loops are supervised: they restart on crash with jittered backoff and
   register as drainable. A custom signal source must accept a stop signal.
 - A realtime stream route that declares an encryption tier is **refused at start** —

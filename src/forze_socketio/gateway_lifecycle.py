@@ -32,7 +32,7 @@ from forze.application.execution.background import (
     BackgroundLoopControl,
     run_supervised,
 )
-from forze.application.execution.realtime import require_tenant_global_source
+from forze.application.execution.realtime import require_source_tenancy
 from forze.base.exceptions import exc
 from forze.base.logging import Logger
 from forze.base.primitives import StrKey
@@ -108,7 +108,7 @@ class _RealtimeGatewayStartup(LifecycleHook):
             _logger.critical("Realtime gateway already running; ignoring duplicate startup")
             return
 
-        require_tenant_global_source(self.gateway.source, ctx, what="Realtime gateway")
+        require_source_tenancy(self.gateway.source, ctx, what="Realtime gateway")
 
         if self.gateway.presence is not None and self.gateway.mailbox_factory is not None:
             # Rooms carry their tenant, and the live path counts them unbound, for a

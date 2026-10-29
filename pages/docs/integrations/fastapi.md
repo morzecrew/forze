@@ -480,7 +480,8 @@ tail loop per shard tenant, each bound to its tenant, so signals fan out under t
 **stream's** trusted identity rather than an untrusted header (the SSE analog of
 `TenantShardedSignalSource`). Hand it the same `RealtimeShard` the publish-side
 steps use. The plain tail reads with no tenant bound, so over a `tenant_aware` route it
-refuses to start (`tenant_global_required`).
+refuses to start (`tenant_global_required`). The sharded tail refuses a route that is not
+`tenant_aware` (`tenant_aware_required`): every tenant's loop would read the same stream.
 
 Pass the **same** presence store the Socket.IO side uses
 (`attach_realtime_sse_route(..., presence=...)`) and open SSE streams join their
@@ -561,7 +562,9 @@ lifecycle = [
   append to the stream chooses the tenant whose mailbox a signal is stored in, so enable
   it only where every producer is trusted to assert tenancy. Otherwise wire the stream
   route `tenant_aware` and use `TenantShardedSignalSource(shard=shard)` with
-  `realtime_tenant_group_ensure_lifecycle_step`, which take the tenant from the stream. A `PubSubSignalSource` is refused
+  `realtime_tenant_group_ensure_lifecycle_step`, which take the tenant from the stream.
+  The sharded source refuses a route that is not `tenant_aware`
+  (`tenant_aware_required`). A `PubSubSignalSource` is refused
   (`realtime_mailbox_writer_source_unsupported`): pub/sub keeps nothing for a writer that
   was not subscribed.
 - **Counters.** Hand one `RealtimeGatewayStats` to the writer and its source, then call

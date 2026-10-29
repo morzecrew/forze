@@ -31,7 +31,7 @@ from forze.base.primitives import HlcTimestamp, StrKey
 
 from .delivery import GatewayDedup, RealtimeDelivery, claim_dedup_inbox
 from .observability import RealtimeGatewayStats
-from .sources import PubSubSignalSource, RealtimeSignalSource, require_tenant_global_source
+from .sources import PubSubSignalSource, RealtimeSignalSource, require_source_tenancy
 
 # ----------------------- #
 
@@ -250,7 +250,7 @@ class _MailboxWriterStartup(LifecycleHook):
         if self.control.running:
             return  # the runtime invokes startup once per scope; ignore a direct double call
 
-        require_tenant_global_source(self.writer.source, ctx, what="Realtime mailbox writer")
+        require_source_tenancy(self.writer.source, ctx, what="Realtime mailbox writer")
 
         stop = self.control.arm()
 
@@ -309,7 +309,8 @@ def realtime_mailbox_writer_lifecycle_step(
     :param step_id: The step's id.
     :raises CoreException: ``configuration`` — *restart_backoff* or
         *max_consecutive_crashes* is not positive; at startup, ``tenant_global_required``
-        for a tenant-global source over a ``tenant_aware`` stream route.
+        for a tenant-global source over a ``tenant_aware`` stream route, or
+        ``tenant_aware_required`` for a ``TenantShardedSignalSource`` over a tenant-global one.
     """
 
     startup = _MailboxWriterStartup(
