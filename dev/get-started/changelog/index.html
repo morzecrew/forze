@@ -10242,6 +10242,9 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <p><strong><code>postgres_counter_purge_lifecycle_step</code> deletes lapsed Postgres counter rows on an interval.</strong> It calls <code>purge_expired()</code> for each route in <code>specs</code>, and binds each tenant in turn with <code>tenants=</code>.</p>
 </li>
 <li>
+<p><strong>An agent or <abbr title="Model Context Protocol">MCP</abbr> tool can advertise and accept fewer query fields than the spec.</strong> <code>operation_tools</code>, <code>register_tools</code> and <code>build_mcp_server</code> take <code>query_policies</code>, a narrower <code>QueryFieldPolicy</code> per operation. The description names only its fields, the field guard checks calls against it, and widening fails at build.</p>
+</li>
+<li>
 <p><strong>Federated search takes <code>member_filters</code>, a filter for one member's leg alone.</strong> It joins <code>filters</code> with <code>$and</code> on that leg, and a hub refuses it. New <code>SearchMemberGrant</code>, <code>bind_search_member_grant</code>, <code>OperationDescriptor.members</code> and <code>AuthorizesMembers</code> back member authorization.</p>
 </li>
 <li>

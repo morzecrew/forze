@@ -7062,7 +7062,9 @@ and the egress declaration stay as they are either way.</p>
 <li><strong>Without a query policy every read field is advertised</strong>, bookkeeping columns
   included — around 600 characters for a two-field model, in every tool the palette
   carries. A policy keeps the description small as well as the surface narrow, which is
-  the same reason to write one twice over.</li>
+  the same reason to write one twice over. To narrow only the palette and leave HTTP the
+  spec's allow-set, pass <code>query_policies</code> to <code>operation_tools</code> — see
+  <a href="../../data-events/agent-tools/">Agent tools</a>.</li>
 <li>
 <p><strong>The filter grammar is repeated in every filter tool's schema</strong> unless the palette is
   built with <code>shared_filter_grammar=True</code>, which moves it to <code>tools.filter_grammar</code> for

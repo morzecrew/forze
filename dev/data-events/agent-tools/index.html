@@ -6824,6 +6824,32 @@ model can act on, like any other governed refusal.</p>
 <p>It is the same sentence the <abbr title="Model Context Protocol">MCP</abbr> surface gives an external agent, from one shared
 builder, so the two surfaces cannot describe one read model differently.
 <a href="../../recipes/query-agent/">Build a question-answering agent</a> puts it to work.</p>
+<p>A palette can advertise less than the spec allows. <code>query_policies</code> gives a tool its
+own <code>QueryFieldPolicy</code>, the handful of fields an agent should filter on, while HTTP
+keeps the spec's full <a href="../../reference/contracts/document/#spec"><code>query_policy</code></a>:</p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">forze.application.contracts.querying</span><span class="w"> </span><span class="kn">import</span> <span class="n">QueryFieldPolicy</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">forze_kits.integrations.agent_tools</span><span class="w"> </span><span class="kn">import</span> <span class="n">operation_tools</span>
+
+<span class="n">tools</span> <span class="o">=</span> <span class="n">operation_tools</span><span class="p">(</span>
+    <span class="n">registry</span><span class="p">,</span>
+    <span class="n">include</span><span class="o">=</span><span class="p">[</span><span class="s2">"notes.list"</span><span class="p">],</span>
+    <span class="n">query_policies</span><span class="o">=</span><span class="p">{</span><span class="s2">"notes.list"</span><span class="p">:</span> <span class="n">QueryFieldPolicy</span><span class="p">(</span><span class="n">filterable</span><span class="o">=</span><span class="p">{</span><span class="s2">"title"</span><span class="p">},</span> <span class="n">sortable</span><span class="o">=</span><span class="nb">set</span><span class="p">())},</span>
+<span class="p">)</span>
+</code></pre></div>
+<p>The tool's description then names only <code>title</code>. Dispatch checks each call against the
+narrowed policy with the same field guard that enforces the operation's own policy, so
+a filter or sort the guard finds outside it is refused (<code>field_not_filterable</code>,
+<code>field_not_sortable</code>). The guard parses a call under the spec's
+<a href="../../reference/query-syntax/#limits">filter limits</a>, as the operation does. An axis left
+<code>None</code> keeps the spec's. A policy can only narrow. The palette is refused when it is
+built if a policy names a field outside the operation's own allow-set, an operation
+outside <code>include</code>, or an operation that takes no filter. It is also refused if a policy
+narrows an axis the operation's input does not carry, such as <code>aggregatable</code> on a plain
+list.</p>
+<p>A policy narrows what a tool may filter, sort and aggregate on, not what it returns:
+results, <code>return_fields</code> and projections still carry every field the operation reads.
+Do not rely on it to keep a field from the model. If one must not reach it, give the
+agent an operation over a read DTO without that field.</p>
 <p>The <a href="../../reference/query-syntax/">filter grammar</a> itself is most of a list tool's
 schema, and it is the same in every filter-accepting tool, so a palette with ten of
 them sends it ten times per request. <code>shared_filter_grammar=True</code> sends it once:</p>
