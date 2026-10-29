@@ -6791,15 +6791,15 @@ queue's delayed jobs.</p>
 </tr>
 <tr>
 <td><code>DurableRunStoreDepKey</code></td>
-<td>the run store behind the self-hosted tier — enqueue / begin / renew / complete / fail, <code>claim_abandoned</code> recovery, the fenced terminal landings <code>mark_cancelled</code> / <code>mark_timed_out</code>, and <code>mark_retry</code>, which sends a running run back to <code>pending</code> for its retry</td>
+<td>the run store behind the self-hosted tier — enqueue (with an <code>idempotency_key</code>, or a <code>coalesce_key</code> that joins the run waiting unclaimed under it) / begin / renew / complete / fail, <code>claim_abandoned</code> recovery, the fenced terminal landings <code>mark_cancelled</code> / <code>mark_timed_out</code>, and <code>mark_retry</code>, which sends a running run back to <code>pending</code> for its retry</td>
 </tr>
 <tr>
 <td><code>DurableRunAdminDepKey</code></td>
-<td>run listing and control — <code>list_runs(status=None, name=None, limit=50, cursor=None)</code> returns a cursor-paged <code>DurableRunPage</code>; <code>request_cancel(run_id)</code> asks a run to stop; <code>requeue_quarantined(run_ids=None)</code> returns quarantined runs to <code>pending</code> and says how many — unbound, it must name them while any belongs to a tenant; <code>requeue_failed(run_ids=None, name=None)</code> returns the named <code>failed</code> and <code>timed_out</code> runs to <code>pending</code> under their own id, so the steps they journaled replay — it needs <code>run_ids</code> or <code>name</code>, and skips a run whose cancel ask is unanswered</td>
+<td>run listing and control — <code>list_runs(status=None, name=None, limit=50, cursor=None)</code> returns a cursor-paged <code>DurableRunPage</code>; <code>request_cancel(run_id)</code> asks a run to stop; <code>requeue_quarantined(run_ids=None)</code> returns quarantined runs to <code>pending</code> and says how many — unbound, it must name them while any belongs to a tenant; <code>requeue_failed(run_ids=None, name=None)</code> returns the named <code>failed</code> and <code>timed_out</code> runs to <code>pending</code> under their own id, so the steps they journaled replay — it needs <code>run_ids</code> or <code>name</code>, and skips a run whose cancel ask is unanswered; <code>purge_finished(older_than, statuses=PURGEABLE_STATUSES, name=None, limit=1000)</code> deletes up to <code>limit</code> runs that landed before the window, with their step journal, and says how many</td>
 </tr>
 <tr>
 <td><code>DurableScheduleStoreDepKey</code></td>
-<td>the cron schedule store — put / claim_due / advance / load / delete</td>
+<td>the cron schedule store — put / claim_due / advance / load / delete, and <code>set_input</code>, which replaces only a schedule's input and keeps its next fire and pause — only while its <code>cron</code> and <code>tz</code> still match the ones the caller read, else it returns <code>False</code></td>
 </tr>
 </tbody>
 </table>
@@ -6824,7 +6824,7 @@ holds all three to it.</p>
 <td>that tenant's runs <strong>and untagged ones</strong></td>
 </tr>
 <tr>
-<td><code>claim_abandoned</code>, <code>list_runs</code>, <code>request_cancel</code>, <code>requeue_quarantined</code>, <code>requeue_failed</code>, <code>refuse_cancel</code></td>
+<td><code>claim_abandoned</code>, <code>list_runs</code>, <code>request_cancel</code>, <code>requeue_quarantined</code>, <code>requeue_failed</code>, <code>purge_finished</code>, <code>refuse_cancel</code></td>
 <td>that tenant's runs, exactly</td>
 </tr>
 <tr>

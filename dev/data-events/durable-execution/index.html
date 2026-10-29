@@ -1826,6 +1826,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#who-a-run-executes-as" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Who a run executes as
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#retrying-a-failed-run" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -1852,6 +1863,17 @@
     <span class="md-ellipsis">
       <span class="md-typeset">
         Stopping a run
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#keeping-the-run-table-bounded" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Keeping the run table bounded
       </span>
     </span>
   </a>
@@ -6595,6 +6617,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#who-a-run-executes-as" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Who a run executes as
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#retrying-a-failed-run" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -6621,6 +6654,17 @@
     <span class="md-ellipsis">
       <span class="md-typeset">
         Stopping a run
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#keeping-the-run-table-bounded" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Keeping the run table bounded
       </span>
     </span>
   </a>
@@ -6866,6 +6910,22 @@ lifecycle guard cannot elect one scanner: it holds its lock only while startup l
 loop, so later replicas scan too, and one that starts while another holds the lock runs none.
 <code>max_concurrency</code> bounds how many runs a sweep recovers at once. Enqueue with
 <code>run_at=&lt;when&gt;</code> for a <strong>delayed</strong> run — the scan skips it until it's due.</p>
+<p>To <strong>coalesce</strong> "recompute after a change", enqueue with a <code>coalesce_key</code>: a submit joins the
+run waiting unclaimed under that key and records a new run once that one is claimed. A
+joined submit's own input and <code>run_at</code> are discarded — the record returned is the joined run,
+with its own — so the run should read the state it recomputes rather than carry it. A burst of changes then causes one run, and a change that lands
+after the run started causes another, which reads it. A run waiting for a retry, or requeued,
+is not joined. The join is atomic at the store — a partial unique index — and needs the
+column and index in the <a href="../../reference/durable-schema/">schema</a>; it cannot be combined with
+an <code>idempotency_key</code>. On Mongo, a submit that keeps losing the key to runs being claimed
+records its own run, outside the key, rather than fail: contention costs an extra run, never
+a missed change.</p>
+<div class="highlight"><pre><span></span><code><span class="k">await</span> <span class="n">runner</span><span class="o">.</span><span class="n">enqueue</span><span class="p">(</span>
+    <span class="n">ctx</span><span class="p">,</span> <span class="s2">"reindex-catalog"</span><span class="p">,</span> <span class="p">{</span><span class="s2">"catalog_id"</span><span class="p">:</span> <span class="nb">str</span><span class="p">(</span><span class="n">catalog_id</span><span class="p">)},</span>
+    <span class="n">coalesce_key</span><span class="o">=</span><span class="sa">f</span><span class="s2">"catalog:</span><span class="si">{</span><span class="n">catalog_id</span><span class="si">}</span><span class="s2">"</span><span class="p">,</span>
+    <span class="n">run_at</span><span class="o">=</span><span class="n">utcnow</span><span class="p">()</span> <span class="o">+</span> <span class="n">timedelta</span><span class="p">(</span><span class="n">seconds</span><span class="o">=</span><span class="mi">30</span><span class="p">),</span>
+<span class="p">)</span>
+</code></pre></div>
 <p><strong>Multi-tenant.</strong> The stores resolve their table under the bound tenant. On a <strong>tagged</strong>
 shared table (a <code>tenant_id</code> column), an unbound scanner recovers every tenant's runs and the
 runner re-binds each run's tenant to execute it. On a <strong>namespace</strong> store (a per-tenant
@@ -6891,6 +6951,30 @@ than passing on the strength of the other planes. Note the coupling that creates
 <code>tenant_aware=True</code> on a run store fails closed when nothing is bound, which is how the
 cross-tenant sweep runs, so a deployment declaring <code>tagged</code> runs per-tenant recovery
 (<code>tenants=…</code>) instead.</p>
+<h3 id="who-a-run-executes-as">Who a run executes as<a class="headerlink" href="#who-a-run-executes-as" title="Permanent link">&para;</a></h3>
+<p>A durable body runs as <strong>no one</strong>: the runner binds the run's tenant and no principal, so
+a run started by <code>run_now</code> inside a request does not inherit the caller, and a recovered
+run behaves the same. A spec whose <code>operation</code> names a registry operation registers with
+<code>register_operation_functions</code>; an operation guarded by <code>AuthnRequired</code> then refuses the run
+until you name a service principal for it:</p>
+<div class="highlight"><pre><span></span><code><span class="n">register_operation_functions</span><span class="p">(</span>
+    <span class="n">registry</span><span class="p">,</span>
+    <span class="n">specs</span><span class="p">,</span>
+    <span class="n">operations</span><span class="o">=</span><span class="n">operations</span><span class="p">,</span>
+    <span class="n">identity</span><span class="o">=</span><span class="n">DurableServiceIdentity</span><span class="p">(</span>
+        <span class="n">authn</span><span class="o">=</span><span class="n">AuthnIdentity</span><span class="p">(</span><span class="n">principal_id</span><span class="o">=</span><span class="n">REPORTS_SERVICE_ID</span><span class="p">),</span>
+        <span class="n">acknowledge_unverified_identity</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+    <span class="p">),</span>
+<span class="p">)</span>
+</code></pre></div>
+<p>Authn and authz then decide for that principal as for any caller, and audit records it.
+Nothing verifies it — no key is checked, expired or revoked — so the acknowledgment is
+required. The run's tenant still comes from the run.</p>
+<p>Running as no one shows wherever a body reads the principal: audit records no actor, a
+document created through <code>CreatorIdMappingStep</code> gets no creator, a progress job started in
+the body has no actor, and a saga's guarded steps refuse. That holds for every durable body
+— a hand-written one, a saga, the secrets rotator and credential sweep — as it always did
+for a recovered run; a service identity covers only the operation-backed bodies.</p>
 <h3 id="retrying-a-failed-run">Retrying a failed run<a class="headerlink" href="#retrying-a-failed-run" title="Permanent link">&para;</a></h3>
 <p>A step that raises writes no journal row, and by default the run lands <code>FAILED</code>. Give the
 runner a retry strategy and a run whose body raises a retryable error goes back to <code>PENDING</code>
@@ -7047,6 +7131,30 @@ recovery scanner re-invokes it, and the oracle asserts every completed step repl
 journal instead of re-executing. Keep durable bodies deterministic too — read time / ids
 through <code>utcnow</code> / <code>uuid7</code> and do work in steps — and the simulator explores the crash-point
 space for you.</p>
+<h3 id="keeping-the-run-table-bounded">Keeping the run table bounded<a class="headerlink" href="#keeping-the-run-table-bounded" title="Permanent link">&para;</a></h3>
+<p>Finished runs are kept until you delete them, with their input, output and step journal. A
+retention step deletes them past a window:</p>
+<div class="highlight"><pre><span></span><code><span class="n">lifecycle</span> <span class="o">=</span> <span class="p">[</span>
+    <span class="n">durable_run_retention_lifecycle_step</span><span class="p">(</span><span class="n">older_than</span><span class="o">=</span><span class="n">timedelta</span><span class="p">(</span><span class="n">days</span><span class="o">=</span><span class="mi">30</span><span class="p">)),</span>
+    <span class="n">durable_recovery_background_lifecycle_step</span><span class="p">(</span><span class="n">runner</span><span class="o">=</span><span class="n">runner</span><span class="p">),</span>
+<span class="p">]</span>
+</code></pre></div>
+<p>Each sweep calls <code>DurableRunAdminPort.purge_finished(older_than, statuses=..., name=None,
+limit=1000)</code> until a batch comes short, at most <code>max_batches_per_tick</code> times, then sleeps
+<code>interval</code>. It deletes only <code>completed</code>, <code>cancelled</code>, <code>failed</code> and <code>timed_out</code> runs that
+landed more than <code>older_than</code> ago (by <code>updated_at</code>, which every terminal write sets), oldest
+first, each with its step journal; <code>quarantined</code> and <code>forward_incomplete</code> runs still owe work
+and cannot be named. The step needs the admin port (<code>admin=True</code> on the run config). Purging
+a run frees its idempotency key: a later submit under that key starts a new run, so keep the
+window longer than any client keeps retrying a key.</p>
+<p>A run store built by hand refuses to purge without its <code>step_config</code>, unless you pass
+<code>journal=False</code> because its runs journal no steps; the deps modules set both. On Postgres the
+batch, its rows and its journal go in one statement that skips any row another transaction
+holds, so a run being requeued keeps its steps. Mongo has no such statement: the purge marks
+the batch's steps first, and the next purge deletes the marked steps of runs an interrupted
+one removed. Concurrent sweepers skip each other's rows on Postgres; on Mongo they can pick
+the same batch, and the second delete finds nothing, so it repeats work but loses none. Run
+the step on every replica either way.</p>
 <h3 id="crash-resumable-sagas">Crash-resumable sagas<a class="headerlink" href="#crash-resumable-sagas" title="Permanent link">&para;</a></h3>
 <p>The self-hosted tier closes the "an in-process saga is not crash-resumable" gap. Swap the
 saga executor for the durable one and run the saga as a durable function — each step <strong>and
@@ -7087,12 +7195,27 @@ the step — no manual <code>put</code>:</p>
 <div class="highlight"><pre><span></span><code><span class="n">spec</span> <span class="o">=</span> <span class="n">DurableFunctionSpec</span><span class="p">(</span>
     <span class="n">name</span><span class="o">=</span><span class="s2">"report"</span><span class="p">,</span>
     <span class="n">run</span><span class="o">=</span><span class="n">DurableFunctionInvokeSpec</span><span class="p">(</span><span class="n">args_type</span><span class="o">=</span><span class="n">ReportArgs</span><span class="p">),</span>
-    <span class="n">triggers</span><span class="o">=</span><span class="p">(</span><span class="n">DurableFunctionCronTrigger</span><span class="p">(</span><span class="n">expression</span><span class="o">=</span><span class="s2">"0 3 * * *"</span><span class="p">),),</span>
+    <span class="n">triggers</span><span class="o">=</span><span class="p">(</span>
+        <span class="n">DurableFunctionCronTrigger</span><span class="p">(</span>
+            <span class="n">expression</span><span class="o">=</span><span class="s2">"0 3 * * *"</span><span class="p">,</span>
+            <span class="n">tz</span><span class="o">=</span><span class="s2">"Europe/Berlin"</span><span class="p">,</span>
+            <span class="nb">input</span><span class="o">=</span><span class="n">ReportArgs</span><span class="p">(</span><span class="n">kind</span><span class="o">=</span><span class="s2">"daily"</span><span class="p">),</span>
+        <span class="p">),</span>
+    <span class="p">),</span>
 <span class="p">)</span>
 <span class="n">durable_scheduler_background_lifecycle_step</span><span class="p">(</span><span class="n">scheduler</span><span class="o">=</span><span class="n">scheduler</span><span class="p">,</span> <span class="n">specs</span><span class="o">=</span><span class="p">[</span><span class="n">spec</span><span class="p">])</span>
 </code></pre></div>
+<p><code>tz</code> names the IANA zone the expression runs in (UTC when unset); an unknown zone fails the
+declaration. Across a daylight-saving change it behaves as cron does: a wall time the clocks
+skip fires once, when the gap ends (<code>30 2 * * *</code> fires at 03:00 on the spring-forward day),
+and a wall time the clocks repeat fires once, at its first occurrence — except an
+every-hour expression, which fires in each real hour, both passes included.</p>
+<p><code>input</code> is what each fire hands the run: a dict or an instance of the spec's <code>args_type</code>,
+checked against it when the spec is declared. On Inngest, <code>tz</code> maps to its <code>TZ=</code> prefix, and an <code>input</code> is refused,
+since an Inngest cron run receives no data.</p>
 <p>Auto-registration is <strong>idempotent</strong> — a restart re-uses an unchanged schedule (so it never
-resets <code>next_fire_at</code> and skips a due fire) and re-registers only when the cron changes.</p>
+resets <code>next_fire_at</code> and skips a due fire) and re-registers only when the cron or timezone
+changes. A changed <code>input</code> alone replaces the stored input and keeps the next fire.</p>
 <p>Firing is <strong>fire-once / skip-missed</strong>: if the scheduler was down across several occurrences
 it fires once and advances to the next future one (no backfill). It's exactly-once across
 replicas — each fire enqueues a run keyed <code>{schedule_id}:{fire_epoch}</code> and the next fire is a

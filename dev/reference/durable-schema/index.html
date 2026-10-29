@@ -6699,6 +6699,7 @@ in <a href="../../data-events/durable-execution/">Durable execution</a>.</p>
 <span class="w">    </span><span class="n">name</span><span class="w">                </span><span class="nb">text</span><span class="w">        </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="p">,</span>
 <span class="w">    </span><span class="n">status</span><span class="w">              </span><span class="nb">text</span><span class="w">        </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="p">,</span>
 <span class="w">    </span><span class="n">idempotency_key</span><span class="w">     </span><span class="nb">text</span><span class="p">,</span>
+<span class="w">    </span><span class="n">coalesce_key</span><span class="w">        </span><span class="nb">text</span><span class="p">,</span>
 <span class="w">    </span><span class="k">input</span><span class="w">               </span><span class="n">jsonb</span><span class="p">,</span>
 <span class="w">    </span><span class="k">output</span><span class="w">              </span><span class="n">jsonb</span><span class="p">,</span>
 <span class="w">    </span><span class="n">error</span><span class="w">               </span><span class="nb">text</span><span class="p">,</span>
@@ -6713,11 +6714,16 @@ in <a href="../../data-events/durable-execution/">Durable execution</a>.</p>
 <span class="w">    </span><span class="k">PRIMARY</span><span class="w"> </span><span class="k">KEY</span><span class="w"> </span><span class="p">(</span><span class="n">run_id</span><span class="p">),</span>
 <span class="w">    </span><span class="k">UNIQUE</span><span class="w"> </span><span class="p">(</span><span class="n">idempotency_key</span><span class="p">)</span>
 <span class="p">);</span>
+
+<span class="k">CREATE</span><span class="w"> </span><span class="k">UNIQUE</span><span class="w"> </span><span class="k">INDEX</span><span class="w"> </span><span class="k">ON</span><span class="w"> </span><span class="k">public</span><span class="p">.</span><span class="n">durable_run</span><span class="w"> </span><span class="p">(</span><span class="n">coalesce_key</span><span class="p">)</span><span class="w"> </span><span class="k">WHERE</span><span class="w"> </span><span class="n">status</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s1">'pending'</span><span class="w"> </span><span class="k">AND</span><span class="w"> </span><span class="n">attempts</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span>
 </code></pre></div>
 <ul>
 <li><code>UNIQUE (idempotency_key)</code> makes two submits of one key converge on a single run. The
   key is stored tenant-scoped, so two tenants reusing a key on a shared table stay
   distinct runs.</li>
+<li>The partial unique index on <code>coalesce_key</code> admits one unclaimed <code>pending</code> run per key,
+  which <code>enqueue(coalesce_key=...)</code> joins. It is stored as <code>{tenant_id}:{key}</code>, or
+  <code>:{key}</code> untagged, so no key reaches another tenant's run.</li>
 <li><code>attempts</code> is the fence token: each claim advances it under a row lock, and a terminal
   write is fenced against a reclaimed lease.</li>
 <li><code>available_at</code> delays when a <code>pending</code> run may be claimed (<code>NULL</code>: claimable now).</li>
@@ -6729,12 +6735,17 @@ in <a href="../../data-events/durable-execution/">Durable execution</a>.</p>
 <span class="c1">-- on a shared tagged table a bound scan also filters tenant_id</span>
 <span class="k">CREATE</span><span class="w"> </span><span class="k">INDEX</span><span class="w"> </span><span class="k">ON</span><span class="w"> </span><span class="k">public</span><span class="p">.</span><span class="n">durable_run</span><span class="w"> </span><span class="p">(</span><span class="n">tenant_id</span><span class="p">,</span><span class="w"> </span><span class="n">status</span><span class="p">,</span><span class="w"> </span><span class="n">created_at</span><span class="p">);</span>
 
+<span class="c1">-- where runs are purged: purge_finished filters on status and updated_at (when the run</span>
+<span class="c1">-- landed) and deletes the oldest landings first</span>
+<span class="k">CREATE</span><span class="w"> </span><span class="k">INDEX</span><span class="w"> </span><span class="k">ON</span><span class="w"> </span><span class="k">public</span><span class="p">.</span><span class="n">durable_run</span><span class="w"> </span><span class="p">(</span><span class="n">status</span><span class="p">,</span><span class="w"> </span><span class="n">updated_at</span><span class="p">);</span>
+
 <span class="c1">-- the admin listing (list_runs) orders newest first and seeks on (created_at, run_id)</span>
 <span class="k">CREATE</span><span class="w"> </span><span class="k">INDEX</span><span class="w"> </span><span class="k">ON</span><span class="w"> </span><span class="k">public</span><span class="p">.</span><span class="n">durable_run</span><span class="w"> </span><span class="p">(</span><span class="n">created_at</span><span class="w"> </span><span class="k">DESC</span><span class="p">,</span><span class="w"> </span><span class="n">run_id</span><span class="w"> </span><span class="k">DESC</span><span class="p">);</span>
 <span class="c1">-- on a shared tagged table a bound listing also filters tenant_id</span>
 <span class="k">CREATE</span><span class="w"> </span><span class="k">INDEX</span><span class="w"> </span><span class="k">ON</span><span class="w"> </span><span class="k">public</span><span class="p">.</span><span class="n">durable_run</span><span class="w"> </span><span class="p">(</span><span class="n">tenant_id</span><span class="p">,</span><span class="w"> </span><span class="n">created_at</span><span class="w"> </span><span class="k">DESC</span><span class="p">,</span><span class="w"> </span><span class="n">run_id</span><span class="w"> </span><span class="k">DESC</span><span class="p">);</span>
 </code></pre></div>
-<p>Without them, the recovery scan and the listing scan and sort the whole table as it grows.</p>
+<p>Without them, the recovery scan, the purge and the listing scan and sort the whole table
+as it grows.</p>
 <h3 id="steps">Steps<a class="headerlink" href="#steps" title="Permanent link">&para;</a></h3>
 <p>For <code>PostgresDurableStepConfig(relation=("public", "durable_step"))</code>:</p>
 <div class="highlight"><pre><span></span><code><span class="k">CREATE</span><span class="w"> </span><span class="k">TABLE</span><span class="w"> </span><span class="k">public</span><span class="p">.</span><span class="n">durable_step</span><span class="w"> </span><span class="p">(</span>
@@ -6746,7 +6757,8 @@ in <a href="../../data-events/durable-execution/">Durable execution</a>.</p>
 <span class="w">    </span><span class="k">PRIMARY</span><span class="w"> </span><span class="k">KEY</span><span class="w"> </span><span class="p">(</span><span class="n">run_id</span><span class="p">,</span><span class="w"> </span><span class="n">step_id</span><span class="p">)</span>
 <span class="p">);</span>
 </code></pre></div>
-<p>The primary key is the journal's dedup key, so it needs no other index.</p>
+<p>The primary key is the journal's dedup key, so it needs no other index; a purge deletes a
+run's steps by <code>run_id</code>, which the key leads with.</p>
 <h3 id="schedules">Schedules<a class="headerlink" href="#schedules" title="Permanent link">&para;</a></h3>
 <p>For <code>PostgresDurableScheduleConfig(relation=("public", "durable_schedule"))</code>:</p>
 <div class="highlight"><pre><span></span><code><span class="k">CREATE</span><span class="w"> </span><span class="k">TABLE</span><span class="w"> </span><span class="k">public</span><span class="p">.</span><span class="n">durable_schedule</span><span class="w"> </span><span class="p">(</span>
@@ -6772,6 +6784,15 @@ tenants registering one id stay distinct schedules.</p>
 <span class="k">CREATE</span><span class="w"> </span><span class="k">INDEX</span><span class="w"> </span><span class="k">ON</span><span class="w"> </span><span class="k">public</span><span class="p">.</span><span class="n">durable_schedule</span><span class="w"> </span><span class="p">(</span><span class="n">tenant_id</span><span class="p">,</span><span class="w"> </span><span class="n">next_fire_at</span><span class="p">)</span><span class="w"> </span><span class="k">WHERE</span><span class="w"> </span><span class="n">enabled</span><span class="p">;</span>
 </code></pre></div>
 <h3 id="migrations">Migrations<a class="headerlink" href="#migrations" title="Permanent link">&para;</a></h3>
+<p><strong>Purging runs reads <code>updated_at</code>.</strong> The column exists already; where you run the
+retention purge, add the <code>(status, updated_at)</code> index recommended above, built
+<code>CONCURRENTLY</code> so the table stays writable meanwhile.</p>
+<p><strong>Coalescing enqueue needs a column and an index.</strong> Only <code>enqueue(coalesce_key=...)</code> reads
+them, so add both before the first such call; nothing else changes:</p>
+<div class="highlight"><pre><span></span><code><span class="k">ALTER</span><span class="w"> </span><span class="k">TABLE</span><span class="w"> </span><span class="k">public</span><span class="p">.</span><span class="n">durable_run</span><span class="w"> </span><span class="k">ADD</span><span class="w"> </span><span class="k">COLUMN</span><span class="w"> </span><span class="n">coalesce_key</span><span class="w"> </span><span class="nb">text</span><span class="p">;</span>
+<span class="k">CREATE</span><span class="w"> </span><span class="k">UNIQUE</span><span class="w"> </span><span class="k">INDEX</span><span class="w"> </span><span class="n">CONCURRENTLY</span><span class="w"> </span><span class="k">ON</span><span class="w"> </span><span class="k">public</span><span class="p">.</span><span class="n">durable_run</span><span class="w"> </span><span class="p">(</span><span class="n">coalesce_key</span><span class="p">)</span>
+<span class="w">    </span><span class="k">WHERE</span><span class="w"> </span><span class="n">status</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s1">'pending'</span><span class="w"> </span><span class="k">AND</span><span class="w"> </span><span class="n">attempts</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span>
+</code></pre></div>
 <p><strong>0.6.0 added run cancellation.</strong> Both cancel columns are nullable with no default, so an
 existing <code>durable_run</code> table migrates with no rewrite:</p>
 <div class="highlight"><pre><span></span><code><span class="k">ALTER</span><span class="w"> </span><span class="k">TABLE</span><span class="w"> </span><span class="k">public</span><span class="p">.</span><span class="n">durable_run</span>
@@ -6799,6 +6820,20 @@ which the batch claim reads back.</p>
 <span class="w">    </span><span class="p">{</span><span class="w"> </span><span class="nx">unique</span><span class="o">:</span><span class="w"> </span><span class="kc">true</span><span class="p">,</span><span class="w"> </span><span class="nx">partialFilterExpression</span><span class="o">:</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="nx">idempotency_key</span><span class="o">:</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="nx">$type</span><span class="o">:</span><span class="w"> </span><span class="s2">"string"</span><span class="w"> </span><span class="p">}</span><span class="w"> </span><span class="p">}</span><span class="w"> </span><span class="p">},</span>
 <span class="p">)</span>
 </code></pre></div>
+<p>Coalescing (<code>enqueue(coalesce_key=...)</code>) needs one more, so a burst of submits joins one
+unclaimed run rather than racing to insert several:</p>
+<div class="highlight"><pre><span></span><code><span class="nx">db</span><span class="p">.</span><span class="nx">durable_run</span><span class="p">.</span><span class="nx">createIndex</span><span class="p">(</span>
+<span class="w">    </span><span class="p">{</span><span class="w"> </span><span class="nx">coalesce_key</span><span class="o">:</span><span class="w"> </span><span class="mf">1</span><span class="w"> </span><span class="p">},</span>
+<span class="w">    </span><span class="p">{</span>
+<span class="w">        </span><span class="nx">unique</span><span class="o">:</span><span class="w"> </span><span class="kc">true</span><span class="p">,</span>
+<span class="w">        </span><span class="nx">partialFilterExpression</span><span class="o">:</span><span class="w"> </span><span class="p">{</span>
+<span class="w">            </span><span class="nx">coalesce_key</span><span class="o">:</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="nx">$type</span><span class="o">:</span><span class="w"> </span><span class="s2">"string"</span><span class="w"> </span><span class="p">},</span>
+<span class="w">            </span><span class="nx">status</span><span class="o">:</span><span class="w"> </span><span class="s2">"pending"</span><span class="p">,</span>
+<span class="w">            </span><span class="nx">attempts</span><span class="o">:</span><span class="w"> </span><span class="mf">0</span><span class="p">,</span>
+<span class="w">        </span><span class="p">},</span>
+<span class="w">    </span><span class="p">},</span>
+<span class="p">)</span>
+</code></pre></div>
 <p>Recommended indexes keep the recovery scan, the listing and the scheduler off collection
 scans as the collections grow:</p>
 <div class="highlight"><pre><span></span><code><span class="nx">db</span><span class="p">.</span><span class="nx">durable_run</span><span class="p">.</span><span class="nx">createIndex</span><span class="p">({</span><span class="w"> </span><span class="nx">status</span><span class="o">:</span><span class="w"> </span><span class="mf">1</span><span class="p">,</span><span class="w"> </span><span class="nx">created_at</span><span class="o">:</span><span class="w"> </span><span class="mf">1</span><span class="w"> </span><span class="p">})</span>
@@ -6806,6 +6841,8 @@ scans as the collections grow:</p>
 <span class="c1">// on a shared tagged collection a bound scan and listing also filter tenant_id</span>
 <span class="nx">db</span><span class="p">.</span><span class="nx">durable_run</span><span class="p">.</span><span class="nx">createIndex</span><span class="p">({</span><span class="w"> </span><span class="nx">tenant_id</span><span class="o">:</span><span class="w"> </span><span class="mf">1</span><span class="p">,</span><span class="w"> </span><span class="nx">status</span><span class="o">:</span><span class="w"> </span><span class="mf">1</span><span class="p">,</span><span class="w"> </span><span class="nx">created_at</span><span class="o">:</span><span class="w"> </span><span class="mf">1</span><span class="w"> </span><span class="p">})</span>
 <span class="nx">db</span><span class="p">.</span><span class="nx">durable_run</span><span class="p">.</span><span class="nx">createIndex</span><span class="p">({</span><span class="w"> </span><span class="nx">tenant_id</span><span class="o">:</span><span class="w"> </span><span class="mf">1</span><span class="p">,</span><span class="w"> </span><span class="nx">created_at</span><span class="o">:</span><span class="w"> </span><span class="o">-</span><span class="mf">1</span><span class="p">,</span><span class="w"> </span><span class="nx">_id</span><span class="o">:</span><span class="w"> </span><span class="o">-</span><span class="mf">1</span><span class="w"> </span><span class="p">})</span>
+<span class="c1">// where runs are purged: status and updated_at (when the run landed), oldest first</span>
+<span class="nx">db</span><span class="p">.</span><span class="nx">durable_run</span><span class="p">.</span><span class="nx">createIndex</span><span class="p">({</span><span class="w"> </span><span class="nx">status</span><span class="o">:</span><span class="w"> </span><span class="mf">1</span><span class="p">,</span><span class="w"> </span><span class="nx">updated_at</span><span class="o">:</span><span class="w"> </span><span class="mf">1</span><span class="w"> </span><span class="p">})</span>
 <span class="c1">// sparse: only a run some scan has claimed carries a token</span>
 <span class="nx">db</span><span class="p">.</span><span class="nx">durable_run</span><span class="p">.</span><span class="nx">createIndex</span><span class="p">({</span><span class="w"> </span><span class="nx">claim_token</span><span class="o">:</span><span class="w"> </span><span class="mf">1</span><span class="w"> </span><span class="p">},</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="nx">sparse</span><span class="o">:</span><span class="w"> </span><span class="kc">true</span><span class="w"> </span><span class="p">})</span>
 
@@ -6813,8 +6850,14 @@ scans as the collections grow:</p>
 <span class="c1">// on a shared tagged collection a bound scheduler also filters tenant_id</span>
 <span class="nx">db</span><span class="p">.</span><span class="nx">durable_schedule</span><span class="p">.</span><span class="nx">createIndex</span><span class="p">({</span><span class="w"> </span><span class="nx">tenant_id</span><span class="o">:</span><span class="w"> </span><span class="mf">1</span><span class="p">,</span><span class="w"> </span><span class="nx">enabled</span><span class="o">:</span><span class="w"> </span><span class="mf">1</span><span class="p">,</span><span class="w"> </span><span class="nx">next_fire_at</span><span class="o">:</span><span class="w"> </span><span class="mf">1</span><span class="w"> </span><span class="p">})</span>
 </code></pre></div>
-<p>The step journal needs no index: its <code>_id</code> composes the run and the step, so a concurrent
-duplicate of one step serialises on the primary key.</p>
+<p>The step journal needs no index for correctness: its <code>_id</code> composes the run and the step,
+so a concurrent duplicate of one step serialises on the primary key. Where runs are purged,
+index <code>run_id</code>, by which the purge marks, deletes and unmarks a run's steps, and the
+<code>purge_pending</code> mark, by which the next purge finds the steps of runs an interrupted one
+deleted:</p>
+<div class="highlight"><pre><span></span><code><span class="nx">db</span><span class="p">.</span><span class="nx">durable_step</span><span class="p">.</span><span class="nx">createIndex</span><span class="p">({</span><span class="w"> </span><span class="nx">run_id</span><span class="o">:</span><span class="w"> </span><span class="mf">1</span><span class="w"> </span><span class="p">})</span>
+<span class="nx">db</span><span class="p">.</span><span class="nx">durable_step</span><span class="p">.</span><span class="nx">createIndex</span><span class="p">({</span><span class="w"> </span><span class="nx">purge_pending</span><span class="o">:</span><span class="w"> </span><span class="mf">1</span><span class="w"> </span><span class="p">},</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="nx">sparse</span><span class="o">:</span><span class="w"> </span><span class="kc">true</span><span class="w"> </span><span class="p">})</span>
+</code></pre></div>
 
 
 

@@ -10344,6 +10344,21 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <p><strong><code>OperationDescriptor(streams=True)</code> keeps a byte-stream result off JSON surfaces.</strong> <abbr title="Model Context Protocol">MCP</abbr> and <code>forze ops</code> leave such an operation out by default; they, agent tools and <code>attach_operation_routes</code> refuse it by name. The storage and stored-file kits' <code>download_stream</code> set it (<strong>behaviour change</strong>).</p>
 </li>
 </ul>
+<p><strong>Self-hosted durable functions:</strong></p>
+<ul>
+<li>
+<p><strong>A cron trigger declares a timezone and an input.</strong> <code>DurableFunctionCronTrigger(expression, tz=..., input=...)</code> registers its schedule with both; an unknown zone or an input not of the spec's <code>args_type</code> fails the declaration. A changed input alone keeps the next fire; Inngest maps <code>tz</code> to <code>TZ=</code> and refuses an input.</p>
+</li>
+<li>
+<p><strong>Finished runs can be purged past a retention window.</strong> <code>DurableRunAdminPort.purge_finished(older_than, ...)</code> deletes up to <code>limit</code> runs that landed before the window, with their step journal, freeing their idempotency keys. <code>durable_run_retention_lifecycle_step</code> sweeps; a hand-built store needs <code>step_config</code>.</p>
+</li>
+<li>
+<p><strong>An enqueue can coalesce onto the run waiting unclaimed.</strong> <code>enqueue(..., coalesce_key=...)</code> joins a <code>pending</code> run never claimed under that key, dropping the submit's own input and <code>run_at</code>, and records a new run once it is claimed. <strong>Migration:</strong> add the <code>coalesce_key</code> column and its partial unique index first.</p>
+</li>
+<li>
+<p><strong>An operation-backed function can run as a service principal.</strong> <code>register_operation_functions(..., identity=DurableServiceIdentity(...))</code> binds it around the operation, so <code>AuthnRequired</code>, authz and audit see it; the identity must be acknowledged as unverified. Without one, a guarded operation refuses the run.</p>
+</li>
+</ul>
 <p><strong><code>forze ops</code> for people at a shell and for backfills:</strong></p>
 <ul>
 <li><strong><code>forze ops</code> gains typed flags, JSONL batches and shell completion.</strong> <code>call OP --field VALUE</code> takes a flat-scalar input as flags; <code>--batch @PATH|-</code> runs one call per line in one runtime, stopping at the first failure; <code>OP</code> completes in the shell. An unknown option after <code>OP</code> now exits 2 with an error object.</li>
@@ -10361,6 +10376,12 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 </li>
 <li>
 <p><strong><code>HttpServicePort</code> requires <code>stream</code></strong> (<strong>behaviour change</strong>). A hand-written implementation or test stub must add it, or it fails type checks and <code>isinstance</code> against the runtime-checkable port.</p>
+</li>
+<li>
+<p><strong>A durable body never inherits the caller's principal</strong> (<strong>behaviour change</strong>). <code>run_now</code> inside a request now runs an untagged run as no one, as recovery always did: audit, <code>CreatorIdMappingStep</code> and progress jobs record no actor, and guarded saga steps refuse. Name a principal with <code>DurableServiceIdentity</code>.</p>
+</li>
+<li>
+<p><strong>Durable store ports gain members</strong> (<strong>behaviour change</strong>). <code>DurableRunAdminPort</code> requires <code>purge_finished</code>, <code>DurableScheduleStorePort</code> requires <code>set_input</code>, and <code>DurableRunStorePort.enqueue</code> takes <code>coalesce_key</code>, which <code>DurableFunctionRunner.enqueue</code> always passes. A hand-written store must add them.</p>
 </li>
 <li>
 <p><strong><code>local_identity_deps</code> wires no tenant resolver for a config that maps no tenant</strong> (<strong>behaviour change</strong>). There, <code>forze ops call --tenant</code> gets <code>400 tenant_request_unverifiable</code>, not <code>401 tenant_mismatch</code>. A tenant on an API key counts and resolves, also in a config built directly.</p>
@@ -10391,6 +10412,12 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 </li>
 <li>
 <p><strong>An operation span stays clean on a failure the caller can handle</strong> (<strong>behaviour change</strong>). OpenTelemetry's own handling marked every failed operation's span <code>ERROR</code> whatever its kind and recorded a server error's exception twice. Now only a server-side failure sets <code>ERROR</code>, with one exception event, as port spans do.</p>
+</li>
+<li>
+<p><strong>A durable schedule with no timezone fires in UTC whatever zone <code>now</code> is given in.</strong> A non-UTC <code>now</code> passed to <code>DurableScheduler.put</code> or <code>tick</code> moved its fires by that zone's offset.</p>
+</li>
+<li>
+<p><strong>A timezoned durable schedule no longer fires twice when the clocks fall back.</strong> A wall time the clocks repeat fires at its first occurrence only, unless the expression runs every hour; a wall time they skip still fires once, when the gap ends.</p>
 </li>
 <li>
 <p><strong>A warning logged before <code>configure_logging</code> carries the invocation's ids.</strong> The fallback renderer now merges the bound logging context, as the configured chain does.</p>
@@ -10517,6 +10544,9 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 </li>
 <li>
 <p><strong>A tenant-sharded realtime consumer refuses a stream route that is not <code>tenant_aware</code></strong> (<strong>behaviour change</strong>). <code>TenantShardedSignalSource</code> and <code>realtime_sse_sharded_tail_lifecycle_step</code> fail with <code>tenant_aware_required</code>, so a signal is never delivered or stored under another tenant. New <code>require_tenant_aware</code>.</p>
+</li>
+<li>
+<p><strong>A nested identity scope no longer logs the outer principal.</strong> <code>bind_identity</code> and <code>bind</code> now clear the principal, actor and tenant log fields they do not set, and restore them when the scope ends.</p>
 </li>
 </ul>
 <h2 id="0162-2026-10-26"><a href="https://github.com/morzecrew/forze/compare/v0.16.1...v0.16.2">0.16.2</a> - 2026-10-26<a class="headerlink" href="#0162-2026-10-26" title="Permanent link">&para;</a></h2>
