@@ -62,6 +62,11 @@ quote. Any change since the reviewer read it should send them back. Pass
 await ctx.document.command(order_spec).update(
     order.id, order.rev, OrderUpdate(status="confirmed"), merge=False,
 )
+```
+
+To record the sign-off without changing any field, touch it at the revision you read:
+
+```python
 await ctx.document.command(order_spec).touch(order.id, rev=order.rev)
 ```
 
