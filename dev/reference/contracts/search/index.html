@@ -6900,6 +6900,12 @@ result-set snapshots.</p>
 <td>field <a href="../../../identity-tenancy-enc/encryption/">encryption</a> — <strong>the same policy</strong> as the document table's, so in-place search reproduces its <abbr title="Additional Authenticated Data">AAD</abbr></td>
 </tr>
 <tr>
+<td><code>sealed_by</code></td>
+<td><code>str \| None</code></td>
+<td><code>None</code></td>
+<td>in-place search only: the document spec whose port sealed the table's fields, so the read codec binds its name in the <abbr title="Additional Authenticated Data">AAD</abbr>. <code>HubSearchSpec</code> takes its own, which governs its hub rows (a member's must be unset or equal to it); Meilisearch and index sync/rebuild refuse it (an index seals its own)</td>
+</tr>
+<tr>
 <td><code>sensitive</code></td>
 <td><code>bool</code></td>
 <td><code>False</code></td>

@@ -6643,7 +6643,14 @@ plaintext.</p>
 (deterministic, equality-only) field sets, plus <code>binds_record_id</code> and
 <code>reject_plaintext</code> — is declared once on the document spec and <strong>carried to search,
 analytics, graph, and procedure params</strong> by pointing their spec at the same policy, so
-the planes can't drift.</p>
+the planes can't drift. Document ciphertext is also bound to the document spec's name: a
+search or analytics spec that reads the document's table in place sets <code>sealed_by</code> to that
+name (otherwise <code>core.crypto.aead_auth_failed</code>). An external index and ingested warehouse
+rows keep their own label, so Meilisearch, index sync and rebuild, and an <code>AnalyticsSpec</code>
+with <code>ingest</code> refuse it. A hub's <code>sealed_by</code> governs its rows; a member's must be unset or
+equal to it.
+Graph (its own Neo4j store) and procedure params (sealed before the SQL) read no document
+table.</p>
 <table>
 <thead>
 <tr>
@@ -6673,7 +6680,7 @@ the planes can't drift.</p>
 <td>Analytics / warehouse</td>
 <td>Postgres, ClickHouse, BigQuery, DuckDB, mock</td>
 <td>yes (equality only)</td>
-<td><strong>rejected</strong> — warehouse rows have no id</td>
+<td>with <code>sealed_by</code> only — each query returns the document's <code>id</code>; <strong>rejected</strong> otherwise (ingested rows have no id)</td>
 <td><code>core.analytics.encryption_wiring</code></td>
 </tr>
 <tr>

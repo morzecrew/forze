@@ -6894,7 +6894,7 @@ reader needs only the key backend to open it, never an out-of-band scheme. The
 across a scope up to <code>max_dek_messages</code> before rotating — one <abbr title="Key Management Service">KMS</abbr> round-trip
 amortized over many values.</p>
 <p>Every ciphertext is bound to <strong>associated data</strong> (<abbr title="Additional Authenticated Data">AAD</abbr>): at minimum the tenant
-and the field name, so an envelope lifted from one tenant or column cannot be
+and the field name (plus the spec name for document fields), so an envelope lifted from one tenant or column cannot be
 replayed into another. The cipher is AEAD (AES-256-GCM by default, ChaCha20-
 Poly1305 optional) — tampering fails the open, it doesn't return garbage.</p>
 <h2 id="wiring-the-keyring">Wiring the keyring<a class="headerlink" href="#wiring-the-keyring" title="Permanent link">&para;</a></h2>
@@ -7016,11 +7016,37 @@ they're never content-searchable, aggregatable, or matchable in a graph predicat
 (that's physics, not a limit) — so encrypt what you store-and-return but never
 query by, and use <code>searchable</code> (deterministic) fields for the equality lookups you
 do need.
-One caveat when sharing a policy: <code>binds_record_id</code> needs a stable per-record id, so it
-applies to the document and graph (key-addressed) planes only — an <code>AnalyticsSpec</code> (warehouse
-rows have no id) and an endpoint-identity graph edge reject it at wiring. Leave it off the
-policy you share with those, or give them their own.
-The downstream caches inherit it: when a search route encrypts, its result-snapshot
+One caveat when sharing a policy: <code>binds_record_id</code> needs a stable per-record id. The document plane,
+search and key-addressed graph kinds take it from each row. An <code>AnalyticsSpec</code> accepts it only with
+<code>sealed_by</code> (below), because the rows it ingests have no id. An endpoint-identity graph edge
+and procedure params reject it. Leave it off the policy you share with those, or give them
+their own.</p>
+<p>A document's ciphertext is also bound to the <strong>document spec's name</strong>, so it can't be
+moved between aggregates. A search or analytics spec that reads the document's table in
+place — Postgres or Mongo search, a warehouse query over that table — names that document
+with <code>sealed_by</code>, and its read codec binds the same name:</p>
+<div class="highlight"><pre><span></span><code><span class="n">PATIENT_FIELDS</span> <span class="o">=</span> <span class="n">FieldEncryption</span><span class="p">(</span><span class="n">encrypted</span><span class="o">=</span><span class="nb">frozenset</span><span class="p">({</span><span class="s2">"ssn"</span><span class="p">}))</span>
+
+<span class="n">DocumentSpec</span><span class="p">(</span><span class="n">name</span><span class="o">=</span><span class="s2">"patients"</span><span class="p">,</span> <span class="n">read</span><span class="o">=</span><span class="n">Patient</span><span class="p">,</span> <span class="n">encryption</span><span class="o">=</span><span class="n">PATIENT_FIELDS</span><span class="p">)</span>
+<span class="n">AnalyticsSpec</span><span class="p">(</span>
+    <span class="n">name</span><span class="o">=</span><span class="s2">"patient_report"</span><span class="p">,</span>
+    <span class="n">read</span><span class="o">=</span><span class="n">Report</span><span class="p">,</span>
+    <span class="n">queries</span><span class="o">=...</span><span class="p">,</span>
+    <span class="n">encryption</span><span class="o">=</span><span class="n">PATIENT_FIELDS</span><span class="p">,</span>
+    <span class="n">sealed_by</span><span class="o">=</span><span class="s2">"patients"</span><span class="p">,</span>
+<span class="p">)</span>
+</code></pre></div>
+<p>Without <code>sealed_by</code>, those reads fail with <code>core.crypto.aead_auth_failed</code>: a ciphertext
+is never opened under another name. When the policy sets <code>binds_record_id</code>, each ciphertext is
+also bound to its row's id, so the read must return the document's <code>id</code> column as <code>id</code>. A read
+that leaves it out, such as an analytics query that doesn't select <code>id</code>, fails with
+<code>core.crypto.record_id_required</code>: an id-bound value is never opened without its id. Data a plane seals itself keeps the plane's own label,
+so an external index (Meilisearch), the kit's index sync, outbox sync and rebuild, and an
+<code>AnalyticsSpec</code> with <code>ingest</code> refuse <code>sealed_by</code>. A <code>HubSearchSpec</code>'s <code>sealed_by</code> governs
+every hub row it decodes: a member's <code>sealed_by</code> must be unset or equal to the hub's, and
+any other is refused when the spec is built. Each federated member names its own. Graph
+and procedure params read no document table, so they have no <code>sealed_by</code>.</p>
+<p>The downstream caches inherit it: when a search route encrypts, its result-snapshot
 runs (the frozen models kept for stable re-pagination) are sealed at rest too, so the
 snapshot store never re-exposes what the document sealed — automatic, no extra config.</p>
 <h3 id="object-storage">Object storage<a class="headerlink" href="#object-storage" title="Permanent link">&para;</a></h3>

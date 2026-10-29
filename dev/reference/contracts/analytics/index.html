@@ -6722,7 +6722,13 @@ model:</p>
 <td><code>encryption</code></td>
 <td><code>FieldEncryption \| None</code></td>
 <td><code>None</code></td>
-<td>seal columns at rest (confidential, <strong>not</strong> aggregatable; <code>binds_record_id</code> unsupported — rows have no id)</td>
+<td>seal columns at rest (confidential, <strong>not</strong> aggregatable; <code>binds_record_id</code> only with <code>sealed_by</code> — ingested rows have no id)</td>
+</tr>
+<tr>
+<td><code>sealed_by</code></td>
+<td><code>str \| None</code></td>
+<td><code>None</code></td>
+<td>the document spec whose port sealed the columns the queries read, so the read codec binds its name in the <abbr title="Additional Authenticated Data">AAD</abbr>; refused with <code>ingest</code> (ingested rows keep the analytics label). Under <code>binds_record_id</code>, every query must return the document's <code>id</code> as <code>id</code>, else <code>core.crypto.record_id_required</code></td>
 </tr>
 <tr>
 <td><code>read_codec</code> / <code>ingest_codec</code></td>
