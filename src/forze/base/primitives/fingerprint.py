@@ -3,7 +3,7 @@
 import binascii
 import hashlib
 from collections.abc import Iterable, Sequence
-from datetime import date, datetime
+from datetime import UTC, date, datetime
 from decimal import Decimal
 from typing import Any, cast
 from urllib.parse import parse_qs, urlparse
@@ -297,7 +297,9 @@ def _advisory_bytes(part: object) -> bytes:
     key whose two writers might not collide, which is the failure the declaration exists to
     remove.
 
-    :raises CoreException: ``configuration`` naming the type.
+    :raises CoreException: ``configuration`` naming the type; ``validation``
+        (``lock_key_instant_out_of_range``) for an instant whose UTC spelling no ``datetime``
+        holds.
     """
 
     match part:
@@ -323,7 +325,21 @@ def _advisory_bytes(part: object) -> bytes:
             return format(part.normalize(), "f").encode("utf-8")
 
         case datetime():
-            return part.isoformat().encode("utf-8")
+            # The instant, in UTC: a store reads one back in its session's offset (Postgres's
+            # `timestamptz`), not the one it was written in. Naive is UTC, as forze reads it.
+            if part.utcoffset() is None:
+                return part.replace(tzinfo=UTC).isoformat().encode("utf-8")
+
+            try:
+                return part.astimezone(UTC).isoformat().encode("utf-8")
+
+            except OverflowError:
+                raise exc.validation(
+                    f"A lock key cannot be derived from an instant at offset {part:%:z}: in UTC "
+                    "it falls outside the years 1 to 9999 a datetime can hold.",
+                    code="lock_key_instant_out_of_range",
+                    details={"offset": f"{part:%:z}"},
+                ) from None
 
         case date():
             return part.isoformat().encode("utf-8")
@@ -341,6 +357,11 @@ def _advisory_bytes(part: object) -> bytes:
 def advisory_lock_key(*parts: object) -> int:
     """A stable 64-bit lock key for *parts*, equal in every process and every release.
 
+    One exception across releases: a datetime keys on its UTC instant, where earlier releases
+    kept its own offset, so a naive or non-UTC datetime key changed. A rolling deployment that
+    crosses that change must drain the writers of such keys first, or old and new nodes will
+    not contend.
+
     A digest rather than :func:`hash`, which is salted per interpreter: two workers deriving a
     key for the same owner would take *different* keys and serialize against nobody, which is
     the one deployment such a lock exists for. Salting is invisible inside a single process, so
@@ -357,7 +378,8 @@ def advisory_lock_key(*parts: object) -> int:
 
     :param parts: The key's components, in a fixed order the caller chooses.
     :returns: A signed 64-bit integer, which is the width a lock key is usually taken in.
-    :raises CoreException: ``configuration`` when a part has no canonical encoding.
+    :raises CoreException: ``configuration`` when a part has no canonical encoding;
+        ``validation`` (``lock_key_instant_out_of_range``) for an instant outside the UTC range.
     """
 
     digest = hashlib.blake2b(digest_size=8)

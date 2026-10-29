@@ -136,6 +136,12 @@ transactions that each hold the owner the other wants are a deadlock Postgres de
 refused as `concurrency`, which is retryable, and the in-memory store refuses the same cycle the
 same way. Mongo has no advisory-lock mechanism and refuses the declaration.
 
+A datetime key field locks on the instant, not on its offset: a create written in `+03:00` and an
+update of the row Postgres reads back in the session's time zone take one lock. A naive datetime
+is read as UTC, which matches what Postgres stores for it only when the writing session's
+`TimeZone` is UTC; the client sets none, so the server's default applies. An instant whose UTC
+spelling falls outside the years 1 to 9999 is refused as `lock_key_instant_out_of_range`.
+
 Those locks add up in a long transaction. A transaction holds one for each distinct owner it writes
 under until it ends, and they all live in Postgres's shared lock table. Every session shares that
 table, which holds `max_locks_per_transaction` × (`max_connections` + `max_prepared_transactions`)

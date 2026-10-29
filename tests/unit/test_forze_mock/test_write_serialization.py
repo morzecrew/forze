@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Awaitable, Callable
-from datetime import date
+from datetime import UTC, date, datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Any
 from uuid import UUID, uuid4
@@ -400,6 +400,91 @@ class TestTheKeyDoesNotCollapseTypes:
         owner = uuid4()
 
         assert advisory_lock_key("a", None, owner) == advisory_lock_key("a", None, owner)
+
+
+# ....................... #
+
+BY_SLOT = SerializedBy(key=("slot",))
+
+_SLOT_UTC = datetime(2026, 3, 29, 9, 0, tzinfo=UTC)
+"""The instant every leg below names, as a store in a UTC session reads it back."""
+
+
+class _Slot(Document):
+    slot: datetime
+    label: str = ""
+
+
+class _SlotRead(ReadDocument):
+    slot: datetime
+    label: str = ""
+
+
+class _SlotCreate(CreateDocumentCmd):
+    slot: datetime
+    label: str = ""
+
+
+class _SlotUpdate(BaseDTO):
+    slot: datetime | None = None
+    label: str | None = None
+
+
+def _slot_spec(*guarantees: SerializedBy) -> DocumentSpec[Any, Any, Any, Any]:
+    return DocumentSpec[_SlotRead, _Slot, _SlotCreate, _SlotUpdate](
+        name="slots",
+        read=_SlotRead,
+        write=DocumentWriteTypes(domain=_Slot, create_cmd=_SlotCreate, update_cmd=_SlotUpdate),
+        guarantees=guarantees,
+    )
+
+
+class TestAnInstantIsOneOwnerInAnyOffset:
+    """A create keys the caller's offset; a write naming a stored row keys the row's.
+
+    Postgres hands the row back in its session's offset, so the two spell one instant
+    differently — and must still be one owner, here as there.
+    """
+
+    @pytest.mark.parametrize(
+        "written",
+        [_SLOT_UTC.astimezone(timezone(timedelta(hours=3))), _SLOT_UTC.replace(tzinfo=None)],
+        ids=["+03:00", "naive"],
+    )
+    async def test_an_update_of_the_stored_row_waits_for_the_create(
+        self, written: datetime
+    ) -> None:
+        state = MockState()
+        row = await _ctx(state).doc.command(_slot_spec()).create(_SlotCreate(slot=_SLOT_UTC))
+
+        async def create(ctx: Any) -> None:
+            await ctx.doc.command(_slot_spec(BY_SLOT)).create(_SlotCreate(slot=written))
+            # The key Postgres takes for this owner: the instant in UTC.
+            key = advisory_lock_key("slots", None, "slot", _SLOT_UTC)
+            assert state.write_serialization.holder_of(key) is not None
+
+        async def update(ctx: Any) -> None:
+            await ctx.doc.command(_slot_spec(BY_SLOT)).update(
+                row.id, row.rev, _SlotUpdate(label="x")
+            )
+
+        assert not await _observed_overlap(state, create, update)
+
+    async def test_another_instant_is_another_owner(self) -> None:
+        # The contrast: an instant an hour on is another owner, whatever offset spells it.
+        state = MockState()
+        row = await _ctx(state).doc.command(_slot_spec()).create(_SlotCreate(slot=_SLOT_UTC))
+        later = (_SLOT_UTC + timedelta(hours=1)).astimezone(timezone(timedelta(hours=3)))
+
+        async def create(ctx: Any) -> None:
+            await ctx.doc.command(_slot_spec(BY_SLOT)).create(_SlotCreate(slot=later))
+
+        async def update(ctx: Any) -> None:
+            await ctx.doc.command(_slot_spec(BY_SLOT)).update(
+                row.id, row.rev, _SlotUpdate(label="x")
+            )
+
+        assert await _observed_overlap(state, create, update)
 
 
 # ....................... #

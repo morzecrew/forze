@@ -4,13 +4,19 @@ import os
 import subprocess
 import sys
 import textwrap
+from datetime import UTC, date, datetime, timedelta, timezone, tzinfo
+from decimal import Decimal
 from enum import Enum, StrEnum
 from typing import NamedTuple
+from uuid import UUID
+from zoneinfo import ZoneInfo
 
 import pytest
 from pydantic import SecretStr
 
+from forze.base.exceptions import CoreException, ExceptionKind
 from forze.base.primitives.fingerprint import (
+    advisory_lock_key,
     build_routing_fingerprint,
     connection_string_fingerprint,
     gcp_credential_dedup_tag,
@@ -342,3 +348,132 @@ def test_build_routing_fingerprint_accepts_secret_str() -> None:
         public=["h"],
         secret=[SecretStr("pw")],
     ) == build_routing_fingerprint(public=["h"], secret=["pw"])
+
+
+# ....................... #
+
+_NOON_IN_MOSCOW = datetime(2026, 3, 29, 12, 0, tzinfo=timezone(timedelta(hours=3)))
+"""09:00 UTC, as a caller in ``+03:00`` writes it."""
+
+
+class TestAnInstantIsOneLockKeyInAnyOffset:
+    """A store reads an instant back in its session's offset, not in the one it was written with.
+
+    Postgres returns a ``timestamptz`` in the session's time zone, so a create keyed on the
+    caller's ``12:00+03:00`` and an update keyed on the row read back as ``09:00+00:00`` (or
+    ``18:00+09:00``) must derive one key, or the two writes for one owner do not contend.
+    """
+
+    @pytest.mark.parametrize(
+        "zone",
+        [
+            timezone(timedelta(hours=3)),
+            timezone(timedelta(hours=-5)),
+            timezone(timedelta(hours=5, minutes=45)),
+            timezone(timedelta(hours=14)),
+            timezone(timedelta(hours=-12)),
+            ZoneInfo("Asia/Tokyo"),
+            ZoneInfo("America/New_York"),
+        ],
+        ids=str,
+    )
+    def test_the_same_instant_in_another_offset_is_the_same_key(self, zone: tzinfo) -> None:
+        assert advisory_lock_key("s", None, _NOON_IN_MOSCOW.astimezone(zone)) == (
+            advisory_lock_key("s", None, _NOON_IN_MOSCOW)
+        )
+
+    def test_the_same_wall_time_in_another_offset_is_another_key(self) -> None:
+        # The contrast: it is the instant that is keyed, not the digits.
+        assert advisory_lock_key("s", None, _NOON_IN_MOSCOW) != advisory_lock_key(
+            "s", None, _NOON_IN_MOSCOW.replace(tzinfo=UTC)
+        )
+
+    def test_a_naive_datetime_is_the_utc_instant(self) -> None:
+        # As forze reads a naive datetime everywhere else, and as a UTC session stores one.
+        assert advisory_lock_key("s", None, datetime(2026, 3, 29, 9, 0)) == advisory_lock_key(
+            "s", None, _NOON_IN_MOSCOW
+        )
+
+    def test_microseconds_are_part_of_the_instant(self) -> None:
+        later = _NOON_IN_MOSCOW + timedelta(microseconds=1)
+
+        assert advisory_lock_key("s", None, later) != advisory_lock_key("s", None, _NOON_IN_MOSCOW)
+        assert advisory_lock_key("s", None, later.astimezone(UTC)) == advisory_lock_key(
+            "s", None, later
+        )
+
+    def test_the_repeated_hour_at_a_dst_change_is_two_instants(self) -> None:
+        # 02:30 happens twice in Berlin on 2026-10-25: first in CEST (00:30 UTC), then in CET
+        # (01:30 UTC). Each is its own owner, and each is the owner its UTC spelling names.
+        berlin = ZoneInfo("Europe/Berlin")
+        first = datetime(2026, 10, 25, 2, 30, tzinfo=berlin, fold=0)
+        second = datetime(2026, 10, 25, 2, 30, tzinfo=berlin, fold=1)
+
+        assert advisory_lock_key("s", None, first) != advisory_lock_key("s", None, second)
+        assert advisory_lock_key("s", None, first) == advisory_lock_key(
+            "s", None, datetime(2026, 10, 25, 0, 30, tzinfo=UTC)
+        )
+        assert advisory_lock_key("s", None, second) == advisory_lock_key(
+            "s", None, datetime(2026, 10, 25, 1, 30, tzinfo=UTC)
+        )
+
+    @pytest.mark.parametrize(
+        ("value", "offset"),
+        [
+            (datetime.max.replace(tzinfo=timezone(timedelta(hours=-1))), "-01:00"),
+            (datetime.min.replace(tzinfo=timezone(timedelta(hours=5, minutes=30))), "+05:30"),
+        ],
+        ids=["after-9999", "before-1"],
+    )
+    def test_an_instant_outside_the_utc_range_is_refused(
+        self, value: datetime, offset: str
+    ) -> None:
+        # Its UTC spelling is no `datetime`, so there is no key to derive: refused as the
+        # caller's value, naming the offset rather than echoing the value.
+        with pytest.raises(CoreException) as caught:
+            advisory_lock_key("s", None, value)
+
+        assert caught.value.kind is ExceptionKind.VALIDATION
+        assert caught.value.code == "lock_key_instant_out_of_range"
+        assert offset in caught.value.summary
+        assert caught.value.details == {"offset": offset}
+        for echoed in (value.isoformat(), value.date().isoformat(), value.time().isoformat()):
+            assert echoed not in caught.value.summary
+            assert echoed not in str(caught.value.details)
+
+
+class TestEveryOtherLockKeyIsUnchanged:
+    """Values pinned to the keys they derived before instants were keyed in UTC.
+
+    A lock key that shifts between releases is a rolling deployment where old and new nodes do
+    not contend, so a change to the derivation must not reach any key it was not meant to. An
+    aware instant already in UTC renders as it always did, so its key is pinned too.
+    """
+
+    @pytest.mark.parametrize(
+        ("parts", "key"),
+        [
+            (("bookings", None, "owner", "o1"), -6374164214799014836),
+            (("bookings", "t1", "owner", 42), -7723614124364265392),
+            (("bookings", None, "owner", True), 1142358895311863153),
+            (("bookings", None, "owner", b"o1"), -4517180046794002836),
+            (
+                ("bookings", None, "owner", UUID("12345678-1234-5678-1234-567812345678")),
+                -6592787601288015191,
+            ),
+            (("bookings", None, "owner", Decimal("1.50")), 4001118793811261361),
+            (("bookings", None, "day", date(2026, 3, 29)), 6216952544602733436),
+            (("bookings", None, "owner", None), 1775724267125941704),
+            (("bookings", "t1", "owner", "room", "o1", -7), 8747620385631718901),
+            (
+                ("bookings", None, "slot", datetime(2026, 3, 29, 9, 0, tzinfo=UTC)),
+                -2189144401023838394,
+            ),
+            (
+                ("bookings", None, "slot", datetime(2026, 3, 29, 9, 0, 0, 123456, tzinfo=UTC)),
+                -3732741677714925686,
+            ),
+        ],
+    )
+    def test_the_key_is_what_it_was(self, parts: tuple[object, ...], key: int) -> None:
+        assert advisory_lock_key(*parts) == key
