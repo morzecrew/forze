@@ -347,7 +347,7 @@ class MongoDurableRunStore(
             "attempts": 0,
         }
 
-        for attempt in range(3):
+        for _ in range(3):
             try:
                 existing = await self.client.find_one_and_update(
                     coll,
@@ -359,7 +359,7 @@ class MongoDurableRunStore(
             except CoreException as error:
                 # Two submits raced to insert and the unique index refused this one: the
                 # next pass joins the winner, or inserts if a claim took it meanwhile.
-                if error.kind is not ExceptionKind.CONFLICT or attempt == 2:
+                if error.kind is not ExceptionKind.CONFLICT:
                     raise
 
                 continue
@@ -372,7 +372,13 @@ class MongoDurableRunStore(
 
             return await self._record_from_row(existing)
 
-        raise AssertionError("unreachable")  # pragma: no cover
+        # Every pass lost the slot to a run that a claim then took before the next pass
+        # could join it. That is contention, not a refusal: record this submit as its own
+        # run, outside the key, so its change still runs.
+        del document["coalesce_key"]
+        await self.client.insert_one(coll, document)
+
+        return self._record_from_document(document, input_json=input_json)
 
     # ....................... #
 

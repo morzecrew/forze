@@ -124,7 +124,9 @@ with its own — so the run should read the state it recomputes rather than carr
 after the run started causes another, which reads it. A run waiting for a retry, or requeued,
 is not joined. The join is atomic at the store — a partial unique index — and needs the
 column and index in the [schema](../reference/durable-schema.md); it cannot be combined with
-an `idempotency_key`.
+an `idempotency_key`. On Mongo, a submit that keeps losing the key to runs being claimed
+records its own run, outside the key, rather than fail: contention costs an extra run, never
+a missed change.
 
 ```python
 await runner.enqueue(
