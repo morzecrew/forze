@@ -32,8 +32,9 @@ The claims, in the order a reader should meet them:
 9. **an allocation that overshoots the ceiling is refused whole**, next to one that lands
    exactly on it and is allowed;
 10. **a ``ttl`` is a lifetime fixed when the counter is created** — a lapsed counter reads as
-    absent, restarts from zero and is not enumerated; no later increment extends it; a
-    ``reset`` replaces it; and a ``ttl`` that has already ended is refused.
+    absent, restarts from zero (once, however many writers race to restart it) and is not
+    enumerated; no later increment extends it; a ``reset`` replaces it; a counter seeded from
+    a pre-route legacy row takes the lifetime too; and a ``ttl`` out of range is refused.
 
 The lifetime checks need time to pass. Each leg says how through :attr:`CounterHarness.wait`:
 the live backends sleep through a short real lifetime, and the mock advances a frozen clock,
@@ -61,6 +62,7 @@ import attrs
 import pytest
 
 from forze.application.contracts.counter import (
+    COUNTER_MAX_TTL,
     COUNTER_MAX_VALUE,
     COUNTER_MIN_VALUE,
     COUNTER_VALUE_OUT_OF_RANGE_CODE,
@@ -113,6 +115,12 @@ class CounterHarness:
     wait: Callable[[timedelta], Awaitable[None]] = _sleep
     """Let this much of the backend's clock pass. Live backends sleep; the mock leg advances
     the frozen clock it binds, so its lifetimes run on the time source like everything else."""
+
+    legacy: Callable[[str, int], Awaitable[None]] | None = None
+    """Store a counter for a suffix the way the backend keyed it before the route fold.
+
+    Only the stores that had such a past (Postgres, Mongo, Firestore) supply it; the check
+    that needs it skips elsewhere."""
 
     for_tenant: Callable[[UUID], Any] | None = None
     """Optional factory building a counter bound to a given tenant, over the SAME store.
@@ -385,27 +393,48 @@ async def check_a_lapsed_counter_reads_as_absent(h: CounterHarness) -> None:
     later write *without* one leaves the lifetime the counter was created with.
     """
 
-    one, batch, down, kept = (h.suffix(name) for name in ("lapse1", "lapse2", "lapse3", "kept"))
+    one, batch, down, race, kept = (
+        h.suffix(name) for name in ("lapse1", "lapse2", "lapse3", "race", "kept")
+    )
 
     assert await h.counter.incr(by=5, suffix=one, ttl=TTL) == 5
     assert await h.counter.incr(suffix=one) == 6, "a live counter keeps counting"
     assert await h.counter.incr_batch(3, suffix=batch, ttl=TTL) == [1, 2, 3]
     assert await h.counter.decr(suffix=down, ttl=TTL) == -1
+    assert await h.counter.incr(by=9, suffix=race, ttl=TTL) == 9
     assert await h.counter.incr(suffix=kept) == 1
 
     await h.wait(LAPSE)
 
-    for suffix in (one, batch, down):
+    for suffix in (one, batch, down, race):
         assert await h.counter.incr(by=0, suffix=suffix) == 0, "a lapsed counter reads as 0"
 
     if h.admin is not None:
         listed = {entry.suffix for entry in await h.admin.list_counters()}
 
         assert kept in listed
-        assert not listed & {one, batch, down}, "a lapsed counter must not be enumerated"
+        assert not listed & {one, batch, down, race}, "a lapsed counter must not be enumerated"
 
-    assert await h.counter.incr(suffix=one, ttl=TTL) == 1, "and restarts from zero"
+    # Every write verb restarts a lapsed counter from zero, with the lifetime it passes.
+    assert await h.counter.incr(suffix=one, ttl=TTL) == 1
+    assert await h.counter.incr_batch(2, suffix=batch, ttl=TTL) == [1, 2]
+    assert await h.counter.decr(suffix=down, ttl=TTL) == -1
     assert await h.counter.incr(suffix=kept) == 2, "a counter without a ttl never lapses"
+
+    # Writers racing to restart one lapsed counter: it restarts once, and no step is lost. The
+    # restart's lifetime is long because a contended store (Firestore retries with backoff)
+    # can take longer than TTL to serialize five writers, and a counter that lapsed *again*
+    # mid-race would rightly restart twice.
+    restarts = await asyncio.gather(
+        *(h.counter.incr(suffix=race, ttl=TTL * 40) for _ in range(5)),
+    )
+
+    assert sorted(restarts) == [1, 2, 3, 4, 5], restarts
+
+    await h.wait(LAPSE)
+
+    for suffix in (one, batch, down):
+        assert await h.counter.incr(by=0, suffix=suffix) == 0, "the restart took its lifetime"
 
 
 # ....................... #
@@ -484,6 +513,49 @@ async def check_a_ttl_that_has_already_ended_is_refused(h: CounterHarness) -> No
     assert await h.counter.incr(suffix=suffix) == 1, "nothing was stored"
 
 
+# ....................... #
+
+
+async def check_a_counter_seeded_from_a_legacy_row_takes_the_lifetime(h: CounterHarness) -> None:
+    """The first write to a pre-route counter creates its new row — so it takes the ``ttl``.
+
+    The seed is a creation on every backend, and a seed written without the lifetime would
+    leave the counter live forever while every other creation lapses.
+    """
+
+    if h.legacy is None:
+        pytest.skip("this backend never keyed counters without the route")
+
+    suffix = h.suffix("legacy")
+    await h.legacy(suffix, 41)
+
+    assert await h.counter.incr(by=0, suffix=suffix) == 41, "the legacy value stands in"
+    assert await h.counter.incr(suffix=suffix, ttl=TTL) == 42, "and the sequence continues"
+
+    await h.wait(LAPSE)
+
+    assert await h.counter.incr(by=0, suffix=suffix) == 0, "the seeded counter took the ttl"
+    assert await h.counter.incr(suffix=suffix) == 1
+
+
+# ....................... #
+
+
+async def check_a_ttl_beyond_the_maximum_is_refused(h: CounterHarness) -> None:
+    """Every backend adds the lifetime to a clock; past :data:`COUNTER_MAX_TTL` that overflows
+    a timestamp somewhere, so it is refused up front, the same way everywhere."""
+
+    suffix = h.suffix("hugettl")
+
+    for ttl in (COUNTER_MAX_TTL + timedelta(days=1), timedelta.max):
+        with pytest.raises(CoreException) as refused:
+            await h.counter.incr(suffix=suffix, ttl=ttl)
+
+        assert refused.value.kind is ExceptionKind.PRECONDITION
+
+    assert await h.counter.incr(suffix=suffix, ttl=COUNTER_MAX_TTL) == 1, "the maximum is legal"
+
+
 COUNTER_BATTERY: tuple[Check, ...] = (
     check_a_fresh_counter_starts_at_zero,
     check_incr_by_zero_reads_without_moving,
@@ -501,6 +573,8 @@ COUNTER_BATTERY: tuple[Check, ...] = (
     check_a_lapsed_counter_reads_as_absent,
     check_later_writes_do_not_extend_a_lifetime,
     check_reset_replaces_the_lifetime,
+    check_a_counter_seeded_from_a_legacy_row_takes_the_lifetime,
     check_a_ttl_that_has_already_ended_is_refused,
+    check_a_ttl_beyond_the_maximum_is_refused,
 )
 """Every check. The mock runs them as a unit test; each real backend runs them live."""

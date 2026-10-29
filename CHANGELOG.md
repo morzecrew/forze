@@ -143,6 +143,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **The login lockout no longer grows its counter store without bound** (**behaviour change**). A check writes no key, and each window's bucket expires a minute after its window. On a Postgres table without `expires_at` it writes without a ttl and warns once, so old keys grow until the column is added.
 
+- **The login lockout writes a key only for a failed attempt or a reset** (**behaviour change**). Each lives a window plus a minute from creation; Redis drops it, Postgres, Mongo and Firestore need a purge or TTL setup. On a Postgres table without `expires_at` keys get no ttl and pile up, with a warning per table.
+
 - **`HttpClient` reads a compressed response.** A gzip or deflate body, and with no cap a zstd or brotli one, no longer fails `request`, or a rejected response from `stream`, as an infrastructure error. `RoutedHttpClient` and declared services are fixed with it.
 
 - **A federated result snapshot replays only for the same members and member filters.** Its fingerprint now covers each member's weight and leg filters, and a thin replay drops a row its member's filters no longer match.

@@ -181,10 +181,17 @@ PostgresLifecycleModule(
     exists. The login lockout is the exception: it writes without a `ttl` instead and warns
     once, so logins keep working while its old keys pile up. After the migration a `ttl`
     call picks the column up within a minute, without a restart. A
-    lapsed row reads as absent but stays in the table: purge a route's lapsed rows with
-    `PostgresCounterAdminAdapter.purge_expired()`, or schedule
-    `DELETE FROM <counters> WHERE expires_at <= now()` (for example with pg_cron). See
-    [Lifetimes](../reference/contracts/stores.md#lifetimes-ttl).
+    lapsed row reads as absent but stays in the table. Purge a route's lapsed rows with
+    `PostgresCounterAdminAdapter.purge_expired()`, which walks the primary key in batches
+    and needs no other index. Or schedule a table-wide purge (for example with pg_cron),
+    with a partial index so it does not scan the live rows:
+
+    ```sql
+    CREATE INDEX ON <counters> (expires_at) WHERE expires_at IS NOT NULL;
+    DELETE FROM <counters> WHERE expires_at <= now();
+    ```
+
+    See [Lifetimes](../reference/contracts/stores.md#lifetimes-ttl).
 - **Bookkeeping.** `bookkeeping_strategy="application"` bumps `rev` /
   `last_update_at` in the write gateway; `"database"` defers to a `BEFORE UPDATE`
   trigger you supply.

@@ -14,6 +14,7 @@ from .deps import (
     CounterDeps,
 )
 from .expiry import (
+    COUNTER_MAX_TTL,
     COUNTER_TTL_UNSUPPORTED_CODE,
     CounterCapabilities,
     CounterExpiryAware,
@@ -43,6 +44,7 @@ __all__ = [
     "counter_out_of_range",
     "validate_counter_value",
     # expiry
+    "COUNTER_MAX_TTL",
     "COUNTER_TTL_UNSUPPORTED_CODE",
     "CounterCapabilities",
     "CounterExpiryAware",

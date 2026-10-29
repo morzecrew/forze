@@ -116,12 +116,16 @@ The lifetime is a **fixed window**, set when the counter is created:
 - `reset` replaces the counter whole, value **and** lifetime: `reset(v, ttl=t)` expires `t`
   after the reset, and `reset(v)` leaves a counter that never expires;
 - a lapsed counter reads as 0, restarts from 0, and is not listed by `list_counters`;
-- a zero or negative `ttl` is refused (`precondition`).
+- a zero or negative `ttl`, or one longer than `COUNTER_MAX_TTL` (about a century), is
+  refused (`precondition`). A counter meant to outlive that takes no `ttl`.
 
 Expiry is a capability. `counter_capabilities(port).expiry` says whether a backend honours a
 `ttl`; one that cannot refuses it with `configuration` (code `counter_ttl_unsupported`)
 rather than storing a counter that outlives what you asked for. Every shipped backend
-reports it:
+reports it. Postgres reports `False` only for a table it has just found without the
+`expires_at` column; until then a `ttl` call there can still be refused. Reclaiming lapsed
+storage is the backend's own business, and on Postgres, Mongo and Firestore it needs a step
+from you:
 
 | Backend | How a lapsed counter is reclaimed | Clock |
 |---------|-----------------------------------|-------|

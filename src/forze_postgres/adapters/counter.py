@@ -25,7 +25,7 @@ from forze_postgres.execution.deps.configs.counter import PostgresCounterConfig
 from forze_postgres.kernel.catalog.introspect import PostgresIntrospector
 from forze_postgres.kernel.client import PostgresClientPort
 from forze_postgres.kernel.gateways.base import PostgresQualifiedName
-from forze_postgres.kernel.relation import resolve_postgres_qname
+from forze_postgres.kernel.relation import is_static_relation, resolve_postgres_qname
 
 from ._logger import logger
 
@@ -116,12 +116,18 @@ class _PostgresCounterBase(TenancyMixin):
     """The counter spec's route — folded into the stored key so two specs sharing one
     table do not merge (see :func:`_encode_suffix`)."""
 
-    introspector: PostgresIntrospector | None = None
+    introspector: PostgresIntrospector = attrs.field(
+        default=attrs.Factory(
+            lambda self: PostgresIntrospector(client=self.client),
+            takes_self=True,
+        ),
+    )
     """Catalog access used to detect the optional ``expires_at`` column.
 
-    ``None`` — a direct construction rather than the wired factory — means no detection is
-    possible, so the adapter keeps the statements of a table without the column and refuses
-    a ``ttl``. Wiring always supplies one.
+    Wiring passes the module's shared introspector. A direct construction gets one of its own,
+    cached for the adapter's life, so it still detects the column rather than answering as if
+    it were absent. On a client routed per tenant, pass the module's introspector, whose cache
+    is partitioned by tenant.
     """
 
     # ....................... #
@@ -158,47 +164,47 @@ class _PostgresCounterBase(TenancyMixin):
         call picks it up within that cooldown.
         """
 
-        introspector = self.introspector
+        columns = await self.introspector.get_column_types(
+            schema=table.schema,
+            relation=table.name,
+        )
 
-        if introspector is not None:
-            columns = await introspector.get_column_types(
+        if _EXPIRY_COLUMN in columns:
+            return True
+
+        recheck = self._recheck_key(table.string())
+
+        if required and _EXPIRY_RECHECK.lookup(recheck) is None:
+            _EXPIRY_RECHECK.store(recheck, True)
+            self.introspector.invalidate_relation(schema=table.schema, relation=table.name)
+            columns = await self.introspector.get_column_types(
                 schema=table.schema,
                 relation=table.name,
             )
 
             if _EXPIRY_COLUMN in columns:
+                _EXPIRY_RECHECK.invalidate(recheck)
                 return True
-
-            partition = introspector.cache_partition_key
-            recheck = ((partition() or "") if partition is not None else "", table.string())
-
-            if required and _EXPIRY_RECHECK.lookup(recheck) is None:
-                _EXPIRY_RECHECK.store(recheck, True)
-                introspector.invalidate_relation(schema=table.schema, relation=table.name)
-                columns = await introspector.get_column_types(
-                    schema=table.schema,
-                    relation=table.name,
-                )
-
-                if _EXPIRY_COLUMN in columns:
-                    _EXPIRY_RECHECK.invalidate(recheck)
-                    return True
 
         if not required:
             # shortcut: a process that cached the table before the column was added keeps
             # the column-less statements for ttl-less calls until a ttl call or a restart.
             return False
 
-        if self.introspector is None:
-            raise counter_ttl_unsupported(
-                "this Postgres counter was built without catalog access, so it cannot "
-                f"detect the {_EXPIRY_COLUMN!r} column"
-            )
-
         raise counter_ttl_unsupported(
             f"the counters table {table.string()!r} has no {_EXPIRY_COLUMN!r} column (add it "
-            f"with ALTER TABLE {table.string()} ADD COLUMN {_EXPIRY_COLUMN} timestamptz)"
+            f"with ALTER TABLE {table.string()} ADD COLUMN {_EXPIRY_COLUMN} timestamptz)",
+            details={"relation": table.string(), "partition": recheck[0]},
         )
+
+    # ....................... #
+
+    def _recheck_key(self, table: str) -> tuple[str, str]:
+        """*table*'s key in :data:`_EXPIRY_RECHECK`: the introspector's cache partition and it."""
+
+        partition = self.introspector.cache_partition_key
+
+        return ((partition() or "") if partition is not None else "", table)
 
 
 # ....................... #
@@ -238,9 +244,23 @@ class PostgresCounterAdapter(_PostgresCounterBase, CounterPort):
     """
 
     def capabilities(self) -> CounterCapabilities:
-        """Report expiry support (a ``ttl`` still needs the ``expires_at`` column)."""
+        """Report expiry support, as far as it is known without a catalog read.
 
-        return CounterCapabilities(expiry=True)
+        The column check is asynchronous and this is not, so it reports ``expiry=False`` only
+        for a static table re-checked within the last :data:`_RECHECK_AFTER` and found
+        without ``expires_at``. Otherwise it reports ``True``, and a ``ttl`` call can still be
+        refused with ``counter_ttl_unsupported`` — which is what then records the answer.
+        """
+
+        relation = self.config.relation
+
+        if not is_static_relation(relation):
+            return CounterCapabilities(expiry=True)
+
+        schema, name = relation
+        known_absent = _EXPIRY_RECHECK.lookup(self._recheck_key(f"{schema}.{name}"))
+
+        return CounterCapabilities(expiry=known_absent is None)
 
     # ....................... #
 
@@ -500,14 +520,17 @@ class PostgresCounterAdminAdapter(_PostgresCounterBase, CounterAdminPort):
         """Delete this spec's lapsed counters for the bound tenant and return how many.
 
         A lapsed row already reads as absent, so this reclaims storage and changes no
-        answer. Scoped like :meth:`list_counters` — tenant and route — and deleted in
-        batches of :data:`_PURGE_BATCH` so a large backlog never holds one long lock. The
-        outer ``expires_at`` test is re-checked against a row an increment revived between
-        a batch's ``SELECT`` and its ``DELETE``, so a live counter is never removed.
+        answer. Scoped like :meth:`list_counters` — tenant and route — and walked in
+        primary-key order, :data:`_PURGE_BATCH` rows at a time, deleting the lapsed ones
+        among them: each row is visited once, every statement is short, and the walk needs no
+        index beyond the primary key. The ``expires_at`` test is re-checked against a row an
+        increment revived between a batch's read and its delete, so a live counter is never
+        removed.
 
         A table without ``expires_at`` holds nothing that can lapse, and returns 0. To purge
         a whole table across tenants and routes, schedule
-        ``DELETE FROM <relation> WHERE expires_at <= now()`` instead (e.g. with pg_cron).
+        ``DELETE FROM <relation> WHERE expires_at <= now()`` instead (e.g. with pg_cron),
+        backed by ``CREATE INDEX ON <relation> (expires_at) WHERE expires_at IS NOT NULL``.
         """
 
         table = await self._table()
@@ -516,28 +539,43 @@ class PostgresCounterAdminAdapter(_PostgresCounterBase, CounterAdminPort):
             return 0
 
         stmt = sql.SQL(
-            "DELETE FROM {table} WHERE (tenant_id, suffix) IN ("
+            "WITH batch AS ("
             "  SELECT tenant_id, suffix FROM {table} "
-            "  WHERE tenant_id = {tenant} AND starts_with(suffix, {route}) "
-            "  AND expires_at <= now() LIMIT {batch}"
-            ") AND expires_at <= now()"
+            "  WHERE tenant_id = {tenant} AND suffix > {after} AND starts_with(suffix, {route}) "
+            "  ORDER BY suffix LIMIT {batch}"
+            "), gone AS ("
+            "  DELETE FROM {table} AS t USING batch "
+            "  WHERE t.tenant_id = batch.tenant_id AND t.suffix = batch.suffix "
+            "  AND t.expires_at <= now() RETURNING 1"
+            ") "
+            "SELECT (SELECT count(*) FROM batch), (SELECT max(suffix) FROM batch), "
+            "(SELECT count(*) FROM gone)"
         ).format(
             table=table.ident(),
             tenant=sql.Placeholder("tenant"),
+            after=sql.Placeholder("after"),
             route=sql.Placeholder("route"),
             batch=sql.Placeholder("batch"),
         )
-        params = {
+        params: dict[str, Any] = {
             "tenant": self._tenant_value(),
             "route": _route_prefix(self.route),
             "batch": _PURGE_BATCH,
+            "after": "",  # every stored suffix sorts after it: the route tag is never empty
         }
         purged = 0
 
         async with self.client.detached():
             while True:
-                deleted = await self.client.execute(stmt, params, return_rowcount=True)
-                purged += deleted
+                row = await self.client.fetch_one(stmt, params, row_factory="tuple")
 
-                if deleted < _PURGE_BATCH:
+                if row is None:  # pragma: no cover - an aggregate SELECT always yields a row
+                    raise exc.internal("Counter purge returned no row")
+
+                scanned, last, deleted = row
+                purged += int(deleted)
+
+                if int(scanned) < _PURGE_BATCH:
                     return purged
+
+                params["after"] = last

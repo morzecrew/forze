@@ -40,6 +40,11 @@ async def harness(
             tenant_provider=lambda: TenantIdentity(tenant_id=tenant),
         )
 
+    async def _legacy(suffix: str, value: int) -> None:
+        # The pre-route document id: no route tag, ``s:`` + the suffix, no tenant.
+        coll = await firestore_client.collection(unique_collection, database="(default)")
+        await firestore_client.set_document(coll, f"s:{suffix}", {"value": value})
+
     return CounterHarness(
         counter=FirestoreCounterAdapter(
             client=firestore_client,
@@ -52,6 +57,7 @@ async def harness(
             config=config,
             route="conformance",
         ),
+        legacy=_legacy,
         for_tenant=_for_tenant,
     )
 

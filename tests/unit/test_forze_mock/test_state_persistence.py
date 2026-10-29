@@ -99,7 +99,10 @@ async def _populated_by_the_batteries(state: MockState) -> None:
 
     with bind_time_source(clock):
         for check in COUNTER_BATTERY:
-            await check(counters)
+            try:
+                await check(counters)
+            except pytest.skip.Exception:
+                continue  # a check that needs a store's past (legacy rows) the mock lacks
 
     storage_port = MockStorageAdapter(state=state, bucket="files")
     storage = StorageHarness(

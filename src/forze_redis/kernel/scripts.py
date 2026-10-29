@@ -76,7 +76,6 @@ Execution requires the lock owner to be provided as the first argument and the T
 Returns 1 if the lock was reset, 0 if the lock was not owned by the provided owner.
 """
 
-# Atomic multi-key SET with shared EX/PX and optional NX/XX (all keys succeed or none).
 INCR_COUNTER_WITH_TTL: Final = """
 local fresh = redis.call('EXISTS', KEYS[1]) == 0
 redis.call('INCRBY', KEYS[1], ARGV[1])
@@ -94,6 +93,7 @@ without one. Returns the new value as the stored string: a Lua number is a doubl
 cannot hold every int64. An ``INCRBY`` that would overflow fails before anything is written.
 """
 
+# Atomic multi-key SET with shared EX/PX and optional NX/XX (all keys succeed or none).
 MSET_BULK_SET: Final = """
 local n = #KEYS
 local ex = tonumber(ARGV[1])

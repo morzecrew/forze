@@ -27,11 +27,10 @@ On a counter backend that does not report
 ``expiry=True``, buckets are written without a ttl. On one that reports expiry but
 refuses this ttl (``counter_ttl_unsupported`` — a Postgres counter table without
 its ``expires_at`` column), the write is retried without one and a warning is
-logged once per process. Login availability outranks key growth, which is what
-every deployment had before counters could expire.
+logged once per refusing table. Login availability outranks key growth, which is
+what every deployment had before counters could expire.
 """
 
-import threading
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
 from typing import Final, final
@@ -45,7 +44,7 @@ from forze.application.contracts.counter import (
 )
 from forze.base.exceptions import CoreException, exc
 from forze.base.logging import Logger
-from forze.base.primitives import StrKey, utcnow
+from forze.base.primitives import CacheLane, StrKey, utcnow
 
 # ----------------------- #
 
@@ -59,17 +58,24 @@ LOCKOUT_COUNTER_ROUTE: Final[StrKey] = "authn_lockout"
 """Default counter route the lockout guard resolves its ``CounterPort`` from."""
 
 LOCKOUT_TTL_SKEW: Final[timedelta] = timedelta(minutes=1)
-"""Lifetime a bucket gets beyond its window, for clock skew.
+"""Lifetime a bucket gets beyond its window, for the spread between application clocks.
 
-A bucket is chosen by the application's clock and expired by the store's. Created at the
-start of its window on the fastest clock, a bucket living exactly one window would lapse
-while a slower node still counts that window as current, and a locked login would unlock
-early there. The margin covers that skew; past it a bucket is dead either way."""
+A bucket's window is chosen by the clock of the node that writes or reads it, and its
+lifetime starts when it is created. The store's own clock offset cancels out: Redis takes the
+ttl as a duration, Postgres compares its ``now()`` with an instant its ``now()`` wrote, and
+Mongo, Firestore and the mock compare application instants with application instants. What
+does not cancel is the spread between nodes. A fast node can create a bucket at the very
+start of its window while a slow node still counts that window as current up to its end, so
+a bucket timed as a duration must outlive its window by that spread, or a locked login
+unlocks early on the slow node. One minute is far above the spread of NTP-synced nodes, and a
+node off by more already disagrees about which window is current at all."""
 
 _logger = Logger("integrations.authn.lockout")
 
-_TTL_REFUSAL_REPORTED: Final = threading.Event()
-"""Set once the warning for a counter that refused the lockout's ttl has been logged."""
+_TTL_REFUSALS_REPORTED: Final[CacheLane[tuple[str, str], bool]] = CacheLane(max_entries=256)
+"""Refusals already warned about, keyed by where they apply (the refusal's summary and
+details, which name the table and partition), so a second table that refuses is still
+reported. Capped, because per-tenant tables are unbounded."""
 
 # ....................... #
 
@@ -224,8 +230,10 @@ class LoginLockoutGuard:
             if not lifetime or error.code != COUNTER_TTL_UNSUPPORTED_CODE:
                 raise
 
-            if not _TTL_REFUSAL_REPORTED.is_set():
-                _TTL_REFUSAL_REPORTED.set()
+            reported = (error.summary, repr(sorted((error.details or {}).items())))
+
+            if _TTL_REFUSALS_REPORTED.lookup(reported) is None:
+                _TTL_REFUSALS_REPORTED.store(reported, True)
                 _logger.warning(
                     "Login lockout counter refused a ttl; writing window keys without one, "
                     "so old windows stay stored until the counter can expire them",

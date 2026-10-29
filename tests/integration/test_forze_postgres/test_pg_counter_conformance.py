@@ -55,6 +55,13 @@ async def harness(pg_client) -> CounterHarness:
             tenant_provider=lambda: TenantIdentity(tenant_id=tenant),
         )
 
+    async def _legacy(suffix: str, value: int) -> None:
+        # The pre-route key: no route tag, ``s:`` + the suffix, no tenant.
+        await pg_client.execute(
+            f"INSERT INTO {table} (tenant_id, suffix, value) VALUES ('', %s, %s)",
+            [f"s:{suffix}", value],
+        )
+
     return CounterHarness(
         counter=PostgresCounterAdapter(
             client=pg_client,
@@ -69,6 +76,7 @@ async def harness(pg_client) -> CounterHarness:
             route="conformance",
             introspector=introspector,
         ),
+        legacy=_legacy,
         for_tenant=_for_tenant,
     )
 

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import threading
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
@@ -24,7 +23,7 @@ from forze.application.integrations.authn import (
 )
 from forze.application.integrations.authn import lockout as lockout_module
 from forze.base.exceptions import CoreException, exc
-from forze.base.primitives import FrozenTimeSource, bind_time_source
+from forze.base.primitives import CacheLane, FrozenTimeSource, bind_time_source
 from forze_mock.adapters.counter import MockCounterAdapter, MockCounterAdminAdapter
 from forze_mock.state import MockState
 
@@ -284,6 +283,28 @@ class TestLockoutKeyGrowth:
             assert await guard.is_locked(DIGEST) is False
             assert await admin.list_counters() == [], "the old bucket must not linger"
 
+    async def test_a_bucket_outlives_its_window(self) -> None:
+        """Created at the first instant of its window, still locking at the last one.
+
+        The lifetime starts at creation, so a bucket created at its window's start is the one
+        closest to lapsing early; ``window + LOCKOUT_TTL_SKEW`` keeps it past the window's
+        end by the skew allowed between nodes.
+        """
+
+        guard, state = _expiring_guard(threshold=1)
+        window_s = WINDOW.total_seconds()
+        start = datetime.fromtimestamp((T0.timestamp() // window_s) * window_s, tz=UTC)
+
+        with bind_time_source(FrozenTimeSource(start)):
+            await guard.record_failure(DIGEST)
+
+        (expires_at,) = state.counter_expiry.values()
+
+        assert expires_at - (start + WINDOW) == LOCKOUT_TTL_SKEW
+
+        with bind_time_source(FrozenTimeSource(start + WINDOW - timedelta(microseconds=1))):
+            assert await guard.is_locked(DIGEST) is True
+
     async def test_a_counter_that_cannot_expire_is_written_without_a_ttl(self) -> None:
         # ``_MemoryCounter`` reports no capabilities and its verbs take no ``ttl`` keyword, so
         # passing one — even ``None`` — would raise ``TypeError`` here.
@@ -332,7 +353,7 @@ class TestLockoutOnACounterThatRefusesTheTtl:
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         warnings: list[str] = []
-        monkeypatch.setattr(lockout_module, "_TTL_REFUSAL_REPORTED", threading.Event())
+        monkeypatch.setattr(lockout_module, "_TTL_REFUSALS_REPORTED", CacheLane(max_entries=8))
         monkeypatch.setattr(
             lockout_module,
             "_logger",
@@ -351,6 +372,26 @@ class TestLockoutOnACounterThatRefusesTheTtl:
 
         assert len(warnings) == 1, "warned once per process, not once per write"
         assert "expires_at" in warnings[0]
+
+    async def test_each_refusing_table_is_reported(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Once per process would hide a second tenant's or route's table behind the first."""
+
+        warnings: list[str] = []
+        monkeypatch.setattr(lockout_module, "_TTL_REFUSALS_REPORTED", CacheLane(max_entries=8))
+        monkeypatch.setattr(
+            lockout_module,
+            "_logger",
+            SimpleNamespace(warning=lambda event, **extras: warnings.append(extras["reason"])),
+        )
+
+        for relation in ("public.lockout_a", "public.lockout_a", "public.lockout_b"):
+            refusal = counter_ttl_unsupported("no expires_at", details={"relation": relation})
+            guard = LoginLockoutGuard(counter=_RefusingCounter(refusal))
+
+            with bind_time_source(FrozenTimeSource(T0)):
+                await guard.record_failure(DIGEST)
+
+        assert len(warnings) == 2, "one warning per refusing table"
 
     async def test_any_other_refusal_still_fails_the_write(self) -> None:
         counter = _RefusingCounter(exc.configuration("the counter route is not wired"))

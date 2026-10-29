@@ -43,6 +43,14 @@ _SUFFIX_PREFIX: Final[str] = "s:"
 unsuffixed sentinel."""
 
 
+_CREATE_ATTEMPTS: Final[int] = 3
+"""Rounds of create-or-join :meth:`MongoCounterAdapter._create` tries before giving up.
+
+A round fails only when the document another caller just created vanishes before this one
+can join it — reaped by the TTL monitor on a server whose clock runs ahead of this one's —
+so a second round almost always lands; the bound keeps a pathological store from looping."""
+
+
 def _live(now: datetime) -> JsonDict:
     """Filter clause matching a counter that has not lapsed at *now*.
 
@@ -151,7 +159,11 @@ class MongoCounterAdapter(_MongoCounterBase, CounterPort):
     # ....................... #
 
     async def _seed_from_legacy(
-        self, coll: AsyncCollection[JsonDict], suffix: str | None, tenant_id: UUID | None
+        self,
+        coll: AsyncCollection[JsonDict],
+        suffix: str | None,
+        tenant_id: UUID | None,
+        expires_at: datetime | None,
     ) -> bool:
         """Carry a pre-route counter document onto its new route-prefixed ``_id``, once.
 
@@ -162,8 +174,9 @@ class MongoCounterAdapter(_MongoCounterBase, CounterPort):
         a duplicate — so this inserts it (keeping the existing document if a racing writer
         won, which is the same outcome) and drops the legacy one.
 
-        Reached only when no live document matched, so a migrated counter pays for the
-        lookup at most once per lifetime. Returns whether it seeded.
+        The seeded document is a creation, so it takes the lifetime (*expires_at*) the call
+        creating it asked for. Reached only when no live document matched, so a migrated
+        counter pays for the lookup at most once per lifetime. Returns whether it seeded.
         """
 
         legacy_id = self._legacy_doc_id(suffix, tenant_id)
@@ -183,6 +196,7 @@ class MongoCounterAdapter(_MongoCounterBase, CounterPort):
                     "suffix": suffix,
                     "tenant_id": (str(tenant_id) if tenant_id is not None else None),
                     "route": self.route,
+                    "expires_at": expires_at,
                 },
             )
         except CoreException as error:
@@ -227,7 +241,9 @@ class MongoCounterAdapter(_MongoCounterBase, CounterPort):
             # forever to serve a one-time migration.
             doc = await self.client.find_one_and_update(coll, live, write)
 
-            if doc is None and await self._seed_from_legacy(coll, suffix, tenant_id):
+            if doc is None and await self._seed_from_legacy(
+                coll, suffix, tenant_id, fresh.get("expires_at")
+            ):
                 doc = await self.client.find_one_and_update(coll, live, write)
 
             if doc is None:
@@ -253,22 +269,30 @@ class MongoCounterAdapter(_MongoCounterBase, CounterPort):
 
         The filter matches only a lapsed document; an absent one is inserted by the upsert.
         A live document matches neither, so the upsert collides on ``_id`` — another caller
-        created the counter first — and the allocation is applied to that one instead.
+        created the counter first — and the allocation is applied to that one instead. If
+        that document is gone again before it can be joined, the round repeats, up to
+        :data:`_CREATE_ATTEMPTS`.
         """
 
-        try:
-            return await self.client.find_one_and_update(
-                coll,
-                {"_id": doc_id, "expires_at": {"$lte": now}},
-                {"$set": fields},
-                upsert=True,
-            )
+        for _ in range(_CREATE_ATTEMPTS):
+            try:
+                return await self.client.find_one_and_update(
+                    coll,
+                    {"_id": doc_id, "expires_at": {"$lte": now}},
+                    {"$set": fields},
+                    upsert=True,
+                )
 
-        except CoreException as error:
-            if error.kind is not ExceptionKind.CONFLICT:
-                raise
+            except CoreException as error:
+                if error.kind is not ExceptionKind.CONFLICT:
+                    raise
 
-        return await self.client.find_one_and_update(coll, live, write)
+            joined = await self.client.find_one_and_update(coll, live, write)
+
+            if joined is not None:
+                return joined
+
+        raise exc.concurrency("Counter creation kept colliding with a vanishing document")
 
     # ....................... #
 

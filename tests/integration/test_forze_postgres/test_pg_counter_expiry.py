@@ -30,6 +30,7 @@ from forze.base.exceptions import CoreException, ExceptionKind
 from forze.base.primitives import FrozenTimeSource, bind_time_source
 from forze.testing import context_from_deps
 from forze_postgres import PostgresDepsModule
+from forze_postgres.adapters import counter as counter_module
 from forze_postgres.adapters.counter import (
     _EXPIRY_RECHECK,  # pyright: ignore[reportPrivateUsage]
     PostgresCounterAdapter,
@@ -131,20 +132,39 @@ async def test_a_table_without_the_column_works_until_a_ttl_is_requested(
     assert await _rows(pg_client, legacy_table) == 1, "a refused ttl stored nothing"
 
 
-async def test_an_adapter_without_catalog_access_refuses_a_ttl(
+async def test_an_adapter_built_by_hand_still_sees_the_column(
     pg_client: PostgresClient, table: str
 ) -> None:
-    counter = PostgresCounterAdapter(
-        client=pg_client,
-        config=PostgresCounterConfig(relation=("public", table)),
-        route="orders",
-    )
+    """Without a wired introspector the adapter builds its own, rather than answering as if
+    the column were absent — which would read a lapsed row as live and add onto it."""
 
-    with pytest.raises(CoreException) as error:
-        await counter.incr(ttl=TTL)
+    config = PostgresCounterConfig(relation=("public", table))
+    counter = PostgresCounterAdapter(client=pg_client, config=config, route="orders")
+    admin = PostgresCounterAdminAdapter(client=pg_client, config=config, route="orders")
 
-    assert error.value.code == COUNTER_TTL_UNSUPPORTED_CODE
-    assert await counter.incr() == 1, "and keeps working without one"
+    assert await counter.incr(by=5, ttl=TTL) == 5
+
+    await _lapse_all(pg_client, table)
+
+    assert await counter.incr(by=0) == 0
+    assert await admin.list_counters() == []
+    assert await admin.purge_expired() == 1
+    assert await counter.incr() == 1
+
+
+async def test_capabilities_report_a_table_known_to_lack_the_column(
+    pg_client: PostgresClient, table: str, legacy_table: str
+) -> None:
+    migrated, legacy = _counter(pg_client, table), _counter(pg_client, legacy_table)
+
+    assert counter_capabilities(migrated).expiry is True
+    assert counter_capabilities(legacy).expiry is True, "unknown until a ttl call checks"
+
+    with pytest.raises(CoreException):
+        await legacy.incr(ttl=TTL)
+
+    assert counter_capabilities(legacy).expiry is False, "the refusal recorded the answer"
+    assert counter_capabilities(migrated).expiry is True
 
 
 async def test_the_migration_can_land_under_a_running_process(
@@ -218,6 +238,26 @@ async def test_purge_removes_only_this_routes_lapsed_rows(
     # The other route's lapsed row is its own purge's business.
     assert await _rows(pg_client, table) == 3
     assert await _admin(pg_client, table).purge_expired() == 0
+
+
+async def test_purge_walks_every_batch_once(
+    pg_client: PostgresClient, table: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Lapsed and live rows interleaved across several batches: every lapsed one goes."""
+
+    monkeypatch.setattr(counter_module, "_PURGE_BATCH", 2)
+    counter = _counter(pg_client, table)
+
+    for index in range(7):
+        await counter.incr(suffix=f"dead{index}", ttl=TTL)
+
+    await _lapse_all(pg_client, table)
+
+    for index in range(4):
+        await counter.incr(suffix=f"dead{index}x")  # sorts between the lapsed rows
+
+    assert await _admin(pg_client, table).purge_expired() == 7
+    assert await _rows(pg_client, table) == 4
 
 
 async def test_purge_on_a_table_without_the_column_is_a_no_op(
