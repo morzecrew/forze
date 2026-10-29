@@ -199,10 +199,13 @@ PostgresLifecycleModule(
     ```
 
     Each route must be wired in `counters=`, or startup fails with `configuration`. On
-    `tenant_aware` routes pass `tenants=`, such as `lambda: shard.tenants`, to purge each
-    tenant's rows in turn; without it the step refuses them at startup. Racing purges are
-    safe, so run the step on every replica. Or schedule a table-wide purge (for example with
-    pg_cron), with a partial index so it does not scan the live rows:
+    per-tenant routes (`tenant_aware`, a per-tenant table or a database per tenant) pass
+    `tenants=`, such as `lambda: shard.tenants`, to purge each tenant's rows in turn; without
+    it the step refuses them at startup. With it, a tenant-global route is refused, because
+    every tenant's pass would walk the same rows: purge it in a step without `tenants=`. An
+    empty shard logs a warning and purges nothing. Racing purges are safe, so run the step on
+    every replica. Or schedule a table-wide purge (for example with pg_cron), with a partial
+    index so it does not scan the live rows:
 
     ```sql
     CREATE INDEX ON <counters> (expires_at) WHERE expires_at IS NOT NULL;

@@ -8,17 +8,18 @@ sweeper of your own.
 """
 
 import asyncio
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import Callable, Sequence
 from datetime import timedelta
-from typing import Protocol, cast, final, runtime_checkable
+from typing import cast, final
 from uuid import UUID
 
 import attrs
 
 from forze.application.contracts.counter import CounterSpec
-from forze.application.contracts.deps import implements
+from forze.application.contracts.deps import backend_of
 from forze.application.contracts.execution import LifecycleHook, LifecycleStep
 from forze.application.contracts.tenancy import TenantIdentity, require_tenant_global
+from forze.application.contracts.tenancy.routed_client_base import RoutedTenantClientBase
 from forze.application.execution import ExecutionContext
 from forze.application.execution.background import (
     DEFAULT_STOP_GRACE_SECONDS,
@@ -27,17 +28,28 @@ from forze.application.execution.background import (
 from forze.base.exceptions import CoreException, ExceptionKind, exc
 from forze.base.primitives import StrKey, current_entropy_source
 
+from ...adapters.counter import PostgresCounterAdminAdapter
+from ...kernel.relation import is_static_relation
 from .._logger import logger
 from .capabilities import POSTGRES_CLIENT_CAPABILITY
 
 # ----------------------- #
 
 
-@runtime_checkable
-class _ExpiredCounterPurger(Protocol):
-    """The admin port of a counter route whose backend can purge lapsed rows (Postgres)."""
+def _tenant_global(purger: PostgresCounterAdminAdapter) -> bool:
+    """Whether every tenant's purge of *purger*'s route would walk the same rows.
 
-    def purge_expired(self) -> Awaitable[int]: ...  # pragma: no cover
+    A route is per tenant when it tags rows by tenant, resolves its table per tenant, or
+    reaches a database per tenant; only a route that does none of these is global.
+    """
+
+    backend = cast(PostgresCounterAdminAdapter, backend_of(purger))
+
+    return (
+        not backend.tenant_aware
+        and is_static_relation(backend.config.relation)
+        and not isinstance(backend.client, RoutedTenantClientBase)
+    )
 
 
 # ....................... #
@@ -85,10 +97,10 @@ class _CounterPurgeStartup(LifecycleHook):
 
     # ....................... #
 
-    def _purger(self, ctx: ExecutionContext, spec: CounterSpec) -> _ExpiredCounterPurger:
+    def _purger(self, ctx: ExecutionContext, spec: CounterSpec) -> PostgresCounterAdminAdapter:
         admin = ctx.counter.admin(spec)
 
-        if not implements(admin, _ExpiredCounterPurger):
+        if not isinstance(backend_of(admin), PostgresCounterAdminAdapter):
             raise exc.configuration(
                 f"Counter route {str(spec.name)!r} is not a Postgres counter, so the "
                 "Postgres counter purge cannot purge it",
@@ -96,7 +108,7 @@ class _CounterPurgeStartup(LifecycleHook):
             )
 
         # Called through the resolved port, so its tracing and policy wrappers still apply.
-        return cast(_ExpiredCounterPurger, admin)
+        return cast(PostgresCounterAdminAdapter, admin)
 
     # ....................... #
 
@@ -142,12 +154,30 @@ class _CounterPurgeStartup(LifecycleHook):
         tenants = list(self.tenants()) if self.tenants is not None else None
 
         # A misrouted spec is refused here, not on the first tick of a loop nobody watches.
-        purgers = [self._purger(ctx, spec) for spec in self.specs]
+        purgers = {str(spec.name): self._purger(ctx, spec) for spec in self.specs}
 
         if tenants is None:
             # One unbound purge: tenant-scoped routes would refuse every one of them.
-            for purger in purgers:
+            for purger in purgers.values():
                 require_tenant_global(purger, what="Postgres counter purge")
+
+        else:
+            for route, purger in purgers.items():
+                if _tenant_global(purger):
+                    raise exc.configuration(
+                        f"Counter route {route!r} is tenant-global, so purging it once per "
+                        "tenant would walk the same rows each time. Purge it in a step "
+                        "without tenants=.",
+                        details={"route": route},
+                    )
+
+            if not tenants:
+                # More replicas than tenants leaves a shard empty, which is legitimate; a
+                # provider returning nothing by mistake looks the same, so say it once.
+                logger.warning(
+                    "Postgres counter purge was assigned no tenants; it purges nothing "
+                    "until restarted"
+                )
 
         if self.control.running:
             logger.warning("Postgres counter purge already running; ignoring duplicate startup")
@@ -235,9 +265,11 @@ def postgres_counter_purge_lifecycle_step(
         (``PostgresDepsModule(counters=...)``), or startup fails with ``configuration``.
     :param interval: Time between purges.
     :param jitter: Fraction of *interval* each sleep varies by, in ``[0, 1)``.
-    :param tenants: On ``tenant_aware`` routes, the tenants to purge in turn, such as
-        ``lambda: shard.tenants``. ``None`` purges the tenant-global rows once, and fails
-        startup over a tenant-scoped route (``tenant_global_required``).
+    :param tenants: On per-tenant routes, the tenants to purge in turn, such as
+        ``lambda: shard.tenants``, read once at startup. Startup fails over a tenant-global
+        route, and an empty shard logs a warning and purges nothing. ``None`` purges the
+        tenant-global rows once, and fails startup over a tenant-scoped route
+        (``tenant_global_required``).
     :param step_id: Unique step id.
     :returns: A lifecycle step that needs a long-running process.
     :raises CoreException: ``configuration`` for no *specs*, a non-positive *interval* or a
