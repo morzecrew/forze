@@ -26,14 +26,15 @@ _PART_TYPES: Final = frozenset({str, int, UUID, datetime})
 """Exact types a key part may have: each derives the same key in every process and release."""
 
 
-def _lock_parts(value: object) -> tuple[object, ...]:
-    """The parts of an operation lock key, from what its key function returned.
+def _lock_parts(value: object, *, op: str) -> tuple[object, ...]:
+    """The parts of *op*'s lock key, from what its key function returned.
 
     Exact types only: a subclass (an enum member, ``bool``) may render differently in another
     process or release, and two invocations deriving different keys for one input would not
     contend at all. A datetime keys on its UTC instant, so one offset or another locks alike.
 
     :param value: A part, or a tuple of parts.
+    :param op: The operation, named in a refusal.
     :returns: The parts, in order.
     :raises CoreException: ``configuration`` (``operation_lock_key_unsupported``) for a part of
         any other type; ``validation`` (``operation_lock_key_naive_datetime``) for a datetime
@@ -47,16 +48,17 @@ def _lock_parts(value: object) -> tuple[object, ...]:
 
         if kind not in _PART_TYPES:
             raise exc.configuration(
-                f"An operation lock key cannot be derived from {kind.__module__}."
-                f"{kind.__qualname__}: return a str, an int, a UUID or a timezone-aware "
-                "datetime (pass an enum's .value), or a tuple of them.",
+                f"Operation {op!r} cannot derive its lock key from {kind.__module__}."
+                f"{kind.__qualname__}: its key function must return a str, an int, a UUID or "
+                "a timezone-aware datetime (pass an enum's .value), or a tuple of them.",
                 code="operation_lock_key_unsupported",
             )
 
         if isinstance(part, datetime) and part.utcoffset() is None:
             raise exc.validation(
-                "An operation lock key cannot be derived from a naive datetime: its instant is "
-                "unknown, so two invocations for one moment could lock different keys.",
+                f"Operation {op!r} cannot derive its lock key from a naive datetime: its "
+                "instant is unknown, so two invocations for one moment could lock different "
+                "keys.",
                 code="operation_lock_key_naive_datetime",
             )
 
@@ -78,9 +80,16 @@ class SerializeOperation(BeforeFactory):
     or rolls back; other keys and other tenants never wait on it. On Postgres that is
     ``pg_advisory_xact_lock``, released by commit or rollback, so no lease expires mid-way.
 
+    The lock is held until the **root** transaction ends. An operation running nested in
+    another's transaction takes it in a savepoint: if the nested operation fails, Postgres
+    releases the lock with the writes it guarded, and if it succeeds the lock stays until the
+    root commits or rolls back. The in-memory store keeps it until the root ends either way.
+
     The registry binds it to its operation and route at freeze. An operation carrying it in its
     outer scope or without a transaction route is refused there, and a route whose backend has
-    no such lock (Mongo, Firestore) is refused when the operation is resolved.
+    no such lock (Mongo, Firestore) is refused when the operation is resolved. What
+    :attr:`key` returns is known only per call, so a value it cannot key on (``None``, a
+    float, an enum member, a naive datetime) refuses that call, naming the operation.
     """
 
     key: OperationLockKey
@@ -136,7 +145,7 @@ class _BoundSerializeOperation:
 
         async def _before(args: Any) -> None:
             tenant = ctx.inv_ctx.get_tenant()
-            parts = _lock_parts(key(args))
+            parts = _lock_parts(key(args), op=op)
             tenant_id = tenant.tenant_id if tenant is not None else None
 
             await port.hold(advisory_lock_key(_LOCK_DOMAIN, op, tenant_id, *parts))

@@ -179,8 +179,8 @@ sum. Optimistic concurrency does not help when the conflict is between two
 *reads* of rows that neither write touches.
 
 `SerializeOperation` makes invocations that share a key take turns. The lock is
-taken inside the operation's transaction and held until it commits or rolls
-back:
+taken inside the operation's transaction and held until the root transaction
+commits or rolls back:
 
 ```python
 from forze.application.hooks.locking import SerializeOperation
@@ -204,9 +204,18 @@ only: `prepare` runs before the transaction opens.
 The key function returns one value or a tuple of values. Each must be a `str`,
 an `int`, a `UUID` or a timezone-aware `datetime`. A datetime locks on its
 instant, so two offsets of one moment take the same lock. Any other type
-(an enum member, a `bool`, a float) is refused as `configuration`
+(`None`, an enum member, a `bool`, a float) is refused as `configuration`
 (`operation_lock_key_unsupported`); pass an enum's `.value`. A naive datetime is
-refused as `validation` (`operation_lock_key_naive_datetime`).
+refused as `validation` (`operation_lock_key_naive_datetime`). What the key
+function returns is known only when the operation runs, so these refuse that
+call, and the error names the operation.
+
+An operation that runs nested in another one's transaction takes the lock in a
+savepoint. If the nested operation succeeds, its lock stays until the root
+transaction ends, as its writes do. If it fails, Postgres rolls the savepoint
+back and releases the lock with the writes it guarded, while the outer
+transaction carries on. The mock keeps the lock until the root ends either way,
+which is stricter.
 
 Wiring problems surface before the first request:
 
@@ -221,7 +230,7 @@ Wiring problems surface before the first request:
 
 On Postgres the lock is `pg_advisory_xact_lock` on the transaction's own
 connection. Nothing expires mid-transaction and nothing needs a fencing token,
-because commit or rollback is the only release. A wait counts against the
+because only a commit or a rollback releases it. A wait counts against the
 operation's [deadline](../running-in-prod/deadlines.md). The mock takes the same
 per-owner write locks a `SerializedBy` write takes, under the `journal` and
 `strict` managers. `transactions="none"` opens no transaction, so it binds no

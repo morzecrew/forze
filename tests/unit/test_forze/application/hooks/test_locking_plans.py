@@ -29,7 +29,8 @@ from forze.application.execution.operations.registry import (
     OperationRegistry,
 )
 from forze.application.hooks.locking import SerializeOperation
-from forze.base.exceptions import CoreException, ExceptionKind
+from forze.application.hooks.resilience import ResilienceWrap
+from forze.base.exceptions import CoreException, ExceptionKind, exc
 from forze.base.primitives import str_key_selector
 from forze_mock import MockDepsModule, MockState
 from forze_mock.execution.factories import mock_strict_txmanager
@@ -237,6 +238,130 @@ class TestSerializes:
 
 # ....................... #
 
+_OUTER = "orders.settle"
+
+
+def _nested_registry(
+    inner: Handler[Any, Any], outer: Callable[[ExecutionContext], Handler[Any, Any]]
+) -> FrozenOperationRegistry:
+    """:data:`_OP` serialized by its key, and :data:`_OUTER`, which calls it in its own
+    transaction on the same route."""
+
+    return (
+        OperationRegistry(handlers={_OP: lambda _ctx: inner, _OUTER: outer})
+        .bind(_OP)
+        .bind_tx()
+        .set_route(_ROUTE)
+        .before(SerializeOperation(key=lambda args: args.order_id).to_step())
+        .finish(deep=True)
+        .bind(_OUTER)
+        .bind_tx()
+        .set_route(_ROUTE)
+        .finish(deep=True)
+        .freeze()
+    )
+
+
+async def _nested_then_contended(*, inner_fails: bool) -> list[str]:
+    """Run :data:`_OP` nested in :data:`_OUTER`, then contend for its key from another session
+    while the outer transaction is still open; the order things happened in."""
+
+    state = MockState()
+    ctx = context_from_modules(MockDepsModule(state=state))
+    other = context_from_modules(MockDepsModule(state=state))
+    events: list[str] = []
+    inner_done, release = asyncio.Event(), asyncio.Event()
+    ref: dict[str, FrozenOperationRegistry] = {}
+
+    class _Inner(Handler[_Named, None]):
+        async def __call__(self, args: _Named) -> None:
+            events.append(f"{args.name}:inner")
+
+            if inner_fails and args.name == "outer":
+                raise RuntimeError("nested failure")
+
+    class _Outer(Handler[_Named, None]):
+        def __init__(self, ctx: ExecutionContext) -> None:
+            self.ctx = ctx
+
+        async def __call__(self, args: _Named) -> None:
+            try:
+                await ref["registry"].resolve(_OP, self.ctx)(args)
+
+            except RuntimeError:
+                events.append("outer:caught")
+
+            inner_done.set()
+            await release.wait()
+            events.append("outer:end")
+
+    ref["registry"] = registry = _nested_registry(_Inner(), _Outer)
+
+    outer = asyncio.create_task(registry.resolve(_OUTER, ctx)(_Named(order_id=1, name="outer")))
+    await asyncio.wait_for(inner_done.wait(), timeout=2)
+    contender = asyncio.create_task(
+        registry.resolve(_OP, other)(_Named(order_id=1, name="contender"))
+    )
+    await asyncio.sleep(0.2)
+    release.set()
+    await asyncio.wait_for(asyncio.gather(outer, contender), timeout=2)
+
+    assert state.write_serialization.held() == ()
+
+    return events
+
+
+class TestNestedAndRetried:
+    async def test_an_operation_nested_in_another_holds_its_key_until_the_outer_commits(
+        self,
+    ) -> None:
+        events = await _nested_then_contended(inner_fails=False)
+
+        assert events.index("contender:inner") > events.index("outer:end"), events
+
+    async def test_a_nested_operation_that_fails_keeps_its_key_until_the_root_ends(
+        self,
+    ) -> None:
+        # Stricter than Postgres, which releases it with the savepoint: the mock models none.
+        events = await _nested_then_contended(inner_fails=True)
+
+        assert "outer:caught" in events
+        assert events.index("contender:inner") > events.index("outer:end"), events
+
+    async def test_a_retry_after_a_serialization_failure_takes_the_key_again(self) -> None:
+        state = MockState()
+        ctx = context_from_modules(MockDepsModule(state=state, resilience="real"))
+        held_per_attempt: list[int] = []
+
+        class _Flaky(Handler[_Args, None]):
+            async def __call__(self, args: _Args) -> None:
+                held_per_attempt.append(len(state.write_serialization.held()))
+
+                if len(held_per_attempt) == 1:
+                    raise exc.concurrency("serialization failure", code="serialization_failure")
+
+        registry = (
+            OperationRegistry(handlers={_OP: lambda _ctx: _Flaky()})
+            .bind(_OP)
+            .bind_outer()
+            .wrap(ResilienceWrap(policy="occ").to_step())
+            .finish()
+            .bind_tx()
+            .set_route(_ROUTE)
+            .before(SerializeOperation(key=lambda args: args.order_id).to_step())
+            .finish(deep=True)
+            .freeze()
+        )
+
+        await registry.resolve(_OP, ctx)(_Args(order_id=1))
+
+        # The first attempt's rollback gave it back; the second took it once, then committed.
+        assert held_per_attempt == [1, 1]
+        assert state.write_serialization.held() == ()
+
+
+# ....................... #
+
 
 class _Region(StrEnum):
     EU = "eu"
@@ -259,6 +384,8 @@ class TestRefusesAKeyThatCannotBeDerived:
 
         assert caught.value.kind is ExceptionKind.CONFIGURATION
         assert caught.value.code == "operation_lock_key_unsupported"
+        # Known only per call, so the refusal names the operation it came from.
+        assert repr(_OP) in caught.value.summary
 
     async def test_a_naive_datetime_is_validation(self) -> None:
         class _Noop(Handler[_Args, None]):
@@ -271,6 +398,7 @@ class TestRefusesAKeyThatCannotBeDerived:
 
         assert caught.value.kind is ExceptionKind.VALIDATION
         assert caught.value.code == "operation_lock_key_naive_datetime"
+        assert repr(_OP) in caught.value.summary
 
     @pytest.mark.parametrize(
         "value",

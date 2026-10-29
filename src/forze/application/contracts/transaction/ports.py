@@ -236,22 +236,26 @@ TX_LOCK_OUTSIDE_TRANSACTION_CODE = "tx_lock_outside_transaction"
 
 @runtime_checkable
 class TxLockPort(Protocol):
-    """Locks the open transaction holds until it ends: the backend's transaction-scoped lock.
+    """Locks a transaction holds until it ends: the backend's transaction-scoped lock.
 
-    Released by commit or rollback and never earlier, so there is no lease to expire and no
-    fencing token to thread through the writes it covers. Resolved per transaction route
-    (``ctx.tx_locks(route)``), so the lock lives on the connection that route's transaction
-    runs on.
+    Held until the root transaction commits or rolls back, so there is no lease to expire and
+    no fencing token to thread through the writes it covers. One exception: a lock taken in a
+    nested scope, which is a savepoint, is released when that scope rolls back, together with
+    the writes it guarded (Postgres). A nested scope that succeeds hands it to the enclosing
+    transaction. The in-memory store keeps every lock until the root ends, which is stricter.
+    Resolved per transaction route (``ctx.tx_locks(route)``), so the lock lives on the
+    connection that route's transaction runs on.
     """
 
     def hold(self, *keys: int) -> Awaitable[None]:
-        """Take the lock of each of *keys*, in sorted order, until the open transaction ends.
+        """Take the lock of each of *keys*, in sorted order, until the root transaction ends.
 
         A key is a 64-bit integer, as :func:`~forze.base.primitives.advisory_lock_key`
         derives one. Another transaction taking a held key waits until this one ends; a key
         this transaction already holds is taken again without waiting. Two calls, or two
         transactions taking keys in opposite orders, can deadlock: the backend refuses one side
-        as a retryable ``concurrency``.
+        as a retryable ``concurrency``. Inside a nested scope that rolls back, the lock is
+        released with it (see the class docstring).
 
         :raises CoreException: ``precondition`` (``tx_lock_outside_transaction``) outside a
             transaction, where the lock would end with its own statement.

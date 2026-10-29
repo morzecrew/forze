@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from typing import Any
 from uuid import uuid4
 
@@ -17,12 +17,16 @@ from pydantic import BaseModel
 from testcontainers.postgres import PostgresContainer
 
 from forze.application.contracts.execution import Handler
+from forze.application.contracts.tenancy import TenantIdentity
 from forze.application.execution import ExecutionContext
 from forze.application.execution.operations.registry import (
     FrozenOperationRegistry,
     OperationRegistry,
 )
 from forze.application.hooks.locking import SerializeOperation
+from forze.application.hooks.resilience import ResilienceWrap
+from forze.base.exceptions import exc
+from forze.base.primitives import advisory_lock_key
 from forze_postgres.execution.deps import PostgresDepsModule
 from forze_postgres.kernel.client import PostgresConfig
 from forze_postgres.kernel.client.client import PostgresClient
@@ -123,6 +127,62 @@ async def _run_both(
     return order
 
 
+WAIT = 0.3
+"""How long a contender is given to take a key it must not get, before it counts as waiting."""
+
+_OUTER = "orders.settle"
+
+
+class _Rollback(RuntimeError):
+    """Raised inside a nested scope to roll it back."""
+
+
+def _key() -> int:
+    return uuid4().int >> 66
+
+
+async def _held(client: PostgresClient, key: int) -> int:
+    """How many sessions hold *key* as a granted advisory lock, read outside any transaction."""
+
+    async with client.detached():
+        row = await client.fetch_one(
+            "SELECT count(*) AS n FROM pg_locks WHERE locktype = 'advisory' AND objsubid = 1 "
+            "AND granted AND classid::bigint = %s AND objid::bigint = %s",
+            [(key >> 32) & 0xFFFF_FFFF, key & 0xFFFF_FFFF],
+            row_factory="dict",
+        )
+
+    assert row is not None
+    return int(row["n"])
+
+
+async def _contend(ctx: ExecutionContext, key: int, taken: asyncio.Event) -> None:
+    async with ctx.tx_ctx.scope(_ROUTE):
+        await ctx.tx_locks(_ROUTE).hold(key)
+        taken.set()
+
+
+def _nested_registry(
+    inner: Handler[Any, Any], outer: Callable[[ExecutionContext], Handler[Any, Any]]
+) -> FrozenOperationRegistry:
+    """:data:`_OP` serialized by its key, and :data:`_OUTER`, which calls it in its own
+    transaction on the same route."""
+
+    return (
+        OperationRegistry(handlers={_OP: lambda _ctx: inner, _OUTER: outer})
+        .bind(_OP)
+        .bind_tx()
+        .set_route(_ROUTE)
+        .before(SerializeOperation(key=lambda args: args.order_id).to_step())
+        .finish(deep=True)
+        .bind(_OUTER)
+        .bind_tx()
+        .set_route(_ROUTE)
+        .finish(deep=True)
+        .freeze()
+    )
+
+
 # ....................... #
 
 
@@ -168,22 +228,148 @@ class TestTheLockIsTheTransactions:
     async def test_pg_locks_shows_it_until_commit(self, pg_client: PostgresClient) -> None:
         ctx = _ctx(pg_client)
         key = 0x1234_5678_9ABC
-        query = (
-            "SELECT count(*) AS n FROM pg_locks WHERE locktype = 'advisory' AND objsubid = 1 "
-            "AND granted AND classid::bigint = %s AND objid::bigint = %s"
-        )
-        parts = [key >> 32, key & 0xFFFF_FFFF]
-
-        async def held() -> int:
-            async with pg_client.detached():
-                row = await pg_client.fetch_one(query, parts, row_factory="dict")
-
-            assert row is not None
-            return int(row["n"])
 
         async with ctx.tx_ctx.scope(_ROUTE):
             await ctx.tx_locks(_ROUTE).hold(key)
 
-            assert await held() == 1
+            assert await _held(pg_client, key) == 1
 
-        assert await held() == 0
+        assert await _held(pg_client, key) == 0
+
+    async def test_a_nested_scope_that_succeeds_keeps_it_until_the_root_commits(
+        self, pg_client: PostgresClient, second_client: PostgresClient
+    ) -> None:
+        # RELEASE SAVEPOINT hands the lock to the enclosing transaction.
+        ctx, key, taken = _ctx(pg_client), _key(), asyncio.Event()
+
+        async with ctx.tx_ctx.scope(_ROUTE):
+            async with ctx.tx_ctx.scope(_ROUTE):
+                await ctx.tx_locks(_ROUTE).hold(key)
+
+            task = asyncio.create_task(_contend(_ctx(second_client), key, taken))
+
+            with pytest.raises(TimeoutError):
+                await asyncio.wait_for(taken.wait(), timeout=WAIT)
+
+        await asyncio.wait_for(task, timeout=5)
+
+        assert taken.is_set()
+
+    async def test_a_nested_scope_that_rolls_back_releases_it(
+        self, pg_client: PostgresClient, second_client: PostgresClient
+    ) -> None:
+        # ROLLBACK TO SAVEPOINT releases the lock with the writes it guarded; the root goes on.
+        ctx, key, taken = _ctx(pg_client), _key(), asyncio.Event()
+
+        async with ctx.tx_ctx.scope(_ROUTE):
+            with pytest.raises(_Rollback):
+                async with ctx.tx_ctx.scope(_ROUTE):
+                    await ctx.tx_locks(_ROUTE).hold(key)
+                    raise _Rollback
+
+            await asyncio.wait_for(_contend(_ctx(second_client), key, taken), timeout=5)
+
+            assert taken.is_set()
+            assert await _held(pg_client, key) == 0
+
+
+# ....................... #
+
+
+class TestNestedRetriedAndTenanted:
+    async def test_an_operation_nested_in_another_holds_its_key_until_the_outer_commits(
+        self, pg_client: PostgresClient, second_client: PostgresClient
+    ) -> None:
+        order: list[str] = []
+        inner_done, release = asyncio.Event(), asyncio.Event()
+        ref: dict[str, FrozenOperationRegistry] = {}
+
+        class _Inner(Handler[_Args, None]):
+            async def __call__(self, args: _Args) -> None:
+                order.append(f"{args.name}:inner")
+
+        class _Outer(Handler[_Args, None]):
+            def __init__(self, ctx: ExecutionContext) -> None:
+                self.ctx = ctx
+
+            async def __call__(self, args: _Args) -> None:
+                await ref["registry"].resolve(_OP, self.ctx)(args)
+                inner_done.set()
+                await release.wait()
+                order.append("outer:end")
+
+        ref["registry"] = _nested_registry(_Inner(), _Outer)
+        registry = ref["registry"]
+        key = uuid4().hex
+
+        outer = asyncio.create_task(
+            registry.resolve(_OUTER, _ctx(pg_client))(_Args(order_id=key, name="outer"))
+        )
+        await asyncio.wait_for(inner_done.wait(), timeout=5)
+        contender = asyncio.create_task(
+            registry.resolve(_OP, _ctx(second_client))(_Args(order_id=key, name="contender"))
+        )
+        await asyncio.sleep(WAIT)
+
+        assert "contender:inner" not in order
+
+        release.set()
+        await asyncio.wait_for(asyncio.gather(outer, contender), timeout=5)
+
+        assert order.index("contender:inner") > order.index("outer:end"), order
+
+    async def test_a_retry_after_a_serialization_failure_takes_the_key_again(
+        self, pg_client: PostgresClient
+    ) -> None:
+        key = uuid4().hex
+        lock = advisory_lock_key("forze.operation", _OP, None, key)
+        held_per_attempt: list[int] = []
+
+        class _Flaky(Handler[_Args, None]):
+            async def __call__(self, args: _Args) -> None:
+                held_per_attempt.append(await _held(pg_client, lock))
+
+                if len(held_per_attempt) == 1:
+                    raise exc.concurrency("serialization failure", code="serialization_failure")
+
+        registry = (
+            OperationRegistry(handlers={_OP: lambda _ctx: _Flaky()})
+            .bind(_OP)
+            .bind_outer()
+            .wrap(ResilienceWrap(policy="occ").to_step())
+            .finish()
+            .bind_tx()
+            .set_route(_ROUTE)
+            .before(SerializeOperation(key=lambda args: args.order_id).to_step())
+            .finish(deep=True)
+            .freeze()
+        )
+
+        await registry.resolve(_OP, _ctx(pg_client))(_Args(order_id=key, name="flaky"))
+
+        # The first attempt's rollback gave it back; the second took it once, then committed.
+        assert held_per_attempt == [1, 1]
+        assert await _held(pg_client, lock) == 0
+
+    async def test_two_tenants_with_one_key_do_not_wait(
+        self, pg_client: PostgresClient, second_client: PostgresClient
+    ) -> None:
+        order: list[str] = []
+        registry = _registry(_Recorder(order))
+        key = uuid4().hex
+
+        async def as_tenant(client: PostgresClient, name: str, lag: float) -> None:
+            ctx = _ctx(client)
+            await asyncio.sleep(lag)
+
+            with ctx.inv_ctx.bind_identity(tenant=TenantIdentity(tenant_id=uuid4())):
+                await registry.resolve(_OP, ctx)(_Args(order_id=key, name=name))
+
+        await asyncio.wait_for(
+            asyncio.gather(
+                as_tenant(pg_client, "first", 0), as_tenant(second_client, "second", LAG)
+            ),
+            timeout=15,
+        )
+
+        assert order.index("second:start") < order.index("first:end"), order

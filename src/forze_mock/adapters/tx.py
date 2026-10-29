@@ -442,8 +442,9 @@ class MockTxLockAdapter(TxLockPort):
 
     One table for both, as Postgres has one advisory-lock space: a cycle through an operation
     lock and an owner lock is refused as a cycle through either alone is. The strict or journal
-    root transaction holds them until it ends; the no-op manager opens none, so the mock module
-    binds no lock port beside it.
+    root transaction holds them until it ends, even one taken in a nested scope that rolls back:
+    savepoints are not modelled, so this is stricter than Postgres, which releases it there. The
+    no-op manager opens no transaction, so the mock module binds no lock port beside it.
     """
 
     state: "MockState"

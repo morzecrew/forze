@@ -199,6 +199,8 @@ class PostgresTxLockAdapter(TxLockPort):
         The advisory-lock space ``SerializedBy`` writes take theirs in, so a deadlock between
         the two kinds is detected and refused like one between either. A wait is bounded by
         the operation's deadline where the client pushes it down as ``statement_timeout``.
+        Taken in a nested scope, the lock belongs to its savepoint: ``ROLLBACK TO SAVEPOINT``
+        releases it, and ``RELEASE SAVEPOINT`` passes it to the enclosing transaction.
 
         :raises CoreException: ``precondition`` (``tx_lock_outside_transaction``) outside a
             transaction, where the lock would end with its own statement.
