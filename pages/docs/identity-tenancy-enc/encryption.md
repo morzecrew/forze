@@ -138,10 +138,11 @@ they're never content-searchable, aggregatable, or matchable in a graph predicat
 (that's physics, not a limit) — so encrypt what you store-and-return but never
 query by, and use `searchable` (deterministic) fields for the equality lookups you
 do need.
-One caveat when sharing a policy: `binds_record_id` needs a stable per-record id, so it
-applies to the document and graph (key-addressed) planes only — an `AnalyticsSpec` (warehouse
-rows have no id) and an endpoint-identity graph edge reject it at wiring. Leave it off the
-policy you share with those, or give them their own.
+One caveat when sharing a policy: `binds_record_id` needs a stable per-record id. The document plane,
+search and key-addressed graph kinds take it from each row. An `AnalyticsSpec` accepts it only with
+`sealed_by` (below), because the rows it ingests have no id. An endpoint-identity graph edge
+and procedure params reject it. Leave it off the policy you share with those, or give them
+their own.
 
 A document's ciphertext is also bound to the **document spec's name**, so it can't be
 moved between aggregates. A search or analytics spec that reads the document's table in
@@ -162,7 +163,10 @@ AnalyticsSpec(
 ```
 
 Without `sealed_by`, those reads fail with `core.crypto.aead_auth_failed`: a ciphertext
-is never opened under another name. Data a plane seals itself keeps the plane's own label,
+is never opened under another name. When the policy sets `binds_record_id`, each ciphertext is
+also bound to its row's id, so the read must return the document's `id` column as `id`. A read
+that leaves it out, such as an analytics query that doesn't select `id`, fails with
+`core.crypto.record_id_required`: an id-bound value is never opened without its id. Data a plane seals itself keeps the plane's own label,
 so an external index (Meilisearch), the kit's index sync, outbox sync and rebuild, and an
 `AnalyticsSpec` with `ingest` refuse `sealed_by`. A `HubSearchSpec`'s `sealed_by` governs
 every hub row it decodes: a member's `sealed_by` must be unset or equal to the hub's, and

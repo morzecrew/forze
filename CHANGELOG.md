@@ -237,7 +237,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **A password change or reset racing its principal's deactivation no longer fails on `revision_mismatch`, nor does the deactivation.** In a Postgres transaction they lock the account (a `read` view must accept `FOR UPDATE`), so the second waits; elsewhere the deactivation rereads a stale credential and closes it.
 
-- **In-place search and analytics read a document's sealed fields.** Name the document with `sealed_by` on the search, hub or analytics spec; reads without it fail with `aead_auth_failed`. An external index or ingested warehouse keeps its own label, so Meilisearch and analytics `ingest` refuse it.
+- **In-place search and analytics read a document's sealed fields.** Name the document with `sealed_by` on the search, hub or analytics spec; under `binds_record_id` each row must also carry its `id`. Meilisearch and analytics `ingest` refuse `sealed_by`, since they seal their own rows.
 
 ### Security
 

@@ -30,7 +30,7 @@ table.
 |---------|----------|--------------|-------------------|------------------|
 | Document fields | Postgres, Mongo, Firestore, mock | yes | yes (randomized fields only) | `core.document.encryption_wiring` |
 | Search | Postgres, Mongo, Meilisearch, mock | yes (rewrites equality filters) | inherited | `core.search.encryption_wiring` |
-| Analytics / warehouse | Postgres, ClickHouse, BigQuery, DuckDB, mock | yes (equality only) | **rejected** — warehouse rows have no id | `core.analytics.encryption_wiring` |
+| Analytics / warehouse | Postgres, ClickHouse, BigQuery, DuckDB, mock | yes (equality only) | with `sealed_by` only — each query returns the document's `id`; **rejected** otherwise (ingested rows have no id) | `core.analytics.encryption_wiring` |
 | Graph | Neo4j, mock | yes | nodes + key-addressed edges; **rejected** for endpoint-identity edges | `core.graph.encryption_wiring` |
 | Procedure params | Postgres, mock | yes | **rejected** — params have no stable id | `core.procedures.encryption_wiring` |
 

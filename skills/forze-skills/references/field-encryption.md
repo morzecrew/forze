@@ -23,7 +23,7 @@ Useful knobs: `dek_ttl_seconds` bounds how long a cached data key stays usable �
 
 Each surface opts in independently:
 
-- **Document fields** — `DocumentSpec(encryption=FieldEncryption(...))`; the same policy object is shared by the `SearchSpec` / analytics / graph specs over the same data, so sealed-field sets cannot drift. Document ciphertext is bound to the document spec's name, so an in-place search or analytics query over the document's table sets `sealed_by="<document spec name>"` on its own spec (Meilisearch and an `AnalyticsSpec` with `ingest` refuse it: they seal their own rows).
+- **Document fields** — `DocumentSpec(encryption=FieldEncryption(...))`; the same policy object is shared by the `SearchSpec` / analytics / graph specs over the same data, so sealed-field sets cannot drift. Document ciphertext is bound to the document spec's name, so an in-place search or analytics query over the document's table sets `sealed_by="<document spec name>"` on its own spec (Meilisearch and an `AnalyticsSpec` with `ingest` refuse it: they seal their own rows). Under `binds_record_id` the read must also return the document's `id` (else `core.crypto.record_id_required`); analytics accepts `binds_record_id` only with `sealed_by`.
 - **Object storage** — per route: `S3StorageConfig(bucket="uploads", encrypt=True)` (client-side; the backend only stores the envelope).
 - **Outbox / queue / stream / pub-sub payloads** — `OutboxSpec(name="events", codec=codec, encryption="end_to_end")`; tiers `none` < `at_rest` (relay decrypts) < `end_to_end` (consumer decrypts).
 - **Idempotency result cache** — `IdempotencySpec(name="orders", encrypt_result=True)`.

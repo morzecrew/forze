@@ -111,13 +111,15 @@ class _DocRead(ReadDocument):
 _POLICY = FieldEncryption(encrypted=frozenset({"secret"}))
 
 
-def _document_sealed_row(keyring: Keyring) -> dict[str, object]:
+def _document_sealed_row(
+    keyring: Keyring, policy: FieldEncryption = _POLICY
+) -> dict[str, object]:
     """A row as the document port stores it: the secret sealed under the document's name."""
 
     document = resolve_document_codecs(
-        DocumentSpec(name="docs", read=_DocRead, encryption=_POLICY).resolved_codecs,
+        DocumentSpec(name="docs", read=_DocRead, encryption=policy).resolved_codecs,
         spec_name="docs",
-        encryption=_POLICY,
+        encryption=policy,
         keyring=keyring,
         deterministic=None,
         tenant_provider=lambda: None,
@@ -161,6 +163,40 @@ async def test_in_place_search_opens_a_documents_rows_only_when_sealed_by_names_
         codec.decode_mapping(row)
 
     assert ei.value.code == "core.crypto.aead_auth_failed"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("hub", [False, True])
+async def test_in_place_search_opens_id_bound_rows_only_when_they_carry_the_id(
+    hub: bool,
+) -> None:
+    """A document that binds its record id seals each row under its id: the search opens the
+    row with the id it returns, and refuses the same ciphertext when the id is missing."""
+
+    bound = FieldEncryption(encrypted=frozenset({"secret"}), binds_record_id=True)
+    keyring = _keyring()
+    await keyring.warm(None)
+    row = _document_sealed_row(keyring, bound)
+    spec: SearchSpec[_Doc] | HubSearchSpec[_Doc] = (
+        HubSearchSpec(
+            name="hub", model_type=_Doc, members=[_spec()], encryption=bound, sealed_by="docs"
+        )
+        if hub
+        else _spec(encryption=bound, sealed_by="docs")
+    )
+
+    codec = resolve_search_read_codec_spec(
+        spec, keyring=keyring, deterministic=None, tenant_provider=lambda: None
+    ).resolved_read_codec
+    assert isinstance(codec, EncryptingModelCodec)
+    await codec.prepare_decrypt([row])
+
+    assert codec.decode_mapping(row) == _Doc(id="1", title="t", secret="s3cr3t")
+
+    with pytest.raises(CoreException) as ei:
+        codec.decrypt_mapping({k: v for k, v in row.items() if k != "id"})
+
+    assert ei.value.code == "core.crypto.record_id_required"
 
 
 @pytest.mark.parametrize("blank", ["", "   "])

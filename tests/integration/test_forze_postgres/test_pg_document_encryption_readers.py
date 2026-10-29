@@ -69,10 +69,12 @@ class _Params(BaseModel):
 
 
 _POLICY = FieldEncryption(encrypted=frozenset({"secret"}))
+_BOUND = FieldEncryption(encrypted=frozenset({"secret"}), binds_record_id=True)
 
 
 def _specs(
     sealed_by: str | None = None,
+    policy: FieldEncryption = _POLICY,
 ) -> tuple[
     DocumentSpec[_VaultRead, _Vault, _VaultCreate, _VaultUpdate],
     AnalyticsSpec[_Report, _Report],
@@ -87,26 +89,31 @@ def _specs(
                 "create_cmd": _VaultCreate,
                 "update_cmd": _VaultUpdate,
             },
-            encryption=_POLICY,
+            encryption=policy,
         ),
         AnalyticsSpec(
             name="vault_report",
             read=_Report,
-            queries={"all": AnalyticsQueryDefinition(params=_Params)},
-            encryption=_POLICY,
+            queries={
+                "all": AnalyticsQueryDefinition(params=_Params),
+                "no_id": AnalyticsQueryDefinition(params=_Params),
+            },
+            encryption=policy,
             sealed_by=sealed_by,
         ),
         SearchSpec(
             name="vault",
             model_type=_VaultRead,
             fields=["title"],
-            encryption=_POLICY,
+            encryption=policy,
             sealed_by=sealed_by,
         ),
     )
 
 
-def _hub(sealed_by: str | None = None) -> HubSearchSpec[_VaultRead]:
+def _hub(
+    sealed_by: str | None = None, policy: FieldEncryption = _POLICY
+) -> HubSearchSpec[_VaultRead]:
     """A hub over the document table: its hub rows are decoded under the hub's sealed_by."""
 
     leg = SearchSpec(name="vault_leg", model_type=_VaultRead, fields=["title"])
@@ -114,7 +121,7 @@ def _hub(sealed_by: str | None = None) -> HubSearchSpec[_VaultRead]:
         name="vault_hub",
         model_type=_VaultRead,
         members=[leg],
-        encryption=_POLICY,
+        encryption=policy,
         sealed_by=sealed_by,
     )
 
@@ -137,7 +144,10 @@ def _ctx(pg_client: PostgresClient, table: str) -> ExecutionContext:
                     "all": PostgresQueryConfig(
                         # table name is a test-local literal, never caller input
                         sql=f"SELECT id::text AS id, title, secret FROM public.{table}",
-                    )
+                    ),
+                    "no_id": PostgresQueryConfig(
+                        sql=f"SELECT title, secret FROM public.{table}",
+                    ),
                 }
             )
         },
@@ -168,7 +178,7 @@ def _ctx(pg_client: PostgresClient, table: str) -> ExecutionContext:
     return context_from_deps(Deps.merge(crypto(), module()))
 
 
-async def _write_sealed(pg_client: PostgresClient) -> str:
+async def _write_sealed(pg_client: PostgresClient, policy: FieldEncryption = _POLICY) -> str:
     table = f"vault_{uuid4().hex[:12]}"
     # table name is a test-local literal, never caller input
     await pg_client.execute(
@@ -185,7 +195,7 @@ async def _write_sealed(pg_client: PostgresClient) -> str:
             USING gin (to_tsvector('english', coalesce(title, '')));
         """
     )
-    document, _, _ = _specs()
+    document, _, _ = _specs(sealed_by="vault", policy=policy)
     writer = _ctx(pg_client, table).document.command(document)
     await writer.create(_VaultCreate(title="ledger one", secret="plain-1"))
 
@@ -249,3 +259,33 @@ async def test_a_hub_decodes_the_document_rows_under_its_own_sealed_by(
         await hub.search_page("ledger", pagination={"limit": 5})
 
     assert refused.value.code == "core.crypto.aead_auth_failed"
+
+
+@pytest.mark.asyncio
+async def test_id_bound_rows_open_only_when_the_read_returns_the_id(
+    pg_client: PostgresClient,
+) -> None:
+    """A document that binds its record id: each reader opens the row with the id it reads
+    back, and a query that does not return the id is refused rather than opened id-less."""
+
+    table = await _write_sealed(pg_client, _BOUND)
+    _, analytics, search = _specs(sealed_by="vault", policy=_BOUND)
+
+    page = await _ctx(pg_client, table).analytics.query(analytics).run_page("all", _Params())
+    assert [hit.secret for hit in page.hits] == ["plain-1"]
+
+    found = await _ctx(pg_client, table).search.query(search).search_page(
+        "ledger", pagination={"limit": 5}
+    )
+    assert [hit.secret for hit in found.hits] == ["plain-1"]
+
+    hub = _ctx(pg_client, table).search.hub(_hub(sealed_by="vault", policy=_BOUND))
+    found = await hub.search_page("ledger", pagination={"limit": 5})
+    assert [hit.secret for hit in found.hits] == ["plain-1"]
+
+    query = _ctx(pg_client, table).analytics.query(analytics)
+
+    with pytest.raises(CoreException) as refused:
+        await query.run_page("no_id", _Params())
+
+    assert refused.value.code == "core.crypto.record_id_required"
