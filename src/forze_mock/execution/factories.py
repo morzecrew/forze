@@ -68,7 +68,7 @@ from forze.application.contracts.storage import (
 from forze.application.contracts.stream import StreamCommandPort
 from forze.application.contracts.stream.specs import StreamSpec
 from forze.application.contracts.tenancy import TenancyMixin, TenantProviderPort
-from forze.application.contracts.transaction import TransactionManagerPort, TxLockPort
+from forze.application.contracts.transaction import TransactionManagerPort
 from forze.application.execution import ExecutionContext
 from forze.application.execution.crypto import enforce_required_reach
 from forze.application.execution.domain import domain_dispatcher_provider
@@ -142,7 +142,6 @@ from forze_mock.adapters import (
     MockStorageAdapter,
     MockStreamAdapter,
     MockStrictTxManagerAdapter,
-    MockTxLockAdapter,
     MockTxManagerAdapter,
 )
 from forze_mock.adapters._derived import ResolvedDerivedRead
@@ -205,13 +204,6 @@ def mock_blocking_journal_txmanager(context: ExecutionContext) -> TransactionMan
     return MockJournalTxManagerAdapter(
         state=context.deps.provide(MockStateDepKey), row_locks="block"
     )
-
-
-# ....................... #
-
-
-def mock_tx_lock(context: ExecutionContext) -> TxLockPort:
-    return MockTxLockAdapter(state=context.deps.provide(MockStateDepKey))
 
 
 # ....................... #

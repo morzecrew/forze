@@ -27,6 +27,9 @@ from forze.application.hooks.locking import SerializeOperation
 from forze.application.hooks.resilience import ResilienceWrap
 from forze.base.exceptions import exc
 from forze.base.primitives import advisory_lock_key
+from forze_mock import MockDepsModule, MockState
+from forze_mock.adapters import MockTxLockAdapter
+from forze_postgres.adapters import PostgresTxLockAdapter
 from forze_postgres.execution.deps import PostgresDepsModule
 from forze_postgres.kernel.client import PostgresConfig
 from forze_postgres.kernel.client.client import PostgresClient
@@ -235,6 +238,25 @@ class TestTheLockIsTheTransactions:
             assert await _held(pg_client, key) == 1
 
         assert await _held(pg_client, key) == 0
+
+    async def test_a_hybrid_context_takes_the_lock_of_the_backend_that_runs_the_route(
+        self, pg_client: PostgresClient
+    ) -> None:
+        # The mock composed behind Postgres as a fallback: the Postgres route's lock is the
+        # Postgres one, and only a route the mock's own manager runs gets the mock's.
+        ctx = context_from_deps(
+            PostgresDepsModule(client=pg_client, tx={_ROUTE})(),
+            MockDepsModule(state=MockState())(),
+        )
+        key = _key()
+
+        assert isinstance(ctx.tx_locks(_ROUTE), PostgresTxLockAdapter)
+        assert isinstance(ctx.tx_locks("mock-only"), MockTxLockAdapter)
+
+        async with ctx.tx_ctx.scope(_ROUTE):
+            await ctx.tx_locks(_ROUTE).hold(key)
+
+            assert await _held(pg_client, key) == 1
 
     async def test_a_nested_scope_that_succeeds_keeps_it_until_the_root_commits(
         self, pg_client: PostgresClient, second_client: PostgresClient

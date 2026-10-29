@@ -142,7 +142,6 @@ from forze.application.contracts.tenancy import (
 )
 from forze.application.contracts.transaction import (
     TransactionManagerDepKey,
-    TxLockDepKey,
 )
 from forze.application.execution import (
     Deps,
@@ -257,7 +256,6 @@ from forze_mock.execution.factories import (
     mock_blocking_journal_txmanager,
     mock_journal_txmanager,
     mock_strict_txmanager,
-    mock_tx_lock,
     mock_txmanager,
     route_simple_stubs,
     route_stubs,
@@ -585,11 +583,6 @@ class MockDepsModule(DepsModule):
             KeyringDepKey: crypto_keyring,
             DeterministicCipherDepKey: crypto_deterministic,
         }
-
-        # The no-op manager opens no transaction, so a lock held until one ends has nothing to
-        # live in: binding none refuses it when the operation is resolved, not on every call.
-        if self.strict_tx or self.transactions != "none":
-            deps[TxLockDepKey] = mock_tx_lock
 
         if self.rotating_credentials is not None:
             exchanger = self.rotating_credentials

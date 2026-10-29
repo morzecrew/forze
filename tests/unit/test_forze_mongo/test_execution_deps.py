@@ -38,7 +38,7 @@ from forze.application.contracts.idempotency import (
 from forze.application.contracts.inbox import InboxDepKey, InboxSpec
 from forze.application.contracts.querying import QueryFilterLimits
 from forze.application.contracts.search import SearchSpec
-from forze.application.contracts.transaction.deps import TransactionManagerDepKey, TxLockDepKey
+from forze.application.contracts.transaction.deps import TransactionManagerDepKey
 from forze.application.execution import Deps, ExecutionContext
 from forze.application.execution.context.invocation import InvocationMetadata
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
@@ -130,9 +130,8 @@ def test_mongo_deps_module_rw_registers_query_and_command() -> None:
     assert deps.exists(DocumentQueryDepKey, route="doc")
     assert deps.exists(DocumentCommandDepKey, route="doc")
     assert deps.exists(TransactionManagerDepKey, route="session")
-    # Mongo has no transaction-scoped lock, so an operation serialized on the route is refused.
-    assert not deps.exists(TxLockDepKey, route="session")
 
+    # Mongo's manager has no transaction-scoped lock, so one asked of its route is refused.
     with pytest.raises(CoreException) as caught:
         context_from_deps(deps).tx_locks("session")
 

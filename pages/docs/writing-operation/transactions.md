@@ -225,8 +225,10 @@ Wiring problems surface before the first request:
   (`tx_lock_without_route`).
 - A route whose backend has no transaction-scoped lock is refused when the
   operation is resolved, on its first call or under `check_wiring`
-  (`tx_lock_unsupported`). Postgres has one; Mongo and Firestore do not. It
-  never falls back to a Redis lease.
+  (`tx_lock_unsupported`). Postgres has one; Mongo and Firestore do not. The
+  lock comes from the route's transaction manager, so it is always the lock of
+  the store that transaction runs on, whatever else is wired. It never falls
+  back to a Redis lease.
 
 On Postgres the lock is `pg_advisory_xact_lock` on the transaction's own
 connection. Nothing expires mid-transaction and nothing needs a fencing token,

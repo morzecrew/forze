@@ -30,7 +30,6 @@ from .factories import (
     ConfigurablePostgresHubSearch,
     ConfigurablePostgresReadOnlyDocument,
     ConfigurablePostgresSearch,
-    postgres_tx_lock,
     postgres_txmanager,
 )
 from .keys import PostgresClientDepKey
@@ -70,6 +69,5 @@ __all__ = [
     "VectorEngine",
     "VectorEngineDistance",
     "validate_fts_groups_for_search_spec",
-    "postgres_tx_lock",
     "postgres_txmanager",
 ]

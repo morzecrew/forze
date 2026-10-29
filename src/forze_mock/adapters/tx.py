@@ -12,6 +12,7 @@ from forze.application.contracts.transaction import (
     TransactionManagerPort,
     TransactionScopeKey,
     TxCapabilities,
+    TxLockCapable,
     TxLockPort,
     require_tx_lock_in_transaction,
 )
@@ -173,7 +174,7 @@ class MockTxManagerAdapter(TransactionManagerPort):
 
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class MockStrictTxManagerAdapter(TransactionManagerPort):
+class MockStrictTxManagerAdapter(TransactionManagerPort, TxLockCapable):
     """Strict mock transaction manager with real rollback semantics.
 
     Semantics:
@@ -217,6 +218,13 @@ class MockStrictTxManagerAdapter(TransactionManagerPort):
         return TxCapabilities(
             isolation=frozenset(IsolationLevel),
         )
+
+    # ....................... #
+
+    def tx_lock(self) -> TxLockPort:
+        """:class:`TxLockCapable`: the per-owner write locks, held by this root transaction."""
+
+        return MockTxLockAdapter(state=self.state)
 
     # ....................... #
 
@@ -292,7 +300,7 @@ class MockStrictTxManagerAdapter(TransactionManagerPort):
 
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class MockJournalTxManagerAdapter(TransactionManagerPort):
+class MockJournalTxManagerAdapter(TransactionManagerPort, TxLockCapable):
     """Concurrency-preserving atomicity + faithful isolation — the default.
 
     The DOCUMENT store routes through the MVCC buffered overlay at **every** level (see
@@ -334,6 +342,13 @@ class MockJournalTxManagerAdapter(TransactionManagerPort):
         return TxCapabilities(
             isolation=frozenset(IsolationLevel),
         )
+
+    # ....................... #
+
+    def tx_lock(self) -> TxLockPort:
+        """:class:`TxLockCapable`: the per-owner write locks, held by this root transaction."""
+
+        return MockTxLockAdapter(state=self.state)
 
     # ....................... #
 
@@ -443,8 +458,8 @@ class MockTxLockAdapter(TxLockPort):
     One table for both, as Postgres has one advisory-lock space: a cycle through an operation
     lock and an owner lock is refused as a cycle through either alone is. The strict or journal
     root transaction holds them until it ends, even one taken in a nested scope that rolls back:
-    savepoints are not modelled, so this is stricter than Postgres, which releases it there. The
-    no-op manager opens no transaction, so the mock module binds no lock port beside it.
+    savepoints are not modelled, so this is stricter than Postgres, which releases it there.
+    Handed out by those two managers; the no-op manager opens no transaction, so it has none.
     """
 
     state: "MockState"

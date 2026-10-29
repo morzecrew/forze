@@ -5,8 +5,6 @@ from .deps import (
     TransactionDeps,
     TransactionManagerDepKey,
     TransactionManagerDepPort,
-    TxLockDepKey,
-    TxLockDepPort,
     TxLockDeps,
 )
 from .ports import (
@@ -21,6 +19,7 @@ from .ports import (
     TransactionManagerPort,
     TransactionScopeKey,
     TxCapabilities,
+    TxLockCapable,
     TxLockPort,
     require_tx_lock_in_transaction,
 )
@@ -43,8 +42,7 @@ __all__ = [
     "TransactionHandle",
     "TransactionallyEnlistable",
     "TxCapabilities",
-    "TxLockDepKey",
-    "TxLockDepPort",
+    "TxLockCapable",
     "TxLockDeps",
     "TxLockPort",
     "require_tx_lock_in_transaction",

@@ -20,6 +20,7 @@ from forze.application.contracts.transaction import (
     TransactionManagerPort,
     TransactionScopeKey,
     TxCapabilities,
+    TxLockCapable,
     TxLockPort,
     require_tx_lock_in_transaction,
 )
@@ -69,7 +70,7 @@ def _statement_timeout_ms(
 
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class PostgresTxManagerAdapter(TransactionManagerPort):
+class PostgresTxManagerAdapter(TransactionManagerPort, TxLockCapable):
     """Postgres-backed :class:`TxManagerPort` that delegates to :meth:`PostgresClient.transaction`."""
 
     client: PostgresClientPort
@@ -89,6 +90,13 @@ class PostgresTxManagerAdapter(TransactionManagerPort):
     def capabilities(self) -> TxCapabilities:
         # Postgres honors every level natively (snapshot via REPEATABLE READ).
         return TxCapabilities(isolation=frozenset(CoreIsolationLevel))
+
+    # ....................... #
+
+    def tx_lock(self) -> TxLockPort:
+        """:class:`TxLockCapable`: ``pg_advisory_xact_lock`` on this manager's client."""
+
+        return PostgresTxLockAdapter(client=self.client)
 
     # ....................... #
 

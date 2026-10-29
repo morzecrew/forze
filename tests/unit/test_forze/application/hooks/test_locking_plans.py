@@ -7,7 +7,8 @@ Run against the in-memory store, whose transaction-scoped locks are the per-owne
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Callable
+from collections.abc import AsyncIterator, Callable
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta, timezone
 from enum import StrEnum
 from typing import Any, Literal
@@ -21,6 +22,7 @@ from forze.application.contracts.tenancy import TenantIdentity
 from forze.application.contracts.transaction import (
     TX_LOCK_UNSUPPORTED_CODE,
     TransactionManagerDepKey,
+    TransactionScopeKey,
 )
 from forze.application.execution import Deps, ExecutionContext
 from forze.application.execution.operations import check_wiring
@@ -67,6 +69,18 @@ class _Gate(Handler[_Named, None]):
         self.started[args.name].set()
         await self.release[args.name].wait()
         self.events.append(f"{args.name}:end")
+
+
+class _ForeignTxManager:
+    """Another backend's transaction manager, with no transaction-scoped lock (as Mongo's)."""
+
+    @property
+    def scope_key(self) -> TransactionScopeKey:
+        return TransactionScopeKey("foreign")
+
+    @asynccontextmanager
+    async def transaction(self, *, read_only: bool = False) -> AsyncIterator[None]:
+        yield
 
 
 def _registry(
@@ -481,18 +495,41 @@ class TestRefusesWhereNoTransactionCanHoldIt:
 
         assert [failure.code for failure in report.failures] == [TX_LOCK_UNSUPPORTED_CODE]
 
-    def test_a_route_bound_to_another_backend_is_not_served_by_the_catch_all(self) -> None:
-        # A route whose transaction manager is bound for it alone (as Mongo binds one) and no
-        # lock port: the mock's catch-all lock port would lock a store it does not run on.
-        deps = Deps.merge(
-            MockDepsModule(state=MockState())(),
+    @pytest.mark.parametrize("bound", ["catch-all", "routed"])
+    def test_a_manager_without_a_lock_is_refused_whatever_else_is_wired(self, bound: str) -> None:
+        # Another backend's manager runs the route, the mock composed behind it as a fallback.
+        # The mock's locks would guard a store that transaction never touches, so the lock is
+        # asked of the manager that runs the route, and that one has none.
+        factory = {TransactionManagerDepKey: lambda _ctx: _ForeignTxManager()}
+        foreign = (
+            Deps.plain(factory)
+            if bound == "catch-all"
+            else Deps.routed(
+                {TransactionManagerDepKey: {_ROUTE: factory[TransactionManagerDepKey]}}
+            )
+        )
+        ctx = context_from_deps(foreign, MockDepsModule(state=MockState())())
+
+        with pytest.raises(CoreException) as caught:
+            _registry(_Gate()).resolve(_OP, ctx)
+
+        assert caught.value.code == TX_LOCK_UNSUPPORTED_CODE
+
+    async def test_the_lock_comes_from_the_manager_that_runs_the_route(self) -> None:
+        # A strict manager bound for the route over the journal catch-all: the lock it hands
+        # out is held by the strict root, so it is gone once that root ends.
+        state = MockState()
+        ctx = context_from_deps(
+            MockDepsModule(state=state)(),
             Deps.routed({TransactionManagerDepKey: {_ROUTE: mock_strict_txmanager}}),
         )
 
-        with pytest.raises(CoreException) as caught:
-            _registry(_Gate()).resolve(_OP, context_from_deps(deps))
+        async with ctx.tx_ctx.scope(_ROUTE):
+            await ctx.tx_locks(_ROUTE).hold(5)
 
-        assert caught.value.code == TX_LOCK_UNSUPPORTED_CODE
+            assert state.write_serialization.holder_of(5) is not None
+
+        assert state.write_serialization.held() == ()
 
     def test_an_unbound_hook_refuses_to_build(self) -> None:
         with pytest.raises(CoreException) as caught:

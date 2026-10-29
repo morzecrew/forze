@@ -556,8 +556,28 @@ transactional behaviour is covered by the graph mock conformance suite instead.\
 
 [tool.conformance_manifest.planes.tx_lock]
 scenario = "tests.support.tx_lock_conformance:TX_LOCK_BATTERY"
-dep_keys = ["tx_lock"]
+dep_keys = []
 engines = ["mock", "postgres"]
+# The lock has no key of its own: a route's transaction manager hands it out (TxLockCapable),
+# so whoever provides a manager owes a leg, or the reason it has no lock to compare.
+derive_from = ["transaction_manager"]
+
+[tool.conformance_manifest.planes.tx_lock.waivers]
+mongo = """
+Mongo has no advisory or transaction-scoped lock: it locks a document only by writing it. \
+Its transaction manager is not TxLockCapable, so a lock asked of a Mongo route is refused at \
+resolve (tx_lock_unsupported), which tests/unit/test_forze_mongo/test_execution_deps.py pins.\
+"""
+firestore = """
+Firestore has no transaction-scoped lock to take without a write: its transactions retry an \
+optimistic read set. Its transaction manager is not TxLockCapable, so a lock asked of a \
+Firestore route is refused at resolve (tx_lock_unsupported).\
+"""
+neo4j = """
+Neo4j registers its transaction manager for the graph plane and offers no transaction-scoped \
+lock. The manager is not TxLockCapable, so a lock asked of its route is refused at resolve \
+(tx_lock_unsupported).\
+"""
 
 [tool.conformance_manifest.planes.owned_reads]
 scenario = "tests.support.owned_reads_conformance:OWNED_READS_BATTERY"

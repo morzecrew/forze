@@ -243,8 +243,9 @@ class TxLockPort(Protocol):
     nested scope, which is a savepoint, is released when that scope rolls back, together with
     the writes it guarded (Postgres). A nested scope that succeeds hands it to the enclosing
     transaction. The in-memory store keeps every lock until the root ends, which is stricter.
-    Resolved per transaction route (``ctx.tx_locks(route)``), so the lock lives on the
-    connection that route's transaction runs on.
+    Handed out by the route's transaction manager (``ctx.tx_locks(route)``, see
+    :class:`TxLockCapable`), so the lock lives on the connection that route's transaction runs
+    on.
     """
 
     def hold(self, *keys: int) -> Awaitable[None]:
@@ -260,6 +261,21 @@ class TxLockPort(Protocol):
         :raises CoreException: ``precondition`` (``tx_lock_outside_transaction``) outside a
             transaction, where the lock would end with its own statement.
         """
+        ...  # pragma: no cover
+
+
+@runtime_checkable
+class TxLockCapable(Protocol):
+    """Opt-in extension for transaction managers whose backend has a transaction-scoped lock.
+
+    The lock comes from the manager itself rather than from a key of its own, so it is always
+    the lock of the store the route's transactions run on: wiring cannot pair one backend's
+    transactions with another backend's locks. A manager that does not implement this has no
+    such lock, and a lock asked of its route is refused (``tx_lock_unsupported``).
+    """
+
+    def tx_lock(self) -> TxLockPort:
+        """The lock port of the transactions this manager opens."""
         ...  # pragma: no cover
 
 
