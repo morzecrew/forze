@@ -1,4 +1,4 @@
-"""Postgres lifecycle steps (pool, catalog warmup, document schema validation)."""
+"""Postgres lifecycle steps (pool, catalog warmup, document schema validation, counter purge)."""
 
 from .capabilities import POSTGRES_CLIENT_CAPABILITY
 from .catalog_warmup import (
@@ -6,6 +6,7 @@ from .catalog_warmup import (
     postgres_catalog_warmup_lifecycle_step,
     warm_postgres_catalog,
 )
+from .counter_purge import postgres_counter_purge_lifecycle_step
 from .document_schema import (
     PostgresDocumentSchemaValidationHook,
     postgres_document_schema_spec_for_binding,
@@ -30,6 +31,7 @@ __all__ = [
     "PostgresShutdownHook",
     "PostgresStartupHook",
     "postgres_catalog_warmup_lifecycle_step",
+    "postgres_counter_purge_lifecycle_step",
     "postgres_document_schema_spec_for_binding",
     "postgres_document_schema_specs",
     "postgres_document_schema_validation_lifecycle_step",

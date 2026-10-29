@@ -4,11 +4,12 @@ The shared battery pins what a ``ttl`` means on a table that has the column. The
 is particular to Postgres: an older table without it keeps working until a ``ttl`` is asked
 for, the migration can land under a running process, and lapsed rows stay until a purge.
 
-# covers: PostgresCounterAdminAdapter.purge_expired
+# covers: PostgresCounterAdminAdapter.purge_expired, postgres_counter_purge_lifecycle_step
 """
 
 from __future__ import annotations
 
+import asyncio
 from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
@@ -29,7 +30,7 @@ from forze.application.integrations.authn import LockoutConfig, LoginLockoutGuar
 from forze.base.exceptions import CoreException, ExceptionKind
 from forze.base.primitives import FrozenTimeSource, bind_time_source
 from forze.testing import context_from_deps
-from forze_postgres import PostgresDepsModule
+from forze_postgres import PostgresDepsModule, postgres_counter_purge_lifecycle_step
 from forze_postgres.adapters import counter as counter_module
 from forze_postgres.adapters.counter import (
     _EXPIRY_RECHECK,  # pyright: ignore[reportPrivateUsage]
@@ -284,6 +285,42 @@ async def test_the_wired_route_honours_a_ttl(pg_client: PostgresClient, table: s
     await _lapse_all(pg_client, table)
 
     assert await counter.incr(by=0) == 0
+
+
+async def test_the_purge_step_deletes_lapsed_rows_and_keeps_live_ones(
+    pg_client: PostgresClient, table: str
+) -> None:
+    ctx = context_from_deps(
+        PostgresDepsModule(
+            client=pg_client,
+            counters={"orders": PostgresCounterConfig(relation=("public", table))},
+        )()
+    )
+    counter = ctx.counter(CounterSpec(name="orders"))
+
+    for day in ("mon", "tue", "wed"):
+        await counter.incr(suffix=day, ttl=TTL)
+
+    await _lapse_all(pg_client, table)
+    await counter.incr(suffix="thu", ttl=TTL)
+    await counter.incr(suffix="forever")
+
+    step = postgres_counter_purge_lifecycle_step(
+        specs=[CounterSpec(name="orders")], interval=timedelta(hours=1)
+    )
+    await step.startup(ctx)
+
+    try:
+        # The loop purges once at startup, then sleeps out the interval.
+        async with asyncio.timeout(10):
+            while await _rows(pg_client, table) > 2:
+                await asyncio.sleep(0.05)
+    finally:
+        await step.shutdown(ctx)
+
+    entries = await _admin(pg_client, table).list_counters()
+
+    assert sorted(entry.suffix or "" for entry in entries) == ["forever", "thu"]
 
 
 async def test_the_lockout_keeps_working_on_a_table_without_the_column(

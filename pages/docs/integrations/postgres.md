@@ -181,10 +181,28 @@ PostgresLifecycleModule(
     exists. The login lockout is the exception: it writes without a `ttl` instead and warns
     once, so logins keep working while its old keys pile up. After the migration a `ttl`
     call picks the column up within a minute, without a restart. A
-    lapsed row reads as absent but stays in the table. Purge a route's lapsed rows with
-    `PostgresCounterAdminAdapter.purge_expired()`, which walks the primary key in batches
-    and needs no other index. Or schedule a table-wide purge (for example with pg_cron),
-    with a partial index so it does not scan the live rows:
+    lapsed row reads as absent but stays in the table. To delete lapsed rows on a schedule,
+    add `postgres_counter_purge_lifecycle_step`. It calls
+    `PostgresCounterAdminAdapter.purge_expired()` for each route on an interval, which walks
+    the primary key in batches and needs no other index:
+
+    ```python
+    from forze.application.contracts.counter import CounterSpec
+    from forze_postgres import postgres_counter_purge_lifecycle_step
+
+    lifecycle = lifecycle.with_steps(
+        postgres_counter_purge_lifecycle_step(
+            specs=[CounterSpec(name="quota")],
+            interval=timedelta(minutes=10),  # the default
+        ),
+    )
+    ```
+
+    Each route must be wired in `counters=`, or startup fails with `configuration`. On
+    `tenant_aware` routes pass `tenants=`, such as `lambda: shard.tenants`, to purge each
+    tenant's rows in turn; without it the step refuses them at startup. Racing purges are
+    safe, so run the step on every replica. Or schedule a table-wide purge (for example with
+    pg_cron), with a partial index so it does not scan the live rows:
 
     ```sql
     CREATE INDEX ON <counters> (expires_at) WHERE expires_at IS NOT NULL;

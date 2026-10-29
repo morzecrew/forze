@@ -311,7 +311,9 @@ the window is over. The minute covers clock spread between application nodes: a 
 can create a window's key at its very start while a slow node still counts that window at
 its end. The store's own clock offset does not matter. A lapsed key reads as absent at
 once; its storage is reclaimed by Redis itself, or by the purge, TTL index or TTL policy you
-set up on Postgres, Mongo or Firestore.
+set up on Postgres, Mongo or Firestore. On Postgres, schedule the purge with
+`postgres_counter_purge_lifecycle_step(specs=[CounterSpec(name=LOCKOUT_COUNTER_ROUTE)])`; see
+[Postgres](../integrations/postgres.md#notes).
 
 A counter that cannot expire keys never breaks a login. On a Postgres counter table without
 the optional `expires_at timestamptz` column, the lockout writes its keys without a `ttl` and

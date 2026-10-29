@@ -130,7 +130,7 @@ from you:
 | Backend | How a lapsed counter is reclaimed | Clock |
 |---------|-----------------------------------|-------|
 | Redis | native key expiry | Redis server |
-| Postgres | `PostgresCounterAdminAdapter.purge_expired()`, or a scheduled `DELETE` | database `now()` |
+| Postgres | `postgres_counter_purge_lifecycle_step`, or a scheduled `DELETE` | database `now()` |
 | Mongo | a TTL index on `expires_at` | application `utcnow()` |
 | Firestore | a TTL policy on `expires_at` | application `utcnow()` |
 | mock | dropped when next touched | bound time source |
