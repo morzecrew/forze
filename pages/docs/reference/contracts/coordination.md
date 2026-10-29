@@ -57,6 +57,10 @@ The port lifecycle the wrap drives:
 For a long-held critical section, use the `DistributedLockScope` kit with an `extend_interval`
 to renew the lease rather than picking a large `ttl`.
 
+A lease is released on its own schedule, not at a commit. For a lock a transaction holds until it
+ends, use the transaction-scoped lock instead:
+[Serializing an operation](../../writing-operation/transactions.md#serializing-an-operation).
+
 A fenced write claims its token first (`fence < :token`), then accepts an equal fence
 (`fence <= :token`); a lower token is always refused, and zero rows on any fenced write ends
 the term. The rule, and when to call `advance_fence`, are in

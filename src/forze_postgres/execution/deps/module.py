@@ -51,7 +51,7 @@ from forze.application.contracts.secrets import (
     RotatingCredentialsDepKey,
 )
 from forze.application.contracts.tenancy import resolves_per_tenant
-from forze.application.contracts.transaction import TransactionManagerDepKey
+from forze.application.contracts.transaction import TransactionManagerDepKey, TxLockDepKey
 from forze.base.exceptions import exc
 from forze.base.primitives import MappingConverter, StrKey, StrKeyMapping
 
@@ -110,6 +110,7 @@ from .factories import (
     ConfigurablePostgresRotatingCredentials,
     ConfigurablePostgresRotatingCredentialsAdmin,
     ConfigurablePostgresSearch,
+    postgres_tx_lock,
     postgres_txmanager,
 )
 from .keys import PostgresClientDepKey, PostgresIntrospectorDepKey
@@ -788,7 +789,12 @@ class PostgresDepsModule(DepsModule):
 
         if self.tx:
             tx_deps = tx_deps.merge(
-                Deps.routed({TransactionManagerDepKey: dict.fromkeys(self.tx, postgres_txmanager)})
+                Deps.routed(
+                    {
+                        TransactionManagerDepKey: dict.fromkeys(self.tx, postgres_txmanager),
+                        TxLockDepKey: dict.fromkeys(self.tx, postgres_tx_lock),
+                    }
+                )
             )
 
         if self.analytics:

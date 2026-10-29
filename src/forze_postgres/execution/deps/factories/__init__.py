@@ -34,7 +34,7 @@ from .search import (
     ConfigurablePostgresSearch,
     postgres_search_port_for_config,
 )
-from .tx import postgres_txmanager
+from .tx import postgres_tx_lock, postgres_txmanager
 
 # ----------------------- #
 
@@ -64,5 +64,6 @@ __all__ = [
     "ConfigurablePostgresSearch",
     "build_hub_leg_runtimes",
     "postgres_search_port_for_config",
+    "postgres_tx_lock",
     "postgres_txmanager",
 ]

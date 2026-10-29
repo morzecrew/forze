@@ -16,7 +16,7 @@ from .search import (
     hub_leg_engine_for,
 )
 from .tenant_provisioner import PostgresSchemaTenantProvisioner
-from .txmanager import PostgresTxManagerAdapter, PostgresTxScopeKey
+from .txmanager import PostgresTxLockAdapter, PostgresTxManagerAdapter, PostgresTxScopeKey
 
 # ----------------------- #
 
@@ -36,6 +36,7 @@ __all__ = [
     "PostgresFTSSearchAdapter",
     "PostgresVectorSearchAdapter",
     "VectorHubLegEngine",
+    "PostgresTxLockAdapter",
     "PostgresTxManagerAdapter",
     "PostgresTxScopeKey",
     "FtsGroupLetter",

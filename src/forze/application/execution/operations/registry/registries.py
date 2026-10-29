@@ -569,7 +569,9 @@ class OperationRegistry:
         RegistryFreezeValidator.validate_member_authz(self._handlers, resolution, self._descriptors)
 
         frozen_handlers = dict(self._handlers)
-        frozen_plans = {op: resolution.resolve(str(op)).freeze() for op in frozen_handlers}
+        frozen_plans = {
+            op: resolution.resolve(str(op)).bind_tx_locks(op).freeze() for op in frozen_handlers
+        }
 
         # Visibility, not an error: descriptor-less operations stay executable but are
         # invisible/half-visible to catalog-driven surfaces (generated routes refuse

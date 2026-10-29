@@ -37,11 +37,10 @@ from forze.domain.constants import ID_FIELD, LAST_UPDATE_AT_FIELD, REV_FIELD
 from forze_mock.adapters._mvcc import (
     MvccTx,
     StatementLocks,
+    acquire_write_locks,
     current_mvcc_tx,
-    raise_row_deadlock,
     release_row_locks,
     release_write_locks,
-    wait_cycle_rows,
 )
 from forze_mock.adapters.tx import (
     ensure_mock_tx_writable,
@@ -395,90 +394,18 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
         outside one, given back as this returns.
         """
 
-        table = self.state.write_serialization
         mvcc = current_mvcc_tx()
         held_by_tx: MvccTx | StatementLocks | None = mvcc if mvcc is not None else strict_tx_locks()
         holder = held_by_tx if held_by_tx is not None else StatementLocks()
 
         try:
             await self._lock_rows(locking, holder)
-
-            while wanted := [key for key in keys() if key not in holder.write_locks]:
-                for key in wanted:
-                    lock = table.for_key(key)
-
-                    if lock.locked():
-                        self._refuse_lock_cycle(holder, key)
-
-                    holder.waiting_for = key
-
-                    try:
-                        await lock.acquire()
-
-                    finally:
-                        holder.waiting_for = None
-
-                    holder.write_locks[key] = lock
-                    table.hold(key, holder)
+            await acquire_write_locks(self.state, holder, keys)
 
         finally:
             if held_by_tx is None:
                 release_write_locks(holder, self.state)
                 release_row_locks(holder, self.state)
-
-    # ....................... #
-
-    def _refuse_lock_cycle(self, holder: MvccTx | StatementLocks, key: int) -> None:
-        """Refuse a wait that would close a cycle, instead of joining one.
-
-        Walks from whoever holds *key* to whatever that writer is itself waiting for — an owner,
-        or under ``row_locks="block"`` a row — and on to its holder. A chain arriving back at
-        *holder* is a deadlock: neither side can release first, and without this both would sit
-        there until an operation deadline fired — a hang where the store being modelled detects
-        the cycle and aborts one of them.
-
-        Refused on the side about to *join* the cycle, which is the side that can still give up
-        without having blocked anyone.
-
-        :raises CoreException: ``concurrency`` naming the owner — the kind Postgres gives the
-            same cycle when it detects the deadlock, so a caller's retry policy treats both alike.
-            A cycle through a row lock is refused as the row side refuses it, with
-            ``code="deadlock_detected"`` and the rows (see
-            :func:`~forze_mock.adapters._mvcc.raise_row_deadlock`).
-        """
-
-        holders = self.state.write_serialization
-        seen: set[int] = set()
-        cursor: int | None = key
-
-        while cursor is not None and cursor not in seen:
-            seen.add(cursor)
-            other = holders.holder_of(cursor)
-
-            if other is None:
-                return
-
-            if other.waiting_for in holder.write_locks:
-                deadlock = exc.concurrency(
-                    "Two writers want each other's owners, so neither can finish. One is "
-                    "refused rather than both waiting: retrying it after the other finishes "
-                    "takes the owners in one order and succeeds.",
-                    details={"key": str(key)},
-                )
-                # As the backends' mapped deadlock: its details are not the client's.
-                deadlock.expose_details = False
-                raise deadlock
-
-            if (row := getattr(other, "row_waiting_for", None)) is not None:
-                # Parked on a row: the rest of the chain may mix both kinds of wait.
-                start = self.state.row_locks.holders().get(row)
-
-                if (cycle := wait_cycle_rows(self.state, holder, start)) is not None:
-                    raise_row_deadlock([row, *cycle])
-
-                return
-
-            cursor = other.waiting_for
 
     # ....................... #
 

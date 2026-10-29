@@ -26,7 +26,7 @@ from forze.application.contracts.embeddings import EmbeddingsProviderDepKey
 from forze.application.contracts.idempotency import IdempotencySpec, scoped_claim_key
 from forze.application.contracts.search import HubSearchSpec, SearchQueryDepKey, SearchSpec
 from forze.application.contracts.secrets import SecretRef
-from forze.application.contracts.transaction.deps import TransactionManagerDepKey
+from forze.application.contracts.transaction.deps import TransactionManagerDepKey, TxLockDepKey
 from forze.application.execution import Deps, ExecutionContext
 from forze.application.execution.context.invocation import InvocationMetadata
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
@@ -289,6 +289,7 @@ class TestPostgresDepsModule:
         assert deps.exists(DocumentCommandDepKey, route="rw_route")
         assert deps.exists(SearchQueryDepKey, route="find")
         assert deps.exists(TransactionManagerDepKey, route="main")
+        assert deps.exists(TxLockDepKey, route="main")
 
     def test_invalid_fts_search_config_fails_at_build_time(self) -> None:
         with pytest.raises(CoreException, match="FTS groups are required"):

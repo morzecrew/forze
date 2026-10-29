@@ -1,6 +1,8 @@
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
+from forze.base.primitives import StrKey
+
 if TYPE_CHECKING:
     from forze.application.execution.context import ExecutionContext
 
@@ -250,6 +252,22 @@ class BeforeFactory(Protocol):  # pragma: no cover
     """Protocol for a factory that builds a before hook."""
 
     def __call__(self, ctx: "ExecutionContext") -> Before[Any]: ...
+
+
+# ....................... #
+
+
+@runtime_checkable
+class HoldsTransactionLock(Protocol):  # pragma: no cover
+    """Marker: a before-hook factory that takes a lock its operation's transaction holds.
+
+    Detected structurally at registry freeze. An operation carrying one in its outer scope,
+    which runs before the transaction opens, or without a transaction route is refused. Every
+    other one is bound to its operation and route (:meth:`for_operation`), so the hook keys the
+    lock by the operation and takes it from the route's backend.
+    """
+
+    def for_operation(self, op: StrKey, route: StrKey) -> BeforeFactory: ...
 
 
 # ....................... #

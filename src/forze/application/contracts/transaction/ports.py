@@ -11,6 +11,8 @@ from typing import (
 
 import attrs
 
+from forze.base.exceptions import exc
+
 # ----------------------- #
 
 COMMIT_AMBIGUOUS_CODE = "commit_ambiguous"
@@ -224,3 +226,48 @@ class ReadOnlyAware(Protocol):
         ``False``. Writes to other stores were never part of the transaction.
         """
         ...
+
+
+# ....................... #
+
+TX_LOCK_OUTSIDE_TRANSACTION_CODE = "tx_lock_outside_transaction"
+"""Error code refusing a transaction-scoped lock taken outside a transaction."""
+
+
+@runtime_checkable
+class TxLockPort(Protocol):
+    """Locks the open transaction holds until it ends: the backend's transaction-scoped lock.
+
+    Released by commit or rollback and never earlier, so there is no lease to expire and no
+    fencing token to thread through the writes it covers. Resolved per transaction route
+    (``ctx.tx_locks(route)``), so the lock lives on the connection that route's transaction
+    runs on.
+    """
+
+    def hold(self, *keys: int) -> Awaitable[None]:
+        """Take the lock of each of *keys*, in sorted order, until the open transaction ends.
+
+        A key is a 64-bit integer, as :func:`~forze.base.primitives.advisory_lock_key`
+        derives one. Another transaction taking a held key waits until this one ends; a key
+        this transaction already holds is taken again without waiting. Two calls, or two
+        transactions taking keys in opposite orders, can deadlock: the backend refuses one side
+        as a retryable ``concurrency``.
+
+        :raises CoreException: ``precondition`` (``tx_lock_outside_transaction``) outside a
+            transaction, where the lock would end with its own statement.
+        """
+        ...  # pragma: no cover
+
+
+def require_tx_lock_in_transaction(in_transaction: bool) -> None:
+    """Refuse a transaction-scoped lock outside a transaction.
+
+    :raises CoreException: ``precondition`` (``tx_lock_outside_transaction``).
+    """
+
+    if not in_transaction:
+        raise exc.precondition(
+            "A transaction-scoped lock is held until the transaction ends, so it must be taken "
+            "inside one: outside it, the lock would be released before anything is read.",
+            code=TX_LOCK_OUTSIDE_TRANSACTION_CODE,
+        )

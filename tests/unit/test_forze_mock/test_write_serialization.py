@@ -31,7 +31,7 @@ from forze.base.exceptions import CoreException, ExceptionKind
 from forze.base.primitives import advisory_lock_key, utcnow
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
 from forze_mock import MockDepsModule, MockState
-from forze_mock.adapters._mvcc import StatementLocks
+from forze_mock.adapters._mvcc import StatementLocks, refuse_write_lock_cycle
 from forze_mock.adapters.tx import (
     MockJournalTxManagerAdapter,
     MockStrictTxManagerAdapter,
@@ -908,13 +908,12 @@ class TestAWriteOutsideATransactionWaitsForEveryOwner:
         # instead of reading the holder that is not there. Driven directly: the window is one
         # scheduler step wide and no ordering of tasks lands in it reliably.
         state = MockState()
-        port = _ctx(state).doc.command(_spec(BY_OWNER))
         state.write_serialization.hold(1, StatementLocks(waiting_for=2))
 
-        port._refuse_lock_cycle(StatementLocks(write_locks={3: None}), 1)
+        refuse_write_lock_cycle(state, StatementLocks(write_locks={3: None}), 1)
 
         with pytest.raises(CoreException) as caught:
-            port._refuse_lock_cycle(StatementLocks(write_locks={2: None}), 1)
+            refuse_write_lock_cycle(state, StatementLocks(write_locks={2: None}), 1)
 
         assert caught.value.kind is ExceptionKind.CONCURRENCY
 

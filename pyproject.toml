@@ -554,6 +554,11 @@ for the Adya anomalies to act on — the battery's read/write sets are document 
 transactional behaviour is covered by the graph mock conformance suite instead.\
 """
 
+[tool.conformance_manifest.planes.tx_lock]
+scenario = "tests.support.tx_lock_conformance:TX_LOCK_BATTERY"
+dep_keys = ["tx_lock"]
+engines = ["mock", "postgres"]
+
 [tool.conformance_manifest.planes.owned_reads]
 scenario = "tests.support.owned_reads_conformance:OWNED_READS_BATTERY"
 dep_keys = []
