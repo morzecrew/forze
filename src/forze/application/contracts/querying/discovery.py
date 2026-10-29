@@ -28,6 +28,7 @@ from .field_types import (
     field_value_operators,
     is_quantifiable_field,
 )
+from .internal.parse import QueryFilterLimits
 
 # ----------------------- #
 
@@ -77,6 +78,10 @@ class QueryDiscovery:
     aggregatable: tuple[str, ...]
     """Field names a caller may group by / aggregate, sorted."""
 
+    filter_limits: QueryFilterLimits | None = None
+    """The bounds the operation parses a filter under (the spec's), or ``None`` for the
+    defaults, so a boundary that checks a filter first parses it as the operation will."""
+
 
 # ....................... #
 
@@ -87,6 +92,7 @@ def build_query_discovery(
     filterable: Iterable[str],
     sortable: Iterable[str],
     aggregatable: Iterable[str],
+    filter_limits: QueryFilterLimits | None = None,
 ) -> QueryDiscovery:
     """Build :class:`QueryDiscovery` from a read model and resolved allow-sets.
 
@@ -95,6 +101,7 @@ def build_query_discovery(
     unrestricted) — typically ``spec.filterable_fields()`` and friends. For each
     filterable field the operators are derived from its Python type; a field absent from
     the model (or otherwise unresolvable) reports the full value-op surface.
+    *filter_limits* is carried as is, typically ``spec.filter_limits``.
     """
 
     fields = model_type.model_fields
@@ -118,6 +125,7 @@ def build_query_discovery(
         filterable=tuple(supports),
         sortable=tuple(sorted(sortable)),
         aggregatable=tuple(sorted(aggregatable)),
+        filter_limits=filter_limits,
     )
 
 

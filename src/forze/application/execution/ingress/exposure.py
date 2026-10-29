@@ -170,55 +170,59 @@ def query_policy_guards(
             details={"ops": unknown},
         )
 
-    guards: dict[str, QueryFieldGuard] = {}
+    return {str(op): _policy_guard(str(op), catalog[op], policy) for op, policy in policies.items()}
 
-    for op, policy in policies.items():
-        descriptor = catalog[op].descriptor
-        discovery = descriptor.query_discovery if descriptor is not None else None
 
-        if descriptor is None or discovery is None:
+def _policy_guard(
+    op: str,
+    entry: OperationCatalogEntry,
+    policy: QueryFieldPolicy,
+) -> QueryFieldGuard:
+    """The guard for *op*'s narrower *policy*, once each axis it narrows is checked."""
+
+    descriptor = entry.descriptor
+    discovery = descriptor.query_discovery if descriptor is not None else None
+
+    if descriptor is None or discovery is None:
+        raise exc.configuration(
+            f"{op!r} takes no filter, so it has no query policy to narrow",
+            code="query_policy_not_queryable",
+            details={"op": op},
+        )
+
+    own = {
+        "filterable": {support.field for support in discovery.filterable},
+        "sortable": set(discovery.sortable),
+        "aggregatable": set(discovery.aggregatable),
+    }
+    fields = descriptor.input_type.model_fields if descriptor.input_type else {}
+
+    for axis, argument in _POLICY_ARGUMENTS.items():
+        narrowed: frozenset[str] | None = getattr(policy, axis)
+
+        if narrowed is None:
+            continue
+
+        if wider := sorted(narrowed - own[axis]):
             raise exc.configuration(
-                f"{str(op)!r} takes no filter, so it has no query policy to narrow",
-                code="query_policy_not_queryable",
-                details={"op": str(op)},
+                f"The query policy for {op!r} widens {axis} beyond the operation's "
+                f"own allow-set: {', '.join(wider)}",
+                code="query_policy_widened",
+                details={"op": op, "axis": axis, "fields": wider},
             )
 
-        own = {
-            "filterable": {support.field for support in discovery.filterable},
-            "sortable": set(discovery.sortable),
-            "aggregatable": set(discovery.aggregatable),
-        }
-        fields = descriptor.input_type.model_fields if descriptor.input_type else {}
+        # The guard reads the call's argument by this name: one it cannot see, it
+        # cannot refuse, so the operation would accept more than the surface states.
+        if argument not in fields:
+            raise exc.configuration(
+                f"The query policy for {op!r} narrows {axis}, but the operation's "
+                f"input has no {argument!r} for it to check",
+                code="query_policy_unenforceable",
+                details={"op": op, "axis": axis},
+            )
 
-        for axis, argument in _POLICY_ARGUMENTS.items():
-            narrowed: frozenset[str] | None = getattr(policy, axis)
-
-            if narrowed is None:
-                continue
-
-            if wider := sorted(narrowed - own[axis]):
-                raise exc.configuration(
-                    f"The query policy for {str(op)!r} widens {axis} beyond the operation's "
-                    f"own allow-set: {', '.join(wider)}",
-                    code="query_policy_widened",
-                    details={"op": str(op), "axis": axis, "fields": wider},
-                )
-
-            # The guard reads the call's argument by this name: one it cannot see, it
-            # cannot refuse, so the operation would accept more than the surface states.
-            if argument not in fields:
-                raise exc.configuration(
-                    f"The query policy for {str(op)!r} narrows {axis}, but the operation's "
-                    f"input has no {argument!r} for it to check",
-                    code="query_policy_unenforceable",
-                    details={"op": str(op), "axis": axis},
-                )
-
-        # shortcut: parses under the default filter limits, as the descriptor does not carry
-        # the spec's; carry them on QueryDiscovery if a spec that raises them needs this.
-        guards[str(op)] = QueryFieldGuard(policy=policy, spec_name=str(op))
-
-    return guards
+    # Parsed under the operation's own limits, so a filter it accepts is not refused here.
+    return QueryFieldGuard(policy=policy, spec_name=op, filter_limits=discovery.filter_limits)
 
 
 # ....................... #

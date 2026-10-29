@@ -12,7 +12,7 @@ import pytest
 from jsonschema import Draft202012Validator
 
 from forze.application.contracts.document import DocumentSpec
-from forze.application.contracts.querying import QueryFieldPolicy, filter_grammar
+from forze.application.contracts.querying import QueryFieldPolicy, QueryFilterLimits, filter_grammar
 from forze.application.execution import ExecutionRuntime
 from forze.application.execution.deps import DepsRegistry
 from forze.base.exceptions import CoreException
@@ -357,9 +357,7 @@ class TestANarrowerQueryPolicy:
         ],
         ids=["or", "not", "and-or-not"],
     )
-    async def test_dispatch_refuses_a_field_nested_in_a_combinator(
-        self, filters: JsonDict
-    ) -> None:
+    async def test_dispatch_refuses_a_field_nested_in_a_combinator(self, filters: JsonDict) -> None:
         # `category` is allowed by the spec, so only the narrowed policy refuses it, and
         # only if the guard walks into the combinator rather than reading the top level.
         tools = operation_tools(
@@ -389,6 +387,32 @@ class TestANarrowerQueryPolicy:
         assert served.is_error is False, served.content
         assert isinstance(refused.content, dict)
         assert refused.content["code"] == "field_not_filterable"
+
+    @pytest.mark.parametrize(("length", "served"), [(300, True), (600, False)])
+    async def test_the_guard_parses_under_the_spec_filter_limits(
+        self, length: int, served: bool
+    ) -> None:
+        # The default pattern limit is 256 and the spec raises it to 512: a 300-character
+        # pattern is the spec's to serve, and a 600-character one is still refused.
+        spec = DocumentSpec(
+            name="notes",
+            read=QueryNoteRead,
+            write={"domain": QueryNote, "create_cmd": CreateQueryNote},
+            query_policy=QUERY_POLICY,
+            filter_limits=QueryFilterLimits(max_pattern_length=512),
+        )
+        registry = build_document_registry(spec, ns=QUERY_NS).freeze()
+        tools = operation_tools(registry, include=[_LIST], query_policies={_LIST: _TITLE_ONLY})
+
+        result = await _call(
+            tools, _LIST, {"filters": {"$values": {"title": {"$like": "a" * length}}}}
+        )
+
+        assert result.is_error is not served, result.content
+
+        if not served:
+            assert isinstance(result.content, dict)
+            assert "maximum length of 512" in result.content["detail"]
 
     async def test_dispatch_serves_what_it_allows(self) -> None:
         tools = operation_tools(

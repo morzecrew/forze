@@ -18,6 +18,7 @@ from forze.application.contracts.querying import (
     ALL_VALUE_OPS,
     QUANTIFIER_OPS,
     QueryFieldPolicy,
+    QueryFilterLimits,
     build_query_discovery,
     classify_field_type,
     describe_query_discovery,
@@ -241,3 +242,13 @@ class TestNarrowDiscovery:
         assert narrowed.filterable == tuple(f for f in qd.filterable if f.field == "age")
         assert narrowed.sortable == ()
         assert narrowed.aggregatable == ("age",)
+
+    def test_keeps_the_filter_limits(self) -> None:
+        limits = QueryFilterLimits(max_pattern_length=512)
+        qd = build_query_discovery(
+            _Doc, filterable={"name"}, sortable=set(), aggregatable=set(), filter_limits=limits
+        )
+
+        narrowed = narrow_query_discovery(qd, QueryFieldPolicy(filterable=set()))
+
+        assert narrowed.filter_limits == limits
