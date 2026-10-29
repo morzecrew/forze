@@ -4,6 +4,7 @@ from uuid import UUID
 
 import pytest
 
+from forze.application.contracts.counter import counter_capabilities
 from forze.application.contracts.tenancy import TenantIdentity
 from forze_redis.adapters.counter import RedisCounterAdapter
 from forze_redis.kernel.client import RedisClient
@@ -97,3 +98,7 @@ async def test_redis_counter_ttl_rounds_up_to_whole_milliseconds(redis_mock: Moc
 
     assert await counter.reset(4, suffix="t", ttl=timedelta(seconds=1.5)) == 4
     redis_mock.set.assert_called_once_with("counter:ns:t", "4", px=1500)
+
+
+def test_redis_counter_reports_expiry(redis_mock: Mock) -> None:
+    assert counter_capabilities(RedisCounterAdapter(client=redis_mock, namespace="ns")).expiry

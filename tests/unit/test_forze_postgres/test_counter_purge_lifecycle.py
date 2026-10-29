@@ -43,6 +43,8 @@ class _Purges:
     calls: list[tuple[str, UUID | None]] = attrs.field(factory=list)
     fail_for: UUID | None = None
     fail_route: str | None = None
+    error: BaseException = attrs.field(factory=lambda: exc.infrastructure("database unavailable"))
+    purged: int = 1
 
 
 @pytest.fixture
@@ -56,10 +58,10 @@ def purges(monkeypatch: pytest.MonkeyPatch) -> _Purges:
         if (tenant_id is not None and tenant_id == record.fail_for) or (
             self.route == record.fail_route
         ):
-            raise exc.infrastructure("database unavailable")
+            raise record.error
 
         record.calls.append((self.route, tenant_id))
-        return 1
+        return record.purged
 
     monkeypatch.setattr(PostgresCounterAdminAdapter, "purge_expired", purge_expired)
     return record
@@ -137,6 +139,22 @@ class TestStartup:
 
         assert purges.calls == [("orders", None), ("authn_lockout", None)]
         assert step.startup.task is not None and step.startup.task.done()  # type: ignore[attr-defined]
+
+    async def test_a_second_startup_is_ignored(self, purges: _Purges) -> None:
+        ctx = _context()
+        step = postgres_counter_purge_lifecycle_step(specs=[ORDERS], interval=timedelta(hours=1))
+
+        await step.startup(ctx)
+        task = step.startup.task  # type: ignore[attr-defined]
+
+        try:
+            await step.startup(ctx)
+
+            assert step.startup.task is task  # type: ignore[attr-defined]
+            name = step.startup.loop_name  # type: ignore[attr-defined]
+            assert name == "postgres_counter_purge"
+        finally:
+            await step.shutdown(ctx)
 
     async def test_a_route_that_is_not_a_postgres_counter_is_refused(self) -> None:
         step = postgres_counter_purge_lifecycle_step(specs=[ORDERS])
@@ -241,6 +259,32 @@ class TestTick:
 
         assert purges.calls == [("authn_lockout", tenant) for tenant in tenants or [None]]
 
+    async def test_a_cancelled_purge_is_not_swallowed(self, purges: _Purges) -> None:
+        purges.fail_route, purges.error = str(ORDERS.name), asyncio.CancelledError()
+        step = postgres_counter_purge_lifecycle_step(specs=[ORDERS, LOCKOUT])
+
+        with pytest.raises(asyncio.CancelledError):
+            await step.startup._purge_tick(_context(), None)  # type: ignore[attr-defined]
+
+        assert purges.calls == []
+
+    @pytest.mark.parametrize(("purged", "logged"), [(1, 1), (0, 0)])
+    async def test_only_a_purge_that_deleted_rows_is_logged(
+        self, purges: _Purges, monkeypatch: pytest.MonkeyPatch, purged: int, logged: int
+    ) -> None:
+        infos: list[str] = []
+        monkeypatch.setattr(
+            counter_purge_module,
+            "logger",
+            SimpleNamespace(info=lambda event, **_extras: infos.append(event)),
+        )
+        purges.purged = purged
+        step = postgres_counter_purge_lifecycle_step(specs=[ORDERS])
+
+        await step.startup._purge_tick(_context(), None)  # type: ignore[attr-defined]
+
+        assert len(infos) == logged
+
     async def test_a_configuration_error_ends_the_tick(self) -> None:
         step = postgres_counter_purge_lifecycle_step(specs=[ORDERS], tenants=lambda: [uuid4()])
 
@@ -248,3 +292,42 @@ class TestTick:
             await step.startup._purge_tick(_misrouted(), [uuid4()])  # type: ignore[attr-defined]
 
         assert error.value.kind is ExceptionKind.CONFIGURATION
+
+
+class TestLoop:
+    async def test_a_failed_tick_is_retried_and_a_configuration_error_stops_the_loop(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        outcomes = iter(
+            [exc.infrastructure("down"), RuntimeError("bug"), exc.configuration("miswired")]
+        )
+        step = postgres_counter_purge_lifecycle_step(
+            specs=[ORDERS], interval=timedelta(milliseconds=1), jitter=0.0
+        )
+
+        async def tick(*_args: object) -> None:
+            raise next(outcomes)
+
+        monkeypatch.setattr(type(step.startup), "_purge_tick", tick)
+        await step.startup(_context())
+
+        async with asyncio.timeout(5):
+            await step.startup.task  # type: ignore[attr-defined]  # ends without a shutdown
+
+        assert next(outcomes, None) is None, "every tick ran"
+
+    async def test_a_cancelled_tick_ends_the_loop(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        entered = asyncio.Event()
+        step = postgres_counter_purge_lifecycle_step(specs=[ORDERS])
+
+        async def tick(*_args: object) -> None:
+            entered.set()
+            await asyncio.Event().wait()
+
+        monkeypatch.setattr(type(step.startup), "_purge_tick", tick)
+        await step.startup(_context())
+        await entered.wait()
+        step.startup.task.cancel()  # type: ignore[attr-defined]
+
+        with pytest.raises(asyncio.CancelledError):
+            await step.startup.task  # type: ignore[attr-defined]
