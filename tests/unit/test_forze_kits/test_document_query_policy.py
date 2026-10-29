@@ -114,6 +114,51 @@ class TestAggregateEnforcement:
             )
         assert ei.value.code == "field_not_aggregatable"
 
+    @pytest.mark.parametrize(
+        ("aggregates", "sorts", "code"),
+        [
+            # `$having` on a group of a non-filterable field.
+            (
+                {
+                    "$groups": {"b": "body"},
+                    "$computed": {"n": {"$count": None}},
+                    "$having": {"$values": {"b": "x"}},
+                },
+                None,
+                "field_not_filterable",
+            ),
+            # A sort on an alias named like a sortable field, over a non-sortable one.
+            (
+                {"$groups": {"title": "body"}, "$computed": {"n": {"$count": None}}},
+                {"title": "asc"},
+                "field_not_sortable",
+            ),
+        ],
+    )
+    async def test_an_alias_is_checked_as_its_source(
+        self,
+        aggregates: dict[str, object],
+        sorts: dict[str, str] | None,
+        code: str,
+    ) -> None:
+        spec = DocumentSpec(
+            name="notes",
+            read=NoteRead,
+            query_policy=QueryFieldPolicy(
+                filterable={"title"}, sortable={"title"}, aggregatable={"title", "body"}
+            ),
+        )
+        reg = build_document_registry(spec, DocumentDTOs(read=NoteRead)).freeze()
+
+        with pytest.raises(CoreException) as ei:
+            await run_operation(
+                reg,
+                spec.default_namespace.key(DocumentKernelOp.AGG_LIST),
+                AggregatedListRequestDTO(aggregates=aggregates, sorts=sorts),
+                _ctx(),
+            )
+        assert ei.value.code == code
+
 
 class TestPortBypass:
     async def test_query_port_is_not_restricted(self) -> None:
