@@ -6274,6 +6274,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#stored-file-direct-uploads" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Stored-file direct uploads
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -6741,6 +6752,17 @@
     <span class="md-ellipsis">
       <span class="md-typeset">
         Stored-file downloads
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#stored-file-direct-uploads" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Stored-file direct uploads
       </span>
     </span>
   </a>
@@ -7259,15 +7281,16 @@ error propagates to a normal error status. <strong>Server-side</strong> (<abbr t
 encryption is transparent and does not refuse.</p>
 </div>
 <h3 id="stored-file-downloads">Stored-file downloads<a class="headerlink" href="#stored-file-downloads" title="Permanent link">&para;</a></h3>
-<p>The stored-file kit ships no generated routes. It has three read-only download
-operations, and each one loads the row first: a row the caller can't read
-(another tenant's, or a missing one) answers not-found, and a <code>pending</code> or
+<p>The stored-file kit ships no generated JSON routes. It has four read-only
+download operations, and each one loads the row first: a row the caller can't
+read (another tenant's, or a missing one) answers not-found, and a <code>pending</code> or
 <code>failed</code> file is refused before storage is touched. <code>download</code> is always
-registered. The other two are opt-in, because an operation runs only the guards
-bound on its own key: enable each with
-<code>StoredFileKitSpec(stream_downloads=True, presign_downloads=True)</code>, then bind
-your authn and authz on it as you do on <code>download</code>. A <code>StoredFileFacade</code> method
-for an operation left off raises a configuration error.</p>
+registered. The other three are opt-in, because an operation runs only the
+guards bound on its own key: enable each with
+<code>StoredFileKitSpec(stream_downloads=True, range_downloads=True, presign_downloads=True)</code>,
+then bind your authn and authz on it as you do on <code>download</code>. A
+<code>StoredFileFacade</code> method for an operation left off raises a configuration
+error.</p>
 <table>
 <thead>
 <tr>
@@ -7286,6 +7309,11 @@ for an operation left off raises a configuration error.</p>
 <td><code>download_stream</code></td>
 <td><code>StoredFileIdDTO</code></td>
 <td><code>StoredFileStream</code>: the row plus a bounded-memory <code>StreamedDownload</code> named after the stored filename</td>
+</tr>
+<tr>
+<td><code>download_range</code></td>
+<td><code>DownloadStoredFileRangeRequestDTO</code> (<code>id</code>, inclusive <code>start</code>, <code>end</code> or <code>None</code> for the end)</td>
+<td><code>StoredFileRangeDTO</code>: the row plus the window's bytes, <code>content_range</code> and <code>total_size</code>; a start past the end is a precondition error</td>
 </tr>
 <tr>
 <td><code>presign_download</code></td>
@@ -7316,14 +7344,38 @@ builds the generated download route's <code>200</code>: <code>Content-Dispositio
 
     <span class="k">return</span> <span class="n">streamed_download_response</span><span class="p">(</span><span class="n">result</span><span class="o">.</span><span class="n">stream</span><span class="p">)</span>
 </code></pre></div>
+<p><code>attach_stored_file_download_route</code> attaches the full download route instead.
+It runs <code>download_stream</code> and <code>download_range</code>, so it needs both enabled, and it
+answers like the storage kit's streaming download: <code>206</code> for a <code>Range</code>, each
+window capped at <code>max_range_bytes</code> (16 MiB by default), <code>416</code> past the end,
+<code>304</code> for a matching <code>If-None-Match</code> or <code>If-Modified-Since</code>, and the streamed
+<code>200</code> otherwise. Each request opens the stream first, which reads the object's
+head but not its body, so a <code>304</code> transfers nothing.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">forze_fastapi.routes</span><span class="w"> </span><span class="kn">import</span> <span class="n">attach_stored_file_download_route</span>
+
+<span class="n">files_router</span> <span class="o">=</span> <span class="n">APIRouter</span><span class="p">(</span><span class="n">prefix</span><span class="o">=</span><span class="s2">"/files"</span><span class="p">,</span> <span class="n">tags</span><span class="o">=</span><span class="p">[</span><span class="s2">"files"</span><span class="p">])</span>
+
+<span class="c1"># GET /files/{id}/content</span>
+<span class="n">attach_stored_file_download_route</span><span class="p">(</span>
+    <span class="n">files_router</span><span class="p">,</span>
+    <span class="n">registry</span><span class="o">=</span><span class="n">registry</span><span class="p">,</span>
+    <span class="n">ns</span><span class="o">=</span><span class="n">kit</span><span class="o">.</span><span class="n">document</span><span class="o">.</span><span class="n">default_namespace</span><span class="p">,</span>
+    <span class="n">ctx_dep</span><span class="o">=</span><span class="n">ctx_dep</span><span class="p">,</span>
+<span class="p">)</span>
+</code></pre></div>
+<p>On a client-side-encrypting route the kit's <code>upload</code> seals each file as one
+AEAD payload, which a range can't slice. <code>download_range</code> refuses such a file
+with <code>core.storage.range_whole_payload_unsupported</code>, and the route answers a
+<code>Range</code> with the whole file and a <code>200</code>.</p>
 <p>The stream reads the object in parts while the response is sent. If the file is
 deleted mid-download, the next read fails with <code>not_found</code>. The status is already
 sent, so the response is cut short: the client gets fewer bytes than
 <code>Content-Length</code>, or a chunked body with no final chunk. A stored file's key is
 never reused, so a stream can't mix two files.</p>
 <p><code>presign_download</code> follows the storage kit's presign rules: the URL is a bearer
-credential and the storage key's tenant check applies. The URL saves under the
-object key's name, so the client takes the filename from <code>file.filename</code>.</p>
+credential and the storage key's tenant check applies. The URL signs in the
+stored filename as the response's <code>Content-Disposition</code>, so the download saves
+under that name rather than the object key's.</p>
 <p>Because its result is a credential, <code>presign_download</code> is marked sensitive.
 <abbr title="Model Context Protocol">MCP</abbr> tools, agent tools, generated routes and <code>forze ops</code> refuse it, so serve it
 from a hand-written route like the one above. An <abbr title="Model Context Protocol">MCP</abbr> server over a registry that
@@ -7331,8 +7383,8 @@ enables it needs an <code>operations=</code> allowlist that leaves it out, becau
 default exposes every read-only operation and the refusal covers the whole
 registration. <code>download_stream</code> is not marked sensitive: it returns the same
 bytes as <code>download</code>, not a credential.</p>
-<p><code>download_stream</code> returns a byte stream, not JSON, so its descriptor sets
-<code>streams=True</code>. <abbr title="Model Context Protocol">MCP</abbr> tools and resource templates, agent tools, <code>forze ops</code> and
+<p><code>download_stream</code> returns a byte stream and <code>download_range</code> raw bytes, not
+JSON, so their descriptors set <code>streams=True</code>. <abbr title="Model Context Protocol">MCP</abbr> tools and resource templates, agent tools, <code>forze ops</code> and
 <code>attach_operation_routes</code> can't carry it. The <abbr title="Model Context Protocol">MCP</abbr> and <code>forze ops</code> defaults leave
 it out, and naming it anywhere is refused. Serve it from a route that calls
 <code>streamed_download_response</code>, like the one above.</p>
@@ -7342,6 +7394,91 @@ it out, and naming it anywhere is refused. Serve it from a route that calls
 when it is called. The storage adapter refuses before anything is signed. The
 kit spec doesn't know a route's encryption config, so setting
 <code>presign_downloads=True</code> for such a route can't fail at build time.</p>
+</div>
+<h3 id="stored-file-direct-uploads">Stored-file direct uploads<a class="headerlink" href="#stored-file-direct-uploads" title="Permanent link">&para;</a></h3>
+<p><code>upload</code> takes the whole file in the request body. For large files,
+<code>StoredFileKitSpec(direct_uploads=True)</code> registers three commands that keep the
+bytes out of the app: the client sends them straight to the bucket through
+presigned URLs. Bind authn and authz on each one, as you do on <code>upload</code>.</p>
+<table>
+<thead>
+<tr>
+<th>Operation</th>
+<th>Input</th>
+<th>Result</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>initiate_upload</code></td>
+<td><code>InitiateStoredFileUploadRequestDTO</code> (<code>filename</code>, exact <code>size</code>, <code>content_type</code>, <code>multipart</code>, and <code>expires_in</code> for a single <code>PUT</code>: 15 minutes by default, at most 1 hour)</td>
+<td><code>StoredFileUploadSessionDTO</code>: the <code>pending</code> row plus a presigned <code>PUT</code> (<code>presigned</code>) or a multipart <code>upload_id</code></td>
+</tr>
+<tr>
+<td><code>presign_upload_part</code></td>
+<td><code>PresignStoredFileUploadPartRequestDTO</code> (<code>id</code>, <code>upload_id</code>, <code>part_number</code>, <code>expires_in</code> with the same bounds)</td>
+<td><code>PresignedUrlDTO</code> for one part</td>
+</tr>
+<tr>
+<td><code>complete_upload</code></td>
+<td><code>CompleteStoredFileUploadRequestDTO</code> (<code>id</code>, plus <code>upload_id</code> and <code>parts</code> for a multipart upload)</td>
+<td>the <code>ready</code> row</td>
+</tr>
+</tbody>
+</table>
+<ol>
+<li><code>initiate_upload</code> mints the storage key, <code>{tenant}/{file_id}</code>, and writes a
+   <code>pending</code> row that holds it. The client never names a key. A declared size
+   over <code>max_bytes</code> is refused before anything is minted.</li>
+<li>The client <code>PUT</code>s the bytes to <code>presigned.url</code> with every header in
+   <code>presigned.headers</code>: the signed content type, and the create-only
+   precondition (<code>If-None-Match: *</code> on S3, <code>x-goog-if-generation-match: 0</code> on
+   GCS). For a multipart upload it asks <code>presign_upload_part</code> for each part
+   instead, and keeps each part's <code>ETag</code>. S3 needs the ETags, and every part but
+   the last must be at least 5 MiB there.</li>
+<li><code>complete_upload</code> checks a multipart upload before assembling it: the stored
+   sizes of the named parts must fit <code>max_bytes</code> and the declared size, or the
+   row is marked <code>failed</code> and the session aborted. It assembles create-only,
+   then reads the object's head. The object's size must equal the declared size
+   and stay within <code>max_bytes</code>, and its content type must equal the declared
+   one. A match marks the row <code>ready</code>. A mismatch marks the row <code>failed</code>, then
+   deletes the object, and raises <code>upload_mismatch</code> or <code>upload_too_large</code>. If
+   nothing has been uploaded yet, it raises <code>upload_incomplete</code> and the row
+   stays <code>pending</code>.</li>
+</ol>
+<p>An uploaded object is create-only: the single <code>PUT</code> URL creates it once and can
+never replace it, for as long as the URL stays valid, and a multipart completion
+refuses to assemble over an existing object. So the bytes <code>complete_upload</code>
+checked are the bytes the file keeps. Two <code>complete_upload</code> calls that race are
+settled by the row's revision: the loser raises <code>revision_mismatch</code>, and a loser
+that refused the object marks nothing and deletes nothing.</p>
+<p><code>initiate_upload</code> and <code>presign_upload_part</code> return credentials: a bearer write
+URL, or a session id that lets its holder add parts. Both are marked sensitive,
+so generated surfaces refuse them; serve them from your own routes.
+<code>bind_stored_file_writes</code> runs <code>initiate_upload</code> in a transaction, as it does
+<code>upload</code>, and leaves <code>complete_upload</code> outside one, so the <code>failed</code> mark
+survives the refusal raised after it.</p>
+<p>A client-side-encrypting route refuses <code>initiate_upload</code> before any row is
+written: the app never sees the bytes, so it can't encrypt them.</p>
+<div class="admonition note">
+<p class="admonition-title">Known limit: abandoned uploads are not swept</p>
+<p>A client that initiates and never completes leaves a <code>pending</code> row, and
+possibly an object or an unfinished multipart upload. Nothing reaps them
+yet. Deleting the row purges the object at its key, but not multipart
+parts. A refused upload leaves its key free, so the single <code>PUT</code> URL can
+still create an object there until it expires; the row stays <code>failed</code>.</p>
+<ul>
+<li><strong>S3.</strong> <code>initiate_upload</code> opens the multipart upload inside its
+  transaction, so a rollback after that leaves an empty upload behind, and
+  an abandoned one keeps its parts. Add a bucket lifecycle rule that aborts
+  incomplete multipart uploads (<code>AbortIncompleteMultipartUpload</code>).</li>
+<li><strong>GCS.</strong> There is no native session: an abandoned upload's parts are
+  objects named <code>{key}.__forze_mpu__/{upload_id}/{n}</code>, next to each file's
+  own key. A lifecycle rule matches only a name prefix or suffix, so none
+  can single them out from the files; they stay until the session is
+  aborted. A rollback leaves nothing on GCS, because opening a session
+  writes nothing.</li>
+</ul>
 </div>
 <h2 id="authn-routes">Authn routes<a class="headerlink" href="#authn-routes" title="Permanent link">&para;</a></h2>
 <p><code>attach_authn_routes</code> projects an authn registry (<code>build_authn_registry</code>) the

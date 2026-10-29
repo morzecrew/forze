@@ -10358,6 +10358,18 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <li>
 <p><strong>An operation-backed function can run as a service principal.</strong> <code>register_operation_functions(..., identity=DurableServiceIdentity(...))</code> binds it around the operation, so <code>AuthnRequired</code>, authz and audit see it; the identity must be acknowledged as unverified. Without one, a guarded operation refuses the run.</p>
 </li>
+<li>
+<p><strong>A presigned download can name the file it saves as.</strong> <code>presign_download(key, expires_in=..., response_filename=...)</code> on the storage query port signs an RFC 6266 <code>Content-Disposition</code> into the URL on S3, GCS and the mock. The stored-file kit's <code>presign_download</code> passes the stored filename.</p>
+</li>
+<li>
+<p><strong>Stored files can serve byte ranges, opt-in.</strong> <code>StoredFileKitSpec(range_downloads=True)</code> registers <code>download_range</code>, with <code>download</code>'s row checks. JSON surfaces leave it out. <code>attach_stored_file_download_route</code> serves <code>GET {id}/content</code> and answers <code>Range</code> and conditional requests as the storage download route does.</p>
+</li>
+<li>
+<p><strong>Stored files can upload straight to the bucket, opt-in.</strong> <code>StoredFileKitSpec(direct_uploads=True)</code> registers <code>initiate_upload</code>, <code>presign_upload_part</code> and <code>complete_upload</code>: a key the kit mints, then a create-only presigned PUT or parts. Completion checks size, type and <code>max_bytes</code>, and fails the row on a mismatch.</p>
+</li>
+<li>
+<p><strong>A presigned upload and a multipart completion can refuse to replace an object</strong> (<strong>Breaking</strong>). <code>create_only=True</code> (never with <code>if_match</code>) makes <code>presign_upload</code> sign <code>If-None-Match: *</code> or <code>x-goog-if-generation-match: 0</code>, and <code>complete_upload</code> refuse an existing key. A custom <code>ObjectStorageClientPort</code> must accept it.</p>
+</li>
 </ul>
 <p><strong><code>forze ops</code> for people at a shell and for backfills:</strong></p>
 <ul>
@@ -10514,6 +10526,15 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 </li>
 <li>
 <p><strong>A download's <code>Content-Disposition</code> encodes <code>/</code> in <code>filename*</code>.</strong> The generated storage download routes and <code>streamed_download_response</code> encode every character outside RFC 5987 <code>attr-char</code>, so a name such as <code>q3/rëport.pdf</code> stays valid and clients keep it.</p>
+</li>
+<li>
+<p><strong>GCS <code>list_parts</code> reports each part's stored size.</strong> It reported <code>0</code> for every part, so a caller resuming or bounding a multipart upload could not tell how much had landed.</p>
+</li>
+<li>
+<p><strong>S3 presigned URLs are always signed with SigV4</strong> (<strong>behaviour change</strong>). With no region configured, botocore fell back to legacy SigV2, which newer AWS regions refuse and floci serves as anonymous. <code>S3Config(signature_version=...)</code> still overrides.</p>
+</li>
+<li>
+<p><strong><code>If-None-Match: *</code> answers 304 for an object without an ETag.</strong> The streaming storage download route served it a 200; per RFC 9110 the wildcard matches any existing object, on the stored-file download route too.</p>
 </li>
 </ul>
 <h3 id="security">Security<a class="headerlink" href="#security" title="Permanent link">&para;</a></h3>

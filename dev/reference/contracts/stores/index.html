@@ -6963,8 +6963,8 @@ name). Objects are addressed by string <code>key</code>.</p>
 <tr>
 <td>query</td>
 <td><code>presign_download</code></td>
-<td><code>presign_download(key, *, expires_in)</code></td>
-<td>time-limited direct-<code>GET</code> URL — a bearer credential, never log it</td>
+<td><code>presign_download(key, *, expires_in, response_filename=None)</code></td>
+<td>time-limited direct-<code>GET</code> URL — a bearer credential, never log it. <code>response_filename</code> signs in a <code>Content-Disposition</code> override, so the download saves under that name</td>
 </tr>
 <tr>
 <td>query</td>
@@ -6993,8 +6993,8 @@ name). Objects are addressed by string <code>key</code>.</p>
 <tr>
 <td>command</td>
 <td><code>presign_upload</code></td>
-<td><code>presign_upload(key, *, expires_in, content_type=None)</code></td>
-<td>time-limited direct-<code>PUT</code> URL — a <strong>write grant</strong>, so it lives on the command port</td>
+<td><code>presign_upload(key, *, expires_in, content_type=None, create_only=False)</code></td>
+<td>time-limited direct-<code>PUT</code> URL — a <strong>write grant</strong>, so it lives on the command port. <code>create_only</code> signs in a precondition that no object holds the key, so the URL can never replace one</td>
 </tr>
 <tr>
 <td>command</td>
