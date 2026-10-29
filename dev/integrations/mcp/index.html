@@ -6731,6 +6731,9 @@ agent needs. Three options, on both <code>build_mcp_server</code> and <code>regi
 <li><code>operations</code> is an allowlist. A key the registry does not have, or a command operation
   without <code>include_writes=True</code>, is refused when the server is built, so a typo never
   quietly exposes less than you reviewed.</li>
+<li>An operation whose result is a byte stream (its descriptor sets <code>streams=True</code>, like
+  <code>download_stream</code> on the storage and stored-file kits) never becomes a tool, because a
+  tool result is JSON. The default leaves it out; an allowlist naming it is refused.</li>
 <li><code>shared_filter_grammar=True</code> takes the <a href="../../reference/query-syntax/">filter grammar</a>,
   most of a list tool's schema, out of every tool: each <code>filters</code> (and an aggregate's
   <code>$having</code>) becomes a plain object, and the grammar is added once to the server's

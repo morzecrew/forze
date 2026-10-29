@@ -10328,6 +10328,12 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <li>
 <p><strong><abbr title="Server-Side Encryption">SSE</abbr>- and WebSocket-only apps get offline delivery without Socket.IO.</strong> <code>RealtimeMailboxWriter</code> and its lifecycle step fill the mailbox those routes replay from, using the gateway's store code. They and the signal sources live in <code>forze.application.execution.realtime</code>; <code>forze_socketio</code> re-exports what moved.</p>
 </li>
+<li>
+<p><strong>Stored files can stream and presign downloads, opt-in.</strong> <code>StoredFileKitSpec(stream_downloads=True, presign_downloads=True)</code> registers <code>download_stream</code> and <code>presign_download</code>; guard each like <code>download</code>. Generated surfaces refuse the sensitive <code>presign_download</code>. A route streams with <code>streamed_download_response</code>.</p>
+</li>
+<li>
+<p><strong><code>OperationDescriptor(streams=True)</code> keeps a byte-stream result off JSON surfaces.</strong> <abbr title="Model Context Protocol">MCP</abbr> and <code>forze ops</code> leave such an operation out by default; they, agent tools and <code>attach_operation_routes</code> refuse it by name. The storage and stored-file kits' <code>download_stream</code> set it (<strong>behaviour change</strong>).</p>
+</li>
 </ul>
 <p><strong><code>forze ops</code> for people at a shell and for backfills:</strong></p>
 <ul>
@@ -10460,6 +10466,9 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 </li>
 <li>
 <p><strong>Analytics ingest stores a plain <code>Enum</code> member as its value, as a document row does</strong> (<strong>behaviour change</strong>). Postgres wrote its name (<code>OPEN</code>), and ClickHouse refused it. Rows ingested earlier keep the name until rewritten.</p>
+</li>
+<li>
+<p><strong>A download's <code>Content-Disposition</code> encodes <code>/</code> in <code>filename*</code>.</strong> The generated storage download routes and <code>streamed_download_response</code> encode every character outside RFC 5987 <code>attr-char</code>, so a name such as <code>q3/rëport.pdf</code> stays valid and clients keep it.</p>
 </li>
 </ul>
 <h3 id="security">Security<a class="headerlink" href="#security" title="Permanent link">&para;</a></h3>

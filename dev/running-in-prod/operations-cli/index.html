@@ -6748,7 +6748,9 @@ through the same pipeline an HTTP or <abbr title="Model Context Protocol">MCP</a
 <h2 id="declare-what-the-cli-exposes">Declare what the CLI exposes<a class="headerlink" href="#declare-what-the-cli-exposes" title="Permanent link">&para;</a></h2>
 <p>An <code>OpsApp</code> names the registry, the runtime a call runs on, and who calls run as. Exposure
 follows <abbr title="Model Context Protocol">MCP</abbr>: queries only by default, commands with <code>include_writes=True</code>, and an optional
-allowlist that is checked like a grant. Sensitive read models are refused.</p>
+allowlist that is checked like a grant. Sensitive read models are refused. Operations whose
+result is a byte stream (<code>streams=True</code> on the descriptor) are left out, since a call prints
+JSON.</p>
 <div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">forze.application.contracts.authn</span><span class="w"> </span><span class="kn">import</span> <span class="n">AuthnSpec</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">forze.application.contracts.document</span><span class="w"> </span><span class="kn">import</span> <span class="n">DocumentSpec</span><span class="p">,</span> <span class="n">DocumentWriteTypes</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">forze.application.execution</span><span class="w"> </span><span class="kn">import</span> <span class="n">DeploymentProfile</span><span class="p">,</span> <span class="n">ExecutionRuntime</span><span class="p">,</span> <span class="n">build_runtime</span>
@@ -6769,7 +6771,8 @@ allowlist that is checked like a grant. Sensitive read models are refused.</p>
 <span class="p">)</span>
 </code></pre></div>
 <p>The declaration is checked when it is built. An unknown allowlisted key, a command without
-<code>include_writes</code>, or a sensitive operation fails while your module imports. <code>forze_cli.ops</code>
+<code>include_writes</code>, an allowlisted streaming operation, or a sensitive operation fails while
+your module imports. <code>forze_cli.ops</code>
 imports neither Typer nor anything else from the <code>cli</code> extra, so the web process can import the
 same module.</p>
 <div class="admonition warning">

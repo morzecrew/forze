@@ -6263,6 +6263,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#stored-file-downloads" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Stored-file downloads
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -6719,6 +6730,17 @@
     <span class="md-ellipsis">
       <span class="md-typeset">
         Direct &amp; resumable uploads
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#stored-file-downloads" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Stored-file downloads
       </span>
     </span>
   </a>
@@ -7235,6 +7257,91 @@ windows.</p>
 adapter (the app never sees the bytes, so it cannot encrypt them) and the
 error propagates to a normal error status. <strong>Server-side</strong> (<abbr title="Server-Side Encryption">SSE</abbr>/<abbr title="Customer-Managed Encryption Keys">CMEK</abbr>)
 encryption is transparent and does not refuse.</p>
+</div>
+<h3 id="stored-file-downloads">Stored-file downloads<a class="headerlink" href="#stored-file-downloads" title="Permanent link">&para;</a></h3>
+<p>The stored-file kit ships no generated routes. It has three read-only download
+operations, and each one loads the row first: a row the caller can't read
+(another tenant's, or a missing one) answers not-found, and a <code>pending</code> or
+<code>failed</code> file is refused before storage is touched. <code>download</code> is always
+registered. The other two are opt-in, because an operation runs only the guards
+bound on its own key: enable each with
+<code>StoredFileKitSpec(stream_downloads=True, presign_downloads=True)</code>, then bind
+your authn and authz on it as you do on <code>download</code>. A <code>StoredFileFacade</code> method
+for an operation left off raises a configuration error.</p>
+<table>
+<thead>
+<tr>
+<th>Operation</th>
+<th>Input</th>
+<th>Result</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>download</code></td>
+<td><code>StoredFileIdDTO</code></td>
+<td><code>StoredFileDownloadDTO</code>: the whole object in memory, for small files</td>
+</tr>
+<tr>
+<td><code>download_stream</code></td>
+<td><code>StoredFileIdDTO</code></td>
+<td><code>StoredFileStream</code>: the row plus a bounded-memory <code>StreamedDownload</code> named after the stored filename</td>
+</tr>
+<tr>
+<td><code>presign_download</code></td>
+<td><code>PresignStoredFileDownloadRequestDTO</code> (<code>id</code>, <code>expires_in</code> up to 7 days)</td>
+<td><code>StoredFilePresignedDownloadDTO</code>: the row plus a presigned <code>GET</code> URL</td>
+</tr>
+</tbody>
+</table>
+<p>A hand-written route hands the stream to <code>streamed_download_response</code>, which
+builds the generated download route's <code>200</code>: <code>Content-Disposition</code>, <code>ETag</code>,
+<code>Last-Modified</code>, and <code>Content-Length</code> when the size is known. It doesn't answer
+<code>Range</code> or conditional requests.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">uuid</span><span class="w"> </span><span class="kn">import</span> <span class="n">UUID</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">fastapi</span><span class="w"> </span><span class="kn">import</span> <span class="n">APIRouter</span><span class="p">,</span> <span class="n">Depends</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">forze.application.execution.operations</span><span class="w"> </span><span class="kn">import</span> <span class="n">run_operation</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">forze_fastapi.routes</span><span class="w"> </span><span class="kn">import</span> <span class="n">streamed_download_response</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">forze_kits.aggregates.stored_file</span><span class="w"> </span><span class="kn">import</span> <span class="n">StoredFileIdDTO</span>
+
+<span class="n">files_router</span> <span class="o">=</span> <span class="n">APIRouter</span><span class="p">(</span><span class="n">prefix</span><span class="o">=</span><span class="s2">"/files"</span><span class="p">,</span> <span class="n">tags</span><span class="o">=</span><span class="p">[</span><span class="s2">"files"</span><span class="p">])</span>
+
+
+<span class="nd">@files_router</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"/</span><span class="si">{file_id}</span><span class="s2">/content"</span><span class="p">)</span>
+<span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">file_content</span><span class="p">(</span><span class="n">file_id</span><span class="p">:</span> <span class="n">UUID</span><span class="p">,</span> <span class="n">ctx</span><span class="o">=</span><span class="n">Depends</span><span class="p">(</span><span class="n">ctx_dep</span><span class="p">)):</span>
+    <span class="n">args</span> <span class="o">=</span> <span class="n">StoredFileIdDTO</span><span class="p">(</span><span class="nb">id</span><span class="o">=</span><span class="n">file_id</span><span class="p">)</span>
+    <span class="n">result</span> <span class="o">=</span> <span class="k">await</span> <span class="n">run_operation</span><span class="p">(</span><span class="n">registry</span><span class="p">,</span> <span class="s2">"files.download_stream"</span><span class="p">,</span> <span class="n">args</span><span class="p">,</span> <span class="n">ctx</span><span class="p">)</span>
+
+    <span class="k">return</span> <span class="n">streamed_download_response</span><span class="p">(</span><span class="n">result</span><span class="o">.</span><span class="n">stream</span><span class="p">)</span>
+</code></pre></div>
+<p>The stream reads the object in parts while the response is sent. If the file is
+deleted mid-download, the next read fails with <code>not_found</code>. The status is already
+sent, so the response is cut short: the client gets fewer bytes than
+<code>Content-Length</code>, or a chunked body with no final chunk. A stored file's key is
+never reused, so a stream can't mix two files.</p>
+<p><code>presign_download</code> follows the storage kit's presign rules: the URL is a bearer
+credential and the storage key's tenant check applies. The URL saves under the
+object key's name, so the client takes the filename from <code>file.filename</code>.</p>
+<p>Because its result is a credential, <code>presign_download</code> is marked sensitive.
+<abbr title="Model Context Protocol">MCP</abbr> tools, agent tools, generated routes and <code>forze ops</code> refuse it, so serve it
+from a hand-written route like the one above. An <abbr title="Model Context Protocol">MCP</abbr> server over a registry that
+enables it needs an <code>operations=</code> allowlist that leaves it out, because the
+default exposes every read-only operation and the refusal covers the whole
+registration. <code>download_stream</code> is not marked sensitive: it returns the same
+bytes as <code>download</code>, not a credential.</p>
+<p><code>download_stream</code> returns a byte stream, not JSON, so its descriptor sets
+<code>streams=True</code>. <abbr title="Model Context Protocol">MCP</abbr> tools and resource templates, agent tools, <code>forze ops</code> and
+<code>attach_operation_routes</code> can't carry it. The <abbr title="Model Context Protocol">MCP</abbr> and <code>forze ops</code> defaults leave
+it out, and naming it anywhere is refused. Serve it from a route that calls
+<code>streamed_download_response</code>, like the one above.</p>
+<div class="admonition note">
+<p class="admonition-title">Known limit: encrypting routes refuse per request</p>
+<p>A client-side-encrypting storage route refuses <code>presign_download</code>, but only
+when it is called. The storage adapter refuses before anything is signed. The
+kit spec doesn't know a route's encryption config, so setting
+<code>presign_downloads=True</code> for such a route can't fail at build time.</p>
 </div>
 <h2 id="authn-routes">Authn routes<a class="headerlink" href="#authn-routes" title="Permanent link">&para;</a></h2>
 <p><code>attach_authn_routes</code> projects an authn registry (<code>build_authn_registry</code>) the
