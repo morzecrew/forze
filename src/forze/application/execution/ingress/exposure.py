@@ -1,7 +1,8 @@
 """Exposure policy: which catalog operations a generated surface exposes.
 
 Queries are exposed by default; ``include_writes`` opts into command (mutating) operations
-as well, and ``operations`` narrows the surface to a named set. *Which* operations a surface
+as well, and ``operations`` narrows the surface to a named set. An operation whose result is
+a byte stream is never exposed: these surfaces answer in JSON. *Which* operations a surface
 exposes is an interface decision and lives at the ingress, not in the engine.
 """
 
@@ -27,21 +28,23 @@ def select_operations(
     :param catalog: The registry's operation catalog.
     :param include_writes: Expose command operations as well as ``QUERY`` ones.
     :param operations: Expose only these operations, by key; a single key is one operation,
-        not a sequence of characters. A name the catalog does not have, or a command
-        operation without *include_writes*, is refused rather than dropped: an allowlist is
-        reviewed like a grant, and a typo that silently exposed less (or a command that
-        silently stayed hidden) would mislead whoever reviewed it.
+        not a sequence of characters. A name the catalog does not have, a command operation
+        without *include_writes*, or a streaming operation is refused rather than dropped:
+        an allowlist is reviewed like a grant, and a typo that silently exposed less (or a
+        command that silently stayed hidden) would mislead whoever reviewed it. Without
+        an allowlist, streaming operations are left out.
     :param surface: What the surface exposes operations as (``"MCP tool"``), named in a
         refusal.
-    :raises CoreException: When *operations* is empty, names an unknown operation, or names
-        a command operation while *include_writes* is off.
+    :raises CoreException: When *operations* is empty, names an unknown operation, names
+        a command operation while *include_writes* is off, or names an operation whose
+        result is a byte stream (``OperationDescriptor.streams``).
     """
 
     if operations is None:
         return {
             str(entry.op): entry.op
             for entry in catalog.values()
-            if include_writes or entry.is_read_only
+            if (include_writes or entry.is_read_only) and not _streams(entry)
         }
 
     selected = (operations,) if isinstance(operations, str) else tuple(operations)
@@ -64,7 +67,21 @@ def select_operations(
             f"{', '.join(commands)}"
         )
 
+    if streaming := sorted(str(op) for op in selected if _streams(catalog[op])):
+        raise exc.configuration(
+            f"Streaming operations in the {surface} allowlist return a byte stream, which "
+            f"this surface cannot carry; serve them from a streaming route: "
+            f"{', '.join(streaming)}"
+        )
+
     return {str(catalog[op].op): catalog[op].op for op in selected}
+
+
+# ....................... #
+
+
+def _streams(entry: OperationCatalogEntry) -> bool:
+    return entry.descriptor is not None and entry.descriptor.streams
 
 
 # ....................... #

@@ -369,8 +369,14 @@ MCP tools, agent tools, generated routes and `forze ops` refuse it, so serve it
 from a hand-written route like the one above. An MCP server over a registry that
 enables it needs an `operations=` allowlist that leaves it out, because the
 default exposes every read-only operation and the refusal covers the whole
-registration. `download_stream` is not marked: it returns the same bytes as
-`download`, not a credential.
+registration. `download_stream` is not marked sensitive: it returns the same
+bytes as `download`, not a credential.
+
+`download_stream` returns a byte stream, not JSON, so its descriptor sets
+`streams=True`. MCP tools and resource templates, agent tools, `forze ops` and
+`attach_operation_routes` can't carry it. The MCP and `forze ops` defaults leave
+it out, and naming it anywhere is refused. Serve it from a route that calls
+`streamed_download_response`, like the one above.
 
 !!! note "Known limit: encrypting routes refuse per request"
 

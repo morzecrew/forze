@@ -129,10 +129,12 @@ def build_stored_file_registry(
                     doc=ctx.doc.query(doc_spec),
                     storage=ctx.storage.query(kit.resolved_storage),
                 ),
-                # The result carries an async chunk iterator, not JSON — no output type.
+                # The result carries an async chunk iterator, not JSON: no output type, and
+                # JSON surfaces (MCP, agent tools, generated routes, `forze ops`) leave it out.
                 descriptor=OperationDescriptor(
                     input_type=StoredFileIdDTO,
                     description="Open a bounded-memory download stream for a ready stored file.",
+                    streams=True,
                 ),
             )
             .as_query()

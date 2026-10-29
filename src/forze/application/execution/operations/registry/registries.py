@@ -664,6 +664,10 @@ class FrozenOperationRegistry:
             "deadline_s": (entry.deadline.total_seconds() if entry.deadline is not None else None),
         }
 
+        # Only a streaming operation carries this, so every other fingerprint is unchanged.
+        if descriptor is not None and descriptor.streams:
+            shape["streams"] = True
+
         # Only a multi-source operation carries these, so every other fingerprint is unchanged.
         if descriptor is not None and descriptor.members:
             shape["members"] = sorted(descriptor.members)
@@ -675,8 +679,9 @@ class FrozenOperationRegistry:
         """Stable structural fingerprint of a single operation's contract + plan facts.
 
         Covers the operation's kind, input/output JSON schema, declared idempotency /
-        authn / authz-permission / deadline facts, catalog tags, and a multi-source
-        operation's members and the search they belong to. Intended as a
+        authn / authz-permission / deadline facts, catalog tags, whether its result is a
+        byte stream, and a multi-source operation's members and the search they belong
+        to. Intended as a
         version tag: if it changes, the operation's observable contract changed.
 
         It is *structural*, not behavioral — it does NOT hash handler code or a hook's

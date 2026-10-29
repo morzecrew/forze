@@ -939,7 +939,7 @@ def attach_operation_routes(
 
     Raises:
         CoreException: On an unknown *include*/override operation, a sensitive read
-            model, a path override that drops or adds a path parameter, or a parameter
+            model, an operation whose result is a byte stream, a path override that drops or adds a path parameter, or a parameter
             description refused as above (all configuration errors).
     """
 
@@ -1015,6 +1015,14 @@ def attach_operation_routes(
                 f"operation '{op}' is sensitive (its result carries credential or "
                 "secret material, which a generated route must not serve). Leave it "
                 "out with include=, or serve it from your own guarded route"
+            )
+
+        if descriptor is not None and descriptor.streams:
+            raise exc.configuration(
+                f"Refusing to attach routes under namespace '{ns.prefix}': "
+                f"operation '{op}' returns a byte stream, which a generated JSON route "
+                "cannot carry; serve it from a hand-written route (see "
+                "streamed_download_response)"
             )
 
         input_type = descriptor.input_type if descriptor is not None else None

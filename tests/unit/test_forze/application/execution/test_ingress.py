@@ -118,6 +118,43 @@ class TestSelectOperations:
             self._select(operations=["calc.write"])
 
 
+class TestSelectStreamingOperations:
+    """A byte-stream result has no JSON form, so no generated surface exposes it."""
+
+    def _catalog(self) -> Any:
+        reg = OperationRegistry(handlers={"calc.read": lambda _c: _Echo()})
+        reg = reg.bind("calc.read").as_query().finish()
+        reg = (
+            reg.register(
+                "calc.stream",
+                lambda _c: _Echo(),
+                descriptor=OperationDescriptor(input_type=_In, streams=True),
+            )
+            .as_query()
+            .finish()
+        )
+
+        return reg.freeze().catalog()
+
+    def test_left_out_by_default(self) -> None:
+        exposed = select_operations(
+            self._catalog(), include_writes=True, operations=None, surface="t"
+        )
+
+        assert set(exposed) == {"calc.read"}
+
+    def test_refused_when_allowlisted_naming_the_surface(self) -> None:
+        with pytest.raises(CoreException, match=r"test tool allowlist .*: calc\.stream$") as ei:
+            select_operations(
+                self._catalog(),
+                include_writes=False,
+                operations=["calc.read", "calc.stream"],
+                surface="test tool",
+            )
+
+        assert ei.value.kind is ExceptionKind.CONFIGURATION
+
+
 # ....................... #
 
 

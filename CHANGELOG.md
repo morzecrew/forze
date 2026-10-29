@@ -77,6 +77,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Stored files can stream and presign downloads, opt-in.** `StoredFileKitSpec(stream_downloads=True, presign_downloads=True)` registers `download_stream` and `presign_download`; guard each like `download`. Generated surfaces refuse the sensitive `presign_download`. A route streams with `streamed_download_response`.
 
+- **`OperationDescriptor(streams=True)` keeps a byte-stream result off JSON surfaces.** MCP and `forze ops` leave such an operation out by default; they, agent tools and `attach_operation_routes` refuse it by name. The storage and stored-file kits' `download_stream` set it (**behaviour change**).
+
 **`forze ops` for people at a shell and for backfills:**
 
 - **`forze ops` gains typed flags, JSONL batches and shell completion.** `call OP --field VALUE` takes a flat-scalar input as flags; `--batch @PATH|-` runs one call per line in one runtime, stopping at the first failure; `OP` completes in the shell. An unknown option after `OP` now exits 2 with an error object.

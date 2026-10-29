@@ -403,7 +403,7 @@ class TestPresignExposure:
             fastmcp.FastMCP("files"),
             _REG,
             lambda: None,
-            operations=[_KEY(StoredFileKernelOp.GET), _STREAM],
+            operations=[_KEY(StoredFileKernelOp.GET), _KEY(StoredFileKernelOp.DOWNLOAD)],
         )
 
         assert _PRESIGN not in names
@@ -421,6 +421,110 @@ class TestPresignExposure:
         assert [str(entry.op) for entry in toolset.bindings.values()] == [
             _KEY(StoredFileKernelOp.GET)
         ]
+
+
+# ....................... #
+
+
+class TestStreamExposure:
+    """``download_stream`` returns a byte stream, which no JSON surface can carry."""
+
+    # Stream only: the sensitive presign would refuse every default projection on its own.
+    _REG = freeze_stored_file_registry(
+        StoredFileKitSpec(name="files", stream_downloads=True), tx_route="mock"
+    )
+    _JSON_OPS = [_KEY(StoredFileKernelOp.GET), _KEY(StoredFileKernelOp.DOWNLOAD)]
+
+    def test_the_stream_descriptor_streams_and_download_does_not(self) -> None:
+        catalog = self._REG.catalog()
+
+        assert catalog[_STREAM].descriptor.streams is True
+        assert catalog[_KEY(StoredFileKernelOp.DOWNLOAD)].descriptor.streams is False
+
+    def test_mcp_leaves_the_stream_out_by_default(self) -> None:
+        fastmcp = pytest.importorskip("fastmcp")
+        from forze_mcp.registration import register_tools
+
+        names = register_tools(fastmcp.FastMCP("files"), self._REG, lambda: None)
+
+        assert _STREAM not in names
+        assert set(self._JSON_OPS) <= set(names)
+
+    def test_mcp_refuses_the_stream_named_in_an_allowlist(self) -> None:
+        fastmcp = pytest.importorskip("fastmcp")
+        from forze_mcp.registration import register_tools
+
+        with pytest.raises(CoreException, match="byte stream") as ei:
+            register_tools(
+                fastmcp.FastMCP("files"), self._REG, lambda: None, operations=[_STREAM]
+            )
+
+        assert ei.value.kind is ExceptionKind.CONFIGURATION
+
+    def test_mcp_refuses_the_stream_as_a_resource_template(self) -> None:
+        fastmcp = pytest.importorskip("fastmcp")
+        from forze_mcp import ResourceTemplateSpec, register_resource_templates
+
+        server = fastmcp.FastMCP("files")
+
+        with pytest.raises(CoreException, match="byte stream") as ei:
+            register_resource_templates(
+                server, self._REG, lambda: None, [ResourceTemplateSpec(op=_STREAM, scheme="f")]
+            )
+
+        assert ei.value.kind is ExceptionKind.CONFIGURATION
+
+    def test_forze_ops_leaves_the_stream_out_by_default(self) -> None:
+        from forze_cli.ops import AnonymousIdentity, OpsApp
+
+        ops = OpsApp(registry=self._REG, runtime=lambda: None, identity=AnonymousIdentity())
+
+        assert _STREAM not in ops.exposed
+        assert set(self._JSON_OPS) <= set(ops.exposed)
+
+    def test_forze_ops_refuses_the_stream_named_in_an_allowlist(self) -> None:
+        from forze_cli.ops import AnonymousIdentity, OpsApp
+
+        with pytest.raises(CoreException, match="byte stream") as ei:
+            OpsApp(
+                registry=self._REG,
+                runtime=lambda: None,
+                identity=AnonymousIdentity(),
+                operations=[_STREAM],
+            )
+
+        assert ei.value.kind is ExceptionKind.CONFIGURATION
+
+    def test_agent_tools_refuse_the_stream(self) -> None:
+        with pytest.raises(CoreException) as ei:
+            operation_tools(self._REG, include=[_KEY(StoredFileKernelOp.GET), _STREAM])
+
+        assert ei.value.code == "agent_tools_streaming_operation"
+
+    def test_agent_tools_project_the_json_reads(self) -> None:
+        toolset = operation_tools(self._REG, include=self._JSON_OPS)
+
+        assert [str(entry.op) for entry in toolset.bindings.values()] == self._JSON_OPS
+
+    def test_generated_routes_refuse_the_stream(self) -> None:
+        from fastapi import APIRouter
+
+        from forze_fastapi.routes import RouteBinding, attach_operation_routes, id_endpoint
+
+        with pytest.raises(CoreException, match="byte stream") as ei:
+            attach_operation_routes(
+                APIRouter(),
+                registry=self._REG,
+                ns=_KIT.document.default_namespace,
+                ctx_dep=lambda: None,
+                bindings={
+                    StoredFileKernelOp.DOWNLOAD_STREAM: RouteBinding(
+                        method="GET", path="/{id}/content", build=id_endpoint
+                    )
+                },
+            )
+
+        assert ei.value.kind is ExceptionKind.CONFIGURATION
 
 
 # ....................... #
