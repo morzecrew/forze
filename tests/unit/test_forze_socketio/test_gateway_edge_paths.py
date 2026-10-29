@@ -1,13 +1,15 @@
 """Gateway edge branches — error taxonomy on the bridge, loop retry, header binding.
 
 # covers: forze_socketio.gateway (_bind_tenant enabled, mailbox-store re-raise, post-commit
-#         config fail-fast, presence-skip stat, loop-level retry, config fail-fast in loop),
+#         config fail-fast, presence-skip stat, loop-level retry, config fail-fast in loop,
+#         delivery logs kept under socketio.errors, dedup inbox shared with a writer),
 #         forze_socketio.gateway_lifecycle (duplicate startup)
 """
 
 from __future__ import annotations
 
 import asyncio
+import io
 from datetime import timedelta
 from typing import Any
 from uuid import uuid4
@@ -15,8 +17,18 @@ from uuid import uuid4
 import pytest
 from pydantic import BaseModel
 
-from forze.application.contracts.realtime import Audience, RealtimeEvent, RealtimeSignal
+from forze.application.contracts.realtime import (
+    Audience,
+    RealtimeEvent,
+    RealtimeEventCatalog,
+    RealtimeSignal,
+)
 from forze.application.execution import DepsRegistry, ExecutionRuntime
+from forze.application.execution.realtime import RealtimeMailboxWriter
+from forze.application.execution.realtime.delivery import (
+    _bind_tenant,  # pyright: ignore[reportPrivateUsage]
+)
+from forze.application.integrations.realtime import InMemoryRealtimeMailbox
 from forze.base.exceptions import CoreException, exc
 from forze.base.primitives import HlcTimestamp, utcnow
 from forze_kits.integrations.realtime import (
@@ -32,7 +44,6 @@ from forze_socketio import (
     StreamGroupSignalSource,
     realtime_gateway_lifecycle_step,
 )
-from forze_socketio.gateway import _bind_tenant  # pyright: ignore[reportPrivateUsage]
 
 # ----------------------- #
 
@@ -319,3 +330,92 @@ async def test_consume_loop_retries_plain_exceptions_too(
             await run
 
     assert failures["n"] == 1 and len(sio.emits) == 1
+
+
+# ----------------------- #
+
+
+async def test_the_gateway_keeps_its_delivery_logs_under_socketio_errors(
+    error_log_buf: io.StringIO,
+) -> None:
+    # The sources and the store half are the transport-neutral kernel's; run by a gateway,
+    # their logs still land on socketio.errors, where log routing has always found them.
+    class _FailingSio:
+        async def emit(self, event: str, data: Any = None, **_: Any) -> None:
+            raise RuntimeError("transport down")
+
+    spec = realtime_stream_spec()
+    gw = RealtimeGateway(
+        sio=_FailingSio(),  # pyright: ignore[reportArgumentType]
+        source=StreamGroupSignalSource(stream_spec=spec, poll_interval=timedelta(milliseconds=10)),
+        event_catalog=RealtimeEventCatalog.of(_EVENT),
+    )
+    undeclared = RealtimeSignal.of(Audience.topic("t"), "undeclared", {})
+
+    runtime = _runtime()
+    async with runtime.scope():
+        ctx = runtime.get_context()
+        await gw._handle(ctx, None, undeclared, None, None, _hlc())  # pyright: ignore[reportPrivateUsage]
+
+        pub = build_realtime_publisher(ctx, stream_spec=spec)
+        await pub.publish(Audience.topic("t"), _EVENT, _View(text="x"))  # admitted; emit fails
+        run = asyncio.create_task(gw.run(ctx))
+
+        for _ in range(200):
+            if "Realtime bridge failed" in error_log_buf.getvalue():
+                break
+
+            await asyncio.sleep(0.01)
+
+        run.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await run
+
+    logged = error_log_buf.getvalue()
+    assert "Realtime signal rejected: event not in catalog" in logged
+    assert "Realtime bridge failed" in logged
+
+
+async def test_a_deduping_gateway_cannot_start_on_a_running_writers_inbox() -> None:
+    # Same process, same dedup inbox: the gateway would mark signals the writer must store
+    # (or the reverse), so the second to start is refused — mailbox or not.
+    spec = realtime_stream_spec()
+    fast = timedelta(milliseconds=10)
+    writer = RealtimeMailboxWriter(
+        source=StreamGroupSignalSource(stream_spec=spec, poll_interval=fast),
+        dedup=GatewayDedup(inbox_spec=realtime_inbox_spec(), tx_route="mock"),
+        mailbox_factory=lambda _ctx: InMemoryRealtimeMailbox(),
+    )
+    deduping = _gateway(_StubSio())  # dedup set, no mailbox
+    live_only = RealtimeGateway(
+        sio=_StubSio(),  # pyright: ignore[reportArgumentType]
+        source=StreamGroupSignalSource(stream_spec=spec, poll_interval=fast),
+    )
+
+    runtime = _runtime()
+    async with runtime.scope():
+        ctx = runtime.get_context()
+        running = asyncio.create_task(writer.run(ctx))
+        await asyncio.sleep(0.03)
+
+        with pytest.raises(CoreException) as caught:
+            await deduping.run(ctx)
+
+        beside = asyncio.create_task(live_only.run(ctx))  # no dedup: nothing to steal
+        await asyncio.sleep(0.03)
+        assert not beside.done()
+
+        for task in (running, beside):
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+
+        # the writer's claim went with it: the gateway starts now
+        after = asyncio.create_task(deduping.run(ctx))
+        await asyncio.sleep(0.03)
+        assert not after.done()
+        after.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await after
+
+    assert caught.value.code == "realtime_dedup_inbox_shared"

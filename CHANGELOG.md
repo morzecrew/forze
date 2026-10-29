@@ -71,6 +71,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **`forze_dst.conformance.compare_analytics_query` checks a mock resolver against the SQL it stands in for.** It loads one seed into both engines, runs the query on each and lists every differing row. `query_invariant(spec, query_key, holds=...)` turns the same query into a DST oracle.
 
+- **SSE- and WebSocket-only apps get offline delivery without Socket.IO.** `RealtimeMailboxWriter` and its lifecycle step fill the mailbox those routes replay from, using the gateway's store code. They and the signal sources live in `forze.application.execution.realtime`; `forze_socketio` re-exports what moved.
+
 **`forze ops` for people at a shell and for backfills:**
 
 - **`forze ops` gains typed flags, JSONL batches and shell completion.** `call OP --field VALUE` takes a flat-scalar input as flags; `--batch @PATH|-` runs one call per line in one runtime, stopping at the first failure; `OP` completes in the shell. An unknown option after `OP` now exits 2 with an error object.
@@ -182,6 +184,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Postgres dynamic-read routes refuse an unknown `provenance` value** (**Breaking**). `PostgresDynamicReadConfig` accepts only `"trusted"` or `"untrusted"` (`postgres_dynamic_read_provenance_invalid`); a config with any other value now fails at startup. New `validate_dynamic_read_provenance`.
 
 - **The storage kit's `presign_download` is sensitive** (**Breaking**). MCP, `forze ops`, agent tools and generated routes refuse it, so `attach_storage_routes` no longer serves it; an MCP server or `OpsApp` over the storage registry needs `operations=` without it. Trace capture masks presigned URLs.
+
+- **A tenant-sharded realtime consumer refuses a stream route that is not `tenant_aware`** (**behaviour change**). `TenantShardedSignalSource` and `realtime_sse_sharded_tail_lifecycle_step` fail with `tenant_aware_required`, so a signal is never delivered or stored under another tenant. New `require_tenant_aware`.
 
 ## [0.16.2] - 2026-10-26
 

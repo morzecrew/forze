@@ -459,8 +459,9 @@ step = realtime_sse_tail_lifecycle_step(hub, stream_spec=realtime_stream_spec())
 
 The live leg reads the realtime stream with a plain (non-group) tail — broadcast
 semantics, so every node sees every signal, with zero consumer-group lifecycle —
-and is at-most-once by contract: the mailbox carries the durable guarantee, and the
-Socket.IO gateway remains its sole writer. Without a hub the endpoint is
+and is at-most-once by contract: the mailbox carries the durable guarantee, and
+something else must write it (see [offline delivery without
+Socket.IO](#offline-delivery-without-socketio)). Without a hub the endpoint is
 catch-up-only (the browser's auto-reconnect gives long-poll-style delivery). Topics
 are subscribed per connection with `?topics=a,b` (live-only, like Socket.IO rooms)
 and are **fail-closed**: they require an `authorize_topics` resolver — `(ctx,
@@ -479,7 +480,8 @@ tail loop per shard tenant, each bound to its tenant, so signals fan out under t
 **stream's** trusted identity rather than an untrusted header (the SSE analog of
 `TenantShardedSignalSource`). Hand it the same `RealtimeShard` the publish-side
 steps use. The plain tail reads with no tenant bound, so over a `tenant_aware` route it
-refuses to start (`tenant_global_required`).
+refuses to start (`tenant_global_required`). The sharded tail refuses a route that is not
+`tenant_aware` (`tenant_aware_required`): every tenant's loop would read the same stream.
 
 Pass the **same** presence store the Socket.IO side uses
 (`attach_realtime_sse_route(..., presence=...)`) and open SSE streams join their
@@ -491,6 +493,95 @@ re-assert within the TTL. The heartbeat runs with no tenant bound, so it refuses
 on a client routed per tenant; rooms already carry their tenant. A closing stream leaves its rooms even when it closes cancelled —
 its client gone, or cut off by a drain — within 2 s; past that, a warning is logged and the
 rest expire with the store's TTL.
+
+### Offline delivery without Socket.IO
+
+The SSE and WebSocket routes replay the mailbox and ack against it; they never write it.
+Something has to consume the realtime stream through a consumer group and store each
+durable, principal-addressed signal. With a Socket.IO server, its gateway does. Without
+one, run `RealtimeMailboxWriter`: the gateway's store half and nothing else. It runs
+the same delivery code as the gateway, so admission against the catalog, the
+tenancy rules, the dedup mark and the store-before-ack order are identical:
+
+```python
+from datetime import timedelta
+
+from forze.application.execution.realtime import (
+    GatewayDedup,
+    RealtimeMailboxWriter,
+    StreamGroupSignalSource,
+    realtime_mailbox_writer_lifecycle_step,
+)
+from forze_kits.integrations.realtime import (
+    MailboxRetention,
+    build_realtime_mailbox,
+    build_realtime_transport,
+    realtime_group_ensure_lifecycle_step,
+    realtime_mailbox_retention_lifecycle_step,
+    realtime_relay_lifecycle_step,
+)
+
+transport = build_realtime_transport()
+writer = RealtimeMailboxWriter(
+    source=StreamGroupSignalSource(stream_spec=transport.stream_spec),
+    dedup=GatewayDedup(inbox_spec=transport.inbox_spec, tx_route="..."),
+    # the same mailbox the routes replay from
+    mailbox_factory=lambda ctx: build_realtime_mailbox(
+        ctx, retention=MailboxRetention(max_age=timedelta(days=7)),
+    ),
+)
+lifecycle = [
+    # before serving; "0" so a group created after the first appends still stores them
+    realtime_group_ensure_lifecycle_step(stream_spec=transport.stream_spec, start_id="0"),
+    realtime_relay_lifecycle_step(
+        outbox_spec=transport.outbox_spec, stream_spec=transport.stream_spec,
+    ),
+    realtime_mailbox_retention_lifecycle_step(max_age=timedelta(days=7)),
+    realtime_mailbox_writer_lifecycle_step(writer),
+]
+```
+
+- **Create its group at `0`.** The group-ensure step defaults to `start_id="$"`, which suits
+  the gateway: a new group should not emit an old backlog live. A writer whose group is
+  created at `$` skips every entry appended before that, such as signals relayed before
+  the writer's first deploy, and those never reach the mailbox. At `"0"` the new group
+  reads every entry the stream still holds. The dedup inbox stops a double store, and the
+  stream's retention cap bounds the one-time catch-up. It only applies when the group is
+  created; an existing group keeps its position. With `TenantShardedSignalSource`, pass
+  `start_id="0"` to `realtime_tenant_group_ensure_lifecycle_step` too.
+- **Any number of nodes.** Give every node's writer the same consumer group: each signal
+  goes to one writer, a crashed node's unacked entries are reclaimed, and a redelivery
+  finds the dedup mark.
+- **Replay follows the HLC; storage does not.** A row is stored at the signal's carried
+  HLC, and a reconnect replays the rows above the device's cursor. Rows are not stored in
+  HLC order: a reclaimed entry, another node, or an out-of-order append can store a row
+  below a cursor the device has already acked past, and that row is never replayed. One
+  writer per stream or tenant shard narrows the window to reclaims and out-of-order
+  appends but does not close it. A storing gateway has the same window.
+- **Instead of the gateway, not beside it.** Never run the writer next to a Socket.IO
+  gateway that shares its dedup inbox, with or without a mailbox. Whichever marks a signal
+  first owns it: the gateway skips its live emit, or the writer never stores the row. In
+  one process the second to start is refused (`realtime_dedup_inbox_shared`); across
+  processes, keeping them apart is your wiring. A gateway with its own inbox can run
+  beside the writer.
+- **Store only.** Ephemeral, topic and `offline_delivery=False` signals are left alone and
+  unmarked; live delivery stays with the hub.
+- **Tenancy as on the gateway.** `bind_tenant_from_headers` is opt-in, and `require_tenant`
+  follows it. The header is not authenticated: on a tenant-global stream, whoever can
+  append to the stream chooses the tenant whose mailbox a signal is stored in, so enable
+  it only where every producer is trusted to assert tenancy. Otherwise wire the stream
+  route `tenant_aware` and use `TenantShardedSignalSource(shard=shard)` with
+  `realtime_tenant_group_ensure_lifecycle_step`, which take the tenant from the stream.
+  The sharded source refuses a route that is not `tenant_aware`
+  (`tenant_aware_required`). A `PubSubSignalSource` is refused
+  (`realtime_mailbox_writer_source_unsupported`): pub/sub keeps nothing for a writer that
+  was not subscribed.
+- **Counters.** Hand one `RealtimeGatewayStats` to the writer and its source, then call
+  `instrument_realtime_gateway(stats)`. Both live in `forze.application.execution.realtime`,
+  so no Socket.IO install is needed.
+
+With neither a writer nor a gateway, the mailbox stays empty. The routes still serve and
+accept acks, but a durable signal that lands while a client is disconnected is lost.
 
 ## Realtime over raw WebSocket
 

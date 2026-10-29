@@ -23,6 +23,7 @@ from forze.application.contracts.realtime import Audience, RealtimeEvent, Realti
 from forze.application.contracts.stream import StreamCommandDepKey
 from forze.application.contracts.tenancy import TenantIdentity
 from forze.application.execution import DepsRegistry, ExecutionRuntime
+from forze.base.exceptions import CoreException
 from forze_kits.integrations.outbox import OutboxRelay
 from forze_kits.integrations.realtime import (
     build_realtime_mailbox,
@@ -150,6 +151,43 @@ async def test_sharded_source_isolates_same_principal_across_tenants() -> None:
     assert sorted(e["room"] for e in sio.emits) == sorted(
         [f"t:{_T1}:principal:u1", f"t:{_T2}:principal:u1"]
     )
+
+
+async def test_sharded_source_over_a_tenant_global_stream_delivers_nothing() -> None:
+    # One shared stream: every tenant loop would read it and emit and store each signal
+    # under its own tenant. The source refuses before reading, so neither tenant's room
+    # or mailbox receives the other's signal.
+    spec = realtime_stream_spec()
+    sio = _StubSio()
+    gw = _sharded_gateway(
+        sio,
+        spec,
+        tenants=[_T1, _T2],
+        mailbox_factory=lambda ctx: build_realtime_mailbox(ctx, retention=UNSWEPT),
+    )
+
+    runtime = _runtime(_tenant_aware(str(realtime_mailbox_spec().name)))
+    async with runtime.scope():
+        ctx = runtime.get_context()
+
+        for n, tenant in enumerate((_T1, _T2), start=1):
+            await _append_for(
+                ctx, spec, tenant, RealtimeSignal.of(Audience.principal("u1"), "e", {"v": n}),
+                event_id=str(UUID(int=n)),
+            )
+
+        with pytest.raises(CoreException) as caught:
+            await gw.run(ctx)
+
+        rows = []
+        for tenant in (_T1, _T2):
+            with ctx.inv_ctx.bind_identity(tenant=TenantIdentity(tenant_id=tenant)):
+                mailbox = build_realtime_mailbox(ctx, retention=UNSWEPT)
+                rows += await mailbox.read_since(principal="u1", since=None)
+
+    assert caught.value.code == "tenant_aware_required"
+    assert sio.emits == []
+    assert rows == []
 
 
 async def test_unassigned_tenant_is_not_consumed() -> None:

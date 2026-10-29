@@ -104,6 +104,34 @@ domain state, not in a mailbox.
 Topic broadcasts are never mailboxed — there is no fixed membership to store them
 for.
 
+The routes replay and ack the mailbox; something else must **write** it. The Socket.IO
+gateway does as it emits. An SSE- or WebSocket-only app has no gateway, so it runs
+`RealtimeMailboxWriter`, the gateway's store half under the same rules (no Socket.IO
+install needed):
+
+```python
+from forze.application.execution.realtime import (
+    GatewayDedup,
+    RealtimeMailboxWriter,
+    StreamGroupSignalSource,
+    realtime_mailbox_writer_lifecycle_step,
+)
+
+writer = RealtimeMailboxWriter(
+    source=StreamGroupSignalSource(stream_spec=transport.stream_spec),
+    dedup=GatewayDedup(inbox_spec=transport.inbox_spec, tx_route="..."),
+    mailbox_factory=mailbox_factory,  # the factory the routes replay from
+)
+# alongside realtime_group_ensure_lifecycle_step(..., start_id="0") and
+# realtime_relay_lifecycle_step; "0" so entries appended before the group existed are stored
+step = realtime_mailbox_writer_lifecycle_step(writer)
+```
+
+Run it on every node with one consumer group, but never beside a Socket.IO gateway that
+shares its dedup inbox, mailbox or not: whichever marks a signal first owns it. Rows are
+replayed above the device's cursor but not stored in HLC order, so a row stored late (a
+reclaim, another node) below an acked cursor is never replayed — the gateway's window too.
+
 ## Authenticating the connection
 
 Do not hand-write the credential ladder. `build_ws_connection_resolver` (and
@@ -167,7 +195,9 @@ wiring notes below.
 - On the namespace tenancy tier (a `tenant_aware` realtime stream route), use the
   sharded lifecycle steps (`realtime_sse_sharded_tail_lifecycle_step`,
   `realtime_tenant_relay_lifecycle_step`) so signals fan out under the stream's
-  trusted identity rather than an untrusted header.
+  trusted identity rather than an untrusted header. The sharded tail and
+  `TenantShardedSignalSource` refuse a route that is not `tenant_aware`
+  (`tenant_aware_required`).
 - Realtime loops are supervised: they restart on crash with jittered backoff and
   register as drainable. A custom signal source must accept a stop signal.
 - A realtime stream route that declares an encryption tier is **refused at start** —
@@ -185,6 +215,7 @@ advance, not on transport internals.
 ## Anti-patterns
 
 - **Treating the live emit as the delivery guarantee** — the mailbox is the source of truth; a signal emitted into an empty room is gone.
+- **An SSE- or WebSocket-only app with no mailbox writer** — the routes replay and ack an empty mailbox, so a durable signal sent while the client reconnects is lost.
 - **Client-asserted topics** — never subscribe a connection to a topic it asked for without an authorization decision.
 - **Skipping `device_id`** — a shared per-principal cursor makes two tabs fight over the same ack position.
 - **Building a client against one transport's quirks** — write against the wire protocol so the transport stays a deployment choice.

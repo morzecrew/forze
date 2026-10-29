@@ -14,6 +14,10 @@ from uuid import uuid4
 import pytest
 
 from forze.application.contracts.realtime import RealtimeShard
+from forze.application.execution.realtime.sources import (
+    _tenant_from_headers,  # pyright: ignore[reportPrivateUsage]
+    _trace_context,  # pyright: ignore[reportPrivateUsage]
+)
 from forze.base.exceptions import CoreException
 from forze_kits.integrations.realtime import realtime_stream_spec
 from forze_socketio import (
@@ -21,10 +25,6 @@ from forze_socketio import (
     StreamGroupSignalSource,
     TenantShardedSignalSource,
     realtime_gateway_lifecycle_step,
-)
-from forze_socketio.gateway import (
-    _tenant_from_headers,  # pyright: ignore[reportPrivateUsage]
-    _trace_context,  # pyright: ignore[reportPrivateUsage]
 )
 
 # ----------------------- #

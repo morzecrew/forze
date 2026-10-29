@@ -197,7 +197,9 @@ For **trusted** per-tenant isolation without trusting a header, put the stream o
 `StreamGroupSignalSource` — one consume loop per assigned tenant, each bound to the
 tenant of the stream it reads (no header trust). `StreamGroupSignalSource` and
 `PubSubSignalSource` read with no tenant bound, so over a `tenant_aware` route the gateway
-step refuses to start (`tenant_global_required`). The shard is a fixed snapshot resolved
+step refuses to start (`tenant_global_required`). The other way round, the sharded source
+refuses a route that is not `tenant_aware` (`tenant_aware_required`), because every
+tenant's loop would read the same stream. The shard is a fixed snapshot resolved
 at startup, so onboarding a new tenant needs a restart; hand the same `RealtimeShard` to
 the source, the group-ensure step (`realtime_tenant_group_ensure_lifecycle_step`), and —
 for a partitioned outbox — `realtime_tenant_relay_lifecycle_step`. The read-side rules
@@ -225,6 +227,14 @@ bound — and drop connections whose credential has lapsed with
 disconnect handlers, without logging it. The full store-and-forward flow —
 per-device cursors, trimming, and opting an event out (`offline_delivery=False`) — is the
 [offline-delivery recipe](../recipes/realtime-offline-delivery.md).
+
+The gateway's store half is shared code. A deployment with no Socket.IO server runs it
+alone as `RealtimeMailboxWriter`, filling the mailbox the SSE and raw-WebSocket routes
+replay from (see [offline delivery without Socket.IO](fastapi.md#offline-delivery-without-socketio)).
+Never let a gateway with `dedup` set, mailbox or not, share a dedup inbox with a writer:
+whichever marks a signal first owns it, so the gateway skips its live emit or the writer
+never stores the row. In one process the second to start is refused
+(`realtime_dedup_inbox_shared`); across processes it is the deployment's to avoid.
 
 Operational hardening around the loop:
 

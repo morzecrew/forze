@@ -31,7 +31,11 @@ from forze.application.contracts.envelope import HEADER_EVENT_ID, HEADER_TENANT_
 from forze.application.contracts.execution import LifecycleHook, LifecycleStep
 from forze.application.contracts.realtime import RealtimeShard, RealtimeSignal
 from forze.application.contracts.stream import StreamQueryDepKey, StreamSpec
-from forze.application.contracts.tenancy import TenantIdentity, require_tenant_global
+from forze.application.contracts.tenancy import (
+    TenantIdentity,
+    require_tenant_aware,
+    require_tenant_global,
+)
 from forze.application.execution import ExecutionContext
 from forze.application.execution.background import (
     DEFAULT_STOP_GRACE_SECONDS,
@@ -452,6 +456,9 @@ def realtime_sse_sharded_tail_lifecycle_step(
     shards across nodes' *serving* processes only if each tenant's SSE clients are
     routed to the node holding that tenant — otherwise give every SSE-serving node
     the full tenant set (broadcast reads don't contend, unlike consumer groups).
+
+    :raises CoreException: ``configuration`` — a non-positive setting; at startup,
+        ``tenant_aware_required`` when the shard's stream route is not ``tenant_aware``.
     """
 
     _validate_tail_settings(batch=batch, poll_interval=poll_interval)
@@ -477,8 +484,17 @@ def realtime_sse_sharded_tail_lifecycle_step(
         finally:
             hub.ready.set()
 
+    def _preflight(ctx: ExecutionContext) -> None:
+        # Each loop publishes what it reads under its own tenant: a shared stream would
+        # hand every tenant's signals to every other tenant's connections.
+        port = ctx.deps.resolve_configurable(
+            ctx, StreamQueryDepKey, shard.stream_spec, route=shard.stream_spec.name
+        )
+        require_tenant_aware(port, what="Realtime SSE sharded tail")
+
     startup = _SseTailStartup(
         runner=_run,
+        preflight=_preflight,
         name="realtime_sse_sharded_tail",
         restart_backoff=restart_backoff,
         max_consecutive_crashes=max_consecutive_crashes,

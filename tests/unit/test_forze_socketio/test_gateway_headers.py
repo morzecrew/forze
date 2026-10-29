@@ -12,8 +12,11 @@ from __future__ import annotations
 from uuid import uuid4
 
 from forze.application.contracts.envelope import HEADER_HLC, HEADER_TENANT_ID
+from forze.application.execution.realtime.sources import (
+    _hlc_from_headers,  # pyright: ignore[reportPrivateUsage]
+    _tenant_from_headers,  # pyright: ignore[reportPrivateUsage]
+)
 from forze.base.primitives import HlcTimestamp
-from forze_socketio.gateway import _hlc_from_headers, _tenant_from_headers
 
 # ----------------------- #
 

@@ -27,7 +27,7 @@ from forze.application.contracts.realtime import (
 )
 from forze.application.execution import ExecutionContext, ExecutionRuntime
 from forze.application.execution.deps import DepsRegistry
-from forze.base.exceptions import CoreException
+from forze.base.exceptions import CoreException, ExceptionKind
 from forze_kits.integrations.realtime import (
     build_realtime_publisher,
     realtime_pubsub_spec,
@@ -194,7 +194,7 @@ async def test_sharded_tenant_crash_does_not_stop_siblings(
         return
 
     stop = asyncio.Event()
-    runtime = _runtime()
+    runtime = _tenant_aware_runtime()
 
     async with runtime.scope():
         ctx = runtime.get_context()
@@ -261,3 +261,22 @@ async def test_the_sharded_source_binds_its_tenants_and_starts() -> None:
         assert ctx.drainables.loops
         assert step.shutdown is not None
         await step.shutdown(ctx)
+
+
+async def test_the_sharded_source_over_a_tenant_global_route_is_refused_at_startup() -> None:
+    # Every tenant loop would read the one shared stream and emit under its own tenant.
+    shard = RealtimeShard(stream_spec=realtime_stream_spec(), tenants=(uuid4(),), group="g")
+    gateway = RealtimeGateway(sio=_StubSio(), source=TenantShardedSignalSource(shard=shard))  # type: ignore[arg-type]
+    step = realtime_gateway_lifecycle_step(gateway)
+    runtime = _runtime()
+
+    async with runtime.scope():
+        ctx = runtime.get_context()
+
+        with pytest.raises(CoreException) as caught:
+            await step.startup(ctx)
+
+        assert not ctx.drainables.loops
+
+    assert caught.value.code == "tenant_aware_required"
+    assert caught.value.kind is ExceptionKind.CONFIGURATION

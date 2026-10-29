@@ -3,8 +3,9 @@
 A durable, principal-addressed realtime signal sent while the recipient is offline
 is stored in a per-recipient **mailbox** and replayed when their device reconnects;
 a per-device **cursor** (advanced by the client's ack) means a device never
-re-receives what it already saw. In a live app the Socket.IO gateway calls
-``mailbox.store`` and ``attach_realtime_connection(mailbox_factory=…, cursors_factory=…)``
+re-receives what it already saw. In a live app the Socket.IO gateway (or, with no Socket.IO
+server, ``RealtimeMailboxWriter``) calls ``mailbox.store`` and
+``attach_realtime_connection(mailbox_factory=…, cursors_factory=…)``
 does the reconnect replay + ``realtime.ack`` — here we drive the same public components
 in-process to show the semantics, no sockets required. Mock-runnable.
 
