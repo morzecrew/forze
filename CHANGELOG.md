@@ -251,6 +251,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **In-place search and analytics read a document's sealed fields.** Name the document with `sealed_by` on the search, hub or analytics spec; under `binds_record_id` each row must also carry its `id`. Meilisearch and analytics `ingest` refuse `sealed_by`, since they seal their own rows.
 
+- **Spec-time encryption refusals carry the documented code.** Analytics `binds_record_id` without `sealed_by`, or `sealed_by` with `ingest`, raises `core.analytics.encryption_wiring`. Procedure `binds_record_id` gets `core.procedures.encryption_wiring`; a hub member's other `sealed_by`, `core.search.encryption_wiring`.
+
 ### Security
 
 - **A document query policy checks `$having` and aggregate sorts against their source fields** (**Breaking**). Refused now: `$having` over a field that is not filterable, and a sort by an alias whose field is not sortable. Allowed now: a sort by a `$count` alias, or by an alias whose field is sortable.

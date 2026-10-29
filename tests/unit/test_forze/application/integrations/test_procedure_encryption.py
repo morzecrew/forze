@@ -99,6 +99,7 @@ def test_binds_record_id_rejected_at_construction() -> None:
 
     assert ei.value.kind is ExceptionKind.CONFIGURATION
     assert "binds_record_id" in str(ei.value)
+    assert ei.value.code == "core.procedures.encryption_wiring"
 
 
 @pytest.mark.asyncio

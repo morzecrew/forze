@@ -226,6 +226,7 @@ def test_hub_members_leave_sealed_by_unset_or_equal_to_the_hubs(member: str | No
         hub("other")
 
     assert ei.value.kind is ExceptionKind.CONFIGURATION
+    assert ei.value.code == "core.search.encryption_wiring"
 
 
 def test_an_index_that_seals_its_own_fields_refuses_sealed_by() -> None:

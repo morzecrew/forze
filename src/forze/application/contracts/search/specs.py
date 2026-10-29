@@ -748,7 +748,8 @@ class HubSearchSpec[M: BaseModel](BaseSpec):
             raise exc.configuration(
                 f"Hub search {self.name!r} is sealed_by {self.sealed_by!r}, but members "
                 f"{disagree} name another document. The hub's sealed_by governs the rows it "
-                "decodes: leave the members' unset or equal to it."
+                "decodes: leave the members' unset or equal to it.",
+                code="core.search.encryption_wiring",
             )
 
         if self.default_member_weights:
