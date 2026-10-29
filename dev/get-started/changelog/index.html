@@ -10569,6 +10569,9 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <li>
 <p><strong><code>If-None-Match: *</code> answers 304 for an object without an ETag.</strong> The streaming storage download route served it a 200; per RFC 9110 the wildcard matches any existing object, on the stored-file download route too.</p>
 </li>
+<li>
+<p><strong>A password change or reset racing its principal's deactivation no longer fails on <code>revision_mismatch</code>, nor does the deactivation.</strong> In a Postgres transaction they lock the account (a <code>read</code> view must accept <code>FOR UPDATE</code>), so the second waits; elsewhere the deactivation rereads a stale credential and closes it.</p>
+</li>
 </ul>
 <h3 id="security">Security<a class="headerlink" href="#security" title="Permanent link">&para;</a></h3>
 <ul>
