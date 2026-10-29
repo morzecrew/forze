@@ -683,9 +683,7 @@ class PubSubSignalSource(RealtimeSignalSource):
 
         try:
             while True:
-                if pending is None:
-                    pending = asyncio.ensure_future(anext(messages))
-
+                pending = asyncio.ensure_future(anext(messages))
                 waiters = {pending} if stop_waiter is None else {pending, stop_waiter}
                 done, _ = await asyncio.wait(waiters, return_when=asyncio.FIRST_COMPLETED)
 

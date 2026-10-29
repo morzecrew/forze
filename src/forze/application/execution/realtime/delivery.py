@@ -12,7 +12,7 @@ rules would drift, and the mailbox is the delivery guarantee.
 import threading
 from collections.abc import Callable, Iterator
 from contextlib import AbstractContextManager, contextmanager, nullcontext
-from typing import Literal, Protocol, final
+from typing import Literal, Protocol, cast, final
 from uuid import UUID
 
 import attrs
@@ -312,9 +312,10 @@ class RealtimeDelivery:
                         if error.code == "tenant_required":
                             raise self.tenant_unbound(dedup_id) from error
                         raise
-                elif emit is not None:
+                else:
                     # not replay-safe: emit inside the tx so a failed emit rolls the mark back
-                    await emit(signal, tenant, event_id=dedup_id, recoverable=False)
+                    # (the early return above leaves an emit whenever there is no store)
+                    await cast(LiveEmit, emit)(signal, tenant, event_id=dedup_id, recoverable=False)
 
             if store is not None and emit is not None:
                 # replay-safe: mark + store committed, so the durable obligation is met and the
