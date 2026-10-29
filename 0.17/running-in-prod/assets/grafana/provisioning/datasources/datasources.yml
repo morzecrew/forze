@@ -1,0 +1,42 @@
+apiVersion: 1
+
+datasources:
+  - name: Prometheus
+    type: prometheus
+    uid: prometheus
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: true
+    jsonData:
+      httpMethod: POST
+      # Turn this on once you have verified your SDK actually attaches exemplars; the
+      # framework does not promise it at the pinned OTel version. A derived link that
+      # never resolves is worse than no link.
+      exemplarTraceIdDestinations: []
+
+  - name: Tempo
+    type: tempo
+    uid: tempo
+    access: proxy
+    url: http://tempo:3200
+    jsonData:
+      tracesToLogsV2:
+        datasourceUid: loki
+        spanStartTimeShift: -5m
+        spanEndTimeShift: 5m
+        filterByTraceID: true
+
+  - name: Loki
+    type: loki
+    uid: loki
+    access: proxy
+    url: http://loki:3100
+    jsonData:
+      # The half that makes log-to-trace correlation real: every JSON line already carries
+      # trace_id, injected from the active span by bootstrap_logging.
+      derivedFields:
+        - name: TraceID
+          matcherType: label
+          matcherRegex: trace_id
+          url: "${__value.raw}"
+          datasourceUid: tempo
