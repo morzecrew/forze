@@ -8,6 +8,7 @@ from ._snapshot_stream import (
 from .encryption import (
     assert_search_encryption_parity,
     decrypt_search_rows,
+    refuse_index_sealed_by,
     reject_encrypted_sort_fields,
     resolve_search_read_codec_spec,
     resolve_snapshot_cipher,
@@ -44,6 +45,7 @@ __all__ = [
     "federated_highlights_for_hits",
     "assert_search_encryption_parity",
     "decrypt_search_rows",
+    "refuse_index_sealed_by",
     "reject_encrypted_sort_fields",
     "resolve_search_read_codec_spec",
     "resolve_snapshot_cipher",

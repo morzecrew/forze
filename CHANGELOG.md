@@ -237,6 +237,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **A password change or reset racing its principal's deactivation no longer fails on `revision_mismatch`, nor does the deactivation.** In a Postgres transaction they lock the account (a `read` view must accept `FOR UPDATE`), so the second waits; elsewhere the deactivation rereads a stale credential and closes it.
 
+- **In-place search and analytics read a document's sealed fields.** Name the document with `sealed_by` on the search, hub or analytics spec; under `binds_record_id` each row must also carry its `id`. Meilisearch and analytics `ingest` refuse `sealed_by`, since they seal their own rows.
+
 ### Security
 
 - **A document query policy checks `$having` and aggregate sorts against their source fields** (**Breaking**). Refused now: `$having` over a field that is not filterable, and a sort by an alias whose field is not sortable. Allowed now: a sort by a `$count` alias, or by an alias whose field is sortable.

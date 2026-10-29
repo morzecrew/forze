@@ -1,6 +1,6 @@
 """Value-level encryption services built on the crypto contracts."""
 
-from .codec import EncryptingModelCodec, encrypting_document_codecs
+from .codec import DEFAULT_FIELD_LABEL, EncryptingModelCodec, encrypting_document_codecs
 from .deterministic import DeterministicFieldCipher
 from .keyring import Keyring
 from .maintenance import ReencryptReport, reencrypt_documents, reencrypt_objects
@@ -24,6 +24,7 @@ from .wiring import resolve_document_codecs
 __all__ = [
     "Keyring",
     "EncryptingModelCodec",
+    "DEFAULT_FIELD_LABEL",
     "encrypting_document_codecs",
     "DeterministicFieldCipher",
     "ReencryptReport",

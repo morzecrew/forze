@@ -7,7 +7,8 @@ encrypted columns are sealed on ingest and decrypted out of every read path.
 Encrypted analytics columns are **confidential, not analyzable**: randomized ciphertext has
 no numeric/linguistic structure, so it cannot be aggregated, grouped, or range-filtered — only
 stored and returned. Encrypt columns you carry but never query (e.g. PII alongside the
-dimensions/measures). ``binds_record_id`` is unsupported (analytics rows have no stable id).
+dimensions/measures). ``binds_record_id`` binds each row's ``id`` like the document port, so
+it is accepted only with ``sealed_by`` (rows the plane ingests have no stable id).
 """
 
 from collections.abc import Callable
@@ -22,10 +23,14 @@ from forze.application.contracts.crypto import (
     FieldCipherPort,
 )
 from forze.application.contracts.tenancy import TenantIdentity
-from forze.application.integrations.crypto import EncryptingModelCodec
+from forze.application.integrations.crypto import (
+    DEFAULT_FIELD_LABEL,
+    EncryptingModelCodec,
+)
 from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict
 from forze.base.serialization import ModelCodec, enum_values
+from forze.domain.constants import ID_FIELD
 
 # ----------------------- #
 
@@ -49,9 +54,6 @@ def resolve_analytics_codecs_spec(
     if encryption is None or encryption.is_empty:
         return spec
 
-    # ``binds_record_id`` is rejected at spec construction (validate_analytics_spec) — analytics
-    # rows have no stable id — so it is always False here.
-
     if keyring is None:
         raise exc.configuration(
             f"AnalyticsSpec {spec.name!r} declares encrypted/searchable fields but no keyring "
@@ -74,6 +76,12 @@ def resolve_analytics_codecs_spec(
             searchable_fields=encryption.searchable,
             deterministic=deterministic,
             tenant_provider=tenant_provider,
+            # A spec with sealed_by has no ingest (refused at construction), so only reads
+            # of a document's table ever take the document's label.
+            label=spec.sealed_by or DEFAULT_FIELD_LABEL,
+            # Only with sealed_by (validate_analytics_spec): the document row's id, bound as the
+            # document port binds it. Id-bound ciphertext in a row without it is refused.
+            record_id_field=ID_FIELD if encryption.binds_record_id else None,
             reject_plaintext=encryption.reject_plaintext,
         )
 

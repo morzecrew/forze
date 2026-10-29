@@ -4,6 +4,7 @@ searchable fields untouched, decrypted on read."""
 from __future__ import annotations
 
 import base64
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -16,13 +17,21 @@ from forze.application.contracts.crypto import (
     StaticKeyDirectory,
 )
 from forze.application.contracts.search import SearchSpec
+from forze.application.execution import Deps
 from forze.application.integrations.crypto import EncryptingModelCodec, Keyring
 from forze.base.crypto import is_envelope
 from forze.base.exceptions import CoreException, ExceptionKind
 from forze.base.serialization import PydanticModelCodec
 from forze_meilisearch.adapters.search._command import MeilisearchSearchCommandAdapter
 from forze_meilisearch.execution.deps.configs import MeilisearchSearchConfig
+from forze_meilisearch.execution.deps.factories.search import (
+    ConfigurableMeilisearchSearch,
+    ConfigurableMeilisearchSearchCommand,
+    ConfigurableMeilisearchSearchManagement,
+)
+from forze_meilisearch.execution.deps.keys import MeilisearchClientDepKey
 from forze_mock import MockKeyManagement
+from tests.support.execution_context import context_from_deps
 
 # ----------------------- #
 
@@ -157,3 +166,30 @@ async def test_plaintext_spec_indexes_plaintext() -> None:
 
     [chunk] = client.index.return_value.add_documents.call_args.args
     assert chunk[0]["secret"] == "plain"
+
+
+@pytest.mark.parametrize(
+    "factory",
+    [
+        ConfigurableMeilisearchSearch,
+        ConfigurableMeilisearchSearchCommand,
+        ConfigurableMeilisearchSearchManagement,
+    ],
+)
+def test_an_index_refuses_sealed_by(factory: Any) -> None:
+    """The index seals its own fields; binding a document's name would re-label its writes."""
+
+    spec = SearchSpec(
+        name="items",
+        model_type=_Doc,
+        fields=["title"],
+        encryption=FieldEncryption(encrypted=frozenset({"secret"})),
+        sealed_by="items_doc",
+    )
+    ctx = context_from_deps(Deps.plain({MeilisearchClientDepKey: _client()}))
+    config = MeilisearchSearchConfig(index_uid="items_idx", wait_for_tasks=False)
+
+    with pytest.raises(CoreException) as ei:
+        factory(config=config)(ctx, spec)
+
+    assert ei.value.code == "core.search.encryption_wiring"

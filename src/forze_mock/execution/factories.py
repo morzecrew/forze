@@ -87,6 +87,7 @@ from forze.application.integrations.pubsub import encrypting_pubsub_command
 from forze.application.integrations.queue import encrypting_queue_command
 from forze.application.integrations.search import (
     SearchResultSnapshot,
+    refuse_index_sealed_by,
     resolve_search_read_codec_spec,
     resolve_snapshot_cipher,
     search_spec_encrypts,
@@ -605,6 +606,14 @@ class ConfigurableMockDynamicRead(_MockFactoryBase):
 @final
 @attrs.define(slots=True, kw_only=True)
 class ConfigurableMockSearch(_MockFactoryBase):
+    """Mock search query port: stands in for an external index *and* an in-place search.
+
+    So it accepts ``sealed_by`` (only the index write side refuses it, as Meilisearch does).
+    shortcut: a ``sealed_by`` that does not match how the rows were written (document port
+    vs. search upsert) fails at read time with ``aead_auth_failed``, not at wiring; a mock
+    split into index and in-place query factories would catch it earlier.
+    """
+
     def __call__(
         self,
         context: ExecutionContext,
@@ -638,6 +647,7 @@ class ConfigurableMockSearchCommand(_MockFactoryBase):
         context: ExecutionContext,
         spec: SearchSpec[Any],
     ) -> MockSearchCommandAdapter:
+        refuse_index_sealed_by(spec, backend="Mock")
         cfg = self._route(spec.name)
         keyring, deterministic = _field_ciphers(context)
         return MockSearchCommandAdapter(
@@ -663,6 +673,7 @@ class ConfigurableMockSearchManagement(_MockFactoryBase):
         context: ExecutionContext,
         spec: SearchSpec[Any],
     ) -> MockSearchManagementAdapter:
+        refuse_index_sealed_by(spec, backend="Mock")
         cfg = self._route(spec.name)
         keyring, deterministic = _field_ciphers(context)
         return MockSearchManagementAdapter(

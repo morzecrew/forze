@@ -28,7 +28,8 @@ model:
 | `queries` | `Mapping[str, AnalyticsQueryDefinition]` | required | named queries (≥1); each declares a typed `params` model |
 | `ingest` | `type[Ing] \| None` | `None` | append-row model; `None` disables ingest |
 | `provenance` | `AnalyticsProvenance` | `UNDECLARED` | where these rows come from — see below |
-| `encryption` | `FieldEncryption \| None` | `None` | seal columns at rest (confidential, **not** aggregatable; `binds_record_id` unsupported — rows have no id) |
+| `encryption` | `FieldEncryption \| None` | `None` | seal columns at rest (confidential, **not** aggregatable; `binds_record_id` only with `sealed_by` — ingested rows have no id) |
+| `sealed_by` | `str \| None` | `None` | the document spec whose port sealed the columns the queries read, so the read codec binds its name in the AAD; refused with `ingest` (ingested rows keep the analytics label). Under `binds_record_id`, every query must return the document's `id` as `id`, else `core.crypto.record_id_required` |
 | `read_codec` / `ingest_codec` | `ModelCodec \| None` | `None` | codec overrides (auto-derived otherwise) |
 
 Each `AnalyticsQueryDefinition` carries a Pydantic `params` model — the typed arguments a

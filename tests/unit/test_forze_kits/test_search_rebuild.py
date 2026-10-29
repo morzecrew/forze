@@ -428,6 +428,34 @@ class TestEncryptionParity:
         assert not query.streamed
         assert command.upserts == []
 
+    async def test_an_in_place_search_spec_is_refused(self) -> None:
+        # sealed_by marks a search over the document table itself: there is no separate index,
+        # and an upsert would write document-label ciphertext into one.
+        sealed = DocumentSpec(
+            name="sealed",
+            read=WidgetRead,
+            write=DocumentWriteTypes(
+                domain=Widget, create_cmd=WidgetCreate, update_cmd=WidgetUpdate
+            ),
+        )
+        in_place = SearchSpec(
+            name="sealed_search", model_type=WidgetRead, fields=["name"], sealed_by="sealed"
+        )
+        query = _FakeQuery([_row("secret")])
+        command = _FakeCommand()
+
+        with pytest.raises(CoreException) as exc_info:
+            await rebuild_search_index(
+                query,  # type: ignore[arg-type]
+                command,  # type: ignore[arg-type]
+                document=sealed,
+                search=in_place,
+            )
+
+        assert exc_info.value.code == "core.search.encryption_wiring"
+        assert not query.streamed
+        assert command.upserts == []
+
 
 # ....................... #
 

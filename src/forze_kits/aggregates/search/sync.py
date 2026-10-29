@@ -27,7 +27,10 @@ from forze.application.contracts.execution import (
 from forze.application.contracts.search import SearchSpec
 from forze.application.execution.operations.registry import OperationRegistry
 from forze.application.execution.resilience import retry_read
-from forze.application.integrations.search import assert_search_encryption_parity
+from forze.application.integrations.search import (
+    assert_search_encryption_parity,
+    refuse_index_sealed_by,
+)
 from forze.base.primitives import StrKey, StrKeyNamespace
 from forze_kits.aggregates._logger import logger
 from forze_kits.aggregates.document.dto import written_read_model
@@ -209,6 +212,8 @@ def bind_search_sync(
     """
 
     assert_search_encryption_parity(document=document, search=search)
+    # Only a separate index is synced; an in-place search (sealed_by) reads the table itself.
+    refuse_index_sealed_by(search, backend="Synced")
 
     ns = ns or document.default_namespace
     steps = SearchSyncSteps(search=search)

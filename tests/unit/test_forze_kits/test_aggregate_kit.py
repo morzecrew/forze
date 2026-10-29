@@ -556,6 +556,22 @@ class TestSearchEncryptionParity:
 
         assert exc_info.value.code == "search_encryption_parity_mismatch"
 
+    @pytest.mark.parametrize("delivery", [None, OutboxSearchSync(), "kit"])
+    def test_index_sync_seams_refuse_an_in_place_search_spec(self, delivery) -> None:
+        # sealed_by marks a search over the document table itself: there is no separate index
+        # to sync, and an upsert would write document-label ciphertext into one.
+        in_place = attrs.evolve(WIDGET_INDEX, sealed_by=str(WIDGET_SPEC.name))
+
+        with pytest.raises(CoreException) as exc_info:
+            if delivery == "kit":
+                AggregateKit(spec=WIDGET_SPEC, search=in_place)
+            elif delivery is None:
+                bind_search_sync(OperationRegistry(), document=WIDGET_SPEC, search=in_place)
+            else:
+                bind_search_sync_outbox(document=WIDGET_SPEC, search=in_place, config=delivery)
+
+        assert exc_info.value.code == "core.search.encryption_wiring"
+
 
 # ....................... #
 

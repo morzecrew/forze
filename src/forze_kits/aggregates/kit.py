@@ -44,7 +44,10 @@ from forze.application.execution.operations.registry import (
     OperationRegistry,
 )
 from forze.application.hooks.audit import Audited
-from forze.application.integrations.search import assert_search_encryption_parity
+from forze.application.integrations.search import (
+    assert_search_encryption_parity,
+    refuse_index_sealed_by,
+)
 from forze.base.exceptions import exc
 from forze.base.primitives import MappingConverter, StrKey
 from forze.domain.models import BaseDTO, Document
@@ -204,7 +207,9 @@ class AggregateKit(Generic[R, D, C, U]):
 
     Must declare the **same** ``encryption`` policy as :attr:`spec` — the sync feeds the index
     the document's decrypted read model, so a field sealed on the document and omitted here is
-    written to the index in clear. Enforced at construction (``search_encryption_parity_mismatch``)."""
+    written to the index in clear. Enforced at construction (``search_encryption_parity_mismatch``).
+    A spec with ``sealed_by`` (an in-place search over the document table) is refused: there is
+    no separate index to sync."""
 
     search_delivery: OutboxSearchSync | None = None
     """How index maintenance reaches the external index. ``None`` (default) keeps the
@@ -331,6 +336,8 @@ class AggregateKit(Generic[R, D, C, U]):
             # here (not only when the sync wiring is composed) so the drift is a declaration-time
             # error, not a runtime one.
             assert_search_encryption_parity(document=self.spec, search=self.search)
+            # The kit's search is an external index it syncs; an in-place one has nothing to sync.
+            refuse_index_sealed_by(self.search, backend="AggregateKit")
 
         if self.get_deleted != "not_found" and not self.soft_delete:
             raise exc.configuration(

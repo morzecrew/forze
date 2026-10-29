@@ -20,9 +20,15 @@ from forze.application.integrations.analytics import (
     encode_ingest_payloads,
     resolve_analytics_codecs_spec,
 )
-from forze.application.integrations.crypto import EncryptingModelCodec, Keyring
+from forze.application.contracts.document import DocumentSpec
+from forze.application.integrations.crypto import (
+    EncryptingModelCodec,
+    Keyring,
+    resolve_document_codecs,
+)
 from forze.base.crypto import is_envelope
 from forze.base.exceptions import CoreException, ExceptionKind
+from forze.domain.models import ReadDocument
 from forze_mock import MockKeyManagement
 
 # ----------------------- #
@@ -32,6 +38,11 @@ class _Row(BaseModel):
     id: str
     region: str  # a plaintext dimension we group by
     email: str  # PII: stored, returned, never aggregated
+
+
+class _DocRow(ReadDocument):
+    region: str
+    email: str
 
 
 class _Params(BaseModel):
@@ -91,13 +102,13 @@ def test_without_keyring_fails_closed() -> None:
     assert ei.value.code == "core.analytics.encryption_wiring"
 
 
-def test_binds_record_id_rejected_at_construction() -> None:
-    # Caught when the spec is built, not deferred to wiring — analytics rows have no id.
+def test_binds_record_id_without_sealed_by_rejected_at_construction() -> None:
+    # Caught when the spec is built, not deferred to wiring — ingested rows have no id.
     with pytest.raises(CoreException) as ei:
         _spec(encryption=FieldEncryption(encrypted=frozenset({"email"}), binds_record_id=True))
 
     assert ei.value.kind is ExceptionKind.CONFIGURATION
-    assert "binds_record_id" in str(ei.value)
+    assert "binds_record_id without sealed_by" in str(ei.value)
 
 
 def test_searchable_without_deterministic_fails_closed() -> None:
@@ -187,3 +198,115 @@ def test_spec_reject_plaintext_reaches_analytics_codecs() -> None:
         read.decode_mapping({"id": "1", "region": "eu", "email": "a@b.co"})
 
     assert ei.value.code == "core.crypto.plaintext_rejected"
+
+
+# ....................... #
+# reads of a document's table (sealed_by)
+
+_POLICY = FieldEncryption(encrypted=frozenset({"email"}))
+
+
+def _document_sealed_row(
+    keyring: Keyring, policy: FieldEncryption = _POLICY
+) -> dict[str, object]:
+    """A row as the document port stores it: the email sealed under the document's name."""
+
+    codecs = resolve_document_codecs(
+        DocumentSpec(name="events_doc", read=_DocRow, encryption=policy).resolved_codecs,
+        spec_name="events_doc",
+        encryption=policy,
+        keyring=keyring,
+        deterministic=None,
+        tenant_provider=lambda: None,
+        integration="test",
+        code="test.encryption_wiring",
+    )
+    read = codecs.read
+    assert isinstance(read, EncryptingModelCodec)
+    return read.encrypt_mapping({"id": "1", "region": "eu", "email": "a@b.co"})
+
+
+def _query_only(policy: FieldEncryption = _POLICY, **kw: object) -> AnalyticsSpec[_Row, _Row]:
+    return AnalyticsSpec(
+        name="events",
+        read=_Row,
+        queries={"all": AnalyticsQueryDefinition(params=_Params)},
+        encryption=policy,
+        **kw,  # type: ignore[arg-type]
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("sealed_by", ["events_doc", None])
+async def test_a_query_opens_a_documents_rows_only_when_sealed_by_names_it(
+    sealed_by: str | None,
+) -> None:
+    """Sealed by the real document codec, not by the analytics codec: naming the document
+    opens the row; without the name it fails authentication, never opened under another."""
+
+    keyring = _keyring()
+    await keyring.warm(None)
+    row = _document_sealed_row(keyring)
+    assert is_envelope(base64.b64decode(str(row["email"])))
+
+    read = resolve_analytics_codecs_spec(
+        _query_only(sealed_by=sealed_by),
+        keyring=keyring,
+        deterministic=None,
+        tenant_provider=lambda: None,
+    ).resolved_read_codec
+    await read.prepare_decrypt([row])  # type: ignore[attr-defined]
+
+    if sealed_by is not None:
+        assert read.decode_mapping(row) == _Row(id="1", region="eu", email="a@b.co")
+        return
+
+    with pytest.raises(CoreException) as ei:
+        read.decode_mapping(row)
+
+    assert ei.value.code == "core.crypto.aead_auth_failed"
+
+
+@pytest.mark.asyncio
+async def test_a_query_opens_id_bound_rows_only_when_they_carry_the_id() -> None:
+    """A document that binds its record id seals each row under its id: the query opens the
+    row with the id it returns, and refuses the same ciphertext when the id is not returned."""
+
+    bound = FieldEncryption(encrypted=frozenset({"email"}), binds_record_id=True)
+    keyring = _keyring()
+    await keyring.warm(None)
+    row = _document_sealed_row(keyring, bound)
+
+    read = resolve_analytics_codecs_spec(
+        _query_only(bound, sealed_by="events_doc"),
+        keyring=keyring,
+        deterministic=None,
+        tenant_provider=lambda: None,
+    ).resolved_read_codec
+    assert isinstance(read, EncryptingModelCodec)
+    await read.prepare_decrypt([row])
+
+    assert read.decode_mapping(row) == _Row(id="1", region="eu", email="a@b.co")
+
+    with pytest.raises(CoreException) as ei:
+        read.decrypt_mapping({k: v for k, v in row.items() if k != "id"})
+
+    assert ei.value.code == "core.crypto.record_id_required"
+
+
+def test_sealed_by_with_ingest_is_refused() -> None:
+    """Ingest seals under the analytics label, which a sealed_by read codec cannot open."""
+
+    with pytest.raises(CoreException) as ei:
+        _query_only(sealed_by="events_doc", ingest=_Row)
+
+    assert ei.value.kind is ExceptionKind.CONFIGURATION
+    assert "sealed_by and ingest" in str(ei.value)
+
+
+@pytest.mark.parametrize("blank", ["", "   "])
+def test_blank_sealed_by_is_rejected(blank: str) -> None:
+    with pytest.raises(CoreException, match="sealed_by") as ei:
+        _query_only(sealed_by=blank)
+
+    assert ei.value.kind is ExceptionKind.CONFIGURATION

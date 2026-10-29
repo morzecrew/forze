@@ -40,6 +40,7 @@ result-set snapshots.
 | `lenient_read_fields` | `frozenset[str]` | `∅` | returned read-model fields with **no** backing column: dropped from the result projection, hydrated from their default, and excluded from sort keys (mirror of [`DocumentSpec.lenient_read_fields`](document.md#lenient-read-fields); must **not** be an indexed `fields` member) |
 | `snapshot` | `SearchResultSnapshotSpec \| None` | `None` | result-ID snapshotting defaults (stable re-pagination) |
 | `encryption` | `FieldEncryption \| None` | `None` | field [encryption](../../identity-tenancy-enc/encryption.md) — **the same policy** as the document table's, so in-place search reproduces its AAD |
+| `sealed_by` | `str \| None` | `None` | in-place search only: the document spec whose port sealed the table's fields, so the read codec binds its name in the AAD. `HubSearchSpec` takes its own, which governs its hub rows (a member's must be unset or equal to it); Meilisearch and index sync/rebuild refuse it (an index seals its own) |
 | `sensitive` | `bool` | `False` | model carries secrets; generated surfaces refuse to project it |
 | `read_codec` | `ModelCodec \| None` | `None` | row codec override (auto-derived otherwise) |
 

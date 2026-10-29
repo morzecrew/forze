@@ -32,7 +32,7 @@ from .directory import (
     SyncKeyDirectoryWithPrevious,
     TenantTemplateKeyDirectory,
 )
-from .field_encryption import FieldEncryption
+from .field_encryption import FieldEncryption, validate_sealed_by
 from .payload_envelope import (
     ENCRYPTED_PAYLOAD_KEY,
     encrypted_payload_ciphertext,
@@ -91,6 +91,7 @@ __all__ = [
     "TenantTemplateKeyDirectory",
     # field-encryption policy
     "FieldEncryption",
+    "validate_sealed_by",
     # deps
     "KeyManagementDepKey",
     "AeadDepKey",

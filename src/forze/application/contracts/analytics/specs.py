@@ -16,7 +16,7 @@ from forze.base.serialization import (
 )
 
 from ..base import BaseSpec
-from ..crypto import FieldEncryption
+from ..crypto import FieldEncryption, validate_sealed_by
 from .value_objects import AnalyticsProvenance
 
 # ----------------------- #
@@ -90,8 +90,18 @@ class AnalyticsSpec(BaseSpec, Generic[R, Ing]):
     of every read path — but *not* aggregatable, groupable, or range-filterable (randomized
     ciphertext has no numeric/linguistic structure). Encrypt only columns you store-and-return
     but never analyze (e.g. PII carried alongside the dimensions/measures you query). Requires
-    a wired keyring; ``binds_record_id`` is unsupported here (analytics rows have no stable id).
-    ``None`` (default) = no encryption."""
+    a wired keyring. ``binds_record_id`` requires :attr:`sealed_by`: rows this plane ingests
+    have no stable id, but a document's rows do. ``None`` (default) = no encryption."""
+
+    sealed_by: str | None = attrs.field(default=None, validator=validate_sealed_by)
+    """Name of the document spec that sealed the encrypted columns this spec's queries read
+    (a warehouse query over a document's table). The document port binds its ciphertext to
+    its spec name, so the read codec binds the same name to open it. ``None`` (default) keeps
+    the analytics plane's own label, for rows it ingested itself. Refused together with
+    :attr:`ingest`: ingest seals under the analytics label, which this read codec would not
+    open. When the policy sets ``binds_record_id``, every query must return the document's
+    ``id`` column as ``id``: id-bound ciphertext in a row without it is refused
+    (``core.crypto.record_id_required``)."""
 
     # ....................... #
 
@@ -137,14 +147,22 @@ def validate_analytics_spec(spec: AnalyticsSpec[Any, Any]) -> None:
         raise exc.configuration("AnalyticsSpec.queries must contain at least one named query.")
 
     if spec.encryption is not None:
-        if spec.encryption.binds_record_id:
+        if spec.encryption.binds_record_id and spec.sealed_by is None:
             raise exc.configuration(
-                "AnalyticsSpec.encryption cannot set binds_record_id: analytics rows have no "
-                "stable record id to bind into the AAD. Use a FieldEncryption without it."
+                f"AnalyticsSpec {spec.name!r} sets binds_record_id without sealed_by: rows the "
+                f"analytics plane ingests have no stable record id to bind into the AAD. Set "
+                f"sealed_by to read a document's id-bound rows, or drop binds_record_id."
             )
 
         spec.encryption.validate_fields_exist(
             stored_field_names_for(spec.read), spec_name=spec.name
+        )
+
+    if spec.sealed_by is not None and spec.ingest is not None:
+        raise exc.configuration(
+            f"AnalyticsSpec {spec.name!r} sets both sealed_by and ingest: ingested rows are "
+            f"sealed under the analytics label, but sealed_by makes reads open document "
+            f"{spec.sealed_by!r}'s. Split the document-backed reads into their own spec."
         )
 
     if not issubclass(spec.read, BaseModel):

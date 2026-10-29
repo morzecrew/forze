@@ -149,6 +149,8 @@ A handler reads `ctx.authn` / `ctx.tenancy` from the identity plane, resolved du
 
 The mock is faithful at the **port** boundary, but logic that lives *below* a port is not in it. If your app leans on database triggers, generated columns, `CHECK` constraints, cascade deletes, or `LISTEN`/`NOTIFY` — efficient, native, but invisible to the app — a mock-based test can't run it, and an invariant a trigger maintains will even *false-pass or false-fail* because the mock writes the rows but never fires the trigger. That logic belongs in an integration test against the real database (below). Keeping invariant logic above the port is what keeps it portable across adapters and testable without one.
 
+The mock search stands in for both an external index and an in-place search over a document table, so its query side accepts a spec's [`sealed_by`](../identity-tenancy-enc/encryption.md#document-fields); only its write side (search command and management) refuses it, as Meilisearch does. A `sealed_by` that doesn't match how the rows were written — by a document port, or by a search upsert — therefore fails at read time with `core.crypto.aead_auth_failed`, not at wiring.
+
 ## Integration testing with testcontainers
 
 For tests that need real infrastructure — or to exercise database-level logic the mock can't model — use testcontainers to spin up ephemeral databases:

@@ -1,7 +1,7 @@
 """Field-encryption policy: which record fields are sealed at rest, and how."""
 
 from collections.abc import Iterable
-from typing import final
+from typing import Any, final
 
 import attrs
 
@@ -22,6 +22,21 @@ def _field_set(value: str | Iterable[str]) -> frozenset[str]:
         return frozenset({value})
 
     return frozenset(value)
+
+
+# ....................... #
+
+
+def validate_sealed_by(_instance: Any, attribute: Any, value: str | None) -> None:
+    """attrs validator for a reader spec's ``sealed_by``: unset, or a document spec name.
+
+    The same rule as a query field name: a blank or whitespace-only string names nothing.
+    """
+
+    if value is not None and (not isinstance(value, str) or not value.strip()):  # pyright: ignore[reportUnnecessaryIsInstance]
+        raise exc.configuration(
+            f"{attribute.name} must be a non-empty document spec name, got {value!r}."
+        )
 
 
 # ....................... #
