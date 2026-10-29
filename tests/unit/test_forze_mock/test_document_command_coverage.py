@@ -658,7 +658,18 @@ class TestTouch:
                 await adapter.touch_many([a.id, b.id], revs=[a.rev, b.rev])
 
         assert excinfo.value.code == "revision_mismatch"
+        # Neither row written: each is still at the revision it had.
         assert (await adapter.touch(a.id, rev=a.rev)).name == "a"
+        assert (await adapter.touch(b.id, rev=b.rev + 1)).name == "b"
+
+    async def test_touch_many_needs_one_revision_per_id(self) -> None:
+        adapter = _plain_adapter(MockState())
+        a = await adapter.create(ThingCreate(name="a"))
+
+        with pytest.raises(CoreException) as excinfo:
+            await adapter.touch_many([a.id], revs=[a.rev, a.rev])
+
+        assert excinfo.value.kind is ExceptionKind.PRECONDITION
 
     async def test_a_strict_update_is_the_mock_s_only_kind(self) -> None:
         # No history, so every stale rev is refused: `merge=False` is accepted and changes

@@ -379,6 +379,24 @@ class TestMongoWriteGateway:
         assert err.value.kind is ExceptionKind.CONFLICT
         assert err.value.code == "mongo_ensure_bulk_miss"
 
+    @pytest.mark.asyncio
+    async def test_touch_many_needs_one_revision_per_key(self) -> None:
+        client = _build_client()
+        gw = MongoWriteGateway(
+            relation=("test_db", "docs"),
+            client=client,
+            read_gw=_build_read(client),
+            create_cmd_type=MyCreateDoc,
+            update_cmd_type=MyUpdateDoc,
+            model_type=MyDoc,
+            **_WRITE_CODECS,
+        )
+
+        with pytest.raises(CoreException) as err:
+            await gw.touch_many([uuid4()], revs=[1, 2])
+
+        assert err.value.kind is ExceptionKind.PRECONDITION
+
 class TestMongoWriteGatewayInsertReturnShape:
     """Insert paths decode the exact inserted payload instead of reading back.
 

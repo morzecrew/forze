@@ -520,3 +520,14 @@ async def test_upsert_wins_create_race_updates_existing() -> None:
 
     assert got.note == "patched"  # update applied to the raced-in row
     assert client.store[key][1]["name"] == "winner"
+
+
+
+@pytest.mark.asyncio
+async def test_touch_many_needs_one_revision_per_key() -> None:
+    write = _gateways(_FakeFirestore())
+
+    with pytest.raises(CoreException) as err:
+        await write.touch_many([uuid4()], revs=[1, 2])
+
+    assert _kind(err.value) is ExceptionKind.PRECONDITION
