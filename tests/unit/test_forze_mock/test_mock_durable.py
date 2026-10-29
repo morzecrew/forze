@@ -486,7 +486,13 @@ async def test_the_mock_coalesces_onto_the_unclaimed_run() -> None:
     )
 
 
-async def test_the_mock_answers_the_purge_window_and_the_races() -> None:
+async def test_the_mock_answers_the_purge_window_and_the_race_scenarios_serially() -> None:
+    """The mock store never suspends mid-call, so each gathered pair runs one after the other.
+
+    This pins only the answers the conformance tests compare the engines with; the races
+    themselves run against Postgres and Mongo there.
+    """
+
     from forze_mock.adapters.durable import MockDurableRunStore, MockDurableScheduleStore
     from tests.support.durable_conformance import (
         PURGE_WINDOW_OUTCOME,

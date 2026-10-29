@@ -38,7 +38,9 @@ _PAGE: Final[Path] = (
 _TABLE: Final[re.Pattern[str]] = re.compile(r"CREATE TABLE (\S+) \((.*?)\n\s*\);?", re.DOTALL)
 _INDEX: Final[re.Pattern[str]] = re.compile(r"CREATE INDEX ON (\S+) (\(.*?\)(?: WHERE \w+)?);")
 _MONGO_INDEX: Final[re.Pattern[str]] = re.compile(r"db\.(\S+?)\.createIndex\(([^()]*)\)")
-_UNIQUE_INDEX: Final[re.Pattern[str]] = re.compile(r"CREATE UNIQUE INDEX ON (\S+) (.*?);")
+_UNIQUE_INDEX: Final[re.Pattern[str]] = re.compile(
+    r"CREATE UNIQUE INDEX (?:CONCURRENTLY )?ON (\S+) (.*?);", re.DOTALL
+)
 
 
 def _words(text: str) -> str:
@@ -54,6 +56,15 @@ def _indexes(text: str) -> dict[str, list[str]]:
 
     for name, columns in _INDEX.findall(text):
         found.setdefault(name, []).append(_words(columns))
+
+    return found
+
+
+def _unique_indexes(text: str) -> dict[str, list[str]]:
+    found: dict[str, list[str]] = {}
+
+    for name, definition in _UNIQUE_INDEX.findall(text):
+        found.setdefault(name, []).append(_words(definition))
 
     return found
 
@@ -156,12 +167,14 @@ def test_every_statement_in_every_source_is_one_the_comparisons_read(source: str
 
     assert text.count("CREATE TABLE") == len(_TABLE.findall(text))
     assert text.count("CREATE INDEX") == len(_INDEX.findall(text))
+    assert text.count("CREATE UNIQUE INDEX") == len(_UNIQUE_INDEX.findall(text))
     assert text.count("createIndex") == len(_MONGO_INDEX.findall(text))
 
 
 def test_the_coalesce_index_reads_the_same_on_the_page_the_adapter_and_the_tests() -> None:
-    page = dict(_UNIQUE_INDEX.findall(_PAGE_TEXT))
-    adapter = dict(_UNIQUE_INDEX.findall(_doc(PostgresDurableRunStore)))
-    tests = dict(_UNIQUE_INDEX.findall(DURABLE_RUN_COALESCE_INDEX + ";"))
+    page = _unique_indexes(_PAGE_TEXT)["public.durable_run"]
+    adapter = _unique_indexes(_doc(PostgresDurableRunStore))["<relation>"]
+    tests = _unique_indexes(DURABLE_RUN_COALESCE_INDEX + ";")["{table}"]
 
-    assert page["public.durable_run"] == adapter["<relation>"] == tests["{table}"]
+    assert adapter == tests
+    assert page == adapter * 2  # the table's schema, then its migration

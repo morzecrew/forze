@@ -1347,15 +1347,22 @@ async def run_purge_scenario(
         assert claimed is not None
         return run.run_id, claimed.attempts
 
+    # The batches go oldest landing first, and Mongo keeps milliseconds: a tie would let
+    # it pick either run, so each landing below waits out the last one's millisecond.
+    landing_gap = 0.002
+
     done, fence = await held("done", idempotency_key="k")
     await _journaled(step_of, done)
     await store.complete(done, output_json={"ok": True}, fence=fence)
+    await asyncio.sleep(landing_gap)
 
     failed, fence = await held("failed")
     await store.fail(failed, error="boom", fence=fence)
+    await asyncio.sleep(landing_gap)
 
     timed, fence = await held("timed")
     await store.mark_timed_out(timed, error="deadline", fence=fence)
+    await asyncio.sleep(landing_gap)
 
     cancelled = (await store.enqueue("cancelled", input_json=None)).run_id
     await admin.request_cancel(cancelled)
