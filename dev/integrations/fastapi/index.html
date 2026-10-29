@@ -3804,6 +3804,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Run the runtime from lifespan">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#build-the-runtime-at-startup" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Build the runtime at startup
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -3847,6 +3864,23 @@
       </span>
     </span>
   </a>
+  
+    <nav class="md-nav" aria-label="Graceful shutdown under uvicorn">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#several-workers-or-a-runtime-built-at-startup" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Several workers, or a runtime built at startup
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
   
 </li>
       
@@ -6653,6 +6687,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Run the runtime from lifespan">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#build-the-runtime-at-startup" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Build the runtime at startup
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -6696,6 +6747,23 @@
       </span>
     </span>
   </a>
+  
+    <nav class="md-nav" aria-label="Graceful shutdown under uvicorn">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#several-workers-or-a-runtime-built-at-startup" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Several workers, or a runtime built at startup
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
   
 </li>
       
@@ -6932,9 +7000,41 @@ reset) on app shutdown, even if the app's lifetime ends with an error:</p>
 <p><code>build_runtime</code> assembles the runtime in one call — it builds and freezes the
 deps registry and the lifecycle plan and returns the
 <a href="../../core-concepts/runtime/"><code>ExecutionRuntime</code></a>.</p>
+<h3 id="build-the-runtime-at-startup">Build the runtime at startup<a class="headerlink" href="#build-the-runtime-at-startup" title="Permanent link">&para;</a></h3>
+<p>Pass <code>build</code> instead of a runtime, and the lifespan builds it at startup and drops
+it at shutdown. Use it when an app factory must import without the environment its
+runtime needs, such as secrets to validate or clients to connect. Use it too when
+every worker process needs its own runtime. The routes are wired before that
+runtime exists, so wire them to the lifespan, which hands them the runtime once it
+is built:</p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">fastapi</span><span class="w"> </span><span class="kn">import</span> <span class="n">APIRouter</span><span class="p">,</span> <span class="n">FastAPI</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">forze.application.execution</span><span class="w"> </span><span class="kn">import</span> <span class="n">build_runtime</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">forze_fastapi</span><span class="w"> </span><span class="kn">import</span> <span class="n">runtime_lifespan</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">forze_fastapi.middlewares</span><span class="w"> </span><span class="kn">import</span> <span class="n">InvocationMetadataMiddleware</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">forze_fastapi.routes</span><span class="w"> </span><span class="kn">import</span> <span class="n">attach_readiness_route</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">create_app</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="n">FastAPI</span><span class="p">:</span>
+    <span class="n">lifespan</span> <span class="o">=</span> <span class="n">runtime_lifespan</span><span class="p">(</span><span class="n">build</span><span class="o">=</span><span class="k">lambda</span><span class="p">:</span> <span class="n">build_runtime</span><span class="p">(</span><span class="o">...</span><span class="p">))</span>
+    <span class="n">app</span> <span class="o">=</span> <span class="n">FastAPI</span><span class="p">(</span><span class="n">title</span><span class="o">=</span><span class="s2">"Orders API"</span><span class="p">,</span> <span class="n">lifespan</span><span class="o">=</span><span class="n">lifespan</span><span class="p">)</span>
+    <span class="n">app</span><span class="o">.</span><span class="n">add_middleware</span><span class="p">(</span><span class="n">InvocationMetadataMiddleware</span><span class="p">,</span> <span class="n">ctx_dep</span><span class="o">=</span><span class="n">lifespan</span><span class="o">.</span><span class="n">get_context</span><span class="p">)</span>
+
+    <span class="n">router</span> <span class="o">=</span> <span class="n">APIRouter</span><span class="p">()</span>
+    <span class="n">attach_readiness_route</span><span class="p">(</span><span class="n">router</span><span class="p">,</span> <span class="n">lifespan</span><span class="o">.</span><span class="n">runtime</span><span class="p">)</span>
+    <span class="n">app</span><span class="o">.</span><span class="n">include_router</span><span class="p">(</span><span class="n">router</span><span class="p">)</span>
+
+    <span class="k">return</span> <span class="n">app</span>
+</code></pre></div>
+<p><code>lifespan.get_context</code> is the <code>ctx_dep</code> for middlewares and generated routes, and
+<code>lifespan.runtime</code> is the runtime provider that <code>attach_readiness_route</code> takes. A
+<code>build</code> that raises fails the startup, so the server never serves. The lifespan
+holds one runtime at a time. Entered again while it runs, it refuses with
+<code>configuration</code> rather than build a second one. Entered after its runtime was torn
+down, it builds a new one.</p>
 <h2 id="bind-request-context">Bind request context<a class="headerlink" href="#bind-request-context" title="Permanent link">&para;</a></h2>
 <p>Two ASGI middlewares attach the per-request context, both given a factory that
-returns the current <code>ExecutionContext</code> — <code>runtime.get_context</code> is that factory:</p>
+returns the current <code>ExecutionContext</code> — <code>runtime.get_context</code> is that factory
+(<code>lifespan.get_context</code> when the lifespan <a href="#build-the-runtime-at-startup">builds the runtime</a>):</p>
 <div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">forze_fastapi.middlewares</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
     <span class="n">InvocationMetadataMiddleware</span><span class="p">,</span>
     <span class="n">SecurityContextMiddleware</span><span class="p">,</span>
@@ -7227,7 +7327,48 @@ event loop closes and cancels the lifespan — at the end of <code>asyncio.run</
 <li><strong>No re-raised signal.</strong> Uvicorn raises the signal again once its server
   returns; <code>serve_uvicorn</code> does not, so your process decides how it exits.</li>
 </ul>
-<p>An app run as <code>uvicorn app:app</code> keeps uvicorn's handling, and pays for it:</p>
+<h3 id="several-workers-or-a-runtime-built-at-startup">Several workers, or a runtime built at startup<a class="headerlink" href="#several-workers-or-a-runtime-built-at-startup" title="Permanent link">&para;</a></h3>
+<p><code>serve_uvicorn</code> serves one process, with a runtime built before the app. Under
+<code>uvicorn --workers N</code>, or gunicorn with uvicorn's worker class, every worker runs
+uvicorn's own server. And a runtime that <code>build</code> makes does not exist until the
+app starts. In both cases, give the lifespan a <code>drain_budget</code> instead:</p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">datetime</span><span class="w"> </span><span class="kn">import</span> <span class="n">timedelta</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">forze.application.execution</span><span class="w"> </span><span class="kn">import</span> <span class="n">build_runtime</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">forze_fastapi</span><span class="w"> </span><span class="kn">import</span> <span class="n">runtime_lifespan</span>
+
+<span class="n">lifespan</span> <span class="o">=</span> <span class="n">runtime_lifespan</span><span class="p">(</span>
+    <span class="n">build</span><span class="o">=</span><span class="k">lambda</span><span class="p">:</span> <span class="n">build_runtime</span><span class="p">(</span><span class="o">...</span><span class="p">),</span>
+    <span class="n">drain_budget</span><span class="o">=</span><span class="n">timedelta</span><span class="p">(</span><span class="n">seconds</span><span class="o">=</span><span class="mi">5</span><span class="p">),</span>
+    <span class="n">announce_delay</span><span class="o">=</span><span class="n">timedelta</span><span class="p">(</span><span class="n">seconds</span><span class="o">=</span><span class="mi">3</span><span class="p">),</span>
+<span class="p">)</span>
+</code></pre></div>
+<div class="highlight"><pre><span></span><code>uvicorn<span class="w"> </span>orders.app:create_app<span class="w"> </span>--factory<span class="w"> </span>--workers<span class="w"> </span><span class="m">4</span><span class="w"> </span>--timeout-graceful-shutdown<span class="w"> </span><span class="m">5</span>
+</code></pre></div>
+<p>At startup the lifespan takes over the signal handler of the uvicorn server that
+runs it, in every worker. The supervisor passes <code>SIGTERM</code> on to each worker. Each
+worker then drains its own runtime as <code>serve_uvicorn</code> would: readiness fails and
+the drain phases run while the worker still serves. Only then does it let its
+server exit: stop accepting, finish in-flight requests within the graceful timeout,
+and tear down. A connection that arrives after that is not served. It is refused,
+or closed unanswered when the supervisor exits.</p>
+<p>The signals behave as under <code>serve_uvicorn</code>, and so does a signal during startup.
+Each worker logs the figures of its worst-case exit at startup. The workers drain
+side by side, so that figure is the whole deployment's too. Unless the server sets a
+graceful timeout, the lifespan sets it to 10 seconds.</p>
+<ul>
+<li><strong>Gunicorn.</strong> Its uvicorn worker runs the same server, so the same lifespan drains
+  there. Set gunicorn's <code>--graceful-timeout</code> above the logged worst case: past it,
+  the master kills the worker.</li>
+<li><strong>Under <code>serve_uvicorn</code>,</strong> the lifespan leaves the signals to <code>serve_uvicorn</code>.</li>
+<li><strong>Under another server,</strong> or a uvicorn off the main thread that installs no
+  handler, the lifespan logs a warning. The drain phases then run only in the
+  lifespan shutdown, after the server stopped accepting.</li>
+<li><strong>A lifespan that does not use <code>runtime_lifespan</code></strong> wraps its runtime's scope in
+  <code>with drain_ahead_of_uvicorn(runtime, drain_budget=..., announce_delay=...):</code>.</li>
+</ul>
+<p>An app run as <code>uvicorn app:app</code> without a <code>drain_budget</code> keeps uvicorn's handling,
+and pays for it:</p>
 <ul>
 <li><strong>WebSockets close at once</strong> with code 1012 when the server stops, before the
   lifespan shutdown runs the drain phases that would have closed them gently.</li>
@@ -7544,11 +7685,15 @@ runs them. The surface, at a glance:</p>
 <tbody>
 <tr>
 <td><code>runtime_lifespan</code></td>
-<td>run the runtime's lifecycle from the app lifespan</td>
+<td>run the runtime's lifecycle from the app lifespan; build the runtime at startup; drain it on <code>SIGTERM</code> in every uvicorn worker</td>
 </tr>
 <tr>
 <td><code>serve_uvicorn</code></td>
 <td>an embedded uvicorn whose <code>SIGTERM</code> drains the runtime before the server stops</td>
+</tr>
+<tr>
+<td><code>drain_ahead_of_uvicorn</code></td>
+<td>the <code>SIGTERM</code> drain <code>runtime_lifespan</code> installs, for a lifespan that does not use <code>runtime_lifespan</code></td>
 </tr>
 <tr>
 <td><code>InvocationMetadataMiddleware</code> / <code>SecurityContextMiddleware</code></td>

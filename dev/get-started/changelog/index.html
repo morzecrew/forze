@@ -10251,6 +10251,12 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <p><strong><code>attach_readiness_route</code> takes a runtime provider.</strong> Pass a zero-argument callable returning the runtime, or <code>None</code> before it exists; it is asked on every request. No runtime, or a provider that raises, answers <code>503 unavailable</code>.</p>
 </li>
 <li>
+<p><strong><code>runtime_lifespan(build=...)</code> builds the runtime when the app starts.</strong> An app factory then imports without the runtime's environment, and each worker process builds its own. Wire routes with <code>ctx_dep=lifespan.get_context</code> and the probe with <code>lifespan.runtime</code>; a build that raises fails the startup.</p>
+</li>
+<li>
+<p><strong><code>runtime_lifespan(drain_budget=...)</code> drains on <code>SIGTERM</code> in every uvicorn worker.</strong> Under <code>uvicorn --workers N</code> or gunicorn's uvicorn worker, each worker drains its own runtime while it still serves, then lets its server exit. An app that does not use <code>runtime_lifespan</code> gets the same from <code>drain_ahead_of_uvicorn</code>.</p>
+</li>
+<li>
 <p><strong><code>bind_max_in_size</code> raises the <code>$in</code> size limit for one block of trusted code.</strong> Application code matching an id list it built itself no longer chunks it under the spec's limit, which still bounds every caller-supplied filter. A backend's own cap, such as Firestore's 30, still applies.</p>
 </li>
 <li>

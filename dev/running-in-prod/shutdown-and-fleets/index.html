@@ -7001,27 +7001,16 @@ takes care of itself: routing stops, in-flight work drains, teardown runs.</p>
 <p>An app that builds its runtime inside the FastAPI lifespan has no runtime yet when
 its factory attaches routes. Pass a zero-argument callable instead: it is asked on
 every request, and returning <code>None</code> answers <code>503 unavailable</code>, as a runtime with no
-open scope does:</p>
-<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">collections.abc</span><span class="w"> </span><span class="kn">import</span> <span class="n">AsyncIterator</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">contextlib</span><span class="w"> </span><span class="kn">import</span> <span class="n">asynccontextmanager</span>
-
-<span class="kn">from</span><span class="w"> </span><span class="nn">fastapi</span><span class="w"> </span><span class="kn">import</span> <span class="n">APIRouter</span><span class="p">,</span> <span class="n">FastAPI</span>
+open scope does. <code>runtime_lifespan(build=...)</code> provides one:</p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">fastapi</span><span class="w"> </span><span class="kn">import</span> <span class="n">APIRouter</span><span class="p">,</span> <span class="n">FastAPI</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">forze.application.execution</span><span class="w"> </span><span class="kn">import</span> <span class="n">build_runtime</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">forze_fastapi</span><span class="w"> </span><span class="kn">import</span> <span class="n">runtime_lifespan</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">forze_fastapi.routes</span><span class="w"> </span><span class="kn">import</span> <span class="n">attach_readiness_route</span>
 
-
-<span class="nd">@asynccontextmanager</span>
-<span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">lifespan</span><span class="p">(</span><span class="n">app</span><span class="p">:</span> <span class="n">FastAPI</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">AsyncIterator</span><span class="p">[</span><span class="kc">None</span><span class="p">]:</span>
-    <span class="n">app</span><span class="o">.</span><span class="n">state</span><span class="o">.</span><span class="n">runtime</span> <span class="o">=</span> <span class="n">runtime</span> <span class="o">=</span> <span class="n">build_runtime</span><span class="p">(</span><span class="o">...</span><span class="p">)</span>
-
-    <span class="k">async</span> <span class="k">with</span> <span class="n">runtime_lifespan</span><span class="p">(</span><span class="n">runtime</span><span class="p">)(</span><span class="n">app</span><span class="p">):</span>
-        <span class="k">yield</span>
-
-
+<span class="n">lifespan</span> <span class="o">=</span> <span class="n">runtime_lifespan</span><span class="p">(</span><span class="n">build</span><span class="o">=</span><span class="k">lambda</span><span class="p">:</span> <span class="n">build_runtime</span><span class="p">(</span><span class="o">...</span><span class="p">))</span>
 <span class="n">app</span> <span class="o">=</span> <span class="n">FastAPI</span><span class="p">(</span><span class="n">lifespan</span><span class="o">=</span><span class="n">lifespan</span><span class="p">)</span>
 <span class="n">router</span> <span class="o">=</span> <span class="n">APIRouter</span><span class="p">()</span>
-<span class="n">attach_readiness_route</span><span class="p">(</span><span class="n">router</span><span class="p">,</span> <span class="k">lambda</span><span class="p">:</span> <span class="nb">getattr</span><span class="p">(</span><span class="n">app</span><span class="o">.</span><span class="n">state</span><span class="p">,</span> <span class="s2">"runtime"</span><span class="p">,</span> <span class="kc">None</span><span class="p">))</span>
+<span class="n">attach_readiness_route</span><span class="p">(</span><span class="n">router</span><span class="p">,</span> <span class="n">lifespan</span><span class="o">.</span><span class="n">runtime</span><span class="p">)</span>
 <span class="n">app</span><span class="o">.</span><span class="n">include_router</span><span class="p">(</span><span class="n">router</span><span class="p">)</span>
 </code></pre></div>
 <p>A callable that raises answers <code>unavailable</code> too. Its exception is logged and never
@@ -7141,7 +7130,10 @@ receives <code>SIGTERM</code>. Withdrawing readiness never refuses an operation:
 means operations are refused, stays false until shutdown closes the gate.</p>
 <p>An HTTP server needs its signal handling to call <code>drain()</code> before it stops
 accepting. For uvicorn that is <code>serve_uvicorn</code> — see
-<a href="../../integrations/fastapi/#graceful-shutdown-under-uvicorn">Graceful shutdown under uvicorn</a>.</p>
+<a href="../../integrations/fastapi/#graceful-shutdown-under-uvicorn">Graceful shutdown under uvicorn</a>.
+Under several uvicorn workers, or with a runtime the lifespan builds, it is
+<code>runtime_lifespan(..., drain_budget=...)</code> — see
+<a href="../../integrations/fastapi/#several-workers-or-a-runtime-built-at-startup">Several workers</a>.</p>
 <p>A process that serves no HTTP — the outbox relay, a consumer, a durable runner —
 needs the same, and has no server to provide it. Hold its scope with
 <code>serve_runtime</code>, beside the <a href="#readiness">probe listener</a>:</p>
@@ -7251,7 +7243,8 @@ lifecycle step: 10 for the drain, 1, 10 for <code>drain_timeout</code> and 3 × 
 take a fraction of it, but the grace period has to cover the one that does not. A budget that does not fit gets the process killed
 in the middle of a phase or of teardown — exactly the exit this ordering exists
 to avoid. Shrink the timeouts, raise the grace period, or both, with headroom.
-<code>serve_uvicorn</code> logs this sum, figure by figure, when the server starts.</p>
+<code>serve_uvicorn</code> logs this sum, figure by figure, when the server starts, and so
+does <code>runtime_lifespan</code> with a <code>drain_budget</code>, in each worker.</p>
 <h2 id="declare-the-fleet-posture">Declare the fleet posture<a class="headerlink" href="#declare-the-fleet-posture" title="Permanent link">&para;</a></h2>
 <p>Some startup work is safe in one process and a stampede in twenty — N replicas
 all running <code>CREATE INDEX</code> or a data migration at the same moment. Declaring
