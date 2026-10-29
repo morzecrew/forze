@@ -40,8 +40,11 @@ class TestBuildStorageRegistry:
         assert registry_has_handler(reg, ns.key(StorageKernelOp.DOWNLOAD))
         assert registry_has_handler(reg, ns.key(StorageKernelOp.DELETE))
 
-    def test_only_presign_download_is_sensitive(self) -> None:
-        # A query minting a bearer credential: every generated surface must refuse it.
+    def test_presign_download_is_sensitive_and_the_command_presigns_are_not(self) -> None:
+        # presign_download is a query minting a bearer credential, and read-only defaults
+        # expose every query, so every generated surface must refuse it. presign_upload and
+        # presign_part are commands: exposing them takes include_writes or a route opt-in,
+        # and the generated direct-upload flow needs them.
         cat = build_storage_registry(_FILES).freeze().catalog()
         sensitive = {str(op) for op, entry in cat.items() if entry.descriptor.sensitive}
 
@@ -160,3 +163,32 @@ class TestStreamingReadHandlers:
         assert ranged.data == payload[2:6]  # end is inclusive
         assert ranged.content_range == "bytes 2-5/10"
         assert ranged.total_size == len(payload)
+
+
+class TestPresignDownloadTrace:
+    """A traced presign_download records the call, never the URL it minted."""
+
+    @pytest.mark.asyncio
+    async def test_the_url_reaches_no_trace_event(self) -> None:
+        from forze.application.execution import DepsRegistry, ExecutionContext
+        from forze.application.execution.operations import run_operation
+        from forze_kits.aggregates.storage import PresignDownloadRequestDTO
+        from forze_mock import MockDepsModule
+
+        state = MockState()
+        deps = (
+            DepsRegistry.from_modules(lambda: MockDepsModule(state=state)())
+            .with_tracing(runtime=True, capture_values=True)
+            .freeze()
+            .resolve()
+        )
+        ctx = ExecutionContext(deps=deps)
+        registry = build_storage_registry(_FILES).freeze()
+        args = PresignDownloadRequestDTO(key="docs/report.pdf", expires_in=300)
+
+        result = await run_operation(registry, "files.presign_download", args, ctx)
+        trace = ctx.deps.runtime_trace()
+
+        assert trace is not None
+        assert any(event.result for event in trace.events)  # capture did record values
+        assert result.url not in repr(trace.events)

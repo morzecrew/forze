@@ -86,13 +86,28 @@ class TestDump:
         url = PresignedUrl(
             url="https://bucket/k?X-Amz-Signature=abc", method="GET", expires_at=expires_at
         )
+        masked = {"url": "<redacted>", "method": "GET", "headers": {}}
 
-        assert TracingPortProxy._dump(url) == {
-            "url": "<redacted>",
-            "method": "GET",
-            "expires_at": expires_at,
-            "headers": {},
-        }
+        # JSON mode keeps the expiry portable; python mode keeps it native, as for any value.
+        assert TracingPortProxy._dump(url) == {**masked, "expires_at": "2026-01-01T00:00:00+00:00"}
+        assert TracingPortProxy._dump(url, mode="python") == {**masked, "expires_at": expires_at}
+
+    def test_presigned_url_inside_a_mapping_is_redacted(self) -> None:
+        from datetime import UTC, datetime
+
+        from forze.application.contracts.storage import PresignedUrl
+
+        url = PresignedUrl(
+            url="https://bucket/k?X-Amz-Signature=abc",
+            method="PUT",
+            expires_at=datetime(2026, 1, 1, tzinfo=UTC),
+        )
+
+        dumped = TracingPortProxy._dump({"part": 1, "urls": {"first": url}})
+
+        assert dumped is not None
+        assert dumped["part"] == 1
+        assert dumped["urls"]["first"]["url"] == "<redacted>"
 
     def test_mapping(self) -> None:
         assert TracingPortProxy._dump({"k": 1}) == {"k": 1}

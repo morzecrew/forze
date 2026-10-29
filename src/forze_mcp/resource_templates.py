@@ -157,9 +157,8 @@ def register_resource_templates(
         if descriptor is not None and descriptor.sensitive:
             raise exc.configuration(
                 f"Refusing to register resource template for operation "
-                f"{template.op!r}: it projects a sensitive read model (its spec "
-                "is marked sensitive=True; credential/secret material must not "
-                "be exposed on generated external surfaces).",
+                f"{template.op!r}: it is sensitive (its result carries credential "
+                "or secret material, which a generated surface must not expose).",
             )
 
         if descriptor is None or descriptor.input_type is None:

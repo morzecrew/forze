@@ -259,13 +259,33 @@ The browser flow for a resumable multipart upload:
 `presign_download` gets no generated route. Its result is a bearer credential, so
 it is marked sensitive, and generated routes, MCP, agent tools and `forze ops`
 refuse it; naming it in `include` is a configuration error. Serve it from your
-own route, behind the same authn and authz as the download route:
+own route, and guard the operation in the registry as you guard `download`:
 
 ```python
 from fastapi import Depends
 
 from forze.application.execution.operations import run_operation
-from forze_kits.aggregates.storage import PresignDownloadRequestDTO, PresignedUrlDTO
+from forze.application.hooks.authn import AuthnRequired
+from forze.application.hooks.authz import AuthzBeforeAuthorize
+from forze_kits.aggregates.storage import (
+    PresignDownloadRequestDTO,
+    PresignedUrlDTO,
+    StorageKernelOp,
+    build_storage_registry,
+)
+
+ns = storage_spec.default_namespace
+storage_registry = (
+    build_storage_registry(storage_spec)
+    .bind(ns.key(StorageKernelOp.PRESIGN_DOWNLOAD))
+    .bind_outer()
+    .before(
+        AuthnRequired().to_step(),
+        AuthzBeforeAuthorize(spec=AUTHZ, action="files:presign_download").to_step(),
+    )
+    .finish(deep=True)
+    .freeze()
+)
 
 
 @files_router.post("/presign/download")
@@ -274,6 +294,11 @@ async def presign_download(
 ) -> PresignedUrlDTO:
     return await run_operation(storage_registry, "files.presign_download", body, ctx)
 ```
+
+`presign_upload` and `presign_part` keep their generated routes. They are command
+operations, so read-only defaults never expose them: MCP and `forze ops` need
+`include_writes=True`, and a route exists only where you attach one. The direct-upload
+flow above needs them.
 
 !!! warning "Guard these endpoints — and never log the URL"
 

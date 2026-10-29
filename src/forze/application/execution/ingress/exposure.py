@@ -76,7 +76,7 @@ def refuse_sensitive(
     *,
     surface: str,
 ) -> None:
-    """Refuse *ops* when one projects a sensitive read model.
+    """Refuse *ops* when one is sensitive (its result carries credential or secret material).
 
     Called before anything is exposed, so a credential-bearing read model never leaks
     through a generated surface.
@@ -93,8 +93,8 @@ def refuse_sensitive(
 
         if descriptor is not None and descriptor.sensitive:
             raise exc.configuration(
-                f"Refusing to register {surface}s: operation '{op}' projects a "
-                "sensitive read model (its spec is marked sensitive=True; "
-                "credential/secret material must not be exposed on generated "
-                "external surfaces)"
+                f"Refusing to register {surface}s: operation '{op}' is sensitive (its "
+                "result carries credential or secret material, which a generated surface "
+                "must not expose). Leave it out with an operations= allowlist, or serve "
+                "it from your own guarded route"
             )

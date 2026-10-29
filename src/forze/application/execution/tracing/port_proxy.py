@@ -66,6 +66,24 @@ def _default_tx_id() -> int | None:
     return None
 
 
+def _mask_presigned(value: Any, mode: str) -> Any:
+    """*value* with each :class:`PresignedUrl` in it, through mappings, reduced to its shape."""
+
+    if isinstance(value, PresignedUrl):
+        # The URL is a bearer credential: a trace keeps its shape, never the URL itself. The
+        # headers stay: they carry only Content-Type and SSE parameters, never a signed token.
+        expires_at = value.expires_at.isoformat() if mode == "json" else value.expires_at
+        return {**attrs.asdict(value), "url": REDACTED, "expires_at": expires_at}
+
+    if isinstance(value, Mapping):
+        return {
+            key: _mask_presigned(item, mode)
+            for key, item in value.items()  # pyright: ignore[reportUnknownVariableType]
+        }
+
+    return value
+
+
 # ....................... #
 
 
@@ -177,8 +195,7 @@ class TracingPortProxy(PortProxy):
             return None
 
         if isinstance(value, PresignedUrl):
-            # The URL is a bearer credential: a trace keeps its shape, never the URL itself.
-            return {**attrs.asdict(value), "url": "<redacted>"}
+            return _mask_presigned(value, mode)
 
         dump = getattr(value, "model_dump", None)
 
@@ -193,9 +210,7 @@ class TracingPortProxy(PortProxy):
             data = attrs.asdict(value)
 
         elif isinstance(value, Mapping):
-            data = dict(  # pyright: ignore[reportUnknownVariableType]
-                value  # pyright: ignore[reportUnknownArgumentType]
-            )
+            data = _mask_presigned(value, mode)
 
         else:
             return None

@@ -164,6 +164,9 @@ def build_storage_registry(
                 ),
                 # The result is a bearer credential: generated surfaces (MCP, agent tools,
                 # generated routes, `forze ops`) refuse it; serve it from your own route.
+                # PRESIGN_UPLOAD / PRESIGN_PART stay unmarked: they are commands, so
+                # read-only defaults never expose them (that takes include_writes or a
+                # route opt-in), and the generated direct-upload flow needs them.
                 sensitive=True,
             ),
             StorageKernelOp.PRESIGN_UPLOAD: OperationDescriptor(

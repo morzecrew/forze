@@ -651,7 +651,7 @@ class TestSensitiveSpecRefusal:
         spec, registry = self._sensitive_registry()
         router = APIRouter(prefix="/notes")
 
-        with pytest.raises(CoreException, match="sensitive") as e:
+        with pytest.raises(CoreException, match="is sensitive.*include=") as e:
             attach_document_routes(
                 router,
                 registry=registry,

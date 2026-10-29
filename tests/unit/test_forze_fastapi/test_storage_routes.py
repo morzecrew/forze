@@ -700,9 +700,10 @@ class TestStoragePresignRoutes:
         with pytest.raises(CoreException, match="presign_download"):
             _build_app("rest", include={StorageKernelOp.PRESIGN_DOWNLOAD})
 
-    def test_hand_written_presign_download_route(self) -> None:
+    @staticmethod
+    def _presign_download(registry: OperationRegistry) -> Any:
         # The route the docs show in place of the generated one.
-        registry = build_storage_registry(StorageSpec(name="files")).freeze()
+        frozen = registry.freeze()
 
         def ctx_dep():
             return context_from_modules(MockDepsModule(state=MockState()))
@@ -713,19 +714,41 @@ class TestStoragePresignRoutes:
         async def presign_download(
             body: PresignDownloadRequestDTO, ctx=Depends(ctx_dep)
         ) -> PresignedUrlDTO:
-            return await run_operation(registry, "files.presign_download", body, ctx)
+            return await run_operation(frozen, "files.presign_download", body, ctx)
 
         app = FastAPI()
         app.include_router(router)
+        register_exception_handlers(app)
 
-        resp = TestClient(app).post(
+        return TestClient(app).post(
             "/files/presign/download",
             json={"key": "docs/report.pdf", "expires_in": 300},
         )
 
+    def test_hand_written_presign_download_route(self) -> None:
+        resp = self._presign_download(build_storage_registry(StorageSpec(name="files")))
+
         assert resp.status_code == 200
         assert resp.json()["method"] == "GET"
         assert "docs/report.pdf" in resp.json()["url"]
+
+    def test_hand_written_presign_download_route_runs_the_registry_guard(self) -> None:
+        # The guard the docs bind on the operation, not on the route.
+        from forze.application.hooks.authn import AuthnRequired
+
+        spec = StorageSpec(name="files")
+        registry = (
+            build_storage_registry(spec)
+            .bind(spec.default_namespace.key(StorageKernelOp.PRESIGN_DOWNLOAD))
+            .bind_outer()
+            .before(AuthnRequired().to_step())
+            .finish(deep=True)
+        )
+
+        resp = self._presign_download(registry)
+
+        assert resp.status_code == 401
+        assert "url" not in resp.json()
 
     def test_presign_upload_returns_put_url_and_headers(self) -> None:
         client = TestClient(_build_app("rest"))

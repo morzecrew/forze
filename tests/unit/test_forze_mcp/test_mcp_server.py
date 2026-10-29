@@ -800,6 +800,7 @@ class TestSensitiveRefusal:
             register_tools(FastMCP("files"), reg, _ctx_factory)
 
         assert e.value.kind.value == "configuration"
+        assert "operations= allowlist" in e.value.summary
 
     def test_storage_registry_registers_with_an_allowlist(self) -> None:
         from forze.application.contracts.storage import StorageSpec
