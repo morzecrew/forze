@@ -138,3 +138,15 @@ async def test_a_coalescing_submit_that_keeps_losing_records_its_own_run() -> No
     assert run.input_json == {"n": 2}
     # Unjoinable: the slot belongs to the run that keeps being claimed and replaced.
     assert "coalesce_key" not in inserted[0]
+
+
+async def test_a_coalescing_submit_still_raises_any_other_failure() -> None:
+    client = _ConflictingClient(
+        existing=None,
+        error=CoreException.infrastructure("Mongo is unreachable."),
+    )
+
+    with pytest.raises(CoreException) as ei:
+        await _store(client).enqueue("fn", input_json=None, coalesce_key="x")
+
+    assert ei.value.kind == ExceptionKind.INFRASTRUCTURE

@@ -651,6 +651,7 @@ async def test_concurrent_purges_of_one_batch_delete_each_run_once(
             steps, {"_id": f"{run.run_id}|s{index}", "run_id": run.run_id, "step_id": "s1"}
         )
 
+    await asyncio.sleep(0.002)  # Mongo keeps milliseconds, the purge bound too
     purged = await asyncio.gather(
         store.purge_finished(timedelta(microseconds=1)),
         store.purge_finished(timedelta(microseconds=1)),
@@ -658,3 +659,43 @@ async def test_concurrent_purges_of_one_batch_delete_each_run_once(
 
     assert sum(purged) == 5
     assert await mongo_client.find_many(steps, {}) == []
+
+
+async def test_a_store_that_journals_nothing_purges_without_a_step_collection(
+    mongo_client: MongoClient, run_collection: tuple[str, str]
+) -> None:
+    store = MongoDurableRunStore(
+        client=mongo_client,
+        config=MongoDurableRunConfig(collection=run_collection),
+        journal=False,
+    )
+    run = await store.enqueue("fn", input_json=None)
+    claimed = await store.begin(run.run_id, lease_for=timedelta(minutes=5))
+    assert claimed is not None
+    await store.complete(run.run_id, output_json=None, fence=claimed.attempts)
+    await asyncio.sleep(0.002)  # Mongo keeps milliseconds, the purge bound too
+
+    assert await store.purge_finished(timedelta(microseconds=1)) == 1
+    assert await store.load(run.run_id) is None
+
+
+async def test_a_purge_unmarks_the_steps_of_runs_that_all_survived(
+    mongo_client: MongoClient, run_collection: tuple[str, str]
+) -> None:
+    db_name = run_collection[0]
+    step_collection = (db_name, f"durable_step_{uuid4().hex[:8]}")
+    store = MongoDurableRunStore(
+        client=mongo_client,
+        config=MongoDurableRunConfig(collection=run_collection),
+        step_config=MongoDurableStepConfig(collection=step_collection),
+    )
+    kept = await store.enqueue("fn", input_json=None)
+    steps = await mongo_client.collection(step_collection[1], db_name=db_name)
+    await mongo_client.insert_one(
+        steps, {"_id": "kept|s1", "run_id": kept.run_id, "step_id": "s1", "purge_pending": True}
+    )
+
+    assert await store.purge_finished(timedelta(days=1)) == 0
+
+    left = await mongo_client.find_many(steps, {})
+    assert [(doc["_id"], doc.get("purge_pending")) for doc in left] == [("kept|s1", None)]

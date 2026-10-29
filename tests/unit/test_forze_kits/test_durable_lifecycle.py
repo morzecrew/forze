@@ -475,6 +475,83 @@ class TestRetention:
 
         assert raised.value.kind is ExceptionKind.CONFIGURATION
 
+    @staticmethod
+    async def _ended(work: Any, tenants: Any, *, settle: float) -> bool:
+        """Run the loop against an admin whose purge awaits *work(ctx)*; return if it ended."""
+
+        class _Admin:
+            def __init__(self, ctx: Any) -> None:
+                self.ctx = ctx
+
+            async def purge_finished(self, *_args: Any, **_kwargs: Any) -> int:
+                return await work(self.ctx)
+
+        startup = _DurableRetentionBackgroundStartup(
+            older_than=timedelta(days=1),
+            statuses=(DurableRunStatus.COMPLETED,),
+            interval=timedelta(milliseconds=10),
+            jitter=0.0,
+            limit=5,
+            max_batches_per_tick=1,
+            tenants=tenants,
+        )
+        ctx = context_from_modules(MockDepsModule())
+
+        with (
+            patch.object(lifecycle_mod, "logger"),
+            patch.object(lifecycle_mod, "resolve_durable_run_admin", side_effect=_Admin),
+        ):
+            assert startup.task is None
+            await startup(ctx)
+            await startup(ctx)  # a duplicate startup is ignored
+            assert startup.loop_name == "durable_retention"
+
+            try:
+                await asyncio.wait({startup.task}, timeout=settle)  # type: ignore[arg-type]
+                return startup.task.done()  # type: ignore[union-attr]
+
+            finally:
+                await startup.stop(deadline=asyncio.get_running_loop().time() + 1)
+
+    @pytest.mark.parametrize("shard", [None, [uuid4(), uuid4()]], ids=["unbound", "sharded"])
+    async def test_a_wiring_error_ends_the_loop(self, shard: list[Any] | None) -> None:
+        broken = AsyncMock(
+            side_effect=exc.configuration("no keyring", code=PAYLOAD_CIPHER_MISSING_CODE)
+        )
+
+        assert await self._ended(broken, None if shard is None else lambda: shard, settle=0.5)
+        assert broken.await_count == 1
+
+    async def test_one_tenants_configuration_error_leaves_the_shard_running(self) -> None:
+        a, b = uuid4(), uuid4()
+        seen: list[Any] = []
+
+        async def work(ctx: Any) -> int:
+            tenant = ctx.inv_ctx.get_tenant().tenant_id
+            seen.append(tenant)
+
+            if tenant == a:
+                raise exc.configuration("AWS KMS key is disabled.")
+
+            return 0
+
+        assert not await self._ended(work, lambda: [a, b], settle=0.3)
+        assert seen.count(a) >= 2 and seen.count(b) >= 2
+
+    async def test_an_unbound_sweep_retries_a_configuration_error_that_is_not_wiring(
+        self,
+    ) -> None:
+        work = AsyncMock(side_effect=exc.configuration("AWS KMS key is disabled."))
+
+        assert not await self._ended(work, None, settle=0.3)
+        assert work.await_count >= 2
+
+    async def test_a_cancelled_tenant_sweep_ends_the_loop(self) -> None:
+        work = AsyncMock(side_effect=asyncio.CancelledError())
+
+        assert await self._ended(work, lambda: [uuid4(), uuid4()], settle=0.5)
+        assert work.await_count == 1  # not swallowed as that tenant's failure
+
 
 # ....................... #
 
