@@ -19,6 +19,15 @@ zero-anchored laws this primitive targets (a sum that must be ``0``, a count tha
 an absent scope holds trivially, so this is benign, but a *minimum*-style predicate (e.g. a sum that
 must be ``>= 100``) would not be caught for a scope that vanished. Within those bounds it is sound.
 
+A **paired** law (:attr:`~forze.application.contracts.invariants.SystemInvariant.against`) runs one
+grouped aggregate per side and checks every scope present on **either** side, with ``0`` for the
+side that has no rows there. With a parent read-set on one side, every parent is a scope, so a
+parent left with no children is checked — the minimum-style law bound (2) would otherwise miss.
+The sides are matched by each scope value's canonical form (:func:`_canonical`), so a ``UUID`` id
+and a string reference to it are one scope, as are a plain ``Enum`` member and its value. Runtime
+evaluation of one binding reads the same two values and, like the oracle, does not check a binding
+with rows on neither side, so they agree. A paired global law over two empty sides has no scope.
+
 **v1 — per-commit trace fold** (``compile_oracle(per_commit=True)``). Instead of querying final
 state, it reads the value-trace (needs ``SimulationConfig.capture_values``), reconstructs the
 read-set's aggregate AS-OF EACH committed transaction, and asserts the predicate after every commit —
@@ -33,16 +42,25 @@ to the real engine; over an unverified port it is a model tautology for the conc
 part. The oracle reads simulated state — it does not itself re-establish that equivalence.
 """
 
+import contextlib
 from collections import defaultdict
-from collections.abc import Awaitable, Callable, Iterable, Mapping
+from collections.abc import Awaitable, Callable, Iterable, Mapping, Sequence
+from decimal import MAX_PREC, Decimal, InvalidOperation, localcontext
+from enum import Enum
 from typing import Any, cast, final
+from uuid import UUID
 
 import attrs
 
 from forze.application.contracts.invariants import (
     AGGREGATE_FIELD,
+    ROWS_FIELD,
+    AggregateValue,
     CountAll,
+    ReadSet,
+    Reducer,
     SystemInvariant,
+    aggregate_value,
     computed_aggregate,
 )
 from forze.application.contracts.querying import (
@@ -82,20 +100,50 @@ class CompiledOracle:
 # ....................... #
 
 
+Scope = tuple[Any, ...]
+"""One scope's values, in the order of the law's :attr:`~ReadSet.scope_keys`."""
+
+Totals = dict[Scope, tuple[Scope, AggregateValue]]
+"""Per scope, keyed by its :func:`_canonical` values: the scope as read, and its aggregate."""
+
+Checked = list[tuple[Scope, Scope, AggregateValue, AggregateValue | None]]
+"""``(key, scope, observed, against)`` for every scope a law checks."""
+
+
+def _canonical(value: Any) -> Any:
+    """A scope value in the form both sides are matched by: a ``UUID`` as its string and an
+    ``Enum`` as its value, the form the value trace carries them in. So a ``UUID`` id and a
+    string reference to it are one scope, on a backend that returns either."""
+
+    if isinstance(value, Enum):
+        return _canonical(value.value)
+
+    return str(value) if isinstance(value, UUID) else value
+
+
+def _keyed(scope: Scope) -> Scope:
+    return tuple(_canonical(value) for value in scope)
+
+
 async def _grouped(
     law: SystemInvariant,
+    read_set: ReadSet,
+    reducer: Reducer,
     ctx: ExecutionContext,
-) -> list[tuple[JsonDict, float]]:
-    """One grouped aggregate over the law's read-set in final state: ``(scope, aggregate)`` per group.
+) -> Totals:
+    """One grouped aggregate over one side of *law* in final state: the aggregate per scope.
 
-    Groups by the law's ``scope_keys`` (a global law — empty keys — yields one whole-collection row),
-    filtered by its constant ``where``. The reducer is shared with runtime evaluation via
+    Groups by the read-set's ``scope_keys`` (a global law — empty keys — yields one whole-collection
+    row), filtered by its constant ``where``. The reducer is shared with runtime evaluation via
     :func:`~forze.application.contracts.invariants.computed_aggregate`, so oracle and enforcement
-    measure the same thing.
+    measure the same thing. A paired side drops that whole-collection row when it counts no rows,
+    as runtime evaluation does: an empty side is no scope.
     """
 
-    read_set = law.read_set
-    computed = computed_aggregate(law.aggregate)
+    computed = computed_aggregate(reducer)
+
+    if law.against is not None:
+        computed = {**computed, ROWS_FIELD: {"$count": None}}
 
     aggregates: AggregatesExpression = {"$computed": computed}
 
@@ -109,7 +157,7 @@ async def _grouped(
         aggregates, filters=read_set.where
     )
 
-    rows: list[tuple[JsonDict, float]] = []
+    totals: Totals = {}
 
     for row in page.hits:
         if missing := [key for key in read_set.scope_keys if key not in row]:
@@ -118,11 +166,56 @@ async def _grouped(
                 f"scope key(s) {missing} — {row!r}"
             )
 
-        scope = {key: row[key] for key in read_set.scope_keys}
-        value = row.get(AGGREGATE_FIELD)
-        rows.append((scope, float(value if value is not None else 0)))
+        if not row.get(ROWS_FIELD, 1):
+            continue
 
-    return rows
+        scope = tuple(row[key] for key in read_set.scope_keys)
+        value = aggregate_value(read_set, reducer, row.get(AGGREGATE_FIELD))
+        totals[_keyed(scope)] = (scope, value)
+
+    return totals
+
+
+def _paired(law: SystemInvariant, own: Totals, other: Totals | None) -> Checked:
+    """Every scope *law* checks, with its aggregate(s).
+
+    One read-set: its scopes. Paired: every scope with rows on either side (this side's first),
+    with the empty aggregate for the side that has none there.
+    """
+
+    side = law.against
+
+    if side is None or other is None:
+        return [(key, scope, observed, None) for key, (scope, observed) in own.items()]
+
+    own_empty = aggregate_value(law.read_set, law.aggregate, None)
+    other_empty = aggregate_value(side.read_set, side.aggregate, None)
+
+    return [
+        (
+            key,
+            (own.get(key) or other[key])[0],
+            own[key][1] if key in own else own_empty,
+            other[key][1] if key in other else other_empty,
+        )
+        for key in {**own, **other}
+    ]
+
+
+async def _final_state(law: SystemInvariant, ctx: ExecutionContext) -> Checked:
+    """Every scope *law* checks over final state, with its aggregate(s)."""
+
+    own = await _grouped(law, law.read_set, law.aggregate, ctx)
+    side = law.against
+    other = None if side is None else await _grouped(law, side.read_set, side.aggregate, ctx)
+
+    return _paired(law, own, other)
+
+
+def _described(observed: Any, against: Any) -> str:
+    """The observed aggregate(s), for a violation message."""
+
+    return f"aggregate observed {observed}" + ("" if against is None else f" against {against}")
 
 
 def _invariant_for(law: SystemInvariant) -> Invariant:
@@ -134,8 +227,8 @@ def _invariant_for(law: SystemInvariant) -> Invariant:
                 invariant=law.name,
                 message=(
                     f"system invariant {law.name!r} violated at scope "
-                    f"{event.fields.get('scope')}: aggregate observed "
-                    f"{event.fields.get('observed')}"
+                    f"{event.fields.get('scope')}: "
+                    f"{_described(event.fields.get('observed'), event.fields.get('against'))}"
                 ),
                 events=(event,),
             )
@@ -157,58 +250,83 @@ def _invariant_for(law: SystemInvariant) -> Invariant:
 # is not a full entity and is not folded; it does not yet fold deletes; the where is scalar-equality
 # only; a redacted field can't be summed. In a ``Cluster``, only node + observe traces are folded —
 # not the ``setup`` hook — so establish any state the fold must see in the node (or use run_recorded).
+# A ``Decimal`` reaches the trace as its JSON string; the fold parses it back exactly for a field
+# the read model declares ``Decimal``, so every trace producer works. A paired law folds both
+# routes, and matches the two sides by each scope value's canonical form, as the final-state oracle.
 
 _TX_DOMAIN = "tx"
 _COMMAND_PHASE = "command"
 _DELETE_OPS = frozenset({"kill", "kill_many"})
 
 
+def _number(value: Any, field: str, *, exact: bool) -> int | float | Decimal:
+    """*value* as a number to sum. A ``Decimal`` reaches the value trace as its JSON string, so a
+    field the read model declares ``Decimal`` is parsed back from one, exactly."""
+
+    if exact and isinstance(value, str):
+        with contextlib.suppress(InvalidOperation):
+            value = Decimal(value)
+
+    # The fold bypasses the backend's numeric validation, so guard non-numeric values with a
+    # clear configuration error rather than a bare TypeError mid-fold.
+    if isinstance(value, bool) or not isinstance(value, (int, float, Decimal)):
+        raise exc.configuration(
+            f"per-commit oracle: read-set field {field!r} must be numeric to sum, but an "
+            f"entity in scope holds {type(value).__name__} {value!r}",
+            code="non_numeric_sum_field",
+        )
+
+    return value
+
+
+def _exact_sum(values: Sequence[int | float | Decimal]) -> AggregateValue:
+    """Total *values* as a store would: exactly when they are decimals, in float when any is one."""
+
+    if any(isinstance(value, float) for value in values):
+        return sum(float(value) for value in values)
+
+    # The default 28-digit context would round a long decimal total; a store does not.
+    with localcontext(prec=MAX_PREC):
+        return (
+            sum(values, Decimal(0)) if any(isinstance(v, Decimal) for v in values) else sum(values)
+        )
+
+
 def _aggregate_by_scope(
-    law: SystemInvariant,
+    read_set: ReadSet,
+    reducer: Reducer,
     entities: Iterable[Mapping[str, Any]],
-) -> dict[tuple[Any, ...], float]:
+) -> Totals:
     """The aggregate per scope over the where-matched materialized *entities*."""
 
-    groups: dict[tuple[Any, ...], list[Mapping[str, Any]]] = defaultdict(list)
+    groups: dict[Scope, tuple[Scope, list[Mapping[str, Any]]]] = {}
 
     for entity in entities:
         # Match the read-set's ``where`` with the SAME shared evaluator the mock adapter and the
         # predicate oracle use (so the per-commit fold agrees with the runtime on the full filter DSL,
         # incl. dotted paths) — not a second, restricted matcher.
-        if evaluate_filter(cast(JsonDict, entity), law.read_set.where):
-            groups[tuple(value_at_path(entity, key) for key in law.read_set.scope_keys)].append(
-                entity
-            )
+        if evaluate_filter(cast(JsonDict, entity), read_set.where):
+            scope = tuple(value_at_path(entity, key) for key in read_set.scope_keys)
+            groups.setdefault(_keyed(scope), (scope, []))[1].append(entity)
 
-    aggregate = law.aggregate
+    if isinstance(reducer, CountAll):
+        return {
+            key: (scope, aggregate_value(read_set, reducer, len(members)))
+            for key, (scope, members) in groups.items()
+        }
 
-    if isinstance(aggregate, CountAll):
-        return {scope: float(len(members)) for scope, members in groups.items()}
+    # SumOf — a missing field is treated 0, as a store's SUM skips NULL.
+    field = reducer.field
+    exact = isinstance(aggregate_value(read_set, reducer, None), Decimal)  # declared Decimal
+    totals: Totals = {}
 
-    # SumOf — the fold bypasses the backend's numeric validation, so guard non-numeric values with a
-    # clear configuration error rather than a bare TypeError mid-fold (a missing field is treated 0).
-    field = aggregate.field
-    totals: dict[tuple[Any, ...], float] = {}
-
-    for scope, members in groups.items():
-        total = 0.0
-
-        for member in members:
-            value = value_at_path(member, field)
-
-            if value is None:
-                continue
-
-            if isinstance(value, bool) or not isinstance(value, (int, float)):
-                raise exc.configuration(
-                    f"per-commit oracle: read-set field {field!r} must be numeric to sum, but an "
-                    f"entity in scope holds {type(value).__name__} {value!r}",
-                    code="non_numeric_sum_field",
-                )
-
-            total += float(value)
-
-        totals[scope] = total
+    for key, (scope, members) in groups.items():
+        values = [
+            _number(value, field, exact=exact)
+            for member in members
+            if (value := value_at_path(member, field)) is not None
+        ]
+        totals[key] = (scope, aggregate_value(read_set, reducer, _exact_sum(values)))
 
     return totals
 
@@ -219,7 +337,9 @@ def _aggregate_by_scope(
 def _per_commit_invariant(law: SystemInvariant) -> Invariant:
     """Check *law* after every committed transaction by folding the value-trace (v1)."""
 
-    route = law.read_set.spec.name
+    side = law.against
+    own_route = law.read_set.spec.name
+    routes = {own_route} if side is None else {own_route, side.read_set.spec.name}
 
     def _check(history: History) -> list[Violation]:
         traces = history.of_kind("trace")
@@ -227,14 +347,16 @@ def _per_commit_invariant(law: SystemInvariant) -> Invariant:
         # Per-transaction mutations in trace order: an upsert (create/update result event) carries the
         # full post-write entity; a delete (``kill``) carries only its key and removes the row — so the
         # fold drops it rather than letting a deleted document linger and skew the aggregate.
-        mutations: dict[int, list[tuple[Any, Mapping[str, Any] | None]]] = defaultdict(list)
+        mutations: dict[int, list[tuple[str, Any, Mapping[str, Any] | None]]] = defaultdict(list)
         saw_upsert_op = False
         captured_upsert = False
 
         for event in traces:
             fields = event.fields
 
-            if fields.get("route") != route or fields.get("phase") != _COMMAND_PHASE:
+            route = fields.get("route")
+
+            if route not in routes or fields.get("phase") != _COMMAND_PHASE:
                 continue
 
             tx_id = fields.get("tx_id")
@@ -259,7 +381,7 @@ def _per_commit_invariant(law: SystemInvariant) -> Invariant:
                         code="per_commit_oracle_cannot_fold_bulk_delete",
                     )
 
-                mutations[int(tx_id)].append((key, None))
+                mutations[int(tx_id)].append((route, key, None))
                 continue
 
             saw_upsert_op = True
@@ -268,7 +390,7 @@ def _per_commit_invariant(law: SystemInvariant) -> Invariant:
             if isinstance(result, Mapping) and "id" in result:
                 captured_upsert = True
                 mutations[int(tx_id)].append(
-                    (result["id"], result)  # pyright: ignore[reportUnknownArgumentType]
+                    (route, result["id"], result)  # pyright: ignore[reportUnknownArgumentType]
                 )
 
         # Committed roots only, in commit order (the exit's trace_seq). The exit event fires from a
@@ -289,39 +411,45 @@ def _per_commit_invariant(law: SystemInvariant) -> Invariant:
 
         if saw_upsert_op and not captured_upsert:
             raise exc.configuration(
-                f"per-commit oracle for {law.name!r}: writes to {route!r} are on the trace but no "
-                "entity values were captured — enable SimulationConfig.capture_values (and keep "
+                f"per-commit oracle for {law.name!r}: writes to {sorted(routes)} are on the trace but "
+                "no entity values were captured — enable SimulationConfig.capture_values (and keep "
                 "return_new=True on the writes)",
                 code="per_commit_oracle_needs_capture_values",
             )
 
-        materialized: dict[Any, Mapping[str, Any]] = {}
-        first_failure: dict[tuple[Any, ...], tuple[int, float]] = {}
+        materialized: dict[str, dict[Any, Mapping[str, Any]]] = {route: {} for route in routes}
+        first_failure: dict[Scope, tuple[int, Scope, AggregateValue, AggregateValue | None]] = {}
 
         for tx_id, _seq in commits:
-            for entity_id, entity in mutations.get(tx_id, []):
+            for route, entity_id, entity in mutations.get(tx_id, []):
                 if entity is None:
-                    materialized.pop(entity_id, None)  # a committed delete drops the row
+                    materialized[route].pop(entity_id, None)  # a committed delete drops the row
                 else:
-                    materialized[entity_id] = entity
+                    materialized[route][entity_id] = entity
 
-            for scope, observed in _aggregate_by_scope(
-                law,
-                entities=materialized.values(),
-            ).items():
-                if scope not in first_failure and not law.holds(observed):
-                    first_failure[scope] = (tx_id, observed)
+            own = _aggregate_by_scope(law.read_set, law.aggregate, materialized[own_route].values())
+            other = (
+                None
+                if side is None
+                else _aggregate_by_scope(
+                    side.read_set, side.aggregate, materialized[side.read_set.spec.name].values()
+                )
+            )
+
+            for key, scope, observed, against in _paired(law, own, other):
+                if key not in first_failure and not law.holds_for(observed, against):
+                    first_failure[key] = (tx_id, scope, observed, against)
 
         return [
             Violation(
                 invariant=law.name,
                 message=(
                     f"system invariant {law.name!r} was violated at a committed point (tx{tx_id}) "
-                    f"— scope {dict(zip(law.read_set.scope_keys, scope, strict=False))}: aggregate observed "
-                    f"{observed}"
+                    f"— scope {dict(zip(law.read_set.scope_keys, scope, strict=False))}: "
+                    f"{_described(observed, against)}"
                 ),
             )
-            for scope, (tx_id, observed) in first_failure.items()
+            for tx_id, scope, observed, against in first_failure.values()
         ]
 
     return _check
@@ -363,13 +491,14 @@ def compile_oracle(*laws: SystemInvariant, per_commit: bool = False) -> Compiled
 
     async def observe(ctx: ExecutionContext) -> None:
         for law in laws:
-            for scope, observed in await _grouped(law, ctx):
+            for _key, scope, observed, against in await _final_state(law, ctx):
                 record_event(
                     SYSTEM_INVARIANT_KIND,
                     name=law.name,
-                    scope=scope,
+                    scope=dict(zip(law.read_set.scope_keys, scope, strict=True)),
                     observed=observed,
-                    held=law.holds(observed),
+                    against=against,
+                    held=law.holds_for(observed, against),
                 )
 
     return CompiledOracle(

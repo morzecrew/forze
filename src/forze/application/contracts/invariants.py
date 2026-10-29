@@ -3,7 +3,9 @@
 The entity-level :func:`~forze.domain.validation.invariant` sees only one ``self`` and so cannot
 express a relation *across* records (a ledger's balances sum to zero, at most one captured payment
 per order). A :class:`SystemInvariant` declares exactly that: a named **read-set** (a document spec
-plus a scope filter) reduced by one **aggregate**, and a predicate the aggregate must satisfy.
+plus a scope filter) reduced by one **aggregate**, and a predicate the aggregate must satisfy —
+optionally against a second read-set reduced the same way and scoped by the same values (a sum
+bounded by another sum, or by a parent's field).
 
 It is a *pure declaration* — the runtime helper in ``forze_kits`` enforces it and the ``forze_dst``
 compiler verifies it under simulation. Enforcement is **preventive** only when the read-set
@@ -14,8 +16,14 @@ site, never here.
 
 from __future__ import annotations
 
+import inspect
 from collections.abc import Callable, Mapping
-from typing import Any, final
+from datetime import date, datetime, time
+from decimal import Decimal
+from enum import Enum
+from types import UnionType
+from typing import Annotated, Any, Union, cast, final, get_args, get_origin
+from uuid import UUID
 
 import attrs
 
@@ -23,16 +31,24 @@ from forze.application.contracts.document import DocumentSpec
 from forze.application.contracts.querying import (
     AggregateComputedFieldExpression,
     QueryFilterExpression,
+    classify_field_type,
 )
 from forze.application.contracts.transaction import IsolationLevel
 from forze.base.exceptions import exc
+from forze.base.logging import get_logger
 
 # ----------------------- #
+
+logger = get_logger("forze.invariants")
 
 AGGREGATE_FIELD = "__forze_aggregate__"
 """The output alias :func:`computed_aggregate` reduces into. Internal and deliberately unlikely as a
 real document field, so it never collides with a grouped query's :attr:`~ReadSet.scope_keys` aliases
 in the same result row (a scope key named ``"value"`` would have)."""
+
+ROWS_FIELD = "__forze_rows__"
+"""The alias a paired law's sides count their rows into, beside :data:`AGGREGATE_FIELD`: a side
+with no rows has no scope there (see :attr:`SystemInvariant.against`)."""
 
 # ----------------------- #
 # Aggregates — the closed set of reducers that collapse a read-set to one comparable number. Closed
@@ -55,6 +71,11 @@ class CountAll:
 
 Reducer = SumOf | CountAll
 """The aggregate that collapses a scoped read-set to a single comparable number."""
+
+AggregateValue = int | float | Decimal
+"""What a reducer hands :attr:`SystemInvariant.holds`: a :class:`CountAll`'s ``int``, or a
+:class:`SumOf`'s total — an exact ``Decimal`` over a field the read model declares ``Decimal``,
+else a ``float``. See :func:`aggregate_value`."""
 
 
 # ....................... #
@@ -80,6 +101,26 @@ class ReadSet:
     spec: DocumentSpec[Any, Any, Any, Any]
     scope_keys: tuple[str, ...] = ()
     where: QueryFilterExpression | None = None
+
+
+# ....................... #
+
+
+@final
+@attrs.define(frozen=True, kw_only=True, slots=True)
+class Measure:
+    """A read-set reduced by an aggregate: the second side of a paired law.
+
+    See :attr:`SystemInvariant.against`. Its :attr:`~ReadSet.scope_keys` pair with the law's own
+    **by position**, so a law over order lines scoped by ``("order_id",)`` against
+    ``ReadSet(spec=ORDERS, scope_keys=("id",))`` reads, for each order, the order whose ``id`` is the
+    lines' ``order_id``. Both sides' scope fields must hold their values in one form, since every
+    evaluator matches them by equality: a ``UUID`` against a ``str`` is matched by its string, a
+    plain ``Enum`` by its value.
+    """
+
+    read_set: ReadSet
+    aggregate: Reducer
 
 
 # ....................... #
@@ -115,13 +156,120 @@ def scope_filter(read_set: ReadSet, params: Mapping[str, Any]) -> QueryFilterExp
             code="missing_scope_key",
         )
 
-    scope_values = {key: params[key] for key in read_set.scope_keys}
+    # A member is stored, and matched, as its value; the filter grammar takes no plain member.
+    scope_values = {
+        key: value.value if isinstance(value := params[key], Enum) else value
+        for key in read_set.scope_keys
+    }
     scope_pred: QueryFilterExpression | None = {"$values": scope_values} if scope_values else None
 
     if read_set.where is not None and scope_pred is not None:
         return {"$and": [read_set.where, scope_pred]}
 
     return read_set.where if scope_pred is None else scope_pred
+
+
+def _declared_type(model: Any, path: str) -> Any:
+    """The annotation *model* declares for the field at dotted *path*, without ``None`` or
+    ``Annotated``; ``None`` when the model does not describe the path."""
+
+    annotation: Any = model
+
+    for segment in path.split("."):
+        fields = getattr(annotation, "model_fields", None)
+        field = fields.get(segment) if isinstance(fields, dict) else None
+
+        if field is None:
+            return None
+
+        annotation = field.annotation
+
+        if get_origin(annotation) in (Union, UnionType):
+            members = [m for m in get_args(annotation) if m is not type(None)]
+            annotation = members[0] if len(members) == 1 else annotation
+
+        if get_origin(annotation) is Annotated:
+            annotation = get_args(annotation)[0]
+
+    return annotation
+
+
+def _declares_decimal(model: Any, path: str) -> bool:
+    """Whether *model* declares the field at dotted *path* a ``Decimal`` (optionally ``None``)."""
+
+    annotation = _declared_type(model, path)
+
+    return isinstance(annotation, type) and issubclass(annotation, Decimal)
+
+
+def _scope_form(annotation: Any) -> Any:
+    """The form every evaluator matches a paired scope field's values in.
+
+    A ``UUID`` as a string, and a plain ``Enum`` of string values as one too, since each is
+    matched by its string. A date, datetime or time only as its own class, as Python compares
+    them. Any other plain ``Enum`` only as itself: Postgres compares its JSON path as text, so
+    ``1`` would meet ``"1"`` there and nowhere else. Otherwise the field's kind of type.
+    """
+
+    kind = classify_field_type(annotation)
+
+    if kind == "temporal":
+        return next(base for base in (datetime, date, time) if issubclass(annotation, base))
+
+    if kind != "scalar":
+        return kind
+
+    if issubclass(annotation, UUID) or all(isinstance(m.value, str) for m in annotation):
+        return "string"
+
+    return annotation
+
+
+def _comparable(own: Any, other: Any) -> bool:
+    """Whether two paired scope fields hold their values in one form (see :func:`_scope_form`)."""
+
+    forms = {_scope_form(own), _scope_form(other)}
+
+    return len(forms) == 1 or "unknown" in forms
+
+
+def _takes(holds: Callable[..., bool], count: int) -> bool:
+    """Whether *holds* takes *count* positional arguments; ``True`` when it cannot be inspected."""
+
+    try:
+        signature = inspect.signature(holds)
+
+    except (TypeError, ValueError):
+        return True
+
+    try:
+        signature.bind(*range(count))
+
+    except TypeError:
+        return False
+
+    return True
+
+
+def aggregate_value(read_set: ReadSet, reducer: Reducer, raw: Any) -> AggregateValue:
+    """The value :attr:`SystemInvariant.holds` receives for *raw*, a backend's aggregate.
+
+    *raw* is ``None`` over no rows, which counts as ``0``. A :class:`CountAll` is an ``int``. A
+    :class:`SumOf` over a field the read model declares ``Decimal`` stays an exact ``Decimal``; over
+    any other field it is a ``float``, as before. The type follows the declaration rather than the
+    value a backend returns, so a law sees the same type on every backend (Postgres sums a ``bigint``
+    column to ``numeric``, the mock sums it to ``int``). Shared by runtime evaluation and both DST
+    oracles.
+    """
+
+    if isinstance(reducer, CountAll):
+        return int(raw or 0)
+
+    if _declares_decimal(read_set.spec.read, reducer.field):
+        # str() first: exact for an int, and for a store's own decimal type (BSON Decimal128).
+        return raw if isinstance(raw, Decimal) else Decimal(str(raw or 0))
+
+    return float(raw or 0)
 
 
 # ....................... #
@@ -133,16 +281,31 @@ class SystemInvariant:
     """A declared law over a read-set: an aggregate of the scoped records must satisfy a predicate.
 
     Cross-record by construction — what :func:`~forze.domain.validation.invariant` cannot express.
-    *holds* is a **pure** predicate over the aggregate (a :class:`SumOf`'s numeric total, or a
-    :class:`CountAll`'s cardinality, passed as a ``float``); it must be deterministic and side-effect
-    free, because it runs both in production and inside the deterministic simulation. *name*
-    identifies the law in violations and in the oracle's provenance.
+    *holds* is a **pure** predicate over the aggregate (see :data:`AggregateValue`: a
+    :class:`CountAll`'s ``int``, a :class:`SumOf`'s ``float``, or an exact ``Decimal`` over a
+    ``Decimal`` field); it must be deterministic and side-effect free, because it runs both in
+    production and inside the deterministic simulation. *name* identifies the law in violations and
+    in the oracle's provenance.
+
+    With :attr:`against`, the law is **paired**: *holds* takes two arguments, this read-set's
+    aggregate and the other side's, for the same scope — ``holds=lambda lines, order: lines <=
+    order``. A scope with rows on either side is checked, and the side with none contributes ``0``,
+    so a parent read-set on one side makes every parent a scope, including one with no children. A
+    scope with rows on neither side does not exist and is not checked.
+
+    Declaring a law refuses a *holds* that cannot take its arguments, and paired scope fields
+    whose values no evaluator would match (an ``int`` against a ``UUID`` or a ``str``).
     """
 
     name: str
     read_set: ReadSet
     aggregate: Reducer
-    holds: Callable[[float], bool]
+    holds: Callable[[Any], bool] | Callable[[Any, Any], bool]
+    """A one-argument predicate, or a two-argument one when :attr:`against` is set."""
+
+    against: Measure | None = None
+    """The second side of a paired law, scoped by the same values as :attr:`read_set` (its scope
+    keys pair with this read-set's by position), or ``None`` for a law over one read-set."""
 
     required_isolation: IsolationLevel = IsolationLevel.SERIALIZABLE
     """The minimum isolation a *preventive* check needs to be correct under concurrency. Most
@@ -152,3 +315,67 @@ class SystemInvariant:
     sole conflict mode is a lost update (two writers clobbering the *same* row). Ignored by detective
     enforcement; the preventive path fails closed unless the writing transaction runs at least here
     (and the backend's conformance-verified ``TxCapabilities`` reports the level)."""
+
+    # ....................... #
+
+    def __attrs_post_init__(self) -> None:
+        arity, takes = (1, "the aggregate") if self.against is None else (2, "both aggregates")
+
+        if not _takes(self.holds, arity):
+            raise exc.configuration(
+                f"system invariant {self.name!r}: holds must take {arity} positional "
+                f"argument(s), {takes}",
+                code="system_invariant_arity_mismatch",
+            )
+
+        sides = [(self.read_set, self.aggregate)]
+
+        if self.against is not None:
+            self._check_pairing(self.against)
+            sides.append((self.against.read_set, self.against.aggregate))
+
+        for read_set, reducer in sides:
+            model = read_set.spec.read
+
+            if isinstance(reducer, SumOf) and _declared_type(model, reducer.field) is None:
+                logger.warning(
+                    "System invariant %r sums %r, which %s does not declare, so holds gets its "
+                    "total as a float rather than an exact Decimal",
+                    self.name,
+                    reducer.field,
+                    model.__name__,
+                )
+
+    def _check_pairing(self, against: Measure) -> None:
+        own_keys, other_keys = self.read_set.scope_keys, against.read_set.scope_keys
+
+        if len(other_keys) != len(own_keys):
+            raise exc.configuration(
+                f"system invariant {self.name!r}: against is scoped by {list(other_keys)} but the "
+                f"law by {list(own_keys)} — the keys pair by position, so both sides need the "
+                "same number",
+                code="system_invariant_scope_mismatch",
+            )
+
+        for own, other in zip(own_keys, other_keys, strict=True):
+            own_type = _declared_type(self.read_set.spec.read, own)
+            other_type = _declared_type(against.read_set.spec.read, other)
+
+            if own_type is None or other_type is None or _comparable(own_type, other_type):
+                continue
+
+            raise exc.configuration(
+                f"system invariant {self.name!r}: scope key {own!r} ({own_type!r}) is paired with "
+                f"{other!r} ({other_type!r}), which can never hold the same value",
+                code="system_invariant_scope_type_mismatch",
+            )
+
+    # ....................... #
+
+    def holds_for(self, observed: AggregateValue, against: AggregateValue | None = None) -> bool:
+        """Apply :attr:`holds` to one scope's aggregate, and the other side's for a paired law."""
+
+        if self.against is None:
+            return cast(Callable[[Any], bool], self.holds)(observed)
+
+        return cast(Callable[[Any, Any], bool], self.holds)(observed, against)

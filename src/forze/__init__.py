@@ -47,6 +47,7 @@ _EXPORTS: dict[str, str] = {
     "ReadSet": "forze.application.contracts.invariants",
     "SumOf": "forze.application.contracts.invariants",
     "CountAll": "forze.application.contracts.invariants",
+    "Measure": "forze.application.contracts.invariants",
     # logging front door
     "Logger": "forze.base.logging",
     "get_logger": "forze.base.logging",
@@ -79,6 +80,7 @@ __all__ = [
     "ReadSet",
     "SumOf",
     "CountAll",
+    "Measure",
     "Logger",
     "get_logger",
     "configure_logging",
@@ -96,6 +98,7 @@ if TYPE_CHECKING:
     from forze.application.contracts.document import DocumentSpec, DocumentWriteTypes
     from forze.application.contracts.invariants import (
         CountAll,
+        Measure,
         ReadSet,
         SumOf,
         SystemInvariant,

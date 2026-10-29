@@ -73,6 +73,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **SSE- and WebSocket-only apps get offline delivery without Socket.IO.** `RealtimeMailboxWriter` and its lifecycle step fill the mailbox those routes replay from, using the gateway's store code. They and the signal sources live in `forze.application.execution.realtime`; `forze_socketio` re-exports what moved.
 
+- **A `SystemInvariant` can compare two read-sets per scope.** `against=Measure(...)` bounds a sum by another sum or by a parent's field, and `holds` takes both aggregates. Every scope with rows on either side is checked, so an order left with no lines breaks `orders == 0 or lines >= 1`.
+
 - **Stored files can stream and presign downloads, opt-in.** `StoredFileKitSpec(stream_downloads=True, presign_downloads=True)` registers `download_stream` and `presign_download`; guard each like `download`. Generated surfaces refuse the sensitive `presign_download`. A route streams with `streamed_download_response`.
 
 - **`OperationDescriptor(streams=True)` keeps a byte-stream result off JSON surfaces.** MCP and `forze ops` leave such an operation out by default; they, agent tools and `attach_operation_routes` refuse it by name. The storage and stored-file kits' `download_stream` set it (**behaviour change**).
@@ -94,6 +96,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`local_identity_deps` wires no tenant resolver for a config that maps no tenant** (**behaviour change**). There, `forze ops call --tenant` gets `400 tenant_request_unverifiable`, not `401 tenant_mismatch`. A tenant on an API key counts and resolves, also in a config built directly.
 
 - **MCP and agent tool descriptions group filterable fields by type** (**behaviour change**). `describe_query_discovery` states the operators every field shares once, then each further operator set once, with its fields under their own types. `QueryDiscovery` and `x-forze-query` are unchanged.
+
+- **A `SystemInvariant` sums a `Decimal` field exactly** (**behaviour change**). `holds` gets a `Decimal`, not a `float`, so float arithmetic in it (`total * 1.1`) raises `TypeError`; the per-commit oracle sums one instead of refusing it. A count is an `int`, printed `3` not `3.0`; other sums stay `float`.
 
 - **The dynamic-read write refusal no longer names a READ ONLY transaction.** The message is engine-neutral and the details carry the engine's `statement_type` where it has one. A `DuckDbClient` statement timeout now carries the code `duckdb_query_timeout`.
 

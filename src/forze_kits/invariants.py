@@ -26,11 +26,17 @@ from forze.application.contracts.execution import (
 )
 from forze.application.contracts.invariants import (
     AGGREGATE_FIELD,
+    ROWS_FIELD,
+    AggregateValue,
     CountAll,
+    ReadSet,
+    Reducer,
     SystemInvariant,
+    aggregate_value,
     computed_aggregate,
     scope_filter,
 )
+from forze.application.contracts.querying import AggregateComputedFieldExpression
 from forze.application.contracts.transaction import IsolationLevel
 from forze.application.execution import ExecutionContext
 from forze.application.execution.operations.registry import OperationRegistry
@@ -48,14 +54,59 @@ class InvariantResult:
     name: str
     """The invariant's name (for violation messages and oracle provenance)."""
 
-    observed: float
+    observed: AggregateValue
     """The aggregate value read over the read-set — a :class:`SumOf`'s total or a :class:`CountAll`'s cardinality."""
 
     held: bool
     """Whether :attr:`~forze.application.contracts.invariants.SystemInvariant.holds` accepted the aggregate."""
 
+    against: AggregateValue | None = None
+    """The paired side's aggregate for the same scope, or ``None`` for a law over one read-set."""
+
+
+def _described(result: InvariantResult) -> str:
+    """The observed aggregate(s), for a violation message."""
+
+    suffix = "" if result.against is None else f" against {result.against}"
+
+    return f"aggregate observed {result.observed}{suffix}"
+
 
 # ....................... #
+
+
+_PAIR_READS = 3
+"""How often a paired law reads its other side before giving up on a consistent pair."""
+
+
+async def _measure(
+    ctx: ExecutionContext,
+    read_set: ReadSet,
+    reducer: Reducer,
+    params: Mapping[str, Any],
+) -> tuple[AggregateValue, bool]:
+    """Read one side's aggregate over the records *params* scope it to, and whether any exist."""
+
+    filters = scope_filter(read_set, params)
+    query = ctx.document.query(read_set.spec)
+
+    if isinstance(reducer, CountAll):
+        count = await query.count(filters)
+
+        return aggregate_value(read_set, reducer, count), count > 0
+
+    # SumOf — a no-group aggregate is the total over the scoped set (one row).
+    computed: AggregateComputedFieldExpression = {
+        **computed_aggregate(reducer),
+        ROWS_FIELD: {"$count": None},
+    }
+    page = await query.aggregate_many({"$computed": computed}, filters=filters)
+    row = page.hits[0] if page.hits else {}
+
+    # A port that reports no count is taken to have rows, so the law is still checked.
+    return aggregate_value(read_set, reducer, row.get(AGGREGATE_FIELD)), bool(
+        row.get(ROWS_FIELD, 1)
+    )
 
 
 async def evaluate(
@@ -67,25 +118,63 @@ async def evaluate(
 
     Builds the scope filter from *params*, runs ``count`` (for :class:`CountAll`) or a no-group
     ``$sum`` ``aggregate_many`` (for :class:`SumOf`) over the scoped set, and applies
-    ``invariant.holds`` to the aggregate as a ``float``. This is the kernel both :func:`enforce` and
-    the DST oracle reuse, so it stays side-effect free (it only reads).
+    ``invariant.holds`` to the aggregate (see
+    :func:`~forze.application.contracts.invariants.aggregate_value`). A paired law reads its
+    :attr:`~forze.application.contracts.invariants.SystemInvariant.against` side the same way, bound
+    to *params*' values by position; a binding with no rows on either side is not a scope, as the
+    oracles see it, so it holds without calling ``holds``. This is the kernel both :func:`enforce`
+    and the DST oracle reuse, so it stays side-effect free (it only reads).
+
+    The two sides of a paired law are separate reads, and a detective check runs outside any
+    transaction, so a write can commit between them. Their aggregates would then come from two
+    states, and could hide a violation present in both. So this side is read again after the
+    other: unchanged, the pair is what the store held when the other side was read. A side that
+    keeps changing for ``3`` reads raises ``exc.concurrency``
+    (``system_invariant_unstable_read``) rather than report a pair no state held.
     """
 
-    read_set = invariant.read_set
-    filters = scope_filter(read_set, params)
-    query = ctx.document.query(read_set.spec)
-    aggregate = invariant.aggregate
+    observed, own_rows = await _measure(ctx, invariant.read_set, invariant.aggregate, params)
+    side = invariant.against
+    against: AggregateValue | None = None
 
-    if isinstance(aggregate, CountAll):
-        observed = float(await query.count(filters))
-    else:  # SumOf — a no-group aggregate is the total over the scoped set (one row).
-        page = await query.aggregate_many(
-            {"$computed": computed_aggregate(aggregate)}, filters=filters
-        )
-        raw = page.hits[0].get(AGGREGATE_FIELD) if page.hits else 0
-        observed = float(raw if raw is not None else 0)
+    if side is not None:
+        # scope_filter above has already refused params missing one of the law's own scope keys.
+        side_params = {
+            key: params[own]
+            for key, own in zip(
+                side.read_set.scope_keys, invariant.read_set.scope_keys, strict=True
+            )
+        }
+        # shortcut: a change and its exact reversal between this side's two reads go unseen; read
+        # both in one transaction at SNAPSHOT or above (enforce_preventive) when that matters.
+        for _ in range(_PAIR_READS):
+            first = (observed, own_rows)
+            against, other_rows = await _measure(ctx, side.read_set, side.aggregate, side_params)
+            observed, own_rows = await _measure(
+                ctx, invariant.read_set, invariant.aggregate, params
+            )
 
-    return InvariantResult(name=invariant.name, observed=observed, held=invariant.holds(observed))
+            if (observed, own_rows) == first:
+                break
+
+        else:
+            raise exc.concurrency(
+                f"system invariant {invariant.name!r}: its own side changed each of "
+                f"{_PAIR_READS} times the other was read, so no consistent pair was observed",
+                code="system_invariant_unstable_read",
+            )
+
+        if not (own_rows or other_rows):
+            return InvariantResult(
+                name=invariant.name, observed=observed, against=against, held=True
+            )
+
+    return InvariantResult(
+        name=invariant.name,
+        observed=observed,
+        against=against,
+        held=invariant.holds_for(observed, against),
+    )
 
 
 # ....................... #
@@ -109,10 +198,7 @@ async def enforce(
     async def _check() -> None:
         result = await evaluate(invariant, ctx, params)
         if not result.held:
-            raise exc.domain(
-                f"system invariant {invariant.name!r} violated: "
-                f"aggregate observed {result.observed}"
-            )
+            raise exc.domain(f"system invariant {invariant.name!r} violated: {_described(result)}")
 
     # A detective check is a deliberate domain outcome, not a best-effort effect: its
     # violation must surface to the caller even though the writing transaction committed.
@@ -163,8 +249,7 @@ async def enforce_preventive(
 
     if not result.held:
         raise exc.domain(
-            f"system invariant {invariant.name!r} would be violated: "
-            f"aggregate observed {result.observed}",
+            f"system invariant {invariant.name!r} would be violated: {_described(result)}",
             code="system_invariant_violated",
         )
 
