@@ -46,13 +46,13 @@ policy.
 | `throttled` | a rate limit rejected the call | — | ✅ | 429 | `core.throttled` |
 | `timeout` | the invocation's [time budget](../running-in-prod/deadlines.md) ran out | — | — | 504 | `core.timeout` |
 | `unavailable` | it works, but is switched off right now (a feature flag, a maintenance window) | — | ✅ | 503 | `core.unavailable` |
+| `internal` | an unexpected bug | — | — | 500 | `core.internal` |
 
 `unavailable`'s summary and code reach clients unmasked, as a 4xx kind's do, so keep the
 summary generic. Being retryable, it is redelivered like `throttled`: a
 [queue consumer](../recipes/transactional-outbox.md#consuming-on-the-other-side) or a
 [commit-stream consumer](../integrations/kafka.md#poison-and-rebalance) retries it with no
-cap on some paths, so pair a long-lived switch-off with pausing the consumer.
-| `internal` | an unexpected bug | — | — | 500 | `core.internal` |
+cap of its own on some paths, so pair a long-lived switch-off with pausing the consumer.
 
 ## Outcomes
 
