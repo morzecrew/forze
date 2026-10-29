@@ -382,13 +382,17 @@ def _decimal(text: str) -> int | None:
 
     ``str.isdigit`` also accepts digits ``int`` refuses (``"²"``), and a long enough run of
     digits trips the interpreter's conversion limit: either would surface as a 500. Past 19
-    digits the value saturates, so an out-of-range position still answers 416 or clamps.
+    significant digits the value saturates, so an out-of-range position still answers 416
+    or clamps.
     """
 
     if not _DECIMAL.fullmatch(text):
         return None
 
-    return int(text) if len(text) <= 19 else _SATURATED
+    # Leading zeros are valid padding, not magnitude: count the significant digits only.
+    digits = text.lstrip("0") or "0"
+
+    return int(digits) if len(digits) <= 19 else _SATURATED
 
 
 def _parse_range_spec(range_header: str) -> _RangeSpec | None:

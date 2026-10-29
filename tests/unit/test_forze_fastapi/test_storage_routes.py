@@ -437,6 +437,17 @@ class TestStorageDownloadRangeAndConditional:
         assert (end.status_code, end.content) == (206, b"789")
         assert (suffix.status_code, suffix.content) == (206, b"0123456789")
 
+    def test_a_zero_padded_position_keeps_its_value(self) -> None:
+        client = TestClient(_build_app("rest"))
+        stored = self._upload(client)
+        pad = "0" * 30
+
+        start = client.get(f"/files/{stored['key']}", headers={"Range": f"bytes={pad}-1"})
+        end = client.get(f"/files/{stored['key']}", headers={"Range": f"bytes=2-{pad}5"})
+
+        assert (start.status_code, start.content) == (206, b"01")
+        assert (end.status_code, end.content) == (206, b"2345")
+
     def test_suffix_range_on_empty_body_returns_416(self) -> None:
         client = TestClient(_build_app("rest"))
         stored = client.post(
