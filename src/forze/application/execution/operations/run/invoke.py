@@ -140,7 +140,7 @@ class ResolvedOperation[Args, R](Handler[Args, R]):
         creation, an unsupported mode) can be detected and warned about.
 
         A **top-level** invocation (no operation already active on this task)
-        is admitted through the scope's drain gate: rejected with ``THROTTLED``
+        is admitted through the scope's drain gate: rejected with ``UNAVAILABLE``
         (``code="draining"``) once the runtime is draining, counted in flight
         otherwise. An admitted operation's own dispatch chains ride its slot —
         genuine in-await nested dispatch, and engine-internal task hops that

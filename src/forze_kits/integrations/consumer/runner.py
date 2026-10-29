@@ -316,7 +316,7 @@ class QueueConsumer[M]:
     5. **Transient failure** — a raising handler is nacked back (``requeue=True``) for
        redelivery; the loop continues. With ``retry_policy`` set, the process step first
        runs under that named policy (in-process retries before the broker redelivery). A
-       **draining** refusal (``THROTTLED``/``code="draining"``: the runtime began quiescing
+       **draining** refusal (``UNAVAILABLE``/``code="draining"``: the runtime began quiescing
        mid-message, before the loop's stop signal) is not a defect — it requeues with
        ``count=False`` so it is never driven toward ``max_deliveries``, and stops the loop.
     6. **Ack/nack failures** are logged and skipped (never fatal): broker redelivery plus

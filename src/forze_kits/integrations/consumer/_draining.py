@@ -1,7 +1,7 @@
 """The drain-gate refusal classification, shared by every consumer runner.
 
 A rolling deploy flips the drain gate before a consumer loop's stop signal arrives, so
-a handler's dispatch can be refused with ``THROTTLED``/``code="draining"`` mid-batch.
+a handler's dispatch can be refused with ``UNAVAILABLE``/``code="draining"`` mid-batch.
 That is a shutdown artifact, never poison — but the consequence lives in each runner's
 own ladder (the queue runner requeues without counting, the offset-log runner stops
 without committing past), and when the classification was inline per runner, only the

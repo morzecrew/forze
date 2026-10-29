@@ -673,7 +673,7 @@ async def test_missing_keyring_aborts_on_the_first_encrypted_message() -> None:
 
 
 async def test_draining_refusal_requeues_without_counting_and_stops() -> None:
-    # The drain gate closing mid-message (THROTTLED/code="draining") is not a handler
+    # The drain gate closing mid-message (UNAVAILABLE/code="draining") is not a handler
     # defect: the message must requeue with count=False (so a rolling deploy never drives
     # it to max_deliveries and parks it as poison), and the loop must stop — the gate is
     # one-way, so a following message would only be refused again.
@@ -688,7 +688,7 @@ async def test_draining_refusal_requeues_without_counting_and_stops() -> None:
 
     async def handler(msg: QueueMessage[_Payload]) -> None:
         seen.append(msg.id)
-        raise exc.throttled("Runtime scope is draining", code="draining")
+        raise exc.unavailable("Runtime scope is draining", code="draining")
 
     result = await _run(ctx, handler)
 
@@ -719,7 +719,7 @@ async def test_legacy_port_without_count_still_requeues_while_draining() -> None
 
     async def handler(msg: QueueMessage[_Payload]) -> None:
         del msg
-        raise exc.throttled("Runtime scope is draining", code="draining")
+        raise exc.unavailable("Runtime scope is draining", code="draining")
 
     assert await _run(ctx, handler) == ConsumerRunResult()
     # Fell back to a plain nack: the message still goes back for redelivery.

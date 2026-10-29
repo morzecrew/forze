@@ -71,7 +71,7 @@ async def continue_operation_on_task[T](awaitable: Awaitable[T]) -> T:
     Re-stamps an inherited active-operation marker onto the **current** task, so a
     dispatch made while awaiting is classified as nested — it rides the admitted
     operation's drain slot instead of being re-admitted (and, mid-drain, rejected
-    with ``THROTTLED`` ``code="draining"``). Wrap the payload of every engine task
+    with ``UNAVAILABLE`` ``code="draining"``). Wrap the payload of every engine task
     spawn that stays *inside* one admitted operation: the two-phase ``prepare``
     task, each hedged attempt, the post-commit callback runner, a concurrent
     graph-wave step.

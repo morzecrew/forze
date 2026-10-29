@@ -378,7 +378,7 @@ async def test_draining_refusal_stops_the_loop_without_ack_or_poison() -> None:
     class _DrainingSio(_StubSio):
         async def emit(self, *args: Any, **kwargs: Any) -> None:
             self.attempts += 1
-            raise _exc.throttled(
+            raise _exc.unavailable(
                 "Runtime scope is draining; operation rejected", code="draining"
             )
 

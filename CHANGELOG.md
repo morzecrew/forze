@@ -119,6 +119,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **`incr(by=0)` no longer creates the counter it reads** (**behaviour change**). An absent counter reads 0 and stays absent, so `list_counters` and a portable export no longer show it at 0.
 
+- **A draining instance refuses new work with a 503, not a 429** (**behaviour change**). The drain gate now raises `unavailable` with `code="draining"`, so a load balancer retries elsewhere and a `retry_on={THROTTLED}` policy no longer retries it in-process. `is_draining_refusal` still matches it, by code.
+
 - **HTTP error bodies carry the error's `code` and `kind`** (**behaviour change**). The body is `{"detail", "code", "kind", "context"}`, so a client tells `revision_mismatch` from other 400s; a whole-body comparison breaks. An unhandled 500 now also sends `X-Error-Code: core.internal`.
 
 - **The DuckDB lake session no longer disables any filesystem** (**behaviour change**). On 1.5 as on 2 it relies on an allowlist of the tenant's prefix, the catalog's tree and the token endpoint, plus attested settings. That tree is shared by every tenant, and analytics SQL can send it unauthenticated requests.

@@ -545,7 +545,7 @@ async def quiesce(
     something a caller may actually build on.
 
     **Closing the gate is one-way.** The drain gate does not reopen: with *close_gate* (the
-    default), every new invocation on this scope is refused with ``THROTTLED``/``draining``
+    default), every new invocation on this scope is refused with ``UNAVAILABLE``/``draining``
     for as long as the scope lives. That is deliberate — it is the *shutdown* gate, and this
     is the step before a shutdown, an export, or a migration.
 

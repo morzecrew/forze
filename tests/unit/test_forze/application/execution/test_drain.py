@@ -65,7 +65,7 @@ class TestOperationDrainGate:
         assert gate.in_flight == 0
         assert gate.draining is False
 
-    async def test_admit_while_draining_raises_throttled(self) -> None:
+    async def test_admit_while_draining_raises_unavailable(self) -> None:
         gate = OperationDrainGate()
 
         assert await gate.drain(0.0) is True
@@ -73,7 +73,7 @@ class TestOperationDrainGate:
         with pytest.raises(CoreException) as ei:
             gate.admit("op")
 
-        assert ei.value.kind is ExceptionKind.THROTTLED
+        assert ei.value.kind is ExceptionKind.UNAVAILABLE
         assert ei.value.code == "draining"
 
     async def test_drain_idle_returns_immediately(self) -> None:
@@ -165,7 +165,7 @@ class TestEngineGateIntegration:
         with pytest.raises(CoreException) as ei:
             await resolved("x")
 
-        assert ei.value.kind is ExceptionKind.THROTTLED
+        assert ei.value.kind is ExceptionKind.UNAVAILABLE
         assert ei.value.code == "draining"
 
     @pytest.mark.asyncio
@@ -278,12 +278,12 @@ class TestEngineContinuationsRideAdmittedSlot:
     than the one the operation was admitted on — a two-phase ``prepare`` task, a
     hedged attempt, the post-commit callback runner, a concurrent graph wave.
     Each of those is a *continuation* of the already-admitted operation: it must
-    not be re-admitted (and so must not be rejected with THROTTLED ``draining``
+    not be re-admitted (and so must not be rejected with UNAVAILABLE ``draining``
     mid-shutdown), and drain must keep waiting for the whole chain because the
     admitted slot is held until the chain is awaited.
 
     Contrast with ``test_spawned_operation_is_counted_and_cancellable`` /
-    ``test_handler_spawned_sibling_is_throttled_while_draining``: a task *user
+    ``test_handler_spawned_sibling_is_refused_while_draining``: a task *user
     code* spawns is a detached top-level driver and stays fully gated.
     """
 
@@ -338,7 +338,7 @@ class TestEngineContinuationsRideAdmittedSlot:
 
         assert await outer_task == "x"
         # The dispatch ran while draining, rode the admitted slot (in-flight
-        # stayed at the outer op's single admission), and was not throttled.
+        # stayed at the outer op's single admission), and was not refused.
         assert after_commit == [("handler:ac", True, 1)]
         assert await drain_task is True
 
@@ -360,7 +360,7 @@ class TestEngineContinuationsRideAdmittedSlot:
                 started.set()
                 await release.wait()
                 seen_in_flight.append(ctx.drain_gate.in_flight)
-                return await inner(args)  # must not be THROTTLED "draining"
+                return await inner(args)  # must not be UNAVAILABLE "draining"
 
             async def apply(self, args: str, payload: str) -> str:
                 return f"applied:{payload}"
@@ -480,7 +480,7 @@ class TestEngineContinuationsRideAdmittedSlot:
         assert await drain_task is True
 
     @pytest.mark.asyncio
-    async def test_handler_spawned_sibling_is_throttled_while_draining(
+    async def test_handler_spawned_sibling_is_refused_while_draining(
         self, ctx: ExecutionContext
     ) -> None:
         """Regression: a task *user code* spawns is not an engine continuation —
@@ -517,7 +517,7 @@ class TestEngineContinuationsRideAdmittedSlot:
         release.set()
 
         assert await outer_task == "x"
-        assert outcomes == [(ExceptionKind.THROTTLED, "draining")]
+        assert outcomes == [(ExceptionKind.UNAVAILABLE, "draining")]
         assert await drain_task is True
 
 

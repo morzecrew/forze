@@ -16,9 +16,9 @@ Raise expected domain/application failures as `CoreException`, built through the
 | `exc.authentication(...)` | `authentication` | 401 | authentication failed |
 | `exc.authorization(...)` | `authorization` | 403 | permission denied |
 | `exc.infrastructure(...)` | `infrastructure` | 500 | backend/service failure |
-| `exc.throttled(...)` | `throttled` | 429 | rate limit / draining rejection (retryable) |
+| `exc.throttled(...)` | `throttled` | 429 | rate limit (retryable) |
 | `exc.timeout(...)` | `timeout` | 504 | invocation time budget spent (non-retryable) |
-| `exc.unavailable(...)` | `unavailable` | 503 | works, but switched off right now: a feature flag, maintenance (retryable; summary shown, not logged as a server error) |
+| `exc.unavailable(...)` | `unavailable` | 503 | works, but switched off right now: a feature flag, maintenance, a draining instance (retryable; summary shown, not logged as a server error) |
 | `exc.concurrency(...)` | `concurrency` | 409 | optimistic-lock / serialization race (retryable) |
 | `exc.internal(...)` / `exc.configuration(...)` | — | 500 | unexpected/internal failures |
 
