@@ -19,6 +19,7 @@ from forze.base.serialization import PydanticModelCodec
 from forze.testing import context_from_modules
 from forze_kits.aggregates.storage.dto import UploadPartDTO
 from forze_kits.aggregates.stored_file import (
+    CompleteStoredFileUpload,
     CompleteStoredFileUploadRequestDTO,
     InitiateStoredFileUpload,
     InitiateStoredFileUploadRequestDTO,
@@ -149,7 +150,7 @@ class TestInitiateUpload:
         assert result.upload_id is None
         assert result.presigned is not None
         assert result.presigned.method == "PUT"
-        assert result.presigned.headers == {"Content-Type": "text/plain"}
+        assert result.presigned.headers == {"Content-Type": "text/plain", "If-None-Match": "*"}
         assert [(p["key"], p["method"], p["content_type"]) for p in state.storage_presigns] == [
             (file.storage_key, "PUT", "text/plain")
         ]
@@ -202,10 +203,6 @@ class TestInitiateUpload:
 
         assert ei.value.kind is ExceptionKind.PRECONDITION
         assert await ctx.doc.query(_KIT.document).count() == 0
-
-    def test_a_single_put_needs_an_expiry(self) -> None:
-        with pytest.raises(ValidationError, match="expires_in"):
-            InitiateStoredFileUploadRequestDTO(filename="a", size=1, content_type="text/plain")
 
     @pytest.mark.parametrize(
         "content_type",
@@ -482,3 +479,163 @@ class TestDirectUploadExposure:
                     )
                 },
             )
+
+
+# ....................... #
+
+
+def _complete_handler(
+    ctx: ExecutionContext,
+    *,
+    reads: Any = None,
+    uploads: Any = None,
+    max_bytes: int | None = 1000,
+) -> CompleteStoredFileUpload:
+    storage = _KIT.resolved_storage
+
+    return CompleteStoredFileUpload(
+        doc=ctx.doc.command(_KIT.document),
+        reads=reads if reads is not None else ctx.doc.query(_KIT.document),
+        storage=ctx.storage.query(storage),
+        blobs=ctx.storage.command(storage),
+        uploads=uploads if uploads is not None else ctx.storage.uploads(storage),
+        max_bytes=max_bytes,
+    )
+
+
+def _stale_reads(snapshot: StoredFileRead) -> Any:
+    """A read port that answers the row as it was before a concurrent complete."""
+
+    reads = MagicMock()
+    reads.get = AsyncMock(return_value=snapshot)
+    return reads
+
+
+class TestCreateOnlyUploads:
+    async def test_the_single_put_is_create_only(
+        self, ctx: ExecutionContext, state: MockState
+    ) -> None:
+        result = await run_operation(_REG, _INITIATE, _initiate_args(), ctx)
+
+        assert result.presigned is not None
+        assert result.presigned.headers["If-None-Match"] == "*"
+        assert state.storage_presigns[-1]["create_only"] is True
+
+    def test_a_single_put_expires_within_an_hour_by_default_fifteen_minutes(self) -> None:
+        with pytest.raises(ValidationError):
+            _initiate_args(expires_in=timedelta(hours=1, seconds=1))
+
+        args = InitiateStoredFileUploadRequestDTO(filename="a", size=1, content_type="text/plain")
+        assert args.expires_in == timedelta(minutes=15)
+
+    async def test_multipart_completion_does_not_replace_an_existing_object(
+        self, ctx: ExecutionContext
+    ) -> None:
+        started = await run_operation(_REG, _INITIATE, _initiate_args(multipart=True), ctx)
+        key = started.file.storage_key
+        uploads = ctx.storage.uploads(_KIT.resolved_storage)
+        session = UploadSession(key=key, upload_id=started.upload_id)
+        part = uploads.deposit_part(session, 1, b"other")  # type: ignore[attr-defined]
+        await _put(ctx, key, b"hello", "text/plain")  # something already holds the key
+
+        with pytest.raises(CoreException) as ei:
+            await run_operation(
+                _REG,
+                _COMPLETE,
+                CompleteStoredFileUploadRequestDTO(
+                    id=started.file.id,
+                    upload_id=started.upload_id,
+                    parts=[UploadPartDTO(part_number=1, etag=part.etag)],
+                ),
+                ctx,
+            )
+
+        assert ei.value.kind is ExceptionKind.CONFLICT
+        downloaded = await ctx.storage.query(_KIT.resolved_storage).download(key)
+        assert downloaded.data == b"hello"
+
+
+# ....................... #
+
+
+class TestCompleteRace:
+    async def _ready_with_stale_snapshot(
+        self, ctx: ExecutionContext
+    ) -> tuple[StoredFileRead, StoredFileRead]:
+        started = await run_operation(_REG, _INITIATE, _initiate_args(), ctx)
+        await _put(ctx, started.file.storage_key, b"hello", "text/plain")
+        stale = await _row(ctx, started.file.id)
+        ready = await run_operation(
+            _REG, _COMPLETE, CompleteStoredFileUploadRequestDTO(id=started.file.id), ctx
+        )
+        return stale, ready
+
+    async def test_the_losing_complete_conflicts_and_the_winner_stands(
+        self, ctx: ExecutionContext
+    ) -> None:
+        stale, ready = await self._ready_with_stale_snapshot(ctx)
+        loser = _complete_handler(ctx, reads=_stale_reads(stale))
+
+        with pytest.raises(CoreException) as ei:
+            await loser(CompleteStoredFileUploadRequestDTO(id=ready.id))
+
+        assert ei.value.code == "revision_mismatch"
+        assert (await _row(ctx, ready.id)).status is StoredFileStatus.READY
+        assert await _object_exists(ctx, ready.storage_key)
+
+    async def test_a_refusal_that_lost_the_race_keeps_the_winners_bytes(
+        self, ctx: ExecutionContext
+    ) -> None:
+        stale, ready = await self._ready_with_stale_snapshot(ctx)
+        # The losing complete refuses the object (a smaller cap), after the winner marked it
+        # ready: the failed mark must lose on the revision, and the bytes must stay.
+        loser = _complete_handler(ctx, reads=_stale_reads(stale), max_bytes=1)
+
+        with pytest.raises(CoreException) as ei:
+            await loser(CompleteStoredFileUploadRequestDTO(id=ready.id))
+
+        assert ei.value.code == "revision_mismatch"
+        assert (await _row(ctx, ready.id)).status is StoredFileStatus.READY
+        assert await _object_exists(ctx, ready.storage_key)
+
+
+# ....................... #
+
+
+class TestMultipartSizeBeforeAssembly:
+    @pytest.mark.parametrize(
+        ("parts", "code"),
+        [
+            ([b"x" * 600, b"y" * 600], "upload_too_large"),
+            ([b"hel", b"lo!"], "upload_mismatch"),
+        ],
+        ids=["over-the-cap", "over-the-declared-size"],
+    )
+    async def test_oversized_parts_are_refused_before_assembly(
+        self, ctx: ExecutionContext, state: MockState, parts: list[bytes], code: str
+    ) -> None:
+        started = await run_operation(_REG, _INITIATE, _initiate_args(multipart=True), ctx)
+        real = ctx.storage.uploads(_KIT.resolved_storage)
+        session = UploadSession(key=started.file.storage_key, upload_id=started.upload_id)
+        landed = [
+            real.deposit_part(session, n, data)  # type: ignore[attr-defined]
+            for n, data in enumerate(parts, start=1)
+        ]
+        spy = MagicMock(wraps=real)
+        spy.list_parts = AsyncMock(side_effect=real.list_parts)
+        spy.abort_upload = AsyncMock(side_effect=real.abort_upload)
+        spy.complete_upload = AsyncMock()
+
+        with pytest.raises(CoreException) as ei:
+            await _complete_handler(ctx, uploads=spy)(
+                CompleteStoredFileUploadRequestDTO(
+                    id=started.file.id,
+                    upload_id=started.upload_id,
+                    parts=[UploadPartDTO(part_number=p.part_number, etag=p.etag) for p in landed],
+                )
+            )
+
+        assert ei.value.code == code
+        spy.complete_upload.assert_not_awaited()
+        spy.abort_upload.assert_awaited_once()
+        assert (await _row(ctx, started.file.id)).status is StoredFileStatus.FAILED

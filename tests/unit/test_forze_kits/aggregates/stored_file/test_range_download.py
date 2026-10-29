@@ -359,3 +359,33 @@ class TestStoredFileDownloadRoute:
         assert [route.operation_id for route in router.routes] == [  # type: ignore[attr-defined]
             _KEY(StoredFileKernelOp.DOWNLOAD_STREAM)
         ]
+
+
+# ....................... #
+
+
+class TestRangeExposure:
+    """``download_range`` returns raw bytes, so JSON surfaces leave it out."""
+
+    _REG = freeze_stored_file_registry(
+        StoredFileKitSpec(name="files", range_downloads=True), tx_route="mock"
+    )
+
+    def test_the_range_descriptor_streams(self) -> None:
+        assert self._REG.catalog()[_RANGE].descriptor.streams is True
+
+    def test_mcp_leaves_the_range_out_by_default(self) -> None:
+        fastmcp = pytest.importorskip("fastmcp")
+        from forze_mcp.registration import register_tools
+
+        names = register_tools(fastmcp.FastMCP("files"), self._REG, lambda: None)
+
+        assert _RANGE not in names
+        assert _KEY(StoredFileKernelOp.GET) in names
+
+    def test_forze_ops_leaves_the_range_out_by_default(self) -> None:
+        from forze_cli.ops import AnonymousIdentity, OpsApp
+
+        ops = OpsApp(registry=self._REG, runtime=lambda: None, identity=AnonymousIdentity())
+
+        assert _RANGE not in ops.exposed

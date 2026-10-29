@@ -195,7 +195,7 @@ async def _initiate(ctx: ExecutionContext, size: int, *, multipart: bool = False
             size=size,
             content_type="application/octet-stream",
             multipart=multipart,
-            expires_in=None if multipart else timedelta(minutes=5),
+            expires_in=timedelta(minutes=5),
         ),
         ctx,
     )
@@ -310,3 +310,56 @@ async def test_an_encrypting_route_refuses_a_direct_upload_before_any_row(
 
     assert ei.value.kind in (ExceptionKind.PRECONDITION, ExceptionKind.CONFIGURATION)
     assert await ctx.doc.query(_KIT.document).count() == 0
+
+
+async def test_the_put_url_cannot_overwrite_a_ready_file(
+    s3_client: S3Client, s3_bucket: str
+) -> None:
+    ctx = _ctx(s3_client, s3_bucket)
+    started = await _initiate(ctx, 5)
+    url, headers = started.presigned.url, started.presigned.headers
+
+    async with httpx.AsyncClient() as http:
+        await http.put(url, content=b"hello", headers=headers)
+        ready = await _complete(ctx, CompleteStoredFileUploadRequestDTO(id=started.file.id))
+        again = await http.put(url, content=b"x" * 1024, headers=headers)
+
+    assert again.status_code == 412
+    assert await _download(ctx, ready.id) == b"hello"
+
+
+async def test_multipart_completion_does_not_replace_an_existing_object(
+    s3_client: S3Client, s3_bucket: str
+) -> None:
+    ctx = _ctx(s3_client, s3_bucket)
+    started = await _initiate(ctx, 5, multipart=True)
+    url = await run_operation(
+        _REG,
+        _NS.key(StoredFileKernelOp.PRESIGN_UPLOAD_PART),
+        PresignStoredFileUploadPartRequestDTO(
+            id=started.file.id, upload_id=started.upload_id, part_number=1
+        ),
+        ctx,
+    )
+
+    async with httpx.AsyncClient() as http:
+        resp = await http.put(url.url, content=b"other", headers=url.headers)
+
+    async with s3_client.client():
+        await s3_client.upload_bytes(s3_bucket, started.file.storage_key, b"hello")
+
+    with pytest.raises(CoreException) as ei:
+        await _complete(
+            ctx,
+            CompleteStoredFileUploadRequestDTO(
+                id=started.file.id,
+                upload_id=started.upload_id,
+                parts=[UploadPartDTO(part_number=1, etag=resp.headers["etag"].strip('"'))],
+            ),
+        )
+
+    async with s3_client.client():
+        body = await s3_client.download_bytes(s3_bucket, started.file.storage_key)
+
+    assert ei.value.kind is ExceptionKind.CONFLICT
+    assert body.data == b"hello"

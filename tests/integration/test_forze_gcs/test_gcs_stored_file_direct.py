@@ -9,7 +9,7 @@ the kit's checks on what landed.
 
 import json
 from datetime import timedelta
-from urllib.parse import urlsplit
+from urllib.parse import parse_qs, urlsplit
 
 import httpx
 import pytest
@@ -20,7 +20,7 @@ from fastapi import APIRouter, FastAPI
 
 from forze.application.execution import ExecutionContext
 from forze.application.execution.operations import run_operation
-from forze.base.exceptions import CoreException
+from forze.base.exceptions import CoreException, ExceptionKind
 from forze.testing import context_from_modules
 from forze_fastapi.exceptions import register_exception_handlers
 from forze_fastapi.routes import attach_stored_file_download_route
@@ -184,7 +184,7 @@ async def _initiate(ctx: ExecutionContext, size: int, *, multipart: bool = False
             size=size,
             content_type="application/octet-stream",
             multipart=multipart,
-            expires_in=None if multipart else timedelta(minutes=5),
+            expires_in=timedelta(minutes=5),
         ),
         ctx,
     )
@@ -275,3 +275,56 @@ async def test_a_content_type_other_than_declared_is_failed(
     assert (await ctx.doc.query(_KIT.document).get(started.file.id)).status is (
         StoredFileStatus.FAILED
     )
+
+
+async def test_the_put_url_is_signed_create_only(
+    gcs_signing_client: GCSClient, gcs_bucket: str
+) -> None:
+    # fake-gcs-server does not enforce x-goog-if-generation-match on a PUT (a second PUT
+    # replaces the object), so this checks what real GCS enforces: the precondition is a
+    # signed header the client must send.
+    ctx = _ctx(gcs_signing_client, gcs_bucket)
+    started = await _initiate(ctx, 5)
+
+    assert started.presigned.headers["x-goog-if-generation-match"] == "0"
+    signed = parse_qs(urlsplit(started.presigned.url).query)["X-Goog-SignedHeaders"]
+    assert "x-goog-if-generation-match" in signed[0].split(";")
+
+
+async def test_multipart_completion_does_not_replace_an_existing_object(
+    gcs_signing_client: GCSClient, gcs_bucket: str, fake_gcs_container: str
+) -> None:
+    ctx = _ctx(gcs_signing_client, gcs_bucket)
+    started = await _initiate(ctx, 5, multipart=True)
+
+    for number, body in ((1, b"oth"), (2, b"er")):
+        url = await run_operation(
+            _REG,
+            _NS.key(StoredFileKernelOp.PRESIGN_UPLOAD_PART),
+            PresignStoredFileUploadPartRequestDTO(
+                id=started.file.id, upload_id=started.upload_id, part_number=number
+            ),
+            ctx,
+        )
+        await _put(url.url, url.headers, body, fake_gcs_container)
+
+    async with gcs_signing_client.client():
+        await gcs_signing_client.upload_bytes(gcs_bucket, started.file.storage_key, b"hello")
+
+    with pytest.raises(CoreException) as ei:
+        await run_operation(
+            _REG,
+            _NS.key(StoredFileKernelOp.COMPLETE_UPLOAD),
+            CompleteStoredFileUploadRequestDTO(
+                id=started.file.id,
+                upload_id=started.upload_id,
+                parts=[UploadPartDTO(part_number=1), UploadPartDTO(part_number=2)],
+            ),
+            ctx,
+        )
+
+    async with gcs_signing_client.client():
+        body = await gcs_signing_client.download_bytes(gcs_bucket, started.file.storage_key)
+
+    assert ei.value.kind is ExceptionKind.CONFLICT
+    assert body.data == b"hello"

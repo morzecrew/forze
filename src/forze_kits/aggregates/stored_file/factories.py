@@ -162,10 +162,13 @@ def build_stored_file_registry(
                     doc=ctx.doc.query(doc_spec),
                     storage=ctx.storage.query(kit.resolved_storage),
                 ),
+                # Raw bytes, like download_stream: JSON surfaces (MCP, agent tools, generated
+                # routes, `forze ops`) leave it out; attach_stored_file_download_route serves it.
                 descriptor=OperationDescriptor(
                     input_type=DownloadStoredFileRangeRequestDTO,
                     output_type=StoredFileRangeDTO,
                     description="Read an inclusive byte range of a ready stored file.",
+                    streams=True,
                 ),
             )
             .as_query()

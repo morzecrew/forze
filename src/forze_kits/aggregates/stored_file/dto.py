@@ -20,6 +20,12 @@ from forze_kits.dto.querying import OptionalFilterExpression
 _MEDIA_TYPE: Final[str] = r"^[A-Za-z0-9][A-Za-z0-9!#$&^_.+-]*/[A-Za-z0-9][A-Za-z0-9!#$&^_.+-]*$"
 """An RFC 6838 ``type/subtype`` with no parameters: signed into a presigned PUT as a header."""
 
+_UPLOAD_URL_EXPIRY: Final[timedelta] = timedelta(minutes=15)
+"""Default lifetime of a direct-upload URL (a single PUT or one part)."""
+
+_UPLOAD_URL_MAX_EXPIRY: Final[timedelta] = timedelta(hours=1)
+"""Longest lifetime a direct-upload URL may ask for: a write grant stays short."""
+
 # ....................... #
 
 
@@ -211,18 +217,11 @@ class InitiateStoredFileUploadRequestDTO(BaseDTO):
     multipart: bool = False
     """Open a multipart session (parts presigned one by one) instead of a single PUT."""
 
-    expires_in: timedelta | None = Field(default=None, gt=timedelta(0), le=timedelta(days=7))
-    """How long the single PUT URL stays valid (positive, at most 7 days); required unless
-    :attr:`multipart`."""
-
-    # ....................... #
-
-    @model_validator(mode="after")
-    def _single_put_needs_an_expiry(self) -> Self:
-        if not self.multipart and self.expires_in is None:
-            raise ValueError("expires_in is required for a single-PUT upload")
-
-        return self
+    expires_in: timedelta = Field(
+        default=_UPLOAD_URL_EXPIRY, gt=timedelta(0), le=_UPLOAD_URL_MAX_EXPIRY
+    )
+    """How long the single-PUT URL stays valid (15 minutes by default, at most 1 hour).
+    Unused for a multipart upload, whose parts are presigned one by one."""
 
 
 # ....................... #
@@ -258,8 +257,10 @@ class PresignStoredFileUploadPartRequestDTO(StoredFileIdDTO):
     part_number: int = Field(ge=1, le=10_000)
     """1-indexed part position."""
 
-    expires_in: timedelta = Field(gt=timedelta(0), le=timedelta(days=7))
-    """How long the part URL stays valid (positive, at most 7 days)."""
+    expires_in: timedelta = Field(
+        default=_UPLOAD_URL_EXPIRY, gt=timedelta(0), le=_UPLOAD_URL_MAX_EXPIRY
+    )
+    """How long the part URL stays valid (15 minutes by default, at most 1 hour)."""
 
 
 # ....................... #

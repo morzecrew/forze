@@ -95,9 +95,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **A presigned download can name the file it saves as.** `presign_download(key, expires_in=..., response_filename=...)` on the storage query port signs an RFC 6266 `Content-Disposition` into the URL on S3, GCS and the mock. The stored-file kit's `presign_download` passes the stored filename.
 
-- **Stored files can serve byte ranges, opt-in.** `StoredFileKitSpec(range_downloads=True)` registers `download_range`, with `download`'s row checks. `attach_stored_file_download_route` serves `GET {id}/content` and answers `Range` and conditional requests as the storage download route does.
+- **Stored files can serve byte ranges, opt-in.** `StoredFileKitSpec(range_downloads=True)` registers `download_range`, with `download`'s row checks. JSON surfaces leave it out. `attach_stored_file_download_route` serves `GET {id}/content` and answers `Range` and conditional requests as the storage download route does.
 
-- **Stored files can upload straight to the bucket, opt-in.** `StoredFileKitSpec(direct_uploads=True)` registers `initiate_upload`, `presign_upload_part` and `complete_upload`: a key the kit mints, then a presigned PUT or parts. Completion checks size, content type and `max_bytes`, and fails the row on a mismatch.
+- **Stored files can upload straight to the bucket, opt-in.** `StoredFileKitSpec(direct_uploads=True)` registers `initiate_upload`, `presign_upload_part` and `complete_upload`: a key the kit mints, then a create-only presigned PUT or parts. Completion checks size, type and `max_bytes`, and fails the row on a mismatch.
 
 - **A presigned upload and a multipart completion can refuse to replace an object.** `presign_upload(..., create_only=True)` signs `If-None-Match: *` (S3) or `x-goog-if-generation-match: 0` (GCS) into the URL, and `complete_upload(..., create_only=True)` refuses a key that already holds an object.
 

@@ -408,8 +408,8 @@ default exposes every read-only operation and the refusal covers the whole
 registration. `download_stream` is not marked sensitive: it returns the same
 bytes as `download`, not a credential.
 
-`download_stream` returns a byte stream, not JSON, so its descriptor sets
-`streams=True`. MCP tools and resource templates, agent tools, `forze ops` and
+`download_stream` returns a byte stream and `download_range` raw bytes, not
+JSON, so their descriptors set `streams=True`. MCP tools and resource templates, agent tools, `forze ops` and
 `attach_operation_routes` can't carry it. The MCP and `forze ops` defaults leave
 it out, and naming it anywhere is refused. Serve it from a route that calls
 `streamed_download_response`, like the one above.
@@ -430,23 +430,35 @@ presigned URLs. Bind authn and authz on each one, as you do on `upload`.
 
 | Operation | Input | Result |
 |-----------|-------|--------|
-| `initiate_upload` | `InitiateStoredFileUploadRequestDTO` (`filename`, exact `size`, `content_type`, `multipart`, and `expires_in` for a single `PUT`) | `StoredFileUploadSessionDTO`: the `pending` row plus a presigned `PUT` (`presigned`) or a multipart `upload_id` |
-| `presign_upload_part` | `PresignStoredFileUploadPartRequestDTO` (`id`, `upload_id`, `part_number`, `expires_in`) | `PresignedUrlDTO` for one part |
+| `initiate_upload` | `InitiateStoredFileUploadRequestDTO` (`filename`, exact `size`, `content_type`, `multipart`, and `expires_in` for a single `PUT`: 15 minutes by default, at most 1 hour) | `StoredFileUploadSessionDTO`: the `pending` row plus a presigned `PUT` (`presigned`) or a multipart `upload_id` |
+| `presign_upload_part` | `PresignStoredFileUploadPartRequestDTO` (`id`, `upload_id`, `part_number`, `expires_in` with the same bounds) | `PresignedUrlDTO` for one part |
 | `complete_upload` | `CompleteStoredFileUploadRequestDTO` (`id`, plus `upload_id` and `parts` for a multipart upload) | the `ready` row |
 
 1. `initiate_upload` mints the storage key, `{tenant}/{file_id}`, and writes a
    `pending` row that holds it. The client never names a key. A declared size
    over `max_bytes` is refused before anything is minted.
-2. The client `PUT`s the bytes to `presigned.url` with `presigned.headers`, which
-   carry the signed content type. For a multipart upload it asks
-   `presign_upload_part` for each part instead, and keeps each part's `ETag`. S3
-   needs the ETags, and every part but the last must be at least 5 MiB there.
-3. `complete_upload` assembles a multipart upload, then reads the object's head.
-   The object's size must equal the declared size and stay within `max_bytes`,
-   and its content type must equal the declared one. A match marks the row
-   `ready`. A mismatch deletes the object, marks the row `failed`, and raises
-   `upload_mismatch` or `upload_too_large`. If nothing has been uploaded yet, it
-   raises `upload_incomplete` and the row stays `pending`.
+2. The client `PUT`s the bytes to `presigned.url` with every header in
+   `presigned.headers`: the signed content type, and the create-only
+   precondition (`If-None-Match: *` on S3, `x-goog-if-generation-match: 0` on
+   GCS). For a multipart upload it asks `presign_upload_part` for each part
+   instead, and keeps each part's `ETag`. S3 needs the ETags, and every part but
+   the last must be at least 5 MiB there.
+3. `complete_upload` checks a multipart upload before assembling it: the stored
+   sizes of the named parts must fit `max_bytes` and the declared size, or the
+   row is marked `failed` and the session aborted. It assembles create-only,
+   then reads the object's head. The object's size must equal the declared size
+   and stay within `max_bytes`, and its content type must equal the declared
+   one. A match marks the row `ready`. A mismatch marks the row `failed`, then
+   deletes the object, and raises `upload_mismatch` or `upload_too_large`. If
+   nothing has been uploaded yet, it raises `upload_incomplete` and the row
+   stays `pending`.
+
+An uploaded object is create-only: the single `PUT` URL creates it once and can
+never replace it, for as long as the URL stays valid, and a multipart completion
+refuses to assemble over an existing object. So the bytes `complete_upload`
+checked are the bytes the file keeps. Two `complete_upload` calls that race are
+settled by the row's revision: the loser raises `revision_mismatch`, and a loser
+that refused the object marks nothing and deletes nothing.
 
 `initiate_upload` and `presign_upload_part` return credentials: a bearer write
 URL, or a session id that lets its holder add parts. Both are marked sensitive,
@@ -462,8 +474,20 @@ written: the app never sees the bytes, so it can't encrypt them.
 
     A client that initiates and never completes leaves a `pending` row, and
     possibly an object or an unfinished multipart upload. Nothing reaps them
-    yet. Deleting the row purges the object at its key. On S3, a bucket
-    lifecycle rule for incomplete multipart uploads reaps unfinished parts.
+    yet. Deleting the row purges the object at its key, but not multipart
+    parts. A refused upload leaves its key free, so the single `PUT` URL can
+    still create an object there until it expires; the row stays `failed`.
+
+    - **S3.** `initiate_upload` opens the multipart upload inside its
+      transaction, so a rollback after that leaves an empty upload behind, and
+      an abandoned one keeps its parts. Add a bucket lifecycle rule that aborts
+      incomplete multipart uploads (`AbortIncompleteMultipartUpload`).
+    - **GCS.** There is no native session: an abandoned upload's parts are
+      objects named `{key}.__forze_mpu__/{upload_id}/{n}`, next to each file's
+      own key. A lifecycle rule matches only a name prefix or suffix, so none
+      can single them out from the files; they stay until the session is
+      aborted. A rollback leaves nothing on GCS, because opening a session
+      writes nothing.
 
 ## Authn routes
 

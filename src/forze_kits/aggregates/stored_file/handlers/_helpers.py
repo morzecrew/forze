@@ -161,6 +161,36 @@ def ensure_awaiting_upload(file: StoredFileRead) -> str:
 # ....................... #
 
 
+def _upload_mismatch(file: StoredFileRead) -> CoreException:
+    return exc.validation(
+        "Uploaded object does not match the declared size and content type",
+        code="upload_mismatch",
+        details={"size": file.size, "content_type": file.content_type},
+    )
+
+
+# ....................... #
+
+
+def oversize_refusal(
+    file: StoredFileRead,
+    size: int,
+    max_bytes: int | None,
+) -> CoreException | None:
+    """Why *size* bytes cannot become *file*'s, or ``None``: over the cap or the declared size."""
+
+    if max_bytes is not None and size > max_bytes:
+        return upload_too_large(max_bytes)
+
+    if size > file.size:
+        return _upload_mismatch(file)
+
+    return None
+
+
+# ....................... #
+
+
 def direct_upload_refusal(
     file: StoredFileRead,
     head: ObjectHead,
@@ -172,15 +202,11 @@ def direct_upload_refusal(
     the size and content type the row was initiated with.
     """
 
-    if max_bytes is not None and head.size > max_bytes:
-        return upload_too_large(max_bytes)
+    if refusal := oversize_refusal(file, head.size, max_bytes):
+        return refusal
 
     if head.size != file.size or head.content_type != file.content_type:
-        return exc.validation(
-            "Uploaded object does not match the declared size and content type",
-            code="upload_mismatch",
-            details={"size": file.size, "content_type": file.content_type},
-        )
+        return _upload_mismatch(file)
 
     return None
 

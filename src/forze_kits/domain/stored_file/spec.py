@@ -61,9 +61,10 @@ class StoredFileKitSpec:
 
     direct_uploads: bool = attrs.field(default=False)
     """Register ``initiate_upload``, ``presign_upload_part`` and ``complete_upload``: the client
-    sends the bytes straight to the store through presigned URLs, and ``complete_upload`` checks
-    them against :attr:`max_bytes` and the declared size and content type. Off by default; bind
-    authn and authz on each before exposing it. A client-side-encrypting route refuses them."""
+    sends the bytes straight to the store through create-only presigned URLs, and
+    ``complete_upload`` checks them against :attr:`max_bytes` and the declared size and content
+    type. Off by default; bind authn and authz on each before exposing it. A
+    client-side-encrypting route refuses them."""
 
     # ....................... #
 

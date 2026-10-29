@@ -1,4 +1,4 @@
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 
 import attrs
 
@@ -22,7 +22,7 @@ from forze_kits.aggregates.search.dto import (
     SearchRequestDTO,
 )
 from forze_kits.aggregates.search.handlers import Search
-from forze_kits.aggregates.storage.dto import PresignedUrlDTO
+from forze_kits.aggregates.storage.dto import PresignedUrlDTO, UploadPartDTO
 from forze_kits.domain.stored_file import (
     StoredFileCreateCmd,
     StoredFileDocument,
@@ -56,6 +56,7 @@ from ._helpers import (
     ensure_downloadable,
     ensure_readable,
     merge_list_filters,
+    oversize_refusal,
     presigned_to_dto,
     stage_deleted,
     stage_upload_pending,
@@ -304,14 +305,13 @@ class InitiateStoredFileUpload(
             upload_id = session.upload_id
 
         else:
-            # The DTO refuses this already; a handler called directly must refuse it too.
-            if args.expires_in is None:
-                raise exc.validation("expires_in is required for a single-PUT upload")
-
+            # Create-only: once an object holds the key, the URL cannot replace it, so the
+            # bytes complete_upload checked stay the file's for as long as the URL lives.
             url = await self.storage.presign_upload(
                 key,
                 expires_in=args.expires_in,
                 content_type=args.content_type,
+                create_only=True,
             )
             presigned = presigned_to_dto(url)
 
@@ -374,11 +374,16 @@ class PresignStoredFileUploadPart(Handler[PresignStoredFileUploadPartRequestDTO,
 class CompleteStoredFileUpload(Handler[CompleteStoredFileUploadRequestDTO, StoredFileRead]):
     """Check a direct upload's object against the row and mark the file ready.
 
-    Assembles a multipart upload first, then reads the object's head. An object larger than
-    ``max_bytes``, or whose size or content type differs from what was initiated, is deleted
-    and the row marked ``failed`` before the refusal is raised. Run it outside a transaction,
-    as the wiring does, so that failed row is not rolled back. An object not uploaded yet
-    leaves the row pending.
+    A multipart upload is bounded before it is assembled: the parts' stored sizes must fit
+    ``max_bytes`` and the declared size, or the session is aborted. It is then assembled
+    create-only, so it cannot replace an object already at the key. The object's head must
+    then match the declared size and content type and fit ``max_bytes``.
+
+    A refused upload marks the row ``failed`` first, with the revision check, and only then
+    deletes the object (or aborts the session): a complete that lost the race to another,
+    which already made the file ready, raises ``revision_mismatch`` and touches no bytes.
+    Run it outside a transaction, as the wiring does, so the failed mark is not rolled back.
+    An object not uploaded yet leaves the row pending.
     """
 
     doc: DocumentCommandPort[
@@ -400,15 +405,16 @@ class CompleteStoredFileUpload(Handler[CompleteStoredFileUploadRequestDTO, Store
     async def __call__(self, args: CompleteStoredFileUploadRequestDTO) -> StoredFileRead:
         file = await self.reads.get(pk=args.id)
         key = ensure_awaiting_upload(file)
-        head = await self._landed(file, key, args)
+
+        if args.upload_id is not None and args.parts is not None:
+            head = await self._assemble(file, key, args.upload_id, args.parts)
+
+        else:
+            head = await self._head(key)
 
         if refusal := direct_upload_refusal(file, head, self.max_bytes):
+            await self._fail(file)
             await self.blobs.delete(key)
-            await self.doc.update(
-                pk=file.id,
-                rev=file.rev,
-                dto=StoredFileUpdateCmd(status=StoredFileStatus.FAILED),
-            )
             raise refusal
 
         updated = await self.doc.update(
@@ -431,25 +437,45 @@ class CompleteStoredFileUpload(Handler[CompleteStoredFileUploadRequestDTO, Store
 
     # ....................... #
 
-    async def _landed(
+    async def _fail(self, file: StoredFileRead) -> None:
+        """Mark *file* failed at the revision this complete read; a lost race raises."""
+
+        await self.doc.update(
+            pk=file.id,
+            rev=file.rev,
+            dto=StoredFileUpdateCmd(status=StoredFileStatus.FAILED),
+        )
+
+    # ....................... #
+
+    async def _assemble(
         self,
         file: StoredFileRead,
         key: str,
-        args: CompleteStoredFileUploadRequestDTO,
+        upload_id: str,
+        parts: Sequence[UploadPartDTO],
     ) -> ObjectHead:
-        """The uploaded object's head, assembling a multipart upload first."""
+        """Bound the named parts by their stored sizes, then assemble them create-only."""
 
-        if args.upload_id is not None and args.parts is not None:
-            session = UploadSession(
-                key=key,
-                upload_id=args.upload_id,
-                content_type=file.content_type,
-            )
-            parts = [
-                UploadPart(part_number=p.part_number, etag=p.etag, size=p.size) for p in args.parts
-            ]
+        session = UploadSession(key=key, upload_id=upload_id, content_type=file.content_type)
+        stored = {p.part_number: p.size for p in await self.uploads.list_parts(session)}
+        total = sum(stored.get(p.part_number, 0) for p in parts)
 
-            return await self.uploads.complete_upload(session, parts)
+        if refusal := oversize_refusal(file, total, self.max_bytes):
+            await self._fail(file)
+            await self.uploads.abort_upload(session)
+            raise refusal
+
+        return await self.uploads.complete_upload(
+            session,
+            [UploadPart(part_number=p.part_number, etag=p.etag, size=p.size) for p in parts],
+            create_only=True,
+        )
+
+    # ....................... #
+
+    async def _head(self, key: str) -> ObjectHead:
+        """The single-PUT object's head; ``upload_incomplete`` when nothing landed yet."""
 
         try:
             return await self.storage.head(key)
