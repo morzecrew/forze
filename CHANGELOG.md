@@ -143,6 +143,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A storage download no longer fails with a 500 on an odd `Range`.** A position in non-ASCII digits is malformed and serves the whole file; one too long to convert reads as past the end, so it answers 416 or clamps. An upload's `Content-Length` is read the same way.
+
 - **Firestore `update_many` and `touch_many` work inside a transaction.** They read every row before writing any, as a Firestore transaction requires; a second row used to fail with a read-after-write error.
 
 - **Postgres schema validation accepts the required fields of a view-backed read model.** Postgres records `NOT NULL` on tables only, so a read relation that is a view or a materialized view no longer has its nullability checked. Write and history relations keep the check.
