@@ -235,3 +235,36 @@ async def test_a_stale_row_in_a_strict_bulk_write_leaves_every_row_unwritten(
 
     assert ei.value.code == "revision_mismatch"
     assert (await write.touch(a.id, rev=a.rev)).name == "a"
+
+
+@pytest.mark.parametrize("revs", [True, False])
+@pytest.mark.parametrize("method", ["update_many", "touch_many"])
+async def test_a_bulk_write_runs_in_an_ambient_transaction(
+    firestore_client: FirestoreClient,
+    unique_collection: str,
+    method: str,
+    revs: bool,
+) -> None:
+    # A transaction refuses a read after a write, so every row is read before any is written.
+    collection = f"hist_tx_{method}_{unique_collection}"
+    write = doc_write_gw(
+        client_context(firestore_client),
+        write_types=_WRITE_TYPES,
+        write_relation=("(default)", collection),
+        history_relation=("(default)", f"{collection}_history"),
+        history_enabled=True,
+        tenant_aware=False,
+    )
+    a = await write.create(make_create_cmd(name="a"))
+    b = await write.create(make_create_cmd(name="b"))
+    checked = {"revs": [a.rev, b.rev]} if revs else {}
+
+    async with firestore_client.transaction():
+        if method == "update_many":
+            dtos = [IntegrationUpdateCmd(name="a2"), IntegrationUpdateCmd(name="b2")]
+            await write.update_many([a.id, b.id], dtos, merge=not revs, **checked)
+
+        else:
+            await write.touch_many([a.id, b.id], **checked)
+
+    assert [d.rev for d in await write.read_gw.get_many([a.id, b.id])] == [2, 2]

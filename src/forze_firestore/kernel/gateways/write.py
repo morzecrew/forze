@@ -216,47 +216,103 @@ class FirestoreWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
         # reused (no independent nested commit).
         async with self.client.transaction():
             current = await self.read_gw.get(pk)
+            diff, written = await self._prepare_patch(current, update, rev=rev, merge=merge)
 
-            if update is None and rev is not None:
-                self._require_revisions((current, rev))
+            return await self._write_patch(current, diff, written)
 
-            if update is not None:
-                patch = update
+    # ....................... #
 
-                if rev is not None:
-                    (patch,) = await self._validate_history((current, rev, update), merge=merge)
+    async def _prepare_patch(
+        self,
+        current: D,
+        update: JsonDict | None,
+        *,
+        rev: int | None,
+        merge: bool,
+    ) -> tuple[JsonDict, JsonDict]:
+        """The diff to report and the fields to write for *update* (a touch when ``None``).
 
-                after, diff = current.update(patch, materialized=self.read_codec.materialized)
-                # Every sealed field the caller named, from `after`: a stale one too.
-                diff = self._with_resealed(after, update, diff)
-                # The merge patch reports the update; the whole value of a changed mapping is
-                # what replaces the stored field (:meth:`Document.stored_changes`).
-                written = self._seal_written(after.stored_changes(diff), record_id=current.id)
+        Reads nothing but history, so a transaction can prepare every row before it writes one.
+        """
 
-            else:
-                _, diff = current.touch()
-                written = diff
+        if update is None and rev is not None:
+            self._require_revisions((current, rev))
 
-            if not diff:
-                return current, diff
+        if update is None:
+            _, diff = current.touch()
 
-            same = written is diff
-            diff = self._bump_rev(current, diff)
-            written = diff if same else self._bump_rev(current, written)
-            merged = await self._encode_domain_one(current)
-            merged.update(self.adapt_payload_for_write(written))
+            return diff, diff
 
-            coll = await self.coll()
-            # The merged image is rebuilt from the domain model, which cannot
-            # carry infrastructure-plane fields; ``adapt_payload_for_write``
-            # re-stamps the tenant so the full-document ``set`` below does not
-            # strip it from the stored row.
-            storage = self.adapt_payload_for_write(merged)
-            await self.client.set_document(coll, self._storage_pk(pk), storage)
-            updated = await self._load_after_write(pk, merged=merged)
-            await self._write_history(updated)
+        patch = update
 
-            return updated, diff
+        if rev is not None:
+            (patch,) = await self._validate_history((current, rev, update), merge=merge)
+
+        after, diff = current.update(patch, materialized=self.read_codec.materialized)
+        # Every sealed field the caller named, from `after`: a stale one too.
+        diff = self._with_resealed(after, update, diff)
+        # The merge patch reports the update; the whole value of a changed mapping is
+        # what replaces the stored field (:meth:`Document.stored_changes`).
+        return diff, self._seal_written(after.stored_changes(diff), record_id=current.id)
+
+    # ....................... #
+
+    async def _write_patch(
+        self, current: D, diff: JsonDict, written: JsonDict
+    ) -> tuple[D, JsonDict]:
+        """Write what :meth:`_prepare_patch` prepared for *current*, inside a transaction."""
+
+        if not diff:
+            return current, diff
+
+        same = written is diff
+        diff = self._bump_rev(current, diff)
+        written = diff if same else self._bump_rev(current, written)
+        merged = await self._encode_domain_one(current)
+        merged.update(self.adapt_payload_for_write(written))
+
+        coll = await self.coll()
+        # The merged image is rebuilt from the domain model, which cannot
+        # carry infrastructure-plane fields; ``adapt_payload_for_write``
+        # re-stamps the tenant so the full-document ``set`` below does not
+        # strip it from the stored row.
+        storage = self.adapt_payload_for_write(merged)
+        await self.client.set_document(coll, self._storage_pk(current.id), storage)
+        updated = await self._load_after_write(current.id, merged=merged)
+        await self._write_history(updated)
+
+        return updated, diff
+
+    # ....................... #
+
+    async def _patch_read_first(
+        self,
+        pks: Sequence[UUID],
+        updates: Sequence[JsonDict | None],
+        revs: Sequence[int | None],
+        *,
+        merge: bool,
+    ) -> tuple[list[D], list[JsonDict]]:
+        """Patch every row of *pks* in the ambient transaction, reading them all first.
+
+        A Firestore transaction refuses a read after a write, so the per-row :meth:`_patch`,
+        which reads its row after the row before was written, cannot run there twice.
+        """
+
+        currents = await self.read_gw.get_many(pks)
+        prepared = [
+            await self._prepare_patch(c, u, rev=r, merge=merge)
+            for c, u, r in zip(currents, updates, revs, strict=True)
+        ]
+        results: list[D] = []
+        diffs: list[JsonDict] = []
+
+        for current, (diff, written) in zip(currents, prepared, strict=True):
+            updated, diff = await self._write_patch(current, diff, written)
+            results.append(updated)
+            diffs.append(diff)
+
+        return results, diffs
 
     # ....................... #
 
@@ -298,6 +354,12 @@ class FirestoreWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
             raise exc.internal("Length mismatch between primary keys and revisions")
 
         self._require_revision_to_check(merge=merge, revisions=revs)
+        checked: Sequence[int | None] = revs if revs is not None else [None] * len(pks)
+
+        if self.client.is_in_transaction():
+            updates = await self._encode_patch_many(dtos, record_ids=pks, seal=False)
+
+            return await self._patch_read_first(pks, updates, checked, merge=merge)
 
         if revs is not None and self._checks_strictly(merge=merge):
             # Every row at its revision before any is written. A row moved between this check
@@ -307,12 +369,7 @@ class FirestoreWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
         results: list[D] = []
         diffs: list[JsonDict] = []
 
-        for pk, dto, rev in zip(
-            pks,
-            dtos,
-            revs if revs is not None else [None] * len(pks),
-            strict=True,
-        ):
+        for pk, dto, rev in zip(pks, dtos, checked, strict=True):
             updated, diff = await self.update(pk, dto, rev=rev, merge=merge)
             results.append(updated)
             diffs.append(diff)
@@ -449,13 +506,20 @@ class FirestoreWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
         if revs is not None and len(revs) != len(pks):
             raise exc.precondition("Length mismatch between primary keys and revisions")
 
+        checked: Sequence[int | None] = revs if revs is not None else [None] * len(pks)
+
+        if self.client.is_in_transaction():
+            res, _ = await self._patch_read_first(pks, [None] * len(pks), checked, merge=True)
+
+            return res
+
         if revs is not None:
             # As for update_many: checked before any row is written.
             self._require_revisions(*zip(await self.read_gw.get_many(pks), revs, strict=True))
 
         out: list[D] = []
 
-        for pk, rev in zip(pks, revs if revs is not None else [None] * len(pks), strict=True):
+        for pk, rev in zip(pks, checked, strict=True):
             doc, _ = await self._patch(pk, rev=rev)
             out.append(doc)
 
