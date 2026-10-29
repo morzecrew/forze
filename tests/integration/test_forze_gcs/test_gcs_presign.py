@@ -144,6 +144,36 @@ async def test_presigned_get_roundtrip_via_emulator(
 
 
 @pytest.mark.asyncio
+async def test_presigned_get_answers_with_the_signed_content_disposition(
+    gcs_signing_client: GCSClient,
+    fake_gcs_container: str,
+) -> None:
+    bucket = "forze-gcs-presign-disposition"
+    disposition = "attachment; filename*=utf-8''q3%2Fr%C3%ABport.pdf"
+
+    async with gcs_signing_client.client():
+        await gcs_signing_client.ensure_bucket(bucket)
+        await gcs_signing_client.upload_bytes(bucket, "docs/0193f2", b"pdf-bytes")
+
+        vo = await gcs_signing_client.presign_download_url(
+            bucket,
+            "docs/0193f2",
+            expires_in=timedelta(minutes=5),
+            content_disposition=disposition,
+        )
+
+    async with httpx.AsyncClient() as http:
+        resp = await http.get(
+            _rebase_to_emulator(vo.url, fake_gcs_container),
+            headers=_emulator_headers(),
+        )
+
+    assert resp.status_code == 200
+    assert resp.content == b"pdf-bytes"
+    assert resp.headers["content-disposition"] == disposition
+
+
+@pytest.mark.asyncio
 async def test_presigned_put_roundtrip_via_emulator(
     gcs_signing_client: GCSClient,
     fake_gcs_container: str,

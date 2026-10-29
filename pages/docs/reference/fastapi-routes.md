@@ -367,8 +367,9 @@ sent, so the response is cut short: the client gets fewer bytes than
 never reused, so a stream can't mix two files.
 
 `presign_download` follows the storage kit's presign rules: the URL is a bearer
-credential and the storage key's tenant check applies. The URL saves under the
-object key's name, so the client takes the filename from `file.filename`.
+credential and the storage key's tenant check applies. The URL signs in the
+stored filename as the response's `Content-Disposition`, so the download saves
+under that name rather than the object key's.
 
 Because its result is a credential, `presign_download` is marked sensitive.
 MCP tools, agent tools, generated routes and `forze ops` refuse it, so serve it

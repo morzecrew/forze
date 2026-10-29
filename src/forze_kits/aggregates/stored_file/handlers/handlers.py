@@ -182,8 +182,8 @@ class PresignStoredFileDownload(
     """Mint a presigned download (GET) URL for a ready stored file (read grant).
 
     Same checks as :class:`DownloadStoredFile`, so no URL is minted for a row the caller
-    cannot read or that is not ready. The storage adapter refuses on a client-side-encrypting
-    route.
+    cannot read or that is not ready. The URL saves the download under the stored filename.
+    The storage adapter refuses on a client-side-encrypting route.
     """
 
     doc: DocumentQueryPort[StoredFileRead]
@@ -199,6 +199,7 @@ class PresignStoredFileDownload(
         url = await self.storage.presign_download(
             ensure_downloadable(file),
             expires_in=args.expires_in,
+            response_filename=file.filename,
         )
 
         # The URL is a bearer credential: it goes back to the client, never to a log.

@@ -48,6 +48,7 @@ from forze.application.integrations.storage.client import (
     ObjectStorageListedObject,
     ObjectStoragePartInfo,
     ObjectStorageSSE,
+    attachment_content_disposition,
     unsatisfiable_range,
     validate_range,
 )
@@ -1336,6 +1337,7 @@ class ObjectStorageAdapter(
         key: str,
         *,
         expires_in: timedelta,
+        response_filename: str | None = None,
     ) -> PresignedUrl:
         """Mint a time-limited direct-download URL for an existing key.
 
@@ -1344,6 +1346,8 @@ class ObjectStorageAdapter(
         signed) and the same tenant-aware bucket resolution, then delegates the
         signing to the client. Existence is **not** checked — signing is local
         and a ``GET`` on a missing object simply fails at request time.
+        *response_filename* is signed in as an RFC 6266 attachment
+        ``Content-Disposition`` override.
 
         Refused when client-side encryption is enabled: a direct ``GET`` would
         return ciphertext the caller cannot decrypt.
@@ -1358,6 +1362,11 @@ class ObjectStorageAdapter(
                 bucket=bucket,
                 key=key,
                 expires_in=expires_in,
+                content_disposition=(
+                    attachment_content_disposition(response_filename)
+                    if response_filename is not None
+                    else None
+                ),
             )
 
     # ....................... #

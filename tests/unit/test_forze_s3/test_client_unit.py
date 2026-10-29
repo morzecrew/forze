@@ -806,6 +806,30 @@ async def test_presign_download_url_signs_get_object() -> None:
 
 
 @pytest.mark.asyncio
+async def test_presign_download_url_signs_the_content_disposition_override() -> None:
+    from datetime import timedelta
+
+    client = S3Client()
+    api = _PresignApi()
+    tok = client._S3Client__ctx_client.set(api)  # type: ignore[arg-type]
+    try:
+        await client.presign_download_url(
+            "b",
+            "docs/k1",
+            expires_in=timedelta(minutes=15),
+            content_disposition='attachment; filename="report.pdf"',
+        )
+    finally:
+        client._S3Client__ctx_client.reset(tok)
+
+    assert api.presign_calls[0]["Params"] == {
+        "Bucket": "b",
+        "Key": "docs/k1",
+        "ResponseContentDisposition": 'attachment; filename="report.pdf"',
+    }
+
+
+@pytest.mark.asyncio
 async def test_presign_upload_url_binds_content_type() -> None:
     from datetime import timedelta
 

@@ -242,7 +242,8 @@ class MockState:
     ``expires_at`` and ``content_type`` so tests can assert issuance without
     parsing the fake URLs. For SSE routes a ``sse`` entry (``{mode, key_id}`` or
     ``None``) records the server-side-encryption requested on the (multipart)
-    upload PUT."""
+    upload PUT. A download presigned with ``response_filename`` carries the
+    rendered ``content_disposition``."""
     storage_sse: dict[str, dict[str, dict[str, Any] | None]] = attrs.field(factory=dict)
     """Server-side-encryption requested per stored object: bucket → key → SSE.
 

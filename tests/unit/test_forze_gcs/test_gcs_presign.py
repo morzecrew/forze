@@ -108,6 +108,25 @@ async def test_presign_download_url_signs_locally_with_pem_key(
 
 
 @pytest.mark.asyncio
+async def test_presign_download_url_signs_the_content_disposition_override(
+    service_key_pem: str,
+) -> None:
+    client = _client_with_storage(_signed_storage(service_key_pem))
+    disposition = "attachment; filename*=utf-8''r%C3%ABport.pdf"
+
+    vo = await client.presign_download_url(
+        "bkt",
+        "docs/k1",
+        expires_in=timedelta(minutes=15),
+        content_disposition=disposition,
+    )
+
+    qs = parse_qs(urlparse(vo.url).query)
+    assert qs["response-content-disposition"] == [disposition]
+    assert qs["X-Goog-Signature"][0]
+
+
+@pytest.mark.asyncio
 async def test_presign_upload_url_binds_content_type_as_signed_header(
     service_key_pem: str,
 ) -> None:

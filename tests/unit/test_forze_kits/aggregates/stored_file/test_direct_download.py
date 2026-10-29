@@ -228,6 +228,10 @@ class TestPresignStoredFileDownload:
         assert [(p["key"], p["method"]) for p in state.storage_presigns] == [
             (file.storage_key, "GET")
         ]
+        # The URL saves the download under the stored filename, not the key's basename.
+        assert state.storage_presigns[0]["content_disposition"] == (
+            'attachment; filename="report.txt"'
+        )
 
     @pytest.mark.parametrize(("status", "kind"), _NOT_READY)
     async def test_no_url_is_minted_for_a_file_that_is_not_ready(

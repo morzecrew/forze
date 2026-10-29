@@ -207,6 +207,7 @@ class RoutedObjectStorageClientBase[C: _RoutedStorageInnerClient](
         key: str,
         *,
         expires_in: timedelta,
+        content_disposition: str | None = None,
     ) -> PresignedUrl:
         inner = await self._get_client()
 
@@ -215,6 +216,7 @@ class RoutedObjectStorageClientBase[C: _RoutedStorageInnerClient](
                 bucket,
                 key,
                 expires_in=expires_in,
+                content_disposition=content_disposition,
             )
 
     async def presign_upload_url(

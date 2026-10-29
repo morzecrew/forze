@@ -888,6 +888,7 @@ class S3Client(S3ClientPort):
         key: str,
         *,
         expires_in: timedelta,
+        content_disposition: str | None = None,
     ) -> PresignedUrl:
         """Sign a time-limited ``GET`` URL for the object (SigV4 query auth).
 
@@ -900,16 +901,23 @@ class S3Client(S3ClientPort):
         :param bucket: Bucket name.
         :param key: Object key.
         :param expires_in: URL lifetime (positive, at most 7 days).
+        :param content_disposition: Optional response ``Content-Disposition``
+            override, signed in as ``ResponseContentDisposition``.
         :raises CoreException: ``validation`` when *expires_in* is out of range.
         """
 
         c = self.__require_client()
         seconds = presign_expiry_seconds(expires_in, max_expiry=PRESIGN_MAX_EXPIRY)
 
+        params: dict[str, Any] = {"Bucket": bucket, "Key": key}
+
+        if content_disposition is not None:
+            params["ResponseContentDisposition"] = content_disposition
+
         expires_at = utcnow() + timedelta(seconds=seconds)
         url = await c.generate_presigned_url(
             "get_object",
-            Params={"Bucket": bucket, "Key": key},
+            Params=params,
             ExpiresIn=seconds,
         )
 

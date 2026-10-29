@@ -1,6 +1,7 @@
 """Unit tests for presigned URLs on the in-memory mock storage adapter."""
 
 from datetime import UTC, datetime, timedelta
+from urllib.parse import parse_qs, urlsplit
 
 import pytest
 
@@ -97,6 +98,20 @@ async def test_presigns_are_recorded_on_the_state(
             "sse": None,
         },
     ]
+
+
+@pytest.mark.asyncio
+async def test_presign_download_carries_the_response_filename(
+    adapter: MockStorageAdapter,
+    state: MockState,
+) -> None:
+    vo = await adapter.presign_download(
+        "docs/k1", expires_in=timedelta(minutes=5), response_filename="rëport.pdf"
+    )
+
+    disposition = "attachment; filename*=utf-8''r%C3%ABport.pdf"
+    assert parse_qs(urlsplit(vo.url).query)["response-content-disposition"] == [disposition]
+    assert state.storage_presigns[-1]["content_disposition"] == disposition
 
 
 @pytest.mark.asyncio

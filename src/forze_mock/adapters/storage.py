@@ -12,6 +12,7 @@ from typing import (
     Literal,
     final,
 )
+from urllib.parse import quote
 
 import attrs
 
@@ -36,6 +37,7 @@ from forze.application.integrations.storage.adapter import (
 )
 from forze.application.integrations.storage.client import (
     ObjectStorageSSE,
+    attachment_content_disposition,
     overwrite_precondition_failed,
     presign_expiry_seconds,
     unsatisfiable_range,
@@ -501,6 +503,7 @@ class MockStorageAdapter(
         key: str,
         *,
         expires_in: timedelta,
+        response_filename: str | None = None,
     ) -> PresignedUrl:
         """Issue a deterministic fake download URL and record it on the state.
 
@@ -508,10 +511,22 @@ class MockStorageAdapter(
         checked, and the 7-day S3/GCS expiry cap is enforced. ``expires_at``
         derives from the ambient
         :class:`~forze.base.primitives.TimeSource`, so frozen time makes the
-        URL fully deterministic.
+        URL fully deterministic. A *response_filename* is rendered as the real
+        adapter renders it and carried, percent-encoded, in the URL's
+        ``response-content-disposition`` parameter and the record's
+        ``content_disposition``.
         """
 
-        return self.__presign(key, expires_in=expires_in, method="GET")
+        return self.__presign(
+            key,
+            expires_in=expires_in,
+            method="GET",
+            content_disposition=(
+                attachment_content_disposition(response_filename)
+                if response_filename is not None
+                else None
+            ),
+        )
 
     # ....................... #
 
@@ -547,6 +562,7 @@ class MockStorageAdapter(
         expires_in: timedelta,
         method: Literal["GET", "PUT"],
         content_type: str | None = None,
+        content_disposition: str | None = None,
     ) -> PresignedUrl:
         seconds = presign_expiry_seconds(expires_in)
         bucket = self._bucket()
@@ -554,6 +570,9 @@ class MockStorageAdapter(
         expires_at = utcnow() + timedelta(seconds=seconds)
         op = "get" if method == "GET" else "put"
         url = f"mock://{bucket}/{key}?op={op}&expires={expires_at.isoformat()}"
+
+        if content_disposition is not None:
+            url += f"&response-content-disposition={quote(content_disposition, safe='')}"
 
         headers: dict[str, str] = {}
 
@@ -579,6 +598,9 @@ class MockStorageAdapter(
                 "expires_at": expires_at,
                 "content_type": content_type,
             }
+
+            if content_disposition is not None:
+                record["content_disposition"] = content_disposition
 
             if method == "PUT":
                 record["sse"] = sse_record

@@ -93,6 +93,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **An operation-backed function can run as a service principal.** `register_operation_functions(..., identity=DurableServiceIdentity(...))` binds it around the operation, so `AuthnRequired`, authz and audit see it; the identity must be acknowledged as unverified. Without one, a guarded operation refuses the run.
 
+- **A presigned download can name the file it saves as.** `presign_download(key, expires_in=..., response_filename=...)` on the storage query port signs an RFC 6266 `Content-Disposition` into the URL on S3, GCS and the mock. The stored-file kit's `presign_download` passes the stored filename.
+
 **`forze ops` for people at a shell and for backfills:**
 
 - **`forze ops` gains typed flags, JSONL batches and shell completion.** `call OP --field VALUE` takes a flat-scalar input as flags; `--batch @PATH|-` runs one call per line in one runtime, stopping at the first failure; `OP` completes in the shell. An unknown option after `OP` now exits 2 with an error object.

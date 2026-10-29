@@ -22,7 +22,6 @@ from datetime import UTC, datetime
 from email.utils import format_datetime, parsedate_to_datetime
 from functools import partial
 from typing import Annotated, Any, Final, final
-from urllib.parse import quote
 
 import attrs
 from fastapi import APIRouter, Form, Request, Response, UploadFile
@@ -37,6 +36,7 @@ from forze.application.contracts.storage import (
 )
 from forze.application.execution.context import ExecutionContextFactory
 from forze.application.execution.operations import FrozenOperationRegistry
+from forze.application.integrations.storage import attachment_content_disposition
 from forze.base.exceptions import CoreException, exc
 from forze.base.primitives import StrKeyNamespace
 from forze_kits.aggregates.storage import (
@@ -218,7 +218,7 @@ def _download_endpoint(
         body: bytes = obj.data
         etag = _strong_body_etag(body)
         base_headers = {
-            "Content-Disposition": _content_disposition(obj.filename),
+            "Content-Disposition": attachment_content_disposition(obj.filename),
             "ETag": etag,
             "Accept-Ranges": "bytes",
         }
@@ -441,30 +441,6 @@ def _parse_byte_range(
 
 # ....................... #
 
-_ATTR_CHAR_PUNCTUATION: Final[str] = "!#$&+-.^_`|~"
-"""RFC 5987 ``attr-char`` beyond letters and digits: what ``filename*`` may carry unencoded."""
-
-
-def _content_disposition(filename: str) -> str:
-    """RFC 6266 attachment header for a client-supplied filename.
-
-    Percent-encoding neutralizes header-injection characters (CR/LF, quotes,
-    delimiters); names that needed encoding are carried in ``filename*``. Everything
-    outside RFC 5987 ``attr-char`` is encoded, ``/`` included, so ``filename*`` stays
-    valid and clients keep the name.
-    """
-
-    filename = filename or "download"
-    quoted = quote(filename, safe=_ATTR_CHAR_PUNCTUATION)
-
-    if quoted == filename:
-        return f'attachment; filename="{filename}"'
-
-    return f"attachment; filename*=utf-8''{quoted}"
-
-
-# ....................... #
-
 
 def _http_date(dt: datetime) -> str:
     """An RFC 1123 ``Last-Modified`` string for *dt*, normalized to UTC.
@@ -551,7 +527,7 @@ def streamed_download_response(streamed: StreamedDownload) -> StreamingResponse:
     etag = f'"{streamed.etag}"' if streamed.etag else ""
     headers = {
         "Accept-Ranges": "bytes",
-        "Content-Disposition": _content_disposition(streamed.filename),
+        "Content-Disposition": attachment_content_disposition(streamed.filename),
         **_cache_validators(etag, streamed.last_modified),
     }
     # Plaintext size known → Content-Length; unknown (encrypted) → chunked transfer.
@@ -730,7 +706,7 @@ async def _range_response(
             # Same filename source as the full streamed download (see streamed_download_response), so a
             # Range and a full GET advertise the same Content-Disposition. Fall back to the key
             # basename if the adapter resolved none.
-            "Content-Disposition": _content_disposition(
+            "Content-Disposition": attachment_content_disposition(
                 ranged.filename or key.rsplit("/", 1)[-1] or "download"
             ),
         },

@@ -151,6 +151,7 @@ async def test_the_presigned_url_fetches_the_file_without_credentials(
 
     assert resp.status_code == 200
     assert resp.content == b"stored-file-presigned"
+    assert resp.headers["content-disposition"] == 'attachment; filename="report.bin"'
 
 
 async def test_an_encrypting_route_refuses_to_presign(s3_client: S3Client, s3_bucket: str) -> None:

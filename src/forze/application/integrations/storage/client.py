@@ -10,6 +10,7 @@ from typing import (
     Protocol,
     final,
 )
+from urllib.parse import quote
 
 import attrs
 
@@ -109,6 +110,33 @@ def build_range_header(start: int, end: int | None) -> str:
         return f"bytes={start}-"
 
     return f"bytes={start}-{end}"
+
+
+# ....................... #
+
+_ATTR_CHAR_PUNCTUATION: Final[str] = "!#$&+-.^_`|~"
+"""RFC 5987 ``attr-char`` beyond letters and digits: what ``filename*`` may carry unencoded."""
+
+
+def attachment_content_disposition(filename: str) -> str:
+    """RFC 6266 ``attachment`` ``Content-Disposition`` value for *filename*.
+
+    Percent-encoding neutralizes header-injection characters (CR/LF, quotes, delimiters);
+    a name that needed encoding is carried in ``filename*`` (RFC 5987). Everything outside
+    ``attr-char`` is encoded, ``/`` included, so ``filename*`` stays valid and clients keep
+    the name. Shared by the download routes and the presigned-download response override.
+
+    :param filename: The name to save the download under; empty falls back to ``download``.
+    :returns: The header value.
+    """
+
+    filename = filename or "download"
+    quoted = quote(filename, safe=_ATTR_CHAR_PUNCTUATION)
+
+    if quoted == filename:
+        return f'attachment; filename="{filename}"'
+
+    return f"attachment; filename*=utf-8''{quoted}"
 
 
 # ....................... #
@@ -473,6 +501,7 @@ class ObjectStorageClientPort(Protocol):
         key: str,
         *,
         expires_in: timedelta,
+        content_disposition: str | None = None,
     ) -> Awaitable[PresignedUrl]:
         """Sign a time-limited ``GET`` URL for *key* in *bucket*.
 
@@ -481,6 +510,10 @@ class ObjectStorageClientPort(Protocol):
         :class:`~forze.application.contracts.storage.PresignedUrl` for the
         trust model. ``expires_in`` must be positive and within
         :data:`PRESIGN_MAX_EXPIRY` (the shared 7-day S3/GCS cap).
+
+        *content_disposition*, when given, is signed into the URL as the response
+        ``Content-Disposition`` override (S3 ``response-content-disposition``, GCS
+        the same query parameter), so the download saves under that name.
         """
         ...  # pragma: no cover
 

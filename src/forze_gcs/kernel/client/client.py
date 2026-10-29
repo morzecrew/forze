@@ -690,6 +690,7 @@ class GCSClient(GCSClientPort):
         key: str,
         *,
         expires_in: timedelta,
+        content_disposition: str | None = None,
     ) -> PresignedUrl:
         """Sign a time-limited ``GET`` URL for the blob (V4 query auth).
 
@@ -698,6 +699,9 @@ class GCSClient(GCSClientPort):
         :param bucket: Bucket name.
         :param key: Blob name.
         :param expires_in: URL lifetime (positive, at most 7 days).
+        :param content_disposition: Optional response ``Content-Disposition``
+            override, signed in as the ``response-content-disposition`` query
+            parameter.
         :raises CoreException: ``validation`` when *expires_in* is out of
             range; ``configuration`` when the bound credentials cannot sign.
         """
@@ -708,6 +712,11 @@ class GCSClient(GCSClientPort):
             expires_in=expires_in,
             method="GET",
             content_type=None,
+            query_params=(
+                {"response-content-disposition": content_disposition}
+                if content_disposition is not None
+                else None
+            ),
         )
 
     # ....................... #
@@ -766,8 +775,12 @@ class GCSClient(GCSClientPort):
         expires_in: timedelta,
         method: Literal["GET", "PUT"],
         content_type: str | None,
+        query_params: dict[str, str] | None = None,
     ) -> PresignedUrl:
         """Build a V4 signed URL via :meth:`gcloud.aio.storage.Blob.get_signed_url`.
+
+        *query_params* are signed into the canonical query (e.g. a response
+        ``Content-Disposition`` override).
 
         **Credential requirements.** V4 signing needs signing material:
 
@@ -837,6 +850,7 @@ class GCSClient(GCSClientPort):
             url = await blob.get_signed_url(
                 seconds,
                 headers=signed_headers,
+                query_params=query_params,
                 http_method=method,
                 **sign_kwargs,
             )

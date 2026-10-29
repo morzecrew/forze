@@ -173,8 +173,43 @@ class TestAdapterPresignDelegation:
             "bucket": "test-bucket",
             "key": "docs/key-1",
             "expires_in": timedelta(minutes=15),
+            "content_disposition": None,
         }
         assert vo.method == "GET"
+
+    @pytest.mark.parametrize(
+        ("filename", "disposition"),
+        [
+            ("report.pdf", 'attachment; filename="report.pdf"'),
+            ("q3/rëport.pdf", "attachment; filename*=utf-8''q3%2Fr%C3%ABport.pdf"),
+            (
+                'evil"\r\nX-Injected: 1',
+                "attachment; filename*=utf-8''evil%22%0D%0AX-Injected%3A%201",
+            ),
+        ],
+        ids=["plain", "slash-non-ascii", "header-injection"],
+    )
+    @pytest.mark.asyncio
+    async def test_presign_download_signs_the_response_filename(
+        self,
+        storage_adapter: ObjectStorageAdapter,
+        filename: str,
+        disposition: str,
+    ) -> None:
+        storage_adapter.client.client.return_value.__aenter__ = AsyncMock()
+        storage_adapter.client.client.return_value.__aexit__ = AsyncMock()
+        storage_adapter.client.presign_download_url = AsyncMock(
+            return_value=_presigned("GET"),
+        )
+
+        await storage_adapter.presign_download(
+            "docs/key-1",
+            expires_in=timedelta(minutes=15),
+            response_filename=filename,
+        )
+
+        kwargs = storage_adapter.client.presign_download_url.await_args.kwargs
+        assert kwargs["content_disposition"] == disposition
 
     @pytest.mark.asyncio
     async def test_presign_upload_delegates_and_ensures_bucket(

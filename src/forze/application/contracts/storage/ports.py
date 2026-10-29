@@ -53,6 +53,7 @@ class StorageQueryPort(Protocol):
         key: str,
         *,
         expires_in: timedelta,
+        response_filename: str | None = None,
     ) -> Awaitable[PresignedUrl]:
         """Mint a time-limited URL for downloading the object directly.
 
@@ -72,8 +73,16 @@ class StorageQueryPort(Protocol):
         (STS, instance roles) the *effective* expiry is additionally bounded
         by the session token's lifetime, regardless of ``expires_in``.
 
+        **Download name.** With ``response_filename`` the signed URL overrides the
+        response's ``Content-Disposition`` (an RFC 6266 ``attachment`` with that
+        name, RFC 5987-encoded when needed), so a browser saves the file under it
+        instead of the key's basename. S3 and GCS sign it as the
+        ``response-content-disposition`` query parameter.
+
         :param key: Storage key of the object (validated against traversal).
         :param expires_in: How long the URL stays valid.
+        :param response_filename: Name the download saves under; ``None`` keeps
+            the backend's default.
         :returns: The presigned URL with its method, expiry, and any headers
             the client must send.
         """
