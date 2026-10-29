@@ -163,7 +163,9 @@ async def test_an_encrypting_route_refuses_to_presign(s3_client: S3Client, s3_bu
             _REG, _KEY(StoredFileKernelOp.PRESIGN_DOWNLOAD), _presign_args(file), ctx
         )
 
-    assert ei.value.kind is ExceptionKind.PRECONDITION
+    # Refused when the operation resolves its direct-transfer storage, before any call.
+    assert ei.value.kind is ExceptionKind.CONFIGURATION
+    assert ei.value.code == "storage_direct_transfer_encrypted"
 
 
 async def test_a_row_naming_another_tenants_key_is_refused(
