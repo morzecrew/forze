@@ -10593,6 +10593,9 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <li>
 <p><strong>In-place search and analytics read a document's sealed fields.</strong> Name the document with <code>sealed_by</code> on the search, hub or analytics spec; under <code>binds_record_id</code> each row must also carry its <code>id</code>. Meilisearch and analytics <code>ingest</code> refuse <code>sealed_by</code>, since they seal their own rows.</p>
 </li>
+<li>
+<p><strong>Spec-time encryption refusals carry the documented code.</strong> Analytics <code>binds_record_id</code> without <code>sealed_by</code>, or <code>sealed_by</code> with <code>ingest</code>, raises <code>core.analytics.encryption_wiring</code>. Procedure <code>binds_record_id</code> gets <code>core.procedures.encryption_wiring</code>; a hub member's other <code>sealed_by</code>, <code>core.search.encryption_wiring</code>.</p>
+</li>
 </ul>
 <h3 id="security">Security<a class="headerlink" href="#security" title="Permanent link">&para;</a></h3>
 <ul>
