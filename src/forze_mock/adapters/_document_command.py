@@ -19,6 +19,10 @@ from forze.application.contracts.document import (
     UpsertItem,
     require_whole_update_matching,
 )
+from forze.application.contracts.document.specs import (
+    require_hold_in_transaction,
+    serialization_keys,
+)
 from forze.application.contracts.domain import drain_domain_events
 from forze.application.contracts.guarantees import (
     NonOverlapping,
@@ -39,7 +43,11 @@ from forze_mock.adapters._mvcc import (
     release_write_locks,
     wait_cycle_rows,
 )
-from forze_mock.adapters.tx import ensure_mock_tx_writable
+from forze_mock.adapters.tx import (
+    ensure_mock_tx_writable,
+    in_mock_transaction,
+    strict_tx_locks,
+)
 from forze_mock.query._types import C, D, R, U
 
 if TYPE_CHECKING:
@@ -370,21 +378,32 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
         caller that decides between writes decides in that same step.
         """
 
+        guarantees = self._serialized_by()
+
+        await self._take_write_locks(
+            lambda: self._owner_keys(guarantees, rows()) if guarantees else (), locking
+        )
+
+    async def _take_write_locks(
+        self,
+        keys: Callable[[], Sequence[int]],
+        locking: Callable[[], Sequence[UUID]] = tuple,
+    ) -> None:
+        """Take the row locks *locking* names, then the per-owner locks *keys* names.
+
+        *keys* is asked again after every wait. Held by the open transaction until it ends;
+        outside one, given back as this returns.
+        """
+
+        table = self.state.write_serialization
         mvcc = current_mvcc_tx()
-        holder = mvcc if mvcc is not None else StatementLocks()
+        held_by_tx: MvccTx | StatementLocks | None = mvcc if mvcc is not None else strict_tx_locks()
+        holder = held_by_tx if held_by_tx is not None else StatementLocks()
 
         try:
             await self._lock_rows(locking, holder)
-            guarantees = self._serialized_by()
 
-            if not guarantees:
-                return
-
-            table = self.state.write_serialization
-
-            while wanted := [
-                key for key in self._owner_keys(guarantees, rows()) if key not in holder.write_locks
-            ]:
+            while wanted := [key for key in keys() if key not in holder.write_locks]:
                 for key in wanted:
                     lock = table.for_key(key)
 
@@ -403,7 +422,7 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
                     table.hold(key, holder)
 
         finally:
-            if mvcc is None:
+            if held_by_tx is None:
                 release_write_locks(holder, self.state)
                 release_row_locks(holder, self.state)
 
@@ -488,6 +507,29 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
         stored = self._store().get(pk)
 
         return [stored, self._destination(stored, patch)]
+
+    # ....................... #
+
+    @staticmethod
+    def _require_revision_to_check(*, merge: bool, rev: int | None) -> None:
+        """Refuse a strict check (``merge=False``) given no revision, as the backends do."""
+
+        if not merge and rev is None:
+            raise exc.configuration(
+                "A strict revision check (merge=False) needs the revision it checks; got none, "
+                "so the write would apply unchecked.",
+            )
+
+    def _check_revisions_first(self, pairs: Sequence[tuple[UUID, int | None]]) -> None:
+        """Refuse a bulk write before any row is written when one row is not at its revision.
+
+        A row moved between this check and its own write is still refused there, but only a
+        transaction undoes the rows written before it.
+        """
+
+        with self.state.lock:
+            for pk, rev in pairs:
+                self._check_rev(int(self._ensure_exists(pk)[REV_FIELD]), rev)
 
     # ....................... #
 
@@ -889,6 +931,7 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
         *,
         return_new: Literal[True] = True,
         return_diff: Literal[False] = False,
+        merge: bool = True,
     ) -> R: ...
 
     @overload
@@ -900,6 +943,7 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
         *,
         return_new: Literal[True] = True,
         return_diff: Literal[True],
+        merge: bool = True,
     ) -> tuple[R, JsonDict]: ...
 
     @overload
@@ -911,6 +955,7 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
         *,
         return_new: Literal[False],
         return_diff: Literal[False] = False,
+        merge: bool = True,
     ) -> None: ...
 
     @overload
@@ -922,6 +967,7 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
         *,
         return_new: Literal[False],
         return_diff: Literal[True],
+        merge: bool = True,
     ) -> JsonDict: ...
 
     async def update(
@@ -932,7 +978,10 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
         *,
         return_new: bool = True,
         return_diff: bool = False,
+        merge: bool = True,
     ) -> R | JsonDict | tuple[R, JsonDict] | None:
+        # The mock keeps no history, so every update is strict; `merge` has nothing to merge.
+        self._require_revision_to_check(merge=merge, rev=rev)
         self._ensure_writable()
         patch = self._encode_patch(dto)
         await self._serialize_writes(lambda: self._sides(pk, patch), lambda: [pk])
@@ -1010,6 +1059,7 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
         *,
         return_new: Literal[True] = True,
         return_diff: Literal[False] = False,
+        merge: bool = True,
     ) -> Sequence[R]: ...
 
     @overload
@@ -1019,6 +1069,7 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
         *,
         return_new: Literal[True] = True,
         return_diff: Literal[True],
+        merge: bool = True,
     ) -> Sequence[tuple[R, JsonDict]]: ...
 
     @overload
@@ -1028,6 +1079,7 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
         *,
         return_new: Literal[False],
         return_diff: Literal[False] = False,
+        merge: bool = True,
     ) -> None: ...
 
     @overload
@@ -1037,6 +1089,7 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
         *,
         return_new: Literal[False],
         return_diff: Literal[True],
+        merge: bool = True,
     ) -> Sequence[JsonDict]: ...
 
     async def update_many(
@@ -1045,13 +1098,19 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
         *,
         return_new: bool = True,
         return_diff: bool = False,
+        merge: bool = True,
     ) -> Sequence[R] | Sequence[JsonDict] | Sequence[tuple[R, JsonDict]] | None:
+        for u in updates:
+            self._require_revision_to_check(merge=merge, rev=u.rev)
+
         if not updates:
             return [] if (return_new or return_diff) else None
 
         pks = [u.id for u in updates]
         if len(set(pks)) != len(pks):
             raise exc.precondition("update_many requires distinct id values in the batch")
+
+        self._check_revisions_first([(u.id, u.rev) for u in updates])
 
         if return_new:
             if return_diff:
@@ -1286,24 +1345,33 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
     # ....................... #
 
     @overload
-    async def touch(self, pk: UUID, *, return_new: Literal[True] = True) -> R: ...
+    async def touch(
+        self, pk: UUID, *, rev: int | None = None, return_new: Literal[True] = True
+    ) -> R: ...
 
     @overload
-    async def touch(self, pk: UUID, *, return_new: Literal[False]) -> None: ...
+    async def touch(
+        self, pk: UUID, *, rev: int | None = None, return_new: Literal[False]
+    ) -> None: ...
 
-    async def touch(self, pk: UUID, *, return_new: bool = True) -> R | None:
+    async def touch(self, pk: UUID, *, rev: int | None = None, return_new: bool = True) -> R | None:
         self._ensure_writable()
         await self._serialize_stored(pk)
 
         with self.state.lock:
             current_raw = dict(self._ensure_exists(pk))
             current = self._to_domain(current_raw)
+            self._check_rev(current.rev, rev)
             updated, _ = current.touch()
             updated = updated.model_copy(update={"rev": current.rev + 1}, deep=True)
             serialized = self._apply_tenant(
                 self._domain_codec().encode_persistence_mapping(updated)
             )
             self._write_row(self._store(), pk, serialized)
+
+            # As for update: a rev-guarded touch fails on a concurrent commit to the row.
+            if rev is not None:
+                self._mark_rev_guarded(pk)
 
         return self._to_read(serialized) if return_new else None
 
@@ -1314,6 +1382,7 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
         self,
         pks: Sequence[UUID],
         *,
+        revs: Sequence[int] | None = None,
         return_new: Literal[True] = True,
     ) -> Sequence[R]: ...
 
@@ -1322,6 +1391,7 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
         self,
         pks: Sequence[UUID],
         *,
+        revs: Sequence[int] | None = None,
         return_new: Literal[False],
     ) -> None: ...
 
@@ -1329,21 +1399,41 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
         self,
         pks: Sequence[UUID],
         *,
+        revs: Sequence[int] | None = None,
         return_new: bool = True,
     ) -> Sequence[R] | None:
+        if revs is not None and len(revs) != len(pks):
+            raise exc.precondition("touch_many requires one revision per id")
+
         if not pks:
             return [] if return_new else None
 
         if len(set(pks)) != len(pks):
             raise exc.internal("Primary keys must be unique")
 
-        if return_new:
-            return [await self.touch(pk, return_new=True) for pk in pks]
+        pairs = list(zip(pks, revs if revs is not None else [None] * len(pks), strict=True))
+        self._check_revisions_first(pairs)
 
-        for pk in pks:
-            await self.touch(pk, return_new=False)
+        if return_new:
+            return [await self.touch(pk, rev=rev, return_new=True) for pk, rev in pairs]
+
+        for pk, rev in pairs:
+            await self.touch(pk, rev=rev, return_new=False)
 
         return None
+
+    # ....................... #
+
+    async def hold(self, *owners: Mapping[str, Any]) -> None:
+        require_hold_in_transaction(in_mock_transaction())
+        keys = serialization_keys(
+            self._serialized_by(),
+            owners,
+            domain=self._require_domain_model(),
+            scope=str(self.spec.name),
+            tenant=self.require_tenant_if_aware() if self.tenant_aware else None,
+        )
+        await self._take_write_locks(lambda: keys)
 
     # ....................... #
 

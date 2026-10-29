@@ -741,7 +741,46 @@ class HistoryOccMixin(Generic[D]):
 
     # ....................... #
 
-    async def _validate_history(self, *data: tuple[D, int, JsonDict]) -> list[JsonDict]:
+    @staticmethod
+    def _require_revisions(*data: tuple[D, int]) -> None:
+        """Refuse any ``(current, presented_rev)`` whose presented revision is not the stored one.
+
+        The strict check: the write then matches the presented revision, so a writer that
+        commits in between makes it match no row, and its retry re-reads and refuses here.
+        """
+
+        for current, rev in data:
+            if rev != current.rev:
+                raise exc.precondition(
+                    "Revision mismatch",
+                    code="revision_mismatch",
+                )
+
+    @staticmethod
+    def _require_revision_to_check(*, merge: bool, revisions: object) -> None:
+        """Refuse a strict check (``merge=False``) given no revision to check.
+
+        :raises CoreException: ``configuration``: without one, the write would apply unchecked.
+        """
+
+        if not merge and revisions is None:
+            raise exc.configuration(
+                "A strict revision check (merge=False) needs the revision it checks; got none, "
+                "so the write would apply unchecked.",
+            )
+
+    def _checks_strictly(self, *, merge: bool) -> bool:
+        """Whether a presented revision is checked strictly: merge off, or no history to merge."""
+
+        return not merge or self.history_gw is None
+
+    # ....................... #
+
+    async def _validate_history(
+        self,
+        *data: tuple[D, int, JsonDict],
+        merge: bool = True,
+    ) -> list[JsonDict]:
         """Validate optimistic-concurrency revisions against persisted history.
 
         For each ``(current, presented_rev, update)`` whose presented revision differs
@@ -751,6 +790,9 @@ class HistoryOccMixin(Generic[D]):
         resource. Nothing retries it automatically: the caller re-reads the document and
         resubmits with its current revision.
 
+        Without history, or with *merge* off, any stale revision is refused
+        (:meth:`_require_revisions`).
+
         :returns: Each update to apply, in order: as given at the stored revision, and at a
             stale one only what it changes against that revision's snapshot
             (:meth:`~forze.domain.models.Document.historical_update`), so a field it resends
@@ -759,13 +801,8 @@ class HistoryOccMixin(Generic[D]):
 
         updates = [update for _, _, update in data]
 
-        if self.history_gw is None:
-            for current, rev, _ in data:
-                if rev != current.rev:
-                    raise exc.precondition(
-                        "Revision mismatch",
-                        code="revision_mismatch",
-                    )
+        if self.history_gw is None or not merge:
+            self._require_revisions(*((current, rev) for current, rev, _ in data))
 
             return updates
 

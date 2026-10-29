@@ -149,10 +149,43 @@ locks. A request touches a few owners; a bulk load or a seed that writes under t
 transaction can fill the table and fail with `out of shared memory`. Commit such a load in batches,
 so a transaction holds only its own batch's owners.
 
-It **serializes, it does not validate**, and the difference is worth stating twice: the lock is
-taken before the *write*, so a handler that reads, decides, and then writes still made its
-decision on an unprotected read. What the declaration removes is two writes landing at once;
-making a read-then-write atomic is a different property, and reads are never serialized by this.
+It **serializes, it does not validate**. A write takes the lock just before it writes, which
+covers the write and nothing before it. A handler that reads, decides and then writes takes the
+lock first with `hold`, inside its transaction, so it decides on a read no other writer for
+that owner can change:
+
+```python
+async with ctx.tx_ctx.scope("orders"):
+    lines = ctx.document.command(line_spec)
+    await lines.hold({"order_id": order_id})  # the lock every write for the order takes
+    ...  # read the order's lines, decide, then write: held until commit
+```
+
+`hold` writes nothing. Each argument names the fields of one declared key. A value is validated
+against the field's type and constraints, so an id passed as a string locks the same owner. A
+second handler for the order waits at its own `hold` until the first commits, and the first
+handler's writes take the lock again without waiting.
+
+`hold` refuses as `configuration`:
+
+- a spec that declares no `SerializedBy`, or an argument naming other fields;
+- a datetime key field: a write keys it as the database returns it, in the session's time zone;
+- a key field the domain validates with a field validator of its own, or any domain with a
+  model validator: a write keys the value after them, and `hold` does not run them;
+- a key field with a serializer of its own (`PlainSerializer`, `WrapSerializer`,
+  `@field_serializer`), or any domain with a model serializer: a write can key the stored
+  form they produce.
+
+A call outside a transaction is refused (`document_hold_outside_transaction`), since its lock
+would end with its statement. Mongo and Firestore keep no write lock and refuse the call.
+
+One call takes its owners in sorted order. Two calls, or a hold and then a write for another
+owner, can take owners in another order than a concurrent transaction does. Postgres refuses
+that deadlock on one side as a retryable `concurrency`, and the in-memory store refuses the same
+cycle. Pass every owner a handler needs to one `hold` call.
+
+The declaration itself refuses no write: where the rule can also be a hard stop, that is a
+second guarantee beside this one.
 
 `UniqueTogether` and `NonOverlapping` also say **when** they hold: `holds="always"`, the default,
 means after every write; `holds="commit"` means once the transaction commits, so a transaction may
@@ -393,11 +426,11 @@ value, a mirror's too. On the domain path, a mirror whose create sets a frozen f
 
 | Method | Signature | Notes |
 |--------|-----------|-------|
-| `update` | `update(pk, rev, dto, *, return_new=True, return_diff=False)` | optimistic — a stale `rev` raises `conflict`; `return_diff` adds the change `JsonDict`, a merge patch holding the values the caller set on every backend (a `StrEnum` stays a member, a datetime is as given), not the store's column coercion |
-| `update_many` | `update_many(updates, *, return_new=True, return_diff=False)` | per-row update (`KeyedUpdate`: id, rev, dto) with OCC |
+| `update` | `update(pk, rev, dto, *, return_new=True, return_diff=False, merge=True)` | optimistic — a stale `rev` is merged through history, or refused (`revision_mismatch`) without history or with `merge=False` ([details](../../writing-operation/concurrency-conflicts.md#refusing-any-change-since-you-read)); `return_diff` adds the change `JsonDict`, a merge patch holding the values the caller set on every backend (a `StrEnum` stays a member, a datetime is as given), not the store's column coercion |
+| `update_many` | `update_many(updates, *, return_new=True, return_diff=False, merge=True)` | per-row update (`KeyedUpdate`: id, rev, dto) with OCC |
 | `update_matching` | `update_matching(filters, dto, *, return_new=True)` | fast bulk patch by filter — **no per-row OCC, no domain side effects**; refuses a field set to a mapping or model, which only an update merges; not on Firestore; `return_new=False` → rows-updated count |
 | `update_matching_strict` | `update_matching_strict(filters, dto, *, return_new=True, chunk_size=None)` | like `update_many` (per-row OCC + domain apply) over a filter |
-| `touch` / `touch_many` | `touch(pk, *, return_new=True)` | bump `last_update_at` only |
+| `touch` / `touch_many` | `touch(pk, *, rev=None, return_new=True)` | bump `rev` and `last_update_at` only; with `rev` (`revs=` per id on `touch_many`), only a document still at it |
 
 ### Delete
 

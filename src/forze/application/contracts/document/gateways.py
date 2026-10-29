@@ -360,6 +360,7 @@ class DocumentWriteGatewayPort(Protocol, Generic[D_co, C_co, U_co]):
         dto: U_co,
         *,
         rev: int | None = None,
+        merge: bool = True,
     ) -> Awaitable[tuple[D_co, JsonDict]]: ...
 
     def update_many(
@@ -368,6 +369,7 @@ class DocumentWriteGatewayPort(Protocol, Generic[D_co, C_co, U_co]):
         dtos: Sequence[U_co],
         *,
         revs: Sequence[int] | None = None,
+        merge: bool = True,
         batch_size: int,
     ) -> Awaitable[tuple[Sequence[D_co], Sequence[JsonDict]]]: ...
 
@@ -379,12 +381,13 @@ class DocumentWriteGatewayPort(Protocol, Generic[D_co, C_co, U_co]):
         batch_size: int,
     ) -> Awaitable[tuple[int, Sequence[D_co]]]: ...
 
-    def touch(self, pk: UUID) -> Awaitable[D_co]: ...
+    def touch(self, pk: UUID, *, rev: int | None = None) -> Awaitable[D_co]: ...
 
     def touch_many(
         self,
         pks: Sequence[UUID],
         *,
+        revs: Sequence[int] | None = None,
         batch_size: int,
     ) -> Awaitable[Sequence[D_co]]: ...
 

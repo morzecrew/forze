@@ -291,6 +291,44 @@ class TestHistoryOccMixin:
         assert exc_info.value.code == "revision_mismatch"
 
     @pytest.mark.asyncio
+    async def test_validate_history_without_merge_refuses_a_stale_rev_history_would_merge(
+        self,
+    ) -> None:
+        # The same update merges through history by default; strict, it is refused unread.
+        current_a, _, hist_a, _ = _occ_fixture()
+        history = _FakeHistoryGw([hist_a])
+        gw = _OccGateway(history)
+
+        assert await gw._validate_history((current_a, 2, {"name": "x"})) == [{"name": "x"}]
+
+        with pytest.raises(CoreException) as exc_info:
+            await gw._validate_history((current_a, 2, {"name": "x"}), merge=False)
+
+        assert exc_info.value.code == "revision_mismatch"
+        assert len(history.read_calls) == 1
+
+    def test_a_strict_check_without_a_revision_is_refused(self) -> None:
+        # Otherwise the write would apply unchecked, the opposite of what was asked.
+        gw = _OccGateway(None)
+
+        gw._require_revision_to_check(merge=True, revisions=None)
+        gw._require_revision_to_check(merge=False, revisions=3)
+
+        with pytest.raises(CoreException) as exc_info:
+            gw._require_revision_to_check(merge=False, revisions=None)
+
+        assert exc_info.value.kind is ExceptionKind.CONFIGURATION
+
+    @pytest.mark.asyncio
+    async def test_validate_history_without_merge_passes_the_stored_rev(self) -> None:
+        current_a, _, _, _ = _occ_fixture()
+        gw = _OccGateway(_FakeHistoryGw([]))
+
+        updates = await gw._validate_history((current_a, 3, {"name": "x"}), merge=False)
+
+        assert updates == [{"name": "x"}]
+
+    @pytest.mark.asyncio
     async def test_validate_history_noop_datetime_resend_passes(self) -> None:
         # Regression: a stale client echoing the identical python datetime it
         # read used to register as a touch against the json-mode historical

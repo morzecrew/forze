@@ -20,7 +20,9 @@ from forze_mock.adapters._journal import (
 )
 from forze_mock.adapters._mvcc import (
     MvccTx,
+    StatementLocks,
     _mvcc_tx,  # pyright: ignore[reportPrivateUsage]
+    release_write_locks,
 )
 
 if TYPE_CHECKING:
@@ -53,6 +55,30 @@ _mock_tx_read_only: ContextVar[bool] = ContextVar(
 )
 """Whether the current task's **root** mock transaction was opened read-only (strict or
 journal manager)."""
+
+_strict_tx_locks: ContextVar[StatementLocks | None] = ContextVar(
+    "forze_mock_strict_tx_locks",
+    default=None,
+)
+"""The per-owner write locks the current task's strict root transaction holds until it ends."""
+
+
+# ....................... #
+
+
+def in_mock_transaction() -> bool:
+    """Whether this task runs inside a transaction the strict or journal manager opened.
+
+    The no-op manager opens none: under it, a write is never inside a transaction.
+    """
+
+    return _strict_tx_depth.get() > 0 or _journal_tx_depth.get() > 0
+
+
+def strict_tx_locks() -> StatementLocks | None:
+    """The write locks the open strict root transaction holds, or ``None`` outside one."""
+
+    return _strict_tx_locks.get()
 
 
 # ....................... #
@@ -229,6 +255,9 @@ class MockStrictTxManagerAdapter(TransactionManagerPort):
             # Options are honored at root only (port contract); nested scopes
             # inherit the root's read_only via the still-set ContextVar.
             token_ro = _mock_tx_read_only.set(read_only) if is_root else None
+            # Per-owner write locks live as long as the root, as the journal manager's do.
+            locks = StatementLocks() if is_root else None
+            token_locks = _strict_tx_locks.set(locks) if is_root else None
 
             try:
                 yield
@@ -238,6 +267,12 @@ class MockStrictTxManagerAdapter(TransactionManagerPort):
                 raise
 
             finally:
+                if locks is not None:
+                    release_write_locks(locks, self.state)
+
+                if token_locks is not None:
+                    _strict_tx_locks.reset(token_locks)
+
                 if token_ro is not None:
                     _mock_tx_read_only.reset(token_ro)
 

@@ -158,3 +158,113 @@ async def test_a_missing_history_snapshot_is_a_precondition_to_resubmit(
 
     assert ei.value.kind is ExceptionKind.PRECONDITION
     assert ei.value.code == "history_not_found_retry"
+
+
+async def test_a_strict_check_refuses_the_stale_rev_history_would_merge(
+    firestore_client: FirestoreClient,
+    unique_collection: str,
+) -> None:
+    collection = f"hist_strict_{unique_collection}"
+    write = doc_write_gw(
+        client_context(firestore_client),
+        write_types=_WRITE_TYPES,
+        write_relation=("(default)", collection),
+        history_relation=("(default)", f"{collection}_history"),
+        history_enabled=True,
+        tenant_aware=False,
+    )
+    created = await write.create(make_create_cmd(name="v1"))
+    other = await write.create(make_create_cmd(name="o1"))
+    await write.update(created.id, IntegrationUpdateCmd(name="theirs"), rev=created.rev)
+
+    # Merged by default: resending the value it now holds changes nothing, at a stale rev.
+    await write.update(created.id, IntegrationUpdateCmd(name="theirs"), rev=created.rev)
+    refused: list[str | None] = []
+
+    for stale in (
+        lambda: write.update(
+            created.id, IntegrationUpdateCmd(name="theirs"), rev=created.rev, merge=False
+        ),
+        lambda: write.touch(created.id, rev=created.rev),
+        lambda: write.touch_many([other.id, created.id], revs=[other.rev, created.rev]),
+    ):
+        with pytest.raises(CoreException) as ei:
+            await stale()
+
+        refused.append(ei.value.code)
+
+    assert refused == ["revision_mismatch"] * 3
+    assert (await write.touch(created.id, rev=created.rev + 1)).rev == created.rev + 2
+
+    with pytest.raises(CoreException) as ei:
+        await write.update(created.id, IntegrationUpdateCmd(name="x"), merge=False)
+
+    assert ei.value.kind is ExceptionKind.CONFIGURATION
+
+
+@pytest.mark.parametrize("method", ["update_many", "touch_many"])
+async def test_a_stale_row_in_a_strict_bulk_write_leaves_every_row_unwritten(
+    firestore_client: FirestoreClient,
+    unique_collection: str,
+    method: str,
+) -> None:
+    collection = f"hist_bulk_{method}_{unique_collection}"
+    write = doc_write_gw(
+        client_context(firestore_client),
+        write_types=_WRITE_TYPES,
+        write_relation=("(default)", collection),
+        history_relation=("(default)", f"{collection}_history"),
+        history_enabled=True,
+        tenant_aware=False,
+    )
+    a = await write.create(make_create_cmd(name="a"))
+    b = await write.create(make_create_cmd(name="b"))
+    await write.touch(b.id)
+
+    with pytest.raises(CoreException) as ei:
+        if method == "update_many":
+            await write.update_many(
+                [a.id, b.id],
+                [IntegrationUpdateCmd(name="a2"), IntegrationUpdateCmd(name="b2")],
+                revs=[a.rev, b.rev],
+                merge=False,
+            )
+
+        else:
+            await write.touch_many([a.id, b.id], revs=[a.rev, b.rev])
+
+    assert ei.value.code == "revision_mismatch"
+    assert (await write.touch(a.id, rev=a.rev)).name == "a"
+
+
+@pytest.mark.parametrize("revs", [True, False])
+@pytest.mark.parametrize("method", ["update_many", "touch_many"])
+async def test_a_bulk_write_runs_in_an_ambient_transaction(
+    firestore_client: FirestoreClient,
+    unique_collection: str,
+    method: str,
+    revs: bool,
+) -> None:
+    # A transaction refuses a read after a write, so every row is read before any is written.
+    collection = f"hist_tx_{method}_{unique_collection}"
+    write = doc_write_gw(
+        client_context(firestore_client),
+        write_types=_WRITE_TYPES,
+        write_relation=("(default)", collection),
+        history_relation=("(default)", f"{collection}_history"),
+        history_enabled=True,
+        tenant_aware=False,
+    )
+    a = await write.create(make_create_cmd(name="a"))
+    b = await write.create(make_create_cmd(name="b"))
+    checked = {"revs": [a.rev, b.rev]} if revs else {}
+
+    async with firestore_client.transaction():
+        if method == "update_many":
+            dtos = [IntegrationUpdateCmd(name="a2"), IntegrationUpdateCmd(name="b2")]
+            await write.update_many([a.id, b.id], dtos, merge=not revs, **checked)
+
+        else:
+            await write.touch_many([a.id, b.id], **checked)
+
+    assert [d.rev for d in await write.read_gw.get_many([a.id, b.id])] == [2, 2]

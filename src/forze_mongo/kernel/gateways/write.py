@@ -512,15 +512,19 @@ class MongoWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
         update: JsonDict | None = None,
         *,
         rev: int | None = None,
+        merge: bool = True,
     ) -> tuple[D, JsonDict]:
         current = await self.read_gw.get(pk)
+
+        if update is None and rev is not None:
+            self._require_revisions((current, rev))
 
         if update is not None:
             # As the store will keep it, so a value it would round finds no change.
             update = patch = cast(JsonDict, _bson_normalize_value(update))
 
             if rev is not None:
-                (patch,) = await self._validate_history((current, rev, update))
+                (patch,) = await self._validate_history((current, rev, update), merge=merge)
 
             after, diff = current.update(patch, materialized=self.read_codec.materialized)
             # Every sealed field the caller named, from `after`: a stale one too.
@@ -532,6 +536,7 @@ class MongoWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
             written = diff
 
         if not diff:
+            # Nothing to hold a strict check with: Mongo locks a document only by writing it.
             return current, diff
 
         payload, diff = self._payload_and_diff(current, written, diff)
@@ -565,12 +570,16 @@ class MongoWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
         updates: Sequence[JsonDict] | None = None,
         *,
         revs: Sequence[int] | None = None,
+        merge: bool = True,
         batch_size: int = 200,
     ) -> tuple[Sequence[D], Sequence[JsonDict]]:
         if not pks or (not updates and updates is not None):
             return [], []
 
         currents = await self.read_gw.get_many(pks)
+
+        if updates is None and revs is not None:
+            self._require_revisions(*zip(currents, revs, strict=True))
 
         # 1. Validation and preparation
         to_patch: list[tuple[int, D, JsonDict, JsonDict]] = []
@@ -580,7 +589,8 @@ class MongoWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
 
             if revs is not None:
                 patches = await self._validate_history(
-                    *[(c, r, u) for c, r, u in zip(currents, revs, updates, strict=True)]
+                    *[(c, r, u) for c, r, u in zip(currents, revs, updates, strict=True)],
+                    merge=merge,
                 )
 
             for i, (current, patch, update) in enumerate(
@@ -633,19 +643,29 @@ class MongoWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
 
     # ....................... #
 
-    async def update(self, pk: UUID, dto: U, *, rev: int | None = None) -> tuple[D, JsonDict]:
+    async def update(
+        self,
+        pk: UUID,
+        dto: U,
+        *,
+        rev: int | None = None,
+        merge: bool = True,
+    ) -> tuple[D, JsonDict]:
         """Apply an update DTO to an existing document.
 
         :param pk: Document primary key.
         :param dto: Update payload.
         :param rev: Expected revision for historical consistency validation.
+        :param merge: Whether a stale *rev* is merged through history; when ``False``,
+            any revision but the stored one is ``revision_mismatch``.
         :returns: The updated domain document and the adapted write payload (diff).
         """
 
         self._require_update_cmd()
+        self._require_revision_to_check(merge=merge, revisions=rev)
 
         update_data = await self._encode_patch_one(dto, record_id=pk, seal=False)
-        return await self._patch(pk, update_data, rev=rev)
+        return await self._patch(pk, update_data, rev=rev, merge=merge)
 
     # ....................... #
 
@@ -655,6 +675,7 @@ class MongoWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
         dtos: Sequence[U],
         *,
         revs: Sequence[int] | None = None,
+        merge: bool = True,
         batch_size: int = 200,
     ) -> tuple[Sequence[D], Sequence[JsonDict]]:
         """Bulk-update documents with corresponding DTOs.
@@ -662,6 +683,7 @@ class MongoWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
         :param pks: Document primary keys (must be unique).
         :param dtos: Update payloads matching *pks* by position.
         :param revs: Optional expected revisions for history validation.
+        :param merge: Whether a stale revision is merged through history.
         :returns: Updated documents and per-document adapted write payloads (diffs).
         :raises exc.internal: If lengths of *pks* and *dtos* (or *revs*) differ.
         :raises ValidationError: If *pks* contains duplicates.
@@ -678,8 +700,9 @@ class MongoWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
         if revs is not None and len(revs) != len(pks):
             raise exc.precondition("Length mismatch between primary keys and revisions")
 
+        self._require_revision_to_check(merge=merge, revisions=revs)
         updates = await self._encode_patch_many(dtos, record_ids=pks, seal=False)
-        return await self._patch_many(pks, updates, revs=revs, batch_size=batch_size)
+        return await self._patch_many(pks, updates, revs=revs, merge=merge, batch_size=batch_size)
 
     # ....................... #
 
@@ -765,13 +788,14 @@ class MongoWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
 
     # ....................... #
 
-    async def touch(self, pk: UUID) -> D:
+    async def touch(self, pk: UUID, *, rev: int | None = None) -> D:
         """Bump a document's revision without changing its data.
 
         :param pk: Document primary key.
+        :param rev: When given, bump only a document still at this revision.
         """
 
-        res, _ = await self._patch(pk)
+        res, _ = await self._patch(pk, rev=rev)
 
         return res
 
@@ -781,11 +805,13 @@ class MongoWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
         self,
         pks: Sequence[UUID],
         *,
+        revs: Sequence[int] | None = None,
         batch_size: int = 200,
     ) -> Sequence[D]:
         """Bump revisions for multiple documents without changing their data.
 
         :param pks: Document primary keys (must be unique).
+        :param revs: When given, bump only documents still at these revisions, by position.
         :param batch_size: Batch size for the bulk operation.
         :raises ValidationError: If *pks* contains duplicates.
         """
@@ -793,7 +819,10 @@ class MongoWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
         if len(pks) != len(set(pks)):
             raise exc.precondition("Primary keys must be unique")
 
-        res, _ = await self._patch_many(pks, batch_size=batch_size)
+        if revs is not None and len(revs) != len(pks):
+            raise exc.precondition("Length mismatch between primary keys and revisions")
+
+        res, _ = await self._patch_many(pks, revs=revs, batch_size=batch_size)
 
         return res
 

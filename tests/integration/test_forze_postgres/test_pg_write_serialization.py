@@ -623,3 +623,111 @@ class TestAnInstantIsOneOwnerInAnyOffset:
             )
 
         assert not await _landed_while_held(utc_writer, zoned_client, table, create, update)
+
+
+# ....................... #
+
+def _hold(table: str, owner: str) -> Write:
+    async def run(ctx: ExecutionContext) -> None:
+        await ctx.doc.command(_spec(table, BY_OWNER)).hold({"owner": owner})
+
+    return run
+
+
+class TestAHoldTakesTheWriteLockWithoutWriting:
+    async def test_a_write_for_the_held_owner_waits(
+        self, pg_client: PostgresClient, second_client: PostgresClient
+    ) -> None:
+        table = await _table(pg_client)
+
+        assert not await _landed_while_held(
+            pg_client, second_client, table, _hold(table, "o1"), _create(table, "o1", BY_OWNER)
+        )
+
+    async def test_a_write_for_another_owner_does_not(
+        self, pg_client: PostgresClient, second_client: PostgresClient
+    ) -> None:
+        table = await _table(pg_client)
+
+        assert await _landed_while_held(
+            pg_client, second_client, table, _hold(table, "o1"), _create(table, "o2", BY_OWNER)
+        )
+
+    @pytest.mark.parametrize("held", [True, False])
+    async def test_two_read_then_write_handlers_decide_one_at_a_time(
+        self, pg_client: PostgresClient, second_client: PostgresClient, held: bool
+    ) -> None:
+        # Each reads the owner's rows, decides, then writes. Without the hold both read
+        # before either writes, and both decide to insert.
+        table = await _table(pg_client)
+        spec = _spec(table, BY_OWNER)
+
+        async def handler(client: PostgresClient) -> None:
+            ctx = _ctx(client, table)
+
+            async with client.transaction():
+                if held:
+                    await ctx.doc.command(spec).hold({"owner": "o1"})
+
+                taken = await ctx.doc.query(spec).count({"$values": {"owner": "o1"}})
+                await asyncio.sleep(LAG)
+
+                if not taken:
+                    await ctx.doc.command(spec).create(_BookingCreate(owner="o1"))
+
+        await asyncio.wait_for(
+            asyncio.gather(handler(pg_client), handler(second_client)), timeout=15
+        )
+
+        rows = await _ctx(pg_client, table).doc.query(spec).count({"$values": {"owner": "o1"}})
+        assert rows == (1 if held else 2)
+
+    async def test_a_write_after_the_hold_in_its_transaction_re_enters_it(
+        self, pg_client: PostgresClient
+    ) -> None:
+        table = await _table(pg_client)
+        cmd = _ctx(pg_client, table).doc.command(_spec(table, BY_OWNER))
+
+        async with pg_client.transaction():
+            await cmd.hold({"owner": "o1"})
+            row = await asyncio.wait_for(cmd.create(_BookingCreate(owner="o1")), timeout=5)
+
+        assert row.owner == "o1"
+
+    async def test_outside_a_transaction_it_is_refused(self, pg_client: PostgresClient) -> None:
+        # Released with its own statement, a hold would end before the read it is for.
+        table = await _table(pg_client)
+        cmd = _ctx(pg_client, table).doc.command(_spec(table, BY_OWNER))
+
+        with pytest.raises(CoreException) as refused:
+            await cmd.hold({"owner": "o1"})
+
+        assert refused.value.code == "document_hold_outside_transaction"
+
+    async def test_pg_locks_shows_the_key_a_write_takes(
+        self, pg_client: PostgresClient, second_client: PostgresClient
+    ) -> None:
+        table = await _table(pg_client)
+        key = advisory_lock_key(table, None, "owner", "o1") & 0xFFFF_FFFF_FFFF_FFFF
+        held = asyncio.Event()
+        seen: list[tuple[int, int]] = []
+
+        async def holder() -> None:
+            async with pg_client.transaction():
+                await _hold(table, "o1")(_ctx(pg_client, table))
+                held.set()
+                await asyncio.sleep(HOLD)
+
+        async def reader() -> None:
+            await held.wait()
+            rows = await second_client.fetch_all(
+                "SELECT classid::bigint AS hi, objid::bigint AS lo FROM pg_locks "
+                "WHERE locktype = 'advisory' AND objsubid = 1 AND granted",
+                [],
+                row_factory="dict",
+            )
+            seen.extend((row["hi"], row["lo"]) for row in rows)
+
+        await asyncio.wait_for(asyncio.gather(holder(), reader()), timeout=15)
+
+        assert (key >> 32, key & 0xFFFF_FFFF) in seen, seen

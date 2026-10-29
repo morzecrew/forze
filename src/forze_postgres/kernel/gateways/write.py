@@ -22,6 +22,10 @@ from forze.application.contracts.document import (
     domains_from_create_payloads,
     require_whole_update_matching,
 )
+from forze.application.contracts.document.specs import (
+    require_hold_in_transaction,
+    serialization_keys,
+)
 from forze.application.contracts.guarantees import SerializedBy
 from forze.application.contracts.querying import QueryFilterExpression
 from forze.application.contracts.resilience import ResilienceExecutorPort
@@ -403,6 +407,30 @@ class PostgresWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
                 await self.client.execute(stmt, [key])
                 held.add(key)
 
+    async def hold(self, *owners: Mapping[str, Any]) -> None:
+        """Take the lock a write for each of *owners* takes, without writing, until commit.
+
+        The same ``pg_advisory_xact_lock`` keys :meth:`_serialize` takes, sorted, so a write
+        for one of *owners* later in this transaction re-enters it without waiting.
+
+        :raises CoreException: ``precondition`` (``document_hold_outside_transaction``)
+            outside a transaction, where the lock would end with its own statement;
+            ``configuration`` per :func:`serialization_keys`.
+        """
+
+        require_hold_in_transaction(self.client.is_in_transaction())
+        keys = serialization_keys(
+            self.serialized_by,
+            owners,
+            domain=self.model_type,
+            scope=self.serialization_scope,
+            tenant=self.require_tenant_if_aware() if self.tenant_aware else None,
+        )
+        stmt = sql.SQL("SELECT pg_advisory_xact_lock({})").format(sql.Placeholder())
+
+        for key in keys:
+            await self.client.execute(stmt, [key])
+
     async def _serialize_rows(self, rows: Sequence[Any]) -> None:
         """:meth:`_serialize` for rows the write already has — the ones it inserts."""
 
@@ -480,6 +508,38 @@ class PostgresWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
             self._ident_rev(),
             sql.Placeholder(),
         )
+
+    # ....................... #
+
+    async def _hold_revisions(self, expected: Mapping[UUID, int]) -> None:
+        """Refuse unless every row of *expected* is still at its revision; hold it until commit.
+
+        For the rows a strict write leaves unchanged: no ``UPDATE ... WHERE rev`` runs to catch
+        a writer committing after the read, so ``FOR SHARE`` reads the stored revision, waiting
+        out a writer in flight, and keeps the next one off the row until this transaction ends.
+
+        :raises CoreException: ``precondition`` (``revision_mismatch``), as
+            :meth:`_require_revisions` does.
+        """
+
+        if not expected:
+            return
+
+        where, params = self._add_tenant_where(
+            sql.SQL("{pk} = ANY({ids})").format(pk=self.ident_pk(), ids=sql.Placeholder()),
+            [list(expected)],
+        )
+        stmt = sql.SQL("SELECT {pk}, {rev} FROM {table} WHERE {where} FOR SHARE").format(
+            pk=self.ident_pk(),
+            rev=self._ident_rev(),
+            table=(await self._qname()).ident(),
+            where=where,
+        )
+        rows = await self.client.fetch_all(stmt, params, row_factory="dict", commit=False)
+        stored = {row[ID_FIELD]: row[REV_FIELD] for row in rows}
+
+        if any(stored.get(pk) != rev for pk, rev in expected.items()):
+            raise exc.precondition("Revision mismatch", code="revision_mismatch")
 
     # ....................... #
 
@@ -1306,6 +1366,7 @@ class PostgresWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
         update: JsonDict | None = None,
         *,
         rev: int | None = None,
+        merge: bool = True,
     ) -> tuple[D, JsonDict]:
         async with self._write_tx():
 
@@ -1316,11 +1377,14 @@ class PostgresWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
             await self._serialize(touched)
             current = await self.read_gw.get(pk)
 
+            if update is None and rev is not None:
+                self._require_revisions((current, rev))
+
             if update is not None:
                 patch = update
 
                 if rev is not None:
-                    (patch,) = await self._validate_history((current, rev, update))
+                    (patch,) = await self._validate_history((current, rev, update), merge=merge)
 
                 after, diff = current.update(patch, materialized=self.read_codec.materialized)
                 # Every sealed field the caller named, from `after`: a stale one too.
@@ -1333,6 +1397,9 @@ class PostgresWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
                 written = diff
 
             if not diff:
+                if rev is not None and self._checks_strictly(merge=merge):
+                    await self._hold_revisions({current.id: rev})
+
                 return current, diff
 
             payload, diff = await self.__payload_and_diff(current, written, diff)
@@ -1373,17 +1440,19 @@ class PostgresWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
         dto: U,
         *,
         rev: int | None = None,
+        merge: bool = True,
     ) -> tuple[D, JsonDict]:
         self._require_update_cmd()
+        self._require_revision_to_check(merge=merge, revisions=rev)
 
         update_data = await self._encode_patch_one(dto, record_id=pk, seal=False)
 
-        return await self.__patch(pk, update_data, rev=rev)
+        return await self.__patch(pk, update_data, rev=rev, merge=merge)
 
     # ....................... #
 
-    async def touch(self, pk: UUID) -> D:
-        res, _ = await self.__patch(pk)
+    async def touch(self, pk: UUID, *, rev: int | None = None) -> D:
+        res, _ = await self.__patch(pk, rev=rev)
 
         return res
 
@@ -1488,6 +1557,7 @@ class PostgresWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
         updates: Sequence[JsonDict] | None = None,
         *,
         revs: Sequence[int] | None = None,
+        merge: bool = True,
         batch_size: int = 200,
     ) -> tuple[Sequence[D], Sequence[JsonDict]]:
         if not pks or (not updates and updates is not None):
@@ -1495,6 +1565,9 @@ class PostgresWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
 
         if updates is not None and len(pks) != len(updates):
             raise exc.internal("Length mismatch between primary keys and updates")
+
+        if revs is not None and len(pks) != len(revs):
+            raise exc.internal("Length mismatch between primary keys and revisions")
 
         if len(pks) != len(set(pks)):
             raise exc.precondition("Primary keys must be unique")
@@ -1519,6 +1592,8 @@ class PostgresWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
             returned: dict[UUID, JsonDict] = {}
 
             if updates is None:
+                if revs is not None:
+                    self._require_revisions(*zip(currents, revs, strict=True))
 
                 async def _prepare_touch(c: D) -> tuple[UUID, int, JsonDict]:
                     _, diff = c.touch()
@@ -1549,7 +1624,7 @@ class PostgresWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
                             strict=True,
                         )
                     ]
-                    patches = await self._validate_history(*data)
+                    patches = await self._validate_history(*data, merge=merge)
 
                 async def _prepare_update(
                     c: D,
@@ -1581,6 +1656,15 @@ class PostgresWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
                         # always the same key so we can handle only one group
                         key = tuple(sorted(diff.keys()))
                         groups[key].append((cid, crev, diff))
+
+                if revs is not None and self._checks_strictly(merge=merge):
+                    await self._hold_revisions(
+                        {
+                            c.id: r
+                            for c, r, written in zip(currents, revs, results, strict=True)
+                            if written is None
+                        }
+                    )
 
             if not groups:
                 return currents, [{} for _ in currents]
@@ -1628,10 +1712,12 @@ class PostgresWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
         dtos: Sequence[U],
         *,
         revs: Sequence[int] | None = None,
+        merge: bool = True,
         batch_size: int = 200,
     ) -> tuple[Sequence[D], Sequence[JsonDict]]:
 
         self._require_update_cmd()
+        self._require_revision_to_check(merge=merge, revisions=revs)
 
         updates: list[JsonDict] = []
         for start in range(0, len(dtos), batch_size):
@@ -1646,6 +1732,7 @@ class PostgresWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
             pks,
             updates,
             revs=revs,
+            merge=merge,
             batch_size=batch_size,
         )
 
@@ -1808,9 +1895,10 @@ class PostgresWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
         self,
         pks: Sequence[UUID],
         *,
+        revs: Sequence[int] | None = None,
         batch_size: int = 200,
     ) -> Sequence[D]:
-        res, _ = await self.__patch_many(pks, None, batch_size=batch_size)
+        res, _ = await self.__patch_many(pks, None, revs=revs, batch_size=batch_size)
 
         return res
 

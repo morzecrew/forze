@@ -1,6 +1,6 @@
 """Ports for document storage and retrieval."""
 
-from collections.abc import AsyncGenerator, Awaitable, Sequence
+from collections.abc import AsyncGenerator, Awaitable, Mapping, Sequence
 from typing import (
     Any,
     Literal,
@@ -569,6 +569,7 @@ class DocumentCommandPort(BaseDocumentPort[R, D, C, U], Protocol[R, D, C, U]):
         *,
         return_new: Literal[True] = True,
         return_diff: Literal[False] = False,
+        merge: bool = True,
     ) -> Awaitable[R]:
         """Apply a partial update to a document identified by ``pk``."""
         ...  # pragma: no cover
@@ -582,6 +583,7 @@ class DocumentCommandPort(BaseDocumentPort[R, D, C, U], Protocol[R, D, C, U]):
         *,
         return_new: Literal[True] = True,
         return_diff: Literal[True],
+        merge: bool = True,
     ) -> Awaitable[tuple[R, JsonDict]]:
         """Apply a partial update to a document identified by ``pk``."""
         ...  # pragma: no cover
@@ -595,6 +597,7 @@ class DocumentCommandPort(BaseDocumentPort[R, D, C, U], Protocol[R, D, C, U]):
         *,
         return_new: Literal[False],
         return_diff: Literal[False] = False,
+        merge: bool = True,
     ) -> Awaitable[None]:
         """Apply a partial update to a document identified by ``pk``."""
         ...  # pragma: no cover
@@ -608,6 +611,7 @@ class DocumentCommandPort(BaseDocumentPort[R, D, C, U], Protocol[R, D, C, U]):
         *,
         return_new: Literal[False],
         return_diff: Literal[True],
+        merge: bool = True,
     ) -> Awaitable[JsonDict]:
         """Apply a partial update to a document identified by ``pk``."""
         ...  # pragma: no cover
@@ -620,8 +624,21 @@ class DocumentCommandPort(BaseDocumentPort[R, D, C, U], Protocol[R, D, C, U]):
         *,
         return_new: bool = True,
         return_diff: bool = False,
+        merge: bool = True,
     ) -> Awaitable[R | JsonDict | tuple[R, JsonDict] | None]:
-        """Apply a partial update to a document identified by ``pk``."""
+        """Apply a partial update to a document identified by ``pk``.
+
+        :param rev: The revision the caller read.
+        :param merge: With revision history on, a stale *rev* is merged by default: the update
+            is reduced to what it changes against that revision and refused only where it
+            overlaps a change made since. ``False`` refuses any *rev* but the stored one
+            (``revision_mismatch``), even for an update that changes nothing, and the write
+            matches that revision, so a writer committing in between makes it fail too.
+            Without history every update is already this strict. An update that changes
+            nothing writes nothing: inside a Mongo transaction its check reads the
+            transaction's snapshot and holds nothing until commit, while :meth:`touch`
+            at *rev* writes, so it holds.
+        """
         ...  # pragma: no cover
 
     # ....................... #
@@ -633,6 +650,7 @@ class DocumentCommandPort(BaseDocumentPort[R, D, C, U], Protocol[R, D, C, U]):
         *,
         return_new: Literal[True] = True,
         return_diff: Literal[False] = False,
+        merge: bool = True,
     ) -> Awaitable[Sequence[R]]:
         """Apply partial updates to multiple documents."""
         ...  # pragma: no cover
@@ -644,6 +662,7 @@ class DocumentCommandPort(BaseDocumentPort[R, D, C, U], Protocol[R, D, C, U]):
         *,
         return_new: Literal[True] = True,
         return_diff: Literal[True],
+        merge: bool = True,
     ) -> Awaitable[Sequence[tuple[R, JsonDict]]]:
         """Apply partial updates to multiple documents."""
         ...  # pragma: no cover
@@ -655,6 +674,7 @@ class DocumentCommandPort(BaseDocumentPort[R, D, C, U], Protocol[R, D, C, U]):
         *,
         return_new: Literal[False],
         return_diff: Literal[False] = False,
+        merge: bool = True,
     ) -> Awaitable[None]:
         """Apply partial updates to multiple documents."""
         ...  # pragma: no cover
@@ -666,6 +686,7 @@ class DocumentCommandPort(BaseDocumentPort[R, D, C, U], Protocol[R, D, C, U]):
         *,
         return_new: Literal[False],
         return_diff: Literal[True],
+        merge: bool = True,
     ) -> Awaitable[Sequence[JsonDict]]:
         """Apply partial updates to multiple documents."""
         ...  # pragma: no cover
@@ -676,8 +697,15 @@ class DocumentCommandPort(BaseDocumentPort[R, D, C, U], Protocol[R, D, C, U]):
         *,
         return_new: bool = True,
         return_diff: bool = False,
+        merge: bool = True,
     ) -> Awaitable[Sequence[R] | Sequence[JsonDict] | Sequence[tuple[R, JsonDict]] | None]:
-        """Apply partial updates to multiple documents."""
+        """Apply partial updates to multiple documents.
+
+        :param merge: As for :meth:`update`, for every row. Strict, every row is checked
+            before any is written, but a row a concurrent writer moves after that check is
+            refused at its own write: only inside a transaction are the rows written before it
+            undone.
+        """
         ...  # pragma: no cover
 
     # ....................... #
@@ -789,17 +817,28 @@ class DocumentCommandPort(BaseDocumentPort[R, D, C, U], Protocol[R, D, C, U]):
     # ....................... #
 
     @overload
-    def touch(self, pk: UUID, *, return_new: Literal[True] = True) -> Awaitable[R]:
+    def touch(
+        self, pk: UUID, *, rev: int | None = None, return_new: Literal[True] = True
+    ) -> Awaitable[R]:
         """Bump metadata (e.g. ``last_update_at``) for a single document."""
         ...  # pragma: no cover
 
     @overload
-    def touch(self, pk: UUID, *, return_new: Literal[False]) -> Awaitable[None]:
+    def touch(
+        self, pk: UUID, *, rev: int | None = None, return_new: Literal[False]
+    ) -> Awaitable[None]:
         """Bump metadata (e.g. ``last_update_at``) for a single document."""
         ...  # pragma: no cover
 
-    def touch(self, pk: UUID, *, return_new: bool = True) -> Awaitable[R | None]:
-        """Bump metadata (e.g. ``last_update_at``) for a single document."""
+    def touch(
+        self, pk: UUID, *, rev: int | None = None, return_new: bool = True
+    ) -> Awaitable[R | None]:
+        """Bump metadata (e.g. ``last_update_at``) for a single document.
+
+        :param rev: When given, bump only a document still at this revision; any other is
+            refused (``revision_mismatch``), and the write matches it, so a writer committing
+            in between makes it fail too.
+        """
         ...  # pragma: no cover
 
     # ....................... #
@@ -809,6 +848,7 @@ class DocumentCommandPort(BaseDocumentPort[R, D, C, U], Protocol[R, D, C, U]):
         self,
         pks: Sequence[UUID],
         *,
+        revs: Sequence[int] | None = None,
         return_new: Literal[True] = True,
     ) -> Awaitable[Sequence[R]]:
         """Bump metadata for multiple documents."""
@@ -819,6 +859,7 @@ class DocumentCommandPort(BaseDocumentPort[R, D, C, U], Protocol[R, D, C, U]):
         self,
         pks: Sequence[UUID],
         *,
+        revs: Sequence[int] | None = None,
         return_new: Literal[False],
     ) -> Awaitable[None]:
         """Bump metadata for multiple documents."""
@@ -828,9 +869,46 @@ class DocumentCommandPort(BaseDocumentPort[R, D, C, U], Protocol[R, D, C, U]):
         self,
         pks: Sequence[UUID],
         *,
+        revs: Sequence[int] | None = None,
         return_new: bool = True,
     ) -> Awaitable[Sequence[R] | None]:
-        """Bump metadata for multiple documents."""
+        """Bump metadata for multiple documents.
+
+        :param revs: When given, the revision each document must still be at, by position,
+            as ``rev`` is for :meth:`touch`, and all-or-nothing only inside a transaction, as
+            for :meth:`update_many`.
+        """
+        ...  # pragma: no cover
+
+    # ....................... #
+
+    def hold(self, *owners: Mapping[str, Any]) -> Awaitable[None]:
+        """Take the write lock of each of *owners*, writing nothing, until the transaction ends.
+
+        Each owner names the fields of one of the spec's ``SerializedBy`` keys, such as
+        ``{"order_id": order_id}``. The lock is the one every write for that owner takes, so a
+        handler that holds it before it reads makes its read-then-write as serialized as the
+        write: a second handler for the owner waits here, and this handler's own writes later
+        in the transaction take the lock again without waiting.
+
+        Values are validated against the key fields' types and constraints, so an id passed
+        as a string locks the same owner. A key the write path derives otherwise is refused:
+        a datetime field, which a write keys as the store returns it, in the session's time
+        zone, and a field the domain validates or serializes with a field or model validator
+        or serializer of its own.
+
+        One call takes its owners in a fixed order. Two calls, or a hold followed by a write
+        for another owner, can take owners in another order than a concurrent transaction
+        does; that deadlock is refused as a retryable ``concurrency`` on one side. Pass every
+        owner the handler needs to one call.
+
+        :raises CoreException: ``configuration`` when the spec declares no ``SerializedBy``,
+            when no owner is given, when an owner's fields are not those of a declared key, or
+            when a key field is one a hold cannot derive as a write does;
+            ``precondition`` (``document_hold_outside_transaction``) outside a transaction;
+            ``precondition`` (``storage_guarantee_unsupported``) on a store that serializes no
+            writes.
+        """
         ...  # pragma: no cover
 
     # ....................... #

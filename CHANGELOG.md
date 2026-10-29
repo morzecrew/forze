@@ -13,6 +13,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **`MockDepsModule(row_locks="block")` makes a held row lock wait under simulation, as Postgres does.** Two transactions taking rows in one order now both succeed. Opposite orders abort one with `deadlock_detected`, and DST reports a `no_lock_order_deadlock` violation naming the rows.
 
+- **A document write can refuse any stale revision, history or not.** `update(..., merge=False)` and `update_many(..., merge=False)` raise `revision_mismatch` for any `rev` but the stored one, even for a no-op, instead of merging it. `touch(pk, rev=...)` and `touch_many(pks, revs=...)` bump only rows still at it.
+
+- **A handler can take a spec's `SerializedBy` lock before it reads.** `hold({"order_id": order_id})` on the document command port takes the lock its writes take, without writing, until the transaction ends. Refused outside a transaction, for a datetime, validator-rewritten or serialized key, and on Mongo and Firestore.
+
 - **DuckDB serves trusted dynamic reads over a per-tenant Iceberg lake.** `RoutedDuckDbClient` gives each tenant a locked-down instance holding its catalog principal and the S3 credentials vended per statement, and serves nothing from one that fails its attestation. Wire routes with `DuckDbDepsModule(dynamic_reads=...)`.
 
 - **`attach_readiness_route` takes a runtime provider.** Pass a zero-argument callable returning the runtime, or `None` before it exists; it is asked on every request. No runtime, or a provider that raises, answers `503 unavailable`.
@@ -88,6 +92,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **The dynamic-read write refusal no longer names a READ ONLY transaction.** The message is engine-neutral and the details carry the engine's `statement_type` where it has one. A `DuckDbClient` statement timeout now carries the code `duckdb_query_timeout`.
 
 ### Fixed
+
+- **Firestore `update_many` and `touch_many` work inside a transaction.** They read every row before writing any, as a Firestore transaction requires; a second row used to fail with a read-after-write error.
 
 - **`HttpClient` reads a compressed response.** A gzip or deflate body, and with no cap a zstd or brotli one, no longer fails `request`, or a rejected response from `stream`, as an infrastructure error. `RoutedHttpClient` and declared services are fixed with it.
 

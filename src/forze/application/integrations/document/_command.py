@@ -1,7 +1,7 @@
 """Document command port methods."""
 
 import asyncio
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from typing import Any, Generic, Literal, overload
 from uuid import UUID
 
@@ -11,8 +11,11 @@ from forze.application.contracts.document import (
     KeyedUpdate,
     UpsertItem,
 )
+from forze.application.contracts.document.specs import require_hold_in_transaction
 from forze.application.contracts.domain import drain_domain_events
+from forze.application.contracts.guarantees import GUARANTEE_UNSUPPORTED
 from forze.application.contracts.querying import QueryFilterExpression
+from forze.application.contracts.transaction import TransactionallyEnlistable
 from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict
 from forze.domain.constants import ID_FIELD, REV_FIELD
@@ -306,6 +309,7 @@ class DocumentCommandMixin(
         *,
         return_new: Literal[True] = True,
         return_diff: Literal[False] = False,
+        merge: bool = True,
     ) -> R: ...
 
     @overload
@@ -317,6 +321,7 @@ class DocumentCommandMixin(
         *,
         return_new: Literal[True] = True,
         return_diff: Literal[True],
+        merge: bool = True,
     ) -> tuple[R, JsonDict]: ...
 
     @overload
@@ -328,6 +333,7 @@ class DocumentCommandMixin(
         *,
         return_new: Literal[False],
         return_diff: Literal[False] = False,
+        merge: bool = True,
     ) -> None: ...
 
     @overload
@@ -339,6 +345,7 @@ class DocumentCommandMixin(
         *,
         return_new: Literal[False],
         return_diff: Literal[True],
+        merge: bool = True,
     ) -> JsonDict: ...
 
     async def update(
@@ -349,18 +356,25 @@ class DocumentCommandMixin(
         *,
         return_new: bool = True,
         return_diff: bool = False,
+        merge: bool = True,
     ) -> R | JsonDict | tuple[R, JsonDict] | None:
         """Update a document and refresh the cache.
 
         :param pk: Document primary key.
         :param dto: Update payload.
         :param rev: Expected revision for historical consistency validation.
+        :param merge: Whether a stale *rev* is merged through history; when ``False``, any
+            revision but the stored one is refused (``revision_mismatch``).
         """
 
         w = self._require_write()
 
+        # The flag goes only where it is asked for, so a gateway that predates it still serves
+        # every other call, and refuses a strict one rather than merging it.
+        write = w.update(pk, dto, rev=rev) if merge else w.update(pk, dto, rev=rev, merge=False)
+
         (domain, diff), _ = await asyncio.gather(
-            w.update(pk, dto, rev=rev),
+            write,
             self.document_cache.invalidate_keys_now(pk),
         )
 
@@ -393,6 +407,7 @@ class DocumentCommandMixin(
         *,
         return_new: Literal[True] = True,
         return_diff: Literal[False] = False,
+        merge: bool = True,
     ) -> Sequence[R]: ...
 
     @overload
@@ -402,6 +417,7 @@ class DocumentCommandMixin(
         *,
         return_new: Literal[True] = True,
         return_diff: Literal[True],
+        merge: bool = True,
     ) -> Sequence[tuple[R, JsonDict]]: ...
 
     @overload
@@ -411,6 +427,7 @@ class DocumentCommandMixin(
         *,
         return_new: Literal[False],
         return_diff: Literal[False] = False,
+        merge: bool = True,
     ) -> None: ...
 
     @overload
@@ -420,6 +437,7 @@ class DocumentCommandMixin(
         *,
         return_new: Literal[False],
         return_diff: Literal[True],
+        merge: bool = True,
     ) -> Sequence[JsonDict]: ...
 
     async def update_many(
@@ -428,11 +446,13 @@ class DocumentCommandMixin(
         *,
         return_new: bool = True,
         return_diff: bool = False,
+        merge: bool = True,
     ) -> Sequence[R] | Sequence[JsonDict] | Sequence[tuple[R, JsonDict]] | None:
         """Bulk-update documents and refresh the cache.
 
         :param updates: One :class:`KeyedUpdate` per document (id, expected rev, patch);
             ids must be unique.
+        :param merge: As for :meth:`update`, for every row.
         """
 
         w = self._require_write()
@@ -456,8 +476,14 @@ class DocumentCommandMixin(
         revs = [u.rev for u in updates]
         dtos = [u.dto for u in updates]
 
+        write = (
+            w.update_many(pks, dtos, revs=revs, batch_size=self.eff_batch_size)
+            if merge
+            else w.update_many(pks, dtos, revs=revs, merge=False, batch_size=self.eff_batch_size)
+        )
+
         (domains, diffs), _ = await asyncio.gather(
-            w.update_many(pks, dtos, revs=revs, batch_size=self.eff_batch_size),
+            write,
             self.document_cache.invalidate_keys_now(*pks),
         )
 
@@ -645,21 +671,27 @@ class DocumentCommandMixin(
     # ....................... #
 
     @overload
-    async def touch(self, pk: UUID, *, return_new: Literal[True] = True) -> R: ...
+    async def touch(
+        self, pk: UUID, *, rev: int | None = None, return_new: Literal[True] = True
+    ) -> R: ...
 
     @overload
-    async def touch(self, pk: UUID, *, return_new: Literal[False]) -> None: ...
+    async def touch(
+        self, pk: UUID, *, rev: int | None = None, return_new: Literal[False]
+    ) -> None: ...
 
-    async def touch(self, pk: UUID, *, return_new: bool = True) -> R | None:
+    async def touch(self, pk: UUID, *, rev: int | None = None, return_new: bool = True) -> R | None:
         """Touch a document (bump revision) and refresh the cache.
 
         :param pk: Document primary key.
+        :param rev: When given, touch only a document still at this revision; any other is
+            refused (``revision_mismatch``).
         """
 
         w = self._require_write()
 
         domain, _ = await asyncio.gather(
-            w.touch(pk),
+            w.touch(pk) if rev is None else w.touch(pk, rev=rev),
             self.document_cache.invalidate_keys_now(pk),
         )
 
@@ -672,6 +704,7 @@ class DocumentCommandMixin(
         self,
         pks: Sequence[UUID],
         *,
+        revs: Sequence[int] | None = None,
         return_new: Literal[True] = True,
     ) -> Sequence[R]: ...
 
@@ -680,6 +713,7 @@ class DocumentCommandMixin(
         self,
         pks: Sequence[UUID],
         *,
+        revs: Sequence[int] | None = None,
         return_new: Literal[False],
     ) -> None: ...
 
@@ -687,14 +721,19 @@ class DocumentCommandMixin(
         self,
         pks: Sequence[UUID],
         *,
+        revs: Sequence[int] | None = None,
         return_new: bool = True,
     ) -> Sequence[R] | None:
         """Touch multiple documents and refresh the cache.
 
         :param pks: Document primary keys.
+        :param revs: When given, the revision each document must still be at, by position.
         """
 
         w = self._require_write()
+
+        if revs is not None and len(revs) != len(pks):
+            raise exc.precondition("touch_many requires one revision per id")
 
         if not pks:
             if not return_new:
@@ -703,11 +742,42 @@ class DocumentCommandMixin(
             return []
 
         domains, _ = await asyncio.gather(
-            w.touch_many(pks, batch_size=self.eff_batch_size),
+            w.touch_many(pks, batch_size=self.eff_batch_size)
+            if revs is None
+            else w.touch_many(pks, revs=revs, batch_size=self.eff_batch_size),
             self.document_cache.invalidate_keys_now(*pks),
         )
 
         return await self._finalize_bulk_write(domains, return_new=return_new)
+
+    # ....................... #
+
+    async def hold(self, *owners: Mapping[str, Any]) -> None:
+        """Hold the write lock of each of *owners* until the transaction ends.
+
+        :raises CoreException: ``precondition`` (``storage_guarantee_unsupported``) when the
+            store serializes no writes; ``precondition`` (``document_hold_outside_transaction``)
+            unless this port reports its writes enlisted in an open transaction; otherwise as
+            the store's own ``hold``.
+        """
+
+        # A store without the method keeps no write lock, and its wiring already refuses a
+        # spec declaring SerializedBy: there is nothing to hold.
+        hold = getattr(self._require_write(), "hold", None)
+
+        if hold is None:
+            raise exc.precondition(
+                f"The store behind {self.spec.name!r} serializes no writes, so it has no write "
+                "lock to hold.",
+                code=GUARANTEE_UNSUPPORTED,
+            )
+
+        # Here as well as in the store, so a store that forgets the check is still refused; a
+        # port that cannot say whether it is in a transaction is refused too.
+        require_hold_in_transaction(
+            isinstance(self, TransactionallyEnlistable) and self.is_transactionally_enlisted()
+        )
+        await hold(*owners)
 
     # ....................... #
 

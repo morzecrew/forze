@@ -51,13 +51,53 @@ a [conflict](errors.md) for the caller to resolve.
     The three-way merge needs document history enabled. Without it, *any*
     revision mismatch is a `precondition` error rather than a merge attempt.
 
+## Refusing any change since you read
+
+The merge is right for ordinary edits and wrong for an action that approves one
+version: confirming an order as reviewed, signing off a document, accepting a
+quote. Any change since the reviewer read it should send them back. Pass
+`merge=False` to refuse every revision but the stored one, history or not:
+
+```python
+await ctx.document.command(order_spec).update(
+    order.id, order.rev, OrderUpdate(status="confirmed"), merge=False,
+)
+```
+
+To record the sign-off without changing any field, touch it at the revision you read:
+
+```python
+await ctx.document.command(order_spec).touch(order.id, rev=order.rev)
+```
+
+A stale `rev` raises `exc.precondition` (`revision_mismatch`), even for an update
+that changes nothing. The check is atomic: the write matches the revision you
+passed, so a writer committing between the store's read and its write makes it
+fail too. `merge=False` with no revision to check is refused as `configuration`.
+
+An update that changes nothing writes nothing. Postgres checks its revision under
+a row lock, and Firestore in its transaction's read; both keep the row until
+commit. Mongo checks the revision it read and keeps nothing, since it locks a
+document only by writing it. Inside a Mongo transaction that read is the
+transaction's snapshot, so a writer can still commit before yours. Touch at the
+revision when the check must last until commit there.
+
+`update_many(..., merge=False)` applies the check to every row, and
+`touch_many(pks, revs=...)` takes one revision per id. Every row is checked
+before any is written. A row a concurrent writer moves after that check is
+refused at its own write, and only a transaction undoes the rows written before
+it. Postgres opens one of its own; Mongo, Firestore and the in-memory store do
+not. Run a strict bulk write in a transaction when it must be all or nothing.
+The in-memory store keeps no history, so it is always this strict.
+
 ## Related write helpers
 
 - `Document.validate_historical_consistency(old, patch)` is the check behind the
   merge — `True` when the concurrent change and yours touch disjoint fields.
 - `Document.historical_update(old, patch)` is what the merge writes: the part of
   `patch` that changes `old`, or `None` on a conflict.
-- `command.touch(pk)` bumps `last_update_at` and `rev` without other changes.
+- `command.touch(pk)` bumps `last_update_at` and `rev` without other changes;
+  `touch(pk, rev=rev)` bumps only a document still at `rev`.
 
 Retrying a conflict safely is only half the story — a retried write must also
 not apply twice. That guarantee is [Idempotency](idempotency.md).

@@ -879,6 +879,111 @@ async def test_touch_many_empty(return_new: bool) -> None:
 # ....................... #
 
 
+class _StrictWriteGateway(FakeWriteGateway):
+    """Records the strict-revision arguments each write is handed."""
+
+    async def update(self, pk: Any, dto: Any, *, rev: int, merge: bool = True) -> Any:
+        self.calls.append(f"update:merge={merge}")
+        return _Domain(id=pk, rev=rev + 1), {"rev": rev + 1}
+
+    async def update_many(
+        self, pks: Any, dtos: Any, *, revs: Any, merge: bool = True, batch_size: int
+    ) -> Any:
+        self.calls.append(f"update_many:merge={merge}")
+        return [_Domain(id=p, rev=r + 1) for p, r in zip(pks, revs, strict=True)], [{}, {}]
+
+    async def touch(self, pk: Any, *, rev: int | None = None) -> Any:
+        self.calls.append(f"touch:rev={rev}")
+        return _Domain(id=pk, rev=2)
+
+    async def touch_many(self, pks: Any, *, revs: Any = None, batch_size: int) -> Any:
+        self.calls.append(f"touch_many:revs={revs}")
+        return [_Domain(id=p, rev=2) for p in pks]
+
+
+@pytest.mark.asyncio
+async def test_the_strict_revision_arguments_reach_the_store() -> None:
+    write_gw = _StrictWriteGateway()
+    harness = CommandHarness(write_gw)
+    updates = [
+        KeyedUpdate(id=_UID_A, rev=1, dto=_Dto()),
+        KeyedUpdate(id=_UID_B, rev=2, dto=_Dto()),
+    ]
+
+    await harness.update(_UID_A, 1, _Dto(), merge=False)
+    await harness.update_many(updates, merge=False)
+    await harness.touch(_UID_A, rev=1)
+    await harness.touch_many([_UID_A, _UID_B], revs=[1, 2])
+
+    assert write_gw.calls == [
+        "update:merge=False",
+        "update_many:merge=False",
+        "touch:rev=1",
+        "touch_many:revs=[1, 2]",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_touch_many_refuses_revisions_not_one_per_id() -> None:
+    write_gw = FakeWriteGateway()
+
+    with pytest.raises(CoreException):
+        await CommandHarness(write_gw).touch_many([_UID_A, _UID_B], revs=[1])
+
+    assert write_gw.calls == []
+
+
+# ....................... #
+
+
+class _HoldingWriteGateway(FakeWriteGateway):
+    async def hold(self, *owners: Any) -> None:
+        self.calls.append(f"hold:{list(owners)}")
+
+
+class _EnlistedHarness(CommandHarness):
+    enlisted = True
+
+    def is_transactionally_enlisted(self) -> bool:
+        return self.enlisted
+
+
+@pytest.mark.asyncio
+async def test_a_hold_in_a_transaction_is_the_store_s_own() -> None:
+    write_gw = _HoldingWriteGateway()
+
+    await _EnlistedHarness(write_gw).hold({"owner": "o1"})
+
+    assert write_gw.calls == ["hold:[{'owner': 'o1'}]"]
+
+
+@pytest.mark.parametrize("enlistable", [True, False])
+@pytest.mark.asyncio
+async def test_a_hold_outside_a_transaction_is_refused_before_the_store(enlistable: bool) -> None:
+    # Whatever the store checks: a port that is not in a transaction, or cannot say, is refused.
+    write_gw = _HoldingWriteGateway()
+    harness = _EnlistedHarness(write_gw) if enlistable else CommandHarness(write_gw)
+    harness.enlisted = False  # type: ignore[attr-defined]
+
+    with pytest.raises(CoreException) as refused:
+        await harness.hold({"owner": "o1"})
+
+    assert refused.value.code == "document_hold_outside_transaction"
+    assert write_gw.calls == []
+
+
+@pytest.mark.asyncio
+async def test_a_store_serializing_no_writes_refuses_a_hold() -> None:
+    # Mongo and Firestore: no write lock exists, so a hold that answered would protect nothing.
+    with pytest.raises(CoreException) as refused:
+        await CommandHarness(FakeWriteGateway()).hold({"owner": "o1"})
+
+    assert refused.value.code == "storage_guarantee_unsupported"
+
+
+# ....................... #
+
+
 @pytest.mark.asyncio
 async def test_kill_evicts_cache() -> None:
     write_gw = FakeWriteGateway()
