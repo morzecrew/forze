@@ -1,4 +1,5 @@
 from collections.abc import Callable, Sequence
+from typing import Final
 
 import attrs
 
@@ -66,6 +67,12 @@ from ._helpers import (
 )
 
 # ----------------------- #
+
+_PART_TOUCH_ATTEMPTS: Final[int] = 8
+"""Touches one ``presign_upload_part`` tries before it gives up: enough for a client asking
+for that many part URLs of one file at once, each lost race being another call's win."""
+
+# ....................... #
 
 
 @attrs.define(slots=True, kw_only=True, frozen=True)
@@ -345,10 +352,13 @@ class InitiateStoredFileUpload(
 class PresignStoredFileUploadPart(Handler[PresignStoredFileUploadPartRequestDTO, PresignedUrlDTO]):
     """Mint a presigned PUT for one part of a pending direct multipart upload.
 
-    The session targets the key on the row, never one the caller names. The row is touched
-    first, at the revision read, so the pending sweep counts its age from the newest part URL
-    and a row the sweep has already failed mints none. The touch bumps the row's revision;
-    ``complete_upload`` reloads the row, so it is unaffected unless it runs concurrently.
+    The session targets the key on the row, never one the caller names. The URL is signed
+    first and handed out only once a revision-checked touch of the row succeeds, so it expires
+    within its lifetime (at most 1 hour) of the row's last update, which the pending sweep
+    counts its age from; a row the sweep failed in between hands out none. Parallel calls for
+    one file race on the revision, so a lost touch re-reads the row and retries.
+    ``complete_upload`` reloads the row, so the revision bump is invisible to it unless it runs
+    concurrently.
     """
 
     doc: DocumentCommandPort[
@@ -364,10 +374,8 @@ class PresignStoredFileUploadPart(Handler[PresignStoredFileUploadPartRequestDTO,
 
     async def __call__(self, args: PresignStoredFileUploadPartRequestDTO) -> PresignedUrlDTO:
         file = await self.reads.get(pk=args.id)
-        key = ensure_awaiting_upload(file)
-        await self.doc.touch(file.id, rev=file.rev, return_new=False)
         session = UploadSession(
-            key=key,
+            key=ensure_awaiting_upload(file),
             upload_id=args.upload_id,
             content_type=file.content_type,
         )
@@ -376,8 +384,27 @@ class PresignStoredFileUploadPart(Handler[PresignStoredFileUploadPartRequestDTO,
             args.part_number,
             expires_in=args.expires_in,
         )
+        await self._touch(file)
 
         return presigned_to_dto(url)
+
+    # ....................... #
+
+    async def _touch(self, file: StoredFileRead) -> None:
+        """Touch *file* at its revision, re-reading it after each lost race; a row that left
+        ``pending`` meanwhile raises ``precondition``."""
+
+        for attempt in range(1, _PART_TOUCH_ATTEMPTS + 1):
+            try:
+                await self.doc.touch(file.id, rev=file.rev, return_new=False)
+                return
+
+            except CoreException as error:
+                if error.code != "revision_mismatch" or attempt == _PART_TOUCH_ATTEMPTS:
+                    raise
+
+            file = await self.reads.get(pk=file.id, skip_cache=True)
+            ensure_awaiting_upload(file)
 
 
 # ....................... #

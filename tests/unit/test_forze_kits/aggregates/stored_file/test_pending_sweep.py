@@ -24,6 +24,7 @@ from forze_kits.aggregates.stored_file import (
     CompleteStoredFileUpload,
     CompleteStoredFileUploadRequestDTO,
     InitiateStoredFileUploadRequestDTO,
+    PresignStoredFileUploadPart,
     PresignStoredFileUploadPartRequestDTO,
     StoredFileKernelOp,
     StoredFileUploadSessionDTO,
@@ -352,6 +353,37 @@ class TestPartUrlsKeepTheRowFresh:
         row = await _row(ctx, started.file.id)
         assert row.status is StoredFileStatus.PENDING
         assert row.rev == started.file.rev + 1  # the URL touched the row
+
+    async def test_a_row_the_sweep_fails_mid_call_hands_out_no_part_url(
+        self, ctx: ExecutionContext
+    ) -> None:
+        started = await _initiate(ctx, multipart=True)
+        inner = ctx.doc.command(_KIT.document)
+
+        class _SweepBeforeTouch:
+            async def touch(self, *args: Any, **kwargs: Any) -> Any:
+                # The URL is signed; the sweep fails the row before the touch records it.
+                await _startup()._drain(ctx)  # pyright: ignore[reportPrivateUsage]
+                return await inner.touch(*args, **kwargs)
+
+        handler = PresignStoredFileUploadPart(
+            doc=_SweepBeforeTouch(),  # type: ignore[arg-type]
+            reads=ctx.doc.query(_KIT.document),
+            uploads=ctx.storage.uploads(_KIT.resolved_storage),
+        )
+
+        with pytest.raises(CoreException) as ei:
+            await handler(
+                PresignStoredFileUploadPartRequestDTO(
+                    id=started.file.id,
+                    upload_id=started.upload_id,
+                    part_number=1,
+                    expires_in=timedelta(minutes=5),
+                )
+            )
+
+        assert ei.value.kind is ExceptionKind.PRECONDITION
+        assert (await _row(ctx, started.file.id)).status is StoredFileStatus.FAILED
 
     async def test_a_row_the_sweep_failed_mints_no_part_url(self, ctx: ExecutionContext) -> None:
         started = await _initiate(ctx, multipart=True)

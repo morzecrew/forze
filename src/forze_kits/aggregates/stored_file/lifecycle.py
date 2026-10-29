@@ -46,8 +46,8 @@ from .dto import _UPLOAD_URL_MAX_EXPIRY  # pyright: ignore[reportPrivateUsage]
 
 DEFAULT_PENDING_MAX_AGE: Final[timedelta] = timedelta(hours=24)
 """How long a ``pending`` row must go without an update before the sweep fails it: well past
-the longest a direct-upload URL lives (1 hour). Minting a URL updates the row, so no URL
-handed out for it still works."""
+the longest a direct-upload URL lives (1 hour). Every URL handed out was signed before the
+row's last update, so none of them still works."""
 
 _StoredFileCommands = DocumentCommandPort[
     StoredFileRead,
@@ -384,8 +384,11 @@ def stored_file_pending_sweep_lifecycle_step(
     pending row has no key yet, so it is only marked failed. Then the sweep sleeps *interval*
     with multiplicative *jitter*.
 
-    *older_than* must exceed the longest a direct-upload URL lives (1 hour). Each URL is
-    minted after the row's last update, so none still works once the row is past the cutoff.
+    *older_than* must exceed the longest a direct-upload URL lives (1 hour). Every URL is
+    signed before the update that records it: ``initiate_upload`` signs before it creates the
+    row, and ``presign_upload_part`` signs, then touches the row, and hands the URL out only
+    if the touch succeeds. So every URL handed out expires within 1 hour of the row's last
+    update, and none still works once the row is past the cutoff.
 
     Concurrent sweepers never fail a row twice: the revision check lets one win, and the
     cleanup is idempotent. So run the step unwrapped on every replica. *tenants* works as on

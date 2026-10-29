@@ -435,7 +435,7 @@ presigned URLs. Bind authn and authz on each one, as you do on `upload`.
 | Operation | Input | Result |
 |-----------|-------|--------|
 | `initiate_upload` | `InitiateStoredFileUploadRequestDTO` (`filename`, exact `size`, `content_type`, `multipart`, and `expires_in` for a single `PUT`: 15 minutes by default, at most 1 hour) | `StoredFileUploadSessionDTO`: the `pending` row plus a presigned `PUT` (`presigned`) or a multipart `upload_id` |
-| `presign_upload_part` | `PresignStoredFileUploadPartRequestDTO` (`id`, `upload_id`, `part_number`, `expires_in` with the same bounds) | `PresignedUrlDTO` for one part; it touches the row, bumping its revision |
+| `presign_upload_part` | `PresignStoredFileUploadPartRequestDTO` (`id`, `upload_id`, `part_number`, `expires_in` with the same bounds) | `PresignedUrlDTO` for one part; it touches the row, bumping its revision, and parallel calls retry the touch |
 | `complete_upload` | `CompleteStoredFileUploadRequestDTO` (`id`, plus `upload_id` and `parts` for a multipart upload) | the `ready` row |
 
 1. `initiate_upload` mints the storage key, `{tenant}/{file_id}`, and writes a
@@ -509,8 +509,11 @@ the mark, and rows `complete_upload` refused, whose single `PUT` URL could
 still land an object after the refusal.
 
 `older_than` must be longer than 1 hour, the longest a direct-upload URL
-lives. Every URL is minted after the row's last update, so none still works
-once the row is past the cutoff. Concurrent sweeps can't fail a row twice, so
+lives. Every URL is signed before the update that records it:
+`initiate_upload` signs before it creates the row, and `presign_upload_part`
+signs, then touches the row, and hands the URL out only if the touch succeeds.
+So every URL handed out expires within 1 hour of the row's last update, and
+none still works once the row is past the cutoff. Concurrent sweeps can't fail a row twice, so
 run the step on every replica, unwrapped. Pass `tenants=` for tenant-aware
 document and storage routes. A missing route fails startup. Only a wiring
 error, such as `tenant_global_required`, stops the loop. Any other error,
