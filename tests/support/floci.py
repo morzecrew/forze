@@ -25,10 +25,12 @@ Known, accepted infidelities (spiked/observed 2026-07 against 1.5.32):
 * S3: presigned-URL verification is immature (tracked:
   https://github.com/floci-io/floci/issues/1841). SigV4 signed-header binding
   is not verified on presigned PUTs (a mismatched ``Content-Type`` upload is
-  accepted; real S3 and MinIO return 403), and expiry enforcement is
-  environment-dependent (a 1s-expiry URL dies locally but never expires on CI
-  runners). Both negative presign tests skip on floci and assert the
-  properties against RustFS.
+  accepted; real S3 and MinIO return 403), so that negative test skips on floci
+  and asserts the property against RustFS. floci does not recognise SigV2
+  query auth at all: it serves such a GET as anonymous, so expiry never applies
+  and a ``response-*`` override answers 400. That is why expiry once looked
+  environment-dependent (CI had no region, so botocore signed SigV2); the S3
+  client now always signs SigV4, and floci enforces expiry.
 """
 
 from __future__ import annotations

@@ -1030,3 +1030,46 @@ async def test_upload_multipart_part_uploads_bytes_and_returns_part_info() -> No
         "PartNumber": 3,
         "Body": b"hello",
     }
+
+
+@pytest.mark.asyncio
+async def test_a_presigned_url_is_sigv4_with_no_region_configured(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Any
+) -> None:
+    # With no region anywhere (as on a CI runner), botocore fell back to legacy SigV2 query
+    # auth, which emulators such as floci read as an anonymous request.
+    from datetime import timedelta
+    from urllib.parse import parse_qs, urlsplit
+
+    for name in ("AWS_REGION", "AWS_DEFAULT_REGION", "AWS_PROFILE"):
+        monkeypatch.delenv(name, raising=False)
+
+    monkeypatch.setenv("AWS_CONFIG_FILE", str(tmp_path / "absent-config"))
+    monkeypatch.setenv("AWS_SHARED_CREDENTIALS_FILE", str(tmp_path / "absent-credentials"))
+
+    client = S3Client()
+    await client.initialize(
+        endpoint="http://127.0.0.1:9", access_key_id="ak", secret_access_key="sk"
+    )
+
+    try:
+        async with client.client():
+            vo = await client.presign_download_url(
+                "b",
+                "k",
+                expires_in=timedelta(minutes=5),
+                content_disposition='attachment; filename="a.bin"',
+            )
+    finally:
+        await client.close()
+
+    query = parse_qs(urlsplit(vo.url).query)
+    assert query["X-Amz-Algorithm"] == ["AWS4-HMAC-SHA256"]
+    assert "AWSAccessKeyId" not in query
+
+
+def test_an_explicit_signature_version_is_kept() -> None:
+    from forze_s3.kernel.client import S3Config
+
+    assert S3Config().to_aio_config().signature_version == "s3v4"
+    assert S3Config(signature_version="s3").to_aio_config().signature_version == "s3"
