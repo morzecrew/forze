@@ -7142,8 +7142,8 @@ round-trip; a conditional or <code>Range</code> request runs <code>head</code> f
 <p><code>stream=False</code> opts back into the legacy fully-buffered download: the whole
 object in memory, an ETag hashed from the body bytes, and <code>Range</code> served by
 slicing the buffer instead of a backend-ranged fetch. Prefer the default; if you
-must keep large objects out of the app entirely, expose <code>presign_download</code> (see
-below) so the client fetches straight from the backend. When a registry predates
+must keep large objects out of the app entirely, serve <code>presign_download</code> from a
+route of your own (see below) so the client fetches straight from the backend. When a registry predates
 the three streaming operations, the attacher quietly keeps the buffered
 endpoint, so enabling <code>stream</code> is safe on any registry.</p>
 <h3 id="direct-resumable-uploads">Direct &amp; resumable uploads<a class="headerlink" href="#direct-resumable-uploads" title="Permanent link">&para;</a></h3>
@@ -7154,7 +7154,6 @@ the session. <code>build_storage_registry</code> already wires these ops; the sa
 <code>attach_storage_routes</code> call projects them when they are registered (JSON-body
 <code>POST</code>s; <code>rest</code> paths shown):</p>
 <ul>
-<li><code>POST /files/presign/download</code> → a presigned <code>GET</code> url (<code>{key, expires_in}</code>).</li>
 <li><code>POST /files/presign/upload</code> → a presigned <code>PUT</code> url + headers
   (<code>{key, expires_in, content_type?}</code>).</li>
 <li><code>POST /files/uploads</code> (201) → a multipart session <code>{key, upload_id, ...}</code>.</li>
@@ -7181,6 +7180,46 @@ the session. <code>build_storage_registry</code> already wires these ops; the sa
    list (each part carries the <code>etag</code> the client got back from its <code>PUT</code>); the
    response is the assembled object's head.</li>
 </ol>
+<p><code>presign_download</code> gets no generated route. Its result is a bearer credential, so
+it is marked sensitive, and generated routes, <abbr title="Model Context Protocol">MCP</abbr>, agent tools and <code>forze ops</code>
+refuse it; naming it in <code>include</code> is a configuration error. Serve it from your
+own route, and guard the operation in the registry as you guard <code>download</code>:</p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">fastapi</span><span class="w"> </span><span class="kn">import</span> <span class="n">Depends</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">forze.application.execution.operations</span><span class="w"> </span><span class="kn">import</span> <span class="n">run_operation</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">forze.application.hooks.authn</span><span class="w"> </span><span class="kn">import</span> <span class="n">AuthnRequired</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">forze.application.hooks.authz</span><span class="w"> </span><span class="kn">import</span> <span class="n">AuthzBeforeAuthorize</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">forze_kits.aggregates.storage</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+    <span class="n">PresignDownloadRequestDTO</span><span class="p">,</span>
+    <span class="n">PresignedUrlDTO</span><span class="p">,</span>
+    <span class="n">StorageKernelOp</span><span class="p">,</span>
+    <span class="n">build_storage_registry</span><span class="p">,</span>
+<span class="p">)</span>
+
+<span class="n">ns</span> <span class="o">=</span> <span class="n">storage_spec</span><span class="o">.</span><span class="n">default_namespace</span>
+<span class="n">storage_registry</span> <span class="o">=</span> <span class="p">(</span>
+    <span class="n">build_storage_registry</span><span class="p">(</span><span class="n">storage_spec</span><span class="p">)</span>
+    <span class="o">.</span><span class="n">bind</span><span class="p">(</span><span class="n">ns</span><span class="o">.</span><span class="n">key</span><span class="p">(</span><span class="n">StorageKernelOp</span><span class="o">.</span><span class="n">PRESIGN_DOWNLOAD</span><span class="p">))</span>
+    <span class="o">.</span><span class="n">bind_outer</span><span class="p">()</span>
+    <span class="o">.</span><span class="n">before</span><span class="p">(</span>
+        <span class="n">AuthnRequired</span><span class="p">()</span><span class="o">.</span><span class="n">to_step</span><span class="p">(),</span>
+        <span class="n">AuthzBeforeAuthorize</span><span class="p">(</span><span class="n">spec</span><span class="o">=</span><span class="n">AUTHZ</span><span class="p">,</span> <span class="n">action</span><span class="o">=</span><span class="s2">"files:presign_download"</span><span class="p">)</span><span class="o">.</span><span class="n">to_step</span><span class="p">(),</span>
+    <span class="p">)</span>
+    <span class="o">.</span><span class="n">finish</span><span class="p">(</span><span class="n">deep</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+    <span class="o">.</span><span class="n">freeze</span><span class="p">()</span>
+<span class="p">)</span>
+
+
+<span class="nd">@files_router</span><span class="o">.</span><span class="n">post</span><span class="p">(</span><span class="s2">"/presign/download"</span><span class="p">)</span>
+<span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">presign_download</span><span class="p">(</span>
+    <span class="n">body</span><span class="p">:</span> <span class="n">PresignDownloadRequestDTO</span><span class="p">,</span> <span class="n">ctx</span><span class="o">=</span><span class="n">Depends</span><span class="p">(</span><span class="n">runtime</span><span class="o">.</span><span class="n">get_context</span><span class="p">)</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">PresignedUrlDTO</span><span class="p">:</span>
+    <span class="k">return</span> <span class="k">await</span> <span class="n">run_operation</span><span class="p">(</span><span class="n">storage_registry</span><span class="p">,</span> <span class="s2">"files.presign_download"</span><span class="p">,</span> <span class="n">body</span><span class="p">,</span> <span class="n">ctx</span><span class="p">)</span>
+</code></pre></div>
+<p><code>presign_upload</code> and <code>presign_part</code> keep their generated routes. They are command
+operations, so read-only defaults never expose them: <abbr title="Model Context Protocol">MCP</abbr> and <code>forze ops</code> need
+<code>include_writes=True</code>, and a route exists only where you attach one. The direct-upload
+flow above needs them.</p>
 <div class="admonition warning">
 <p class="admonition-title">Guard these endpoints — and never log the URL</p>
 <p>Minting an upload URL (or beginning a multipart session) <strong>grants write to a

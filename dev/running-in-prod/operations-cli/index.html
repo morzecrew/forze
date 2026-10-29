@@ -6777,6 +6777,10 @@ same module.</p>
 <p>An operation that relies on its route for protection has none here. The tenancy admin
 kit, for one, ships unguarded by design. When <code>include_writes</code> is on, keep an allowlist.</p>
 </div>
+<p>A sensitive operation fails the declaration even when you didn't name it, because the default
+takes every query. The storage kit's <code>presign_download</code> is one, since its result is a bearer
+credential. An <code>OpsApp</code> over a registry that holds the storage kit needs an <code>operations=</code>
+allowlist that leaves it out.</p>
 <h2 id="build-a-one-shot-runtime">Build a one-shot runtime<a class="headerlink" href="#build-a-one-shot-runtime" title="Permanent link">&para;</a></h2>
 <p><code>runtime</code> is a factory. <code>list</code> and <code>describe</code> never call it, so they need no credentials and
 open no pool. <code>call</code> builds the runtime once, enters its scope, runs the operation and shuts

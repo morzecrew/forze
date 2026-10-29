@@ -10464,6 +10464,9 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <li>
 <p><strong>Postgres dynamic-read routes refuse an unknown <code>provenance</code> value</strong> (<strong>Breaking</strong>). <code>PostgresDynamicReadConfig</code> accepts only <code>"trusted"</code> or <code>"untrusted"</code> (<code>postgres_dynamic_read_provenance_invalid</code>); a config with any other value now fails at startup. New <code>validate_dynamic_read_provenance</code>.</p>
 </li>
+<li>
+<p><strong>The storage kit's <code>presign_download</code> is sensitive</strong> (<strong>Breaking</strong>). <abbr title="Model Context Protocol">MCP</abbr>, <code>forze ops</code>, agent tools and generated routes refuse it, so <code>attach_storage_routes</code> no longer serves it; an <abbr title="Model Context Protocol">MCP</abbr> server or <code>OpsApp</code> over the storage registry needs <code>operations=</code> without it. Trace capture masks presigned URLs.</p>
+</li>
 </ul>
 <h2 id="0162-2026-10-26"><a href="https://github.com/morzecrew/forze/compare/v0.16.1...v0.16.2">0.16.2</a> - 2026-10-26<a class="headerlink" href="#0162-2026-10-26" title="Permanent link">&para;</a></h2>
 <h3 id="added_1">Added<a class="headerlink" href="#added_1" title="Permanent link">&para;</a></h3>
