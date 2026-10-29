@@ -10304,6 +10304,12 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <li>
 <p><strong><code>postgres_document_schema_specs(registry, deps)</code> validates every bound Postgres document.</strong> It pairs each route with its catalogued <code>DocumentSpec</code> for <code>schema_specs</code>, and refuses a route with no such spec or a read-write route over a read-only one. <code>exclude=</code> skips routes; a per-tenant one is skipped with a warning.</p>
 </li>
+<li>
+<p><strong>The mock can compute an analytics query from its current documents.</strong> Register <code>fn(view, params)</code> with <code>MockDepsModule(analytics=MockAnalyticsRegistry().on(spec, query_key, fn))</code>; <code>view.rows(spec)</code> reads stored rows as the caller's transaction sees them. A query with no resolver keeps its seeded rows.</p>
+</li>
+<li>
+<p><strong><code>forze_dst.conformance.compare_analytics_query</code> checks a mock resolver against the SQL it stands in for.</strong> It loads one seed into both engines, runs the query on each and lists every differing row. <code>query_invariant(spec, query_key, holds=...)</code> turns the same query into a <abbr title="Deterministic Simulation Testing">DST</abbr> oracle.</p>
+</li>
 </ul>
 <p><strong><code>forze ops</code> for people at a shell and for backfills:</strong></p>
 <ul>

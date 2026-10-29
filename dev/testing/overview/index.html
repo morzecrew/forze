@@ -2531,6 +2531,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#analytics-answered-from-current-state" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Analytics answered from current state
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#transaction-rollback-in-tests" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -6622,6 +6633,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#analytics-answered-from-current-state" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Analytics answered from current state
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#transaction-rollback-in-tests" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -6896,6 +6918,41 @@
 <p>Each disagreement is one <code>DerivedMismatch</code> for one field on one row, holding both values. A read that raises on one side is recorded as a <code>ReadRefused</code> value, so one bad row does not hide the rest. A value that JSON serialization refuses is recorded as <code>Unserializable</code>, which never agrees with anything. A derived field the read model excludes from serialization is refused up front, since it could only ever agree as <code>None</code>.</p>
 <p><code>agrees</code> means only that nothing mismatched. A field that is <code>None</code> on both sides, or a row both sides refused, agrees without testing the join. So also check the per-field <code>tallies</code>: each one counts the rows actually <code>compared</code>, the rows <code>null_on_both</code> and the rows <code>refused_on_both</code>, and <code>render_markdown()</code> prints them.</p>
 <p>Keep the plan's <code>instant</code> pinned (the default), so both stores create the same ids. Leave <code>SpecSeed.derived</code> out of the plan: the real store has no column to write those values to, and the point is to test the join or callback your tests use, not a value you supplied. For a tenant-aware spec, pass <code>tenant=TenantIdentity(...)</code>; it is bound on both contexts for the seed and the reads.</p>
+<h2 id="analytics-answered-from-current-state">Analytics answered from current state<a class="headerlink" href="#analytics-answered-from-current-state" title="Permanent link">&para;</a></h2>
+<p>By default the mock answers an <a href="../../data-events/analytics/">analytics</a> query from rows you seed into <code>MockState.analytics_query_hits</code>. Those rows never change. A handler that reads a query to decide what to do sees the same numbers after every write, so under simulation it never takes the branch the real numbers would send it down.</p>
+<p>Register a resolver instead, and the mock computes the query on each call from the documents it holds:</p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">forze_mock</span><span class="w"> </span><span class="kn">import</span> <span class="n">MockAnalyticsRegistry</span><span class="p">,</span> <span class="n">MockDepsModule</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">totals_by_customer</span><span class="p">(</span><span class="n">view</span><span class="p">,</span> <span class="n">params</span><span class="p">):</span>
+    <span class="n">sums</span> <span class="o">=</span> <span class="n">defaultdict</span><span class="p">(</span><span class="nb">int</span><span class="p">)</span>
+    <span class="k">for</span> <span class="n">row</span> <span class="ow">in</span> <span class="n">view</span><span class="o">.</span><span class="n">rows</span><span class="p">(</span><span class="n">ORDERS</span><span class="p">):</span>
+        <span class="n">sums</span><span class="p">[</span><span class="n">row</span><span class="p">[</span><span class="s2">"customer"</span><span class="p">]]</span> <span class="o">+=</span> <span class="n">row</span><span class="p">[</span><span class="s2">"amount"</span><span class="p">]</span>
+    <span class="k">return</span> <span class="p">[{</span><span class="s2">"customer"</span><span class="p">:</span> <span class="n">c</span><span class="p">,</span> <span class="s2">"total"</span><span class="p">:</span> <span class="n">t</span><span class="p">}</span> <span class="k">for</span> <span class="n">c</span><span class="p">,</span> <span class="n">t</span> <span class="ow">in</span> <span class="n">sums</span><span class="o">.</span><span class="n">items</span><span class="p">()</span> <span class="k">if</span> <span class="n">t</span> <span class="o">&gt;=</span> <span class="n">params</span><span class="o">.</span><span class="n">min_total</span><span class="p">]</span>
+
+
+<span class="n">MockDepsModule</span><span class="p">(</span>
+    <span class="n">analytics</span><span class="o">=</span><span class="n">MockAnalyticsRegistry</span><span class="p">()</span><span class="o">.</span><span class="n">on</span><span class="p">(</span><span class="n">TOTALS</span><span class="p">,</span> <span class="s2">"by_customer"</span><span class="p">,</span> <span class="n">totals_by_customer</span><span class="p">),</span>
+<span class="p">)</span>
+</code></pre></div>
+<p><code>view.rows(spec)</code> returns a document spec's stored rows in storage form: the columns a SQL query over the table would see. You get the rows the calling transaction sees. Inside a transaction, its own uncommitted writes are included and a concurrent transaction's are not. Outside one, you get the committed rows. A field the document spec seals arrives encrypted, exactly as SQL sees the column. Analytics cannot decrypt it today, even if the analytics spec declares the field encrypted. The document codec binds the ciphertext to the document spec's name and the analytics codec to <code>forze.field</code>, so the read fails authentication. Keep sealed fields out of a resolver's rows.</p>
+<p>On a tenant-aware analytics route, a call with no tenant bound is refused with <code>tenant_required</code>. Otherwise <code>view.rows</code> returns only rows whose <code>tenant_id</code> names the bound tenant, even when the document route keeps every tenant in one namespace. A tenant-aware document route narrows <code>view.rows</code> the way a document read does, whatever the analytics route declares: the bound tenant's partition, without rows another tenant owns or rows with no owner.</p>
+<p>The resolver receives the call's validated params. Its rows then go through the same <code>max_rows</code> cap and read-model decoding as seeded rows. A query with no resolver keeps its seeded rows. <code>on()</code> refuses a query key the spec does not declare, and a second resolver for the same query.</p>
+<p>A resolver is a second implementation of the query, and only a test keeps it in step with the SQL. <code>forze_dst.conformance.compare_analytics_query</code> is that test. It loads one seed into the mock and into the real engine, runs the query on both, and diffs the rows:</p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">forze_dst.conformance</span><span class="w"> </span><span class="kn">import</span> <span class="n">compare_analytics_query</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">forze_mock.seeding</span><span class="w"> </span><span class="kn">import</span> <span class="n">apply_seed</span>
+
+<span class="n">comparison</span> <span class="o">=</span> <span class="k">await</span> <span class="n">compare_analytics_query</span><span class="p">(</span>
+    <span class="n">TOTALS</span><span class="p">,</span>
+    <span class="s2">"by_customer"</span><span class="p">,</span>
+    <span class="n">MinTotal</span><span class="p">(</span><span class="n">min_total</span><span class="o">=</span><span class="mi">10</span><span class="p">),</span>
+    <span class="n">mock</span><span class="o">=</span><span class="n">mock_ctx</span><span class="p">,</span>
+    <span class="n">real</span><span class="o">=</span><span class="n">postgres_ctx</span><span class="p">,</span>
+    <span class="n">seed</span><span class="o">=</span><span class="k">lambda</span> <span class="n">ctx</span><span class="p">:</span> <span class="n">apply_seed</span><span class="p">(</span><span class="n">ctx</span><span class="p">,</span> <span class="n">plan</span><span class="p">),</span>
+<span class="p">)</span>
+<span class="k">assert</span> <span class="n">comparison</span><span class="o">.</span><span class="n">agrees</span><span class="p">,</span> <span class="n">comparison</span><span class="o">.</span><span class="n">render</span><span class="p">()</span>
+</code></pre></div>
+<p>Rows are compared as a multiset after the read model, so a <code>Decimal</code> from the engine and an <code>int</code> from the resolver agree when the read model types the field. In an untyped field, <code>1</code> and <code>1.0</code> agree and <code>true</code> never matches <code>1</code>, in either mode. Pass <code>ordered=True</code> only for a query with an <code>ORDER BY</code>. <code>render()</code> prints one line for each row that only one side returned, or, in ordered mode, for each position that differs. Two empty answers do not agree: a seed that produced no rows the query selects would pass any resolver. Pass <code>allow_empty=True</code> only for a query whose correct answer is empty. To use the same query as a simulation invariant, see <a href="../../dst/invariants/#what-must-always-hold"><code>query_invariant</code></a>.</p>
 <h2 id="transaction-rollback-in-tests">Transaction rollback in tests<a class="headerlink" href="#transaction-rollback-in-tests" title="Permanent link">&para;</a></h2>
 <p>Mock transactions are <strong>faithful by default</strong>: a write inside a transaction that rolls back is undone, so a "forgot to run it in the same transaction" bug fails in your unit test exactly as it would in production. No flag needed.</p>
 <ul>
