@@ -486,10 +486,12 @@ def _is_conditional_hit(request: Request, etag: str, last_modified: Any) -> bool
     """Whether a conditional request is satisfied and should answer **304**.
 
     ``If-None-Match`` (entity tag) takes precedence per RFC 7232; ``If-Modified-Since`` is the
-    time fallback, consulted only when no ``If-None-Match`` is present.
+    time fallback, consulted only when no ``If-None-Match`` is present. Called only for an
+    object that exists, so ``If-None-Match: *`` matches even when the backend has no ETag
+    (RFC 9110 §13.1.2); an empty *etag* matches no listed tag.
     """
 
-    if etag and _is_not_modified(request, etag):
+    if _is_not_modified(request, etag):
         return True
 
     return request.headers.get("if-none-match") is None and _not_modified_since(

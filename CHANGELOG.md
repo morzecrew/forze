@@ -209,6 +209,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **GCS `list_parts` reports each part's stored size.** It reported `0` for every part, so a caller resuming or bounding a multipart upload could not tell how much had landed.
 
+- **`If-None-Match: *` answers 304 for an object without an ETag.** The streaming storage download route served it a 200; per RFC 9110 the wildcard matches any existing object, on the stored-file download route too.
+
 ### Security
 
 - **A document query policy checks `$having` and aggregate sorts against their source fields** (**Breaking**). Refused now: `$having` over a field that is not filterable, and a sort by an alias whose field is not sortable. Allowed now: a sort by a `$count` alias, or by an alias whose field is sortable.

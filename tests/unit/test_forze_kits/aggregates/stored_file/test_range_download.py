@@ -301,6 +301,15 @@ class TestStoredFileDownloadRoute:
         assert resp.content == b""
         assert resp.headers["etag"] == etag
 
+    async def test_a_wildcard_answers_304(
+        self, ctx: ExecutionContext, client: httpx.AsyncClient
+    ) -> None:
+        file = await _ready(ctx)
+
+        resp = await client.get(f"/files/{file.id}/content", headers={"If-None-Match": "*"})
+
+        assert resp.status_code == 304
+
     async def test_a_stale_etag_gets_the_body(
         self, ctx: ExecutionContext, client: httpx.AsyncClient
     ) -> None:
