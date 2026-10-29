@@ -1052,7 +1052,8 @@ def attach_storage_routes(
 
     ``presign_download`` gets no route: it is marked sensitive (its result is a
     bearer credential), so generated routes refuse it. Serve it from a route of
-    your own; naming it in *include* is a configuration error.
+    your own, with ``AuthnRequired`` and object-level authorization bound on the
+    operation in the registry; naming it in *include* is a configuration error.
 
     **Authz posture.** These endpoints SHOULD sit behind authn/authz: minting an
     upload URL (or beginning a multipart session) **grants write to a key**, so

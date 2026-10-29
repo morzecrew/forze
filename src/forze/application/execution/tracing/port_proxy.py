@@ -67,19 +67,37 @@ def _default_tx_id() -> int | None:
 
 
 def _mask_presigned(value: Any, mode: str) -> Any:
-    """*value* with each :class:`PresignedUrl` in it, through mappings, reduced to its shape."""
+    """*value* with each :class:`PresignedUrl` in it reduced to its shape.
+
+    Walks mappings, sequences and attrs instances, as :func:`attrs.asdict` would, so a URL
+    nested in an attrs result is masked rather than converted to a plain dict first.
+    """
 
     if isinstance(value, PresignedUrl):
-        # The URL is a bearer credential: a trace keeps its shape, never the URL itself. The
-        # headers stay: they carry only Content-Type and SSE parameters, never a signed token.
+        # The URL is a bearer credential: a trace keeps its shape, never the URL itself. Header
+        # names stay but their values go too: the contract allows any header, a token included.
         expires_at = value.expires_at.isoformat() if mode == "json" else value.expires_at
-        return {**attrs.asdict(value), "url": REDACTED, "expires_at": expires_at}
+        return {
+            **attrs.asdict(value),
+            "url": REDACTED,
+            "expires_at": expires_at,
+            "headers": dict.fromkeys(value.headers, REDACTED),
+        }
 
     if isinstance(value, Mapping):
         return {
             key: _mask_presigned(item, mode)
             for key, item in value.items()  # pyright: ignore[reportUnknownVariableType]
         }
+
+    if attrs.has(type(value)):  # pyright: ignore[reportUnknownArgumentType]
+        return {
+            field.name: _mask_presigned(getattr(value, field.name), mode)
+            for field in attrs.fields(type(value))  # pyright: ignore[reportUnknownArgumentType]
+        }
+
+    if isinstance(value, (list, tuple, set, frozenset)):
+        return [_mask_presigned(item, mode) for item in value]  # pyright: ignore[reportUnknownVariableType]
 
     return value
 
@@ -206,10 +224,7 @@ class TracingPortProxy(PortProxy):
             except TypeError:  # a model_dump without the mode kwarg
                 data = dump()
 
-        elif attrs.has(type(value)):  # pyright: ignore[reportUnknownArgumentType]
-            data = attrs.asdict(value)
-
-        elif isinstance(value, Mapping):
+        elif attrs.has(type(value)) or isinstance(value, Mapping):  # pyright: ignore[reportUnknownArgumentType]
             data = _mask_presigned(value, mode)
 
         else:
