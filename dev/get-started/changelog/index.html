@@ -10366,6 +10366,9 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <h3 id="changed">Changed<a class="headerlink" href="#changed" title="Permanent link">&para;</a></h3>
 <ul>
 <li>
+<p><strong>Postgres schema validation reports every refused document in one <code>postgres_schema_documents_refused</code> error</strong> (<strong>behaviour change</strong>). Its <code>details["failures"]</code> lists each; a single refused document still raises its own error. A connection or partition error stops the checks and raises the refusals found before it.</p>
+</li>
+<li>
 <p><strong>HTTP error bodies carry the error's <code>code</code> and <code>kind</code></strong> (<strong>behaviour change</strong>). The body is <code>{"detail", "code", "kind", "context"}</code>, so a client tells <code>revision_mismatch</code> from other 400s; a whole-body comparison breaks. An unhandled 500 now also sends <code>X-Error-Code: core.internal</code>.</p>
 </li>
 <li>
@@ -10400,6 +10403,9 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <ul>
 <li>
 <p><strong>Firestore <code>update_many</code> and <code>touch_many</code> work inside a transaction.</strong> They read every row before writing any, as a Firestore transaction requires; a second row used to fail with a read-after-write error.</p>
+</li>
+<li>
+<p><strong>Postgres schema validation accepts the required fields of a view-backed read model.</strong> Postgres records <code>NOT NULL</code> on tables only, so a read relation that is a view or a materialized view no longer has its nullability checked. Write and history relations keep the check.</p>
 </li>
 <li>
 <p><strong><code>HttpClient</code> reads a compressed response.</strong> A gzip or deflate body, and with no cap a zstd or brotli one, no longer fails <code>request</code>, or a rejected response from <code>stream</code>, as an infrastructure error. <code>RoutedHttpClient</code> and declared services are fixed with it.</p>
