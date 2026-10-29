@@ -476,24 +476,49 @@ the app never sees the bytes, so it can't encrypt them. As with
 `presign_download`, the kit resolves their storage with `direct_transfer=True`,
 so `check_wiring` reports them and a call fails before any row is written.
 
-!!! note "Known limit: abandoned uploads are not swept"
+#### Sweeping abandoned uploads
 
-    A client that initiates and never completes leaves a `pending` row, and
-    possibly an object or an unfinished multipart upload. Nothing reaps them
-    yet. Deleting the row purges the object at its key, but not multipart
-    parts. A refused upload leaves its key free, so the single `PUT` URL can
-    still create an object there until it expires; the row stays `failed`.
+A client that initiates and never completes leaves a `pending` row, and
+possibly an object or an unfinished multipart upload. A buffered `upload`
+whose process died between its commit and the after-commit stage leaves a
+`pending` row too. `stored_file_pending_sweep_lifecycle_step` cleans them up
+on an interval (10 minutes by default):
 
-    - **S3.** `initiate_upload` opens the multipart upload inside its
-      transaction, so a rollback after that leaves an empty upload behind, and
-      an abandoned one keeps its parts. Add a bucket lifecycle rule that aborts
-      incomplete multipart uploads (`AbortIncompleteMultipartUpload`).
-    - **GCS.** There is no native session: an abandoned upload's parts are
-      objects named `{key}.__forze_mpu__/{upload_id}/{n}`, next to each file's
-      own key. A lifecycle rule matches only a name prefix or suffix, so none
-      can single them out from the files; they stay until the session is
-      aborted. A rollback leaves nothing on GCS, because opening a session
-      writes nothing.
+```python
+from forze_kits.aggregates.stored_file import stored_file_pending_sweep_lifecycle_step
+
+lifecycle_steps.append(stored_file_pending_sweep_lifecycle_step(kit))
+```
+
+Each sweep reads the `pending` rows created more than `older_than` ago (24
+hours by default), in batches. For each row, the sweep:
+
+1. Marks the row `failed`, with the revision check that `complete_upload` uses
+   when it refuses an upload. If a `complete_upload` races the sweep, one of
+   them wins cleanly: the sweep leaves a completed file alone, and a complete
+   that lost raises `revision_mismatch`.
+2. Aborts every multipart upload still open at the row's key.
+3. Deletes the object at the key, if one landed.
+
+`older_than` must be longer than 1 hour, the longest a direct-upload URL
+lives, so no URL handed out for a swept row still works. Set it longer than
+your longest multipart upload, which keeps asking for part URLs while its row
+is `pending`. Concurrent sweeps can't fail a row twice, so run the step on
+every replica, unwrapped. Pass `tenants=` for tenant-aware document and
+storage routes. A `configuration` error stops the loop. Any other error is
+logged, for that row or tenant, and retried on the next sweep.
+
+Some leftovers have no row for the sweep to find:
+
+- A refused upload leaves its key free, so the single `PUT` URL can still
+  create an object there until it expires. The row stays `failed`.
+- If a row's cleanup fails after the `failed` mark, its object stays: the
+  sweep reads only `pending` rows.
+- **S3.** `initiate_upload` opens the multipart upload inside its
+  transaction, so a rollback after that leaves an empty upload with no row.
+  Keep a bucket lifecycle rule that aborts incomplete multipart uploads
+  (`AbortIncompleteMultipartUpload`). On GCS a rollback leaves nothing,
+  because opening a session writes nothing.
 
 ## Authn routes
 

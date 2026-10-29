@@ -90,6 +90,7 @@ PERSIST_FIELDS: Final = frozenset(
         "storage_bytes",
         "storage_buckets",
         "storage_multipart",
+        "storage_multipart_keys",
         "storage_sse",
         "queues",
         "queue_pending",

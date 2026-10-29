@@ -197,7 +197,9 @@ upload sessions), and a client-side-encrypting route refuses to resolve the spec
 | command | `put_object_tags` | `put_object_tags(key, tags)` | full tag replacement |
 
 A third port, `StorageUploadSessionPort`, drives resumable multipart uploads
-(begin / presign part / list parts / complete / abort) — its HTTP projection is
+(begin / presign part / list parts / complete / abort). `list_uploads(key)` finds the
+sessions still open at a key, so a cleanup that lost their handles can abort them. Its HTTP
+projection is
 on the [FastAPI route generators](../fastapi-routes.md#direct-resumable-uploads)
 page. Ranged reads work over chunked-AEAD encrypted objects (only the covering
 chunks are fetched and decrypted); a legacy whole-payload envelope cannot be

@@ -109,6 +109,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Stored files can upload straight to the bucket, opt-in.** `StoredFileKitSpec(direct_uploads=True)` registers `initiate_upload`, `presign_upload_part` and `complete_upload`: a key the kit mints, then a create-only presigned PUT or parts. Completion checks size, type and `max_bytes`, and fails the row on a mismatch.
 
+- **`stored_file_pending_sweep_lifecycle_step` fails abandoned stored-file uploads and frees their bytes.** A row left `pending` past `older_than` (24 hours by default) is marked `failed` at its revision, so a racing `complete_upload` wins or loses cleanly; then its multipart uploads are aborted and its object deleted.
+
 - **A presigned upload and a multipart completion can refuse to replace an object** (**Breaking**). `create_only=True` (never with `if_match`) makes `presign_upload` sign `If-None-Match: *` or `x-goog-if-generation-match: 0`, and `complete_upload` refuse an existing key. A custom `ObjectStorageClientPort` must accept it.
 
 - **A durable service identity can be an API key verified on every run.** `DurableServiceIdentity(api_key=SecretRef(...), authn_spec=...)` runs the body as the key's principal, a member of the run's tenant. A revoked, expired or delegated key fails the run, within cached key states' `ttl` if a revocation's write is lost.
@@ -148,6 +150,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **An encrypting storage route refuses the stored-file kit's direct operations at resolve** (**behaviour change**). `presign_download` and the direct uploads resolve storage as the new `StorageSpec(direct_transfer=True)`, which a client-side-encrypting route refuses (`configuration`), so `check_wiring` reports them.
 
 - **The stored-file kit's buffered `download` sets `streams=True`** (**behaviour change**). JSON cannot carry a binary file, so MCP and `forze ops` failed on one; they now leave `download` out by default, and they, agent tools and generated routes refuse it by name.
+
+- **`StorageUploadSessionPort` requires `list_uploads`** (**Breaking**). `list_uploads(key)` returns the sessions open at a key, so a cleanup that lost their handles can abort them; S3, GCS and the mock have it. A custom port, or an `ObjectStorageClientPort` (`list_multipart_uploads`), must add it.
 
 ### Fixed
 

@@ -1768,6 +1768,20 @@ class ObjectStorageAdapter(
 
     # ....................... #
 
+    async def list_uploads(self, key: str) -> builtins.list[UploadSession]:
+        """List the unfinished sessions targeting *key* (refused on an encrypting route)."""
+
+        self._reject_multipart_when_encrypted()
+        self._validate_key(key)
+        bucket = await self._resolved_bucket()
+
+        async with self.client.client():
+            upload_ids = await self.client.list_multipart_uploads(bucket=bucket, key=key)
+
+        return [UploadSession(key=key, upload_id=u, bucket=bucket) for u in upload_ids]
+
+    # ....................... #
+
     async def complete_upload(
         self,
         session: UploadSession,

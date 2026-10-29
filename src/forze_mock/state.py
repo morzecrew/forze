@@ -238,6 +238,9 @@ class MockState:
     assembles them in part-number order into ``storage``/``storage_bytes`` and
     drops the session; ``abort_upload`` drops it. Non-transactional (object
     storage survives a DB rollback in production)."""
+    storage_multipart_keys: dict[str, dict[str, str]] = attrs.field(factory=dict)
+    """The key each open session in :attr:`storage_multipart` targets: bucket → upload_id →
+    key. What ``list_uploads`` reads, as S3 ``ListMultipartUploads`` reads the key."""
     storage_presigns: list[dict[str, Any]] = attrs.field(factory=list)
     """Presigned URLs issued by the mock storage adapter (test observability).
 

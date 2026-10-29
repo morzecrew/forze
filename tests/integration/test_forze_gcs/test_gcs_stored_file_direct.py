@@ -21,6 +21,7 @@ from fastapi import APIRouter, FastAPI
 from forze.application.execution import ExecutionContext
 from forze.application.execution.operations import run_operation
 from forze.base.exceptions import CoreException, ExceptionKind
+from forze.base.primitives import FrozenTimeSource, bind_time_source, utcnow
 from forze.testing import context_from_modules
 from forze_fastapi.exceptions import register_exception_handlers
 from forze_fastapi.routes import attach_stored_file_download_route
@@ -37,6 +38,7 @@ from forze_kits.aggregates.stored_file import (
     StoredFileKernelOp,
     UploadStoredFileRequestDTO,
     freeze_stored_file_registry,
+    stored_file_pending_sweep_lifecycle_step,
 )
 from forze_kits.domain.stored_file import StoredFileKitSpec, StoredFileRead, StoredFileStatus
 from forze_mock import MockDepsModule, MockState
@@ -328,3 +330,46 @@ async def test_multipart_completion_does_not_replace_an_existing_object(
 
     assert ei.value.kind is ExceptionKind.CONFLICT
     assert body.data == b"hello"
+
+
+async def test_the_pending_sweep_cleans_an_abandoned_put_and_session(
+    gcs_signing_client: GCSClient, gcs_bucket: str, fake_gcs_container: str
+) -> None:
+    ctx = _ctx(gcs_signing_client, gcs_bucket)
+
+    with bind_time_source(FrozenTimeSource(instant=utcnow() - timedelta(hours=25))):
+        put = await _initiate(ctx, 5)
+        mpu = await _initiate(ctx, 64, multipart=True)
+
+    part = await run_operation(
+        _REG,
+        _NS.key(StoredFileKernelOp.PRESIGN_UPLOAD_PART),
+        PresignStoredFileUploadPartRequestDTO(
+            id=mpu.file.id,
+            upload_id=mpu.upload_id,
+            part_number=1,
+            expires_in=timedelta(minutes=5),
+        ),
+        ctx,
+    )
+    put_resp = await _put(put.presigned.url, put.presigned.headers, b"hello", fake_gcs_container)
+    part_resp = await _put(part.url, part.headers, b"abandoned-part", fake_gcs_container)
+
+    uploads = ctx.storage.uploads(_KIT.resolved_storage)
+    assert (put_resp.status_code, part_resp.status_code) == (200, 200)
+    assert [s.upload_id for s in await uploads.list_uploads(mpu.file.storage_key)] == [
+        mpu.upload_id
+    ]
+
+    sweep = stored_file_pending_sweep_lifecycle_step(_KIT).startup
+    await sweep._drain(ctx)  # type: ignore[attr-defined]  # pyright: ignore[reportAttributeAccessIssue]
+
+    for started in (put, mpu):
+        row = await ctx.doc.query(_KIT.document).get(started.file.id)
+        assert row.status is StoredFileStatus.FAILED
+
+    with pytest.raises(CoreException) as gone:
+        await ctx.storage.query(_KIT.resolved_storage).head(put.file.storage_key)
+
+    assert gone.value.kind is ExceptionKind.NOT_FOUND
+    assert await uploads.list_uploads(mpu.file.storage_key) == []

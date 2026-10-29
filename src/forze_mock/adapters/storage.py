@@ -789,6 +789,9 @@ class MockStorageAdapter(
     def _sessions(self) -> dict[str, dict[int, bytes]]:
         return self.state.storage_multipart.setdefault(self._bucket(), {})
 
+    def _session_keys(self) -> dict[str, str]:
+        return self.state.storage_multipart_keys.setdefault(self._bucket(), {})
+
     # ....................... #
 
     async def begin_upload(
@@ -806,6 +809,7 @@ class MockStorageAdapter(
             # A write path, so it creates the container on demand like the real backends.
             self._provision()
             self._sessions()[upload_id] = {}
+            self._session_keys()[upload_id] = key
 
         return UploadSession(
             key=key,
@@ -925,6 +929,18 @@ class MockStorageAdapter(
 
     # ....................... #
 
+    async def list_uploads(self, key: str) -> builtins.list[UploadSession]:
+        """Report the open sessions targeting *key*."""
+
+        bucket = self._bucket()
+
+        with self.state.lock:
+            upload_ids = [u for u, k in self._session_keys().items() if k == key]
+
+        return [UploadSession(key=key, upload_id=u, bucket=bucket) for u in upload_ids]
+
+    # ....................... #
+
     async def complete_upload(
         self,
         session: UploadSession,
@@ -995,6 +1011,7 @@ class MockStorageAdapter(
             self._writable_payloads()[session.key] = payload
             self._record_sse(session.key)
             del sessions[session.upload_id]
+            self._session_keys().pop(session.upload_id, None)
 
         return ObjectHead(
             content_type=content_type,
@@ -1012,3 +1029,4 @@ class MockStorageAdapter(
 
         with self.state.lock:
             self._sessions().pop(session.upload_id, None)
+            self._session_keys().pop(session.upload_id, None)

@@ -85,6 +85,9 @@ class _StubUploads:
     async def list_parts(self, session: UploadSession) -> list[UploadPart]:
         return [UploadPart(part_number=1, etag="e1", size=5)]
 
+    async def list_uploads(self, key: str) -> list[UploadSession]:
+        return [UploadSession(key=key, upload_id="uid")]
+
     async def complete_upload(
         self,
         session: UploadSession,

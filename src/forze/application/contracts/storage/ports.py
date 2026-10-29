@@ -458,7 +458,8 @@ class StorageUploadSessionPort(Protocol):
     1. :meth:`begin_upload` opens a session and returns an
        :class:`UploadSession` whose :attr:`~UploadSession.upload_id` the
        application **must persist** (or hand to the client) — it is the only
-       way to resume, complete, or abort later.
+       way to resume or complete later (:meth:`list_uploads` recovers it only
+       to abort).
     2. For each part the application calls :meth:`presign_part` and gives the
        returned URL to the client, which ``PUT``\\ s that part's bytes
        **directly and in parallel** (no app round-trip for the bytes).
@@ -575,6 +576,22 @@ class StorageUploadSessionPort(Protocol):
 
         :param session: The session from :meth:`begin_upload`.
         :returns: The already-uploaded parts (ascending ``part_number``).
+        """
+        ...  # pragma: no cover
+
+    def list_uploads(
+        self,
+        key: str,
+    ) -> Awaitable[list[UploadSession]]:
+        """List the unfinished sessions targeting *key* (the cleanup primitive).
+
+        For a caller that no longer holds a session's handle, such as a sweep of abandoned
+        uploads: it finds each session here and discards it with :meth:`abort_upload`. On
+        S3 this is ``ListMultipartUploads``. On GCS it lists the temp part namespaces under
+        the key, so a session with no part uploaded yet is not listed: it holds nothing.
+
+        :param key: Final object key the sessions target.
+        :returns: The open sessions; their ``content_type`` is not recovered.
         """
         ...  # pragma: no cover
 

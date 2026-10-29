@@ -324,6 +324,12 @@ class RoutedObjectStorageClientBase[C: _RoutedStorageInnerClient](
                 upload_id=upload_id,
             )
 
+    async def list_multipart_uploads(self, bucket: str, key: str) -> list[str]:
+        inner = await self._get_client()
+
+        async with inner.client():
+            return await inner.list_multipart_uploads(bucket, key)
+
     async def complete_multipart_upload(
         self,
         bucket: str,
