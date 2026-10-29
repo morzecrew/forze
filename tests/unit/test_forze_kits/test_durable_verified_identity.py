@@ -173,6 +173,9 @@ async def _app(*, expires_in: timedelta | None = None) -> _App:
 
 # ....................... #
 
+# The verifier's message is rebuilt from its kind and code, so the row never quotes it.
+_REFUSED = "The durable service identity did not verify (authentication, core.authentication)"
+
 
 async def test_a_live_key_runs_as_its_principal() -> None:
     app = await _app()
@@ -185,7 +188,7 @@ async def test_a_revoked_key_fails_the_run() -> None:
     app = await _app()
     await app.revoke()
 
-    assert await app.run("o-1") == (DurableRunStatus.FAILED, "API key account not found")
+    assert await app.run("o-1") == (DurableRunStatus.FAILED, _REFUSED)
     assert app.seen == []
 
 
@@ -193,7 +196,7 @@ async def test_an_expired_key_fails_the_run() -> None:
     app = await _app(expires_in=timedelta(hours=1))
 
     with bind_time_source(FrozenTimeSource(instant=datetime.now(UTC) + timedelta(hours=2))):
-        assert await app.run("o-1") == (DurableRunStatus.FAILED, "API key account not found")
+        assert await app.run("o-1") == (DurableRunStatus.FAILED, _REFUSED)
 
     assert app.seen == []
 
@@ -204,7 +207,7 @@ async def test_a_disabled_principal_fails_the_run() -> None:
     current = await app.ctx.doc.query(policy_principal_spec).get(app.service)
     await principals.update(app.service, current.rev, UpdatePolicyPrincipalCmd(is_active=False))
 
-    assert await app.run("o-1") == (DurableRunStatus.FAILED, "Principal not found")
+    assert await app.run("o-1") == (DurableRunStatus.FAILED, _REFUSED)
     assert app.seen == []
 
 
@@ -225,7 +228,7 @@ async def test_a_key_revoked_between_two_fires_stops_the_schedule() -> None:
     assert statuses == ["completed", "failed"]
     assert app.seen == [app.service]
     failed = next(row for row in app.state.durable_runs.values() if row["status"] == "failed")
-    assert failed["error"].endswith("(core.authentication): API key account not found")
+    assert failed["error"].endswith(f"(core.authentication): {_REFUSED}")
 
     stored = repr((app.state.durable_runs, app.state.durable_run_schedules))
     assert app.issued.key.key not in stored

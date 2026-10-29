@@ -215,9 +215,10 @@ made by a process configured without the states.
 An `authentication` refusal is logged as a warning that the identity did not verify. Any
 other failure, such as a secrets backend or authn store being down, is logged as one that
 could not be checked. Both log only the error's kind and code, and the run lands `FAILED`
-unless a retry strategy retries that kind. An error that is not a `CoreException` becomes
-`internal` (`durable_service_identity_unchecked`) and keeps only its type name. That way a
-message quoting the key never reaches the run row or the log. A missing secret fails the run
+unless a retry strategy retries that kind. The failure keeps its kind and code under a
+message of its own, and an error that is not a `CoreException` becomes `internal`
+(`durable_service_identity_unchecked`) and keeps only its type name. That way a message
+quoting the key never reaches the run row or the log. A missing secret fails the run
 with `not_found` on the env, directory, mapping and Vault backends.
 
 The key's admission, which the identity plane's verifier records so that a credential issued

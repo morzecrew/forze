@@ -37,7 +37,7 @@ from forze.application.contracts.secrets import SecretRef
 from forze.application.contracts.tenancy import TenantIdentity
 from forze.application.execution.operations import OperationRegistry
 from forze.application.hooks.authn import AuthnRequired
-from forze.base.exceptions import CoreException, ExceptionKind
+from forze.base.exceptions import CoreException, ExceptionKind, exc
 from forze.base.primitives import str_key_selector
 from forze_kits.integrations.durable import (
     DurableFunctionRegistry,
@@ -616,6 +616,32 @@ async def test_a_foreign_error_quoting_the_key_reaches_no_row_or_log(
     assert key not in repr(state.durable_runs)
     log.warning.assert_called_once()
     assert key not in repr(log.warning.call_args)
+
+
+@pytest.mark.asyncio
+async def test_a_core_error_quoting_the_key_keeps_its_kind_and_code_only(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    key = secrets.token_hex(16)
+
+    async def leaky(self: Any, credentials: Any) -> Any:
+        raise exc.infrastructure(f"store refused {credentials.key}", code="store_down")
+
+    monkeypatch.setattr(MockApiKeyVerifierPort, "verify_api_key", leaky)
+    state = _keyed_state(key)
+    registry = DurableFunctionRegistry()
+    register_operation_functions(
+        registry, [_spec()], operations=_guarded([]), identity=_keyed_identity()
+    )
+    ctx = context_from_modules(MockDepsModule(state=state))
+
+    with pytest.raises(CoreException) as caught:
+        await DurableFunctionRunner(registry=registry).run_now(ctx, "sync", {"order_id": "o"})
+
+    # The kind still decides a retry, and the code still names the reason.
+    assert (caught.value.kind, caught.value.code) == (ExceptionKind.INFRASTRUCTURE, "store_down")
+    assert key not in str(caught.value)
+    assert key not in repr(state.durable_runs)
 
 
 @pytest.mark.asyncio

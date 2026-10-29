@@ -156,7 +156,8 @@ async def _verified(
         (``durable_service_identity_delegated``), or one whose principal or own tenant is not
         the run's (``tenant_mismatch``, ``tenant_conflict``); ``internal``
         (``durable_service_identity_unchecked``) for an error that is not a
-        ``CoreException``; whatever else the secrets backend, authn or tenancy raises.
+        ``CoreException``; the kind and code of whatever else the secrets backend or authn
+        raises, under a message of its own; whatever tenancy raises.
     """
 
     try:
@@ -164,8 +165,14 @@ async def _verified(
             raw = await ctx.deps.provide(SecretsDepKey).resolve_str(ref)
             result = await authenticate_api_key(ctx, spec, raw)
 
-        except CoreException:
-            raise
+        except CoreException as error:
+            # Kind and code carry the reason and the retry decision; the message is the
+            # backend's, may quote the key, and the run row stores it: rebuilt, not kept.
+            raise CoreException(
+                error.kind,
+                f"The durable service identity did not verify ({error.kind.value}, {error.code})",
+                code=error.code,
+            ) from None
 
         except Exception as error:
             # Its message may quote the key, and the run row stores the message: type only.
