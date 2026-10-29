@@ -13,6 +13,7 @@ from forze.base.primitives import StrKey
 
 from .handlers import (
     DownloadStoredFile,
+    DownloadStoredFileRange,
     DownloadStoredFileStream,
     GetStoredFile,
     ListStoredFiles,
@@ -30,6 +31,7 @@ if TYPE_CHECKING:
 
 _OPT_IN: Mapping[StrKey, str] = {
     StoredFileKernelOp.DOWNLOAD_STREAM: "stream_downloads",
+    StoredFileKernelOp.DOWNLOAD_RANGE: "range_downloads",
     StoredFileKernelOp.PRESIGN_DOWNLOAD: "presign_downloads",
 }
 """Opt-in operations → the ``StoredFileKitSpec`` field that registers each."""
@@ -74,6 +76,12 @@ class StoredFileFacade(OperationFacade):
         uc=DownloadStoredFileStream,
     )
     """Open a bounded-memory download stream (opt-in: ``stream_downloads``)."""
+
+    download_range = facade_op(
+        StoredFileKernelOp.DOWNLOAD_RANGE,
+        uc=DownloadStoredFileRange,
+    )
+    """Read an inclusive byte range (opt-in: ``range_downloads``)."""
 
     presign_download = facade_op(
         StoredFileKernelOp.PRESIGN_DOWNLOAD,

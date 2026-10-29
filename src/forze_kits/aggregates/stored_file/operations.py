@@ -19,6 +19,9 @@ class StoredFileKernelOp(StrEnum):
     DOWNLOAD_STREAM = "download_stream"
     """Open a bounded-memory download stream for a ready stored file (opt-in)."""
 
+    DOWNLOAD_RANGE = "download_range"
+    """Read an inclusive byte range of a ready stored file (opt-in)."""
+
     PRESIGN_DOWNLOAD = "presign_download"
     """Mint a time-limited URL for downloading a ready stored file directly (opt-in)."""
 

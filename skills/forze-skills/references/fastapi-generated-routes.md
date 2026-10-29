@@ -109,6 +109,8 @@ A hand-written upload route reads the file with `await read_upload_capped(file, 
 
 A stored-file download route runs the kit's `download_stream` operation (`StoredFileIdDTO`) and returns `streamed_download_response(result.stream)` (from `forze_fastapi.routes`), not the buffered `download`. For a direct fetch, `presign_download` (`id`, `expires_in` up to 7 days) returns the row and a presigned URL; a client-side-encrypting route refuses it. Both load the row and refuse a file that is not ready. Both are opt-in: enable them with `StoredFileKitSpec(stream_downloads=True, presign_downloads=True)` and bind authn and authz on each one, since a guard on `download` does not cover them. `presign_download` is marked sensitive, so MCP, agent tools and generated routes refuse it: serve it from a hand-written route, and give an MCP server over such a registry an `operations=` allowlist without it. `download_stream` sets `streams=True` (its result is a byte stream, not JSON): the MCP and `forze ops` defaults leave it out, and naming it on MCP, agent tools, `forze ops` or `attach_operation_routes` is refused.
 
+For `Range` and conditional requests, enable `range_downloads=True` as well and call `attach_stored_file_download_route(router, registry=..., ns=kit.document.default_namespace, ctx_dep=...)` (from `forze_fastapi.routes`): `GET {id}/content` runs `download_stream` and `download_range` and answers `206`, `416` and `304` like the storage download route. On a client-side-encrypting route a range can't slice the kit's buffered uploads, so the route serves the whole file.
+
 ## Readiness and deadline headers
 
 - `attach_readiness_route(router, runtime)` (from `forze_fastapi.routes`) adds

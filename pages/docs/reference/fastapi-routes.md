@@ -319,20 +319,22 @@ flow above needs them.
 
 ### Stored-file downloads
 
-The stored-file kit ships no generated routes. It has three read-only download
-operations, and each one loads the row first: a row the caller can't read
-(another tenant's, or a missing one) answers not-found, and a `pending` or
+The stored-file kit ships no generated JSON routes. It has four read-only
+download operations, and each one loads the row first: a row the caller can't
+read (another tenant's, or a missing one) answers not-found, and a `pending` or
 `failed` file is refused before storage is touched. `download` is always
-registered. The other two are opt-in, because an operation runs only the guards
-bound on its own key: enable each with
-`StoredFileKitSpec(stream_downloads=True, presign_downloads=True)`, then bind
-your authn and authz on it as you do on `download`. A `StoredFileFacade` method
-for an operation left off raises a configuration error.
+registered. The other three are opt-in, because an operation runs only the
+guards bound on its own key: enable each with
+`StoredFileKitSpec(stream_downloads=True, range_downloads=True, presign_downloads=True)`,
+then bind your authn and authz on it as you do on `download`. A
+`StoredFileFacade` method for an operation left off raises a configuration
+error.
 
 | Operation | Input | Result |
 |-----------|-------|--------|
 | `download` | `StoredFileIdDTO` | `StoredFileDownloadDTO`: the whole object in memory, for small files |
 | `download_stream` | `StoredFileIdDTO` | `StoredFileStream`: the row plus a bounded-memory `StreamedDownload` named after the stored filename |
+| `download_range` | `DownloadStoredFileRangeRequestDTO` (`id`, inclusive `start`, `end` or `None` for the end) | `StoredFileRangeDTO`: the row plus the window's bytes, `content_range` and `total_size`; a start past the end is a precondition error |
 | `presign_download` | `PresignStoredFileDownloadRequestDTO` (`id`, `expires_in` up to 7 days) | `StoredFilePresignedDownloadDTO`: the row plus a presigned `GET` URL |
 
 A hand-written route hands the stream to `streamed_download_response`, which
@@ -359,6 +361,33 @@ async def file_content(file_id: UUID, ctx=Depends(ctx_dep)):
 
     return streamed_download_response(result.stream)
 ```
+
+`attach_stored_file_download_route` attaches the full download route instead.
+It runs `download_stream` and `download_range`, so it needs both enabled, and it
+answers like the storage kit's streaming download: `206` for a `Range`, each
+window capped at `max_range_bytes` (16 MiB by default), `416` past the end,
+`304` for a matching `If-None-Match` or `If-Modified-Since`, and the streamed
+`200` otherwise. Each request opens the stream first, which reads the object's
+head but not its body, so a `304` transfers nothing.
+
+```python
+from forze_fastapi.routes import attach_stored_file_download_route
+
+files_router = APIRouter(prefix="/files", tags=["files"])
+
+# GET /files/{id}/content
+attach_stored_file_download_route(
+    files_router,
+    registry=registry,
+    ns=kit.document.default_namespace,
+    ctx_dep=ctx_dep,
+)
+```
+
+On a client-side-encrypting route the kit's `upload` seals each file as one
+AEAD payload, which a range can't slice. `download_range` refuses such a file
+with `core.storage.range_whole_payload_unsupported`, and the route answers a
+`Range` with the whole file and a `200`.
 
 The stream reads the object in parts while the response is sent. If the file is
 deleted mid-download, the next read fails with `not_found`. The status is already

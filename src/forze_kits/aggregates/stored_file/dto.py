@@ -119,6 +119,41 @@ class StoredFileStream:
 # ....................... #
 
 
+class DownloadStoredFileRangeRequestDTO(StoredFileIdDTO):
+    """Request payload for reading an inclusive byte range of a stored file."""
+
+    start: int = Field(ge=0)
+    """First byte offset to read (inclusive)."""
+
+    end: int | None = Field(default=None, ge=0)
+    """Last byte offset to read (inclusive); ``None`` reads to the end of the file."""
+
+
+# ....................... #
+
+
+class StoredFileRangeDTO(BaseDTO):
+    """An inclusive byte range of a ready stored file, with its metadata."""
+
+    file: StoredFileRead
+    """Stored-file metadata; its ``filename`` is the name to save the download under."""
+
+    data: bytes
+    """The range's bytes."""
+
+    content_type: str
+    """MIME type of the file."""
+
+    content_range: str
+    """The satisfied range as an HTTP ``Content-Range`` value (``bytes start-end/total``)."""
+
+    total_size: int
+    """The whole file's size in bytes."""
+
+
+# ....................... #
+
+
 class PresignStoredFileDownloadRequestDTO(StoredFileIdDTO):
     """Request payload for minting a presigned download (GET) URL for a stored file."""
 

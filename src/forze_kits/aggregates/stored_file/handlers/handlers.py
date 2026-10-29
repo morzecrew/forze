@@ -23,12 +23,14 @@ from forze_kits.domain.stored_file import (
 from forze_kits.dto.paginated import Paginated
 
 from ..dto import (
+    DownloadStoredFileRangeRequestDTO,
     ListStoredFilesRequestDTO,
     PresignStoredFileDownloadRequestDTO,
     StoredFileDownloadDTO,
     StoredFileIdDTO,
     StoredFileIdRevDTO,
     StoredFilePresignedDownloadDTO,
+    StoredFileRangeDTO,
     StoredFileStream,
     UploadStoredFileRequestDTO,
 )
@@ -170,6 +172,39 @@ class DownloadStoredFileStream(Handler[StoredFileIdDTO, StoredFileStream]):
         streamed = await self.storage.download_stream(ensure_downloadable(file))
 
         return StoredFileStream(file=file, stream=attrs.evolve(streamed, filename=file.filename))
+
+
+# ....................... #
+
+
+@attrs.define(slots=True, kw_only=True, frozen=True)
+class DownloadStoredFileRange(Handler[DownloadStoredFileRangeRequestDTO, StoredFileRangeDTO]):
+    """Read an inclusive byte range of a ready stored file.
+
+    Same checks as :class:`DownloadStoredFile`. A start past the end of the file is a
+    precondition error (the HTTP 416 equivalent).
+    """
+
+    doc: DocumentQueryPort[StoredFileRead]
+    storage: StorageQueryPort
+
+    # ....................... #
+
+    async def __call__(self, args: DownloadStoredFileRangeRequestDTO) -> StoredFileRangeDTO:
+        file = await self.doc.get(pk=args.id)
+        ranged = await self.storage.download_range(
+            ensure_downloadable(file),
+            start=args.start,
+            end=args.end,
+        )
+
+        return StoredFileRangeDTO(
+            file=file,
+            data=ranged.data,
+            content_type=ranged.content_type,
+            content_range=ranged.content_range,
+            total_size=ranged.total_size,
+        )
 
 
 # ....................... #

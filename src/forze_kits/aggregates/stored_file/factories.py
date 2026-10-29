@@ -9,16 +9,19 @@ from forze_kits.domain.stored_file import StoredFileKitSpec, StoredFileRead
 from forze_kits.dto.paginated import Paginated
 
 from .dto import (
+    DownloadStoredFileRangeRequestDTO,
     ListStoredFilesRequestDTO,
     PresignStoredFileDownloadRequestDTO,
     StoredFileDownloadDTO,
     StoredFileIdDTO,
     StoredFileIdRevDTO,
     StoredFilePresignedDownloadDTO,
+    StoredFileRangeDTO,
     UploadStoredFileRequestDTO,
 )
 from .handlers import (
     DownloadStoredFile,
+    DownloadStoredFileRange,
     DownloadStoredFileStream,
     GetStoredFile,
     ListStoredFiles,
@@ -45,8 +48,9 @@ def build_stored_file_registry(
 ) -> OperationRegistry:
     """Build stored-file operation registry for *kit*.
 
-    ``download_stream`` and ``presign_download`` are registered only when *kit* enables them
-    (:attr:`~StoredFileKitSpec.stream_downloads`, :attr:`~StoredFileKitSpec.presign_downloads`).
+    ``download_stream``, ``download_range`` and ``presign_download`` are registered only when
+    *kit* enables them (:attr:`~StoredFileKitSpec.stream_downloads`,
+    :attr:`~StoredFileKitSpec.range_downloads`, :attr:`~StoredFileKitSpec.presign_downloads`).
     """
 
     ns = ns or kit.document.default_namespace
@@ -135,6 +139,24 @@ def build_stored_file_registry(
                     input_type=StoredFileIdDTO,
                     description="Open a bounded-memory download stream for a ready stored file.",
                     streams=True,
+                ),
+            )
+            .as_query()
+            .finish()
+        )
+
+    if kit.range_downloads:
+        reg = (
+            reg.register(
+                ns.key(StoredFileKernelOp.DOWNLOAD_RANGE),
+                lambda ctx: DownloadStoredFileRange(
+                    doc=ctx.doc.query(doc_spec),
+                    storage=ctx.storage.query(kit.resolved_storage),
+                ),
+                descriptor=OperationDescriptor(
+                    input_type=DownloadStoredFileRangeRequestDTO,
+                    output_type=StoredFileRangeDTO,
+                    description="Read an inclusive byte range of a ready stored file.",
                 ),
             )
             .as_query()

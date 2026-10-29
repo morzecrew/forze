@@ -3,12 +3,14 @@
 from forze_kits.domain.stored_file.events import StoredFileOutboxPayload
 
 from .dto import (
+    DownloadStoredFileRangeRequestDTO,
     ListStoredFilesRequestDTO,
     PresignStoredFileDownloadRequestDTO,
     StoredFileDownloadDTO,
     StoredFileIdDTO,
     StoredFileIdRevDTO,
     StoredFilePresignedDownloadDTO,
+    StoredFileRangeDTO,
     StoredFileStream,
     UploadStoredFileRequestDTO,
 )
@@ -16,6 +18,7 @@ from .facades import StoredFileFacade
 from .factories import build_stored_file_registry
 from .handlers import (
     DownloadStoredFile,
+    DownloadStoredFileRange,
     DownloadStoredFileStream,
     GetStoredFile,
     ListStoredFiles,
@@ -44,12 +47,14 @@ __all__ = [
     "stored_file_complete_upload_after_commit_factory",
     "stored_file_outbox_flush_factory",
     "stored_file_purge_blob_after_commit_factory",
+    "DownloadStoredFileRangeRequestDTO",
     "ListStoredFilesRequestDTO",
     "PresignStoredFileDownloadRequestDTO",
     "StoredFileDownloadDTO",
     "StoredFileIdDTO",
     "StoredFileIdRevDTO",
     "StoredFilePresignedDownloadDTO",
+    "StoredFileRangeDTO",
     "StoredFileStream",
     "UploadStoredFileRequestDTO",
     "UploadStoredFile",
@@ -57,6 +62,7 @@ __all__ = [
     "SoftDeleteStoredFile",
     "GetStoredFile",
     "DownloadStoredFile",
+    "DownloadStoredFileRange",
     "DownloadStoredFileStream",
     "PresignStoredFileDownload",
     "ListStoredFiles",

@@ -2,6 +2,7 @@ from forze_kits.aggregates.search.dto import SearchRequestDTO
 
 from .handlers import (
     DownloadStoredFile,
+    DownloadStoredFileRange,
     DownloadStoredFileStream,
     GetStoredFile,
     ListStoredFiles,
@@ -15,6 +16,7 @@ from .handlers import (
 
 __all__ = [
     "DownloadStoredFile",
+    "DownloadStoredFileRange",
     "DownloadStoredFileStream",
     "GetStoredFile",
     "ListStoredFiles",

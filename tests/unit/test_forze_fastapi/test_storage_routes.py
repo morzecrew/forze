@@ -1241,16 +1241,16 @@ class TestStreamingHeaderHelpers:
         from forze.base.exceptions import exc
         from forze_fastapi.routes import storage as mod
 
-        async def runner(_args: object) -> object:
+        async def reader(_start: int, _end: int) -> object:
             raise exc.precondition(
                 "cannot slice", code=RANGE_WHOLE_PAYLOAD_UNSUPPORTED_CODE
             )
 
         out = await mod._range_response(  # pyright: ignore[reportPrivateUsage]
-            key="k",
             range_header="bytes=0-10",
             base_headers={},
-            range_runner=runner,
+            read_range=reader,
+            fallback_filename="k",
             max_range_bytes=16 * 1024 * 1024,
         )
 
@@ -1260,14 +1260,14 @@ class TestStreamingHeaderHelpers:
         from forze.base.exceptions import CoreException, exc
         from forze_fastapi.routes import storage as mod
 
-        async def runner(_args: object) -> object:
+        async def reader(_start: int, _end: int) -> object:
             raise exc.internal("boom")
 
         with pytest.raises(CoreException):
             await mod._range_response(  # pyright: ignore[reportPrivateUsage]
-                key="k",
                 range_header="bytes=0-10",
                 base_headers={},
-                range_runner=runner,
+                read_range=reader,
+                fallback_filename="k",
                 max_range_bytes=16 * 1024 * 1024,
             )
