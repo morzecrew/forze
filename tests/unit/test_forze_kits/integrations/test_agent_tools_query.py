@@ -343,6 +343,53 @@ class TestANarrowerQueryPolicy:
         assert isinstance(by_metric.content, dict)
         assert by_metric.content["code"] == "field_not_filterable"
 
+    @pytest.mark.parametrize(
+        "filters",
+        [
+            {"$or": [{"$values": {"title": "alpha"}}, {"$values": {"category": "green"}}]},
+            {"$not": {"$values": {"category": "green"}}},
+            {
+                "$and": [
+                    {"$values": {"title": "alpha"}},
+                    {"$or": [{"$not": {"$values": {"category": "green"}}}]},
+                ]
+            },
+        ],
+        ids=["or", "not", "and-or-not"],
+    )
+    async def test_dispatch_refuses_a_field_nested_in_a_combinator(
+        self, filters: JsonDict
+    ) -> None:
+        # `category` is allowed by the spec, so only the narrowed policy refuses it, and
+        # only if the guard walks into the combinator rather than reading the top level.
+        tools = operation_tools(
+            query_registry(), include=[_LIST], query_policies={_LIST: _TITLE_ONLY}
+        )
+
+        refused = await _call(tools, _LIST, {"filters": filters})
+
+        assert isinstance(refused.content, dict)
+        assert refused.content["code"] == "field_not_filterable"
+
+    async def test_the_cursor_list_is_narrowed_the_same_way(self) -> None:
+        cursor = QUERY_NS.key(DocumentKernelOp.LIST_CURSOR)
+        tools = operation_tools(
+            query_registry(), include=[cursor], query_policies={cursor: _TITLE_ONLY}
+        )
+
+        assert tools.defs[0].description == (
+            "List documents by filters and sorts (cursor pagination). Filterable fields — "
+            "$eq, $ilike, $in, $like, $neq, $nin, $null, $regex on every field; "
+            "string: title. Aggregatable by: category."
+        )
+
+        served = await _call(tools, cursor, {"filters": {"$values": {"title": "alpha"}}})
+        refused = await _call(tools, cursor, {"filters": {"$values": {"category": "green"}}})
+
+        assert served.is_error is False, served.content
+        assert isinstance(refused.content, dict)
+        assert refused.content["code"] == "field_not_filterable"
+
     async def test_dispatch_serves_what_it_allows(self) -> None:
         tools = operation_tools(
             query_registry(), include=[_LIST], query_policies={_LIST: _TITLE_ONLY}

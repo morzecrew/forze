@@ -287,10 +287,11 @@ def register_tools(
         before registering: assigning them afterwards replaces the grammar (the tools still
         point at the resource). A call is validated against the full grammar either way.
     :param query_policies: Operation key → a narrower policy for that tool: its description
-        names only the fields the policy allows, and a call that filters, sorts or
-        aggregates on any other is refused, so the tool accepts what it advertises. Each
-        allow-set must be a subset of the operation's own; an axis left ``None`` keeps the
-        operation's. The operation itself, served elsewhere, keeps its full allow-set.
+        names only the fields the policy allows, and each call is checked against it by
+        the field guard that enforces the operation's own policy. It narrows filter, sort
+        and aggregate, not the result. Each allow-set must be a subset of the operation's
+        own; an axis left ``None`` keeps the operation's. The operation itself, served
+        elsewhere, keeps its full allow-set.
     :returns: The list of registered tool names.
     :raises CoreException: When an exposed operation projects a sensitive read model
         (its spec is marked ``sensitive=True``), *operations* names an operation it

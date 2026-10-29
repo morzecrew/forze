@@ -137,8 +137,8 @@ class OperationToolset:
         converter=_read_only,
     )
     """Operation key → the guard enforcing the narrower query policy the palette was built
-    with (``query_policies``). Dispatch applies it to every call of that operation, so a
-    tool refuses a field its description does not name. Read-only, like :attr:`bindings`."""
+    with (``query_policies``). Dispatch applies it to every call of that operation.
+    Read-only, like :attr:`bindings`."""
 
     # ....................... #
 

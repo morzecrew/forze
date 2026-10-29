@@ -203,10 +203,11 @@ def operation_tools(
         :attr:`~.value_objects.OperationToolset.filter_grammar`, for the system prompt.
         Dispatch validates a call against the full grammar either way.
     :param query_policies: Operation key → a narrower policy for that tool: its description
-        names only the fields the policy allows, and dispatch refuses a call that filters,
-        sorts or aggregates on any other, so the palette accepts what it advertises. Each
-        allow-set must be a subset of the operation's own; an axis left ``None`` keeps the
-        operation's. The operation itself, served elsewhere, keeps its full allow-set.
+        names only the fields the policy allows, and dispatch checks each call against it
+        with the field guard that enforces the operation's own policy. It narrows filter,
+        sort and aggregate, not the result. Each allow-set must be a subset of the
+        operation's own; an axis left ``None`` keeps the operation's. The operation itself,
+        served elsewhere, keeps its full allow-set.
     :returns: The palette: :attr:`~.value_objects.OperationToolset.defs` for the agent's
         SDK, and the bindings dispatch resolves names against.
     :raises CoreException: When *include* is empty, names an operation the registry does

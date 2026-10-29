@@ -5,8 +5,8 @@ context, so tenancy, permission keys, ownership checks, the deadline, resilience
 interceptors and audit all apply exactly as they do to an HTTP or MCP call of the same
 operation. This module enforces nothing of its own — an agent that cannot reach an
 operation is an agent whose bound principal cannot reach it. The one addition is the
-palette's: a tool built with a narrower query policy refuses a field outside it, so the
-tool accepts no more than its description advertises.
+palette's: a tool built with a narrower query policy checks each call against it with
+the field guard that enforces the operation's own policy.
 
 Two failure kinds are kept apart on purpose. A **governed** failure (validation,
 authorization, a precondition) is something the model can act on, so it comes back as a

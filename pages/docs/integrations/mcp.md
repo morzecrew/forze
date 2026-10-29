@@ -81,12 +81,18 @@ server = build_mcp_server(
   as text, but a list or scalar result then carries no structured content, and an object
   comes back as a plain mapping rather than a typed model.
 - `query_policies` gives a tool a narrower `QueryFieldPolicy` than its spec's. The tool's
-  description names only those fields, and a call that filters, sorts or aggregates on
-  any other is refused (`field_not_filterable`). An axis left `None` keeps the spec's. A
-  policy can only narrow: one that names a field outside the operation's own allow-set,
-  an operation that is not exposed or takes no filter, or an axis the operation's input
-  does not carry is refused when the server is built. The
-  [agent-tool bridge](../data-events/agent-tools.md) takes the same option.
+  description names only those fields, and each call is checked against the narrowed
+  policy by the same field guard that enforces the operation's own policy
+  (`field_not_filterable`, `field_not_sortable`, `field_not_aggregatable`). An axis left
+  `None` keeps the spec's. A policy can only narrow: one that names a field outside the
+  operation's own allow-set, an operation that is not exposed or takes no filter, or an
+  axis the operation's input does not carry is refused when the server is built. The
+  narrowing applies to the MCP tools only. Generated HTTP routes, the `forze ops` CLI
+  and WebSocket dispatch keep the operation's full policy. It narrows filter, sort and
+  aggregate, not results: `return_fields` and projections still carry every field the
+  operation reads, so serve a field the model must not see through an operation over a
+  read DTO without it. The [agent-tool bridge](../data-events/agent-tools.md) takes the
+  same option.
 
 Set the server's instructions before the tools are registered: pass `instructions=` to
 `build_mcp_server`, or to your own `FastMCP` before `register_tools`. Assigning

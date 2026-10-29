@@ -127,15 +127,20 @@ tools = operation_tools(
 )
 ```
 
-The tool's description then names only `title`, and dispatch refuses a call that
-filters or sorts on any other field (`field_not_filterable`, `field_not_sortable`), so
-the tool accepts no more than it advertises. An axis left `None` keeps the spec's. A
-policy can only narrow. The palette is refused when it is built if a policy names a
+The tool's description then names only `title`. Dispatch checks each call against the
+narrowed policy with the same field guard that enforces the operation's own policy, so
+a filter or sort the guard finds outside it is refused (`field_not_filterable`,
+`field_not_sortable`). An axis left `None` keeps the spec's. A policy can only narrow. The palette is refused when it is built if a policy names a
 field outside the operation's own allow-set, an operation outside `include`, or an
 operation that takes no filter. It is also refused if a policy narrows an axis the
 operation's input does not carry, such as `aggregatable` on a plain list. The filter is
 checked under the default [filter limits](../reference/query-syntax.md#limits), so a
 spec that raises them has its larger filters refused by such a tool.
+
+A policy narrows what a tool may filter, sort and aggregate on, not what it returns:
+results, `return_fields` and projections still carry every field the operation reads.
+Do not rely on it to keep a field from the model. If one must not reach it, give the
+agent an operation over a read DTO without that field.
 
 The [filter grammar](../reference/query-syntax.md) itself is most of a list tool's
 schema, and it is the same in every filter-accepting tool, so a palette with ten of
