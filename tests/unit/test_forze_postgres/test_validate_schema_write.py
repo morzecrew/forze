@@ -547,3 +547,63 @@ async def test_a_write_or_history_view_keeps_the_nullability_rule(side: str) -> 
 
     assert caught.value.details is not None
     assert caught.value.details["label"].startswith(f"doc {side}")
+
+
+# ....................... #
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("missing", [None, "w", "h"])
+async def test_a_tenant_aware_write_and_history_check_their_tenant_columns(
+    missing: str | None,
+) -> None:
+    tenant = PostgresType(base="uuid", is_array=False, not_null=True)
+    not_null = {
+        base: PostgresType(base=base, is_array=False, not_null=True)
+        for base in ("uuid", "int4", "timestamptz", "jsonb")
+    }
+    columns: dict[str, dict[str, PostgresType]] = {
+        "v": {"id": _col("id"), "name": _col("name")},
+        "w": {"id": _col("id"), "name": _col("name"), "rev": not_null["int4"]},
+        "h": {
+            "source": _col("source"),
+            "id": not_null["uuid"],
+            "rev": not_null["int4"],
+            "created_at": not_null["timestamptz"],
+            "data": not_null["jsonb"],
+        },
+    }
+
+    for relation, cols in columns.items():
+        if relation != missing:
+            cols[TENANT_ID_FIELD] = tenant
+
+    async def _types(*, schema: str, relation: str) -> dict[str, PostgresType]:
+        return columns[relation]
+
+    intro = MagicMock(spec=PostgresIntrospector)
+    intro.get_column_types = AsyncMock(side_effect=_types)
+    intro.get_relation = AsyncMock(return_value="table")
+    spec = PostgresDocumentSchemaSpec(
+        name="doc",
+        read_model=_Read,
+        read_relation=("public", "v"),
+        tenant_aware=True,
+        write_domain_model=_Domain,
+        write_create_model=_Create,
+        write_relation=("public", "w"),
+        history_enabled=True,
+        history_relation=("public", "h"),
+    )
+
+    if missing is None:
+        await validate_postgres_document_schemas(intro, [spec])
+
+        return
+
+    with pytest.raises(CoreException, match=TENANT_ID_FIELD) as caught:
+        await validate_postgres_document_schemas(intro, [spec])
+
+    side = "write" if missing == "w" else "history"
+    assert caught.value.details is not None
+    assert caught.value.details["document"] == f"doc {side}"
