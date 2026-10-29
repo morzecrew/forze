@@ -104,28 +104,38 @@ class DurableFunctionCronTrigger:
     def encode_input(self, args_type: type[BaseModel]) -> JsonDict | None:
         """Return :attr:`input` validated against *args_type*, as the run store holds it.
 
-        :raises CoreException: ``configuration`` when the input is not an *args_type*.
+        The encoding is checked to validate back into *args_type*, as the run will validate
+        it, so a model whose dump it cannot read back fails here rather than on every fire.
+
+        :raises CoreException: ``configuration`` when the input is not an *args_type* or
+            its encoding does not validate as one.
         """
 
         if self.input is None:
             return None
 
-        if isinstance(self.input, BaseModel):
-            if not isinstance(self.input, args_type):
-                raise exc.configuration(
-                    f"Cron trigger input is a {type(self.input).__name__}, "
-                    f"not the spec's args type {args_type.__name__}.",
-                )
-
-            return self.input.model_dump(mode="json")
+        if isinstance(self.input, BaseModel) and not isinstance(self.input, args_type):
+            raise exc.configuration(
+                f"Cron trigger input is a {type(self.input).__name__}, "
+                f"not the spec's args type {args_type.__name__}.",
+            )
 
         try:
-            return args_type.model_validate(self.input).model_dump(mode="json")
+            model = (
+                self.input
+                if isinstance(self.input, BaseModel)
+                else args_type.model_validate(self.input)
+            )
+            # By alias: an args type that accepts only its aliases reads its own dump back.
+            encoded: JsonDict = model.model_dump(mode="json", by_alias=True)
+            args_type.model_validate(encoded)
 
         except ValidationError as error:
             raise exc.configuration(
                 f"Cron trigger input does not validate as {args_type.__name__}.",
             ) from error
+
+        return encoded
 
 
 # ....................... #

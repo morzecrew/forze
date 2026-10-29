@@ -1,7 +1,7 @@
 """Unit tests for durable function contract specs."""
 
 import pytest
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from forze.application.contracts.durable.function import (
     DurableFunctionCronTrigger,
@@ -99,6 +99,27 @@ class TestDurableFunctionCronTrigger:
         trigger = DurableFunctionCronTrigger(expression="0 2 * * *", input=_In(n=4))
 
         assert trigger.encode_input(_In) == {"n": 4}
+
+    def test_a_dict_input_is_encoded_by_alias(self) -> None:
+        class _Aliased(BaseModel):
+            order_id: str = Field(alias="orderId")
+
+        trigger = DurableFunctionCronTrigger(expression="0 2 * * *", input={"orderId": "o"})
+
+        assert trigger.encode_input(_Aliased) == {"orderId": "o"}
+
+    def test_an_input_whose_encoding_does_not_validate_back_fails(self) -> None:
+        class _ReadsOnlyItsAlias(BaseModel):
+            order_id: str = Field(validation_alias="orderId")
+
+        trigger = DurableFunctionCronTrigger(
+            expression="0 2 * * *", input=_ReadsOnlyItsAlias(orderId="o")
+        )
+
+        with pytest.raises(CoreException) as raised:
+            trigger.encode_input(_ReadsOnlyItsAlias)
+
+        assert raised.value.kind == "configuration"
 
     def test_a_trigger_with_a_dict_input_still_hashes(self) -> None:
         trigger = DurableFunctionCronTrigger(expression="0 2 * * *", input={"n": 1})

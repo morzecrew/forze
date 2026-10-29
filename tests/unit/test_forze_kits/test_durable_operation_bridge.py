@@ -14,7 +14,7 @@ from typing import Any
 from uuid import UUID
 
 import pytest
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, RootModel
 
 from forze.application.contracts.authn import AuthnIdentity
 from forze.application.contracts.durable.function import (
@@ -263,3 +263,34 @@ async def test_the_runner_binds_no_principal_for_an_untagged_run() -> None:
         await DurableFunctionRunner(registry=registry).run_now(ctx, "plain")
 
     assert seen == [(None, None)]
+
+
+class _Aliased(BaseModel):
+    order_id: str = Field(alias="orderId")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "args",
+    [_Aliased(orderId="o-1"), RootModel[int](root=0)],
+    ids=["alias-only", "falsy-root"],
+)
+async def test_a_cron_input_reaches_the_operation_as_declared(args: BaseModel) -> None:
+    received: list[BaseModel] = []
+
+    async def _record(value: Any) -> None:
+        received.append(value)
+
+    spec = DurableFunctionSpec(
+        name="sync",
+        run=DurableFunctionInvokeSpec(args_type=type(args)),
+        operation="sync.run",
+        triggers=(DurableFunctionCronTrigger(expression="0 * * * *", input=args),),
+    )
+    operations = OperationRegistry().set_handler("sync.run", lambda _ctx: _record).freeze()
+    handler = operation_durable_handler(spec, operations)
+    ctx = context_from_modules(MockDepsModule())
+
+    await handler(ctx, spec.triggers[0].encode_input(type(args)))  # type: ignore[union-attr]
+
+    assert received == [args]

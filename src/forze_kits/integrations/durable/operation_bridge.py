@@ -103,7 +103,8 @@ def operation_durable_handler(
 
     async def handler(ctx: ExecutionContext, input_json: JsonDict | None) -> JsonDict | None:
         try:
-            args = args_type.model_validate(input_json or {})
+            # ``is None``, not falsy: a root-model input may be stored as ``0`` or ``""``.
+            args = args_type.model_validate({} if input_json is None else input_json)
 
         except ValidationError as error:
             # Deterministic: replaying the same stored input can never converge.
