@@ -198,6 +198,15 @@ def mock_journal_txmanager(context: ExecutionContext) -> TransactionManagerPort:
 # ....................... #
 
 
+def mock_blocking_journal_txmanager(context: ExecutionContext) -> TransactionManagerPort:
+    return MockJournalTxManagerAdapter(
+        state=context.deps.provide(MockStateDepKey), row_locks="block"
+    )
+
+
+# ....................... #
+
+
 def _statically_namespaced(cfg: MockRouteConfig) -> bool:
     """Whether a route's namespace resolves without an await.
 
@@ -428,6 +437,7 @@ class ConfigurableMockDocument(_MockFactoryBase):
                 name for name, declared in spec.derived_read_fields.items() if not declared.resolved
             ),
             derived_source=derived_source,
+            block_rows=self.module.row_locks == "block",
         )
 
 

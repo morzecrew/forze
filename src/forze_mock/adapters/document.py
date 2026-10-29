@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import AsyncGenerator, Callable, Mapping, Sequence
+from collections.abc import AsyncGenerator, Awaitable, Callable, Mapping, Sequence
 from typing import (
     Any,
     ClassVar,
@@ -77,7 +77,12 @@ from forze_mock.adapters._derived import (
     staged_for,
 )
 from forze_mock.adapters._journal import JournalingStore
-from forze_mock.adapters._mvcc import current_mvcc_tx
+from forze_mock.adapters._mvcc import (
+    MvccTx,
+    StatementLocks,
+    acquire_row_locks,
+    current_mvcc_tx,
+)
 from forze_mock.adapters.derived_values import MockDerivedSource
 from forze_mock.adapters.query_params import MockQueryParamsSource
 from forze_mock.query._types import (
@@ -169,6 +174,12 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
     registered default, and the only posture in which an unsupplied value is
     discoverable. A registered source is consulted for every row, which is what makes
     a row the workload itself created readable."""
+
+    block_rows: bool = False
+    """Whether a statement outside a transaction waits for a row a blocking transaction holds.
+
+    Set from ``MockDepsModule(row_locks="block")``; a transaction's own waits follow its manager's
+    mode instead. Off, a claim-mode module sharing the state with a blocking one never waits."""
 
     # ....................... #
 
@@ -329,7 +340,8 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
         committer then wrote is aborted (abort-vs-block, normalized by the conformance differential),
         preventing the lost update / write skew a bare read would let through. Reuses the claim
         machinery (:attr:`~forze_mock.adapters._mvcc.MvccTx.rev_guarded`) — a lock is a claim on the
-        row just like a rev-guarded write.
+        row just like a rev-guarded write. Under ``row_locks="block"`` the read has already waited
+        in :meth:`_lock_rows`, so the claim is taken after the holder committed and stays quiet.
         """
 
         mvcc = current_mvcc_tx()
@@ -340,13 +352,43 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
 
     # ....................... #
 
-    def _mark_locked_row_from(self, hit: Any) -> None:
-        """Claim a ``FOR UPDATE`` lock on a predicate read's row, keyed by its id when discoverable.
+    async def _lock_rows(
+        self,
+        pks: Callable[[], Sequence[UUID]],
+        holder: MvccTx | StatementLocks | None = None,
+    ) -> bool:
+        """Hold the row lock on each visible row *pks* names, under ``row_locks="block"``.
+
+        A no-op returning ``False`` in the default claim mode and off a simulation loop (see
+        :func:`~forze_mock.adapters._mvcc.acquire_row_locks`, which says what *holder* keeps).
+        Only a row this statement can see is locked, as on Postgres: one a concurrent
+        transaction inserted and has not committed is absent, not waited on.
+
+        :returns: Whether it waited for another transaction, so a read re-evaluates its row.
+        """
+
+        def keys() -> list[tuple[str, Any]]:
+            ns = partition_namespace(self.require_tenant_if_aware(), self.namespace)
+            store = self._store()
+
+            return [(ns, pk) for pk in pks() if pk in store]
+
+        return await acquire_row_locks(
+            self.state, keys, block_statement=self.block_rows, holder=holder
+        )
+
+    # ....................... #
+
+    async def _lock_hit(self, hit: Any) -> bool:
+        """Take a ``FOR UPDATE`` lock on a predicate read's row, keyed by its id when discoverable.
 
         ``get`` locks by an explicit pk; ``find``/``project``/``select`` lock the returned row,
         whose id is read from the model attribute or the projected mapping. A projection that
         excludes the id (or a custom ``select`` type without one) cannot be claimed — a best-effort
         gap, not a lost update: the common id-addressable path (``get``, full-row ``find``) is exact.
+
+        :returns: Whether blocking mode waited out another holder first, in which case nothing is
+            claimed and the caller reads again against what the holder committed.
         """
 
         raw = getattr(hit, ID_FIELD, None)
@@ -357,11 +399,38 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
             )
 
         if raw is None:
-            return
+            return False
 
-        self._mark_row_locked(
-            raw if isinstance(raw, UUID) else UUID(str(raw))  # pyright: ignore[reportUnknownArgumentType]
-        )
+        pk = raw if isinstance(raw, UUID) else UUID(str(raw))  # pyright: ignore[reportUnknownArgumentType]
+
+        if await self._lock_rows(lambda: [pk]):
+            return True
+
+        self._mark_row_locked(pk)
+
+        return False
+
+    # ....................... #
+
+    async def _first_hit[H](
+        self,
+        read: Callable[[], Awaitable[CountlessPage[H]]],
+        for_update: RowLockMode,
+    ) -> H | None:
+        """The first hit *read* returns, locked first when *for_update*.
+
+        A wait for another holder ends in a fresh read, as read committed re-evaluates a locked
+        row whose holder changed it. A loop rather than a retry by recursion, since a contended
+        filter can make a read wait many times over.
+        """
+
+        while (page := await read()).hits:
+            hit = page.hits[0]
+
+            if not for_update or not await self._lock_hit(hit):
+                return hit
+
+        return None
 
     # ....................... #
 
@@ -666,6 +735,11 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
         if self.bound_params is not None:
             return self._to_read(self._param_doc_by_pk(pk))
 
+        if for_update:
+            # Blocking mode parks here on a held row; the read below then sees what its holder
+            # committed, and the claim is anchored after the wait rather than before it.
+            await self._lock_rows(lambda: [pk])
+
         with self.state.lock:
             doc = dict(self._ensure_exists(pk))
             # ``FOR UPDATE`` (any truthy mode): claim the row so a concurrent writer conflicts, the
@@ -761,20 +835,9 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
         *,
         for_update: RowLockMode = False,
     ) -> R | None:
-        page = await self.find_many(
-            filters=filters,
-            pagination={"limit": 1},
+        return await self._first_hit(
+            lambda: self.find_many(filters=filters, pagination={"limit": 1}), for_update
         )
-
-        if not page.hits:
-            return None
-
-        hit = page.hits[0]
-
-        if for_update:
-            self._mark_locked_row_from(hit)
-
-        return hit
 
     # ....................... #
 
@@ -785,21 +848,10 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
         *,
         for_update: RowLockMode = False,
     ) -> JsonDict | None:
-        page = await self.project_many(
-            tuple(fields),
-            filters=filters,
-            pagination={"limit": 1},
+        return await self._first_hit(
+            lambda: self.project_many(tuple(fields), filters=filters, pagination={"limit": 1}),
+            for_update,
         )
-
-        if not page.hits:
-            return None
-
-        hit = page.hits[0]
-
-        if for_update:
-            self._mark_locked_row_from(hit)
-
-        return hit
 
     # ....................... #
 
@@ -810,21 +862,10 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
         *,
         for_update: RowLockMode = False,
     ) -> T | None:
-        page = await self.select_many(
-            return_type,
-            filters=filters,
-            pagination={"limit": 1},
+        return await self._first_hit(
+            lambda: self.select_many(return_type, filters=filters, pagination={"limit": 1}),
+            for_update,
         )
-
-        if not page.hits:
-            return None
-
-        hit = page.hits[0]
-
-        if for_update:
-            self._mark_locked_row_from(hit)
-
-        return hit
 
     # ....................... #
 

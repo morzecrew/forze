@@ -98,6 +98,35 @@ class MockTxSnapshot:
 
 @final
 @attrs.define(slots=True)
+class RowLockTable(AsyncLockTable):
+    """Who holds each blocking row lock, as ``(namespace, pk) → transaction``, per event loop.
+
+    Filled only under ``MockDepsModule(row_locks="block")`` on a simulation loop. Keyed by loop,
+    as :class:`~forze.base.primitives.PerOwnerAsyncLocks` is: a crashed run's loop closes with its
+    transactions still holding, and a holder nothing will ever end must not outlive that loop, or
+    the next run over the same state would wait on it for good.
+    """
+
+    _tables: dict[Any, dict[tuple[str, Any], Any]] = attrs.field(factory=dict, init=False)
+
+    # ....................... #
+
+    def holders(self) -> dict[tuple[str, Any], Any]:
+        """The running loop's row-to-holder map, live (a closed loop's map is dropped)."""
+
+        loop = asyncio.get_running_loop()
+
+        for finished in [entry for entry in self._tables if entry.is_closed()]:
+            del self._tables[finished]
+
+        return self._tables.setdefault(loop, {})
+
+
+# ....................... #
+
+
+@final
+@attrs.define(slots=True)
 class MockState:
     """Shared in-memory state used by all mock adapters.
 
@@ -323,6 +352,12 @@ class MockState:
 
     mvcc_active: list[int] = attrs.field(factory=list)
     """Begin-versions of in-flight MVCC transactions (one entry each), for log pruning."""
+
+    row_locks: RowLockTable = attrs.field(factory=RowLockTable)
+    """The row locks blocking-mode transactions hold (``MockDepsModule(row_locks="block")``).
+
+    A lock table, so :meth:`clear` leaves it alone: dropping it while a transaction waits on a
+    holder would let the next caller take a row that is still held."""
 
     __lock: threading.RLock = attrs.field(factory=threading.RLock, init=False, repr=False)
     __seq: int = attrs.field(default=0, init=False, repr=False)

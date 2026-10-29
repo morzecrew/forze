@@ -34,7 +34,10 @@ from forze_mock.adapters._mvcc import (
     MvccTx,
     StatementLocks,
     current_mvcc_tx,
+    raise_row_deadlock,
+    release_row_locks,
     release_write_locks,
+    wait_cycle_rows,
 )
 from forze_mock.adapters.tx import ensure_mock_tx_writable
 from forze_mock.query._types import C, D, R, U
@@ -75,6 +78,11 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
         def _ensure_exists(self, pk: UUID) -> JsonDict: ...
         def _check_rev(self, current_rev: int, expected_rev: int | None) -> None: ...
         def _mark_rev_guarded(self, pk: UUID) -> None: ...
+        def _lock_rows(
+            self,
+            pks: Callable[[], Sequence[UUID]],
+            holder: MvccTx | StatementLocks | None = None,
+        ) -> Awaitable[bool]: ...
         def _mark_guarantee_recheck(self, pk: UUID) -> None: ...
         def _mark_created(self, pk: UUID) -> None: ...
         def _create_codec(self) -> ModelCodec[D, Any]: ...
@@ -333,8 +341,16 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
 
     # ....................... #
 
-    async def _serialize_writes(self, rows: Callable[[], Sequence[Any]]) -> None:
-        """Hold this aggregate's per-owner write lock for every owner a write touches.
+    async def _serialize_writes(
+        self,
+        rows: Callable[[], Sequence[Any]],
+        locking: Callable[[], Sequence[UUID]] = tuple,
+    ) -> None:
+        """Hold the row locks, then this aggregate's per-owner write locks, a write needs.
+
+        *locking* names the stored rows the write changes, locked first (see :meth:`_lock_rows`).
+        Row before owner keeps the owners read next final, since a held row cannot move. Not a
+        deadlock-detection need: both cycle walks follow row and owner waits alike.
 
         *rows* names what the write touches — the rows it inserts, the rows it changes and
         where the change moves them — and is asked again after every wait. Taking a lock is an
@@ -347,22 +363,25 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
         serialized is its own read-then-write, and a lock released at the write leaves exactly the
         gap between them open.
 
-        Outside a transaction the write is a statement of its own: every owner is held at once
-        and all are given back as this returns. Giving them back before the write is sound only
-        because every caller writes before it next awaits, so no other writer can run between
-        the two — which is why a caller that decides between writes decides in that same step.
+        Outside a transaction the write is a statement of its own: every row and owner is held at
+        once, so a locker arriving while it waits for an owner waits for it too, and all are given
+        back as this returns. Giving them back before the write is sound only because every caller
+        writes before it next awaits, so no other writer can run between the two — which is why a
+        caller that decides between writes decides in that same step.
         """
 
-        guarantees = self._serialized_by()
-
-        if not guarantees:
-            return
-
-        table = self.state.write_serialization
         mvcc = current_mvcc_tx()
         holder = mvcc if mvcc is not None else StatementLocks()
 
         try:
+            await self._lock_rows(locking, holder)
+            guarantees = self._serialized_by()
+
+            if not guarantees:
+                return
+
+            table = self.state.write_serialization
+
             while wanted := [
                 key for key in self._owner_keys(guarantees, rows()) if key not in holder.write_locks
             ]:
@@ -386,22 +405,27 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
         finally:
             if mvcc is None:
                 release_write_locks(holder, self.state)
+                release_row_locks(holder, self.state)
 
     # ....................... #
 
     def _refuse_lock_cycle(self, holder: MvccTx | StatementLocks, key: int) -> None:
         """Refuse a wait that would close a cycle, instead of joining one.
 
-        Walks from whoever holds *key* to whatever that writer is itself waiting for, and on to
-        its holder. A chain arriving back at a key *holder* already holds is a deadlock: neither
-        side can release first, and without this both would sit there until an operation deadline
-        fired — a hang where the store being modelled detects the cycle and aborts one of them.
+        Walks from whoever holds *key* to whatever that writer is itself waiting for — an owner,
+        or under ``row_locks="block"`` a row — and on to its holder. A chain arriving back at
+        *holder* is a deadlock: neither side can release first, and without this both would sit
+        there until an operation deadline fired — a hang where the store being modelled detects
+        the cycle and aborts one of them.
 
         Refused on the side about to *join* the cycle, which is the side that can still give up
         without having blocked anyone.
 
         :raises CoreException: ``concurrency`` naming the owner — the kind Postgres gives the
             same cycle when it detects the deadlock, so a caller's retry policy treats both alike.
+            A cycle through a row lock is refused as the row side refuses it, with
+            ``code="deadlock_detected"`` and the rows (see
+            :func:`~forze_mock.adapters._mvcc.raise_row_deadlock`).
         """
 
         holders = self.state.write_serialization
@@ -425,6 +449,15 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
                 # As the backends' mapped deadlock: its details are not the client's.
                 deadlock.expose_details = False
                 raise deadlock
+
+            if (row := getattr(other, "row_waiting_for", None)) is not None:
+                # Parked on a row: the rest of the chain may mix both kinds of wait.
+                start = self.state.row_locks.holders().get(row)
+
+                if (cycle := wait_cycle_rows(self.state, holder, start)) is not None:
+                    raise_row_deadlock([row, *cycle])
+
+                return
 
             cursor = other.waiting_for
 
@@ -478,7 +511,7 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
     async def _serialize_stored(self, *pks: UUID) -> None:
         """The same, for a write addressed by primary key: the owner is on the stored row."""
 
-        await self._serialize_writes(lambda: [self._store().get(pk) for pk in pks])
+        await self._serialize_writes(lambda: [self._store().get(pk) for pk in pks], lambda: pks)
 
     # ....................... #
 
@@ -756,11 +789,14 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
 
         # Every owner either arm could touch — the row's, the one the update would move it to,
         # and the one a create would write — since which arm runs is decided below.
-        if self._serialized_by():
-            created = self._apply_tenant(
+        created = (
+            self._apply_tenant(
                 self._domain_codec().encode_persistence_mapping(self._build_domain(create, id))
             )
-            await self._serialize_writes(lambda: [*self._sides(id, patch), created])
+            if self._serialized_by()
+            else None
+        )
+        await self._serialize_writes(lambda: [*self._sides(id, patch), created], lambda: [id])
 
         # Read, decide and write in one step with no await inside it: two concurrent upserts on
         # the same id cannot both observe "absent" and race into duplicate creates, and nothing
@@ -899,7 +935,7 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
     ) -> R | JsonDict | tuple[R, JsonDict] | None:
         self._ensure_writable()
         patch = self._encode_patch(dto)
-        await self._serialize_writes(lambda: self._sides(pk, patch))
+        await self._serialize_writes(lambda: self._sides(pk, patch), lambda: [pk])
 
         with self.state.lock:
             updated, serialized, write_diff = self._store_updated(pk, rev, patch)
@@ -1098,16 +1134,17 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
 
         selects = self._matcher(filters)
 
-        # Every owner the filter selects, and every owner the patch would move a selected row
-        # to, before the section rather than inside it: a set-based update is one statement on a
-        # real store and takes every lock it needs up front.
+        # Each row it selects, every owner the filter selects, and every owner the patch would
+        # move a selected row to, before the section rather than inside it: a set-based update
+        # is one statement on a real store and takes every lock it needs up front.
         await self._serialize_writes(
             lambda: [
                 side
                 for raw in list(self._store().values())
                 if selects(raw)
                 for side in (raw, self._destination(raw, patch))
-            ]
+            ],
+            lambda: [pk for pk, raw in self._store().items() if selects(raw)],
         )
 
         with self.state.lock:

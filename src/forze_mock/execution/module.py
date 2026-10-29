@@ -161,6 +161,7 @@ from forze.application.integrations.authz import (
     check_provider_timeout,
 )
 from forze.application.integrations.crypto import DeterministicFieldCipher, Keyring
+from forze.base.exceptions import exc
 from forze.base.primitives import MappingConverter, StrKey, StrKeyMapping
 from forze_mock.adapters import (
     MockDerivedRegistry,
@@ -251,6 +252,7 @@ from forze_mock.execution.factories import (
     ConfigurableMockTokenLifecycle,
     ConstantMockPortFactory,
     MockAuthzDecisionFactory,
+    mock_blocking_journal_txmanager,
     mock_journal_txmanager,
     mock_strict_txmanager,
     mock_txmanager,
@@ -385,6 +387,21 @@ class MockDepsModule(DepsModule):
     strict_tx: bool = attrs.field(default=False)
     """Back-compat alias: when true, forces ``transactions="strict"``."""
 
+    row_locks: Literal["claim", "block"] = attrs.field(default="claim")
+    """How a row lock — a ``for_update`` read, or a write's own lock — meets another transaction
+    holding the same row (journal transactions only):
+
+    - ``"claim"`` (default) — no one waits. The lock is a claim, and the transaction that commits
+      second over a claimed row is aborted with a conflict. Safe, but two transactions locking
+      rows A and B in the same order and in opposite orders look alike: both abort.
+    - ``"block"`` — the contender parks until the holder commits or rolls back, then proceeds
+      against the committed row, as Postgres does; at snapshot or serializable isolation a row
+      changed since the snapshot fails with ``serialization_failure`` instead. A wait that would
+      close a cycle aborts the waiter with ``exc.concurrency(code="deadlock_detected")`` naming
+      the rows, which a simulation reports as a ``no_lock_order_deadlock`` violation. Blocks only
+      on a simulation loop, where a wait cannot hang; anywhere else the claim stands in.
+    """
+
     permission_providers: tuple[PermissionProvider, ...] = attrs.field(
         factory=tuple, converter=tuple
     )
@@ -413,12 +430,30 @@ class MockDepsModule(DepsModule):
         check_permission_providers(self.permission_providers)
         check_provider_timeout(self.permission_provider_timeout)
 
+        if self.row_locks not in ("claim", "block"):
+            # A typo would otherwise run claim mode silently, the opposite of what was asked.
+            raise exc.configuration(
+                f'row_locks must be "claim" or "block", not {self.row_locks!r}.',
+                code="mock_row_locks_unknown",
+            )
+
+        if self.row_locks == "block" and (self.strict_tx or self.transactions != "journal"):
+            # Strict roots never run together and "none" has no transaction: nothing would block.
+            raise exc.configuration(
+                'row_locks="block" needs transactions="journal".',
+                code="mock_row_locks_need_journal",
+            )
+
     def _txmanager_factory(self) -> Any:
         """Pick the transaction-manager factory (``strict_tx`` forces strict for back-compat)."""
 
         mode = "strict" if self.strict_tx else self.transactions
         return {
-            "journal": mock_journal_txmanager,
+            "journal": (
+                mock_blocking_journal_txmanager
+                if self.row_locks == "block"
+                else mock_journal_txmanager
+            ),
             "none": mock_txmanager,
             "strict": mock_strict_txmanager,
         }[mode]

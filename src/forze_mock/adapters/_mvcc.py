@@ -41,12 +41,14 @@ in that namespace — sound, if coarse).
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+import asyncio
+from collections.abc import Callable, Iterator, Sequence
 from contextvars import ContextVar
-from typing import Any
+from typing import Any, NoReturn
 
 import attrs
 
+from forze.application.execution.tracing import record
 from forze.base.exceptions import exc
 
 # ----------------------- #
@@ -236,10 +238,32 @@ class MvccTx:
     serialization check. ``ensure`` / ``upsert`` are ``ON CONFLICT DO NOTHING`` idempotent on the
     real adapters, so their create arm is deliberately not tracked here (no spurious conflict)."""
 
+    block_rows: bool = False
+    """Whether a row lock this transaction meets parks it (``MockDepsModule(row_locks="block")``).
+
+    Off, a locking read is a claim checked at commit (see :attr:`rev_guarded`); on, it waits for the
+    holder to end, as Postgres does — see :func:`acquire_row_locks`."""
+
+    held_rows: list[tuple[str, Any]] = attrs.field(factory=list)
+    """The ``(namespace, pk)`` row locks this transaction holds in blocking mode, until it ends."""
+
+    row_waiting_for: tuple[str, Any] | None = None
+    """The row this transaction is parked on, or ``None`` — the wait-for graph's edge out of it."""
+
+    ended: asyncio.Event = attrs.field(factory=asyncio.Event)
+    """Set once this transaction commits or rolls back: what a row-lock waiter parks on."""
+
     # ....................... #
 
     @classmethod
-    def begin(cls, state: Any, *, serializable: bool, read_committed: bool = False) -> MvccTx:
+    def begin(
+        cls,
+        state: Any,
+        *,
+        serializable: bool,
+        read_committed: bool = False,
+        block_rows: bool = False,
+    ) -> MvccTx:
         # Snapshot / serializable freeze an as-of-begin snapshot of every document namespace
         # (shallow: rows are replaced, never mutated in place, so holding the prior row refs is a
         # faithful snapshot). Read-committed reads through to the live store instead, so it needs
@@ -255,6 +279,7 @@ class MvccTx:
             serializable=serializable,
             read_committed=read_committed,
             snapshots=snapshots,
+            block_rows=block_rows,
         )
 
     # ....................... #
@@ -263,7 +288,8 @@ class MvccTx:
         """Deregister this transaction and prune the commit log below the oldest in-flight one.
 
         Called once on transaction end (commit or abort), which is also where the per-owner
-        write locks are released — commit or rollback, no path that forgets. An entry only
+        write locks and the blocking row locks are released — commit or rollback, no path that
+        forgets. An entry only
         matters to a
         transaction whose begin-version precedes it, so once no in-flight transaction began
         before an entry, the entry can never be consulted again and is dropped — keeping the
@@ -273,6 +299,7 @@ class MvccTx:
         # Before anything else: a writer waiting on one of these has nothing to do with this
         # transaction's bookkeeping, and an exception raised below would strand it for good.
         release_write_locks(self, state)
+        release_row_locks(self, state)
 
         state.mvcc_active.remove(self.begin_version)
         horizon = min(state.mvcc_active) if state.mvcc_active else state.mvcc_version
@@ -523,16 +550,20 @@ class MvccTx:
 
 @attrs.define(slots=True)
 class StatementLocks:
-    """The per-owner write locks one write outside a transaction holds.
+    """The per-owner write locks and row locks one write outside a transaction holds.
 
     Such a write is a transaction of one statement, and it contends the way one does: it holds
-    every owner it touches at once, and another transaction deciding whether to wait on it has
-    to be able to see it — what it holds and what it is waiting for — or a cycle through it is a
-    hang nobody detects. Shaped like :class:`MvccTx`'s own two fields so either can be read.
+    every owner and row it touches at once, and another transaction deciding whether to wait on
+    it has to be able to see it — what it holds and what it is waiting for — or a cycle through
+    it is a hang nobody detects. Shaped like :class:`MvccTx`'s own lock fields so either can be
+    read.
     """
 
     write_locks: dict[int, Any] = attrs.field(factory=dict)
     waiting_for: int | None = attrs.field(default=None)
+    held_rows: list[tuple[str, Any]] = attrs.field(factory=list)
+    row_waiting_for: tuple[str, Any] | None = None
+    ended: asyncio.Event = attrs.field(factory=asyncio.Event)
 
 
 # ....................... #
@@ -546,6 +577,204 @@ def release_write_locks(holder: MvccTx | StatementLocks, state: Any) -> None:
         lock.release()
 
     holder.write_locks.clear()
+
+
+# ....................... #
+
+
+def _on_simulation_loop() -> bool:
+    """Whether the running loop raises on quiescence instead of hanging.
+
+    Read by name because ``forze_mock`` may not import ``forze_dst``, whose
+    ``SimulationEventLoop`` declares it. A blocking wait is only safe there: a holder that never
+    ends becomes a reported deadlock rather than a hung test.
+    """
+
+    return getattr(asyncio.get_running_loop(), "raises_on_quiescence", False) is True
+
+
+# ....................... #
+
+
+def release_row_locks(holder: MvccTx | StatementLocks, state: Any) -> None:
+    """Give back every row lock *holder* holds, then wake whoever is parked on it."""
+
+    if holder.held_rows:
+        # The loop running this is the one the rows were taken on: ``finish`` runs in the same
+        # coroutine as ``begin``, a statement releases in the call that took them, and rows are
+        # only taken on the simulation loop, which is single-threaded and refuses threads — no
+        # other loop can share the holder.
+        holders = state.row_locks.holders()
+
+        for key in holder.held_rows:
+            holders.pop(key, None)
+
+        holder.held_rows.clear()
+
+    # After the release, never before: a waiter woken to a row still marked held would park on
+    # an event already set, and spin.
+    holder.ended.set()
+
+
+# ....................... #
+
+
+def wait_cycle_rows(state: Any, waiter: Any, holder: Any) -> list[tuple[str, Any]] | None:
+    """The rows on the wait-for path from *holder* back to *waiter*, or ``None`` with no cycle.
+
+    Each step goes from a transaction to whoever holds what it is parked on: a row
+    (``row_waiting_for``) or a ``SerializedBy`` owner (``waiting_for``). Following both is what
+    catches a cycle mixing the two, whichever kind of wait closes it. An empty list means the path
+    arrived back through owner waits alone.
+    """
+
+    path: list[tuple[str, Any]] = []
+    seen: set[int] = set()
+
+    while holder is not None and id(holder) not in seen:
+        if holder is waiter:
+            return path
+
+        seen.add(id(holder))
+        row = getattr(holder, "row_waiting_for", None)
+
+        if row is not None:
+            path.append(row)
+            holder = state.row_locks.holders().get(row)
+
+        else:
+            owner = holder.waiting_for
+            holder = None if owner is None else state.write_serialization.holder_of(owner)
+
+    return None
+
+
+# ....................... #
+
+
+def raise_row_deadlock(rows: Sequence[tuple[str, Any]]) -> NoReturn:
+    """Refuse the transaction closing a cycle through row locks, naming the rows.
+
+    Postgres aborts one transaction of such a cycle; this refuses the one about to close it,
+    which under one seed and schedule is always the same transaction.
+
+    :raises CoreException: ``concurrency`` with ``code="deadlock_detected"`` and the cycle's rows
+        in its details; the same rows go on the runtime trace for the simulation's oracle.
+    """
+
+    named = [f"{namespace}/{pk}" for namespace, pk in rows]
+    record(domain="lock", op="deadlock", key=named[0], outcome="refused", payload={"rows": named})
+    deadlock = exc.concurrency(
+        "Deadlock detected: this transaction and another each hold a row the other is waiting "
+        "for. This one is refused rather than both waiting; taking the rows in one order "
+        "avoids it.",
+        code="deadlock_detected",
+        details={"rows": named},
+    )
+    # As the backends' mapped deadlock: its details are not the client's.
+    deadlock.expose_details = False
+    raise deadlock
+
+
+# ....................... #
+
+
+def _refuse_stale_lock(state: Any, tx: MvccTx, key: tuple[str, Any]) -> None:
+    """Refuse a snapshot transaction's lock on a row written since its snapshot was taken.
+
+    What Postgres does at ``REPEATABLE READ`` and ``SERIALIZABLE``: the version the snapshot
+    sees is no longer the latest, and a lock on it would act on a stale row. Rows are replaced
+    on every write, never mutated in place, so a changed or deleted row is one whose live entry
+    is no longer the snapshot's. Read committed keeps no snapshot, so it is never refused here.
+
+    :raises CoreException: ``concurrency`` with ``code="serialization_failure"``.
+    """
+
+    namespace, pk = key
+    seen = tx.snapshots.get(namespace, {}).get(pk)
+
+    if seen is not None and (state.documents.get(namespace) or {}).get(pk) is not seen:
+        raise exc.concurrency(
+            "Could not serialize access due to concurrent update: a row this transaction "
+            "locks was changed after its snapshot was taken",
+            code="serialization_failure",
+        )
+
+
+# ....................... #
+
+
+async def acquire_row_locks(
+    state: Any,
+    keys: Callable[[], Sequence[tuple[str, Any]]],
+    *,
+    block_statement: bool,
+    holder: MvccTx | StatementLocks | None = None,
+) -> bool:
+    """Hold every row lock *keys* names, waiting out each live holder, in blocking mode.
+
+    A no-op in the default claim mode, and off a simulation loop, where a wait could hang: the
+    claim then stands in, as it always has. A transaction takes each free row and keeps it until
+    it ends. Outside one, a write passes its *holder* and keeps its rows until it gives them back
+    with its owner locks, right before it writes; a read passes none and holds its row for this
+    call only. Outside a transaction it blocks only when *block_statement* says its own module
+    does — a claim-mode module sharing the state with a blocking one never waits. *keys* is asked
+    again after every wait, so a row deleted or moved meanwhile drops out and the caller proceeds
+    against what the holder committed — read committed's re-read. A snapshot transaction is
+    refused instead when the row changed since its snapshot (see :func:`_refuse_stale_lock`).
+
+    Waiters park on the holder's :attr:`MvccTx.ended` and wake in the order the loop runs them,
+    which the simulation's scheduler fixes from the seed; no wall clock is read.
+
+    :returns: Whether it waited, so a predicate read re-evaluates against the committed row.
+    :raises CoreException: ``concurrency`` with ``code="deadlock_detected"`` when a wait would
+        close a cycle (see :func:`wait_cycle_rows` and :func:`raise_row_deadlock`), or with
+        ``code="serialization_failure"`` for a snapshot transaction's stale row.
+    """
+
+    tx = current_mvcc_tx()
+    blocks = tx.block_rows if tx is not None else block_statement
+
+    if not blocks or not _on_simulation_loop():
+        return False
+
+    holders = state.row_locks.holders()
+    taker = tx if tx is not None else holder if holder is not None else StatementLocks()
+    waited = False
+
+    try:
+        while pending := [key for key in keys() if holders.get(key) is not taker]:
+            for key in pending:
+                other = holders.get(key)
+
+                if other is None:
+                    if tx is not None:
+                        _refuse_stale_lock(state, tx, key)
+
+                    holders[key] = taker
+                    taker.held_rows.append(key)
+                    continue
+
+                if (cycle := wait_cycle_rows(state, taker, other)) is not None:
+                    raise_row_deadlock([key, *cycle])
+
+                taker.row_waiting_for = key
+
+                try:
+                    await other.ended.wait()
+
+                finally:
+                    taker.row_waiting_for = None
+
+                waited = True
+                break
+
+    finally:
+        if taker is not tx and taker is not holder:
+            # A read outside a transaction: its statement ends with this call.
+            release_row_locks(taker, state)
+
+    return waited
 
 
 # ....................... #
