@@ -53,15 +53,27 @@ class _Args(BaseModel):
 
 
 class _Recorder(Handler[_Args, None]):
-    def __init__(self, order: list[str], *, fail: bool = False) -> None:
+    def __init__(
+        self, order: list[str], *, fail: bool = False, meet: asyncio.Event | None = None
+    ) -> None:
         self.order = order
         self.fail = fail
+        # With *meet*, the first holds until the second has started: a second that waits on
+        # the first's key never starts, and the wait times out instead of passing on a margin.
+        self.meet = meet
 
     async def __call__(self, args: _Args) -> None:
         self.order.append(f"{args.name}:start")
 
+        if args.name == "second" and self.meet is not None:
+            self.meet.set()
+
         if args.name == "first":
-            await asyncio.sleep(HOLD)
+            if self.meet is None:
+                await asyncio.sleep(HOLD)
+
+            else:
+                await asyncio.wait_for(self.meet.wait(), timeout=5)
 
         self.order.append(f"{args.name}:end")
 
@@ -109,9 +121,11 @@ async def _run_both(
     *,
     fail: bool = False,
     query: bool = False,
+    meet: bool = False,
 ) -> list[str]:
     order: list[str] = []
-    registry = _registry(_Recorder(order, fail=fail), query=query)
+    recorder = _Recorder(order, fail=fail, meet=asyncio.Event() if meet else None)
+    registry = _registry(recorder, query=query)
     first = registry.resolve(_OP, _ctx(pg_client))
     second = registry.resolve(_OP, _ctx(second_client))
 
@@ -190,18 +204,24 @@ def _nested_registry(
 
 
 class TestSerializesAcrossSessions:
+    # Ordered against the handler's own end, inside the transaction: the commit wakes the
+    # waiter and the first task's next line in the same instant, in either order. That the
+    # lock outlasts the handler until the root commits is pinned across sessions by the
+    # nested-scope tests below (an operation nested in another holds its key until the outer
+    # commits).
+
     async def test_the_same_key_waits_until_the_first_commits(
         self, pg_client: PostgresClient, second_client: PostgresClient
     ) -> None:
         key = uuid4().hex
         order = await _run_both(pg_client, second_client, key, key)
 
-        assert order.index("second:start") > order.index("first:closed"), order
+        assert order.index("second:start") > order.index("first:end"), order
 
     async def test_a_different_key_does_not_wait(
         self, pg_client: PostgresClient, second_client: PostgresClient
     ) -> None:
-        order = await _run_both(pg_client, second_client, uuid4().hex, uuid4().hex)
+        order = await _run_both(pg_client, second_client, uuid4().hex, uuid4().hex, meet=True)
 
         assert order.index("second:start") < order.index("first:end"), order
 
@@ -211,7 +231,7 @@ class TestSerializesAcrossSessions:
         key = uuid4().hex
         order = await _run_both(pg_client, second_client, key, key, fail=True)
 
-        assert order.index("second:start") > order.index("first:closed"), order
+        assert order.index("second:start") > order.index("first:end"), order
         assert order[-1] == "second:end"
 
     async def test_a_read_only_query_takes_it_too(
@@ -221,7 +241,7 @@ class TestSerializesAcrossSessions:
         key = uuid4().hex
         order = await _run_both(pg_client, second_client, key, key, query=True)
 
-        assert order.index("second:start") > order.index("first:closed"), order
+        assert order.index("second:start") > order.index("first:end"), order
 
 
 # ....................... #
@@ -377,7 +397,7 @@ class TestNestedRetriedAndTenanted:
         self, pg_client: PostgresClient, second_client: PostgresClient
     ) -> None:
         order: list[str] = []
-        registry = _registry(_Recorder(order))
+        registry = _registry(_Recorder(order, meet=asyncio.Event()))
         key = uuid4().hex
 
         async def as_tenant(client: PostgresClient, name: str, lag: float) -> None:
