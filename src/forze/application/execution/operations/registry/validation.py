@@ -7,6 +7,7 @@ from forze.application.contracts.execution import (
     AuthorizesMembers,
     DeclaresAuthz,
     DeclaresHedge,
+    HoldsTransactionLock,
     OperationHandlerFactory,
 )
 from forze.base.exceptions import exc
@@ -36,6 +37,7 @@ class RegistryFreezeValidator:
         """Run all freeze validations."""
 
         RegistryFreezeValidator.validate_patches(handlers, resolution)
+        RegistryFreezeValidator.validate_tx_locks(handlers, resolution)
         RegistryFreezeValidator.validate_resolved_plans(handlers, resolution)
         RegistryFreezeValidator.validate_dispatch_graph(handlers, resolution)
         RegistryFreezeValidator.validate_hedge_safety(handlers, resolution)
@@ -149,6 +151,46 @@ class RegistryFreezeValidator:
                     f"Operation {op!r} declares isolation={isolation.name} but no "
                     "transaction route (set_isolation requires a bound tx route via "
                     "set_route); isolation cannot be honored without a transaction.",
+                )
+
+    # ....................... #
+
+    @staticmethod
+    def validate_tx_locks(
+        handlers: StrKeyMapping[OperationHandlerFactory],
+        resolution: PlanResolution,
+    ) -> None:
+        """Refuse a transaction lock that its operation's transaction cannot hold.
+
+        The lock is held until the transaction ends, so its step must run inside it: in the
+        transaction scope of an operation with a route. Anywhere else every call would be
+        refused. Whether the route's backend has such a lock depends on the wiring, which the
+        registry does not see: the step checks it when the operation is resolved, on its first
+        call or under ``check_wiring``.
+        """
+
+        for op in handlers:
+            plan = resolution.resolve(str(op))
+
+            if any(
+                isinstance(step.factory, HoldsTransactionLock)
+                for step in plan.iter_outer_before_steps()
+            ):
+                raise exc.configuration(
+                    f"Operation {op!r} takes a transaction lock in its outer scope, which runs "
+                    "before the transaction opens; attach it to the transaction scope with "
+                    "bind_tx().",
+                    code="tx_lock_outside_transaction_scope",
+                )
+
+            if plan.tx_route() is None and any(
+                isinstance(step.factory, HoldsTransactionLock) for step in plan.iter_before_steps()
+            ):
+                raise exc.configuration(
+                    f"Operation {op!r} takes a transaction lock but has no transaction route, "
+                    "so there is no transaction to hold it; bind one via "
+                    "bind_tx().set_route(...).",
+                    code="tx_lock_without_route",
                 )
 
     # ....................... #

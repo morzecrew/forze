@@ -1,9 +1,9 @@
-"""Mock transaction managers: the default no-op and the opt-in strict variant."""
+"""Mock transaction managers (no-op, strict, journal) and their transaction-scoped locks."""
 
 from collections.abc import AsyncGenerator
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from contextvars import ContextVar
-from typing import TYPE_CHECKING, Literal, final
+from typing import TYPE_CHECKING, Literal, cast, final
 
 import attrs
 
@@ -12,6 +12,9 @@ from forze.application.contracts.transaction import (
     TransactionManagerPort,
     TransactionScopeKey,
     TxCapabilities,
+    TxLockCapable,
+    TxLockPort,
+    require_tx_lock_in_transaction,
 )
 from forze.base.exceptions import exc
 from forze_mock.adapters._journal import (
@@ -22,6 +25,8 @@ from forze_mock.adapters._mvcc import (
     MvccTx,
     StatementLocks,
     _mvcc_tx,  # pyright: ignore[reportPrivateUsage]
+    acquire_write_locks,
+    current_mvcc_tx,
     release_write_locks,
 )
 
@@ -169,7 +174,7 @@ class MockTxManagerAdapter(TransactionManagerPort):
 
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class MockStrictTxManagerAdapter(TransactionManagerPort):
+class MockStrictTxManagerAdapter(TransactionManagerPort, TxLockCapable):
     """Strict mock transaction manager with real rollback semantics.
 
     Semantics:
@@ -213,6 +218,13 @@ class MockStrictTxManagerAdapter(TransactionManagerPort):
         return TxCapabilities(
             isolation=frozenset(IsolationLevel),
         )
+
+    # ....................... #
+
+    def tx_lock(self) -> TxLockPort:
+        """:class:`TxLockCapable`: the per-owner write locks, held by this root transaction."""
+
+        return MockTxLockAdapter(state=self.state)
 
     # ....................... #
 
@@ -288,7 +300,7 @@ class MockStrictTxManagerAdapter(TransactionManagerPort):
 
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class MockJournalTxManagerAdapter(TransactionManagerPort):
+class MockJournalTxManagerAdapter(TransactionManagerPort, TxLockCapable):
     """Concurrency-preserving atomicity + faithful isolation — the default.
 
     The DOCUMENT store routes through the MVCC buffered overlay at **every** level (see
@@ -330,6 +342,13 @@ class MockJournalTxManagerAdapter(TransactionManagerPort):
         return TxCapabilities(
             isolation=frozenset(IsolationLevel),
         )
+
+    # ....................... #
+
+    def tx_lock(self) -> TxLockPort:
+        """:class:`TxLockCapable`: the per-owner write locks, held by this root transaction."""
+
+        return MockTxLockAdapter(state=self.state)
 
     # ....................... #
 
@@ -426,3 +445,32 @@ class MockJournalTxManagerAdapter(TransactionManagerPort):
                 _journal.reset(token_journal)
 
             _journal_tx_depth.reset(token_depth)
+
+
+# ....................... #
+
+
+@final
+@attrs.define(slots=True, kw_only=True, frozen=True)
+class MockTxLockAdapter(TxLockPort):
+    """Transaction-scoped locks on the per-owner write locks ``SerializedBy`` writes take.
+
+    One table for both, as Postgres has one advisory-lock space: a cycle through an operation
+    lock and an owner lock is refused as a cycle through either alone is. The strict or journal
+    root transaction holds them until it ends, even one taken in a nested scope that rolls back:
+    savepoints are not modelled, so this is stricter than Postgres, which releases it there.
+    Handed out by those two managers; the no-op manager opens no transaction, so it has none.
+    """
+
+    state: "MockState"
+
+    # ....................... #
+
+    async def hold(self, *keys: int) -> None:
+        mvcc = current_mvcc_tx()
+        holder = mvcc if mvcc is not None else strict_tx_locks()
+        require_tx_lock_in_transaction(holder is not None)
+        wanted = sorted(set(keys))
+
+        # Refused above when there is no holder.
+        await acquire_write_locks(self.state, cast(MvccTx | StatementLocks, holder), lambda: wanted)

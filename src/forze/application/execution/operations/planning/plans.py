@@ -12,6 +12,7 @@ from forze.application.contracts.execution import (
     DeclaresAuthn,
     DeclaresAuthz,
     DispatchStep,
+    HoldsTransactionLock,
     MiddlewareStep,
     OnSuccess,
     OnSuccessStep,
@@ -148,6 +149,41 @@ class OperationPlan:
 
         yield from self._outer.before.items
         yield from self._tx.before.items
+
+    # ....................... #
+
+    def iter_outer_before_steps(self) -> Iterable[BeforeStep]:
+        """Yield the before steps of the outer scope, which run before the transaction opens."""
+
+        yield from self._outer.before.items
+
+    # ....................... #
+
+    def bind_tx_locks(self, op: StrKey) -> Self:
+        """Bind each transaction-lock step of the transaction scope to *op* and its route.
+
+        Called by the registry at freeze, once validation has placed every such step here and
+        given the scope a route (:class:`HoldsTransactionLock`).
+        """
+
+        route = self._tx.route
+        before = self._tx.before
+
+        if route is None or not any(
+            isinstance(step.factory, HoldsTransactionLock) for step in before.items
+        ):
+            return self
+
+        bound = tuple(
+            attrs.evolve(step, factory=step.factory.for_operation(op, route))
+            if isinstance(step.factory, HoldsTransactionLock)
+            else step
+            for step in before.items
+        )
+
+        return attrs.evolve(
+            self, tx=attrs.evolve(self._tx, before=attrs.evolve(before, items=bound))
+        )
 
     # ....................... #
 

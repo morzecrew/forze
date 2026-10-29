@@ -203,6 +203,10 @@ owner, can take owners in another order than a concurrent transaction does. Post
 that deadlock on one side as a retryable `concurrency`, and the in-memory store refuses the same
 cycle. Pass every owner a handler needs to one `hold` call.
 
+`hold` locks a document owner. To make an operation take turns per input instead, whatever
+documents it writes, see
+[Serializing an operation](../../writing-operation/transactions.md#serializing-an-operation).
+
 The declaration itself refuses no write: where the rule can also be a hard stop, that is a
 second guarantee beside this one.
 

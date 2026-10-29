@@ -27,7 +27,7 @@ from forze.application.contracts.search import SearchDeps
 from forze.application.contracts.storage import StorageDeps
 from forze.application.contracts.stream import StreamDeps
 from forze.application.contracts.tenancy import TenancyDeps
-from forze.application.contracts.transaction import TransactionDeps
+from forze.application.contracts.transaction import TransactionDeps, TxLockDeps
 from forze.base.primitives import HybridLogicalClock, StrKey
 
 from ..deps import FrozenDeps
@@ -267,6 +267,9 @@ class ExecutionContext:
     transaction: TransactionDeps = attrs.field(factory=TransactionDeps, init=False)
     """Transaction dependencies."""
 
+    tx_locks: TxLockDeps = attrs.field(factory=TxLockDeps, init=False)
+    """Transaction-scoped lock dependencies, per transaction route."""
+
     resilience: ResilienceDeps = attrs.field(factory=ResilienceDeps, init=False)
     """Resilience policy pipeline dependencies."""
 
@@ -401,6 +404,7 @@ class ExecutionContext:
         self.authz.lock(self)
         self.authn.lock(self)
         self.transaction.lock(self)
+        self.tx_locks.lock(self)
         self.resilience.lock(self)
         self.idempotency.lock(self)
         self.domain.lock(self)

@@ -53,6 +53,7 @@ the name a resolution error prints. Handlers should keep to the accessor.
 | Capability | Spec / key | Resolve via | Dep key |
 |------------|-----------|-------------|---------|
 | Transactions | tx route | `ctx.transaction(route)` for the manager; `ctx.tx_ctx.scope(route)` for the ambient scope | `TransactionManagerDepKey` |
+| [Transaction-scoped lock](../writing-operation/transactions.md#serializing-an-operation) | tx route | `ctx.tx_locks(route).hold(*keys)`, or `SerializeOperation` on an operation | `TransactionManagerDepKey`: the route's manager hands it out when it implements `TxLockCapable` |
 | [Idempotency](contracts/coordination.md#idempotency) | `IdempotencySpec` | `ctx.idempotency(spec)` | `IdempotencyDepKey` |
 | [Resilience](resilience-tuning.md) | `ResiliencePolicy` | `ctx.resilience().run(fn, policy=…)` | `ResilienceExecutorDepKey` (+ `ResiliencePortPoliciesDepKey` for per-port defaults, `ResilienceAdminDepKey` for breaker state) |
 | [Distributed lock](contracts/coordination.md#distributed-lock) | `DistributedLockSpec` | `ctx.dlock` | `DistributedLockCommandDepKey` / `DistributedLockQueryDepKey` |

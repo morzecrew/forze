@@ -82,6 +82,7 @@ from forze_mock.adapters.stream import (
 from forze_mock.adapters.tx import (
     MockJournalTxManagerAdapter,
     MockStrictTxManagerAdapter,
+    MockTxLockAdapter,
     MockTxManagerAdapter,
 )
 from forze_mock.state import MockState
@@ -115,6 +116,7 @@ __all__ = [
     "MockSandboxRun",
     "MockStorageAdapter",
     "MockTxManagerAdapter",
+    "MockTxLockAdapter",
     "MockStrictTxManagerAdapter",
     "MockJournalTxManagerAdapter",
     "MockQueueAdapter",

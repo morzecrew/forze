@@ -170,6 +170,97 @@ honors all three through an in-memory MVCC overlay (it rejects the write-write,
 write-skew, and phantom conflicts the level forbids), so an isolation-dependent
 bug is catchable in a unit test or under [simulation](../dst/overview.md).
 
+## Serializing an operation
+
+Some operations must not run twice at once for the same input. A recompute of an
+order's totals reads every line and writes the sum. Two of them in parallel can
+each read a different set of lines, and the second to commit wins with a stale
+sum. Optimistic concurrency does not help when the conflict is between two
+*reads* of rows that neither write touches.
+
+`SerializeOperation` makes invocations that share a key take turns. The lock is
+taken inside the operation's transaction and held until the root transaction
+commits or rolls back:
+
+```python
+from forze.application.hooks.locking import SerializeOperation
+
+registry = (
+    registry.bind("orders.recompute")
+    .bind_tx()
+    .set_route("orders")
+    .before(SerializeOperation(key=lambda args: args.order_id).to_step())
+    .finish(deep=True)
+)
+```
+
+A second `orders.recompute` for the same order waits at that step until the
+first one's transaction ends. Different orders, and different tenants, never
+wait on each other. The lock is keyed by the operation's registered name, the
+bound tenant and the key, so another operation never shares it. Under a
+[two-phase handler](#two-phase-handlers-work-before-the-write) it covers `apply`
+only: `prepare` runs before the transaction opens.
+
+The key function returns one value or a tuple of values. Each must be a `str`,
+an `int`, a `UUID` or a timezone-aware `datetime`. A datetime locks on its
+instant, so two offsets of one moment take the same lock. Any other type
+(`None`, an enum member, a `bool`, a float) is refused as `configuration`
+(`operation_lock_key_unsupported`); pass an enum's `.value`. A naive datetime is
+refused as `validation` (`operation_lock_key_naive_datetime`). What the key
+function returns is known only when the operation runs, so these refuse that
+call, and the error names the operation.
+
+An operation that runs nested in another one's transaction takes the lock in a
+savepoint. If the nested operation succeeds, its lock stays until the root
+transaction ends, as its writes do. If it fails, Postgres rolls the savepoint
+back and releases the lock with the writes it guarded, while the outer
+transaction carries on. The mock keeps the lock until the root ends either way,
+which is stricter.
+
+Wiring problems surface before the first request:
+
+- Placed in the outer scope, which runs before the transaction opens, it is
+  refused at registry freeze (`tx_lock_outside_transaction_scope`).
+- An operation with no transaction route is refused there too
+  (`tx_lock_without_route`).
+- A route whose backend has no transaction-scoped lock is refused when the
+  operation is resolved, on its first call or under `check_wiring`
+  (`tx_lock_unsupported`). Postgres has one; Mongo and Firestore do not. The
+  lock comes from the route's transaction manager, so it is always the lock of
+  the store that transaction runs on, whatever else is wired. It never falls
+  back to a Redis lease.
+
+On Postgres the lock is `pg_advisory_xact_lock` on the transaction's own
+connection. Nothing expires mid-transaction and nothing needs a fencing token,
+because only a commit or a rollback releases it. A wait counts against the
+operation's [deadline](../running-in-prod/deadlines.md). The mock takes the same
+per-owner write locks a `SerializedBy` write takes, under the `journal` and
+`strict` managers. `transactions="none"` opens no transaction, so it binds no
+lock and the operation is refused at resolve.
+
+To take a lock by hand inside a scope, call the port the step uses:
+
+```python
+async with ctx.tx_ctx.scope("orders"):
+    await ctx.tx_locks("orders").hold(key)  # key: a 64-bit int, e.g. advisory_lock_key(...)
+```
+
+Outside a transaction it is refused (`tx_lock_outside_transaction`), since the
+lock would end with its own statement. One `hold` call takes its keys in sorted
+order. Two calls, or two transactions taking keys in opposite orders, can
+deadlock; one side is refused as a retryable `concurrency`, on Postgres and the
+mock alike.
+
+!!! note "Which lock to reach for"
+
+    The [`SerializedBy`](../reference/contracts/document.md) guarantee and
+    `command.hold(...)` lock a *document owner*: every write for that owner takes
+    the lock, whoever wrote the code. `SerializeOperation` locks an *operation
+    input*: only invocations of that operation take it, and the key need not be
+    any document's field. A [distributed lock](../reference/contracts/coordination.md#distributed-lock)
+    is a lease for work outside any transaction; its release is not tied to a
+    commit.
+
 ## After the commit
 
 Some work must happen **only if** the transaction commits — publishing an event,

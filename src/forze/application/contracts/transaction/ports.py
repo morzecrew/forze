@@ -11,6 +11,8 @@ from typing import (
 
 import attrs
 
+from forze.base.exceptions import exc
+
 # ----------------------- #
 
 COMMIT_AMBIGUOUS_CODE = "commit_ambiguous"
@@ -224,3 +226,68 @@ class ReadOnlyAware(Protocol):
         ``False``. Writes to other stores were never part of the transaction.
         """
         ...
+
+
+# ....................... #
+
+TX_LOCK_OUTSIDE_TRANSACTION_CODE = "tx_lock_outside_transaction"
+"""Error code refusing a transaction-scoped lock taken outside a transaction."""
+
+
+@runtime_checkable
+class TxLockPort(Protocol):
+    """Locks a transaction holds until it ends: the backend's transaction-scoped lock.
+
+    Held until the root transaction commits or rolls back, so there is no lease to expire and
+    no fencing token to thread through the writes it covers. One exception: a lock taken in a
+    nested scope, which is a savepoint, is released when that scope rolls back, together with
+    the writes it guarded (Postgres). A nested scope that succeeds hands it to the enclosing
+    transaction. The in-memory store keeps every lock until the root ends, which is stricter.
+    Handed out by the route's transaction manager (``ctx.tx_locks(route)``, see
+    :class:`TxLockCapable`), so the lock lives on the connection that route's transaction runs
+    on.
+    """
+
+    def hold(self, *keys: int) -> Awaitable[None]:
+        """Take the lock of each of *keys*, in sorted order, until the root transaction ends.
+
+        A key is a 64-bit integer, as :func:`~forze.base.primitives.advisory_lock_key`
+        derives one. Another transaction taking a held key waits until this one ends; a key
+        this transaction already holds is taken again without waiting. Two calls, or two
+        transactions taking keys in opposite orders, can deadlock: the backend refuses one side
+        as a retryable ``concurrency``. Inside a nested scope that rolls back, the lock is
+        released with it (see the class docstring).
+
+        :raises CoreException: ``precondition`` (``tx_lock_outside_transaction``) outside a
+            transaction, where the lock would end with its own statement.
+        """
+        ...  # pragma: no cover
+
+
+@runtime_checkable
+class TxLockCapable(Protocol):
+    """Opt-in extension for transaction managers whose backend has a transaction-scoped lock.
+
+    The lock comes from the manager itself rather than from a key of its own, so it is always
+    the lock of the store the route's transactions run on: wiring cannot pair one backend's
+    transactions with another backend's locks. A manager that does not implement this has no
+    such lock, and a lock asked of its route is refused (``tx_lock_unsupported``).
+    """
+
+    def tx_lock(self) -> TxLockPort:
+        """The lock port of the transactions this manager opens."""
+        ...  # pragma: no cover
+
+
+def require_tx_lock_in_transaction(in_transaction: bool) -> None:
+    """Refuse a transaction-scoped lock outside a transaction.
+
+    :raises CoreException: ``precondition`` (``tx_lock_outside_transaction``).
+    """
+
+    if not in_transaction:
+        raise exc.precondition(
+            "A transaction-scoped lock is held until the transaction ends, so it must be taken "
+            "inside one: outside it, the lock would be released before anything is read.",
+            code=TX_LOCK_OUTSIDE_TRANSACTION_CODE,
+        )

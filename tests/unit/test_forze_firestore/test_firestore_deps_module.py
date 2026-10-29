@@ -4,11 +4,18 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
+import pytest
+
 from forze.application.contracts.document import (
     DocumentCommandDepKey,
     DocumentQueryDepKey,
 )
-from forze.application.contracts.transaction import TransactionManagerDepKey
+from forze.application.contracts.transaction import (
+    TX_LOCK_UNSUPPORTED_CODE,
+    TransactionManagerDepKey,
+)
+from forze.application.execution import ExecutionContext
+from forze.base.exceptions import CoreException
 from forze_firestore.execution.deps.configs import (
     FirestoreDocumentConfig,
     FirestoreReadOnlyDocumentConfig,
@@ -45,3 +52,9 @@ def test_firestore_deps_module_registers_client_and_documents() -> None:
     assert TransactionManagerDepKey in deps.routed_deps
     assert "readonly" in deps.routed_deps[DocumentQueryDepKey]
     assert "writable" in deps.routed_deps[DocumentCommandDepKey]
+
+    # Firestore's manager has no transaction-scoped lock, so one asked of its route is refused.
+    with pytest.raises(CoreException) as caught:
+        ExecutionContext(deps=resolved).tx_locks("writable")
+
+    assert caught.value.code == TX_LOCK_UNSUPPORTED_CODE

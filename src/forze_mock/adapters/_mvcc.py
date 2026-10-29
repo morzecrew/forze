@@ -679,6 +679,99 @@ def raise_row_deadlock(rows: Sequence[tuple[str, Any]]) -> NoReturn:
 # ....................... #
 
 
+async def acquire_write_locks(
+    state: Any,
+    holder: MvccTx | StatementLocks,
+    keys: Callable[[], Sequence[int]],
+) -> None:
+    """Take every per-owner write lock *keys* names for *holder*, waiting out each live holder.
+
+    *keys* is asked again after every wait, so a key that appears meanwhile is taken too. The
+    caller decides when *holder* gives them back (:func:`release_write_locks`).
+
+    :raises CoreException: ``concurrency`` when a wait would close a cycle
+        (:func:`refuse_write_lock_cycle`).
+    """
+
+    table = state.write_serialization
+
+    while wanted := [key for key in keys() if key not in holder.write_locks]:
+        for key in wanted:
+            lock = table.for_key(key)
+
+            if lock.locked():
+                refuse_write_lock_cycle(state, holder, key)
+
+            holder.waiting_for = key
+
+            try:
+                await lock.acquire()
+
+            finally:
+                holder.waiting_for = None
+
+            holder.write_locks[key] = lock
+            table.hold(key, holder)
+
+
+# ....................... #
+
+
+def refuse_write_lock_cycle(state: Any, holder: MvccTx | StatementLocks, key: int) -> None:
+    """Refuse a wait that would close a cycle, instead of joining one.
+
+    Walks from whoever holds *key* to whatever that writer is itself waiting for — an owner,
+    or under ``row_locks="block"`` a row — and on to its holder. A chain arriving back at
+    *holder* is a deadlock: neither side can release first, and without this both would sit
+    there until an operation deadline fired — a hang where the store being modelled detects
+    the cycle and aborts one of them.
+
+    Refused on the side about to *join* the cycle, which is the side that can still give up
+    without having blocked anyone.
+
+    :raises CoreException: ``concurrency`` naming the owner — the kind Postgres gives the
+        same cycle when it detects the deadlock, so a caller's retry policy treats both alike.
+        A cycle through a row lock is refused as the row side refuses it, with
+        ``code="deadlock_detected"`` and the rows (see :func:`raise_row_deadlock`).
+    """
+
+    holders = state.write_serialization
+    seen: set[int] = set()
+    cursor: int | None = key
+
+    while cursor is not None and cursor not in seen:
+        seen.add(cursor)
+        other = holders.holder_of(cursor)
+
+        if other is None:
+            return
+
+        if other.waiting_for in holder.write_locks:
+            deadlock = exc.concurrency(
+                "Two writers want each other's owners, so neither can finish. One is "
+                "refused rather than both waiting: retrying it after the other finishes "
+                "takes the owners in one order and succeeds.",
+                details={"key": str(key)},
+            )
+            # As the backends' mapped deadlock: its details are not the client's.
+            deadlock.expose_details = False
+            raise deadlock
+
+        if (row := getattr(other, "row_waiting_for", None)) is not None:
+            # Parked on a row: the rest of the chain may mix both kinds of wait.
+            start = state.row_locks.holders().get(row)
+
+            if (cycle := wait_cycle_rows(state, holder, start)) is not None:
+                raise_row_deadlock([row, *cycle])
+
+            return
+
+        cursor = other.waiting_for
+
+
+# ....................... #
+
+
 def _refuse_stale_lock(state: Any, tx: MvccTx, key: tuple[str, Any]) -> None:
     """Refuse a snapshot transaction's lock on a row written since its snapshot was taken.
 

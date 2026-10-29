@@ -37,7 +37,7 @@ from forze_postgres.adapters import (
     PostgresVectorSearchAdapter,
 )
 from forze_postgres.adapters.idempotency import PostgresIdempotencyStore
-from forze_postgres.adapters.txmanager import PostgresTxManagerAdapter
+from forze_postgres.adapters.txmanager import PostgresTxLockAdapter, PostgresTxManagerAdapter
 from forze_postgres.execution.deps import (
     ConfigurablePostgresDocument,
     ConfigurablePostgresHubSearch,
@@ -289,6 +289,8 @@ class TestPostgresDepsModule:
         assert deps.exists(DocumentCommandDepKey, route="rw_route")
         assert deps.exists(SearchQueryDepKey, route="find")
         assert deps.exists(TransactionManagerDepKey, route="main")
+        # The route's manager hands out its lock, on the same client.
+        assert isinstance(context_from_deps(deps).tx_locks("main"), PostgresTxLockAdapter)
 
     def test_invalid_fts_search_config_fails_at_build_time(self) -> None:
         with pytest.raises(CoreException, match="FTS groups are required"):

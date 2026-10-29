@@ -131,6 +131,12 @@ def test_mongo_deps_module_rw_registers_query_and_command() -> None:
     assert deps.exists(DocumentCommandDepKey, route="doc")
     assert deps.exists(TransactionManagerDepKey, route="session")
 
+    # Mongo's manager has no transaction-scoped lock, so one asked of its route is refused.
+    with pytest.raises(CoreException) as caught:
+        context_from_deps(deps).tx_locks("session")
+
+    assert caught.value.code == "tx_lock_unsupported"
+
 
 def test_mongo_deps_module_registers_inbox() -> None:
     client = MagicMock(spec=MongoClient)

@@ -1,4 +1,4 @@
-"""Postgres adapter implementing the transaction manager port."""
+"""Postgres adapters implementing the transaction manager and transaction-scoped lock ports."""
 
 from forze_postgres._compat import require_psycopg
 
@@ -11,6 +11,7 @@ from contextlib import asynccontextmanager, nullcontext
 from typing import final
 
 import attrs
+from psycopg import sql
 
 from forze.application.contracts.transaction import (
     IsolationLevel as CoreIsolationLevel,
@@ -19,6 +20,9 @@ from forze.application.contracts.transaction import (
     TransactionManagerPort,
     TransactionScopeKey,
     TxCapabilities,
+    TxLockCapable,
+    TxLockPort,
+    require_tx_lock_in_transaction,
 )
 from forze.base.primitives import driver_deadline_budget
 
@@ -66,7 +70,7 @@ def _statement_timeout_ms(
 
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class PostgresTxManagerAdapter(TransactionManagerPort):
+class PostgresTxManagerAdapter(TransactionManagerPort, TxLockCapable):
     """Postgres-backed :class:`TxManagerPort` that delegates to :meth:`PostgresClient.transaction`."""
 
     client: PostgresClientPort
@@ -86,6 +90,13 @@ class PostgresTxManagerAdapter(TransactionManagerPort):
     def capabilities(self) -> TxCapabilities:
         # Postgres honors every level natively (snapshot via REPEATABLE READ).
         return TxCapabilities(isolation=frozenset(CoreIsolationLevel))
+
+    # ....................... #
+
+    def tx_lock(self) -> TxLockPort:
+        """:class:`TxLockCapable`: ``pg_advisory_xact_lock`` on this manager's client."""
+
+        return PostgresTxLockAdapter(client=self.client)
 
     # ....................... #
 
@@ -175,3 +186,36 @@ class PostgresTxManagerAdapter(TransactionManagerPort):
         # Defer to the client: a lazy root scope carries this until materialization, so
         # applying the backstop never forces an early connection checkout.
         await self.client.apply_statement_timeout(ms)
+
+
+# ....................... #
+
+
+@final
+@attrs.define(slots=True, kw_only=True, frozen=True)
+class PostgresTxLockAdapter(TxLockPort):
+    """``pg_advisory_xact_lock`` on the connection of the client's open transaction."""
+
+    client: PostgresClientPort
+    """Client instance — the one the route's transaction manager opens transactions on."""
+
+    # ....................... #
+
+    async def hold(self, *keys: int) -> None:
+        """Take ``pg_advisory_xact_lock`` for each of *keys*, sorted, until the transaction ends.
+
+        The advisory-lock space ``SerializedBy`` writes take theirs in, so a deadlock between
+        the two kinds is detected and refused like one between either. A wait is bounded by
+        the operation's deadline where the client pushes it down as ``statement_timeout``.
+        Taken in a nested scope, the lock belongs to its savepoint: ``ROLLBACK TO SAVEPOINT``
+        releases it, and ``RELEASE SAVEPOINT`` passes it to the enclosing transaction.
+
+        :raises CoreException: ``precondition`` (``tx_lock_outside_transaction``) outside a
+            transaction, where the lock would end with its own statement.
+        """
+
+        require_tx_lock_in_transaction(self.client.is_in_transaction())
+        stmt = sql.SQL("SELECT pg_advisory_xact_lock({})").format(sql.Placeholder())
+
+        for key in sorted(set(keys)):
+            await self.client.execute(stmt, [key])
