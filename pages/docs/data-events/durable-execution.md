@@ -189,6 +189,9 @@ again. `registry.register(name, body, retry=...)` gives one function its own str
 - **When it is due** it keeps its `created_at`, so the scan, oldest first, claims it ahead of
   fresh runs. A `throttled` or `unavailable` failure with a `retry_after` (an upstream `429`'s
   `Retry-After`) or a `retry_at` is due no sooner than that, even past the backoff's `max`.
+  A hint too far off to schedule — infinite, or past what a `datetime` holds — means never:
+  the run lands `FAILED` at once, where an alert sees it and `requeue_failed` can bring it
+  back.
 
 An attempt that sends its run back counts under the `retrying` outcome, and the last one
 under `failed`: alert on `failed`.

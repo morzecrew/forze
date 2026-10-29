@@ -219,11 +219,13 @@ class TestRunRetry:
         assert first.available_at - before >= timedelta(minutes=10)
         assert await runner.recover(ctx) == 0
 
-    async def test_a_retry_after_no_datetime_can_hold_fails_the_run(self) -> None:
+    # Infinite; finite but past what a timedelta holds; within a timedelta, past year 9999.
+    @pytest.mark.parametrize("hint", [10**400, 1e15, 3e11], ids=["inf", "timedelta", "year"])
+    async def test_a_retry_after_no_datetime_can_hold_fails_the_run(self, hint: float) -> None:
         ctx = context_from_modules(MockDepsModule())
 
         async def throttled(ctx: ExecutionContext, input_json: dict | None) -> dict:
-            raise exc.throttled("slow down", details={"retry_after": 10**400})
+            raise exc.throttled("slow down", details={"retry_after": hint})
 
         registry = DurableFunctionRegistry()
         registry.register("throttled", throttled)
