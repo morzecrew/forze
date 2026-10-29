@@ -19,7 +19,12 @@ from .document import attach_document_routes
 from .health import attach_liveness_route, attach_metrics_route, attach_readiness_route
 from .jwks import attach_jwks_route
 from .search import attach_search_routes
-from .storage import DEFAULT_MAX_UPLOAD_SIZE, attach_storage_routes, read_upload_capped
+from .storage import (
+    DEFAULT_MAX_UPLOAD_SIZE,
+    attach_storage_routes,
+    read_upload_capped,
+    streamed_download_response,
+)
 from .tenancy import attach_tenancy_routes
 from .tenancy_admin import attach_tenancy_admin_routes
 
@@ -48,6 +53,7 @@ __all__ = [
     "attach_search_routes",
     "attach_storage_routes",
     "read_upload_capped",
+    "streamed_download_response",
     "attach_tenancy_routes",
     "attach_tenancy_admin_routes",
 ]

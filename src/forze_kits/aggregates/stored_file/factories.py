@@ -10,15 +10,19 @@ from forze_kits.dto.paginated import Paginated
 
 from .dto import (
     ListStoredFilesRequestDTO,
+    PresignStoredFileDownloadRequestDTO,
     StoredFileDownloadDTO,
     StoredFileIdDTO,
     StoredFileIdRevDTO,
+    StoredFilePresignedDownloadDTO,
     UploadStoredFileRequestDTO,
 )
 from .handlers import (
     DownloadStoredFile,
+    DownloadStoredFileStream,
     GetStoredFile,
     ListStoredFiles,
+    PresignStoredFileDownload,
     SearchStoredFiles,
     SoftDeleteStoredFile,
     UploadStoredFile,
@@ -39,7 +43,11 @@ def build_stored_file_registry(
     *,
     ns: StrKeyNamespace | None = None,
 ) -> OperationRegistry:
-    """Build stored-file operation registry for *kit*."""
+    """Build stored-file operation registry for *kit*.
+
+    ``download_stream`` and ``presign_download`` are registered only when *kit* enables them
+    (:attr:`~StoredFileKitSpec.stream_downloads`, :attr:`~StoredFileKitSpec.presign_downloads`).
+    """
 
     ns = ns or kit.document.default_namespace
     doc_spec = kit.document
@@ -110,6 +118,53 @@ def build_stored_file_registry(
         },
         namespace=ns,
     )
+
+    # Opt-in: an operation runs only the guards bound on its own key, so a new download path
+    # must not appear unguarded in a registry whose app guarded only ``download``.
+    if kit.stream_downloads:
+        reg = (
+            reg.register(
+                ns.key(StoredFileKernelOp.DOWNLOAD_STREAM),
+                lambda ctx: DownloadStoredFileStream(
+                    doc=ctx.doc.query(doc_spec),
+                    storage=ctx.storage.query(kit.resolved_storage),
+                ),
+                # The result carries an async chunk iterator, not JSON: no output type, and
+                # JSON surfaces (MCP, agent tools, generated routes, `forze ops`) leave it out.
+                descriptor=OperationDescriptor(
+                    input_type=StoredFileIdDTO,
+                    description="Open a bounded-memory download stream for a ready stored file.",
+                    streams=True,
+                ),
+            )
+            .as_query()
+            .finish()
+        )
+
+    # presign_download is a read grant → query port.
+    if kit.presign_downloads:
+        reg = (
+            reg.register(
+                ns.key(StoredFileKernelOp.PRESIGN_DOWNLOAD),
+                lambda ctx: PresignStoredFileDownload(
+                    doc=ctx.doc.query(doc_spec),
+                    storage=ctx.storage.query(kit.resolved_storage),
+                ),
+                descriptor=OperationDescriptor(
+                    input_type=PresignStoredFileDownloadRequestDTO,
+                    output_type=StoredFilePresignedDownloadDTO,
+                    description=(
+                        "Mint a time-limited URL granting direct download (GET) of a ready "
+                        "stored file. The returned URL is a bearer credential — never logged."
+                    ),
+                    # The result is a bearer credential: generated surfaces (MCP, agent tools,
+                    # generated routes, `forze ops`) refuse it; serve it from your own route.
+                    sensitive=True,
+                ),
+            )
+            .as_query()
+            .finish()
+        )
 
     if kit.search_spec is not None:
         search_spec = kit.search_spec

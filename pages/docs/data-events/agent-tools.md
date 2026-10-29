@@ -195,6 +195,10 @@ on its spec, and naming one in a palette fails the projection. Dropping it
 quietly would be worse than failing: the app would believe it granted a
 capability it did not, and nobody would find out until an agent needed it.
 
+An operation whose result is a byte stream, like the stored-file kit's
+`download_stream`, is refused the same way. Its descriptor sets `streams=True`, and a
+tool result is JSON, so the model would get the stream object, never the bytes.
+
 ## Related
 
 - [Inference](inference.md) — the seam your loop calls the model through

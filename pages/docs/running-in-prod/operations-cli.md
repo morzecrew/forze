@@ -15,7 +15,9 @@ through the same pipeline an HTTP or MCP caller goes through.
 
 An `OpsApp` names the registry, the runtime a call runs on, and who calls run as. Exposure
 follows MCP: queries only by default, commands with `include_writes=True`, and an optional
-allowlist that is checked like a grant. Sensitive read models are refused.
+allowlist that is checked like a grant. Sensitive read models are refused. Operations whose
+result is a byte stream (`streams=True` on the descriptor) are left out, since a call prints
+JSON.
 
 ```python
 --8<-- "recipes/ops_cli/app.py:declaration"
@@ -24,7 +26,8 @@ allowlist that is checked like a grant. Sensitive read models are refused.
 ```
 
 The declaration is checked when it is built. An unknown allowlisted key, a command without
-`include_writes`, or a sensitive operation fails while your module imports. `forze_cli.ops`
+`include_writes`, an allowlisted streaming operation, or a sensitive operation fails while
+your module imports. `forze_cli.ops`
 imports neither Typer nor anything else from the `cli` extra, so the web process can import the
 same module.
 

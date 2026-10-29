@@ -2,8 +2,10 @@ from forze_kits.aggregates.search.dto import SearchRequestDTO
 
 from .handlers import (
     DownloadStoredFile,
+    DownloadStoredFileStream,
     GetStoredFile,
     ListStoredFiles,
+    PresignStoredFileDownload,
     SearchStoredFiles,
     SoftDeleteStoredFile,
     UploadStoredFile,
@@ -13,8 +15,10 @@ from .handlers import (
 
 __all__ = [
     "DownloadStoredFile",
+    "DownloadStoredFileStream",
     "GetStoredFile",
     "ListStoredFiles",
+    "PresignStoredFileDownload",
     "SearchRequestDTO",
     "SearchStoredFiles",
     "SoftDeleteStoredFile",

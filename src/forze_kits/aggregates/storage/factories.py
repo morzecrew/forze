@@ -148,6 +148,7 @@ def build_storage_registry(
             # iterator / a byte-range window), not JSON — description-only, like DOWNLOAD.
             StorageKernelOp.DOWNLOAD_STREAM: OperationDescriptor(
                 description=("Open a bounded-memory download stream for an object by storage key."),
+                streams=True,
             ),
             StorageKernelOp.DOWNLOAD_RANGE: OperationDescriptor(
                 description="Download an inclusive byte range of an object by storage key.",

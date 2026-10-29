@@ -30,11 +30,15 @@ class _Echo(Handler[_In, _In]):
         return args
 
 
-def _registry(*, input_type: type[BaseModel] = _In, query: bool = False) -> object:
+def _registry(
+    *, input_type: type[BaseModel] = _In, query: bool = False, streams: bool = False
+) -> object:
     reg = OperationRegistry(
         handlers={"do": lambda _c: _Echo()},
         descriptors={
-            "do": OperationDescriptor(input_type=input_type, output_type=_In, description="d")
+            "do": OperationDescriptor(
+                input_type=input_type, output_type=_In, description="d", streams=streams
+            )
         },
     )
     if query:
@@ -51,6 +55,9 @@ class TestOperationFingerprint:
 
     def test_changes_with_operation_kind(self) -> None:
         assert _registry(query=False).fingerprint() != _registry(query=True).fingerprint()
+
+    def test_changes_when_the_result_streams(self) -> None:
+        assert _registry().fingerprint() != _registry(streams=True).fingerprint()
 
     def test_per_operation_fingerprint(self) -> None:
         registry = _registry()

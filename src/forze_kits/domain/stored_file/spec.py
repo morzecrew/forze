@@ -47,6 +47,14 @@ class StoredFileKitSpec:
     is checked once the whole upload is in memory, so cap the read at the transport too (over
     FastAPI, ``forze_fastapi.routes.read_upload_capped``)."""
 
+    stream_downloads: bool = attrs.field(default=False)
+    """Register the ``download_stream`` operation. Off by default: an operation runs only the
+    guards bound on its own key, so bind authn and authz on it before exposing it."""
+
+    presign_downloads: bool = attrs.field(default=False)
+    """Register the ``presign_download`` operation, which mints a bearer URL for direct download.
+    Off by default; bind authn and authz on it before exposing it."""
+
     # ....................... #
 
     def __attrs_post_init__(self) -> None:

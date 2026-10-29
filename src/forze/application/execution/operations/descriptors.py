@@ -58,6 +58,13 @@ class OperationDescriptor:
     external surfaces (HTTP route generators, MCP tools/resources) must refuse to
     project operations marked sensitive."""
 
+    streams: bool = False
+    """The operation's result carries a byte stream (a single-use async chunk iterator), not a
+    JSON value. An intrinsic fact, not an exposure decision: generated JSON surfaces (MCP
+    tools and resource templates, agent tools, generated HTTP routes, ``forze ops``) cannot
+    carry it, so they leave it out of a default projection and refuse it when named; serve
+    it from a streaming route."""
+
     members: tuple[str, ...] = attrs.field(factory=tuple)
     """Names of the sources the operation reads rows from, each with its own read permission
     (a hub or federated search's members). An intrinsic fact: when the plan declares authz

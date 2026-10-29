@@ -75,6 +75,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **A `SystemInvariant` can compare two read-sets per scope.** `against=Measure(...)` bounds a sum by another sum or by a parent's field, and `holds` takes both aggregates. Every scope with rows on either side is checked, so an order left with no lines breaks `orders == 0 or lines >= 1`.
 
+- **Stored files can stream and presign downloads, opt-in.** `StoredFileKitSpec(stream_downloads=True, presign_downloads=True)` registers `download_stream` and `presign_download`; guard each like `download`. Generated surfaces refuse the sensitive `presign_download`. A route streams with `streamed_download_response`.
+
+- **`OperationDescriptor(streams=True)` keeps a byte-stream result off JSON surfaces.** MCP and `forze ops` leave such an operation out by default; they, agent tools and `attach_operation_routes` refuse it by name. The storage and stored-file kits' `download_stream` set it (**behaviour change**).
+
 **`forze ops` for people at a shell and for backfills:**
 
 - **`forze ops` gains typed flags, JSONL batches and shell completion.** `call OP --field VALUE` takes a flat-scalar input as flags; `--batch @PATH|-` runs one call per line in one runtime, stopping at the first failure; `OP` completes in the shell. An unknown option after `OP` now exits 2 with an error object.
@@ -166,6 +170,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **A plain `Enum` document field is stored as its value on Postgres, MongoDB and Firestore.** Postgres wrote `Status.OPEN`, as it did for a `(str, Enum)` class, which no read could decode; MongoDB and Firestore refused it. A `StrEnum` or `IntEnum` is stored as before.
 
 - **Analytics ingest stores a plain `Enum` member as its value, as a document row does** (**behaviour change**). Postgres wrote its name (`OPEN`), and ClickHouse refused it. Rows ingested earlier keep the name until rewritten.
+
+- **A download's `Content-Disposition` encodes `/` in `filename*`.** The generated storage download routes and `streamed_download_response` encode every character outside RFC 5987 `attr-char`, so a name such as `q3/rëport.pdf` stays valid and clients keep it.
 
 ### Security
 
