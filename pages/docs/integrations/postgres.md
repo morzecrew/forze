@@ -137,6 +137,19 @@ A required field must map to a `NOT NULL` column. On a read relation that is a v
 materialized view, nullability is not checked: Postgres records `NOT NULL` on tables only, so
 each column of a view reads as nullable. A write or history relation keeps the check.
 
+Catalog warmup takes the search configs the deps module already holds. Pass its mappings, so a
+search added later is warmed too:
+
+```python
+PostgresLifecycleModule(
+    client=pg,
+    dsn="postgresql://…",
+    searches=pg_deps.searches,
+    hub_searches=pg_deps.hub_searches,
+    federated_searches=pg_deps.federated_searches,
+)
+```
+
 ## What it provides
 
 | Contract | Keyed by | Notes |
