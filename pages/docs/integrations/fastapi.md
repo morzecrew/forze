@@ -39,10 +39,47 @@ app = FastAPI(title="Orders API", lifespan=runtime_lifespan(runtime))
 deps registry and the lifecycle plan and returns the
 [`ExecutionRuntime`](../core-concepts/runtime.md).
 
+### Build the runtime at startup
+
+Pass `build` instead of a runtime, and the lifespan builds it at startup and drops
+it at shutdown. Use it when an app factory must import without the environment its
+runtime needs, such as secrets to validate or clients to connect. Use it too when
+every worker process needs its own runtime. The routes are wired before that
+runtime exists, so wire them to the lifespan, which hands them the runtime once it
+is built:
+
+```python
+from fastapi import APIRouter, FastAPI
+from forze.application.execution import build_runtime
+from forze_fastapi import runtime_lifespan
+from forze_fastapi.middlewares import InvocationMetadataMiddleware
+from forze_fastapi.routes import attach_readiness_route
+
+
+def create_app() -> FastAPI:
+    lifespan = runtime_lifespan(build=lambda: build_runtime(...))
+    app = FastAPI(title="Orders API", lifespan=lifespan)
+    app.add_middleware(InvocationMetadataMiddleware, ctx_dep=lifespan.get_context)
+
+    router = APIRouter()
+    attach_readiness_route(router, lifespan.runtime)
+    app.include_router(router)
+
+    return app
+```
+
+`lifespan.get_context` is the `ctx_dep` for middlewares and generated routes, and
+`lifespan.runtime` is the runtime provider that `attach_readiness_route` takes. A
+`build` that raises fails the startup, so the server never serves. The lifespan
+holds one runtime at a time. Entered again while it runs, it refuses with
+`configuration` rather than build a second one. Entered after its runtime was torn
+down, it builds a new one.
+
 ## Bind request context
 
 Two ASGI middlewares attach the per-request context, both given a factory that
-returns the current `ExecutionContext` — `runtime.get_context` is that factory:
+returns the current `ExecutionContext` — `runtime.get_context` is that factory
+(`lifespan.get_context` when the lifespan [builds the runtime](#build-the-runtime-at-startup)):
 
 ```python
 from forze_fastapi.middlewares import (
@@ -366,7 +403,55 @@ event loop closes and cancels the lifespan — at the end of `asyncio.run`.
 - **No re-raised signal.** Uvicorn raises the signal again once its server
   returns; `serve_uvicorn` does not, so your process decides how it exits.
 
-An app run as `uvicorn app:app` keeps uvicorn's handling, and pays for it:
+### Several workers, or a runtime built at startup
+
+`serve_uvicorn` serves one process, with a runtime built before the app. Under
+`uvicorn --workers N`, or gunicorn with uvicorn's worker class, every worker runs
+uvicorn's own server. And a runtime that `build` makes does not exist until the
+app starts. In both cases, give the lifespan a `drain_budget` instead:
+
+```python
+from datetime import timedelta
+
+from forze.application.execution import build_runtime
+from forze_fastapi import runtime_lifespan
+
+lifespan = runtime_lifespan(
+    build=lambda: build_runtime(...),
+    drain_budget=timedelta(seconds=5),
+    announce_delay=timedelta(seconds=3),
+)
+```
+
+```bash
+uvicorn orders.app:create_app --factory --workers 4 --timeout-graceful-shutdown 5
+```
+
+At startup the lifespan takes over the signal handler of the uvicorn server that
+runs it, in every worker. The supervisor passes `SIGTERM` on to each worker. Each
+worker then drains its own runtime as `serve_uvicorn` would: readiness fails and
+the drain phases run while the worker still serves. Only then does it let its
+server exit: stop accepting, finish in-flight requests within the graceful timeout,
+and tear down. A connection that arrives after that is not served. It is refused,
+or closed unanswered when the supervisor exits.
+
+The signals behave as under `serve_uvicorn`, and so does a signal during startup.
+Each worker logs the figures of its worst-case exit at startup. The workers drain
+side by side, so that figure is the whole deployment's too. Unless the server sets a
+graceful timeout, the lifespan sets it to 10 seconds.
+
+- **Gunicorn.** Its uvicorn worker runs the same server, so the same lifespan drains
+  there. Set gunicorn's `--graceful-timeout` above the logged worst case: past it,
+  the master kills the worker.
+- **Under `serve_uvicorn`,** the lifespan leaves the signals to `serve_uvicorn`.
+- **Under another server,** or a uvicorn off the main thread that installs no
+  handler, the lifespan logs a warning. The drain phases then run only in the
+  lifespan shutdown, after the server stopped accepting.
+- **A lifespan that does not use `runtime_lifespan`** wraps its runtime's scope in
+  `with drain_ahead_of_uvicorn(runtime, drain_budget=..., announce_delay=...):`.
+
+An app run as `uvicorn app:app` without a `drain_budget` keeps uvicorn's handling,
+and pays for it:
 
 - **WebSockets close at once** with code 1012 when the server stops, before the
   lifespan shutdown runs the drain phases that would have closed them gently.
@@ -709,8 +794,9 @@ runs them. The surface, at a glance:
 
 | Piece | What it does |
 |-------|--------------|
-| `runtime_lifespan` | run the runtime's lifecycle from the app lifespan |
+| `runtime_lifespan` | run the runtime's lifecycle from the app lifespan; build the runtime at startup; drain it on `SIGTERM` in every uvicorn worker |
 | `serve_uvicorn` | an embedded uvicorn whose `SIGTERM` drains the runtime before the server stops |
+| `drain_ahead_of_uvicorn` | the `SIGTERM` drain `runtime_lifespan` installs, for a lifespan that does not use `runtime_lifespan` |
 | `InvocationMetadataMiddleware` / `SecurityContextMiddleware` | bind per-request context, identity, and tenant |
 | `CustomHeadersMiddleware` / `LoggingMiddleware` | inject response headers; sampled, probe-excluded access logs |
 | `register_exception_handlers` | map a `CoreException` to an HTTP response by kind |

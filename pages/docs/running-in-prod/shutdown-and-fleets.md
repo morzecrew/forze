@@ -65,29 +65,18 @@ takes care of itself: routing stops, in-flight work drains, teardown runs.
 An app that builds its runtime inside the FastAPI lifespan has no runtime yet when
 its factory attaches routes. Pass a zero-argument callable instead: it is asked on
 every request, and returning `None` answers `503 unavailable`, as a runtime with no
-open scope does:
+open scope does. `runtime_lifespan(build=...)` provides one:
 
 ```python
-from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
-
 from fastapi import APIRouter, FastAPI
 from forze.application.execution import build_runtime
 from forze_fastapi import runtime_lifespan
 from forze_fastapi.routes import attach_readiness_route
 
-
-@asynccontextmanager
-async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-    app.state.runtime = runtime = build_runtime(...)
-
-    async with runtime_lifespan(runtime)(app):
-        yield
-
-
+lifespan = runtime_lifespan(build=lambda: build_runtime(...))
 app = FastAPI(lifespan=lifespan)
 router = APIRouter()
-attach_readiness_route(router, lambda: getattr(app.state, "runtime", None))
+attach_readiness_route(router, lifespan.runtime)
 app.include_router(router)
 ```
 
@@ -237,6 +226,9 @@ means operations are refused, stays false until shutdown closes the gate.
 An HTTP server needs its signal handling to call `drain()` before it stops
 accepting. For uvicorn that is `serve_uvicorn` — see
 [Graceful shutdown under uvicorn](../integrations/fastapi.md#graceful-shutdown-under-uvicorn).
+Under several uvicorn workers, or with a runtime the lifespan builds, it is
+`runtime_lifespan(..., drain_budget=...)` — see
+[Several workers](../integrations/fastapi.md#several-workers-or-a-runtime-built-at-startup).
 
 A process that serves no HTTP — the outbox relay, a consumer, a durable runner —
 needs the same, and has no server to provide it. Hold its scope with
@@ -348,7 +340,8 @@ lifecycle step: 10 for the drain, 1, 10 for `drain_timeout` and 3 × 10. Most ex
 take a fraction of it, but the grace period has to cover the one that does not. A budget that does not fit gets the process killed
 in the middle of a phase or of teardown — exactly the exit this ordering exists
 to avoid. Shrink the timeouts, raise the grace period, or both, with headroom.
-`serve_uvicorn` logs this sum, figure by figure, when the server starts.
+`serve_uvicorn` logs this sum, figure by figure, when the server starts, and so
+does `runtime_lifespan` with a `drain_budget`, in each worker.
 
 ## Declare the fleet posture
 

@@ -281,6 +281,54 @@ class TestStopAndHandlers:
         assert events == ["phase-started", "phase-cancelled", "teardown"]
         assert {sig: signal.getsignal(sig) for sig in handled} == before
 
+    # ....................... #
+
+    @pytest.mark.asyncio
+    async def test_cancelling_it_during_the_announcement_gives_the_phases_up(self) -> None:
+        events: list[str] = []
+
+        async def phase(_allowed: timedelta) -> None:
+            events.append("phase")
+
+        async def startup(ctx: ExecutionContext) -> None:
+            ctx.drain_phases.register("quick", phase)
+
+        async def teardown(_ctx: ExecutionContext) -> None:
+            events.append("teardown")
+
+        runtime = build_runtime(
+            lifecycle_steps=LifecycleStep(id="step", startup=startup, shutdown=teardown),
+            drain_timeout=timedelta(0),
+        )
+        stop = asyncio.Event()
+        serving = asyncio.create_task(
+            serve_runtime(
+                runtime,
+                drain_budget=timedelta(seconds=30),
+                announce_delay=timedelta(seconds=30),
+                stop=stop,
+            )
+        )
+
+        await _until_ready(runtime)
+        stop.set()
+
+        for _ in range(500):  # bounded: the announcement starts within a few loop turns
+            if runtime.draining:
+                break
+
+            await asyncio.sleep(0.01)
+
+        assert runtime.draining
+
+        serving.cancel()
+        await asyncio.wait({serving}, timeout=10.0)
+
+        # The drain gave its claim back when cancelled before its phases started; the
+        # teardown right after must not take it up and run them.
+        assert serving.cancelled()
+        assert events == ["teardown"]
+
 
 # ----------------------- #
 
@@ -334,6 +382,25 @@ class TestSignalDrain:
         drain._on_signal_in_loop(signal.SIGINT)  # pyright: ignore[reportPrivateUsage]
 
         await asyncio.wait_for(drain.drained.wait(), timeout=5.0)
+
+    # ....................... #
+
+    @pytest.mark.asyncio
+    async def test_a_drain_already_cancelled_still_gives_the_phases_up(self) -> None:
+        """Its done callback can still be queued when the scope is cancelled, so ``cancel()``
+        returning ``False`` must not let the teardown take the phases back."""
+
+        runtime = build_runtime()
+        drain = SignalDrain(runtime, drain_budget=timedelta(seconds=1), announce_delay=timedelta(0))
+        task = asyncio.ensure_future(asyncio.sleep(10))
+        task.cancel()
+        await asyncio.wait({task})
+        drain._drain_task = task  # pyright: ignore[reportPrivateUsage]
+
+        async with runtime.scope():
+            await drain.cancel_drain_and_wait()
+
+            assert runtime.get_context().drain_phases.done
 
     # ....................... #
 
