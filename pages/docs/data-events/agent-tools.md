@@ -112,6 +112,37 @@ It is the same sentence the MCP surface gives an external agent, from one shared
 builder, so the two surfaces cannot describe one read model differently.
 [Build a question-answering agent](../recipes/query-agent.md) puts it to work.
 
+A palette can advertise less than the spec allows. `query_policies` gives a tool its
+own `QueryFieldPolicy`, the handful of fields an agent should filter on, while HTTP
+keeps the spec's full [`query_policy`](../reference/contracts/document.md#spec):
+
+```python
+from forze.application.contracts.querying import QueryFieldPolicy
+from forze_kits.integrations.agent_tools import operation_tools
+
+tools = operation_tools(
+    registry,
+    include=["notes.list"],
+    query_policies={"notes.list": QueryFieldPolicy(filterable={"title"}, sortable=set())},
+)
+```
+
+The tool's description then names only `title`. Dispatch checks each call against the
+narrowed policy with the same field guard that enforces the operation's own policy, so
+a filter or sort the guard finds outside it is refused (`field_not_filterable`,
+`field_not_sortable`). The guard parses a call under the spec's
+[filter limits](../reference/query-syntax.md#limits), as the operation does. An axis left
+`None` keeps the spec's. A policy can only narrow. The palette is refused when it is
+built if a policy names a field outside the operation's own allow-set, an operation
+outside `include`, or an operation that takes no filter. It is also refused if a policy
+narrows an axis the operation's input does not carry, such as `aggregatable` on a plain
+list.
+
+A policy narrows what a tool may filter, sort and aggregate on, not what it returns:
+results, `return_fields` and projections still carry every field the operation reads.
+Do not rely on it to keep a field from the model. If one must not reach it, give the
+agent an operation over a read DTO without that field.
+
 The [filter grammar](../reference/query-syntax.md) itself is most of a list tool's
 schema, and it is the same in every filter-accepting tool, so a palette with ten of
 them sends it ten times per request. `shared_filter_grammar=True` sends it once:

@@ -17,11 +17,14 @@ from pydantic import BaseModel
 from forze.application.contracts.querying import (
     ALL_VALUE_OPS,
     QUANTIFIER_OPS,
+    QueryFieldPolicy,
+    QueryFilterLimits,
     build_query_discovery,
     classify_field_type,
     describe_query_discovery,
     field_value_operators,
     is_quantifiable_field,
+    narrow_query_discovery,
 )
 
 pytestmark = pytest.mark.unit
@@ -221,3 +224,31 @@ class TestDescribeDiscovery:
 
     def test_empty_surface_is_empty(self) -> None:
         assert self._describe(_Doc, filterable=set()) == ""
+
+
+# ....................... #
+
+
+class TestNarrowDiscovery:
+    def test_keeps_only_the_allowed_fields_and_never_adds_one(self) -> None:
+        qd = build_query_discovery(
+            _Doc, filterable={"name", "age"}, sortable={"name"}, aggregatable={"age"}
+        )
+        # `score` is on the model but not in the discovery: an intersection cannot add it.
+        narrowed = narrow_query_discovery(
+            qd, QueryFieldPolicy(filterable={"age", "score"}, sortable=set())
+        )
+
+        assert narrowed.filterable == tuple(f for f in qd.filterable if f.field == "age")
+        assert narrowed.sortable == ()
+        assert narrowed.aggregatable == ("age",)
+
+    def test_keeps_the_filter_limits(self) -> None:
+        limits = QueryFilterLimits(max_pattern_length=512)
+        qd = build_query_discovery(
+            _Doc, filterable={"name"}, sortable=set(), aggregatable=set(), filter_limits=limits
+        )
+
+        narrowed = narrow_query_discovery(qd, QueryFieldPolicy(filterable=set()))
+
+        assert narrowed.filter_limits == limits

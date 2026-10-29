@@ -15,6 +15,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **`postgres_counter_purge_lifecycle_step` deletes lapsed Postgres counter rows on an interval.** It calls `purge_expired()` for each route in `specs`, and binds each tenant in turn with `tenants=`.
 
+- **An agent or MCP tool can advertise and accept fewer query fields than the spec.** `operation_tools`, `register_tools` and `build_mcp_server` take `query_policies`, a narrower `QueryFieldPolicy` per operation. The description names only its fields, the field guard checks calls against it, and widening fails at build.
+
 - **Federated search takes `member_filters`, a filter for one member's leg alone.** It joins `filters` with `$and` on that leg, and a hub refuses it. New `SearchMemberGrant`, `bind_search_member_grant`, `OperationDescriptor.members` and `AuthorizesMembers` back member authorization.
 
 - **`MockDepsModule(row_locks="block")` makes a held row lock wait under simulation, as Postgres does.** Two transactions taking rows in one order now both succeed. Opposite orders abort one with `deadlock_detected`, and DST reports a `no_lock_order_deadlock` violation naming the rows.

@@ -12,11 +12,20 @@ import pytest
 from jsonschema import Draft202012Validator
 
 from forze.application.contracts.document import DocumentSpec
-from forze.application.contracts.querying import QueryFieldPolicy, filter_grammar
+from forze.application.contracts.querying import QueryFieldPolicy, QueryFilterLimits, filter_grammar
 from forze.application.execution import ExecutionRuntime
 from forze.application.execution.deps import DepsRegistry
+from forze.base.exceptions import CoreException
+from forze.base.primitives import JsonDict
 from forze_kits.aggregates.document import DocumentKernelOp, build_document_registry
-from forze_kits.integrations.agent_tools import ToolUse, dispatch_tool_use, operation_tools
+from forze_kits.integrations.agent_tools import (
+    OperationToolset,
+    ToolResult,
+    ToolUse,
+    dispatch_tool_use,
+    operation_tools,
+    provider_safe_tool_name,
+)
 from forze_mock import MockDepsModule
 from tests.support.agent_tools_query import (
     AGENT_TOOLS_QUERY_BATTERY,
@@ -225,3 +234,194 @@ class TestTheSharedFilterGrammar:
         assert result.is_error is True
         assert isinstance(result.content, dict)
         assert result.content["code"] == "agent_tools_invalid_arguments"
+
+
+# ....................... #
+
+_LIST = QUERY_NS.key(DocumentKernelOp.LIST)
+_AGG = QUERY_NS.key(DocumentKernelOp.AGG_LIST)
+_TITLE_ONLY = QueryFieldPolicy(filterable={"title"}, sortable=set())
+"""Narrower than :data:`QUERY_POLICY` on two axes, and leaves aggregatable as the spec has it."""
+
+
+async def _call(tools: OperationToolset, op: str, arguments: JsonDict) -> ToolResult:
+    runtime = ExecutionRuntime(deps=DepsRegistry.from_modules(MockDepsModule()).freeze())
+
+    async with runtime.scope():
+        return await dispatch_tool_use(
+            ToolUse(id="q", name=provider_safe_tool_name(op), input=arguments),
+            ctx=runtime.get_context(),
+            tools=tools,
+        )
+
+
+def _refusal(query_policies: dict[str, QueryFieldPolicy]) -> CoreException:
+    with pytest.raises(CoreException) as caught:
+        operation_tools(query_registry(), include=[_LIST, _AGG], query_policies=query_policies)
+
+    assert caught.value.kind == "configuration"
+
+    return caught.value
+
+
+class TestANarrowerQueryPolicy:
+    """A palette advertising fewer fields than the spec allows, and accepting no more."""
+
+    def test_the_description_names_only_the_narrowed_fields(self) -> None:
+        # `category` is filterable and `title` sortable under the spec; the palette takes
+        # both away and leaves aggregatable, which it did not narrow, as the spec has it.
+        tools = operation_tools(
+            query_registry(), include=[_LIST], query_policies={_LIST: _TITLE_ONLY}
+        )
+
+        assert tools.defs[0].description == (
+            "List documents by filters and sorts (offset pagination). Filterable fields — "
+            "$eq, $ilike, $in, $like, $neq, $nin, $null, $regex on every field; "
+            "string: title. Aggregatable by: category."
+        )
+
+    def test_an_operation_it_does_not_name_keeps_the_spec_surface(self) -> None:
+        narrowed = operation_tools(
+            query_registry(), include=[_LIST, _AGG], query_policies={_LIST: _TITLE_ONLY}
+        )
+        full = operation_tools(query_registry(), include=[_AGG])
+
+        assert narrowed.defs[1].description == full.defs[0].description
+
+    def test_a_widened_axis_is_refused(self) -> None:
+        # `body` is on the read model, so only the spec's allow-set can refuse it.
+        refused = _refusal({_LIST: QueryFieldPolicy(filterable={"title", "body"})})
+
+        assert refused.code == "query_policy_widened"
+        assert refused.details == {"op": _LIST, "axis": "filterable", "fields": ["body"]}
+
+    def test_an_operation_outside_the_palette_is_refused(self) -> None:
+        refused = _refusal({QUERY_NS.key(DocumentKernelOp.LIST_CURSOR): _TITLE_ONLY})
+
+        assert refused.code == "query_policy_unknown_operation"
+
+    def test_an_operation_that_takes_no_filter_is_refused(self) -> None:
+        with pytest.raises(CoreException) as caught:
+            operation_tools(
+                query_registry(),
+                include=[QUERY_NS.key(DocumentKernelOp.GET)],
+                query_policies={QUERY_NS.key(DocumentKernelOp.GET): _TITLE_ONLY},
+            )
+
+        assert caught.value.code == "query_policy_not_queryable"
+
+    def test_an_axis_the_input_does_not_carry_is_refused(self) -> None:
+        # The plain list takes no aggregates, so nothing could check that axis on it.
+        refused = _refusal({_LIST: QueryFieldPolicy(aggregatable={"category"})})
+
+        assert refused.code == "query_policy_unenforceable"
+
+    async def test_dispatch_refuses_a_filter_outside_it(self) -> None:
+        tools = operation_tools(
+            query_registry(), include=[_LIST], query_policies={_LIST: _TITLE_ONLY}
+        )
+
+        refused = await _call(tools, _LIST, {"filters": {"$values": {"category": "green"}}})
+
+        assert refused.is_error is True
+        assert isinstance(refused.content, dict)
+        assert refused.content["code"] == "field_not_filterable"
+
+    async def test_dispatch_refuses_a_sort_and_a_metric_filter_outside_it(self) -> None:
+        tools = operation_tools(
+            query_registry(), include=[_LIST, _AGG], query_policies={_AGG: _TITLE_ONLY}
+        )
+        aggregates = {
+            "$groups": {"category": "category"},
+            "$computed": {"n": {"$count": {"filter": {"$values": {"category": "green"}}}}},
+        }
+
+        sorted_ = await _call(tools, _LIST, {"sorts": {"title": "asc"}})
+        by_metric = await _call(tools, _AGG, {"aggregates": aggregates})
+
+        assert sorted_.is_error is False
+        assert isinstance(by_metric.content, dict)
+        assert by_metric.content["code"] == "field_not_filterable"
+
+    @pytest.mark.parametrize(
+        "filters",
+        [
+            {"$or": [{"$values": {"title": "alpha"}}, {"$values": {"category": "green"}}]},
+            {"$not": {"$values": {"category": "green"}}},
+            {
+                "$and": [
+                    {"$values": {"title": "alpha"}},
+                    {"$or": [{"$not": {"$values": {"category": "green"}}}]},
+                ]
+            },
+        ],
+        ids=["or", "not", "and-or-not"],
+    )
+    async def test_dispatch_refuses_a_field_nested_in_a_combinator(self, filters: JsonDict) -> None:
+        # `category` is allowed by the spec, so only the narrowed policy refuses it, and
+        # only if the guard walks into the combinator rather than reading the top level.
+        tools = operation_tools(
+            query_registry(), include=[_LIST], query_policies={_LIST: _TITLE_ONLY}
+        )
+
+        refused = await _call(tools, _LIST, {"filters": filters})
+
+        assert isinstance(refused.content, dict)
+        assert refused.content["code"] == "field_not_filterable"
+
+    async def test_the_cursor_list_is_narrowed_the_same_way(self) -> None:
+        cursor = QUERY_NS.key(DocumentKernelOp.LIST_CURSOR)
+        tools = operation_tools(
+            query_registry(), include=[cursor], query_policies={cursor: _TITLE_ONLY}
+        )
+
+        assert tools.defs[0].description == (
+            "List documents by filters and sorts (cursor pagination). Filterable fields — "
+            "$eq, $ilike, $in, $like, $neq, $nin, $null, $regex on every field; "
+            "string: title. Aggregatable by: category."
+        )
+
+        served = await _call(tools, cursor, {"filters": {"$values": {"title": "alpha"}}})
+        refused = await _call(tools, cursor, {"filters": {"$values": {"category": "green"}}})
+
+        assert served.is_error is False, served.content
+        assert isinstance(refused.content, dict)
+        assert refused.content["code"] == "field_not_filterable"
+
+    @pytest.mark.parametrize(("length", "served"), [(300, True), (600, False)])
+    async def test_the_guard_parses_under_the_spec_filter_limits(
+        self, length: int, served: bool
+    ) -> None:
+        # The default pattern limit is 256 and the spec raises it to 512: a 300-character
+        # pattern is the spec's to serve, and a 600-character one is still refused.
+        spec = DocumentSpec(
+            name="notes",
+            read=QueryNoteRead,
+            write={"domain": QueryNote, "create_cmd": CreateQueryNote},
+            query_policy=QUERY_POLICY,
+            filter_limits=QueryFilterLimits(max_pattern_length=512),
+        )
+        registry = build_document_registry(spec, ns=QUERY_NS).freeze()
+        tools = operation_tools(registry, include=[_LIST], query_policies={_LIST: _TITLE_ONLY})
+
+        result = await _call(
+            tools, _LIST, {"filters": {"$values": {"title": {"$like": "a" * length}}}}
+        )
+
+        assert result.is_error is not served, result.content
+
+        if not served:
+            assert isinstance(result.content, dict)
+            assert "maximum length of 512" in result.content["detail"]
+
+    async def test_dispatch_serves_what_it_allows(self) -> None:
+        tools = operation_tools(
+            query_registry(), include=[_LIST], query_policies={_LIST: _TITLE_ONLY}
+        )
+
+        served = await _call(tools, _LIST, {"filters": {"$values": {"title": "alpha"}}})
+        unsorted = await _call(tools, _LIST, {"sorts": {"title": "asc"}})
+
+        assert served.is_error is False
+        assert isinstance(unsorted.content, dict)
+        assert unsorted.content["code"] == "field_not_sortable"

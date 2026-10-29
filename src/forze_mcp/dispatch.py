@@ -14,8 +14,10 @@ is translated to a client-safe ``ToolError`` / ``ResourceError`` at the register
 from collections.abc import Mapping
 from typing import Any
 
+from forze.application.contracts.querying import QueryFieldGuard
 from forze.application.execution.context import ExecutionContextFactory
 from forze.application.execution.ingress import (
+    check_query_policy,
     invoke_at_ingress,
     mint_invocation_metadata,
     validate_operation_input,
@@ -73,10 +75,16 @@ async def invoke_operation(
     op: StrKey,
     descriptor: OperationDescriptor | None,
     arguments: Mapping[str, Any],
+    query_guard: QueryFieldGuard | None = None,
 ) -> Any:
-    """Establish a boundary context and run *op* through the operation pipeline."""
+    """Establish a boundary context and run *op* through the operation pipeline.
+
+    *query_guard* is the tool's narrower query policy, when it was registered with one: a
+    call reaching outside it is refused before any context is bound.
+    """
 
     args = build_args(descriptor, arguments)
+    check_query_policy(query_guard, args)
 
     ctx = ctx_factory()
     authn, tenant = await identity.resolve()

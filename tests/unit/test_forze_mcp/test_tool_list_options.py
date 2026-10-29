@@ -6,6 +6,7 @@ from __future__ import annotations
 import json
 from enum import StrEnum
 from typing import Any
+from uuid import uuid4
 
 import pytest
 
@@ -18,7 +19,7 @@ from fastmcp.resources import Resource
 from pydantic import BaseModel, Field, TypeAdapter
 
 from forze.application.contracts.execution import Handler
-from forze.application.contracts.querying import QueryFilterExpression
+from forze.application.contracts.querying import QueryFieldPolicy, QueryFilterExpression
 from forze.application.execution import OperationDescriptor
 from forze.application.execution.operations.registry import (
     FrozenOperationRegistry,
@@ -478,3 +479,77 @@ async def test_build_mcp_server_passes_the_options_through() -> None:
     assert tools["notes.list"].output_schema is None
     assert not _carries_grammar(tools["notes.list"].input_schema)
     assert instructions.startswith("Notes only.") and FILTER_GRAMMAR_URI in instructions
+
+
+# ....................... #
+
+_TITLE_ONLY = QueryFieldPolicy(filterable={"title"}, sortable={"title"})
+
+
+class TestQueryPolicies:
+    """A tool advertising fewer fields than its operation allows, and accepting no more."""
+
+    async def test_a_built_server_advertises_and_enforces_the_narrowed_policy(self) -> None:
+        server = build_mcp_server(
+            _notes(),
+            _ctx_factory,
+            name="notes",
+            operations=["notes.list", "notes.list_cursor"],
+            query_policies={"notes.list": _TITLE_ONLY},
+        )
+        tools = await _tools(server)
+        full = await _tools(build_mcp_server(_notes(), _ctx_factory, name="notes"))
+        aggregatable = ", ".join(sorted(_NoteRead.model_fields))
+
+        assert tools["notes.list"].description == (
+            "List documents by filters and sorts (offset pagination). Filterable fields — "
+            "$eq, $ilike, $in, $like, $neq, $nin, $null, $regex on every field; "
+            f"string: title. Sortable by: title. Aggregatable by: {aggregatable}."
+        )
+        # The operation it does not name keeps its full surface.
+        assert tools["notes.list_cursor"].description == full["notes.list_cursor"].description
+
+        stray = {"filters": {"$values": {"id": str(uuid4())}}}
+
+        async with Client(server) as client:
+            listed = await client.call_tool("notes.list", {"filters": {"$values": {"title": "a"}}})
+
+            with pytest.raises(ToolError) as refused:
+                await client.call_tool("notes.list", stray)
+
+            unguarded = await client.call_tool("notes.list_cursor", stray)
+
+        assert listed.structured_content is not None
+        assert "field_not_filterable" in str(refused.value)
+        assert unguarded.structured_content is not None
+
+    async def test_a_widened_axis_is_refused_before_any_tool_is_added(self) -> None:
+        server = FastMCP("notes")
+
+        with pytest.raises(CoreException) as caught:
+            register_tools(
+                server,
+                _notes(),
+                _ctx_factory,
+                query_policies={"notes.list": QueryFieldPolicy(filterable={"title", "nope"})},
+            )
+
+        assert caught.value.code == "query_policy_widened"
+        assert caught.value.details == {
+            "op": "notes.list",
+            "axis": "filterable",
+            "fields": ["nope"],
+        }
+        assert await _tools(server) == {}
+
+    def test_an_operation_that_is_not_exposed_is_refused(self) -> None:
+        with pytest.raises(CoreException) as caught:
+            register_tools(
+                FastMCP("notes"),
+                _notes(),
+                _ctx_factory,
+                operations=["notes.list"],
+                query_policies={"notes.list_cursor": _TITLE_ONLY},
+            )
+
+        assert caught.value.code == "query_policy_unknown_operation"

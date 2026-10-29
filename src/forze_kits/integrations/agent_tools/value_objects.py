@@ -16,10 +16,11 @@ unreachable through this path even when it exists in the catalog.
 
 from collections.abc import Mapping
 from types import MappingProxyType
-from typing import final
+from typing import Any, final
 
 import attrs
 
+from forze.application.contracts.querying import QueryFieldGuard
 from forze.application.execution.operations import (
     FrozenOperationRegistry,
     OperationCatalogEntry,
@@ -29,9 +30,7 @@ from forze.base.primitives import JsonDict
 # ----------------------- #
 
 
-def _read_only(
-    given: Mapping[str, OperationCatalogEntry],
-) -> Mapping[str, OperationCatalogEntry]:
+def _read_only(given: Mapping[str, Any]) -> Mapping[str, Any]:
     """Copy a mapping into a read-only view of its own."""
 
     return MappingProxyType(dict(given))
@@ -132,6 +131,14 @@ class OperationToolset:
     """The filter grammar, stated once for the system prompt, when the palette was built
     with ``shared_filter_grammar=True`` and a tool in it takes a filter; ``None`` otherwise,
     when each filter-accepting def carries the grammar itself."""
+
+    query_guards: Mapping[str, QueryFieldGuard] = attrs.field(
+        factory=dict[str, QueryFieldGuard],
+        converter=_read_only,
+    )
+    """Operation key → the guard enforcing the narrower query policy the palette was built
+    with (``query_policies``). Dispatch applies it to every call of that operation.
+    Read-only, like :attr:`bindings`."""
 
     # ....................... #
 

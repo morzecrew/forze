@@ -22,11 +22,13 @@ from collections.abc import Iterable
 import attrs
 from pydantic import BaseModel
 
+from .field_policy import QueryFieldPolicy
 from .field_types import (
     classify_field_type,
     field_value_operators,
     is_quantifiable_field,
 )
+from .internal.parse import QueryFilterLimits
 
 # ----------------------- #
 
@@ -76,6 +78,10 @@ class QueryDiscovery:
     aggregatable: tuple[str, ...]
     """Field names a caller may group by / aggregate, sorted."""
 
+    filter_limits: QueryFilterLimits | None = None
+    """The bounds the operation parses a filter under (the spec's), or ``None`` for the
+    defaults, so a boundary that checks a filter first parses it as the operation will."""
+
 
 # ....................... #
 
@@ -86,6 +92,7 @@ def build_query_discovery(
     filterable: Iterable[str],
     sortable: Iterable[str],
     aggregatable: Iterable[str],
+    filter_limits: QueryFilterLimits | None = None,
 ) -> QueryDiscovery:
     """Build :class:`QueryDiscovery` from a read model and resolved allow-sets.
 
@@ -94,6 +101,7 @@ def build_query_discovery(
     unrestricted) — typically ``spec.filterable_fields()`` and friends. For each
     filterable field the operators are derived from its Python type; a field absent from
     the model (or otherwise unresolvable) reports the full value-op surface.
+    *filter_limits* is carried as is, typically ``spec.filter_limits``.
     """
 
     fields = model_type.model_fields
@@ -117,6 +125,33 @@ def build_query_discovery(
         filterable=tuple(supports),
         sortable=tuple(sorted(sortable)),
         aggregatable=tuple(sorted(aggregatable)),
+        filter_limits=filter_limits,
+    )
+
+
+# ....................... #
+
+
+def narrow_query_discovery(discovery: QueryDiscovery, policy: QueryFieldPolicy) -> QueryDiscovery:
+    """*discovery* restricted to *policy*'s allow-sets, for a surface that advertises less.
+
+    An axis whose allow-set is ``None`` keeps every field *discovery* names. The result is an
+    intersection, so it never names a field *discovery* does not: a narrower surface cannot
+    advertise more than the operation accepts.
+    """
+
+    def kept(names: tuple[str, ...], allowed: frozenset[str] | None) -> tuple[str, ...]:
+        return names if allowed is None else tuple(name for name in names if name in allowed)
+
+    return attrs.evolve(
+        discovery,
+        filterable=tuple(
+            f
+            for f in discovery.filterable
+            if policy.filterable is None or f.field in policy.filterable
+        ),
+        sortable=kept(discovery.sortable, policy.sortable),
+        aggregatable=kept(discovery.aggregatable, policy.aggregatable),
     )
 
 

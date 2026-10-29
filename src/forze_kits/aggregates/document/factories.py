@@ -167,6 +167,7 @@ def _build_document_descriptors(
         filterable=spec.filterable_fields(),
         sortable=spec.sortable_fields(),
         aggregatable=spec.aggregatable_fields(),
+        filter_limits=spec.filter_limits,
     )
 
     descriptors: dict[StrKey, OperationDescriptor] = {
