@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import math
 import random
-from datetime import UTC, datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta, timezone, tzinfo
 
 import pytest
 
@@ -144,3 +144,30 @@ def test_retry_hint_keeps_the_instant_in_utc() -> None:
     assert hint == at
     assert isinstance(hint, datetime) and hint.tzinfo is UTC
     assert retry_hint(exc.infrastructure("down", details={"retry_at": at})) is None
+
+
+class _BadZone(tzinfo):
+    """A zone whose ``utcoffset`` answers what a ``datetime`` refuses."""
+
+    def __init__(self, offset: object) -> None:
+        self.offset = offset
+
+    def utcoffset(self, dt: datetime | None) -> timedelta | None:
+        return self.offset  # type: ignore[return-value]
+
+
+@pytest.mark.parametrize(
+    "zone",
+    [tzinfo(), _BadZone("+03:00"), _BadZone(timedelta(hours=25))],
+    ids=["not-implemented", "not-a-timedelta", "out-of-range"],
+)
+def test_a_zone_that_raises_is_no_hint(zone: tzinfo) -> None:
+    # A tzinfo is user code: whatever its offset raises, the hint is unusable, never an error.
+    at = datetime(2026, 10, 21, 7, 28, tzinfo=zone)
+
+    assert retry_hint(exc.throttled("slow", details={"retry_at": at})) is None
+
+    # The seconds fallback still stands.
+    hint = retry_hint(exc.throttled("slow", details={"retry_after": math.inf, "retry_at": at}))
+
+    assert hint == math.inf

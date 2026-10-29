@@ -81,7 +81,7 @@ def retry_hint(error: CoreException) -> float | datetime | None:
     ``details["retry_at"]``, an aware :class:`~datetime.datetime`, in UTC; otherwise an
     infinite ``retry_after`` (or one too large for a float) as ``math.inf``: no retry waits
     it out. Any other kind, or no usable value — a negative or NaN number, a string, a
-    naive datetime, an instant UTC cannot represent — is ``None``.
+    naive datetime, one whose zone raises, an instant UTC cannot represent — is ``None``.
     """
 
     if error.kind not in _RETRY_HINT_KINDS or not error.details:
@@ -94,12 +94,15 @@ def retry_hint(error: CoreException) -> float | datetime | None:
 
     at = error.details.get("retry_at")
 
-    if isinstance(at, datetime) and at.utcoffset() is not None:
+    if isinstance(at, datetime):
         try:
-            return at.astimezone(UTC)
+            if at.utcoffset() is not None:
+                return at.astimezone(UTC)
 
-        except (OverflowError, ValueError):  # an instant UTC cannot represent
-            pass
+        # A tzinfo is user code, so its offset can raise anything; an instant UTC cannot
+        # represent raises too. Either way the hint is unusable, never an error.
+        except Exception:
+            return seconds
 
     return seconds
 

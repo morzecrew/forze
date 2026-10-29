@@ -3,7 +3,7 @@
 import io
 import json
 from collections.abc import Iterator
-from datetime import UTC, datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta, timezone, tzinfo
 
 import pytest
 from fastapi import FastAPI
@@ -491,6 +491,10 @@ class TestRetryAfterHeader:
             {"retry_at": datetime(2026, 10, 21, 7, 28)},
             {"retry_at": "2026-10-21T07:28:00+00:00"},
             {"retry_at": datetime(1, 1, 1, tzinfo=timezone(timedelta(hours=1)))},
+            # A zone whose utcoffset raises (a tzinfo subclass that does not implement it).
+            {"retry_at": datetime(2026, 10, 21, 7, 28, tzinfo=tzinfo())},
+            # Rounding up to the next second passes the last instant a datetime holds.
+            {"retry_at": datetime.max.replace(tzinfo=UTC)},
         ],
         ids=[
             "none",
@@ -502,6 +506,8 @@ class TestRetryAfterHeader:
             "naive-datetime",
             "string-instant",
             "out-of-range",
+            "zone-raises",
+            "rounds-past-max",
         ],
     )
     def test_an_unusable_hint_sends_no_header(self, details: dict[str, object]) -> None:

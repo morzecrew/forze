@@ -279,7 +279,7 @@ when to come back: the response carries a `Retry-After` header read from two `de
 
 A usable `retry_after` wins when both are set; an unusable one — a negative or non-finite
 number, a string — falls through to `retry_at`. When neither is usable (a naive `datetime`
-is not), no header is sent, never an error. The [retry layers](../reference/resilience-tuning.md#retry-backoff)
+is not, nor one whose zone raises), no header is sent, never an error. The [retry layers](../reference/resilience-tuning.md#retry-backoff)
 read the same keys the same way, through `retry_hint`. `retry_after` is also what the
 [HTTP client](http.md) puts on an upstream `429`, so a throttle passed through keeps its
 hint — but the client caps it at 3600 seconds, so a longer upstream wait arrives as 3600.
