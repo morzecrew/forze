@@ -121,6 +121,22 @@ class TestRetry:
         assert ei.value.kind is ExceptionKind.CONFLICT
         assert counter.calls == 1
 
+    @pytest.mark.parametrize("kind", [ExceptionKind.UNAVAILABLE, ExceptionKind.THROTTLED])
+    async def test_a_drain_refusal_is_never_retried(self, kind: ExceptionKind) -> None:
+        # Even a policy that retries the refusal's kind: the gate never reopens in-process.
+        executor = _executor(_retry_policy(retry_on=frozenset({kind})))
+        counter = _Counter()
+
+        async def fn() -> str:
+            counter.calls += 1
+            raise CoreException(kind, "Runtime scope is draining", code="draining")
+
+        with pytest.raises(CoreException) as ei:
+            await executor.run(fn, policy="p")
+
+        assert ei.value.code == "draining"
+        assert counter.calls == 1
+
     async def test_retry_on_narrowing_excludes_other_retryable(self) -> None:
         # Only CONCURRENCY is retried; an INFRASTRUCTURE error must propagate.
         executor = _executor(
