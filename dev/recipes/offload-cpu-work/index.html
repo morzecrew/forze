@@ -6731,6 +6731,15 @@ zero configuration (<code>cpu_workers=</code> sizes it). To manage the pool your
 
 <span class="n">runtime</span> <span class="o">=</span> <span class="n">build_runtime</span><span class="p">(</span><span class="n">MyModule</span><span class="p">(),</span> <span class="n">cpu_executor</span><span class="o">=</span><span class="n">ThreadPoolCpuExecutor</span><span class="p">(</span><span class="n">max_workers</span><span class="o">=</span><span class="mi">8</span><span class="p">))</span>
 </code></pre></div>
+<p>The scope also holds its pool for the whole process while it is open. An ASGI server
+runs the lifespan holding the scope (<code>runtime_lifespan</code>, or your own
+<code>async with runtime.scope()</code>) in a task of its own, and starts every request from
+somewhere else; a request handler's <code>run_cpu</code> still lands on the runtime's pool. With
+several runtime scopes open in one process, code that none of them started uses the
+oldest one's pool. Only with no scope open at all does <code>run_cpu</code> run inline. An
+executor bound around the scope, which it defers to, stays in the scope's own task.
+Once its scope exits, a closed pool refuses further work with a retryable
+<code>unavailable</code> error.</p>
 
 
 

@@ -6719,6 +6719,26 @@ runtime — a script, a custom host — <code>configure_cursor_signer</code> /
 <code>configure_cursor_cipher</code> set it for the current context at startup (like
 <code>configure_logging</code>), and <code>bind_cursor_signer</code> / <code>bind_cursor_cipher</code> are the
 scoped, auto-restoring variants.</p>
+<p>The scope also holds the signer and cipher set on its runtime for the whole
+process while it is open, so they apply to requests: an ASGI server runs the
+lifespan holding the scope in a task of its own and starts every request from
+somewhere else. Code that binds no signer of its own uses the one the open
+scopes hold. A key bound <em>around</em> a scope stays in that scope's task; it is
+never held.</p>
+<p>Open scopes agree when their keys are equal: two runtimes built with the same
+secret share one protection. When open scopes hold different keys, or one
+holds a key and another none, code that binds none cannot tell which runtime
+it serves: minting and verifying there fail with <code>cursor_protection_ambiguous</code>
+rather than pick one. That is a <code>configuration</code> error, a server
+misconfiguration answered with a 500, not a client error. Give the runtimes
+the same key, or bind one around that code with <code>bind_cursor_signer</code> /
+<code>bind_cursor_cipher</code>. A custom host holding its own scope does the same with
+<code>hold_cursor_signer</code> / <code>hold_cursor_cipher</code>.</p>
+<p><code>configure_cursor_signer(None)</code> / <code>configure_cursor_cipher(None)</code> clear the
+current context's own key, so the one the open scopes hold applies again.
+<code>bind_cursor_signer(None)</code> / <code>bind_cursor_cipher(None)</code> turn protection off
+for the block, whatever the scopes hold — for tests, or for cursors you
+deliberately leave public.</p>
 <p>The everywhere-at-once semantics is the point: because every mint and verify
 falls back to the one bound signer, there is no way to end up minting signed
 tokens on one path and accepting unsigned ones on another from a missed call

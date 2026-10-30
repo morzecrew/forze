@@ -6729,6 +6729,11 @@ infrastructure; leaving it tears everything down in reverse.</p>
 </div>
 <p>If a startup step fails, the steps that already ran are shut down in reverse
 before the error propagates — no half-open pools left behind.</p>
+<p>What the scope sets up reaches code it never started, such as the requests an ASGI
+server runs while its lifespan holds the scope: the context, the CPU pool <code>run_cpu</code>
+uses (<a href="../../recipes/offload-cpu-work/#sizing-the-pool">Offload heavy CPU work</a>), and
+the cursor signer and cipher
+(<a href="../../identity-tenancy-enc/cursor-tokens/#turning-it-on">Cursor tokens</a>).</p>
 <h2 id="transactions">Transactions<a class="headerlink" href="#transactions" title="Permanent link">&para;</a></h2>
 <p>Multi-step writes that must commit together run in a <strong>transaction scope</strong>, keyed
 by the same specification name as the deps wiring:</p>
