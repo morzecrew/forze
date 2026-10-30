@@ -555,7 +555,7 @@ def cursor_protection_active() -> bool:
     neither active there is nothing to bind to and the filter need not be fingerprinted.
     """
 
-    return current_cursor_signer() is not None or current_cursor_cipher() is not None
+    return current_cursor_cipher() is not None or current_cursor_signer() is not None
 
 
 # ....................... #
@@ -890,8 +890,10 @@ def encode_keyset_v1(
         "n": list(null_order),
         "x": [_jsonify_value(x) for x in values],
     }
-    signer = _effective_signer(signer)
+    # A cipher supersedes a signer, so the signer is resolved only without one: open scopes
+    # agreeing on the cipher may hold different signers.
     cipher = _effective_cipher(cipher)
+    signer = None if cipher is not None else _effective_signer(signer)
 
     # The binding digest is embedded (and authenticated) only under integrity — a signer or a
     # cipher. Unprotected, a client could forge it, so it would be integrity theater; with
@@ -955,8 +957,10 @@ def decode_keyset_v1(
     rejected. The digest is authenticated, so this check only runs under a signer or cipher.
     """
 
-    signer = _effective_signer(signer)
+    # A cipher supersedes a signer, so the signer is resolved only without one: open scopes
+    # agreeing on the cipher may hold different signers.
     cipher = _effective_cipher(cipher)
+    signer = None if cipher is not None else _effective_signer(signer)
 
     if cipher is not None:
         # Hard cutover: with a cipher configured, only an encrypted token is acceptable.

@@ -170,8 +170,22 @@ class ThreadPoolCpuExecutor:
 
     async def run[T](self, fn: Callable[[], T], *, label: str | None = None) -> T:
         loop = asyncio.get_running_loop()
+        pool = self._require_pool()
 
-        return await loop.run_in_executor(self._require_pool(), fn)
+        try:
+            future = loop.run_in_executor(pool, fn)
+
+        except RuntimeError:
+            # A close that ran between ``_require_pool`` and the submit shut the pool down.
+            if self._closed:
+                raise exc.unavailable(
+                    "CPU executor is closed; its runtime scope has exited.",
+                    code="cpu_executor_closed",
+                ) from None
+
+            raise
+
+        return await future
 
     def close(self) -> None:
         """Shut the pool down, cancelling work that has not started.

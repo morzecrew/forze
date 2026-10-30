@@ -534,6 +534,23 @@ class TestScopeBindingsWithSeveralRuntimes:
             assert _token().startswith("~")
 
     @pytest.mark.asyncio
+    async def test_an_agreed_cipher_supersedes_unequal_signers(self) -> None:
+        from forze.application.contracts.querying import CursorTokenCipher, CursorTokenSigner
+
+        key = secrets.token_bytes(32)
+        a = ExecutionRuntime(
+            cursor_token_cipher=CursorTokenCipher(secret=key),
+            cursor_token_signer=CursorTokenSigner(secret=secrets.token_bytes(32)),
+        )
+        b = ExecutionRuntime(
+            cursor_token_cipher=CursorTokenCipher(secret=key),
+            cursor_token_signer=CursorTokenSigner(secret=secrets.token_bytes(32)),
+        )
+
+        async with _held_by_lifespan(a, b):
+            assert _token().startswith("~")
+
+    @pytest.mark.asyncio
     async def test_each_scope_task_keeps_its_own_signer(self) -> None:
         from forze.application.contracts.querying import (
             CursorTokenSigner,

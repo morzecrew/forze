@@ -170,6 +170,21 @@ class TestThreadPoolCpuExecutor:
         assert executor._pool is None  # pyright: ignore[reportPrivateUsage]
 
 
+    async def test_a_submit_racing_close_is_refused_as_closed(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        executor = ThreadPoolCpuExecutor(max_workers=1)
+        pool = executor._require_pool()  # pyright: ignore[reportPrivateUsage]
+        executor.close()
+        # The pool handed out just before the close, as a concurrent first use would see it.
+        monkeypatch.setattr(ThreadPoolCpuExecutor, "_require_pool", lambda self: pool)
+
+        with pytest.raises(CoreException) as caught:
+            await executor.run(lambda: 1)
+
+        assert caught.value.kind is ExceptionKind.UNAVAILABLE
+        assert caught.value.code == "cpu_executor_closed"
+
 class TestDeadline:
     async def test_already_passed_deadline_raises_at_entry(self) -> None:
         with bind_deadline(0.0), pytest.raises(CoreException) as ei:
