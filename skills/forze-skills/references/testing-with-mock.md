@@ -86,6 +86,11 @@ integration test against the real view.
 Where the value is one field of one row reached by one key, `DerivedReadField(source=…,
 via=…, field=…)` makes the mock perform the join instead — or `fields=("id", "name")` for
 an expanded reference, a nested object built from that one row. One hop, primary key only.
+For a row the workload creates, register a callback per spec with
+`MockDepsModule(derived_values=MockDerivedRegistry().on(spec, source))`. A source sees its own
+row. One with two required positional parameters, `(row, view)`, also reads other specs through
+`view.rows(spec)`, as the calling transaction sees them, which covers an aggregate over child
+rows.
 `forze_dst.conformance.run_derived_fidelity` checks the mock's join or callback against the
 real view, comparing each derived field on each row of one seed.
 Either way the field is not filterable, sortable or sealable, and a required marked field

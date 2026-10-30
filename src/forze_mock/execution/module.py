@@ -348,8 +348,9 @@ class MockDepsModule(DepsModule):
     (``code="mock.document.derived_unsupplied"``), which is what makes a missing value
     discoverable rather than invented. Pass a :class:`MockDerivedRegistry` with a source per
     spec and every row becomes readable — including the rows a simulation's own workload
-    creates, which no seed can reach. The source is fixture logic, not a derivation: nothing
-    recomputes it when the source row changes."""
+    creates, which no seed can reach. A ``(row, view)`` source also reads other specs' rows as
+    the reading transaction sees them, for an aggregate over child rows. The source is fixture
+    logic, not a derivation: nothing keeps it in agreement with the view's SQL."""
 
     query_param_sources: MockQueryParamsRegistry | None = attrs.field(default=None)
     """Programmable sources modelling parametrized document reads (``with_parameters``).

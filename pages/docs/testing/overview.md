@@ -54,6 +54,25 @@ MockDepsModule(
 
 Keep it a function of the row: a source that reads a clock or a counter makes two runs of one seed disagree, and a simulation you cannot replay is one you cannot minimize. A seeded or persisted value still wins, so a test that wrote a specific row keeps it. Registering nothing keeps the refusal above, which is the posture that makes a missing value discoverable.
 
+A view that aggregates child rows, such as `released_quantity = SUM(child.quantity) WHERE child.parent_id = id`, needs the other rows as well. A source with two required positional parameters receives, as its second argument, the view an [analytics resolver](#analytics-answered-from-current-state) gets:
+
+```python
+MockDepsModule(
+    derived_values=MockDerivedRegistry().on(
+        "batches",
+        lambda row, view: {
+            "released_quantity": sum(
+                r["quantity"] for r in view.rows(RELEASES) if r["batch_id"] == row["id"]
+            ),
+        },
+    ),
+)
+```
+
+`view.rows(spec)` returns stored rows as the reading transaction sees them, so a handler that writes a child and then reads the parent in the same transaction counts that child, as the real view does. The rows are stored rows, so a child's own derived fields are not on them: aggregate over stored fields, as an analytics resolver does. A rolled-back child drops out again. A tenant-aware child route is read in the bound tenant's partition, as for a resolver. A tenant-aware parent route also narrows the rows to the bound tenant, leaving out rows another tenant owns or no tenant owns. So children kept on a route that is not tenant-aware, which carry no `tenant_id`, are never counted for a tenant-aware parent, even where the real view would count them. The source runs on every read of every row, so the value follows the children without anything recomputing it. That is fine for fixtures; on a large seed, pin the field instead.
+
+`on()` reads the source's signature once. A source that accepts one positional argument stays row-only, as before, even if it could also take two (`def f(row, scale=2)`, `*args`). A signature that accepts neither `(row)` nor `(row, view)` is refused with `mock.derived.source_shape`.
+
 Where the value is one row reached by one key — a joined column, or an expanded reference like `warehouse: {id, name}` — declare the join instead (`DerivedReadField(source=..., via=..., fields=("id", "name"))`, see [reading data](../data-events/reading-data.md#read-fields-storage-doesnt-hold)) and the mock resolves it with no callback at all.
 
 ### Checking derived fields against the real view

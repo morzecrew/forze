@@ -83,7 +83,8 @@ from forze_mock.adapters._mvcc import (
     acquire_row_locks,
     current_mvcc_tx,
 )
-from forze_mock.adapters.derived_values import MockDerivedSource
+from forze_mock.adapters.analytics_resolvers import MockAnalyticsView
+from forze_mock.adapters.derived_values import MockDerivedViewSource, as_view_source
 from forze_mock.adapters.query_params import MockQueryParamsSource
 from forze_mock.query._types import (
     C,
@@ -167,13 +168,21 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
     value claims and what the store refuses are the same list, and the parity battery compares
     this store's refusal with a real backend's for each member."""
 
-    derived_source: MockDerivedSource | None = None
+    derived_source: MockDerivedViewSource | None = attrs.field(
+        default=None, converter=attrs.converters.optional(as_view_source)
+    )
     """Stands in for the relation that produces this spec's *marked* derived fields.
 
     ``None`` leaves the refusal a marked field without a value already raises — the
     registered default, and the only posture in which an unsupplied value is
     discoverable. A registered source is consulted for every row, which is what makes
-    a row the workload itself created readable."""
+    a row the workload itself created readable. Takes a ``(row)`` or ``(row, view)``
+    source (see :func:`as_view_source`); either is held in the ``(row, view)`` shape."""
+
+    derived_view: MockAnalyticsView | None = None
+    """The document view handed to :attr:`derived_source`; ``None`` reads each spec's rows
+    from the namespace named after it, unpartitioned. Narrowed to the bound tenant on a
+    tenant-aware route, as an analytics resolver's view is."""
 
     block_rows: bool = False
     """Whether a statement outside a transaction waits for a row a blocking transaction holds.
@@ -566,11 +575,17 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
             supplied: JsonDict = {}
 
             if self.derived_source is not None:
+                # The view reads through this transaction, so an aggregate over child
+                # rows counts the caller's own uncommitted children, as the real view does.
+                view = attrs.evolve(
+                    self.derived_view or MockAnalyticsView(state=self.state),
+                    tenant_id=self.require_tenant_if_aware(),
+                )
                 # Scoped to the declared names, so a source cannot put a field on the
                 # read model that the spec never declared derived.
                 supplied = {
                     name: value
-                    for name, value in self.derived_source(doc).items()
+                    for name, value in self.derived_source(doc, view).items()
                     if name in self.derived_marked
                 }
 

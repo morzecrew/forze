@@ -13,6 +13,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **`runtime_lifespan(nested=...)` runs mounted apps' lifespans inside the runtime's scope.** They enter in order once the scope opens; on shutdown the runtime drains, then they exit in reverse, then it tears down. An app mounting an MCP HTTP app passes `nested=(mcp_app,)` instead of writing its own lifespan.
 
+- **A mock derived source can aggregate child rows.** A `MockDerivedRegistry` source with two required positional parameters gets `(row, view)`, the view analytics resolvers get, so `view.rows(spec)` counts the caller's own uncommitted children. Existing `(row)` sources keep working.
+
 ### Changed
 
 - ...
