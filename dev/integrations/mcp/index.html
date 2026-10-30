@@ -3887,6 +3887,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#mount-it-on-a-fastapi-app" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Mount it on a FastAPI app
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#what-it-provides" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -6567,6 +6578,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#mount-it-on-a-fastapi-app" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Mount it on a FastAPI app
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#what-it-provides" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -6822,6 +6844,25 @@ binds the good one. Read-only stays the default (<code>include_writes=False</cod
 write-capable agent needs <code>include_writes=True</code> <strong>and</strong> write grants on every principal in
 the chain — the user, the key's agent and the operator's agent. OAuth-based hosts (that can't paste a key) are a later, external concern —
 forze stays the Resource Server and never runs an authorization server.</p>
+<h2 id="mount-it-on-a-fastapi-app">Mount it on a FastAPI app<a class="headerlink" href="#mount-it-on-a-fastapi-app" title="Permanent link">&para;</a></h2>
+<p>To serve <abbr title="Model Context Protocol">MCP</abbr> from the same process as an HTTP API, mount the server's HTTP app on the
+FastAPI app. Starlette never runs a mounted app's lifespan, so the FastAPI app's
+<code>runtime_lifespan</code> runs the session manager's lifespan inside the runtime's scope:</p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">fastapi</span><span class="w"> </span><span class="kn">import</span> <span class="n">FastAPI</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">forze.application.execution</span><span class="w"> </span><span class="kn">import</span> <span class="n">build_runtime</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">forze_fastapi</span><span class="w"> </span><span class="kn">import</span> <span class="n">runtime_lifespan</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">forze_mcp</span><span class="w"> </span><span class="kn">import</span> <span class="n">build_mcp_server</span>
+
+<span class="n">server</span> <span class="o">=</span> <span class="n">build_mcp_server</span><span class="p">(</span><span class="n">registry</span><span class="p">,</span> <span class="k">lambda</span><span class="p">:</span> <span class="n">lifespan</span><span class="o">.</span><span class="n">get_context</span><span class="p">(),</span> <span class="n">name</span><span class="o">=</span><span class="s2">"orders"</span><span class="p">)</span>
+<span class="n">mcp_app</span> <span class="o">=</span> <span class="n">server</span><span class="o">.</span><span class="n">http_app</span><span class="p">(</span><span class="n">path</span><span class="o">=</span><span class="s2">"/"</span><span class="p">)</span>
+
+<span class="n">lifespan</span> <span class="o">=</span> <span class="n">runtime_lifespan</span><span class="p">(</span><span class="n">build</span><span class="o">=</span><span class="k">lambda</span><span class="p">:</span> <span class="n">build_runtime</span><span class="p">(</span><span class="o">...</span><span class="p">),</span> <span class="n">nested</span><span class="o">=</span><span class="p">(</span><span class="n">mcp_app</span><span class="p">,))</span>
+<span class="n">app</span> <span class="o">=</span> <span class="n">FastAPI</span><span class="p">(</span><span class="n">lifespan</span><span class="o">=</span><span class="n">lifespan</span><span class="p">)</span>
+<span class="n">app</span><span class="o">.</span><span class="n">mount</span><span class="p">(</span><span class="s2">"/mcp"</span><span class="p">,</span> <span class="n">mcp_app</span><span class="p">)</span>
+</code></pre></div>
+<p>The FastAPI lifespan holds the scope, so do not also give the server
+<code>forze_mcp.runtime_lifespan</code>. The order of startup, shutdown and the <code>SIGTERM</code> drain is in
+<a href="../fastapi/#run-a-mounted-apps-lifespan">FastAPI → Run a mounted app's lifespan</a>.</p>
 <h2 id="what-it-provides">What it provides<a class="headerlink" href="#what-it-provides" title="Permanent link">&para;</a></h2>
 <table>
 <thead>

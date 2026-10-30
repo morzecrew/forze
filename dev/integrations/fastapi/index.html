@@ -3818,6 +3818,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#run-a-mounted-apps-lifespan" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Run a mounted app's lifespan
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -6701,6 +6712,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#run-a-mounted-apps-lifespan" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Run a mounted app's lifespan
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -7031,6 +7053,42 @@ is built:</p>
 holds one runtime at a time. Entered again while it runs, it refuses with
 <code>configuration</code> rather than build a second one. Entered after its runtime was torn
 down, it builds a new one.</p>
+<h3 id="run-a-mounted-apps-lifespan">Run a mounted app's lifespan<a class="headerlink" href="#run-a-mounted-apps-lifespan" title="Permanent link">&para;</a></h3>
+<p>Starlette never runs the lifespan of a mounted app. When a mounted app needs its own
+lifespan, such as the session manager of an <a href="../mcp/"><abbr title="Model Context Protocol">MCP</abbr></a> HTTP app, pass the app in
+<code>nested</code>. Its lifespan is entered with that app, as Starlette enters a top-level app's, so
+whatever it sets on <code>app.state</code> is what the app's routes read from <code>request.app.state</code>:</p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">fastapi</span><span class="w"> </span><span class="kn">import</span> <span class="n">FastAPI</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">forze.application.execution</span><span class="w"> </span><span class="kn">import</span> <span class="n">build_runtime</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">forze_fastapi</span><span class="w"> </span><span class="kn">import</span> <span class="n">runtime_lifespan</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">forze_mcp</span><span class="w"> </span><span class="kn">import</span> <span class="n">build_mcp_server</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">create_app</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="n">FastAPI</span><span class="p">:</span>
+    <span class="c1"># Built before the lifespan exists, so the factory looks it up on each call.</span>
+    <span class="n">server</span> <span class="o">=</span> <span class="n">build_mcp_server</span><span class="p">(</span><span class="n">registry</span><span class="p">,</span> <span class="k">lambda</span><span class="p">:</span> <span class="n">lifespan</span><span class="o">.</span><span class="n">get_context</span><span class="p">(),</span> <span class="n">name</span><span class="o">=</span><span class="s2">"orders"</span><span class="p">)</span>
+    <span class="n">mcp_app</span> <span class="o">=</span> <span class="n">server</span><span class="o">.</span><span class="n">http_app</span><span class="p">(</span><span class="n">path</span><span class="o">=</span><span class="s2">"/"</span><span class="p">)</span>
+
+    <span class="n">lifespan</span> <span class="o">=</span> <span class="n">runtime_lifespan</span><span class="p">(</span><span class="n">build</span><span class="o">=</span><span class="k">lambda</span><span class="p">:</span> <span class="n">build_runtime</span><span class="p">(</span><span class="o">...</span><span class="p">),</span> <span class="n">nested</span><span class="o">=</span><span class="p">(</span><span class="n">mcp_app</span><span class="p">,))</span>
+    <span class="n">app</span> <span class="o">=</span> <span class="n">FastAPI</span><span class="p">(</span><span class="n">title</span><span class="o">=</span><span class="s2">"Orders API"</span><span class="p">,</span> <span class="n">lifespan</span><span class="o">=</span><span class="n">lifespan</span><span class="p">)</span>
+    <span class="n">app</span><span class="o">.</span><span class="n">mount</span><span class="p">(</span><span class="s2">"/mcp"</span><span class="p">,</span> <span class="n">mcp_app</span><span class="p">)</span>
+
+    <span class="k">return</span> <span class="n">app</span>
+</code></pre></div>
+<p>The startup checks run first, then the runtime is built and its scope opens. The nested
+lifespans are entered in order inside the scope, so they can use the runtime. On shutdown
+the runtime drains first, with its <code>drain_budget</code>. Then the nested lifespans exit in
+reverse, and then the runtime tears down. So the drain phases always run while the mounted
+apps are up. With a <a href="#several-workers-or-a-runtime-built-at-startup"><code>drain_budget</code></a> on the
+lifespan, a <code>SIGTERM</code> drains while the app still serves, and the shutdown finds the drain
+done. A lifetime that ends in an error or a cancellation skips the drain ahead of the
+exits, and the teardown drains after them.</p>
+<p>An entry in <code>nested</code> can also be a lifespan callable, which takes an app and returns an
+async context manager, as Starlette's <code>lifespan=</code> does. It is called with the outer app.</p>
+<p>If a nested lifespan raises on entry, the startup fails, and the lifespans already entered
+and the scope exit. If one raises on exit, the others still exit, the runtime still tears
+down, and the error is raised. State a nested lifespan yields is merged, a later key over
+an earlier one, and reaches <code>request.state</code> in every app.</p>
 <h2 id="bind-request-context">Bind request context<a class="headerlink" href="#bind-request-context" title="Permanent link">&para;</a></h2>
 <p>Two ASGI middlewares attach the per-request context, both given a factory that
 returns the current <code>ExecutionContext</code> — <code>runtime.get_context</code> is that factory
@@ -7685,7 +7743,7 @@ runs them. The surface, at a glance:</p>
 <tbody>
 <tr>
 <td><code>runtime_lifespan</code></td>
-<td>run the runtime's lifecycle from the app lifespan; build the runtime at startup; drain it on <code>SIGTERM</code> in every uvicorn worker</td>
+<td>run the runtime's lifecycle from the app lifespan; build the runtime at startup; drain it on <code>SIGTERM</code> in every uvicorn worker; run mounted apps' lifespans inside its scope</td>
 </tr>
 <tr>
 <td><code>serve_uvicorn</code></td>
