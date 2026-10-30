@@ -329,7 +329,8 @@ The rules:
   `where`, `skip_null` or `holds`. The spec never carries two, so there is never a second index
   to migrate.
 - Only the write domain model counts. A read-only spec implies nothing, because nothing writes
-  through it and its relation may be a view.
+  through it and its relation may be a view. Likewise, Postgres startup checks only declared
+  guarantees on a route bound in `ro_documents`: the implied ones bind the writer's table.
 - `spec.guarantees` lists both kinds, and every store reads it. `spec.declared_guarantees` holds
   only what you passed as `guarantees=`.
 - The counter numbers per tenant only when its own route is `tenant_aware`. Give the counter
