@@ -6,12 +6,19 @@ require_fastapi()
 
 # ....................... #
 
-from collections.abc import AsyncGenerator, Callable
-from contextlib import AbstractContextManager, asynccontextmanager, nullcontext
+from collections.abc import AsyncGenerator, Callable, Sequence
+from contextlib import (
+    AbstractAsyncContextManager,
+    AbstractContextManager,
+    AsyncExitStack,
+    asynccontextmanager,
+    nullcontext,
+)
 from datetime import timedelta
 from typing import Any, final
 
 from fastapi import FastAPI
+from starlette.applications import Starlette
 
 from forze.application.execution import ExecutionContext, ExecutionRuntime
 from forze.base.exceptions import exc
@@ -79,11 +86,13 @@ class RuntimeLifespan:
         *,
         drain_budget: timedelta | None,
         announce_delay: timedelta,
+        nested: Sequence[Starlette | Callable[[FastAPI], AbstractAsyncContextManager[Any]]] = (),
     ) -> None:
         self._source = source
         self._runtime = source if isinstance(source, ExecutionRuntime) else None
         self._drain_budget = drain_budget
         self._announce_delay = announce_delay
+        self._nested = tuple(nested)
         self._running = False
 
     # ....................... #
@@ -110,7 +119,7 @@ class RuntimeLifespan:
     # ....................... #
 
     @asynccontextmanager
-    async def __call__(self, app: FastAPI) -> AsyncGenerator[None]:
+    async def __call__(self, app: FastAPI) -> AsyncGenerator[Any]:
         if self._running:
             # One runtime per lifespan: a second app, or a nested entry, would build another
             # one with its own pools, or trip over the scope already open.
@@ -136,9 +145,30 @@ class RuntimeLifespan:
                 )
             )
 
+            # The signal handling spans the scope's startup and teardown, nested lifespans
+            # included; they run inside the scope, so they can use the runtime.
             with drain:
-                async with runtime.scope():
-                    yield
+                async with runtime.scope(), AsyncExitStack() as stack:
+                    state: dict[str, Any] = {}
+
+                    for nested in self._nested:
+                        # A mounted app's lifespan gets that app, as Starlette gives a top-level
+                        # app its own; checked first, since an app is callable too.
+                        entered = (
+                            nested.router.lifespan_context(nested)
+                            if isinstance(nested, Starlette)
+                            else nested(app)
+                        )
+                        state.update(await stack.enter_async_context(entered) or {})
+
+                    # ``None`` without state, as Starlette and FastAPI do: a server that does
+                    # not support lifespan state refuses any state yielded, even an empty one.
+                    yield state or None
+
+                    if self._nested:
+                        # Teardown drains only after the nested lifespans exit: drain now, so
+                        # the phases run with the mounted apps still up. Teardown's is a no-op.
+                        await runtime.drain(runtime.drain_budget)
 
         finally:
             self._running = False
@@ -156,6 +186,7 @@ def runtime_lifespan(
     build: Callable[[], ExecutionRuntime] | None = None,
     drain_budget: timedelta | None = None,
     announce_delay: timedelta = timedelta(0),
+    nested: Sequence[Starlette | Callable[[FastAPI], AbstractAsyncContextManager[Any]]] = (),
 ) -> RuntimeLifespan:
     """Return a lifespan that holds a runtime's scope open for the app.
 
@@ -195,11 +226,40 @@ def runtime_lifespan(
     on the app. Give it to the outermost app: Starlette never sends lifespan events to a
     mounted app, so on a mounted app neither the runtime nor the checks would ever start.
 
+    *nested* runs the lifespans of the apps mounted beneath it, which Starlette never runs —
+    a FastMCP HTTP app's session manager, say. Pass a mounted app, and its lifespan is
+    entered with that app, as Starlette enters a top-level app's, so state it sets on
+    ``app.state`` is what its routes read from ``request.app.state``. A bare lifespan
+    callable is called with the outer app instead. The server is built before the lifespan,
+    so its context factory looks the lifespan up when called::
+
+        def create_app() -> FastAPI:
+            server = build_mcp_server(registry, lambda: lifespan.get_context(), name="orders")
+            mcp_app = server.http_app(path="/")
+            lifespan = runtime_lifespan(build=build_my_runtime, nested=(mcp_app,))
+            app = FastAPI(lifespan=lifespan)
+            app.mount("/mcp", mcp_app)
+            ...
+
+    They are entered in order once the scope is open, so they can use the runtime. On shutdown the runtime drains first, with its ``drain_budget``; then they
+    exit in reverse; then the scope tears the runtime down. The drain phases thus run with
+    every mounted app up: a signal's drain runs them while the app serves, and the shutdown
+    finds them done; without one, or for a signal during startup, the shutdown runs them. A
+    lifetime that ends in an error or a cancellation skips that drain: they exit, and the
+    teardown drains. The signal handling spans the scope's startup and teardown, nested
+    lifespans included, so a signal during either is handled as under ``serve_uvicorn``. One
+    that raises on entry fails the startup: those already entered exit, then the scope. The
+    state they yield is merged, a later key over an earlier one, and the lifespan yields
+    it; without any, it yields ``None``.
+
     :param runtime: Runtime to run for the app's lifetime.
     :param build: Builds the runtime at startup, instead of *runtime*.
     :param drain_budget: Shared by the drain phases on the first signal; ``None`` (default)
         leaves the signals to the server.
     :param announce_delay: How long readiness fails before the first drain phase starts.
+    :param nested: Mounted apps whose lifespans run inside the runtime's scope, or
+        lifespans themselves, each ``app -> async context manager`` as Starlette's
+        ``lifespan=`` takes, called with the outer app.
     :returns: Lifespan callable for ``FastAPI(lifespan=...)``.
     :raises CoreException: ``configuration`` — not exactly one of *runtime* and *build*.
     """
@@ -215,4 +275,6 @@ def runtime_lifespan(
     else:
         raise exc.configuration("runtime_lifespan takes a runtime or build=, not both or neither")
 
-    return RuntimeLifespan(source, drain_budget=drain_budget, announce_delay=announce_delay)
+    return RuntimeLifespan(
+        source, drain_budget=drain_budget, announce_delay=announce_delay, nested=nested
+    )

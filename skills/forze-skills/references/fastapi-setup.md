@@ -50,6 +50,8 @@ def create_app() -> FastAPI:
 
 Serve it with `uvicorn pkg.app:create_app --factory --workers N`. A second entry while the lifespan runs is refused (`configuration`), never a second runtime.
 
+A mounted app that needs its own lifespan (an MCP HTTP app's session manager: `server.http_app()`) passes the app: `runtime_lifespan(..., nested=(mcp_app,))` enters its lifespan with that app, so `app.state` it sets is what its routes read; a bare lifespan callable there gets the outer app. Nested lifespans are entered in order inside the runtime's scope. On shutdown the runtime drains first, then they exit in reverse, then it tears down, so drain phases (or a `SIGTERM` drain) run while they are entered. Their yielded state is merged into `request.state`.
+
 ## Middleware, errors, and docs
 
 ```python
@@ -141,7 +143,7 @@ app = FastAPI(lifespan=lifespan)
 
 - **Creating `ExecutionContext` per request by hand** — use `runtime.get_context()` via `ctx_dep`.
 - **Calling `runtime.get_context()` outside lifespan scope** — it raises at runtime.
-- **A lifespan on a mounted app** — Starlette never runs it, so neither the runtime nor the startup checks start. Give it to the outermost app; `run_startup_checks` walks the mounted apps from there.
+- **A lifespan on a mounted app** — Starlette never runs it, so neither the runtime nor the startup checks start. Give it to the outermost app; `run_startup_checks` walks the mounted apps from there, and `nested=` runs a mounted app's own lifespan.
 - **Catching `CoreException` manually in routes** — register the built-in exception handlers.
 - Passing unfrozen registry to FastAPI attach — call `.freeze()` after plan binding.
 - **Missing `ctx_dep` on FastAPI routers** — each request needs a context from the active scope.

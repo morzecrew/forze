@@ -164,6 +164,30 @@ write-capable agent needs `include_writes=True` **and** write grants on every pr
 the chain — the user, the key's agent and the operator's agent. OAuth-based hosts (that can't paste a key) are a later, external concern —
 forze stays the Resource Server and never runs an authorization server.
 
+## Mount it on a FastAPI app
+
+To serve MCP from the same process as an HTTP API, mount the server's HTTP app on the
+FastAPI app. Starlette never runs a mounted app's lifespan, so the FastAPI app's
+`runtime_lifespan` runs the session manager's lifespan inside the runtime's scope:
+
+```python
+from fastapi import FastAPI
+from forze.application.execution import build_runtime
+from forze_fastapi import runtime_lifespan
+from forze_mcp import build_mcp_server
+
+server = build_mcp_server(registry, lambda: lifespan.get_context(), name="orders")
+mcp_app = server.http_app(path="/")
+
+lifespan = runtime_lifespan(build=lambda: build_runtime(...), nested=(mcp_app,))
+app = FastAPI(lifespan=lifespan)
+app.mount("/mcp", mcp_app)
+```
+
+The FastAPI lifespan holds the scope, so do not also give the server
+`forze_mcp.runtime_lifespan`. The order of startup, shutdown and the `SIGTERM` drain is in
+[FastAPI → Run a mounted app's lifespan](fastapi.md#run-a-mounted-apps-lifespan).
+
 ## What it provides
 
 | Surface | What it does |
