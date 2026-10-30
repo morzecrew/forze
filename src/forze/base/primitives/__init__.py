@@ -26,6 +26,7 @@ from .cpu import (
     checkpoint,
     cpu_executor_bound,
     current_cpu_executor,
+    hold_cpu_executor,
     run_cpu,
     run_cpu_map,
 )
@@ -128,6 +129,7 @@ __all__ = [
     "current_cpu_executor",
     "cpu_executor_bound",
     "bind_cpu_executor",
+    "hold_cpu_executor",
     "TimeSource",
     "SystemTimeSource",
     "FrozenTimeSource",

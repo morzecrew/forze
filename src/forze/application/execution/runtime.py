@@ -18,8 +18,8 @@ from forze.application.contracts.inventory import (
 from forze.application.contracts.querying import (
     CursorTokenCipher,
     CursorTokenSigner,
-    bind_cursor_cipher,
-    bind_cursor_signer,
+    hold_cursor_cipher,
+    hold_cursor_signer,
 )
 from forze.base.exceptions import CoreException, DenialPosture, bind_denial_posture, exc
 from forze.base.primitives import (
@@ -27,8 +27,8 @@ from forze.base.primitives import (
     OnceCell,
     RuntimeVar,
     ThreadPoolCpuExecutor,
-    bind_cpu_executor,
     cpu_executor_bound,
+    hold_cpu_executor,
 )
 
 from .context import ExecutionContext
@@ -205,6 +205,11 @@ class ExecutionRuntime:
     runtime then binds but never closes it (you own its lifecycle). An executor already
     bound around the scope (e.g. a simulation's) is always respected, never overridden;
     with no runtime scope active at all, ``run_cpu`` runs inline.
+
+    The scope also holds the pool it owns, or the injected executor, process-wide while open,
+    so code running outside the scope's task — a request an ASGI server runs while the lifespan
+    holds the scope — offloads to it too; with several scopes open, to the oldest one's. An
+    executor it deferred to stays in the scope's own task.
     """
 
     cpu_workers: int | None = attrs.field(default=None, validator=_positive_cpu_workers)
@@ -220,15 +225,21 @@ class ExecutionRuntime:
     (context-scoped, auto-restored on scope exit — so two runtimes in one process sign with
     their own signer), so every keyset cursor token is signed and verification rejects any
     unsigned or tampered token — opt-in, hard cutover. ``None`` (default) leaves tokens
-    unsigned. See :func:`~forze.application.contracts.querying.bind_cursor_signer`."""
+    unsigned, unless a signer is bound around the scope.
+
+    The scope also holds this signer (``None``: "unsigned") process-wide, for code outside the
+    scope's task — a request an ASGI server runs while the lifespan holds the scope; a signer
+    bound around the scope is never held. There, while open scopes hold unequal signers (or one
+    holds none), minting and verifying are refused rather than guessed. See
+    :func:`~forze.application.contracts.querying.hold_cursor_signer`."""
 
     cursor_token_cipher: CursorTokenCipher | None = None
     """Optional AEAD cipher for keyset cursor tokens. When set, the runtime binds it per scope,
     so every keyset cursor token is encrypted (payload hidden, tag-authenticated) and
     verification rejects any unencrypted or tampered token — opt-in, hard cutover. A cipher
     **supersedes** :attr:`cursor_token_signer` (AEAD already authenticates). ``None`` (default)
-    leaves confidentiality off. See
-    :func:`~forze.application.contracts.querying.configure_cursor_cipher`."""
+    leaves confidentiality off. Held process-wide like :attr:`cursor_token_signer`. See
+    :func:`~forze.application.contracts.querying.hold_cursor_cipher`."""
 
     after_commit_error_handler: AfterCommitErrorHandler | None = None
     """Optional out-of-band handler notified when a non-fatal post-commit callback fails
@@ -633,42 +644,27 @@ class ExecutionRuntime:
 
         logger.info("Entering execution runtime scope")
 
-        # Bind a CPU-offload executor for startup, body, and shutdown, by priority:
-        #   1. an injected executor     -> bound, caller-owned (never closed here);
+        # A CPU-offload executor for startup, body, and shutdown, by priority:
+        #   1. an injected executor     -> held, caller-owned (never closed here);
         #   2. one already bound upstack -> deferred to, never overridden (e.g. a
-        #      simulation's inline executor — overriding it would break determinism);
+        #      simulation's inline executor — overriding it would break determinism),
+        #      and never held: an inherited binding stays in this task;
         #   3. nothing bound            -> a scope-lifetime pool this runtime owns,
-        #      created now and closed on exit (no shared process-global pool).
+        #      held, created now and closed on exit (no shared process-global pool).
         owned_pool: ThreadPoolCpuExecutor | None = None
-        bind: AbstractContextManager[None]
+        cpu_hold: AbstractContextManager[None]
 
         if self.cpu_executor is not None:
-            bind = bind_cpu_executor(self.cpu_executor)
+            cpu_hold = hold_cpu_executor(self.cpu_executor)
         elif cpu_executor_bound():
-            bind = nullcontext()
+            cpu_hold = nullcontext()
         else:
             owned_pool = (
                 ThreadPoolCpuExecutor(max_workers=self.cpu_workers)
                 if self.cpu_workers is not None
                 else ThreadPoolCpuExecutor()
             )
-            bind = bind_cpu_executor(owned_pool)
-
-        # Opt-in cursor-token signing, scoped to this runtime's scope (context-local, so two
-        # runtimes in one process each mint/verify with their own signer). ``None`` = unsigned.
-        sign_bind: AbstractContextManager[None] = (
-            bind_cursor_signer(self.cursor_token_signer)
-            if self.cursor_token_signer is not None
-            else nullcontext()
-        )
-
-        # Opt-in cursor-token encryption (confidentiality), same scoping. A cipher supersedes
-        # the signer — AEAD authenticates too — so both binding is harmless. ``None`` = plaintext.
-        cipher_bind: AbstractContextManager[None] = (
-            bind_cursor_cipher(self.cursor_token_cipher)
-            if self.cursor_token_cipher is not None
-            else nullcontext()
-        )
+            cpu_hold = hold_cpu_executor(owned_pool)
 
         posture_bind: AbstractContextManager[None] = (
             bind_denial_posture(self.denial_posture)
@@ -677,7 +673,18 @@ class ExecutionRuntime:
         )
 
         try:
-            with bind, sign_bind, cipher_bind, posture_bind:
+            # Bound in this task's context and held process-wide: an ASGI server runs the
+            # lifespan holding this scope in a task of its own and creates every request task
+            # from its own context, which the binding alone never reaches. Only what this
+            # runtime was given is held, never a binding inherited from around the scope.
+            # Opt-in cursor signing and encryption (a cipher supersedes the signer) fail
+            # closed there when two open scopes disagree.
+            with (
+                cpu_hold,
+                hold_cursor_signer(self.cursor_token_signer),
+                hold_cursor_cipher(self.cursor_token_cipher),
+                posture_bind,
+            ):
                 # Inside the binds, so one that refuses (a conflicting denial posture) leaves no
                 # context behind for the next scope to trip over.
                 self.create_context()

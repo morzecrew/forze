@@ -6,6 +6,7 @@ import asyncio
 import contextvars
 import threading
 import time
+from typing import Any
 
 import pytest
 
@@ -111,6 +112,123 @@ class TestBindCpuExecutor:
             assert cpu_executor_bound() is True
 
         assert cpu_executor_bound() is False
+
+
+class TestThreadPoolCpuExecutor:
+    async def test_first_use_from_two_threads_creates_one_pool(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from forze.base.primitives import cpu
+
+        real = cpu.ThreadPoolExecutor
+        created: list[object] = []
+
+        def slow_pool(**kwargs: Any) -> Any:
+            time.sleep(0.05)  # widen the window between the check and the assignment
+            pool = real(**kwargs)
+            created.append(pool)
+            return pool
+
+        monkeypatch.setattr(cpu, "ThreadPoolExecutor", slow_pool)
+        executor = ThreadPoolCpuExecutor(max_workers=1)
+        barrier = threading.Barrier(2)
+        seen: list[object] = []
+
+        def first_use() -> None:
+            barrier.wait()
+            seen.append(executor._require_pool())  # pyright: ignore[reportPrivateUsage]
+
+        threads = [threading.Thread(target=first_use) for _ in range(2)]
+
+        for thread in threads:
+            thread.start()
+
+        for thread in threads:
+            thread.join(timeout=5)
+
+        try:
+            assert len(created) == 1
+            assert seen[0] is seen[1]
+
+        finally:
+            executor.close()
+
+        for pool in created:
+            pool.shutdown()  # type: ignore[attr-defined]
+
+    async def test_a_closed_executor_refuses_rather_than_building_a_new_pool(self) -> None:
+        executor = ThreadPoolCpuExecutor(max_workers=1)
+        assert await executor.run(lambda: 6 * 7) == 42
+
+        executor.close()
+
+        with pytest.raises(CoreException) as caught:
+            await executor.run(lambda: 1)
+
+        assert caught.value.kind is ExceptionKind.UNAVAILABLE
+        assert caught.value.code == "cpu_executor_closed"
+        assert executor._pool is None  # pyright: ignore[reportPrivateUsage]
+
+    async def test_a_submit_racing_close_is_refused_as_closed(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        executor = ThreadPoolCpuExecutor(max_workers=1)
+        pool = executor._require_pool()  # pyright: ignore[reportPrivateUsage]
+        executor.close()
+        # The pool handed out just before the close, as a concurrent first use would see it.
+        monkeypatch.setattr(ThreadPoolCpuExecutor, "_require_pool", lambda self: pool)
+
+        with pytest.raises(CoreException) as caught:
+            await executor.run(lambda: 1)
+
+        assert caught.value.kind is ExceptionKind.UNAVAILABLE
+        assert caught.value.code == "cpu_executor_closed"
+
+    async def test_a_submit_error_from_an_open_executor_is_not_relabelled(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        executor = ThreadPoolCpuExecutor(max_workers=1)
+        loop = asyncio.get_running_loop()
+
+        def _refuse(*_: object) -> None:
+            raise RuntimeError("cannot schedule new futures after interpreter shutdown")
+
+        monkeypatch.setattr(loop, "run_in_executor", _refuse)
+
+        try:
+            with pytest.raises(RuntimeError, match="interpreter shutdown"):
+                await executor.run(lambda: 1)
+
+        finally:
+            executor.close()
+
+    async def test_a_first_use_that_waited_on_the_lock_takes_the_pool_built_meanwhile(self) -> None:
+        from forze.base.primitives import cpu
+
+        executor = ThreadPoolCpuExecutor(max_workers=1)
+        built = cpu.ThreadPoolExecutor(max_workers=1)
+
+        class _BuiltMeanwhile:
+            # Another thread builds the pool while this one waits for the lock.
+            def __enter__(self) -> None:
+                executor._pool = built  # pyright: ignore[reportPrivateUsage]
+
+            def __exit__(self, *_: object) -> None:
+                return None
+
+        executor._lock = _BuiltMeanwhile()  # type: ignore[assignment]  # pyright: ignore[reportPrivateUsage, reportAttributeAccessIssue]
+
+        try:
+            assert executor._require_pool() is built  # pyright: ignore[reportPrivateUsage]
+
+        finally:
+            built.shutdown()
+
+    async def test_closing_an_unused_executor_is_a_no_op(self) -> None:
+        executor = ThreadPoolCpuExecutor(max_workers=1)
+        executor.close()
+
+        assert executor._pool is None  # pyright: ignore[reportPrivateUsage]
 
 
 class TestDeadline:

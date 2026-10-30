@@ -63,6 +63,29 @@ runtime — a script, a custom host — `configure_cursor_signer` /
 `configure_logging`), and `bind_cursor_signer` / `bind_cursor_cipher` are the
 scoped, auto-restoring variants.
 
+The scope also holds the signer and cipher set on its runtime for the whole
+process while it is open, so they apply to requests: an ASGI server runs the
+lifespan holding the scope in a task of its own and starts every request from
+somewhere else. Code that binds no signer of its own uses the one the open
+scopes hold. A key bound *around* a scope stays in that scope's task; it is
+never held.
+
+Open scopes agree when their keys are equal: two runtimes built with the same
+secret share one protection. When open scopes hold different keys, or one
+holds a key and another none, code that binds none cannot tell which runtime
+it serves: minting and verifying there fail with `cursor_protection_ambiguous`
+rather than pick one. That is a `configuration` error, a server
+misconfiguration answered with a 500, not a client error. Give the runtimes
+the same key, or bind one around that code with `bind_cursor_signer` /
+`bind_cursor_cipher`. A custom host holding its own scope does the same with
+`hold_cursor_signer` / `hold_cursor_cipher`.
+
+`configure_cursor_signer(None)` / `configure_cursor_cipher(None)` clear the
+current context's own key, so the one the open scopes hold applies again.
+`bind_cursor_signer(None)` / `bind_cursor_cipher(None)` turn protection off
+for the block, whatever the scopes hold — for tests, or for cursors you
+deliberately leave public.
+
 The everywhere-at-once semantics is the point: because every mint and verify
 falls back to the one bound signer, there is no way to end up minting signed
 tokens on one path and accepting unsigned ones on another from a missed call

@@ -10,6 +10,7 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from datetime import UTC, date, datetime
 from decimal import Decimal, InvalidOperation
+from enum import Enum, auto
 from typing import Any, cast
 
 import attrs
@@ -17,6 +18,7 @@ import attrs
 from forze.base.codecs import B64UrlJsonCodec
 from forze.base.crypto import Aead, AesGcmAead
 from forze.base.exceptions import CoreException, exc
+from forze.base.primitives.runtime import ScopeFallback
 
 from ..internal.canonical import canonical_sort_key
 
@@ -325,16 +327,57 @@ def build_cursor_binding(
 # ....................... #
 
 
-_cursor_signer_var: ContextVar[CursorTokenSigner | None] = ContextVar(
-    "forze_cursor_token_signer", default=None
+class _Unbound(Enum):
+    """Nothing bound in this context: the signer or cipher the runtime scopes hold applies."""
+
+    UNBOUND = auto()
+
+
+def _resolve[T](value: T | _Unbound | None, held: tuple[T | None, ...], what: str) -> T | None:
+    """The context's own binding, else the one value every open runtime scope holds.
+
+    Scopes agree when their values are equal: equal keys give the same protection, so two
+    runtimes built with the same secret share it. When they disagree, a context binding nothing
+    cannot tell which runtime it serves, and picking one would mint and accept tokens under
+    another runtime's key: it fails closed with ``configuration``, a server misconfiguration
+    (rendered as a 500), not a client error.
+    """
+
+    if not isinstance(value, _Unbound):
+        return value
+
+    if not held:
+        return None
+
+    if any(other != held[0] for other in held[1:]):
+        raise exc.configuration(
+            f"Runtime scopes holding different cursor-token {what}s are open in this process "
+            f"and this context binds none; bind one with bind_cursor_{what}, or give the "
+            "runtimes the same one.",
+            code="cursor_protection_ambiguous",
+        )
+
+    return held[0]
+
+
+# ....................... #
+
+
+_cursor_signer_var: ContextVar[CursorTokenSigner | _Unbound | None] = ContextVar(
+    "forze_cursor_token_signer", default=_Unbound.UNBOUND
 )
-"""The active cursor-token signer for the current context (``None`` = unsigned, the default).
+"""The cursor-token signer bound in the current context (``None`` binds "unsigned").
 
 Context-scoped so two :class:`ExecutionRuntime` s in one process each mint/verify with their
 own signer instead of sharing one — bind it with :func:`bind_cursor_signer` (the runtime does
 this per scope) or :func:`configure_cursor_signer`. Every keyset mint/verify falls back to it
 when no explicit ``signer`` is passed, so enabling it signs and requires signatures everywhere
-at once — no per-backend wiring, no mint-signed/verify-unsigned split from a missed call site."""
+at once — no per-backend wiring, no mint-signed/verify-unsigned split from a missed call site.
+A context binding nothing reads :data:`_HELD_SIGNERS` instead."""
+
+_HELD_SIGNERS: ScopeFallback[CursorTokenSigner | None] = ScopeFallback()
+"""The signers the open runtime scopes hold (``None`` for "unsigned"), for a context binding
+none — an ASGI request, which the server creates outside the lifespan's task."""
 
 
 def configure_cursor_signer(
@@ -346,12 +389,13 @@ def configure_cursor_signer(
     rejects any unsigned or tampered token (a hard cutover — cursors minted before it 422
     once and the client restarts pagination). Call at startup, like ``configure_logging``; for
     a scoped binding that auto-restores (and isolates concurrent runtimes) use
-    :func:`bind_cursor_signer`.
+    :func:`bind_cursor_signer`. ``None`` clears the context's signer, so the one the runtime
+    scopes hold applies again.
     """
 
     previous = _cursor_signer_var.get()
-    _cursor_signer_var.set(signer)
-    return previous
+    _cursor_signer_var.set(_Unbound.UNBOUND if signer is None else signer)
+    return None if isinstance(previous, _Unbound) else previous
 
 
 # ....................... #
@@ -365,7 +409,9 @@ def bind_cursor_signer(
 
     Context-scoped (a :class:`~contextvars.ContextVar`), so an :class:`ExecutionRuntime` binds
     its own signer per :meth:`~ExecutionRuntime.scope`: two runtimes in one process verify and
-    mint with independent signers rather than clobbering a shared global.
+    mint with independent signers rather than clobbering a shared global. ``None`` turns
+    signing off for the block, whatever the runtime scopes hold — for tests, or for cursors
+    deliberately left public.
     """
 
     token = _cursor_signer_var.set(signer)
@@ -377,30 +423,60 @@ def bind_cursor_signer(
         _cursor_signer_var.reset(token)
 
 
-def current_cursor_signer() -> CursorTokenSigner | None:
-    """The cursor-token signer active in the current context, or ``None`` when unsigned."""
+@contextmanager
+def hold_cursor_signer(signer: CursorTokenSigner | None) -> Iterator[None]:
+    """Bind *signer* for the block and hold it process-wide — an execution runtime's scope.
 
-    return _cursor_signer_var.get()
+    Held, it is the signer of a context binding none, such as a request task an ASGI server
+    creates outside the lifespan's task (see :func:`current_cursor_signer`). ``None`` holds
+    "unsigned" — unless the surrounding context binds a signer: the block then keeps that one
+    and holds nothing, so an inherited signer never reaches another context. Released on exit.
+    """
+
+    if signer is None and not isinstance(_cursor_signer_var.get(), _Unbound):
+        yield
+        return
+
+    with bind_cursor_signer(signer), _HELD_SIGNERS.hold(signer):
+        yield
+
+
+def current_cursor_signer() -> CursorTokenSigner | None:
+    """The cursor-token signer active in the current context, or ``None`` when unsigned.
+
+    One bound in this context wins; a context binding none gets the signer the open runtime
+    scopes hold.
+
+    :raises CoreException: ``configuration`` (``cursor_protection_ambiguous``) — this context
+        binds none, and the open runtime scopes hold unequal signers.
+    """
+
+    return _resolve(_cursor_signer_var.get(), _HELD_SIGNERS.held(), "signer")
 
 
 def _effective_signer(signer: CursorTokenSigner | None) -> CursorTokenSigner | None:
     """An explicit *signer* wins; otherwise fall back to the context's active signer."""
 
-    return signer if signer is not None else _cursor_signer_var.get()
+    return signer if signer is not None else current_cursor_signer()
 
 
 # ....................... #
 
 
-_cursor_cipher_var: ContextVar[CursorTokenCipher | None] = ContextVar(
-    "forze_cursor_token_cipher", default=None
+_cursor_cipher_var: ContextVar[CursorTokenCipher | _Unbound | None] = ContextVar(
+    "forze_cursor_token_cipher", default=_Unbound.UNBOUND
 )
-"""The active cursor-token cipher for the current context (``None`` = not encrypted).
+"""The cursor-token cipher bound in the current context (``None`` binds "not encrypted").
 
 Context-scoped like :data:`_cursor_signer_var`; an :class:`ExecutionRuntime` binds its own per
 :meth:`~ExecutionRuntime.scope`. A cipher **supersedes** a signer — AEAD gives integrity too —
 so with one bound every mint encrypts and every verify requires (and decrypts) an encrypted
-token, everywhere at once, with no per-backend wiring."""
+token, everywhere at once, with no per-backend wiring. A context binding nothing reads
+:data:`_HELD_CIPHERS` instead."""
+
+_HELD_CIPHERS: ScopeFallback[CursorTokenCipher | None] = ScopeFallback()
+"""The ciphers the open runtime scopes hold (``None`` for "not encrypted"), like
+:data:`_HELD_SIGNERS`."""
 
 
 def configure_cursor_cipher(
@@ -411,11 +487,12 @@ def configure_cursor_cipher(
     Opt-in: with a cipher set, every keyset cursor token is AEAD-encrypted (payload hidden,
     tag-authenticated) and verification rejects any unencrypted or tampered token — a hard
     cutover, like :func:`configure_cursor_signer`. A cipher takes precedence over any signer.
+    ``None`` clears the context's cipher, so the one the runtime scopes hold applies again.
     """
 
     previous = _cursor_cipher_var.get()
-    _cursor_cipher_var.set(cipher)
-    return previous
+    _cursor_cipher_var.set(_Unbound.UNBOUND if cipher is None else cipher)
+    return None if isinstance(previous, _Unbound) else previous
 
 
 @contextmanager
@@ -425,7 +502,9 @@ def bind_cursor_cipher(
     """Bind *cipher* as the cursor-token cipher for the duration of the block, then restore.
 
     Context-scoped (a :class:`~contextvars.ContextVar`), so two runtimes in one process encrypt
-    and decrypt with independent ciphers rather than clobbering a shared global.
+    and decrypt with independent ciphers rather than clobbering a shared global. ``None`` turns
+    encryption off for the block, whatever the runtime scopes hold — for tests, or for cursors
+    deliberately left readable.
     """
 
     token = _cursor_cipher_var.set(cipher)
@@ -437,27 +516,46 @@ def bind_cursor_cipher(
         _cursor_cipher_var.reset(token)
 
 
-def current_cursor_cipher() -> CursorTokenCipher | None:
-    """The cursor-token cipher active in the current context, or ``None`` when not encrypting."""
+@contextmanager
+def hold_cursor_cipher(cipher: CursorTokenCipher | None) -> Iterator[None]:
+    """Bind *cipher* for the block and hold it process-wide, like :func:`hold_cursor_signer`."""
 
-    return _cursor_cipher_var.get()
+    if cipher is None and not isinstance(_cursor_cipher_var.get(), _Unbound):
+        yield
+        return
+
+    with bind_cursor_cipher(cipher), _HELD_CIPHERS.hold(cipher):
+        yield
+
+
+def current_cursor_cipher() -> CursorTokenCipher | None:
+    """The cursor-token cipher active in the current context, or ``None`` when not encrypting.
+
+    One bound in this context wins; a context binding none gets the cipher the open runtime
+    scopes hold.
+
+    :raises CoreException: ``configuration`` (``cursor_protection_ambiguous``) — this context
+        binds none, and the open runtime scopes hold unequal ciphers.
+    """
+
+    return _resolve(_cursor_cipher_var.get(), _HELD_CIPHERS.held(), "cipher")
 
 
 def _effective_cipher(cipher: CursorTokenCipher | None) -> CursorTokenCipher | None:
     """An explicit *cipher* wins; otherwise fall back to the context's active cipher."""
 
-    return cipher if cipher is not None else _cursor_cipher_var.get()
+    return cipher if cipher is not None else current_cursor_cipher()
 
 
 def cursor_protection_active() -> bool:
-    """Whether cursor tokens are protected in this context — a signer **or** cipher is bound.
+    """Whether cursor tokens are protected in this context — a signer **or** cipher is active.
 
     Gates the (otherwise wasted) work of building a :class:`CursorBinding` at a mint/verify
     call site: the binding is embedded and checked only under signing or encryption, so with
-    neither bound there is nothing to bind to and the filter need not be fingerprinted.
+    neither active there is nothing to bind to and the filter need not be fingerprinted.
     """
 
-    return _cursor_signer_var.get() is not None or _cursor_cipher_var.get() is not None
+    return current_cursor_cipher() is not None or current_cursor_signer() is not None
 
 
 # ....................... #
@@ -792,8 +890,10 @@ def encode_keyset_v1(
         "n": list(null_order),
         "x": [_jsonify_value(x) for x in values],
     }
-    signer = _effective_signer(signer)
+    # A cipher supersedes a signer, so the signer is resolved only without one: open scopes
+    # agreeing on the cipher may hold different signers.
     cipher = _effective_cipher(cipher)
+    signer = None if cipher is not None else _effective_signer(signer)
 
     # The binding digest is embedded (and authenticated) only under integrity — a signer or a
     # cipher. Unprotected, a client could forge it, so it would be integrity theater; with
@@ -857,8 +957,10 @@ def decode_keyset_v1(
     rejected. The digest is authenticated, so this check only runs under a signer or cipher.
     """
 
-    signer = _effective_signer(signer)
+    # A cipher supersedes a signer, so the signer is resolved only without one: open scopes
+    # agreeing on the cipher may hold different signers.
     cipher = _effective_cipher(cipher)
+    signer = None if cipher is not None else _effective_signer(signer)
 
     if cipher is not None:
         # Hard cutover: with a cipher configured, only an encrypted token is acceptable.

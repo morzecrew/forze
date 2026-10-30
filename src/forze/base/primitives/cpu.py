@@ -5,8 +5,9 @@ Run a blocking or CPU-bound callable off the event loop via the **active**
 :class:`EntropySource`:
 
 - an :class:`ExecutionRuntime` scope binds a bounded :class:`ThreadPoolCpuExecutor`
-  it owns and closes on exit (production), unless one is already bound or injected;
-- with nothing bound (no runtime, no explicit bind) the work runs inline via
+  it owns and closes on exit (production), unless one is already bound or injected,
+  and holds it process-wide for contexts that bind none (an ASGI request's);
+- with nothing bound or held (no runtime, no explicit bind) the work runs inline via
   :class:`InlineCpuExecutor` — no hidden process-global pool is ever created;
 - Deterministic Simulation Testing binds an inline executor so the work stays
   deterministic and never trips ``RealIOForbidden`` (DST swaps it in itself).
@@ -41,6 +42,7 @@ import attrs
 from forze.base.exceptions import exc
 
 from .deadline import clear_deadline, remaining_time
+from .runtime import ScopeFallback
 
 # ----------------------- #
 
@@ -130,36 +132,75 @@ class ThreadPoolCpuExecutor:
     """Offload to a bounded, dedicated thread pool (the production default).
 
     The pool is created lazily on first use (so importing this module spawns no
-    threads) and lives for the process, like the Argon2 hashing pool. Size it
-    via :attr:`max_workers`; close it on shutdown via :meth:`close`.
+    threads), once even when first used from several threads, and lives for the
+    process, like the Argon2 hashing pool. Size it via :attr:`max_workers`; close
+    it on shutdown via :meth:`close`, which is final.
     """
 
     max_workers: int = _DEFAULT_CPU_WORKERS
     thread_name_prefix: str = "forze-cpu"
     _pool: ThreadPoolExecutor | None = attrs.field(default=None, init=False)
+    _lock: threading.Lock = attrs.field(factory=threading.Lock, init=False, eq=False, repr=False)
+    _closed: bool = attrs.field(default=False, init=False, eq=False, repr=False)
 
     def _require_pool(self) -> ThreadPoolExecutor:
-        # Lazy and unguarded: callers sit on one event loop and there is no await
-        # between the check and the assignment (mirrors PasswordService).
-        if self._pool is None:
-            self._pool = ThreadPoolExecutor(
-                max_workers=self.max_workers,
-                thread_name_prefix=self.thread_name_prefix,
-            )
+        # Double-checked under a lock: a runtime scope holds its pool process-wide, so event
+        # loops on other threads can reach the first use too.
+        pool = self._pool
 
-        return self._pool
+        if pool is None:
+            with self._lock:
+                if self._closed:
+                    # Refused, as the drain gate refuses new work: inline would block the loop
+                    # unseen, and a new pool would outlive its runtime with nothing to close it.
+                    raise exc.unavailable(
+                        "CPU executor is closed; its runtime scope has exited.",
+                        code="cpu_executor_closed",
+                    )
+
+                pool = self._pool
+
+                if pool is None:
+                    pool = self._pool = ThreadPoolExecutor(
+                        max_workers=self.max_workers,
+                        thread_name_prefix=self.thread_name_prefix,
+                    )
+
+        return pool
 
     async def run[T](self, fn: Callable[[], T], *, label: str | None = None) -> T:
         loop = asyncio.get_running_loop()
+        pool = self._require_pool()
 
-        return await loop.run_in_executor(self._require_pool(), fn)
+        try:
+            future = loop.run_in_executor(pool, fn)
+
+        except RuntimeError:
+            # A close that ran between ``_require_pool`` and the submit shut the pool down.
+            if self._closed:
+                raise exc.unavailable(
+                    "CPU executor is closed; its runtime scope has exited.",
+                    code="cpu_executor_closed",
+                ) from None
+
+            raise
+
+        return await future
 
     def close(self) -> None:
-        """Shut the pool down, cancelling work that has not started."""
+        """Shut the pool down, cancelling work that has not started.
 
-        if self._pool is not None:
-            self._pool.shutdown(cancel_futures=True)
-            self._pool = None
+        Final: a later offload is refused with a retryable ``unavailable``
+        (``cpu_executor_closed``) instead of building a pool nothing would close.
+        """
+
+        with self._lock:
+            self._closed = True
+            pool, self._pool = self._pool, None
+
+        # Outside the lock: shutdown waits for running work, which must not stall a first use.
+        if pool is not None:
+            pool.shutdown(cancel_futures=True)
 
 
 # ....................... #
@@ -177,7 +218,7 @@ class InlineCpuExecutor:
 
 # ....................... #
 
-# The fallback when nothing is bound (no runtime scope, no explicit bind): run inline.
+# The fallback when nothing is bound or held (no runtime scope, no explicit bind): run inline.
 # It is stateless, immutable, and holds no resources, so there is no hidden process-global
 # thread pool created at import — a real offload comes from a runtime scope (which owns a
 # scope-lifetime ThreadPoolCpuExecutor) or an explicit bind_cpu_executor.
@@ -188,15 +229,28 @@ _CPU_EXECUTOR: ContextVar[CpuExecutor | None] = ContextVar(
     default=None,
 )
 
+_HELD_EXECUTORS: ScopeFallback[CpuExecutor] = ScopeFallback()
+"""The executors open runtime scopes hold, for a context that binds none (an ASGI request)."""
+
 # ....................... #
 
 
 def current_cpu_executor() -> CpuExecutor:
-    """Return the CPU executor active in the current context (the inline fallback if none)."""
+    """Return the CPU executor active in the current context.
+
+    One bound in this context wins. Otherwise the executor of the oldest runtime scope open in
+    the process — a request an ASGI server runs outside the lifespan's task still offloads to
+    the runtime's pool — and with no scope open, the inline fallback.
+    """
 
     bound = _CPU_EXECUTOR.get()
 
-    return bound if bound is not None else _FALLBACK_EXECUTOR
+    if bound is not None:
+        return bound
+
+    held = _HELD_EXECUTORS.held()
+
+    return held[0] if held else _FALLBACK_EXECUTOR
 
 
 # ....................... #
@@ -226,6 +280,22 @@ def bind_cpu_executor(executor: CpuExecutor) -> Generator[None]:
 
     finally:
         _CPU_EXECUTOR.reset(token)
+
+
+# ....................... #
+
+
+@contextmanager
+def hold_cpu_executor(executor: CpuExecutor) -> Generator[None]:
+    """Bind *executor* for the block and hold it process-wide — an execution runtime's scope.
+
+    Held, it is what :func:`current_cpu_executor` returns in a context that binds none, such as
+    a request task an ASGI server creates outside the lifespan's task; with several scopes open,
+    the oldest one's. Released on exit.
+    """
+
+    with bind_cpu_executor(executor), _HELD_EXECUTORS.hold(executor):
+        yield
 
 
 # ----------------------- #

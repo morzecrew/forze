@@ -71,6 +71,12 @@ async with runtime.scope():
 If a startup step fails, the steps that already ran are shut down in reverse
 before the error propagates — no half-open pools left behind.
 
+What the scope sets up reaches code it never started, such as the requests an ASGI
+server runs while its lifespan holds the scope: the context, the CPU pool `run_cpu`
+uses ([Offload heavy CPU work](../recipes/offload-cpu-work.md#sizing-the-pool)), and
+the cursor signer and cipher
+([Cursor tokens](../identity-tenancy-enc/cursor-tokens.md#turning-it-on)).
+
 ## Transactions
 
 Multi-step writes that must commit together run in a **transaction scope**, keyed

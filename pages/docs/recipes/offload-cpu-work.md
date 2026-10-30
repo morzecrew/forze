@@ -67,3 +67,13 @@ from forze.base.primitives import ThreadPoolCpuExecutor
 
 runtime = build_runtime(MyModule(), cpu_executor=ThreadPoolCpuExecutor(max_workers=8))
 ```
+
+The scope also holds its pool for the whole process while it is open. An ASGI server
+runs the lifespan holding the scope (`runtime_lifespan`, or your own
+`async with runtime.scope()`) in a task of its own, and starts every request from
+somewhere else; a request handler's `run_cpu` still lands on the runtime's pool. With
+several runtime scopes open in one process, code that none of them started uses the
+oldest one's pool. Only with no scope open at all does `run_cpu` run inline. An
+executor bound around the scope, which it defers to, stays in the scope's own task.
+Once its scope exits, a closed pool refuses further work with a retryable
+`unavailable` error.
