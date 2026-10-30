@@ -446,8 +446,18 @@ async def test_aclose_cancels_bg_tasks_and_releases_subscription() -> None:
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "cached",
-    [b"\x00not json", {"id": "not-a-uuid", "rev": 1}],
-    ids=["corrupt-bytes", "stale-shape"],
+    [
+        b"\x00not json",
+        {"id": "not-a-uuid", "rev": 1},
+        {"_xf": {}, "doc": []},
+        {"_xf": [], "doc": {"id": str(_pk), "rev": 1, "payload": "stale"}},
+    ],
+    ids=[
+        "corrupt-bytes",
+        "stale-shape",
+        "envelope-doc-not-a-mapping",
+        "envelope-meta-not-a-mapping",
+    ],
 )
 async def test_get_read_through_undecodable_entry_is_a_miss(monkeypatch, cached) -> None:
     """An entry that does not decode costs a refetch, never a failed read; the warning

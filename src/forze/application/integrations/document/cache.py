@@ -41,6 +41,20 @@ from .l1 import L1Store, LruTtlStore, register_l1_store
 CACHE_PAYLOAD_DOMAIN = "cache"
 """AAD domain isolating cache-entry ciphertext from other contexts (messaging, etc.)."""
 
+# ....................... #
+
+
+def _require_mapping(value: object) -> JsonDict:
+    """*value* as a document mapping, or ``TypeError`` — a decode failure — for anything else."""
+
+    if not isinstance(value, dict):
+        raise TypeError("Cached document body is not a mapping")
+
+    return cast(JsonDict, value)
+
+
+# ....................... #
+
 
 @runtime_checkable
 class _ReadModelWithIdAndRev(Protocol):
@@ -466,11 +480,17 @@ class DocumentCache[R: BaseModel]:
         sealed document body if present."""
 
         if isinstance(cached, dict) and "_xf" in cached and "doc" in cached:
-            opened = await self._open_doc(cached["doc"], pk)
-            return self.read_codec.decode_mapping(opened), cast(JsonDict, cached["_xf"])
+            meta = cached["_xf"]  # pyright: ignore[reportUnknownVariableType]
+
+            # A malformed envelope is a decode failure, so the caller treats it as a miss.
+            if not isinstance(meta, dict):
+                raise TypeError("Cached refresh metadata is not a mapping")
+
+            opened = _require_mapping(await self._open_doc(cached["doc"], pk))
+            return self.read_codec.decode_mapping(opened), cast(JsonDict, meta)
 
         if is_encrypted_payload(cached):  # pyright: ignore[reportUnknownArgumentType]
-            opened = await self._open_doc(cached, pk)
+            opened = _require_mapping(await self._open_doc(cached, pk))
             return self.read_codec.decode_mapping(opened), None
 
         return self._decode_from_cache(cached), None
