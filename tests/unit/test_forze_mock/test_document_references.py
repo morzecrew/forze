@@ -305,6 +305,75 @@ class TestSetNull:
 
         assert (await ctx.doc.query(_lines("set_null")).get(line.id)).stage_id is None
 
+    async def test_a_snapshot_transaction_clears_it_at_commit(self) -> None:
+        # Inside the transaction the cleared row is rechecked when it commits, as a write is.
+        ctx = context_from_modules(MockDepsModule())
+        stages, lines = ctx.doc.command(STAGES), ctx.doc.command(self._strict_lines())
+        stage = await stages.create(_StageCreate())
+        line = await lines.create(_LineCreate(stage_id=stage.id))
+
+        async with ctx.tx_ctx.scope("mock", isolation=IsolationLevel.SNAPSHOT):
+            await stages.kill(stage.id)
+
+        assert (await ctx.doc.query(self._strict_lines()).get(line.id)).stage_id is None
+
+    @staticmethod
+    def _strict_lines() -> DocumentSpec[Any, Any, Any, Any]:
+        # Nulls compare equal here (NULLS NOT DISTINCT), so two cleared rows collide.
+        return DocumentSpec(
+            name="lines",
+            read=_LineRead,
+            write=DocumentWriteTypes(domain=_Line, create_cmd=_LineCreate),
+            guarantees=(
+                Reference(field="stage_id", spec="stages", on_delete="set_null"),
+                UniqueTogether(fields=("stage_id", "position")),
+            ),
+        )
+
+    async def test_cleared_rows_that_collide_refuse_the_whole_delete(self) -> None:
+        # Each row is checked against what the whole cascade leaves, not against the store
+        # before it: alone, either cleared row would pass.
+        ctx = context_from_modules(MockDepsModule())
+        stages, lines = ctx.doc.command(STAGES), ctx.doc.command(self._strict_lines())
+        first, second = await stages.create(_StageCreate()), await stages.create(_StageCreate())
+        await lines.create(_LineCreate(stage_id=first.id, position=1))
+        await lines.create(_LineCreate(stage_id=second.id, position=1))
+
+        with pytest.raises(CoreException) as caught:
+            await stages.kill_many([first.id, second.id])
+
+        assert _is_conflict(caught.value)
+        assert await _ids(ctx, STAGES) == {first.id, second.id}
+        rows = (await ctx.doc.query(self._strict_lines()).find_many()).hits
+        assert {row.stage_id for row in rows} == {first.id, second.id}
+
+    async def test_a_cleared_row_meeting_a_stored_one_refuses_too(self) -> None:
+        ctx = context_from_modules(MockDepsModule())
+        stages, lines = ctx.doc.command(STAGES), ctx.doc.command(self._strict_lines())
+        stage = await stages.create(_StageCreate())
+        await lines.create(_LineCreate(stage_id=None, position=1))
+        await lines.create(_LineCreate(stage_id=stage.id, position=1))
+
+        with pytest.raises(CoreException) as caught:
+            await stages.kill(stage.id)
+
+        assert _is_conflict(caught.value)
+        assert await _ids(ctx, STAGES) == {stage.id}
+
+    async def test_a_spec_with_no_adapter_in_this_process_is_refused(self) -> None:
+        # Restored from a snapshot before its port was resolved: its guarantees are unknown.
+        state = MockState()
+        ctx = context_from_modules(MockDepsModule(state=state))
+        stages, lines = ctx.doc.command(STAGES), ctx.doc.command(self._strict_lines())
+        stage = await stages.create(_StageCreate())
+        await lines.create(_LineCreate(stage_id=stage.id))
+        state.reference_checks.clear()
+
+        with pytest.raises(CoreException, match="cannot be checked"):
+            await stages.kill(stage.id)
+
+        assert await _ids(ctx, STAGES) == {stage.id}
+
 
 # ....................... #
 

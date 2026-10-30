@@ -132,7 +132,11 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
             # Recorded when the adapter was built too; again here for a write through a port
             # cached before a `clear()` emptied the record.
             record_references(
-                self.state, self.spec, namespace=self.namespace, tenant_scoped=self.tenant_aware
+                self.state,
+                self.spec,
+                namespace=self.namespace,
+                tenant_scoped=self.tenant_aware,
+                check=self._check_guarantees,
             )
 
     # ....................... #

@@ -9,7 +9,8 @@ The parent knows nothing about its children, so each child spec's references are
 state (:attr:`~forze_mock.state.MockState.document_references`), keyed by the spec each one names,
 when the child's adapter is built and again on each of its writes. The record is persisted with
 the rows. A row whose spec has had no adapter built against this state, or since its last
-``clear``, is not reached: nothing here knows that spec exists.
+``clear``, is not reached: nothing here knows that spec exists. The adapter's guarantee check is
+kept beside it, for the rows a ``set_null`` clears; it lives only as long as the process.
 """
 
 from __future__ import annotations
@@ -21,6 +22,7 @@ from uuid import UUID
 from forze.application.contracts.guarantees import Reference
 from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict
+from forze_mock.adapters._mvcc import current_mvcc_tx
 from forze_mock.tenancy import partition_namespace
 
 if TYPE_CHECKING:
@@ -30,17 +32,24 @@ if TYPE_CHECKING:
 # ----------------------- #
 
 
+GuaranteeCheck = Callable[..., None]
+"""A spec's write-time guarantee check, ``(store, pk, row, *, deferred)``, raising on a
+violation: the bound ``_check_guarantees`` of one of its adapters."""
+
+
 def record_references(
     state: MockState,
     spec: DocumentSpec[Any, Any, Any, Any],
     *,
     namespace: str,
     tenant_scoped: bool,
+    check: GuaranteeCheck,
 ) -> None:
     """Record *spec*'s references on *state*, keyed by the spec each one names.
 
     :param namespace: The namespace *spec*'s rows live in, before any tenant partition.
     :param tenant_scoped: Whether those rows are partitioned by tenant.
+    :param check: *spec*'s guarantee check, which a ``set_null`` runs on the row it clears.
     """
 
     references = [g for g in spec.guarantees if isinstance(g, Reference)]
@@ -49,6 +58,8 @@ def record_references(
         return
 
     with state.lock:
+        state.reference_checks[str(spec.name)] = check
+
         for reference in references:
             state.document_references.setdefault(reference.spec, set()).add(
                 (str(spec.name), namespace, tenant_scoped, reference.field, reference.on_delete)
@@ -102,6 +113,12 @@ def apply_references(
     one its own adapter reads under that tenant. Below an unscoped row it is searched in every
     tenant's partition, since a foreign key reaches every tenant's rows.
 
+    A ``set_null`` is an update of the child, so it keeps the child's guarantees, checked as a
+    write of the child checks them against what the whole cascade leaves, before anything
+    changes. A violation refuses the delete with the write's ``conflict``, as Postgres checks
+    the child's constraints after the action. The revision is left as it was, as under
+    application bookkeeping; a trigger keeping it (``database`` bookkeeping) would bump it.
+
     The caller holds ``state.lock`` and deletes the parent rows itself.
 
     :param parent: The name of the spec *pks* belong to.
@@ -109,14 +126,18 @@ def apply_references(
     :param tenant: The parent rows' tenant, or ``None`` when the parent is not tenant-scoped.
     :param store_for: The rows of a namespace, through the transaction's view.
     :raises CoreException: ``conflict``, as Postgres's restrict and foreign-key violations map
-        on a hard delete, when a ``restrict`` reference still names a row.
+        on a hard delete, when a ``restrict`` reference still names a row, and as the child's
+        own write raises it when a cleared row breaks one of its guarantees; ``configuration``
+        when a row to clear belongs to a spec with no adapter built in this process, whose
+        guarantees therefore cannot be checked.
     """
 
     pending = [(parent, pk, tenant) for pk in pks]
     killed = frozenset((namespace, pk) for _, pk, _ in pending)
     seen = set(killed)
     doomed: list[tuple[dict[UUID, JsonDict], UUID]] = []
-    nulled: list[tuple[dict[UUID, JsonDict], UUID, str]] = []
+    # (namespace, row) -> (store, spec, fields to clear)
+    nulled: dict[tuple[str, UUID], tuple[dict[UUID, JsonDict], str, set[str]]] = {}
 
     while pending:
         name, pk, row_tenant = pending.pop()
@@ -160,19 +181,70 @@ def apply_references(
                         continue
 
                     if on_delete == "set_null":
-                        nulled.append((store, child_pk, field))
+                        nulled.setdefault((ns, child_pk), (store, child, set()))[2].add(field)
                         continue
 
                     seen.add((ns, child_pk))
                     doomed.append((store, child_pk))
                     pending.append((child, child_pk, child_tenant))
 
+    cleared = _check_cleared(state, nulled, gone=seen)
+
     for store, child_pk in doomed:
         del store[child_pk]
 
-    # shortcut: the field is cleared without a revision bump, as under application bookkeeping
-    # (a Postgres trigger keeping the revision would bump it), and the child's own guarantees
-    # are not rechecked; recheck them if a NULLS NOT DISTINCT uniqueness over the field matters.
-    for store, child_pk, field in nulled:
-        if child_pk in store:
-            store[child_pk] = {**store[child_pk], field: None}
+    mvcc = current_mvcc_tx()
+
+    for (ns, child_pk), (store, row, check) in cleared.items():
+        store[child_pk] = row
+
+        if mvcc is not None:
+            mvcc.mark_guarantee_recheck(ns, child_pk, check)
+
+
+# ....................... #
+
+
+def _check_cleared(
+    state: MockState,
+    nulled: dict[tuple[str, UUID], tuple[dict[UUID, JsonDict], str, set[str]]],
+    *,
+    gone: set[tuple[str, UUID]],
+) -> dict[tuple[str, UUID], tuple[dict[UUID, JsonDict], JsonDict, GuaranteeCheck]]:
+    """Each row a ``set_null`` clears, checked against its namespace as the cascade leaves it.
+
+    :param gone: The rows the delete removes, left out of what a cleared row is checked against.
+    :returns: Per row, its store, the cleared row and the check it passed.
+    """
+
+    staged: dict[str, dict[UUID, JsonDict]] = {}
+    cleared: dict[tuple[str, UUID], tuple[dict[UUID, JsonDict], JsonDict, GuaranteeCheck]] = {}
+
+    for (ns, child_pk), (store, child, fields) in nulled.items():
+        if (ns, child_pk) in gone:
+            continue
+
+        check = state.reference_checks.get(child)
+
+        if check is None:
+            raise exc.configuration(
+                f"A delete would clear rows of {child!r}, whose guarantees cannot be checked: no "
+                f"adapter for {child!r} has been built in this process. Resolve its port first.",
+                code="mock.document.reference_unchecked",
+                details={"spec": child},
+            )
+
+        rows = staged.get(ns)
+
+        if rows is None:
+            rows = staged[ns] = {pk: row for pk, row in store.items() if (ns, pk) not in gone}
+
+        rows[child_pk] = {**rows[child_pk], **dict.fromkeys(fields)}
+        cleared[(ns, child_pk)] = (store, rows[child_pk], check)
+
+    deferred = current_mvcc_tx() is None
+
+    for (ns, child_pk), (_, row, check) in cleared.items():
+        check(staged[ns], child_pk, row, deferred=deferred)
+
+    return cleared

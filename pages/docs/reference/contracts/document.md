@@ -251,7 +251,8 @@ it. Startup refuses a sparse index offered for a `skip_null` guarantee.
 
 A `Reference` is declared on the referencing spec, as a foreign key is declared on the
 referencing table. It says that `field` holds the id of a row of the document spec `spec`, and
-what a hard delete of that row does to the rows naming it:
+what a hard delete of that row does to the rows naming it. The field must be a `UUID` (or
+`UUID | None`) on the read and domain models, or it would never equal that id:
 
 ```python
 from forze.application.contracts.guarantees import Reference
@@ -261,17 +262,18 @@ Reference(field="stage_id", spec="stages", on_delete="cascade")
 
 `"cascade"` deletes them too, and their own referencing rows in turn. `"restrict"` refuses the
 delete with `conflict` while any remain. `"set_null"` clears the field, which must accept
-`None`. Only `kill` and `kill_many` apply it: a soft delete is an update and leaves the rows
-alone. On Postgres the foreign key does the work. The in-memory store does the same inside the
-transaction's view, so a rollback restores the parent and its children together. It plans the
-whole cascade first, so a `restrict` anywhere in it refuses the delete with nothing removed. It
-plans from the transaction's view, so under snapshot isolation a child another transaction
-committed meanwhile survives, where Postgres's referential check would still find it. A
-`restrict` refuses even from a row the same cascade deletes, where Postgres refuses or allows
-that depending on which key was created first. Below an unscoped parent it searches every
-tenant's partition of a tenant-scoped spec, as a foreign key reaches every tenant's rows. Below a
-tenant-scoped parent it searches only that tenant's partition; a single-column Postgres key
-would also reach another tenant's rows naming the parent, which happens only when rows
+`None`; the cleared row keeps the child's guarantees, so one it would break refuses the delete
+with the write's `conflict`. Only `kill` and `kill_many` apply it: a soft delete is an update and
+leaves the rows alone. On Postgres the foreign key does the work. The in-memory store does the
+same inside the transaction's view, so a rollback restores the parent and its children together.
+It plans the whole cascade first, so a `restrict` anywhere in it refuses the delete with nothing
+removed. It plans from the transaction's view, so under snapshot isolation a child another
+transaction committed meanwhile survives, where Postgres's referential check would still find
+it. A `restrict` refuses even from a row the same cascade deletes, where Postgres refuses or
+allows that depending on which key was created first. Below an unscoped parent it searches
+every tenant's partition of a tenant-scoped spec, as a foreign key reaches every tenant's rows.
+Below a tenant-scoped parent it searches only that tenant's partition; a single-column Postgres
+key would also reach another tenant's rows naming the parent, which happens only when rows
 reference across tenants. It finds a spec's rows once that spec's adapter has been built
 against the state, which a seed, a write or a resolved port does. Neither store evicts the rows a
 cascade removes from a document cache. A spec catalogue refuses a reference to a spec it does not

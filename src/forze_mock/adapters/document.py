@@ -197,7 +197,11 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
         # Before any row is reached: a parent's kill finds this spec's rows through the record,
         # including rows a seed, a snapshot or another spec on the namespace put there.
         record_references(
-            self.state, self.spec, namespace=self.namespace, tenant_scoped=self.tenant_aware
+            self.state,
+            self.spec,
+            namespace=self.namespace,
+            tenant_scoped=self.tenant_aware,
+            check=self._check_guarantees,
         )
 
     # ....................... #

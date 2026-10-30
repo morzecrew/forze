@@ -131,6 +131,7 @@ _LIVE_FIELDS: Final = frozenset(
         "rotating_credential_locks",
         "write_serialization",
         "row_locks",
+        "reference_checks",  # bound methods of this process's adapters
     }
 )
 """The state's machinery rather than its data: a re-entrant lock, the strict-transaction

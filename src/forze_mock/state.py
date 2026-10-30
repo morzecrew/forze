@@ -4,6 +4,7 @@ import asyncio
 import copy
 import threading
 from collections import OrderedDict
+from collections.abc import Callable
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, ClassVar, final
 
@@ -197,6 +198,10 @@ class MockState:
     reaches. Metadata about the rows rather than rows, so not transactional: an entry recorded
     inside a rolled-back transaction only makes a later delete look in a namespace with nothing
     to find."""
+    reference_checks: dict[str, Callable[..., None]] = attrs.field(factory=dict)
+    """Referencing spec name → its adapter's guarantee check, recorded with
+    :attr:`document_references`: what a ``set_null`` runs on the row it clears. Machinery, not
+    data, so a snapshot leaves it out and a restore leaves it alone."""
     counters: dict[tuple[str, str | None], int] = attrs.field(factory=dict)
     counter_expiry: dict[tuple[str, str | None], datetime] = attrs.field(factory=dict)
     """When each counter written with a ``ttl`` lapses, keyed like :attr:`counters`."""
