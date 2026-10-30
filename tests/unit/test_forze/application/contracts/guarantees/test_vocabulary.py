@@ -1,6 +1,7 @@
 """The vocabulary, and the reconciliation that refuses a guarantee no store can keep."""
 
 from datetime import UTC, datetime
+from enum import StrEnum
 from typing import Annotated, Any
 from uuid import UUID, uuid4
 
@@ -20,6 +21,7 @@ from forze.application.contracts.guarantees import (
     FULL_STORAGE_GUARANTEES,
     GUARANTEE_UNSUPPORTED,
     NonOverlapping,
+    Reference,
     SerializedBy,
     StorageGuaranteeCapabilities,
     UniqueTogether,
@@ -573,3 +575,48 @@ class TestTheKeysAHoldTakes:
             serialization_keys(declarations, owners, domain=_Line, scope="lines", tenant=None)
 
         assert refused.value.kind is ExceptionKind.CONFIGURATION
+
+
+# ....................... #
+
+
+class TestReference:
+    def test_an_unknown_delete_action_is_refused(self) -> None:
+        # Read from configuration, a misspelt action would otherwise be enforced as none.
+        with pytest.raises(CoreException, match="on_delete"):
+            Reference(field="stage_id", spec="stages", on_delete="delete")  # type: ignore[arg-type]
+
+    @pytest.mark.parametrize(("field", "spec"), [("", "stages"), ("stage_id", "")])
+    def test_a_reference_names_both_a_field_and_a_spec(self, field: str, spec: str) -> None:
+        with pytest.raises(CoreException, match="both a field and a spec"):
+            Reference(field=field, spec=spec, on_delete="cascade")
+
+    def test_a_spec_object_for_its_name_is_refused(self) -> None:
+        # Converted to text it would read as its repr and never match a row.
+        with pytest.raises(CoreException, match="must be strings"):
+            Reference(field="stage_id", spec=_Spec(), on_delete="cascade")  # type: ignore[arg-type]
+
+    def test_a_str_enum_name_reads_as_its_value(self) -> None:
+        class _Names(StrEnum):
+            STAGES = "stages"
+
+        reference = Reference(field="stage_id", spec=_Names.STAGES, on_delete="cascade")
+
+        assert type(reference.spec) is str
+        assert reference.spec == "stages"
+
+    def test_the_mock_applies_it(self) -> None:
+        reference = Reference(field="stage_id", spec="stages", on_delete="cascade")
+
+        assert FULL_STORAGE_GUARANTEES.unmet(reference) == ()
+
+    def test_a_store_that_cannot_apply_it_is_refused_at_wiring(self) -> None:
+        reference = Reference(field="stage_id", spec="stages", on_delete="restrict")
+
+        with pytest.raises(CoreException) as caught:
+            validate_storage_guarantees(
+                (reference,), _Unfiltered(), spec_name="lines", backend="forze_mongo"
+            )
+
+        assert caught.value.code == GUARANTEE_UNSUPPORTED
+        assert "reference needs applying a reference's `on_delete`" in caught.value.summary

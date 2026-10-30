@@ -20,6 +20,7 @@ from forze.base.exceptions import exc
 from forze.base.logging import get_logger
 
 from ..deps import ResolutionFrame
+from ..guarantees import Reference, guarantees_of
 from .planes import PLANE_DEP_KEYS, plane_of_key
 from .registry import FrozenSpecRegistry
 from .value_objects import SpecPlane
@@ -72,6 +73,8 @@ def reconcile_specs(
       empty registry reconciles vacuously, fingerprints equal to any other empty registry, and
       an export driven by it carries nothing while reporting success.
     - **An edge points at a spec that is not in the inventory.**
+    - **A document's** :class:`~forze.application.contracts.guarantees.Reference` **names a
+      document spec that is not in the inventory.**
 
     **The routeless-provider gap and its second half:** a *plain* (routeless) provider — one
     object serving every route of a key, the shape of the mock backend *and* of most
@@ -159,6 +162,16 @@ def reconcile_specs(
             f"  - {edge.label()}: points at {end.label()}, which is not in the inventory"
             for end in (edge.source, edge.target)
             if (end.plane, end.name) not in catalogued
+        )
+
+    # A reference to a spec nothing catalogues is a delete action that can never fire.
+    for entry in registry.of_plane(SpecPlane.DOCUMENT):
+        problems.extend(
+            f"  - {entry.ref.label()}: its Reference on {guarantee.field!r} points at "
+            f"{SpecPlane.DOCUMENT.value}:{guarantee.spec}, which is not in the inventory"
+            for guarantee in guarantees_of(entry.spec)
+            if isinstance(guarantee, Reference)
+            and (SpecPlane.DOCUMENT, guarantee.spec) not in catalogued
         )
 
     if problems:

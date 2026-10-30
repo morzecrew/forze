@@ -114,6 +114,14 @@ def _psycopg_eh(  # skipcq: PY-R1000
                 details=details,
             )
 
+        case errors.RestrictViolation():
+            # `ON DELETE RESTRICT` refusing a delete while rows still reference it: the state
+            # conflicts with the request, and the in-memory store raises the same kind.
+            return CoreException.conflict(
+                "Row is still referenced (restrict violation).",
+                details=details,
+            )
+
         case errors.UniqueViolation():
             return CoreException.conflict(
                 "Unique violation.",
@@ -433,6 +441,33 @@ def copy_data_error(error: BaseException, *, binary: bool) -> CoreException | No
         code="copy_row_invalid",
         details=details,
     )
+
+
+# ....................... #
+
+
+def still_referenced(error: CoreException) -> CoreException | None:
+    """What a foreign-key violation means when a hard delete raised it, or ``None``.
+
+    The general mapping reads it as an insert naming a missing row (``not_found``). From a
+    ``DELETE`` it is a ``NO ACTION`` key refusing because rows still reference the deleted one,
+    which is a ``conflict``, as a restrict violation is. Decided by the statement and the
+    exception class, never by the driver's message.
+
+    :param error: The mapped error the delete raised, chained from the driver's exception.
+    :returns: The ``conflict`` to raise instead, or ``None`` when *error* is something else.
+    """
+
+    if not isinstance(error.__cause__, errors.ForeignKeyViolation):
+        return None
+
+    refusal = CoreException.conflict(
+        "Row is still referenced (foreign key violation).",
+        details=error.details,
+    )
+    refusal.expose_details = False
+
+    return refusal
 
 
 # ....................... #

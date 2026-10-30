@@ -21,6 +21,7 @@ from forze_postgres.kernel.client import PostgresClientPort
 
 from .types import (
     ExclusionConstraintInfo,
+    ForeignKeyInfo,
     PostgresColumnTypes,
     PostgresIndexEngine,
     PostgresIndexInfo,
@@ -727,6 +728,103 @@ class PostgresIntrospector:
                 name=str(row.get("name")),
                 columns=frozenset(str(column) for column in (row.get("columns") or [])),  # pyright: ignore[reportUnknownVariableType, reportUnknownArgumentType]
                 definition=str(row.get("definition") or ""),
+                initially_deferred=bool(row.get("initially_deferred")),
+            )
+            for row in rows
+        )
+
+    # ....................... #
+
+    async def foreign_keys(
+        self,
+        *,
+        schema: str | None,
+        relation: str,
+    ) -> tuple[ForeignKeyInfo, ...]:
+        """Every FOREIGN KEY constraint on *relation*, the referencing side.
+
+        The reference sibling of :meth:`unique_indexes`. Each column is paired with the column it
+        references, in key order, because ``(tenant_id, stage_id) → (tenant_id, id)`` and
+        ``(stage_id, tenant_id) → (tenant_id, id)`` hold the same two names and are different
+        keys.
+
+        ``confdelsetcols`` (Postgres 15) is read through ``to_jsonb`` so an older server, which
+        has no such column, reads as not knowing it rather than failing the query.
+
+        Uncached, for the same reason as :meth:`unique_indexes` — once per relation at startup.
+        """
+
+        schema = self.__normalize_schema(schema)
+        await self.require_relation(schema=schema, relation=relation)
+
+        stmt = sql.SQL(
+            """
+            SELECT c.conname AS name,
+                   c.confdeltype::text AS on_delete,
+                   c.condeferred AS initially_deferred,
+                   to_jsonb(c) ? 'confdelsetcols' AS knows_set_columns,
+                   ARRAY(
+                     SELECT a.attname
+                     FROM jsonb_array_elements_text(
+                       CASE jsonb_typeof(to_jsonb(c) -> 'confdelsetcols')
+                         WHEN 'array' THEN to_jsonb(c) -> 'confdelsetcols'
+                         ELSE '[]'::jsonb
+                       END
+                     ) WITH ORDINALITY AS u(attnum, ord)
+                     JOIN pg_attribute a
+                       ON a.attrelid = c.conrelid AND a.attnum = u.attnum::int2
+                     ORDER BY u.ord
+                   ) AS set_null_columns,
+                   rn.nspname AS referenced_schema,
+                   rt.relname AS referenced_relation,
+                   ARRAY(
+                     SELECT a.attname
+                     FROM unnest(c.conkey) WITH ORDINALITY AS u(attnum, ord)
+                     JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = u.attnum
+                     ORDER BY u.ord
+                   ) AS columns,
+                   ARRAY(
+                     SELECT a.attname
+                     FROM unnest(c.confkey) WITH ORDINALITY AS u(attnum, ord)
+                     JOIN pg_attribute a ON a.attrelid = c.confrelid AND a.attnum = u.attnum
+                     ORDER BY u.ord
+                   ) AS referenced_columns
+            FROM pg_constraint c
+            JOIN pg_class t ON t.oid = c.conrelid
+            JOIN pg_namespace n ON n.oid = t.relnamespace
+            JOIN pg_class rt ON rt.oid = c.confrelid
+            JOIN pg_namespace rn ON rn.oid = rt.relnamespace
+            WHERE c.contype = 'f'
+              AND n.nspname = {schema}
+              AND t.relname = {relation}
+            """
+        ).format(schema=sql.Placeholder(), relation=sql.Placeholder())
+
+        rows = await self.client.fetch_all(
+            stmt,
+            [schema, relation],
+            row_factory="dict",
+            commit=False,
+        )
+
+        return tuple(
+            ForeignKeyInfo(
+                name=str(row.get("name")),
+                columns=tuple(
+                    (str(column), str(target))
+                    for column, target in zip(
+                        row.get("columns") or [],  # pyright: ignore[reportUnknownArgumentType]
+                        row.get("referenced_columns") or [],  # pyright: ignore[reportUnknownArgumentType]
+                        strict=True,
+                    )
+                ),
+                referenced=(str(row.get("referenced_schema")), str(row.get("referenced_relation"))),
+                on_delete=str(row.get("on_delete")),
+                set_null_columns=(
+                    tuple(str(column) for column in row.get("set_null_columns") or [])  # pyright: ignore[reportUnknownVariableType, reportUnknownArgumentType]
+                    if row.get("knows_set_columns")
+                    else None
+                ),
                 initially_deferred=bool(row.get("initially_deferred")),
             )
             for row in rows

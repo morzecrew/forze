@@ -31,6 +31,7 @@ from .value_objects import (
     GuaranteeKind,
     GuaranteeMoment,
     NonOverlapping,
+    Reference,
     SerializedBy,
     StorageGuarantee,
     StorageGuarantees,
@@ -108,6 +109,10 @@ class StorageGuaranteeCapabilities:
     distinct, so it keeps ``skip_null`` without a predicate, and a deferred one keeps it at
     commit."""
 
+    reference: bool = False
+    """Whether a hard delete of a referenced row applies a :class:`Reference`'s ``on_delete``
+    to the rows naming it."""
+
     # ....................... #
 
     def unmet(self, guarantee: StorageGuarantee) -> tuple[str, ...]:
@@ -167,6 +172,9 @@ class StorageGuaranteeCapabilities:
             case SerializedBy():
                 return () if self.serialized_by else ("serializing writes per key",)
 
+            case Reference():
+                return () if self.reference else ("applying a reference's `on_delete`",)
+
     def _unmet_moment(self, holds: GuaranteeMoment) -> tuple[str, ...]:
         if holds == "commit" and not self.checks_deferred_to_commit:
             return ('holding only at commit (`holds="commit"`)',)
@@ -186,6 +194,7 @@ FULL_STORAGE_GUARANTEES: Final[StorageGuaranteeCapabilities] = StorageGuaranteeC
     checks_deferred_to_commit=True,
     unique_together_partial_at_commit=True,
     unique_together_skip_null_at_commit=True,
+    reference=True,
 )
 """Every guarantee that is enforced anywhere today — the in-memory store's declaration.
 

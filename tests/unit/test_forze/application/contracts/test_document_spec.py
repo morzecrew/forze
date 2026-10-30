@@ -7,12 +7,14 @@ from uuid import UUID
 import pytest
 import structlog
 from pydantic import (
+    UUID4,
     BaseModel,
     Field,
     PlainSerializer,
     SerializerFunctionWrapHandler,
     ValidationInfo,
     computed_field,
+    create_model,
     field_serializer,
     field_validator,
     model_serializer,
@@ -29,7 +31,12 @@ from forze.application.contracts.document import (
     DocumentWriteTypes,
     validate_query_parameters,
 )
-from forze.application.contracts.guarantees import NonOverlapping, SerializedBy, UniqueTogether
+from forze.application.contracts.guarantees import (
+    NonOverlapping,
+    Reference,
+    SerializedBy,
+    UniqueTogether,
+)
 from forze.application.contracts.querying import QueryFieldPolicy
 from forze.base.exceptions import CoreException
 from forze.base.primitives import utcnow
@@ -1241,3 +1248,90 @@ def test_a_set_based_upsert_is_judged_on_the_update_types_it_writes() -> None:
     assert refused.value.details["reasons"] == [
         "update fields the domain derives, merges or refuses (tags)"
     ]
+
+
+# ....................... #
+
+
+type _StageId = UUID
+
+
+class _LineRead(ReadDocument):
+    stage_id: UUID | None = None
+    owner_id: UUID
+
+
+class _LineDomain(Document):
+    stage_id: UUID | None = None
+    owner_id: UUID
+
+
+class _LineCreate(CreateDocumentCmd):
+    stage_id: UUID | None = None
+    owner_id: UUID
+
+
+def _lines(reference: Reference, **kwargs: Any) -> DocumentSpec[Any, Any, Any, Any]:
+    return DocumentSpec(
+        name="lines",
+        read=_LineRead,
+        write=DocumentWriteTypes(domain=_LineDomain, create_cmd=_LineCreate),
+        guarantees=(reference,),
+        **kwargs,
+    )
+
+
+class TestReferenceDeclaration:
+    def test_a_reference_over_a_stored_field_is_accepted(self) -> None:
+        reference = Reference(field="stage_id", spec="stages", on_delete="cascade")
+
+        assert _lines(reference).guarantees == (reference,)
+
+    def test_a_reference_over_an_unknown_field_is_refused(self) -> None:
+        # Every row reads the missing name as null, so the delete action would never fire.
+        with pytest.raises(CoreException, match="does not store"):
+            _lines(Reference(field="stage", spec="stages", on_delete="cascade"))
+
+    def test_set_null_over_a_field_that_cannot_hold_one_is_refused(self) -> None:
+        with pytest.raises(CoreException, match="does not accept None"):
+            _lines(Reference(field="owner_id", spec="owners", on_delete="set_null"))
+
+    def test_set_null_over_an_optional_field_is_accepted(self) -> None:
+        _lines(Reference(field="stage_id", spec="stages", on_delete="set_null"))
+
+    def test_a_reference_over_a_sealed_field_is_refused(self) -> None:
+        # Ciphertext never equals the id it seals, so no row would match its parent.
+        with pytest.raises(CoreException, match="stores encrypted"):
+            _lines(
+                Reference(field="stage_id", spec="stages", on_delete="cascade"),
+                encryption=FieldEncryption(encrypted=frozenset({"stage_id"})),
+            )
+
+    @staticmethod
+    def _typed(read: Any, domain: Any) -> DocumentSpec[Any, Any, Any, Any]:
+        return DocumentSpec(
+            name="lines",
+            read=create_model("_TypedRead", __base__=ReadDocument, stage_id=(read, None)),
+            write=DocumentWriteTypes(
+                domain=create_model("_TypedDomain", __base__=Document, stage_id=(domain, None)),
+                create_cmd=CreateDocumentCmd,
+            ),
+            guarantees=(Reference(field="stage_id", spec="stages", on_delete="cascade"),),
+        )
+
+    @pytest.mark.parametrize(
+        "annotation",
+        [UUID, UUID | None, Annotated[UUID, Field(description="stage")] | None, _StageId, UUID4],
+    )
+    def test_a_uuid_field_is_accepted_however_spelled(self, annotation: Any) -> None:
+        self._typed(annotation, annotation)
+
+    @pytest.mark.parametrize("annotation", [int, str | None, UUID | int])
+    def test_a_field_that_is_not_a_uuid_is_refused(self, annotation: Any) -> None:
+        # It never equals the parent's id, so the delete action would never fire.
+        with pytest.raises(CoreException, match="not a UUID"):
+            self._typed(annotation, annotation)
+
+    def test_the_domain_model_is_checked_too(self) -> None:
+        with pytest.raises(CoreException, match="_TypedDomain.stage_id"):
+            self._typed(UUID | None, int | None)

@@ -82,6 +82,26 @@ class TestPsycopgErrorHandler:
         assert err.details == {"raw": detail}
 
 
+class TestStillReferenced:
+    """A hard delete's foreign-key violation means the row is still referenced."""
+
+    def test_a_foreign_key_violation_becomes_a_conflict(self) -> None:
+        mapped = exc.not_found("Reference document not found.", details={"raw": "x"})
+        mapped.__cause__ = errors.ForeignKeyViolation()
+
+        refusal = client_errors.still_referenced(mapped)
+
+        assert refusal is not None
+        assert refusal.kind is ExceptionKind.CONFLICT
+        assert refusal.expose_details is False
+
+    def test_anything_else_is_left_alone(self) -> None:
+        mapped = exc.conflict("Unique violation.")
+        mapped.__cause__ = errors.UniqueViolation()
+
+        assert client_errors.still_referenced(mapped) is None
+
+
 class TestPsycopgErrorHandlerBranches:
     """Broad coverage of :func:`_psycopg_eh` ``match`` arms."""
 
@@ -95,6 +115,7 @@ class TestPsycopgErrorHandlerBranches:
         [
             (lambda: errors.UniqueViolation(), ExceptionKind.CONFLICT),
             (lambda: errors.ExclusionViolation(), ExceptionKind.CONFLICT),
+            (lambda: errors.RestrictViolation(), ExceptionKind.CONFLICT),
             (lambda: errors.CheckViolation(), ExceptionKind.PRECONDITION),
             (lambda: errors.WithCheckOptionViolation(), ExceptionKind.PRECONDITION),
             (lambda: errors.NotNullViolation(), ExceptionKind.PRECONDITION),

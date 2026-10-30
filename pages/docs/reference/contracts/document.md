@@ -142,6 +142,7 @@ Two sentences carry the whole doctrine:
 | `NonOverlapping(key=…, period=…)` | no two rows for one key hold overlapping [periods](../../core-concepts/domain-layer.md#a-period-and-which-end-is-in-force) | `EXCLUDE USING gist` | — | ✅ |
 | `NonOverlapping(key=…, period=…, where=…)` | …among the rows the filter selects | `EXCLUDE … WHERE (…)` | — | ✅ |
 | `SerializedBy(key=…)` | two writes for one key never run at once | `pg_advisory_xact_lock` | — | ✅ |
+| `Reference(field=…, spec=…, on_delete=…)` | a hard delete of the referenced row cascades, is refused, or clears the field | `FOREIGN KEY … ON DELETE …` | — | ✅ |
 
 `SerializedBy` is the one member about write *ordering* rather than about stored rows. It says
 two writes for one key never run at once — the rule that otherwise lives in whichever writer
@@ -248,6 +249,36 @@ not a `sparse` index: sparse skips a document only when *every* indexed field is
 indexes an explicit null, so the tuples the exemption was meant to let through would collide under
 it. Startup refuses a sparse index offered for a `skip_null` guarantee.
 
+A `Reference` is declared on the referencing spec, as a foreign key is declared on the
+referencing table. It says that `field` holds the id of a row of the document spec `spec`, and
+what a hard delete of that row does to the rows naming it. The field must be a `UUID` (or
+`UUID | None`) on the read and domain models, or it would never equal that id:
+
+```python
+from forze.application.contracts.guarantees import Reference
+
+Reference(field="stage_id", spec="stages", on_delete="cascade")
+```
+
+`"cascade"` deletes them too, and their own referencing rows in turn. `"restrict"` refuses the
+delete with `conflict` while any remain. `"set_null"` clears the field, which must accept
+`None`; the cleared row keeps the child's guarantees, so one it would break refuses the delete
+with the write's `conflict`. Only `kill` and `kill_many` apply it: a soft delete is an update and
+leaves the rows alone. On Postgres the foreign key does the work. The in-memory store does the
+same inside the transaction's view, so a rollback restores the parent and its children together.
+It plans the whole cascade first, so a `restrict` anywhere in it refuses the delete with nothing
+removed. It plans from the transaction's view, so under snapshot isolation a child another
+transaction committed meanwhile survives, where Postgres's referential check would still find
+it. A `restrict` refuses even from a row the same cascade deletes, where Postgres refuses or
+allows that depending on which key was created first. Below an unscoped parent it searches
+every tenant's partition of a tenant-scoped spec, as a foreign key reaches every tenant's rows.
+Below a tenant-scoped parent it searches only that tenant's partition; a single-column Postgres
+key would also reach another tenant's rows naming the parent, which happens only when rows
+reference across tenants. It finds a spec's rows once that spec's adapter has been built
+against the state, which a seed, a write or a resolved port does. Neither store evicts the rows a
+cascade removes from a document cache. A spec catalogue refuses a reference to a spec it does not
+hold. Mongo and Firestore cannot apply one and refuse it at wiring.
+
 Three things happen to a declared guarantee, and a failure at any of them is loud:
 
 1. **Reconciliation**, when the port is built. A backend that cannot keep the guarantee raises
@@ -271,9 +302,16 @@ periods and takes every other overlapping pair.
    and anything that does not reduce that way is refused rather than guessed at. Postgres hands
    back a deparsed SQL predicate, so only the columns it restricts on are checked — an index on
    the right column and the wrong value passes there. Neither is a proof that the mechanism
-   matches; on Postgres it is a floor under a forgotten migration. Postgres also warns about
-   each unique index and `EXCLUDE` constraint on the write table that no guarantee declares,
-   other than the primary key and an index over all its columns, and suggests the declaration.
+   matches; on Postgres it is a floor under a forgotten migration. For a `Reference`, Postgres
+   wants a foreign key from the field to `id` on the referenced spec's relation, alone or beside
+   `tenant_id`, with the declared `ON DELETE`. A referenced spec bound in another Postgres
+   module is refused, since a foreign key lives in one database. `"restrict"` takes
+   `ON DELETE RESTRICT` or a plain `NO ACTION` key, unless it is deferred to commit. `"set_null"`
+   needs a nullable column, and over a key beside `tenant_id` it needs
+   `ON DELETE SET NULL (field)` (Postgres 15), which leaves `tenant_id` alone. Postgres also
+   warns about each unique index, `EXCLUDE` constraint and `ON DELETE CASCADE` or `SET NULL`
+   foreign key on the write table that no guarantee declares, other than the primary key and an
+   index over all its columns, and suggests the declaration.
    A `conflict_target` over other columns is reported too, since it refuses duplicates. Without it
    the in-memory store accepts writes the database refuses. An index counts as declared only
    when it is the one that keeps a guarantee, so a partial index beside an unfiltered
@@ -503,7 +541,9 @@ value, a mirror's too. On the domain path, a mirror whose create sets a frozen f
 `kill(pk)` and `kill_many(pks)` **hard-delete** — there is no soft-delete or
 `restore` on the port (model soft-delete is a domain concern, applied via
 `update`). On a spec declaring `hard_delete=False` both refuse with a
-`configuration` error (`hard_delete_forbidden`), whoever calls them.
+`configuration` error (`hard_delete_forbidden`), whoever calls them. Both apply every
+[`Reference`](#storage-guarantees) naming the spec. A row a foreign key still references is
+refused with `conflict`, by `ON DELETE RESTRICT` and a plain key alike.
 
 ### Command hooks
 

@@ -25,6 +25,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **`DocumentSpec` keeps what `guarantees=` passes in a field named `declared_guarantees`** (**Breaking**). Passing `guarantees=` and reading `spec.guarantees` still work; the latter adds what the domain model implies. A numbered domain whose read model does not store `number_id` is now refused when the spec is built.
 
+- **A `Reference` guarantee declares a foreign key's `ON DELETE`, which the mock applies.** `Reference(field=, spec=, on_delete="cascade"|"restrict"|"set_null")` on the child spec. Postgres schema validation checks the key and warns about undeclared cascading ones; Mongo and Firestore refuse it.
+
+### Changed
+
+- **The mock's `kill_many` deletes all of its rows or none** (**behaviour change**). A missing id or a declared `restrict` now refuses before any row is removed, as on Postgres.
+
+- **Mock state snapshots written before this release are refused at load** (**behaviour change**). A snapshot now carries the declared references with the rows; delete the old file to start fresh.
+
 ### Fixed
 
 - **`run_cpu` in a request offloads to the runtime's pool instead of running inline.** A runtime scope holds its pool process-wide while open, the oldest scope's when several are. New `hold_cpu_executor`; a closed `ThreadPoolCpuExecutor` refuses work (`cpu_executor_closed`).
@@ -36,6 +44,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Cursor signing and encryption set on an `ExecutionRuntime` apply to every request** (**Breaking**). Code outside the scope's task now mints and requires protected cursors, refused (`cursor_protection_ambiguous`) while open scopes hold different keys. New `hold_cursor_signer` and `hold_cursor_cipher`.
 
 - **Startup accepts an index over `tenant_id` plus the fields for a guarantee on a tenant-aware route.** It keeps the guarantee per tenant, as the mock does, so Postgres and Mongo print that index when it is missing. The Postgres undeclared-index warning no longer suggests naming `tenant_id`, which a spec cannot.
+
+- **A Postgres hard delete refused by a foreign key raises `conflict`, not `not_found`** (**behaviour change**). `kill`/`kill_many` on a row a plain foreign key still references no longer reads as "Reference document not found"; `ON DELETE RESTRICT` maps to `conflict` too.
 
 ## [0.17.0] - 2026-10-30
 

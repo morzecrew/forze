@@ -62,9 +62,11 @@ DST finds the race, shrinks it to **two** contending payments, and reports the s
 !!! warning "DST sees the ports, not the database"
 
     DST exercises your handlers over the **ports**. Logic that lives *below* a port — database
-    triggers, generated columns, `CHECK` constraints, cascade deletes, `LISTEN`/`NOTIFY` flows,
-    or a **read view that joins or derives fields the app never writes** — the mock doesn't have,
-    so the simulation can't run it. The mock builds a read model by decoding the stored *write*
+    triggers, generated columns, `CHECK` constraints, `LISTEN`/`NOTIFY` flows, or a **read view
+    that joins or derives fields the app never writes** — the mock doesn't have, so the
+    simulation can't run it. A foreign key's `ON DELETE` is the exception once the child spec
+    declares it as a [`Reference`](../reference/contracts/document.md#storage-guarantees): the
+    mock applies it, and startup checks the key is there. The mock builds a read model by decoding the stored *write*
     data, so a read relation pointing at an enriched view reproduces only what the write model
     holds. Worse, an invariant a trigger *maintains* (a trigger-kept running total, say) will
     **false-positive** under the mock, which writes the rows but never fires the trigger.

@@ -1,7 +1,7 @@
 """Compare Pydantic document shapes to Postgres relation columns (startup validation)."""
 
 import re
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from typing import Final
 
 import attrs
@@ -10,6 +10,7 @@ from pydantic import BaseModel
 from forze.application.contracts.guarantees import (
     GuaranteeMoment,
     NonOverlapping,
+    Reference,
     StorageGuarantees,
     UniqueTogether,
 )
@@ -22,9 +23,14 @@ from forze.application.contracts.querying.internal.parse import QueryFilterExpre
 from forze.application.contracts.tenancy import TENANT_ID_FIELD
 from forze.base.exceptions import CoreException, ExceptionKind, exc
 from forze.base.serialization import stored_field_names_for
+from forze.domain.constants import ID_FIELD
 from forze.domain.models import DocumentHistory
 from forze_postgres.kernel._logger import logger
-from forze_postgres.kernel.catalog.introspect import PostgresIntrospector, PostgresType
+from forze_postgres.kernel.catalog.introspect import (
+    ForeignKeyInfo,
+    PostgresIntrospector,
+    PostgresType,
+)
 from forze_postgres.kernel.gateways.types import PostgresBookkeepingStrategy
 from forze_postgres.kernel.sql.conflict_target import resolve_write_conflict_target
 
@@ -118,9 +124,14 @@ class PostgresDocumentSchemaSpec:
     these, and this says whether the deployment's migration actually did."""
 
     warn_undeclared: bool = True
-    """Whether a unique index or EXCLUDE constraint on the write relation that no guarantee
-    declares is reported. Off for a spec the framework owns: the application can declare
-    nothing on it, so the warning would be one it cannot act on."""
+    """Whether a unique index, EXCLUDE constraint or cascading foreign key on the write relation
+    that no guarantee declares is reported. Off for a spec the framework owns: the application
+    can declare nothing on it, so the warning would be one it cannot act on."""
+
+    bound_relations: Mapping[str, tuple[str, str]] = attrs.field(factory=dict)
+    """The relation of each document the same module binds, by route name: where a declared
+    :class:`~forze.application.contracts.guarantees.Reference` must point its foreign key, and
+    which spec an undeclared one points at."""
 
     # ....................... #
 
@@ -1157,6 +1168,169 @@ def _guarantee_refusal(
 
 # ....................... #
 
+_ON_DELETE_TYPES: Final[dict[str, frozenset[str]]] = {
+    "cascade": frozenset({"c"}),
+    "set_null": frozenset({"n"}),
+    "restrict": frozenset({"r", "a"}),
+}
+"""The ``confdeltype`` values that keep each declared action; see
+:func:`_reference_mismatch` for the two that need more than the action."""
+
+_ON_DELETE_SQL: Final[dict[str, str]] = {
+    "cascade": "CASCADE",
+    "set_null": "SET NULL",
+    "restrict": "RESTRICT",
+}
+
+_UNDECLARED_ACTIONS: Final[dict[str, str]] = {"c": "cascade", "n": "set_null"}
+"""The delete actions that change rows, which an undeclared foreign key is reported for."""
+
+
+def _references_id(key: ForeignKeyInfo, field: str) -> bool:
+    """Whether *key* runs from *field* to ``id``, alone or beside the tenant column."""
+
+    pairs = frozenset(key.columns)
+    wanted = frozenset({(field, ID_FIELD)})
+
+    return wanted <= pairs <= wanted | {(TENANT_ID_FIELD, TENANT_ID_FIELD)}
+
+
+def _reference_mismatch(key: ForeignKeyInfo, field: str) -> str | None:
+    """Why *key*, carrying the declared action, still does not do what the in-memory store does.
+
+    A deferred ``NO ACTION`` checks at commit, so a transaction deleting the children after the
+    parent passes there and is refused here. A ``SET NULL`` over a key beside the tenant column
+    clears ``tenant_id`` too, unless it names *field* alone, which Postgres 15 can.
+
+    :returns: The reason, for the refusal, or ``None`` when *key* keeps the reference.
+    """
+
+    if key.on_delete == "a" and key.initially_deferred:
+        return (
+            f"{key.name} is NO ACTION deferred to commit, where the in-memory store refuses at once"
+        )
+
+    if key.on_delete == "n" and len(key.columns) > 1 and key.set_null_columns != (field,):
+        if key.set_null_columns is None:
+            return (
+                f"{key.name} clears {TENANT_ID_FIELD} too; clearing {field} alone beside it "
+                "needs Postgres 15 or later"
+            )
+
+        return f"{key.name} clears every column of the key, {TENANT_ID_FIELD} included"
+
+    return None
+
+
+async def _require_reference_mechanisms(
+    introspector: PostgresIntrospector,
+    spec: PostgresDocumentSchemaSpec,
+) -> frozenset[str]:
+    """Refuse a declared reference whose foreign key is not in the database, naming the DDL.
+
+    Returns the names of the foreign keys that keep the declared references, so the
+    undeclared-key warning can tell those from the rest.
+
+    The key must run from the reference's field to ``id`` on the relation the referenced spec is
+    bound to, alone or beside a tenant column referencing the tenant column, and must apply the
+    declared delete action. ``restrict`` is kept by ``RESTRICT`` and by an immediate ``NO
+    ACTION``: a hard delete through the document port maps either refusal to ``conflict``, as
+    the in-memory store raises it. A ``set_null`` reference needs a nullable column, or every
+    delete reaching a row would fail. The parent must be bound in the same module: a foreign
+    key lives in one database.
+    """
+
+    references = [g for g in spec.guarantees if isinstance(g, Reference)]
+
+    if not references:
+        return frozenset()
+
+    schema, table = spec.write_relation or spec.read_relation
+    keys = await introspector.foreign_keys(schema=schema, relation=table)
+    matched: set[str] = set()
+
+    for reference in references:
+        field = reference.field
+        target = spec.bound_relations.get(reference.spec)
+        details = {
+            "document": spec.name,
+            "relation": f"{schema}.{table}",
+            "field": field,
+            "references": reference.spec,
+        }
+
+        if target is None:
+            raise exc.configuration(
+                f"Document {spec.name!r} references {reference.spec!r}, which this Postgres "
+                "module does not bind to a fixed relation, so no foreign key can keep the "
+                f"reference. Bind {reference.spec!r} in the same module, or drop the reference.",
+                details=details,
+            )
+
+        if reference.on_delete == "set_null":
+            column = (await introspector.get_column_types(schema=schema, relation=table)).get(field)
+
+            if column is not None and column.not_null:
+                raise exc.configuration(
+                    f"Document {spec.name!r} sets {field!r} to null when its {reference.spec!r} "
+                    f"row is deleted, but {schema}.{table}.{field} is NOT NULL, so Postgres "
+                    "would refuse that delete. Drop the NOT NULL, or pick another on_delete.",
+                    details=details,
+                )
+
+        reason: str | None = None
+        one_column = False
+        # Keys from the field to the parent that keep something else: dropped before the right one
+        # is added, or the old ON DELETE stays in force beside it.
+        stale: list[str] = []
+
+        for key in keys:
+            if key.referenced != target or not _references_id(key, field):
+                continue
+
+            if key.on_delete in _ON_DELETE_TYPES[reference.on_delete]:
+                mismatch = _reference_mismatch(key, field)
+
+                if mismatch is None:
+                    matched.add(key.name)
+                    break
+
+                reason = mismatch
+                one_column = key.on_delete == "n" and key.set_null_columns is not None
+
+            stale.append(key.name)
+
+        else:
+            action = _ON_DELETE_SQL[reference.on_delete]
+            parent = f"{target[0]}.{target[1]}"
+            columns, targets = field, ID_FIELD
+
+            if one_column:
+                # Keep the tenant pairing the existing key has, and clear the field alone.
+                columns, targets = f"{TENANT_ID_FIELD}, {field}", f"{TENANT_ID_FIELD}, {ID_FIELD}"
+                action = f"SET NULL ({field})"
+
+            ddl = [f"ALTER TABLE {schema}.{table} DROP CONSTRAINT {name};" for name in stale]
+            ddl.append(
+                f"ALTER TABLE {schema}.{table} ADD FOREIGN KEY ({columns}) "
+                f"REFERENCES {parent} ({targets}) ON DELETE {action};"
+            )
+
+            raise exc.configuration(
+                f"Document {spec.name!r} references {reference.spec!r} through {field!r} with "
+                f"on_delete={reference.on_delete!r}, and {schema}.{table} has no foreign key "
+                f"from that column to {parent} ({ID_FIELD}) with ON DELETE {action}"
+                + (f" ({reason})" if reason is not None else "")
+                + ". The migration is what satisfies a reference — nothing here creates one. "
+                "This would:\n  " + "\n  ".join(ddl),
+                details=details,
+            )
+
+    return frozenset(matched)
+
+
+# ....................... #
+
 
 async def _warn_undeclared_mechanisms(
     introspector: PostgresIntrospector,
@@ -1167,10 +1341,10 @@ async def _warn_undeclared_mechanisms(
     conflict_target: Sequence[str],
     declared: frozenset[str],
 ) -> None:
-    """Warn about each unique index and EXCLUDE constraint on the write relation that no
-    guarantee declares.
+    """Warn about each unique index, EXCLUDE constraint and foreign key deleting or clearing
+    rows (``ON DELETE CASCADE``/``SET NULL``) on the write relation that no guarantee declares.
 
-    The reverse of the two passes above, and a warning rather than a refusal: the index is not
+    The reverse of the passes above, and a warning rather than a refusal: the index is not
     wrong, but the in-memory store does not know about it, so Postgres refuses with ``conflict``
     a write that a test or simulation run accepted. The primary key is left out, and so is any
     index over all its columns, which refuses no write the key would not: every store keeps a
@@ -1247,6 +1421,31 @@ async def _warn_undeclared_mechanisms(
             constraint.definition,
         )
 
+    for key in await introspector.foreign_keys(schema=schema, relation=table):
+        action = _UNDECLARED_ACTIONS.get(key.on_delete)
+
+        if action is None or key.name in declared:
+            continue
+
+        referenced = next(
+            (name for name, relation in spec.bound_relations.items() if relation == key.referenced),
+            f"<the spec bound to {key.referenced[0]}.{key.referenced[1]}>",
+        )
+
+        logger.warning(
+            "Postgres schema validation for document %r: foreign key %s on %s.%s is declared "
+            "by no guarantee, so the in-memory store keeps rows its ON DELETE %s changes. "
+            "Declare it: Reference(field=%r, spec=%r, on_delete=%r).",
+            spec.name,
+            key.name,
+            schema,
+            table,
+            _ON_DELETE_SQL[action],
+            ", ".join(column for column, _ in key.columns if column != TENANT_ID_FIELD),
+            referenced,
+            action,
+        )
+
 
 # ....................... #
 
@@ -1257,9 +1456,11 @@ async def _validate_document(
 ) -> None:
     """Assert one spec's relations expose the columns implied by its Pydantic models."""
 
-    declared = await _require_guarantee_mechanisms(
-        introspector, spec
-    ) | await _require_overlap_mechanisms(introspector, spec)
+    declared = (
+        await _require_guarantee_mechanisms(introspector, spec)
+        | await _require_overlap_mechanisms(introspector, spec)
+        | await _require_reference_mechanisms(introspector, spec)
+    )
 
     read_need = frozenset(
         (stored_field_names_for(spec.read_model, include_computed=False) | spec.materialized)

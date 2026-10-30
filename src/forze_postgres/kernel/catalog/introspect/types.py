@@ -155,3 +155,30 @@ class ExclusionConstraintInfo:
     initially_deferred: bool = False
     """Whether the constraint is ``DEFERRABLE INITIALLY DEFERRED`` (``condeferred``) — read from
     the catalog, never from :attr:`definition`, which only renders it."""
+
+
+@attrs.define(slots=True, frozen=True, kw_only=True)
+class ForeignKeyInfo:
+    """One FOREIGN KEY constraint, described in the terms a declared reference is checked
+    against."""
+
+    name: str
+    """The constraint's name, for the messages."""
+
+    columns: tuple[tuple[str, str], ...]
+    """Each referencing column paired with the column it references, in key order."""
+
+    referenced: tuple[str, str]
+    """The referenced relation, ``(schema, name)``."""
+
+    on_delete: str
+    """``confdeltype``: ``a`` no action, ``r`` restrict, ``c`` cascade, ``n`` set null, ``d`` set
+    default."""
+
+    set_null_columns: tuple[str, ...] | None = ()
+    """The columns ``ON DELETE SET NULL (…)`` clears (``confdelsetcols``); empty for every
+    column of the key. ``None`` on a server older than Postgres 15, which has no column list."""
+
+    initially_deferred: bool = False
+    """Whether the constraint is ``DEFERRABLE INITIALLY DEFERRED``, so a ``NO ACTION`` check
+    waits for commit."""

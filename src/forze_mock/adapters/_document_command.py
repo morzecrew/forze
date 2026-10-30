@@ -42,12 +42,14 @@ from forze_mock.adapters._mvcc import (
     release_row_locks,
     release_write_locks,
 )
+from forze_mock.adapters._references import apply_references, record_references
 from forze_mock.adapters.tx import (
     ensure_mock_tx_writable,
     in_mock_transaction,
     strict_tx_locks,
 )
 from forze_mock.query._types import C, D, R, U
+from forze_mock.tenancy import partition_namespace
 
 if TYPE_CHECKING:
     from forze.application.contracts.base import CountlessPage
@@ -74,12 +76,14 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
     if TYPE_CHECKING:
         spec: DocumentSpec[R, D, C, U]
         state: MockState
+        namespace: str
         domain_model: type[D] | None
         tenant_aware: bool
         dispatcher_provider: Callable[[], DomainEventDispatcherPort | None]
 
         def require_tenant_if_aware(self) -> UUID | None: ...
         def _store(self) -> dict[UUID, JsonDict]: ...
+        def _store_for(self, ns: str) -> dict[UUID, JsonDict]: ...
         def _to_read(self, doc: JsonDict) -> R: ...
         def _to_domain(self, doc: JsonDict) -> D: ...
         def _ensure_exists(self, pk: UUID) -> JsonDict: ...
@@ -125,6 +129,15 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
 
         if self.spec.guarantees:
             self._mark_guarantee_recheck(pk)
+            # Recorded when the adapter was built too; again here for a write through a port
+            # cached before a `clear()` emptied the record.
+            record_references(
+                self.state,
+                self.spec,
+                namespace=self.namespace,
+                tenant_scoped=self.tenant_aware,
+                check=self._check_guarantees,
+            )
 
     # ....................... #
 
@@ -1365,13 +1378,7 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
     # ....................... #
 
     async def kill(self, pk: UUID) -> None:
-        self.spec.require_hard_delete()
-        self._ensure_writable()
-        await self._serialize_stored(pk)
-
-        with self.state.lock:
-            _ = self._ensure_exists(pk)
-            del self._store()[pk]
+        await self.kill_many([pk])
 
     # ....................... #
 
@@ -1381,8 +1388,32 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
         if len(set(pks)) != len(pks):
             raise exc.internal("Primary keys must be unique")
 
-        for pk in pks:
-            await self.kill(pk)
+        if not pks:
+            return
+
+        self._ensure_writable()
+        await self._serialize_stored(*pks)
+
+        with self.state.lock:
+            store = self._store()
+
+            for pk in pks:
+                _ = self._ensure_exists(pk)
+
+            # One statement on Postgres: the rows a declared reference reaches go with these,
+            # and a refusal anywhere leaves every row as it was.
+            tenant = self.require_tenant_if_aware()
+            apply_references(
+                self.state,
+                parent=str(self.spec.name),
+                namespace=partition_namespace(tenant, self.namespace),
+                pks=pks,
+                tenant=tenant,
+                store_for=self._store_for,
+            )
+
+            for pk in pks:
+                del store[pk]
 
     # ....................... #
 

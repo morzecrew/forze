@@ -1,6 +1,6 @@
 """Lifecycle wiring for optional Postgres document schema validation."""
 
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from typing import Any, final
 
 import attrs
@@ -20,7 +20,7 @@ from ...kernel.catalog.validation.validate_schema import (
     PostgresDocumentSchemaSpec,
     validate_postgres_document_schemas,
 )
-from ...kernel.relation import require_static_relation
+from ...kernel.relation import is_static_relation, require_static_relation
 from ..deps.configs import PostgresDocumentConfig, PostgresReadOnlyDocumentConfig
 from ..deps.keys import PostgresIntrospectorDepKey
 from ..deps.module import PostgresDepsModule
@@ -35,6 +35,7 @@ def postgres_document_schema_spec_for_binding(
     spec: DocumentSpec[Any, Any, Any, Any],
     config: PostgresReadOnlyDocumentConfig | PostgresDocumentConfig,
     warn_undeclared: bool = True,
+    bound_relations: Mapping[str, tuple[str, str]] | None = None,
 ) -> PostgresDocumentSchemaSpec:
     """Build a :class:`~forze_postgres.kernel.catalog.validation.validate_schema.PostgresDocumentSchemaSpec` from kernel wiring.
 
@@ -47,6 +48,9 @@ def postgres_document_schema_spec_for_binding(
 
     :param warn_undeclared: Whether to report unique indexes no guarantee declares. Pass
         ``False`` for a spec the framework owns, such as a ``forze_identity`` one.
+    :param bound_relations: The relation of each document the same module binds, by route name,
+        where a declared ``Reference`` must point its foreign key. A spec declaring one is
+        refused at validation when the spec it names is missing here.
     :raises CoreException: ``configuration``, code ``postgres_document_spec_read_only``, when a
         read-write binding pairs with a spec that has no write model.
     """
@@ -78,6 +82,7 @@ def postgres_document_schema_spec_for_binding(
             materialized=spec.materialized,
             guarantees=spec.declared_guarantees,
             warn_undeclared=warn_undeclared,
+            bound_relations=bound_relations or {},
         )
 
     w = spec.write
@@ -122,6 +127,7 @@ def postgres_document_schema_spec_for_binding(
         materialized=spec.materialized,
         guarantees=spec.guarantees,
         warn_undeclared=warn_undeclared,
+        bound_relations=bound_relations or {},
     )
 
 
@@ -173,11 +179,19 @@ def postgres_document_schema_specs(
         )
 
     skipped = frozenset(exclude)
-    bindings: dict[str, PostgresReadOnlyDocumentConfig | PostgresDocumentConfig] = {
+    bound: dict[str, PostgresReadOnlyDocumentConfig | PostgresDocumentConfig] = {
         str(name): config
         for mapping in (deps.ro_documents, deps.rw_documents)
         for name, config in (mapping or {}).items()
-        if str(name) not in skipped
+    }
+    bindings = {name: config for name, config in bound.items() if name not in skipped}
+    # Where each bound document lives, excluded or not: a declared reference points there.
+    relations = {
+        name: relation
+        for name, config in bound.items()
+        if is_static_relation(
+            relation := config.write if isinstance(config, PostgresDocumentConfig) else config.read
+        )
     }
     specs: list[PostgresDocumentSchemaSpec] = []
     uncatalogued: list[str] = []
@@ -196,6 +210,7 @@ def postgres_document_schema_specs(
                     spec=entry.spec,  # pyright: ignore[reportUnknownArgumentType]
                     config=bindings[name],
                     warn_undeclared=entry.source is not SpecSource.FRAMEWORK,
+                    bound_relations=relations,
                 )
             )
 

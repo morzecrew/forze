@@ -79,6 +79,7 @@ SNAPSHOT_VERSION: Final = 1
 PERSIST_FIELDS: Final = frozenset(
     {
         "documents",
+        "document_references",  # without it, restored rows miss their parent's cascade
         "counters",
         "counter_expiry",
         "cache_kv",
@@ -130,6 +131,7 @@ _LIVE_FIELDS: Final = frozenset(
         "rotating_credential_locks",
         "write_serialization",
         "row_locks",
+        "reference_checks",  # bound methods of this process's adapters
     }
 )
 """The state's machinery rather than its data: a re-entrant lock, the strict-transaction

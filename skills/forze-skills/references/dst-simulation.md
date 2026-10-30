@@ -120,7 +120,7 @@ under test is no longer the same app.
 - **Sweeping with faults configured but no reachability target** — a green run over a fault that never fired is false confidence; declare what must *sometimes* happen (see [invariants](dst-invariants.md)).
 - **Treating a changed `registry_fingerprint` as flakiness** — the seed stopped reproducing because the catalog changed; re-derive rather than chasing it.
 - **Running DST against the legacy no-op transaction manager** — it reports false double-writes. The default journal manager rolls back faithfully, which is what makes a found race real.
-- **Expecting DST to catch logic below a port** — database triggers, generated columns and `CHECK` constraints are not in the mock, and an invariant a trigger maintains will false-positive.
+- **Expecting DST to catch logic below a port** — database triggers, generated columns and `CHECK` constraints are not in the mock, and an invariant a trigger maintains will false-positive. A foreign key's `ON DELETE` is, once the child spec declares it: `guarantees=(Reference(field="stage_id", spec="stages", on_delete="cascade"),)`.
 
 ## Reference
 
