@@ -1252,6 +1252,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Serializing an operation">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#sharing-one-lock-between-operations" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Sharing one lock between operations
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -6629,6 +6646,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Serializing an operation">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#sharing-one-lock-between-operations" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Sharing one lock between operations
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -6915,7 +6949,8 @@ commits or rolls back:</p>
 <p>A second <code>orders.recompute</code> for the same order waits at that step until the
 first one's transaction ends. Different orders, and different tenants, never
 wait on each other. The lock is keyed by the operation's registered name, the
-bound tenant and the key, so another operation never shares it. Under a
+bound tenant and the key, so another operation never shares it unless both name
+a <a href="#sharing-one-lock-between-operations">group</a>. Under a
 <a href="#two-phase-handlers-work-before-the-write">two-phase handler</a> it covers <code>apply</code>
 only: <code>prepare</code> runs before the transaction opens.</p>
 <p>The key function returns one value or a tuple of values. Each must be a <code>str</code>,
@@ -6937,7 +6972,8 @@ which is stricter.</p>
 <li>Placed in the outer scope, which runs before the transaction opens, it is
   refused at registry freeze (<code>tx_lock_outside_transaction_scope</code>).</li>
 <li>An operation with no transaction route is refused there too
-  (<code>tx_lock_without_route</code>).</li>
+  (<code>tx_lock_without_route</code>), as is a group spread over several routes
+  (<code>tx_lock_group_spans_routes</code>).</li>
 <li>A route whose backend has no transaction-scoped lock is refused when the
   operation is resolved, on its first call or under <code>check_wiring</code>
   (<code>tx_lock_unsupported</code>). Postgres has one; Mongo and Firestore do not. The
@@ -6966,11 +7002,46 @@ mock alike.</p>
 <p>The <a href="../../reference/contracts/document/"><code>SerializedBy</code></a> guarantee and
 <code>command.hold(...)</code> lock a <em>document owner</em>: every write for that owner takes
 the lock, whoever wrote the code. <code>SerializeOperation</code> locks an <em>operation
-input</em>: only invocations of that operation take it, and the key need not be
-any document's field. A <a href="../../reference/contracts/coordination/#distributed-lock">distributed lock</a>
+input</em>: only invocations of that operation, or of its group, take it, and the
+key need not be any document's field. A <a href="../../reference/contracts/coordination/#distributed-lock">distributed lock</a>
 is a lease for work outside any transaction; its release is not tied to a
 commit.</p>
 </div>
+<h3 id="sharing-one-lock-between-operations">Sharing one lock between operations<a class="headerlink" href="#sharing-one-lock-between-operations" title="Permanent link">&para;</a></h3>
+<p>Two different operations sometimes must exclude each other: a job that
+recomputes a derived table, and another operation that reads it and writes into
+it. Give both the same <code>group</code>, and the group takes the operation's place in the
+lock key:</p>
+<div class="highlight"><pre><span></span><code><span class="n">serialize</span> <span class="o">=</span> <span class="n">SerializeOperation</span><span class="p">(</span><span class="n">key</span><span class="o">=</span><span class="k">lambda</span> <span class="n">args</span><span class="p">:</span> <span class="p">(),</span> <span class="n">group</span><span class="o">=</span><span class="s2">"requirements"</span><span class="p">)</span>
+
+<span class="n">registry</span> <span class="o">=</span> <span class="p">(</span>
+    <span class="n">registry</span><span class="o">.</span><span class="n">bind</span><span class="p">(</span><span class="s2">"requirements.recompute"</span><span class="p">)</span>
+    <span class="o">.</span><span class="n">bind_tx</span><span class="p">()</span>
+    <span class="o">.</span><span class="n">set_route</span><span class="p">(</span><span class="s2">"orders"</span><span class="p">)</span>
+    <span class="o">.</span><span class="n">before</span><span class="p">(</span><span class="n">serialize</span><span class="o">.</span><span class="n">to_step</span><span class="p">())</span>
+    <span class="o">.</span><span class="n">finish</span><span class="p">(</span><span class="n">deep</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+    <span class="o">.</span><span class="n">bind</span><span class="p">(</span><span class="s2">"requirements.extend"</span><span class="p">)</span>
+    <span class="o">.</span><span class="n">bind_tx</span><span class="p">()</span>
+    <span class="o">.</span><span class="n">set_route</span><span class="p">(</span><span class="s2">"orders"</span><span class="p">)</span>
+    <span class="o">.</span><span class="n">before</span><span class="p">(</span><span class="n">serialize</span><span class="o">.</span><span class="n">to_step</span><span class="p">())</span>
+    <span class="o">.</span><span class="n">finish</span><span class="p">(</span><span class="n">deep</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+<span class="p">)</span>
+</code></pre></div>
+<p>Every operation naming the group waits on every other one with the same key, as
+invocations of one operation do. The tenant stays in the key, so different
+tenants still never wait on each other. A group keys in its own namespace, so a
+group named <code>orders.recompute</code> never shares the lock of the operation of that
+name. The name must be a non-empty string without surrounding whitespace, or the
+constructor refuses it as <code>configuration</code> (<code>operation_lock_group_invalid</code>); a <code>StrEnum</code>
+member keys as its plain value.</p>
+<p>Setting, changing or dropping an operation's group changes its lock key. During a
+rolling deployment, old and new nodes would then hold different locks and not wait
+on each other, so drain the operation's writers before rolling the change out.</p>
+<p>The lock lives in the backend of the route's transaction manager, so two routes
+would hold two unrelated locks. Freeze refuses a group whose operations run on
+different transaction routes (<code>tx_lock_group_spans_routes</code>), even when both
+routes reach one database. It compares the operations of the registry it
+freezes, so merge registries before freezing to check a group across them.</p>
 <h2 id="after-the-commit">After the commit<a class="headerlink" href="#after-the-commit" title="Permanent link">&para;</a></h2>
 <p>Some work must happen <strong>only if</strong> the transaction commits — publishing an event,
 sending a notification, enqueuing a job. Doing it inside the scope risks acting

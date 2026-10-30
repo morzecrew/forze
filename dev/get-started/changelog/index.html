@@ -10332,7 +10332,7 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <h2 id="unreleased"><a href="https://github.com/morzecrew/forze/compare/v0.17.0...HEAD">Unreleased</a><a class="headerlink" href="#unreleased" title="Permanent link">&para;</a></h2>
 <h3 id="added">Added<a class="headerlink" href="#added" title="Permanent link">&para;</a></h3>
 <ul>
-<li>...</li>
+<li><strong><code>SerializeOperation(group=...)</code> shares one lock between operations.</strong> Operations naming one group take turns per key and tenant, keyed apart from operation names. Freeze refuses a group spread over several transaction routes (<code>tx_lock_group_spans_routes</code>), found through the new <code>SharesTransactionLock</code> protocol.</li>
 </ul>
 <h3 id="changed">Changed<a class="headerlink" href="#changed" title="Permanent link">&para;</a></h3>
 <ul>
