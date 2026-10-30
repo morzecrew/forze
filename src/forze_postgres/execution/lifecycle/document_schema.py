@@ -66,7 +66,8 @@ def postgres_document_schema_spec_for_binding(
             details={"route": name},
         )
 
-    # A read-only binding reads the spec's read side alone, whatever else the spec declares.
+    # A read-only binding reads the spec's read side alone, whatever else the spec declares;
+    # what the write domain model implies binds the writer's table, not this relation.
     if not isinstance(config, PostgresDocumentConfig) or spec.write is None:
         return PostgresDocumentSchemaSpec(
             name=name,
@@ -75,7 +76,7 @@ def postgres_document_schema_spec_for_binding(
             read_omit_fields=spec.resolved_lenient_read_fields,
             tenant_aware=tenant_aware,
             materialized=spec.materialized,
-            guarantees=spec.guarantees,
+            guarantees=spec.declared_guarantees,
             warn_undeclared=warn_undeclared,
         )
 

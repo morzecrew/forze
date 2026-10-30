@@ -15,13 +15,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **A mock derived source can aggregate child rows.** A `MockDerivedRegistry` source with two required positional parameters gets `(row, view)`, the view analytics resolvers get, so `view.rows(spec)` counts the caller's own uncommitted children. Existing `(row)` sources keep working.
 
+- **`GuaranteeImplying` lets a domain model declare the guarantees its fields need.** A tuple of guarantees in the model's `implied_guarantees` class attribute is added to every document spec over it. `implied_guarantees_of(model)` reads it and refuses anything else as `implied_guarantees_invalid`.
+
 ### Changed
 
-- ...
+- **A spec over a `NumberIdMixin` domain declares `number_id` unique by itself** (**Breaking**). The mock refuses a duplicate, and startup needs the unique index, per tenant on a tenant-aware route. A declared uniqueness over `number_id` replaces it; on Firestore, set `implied_guarantees = ()` on the model.
+
+- **`DocumentSpec` keeps what `guarantees=` passes in a field named `declared_guarantees`** (**Breaking**). Passing `guarantees=` and reading `spec.guarantees` still work; the latter adds what the domain model implies. A numbered domain whose read model does not store `number_id` is now refused when the spec is built.
 
 ### Fixed
 
 - **Postgres schema validation no longer warns that declared derived read fields are missing from the write relation.** A field in `derived_read_fields` comes from the read view, so the startup warning now names only read fields that are neither derived nor omitted.
+
+- **Startup accepts an index over `tenant_id` plus the fields for a guarantee on a tenant-aware route.** It keeps the guarantee per tenant, as the mock does, so Postgres and Mongo print that index when it is missing. The Postgres undeclared-index warning no longer suggests naming `tenant_id`, which a spec cannot.
 
 ## [0.17.0] - 2026-10-30
 

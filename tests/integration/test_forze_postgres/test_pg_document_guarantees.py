@@ -28,9 +28,14 @@ from forze.application.contracts.guarantees import NonOverlapping, UniqueTogethe
 from forze.application.execution import Deps
 from forze.base.exceptions import CoreException
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
+from forze_kits.domain.number_id import NumberIdCreateCmdMixin, NumberIdMixin
 from forze_mock import MockDepsModule
+from forze_postgres.execution.deps.configs import PostgresDocumentConfig
 from forze_postgres.execution.deps.keys import PostgresIntrospectorDepKey
-from forze_postgres.execution.lifecycle import PostgresDocumentSchemaValidationHook
+from forze_postgres.execution.lifecycle import (
+    PostgresDocumentSchemaValidationHook,
+    postgres_document_schema_spec_for_binding,
+)
 from forze_postgres.kernel.catalog.introspect import PostgresIntrospector
 from forze_postgres.kernel.catalog.validation.validate_schema import PostgresDocumentSchemaSpec
 from forze_postgres.kernel.client.client import PostgresClient
@@ -1432,3 +1437,90 @@ class TestAnUndeclaredMechanismIsReported:
         assert "daterange(valid_from, valid_to, '[]'::text)" in warnings[0]
 
         assert await self._warnings(pg_client, table, NO_OVERLAP) == []
+
+
+# ....................... #
+
+
+class _Order(NumberIdMixin, Document):
+    name: str
+
+
+class _OrderRead(NumberIdMixin, ReadDocument):
+    name: str
+
+
+class _OrderCmd(NumberIdCreateCmdMixin, CreateDocumentCmd):
+    name: str
+
+
+ORDERS = DocumentSpec(
+    name="orders",
+    read=_OrderRead,
+    write=DocumentWriteTypes(domain=_Order, create_cmd=_OrderCmd),
+)
+
+
+class TestANumberedSpecDeclaresItsNumberUnique:
+    """The number-id mixin implies the uniqueness its counter hands out, so the index behind it
+    is a declared mechanism — no warning — and a missing one is refused like any other."""
+
+    @staticmethod
+    async def _warnings(pg_client: PostgresClient, *, tenant_aware: bool, unique: str) -> list[str]:
+        table = f"numbered_{uuid4().hex[:12]}"
+        tenant = "tenant_id uuid NOT NULL," if tenant_aware else ""
+        await pg_client.execute(
+            f"""
+            CREATE TABLE {table} (
+                id uuid PRIMARY KEY,
+                rev integer NOT NULL,
+                created_at timestamptz NOT NULL,
+                last_update_at timestamptz NOT NULL,
+                {tenant}
+                number_id integer NOT NULL,
+                name text NOT NULL
+            );
+            """
+        )
+
+        if unique:
+            await pg_client.execute(f"ALTER TABLE {table} ADD UNIQUE ({unique});")
+
+        relation = ("public", table)
+        spec = postgres_document_schema_spec_for_binding(
+            "orders",
+            spec=ORDERS,
+            config=PostgresDocumentConfig(
+                read=relation,
+                write=relation,
+                bookkeeping_strategy="application",
+                tenant_aware=tenant_aware,
+            ),
+        )
+        ctx = context_from_deps(
+            Deps.plain({PostgresIntrospectorDepKey: PostgresIntrospector(client=pg_client)})
+        )
+
+        with patch("forze_postgres.kernel.catalog.validation.validate_schema.logger") as log:
+            await PostgresDocumentSchemaValidationHook(specs=(spec,))(ctx)
+
+        return [call.args[0] % call.args[1:] for call in log.warning.call_args_list]
+
+    @pytest.mark.parametrize(
+        ("tenant_aware", "unique"),
+        [(False, "number_id"), (True, "tenant_id, number_id")],
+        ids=["global", "per-tenant"],
+    )
+    async def test_the_index_on_the_number_is_not_reported(
+        self,
+        pg_client: PostgresClient,
+        tenant_aware: bool,
+        unique: str,
+    ) -> None:
+        assert await self._warnings(pg_client, tenant_aware=tenant_aware, unique=unique) == []
+
+    async def test_a_missing_index_is_refused(self, pg_client: PostgresClient) -> None:
+        with pytest.raises(CoreException) as caught:
+            await self._warnings(pg_client, tenant_aware=False, unique="")
+
+        assert "ADD UNIQUE (number_id)" in str(caught.value)

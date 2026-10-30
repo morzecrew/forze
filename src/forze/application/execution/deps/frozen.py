@@ -311,6 +311,9 @@ class FrozenDeps:
                 result,
                 spec_name=str(spec.name),
                 backend=type(result).__module__.split(".")[0],
+                # A document spec keeps what its author declared apart from what its model
+                # implies, so a refusal of an implied one can name the opt-out instead.
+                declared=getattr(spec, "declared_guarantees", None),
             )
             # Innermost (closest to the real port): interceptor chain, then runtime tracing, then the
             # OTel client span, then the resilience port policy outermost (so a fault interceptor's
