@@ -30,8 +30,10 @@ from ..crypto import FieldEncryption
 from ..guarantees import (
     NonOverlapping,
     SerializedBy,
+    StorageGuarantee,
     StorageGuarantees,
     UniqueTogether,
+    implied_guarantees_of,
 )
 from ..querying import (
     QueryFieldPolicy,
@@ -417,6 +419,27 @@ def serialization_keys(
 # ....................... #
 
 
+def _already_declared(implied: StorageGuarantee, declared: StorageGuarantees) -> bool:
+    """Whether *declared* already says what *implied* does.
+
+    A declared uniqueness over the same fields counts whatever its filter, null exemption or
+    moment: an author who narrowed it to the live rows meant the narrower property, and keeping
+    the implied one beside it would ask for a second index and refuse what the first allows.
+    """
+
+    if isinstance(implied, UniqueTogether):
+        fields = frozenset(implied.fields)
+
+        return any(
+            isinstance(g, UniqueTogether) and frozenset(g.fields) == fields for g in declared
+        )
+
+    return implied in declared
+
+
+# ....................... #
+
+
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class DocumentSpec(BaseSpec, Generic[R, D, C, U]):
     """Declarative specification for a document aggregate."""
@@ -590,8 +613,10 @@ class DocumentSpec(BaseSpec, Generic[R, D, C, U]):
     )
     """Optional codec overrides; defaults are derived from model types."""
 
-    guarantees: StorageGuarantees = ()
+    declared_guarantees: StorageGuarantees = attrs.field(default=(), alias="guarantees")
     """What the store serving this document must enforce, declared as properties of the data.
+
+    Passed as ``guarantees``; read :attr:`guarantees`, which adds what the domain model implies.
 
     A guarantee is reconciled against the resolved adapter's declaration when the port is
     built, so a backend that cannot keep one refuses at wiring rather than at the first write
@@ -600,6 +625,32 @@ class DocumentSpec(BaseSpec, Generic[R, D, C, U]):
 
     Empty by default, and empty asks for nothing — the reconciliation is inert for a spec that
     declares no guarantee, which is every spec that has not opted in."""
+
+    # ....................... #
+
+    @functools.cached_property
+    def guarantees(self) -> StorageGuarantees:
+        """The declared guarantees, plus what the write domain model implies and they do not
+        already say (see :class:`~forze.application.contracts.guarantees.GuaranteeImplying`).
+
+        A declared uniqueness over the same fields replaces an implied one, so a spec never asks
+        for two indexes over the same fields. Read off the spec rather than added by whoever
+        builds a port: resolution memoizes a port per spec value, so the mock, the
+        reconciliation and the startup validator all see this one tuple.
+        """
+
+        declared = self.declared_guarantees
+
+        if self.write is None:
+            return declared
+
+        implied = [
+            g
+            for g in implied_guarantees_of(self.write["domain"])
+            if not _already_declared(g, declared)
+        ]
+
+        return (*declared, *implied) if implied else declared
 
     # ....................... #
 

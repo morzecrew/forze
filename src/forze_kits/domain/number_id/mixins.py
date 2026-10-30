@@ -1,6 +1,11 @@
+from typing import ClassVar
+
 from pydantic import PositiveInt
 
+from forze.application.contracts.guarantees import StorageGuarantees, UniqueTogether
 from forze.domain.models import BaseDTO, CoreModel
+
+from .constants import NUMBER_ID_FIELD
 
 # ----------------------- #
 
@@ -14,6 +19,15 @@ class NumberIdMixin(CoreModel):
 
     number_id: PositiveInt
     """Unique number identifier of the document."""
+
+    implied_guarantees: ClassVar[StorageGuarantees] = (UniqueTogether(fields=(NUMBER_ID_FIELD,)),)
+    """At most one row per number: a document spec over this model declares it by itself.
+
+    The counter hands each number out once: per tenant when its own route is tenant-aware, as
+    the stores keep a tenant-aware document route's guarantee. Give the two routes the same
+    tenancy; a per-tenant counter feeding a shared relation repeats numbers, which this refuses.
+    A uniqueness the spec declares over ``number_id`` replaces this one. Override with ``()``
+    where the store keeps no uniqueness, such as Firestore."""
 
 
 # ....................... #

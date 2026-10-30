@@ -9,6 +9,7 @@ from uuid import UUID
 import pytest
 from pydantic import BaseModel, computed_field
 
+from forze.application.contracts.guarantees import UniqueTogether
 from forze.application.contracts.tenancy import TENANT_ID_FIELD
 from forze.base.exceptions import CoreException
 from forze_postgres.kernel.catalog.introspect import (
@@ -607,3 +608,64 @@ async def test_a_tenant_aware_write_and_history_check_their_tenant_columns(
     side = "write" if missing == "w" else "history"
     assert caught.value.details is not None
     assert caught.value.details["document"] == f"doc {side}"
+
+
+# ....................... #
+
+_ONE_PER_NAME = UniqueTogether(fields=("name",))
+
+
+async def _validate_tenant_aware(
+    *guarantees: UniqueTogether,
+    indexes: tuple[UniqueIndexInfo, ...],
+) -> list[str]:
+    intro = MagicMock(spec=PostgresIntrospector)
+    intro.get_primary_key_columns = AsyncMock(return_value=["id"])
+    intro.get_column_types = AsyncMock(
+        return_value={
+            "id": _col("id"),
+            "name": _col("name"),
+            "rev": PostgresType(base="int4", is_array=False, not_null=True),
+            TENANT_ID_FIELD: PostgresType(base="uuid", is_array=False, not_null=True),
+        }
+    )
+    intro.unique_indexes = AsyncMock(return_value=indexes)
+    intro.exclusion_constraints = AsyncMock(return_value=())
+    spec = _spec_over(_Domain, tenant_aware=True, guarantees=guarantees)
+
+    with patch("forze_postgres.kernel.catalog.validation.validate_schema.logger") as log:
+        await validate_postgres_document_schemas(intro, [spec])
+
+    return [call.args[0] % call.args[1:] for call in log.warning.call_args_list]
+
+
+def _index(*columns: str) -> UniqueIndexInfo:
+    return UniqueIndexInfo(
+        columns=frozenset(columns), predicate=None, nulls_not_distinct=False, name="t_key"
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("columns", [("name",), (TENANT_ID_FIELD, "name")])
+async def test_a_tenant_aware_guarantee_is_kept_by_an_index_per_tenant_or_over_all(
+    columns: tuple[str, ...],
+) -> None:
+    # Per tenant is what the in-memory store keeps; across tenants is stricter, as before.
+    assert await _validate_tenant_aware(_ONE_PER_NAME, indexes=(_index(*columns),)) == []
+
+
+@pytest.mark.asyncio
+async def test_a_tenant_aware_refusal_names_the_index_per_tenant() -> None:
+    with pytest.raises(CoreException) as caught:
+        await _validate_tenant_aware(_ONE_PER_NAME, indexes=())
+
+    assert f"ADD UNIQUE ({TENANT_ID_FIELD}, name)" in str(caught.value)
+
+
+@pytest.mark.asyncio
+async def test_a_tenant_aware_suggestion_leaves_the_tenant_column_out() -> None:
+    # The spec cannot name the column, and its guarantee is kept per tenant without it.
+    reported = await _validate_tenant_aware(indexes=(_index(TENANT_ID_FIELD, "name"),))
+
+    assert len(reported) == 1
+    assert "UniqueTogether(fields=('name',))" in reported[0]

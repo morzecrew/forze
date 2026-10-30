@@ -15,9 +15,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **A mock derived source can aggregate child rows.** A `MockDerivedRegistry` source with two required positional parameters gets `(row, view)`, the view analytics resolvers get, so `view.rows(spec)` counts the caller's own uncommitted children. Existing `(row)` sources keep working.
 
+- **`GuaranteeImplying` lets a domain model declare the guarantees its fields need.** A tuple of guarantees in the model's `implied_guarantees` class attribute is added to every document spec over it. `implied_guarantees_of(model)` reads it and refuses anything else as `implied_guarantees_invalid`.
+
 ### Changed
 
 - **`configure_cursor_signer(None)` and `configure_cursor_cipher(None)` clear the context's own key** (**Breaking**). The key an open runtime scope holds then applies again. `bind_cursor_signer(None)` and `bind_cursor_cipher(None)` still turn protection off for a block.
+
+- **A spec over a `NumberIdMixin` domain declares `number_id` unique by itself** (**Breaking**). The mock refuses a duplicate, and startup needs the unique index, per tenant on a tenant-aware route. A declared uniqueness over `number_id` replaces it; on Firestore, set `implied_guarantees = ()` on the model.
+
+- **`DocumentSpec` keeps what `guarantees=` passes in a field named `declared_guarantees`** (**Breaking**). Passing `guarantees=` and reading `spec.guarantees` still work; the latter adds what the domain model implies. A numbered domain whose read model does not store `number_id` is now refused when the spec is built.
 
 ### Fixed
 
@@ -28,6 +34,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Security
 
 - **Cursor signing and encryption set on an `ExecutionRuntime` apply to every request** (**Breaking**). Code outside the scope's task now mints and requires protected cursors, refused (`cursor_protection_ambiguous`) while open scopes hold different keys. New `hold_cursor_signer` and `hold_cursor_cipher`.
+
+- **Startup accepts an index over `tenant_id` plus the fields for a guarantee on a tenant-aware route.** It keeps the guarantee per tenant, as the mock does, so Postgres and Mongo print that index when it is missing. The Postgres undeclared-index warning no longer suggests naming `tenant_id`, which a spec cannot.
 
 ## [0.17.0] - 2026-10-30
 

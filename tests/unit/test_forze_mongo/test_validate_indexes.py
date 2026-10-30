@@ -797,3 +797,43 @@ class TestAFilterThatAlreadyExcludesNulls:
             "live": ("eq", ("bool", True)),
             "pointer": ("type", frozenset({"string"})),
         }
+
+
+# ....................... #
+
+
+class TestATenantAwareRoute:
+    """Its guarantees hold per tenant, as the in-memory store keeps them, so the index may cover
+    ``tenant_id`` as well, in any order; one over the fields alone is stricter and counts."""
+
+    @staticmethod
+    def _require(*keys: str, tenant_aware: bool = True) -> None:
+        _require_guarantee_indexes(
+            MongoDocumentIndexSpec(
+                name="orders",
+                write_relation=("db", "coll"),
+                guarantees=(UniqueTogether(fields=("number_id",)),),
+                tenant_aware=tenant_aware,
+            ),
+            [MongoIndexInfo(name="ix", keys=tuple((k, 1) for k in keys), unique=True)]
+            if keys
+            else [],
+            database="db",
+            collection="coll",
+        )
+
+    @pytest.mark.parametrize(
+        "keys", [("tenant_id", "number_id"), ("number_id", "tenant_id"), ("number_id",)]
+    )
+    def test_an_index_per_tenant_or_over_all_counts(self, keys: tuple[str, ...]) -> None:
+        self._require(*keys)
+
+    def test_the_index_per_tenant_does_not_count_on_a_route_without_tenancy(self) -> None:
+        with pytest.raises(CoreException, match="no unique index"):
+            self._require("tenant_id", "number_id", tenant_aware=False)
+
+    def test_the_refusal_prints_the_index_per_tenant(self) -> None:
+        with pytest.raises(CoreException) as caught:
+            self._require()
+
+        assert "createIndex({tenant_id: 1, number_id: 1}, {unique: true})" in caught.value.summary

@@ -39,6 +39,7 @@ def mongo_document_index_spec_for_binding(
         name=name,
         write_relation=config.write,
         guarantees=spec.guarantees,
+        tenant_aware=config.tenant_aware,
         read_model=spec.read,
     )
 

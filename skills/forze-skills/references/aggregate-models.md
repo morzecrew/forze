@@ -44,7 +44,7 @@ class ProjectReadModel(ReadDocument):
 | Mixin | Adds | Use when |
 |-------|------|----------|
 | `SoftDeletionMixin` | `is_deleted` | Soft-delete support |
-| `NumberIdMixin` | `number_id` | Human-readable IDs (combine with `NumberIdMappingStep` in mapping) |
+| `NumberIdMixin` | `number_id` | Human-readable IDs (combine with `NumberIdMappingStep` in mapping); the spec declares `UniqueTogether(fields=("number_id",))` by itself, so back it with a unique index |
 | `CreatorIdMixin` (`forze_kits.domain.creator_id`) | `creator_id` | Audit (`CreatorIdMappingStep`) |
 | `MetadataMixin` (`forze_kits.domain.metadata`) | `name`, `display_name`, … | Named entities |
 

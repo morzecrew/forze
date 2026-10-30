@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, ClassVar
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from pydantic import BaseModel
 
 from forze.application.contracts.document import DocumentSpec
+from forze.application.contracts.guarantees import StorageGuarantees, UniqueTogether
 from forze.application.contracts.inventory import (
     FrozenSpecRegistry,
     SpecRegistry,
@@ -82,6 +83,33 @@ def test_a_read_only_binding_of_a_writable_spec_validates_its_read_side() -> Non
 
     assert out.read_relation == ("public", "items")
     assert out.write_relation is None
+
+
+class _NumberedRead(_Read):
+    number_id: int
+
+
+class _NumberedDomain(_Domain):
+    number_id: int
+
+    implied_guarantees: ClassVar[StorageGuarantees] = (UniqueTogether(fields=("number_id",)),)
+
+
+def test_a_read_only_binding_checks_only_what_the_spec_declares() -> None:
+    # The domain implies `number_id` unique on the writer's table, not on what this reads.
+    declared = UniqueTogether(fields=("name",))
+    spec = DocumentSpec(
+        name="doc",
+        read=_NumberedRead,
+        write={"domain": _NumberedDomain, "create_cmd": _Create},
+        guarantees=(declared,),
+    )
+    config = PostgresReadOnlyDocumentConfig(read=("public", "items_v"))
+
+    out = postgres_document_schema_spec_for_binding("doc", spec=spec, config=config)
+
+    assert len(spec.guarantees) == 2
+    assert out.guarantees == (declared,)
 
 
 def test_a_read_write_binding_of_a_read_only_spec_is_refused() -> None:

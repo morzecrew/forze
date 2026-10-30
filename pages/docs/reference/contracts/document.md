@@ -306,6 +306,49 @@ periods and takes every other overlapping pair.
     created. A spec with soft deletion usually filters the deleted rows out — which also means
     an un-delete can conflict, and is refused.
 
+!!! note "A tenant-aware route keeps a guarantee per tenant"
+
+    The in-memory store keeps one partition per tenant, so on a `tenant_aware` route two tenants
+    may share a tuple. Startup therefore accepts an index over `tenant_id` plus the fields, in
+    any order, such as `UNIQUE (tenant_id, number_id)`, and prints that form when the index is
+    missing. An index over the fields alone also counts, but it is stricter: it refuses a
+    duplicate across tenants that the in-memory store accepts. The undeclared-index warning
+    leaves `tenant_id` out of its suggestion, since the spec cannot name it.
+
+#### Guarantees the domain model implies
+
+Some fields carry their own guarantee. `NumberIdMixin` gives a `number_id` that a counter hands
+out once, so a spec whose write domain model uses it declares
+`UniqueTogether(fields=("number_id",))` by itself. You add no line to the spec. The in-memory
+store refuses a duplicate number, and startup expects the unique index on `number_id` (per
+tenant on a tenant-aware route).
+
+The rules:
+
+- A uniqueness you declare over the same fields replaces the implied one, whatever its
+  `where`, `skip_null` or `holds`. The spec never carries two, so there is never a second index
+  to migrate.
+- Only the write domain model counts. A read-only spec implies nothing, because nothing writes
+  through it and its relation may be a view. Likewise, Postgres startup checks only declared
+  guarantees on a route bound in `ro_documents`: the implied ones bind the writer's table.
+- `spec.guarantees` lists both kinds, and every store reads it. `spec.declared_guarantees` holds
+  only what you passed as `guarantees=`.
+- The counter numbers per tenant only when its own route is `tenant_aware`. Give the counter
+  route and the document route the same tenancy. A per-tenant counter feeding a relation that
+  tenants share hands two tenants the same number, and the guarantee refuses the second.
+- An implied guarantee needs a backend that keeps it, as a declared one does. The wiring
+  refusal marks it `(implied by the domain model)` and names the opt-out. Firestore keeps no
+  uniqueness, so wiring refuses a numbered spec there. To opt out, override the attribute on
+  your domain model:
+  `implied_guarantees: ClassVar[StorageGuarantees] = ()`. Nothing then refuses a duplicate
+  number.
+- A numbered domain whose read model does not store `number_id` is refused when the spec is
+  built, because a guarantee must name a stored field.
+
+A mixin of your own can do the same: set `implied_guarantees` as a `ClassVar` holding a tuple
+of guarantees (`GuaranteeImplying` is the protocol). Anything else, such as a bare guarantee
+outside a tuple, is refused as `implied_guarantees_invalid` when the spec is built.
+
 #### Guarantee or invariant?
 
 Both can express "one current row per fact", and the question comes up immediately.
