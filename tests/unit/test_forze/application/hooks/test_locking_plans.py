@@ -17,7 +17,7 @@ from uuid import UUID, uuid4
 import pytest
 from pydantic import BaseModel
 
-from forze.application.contracts.execution import Handler
+from forze.application.contracts.execution import Handler, SharesTransactionLock
 from forze.application.contracts.tenancy import TenantIdentity
 from forze.application.contracts.transaction import (
     TX_LOCK_UNSUPPORTED_CODE,
@@ -33,7 +33,7 @@ from forze.application.execution.operations.registry import (
 from forze.application.hooks.locking import SerializeOperation
 from forze.application.hooks.resilience import ResilienceWrap
 from forze.base.exceptions import CoreException, ExceptionKind, exc
-from forze.base.primitives import str_key_selector
+from forze.base.primitives import advisory_lock_key, str_key_selector
 from forze_mock import MockDepsModule, MockState
 from forze_mock.execution.factories import mock_strict_txmanager
 from tests.support.execution_context import context_from_deps, context_from_modules
@@ -102,37 +102,79 @@ def _ctx(transactions: Literal["journal", "strict", "none"] = "journal") -> Exec
     return context_from_modules(MockDepsModule(state=MockState(), transactions=transactions))
 
 
-async def _run_pair(
-    ctx: ExecutionContext,
+def _op_key(*parts: object) -> int:
+    """The lock key :data:`_OP` takes for *parts*, with no tenant bound."""
+
+    return advisory_lock_key("forze.operation", _OP, None, *parts)
+
+
+async def _until_queued(state: MockState, key: int) -> None:
+    """Return once a task waits on *key*'s lock (``asyncio.Lock`` queues it in ``_waiters``)."""
+
+    lock = state.write_serialization.for_key(key)
+
+    while not lock._waiters:  # pyright: ignore[reportPrivateUsage]
+        await asyncio.sleep(0)
+
+
+async def _meet(
     registry: FrozenOperationRegistry,
     gate: _Gate,
     first: _Named,
     second: _Named,
-) -> bool:
-    """Start *first*, let it take its lock, start *second*; whether *second* entered while
-    *first* was still running."""
+    *,
+    second_op: str = _OP,
+) -> None:
+    """Run *first* and *second* (of *second_op*) at once until both are inside their handlers.
 
+    Both arriving is the signal; the timeout only fails a run where one waits on the other.
+    """
+
+    ctx = _ctx()
     gate.gate(first.name)
     gate.gate(second.name)
-    run = registry.resolve(_OP, ctx)
-
-    a = asyncio.create_task(run(first))
-    await asyncio.wait_for(gate.started[first.name].wait(), timeout=2)
-
-    b = asyncio.create_task(run(second))
+    a = asyncio.create_task(registry.resolve(_OP, ctx)(first))
+    b = asyncio.create_task(registry.resolve(second_op, ctx)(second))
 
     try:
-        await asyncio.wait_for(gate.started[second.name].wait(), timeout=0.2)
-        overlapped = True
+        await asyncio.wait_for(
+            asyncio.gather(gate.started[first.name].wait(), gate.started[second.name].wait()),
+            timeout=5,
+        )
 
-    except TimeoutError:
-        overlapped = False
+    finally:
+        gate.release[first.name].set()
+        gate.release[second.name].set()
+        await asyncio.wait_for(asyncio.gather(a, b), timeout=5)
+
+
+async def _take_turns(
+    registry: FrozenOperationRegistry,
+    gate: _Gate,
+    first: _Named,
+    second: _Named,
+    *,
+    key: int,
+    second_op: str = _OP,
+) -> list[str]:
+    """Start *first*, let it take *key*, start *second* (of *second_op*) and wait until it is
+    queued on *key* before letting *first* finish; the order things happened in."""
+
+    state = MockState()
+    ctx = context_from_modules(MockDepsModule(state=state, transactions="journal"))
+    gate.gate(first.name)
+    gate.gate(second.name)
+
+    a = asyncio.create_task(registry.resolve(_OP, ctx)(first))
+    await asyncio.wait_for(gate.started[first.name].wait(), timeout=5)
+    b = asyncio.create_task(registry.resolve(second_op, ctx)(second))
+    await asyncio.wait_for(_until_queued(state, key), timeout=5)
 
     gate.release[first.name].set()
     gate.release[second.name].set()
-    await asyncio.wait_for(asyncio.gather(a, b), timeout=2)
+    await asyncio.wait_for(asyncio.gather(a, b), timeout=5)
 
-    return overlapped
+    return gate.events
 
 
 # ....................... #
@@ -143,16 +185,15 @@ class TestSerializes:
         gate = _Gate()
         order = uuid4()
 
-        overlapped = await _run_pair(
-            _ctx(),
+        events = await _take_turns(
             _registry(gate),
             gate,
             _Named(order_id=order, name="a"),
             _Named(order_id=order, name="b"),
+            key=_op_key(order),
         )
 
-        assert not overlapped
-        assert gate.events == ["a:start", "a:end", "b:start", "b:end"]
+        assert events == ["a:start", "a:end", "b:start", "b:end"]
 
     @pytest.mark.parametrize("transactions", ["journal", "strict"])
     async def test_the_root_transaction_holds_the_key_until_it_ends(
@@ -173,15 +214,12 @@ class TestSerializes:
     async def test_different_keys_run_at_once(self) -> None:
         gate = _Gate()
 
-        overlapped = await _run_pair(
-            _ctx(),
+        await _meet(
             _registry(gate),
             gate,
             _Named(order_id=uuid4(), name="a"),
             _Named(order_id=uuid4(), name="b"),
         )
-
-        assert overlapped
 
     async def test_different_tenants_run_at_once(self) -> None:
         gate = _Gate()
@@ -229,25 +267,191 @@ class TestSerializes:
         gate = _Gate()
         at = datetime(2026, 10, 29, 12, 0, tzinfo=UTC)
 
-        overlapped = await _run_pair(
-            _ctx(),
+        events = await _take_turns(
             _registry(gate),
             gate,
             _Named(order_id=at, name="a"),
             _Named(order_id=at.astimezone(timezone(timedelta(hours=3))), name="b"),
+            key=_op_key(at),
         )
 
-        assert not overlapped
+        assert events == ["a:start", "a:end", "b:start", "b:end"]
 
     async def test_a_tuple_key_locks_on_every_part(self) -> None:
         gate = _Gate()
         registry = _registry(gate, key=lambda args: (args.order_id, args.name))
 
-        overlapped = await _run_pair(
-            _ctx(), registry, gate, _Named(order_id=1, name="a"), _Named(order_id=1, name="b")
+        await _meet(registry, gate, _Named(order_id=1, name="a"), _Named(order_id=1, name="b"))
+
+
+# ....................... #
+
+_PEER = "orders.reprice"
+
+
+def _pair_registry(
+    handler: Handler[Any, Any],
+    *,
+    groups: tuple[str | None, str | None],
+    routes: tuple[str, str] = (_ROUTE, _ROUTE),
+) -> OperationRegistry:
+    """:data:`_OP` and :data:`_PEER`, each serialized by its order under its own group."""
+
+    registry = OperationRegistry(handlers={_OP: lambda _ctx: handler, _PEER: lambda _ctx: handler})
+
+    for op, group, route in zip((_OP, _PEER), groups, routes, strict=True):
+        registry = (
+            registry.bind(op)
+            .bind_tx()
+            .set_route(route)
+            .before(SerializeOperation(key=lambda args: args.order_id, group=group).to_step())
+            .finish(deep=True)
         )
 
-        assert overlapped
+    return registry
+
+
+class TestGroup:
+    async def test_two_operations_in_one_group_take_turns(self) -> None:
+        gate = _Gate()
+
+        events = await _take_turns(
+            _pair_registry(gate, groups=("orders", "orders")).freeze(),
+            gate,
+            _Named(order_id=1, name="a"),
+            _Named(order_id=1, name="b"),
+            key=advisory_lock_key("forze.operation.group", "orders", None, 1),
+            second_op=_PEER,
+        )
+
+        assert events == ["a:start", "a:end", "b:start", "b:end"]
+
+    @pytest.mark.parametrize(
+        ("groups", "order_ids"),
+        [(("orders", "invoices"), (1, 1)), (("orders", "orders"), (1, 2)), ((None, None), (1, 1))],
+        ids=["other-group", "other-key", "no-group"],
+    )
+    async def test_another_group_or_key_runs_at_once(
+        self, groups: tuple[str | None, str | None], order_ids: tuple[int, int]
+    ) -> None:
+        gate = _Gate()
+
+        await _meet(
+            _pair_registry(gate, groups=groups).freeze(),
+            gate,
+            _Named(order_id=order_ids[0], name="a"),
+            _Named(order_id=order_ids[1], name="b"),
+            second_op=_PEER,
+        )
+
+    async def test_a_group_named_like_an_operation_takes_another_lock(self) -> None:
+        # _PEER's group spells _OP's name: the group namespace keeps the two locks apart.
+        gate = _Gate()
+
+        await _meet(
+            _pair_registry(gate, groups=(None, _OP)).freeze(),
+            gate,
+            _Named(order_id=1, name="a"),
+            _Named(order_id=1, name="b"),
+            second_op=_PEER,
+        )
+
+    @pytest.mark.parametrize(
+        ("group", "domain", "name"),
+        [(None, "forze.operation", _OP), ("orders", "forze.operation.group", "orders")],
+        ids=["operation", "group"],
+    )
+    async def test_the_key_is_the_domain_the_name_the_tenant_and_the_parts(
+        self, group: str | None, domain: str, name: str
+    ) -> None:
+        # Pinned: a changed key is a rolling deployment whose old and new nodes do not contend.
+        state = MockState()
+        ctx = context_from_modules(MockDepsModule(state=state))
+        tenant_id = uuid4()
+        held: list[object] = []
+
+        class _Probe(Handler[_Args, None]):
+            async def __call__(self, args: _Args) -> None:
+                key = advisory_lock_key(domain, name, tenant_id, args.order_id)
+                held.append(state.write_serialization.holder_of(key))
+
+        with ctx.inv_ctx.bind_identity(tenant=TenantIdentity(tenant_id=tenant_id)):
+            await (
+                _pair_registry(_Probe(), groups=(group, None))
+                .freeze()
+                .resolve(_OP, ctx)(_Args(order_id=1))
+            )
+
+        assert len(held) == 1 and held[0] is not None
+
+    @pytest.mark.parametrize(
+        "group",
+        ["", "   ", " orders", "orders\n", 7],
+        ids=["empty", "blank", "lead", "trail", "int"],
+    )
+    def test_a_name_that_is_not_a_trimmed_string_is_refused(self, group: Any) -> None:
+        with pytest.raises(CoreException) as caught:
+            SerializeOperation(key=lambda args: args.order_id, group=group)
+
+        assert caught.value.kind is ExceptionKind.CONFIGURATION
+        assert caught.value.code == "operation_lock_group_invalid"
+
+    def test_a_group_across_two_routes_is_refused_at_freeze(self) -> None:
+        registry = _pair_registry(_Gate(), groups=("orders", "orders"), routes=(_ROUTE, "reports"))
+
+        with pytest.raises(CoreException) as caught:
+            registry.freeze()
+
+        assert caught.value.kind is ExceptionKind.CONFIGURATION
+        assert caught.value.code == "tx_lock_group_spans_routes"
+        assert repr(_OP) in caught.value.summary and repr(_PEER) in caught.value.summary
+
+    def test_other_groups_on_other_routes_freeze(self) -> None:
+        _pair_registry(_Gate(), groups=("orders", "reports"), routes=(_ROUTE, "reports")).freeze()
+
+    def test_the_bound_hook_keeps_its_group(self) -> None:
+        bound = SerializeOperation(key=lambda args: args, group="orders").for_operation(_OP, _ROUTE)
+
+        assert isinstance(bound, SharesTransactionLock)
+        assert bound.lock_group() == "orders"
+
+
+def _patched_registry(gate: _Gate, routes: tuple[str, str]) -> OperationRegistry:
+    """:data:`_OP` and :data:`_PEER` on *routes*, a patch adding the ``orders`` group to both."""
+
+    registry = OperationRegistry(handlers={_OP: lambda _ctx: gate, _PEER: lambda _ctx: gate})
+
+    for op, route in zip((_OP, _PEER), routes, strict=True):
+        registry = registry.bind(op).bind_tx().set_route(route).finish(deep=True)
+
+    return (
+        registry.patch(str_key_selector.prefix("orders."))
+        .bind_tx()
+        .before(SerializeOperation(key=lambda args: args.order_id, group="orders").to_step())
+        .finish(deep=True)
+    )
+
+
+class TestGroupFromAPatch:
+    async def test_a_patch_puts_two_operations_in_one_group(self) -> None:
+        gate = _Gate()
+
+        events = await _take_turns(
+            _patched_registry(gate, (_ROUTE, _ROUTE)).freeze(),
+            gate,
+            _Named(order_id=1, name="a"),
+            _Named(order_id=1, name="b"),
+            key=advisory_lock_key("forze.operation.group", "orders", None, 1),
+            second_op=_PEER,
+        )
+
+        assert events == ["a:start", "a:end", "b:start", "b:end"]
+
+    def test_a_patched_group_across_two_routes_is_refused_at_freeze(self) -> None:
+        with pytest.raises(CoreException) as caught:
+            _patched_registry(_Gate(), (_ROUTE, "reports")).freeze()
+
+        assert caught.value.code == "tx_lock_group_spans_routes"
 
 
 # ....................... #
@@ -316,7 +520,7 @@ async def _nested_then_contended(*, inner_fails: bool) -> list[str]:
     contender = asyncio.create_task(
         registry.resolve(_OP, other)(_Named(order_id=1, name="contender"))
     )
-    await asyncio.sleep(0.2)
+    await asyncio.wait_for(_until_queued(state, _op_key(1)), timeout=5)
     release.set()
     await asyncio.wait_for(asyncio.gather(outer, contender), timeout=2)
 

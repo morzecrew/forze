@@ -22,6 +22,9 @@ overlap. Each part is a ``str``, an ``int``, a ``UUID`` or a timezone-aware ``da
 _LOCK_DOMAIN: Final = "forze.operation"
 """First part of every operation lock key, so one never coincides with a ``SerializedBy`` key."""
 
+_GROUP_DOMAIN: Final = "forze.operation.group"
+"""First part of every group lock key, so group ``x`` never coincides with operation ``x``."""
+
 _PART_TYPES: Final = frozenset({str, int, UUID, datetime})
 """Exact types a key part may have: each derives the same key in every process and release."""
 
@@ -65,6 +68,25 @@ def _lock_parts(value: object, *, op: str) -> tuple[object, ...]:
     return parts
 
 
+def _validate_group(_instance: object, _attribute: object, value: str | None) -> None:
+    """attrs validator for :attr:`SerializeOperation.group`: unset, or a trimmed name.
+
+    Surrounding whitespace is refused, not stripped: ``"x "`` and ``"x"`` would otherwise be
+    one lock spelled two ways, or two locks that look like one.
+    """
+
+    if value is not None and (
+        not isinstance(value, str)  # pyright: ignore[reportUnnecessaryIsInstance]
+        or not value
+        or value != value.strip()
+    ):
+        raise exc.configuration(
+            "SerializeOperation group must be a non-empty name without surrounding "
+            f"whitespace, got {value!r}.",
+            code="operation_lock_group_invalid",
+        )
+
+
 # ....................... #
 
 
@@ -90,10 +112,18 @@ class SerializeOperation(BeforeFactory):
     no such lock (Mongo, Firestore) is refused when the operation is resolved. What
     :attr:`key` returns is known only per call, so a value it cannot key on (``None``, a
     float, an enum member, a naive datetime) refuses that call, naming the operation.
+
+    With :attr:`group`, every operation naming that group shares one lock: the group takes the
+    operation's place in the key, the tenant and :attr:`key` stay. One route's backend holds
+    the lock, so freeze refuses a group whose operations run on different transaction routes.
     """
 
     key: OperationLockKey
     """Derives the key from the operation's arguments (see :data:`OperationLockKey`)."""
+
+    group: str | None = attrs.field(default=None, validator=_validate_group)
+    """Shares the lock with every operation naming this group, instead of keying it by the
+    operation alone."""
 
     # ....................... #
 
@@ -101,7 +131,15 @@ class SerializeOperation(BeforeFactory):
         """Marker (:class:`~forze.application.contracts.execution.HoldsTransactionLock`): this
         hook bound to *op* and its transaction *route*."""
 
-        return _BoundSerializeOperation(key=self.key, op=str(op), route=route)
+        return _BoundSerializeOperation(key=self.key, op=str(op), route=route, group=self.group)
+
+    # ....................... #
+
+    def lock_group(self) -> str | None:
+        """Marker (:class:`~forze.application.contracts.execution.SharesTransactionLock`): the
+        group whose operations share this lock."""
+
+        return self.group
 
     # ....................... #
 
@@ -135,6 +173,15 @@ class _BoundSerializeOperation:
     key: OperationLockKey
     op: str
     route: StrKey
+    group: str | None = None
+
+    # ....................... #
+
+    def lock_group(self) -> str | None:
+        """Marker (:class:`~forze.application.contracts.execution.SharesTransactionLock`), kept
+        once bound, so a plan validated again after binding still has its group checked."""
+
+        return self.group
 
     # ....................... #
 
@@ -142,12 +189,13 @@ class _BoundSerializeOperation:
         # Resolved with the operation, so a route without a lock fails at wiring, not on a call.
         port: TxLockPort = ctx.tx_locks(self.route)
         key, op = self.key, self.op
+        domain, name = (_LOCK_DOMAIN, op) if self.group is None else (_GROUP_DOMAIN, self.group)
 
         async def _before(args: Any) -> None:
             tenant = ctx.inv_ctx.get_tenant()
             parts = _lock_parts(key(args), op=op)
             tenant_id = tenant.tenant_id if tenant is not None else None
 
-            await port.hold(advisory_lock_key(_LOCK_DOMAIN, op, tenant_id, *parts))
+            await port.hold(advisory_lock_key(domain, name, tenant_id, *parts))
 
         return _before

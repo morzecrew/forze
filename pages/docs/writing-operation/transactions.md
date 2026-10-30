@@ -197,7 +197,8 @@ registry = (
 A second `orders.recompute` for the same order waits at that step until the
 first one's transaction ends. Different orders, and different tenants, never
 wait on each other. The lock is keyed by the operation's registered name, the
-bound tenant and the key, so another operation never shares it. Under a
+bound tenant and the key, so another operation never shares it unless both name
+a [group](#sharing-one-lock-between-operations). Under a
 [two-phase handler](#two-phase-handlers-work-before-the-write) it covers `apply`
 only: `prepare` runs before the transaction opens.
 
@@ -222,7 +223,8 @@ Wiring problems surface before the first request:
 - Placed in the outer scope, which runs before the transaction opens, it is
   refused at registry freeze (`tx_lock_outside_transaction_scope`).
 - An operation with no transaction route is refused there too
-  (`tx_lock_without_route`).
+  (`tx_lock_without_route`), as is a group spread over several routes
+  (`tx_lock_group_spans_routes`).
 - A route whose backend has no transaction-scoped lock is refused when the
   operation is resolved, on its first call or under `check_wiring`
   (`tx_lock_unsupported`). Postgres has one; Mongo and Firestore do not. The
@@ -256,10 +258,47 @@ mock alike.
     The [`SerializedBy`](../reference/contracts/document.md) guarantee and
     `command.hold(...)` lock a *document owner*: every write for that owner takes
     the lock, whoever wrote the code. `SerializeOperation` locks an *operation
-    input*: only invocations of that operation take it, and the key need not be
-    any document's field. A [distributed lock](../reference/contracts/coordination.md#distributed-lock)
+    input*: only invocations of that operation, or of its group, take it, and the
+    key need not be any document's field. A [distributed lock](../reference/contracts/coordination.md#distributed-lock)
     is a lease for work outside any transaction; its release is not tied to a
     commit.
+
+### Sharing one lock between operations
+
+Two different operations sometimes must exclude each other: a job that
+recomputes a derived table, and another operation that reads it and writes into
+it. Give both the same `group`, and the group takes the operation's place in the
+lock key:
+
+```python
+serialize = SerializeOperation(key=lambda args: (), group="requirements")
+
+registry = (
+    registry.bind("requirements.recompute")
+    .bind_tx()
+    .set_route("orders")
+    .before(serialize.to_step())
+    .finish(deep=True)
+    .bind("requirements.extend")
+    .bind_tx()
+    .set_route("orders")
+    .before(serialize.to_step())
+    .finish(deep=True)
+)
+```
+
+Every operation naming the group waits on every other one with the same key, as
+invocations of one operation do. The tenant stays in the key, so different
+tenants still never wait on each other. A group keys in its own namespace, so a
+group named `orders.recompute` never shares the lock of the operation of that
+name. The name must be a non-empty string without surrounding whitespace, or the
+constructor refuses it as `configuration` (`operation_lock_group_invalid`).
+
+The lock lives in the backend of the route's transaction manager, so two routes
+would hold two unrelated locks. Freeze refuses a group whose operations run on
+different transaction routes (`tx_lock_group_spans_routes`), even when both
+routes reach one database. It compares the operations of the registry it
+freezes, so merge registries before freezing to check a group across them.
 
 ## After the commit
 

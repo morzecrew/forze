@@ -9,6 +9,7 @@ from forze.application.contracts.execution import (
     DeclaresHedge,
     HoldsTransactionLock,
     OperationHandlerFactory,
+    SharesTransactionLock,
 )
 from forze.base.exceptions import exc
 from forze.base.primitives import (
@@ -167,7 +168,13 @@ class RegistryFreezeValidator:
         refused. Whether the route's backend has such a lock depends on the wiring, which the
         registry does not see: the step checks it when the operation is resolved, on its first
         call or under ``check_wiring``.
+
+        Operations sharing a lock group must share a route as well: each route's backend holds
+        its own locks, so two routes would not exclude each other. Only this registry's
+        operations are compared; merge registries before freezing to check across them.
         """
+
+        groups: dict[str, tuple[StrKey, StrKey]] = {}
 
         for op in handlers:
             plan = resolution.resolve(str(op))
@@ -192,6 +199,27 @@ class RegistryFreezeValidator:
                     "bind_tx().set_route(...).",
                     code="tx_lock_without_route",
                 )
+
+            if (route := plan.tx_route()) is None:
+                continue
+
+            for step in plan.iter_before_steps():
+                if not isinstance(step.factory, SharesTransactionLock):
+                    continue
+
+                if (group := step.factory.lock_group()) is None:
+                    continue
+
+                first_op, first_route = groups.setdefault(group, (op, route))
+
+                if first_route != route:
+                    raise exc.configuration(
+                        f"Operations {first_op!r} and {op!r} share the transaction lock group "
+                        f"{group!r} but run on transaction routes {first_route!r} and "
+                        f"{route!r}, whose locks do not exclude each other; bind every "
+                        "operation in a group to one route.",
+                        code="tx_lock_group_spans_routes",
+                    )
 
     # ....................... #
 
