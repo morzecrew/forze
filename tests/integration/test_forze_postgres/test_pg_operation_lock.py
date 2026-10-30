@@ -158,14 +158,15 @@ def _key() -> int:
     return uuid4().int >> 66
 
 
-async def _held(client: PostgresClient, key: int) -> int:
-    """How many sessions hold *key* as a granted advisory lock, read outside any transaction."""
+async def _held(client: PostgresClient, key: int, *, granted: bool = True) -> int:
+    """How many sessions hold *key* as a granted advisory lock (or wait for it, with
+    ``granted=False``), read outside any transaction."""
 
     async with client.detached():
         row = await client.fetch_one(
             "SELECT count(*) AS n FROM pg_locks WHERE locktype = 'advisory' AND objsubid = 1 "
-            "AND granted AND classid::bigint = %s AND objid::bigint = %s",
-            [(key >> 32) & 0xFFFF_FFFF, key & 0xFFFF_FFFF],
+            "AND granted = %s AND classid::bigint = %s AND objid::bigint = %s",
+            [granted, (key >> 32) & 0xFFFF_FFFF, key & 0xFFFF_FFFF],
             row_factory="dict",
         )
 
@@ -415,3 +416,67 @@ class TestNestedRetriedAndTenanted:
         )
 
         assert order.index("second:start") < order.index("first:end"), order
+
+
+# ....................... #
+
+_PEER = "orders.reprice"
+
+
+async def _until_waiting(client: PostgresClient, key: int) -> None:
+    while not await _held(client, key, granted=False):
+        await asyncio.sleep(0.01)
+
+
+class TestGroupAcrossSessions:
+    async def test_two_operations_in_one_group_take_turns(
+        self, pg_client: PostgresClient, second_client: PostgresClient
+    ) -> None:
+        order: list[str] = []
+        started, release = asyncio.Event(), asyncio.Event()
+        key = uuid4().hex
+
+        class _Park(Handler[_Args, None]):
+            async def __call__(self, args: _Args) -> None:
+                order.append(f"{args.name}:start")
+
+                if args.name == "first":
+                    started.set()
+                    await release.wait()
+
+                order.append(f"{args.name}:end")
+
+        registry = OperationRegistry(
+            handlers={_OP: lambda _ctx: _Park(), _PEER: lambda _ctx: _Park()}
+        )
+
+        for op in (_OP, _PEER):
+            registry = (
+                registry.bind(op)
+                .bind_tx()
+                .set_route(_ROUTE)
+                .before(
+                    SerializeOperation(key=lambda args: args.order_id, group="orders").to_step()
+                )
+                .finish(deep=True)
+            )
+
+        frozen = registry.freeze()
+        first = asyncio.create_task(
+            frozen.resolve(_OP, _ctx(pg_client))(_Args(order_id=key, name="first"))
+        )
+        await asyncio.wait_for(started.wait(), timeout=5)
+        second = asyncio.create_task(
+            frozen.resolve(_PEER, _ctx(second_client))(_Args(order_id=key, name="second"))
+        )
+
+        # Rendezvous, not a margin: the other session is queued on the group's lock.
+        lock = advisory_lock_key("forze.operation.group", "orders", None, key)
+        await asyncio.wait_for(_until_waiting(pg_client, lock), timeout=5)
+
+        assert "second:start" not in order
+
+        release.set()
+        await asyncio.wait_for(asyncio.gather(first, second), timeout=5)
+
+        assert order == ["first:start", "first:end", "second:start", "second:end"]

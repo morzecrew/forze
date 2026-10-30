@@ -273,6 +273,22 @@ class HoldsTransactionLock(Protocol):  # pragma: no cover
 # ....................... #
 
 
+@runtime_checkable
+class SharesTransactionLock(Protocol):  # pragma: no cover
+    """Marker: a transaction-lock hook that may share its lock with other operations.
+
+    Operations naming one group take one lock, which only one route's backend holds: the
+    registry refuses at freeze a group whose operations run on different transaction routes.
+    """
+
+    def lock_group(self) -> str | None:
+        """The group every operation sharing this lock names, or ``None`` for its own lock."""
+        ...
+
+
+# ....................... #
+
+
 class OnSuccessFactory(Protocol):  # pragma: no cover
     """Protocol for a factory that builds a on success hook."""
 

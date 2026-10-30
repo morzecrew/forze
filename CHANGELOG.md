@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- ...
+- **`SerializeOperation(group=...)` shares one lock between operations.** Operations naming one group take turns per key and tenant, keyed apart from operation names. Freeze refuses a group spread over several transaction routes (`tx_lock_group_spans_routes`), found through the new `SharesTransactionLock` protocol.
 
 ### Changed
 
