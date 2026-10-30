@@ -57,6 +57,10 @@ their `operation_id`, `description`, `tags`, `openapi_extra` and the rest throug
 `route_options=` (stream) and `ack_route_options=` (ack), not by patching the attached
 route: FastAPI derives an included route's parameters from the endpoint again.
 
+Signals all ephemeral (`publish`, never `stage`)? Leave out both `mailbox_factory` and
+`cursors_factory`: the SSE stream serves the live tail only, ignores `Last-Event-ID` and
+attaches no ack route. It needs a `hub`; one factory without the other is refused.
+
 Client-side rules that hold on every transport:
 
 - **Dedup by `id`.** Delivery is at-least-once; reconnect replay and the

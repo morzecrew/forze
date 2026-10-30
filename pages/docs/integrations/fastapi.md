@@ -622,6 +622,22 @@ on a client routed per tenant; rooms already carry their tenant. A closing strea
 its client gone, or cut off by a drain — within 2 s; past that, a warning is logged and the
 rest expire with the store's TTL.
 
+### Live-only SSE streams
+
+A deployment whose signals are all ephemeral (`publish`, never `stage`) has nothing for a
+mailbox to hold, since topic broadcasts are never mailboxed. Leave out `mailbox_factory` and
+`cursors_factory`:
+
+```python
+attach_realtime_sse_route(router, ctx_dep=runtime.get_context, hub=hub)
+```
+
+The stream then serves the live tail with no replay, and no `POST …/ack` route is attached.
+A `Last-Event-ID` the browser sends on reconnect is ignored, so a signal published while
+the client was away is not delivered. Durable delivery still takes both factories. Attach
+refuses one factory without the other, a live-only stream without a hub, and
+`ack_route_options` on a live-only stream.
+
 ### Documenting the SSE routes
 
 The stream and ack routes ship with a summary and a description on every query parameter
@@ -735,7 +751,9 @@ lifecycle = [
   so no Socket.IO install is needed.
 
 With neither a writer nor a gateway, the mailbox stays empty. The routes still serve and
-accept acks, but a durable signal that lands while a client is disconnected is lost.
+accept acks, but a durable signal that lands while a client is disconnected is lost. An SSE
+deployment with no durable signals at all can drop the mailbox: see [live-only SSE
+streams](#live-only-sse-streams).
 
 ## Realtime over raw WebSocket
 

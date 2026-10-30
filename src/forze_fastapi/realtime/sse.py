@@ -15,6 +15,9 @@ because SSE's reconnect model — ``Last-Event-ID`` — *is* a cursor protocol:
   auto-reconnects with ``Last-Event-ID``, giving long-poll-style delivery).
 - **Ack**: SSE has no upstream channel, so the cumulative ack rides a small POST
   endpoint attached alongside, sharing the kernel's cursor machinery.
+- **Live-only**: without a mailbox the stream skips the replay and serves the live tail
+  alone, with no ack endpoint — for signals that are all ephemeral, which no mailbox
+  holds. A ``Last-Event-ID`` is then ignored: the stream starts at the live tail.
 - **Drain**: while the replica drains a new stream is told to retry — a 200 carrying only
   a jittered ``retry:`` — and the hub's drain step ends the open ones; either way the
   browser reconnects, through the balancer, to a replica that is still ready.
@@ -516,8 +519,8 @@ def attach_realtime_sse_route(
     router: APIRouter,
     *,
     ctx_dep: ExecutionContextFactory,
-    mailbox_factory: Callable[[ExecutionContext], RealtimeMailbox],
-    cursors_factory: Callable[[ExecutionContext], MailboxCursors],
+    mailbox_factory: Callable[[ExecutionContext], RealtimeMailbox] | None = None,
+    cursors_factory: Callable[[ExecutionContext], MailboxCursors] | None = None,
     hub: RealtimeSseHub | None = None,
     presence: RealtimePresence | None = None,
     authorize_topics: TopicAuthorizer | None = None,
@@ -535,6 +538,11 @@ def attach_realtime_sse_route(
     signals after the replay; without one the endpoint is catch-up-only. The ack
     endpoint is attached at ``{path}/ack`` and shares the handshake parameters, so
     both derive the same client key.
+
+    Durable delivery takes both *mailbox_factory* and *cursors_factory*. Pass neither for a
+    live-only stream, whose signals are all ephemeral (``publish``, never ``stage``): it
+    needs a *hub*, serves the live tail without a replay, ignores ``Last-Event-ID`` and
+    attaches no ack endpoint, so a signal sent while the client is away is not delivered.
 
     Pass the **same** *presence* store the Socket.IO side uses and open SSE streams
     join their principal/topic rooms for the connection's lifetime, so presence-based
@@ -569,7 +577,8 @@ def attach_realtime_sse_route(
         route_options,
         argument="route_options",
         defaults={
-            "summary": "Realtime egress over Server-Sent Events (replay, then live)",
+            "summary": "Realtime egress over Server-Sent Events "
+            + ("(replay, then live)" if mailbox_factory is not None else "(live only)"),
             "responses": _STREAM_RESPONSES,
         },
     )
@@ -578,6 +587,26 @@ def attach_realtime_sse_route(
         argument="ack_route_options",
         defaults={"summary": "Cumulative realtime ack (advance this device's replay cursor)"},
     )
+
+    if (mailbox_factory is None) != (cursors_factory is None):
+        raise exc.configuration(
+            "Durable SSE delivery needs both mailbox_factory and cursors_factory: the replay "
+            "reads the mailbox from the device's cursor, and the ack advances it. Pass both, "
+            "or neither for a live-only stream"
+        )
+
+    if mailbox_factory is None:
+        if hub is None:
+            raise exc.configuration(
+                "A live-only SSE stream (no mailbox_factory) needs a hub: without one it "
+                "would serve nothing"
+            )
+
+        if ack_route_options is not None:
+            raise exc.configuration(
+                "ack_route_options documents the ack route, which a live-only SSE stream "
+                "(no mailbox_factory) does not attach"
+            )
 
     if keepalive_interval.total_seconds() <= 0:
         raise exc.configuration("SSE keepalive interval must be positive")
@@ -608,8 +637,11 @@ def attach_realtime_sse_route(
 
         require_connection_tenant(ctx, tenant)
         client_key = _client_key(principal, device_id)
-        mailbox = mailbox_factory(ctx)
-        cursors = cursors_factory(ctx)
+        stores = (
+            (mailbox_factory(ctx), cursors_factory(ctx))
+            if mailbox_factory is not None and cursors_factory is not None
+            else None  # live-only
+        )
         last_event_id = request.headers.get(LAST_EVENT_ID_HEADER)
         topic_set = _parse_topics(topics)
 
@@ -659,32 +691,34 @@ def attach_realtime_sse_route(
                     # the client's next reconnect.
                     await _await_hub_ready(hub)
 
-                resume = await _resolve_since(
-                    mailbox,
-                    cursors,
-                    principal=principal,
-                    client_key=client_key,
-                    last_event_id=last_event_id,
-                )
+                if stores is not None:
+                    mailbox, cursors = stores
+                    resume = await _resolve_since(
+                        mailbox,
+                        cursors,
+                        principal=principal,
+                        client_key=client_key,
+                        last_event_id=last_event_id,
+                    )
 
-                outcome = BacklogDrain(claim_floor=resume.since)
+                    outcome = BacklogDrain(claim_floor=resume.since)
 
-                async for frame in _replay_frames(
-                    mailbox, principal=principal, resume=resume, outcome=outcome
-                ):
-                    yield frame
+                    async for frame in _replay_frames(
+                        mailbox, principal=principal, resume=resume, outcome=outcome
+                    ):
+                        yield frame
+
+                    # Entering the live tail is only safe after a CONFIRMED drain: a
+                    # backlog still cap-filled after ``iter_backlog``'s rounds may hold
+                    # an undelivered middle, and a later unclamped ack would advance the
+                    # cursor over it (the all-device trim then hard-deletes it). An
+                    # unconfirmed drain ends the stream instead — the browser reconnects
+                    # with Last-Event-ID and the next replay continues from there.
+                    if not outcome.complete:
+                        return
 
                 if subscription is None:
                     return  # catch-up mode: the browser reconnects with Last-Event-ID
-
-                # Entering the live tail is only safe after a CONFIRMED drain: a
-                # backlog still cap-filled after ``iter_backlog``'s rounds may hold
-                # an undelivered middle, and a later unclamped ack would advance the
-                # cursor over it (the all-device trim then hard-deletes it). An
-                # unconfirmed drain ends the stream instead — the browser reconnects
-                # with Last-Event-ID and the next replay continues from there.
-                if not outcome.complete:
-                    return
 
                 async with aclosing(
                     _live_frames(subscription, keepalive_interval=keepalive_interval)
@@ -703,6 +737,16 @@ def attach_realtime_sse_route(
             return StreamingResponse(stream(), media_type="text/event-stream", headers=_SSE_HEADERS)
 
         return _LiveSseResponse(stream(), ended=subscription.ended)
+
+    router.get(
+        path,
+        name="realtime_sse_stream",
+        response_class=_EventStreamResponse,
+        **stream_kwargs,
+    )(stream_endpoint)
+
+    if mailbox_factory is None or cursors_factory is None:
+        return router  # live-only: no cursor for an ack to advance
 
     # ....................... #
 
@@ -737,15 +781,6 @@ def attach_realtime_sse_route(
         )
 
         return RealtimeAckResult(acked=position is not None)
-
-    # ....................... #
-
-    router.get(
-        path,
-        name="realtime_sse_stream",
-        response_class=_EventStreamResponse,
-        **stream_kwargs,
-    )(stream_endpoint)
 
     router.post(ack_path, name="realtime_sse_ack", **ack_kwargs)(ack_endpoint)
 
