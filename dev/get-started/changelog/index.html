@@ -10338,6 +10338,9 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <li>
 <p><strong><code>runtime_lifespan(nested=...)</code> runs mounted apps' lifespans inside the runtime's scope.</strong> They enter in order once the scope opens; on shutdown the runtime drains, then they exit in reverse, then it tears down. An app mounting an <abbr title="Model Context Protocol">MCP</abbr> HTTP app passes <code>nested=(mcp_app,)</code> instead of writing its own lifespan.</p>
 </li>
+<li>
+<p><strong>A mock derived source can aggregate child rows.</strong> A <code>MockDerivedRegistry</code> source with two required positional parameters gets <code>(row, view)</code>, the view analytics resolvers get, so <code>view.rows(spec)</code> counts the caller's own uncommitted children. Existing <code>(row)</code> sources keep working.</p>
+</li>
 </ul>
 <h3 id="changed">Changed<a class="headerlink" href="#changed" title="Permanent link">&para;</a></h3>
 <ul>
