@@ -217,6 +217,22 @@ class GuaranteeDeclaring(Protocol):
 
 
 @runtime_checkable
+class GuaranteeImplying(Protocol):
+    """A domain model whose fields carry a guarantee of their own, checked on the model class.
+
+    Structural so a mixin outside the core can say what its fields need without the core
+    importing it: a number handed out once by a counter is a number no two rows may hold. A
+    document spec over the model adds these to its declared guarantees.
+    """
+
+    implied_guarantees: StorageGuarantees
+    """What any store holding this model's rows must enforce, declared or not."""
+
+
+# ....................... #
+
+
+@runtime_checkable
 class GuaranteeEnforcing(Protocol):
     """A port that says which guarantees it enforces.
 
@@ -236,6 +252,31 @@ def guarantees_of(spec: object) -> StorageGuarantees:
     """What *spec* requires of its store, or nothing when it requires nothing."""
 
     return spec.guarantees if isinstance(spec, GuaranteeDeclaring) else ()
+
+
+def implied_guarantees_of(model: type) -> StorageGuarantees:
+    """What *model*'s fields require of its store, or nothing when they require nothing.
+
+    :raises CoreException: ``configuration`` (``implied_guarantees_invalid``) when the model's
+        ``implied_guarantees`` is not a tuple of storage guarantees.
+    """
+
+    if not isinstance(model, GuaranteeImplying):
+        return ()
+
+    implied = model.implied_guarantees
+
+    # Checked rather than trusted: a bare guarantee or a stray item would otherwise fail deep in
+    # spec validation as a TypeError or an UnboundLocalError that names no model.
+    if not isinstance(implied, tuple) or not all(isinstance(g, StorageGuarantee) for g in implied):
+        raise exc.configuration(
+            f"{model.__qualname__}.implied_guarantees is {implied!r}; it must be a tuple of "
+            "storage guarantees (UniqueTogether, NonOverlapping, SerializedBy), or () for none.",
+            code="implied_guarantees_invalid",
+            details={"model": f"{model.__module__}.{model.__qualname__}"},
+        )
+
+    return implied
 
 
 # ....................... #
@@ -263,6 +304,7 @@ def validate_storage_guarantees(
     *,
     spec_name: str,
     backend: str,
+    declared: StorageGuarantees | None = None,
 ) -> None:
     """Refuse *spec_name*'s guarantees that *port* cannot keep.
 
@@ -271,6 +313,9 @@ def validate_storage_guarantees(
     :meth:`~forze.application.execution.operations.wiring.WiringReport.raise_if_failed`
     aggregates too.
 
+    :param declared: What the spec's author declared, when *guarantees* also holds what its
+        domain model implies. An unmet implied guarantee is marked, and the refusal names the
+        opt-out on the model, since there is no declaration to drop.
     :raises CoreException: ``precondition``, code ``storage_guarantee_unsupported``, naming each
         guarantee, the spec and the backend.
     """
@@ -278,26 +323,41 @@ def validate_storage_guarantees(
     if not guarantees:
         return
 
-    declared = capabilities_of(port)
+    capabilities = capabilities_of(port)
     unmet: list[str] = []
+    implied = False
 
     for guarantee in guarantees:
-        missing = declared.unmet(guarantee)
+        missing = capabilities.unmet(guarantee)
 
-        if missing:
-            unmet.append(f"{guarantee.kind} needs {', and '.join(missing)}")
+        if not missing:
+            continue
+
+        entry = f"{guarantee.kind} needs {', and '.join(missing)}"
+
+        if declared is not None and guarantee not in declared:
+            entry += " (implied by the domain model)"
+            implied = True
+
+        unmet.append(entry)
 
     if not unmet:
         return
 
     lines = "\n".join(f"  - {entry}" for entry in unmet)
+    opt_out = (
+        " A guarantee the domain model implies is dropped on the model, with "
+        "`implied_guarantees = ()`."
+        if implied
+        else ""
+    )
 
     raise exc.precondition(
         f"Backend {backend!r} cannot enforce {len(unmet)} guarantee(s) that spec "
         f"{spec_name!r} declares:\n{lines}\n"
         "A guarantee is refused rather than skipped: a store that does not keep it leaves the "
         "declaration reading as a promise. Either wire a backend that enforces it, or drop the "
-        "guarantee and accept that nothing prevents the violation.",
+        "guarantee and accept that nothing prevents the violation." + opt_out,
         code=GUARANTEE_UNSUPPORTED,
         details={"spec": spec_name, "backend": backend},
     )
@@ -308,9 +368,11 @@ __all__ = [
     "GUARANTEE_UNSUPPORTED",
     "GuaranteeDeclaring",
     "GuaranteeEnforcing",
+    "GuaranteeImplying",
     "GuaranteeKind",
     "StorageGuaranteeCapabilities",
     "capabilities_of",
     "guarantees_of",
+    "implied_guarantees_of",
     "validate_storage_guarantees",
 ]

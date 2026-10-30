@@ -25,6 +25,7 @@ from forze.application.contracts.guarantees import (
     UniqueTogether,
     capabilities_of,
     guarantees_of,
+    implied_guarantees_of,
     validate_storage_guarantees,
 )
 from forze.application.contracts.document.specs import serialization_keys
@@ -210,6 +211,61 @@ class TestReconciliation:
 
         assert caught.value.details["spec"] == "shift"
         assert caught.value.details["backend"] == "void"
+
+    def test_an_implied_guarantee_names_the_opt_out_on_the_model(self) -> None:
+        # Nothing in the spec to drop: the model put it there, and the model is where it goes.
+        with pytest.raises(CoreException) as caught:
+            validate_storage_guarantees(
+                (NO_OVERLAP, ANY_ROW),
+                _Bare(),
+                spec_name="fact",
+                backend="void",
+                declared=(NO_OVERLAP,),
+            )
+
+        assert "unique_together needs uniqueness over a field tuple (implied" in (
+            caught.value.summary
+        )
+        assert "`implied_guarantees = ()`" in caught.value.summary
+        assert "non_overlapping needs non-overlap of periods per key\n" in caught.value.summary
+
+    def test_a_declared_guarantee_does_not(self) -> None:
+        with pytest.raises(CoreException) as caught:
+            validate_storage_guarantees(
+                (ANY_ROW,), _Bare(), spec_name="fact", backend="void", declared=(ANY_ROW,)
+            )
+
+        assert "implied" not in caught.value.summary
+
+
+# ....................... #
+
+
+class TestWhatAModelImplies:
+    def test_a_model_without_the_attribute_implies_nothing(self) -> None:
+        assert implied_guarantees_of(Document) == ()
+
+    def test_a_tuple_of_guarantees_is_read(self) -> None:
+        class Numbered:
+            implied_guarantees = (ANY_ROW,)
+
+        assert implied_guarantees_of(Numbered) == (ANY_ROW,)
+
+    @pytest.mark.parametrize(
+        "value",
+        [ANY_ROW, [ANY_ROW], (ANY_ROW, "root_id")],
+        ids=["bare guarantee", "list", "stray item"],
+    )
+    def test_anything_else_is_refused_naming_the_model(self, value: object) -> None:
+        class Numbered:
+            implied_guarantees = value
+
+        with pytest.raises(CoreException) as caught:
+            implied_guarantees_of(Numbered)
+
+        assert caught.value.kind is ExceptionKind.CONFIGURATION
+        assert caught.value.code == "implied_guarantees_invalid"
+        assert "Numbered.implied_guarantees" in caught.value.summary
 
 
 # ....................... #

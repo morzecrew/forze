@@ -121,7 +121,7 @@ default install). Each adds one focused capability — no deep inheritance chain
 |-------|------|
 | **Soft deletion** | An `is_deleted` flag plus a validator that blocks edits to deleted records |
 | **Metadata** | `name`, `display_name`, and `description` with normalized string types |
-| **Number id** | A human-readable `number_id`, populated by a counter on create |
+| **Number id** | A human-readable `number_id`, populated by a counter on create; a spec over it [declares it unique](../reference/contracts/document.md#guarantees-the-domain-model-implies) |
 | **Creator id** | A frozen `creator_id`, injected from the current actor context |
 
 ## A period, and which end is in force

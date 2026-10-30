@@ -5,9 +5,11 @@ from .capabilities import (
     GUARANTEE_UNSUPPORTED,
     GuaranteeDeclaring,
     GuaranteeEnforcing,
+    GuaranteeImplying,
     StorageGuaranteeCapabilities,
     capabilities_of,
     guarantees_of,
+    implied_guarantees_of,
     validate_storage_guarantees,
 )
 from .value_objects import (
@@ -27,6 +29,7 @@ __all__ = [
     "GUARANTEE_UNSUPPORTED",
     "GuaranteeDeclaring",
     "GuaranteeEnforcing",
+    "GuaranteeImplying",
     "GuaranteeKind",
     "GuaranteeMoment",
     "NonOverlapping",
@@ -37,5 +40,6 @@ __all__ = [
     "UniqueTogether",
     "capabilities_of",
     "guarantees_of",
+    "implied_guarantees_of",
     "validate_storage_guarantees",
 ]
