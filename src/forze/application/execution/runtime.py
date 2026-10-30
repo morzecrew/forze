@@ -25,10 +25,13 @@ from forze.base.exceptions import CoreException, DenialPosture, bind_denial_post
 from forze.base.primitives import (
     CpuExecutor,
     OnceCell,
+    ProcessPoolCpuExecutor,
     RuntimeVar,
     ThreadPoolCpuExecutor,
     cpu_executor_bound,
     hold_cpu_executor,
+    hold_isolated_cpu_executor,
+    isolated_cpu_executor_bound,
 )
 
 from .context import ExecutionContext
@@ -74,14 +77,18 @@ class DeploymentProfile(StrEnum):
 # ....................... #
 
 
-def _positive_cpu_workers(_instance: object, _attribute: object, value: int | None) -> None:
-    """Reject a non-positive ``cpu_workers`` at construction, not later on first offload."""
+def _positive_cpu_workers(
+    _instance: object,
+    attribute: "attrs.Attribute[int | None]",
+    value: int | None,
+) -> None:
+    """Reject a non-positive worker count at construction, not later on first offload."""
 
     if value is not None and value < 1:
         raise exc.configuration(
-            f"cpu_workers must be a positive integer when set (got {value!r}); "
+            f"{attribute.name} must be a positive integer when set (got {value!r}); "
             "leave it None for default sizing.",
-            code="core.runtime.cpu_workers_invalid",
+            code=f"core.runtime.{attribute.name}_invalid",
         )
 
 
@@ -218,6 +225,32 @@ class ExecutionRuntime:
     ``None`` uses the default sizing (``min(32, os.cpu_count() + 4)``), letting you size the
     pool without constructing and owning a :class:`ThreadPoolCpuExecutor` yourself. Must be a
     positive integer when set (validated at construction).
+    """
+
+    isolated_cpu_executor: CpuExecutor | None = None
+    """Executor for ``run_cpu(..., isolated=True)``, bound beside :attr:`cpu_executor`.
+
+    ``None`` (default): unless one is already bound in the surrounding context, the runtime
+    creates a scope-lifetime :class:`ProcessPoolCpuExecutor`, binds it, and **closes it on
+    scope exit**, terminating workers still running abandoned calls (size it with
+    :attr:`isolated_cpu_workers`). The pool starts no process until the first isolated call.
+    Pass an executor (e.g. an :class:`~forze.base.primitives.InterpreterPoolCpuExecutor`) to
+    inject your own; the runtime binds but never closes it. One already bound around the
+    scope (e.g. a simulation's) is respected, never overridden.
+
+    Held process-wide like :attr:`cpu_executor` — the owned pool or the injected executor,
+    never one bound around the scope — so an ASGI request outside the scope's task reaches it.
+    """
+
+    isolated_cpu_workers: int | None = attrs.field(
+        default=None,
+        validator=_positive_cpu_workers,
+    )
+    """Worker count for the runtime-owned isolated pool (ignored when
+    :attr:`isolated_cpu_executor` is set).
+
+    ``None`` uses the default sizing (``os.process_cpu_count()``). Must be a positive integer
+    when set (validated at construction).
     """
 
     cursor_token_signer: CursorTokenSigner | None = None
@@ -666,6 +699,24 @@ class ExecutionRuntime:
             )
             cpu_hold = hold_cpu_executor(owned_pool)
 
+        # The isolated executor for run_cpu(..., isolated=True), by the same priority and held
+        # the same way. The owned process pool is lazy: a scope that never isolates starts no
+        # process.
+        owned_isolated: ProcessPoolCpuExecutor | None = None
+        isolated_hold: AbstractContextManager[None]
+
+        if self.isolated_cpu_executor is not None:
+            isolated_hold = hold_isolated_cpu_executor(self.isolated_cpu_executor)
+        elif isolated_cpu_executor_bound():
+            isolated_hold = nullcontext()
+        else:
+            owned_isolated = (
+                ProcessPoolCpuExecutor(max_workers=self.isolated_cpu_workers)
+                if self.isolated_cpu_workers is not None
+                else ProcessPoolCpuExecutor()
+            )
+            isolated_hold = hold_isolated_cpu_executor(owned_isolated)
+
         posture_bind: AbstractContextManager[None] = (
             bind_denial_posture(self.denial_posture)
             if self.denial_posture is not None
@@ -681,6 +732,7 @@ class ExecutionRuntime:
             # closed there when two open scopes disagree.
             with (
                 cpu_hold,
+                isolated_hold,
                 hold_cursor_signer(self.cursor_token_signer),
                 hold_cursor_cipher(self.cursor_token_cipher),
                 posture_bind,
@@ -701,5 +753,8 @@ class ExecutionRuntime:
         finally:
             if owned_pool is not None:
                 owned_pool.close()
+
+            if owned_isolated is not None:
+                owned_isolated.close()
 
         logger.info("Execution runtime scope exited")

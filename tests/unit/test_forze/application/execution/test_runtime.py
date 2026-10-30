@@ -284,6 +284,78 @@ class TestScopeCpuExecutor:
         rt = build_runtime(cpu_executor=ex)
         assert rt.cpu_executor is ex
 
+    @pytest.mark.parametrize("field", ["cpu_workers", "isolated_cpu_workers"])
+    def test_non_positive_worker_count_is_refused(self, field: str) -> None:
+        with pytest.raises(CoreException) as ei:
+            ExecutionRuntime(deps=DepsRegistry().freeze(), **{field: 0})
+
+        assert ei.value.code == f"core.runtime.{field}_invalid"
+        assert field in str(ei.value)
+
+    @pytest.mark.asyncio
+    async def test_unbound_scope_owns_and_closes_an_isolated_process_pool(self) -> None:
+        import os
+
+        from forze.base.primitives import (
+            ProcessPoolCpuExecutor,
+            current_isolated_cpu_executor,
+            run_cpu,
+        )
+
+        rt = ExecutionRuntime(deps=DepsRegistry().freeze(), isolated_cpu_workers=1)
+
+        async with rt.scope():
+            owned = current_isolated_cpu_executor()
+            assert isinstance(owned, ProcessPoolCpuExecutor)
+            assert owned.max_workers == 1
+            assert await run_cpu(os.getpid, isolated=True) != os.getpid()
+
+        assert owned._pool is None  # closed with the scope
+        assert current_isolated_cpu_executor() is None
+
+    @pytest.mark.asyncio
+    async def test_scope_binds_but_does_not_close_an_injected_isolated_executor(self) -> None:
+        from forze.base.primitives import (
+            InlineCpuExecutor,
+            ThreadPoolCpuExecutor,
+            current_isolated_cpu_executor,
+        )
+
+        injected = InlineCpuExecutor()
+        default = ThreadPoolCpuExecutor(max_workers=1)
+        rt = ExecutionRuntime(
+            deps=DepsRegistry().freeze(), cpu_executor=default, isolated_cpu_executor=injected
+        )
+
+        async with rt.scope():
+            assert current_isolated_cpu_executor() is injected
+
+        assert current_isolated_cpu_executor() is None
+
+    @pytest.mark.asyncio
+    async def test_ambient_isolated_executor_is_not_overridden(self) -> None:
+        from forze.base.primitives import (
+            InlineCpuExecutor,
+            bind_isolated_cpu_executor,
+            current_isolated_cpu_executor,
+        )
+
+        ambient = InlineCpuExecutor()
+        rt = ExecutionRuntime(deps=DepsRegistry().freeze())
+
+        with bind_isolated_cpu_executor(ambient):
+            async with rt.scope():
+                assert current_isolated_cpu_executor() is ambient
+
+    def test_build_runtime_threads_isolated_cpu_settings(self) -> None:
+        from forze.application.execution import build_runtime
+        from forze.base.primitives import InlineCpuExecutor
+
+        ex = InlineCpuExecutor()
+        rt = build_runtime(isolated_cpu_executor=ex, isolated_cpu_workers=2)
+        assert rt.isolated_cpu_executor is ex
+        assert rt.isolated_cpu_workers == 2
+
 
 # ....................... #
 
@@ -410,6 +482,72 @@ class TestScopeBindingsReachRequests:
             await task
 
     @pytest.mark.asyncio
+    async def test_isolated_run_cpu_in_a_request_reaches_the_runtime_process_pool(self) -> None:
+        import os
+
+        from forze.base.primitives import (
+            ProcessPoolCpuExecutor,
+            current_isolated_cpu_executor,
+            run_cpu,
+        )
+
+        async with _held_by_lifespan(ExecutionRuntime(isolated_cpu_workers=1)):
+            assert isinstance(current_isolated_cpu_executor(), ProcessPoolCpuExecutor)
+            pid = await run_cpu(os.getpid, isolated=True)
+
+        assert pid != os.getpid()
+
+        # Scope exit releases it: back to the refusal, never a fallback.
+        assert current_isolated_cpu_executor() is None
+
+        with pytest.raises(CoreException) as caught:
+            await run_cpu(os.getpid, isolated=True)
+
+        assert caught.value.code == "cpu_offload_isolated_unbound"
+
+    @pytest.mark.asyncio
+    async def test_an_injected_isolated_executor_reaches_a_request(self) -> None:
+        from forze.base.primitives import InlineCpuExecutor, current_isolated_cpu_executor
+
+        injected = InlineCpuExecutor()
+
+        async with _held_by_lifespan(ExecutionRuntime(isolated_cpu_executor=injected)):
+            assert current_isolated_cpu_executor() is injected
+
+    @pytest.mark.asyncio
+    async def test_an_isolated_executor_inherited_around_a_scope_stays_in_its_task(
+        self,
+    ) -> None:
+        from forze.base.primitives import (
+            InlineCpuExecutor,
+            bind_isolated_cpu_executor,
+            current_isolated_cpu_executor,
+        )
+
+        ambient = InlineCpuExecutor()
+        inside: list[object] = []
+        stop, started = asyncio.Event(), asyncio.Event()
+
+        async def lifespan() -> None:
+            with bind_isolated_cpu_executor(ambient):
+                async with ExecutionRuntime().scope():
+                    inside.append(current_isolated_cpu_executor())
+                    started.set()
+                    await stop.wait()
+
+        task = asyncio.create_task(lifespan())
+
+        try:
+            await started.wait()
+
+            assert inside == [ambient]  # the scope's own task defers to it ...
+            assert current_isolated_cpu_executor() is None  # ... and never publishes it
+
+        finally:
+            stop.set()
+            await task
+
+    @pytest.mark.asyncio
     async def test_cursor_tokens_in_a_request_are_signed(self) -> None:
         from forze.application.contracts.querying import (
             CursorTokenSigner,
@@ -483,6 +621,22 @@ class TestScopeBindingsWithSeveralRuntimes:
 
             await exit_scope(0)
             assert current_cpu_executor() is second
+
+    @pytest.mark.asyncio
+    async def test_a_request_isolates_on_the_oldest_open_isolated_executor(self) -> None:
+        from forze.base.primitives import InlineCpuExecutor, current_isolated_cpu_executor
+
+        first, second = InlineCpuExecutor(), InlineCpuExecutor()
+        runtimes = (
+            ExecutionRuntime(isolated_cpu_executor=first),
+            ExecutionRuntime(isolated_cpu_executor=second),
+        )
+
+        async with _held_by_lifespan(*runtimes) as exit_scope:
+            assert current_isolated_cpu_executor() is first
+
+            await exit_scope(0)
+            assert current_isolated_cpu_executor() is second
 
     @pytest.mark.asyncio
     async def test_a_request_refuses_to_pick_between_two_signers(self) -> None:

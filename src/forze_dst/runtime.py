@@ -25,6 +25,7 @@ from forze.base.primitives import (
     SeededEntropySource,
     bind_cpu_executor,
     bind_entropy_source,
+    bind_isolated_cpu_executor,
     bind_time_source,
 )
 
@@ -150,6 +151,10 @@ def run_simulation[T](
             # so a predictable secret is unrepresentable rather than gated by an opt-in flag.
             bind_entropy_source(entropy),
             bind_cpu_executor(SimulationCpuExecutor(cost=cpu_cost)),
+            # run_cpu(..., isolated=True) runs inline too: a real worker process is wall-clock
+            # work the simulation loop refuses. It still takes the pickle round trip, so a call
+            # production would refuse is refused here.
+            bind_isolated_cpu_executor(SimulationCpuExecutor(cost=cpu_cost, pickled=True)),
             bind_interceptors(CooperativeInterceptor(latency=latency)),
         ):
             return loop.run_until_complete(scenario())

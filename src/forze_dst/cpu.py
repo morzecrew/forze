@@ -13,7 +13,7 @@ from typing import final
 
 import attrs
 
-from forze.base.primitives.cpu import CpuExecutor
+from forze.base.primitives.cpu import CpuExecutor, InlineCpuExecutor
 
 # ----------------------- #
 
@@ -32,12 +32,16 @@ class SimulationCpuExecutor(CpuExecutor):
     interleaving point, instant in virtual time. A :attr:`cost` model advances the
     virtual clock for the named call site before running the thunk, so time-dependent
     behavior around slow CPU work (deadlines, timeouts) is exercised deterministically.
+
+    With :attr:`pickled` — the isolated slot's executor — the thunk takes the same pickle
+    round trip as on a worker process, so a call production would refuse is refused here.
     """
 
     cost: CpuCostModel | None = None
+    pickled: bool = False
 
     async def run[T](self, fn: Callable[[], T], *, label: str | None = None) -> T:
         delay = self.cost(label) if self.cost is not None else 0.0
         await asyncio.sleep(delay)  # virtual-time advance + yield (delay 0.0 = bare yield)
 
-        return fn()
+        return await InlineCpuExecutor(pickled=self.pickled).run(fn, label=label)
