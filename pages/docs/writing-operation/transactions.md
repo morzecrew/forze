@@ -292,7 +292,12 @@ invocations of one operation do. The tenant stays in the key, so different
 tenants still never wait on each other. A group keys in its own namespace, so a
 group named `orders.recompute` never shares the lock of the operation of that
 name. The name must be a non-empty string without surrounding whitespace, or the
-constructor refuses it as `configuration` (`operation_lock_group_invalid`).
+constructor refuses it as `configuration` (`operation_lock_group_invalid`); a `StrEnum`
+member keys as its plain value.
+
+Setting, changing or dropping an operation's group changes its lock key. During a
+rolling deployment, old and new nodes would then hold different locks and not wait
+on each other, so drain the operation's writers before rolling the change out.
 
 The lock lives in the backend of the route's transaction manager, so two routes
 would hold two unrelated locks. Freeze refuses a group whose operations run on

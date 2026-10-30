@@ -68,6 +68,16 @@ def _lock_parts(value: object, *, op: str) -> tuple[object, ...]:
     return parts
 
 
+def _plain_group(value: object) -> object:
+    """attrs converter for :attr:`SerializeOperation.group`: a ``str`` subclass as plain ``str``.
+
+    The lock key digests each part's type, so a ``StrEnum`` member would key apart from the
+    equal plain name while freeze compares the two as one group.
+    """
+
+    return str.__str__(value) if isinstance(value, str) else value
+
+
 def _validate_group(_instance: object, _attribute: object, value: str | None) -> None:
     """attrs validator for :attr:`SerializeOperation.group`: unset, or a trimmed name.
 
@@ -121,9 +131,14 @@ class SerializeOperation(BeforeFactory):
     key: OperationLockKey
     """Derives the key from the operation's arguments (see :data:`OperationLockKey`)."""
 
-    group: str | None = attrs.field(default=None, validator=_validate_group)
+    group: str | None = attrs.field(
+        default=None,
+        converter=_plain_group,  # pyright: ignore[reportArgumentType]
+        validator=_validate_group,
+    )
     """Shares the lock with every operation naming this group, instead of keying it by the
-    operation alone."""
+    operation alone. Setting, changing or dropping it changes the lock key: drain the
+    operation's writers before rolling that out, or old and new nodes will not contend."""
 
     # ....................... #
 

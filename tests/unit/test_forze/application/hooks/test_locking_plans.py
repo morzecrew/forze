@@ -165,14 +165,18 @@ async def _take_turns(
     gate.gate(first.name)
     gate.gate(second.name)
 
-    a = asyncio.create_task(registry.resolve(_OP, ctx)(first))
-    await asyncio.wait_for(gate.started[first.name].wait(), timeout=5)
-    b = asyncio.create_task(registry.resolve(second_op, ctx)(second))
-    await asyncio.wait_for(_until_queued(state, key), timeout=5)
+    tasks = [asyncio.create_task(registry.resolve(_OP, ctx)(first))]
 
-    gate.release[first.name].set()
-    gate.release[second.name].set()
-    await asyncio.wait_for(asyncio.gather(a, b), timeout=5)
+    try:
+        await asyncio.wait_for(gate.started[first.name].wait(), timeout=5)
+        tasks.append(asyncio.create_task(registry.resolve(second_op, ctx)(second)))
+        await asyncio.wait_for(_until_queued(state, key), timeout=5)
+
+    finally:
+        # Released on a timeout too, so a failed run leaves no invocation holding the lock.
+        gate.release[first.name].set()
+        gate.release[second.name].set()
+        await asyncio.wait_for(asyncio.gather(*tasks), timeout=5)
 
     return gate.events
 
@@ -395,6 +399,14 @@ class TestGroup:
 
         assert caught.value.kind is ExceptionKind.CONFIGURATION
         assert caught.value.code == "operation_lock_group_invalid"
+
+    def test_a_str_enum_group_keys_as_its_plain_value(self) -> None:
+        class _Group(StrEnum):
+            ORDERS = "orders"
+
+        serialize = SerializeOperation(key=lambda args: args.order_id, group=_Group.ORDERS)
+
+        assert type(serialize.group) is str and serialize.group == "orders"
 
     def test_a_group_across_two_routes_is_refused_at_freeze(self) -> None:
         registry = _pair_registry(_Gate(), groups=("orders", "orders"), routes=(_ROUTE, "reports"))
