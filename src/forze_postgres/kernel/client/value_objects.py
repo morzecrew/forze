@@ -70,6 +70,16 @@ class PostgresConfig:
     reconnect_timeout: timedelta = timedelta(seconds=10)
     """Timeout when reconnecting after a failure."""
 
+    check_on_checkout: bool = True
+    """Ping each connection before the pool hands it out, replacing one the server has ended.
+
+    Without it, each idle connection a restart, failover or ``pg_terminate_backend`` ended
+    fails the one operation it is handed to. The cost is one round trip per checkout, and a
+    transaction checks out once. A ping still unanswered at the acquire timeout fails, and the
+    pool discards that connection. The ping is an empty query, which carries no session state,
+    so it is safe behind pgbouncer in transaction pooling; there it proves the link to pgbouncer.
+    """
+
     num_workers: int = 4
     """Number of worker threads for the pool."""
 

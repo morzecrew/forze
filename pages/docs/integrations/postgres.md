@@ -218,6 +218,20 @@ PostgresLifecycleModule(
   trigger you supply.
 - **Routed clients** require `introspector_cache_partition_key` on the deps
   module so the catalog cache partitions by tenant.
+- **Connections the server ended.** A restart, a failover, `pg_terminate_backend` or
+  `DROP DATABASE … WITH (FORCE)` ends every pooled session at once. The pool pings each
+  connection before handing it out, and the first dead one makes it check all its idle
+  connections, so requests get live connections instead of failing on dead ones. It then
+  opens their replacements at once, up to `max_size` new connections, which is by design.
+  The cost is one round trip per checkout; a transaction checks out once. A ping still
+  unanswered at the acquire timeout fails, and that connection is discarded. The check of the
+  idle connections has no such bound: on one that stops answering it waits until TCP gives
+  up, and the idle connections it holds stay out of the pool meanwhile. On a network that
+  drops connections silently, bound that with libpq's `keepalives_idle` or `tcp_user_timeout`
+  in the DSN. The ping is an empty query that carries no session state, so it is safe behind
+  pgbouncer in transaction pooling. To skip it, pass `PostgresConfig(check_on_checkout=False)`:
+  each dead connection then fails the one operation it is handed to. Routed clients take the
+  same `pool_config`.
 - **Relations** can be static `(schema, table)` tuples or per-tenant resolvers —
   see [Multi-tenancy](../identity-tenancy-enc/multi-tenancy.md).
 - **Locking reads when `read` differs from `write`** (a view, typically). A read with

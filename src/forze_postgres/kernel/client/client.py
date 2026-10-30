@@ -15,19 +15,29 @@ require_psycopg()
 # ....................... #
 
 import asyncio
-from collections.abc import AsyncGenerator, AsyncIterable, Iterable, Sequence
+import os
+import socket
+from collections.abc import (
+    AsyncGenerator,
+    AsyncIterable,
+    Awaitable,
+    Callable,
+    Iterable,
+    Sequence,
+)
 from contextlib import (
     AbstractAsyncContextManager,
     AsyncExitStack,
     asynccontextmanager,
     nullcontext,
+    suppress,
 )
 from contextvars import ContextVar
 from datetime import timedelta
 from typing import Any, Literal, final, overload
 
 import attrs
-from psycopg import AsyncConnection, Column, sql
+from psycopg import AsyncConnection, Column, OperationalError, sql
 from psycopg.abc import Params, QueryNoTemplate
 from psycopg_pool import AsyncConnectionPool, PoolTimeout
 
@@ -198,6 +208,106 @@ def _pool_configure_for_config(  # type: ignore[no-untyped-def]
 # ....................... #
 
 
+async def _ping(conn: AsyncConnection, deadline: float) -> None:
+    """Run psycopg_pool's connection check, failing it if it is still running at *deadline*.
+
+    Not a cancelling timeout: psycopg answers a cancellation by sending the server a cancel
+    request, then waits for the query again, and nothing ends that wait when the server has
+    stopped answering. Shutting the socket down under the ping fails its read at once instead,
+    and leaves the connection broken, so the pool discards it.
+
+    :param deadline: Event-loop time (:meth:`asyncio.AbstractEventLoop.time`) to give up at.
+    :raises TimeoutError: The ping returned just as the deadline shut its socket down.
+    """
+
+    shut = False
+
+    def shut_down() -> None:
+        nonlocal shut
+        shut = True
+
+        with (
+            suppress(OSError, OperationalError),
+            socket.socket(fileno=os.dup(conn.pgconn.socket)) as sock,
+        ):
+            sock.shutdown(socket.SHUT_RDWR)
+
+    breaker = asyncio.get_running_loop().call_at(deadline, shut_down)
+
+    try:
+        await AsyncConnectionPool.check_connection(conn)
+
+    finally:
+        breaker.cancel()
+
+    if shut:
+        raise TimeoutError("Postgres connection check timed out")
+
+
+# ....................... #
+
+
+def _report_sweep(sweep: asyncio.Task[None]) -> None:
+    """Log a failed sweep. Reading its exception also keeps asyncio from reporting it as
+    never retrieved when every checkout stopped waiting for it first."""
+
+    if not sweep.cancelled() and (error := sweep.exception()) is not None:
+        logger.warning("Postgres pool sweep failed: %s", error)
+
+
+# ....................... #
+
+
+def _pool_check(
+    pool: Callable[[], AsyncConnectionPool],
+    timeout: timedelta,
+) -> Callable[[AsyncConnection], Awaitable[None]]:
+    """Return a pool ``check`` callback: ping the connection, and sweep the pool if it is dead.
+
+    A restart or failover ends every pooled session at once. psycopg_pool answers a failed
+    check by trying the next idle connection, but backs off between attempts (0s, ~1s, ~2s,
+    ~4s), so a checkout that meets four dead connections in turn outlasts its acquire timeout.
+    :meth:`~psycopg_pool.AsyncConnectionPool.check` drops every dead idle connection in one
+    pass instead, and the retry then gets a live one. Concurrent failures share one sweep. No
+    checkout can cancel it: it holds the idle connections outside the pool while it runs, and
+    a cancelled checkout must not strand them there.
+
+    The ping and the wait for the sweep share one deadline, *timeout* after the check starts;
+    past it the check fails and the sweep carries on. The sweep's own pings have no bound
+    (``check()`` takes none): on a connection that stops answering it waits until TCP gives up.
+
+    :param pool: Returns the pool the callback belongs to; called only on a failed check.
+    :param timeout: How long one check may take: the client's acquire timeout.
+    """
+
+    seconds = timeout.total_seconds()
+    sweep: asyncio.Task[None] | None = None
+
+    async def check(conn: AsyncConnection) -> None:
+        nonlocal sweep
+
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + seconds
+
+        try:
+            await _ping(conn, deadline)
+
+        except Exception:
+            if sweep is None or sweep.done():
+                sweep = asyncio.create_task(pool().check())
+                sweep.add_done_callback(_report_sweep)
+
+            # `wait`, not `shield`: it never cancels the sweep, and leaves its error to
+            # `_report_sweep` rather than to whichever checkout happens to be waiting.
+            await asyncio.wait([sweep], timeout=max(0.0, deadline - loop.time()))
+            raise
+
+    return check
+
+
+# ....................... #
+
+
 async def _pool_reset_transaction_attributes(conn: AsyncConnection) -> None:
     """Pool ``reset`` callback: clear transaction-shaping attributes on check-in.
 
@@ -360,6 +470,9 @@ class PostgresClient(PostgresClientPort):
                 reconnect_timeout=config.reconnect_timeout.total_seconds(),
                 num_workers=config.num_workers,
                 configure=configure,
+                check=(
+                    _pool_check(lambda: pool, acquire_timeout) if config.check_on_checkout else None
+                ),
                 reset=_pool_reset_transaction_attributes,
             )
 

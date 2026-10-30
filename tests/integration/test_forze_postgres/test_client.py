@@ -1,7 +1,12 @@
 import asyncio
 from datetime import timedelta
+from time import monotonic
+from typing import Any
+from urllib.parse import urlsplit
+from uuid import uuid4
 
 import pytest
+from testcontainers.postgres import PostgresContainer
 
 from forze.base.exceptions import CoreException, ExceptionKind
 from forze_postgres.kernel.client.client import (
@@ -9,7 +14,10 @@ from forze_postgres.kernel.client.client import (
     PostgresConfig,
     PostgresTransactionOptions,
 )
-from forze_postgres.kernel.client.errors import POOL_ACQUIRE_TIMEOUT_CODE
+from forze_postgres.kernel.client.errors import (
+    DATABASE_UNREACHABLE_CODE,
+    POOL_ACQUIRE_TIMEOUT_CODE,
+)
 
 
 @pytest.mark.asyncio
@@ -518,3 +526,193 @@ async def test_session_options_are_in_effect_on_pooled_connections(postgres_cont
     # The same server connection throughout: the checks ran on the one checked back in.
     assert after_commit == {"pid": pid, **expected}
     assert after_rollback == {"pid": pid, **expected}
+
+
+# ....................... #
+# Connections the server ended (issue #776)
+
+_ENDED = 4
+"""Idle pooled connections the server ends under each client below. Four, because without
+the sweep psycopg_pool's backoff between failed checks (0s, ~1s, ~2s, ~4s) outlasts the
+default acquire timeout before the fourth."""
+
+_RECOVERY_BOUND = 1.0
+"""Seconds the operations after a restart may take in all. Well under the 5s acquire timeout,
+and under psycopg_pool's ~1s backoff after a second failed check, so a checkout that meets the
+dead connections in turn rather than through one sweep fails it."""
+
+
+def _dsn(container: Any) -> str:
+    return container.get_connection_url().replace("postgresql+psycopg://", "postgresql://")
+
+
+async def _all_idle(client: PostgresClient, count: int) -> None:
+    """Wait until *count* connections sit idle in the client's pool."""
+
+    pool = client._PostgresClient__pool  # type: ignore[attr-defined]
+
+    async with asyncio.timeout(10):
+        while pool.get_stats().get("pool_available", 0) < count:
+            await asyncio.sleep(0.05)
+
+
+async def _client_whose_sessions_the_server_ended(
+    url: str,
+    admin: PostgresClient,
+    **config: Any,
+) -> PostgresClient:
+    """A client whose idle pooled connections the server has terminated, as a restart would."""
+
+    tag = f"forze-ended-{uuid4().hex[:8]}"
+    client = PostgresClient()
+    await client.initialize(
+        dsn=url,
+        config=PostgresConfig(min_size=_ENDED, max_size=_ENDED, application_name=tag, **config),
+    )
+    remaining = "SELECT count(*) FROM pg_stat_activity WHERE application_name = %s"
+
+    # Every connection idle in the pool first, so each one is handed out dead.
+    await _all_idle(client, _ENDED)
+
+    async with asyncio.timeout(10):
+        await admin.fetch_value(
+            "SELECT count(pg_terminate_backend(pid)) FROM pg_stat_activity "
+            "WHERE application_name = %s",
+            (tag,),
+        )
+
+        while await admin.fetch_value(remaining, (tag,)):
+            await asyncio.sleep(0.05)
+
+    return client
+
+
+@pytest.mark.asyncio
+async def test_a_checkout_skips_connections_the_server_ended(
+    postgres_container, pg_client: PostgresClient
+) -> None:
+    """After a restart, the next operations succeed rather than one failing per dead connection.
+
+    By default the pool checks a connection before handing it out, and one failed check sweeps
+    the other idle connections, so the first checkout neither fails nor waits out
+    psycopg_pool's backoff on each dead connection in turn.
+    """
+
+    client = await _client_whose_sessions_the_server_ended(_dsn(postgres_container), pg_client)
+
+    try:
+        started = monotonic()
+        values = [await client.fetch_value("SELECT %s::int", (i,)) for i in range(_ENDED + 1)]
+        elapsed = monotonic() - started
+
+    finally:
+        await client.close()
+
+    assert values == list(range(_ENDED + 1))
+    assert elapsed < _RECOVERY_BOUND, elapsed
+
+
+@pytest.mark.asyncio
+async def test_with_the_check_off_each_ended_connection_fails_one_operation(
+    postgres_container, pg_client: PostgresClient
+) -> None:
+    """The opt-out keeps the old behaviour, which is also what makes the test above non-vacuous:
+    the setup does hand out dead connections."""
+
+    client = await _client_whose_sessions_the_server_ended(
+        _dsn(postgres_container), pg_client, check_on_checkout=False
+    )
+    outcomes: list[str] = []
+
+    try:
+        for _ in range(_ENDED + 1):
+            try:
+                await client.fetch_value("SELECT 1")
+                outcomes.append("ok")
+
+            except CoreException:
+                outcomes.append("failed")
+
+    finally:
+        await client.close()
+
+    assert outcomes == ["failed"] * _ENDED + ["ok"]
+
+
+@pytest.mark.asyncio
+async def test_a_server_that_takes_no_new_sessions_fails_the_checkout_in_its_timeout(
+    postgres_container, pg_client: PostgresClient
+) -> None:
+    """Every pooled session ended and none accepted since: the caller gets the mapped
+    unreachable error at about its acquire timeout, not a hang. ``DROP DATABASE … WITH
+    (FORCE)`` does both to the clients of that database."""
+
+    database = f"forze_gone_{uuid4().hex[:8]}"
+    await pg_client.execute(f'CREATE DATABASE "{database}"')
+    acquire = timedelta(seconds=1)
+    client = PostgresClient()
+    await client.initialize(
+        dsn=urlsplit(_dsn(postgres_container))._replace(path=f"/{database}").geturl(),
+        config=PostgresConfig(min_size=2, max_size=2),
+        acquire_timeout=acquire,
+    )
+
+    try:
+        await _all_idle(client, 2)
+        await pg_client.execute(f'DROP DATABASE "{database}" WITH (FORCE)')
+
+        started = monotonic()
+
+        with pytest.raises(CoreException) as caught:
+            await asyncio.wait_for(client.fetch_value("SELECT 1"), 15)
+
+        elapsed = monotonic() - started
+
+    finally:
+        await client.close()
+
+    assert caught.value.code == DATABASE_UNREACHABLE_CODE
+    assert elapsed < acquire.total_seconds() + 1, elapsed
+
+
+@pytest.mark.asyncio
+async def test_a_server_that_stops_answering_fails_the_checkout_in_its_timeout() -> None:
+    """A ping nobody answers is bounded too. A cancelled one is not: psycopg answers the
+    cancellation by waiting for the query again, so without the bound this checkout would wait
+    until the server answers. Its own server, because pausing it stops every session on it."""
+
+    acquire = timedelta(seconds=1)
+
+    with PostgresContainer(image="ghcr.io/morzecrew/postgres:18", driver="psycopg") as postgres:
+        server = postgres.get_wrapped_container()
+        client = PostgresClient()
+        await client.initialize(
+            dsn=_dsn(postgres),
+            config=PostgresConfig(min_size=2, max_size=2),
+            acquire_timeout=acquire,
+        )
+
+        try:
+            await _all_idle(client, 2)
+            server.pause()
+
+            try:
+                started = monotonic()
+
+                with pytest.raises(CoreException) as caught:
+                    await asyncio.wait_for(client.fetch_value("SELECT 1"), 15)
+
+                elapsed = monotonic() - started
+
+            finally:
+                server.unpause()
+
+            # The sweep that failure started finishes once the server answers again.
+            recovered = await asyncio.wait_for(client.fetch_value("SELECT 1"), 15)
+
+        finally:
+            await client.close()
+
+    assert caught.value.code == POOL_ACQUIRE_TIMEOUT_CODE
+    assert elapsed < acquire.total_seconds() + 1, elapsed
+    assert recovered == 1

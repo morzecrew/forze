@@ -1,6 +1,10 @@
 """Unit tests for :mod:`forze_postgres.kernel.client.client` helpers (no DB I/O)."""
 
 import asyncio
+import gc
+import socket
+from datetime import timedelta
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -9,13 +13,14 @@ from forze.base.exceptions import CoreException
 
 pytest.importorskip("psycopg")
 
-from psycopg import IsolationLevel
+from psycopg import IsolationLevel, OperationalError
 from psycopg_pool import PoolTimeout
 
 from forze_postgres.kernel.client.client import (
     PostgresClient,
     PostgresConfig,
     PostgresTransactionOptions,
+    _pool_check,
     _pool_reset_transaction_attributes,
 )
 from forze_postgres.kernel.client.helpers import isolation_level_enum
@@ -202,6 +207,218 @@ class TestPoolResetCallback:
         # The other attributes stay untouched on this clean path.
         conn.set_isolation_level.assert_not_called()
         conn.set_read_only.assert_not_called()
+
+
+_BOUND = timedelta(seconds=5)
+"""A check deadline the tests that are not about it never reach."""
+
+
+def _ping_conn(execute: Any) -> MagicMock:
+    """Connection mock for ``check_connection``: idle, not in autocommit, pinged via ``execute``."""
+
+    conn = _mock_conn()
+    conn.autocommit = False
+    conn.execute = AsyncMock(side_effect=execute)
+    return conn
+
+
+def _lost(_query: str) -> None:
+    raise OperationalError("the connection is lost")
+
+
+def _checker(pool: MagicMock, timeout: timedelta = _BOUND) -> Any:
+    return _pool_check(lambda: pool, timeout)
+
+
+class TestPoolCheckCallback:
+    """The checkout ``check`` (#776): on by default, and one failure sweeps the idle pool."""
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("config", "checked"),
+        [(PostgresConfig(), True), (PostgresConfig(check_on_checkout=False), False)],
+    )
+    async def test_pool_is_built_with_the_check_unless_disabled(
+        self, config: PostgresConfig, checked: bool
+    ) -> None:
+        with patch("forze_postgres.kernel.client.client.AsyncConnectionPool") as pool_cls:
+            pool_cls.return_value.open = AsyncMock()
+            await PostgresClient().initialize("postgresql://unused", config=config)
+
+        assert (pool_cls.call_args.kwargs["check"] is not None) is checked
+
+    @pytest.mark.asyncio
+    async def test_a_live_connection_passes_without_a_sweep(self) -> None:
+        pool = MagicMock(check=AsyncMock())
+        conn = _ping_conn(None)
+
+        await _checker(pool)(conn)
+
+        conn.execute.assert_awaited_once_with("")
+        pool.check.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_a_dead_connection_sweeps_the_pool_then_fails(self) -> None:
+        pool = MagicMock(check=AsyncMock())
+
+        with pytest.raises(OperationalError):
+            await _checker(pool)(_ping_conn(_lost))
+
+        pool.check.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_concurrent_failures_share_one_sweep(self) -> None:
+        """The sweep holds until all three checks have failed, so each meets it running."""
+
+        failures = 0
+        all_failed = asyncio.Event()
+
+        def lost(query: str) -> None:
+            nonlocal failures
+            failures += 1
+
+            if failures == 3:
+                all_failed.set()
+
+            _lost(query)
+
+        pool = MagicMock(check=AsyncMock(side_effect=all_failed.wait))
+        check = _checker(pool)
+
+        results = await asyncio.gather(
+            *(check(_ping_conn(lost)) for _ in range(3)),
+            return_exceptions=True,
+        )
+
+        assert [type(result) for result in results] == [OperationalError] * 3
+        pool.check.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_a_failure_after_a_finished_sweep_starts_another(self) -> None:
+        pool = MagicMock(check=AsyncMock())
+        check = _checker(pool)
+
+        for _ in range(2):
+            with pytest.raises(OperationalError):
+                await check(_ping_conn(_lost))
+
+        assert pool.check.await_count == 2
+
+    @pytest.mark.asyncio
+    async def test_a_cancelled_checkout_leaves_the_sweep_to_finish(self) -> None:
+        """The sweep holds the idle connections outside the pool until it puts them back, so
+        cancelling the checkout that waits on it must not cancel it."""
+
+        started, release, finished = asyncio.Event(), asyncio.Event(), asyncio.Event()
+
+        async def sweep() -> None:
+            started.set()
+            await release.wait()
+            finished.set()  # stands for: the idle connections are back in the pool
+
+        pool = MagicMock(check=AsyncMock(side_effect=sweep))
+        checkout = asyncio.ensure_future(_checker(pool)(_ping_conn(_lost)))
+        await asyncio.wait_for(started.wait(), 1)
+
+        checkout.cancel()
+
+        with pytest.raises(asyncio.CancelledError):
+            await checkout
+
+        release.set()
+        await asyncio.wait_for(finished.wait(), 1)
+
+    @pytest.mark.asyncio
+    async def test_a_stalled_sweep_holds_a_checkout_only_until_its_deadline(self) -> None:
+        release, finished = asyncio.Event(), asyncio.Event()
+
+        async def stalled() -> None:
+            await release.wait()
+            finished.set()
+
+        pool = MagicMock(check=AsyncMock(side_effect=stalled))
+        check = _checker(pool, timedelta(milliseconds=50))
+
+        # Twice: the second failure finds the stalled sweep running and waits on it too.
+        for _ in range(2):
+            with pytest.raises(OperationalError):
+                await asyncio.wait_for(check(_ping_conn(_lost)), 1)
+
+        pool.check.assert_awaited_once()
+
+        release.set()
+        await asyncio.wait_for(finished.wait(), 1)
+
+    @pytest.mark.asyncio
+    async def test_a_ping_that_is_never_answered_fails_at_the_deadline(self) -> None:
+        """The bound shuts the socket down rather than cancelling the ping, which psycopg
+        would meet by waiting for the query again. The stub's read, like psycopg's, returns
+        only when the socket ends."""
+
+        loop = asyncio.get_running_loop()
+        ours, theirs = socket.socketpair()
+        ours.setblocking(False)
+
+        async def unanswered(_query: str) -> None:
+            if not await loop.sock_recv(ours, 1):
+                raise OperationalError("server closed the connection unexpectedly")
+
+        swept = asyncio.Event()
+        pool = MagicMock(check=AsyncMock(side_effect=swept.set))
+        conn = _ping_conn(unanswered)
+        conn.pgconn.socket = ours.fileno()
+        started = loop.time()
+
+        try:
+            with pytest.raises(OperationalError):
+                await asyncio.wait_for(_checker(pool, timedelta(milliseconds=50))(conn), 2)
+
+            elapsed = loop.time() - started
+            await asyncio.wait_for(swept.wait(), 1)
+
+        finally:
+            ours.close()
+            theirs.close()
+
+        assert elapsed < 1
+
+    @pytest.mark.asyncio
+    async def test_a_failed_sweep_is_logged_not_left_unretrieved(self) -> None:
+        """The checkout stopped waiting before the sweep failed, so nothing else reads its
+        error: unread, asyncio would report it when the task is collected."""
+
+        release, failing = asyncio.Event(), asyncio.Event()
+
+        async def broken() -> None:
+            await release.wait()
+            failing.set()
+            raise RuntimeError("sweep broke")
+
+        pool = MagicMock(check=AsyncMock(side_effect=broken))
+        check = _checker(pool, timedelta(milliseconds=20))
+        loop = asyncio.get_running_loop()
+        reported: list[dict[str, Any]] = []
+        loop.set_exception_handler(lambda _loop, context: reported.append(context))
+
+        try:
+            with patch("forze_postgres.kernel.client.client.logger") as log:
+                with pytest.raises(OperationalError):
+                    await check(_ping_conn(_lost))
+
+                release.set()
+                await asyncio.wait_for(failing.wait(), 1)
+
+                for _ in range(3):  # the task finishes, then its done callbacks run
+                    await asyncio.sleep(0)
+
+            del check
+            gc.collect()
+
+        finally:
+            loop.set_exception_handler(None)
+
+        log.warning.assert_called_once()
+        assert reported == []
 
 
 class _StubCursor:
