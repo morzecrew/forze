@@ -7208,6 +7208,13 @@ wiring:</p>
 <td>—</td>
 <td>✅</td>
 </tr>
+<tr>
+<td><code>Reference(field=…, spec=…, on_delete=…)</code></td>
+<td>a hard delete of the referenced row cascades, is refused, or clears the field</td>
+<td><code>FOREIGN KEY … ON DELETE …</code></td>
+<td>—</td>
+<td>✅</td>
+</tr>
 </tbody>
 </table>
 <p><code>SerializedBy</code> is the one member about write <em>ordering</em> rather than about stored rows. It says
@@ -7296,6 +7303,32 @@ same — so the declaration is refused rather than enforced two different ways. 
 not a <code>sparse</code> index: sparse skips a document only when <em>every</em> indexed field is missing and still
 indexes an explicit null, so the tuples the exemption was meant to let through would collide under
 it. Startup refuses a sparse index offered for a <code>skip_null</code> guarantee.</p>
+<p>A <code>Reference</code> is declared on the referencing spec, as a foreign key is declared on the
+referencing table. It says that <code>field</code> holds the id of a row of the document spec <code>spec</code>, and
+what a hard delete of that row does to the rows naming it. The field must be a <code>UUID</code> (or
+<code>UUID | None</code>) on the read and domain models, or it would never equal that id:</p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">forze.application.contracts.guarantees</span><span class="w"> </span><span class="kn">import</span> <span class="n">Reference</span>
+
+<span class="n">Reference</span><span class="p">(</span><span class="n">field</span><span class="o">=</span><span class="s2">"stage_id"</span><span class="p">,</span> <span class="n">spec</span><span class="o">=</span><span class="s2">"stages"</span><span class="p">,</span> <span class="n">on_delete</span><span class="o">=</span><span class="s2">"cascade"</span><span class="p">)</span>
+</code></pre></div>
+<p><code>"cascade"</code> deletes them too, and their own referencing rows in turn. <code>"restrict"</code> refuses the
+delete with <code>conflict</code> while any remain. <code>"set_null"</code> clears the field, which must accept
+<code>None</code>; the cleared row keeps the child's guarantees, so one it would break refuses the delete
+with the write's <code>conflict</code>. Only <code>kill</code> and <code>kill_many</code> apply it: a soft delete is an update and
+leaves the rows alone. On Postgres the foreign key does the work. The in-memory store does the
+same inside the transaction's view, so a rollback restores the parent and its children together.
+It plans the whole cascade first, so a <code>restrict</code> anywhere in it refuses the delete with nothing
+removed. It plans from the transaction's view, so under snapshot isolation a child another
+transaction committed meanwhile survives, where Postgres's referential check would still find
+it. A <code>restrict</code> refuses even from a row the same cascade deletes, where Postgres refuses or
+allows that depending on which key was created first. Below an unscoped parent it searches
+every tenant's partition of a tenant-scoped spec, as a foreign key reaches every tenant's rows.
+Below a tenant-scoped parent it searches only that tenant's partition; a single-column Postgres
+key would also reach another tenant's rows naming the parent, which happens only when rows
+reference across tenants. It finds a spec's rows once that spec's adapter has been built
+against the state, which a seed, a write or a resolved port does. Neither store evicts the rows a
+cascade removes from a document cache. A spec catalogue refuses a reference to a spec it does not
+hold. Mongo and Firestore cannot apply one and refuse it at wiring.</p>
 <p>Three things happen to a declared guarantee, and a failure at any of them is loud:</p>
 <ol>
 <li>
@@ -7321,9 +7354,16 @@ periods and takes every other overlapping pair.</p>
    and anything that does not reduce that way is refused rather than guessed at. Postgres hands
    back a deparsed SQL predicate, so only the columns it restricts on are checked — an index on
    the right column and the wrong value passes there. Neither is a proof that the mechanism
-   matches; on Postgres it is a floor under a forgotten migration. Postgres also warns about
-   each unique index and <code>EXCLUDE</code> constraint on the write table that no guarantee declares,
-   other than the primary key and an index over all its columns, and suggests the declaration.
+   matches; on Postgres it is a floor under a forgotten migration. For a <code>Reference</code>, Postgres
+   wants a foreign key from the field to <code>id</code> on the referenced spec's relation, alone or beside
+   <code>tenant_id</code>, with the declared <code>ON DELETE</code>. A referenced spec bound in another Postgres
+   module is refused, since a foreign key lives in one database. <code>"restrict"</code> takes
+   <code>ON DELETE RESTRICT</code> or a plain <code>NO ACTION</code> key, unless it is deferred to commit. <code>"set_null"</code>
+   needs a nullable column, and over a key beside <code>tenant_id</code> it needs
+   <code>ON DELETE SET NULL (field)</code> (Postgres 15), which leaves <code>tenant_id</code> alone. Postgres also
+   warns about each unique index, <code>EXCLUDE</code> constraint and <code>ON DELETE CASCADE</code> or <code>SET NULL</code>
+   foreign key on the write table that no guarantee declares, other than the primary key and an
+   index over all its columns, and suggests the declaration.
    A <code>conflict_target</code> over other columns is reported too, since it refuses duplicates. Without it
    the in-memory store accepts writes the database refuses. An index counts as declared only
    when it is the one that keeps a guarantee, so a partial index beside an unfiltered
@@ -7685,7 +7725,9 @@ value, a mirror's too. On the domain path, a mirror whose create sets a frozen f
 <p><code>kill(pk)</code> and <code>kill_many(pks)</code> <strong>hard-delete</strong> — there is no soft-delete or
 <code>restore</code> on the port (model soft-delete is a domain concern, applied via
 <code>update</code>). On a spec declaring <code>hard_delete=False</code> both refuse with a
-<code>configuration</code> error (<code>hard_delete_forbidden</code>), whoever calls them.</p>
+<code>configuration</code> error (<code>hard_delete_forbidden</code>), whoever calls them. Both apply every
+<a href="#storage-guarantees"><code>Reference</code></a> naming the spec. A row a foreign key still references is
+refused with <code>conflict</code>, by <code>ON DELETE RESTRICT</code> and a plain key alike.</p>
 <h3 id="command-hooks">Command hooks<a class="headerlink" href="#command-hooks" title="Permanent link">&para;</a></h3>
 <p>A plane that owns a document can wrap its command port wherever it is resolved: a provider
 registered under <code>DocumentCommandHookDepKey</code>, routed by the document's name, receives
