@@ -14,7 +14,7 @@ import sys
 import threading
 import time
 from collections.abc import Iterator
-from concurrent.futures import BrokenExecutor
+from concurrent.futures import BrokenExecutor, Future, ThreadPoolExecutor
 from typing import Any
 from unittest.mock import MagicMock
 
@@ -650,6 +650,85 @@ class TestProcessPoolCpuExecutor:
         await asyncio.to_thread(lambda: [w.join(5) for w in workers])
         assert not any(w.is_alive() for w in workers)
 
+    async def test_a_submit_to_a_broken_pool_drops_it_as_a_lost_worker(self) -> None:
+        executor = ProcessPoolCpuExecutor(max_workers=1)
+        broken = MagicMock(spec=["submit", "shutdown"])
+        broken.submit.side_effect = BrokenExecutor("a worker died")
+        executor._pool = broken
+
+        with pytest.raises(CoreException) as ei:
+            await executor.run(os.getpid)
+
+        assert ei.value.code == "cpu_offload_worker_lost"
+        assert executor._pool is None  # dropped: the next call starts a fresh pool
+        broken.shutdown.assert_called_once_with(wait=False, cancel_futures=True)
+
+    async def test_a_broken_pool_another_call_already_dropped_is_left_alone(self) -> None:
+        executor = ProcessPoolCpuExecutor(max_workers=1)
+        stale = MagicMock(spec=["shutdown"])
+
+        assert executor._broken(stale, "site.fn").code == "cpu_offload_worker_lost"
+        executor.close()
+        assert executor._broken(stale, "site.fn").code == "cpu_executor_closed"
+        stale.shutdown.assert_not_called()
+
+    async def test_close_without_terminate_workers_terminates_then_kills(self) -> None:
+        # Python 3.13's pool has no terminate_workers(): close() stops the workers itself.
+        executor = ProcessPoolCpuExecutor(max_workers=1)
+        stubborn = MagicMock(spec=["is_alive", "terminate", "join", "kill"])
+        exited = MagicMock(spec=["is_alive", "terminate", "join", "kill"])
+        stubborn.is_alive.return_value = True  # ignores SIGTERM
+        exited.is_alive.return_value = False
+        pool = MagicMock(spec=["_shutdown_lock", "_processes", "shutdown"])
+        pool._shutdown_lock = threading.Lock()
+        pool._processes = {1: stubborn, 2: exited}
+        executor._pool = pool
+
+        executor.close()
+
+        pool.shutdown.assert_called_once_with(wait=False, cancel_futures=True)
+        stubborn.terminate.assert_called_once_with()
+        stubborn.join.assert_called_once_with(0.25)  # 0.5 s shared by both
+        stubborn.kill.assert_called_once_with()
+        exited.terminate.assert_not_called()
+        exited.kill.assert_not_called()
+
+
+class TestAwaitWorker:
+    async def test_cancelling_a_queued_call_drops_it_without_a_warning(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        logger = MagicMock()
+        monkeypatch.setattr(cpu_module, "logger", logger)
+        future: Future[int] = Future()
+        waiting = asyncio.ensure_future(cpu_module._await_worker(future, "site.fn"))
+        await asyncio.sleep(0)  # one loop turn: it now awaits the future
+        waiting.cancel()
+
+        with pytest.raises(asyncio.CancelledError):
+            await waiting
+
+        assert future.cancelled()
+        logger.warning.assert_not_called()
+
+    async def test_cancelling_a_running_call_warns_once(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        logger = MagicMock()
+        monkeypatch.setattr(cpu_module, "logger", logger)
+        future: Future[int] = Future()
+        assert future.set_running_or_notify_cancel()  # a worker has taken it
+        waiting = asyncio.ensure_future(cpu_module._await_worker(future, "site.fn"))
+        await asyncio.sleep(0)
+        waiting.cancel()
+
+        with pytest.raises(asyncio.CancelledError):
+            await waiting
+
+        assert not future.cancelled()
+        logger.warning.assert_called_once()
+        assert logger.warning.call_args.args[1:] == ("site.fn",)
+
 
 class TestInterpreterPoolCpuExecutor:
     async def test_refuses_construction_without_interpreter_pool(
@@ -662,6 +741,72 @@ class TestInterpreterPoolCpuExecutor:
 
         assert ei.value.kind is ExceptionKind.CONFIGURATION
         assert ei.value.code == "cpu_offload_interpreters_unavailable"
+
+    async def test_a_first_use_that_waited_on_the_lock_takes_the_pool_built_meanwhile(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # A thread pool stands in for the interpreter pool, so this runs on Python 3.13 too.
+        monkeypatch.setattr(cpu_module, "_interpreter_pool_type", lambda: ThreadPoolExecutor)
+        executor = InterpreterPoolCpuExecutor(max_workers=1)
+        built = ThreadPoolExecutor(max_workers=1)
+
+        class _BuiltMeanwhile:
+            # Another thread builds the pool while this one waits for the lock.
+            def __enter__(self) -> None:
+                executor._pool = built
+
+            def __exit__(self, *_: object) -> None:
+                return None
+
+        executor._lock = _BuiltMeanwhile()  # type: ignore[assignment]
+
+        try:
+            assert executor._require_pool() is built
+
+        finally:
+            built.shutdown()
+
+    @_needs_interpreters
+    async def test_a_worker_that_failed_to_start_is_a_lost_worker(self) -> None:
+        executor = InterpreterPoolCpuExecutor(max_workers=1)
+        pool = MagicMock(spec=["submit"])
+        pool.submit.side_effect = BrokenExecutor("interpreter failed to start")
+        executor._pool = pool
+
+        with pytest.raises(CoreException) as ei:
+            await executor.run(os.getpid)
+
+        assert ei.value.code == "cpu_offload_worker_lost"
+
+    @_needs_interpreters
+    async def test_a_submit_error_from_an_open_executor_is_not_relabelled(self) -> None:
+        executor = InterpreterPoolCpuExecutor(max_workers=1)
+        pool = MagicMock(spec=["submit"])
+        pool.submit.side_effect = RuntimeError("cannot schedule new futures after shutdown")
+        executor._pool = pool
+
+        with pytest.raises(RuntimeError, match="after shutdown"):
+            await executor.run(os.getpid)
+
+    @_needs_interpreters
+    @pytest.mark.parametrize("error", [pickle.PicklingError, TypeError])
+    async def test_a_sharing_error_the_call_raised_itself_is_not_relabelled(
+        self, error: type[Exception]
+    ) -> None:
+        from concurrent.interpreters import ExecutionFailed, NotShareableError
+
+        # Raised inside the worker, it arrives chained to ExecutionFailed: the call's own error.
+        raised = NotShareableError("x") if error is TypeError else error("x")
+        raised.__cause__ = ExecutionFailed.__new__(ExecutionFailed)
+        done: Future[object] = Future()
+        done.set_exception(raised)
+        executor = InterpreterPoolCpuExecutor(max_workers=1)
+        executor._pool = MagicMock(spec=["submit"], **{"submit.return_value": done})
+
+        with pytest.raises(type(raised)) as ei:
+            await executor.run(os.getpid)
+
+        assert ei.value is raised
 
     @_needs_interpreters
     async def test_runs_in_other_interpreters_of_this_process(self) -> None:
@@ -774,6 +919,13 @@ class TestPickledInlineCpuExecutor:
             await InlineCpuExecutor(pickled=True).run(_raise_unpicklable_back)
 
         assert ei.value.code == "cpu_offload_result_not_picklable"
+
+    async def test_refuses_a_result_the_worker_side_cannot_pickle(self) -> None:
+        with pytest.raises(CoreException) as ei:
+            await InlineCpuExecutor(pickled=True).run(threading.Lock)
+
+        assert ei.value.code == "cpu_offload_result_not_picklable"
+        assert "lock" in str(ei.value.__cause__)  # the worker side's pickling error
 
 
 class TestIsolatedRunCpu:
