@@ -15,6 +15,7 @@ from forze.application.contracts.document import (
 )
 from forze.application.contracts.guarantees import (
     GUARANTEE_UNSUPPORTED,
+    SerializedBy,
     StorageGuarantees,
     UniqueTogether,
 )
@@ -60,6 +61,10 @@ class PlainCmd(CreateDocumentCmd):
     name: str = ""
 
 
+class Serialized(Plain):
+    implied_guarantees: ClassVar[StorageGuarantees] = (SerializedBy(key=("name",)),)
+
+
 def _orders(domain: type[Order] = Order, **kwargs: Any) -> DocumentSpec[Any, Any, Any, Any]:
     return DocumentSpec(
         name="orders",
@@ -73,6 +78,17 @@ def _orders(domain: type[Order] = Order, **kwargs: Any) -> DocumentSpec[Any, Any
 
 
 class TestTheSpec:
+    def test_an_implied_guarantee_of_another_kind_is_added_once(self) -> None:
+        serialized = SerializedBy(key=("name",))
+        spec = DocumentSpec(
+            name="plain",
+            read=PlainRead,
+            write=DocumentWriteTypes(domain=Serialized, create_cmd=PlainCmd),
+        )
+
+        assert spec.guarantees == (serialized,)
+        assert attrs.evolve(spec, guarantees=(serialized,)).guarantees == (serialized,)
+
     def test_a_numbered_domain_declares_its_number_unique(self) -> None:
         assert tuple(_orders().guarantees) == (ONE_PER_NUMBER,)
 
