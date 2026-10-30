@@ -169,7 +169,6 @@ class TestThreadPoolCpuExecutor:
         assert caught.value.code == "cpu_executor_closed"
         assert executor._pool is None  # pyright: ignore[reportPrivateUsage]
 
-
     async def test_a_submit_racing_close_is_refused_as_closed(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -184,6 +183,53 @@ class TestThreadPoolCpuExecutor:
 
         assert caught.value.kind is ExceptionKind.UNAVAILABLE
         assert caught.value.code == "cpu_executor_closed"
+
+    async def test_a_submit_error_from_an_open_executor_is_not_relabelled(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        executor = ThreadPoolCpuExecutor(max_workers=1)
+        loop = asyncio.get_running_loop()
+
+        def _refuse(*_: object) -> None:
+            raise RuntimeError("cannot schedule new futures after interpreter shutdown")
+
+        monkeypatch.setattr(loop, "run_in_executor", _refuse)
+
+        try:
+            with pytest.raises(RuntimeError, match="interpreter shutdown"):
+                await executor.run(lambda: 1)
+
+        finally:
+            executor.close()
+
+    def test_a_first_use_that_waited_on_the_lock_takes_the_pool_built_meanwhile(self) -> None:
+        from forze.base.primitives import cpu
+
+        executor = ThreadPoolCpuExecutor(max_workers=1)
+        built = cpu.ThreadPoolExecutor(max_workers=1)
+
+        class _BuiltMeanwhile:
+            # Another thread builds the pool while this one waits for the lock.
+            def __enter__(self) -> None:
+                executor._pool = built  # pyright: ignore[reportPrivateUsage]
+
+            def __exit__(self, *_: object) -> None:
+                return None
+
+        executor._lock = _BuiltMeanwhile()  # type: ignore[assignment]  # pyright: ignore[reportPrivateUsage, reportAttributeAccessIssue]
+
+        try:
+            assert executor._require_pool() is built  # pyright: ignore[reportPrivateUsage]
+
+        finally:
+            built.shutdown()
+
+    def test_closing_an_unused_executor_is_a_no_op(self) -> None:
+        executor = ThreadPoolCpuExecutor(max_workers=1)
+        executor.close()
+
+        assert executor._pool is None  # pyright: ignore[reportPrivateUsage]
+
 
 class TestDeadline:
     async def test_already_passed_deadline_raises_at_entry(self) -> None:
