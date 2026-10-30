@@ -75,6 +75,46 @@ holds one runtime at a time. Entered again while it runs, it refuses with
 `configuration` rather than build a second one. Entered after its runtime was torn
 down, it builds a new one.
 
+### Run a mounted app's lifespan
+
+Starlette never runs the lifespan of a mounted app. When a mounted app needs its own
+lifespan, such as the session manager of an [MCP](mcp.md) HTTP app, pass that lifespan in
+`nested`. Each entry takes the app and returns an async context manager, as Starlette's
+`lifespan=` does:
+
+```python
+from fastapi import FastAPI
+from forze.application.execution import build_runtime
+from forze_fastapi import runtime_lifespan
+from forze_mcp import build_mcp_server
+
+
+def create_app() -> FastAPI:
+    # Built before the lifespan exists, so the factory looks it up on each call.
+    server = build_mcp_server(registry, lambda: lifespan.get_context(), name="orders")
+    mcp_app = server.http_app(path="/")
+
+    lifespan = runtime_lifespan(build=lambda: build_runtime(...), nested=(mcp_app.lifespan,))
+    app = FastAPI(title="Orders API", lifespan=lifespan)
+    app.mount("/mcp", mcp_app)
+
+    return app
+```
+
+The startup checks run first, then the runtime is built and its scope opens. The nested
+lifespans are entered in order inside the scope, so they can use the runtime. On shutdown
+the runtime drains first, with its `drain_budget`. Then the nested lifespans exit in
+reverse, and then the runtime tears down. So the drain phases always run while the mounted
+apps are up. With a [`drain_budget`](#several-workers-or-a-runtime-built-at-startup) on the
+lifespan, a `SIGTERM` drains while the app still serves, and the shutdown finds the drain
+done. A lifetime that ends in an error or a cancellation skips the drain ahead of the
+exits, and the teardown drains after them.
+
+If a nested lifespan raises on entry, the startup fails, and the lifespans already entered
+and the scope exit. If one raises on exit, the others still exit, the runtime still tears
+down, and the error is raised. State a nested lifespan yields is merged, a later key over
+an earlier one, and reaches `request.state` in every app.
+
 ## Bind request context
 
 Two ASGI middlewares attach the per-request context, both given a factory that
@@ -794,7 +834,7 @@ runs them. The surface, at a glance:
 
 | Piece | What it does |
 |-------|--------------|
-| `runtime_lifespan` | run the runtime's lifecycle from the app lifespan; build the runtime at startup; drain it on `SIGTERM` in every uvicorn worker |
+| `runtime_lifespan` | run the runtime's lifecycle from the app lifespan; build the runtime at startup; drain it on `SIGTERM` in every uvicorn worker; run mounted apps' lifespans inside its scope |
 | `serve_uvicorn` | an embedded uvicorn whose `SIGTERM` drains the runtime before the server stops |
 | `drain_ahead_of_uvicorn` | the `SIGTERM` drain `runtime_lifespan` installs, for a lifespan that does not use `runtime_lifespan` |
 | `InvocationMetadataMiddleware` / `SecurityContextMiddleware` | bind per-request context, identity, and tenant |

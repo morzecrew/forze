@@ -5,6 +5,8 @@ from __future__ import annotations
 import asyncio
 import signal
 import threading
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from datetime import timedelta
 from unittest.mock import MagicMock
 
@@ -13,7 +15,7 @@ import pytest
 pytest.importorskip("fastapi")
 
 import uvicorn
-from fastapi import APIRouter, FastAPI
+from fastapi import APIRouter, FastAPI, Request
 from fastapi.testclient import TestClient
 
 from forze.application.contracts.document import DocumentSpec, DocumentWriteTypes
@@ -306,6 +308,207 @@ class TestRuntimeLifespanBuild:
             assert client.get(f"/notes/{created.json()['id']}").json()["title"] == "hello"
 
         assert len(built) == 1
+
+
+# ....................... #
+
+
+def _logged_runtime(log: list[str]) -> ExecutionRuntime:
+    async def drain_phase(_allowed: timedelta) -> None:
+        log.append("drain")
+
+    async def up(ctx) -> None:
+        ctx.drain_phases.register("record", drain_phase)
+        log.append("startup")
+
+    async def down(_ctx) -> None:
+        log.append("shutdown")
+
+    return build_runtime(
+        MockDepsModule(),
+        lifecycle_steps=[LifecycleStep(id="probe", startup=up, shutdown=down)],
+    )
+
+
+class TestRuntimeLifespanNested:
+    """``nested``: lifespans of mounted apps, run inside the runtime's scope."""
+
+    @pytest.mark.asyncio
+    async def test_entered_in_order_inside_the_scope_and_exited_in_reverse_after_the_drain(
+        self,
+    ) -> None:
+        log: list[str] = []
+        apps: list[object] = []
+
+        def nested(name: str):
+            @asynccontextmanager
+            async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+                apps.append(app)
+                # The runtime is up for the whole of a nested lifespan.
+                assert outer.get_context() is not None
+                log.append(f"enter {name}")
+                yield
+                assert outer.get_context() is not None
+                log.append(f"exit {name}")
+
+            return lifespan
+
+        outer = runtime_lifespan(
+            build=lambda: _logged_runtime(log), nested=(nested("a"), nested("b"))
+        )
+        app = FastAPI()
+
+        async with outer(app) as state:
+            assert state is None
+            assert outer.runtime() is not None
+            log.append("serving")
+
+        # The shutdown drains with the mounted apps still up; teardown does not drain again.
+        assert log == [
+            "startup",
+            "enter a",
+            "enter b",
+            "serving",
+            "drain",
+            "exit b",
+            "exit a",
+            "shutdown",
+        ]
+        assert apps == [app, app]
+        assert outer.runtime() is None
+
+    @pytest.mark.asyncio
+    async def test_one_that_raises_on_entry_unwinds_those_entered_and_the_scope(self) -> None:
+        log: list[str] = []
+
+        @asynccontextmanager
+        async def entered(_app: FastAPI) -> AsyncIterator[None]:
+            log.append("enter a")
+
+            try:
+                yield
+
+            finally:
+                log.append("exit a")
+
+        @asynccontextmanager
+        async def failing(_app: FastAPI) -> AsyncIterator[None]:
+            raise RuntimeError("no session manager")
+            yield
+
+        never = MagicMock()
+        outer = runtime_lifespan(
+            build=lambda: _logged_runtime(log), nested=(entered, failing, never)
+        )
+
+        with pytest.raises(RuntimeError, match="no session manager"):
+            async with outer(FastAPI()):
+                pytest.fail("the app started")
+
+        # Never served, so no drain ahead of the exits: teardown drains, as without nested.
+        assert log == ["startup", "enter a", "exit a", "drain", "shutdown"]
+        never.assert_not_called()
+        assert outer.runtime() is None
+
+        # Not left running: the next startup goes through again.
+        with pytest.raises(RuntimeError, match="no session manager"):
+            async with outer(FastAPI()):
+                pytest.fail("the app started")
+
+    @pytest.mark.asyncio
+    async def test_one_whose_exit_raises_still_tears_down_the_scope(self) -> None:
+        log: list[str] = []
+
+        @asynccontextmanager
+        async def entered(_app: FastAPI) -> AsyncIterator[None]:
+            try:
+                yield
+
+            finally:
+                log.append("exit a")
+
+        @asynccontextmanager
+        async def failing(_app: FastAPI) -> AsyncIterator[None]:
+            yield
+            raise RuntimeError("session manager would not close")
+
+        outer = runtime_lifespan(build=lambda: _logged_runtime(log), nested=(entered, failing))
+
+        with pytest.raises(RuntimeError, match="would not close"):
+            async with outer(FastAPI()):
+                pass
+
+        assert log == ["startup", "drain", "exit a", "shutdown"]
+        assert outer.runtime() is None
+
+    @pytest.mark.asyncio
+    async def test_a_signal_drain_runs_while_they_are_entered_and_not_again(self) -> None:
+        log: list[str] = []
+
+        @asynccontextmanager
+        async def nested(_app: FastAPI) -> AsyncIterator[None]:
+            yield
+            log.append("exit a")
+
+        server = uvicorn.Server(uvicorn.Config(FastAPI()))
+        outer = runtime_lifespan(
+            build=lambda: _logged_runtime(log),
+            drain_budget=timedelta(seconds=1),
+            nested=(nested,),
+        )
+
+        with server.capture_signals():
+            async with outer(FastAPI()):
+                signal.raise_signal(signal.SIGTERM)
+
+                for _ in range(200):
+                    if server.should_exit:
+                        break
+
+                    await asyncio.sleep(0.01)
+
+                assert server.should_exit
+                assert log == ["startup", "drain"]
+
+        assert log == ["startup", "drain", "exit a", "shutdown"]
+
+    @pytest.mark.asyncio
+    async def test_their_state_is_merged_and_yielded(self) -> None:
+        def stateful(state: dict[str, int]):
+            @asynccontextmanager
+            async def lifespan(_app: FastAPI) -> AsyncIterator[dict[str, int]]:
+                yield state
+
+            return lifespan
+
+        @asynccontextmanager
+        async def stateless(_app: FastAPI) -> AsyncIterator[None]:
+            yield
+
+        outer = runtime_lifespan(
+            build_runtime(),
+            nested=(stateful({"a": 1, "x": 1}), stateless, stateful({"x": 2})),
+        )
+
+        async with outer(FastAPI()) as state:
+            assert state == {"a": 1, "x": 2}
+
+    def test_a_mounted_app_reads_the_state_its_lifespan_yielded(self) -> None:
+        mounted = FastAPI()
+
+        @mounted.get("/pool")
+        def pool(request: Request) -> dict[str, str]:
+            return {"pool": request.state.pool}
+
+        @asynccontextmanager
+        async def lifespan(_app: FastAPI) -> AsyncIterator[dict[str, str]]:
+            yield {"pool": "warm"}
+
+        app = FastAPI(lifespan=runtime_lifespan(build_runtime(), nested=(lifespan,)))
+        app.mount("/sub", mounted)
+
+        with TestClient(app) as client:
+            assert client.get("/sub/pool").json() == {"pool": "warm"}
 
 
 # ....................... #

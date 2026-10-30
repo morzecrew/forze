@@ -872,6 +872,41 @@ class TestRuntimeLifespan:
         assert result.data.doubled == 42
 
 
+class TestMountedOnFastAPI:
+    """The HTTP app mounted on a FastAPI app, its session manager run by the host's lifespan."""
+
+    async def test_runs_inside_the_hosts_runtime_lifespan(self) -> None:
+        pytest.importorskip("fastapi")
+
+        import httpx2
+        from fastapi import FastAPI
+        from fastmcp.client.transports import StreamableHttpTransport
+
+        from forze.application.execution import build_runtime
+        from forze_fastapi import runtime_lifespan
+
+        server = build_mcp_server(_registry(), lambda: lifespan.get_context(), name="calc")
+        mcp_app = server.http_app(path="/")
+        lifespan = runtime_lifespan(
+            build=lambda: build_runtime(MockDepsModule()), nested=(mcp_app.lifespan,)
+        )
+        app = FastAPI(lifespan=lifespan)
+        app.mount("/mcp", mcp_app)
+
+        transport = StreamableHttpTransport(
+            "http://testserver/mcp/",
+            httpx_client_factory=lambda **kwargs: httpx2.AsyncClient(
+                transport=httpx2.ASGITransport(app), **kwargs
+            ),
+        )
+
+        # httpx's ASGI transport sends no lifespan events: the host's lifespan is entered here.
+        async with lifespan(app), Client(transport) as client:
+            result = await client.call_tool("calc.double", {"n": 21})
+
+        assert result.data.doubled == 42
+
+
 # ....................... #
 
 
