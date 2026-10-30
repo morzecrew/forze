@@ -40,12 +40,6 @@ from tests.support.execution_context import context_from_deps
 _OP = "orders.recompute"
 _ROUTE = "postgres"
 
-HOLD = 0.6
-"""How long the first invocation keeps its transaction open once it holds the lock."""
-
-LAG = 0.15
-"""How long the second invocation waits before it starts, so the first has the lock."""
-
 
 class _Args(BaseModel):
     order_id: str
@@ -53,27 +47,20 @@ class _Args(BaseModel):
 
 
 class _Recorder(Handler[_Args, None]):
-    def __init__(
-        self, order: list[str], *, fail: bool = False, meet: asyncio.Event | None = None
-    ) -> None:
+    def __init__(self, order: list[str], *, fail: bool = False) -> None:
         self.order = order
         self.fail = fail
-        # With *meet*, the first holds until the second has started: a second that waits on
-        # the first's key never starts, and the wait times out instead of passing on a margin.
-        self.meet = meet
+        # The first sets *held* once it holds its key, then keeps its transaction open until
+        # the test sets *release*: rendezvous, not margins.
+        self.held = asyncio.Event()
+        self.release = asyncio.Event()
 
     async def __call__(self, args: _Args) -> None:
         self.order.append(f"{args.name}:start")
 
-        if args.name == "second" and self.meet is not None:
-            self.meet.set()
-
         if args.name == "first":
-            if self.meet is None:
-                await asyncio.sleep(HOLD)
-
-            else:
-                await asyncio.wait_for(self.meet.wait(), timeout=5)
+            self.held.set()
+            await asyncio.wait_for(self.release.wait(), timeout=5)
 
         self.order.append(f"{args.name}:end")
 
@@ -121,31 +108,36 @@ async def _run_both(
     *,
     fail: bool = False,
     query: bool = False,
-    meet: bool = False,
 ) -> list[str]:
+    """Start the second while the first holds *first_key*, and let the first end once the
+    second is queued on that key (one key) or has finished (two keys)."""
+
     order: list[str] = []
-    recorder = _Recorder(order, fail=fail, meet=asyncio.Event() if meet else None)
+    recorder = _Recorder(order, fail=fail)
     registry = _registry(recorder, query=query)
-    first = registry.resolve(_OP, _ctx(pg_client))
-    second = registry.resolve(_OP, _ctx(second_client))
 
     async def run_first() -> None:
         with contextlib.suppress(RuntimeError):
-            await first(_Args(order_id=first_key, name="first"))
+            await registry.resolve(_OP, _ctx(pg_client))(_Args(order_id=first_key, name="first"))
 
-        order.append("first:closed")
+    first = asyncio.create_task(run_first())
+    await asyncio.wait_for(recorder.held.wait(), timeout=5)
+    second = asyncio.create_task(
+        registry.resolve(_OP, _ctx(second_client))(_Args(order_id=second_key, name="second"))
+    )
 
-    async def run_second() -> None:
-        await asyncio.sleep(LAG)
-        await second(_Args(order_id=second_key, name="second"))
+    if first_key == second_key:
+        lock = advisory_lock_key("forze.operation", _OP, None, first_key)
+        await asyncio.wait_for(_until_waiting(pg_client, lock), timeout=5)
 
-    await asyncio.wait_for(asyncio.gather(run_first(), run_second()), timeout=15)
+    else:
+        await asyncio.wait_for(second, timeout=5)
+
+    recorder.release.set()
+    await asyncio.wait_for(asyncio.gather(first, second), timeout=5)
 
     return order
 
-
-WAIT = 0.3
-"""How long a contender is given to take a key it must not get, before it counts as waiting."""
 
 _OUTER = "orders.settle"
 
@@ -172,6 +164,11 @@ async def _held(client: PostgresClient, key: int, *, granted: bool = True) -> in
 
     assert row is not None
     return int(row["n"])
+
+
+async def _until_waiting(client: PostgresClient, key: int) -> None:
+    while not await _held(client, key, granted=False):
+        await asyncio.sleep(0.01)
 
 
 async def _contend(ctx: ExecutionContext, key: int, taken: asyncio.Event) -> None:
@@ -205,11 +202,11 @@ def _nested_registry(
 
 
 class TestSerializesAcrossSessions:
-    # Ordered against the handler's own end, inside the transaction: the commit wakes the
-    # waiter and the first task's next line in the same instant, in either order. That the
-    # lock outlasts the handler until the root commits is pinned across sessions by the
-    # nested-scope tests below (an operation nested in another holds its key until the outer
-    # commits).
+    # Ordered against the handler's own end, inside the transaction: the commit (or rollback)
+    # wakes the waiter and the first task's next line in the same instant, in either order.
+    # That the lock outlasts the handler until the root commits is pinned across sessions by
+    # the nested-scope tests below (an operation nested in another holds its key until the
+    # outer commits).
 
     async def test_the_same_key_waits_until_the_first_commits(
         self, pg_client: PostgresClient, second_client: PostgresClient
@@ -222,18 +219,18 @@ class TestSerializesAcrossSessions:
     async def test_a_different_key_does_not_wait(
         self, pg_client: PostgresClient, second_client: PostgresClient
     ) -> None:
-        order = await _run_both(pg_client, second_client, uuid4().hex, uuid4().hex, meet=True)
+        order = await _run_both(pg_client, second_client, uuid4().hex, uuid4().hex)
 
-        assert order.index("second:start") < order.index("first:end"), order
+        assert order.index("second:end") < order.index("first:end"), order
 
     async def test_a_rollback_releases_the_key(
         self, pg_client: PostgresClient, second_client: PostgresClient
     ) -> None:
         key = uuid4().hex
+        # The second, queued on the key, gets it once the first's transaction rolls back.
         order = await _run_both(pg_client, second_client, key, key, fail=True)
 
         assert order.index("second:start") > order.index("first:end"), order
-        assert order[-1] == "second:end"
 
     async def test_a_read_only_query_takes_it_too(
         self, pg_client: PostgresClient, second_client: PostgresClient
@@ -290,9 +287,9 @@ class TestTheLockIsTheTransactions:
                 await ctx.tx_locks(_ROUTE).hold(key)
 
             task = asyncio.create_task(_contend(_ctx(second_client), key, taken))
+            await asyncio.wait_for(_until_waiting(pg_client, key), timeout=5)
 
-            with pytest.raises(TimeoutError):
-                await asyncio.wait_for(taken.wait(), timeout=WAIT)
+            assert not taken.is_set()
 
         await asyncio.wait_for(task, timeout=5)
 
@@ -352,7 +349,8 @@ class TestNestedRetriedAndTenanted:
         contender = asyncio.create_task(
             registry.resolve(_OP, _ctx(second_client))(_Args(order_id=key, name="contender"))
         )
-        await asyncio.sleep(WAIT)
+        lock = advisory_lock_key("forze.operation", _OP, None, key)
+        await asyncio.wait_for(_until_waiting(pg_client, lock), timeout=5)
 
         assert "contender:inner" not in order
 
@@ -398,34 +396,29 @@ class TestNestedRetriedAndTenanted:
         self, pg_client: PostgresClient, second_client: PostgresClient
     ) -> None:
         order: list[str] = []
-        registry = _registry(_Recorder(order, meet=asyncio.Event()))
+        recorder = _Recorder(order)
+        registry = _registry(recorder)
         key = uuid4().hex
 
-        async def as_tenant(client: PostgresClient, name: str, lag: float) -> None:
+        async def as_tenant(client: PostgresClient, name: str) -> None:
             ctx = _ctx(client)
-            await asyncio.sleep(lag)
 
             with ctx.inv_ctx.bind_identity(tenant=TenantIdentity(tenant_id=uuid4())):
                 await registry.resolve(_OP, ctx)(_Args(order_id=key, name=name))
 
-        await asyncio.wait_for(
-            asyncio.gather(
-                as_tenant(pg_client, "first", 0), as_tenant(second_client, "second", LAG)
-            ),
-            timeout=15,
-        )
+        first = asyncio.create_task(as_tenant(pg_client, "first"))
+        await asyncio.wait_for(recorder.held.wait(), timeout=5)
+        # The other tenant's invocation runs to its end while the first holds its key.
+        await asyncio.wait_for(as_tenant(second_client, "second"), timeout=5)
+        recorder.release.set()
+        await asyncio.wait_for(first, timeout=5)
 
-        assert order.index("second:start") < order.index("first:end"), order
+        assert order.index("second:end") < order.index("first:end"), order
 
 
 # ....................... #
 
 _PEER = "orders.reprice"
-
-
-async def _until_waiting(client: PostgresClient, key: int) -> None:
-    while not await _held(client, key, granted=False):
-        await asyncio.sleep(0.01)
 
 
 class TestGroupAcrossSessions:
