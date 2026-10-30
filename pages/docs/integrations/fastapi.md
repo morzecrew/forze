@@ -78,9 +78,9 @@ down, it builds a new one.
 ### Run a mounted app's lifespan
 
 Starlette never runs the lifespan of a mounted app. When a mounted app needs its own
-lifespan, such as the session manager of an [MCP](mcp.md) HTTP app, pass that lifespan in
-`nested`. Each entry takes the app and returns an async context manager, as Starlette's
-`lifespan=` does:
+lifespan, such as the session manager of an [MCP](mcp.md) HTTP app, pass the app in
+`nested`. Its lifespan is entered with that app, as Starlette enters a top-level app's, so
+whatever it sets on `app.state` is what the app's routes read from `request.app.state`:
 
 ```python
 from fastapi import FastAPI
@@ -94,7 +94,7 @@ def create_app() -> FastAPI:
     server = build_mcp_server(registry, lambda: lifespan.get_context(), name="orders")
     mcp_app = server.http_app(path="/")
 
-    lifespan = runtime_lifespan(build=lambda: build_runtime(...), nested=(mcp_app.lifespan,))
+    lifespan = runtime_lifespan(build=lambda: build_runtime(...), nested=(mcp_app,))
     app = FastAPI(title="Orders API", lifespan=lifespan)
     app.mount("/mcp", mcp_app)
 
@@ -109,6 +109,9 @@ apps are up. With a [`drain_budget`](#several-workers-or-a-runtime-built-at-star
 lifespan, a `SIGTERM` drains while the app still serves, and the shutdown finds the drain
 done. A lifetime that ends in an error or a cancellation skips the drain ahead of the
 exits, and the teardown drains after them.
+
+An entry in `nested` can also be a lifespan callable, which takes an app and returns an
+async context manager, as Starlette's `lifespan=` does. It is called with the outer app.
 
 If a nested lifespan raises on entry, the startup fails, and the lifespans already entered
 and the scope exit. If one raises on exit, the others still exit, the runtime still tears

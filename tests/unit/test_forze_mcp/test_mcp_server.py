@@ -888,7 +888,7 @@ class TestMountedOnFastAPI:
         server = build_mcp_server(_registry(), lambda: lifespan.get_context(), name="calc")
         mcp_app = server.http_app(path="/")
         lifespan = runtime_lifespan(
-            build=lambda: build_runtime(MockDepsModule()), nested=(mcp_app.lifespan,)
+            build=lambda: build_runtime(MockDepsModule()), nested=(mcp_app,)
         )
         app = FastAPI(lifespan=lifespan)
         app.mount("/mcp", mcp_app)

@@ -17,6 +17,9 @@ pytest.importorskip("fastapi")
 import uvicorn
 from fastapi import APIRouter, FastAPI, Request
 from fastapi.testclient import TestClient
+from starlette.applications import Starlette
+from starlette.responses import JSONResponse
+from starlette.routing import Route
 
 from forze.application.contracts.document import DocumentSpec, DocumentWriteTypes
 from forze.application.contracts.execution import LifecycleStep
@@ -509,6 +512,25 @@ class TestRuntimeLifespanNested:
 
         with TestClient(app) as client:
             assert client.get("/sub/pool").json() == {"pool": "warm"}
+
+    def test_a_mounted_app_gets_itself_so_its_routes_read_what_its_lifespan_set(self) -> None:
+        @asynccontextmanager
+        async def lifespan(app: Starlette) -> AsyncIterator[None]:
+            app.state.pool = "warm"
+            yield
+
+        async def pool(request: Request) -> JSONResponse:
+            return JSONResponse({"pool": request.app.state.pool})
+
+        mounted = Starlette(routes=[Route("/pool", pool)], lifespan=lifespan)
+        app = FastAPI(lifespan=runtime_lifespan(build_runtime(), nested=(mounted,)))
+        app.mount("/sub", mounted)
+
+        with TestClient(app) as client:
+            assert client.get("/sub/pool").json() == {"pool": "warm"}
+
+        # Set on the mounted app, which its routes see as ``request.app``, not the outer one.
+        assert not hasattr(app.state, "pool")
 
 
 # ....................... #

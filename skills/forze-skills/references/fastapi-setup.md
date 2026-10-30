@@ -50,7 +50,7 @@ def create_app() -> FastAPI:
 
 Serve it with `uvicorn pkg.app:create_app --factory --workers N`. A second entry while the lifespan runs is refused (`configuration`), never a second runtime.
 
-A mounted app that needs its own lifespan (an MCP HTTP app's session manager: `server.http_app()`) passes it as `runtime_lifespan(..., nested=(mcp_app.lifespan,))`. Nested lifespans are entered in order inside the runtime's scope. On shutdown the runtime drains first, then they exit in reverse, then it tears down, so drain phases (or a `SIGTERM` drain) run while they are entered. Their yielded state is merged into `request.state`.
+A mounted app that needs its own lifespan (an MCP HTTP app's session manager: `server.http_app()`) passes the app: `runtime_lifespan(..., nested=(mcp_app,))` enters its lifespan with that app, so `app.state` it sets is what its routes read; a bare lifespan callable there gets the outer app. Nested lifespans are entered in order inside the runtime's scope. On shutdown the runtime drains first, then they exit in reverse, then it tears down, so drain phases (or a `SIGTERM` drain) run while they are entered. Their yielded state is merged into `request.state`.
 
 ## Middleware, errors, and docs
 

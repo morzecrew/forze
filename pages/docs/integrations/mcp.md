@@ -179,7 +179,7 @@ from forze_mcp import build_mcp_server
 server = build_mcp_server(registry, lambda: lifespan.get_context(), name="orders")
 mcp_app = server.http_app(path="/")
 
-lifespan = runtime_lifespan(build=lambda: build_runtime(...), nested=(mcp_app.lifespan,))
+lifespan = runtime_lifespan(build=lambda: build_runtime(...), nested=(mcp_app,))
 app = FastAPI(lifespan=lifespan)
 app.mount("/mcp", mcp_app)
 ```

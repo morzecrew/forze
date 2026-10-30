@@ -11,7 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **`SerializeOperation(group=...)` shares one lock between operations.** Operations naming one group take turns per key and tenant, keyed apart from operation names. Freeze refuses a group spread over several transaction routes (`tx_lock_group_spans_routes`), found through the new `SharesTransactionLock` protocol.
 
-- **`runtime_lifespan(nested=...)` runs mounted apps' lifespans inside the runtime's scope.** They enter in order once the scope opens; on shutdown the runtime drains, then they exit in reverse, then it tears down. An app mounting an MCP HTTP app passes `nested=(mcp_app.lifespan,)` instead of writing its own lifespan.
+- **`runtime_lifespan(nested=...)` runs mounted apps' lifespans inside the runtime's scope.** They enter in order once the scope opens; on shutdown the runtime drains, then they exit in reverse, then it tears down. An app mounting an MCP HTTP app passes `nested=(mcp_app,)` instead of writing its own lifespan.
 
 ### Changed
 
