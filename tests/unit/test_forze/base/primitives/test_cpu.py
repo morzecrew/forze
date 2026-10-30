@@ -202,7 +202,7 @@ class TestThreadPoolCpuExecutor:
         finally:
             executor.close()
 
-    def test_a_first_use_that_waited_on_the_lock_takes_the_pool_built_meanwhile(self) -> None:
+    async def test_a_first_use_that_waited_on_the_lock_takes_the_pool_built_meanwhile(self) -> None:
         from forze.base.primitives import cpu
 
         executor = ThreadPoolCpuExecutor(max_workers=1)
@@ -224,7 +224,7 @@ class TestThreadPoolCpuExecutor:
         finally:
             built.shutdown()
 
-    def test_closing_an_unused_executor_is_a_no_op(self) -> None:
+    async def test_closing_an_unused_executor_is_a_no_op(self) -> None:
         executor = ThreadPoolCpuExecutor(max_workers=1)
         executor.close()
 
