@@ -33,10 +33,11 @@ require_fastapi()
 # ....................... #
 
 import asyncio
-from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Mapping
 from contextlib import aclosing
 from datetime import timedelta
-from typing import Annotated, Any, final
+from enum import Enum
+from typing import Annotated, Any, TypedDict, final
 from uuid import UUID
 
 import anyio
@@ -81,6 +82,7 @@ __all__ = [
     "attach_realtime_sse_route",
     "RealtimeAckBody",
     "RealtimeAckResult",
+    "RealtimeSseRouteOptions",
     "TopicAuthorizer",
 ]
 
@@ -107,6 +109,63 @@ _SSE_HEADERS = {
     "Cache-Control": "no-store",
     "X-Accel-Buffering": "no",  # proxies must not buffer an event stream
 }
+
+
+class RealtimeSseRouteOptions(TypedDict, total=False):
+    """How a caller documents a route :func:`attach_realtime_sse_route` attaches.
+
+    Each key is the :class:`~fastapi.routing.APIRoute` argument of the same name. Only the
+    route's OpenAPI documentation is the caller's: its path, methods, endpoint, name and
+    response class stay forze's, and any other key is refused at attach time.
+    """
+
+    summary: str
+    description: str
+    operation_id: str
+    tags: list[str | Enum]
+    deprecated: bool
+    responses: dict[int | str, dict[str, Any]]
+    """Merged over the built-in ones, a status code given here replacing forze's."""
+
+    openapi_extra: dict[str, Any]
+
+
+class _EventStreamResponse(StreamingResponse):
+    """The stream route's documented response class: OpenAPI reads its media type."""
+
+    media_type = "text/event-stream"
+
+
+_STREAM_RESPONSES: dict[int | str, dict[str, Any]] = {
+    200: {"description": "An event stream: each frame carries an `{id, data}` envelope"},
+}
+
+
+def _route_kwargs(
+    options: RealtimeSseRouteOptions | None,
+    *,
+    argument: str,
+    defaults: dict[str, Any],
+) -> dict[str, Any]:
+    """The route's arguments: forze's *defaults* with the caller's *options* over them."""
+
+    options = {} if options is None else options
+
+    if not isinstance(options, Mapping):
+        raise exc.configuration(
+            f"{argument} must be a mapping of route options, not {type(options).__name__}"
+        )
+
+    if unknown := set(options) - RealtimeSseRouteOptions.__optional_keys__:
+        raise exc.configuration(
+            f"{argument} sets {sorted(unknown)}, which a caller may not: it takes only "
+            f"{sorted(RealtimeSseRouteOptions.__optional_keys__)} (the route's path, "
+            "methods, endpoint, name and response class are forze's)"
+        )
+
+    responses = {**defaults.get("responses", {}), **options.get("responses", {})}
+
+    return {**defaults, **options, "responses": responses}
 
 
 _END_GRACE_SECONDS = 5.0
@@ -435,6 +494,23 @@ async def _live_frames(
 
 # ----------------------- #
 
+_PROTOCOL_DESCRIPTION = (
+    "The realtime protocol version the client speaks; omitted, the current one. "
+    "An unsupported version is refused."
+)
+_DEVICE_ID_DESCRIPTION = (
+    "A stable per-device id that keys this device's replay cursor. Without one, the "
+    "principal's device-less streams share one cursor and resume by `Last-Event-ID`."
+)
+_TOPICS_DESCRIPTION = (
+    "Comma-separated topics to subscribe to. The connection is refused unless the app "
+    "grants every one."
+)
+_ACK_DEVICE_ID_DESCRIPTION = (
+    "The stable per-device id the stream was opened with; required, since an ack advances "
+    "that device's replay cursor."
+)
+
 
 def attach_realtime_sse_route(
     router: APIRouter,
@@ -448,6 +524,8 @@ def attach_realtime_sse_route(
     max_topics: int = 32,
     path: str = "/realtime/sse",
     keepalive_interval: timedelta = timedelta(seconds=15),
+    route_options: RealtimeSseRouteOptions | None = None,
+    ack_route_options: RealtimeSseRouteOptions | None = None,
 ) -> APIRouter:
     """Attach the authenticated SSE egress endpoint (and its ack endpoint) to *router*.
 
@@ -480,7 +558,26 @@ def attach_realtime_sse_route(
     ``X-Error-Code: realtime_draining``, so ``EventSource`` reconnects — a non-200 would end
     it for good. :func:`~forze_fastapi.realtime.realtime_sse_drain_lifecycle_step` ends the
     open ones.
+
+    *route_options* and *ack_route_options* document the stream and ack routes in OpenAPI —
+    an ``operation_id``, a ``description``, ``tags``, ``openapi_extra``, … (see
+    :class:`RealtimeSseRouteOptions`). The query parameters ship described, and the stream's
+    200 is documented as ``text/event-stream``.
     """
+
+    stream_kwargs = _route_kwargs(
+        route_options,
+        argument="route_options",
+        defaults={
+            "summary": "Realtime egress over Server-Sent Events (replay, then live)",
+            "responses": _STREAM_RESPONSES,
+        },
+    )
+    ack_kwargs = _route_kwargs(
+        ack_route_options,
+        argument="ack_route_options",
+        defaults={"summary": "Cumulative realtime ack (advance this device's replay cursor)"},
+    )
 
     if keepalive_interval.total_seconds() <= 0:
         raise exc.configuration("SSE keepalive interval must be positive")
@@ -494,9 +591,9 @@ def attach_realtime_sse_route(
 
     async def stream_endpoint(
         request: Request,
-        protocol: Annotated[str | None, Query()] = None,
-        device_id: Annotated[str | None, Query()] = None,
-        topics: Annotated[str | None, Query()] = None,
+        protocol: Annotated[str | None, Query(description=_PROTOCOL_DESCRIPTION)] = None,
+        device_id: Annotated[str | None, Query(description=_DEVICE_ID_DESCRIPTION)] = None,
+        topics: Annotated[str | None, Query(description=_TOPICS_DESCRIPTION)] = None,
     ) -> StreamingResponse:
         ctx = ctx_dep()
 
@@ -611,7 +708,7 @@ def attach_realtime_sse_route(
 
     async def ack_endpoint(
         body: RealtimeAckBody,
-        device_id: Annotated[str | None, Query()] = None,
+        device_id: Annotated[str | None, Query(description=_ACK_DEVICE_ID_DESCRIPTION)] = None,
     ) -> RealtimeAckResult:
         ctx = ctx_dep()
         principal = _authenticated_principal(ctx)
@@ -646,14 +743,10 @@ def attach_realtime_sse_route(
     router.get(
         path,
         name="realtime_sse_stream",
-        summary="Realtime egress over Server-Sent Events (replay, then live)",
-        response_class=StreamingResponse,
+        response_class=_EventStreamResponse,
+        **stream_kwargs,
     )(stream_endpoint)
 
-    router.post(
-        ack_path,
-        name="realtime_sse_ack",
-        summary="Cumulative realtime ack (advance this device's replay cursor)",
-    )(ack_endpoint)
+    router.post(ack_path, name="realtime_sse_ack", **ack_kwargs)(ack_endpoint)
 
     return router
