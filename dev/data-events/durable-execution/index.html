@@ -6910,6 +6910,26 @@ lifecycle guard cannot elect one scanner: it holds its lock only while startup l
 loop, so later replicas scan too, and one that starts while another holds the lock runs none.
 <code>max_concurrency</code> bounds how many runs a sweep recovers at once. Enqueue with
 <code>run_at=&lt;when&gt;</code> for a <strong>delayed</strong> run — the scan skips it until it's due.</p>
+<p>A sweep claims whatever is due, so one slow run (an LLM call, say) holds its batch open,
+and runs enqueued meanwhile wait for the next sweep. To keep slow functions from delaying
+the rest, register them in their own <strong>queue</strong> and give each queue its own worker:</p>
+<div class="highlight"><pre><span></span><code><span class="n">registry</span><span class="o">.</span><span class="n">register</span><span class="p">(</span><span class="s2">"draft-spec"</span><span class="p">,</span> <span class="n">draft_spec</span><span class="p">,</span> <span class="n">queue</span><span class="o">=</span><span class="s2">"llm"</span><span class="p">)</span>  <span class="c1"># the rest stay in "default"</span>
+
+<span class="c1"># the worker for short runs</span>
+<span class="n">durable_recovery_background_lifecycle_step</span><span class="p">(</span><span class="n">runner</span><span class="o">=</span><span class="n">runner</span><span class="p">,</span> <span class="n">queues</span><span class="o">=</span><span class="p">{</span><span class="s2">"default"</span><span class="p">})</span>
+<span class="c1"># the worker for LLM runs</span>
+<span class="n">durable_recovery_background_lifecycle_step</span><span class="p">(</span><span class="n">runner</span><span class="o">=</span><span class="n">runner</span><span class="p">,</span> <span class="n">queues</span><span class="o">=</span><span class="p">{</span><span class="s2">"llm"</span><span class="p">})</span>
+</code></pre></div>
+<p><code>register_operation_functions(..., queue="llm")</code> puts operation-backed specs in a queue, and
+<code>functions={...}</code> on the step selects functions by name instead of by queue. Startup checks
+the selector against the registry and fails on a queue no function is registered in or on
+an unregistered function. The recovery scan never claims a run outside the worker's
+selection, so a run whose queue no worker serves stays <code>pending</code>: some worker must serve
+every queue, <code>default</code> included. <code>run_now</code> is the exception: it executes its run in the
+caller whatever the queue, including a re-submit under an <code>idempotency_key</code> that claims the
+run already waiting. A worker that claims only some functions needs the <code>name</code> index from
+the <a href="../../reference/durable-schema/">schema</a>, or each scan reads the other functions'
+pending runs.</p>
 <p>To <strong>coalesce</strong> "recompute after a change", enqueue with a <code>coalesce_key</code>: a submit joins the
 run waiting unclaimed under that key and records a new run once that one is claimed. A
 joined submit's own input and <code>run_at</code> are discarded — the record returned is the joined run,

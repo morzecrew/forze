@@ -6791,7 +6791,7 @@ queue's delayed jobs.</p>
 </tr>
 <tr>
 <td><code>DurableRunStoreDepKey</code></td>
-<td>the run store behind the self-hosted tier — enqueue (with an <code>idempotency_key</code>, or a <code>coalesce_key</code> that joins the run waiting unclaimed under it) / begin / renew / complete / fail, <code>claim_abandoned</code> recovery, the fenced terminal landings <code>mark_cancelled</code> / <code>mark_timed_out</code>, and <code>mark_retry</code>, which sends a running run back to <code>pending</code> for its retry</td>
+<td>the run store behind the self-hosted tier — enqueue (with an <code>idempotency_key</code>, or a <code>coalesce_key</code> that joins the run waiting unclaimed under it) / begin / renew / complete / fail, <code>claim_abandoned</code> recovery (of every function, or only the named ones), the fenced terminal landings <code>mark_cancelled</code> / <code>mark_timed_out</code>, and <code>mark_retry</code>, which sends a running run back to <code>pending</code> for its retry</td>
 </tr>
 <tr>
 <td><code>DurableRunAdminDepKey</code></td>
