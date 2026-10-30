@@ -81,8 +81,15 @@ def as_view_source(source: MockDerivedSource) -> MockDerivedViewSource:
             code="mock.derived.source_shape",
         )
 
+    # A partial subclass with its own ``__call__`` takes what that method takes, not its func.
+    overrides = isinstance(source, functools.partial) and (
+        type(source).__call__ is not functools.partial.__call__
+    )
+
     try:
-        signature = inspect.signature(source)
+        signature = inspect.signature(
+            cast("functools.partial[object]", source).__call__ if overrides else source
+        )
 
     except (TypeError, ValueError):
         # Nothing to inspect (a C builtin): keep the one shape every source had before views.

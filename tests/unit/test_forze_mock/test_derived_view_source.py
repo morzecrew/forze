@@ -253,6 +253,11 @@ class _AsyncPartial(functools.partial[Any]):
         return self.func(*args, **kwargs)
 
 
+class _ViewPartial(functools.partial[Any]):
+    def __call__(self, row: JsonDict, view: MockAnalyticsView) -> dict[str, Any]:
+        return _released(row, view)
+
+
 class _AsyncCall:
     async def __call__(self, row: JsonDict) -> dict[str, Any]:
         return {"released_quantity": -1}
@@ -275,6 +280,8 @@ class TestRegistration:
             (lambda row, view=None: {"released_quantity": -4 if view is None else 99}, -4),
             (lambda *args: {"released_quantity": -len(args)}, -1),
             (MagicMock(return_value={"released_quantity": -6}), -6),
+            # A partial subclass's own ``__call__`` decides its shape, not its func.
+            (_ViewPartial(_row_only), 4),
         ],
     )
     async def test_each_accepted_shape_is_called_as_it_declares(
