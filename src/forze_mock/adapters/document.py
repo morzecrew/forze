@@ -83,6 +83,7 @@ from forze_mock.adapters._mvcc import (
     acquire_row_locks,
     current_mvcc_tx,
 )
+from forze_mock.adapters._references import record_references
 from forze_mock.adapters.analytics_resolvers import MockAnalyticsView
 from forze_mock.adapters.derived_values import MockDerivedViewSource, as_view_source
 from forze_mock.adapters.query_params import MockQueryParamsSource
@@ -189,6 +190,15 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
 
     Set from ``MockDepsModule(row_locks="block")``; a transaction's own waits follow its manager's
     mode instead. Off, a claim-mode module sharing the state with a blocking one never waits."""
+
+    # ....................... #
+
+    def __attrs_post_init__(self) -> None:
+        # Before any row is reached: a parent's kill finds this spec's rows through the record,
+        # including rows a seed, a snapshot or another spec on the namespace put there.
+        record_references(
+            self.state, self.spec, namespace=self.namespace, tenant_scoped=self.tenant_aware
+        )
 
     # ....................... #
 

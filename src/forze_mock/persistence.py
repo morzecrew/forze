@@ -79,6 +79,7 @@ SNAPSHOT_VERSION: Final = 1
 PERSIST_FIELDS: Final = frozenset(
     {
         "documents",
+        "document_references",  # without it, restored rows miss their parent's cascade
         "counters",
         "counter_expiry",
         "cache_kv",

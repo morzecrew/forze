@@ -72,6 +72,7 @@ class PostgresDocumentAdapter(DocumentAdapter[R, D, C, U]):
         serialized_by=True,
         checks_deferred_to_commit=True,
         unique_together_skip_null_at_commit=True,
+        reference=True,
     )
     """What this store enforces, given the index or constraint the deployment migrated.
 
@@ -93,6 +94,9 @@ class PostgresDocumentAdapter(DocumentAdapter[R, D, C, U]):
     can keep it, is not. ``skip_null`` needs no predicate, so a deferred plain constraint keeps
     it at commit. An exclusion constraint can be both, so a filtered non-overlap holding at
     commit is kept.
+
+    A reference is a foreign key, whose ``ON DELETE`` the database applies itself; a refused
+    ``restrict`` arrives as ``conflict``, the kind the in-memory store raises.
     """
 
     batch_size: int = 200

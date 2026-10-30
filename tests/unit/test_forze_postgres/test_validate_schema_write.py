@@ -9,16 +9,18 @@ from uuid import UUID
 import pytest
 from pydantic import BaseModel, computed_field
 
-from forze.application.contracts.guarantees import UniqueTogether
+from forze.application.contracts.guarantees import Reference, UniqueTogether
 from forze.application.contracts.tenancy import TENANT_ID_FIELD
 from forze.base.exceptions import CoreException
 from forze_postgres.kernel.catalog.introspect import (
+    ForeignKeyInfo,
     PostgresIntrospector,
     PostgresType,
     UniqueIndexInfo,
 )
 from forze_postgres.kernel.catalog.validation.validate_schema import (
     PostgresDocumentSchemaSpec,
+    _require_reference_mechanisms,  # pyright: ignore[reportPrivateUsage]
     validate_postgres_document_schemas,
 )
 
@@ -669,3 +671,35 @@ async def test_a_tenant_aware_suggestion_leaves_the_tenant_column_out() -> None:
 
     assert len(reported) == 1
     assert "UniqueTogether(fields=('name',))" in reported[0]
+
+
+@pytest.mark.asyncio
+async def test_set_null_beside_the_tenant_column_before_postgres_15_names_no_column_list() -> None:
+    # `ON DELETE SET NULL (field)` is a syntax error there, so the hint is the single-column key.
+    intro = MagicMock(spec=PostgresIntrospector)
+    intro.foreign_keys = AsyncMock(
+        return_value=(
+            ForeignKeyInfo(
+                name="t_stage",
+                columns=((TENANT_ID_FIELD, TENANT_ID_FIELD), ("stage_id", "id")),
+                referenced=("public", "stages"),
+                on_delete="n",
+                set_null_columns=None,
+            ),
+        )
+    )
+    intro.get_column_types = AsyncMock(return_value={"stage_id": _nullable()})
+    spec = _spec_over(
+        _Domain,
+        guarantees=(Reference(field="stage_id", spec="stages", on_delete="set_null"),),
+        bound_relations={"stages": ("public", "stages")},
+    )
+
+    with pytest.raises(CoreException) as caught:
+        await _require_reference_mechanisms(intro, spec)
+
+    summary = caught.value.summary
+    assert "needs Postgres 15 or later" in summary
+    assert "SET NULL (stage_id)" not in summary
+    assert "ALTER TABLE public.t DROP CONSTRAINT t_stage;" in summary
+    assert "ADD FOREIGN KEY (stage_id) REFERENCES public.stages (id) ON DELETE SET NULL;" in summary

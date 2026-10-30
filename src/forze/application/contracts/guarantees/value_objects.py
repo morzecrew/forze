@@ -31,7 +31,7 @@ from ..querying import QueryFilterExpression
 
 # ----------------------- #
 
-GuaranteeKind = Literal["unique_together", "non_overlapping", "serialized_by"]
+GuaranteeKind = Literal["unique_together", "non_overlapping", "serialized_by", "reference"]
 """The vocabulary, as a closed set of names.
 
 Names rather than classes because the refusals, the capability flags and the per-adapter mappings
@@ -257,7 +257,72 @@ class SerializedBy:
 
 # ....................... #
 
-StorageGuarantee = UniqueTogether | NonOverlapping | SerializedBy
+ReferenceAction = Literal["cascade", "restrict", "set_null"]
+"""What a hard delete of a referenced row does to the rows referencing it.
+
+``"cascade"`` deletes them too, ``"restrict"`` refuses the delete while any remain, and
+``"set_null"`` clears their reference field. The names are the SQL ``ON DELETE`` actions, so
+the declaration reads as the foreign key that keeps it."""
+
+_ACTIONS: frozenset[str] = frozenset({"cascade", "restrict", "set_null"})
+
+
+def _plain_str(value: object) -> object:
+    # A `StrEnum` member becomes its value; anything else is left for the refusal to name.
+    return str(value) if isinstance(value, str) else value
+
+
+@final
+@attrs.define(slots=True, frozen=True, kw_only=True)
+class Reference:
+    """:attr:`field` holds the id of a row of the document :attr:`spec`, and a hard delete of
+    that row applies :attr:`on_delete` to every row naming it.
+
+    Declared on the referencing (child) spec, as a foreign key is declared on the referencing
+    table. Only a hard delete (``kill``/``kill_many``) applies it; a soft delete is an update and
+    leaves the children alone, as ``ON DELETE`` does.
+
+    :raises CoreException: ``configuration`` when :attr:`field` or :attr:`spec` is not a
+        non-empty string, or when :attr:`on_delete` is not one of :data:`ReferenceAction` — a
+        misspelt action read from configuration would otherwise be enforced as none.
+    """
+
+    kind: GuaranteeKind = attrs.field(default="reference", init=False)
+    """Discriminator, for the reconciliation and the refusal messages."""
+
+    field: str = attrs.field(converter=_plain_str)
+    """The field on this spec holding the referenced row's id."""
+
+    spec: str = attrs.field(converter=_plain_str)
+    """The name of the referenced document spec (a ``StrEnum`` member reads as its value)."""
+
+    on_delete: ReferenceAction
+    """What a hard delete of the referenced row does to this one (:data:`ReferenceAction`)."""
+
+    def __attrs_post_init__(self) -> None:
+        if not isinstance(self.field, str) or not isinstance(self.spec, str):  # pyright: ignore[reportUnnecessaryIsInstance]
+            # A spec object passed for its name would read as its repr and never match a row.
+            raise exc.configuration(
+                f"Reference takes names: field={self.field!r} and spec={self.spec!r} must be "
+                "strings. Pass the referenced spec's name, not the spec.",
+            )
+
+        if not self.field or not self.spec:
+            raise exc.configuration(
+                "Reference needs both a field and a spec: it names the field holding the id "
+                "and the document that id belongs to.",
+            )
+
+        if self.on_delete not in _ACTIONS:
+            raise exc.configuration(
+                f"Reference.on_delete is {self.on_delete!r}; it must be 'cascade', 'restrict' "
+                "or 'set_null'.",
+            )
+
+
+# ....................... #
+
+StorageGuarantee = UniqueTogether | NonOverlapping | SerializedBy | Reference
 """One member of the vocabulary.
 
 A closed union rather than a base class: the reconciliation, each adapter's mapping and the mock's

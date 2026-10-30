@@ -35,7 +35,7 @@ from forze.application.integrations.persistence import (
     DocumentWriteCodecMixin,
     HistoryOccMixin,
 )
-from forze.base.exceptions import exc
+from forze.base.exceptions import CoreException, exc
 from forze.base.primitives import JsonDict, OnceCell, advisory_lock_key, utcnow
 from forze.base.serialization import ModelCodec
 from forze.domain.constants import ID_FIELD, LAST_UPDATE_AT_FIELD, REV_FIELD
@@ -43,6 +43,7 @@ from forze.domain.models import BaseDTO, Document
 from forze_postgres.kernel.catalog.introspect import PostgresColumnTypes, PostgresType
 from forze_postgres.kernel.catalog.introspect.utils import normalize_pg_type, strip_type_modifier
 from forze_postgres.kernel.client import gather_db_work
+from forze_postgres.kernel.client.errors import still_referenced
 from forze_postgres.kernel.sql.conflict_target import resolve_write_conflict_target
 
 from ._occ import postgres_occ_retry
@@ -1904,6 +1905,27 @@ class PostgresWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
 
     # ....................... #
 
+    async def _delete(self, stmt: sql.Composed, params: list[Any]) -> int:
+        """Run a hard delete, returning the rows it removed.
+
+        :raises CoreException: ``conflict`` when a foreign key refuses it, as a ``RESTRICT`` key
+            and the in-memory store do (see :func:`still_referenced`).
+        """
+
+        try:
+            return await self.client.execute(stmt, params, return_rowcount=True)
+
+        except CoreException as error:
+            # Also catches a foreign-key violation an AFTER DELETE trigger raises; accepted.
+            refusal = still_referenced(error)
+
+            if refusal is None:
+                raise
+
+            raise refusal from error
+
+    # ....................... #
+
     async def kill(self, pk: UUID) -> None:
         where_sql = sql.SQL("{pk} = {value}").format(
             pk=self.ident_pk(),
@@ -1925,7 +1947,7 @@ class PostgresWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
                 return await self._fetch_domains_by_pks([pk], missing_ok=True)
 
             await self._serialize(touched)
-            n = await self.client.execute(stmt, params, return_rowcount=True)
+            n = await self._delete(stmt, params)
 
         if n == 0:
             raise exc.not_found(f"Record not found: {pk}")
@@ -1968,7 +1990,7 @@ class PostgresWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
             async def _delete_batch(batch: list[UUID]) -> None:
                 params: list[Any] = [list(batch), *trailing_params]
 
-                n = await self.client.execute(stmt, params, return_rowcount=True)
+                n = await self._delete(stmt, params)
 
                 if n != len(batch):
                     if self.tenant_aware:

@@ -36,6 +36,7 @@ from forze.application.contracts.graph import (
     GraphModuleSpec,
     GraphNodeSpec,
 )
+from forze.application.contracts.guarantees import Reference
 from forze.application.contracts.inventory import (
     PlaneDisposition,
     SpecEdgeKind,
@@ -421,6 +422,23 @@ def test_a_dangling_edge_is_a_failure() -> None:
 
     with pytest.raises(CoreException, match="not in the inventory"):
         reconcile_specs(registry.freeze(), _frames("orders_idx"))
+
+
+def test_a_reference_to_an_uncatalogued_document_is_a_failure() -> None:
+    # A delete action keyed by a spec nothing catalogues can never fire.
+    lines = DocumentSpec(
+        name="lines",
+        read=_Model,
+        write={"domain": _Model, "create_cmd": _Model, "update_cmd": _Model},
+        guarantees=(Reference(field="id", spec="stages", on_delete="cascade"),),
+    )
+
+    with pytest.raises(CoreException, match="Reference on 'id' points at document:stages"):
+        reconcile_specs(SpecRegistry().register(lines).freeze(), _frames("lines"))
+
+    catalogued = SpecRegistry().register(lines, _document("stages")).freeze()
+
+    assert reconcile_specs(catalogued, _frames("lines", "stages")) == ()
 
 
 # ----------------------- #

@@ -160,6 +160,8 @@ class MockState:
 
     NOT participating (non-transactional backends in production; survive rollback):
 
+    - ``document_references`` — which specs reference which, recorded by the adapters
+      (metadata about the rows, not rows)
     - ``queues`` / ``queue_pending`` / ``pubsub_logs`` — brokers (RabbitMQ/SQS)
     - ``streams`` / ``stream_ack`` — stream backends
     - ``storage`` / ``storage_bytes`` / ``storage_buckets`` — object storage (S3/GCS)
@@ -186,6 +188,15 @@ class MockState:
     Vault-backed in production and therefore excluded)."""
 
     documents: dict[str, dict[Any, dict[str, Any]]] = attrs.field(factory=dict)
+    document_references: dict[str, set[tuple[str, str, bool, str, str]]] = attrs.field(factory=dict)
+    """Referenced spec name → ``(spec, namespace, tenant-scoped, field, on_delete)`` for each
+    declared ``Reference`` naming it, recorded when the referencing spec's adapter is built and
+    on its writes.
+
+    What a hard delete in :attr:`documents` reads to find the rows its declared ``on_delete``
+    reaches. Metadata about the rows rather than rows, so not transactional: an entry recorded
+    inside a rolled-back transaction only makes a later delete look in a namespace with nothing
+    to find."""
     counters: dict[tuple[str, str | None], int] = attrs.field(factory=dict)
     counter_expiry: dict[tuple[str, str | None], datetime] = attrs.field(factory=dict)
     """When each counter written with a ``ttl`` lapses, keyed like :attr:`counters`."""
