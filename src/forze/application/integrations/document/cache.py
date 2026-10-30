@@ -477,6 +477,32 @@ class DocumentCache[R: BaseModel]:
 
     # ....................... #
 
+    async def _decode_cached_or_miss(
+        self,
+        cached: Any,
+        *,
+        pk: UUID | str,
+    ) -> tuple[R, JsonDict | None] | None:
+        """:meth:`_decode_cached`, or ``None`` — a miss — for an entry that does not decode.
+
+        A corrupt or stale-shaped entry must cost a refetch, not fail the read. Crypto and
+        configuration errors are not decode failures and still propagate.
+        """
+
+        try:
+            return await self._decode_cached(cached, pk=pk)
+
+        except (ValueError, TypeError):
+            logger.warning(
+                "Cache decode failed for '%s' document %s, treating it as a miss",
+                self.document_name,
+                pk,
+            )
+
+            return None
+
+    # ....................... #
+
     def _elects_early_refresh(self, meta: JsonDict | None) -> bool:
         """XFetch election: ``now - delta * beta * ln(rand()) >= expiry``.
 
@@ -794,8 +820,10 @@ class DocumentCache[R: BaseModel]:
 
             return await fetch_on_cache_fault()
 
-        if cached is not None:
-            doc, meta = await self._decode_cached(cached, pk=pk)
+        decoded = None if cached is None else await self._decode_cached_or_miss(cached, pk=pk)
+
+        if decoded is not None:
+            doc, meta = decoded
 
             if not self._elects_early_refresh(meta):
                 logger.trace("Retrieved 1 cached '%s' document", self.document_name)
@@ -920,6 +948,18 @@ class DocumentCache[R: BaseModel]:
 
             return await fetch_many_on_cache_fault()
 
+        misses = list(misses)
+        hits_validated: list[R] = []
+
+        for key, value in hits.items():
+            decoded = await self._decode_cached_or_miss(value, pk=key)
+
+            if decoded is None:
+                misses.append(key)
+
+            else:
+                hits_validated.append(decoded[0])
+
         miss_res: list[R] = []
 
         if misses:
@@ -938,9 +978,6 @@ class DocumentCache[R: BaseModel]:
 
             await self.after_commit_or_now(lambda: self.set_many(miss_res, delta=delta))
 
-        hits_validated = [
-            (await self._decode_cached(value, pk=key))[0] for key, value in hits.items()
-        ]
         hits_validated_cast = [cast(_ReadModelWithIdAndRev, x) for x in hits_validated]
         miss_res_cast = [cast(_ReadModelWithIdAndRev, x) for x in miss_res]
 

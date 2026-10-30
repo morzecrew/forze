@@ -3,6 +3,8 @@
 import pytest
 
 from forze_redis.adapters import RedisCacheAdapter
+from forze_redis.kernel.client import RedisClient
+from tests.support.cache_conformance import assert_value_contract
 
 
 @pytest.mark.asyncio
@@ -110,3 +112,30 @@ async def test_cache_delete_many_hard_clears_versioned_bodies(redis_cache: Redis
     hits, misses = await redis_cache.get_many(["a", "b"])
     assert hits == {}
     assert set(misses) == {"a", "b"}
+
+
+@pytest.mark.asyncio
+async def test_cache_value_contract(redis_cache: RedisCacheAdapter) -> None:
+    """Pre-encoded bytes come back verbatim and JSON values parsed, on a real server."""
+    await assert_value_contract(redis_cache)
+
+
+@pytest.mark.asyncio
+async def test_cache_legacy_unmarked_entries_read_as_json(
+    redis_client: RedisClient,
+    redis_cache: RedisCacheAdapter,
+) -> None:
+    """Entries written before the bytes marker existed keep reading as parsed JSON."""
+    kv_key = redis_cache._RedisCacheAdapter__kv_key("plain")  # type: ignore[attr-defined]
+    pointer_key = redis_cache._RedisCacheAdapter__pointer_key("ver")  # type: ignore[attr-defined]
+    body_key = redis_cache._RedisCacheAdapter__body_key("ver", "1")  # type: ignore[attr-defined]
+
+    await redis_client.set(kv_key, b'{"a":1}')
+    await redis_client.set(pointer_key, b"1")
+    await redis_client.set(body_key, b"[1,2]")
+
+    assert await redis_cache.get("plain") == {"a": 1}
+
+    hits, misses = await redis_cache.get_many(["plain", "ver"])
+    assert hits == {"plain": {"a": 1}, "ver": [1, 2]}
+    assert misses == []

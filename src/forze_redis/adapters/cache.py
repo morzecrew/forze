@@ -35,6 +35,17 @@ _KV_SCOPE: Final[str] = "kv"
 _POINTER_SCOPE: Final[str] = "pointer"
 _BODY_SCOPE: Final[str] = "body"
 
+_BYTES_MARKER: Final[bytes] = b"\x00\xffforze:bytes\x00"
+"""Prefix of an entry written as pre-encoded ``bytes``, matched exactly.
+
+* The NUL first byte is one the JSON codec never emits, so no JSON entry carries it, and a
+  reader that predates the marker fails to parse a marked entry and treats it as a miss.
+* ``0xFF`` never occurs in UTF-8, so no text value starts with the marker.
+* The NUL-terminated tag means a raw ``bytes`` entry written before the marker existed is
+  mistaken for a marked one only if it starts with these exact bytes; any other unmarked
+  entry is parsed as JSON, as before.
+"""
+
 
 def _ttl_seconds(ttl: "timedelta") -> int:
     """Whole seconds for Redis expiry, never truncating a live TTL to zero.
@@ -46,14 +57,27 @@ def _ttl_seconds(ttl: "timedelta") -> int:
     return max(1, math.ceil(ttl.total_seconds()))
 
 
-def _loads_cache_body(raw: bytes | str) -> Any:
-    """Deserialize a versioned cache body for :class:`CachePort` consumers.
+def _dumps_cache_value(value: Any) -> bytes:
+    """Serialize a cache value: pre-encoded ``bytes`` verbatim behind the marker, else JSON."""
 
-    Bodies may be stored as JSON bytes (plain cache usage or legacy document dict
-    payloads). :class:`~forze.application.integrations.document.DocumentCache`
-    may store pre-encoded JSON bytes; parsing here yields a ``dict`` that its
-    codec can still decode (same as the legacy dict wire format).
+    if isinstance(value, bytes):
+        return _BYTES_MARKER + value
+
+    return default_json_codec.dumps(value)
+
+
+# ....................... #
+
+
+def _loads_cache_value(raw: bytes | str) -> Any:
+    """Deserialize a cache entry for :class:`CachePort` consumers.
+
+    An entry written as pre-encoded ``bytes`` comes back as those bytes, for the caller
+    to decode; anything else is parsed as JSON.
     """
+
+    if isinstance(raw, bytes) and raw.startswith(_BYTES_MARKER):
+        return raw[len(_BYTES_MARKER) :]
 
     return default_json_codec.loads(raw)
 
@@ -201,11 +225,11 @@ class RedisCacheAdapter(CachePort, RedisBaseAdapter):
                 self._decode_batch,
                 mapping.keys(),
                 raw,
-                _loads_cache_body,
+                _loads_cache_value,
                 deadline=False,
             )
 
-        return self._decode_batch(mapping.keys(), raw, _loads_cache_body)
+        return self._decode_batch(mapping.keys(), raw, _loads_cache_value)
 
     # ....................... #
 
@@ -219,10 +243,7 @@ class RedisCacheAdapter(CachePort, RedisBaseAdapter):
             return
 
         redis_mapping = {
-            self.__body_key(k, v): (
-                val if isinstance(val, bytes) else default_json_codec.dumps(val)
-            )
-            for (k, v), val in mapping.items()
+            self.__body_key(k, v): _dumps_cache_value(val) for (k, v), val in mapping.items()
         }
         await self.client.mset(redis_mapping, ex=_ttl_seconds(ttl))
 
@@ -250,11 +271,11 @@ class RedisCacheAdapter(CachePort, RedisBaseAdapter):
                 self._decode_batch,
                 keys,
                 raw,
-                default_json_codec.loads,
+                _loads_cache_value,
                 deadline=False,
             )
 
-        return self._decode_batch(keys, raw, default_json_codec.loads)
+        return self._decode_batch(keys, raw, _loads_cache_value)
 
     # ....................... #
 
@@ -262,10 +283,7 @@ class RedisCacheAdapter(CachePort, RedisBaseAdapter):
         if not mapping:
             return
 
-        redis_mapping = {
-            self.__kv_key(k): v if isinstance(v, bytes) else default_json_codec.dumps(v)
-            for k, v in mapping.items()
-        }
+        redis_mapping = {self.__kv_key(k): _dumps_cache_value(v) for k, v in mapping.items()}
         await self.client.mset(redis_mapping, ex=_ttl_seconds(ttl))
 
     # ....................... #
