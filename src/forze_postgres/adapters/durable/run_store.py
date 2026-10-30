@@ -165,7 +165,9 @@ class PostgresDurableRunStore(
         -- functions) and orders by created_at under FOR UPDATE SKIP LOCKED. Without it the
         -- claim seq-scans + sorts under lock as the table grows, and a worker claiming only
         -- some functions reads every pending run of the others. It replaces the earlier
-        -- (status, created_at), which serves the unfiltered scan only; create it first.
+        -- (status, created_at); create it first. Neither lets the claim read in created_at
+        -- order: its OR over pending and running rows sorts what it selects, so a scan of
+        -- every function costs the same on either.
         CREATE INDEX ON <relation> (status, name, created_at);
         -- On a shared tagged table claim_abandoned also filters `tenant_id = …` for a bound
         -- tenant, so lead the index with tenant_id to skip other tenants' rows (it replaces

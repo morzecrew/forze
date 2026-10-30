@@ -72,9 +72,10 @@ Without them, the recovery scan, the purge and the listing scan and sort the who
 as it grows.
 
 The two recovery-scan indexes replace `(status, created_at)` and
-`(tenant_id, status, created_at)`. The old ones still serve a scan of every function, but
-a worker that claims only some functions would read every pending run of the others on
-each scan. On an existing table, create the new indexes (`CONCURRENTLY` on a live one)
+`(tenant_id, status, created_at)`. A scan of every function costs the same on either:
+neither lets the claim read in `created_at` order, since it selects `pending` and
+`running` rows and sorts them. On the old ones, a worker that claims only some functions
+would read every pending run of the others on each scan. On an existing table, create the new indexes (`CONCURRENTLY` on a live one)
 before such a worker starts, then drop the old ones.
 
 ### Steps
