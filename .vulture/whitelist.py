@@ -738,7 +738,7 @@ _.__pydantic_fields_set__  # unused attribute (src/forze/application/contracts/d
 list_operations  # unused function (src/forze_cli/ops/commands.py:187) — a Typer command callback
 _.handle_async_request  # unused method (src/forze_http/adapters/http_transport.py:76) — called by httpx.AsyncClient
 _.purge_expired  # unused method (src/forze_postgres/adapters/counter.py:519) — an operator's admin call
-operation_id  # unused variable (src/forze_fastapi/realtime/sse.py:124) — a TypedDict key, read by APIRouter
-deprecated  # unused variable (src/forze_fastapi/realtime/sse.py:126) — a TypedDict key, read by APIRouter
-openapi_extra  # unused variable (src/forze_fastapi/realtime/sse.py:130) — a TypedDict key, read by APIRouter
-media_type  # unused variable (src/forze_fastapi/realtime/sse.py:136) — read by FastAPI's OpenAPI generator
+operation_id  # unused variable (src/forze_fastapi/realtime/sse.py:127) — a TypedDict key, read by APIRouter
+deprecated  # unused variable (src/forze_fastapi/realtime/sse.py:129) — a TypedDict key, read by APIRouter
+openapi_extra  # unused variable (src/forze_fastapi/realtime/sse.py:133) — a TypedDict key, read by APIRouter
+media_type  # unused variable (src/forze_fastapi/realtime/sse.py:139) — read by FastAPI's OpenAPI generator

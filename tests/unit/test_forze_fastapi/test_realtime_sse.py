@@ -1,13 +1,14 @@
 """The SSE egress route — replay-from-cursor, cumulative ack, live tail, hub fan-out.
 
 # covers: forze_fastapi.realtime.sse (attach_realtime_sse_route, replay/ack endpoints,
-#         Last-Event-ID precedence, protocol refusal, frame shape),
+#         Last-Event-ID precedence, protocol refusal, frame shape, live-only streams),
 #         forze_fastapi.realtime.hub (matching, drop-on-full, subscribe/unsubscribe)
 
 Replay and ack run end-to-end through the app (identity bound by a middleware, like
 production); the live leg is an infinite stream a buffered test transport cannot
 drive, so its generator (`_live_frames`) is exercised directly against a hub
-subscription — the same composition the endpoint uses.
+subscription — the same composition the endpoint uses. A live-only stream is driven
+through the ASGI app directly, so the test reads its frames as they are written.
 """
 
 from __future__ import annotations
@@ -21,7 +22,7 @@ from uuid import UUID, uuid4
 import pytest
 from fastapi import APIRouter, FastAPI
 from starlette.testclient import TestClient
-from starlette.types import ASGIApp, Receive, Scope, Send
+from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from forze.application.contracts.authn import AuthnIdentity
 from forze.application.contracts.realtime import Audience, RealtimeSignal
@@ -88,23 +89,23 @@ class _BindIdentity:
             await self.app(scope, receive, send)
 
 
-def _build_client(
+def _build_app(
     *,
-    mailbox: InMemoryRealtimeMailbox,
-    cursors: InMemoryMailboxCursors,
+    mailbox: InMemoryRealtimeMailbox | None,
+    cursors: InMemoryMailboxCursors | None,
     hub: RealtimeSseHub | None = None,
     authenticated: bool = True,
     authn: AuthnIdentity | None = None,
     tenant: TenantIdentity | None = None,
     extra: tuple[Deps, ...] = (),
-) -> TestClient:
+) -> FastAPI:
     ctx = context_from_deps(MockDepsModule(state=MockState())(), *extra)
     router = APIRouter()
     attach_realtime_sse_route(
         router,
         ctx_dep=lambda: ctx,
-        mailbox_factory=lambda _ctx: mailbox,
-        cursors_factory=lambda _ctx: cursors,
+        mailbox_factory=(lambda _ctx: mailbox) if mailbox is not None else None,
+        cursors_factory=(lambda _ctx: cursors) if cursors is not None else None,
         hub=hub,
     )
 
@@ -118,7 +119,16 @@ def _build_client(
         tenant=tenant,
     )
 
-    return TestClient(app)
+    return app
+
+
+def _build_client(
+    *,
+    mailbox: InMemoryRealtimeMailbox,
+    cursors: InMemoryMailboxCursors,
+    **build: Any,
+) -> TestClient:
+    return TestClient(_build_app(mailbox=mailbox, cursors=cursors, **build))
 
 
 def _frames(body: str) -> list[dict[str, Any]]:
@@ -407,6 +417,113 @@ class TestHandshake:
                 mailbox_factory=lambda _ctx: InMemoryRealtimeMailbox(),
                 cursors_factory=lambda _ctx: InMemoryMailboxCursors(),
                 keepalive_interval=timedelta(0),
+            )
+
+
+class TestLiveOnly:
+    async def test_the_stream_serves_the_live_tail_and_ignores_last_event_id(self) -> None:
+        hub = RealtimeSseHub()
+        app = _build_app(mailbox=None, cursors=None, hub=hub)
+        sent: list[Message] = []
+
+        async def receive() -> Message:
+            await asyncio.Event().wait()  # the client never leaves
+            raise AssertionError("unreachable")
+
+        async def send(message: Message) -> None:
+            sent.append(message)
+
+        def frames() -> list[dict[str, Any]]:
+            body = b"".join(m.get("body", b"") for m in sent if m["type"] == "http.response.body")
+            return _frames(body.decode())
+
+        async def until(check: Any) -> None:
+            for _ in range(500):  # bounded
+                if check():
+                    return
+
+                await asyncio.sleep(0.01)
+
+            raise AssertionError("condition not reached")
+
+        scope: Scope = {
+            "type": "http",
+            "asgi": {"version": "3.0", "spec_version": "2.3"},
+            "http_version": "1.1",
+            "method": "GET",
+            "path": "/realtime/sse",
+            "raw_path": b"/realtime/sse",
+            "root_path": "",
+            "query_string": b"",
+            # A live frame of a durable signal carries an id, so a browser resumes with one.
+            "headers": [(b"last-event-id", b"earlier")],
+            "scheme": "http",
+            "server": ("test", 80),
+            "client": ("test", 1),
+        }
+        stream = asyncio.ensure_future(app(scope, receive, send))
+
+        try:
+            await until(lambda: hub.subscribers == 1)
+            [subscription] = hub.subscriptions
+            hub.publish(_signal(1), None, event_id=None)
+            hub.publish(_signal(2), None, event_id="durable-2")
+            await until(lambda: len(frames()) == 2)  # both written before the end
+            subscription.end()
+            await asyncio.wait_for(stream, timeout=5)
+
+        finally:
+            stream.cancel()
+
+        [start] = [m for m in sent if m["type"] == "http.response.start"]
+        assert start["status"] == 200
+        assert dict(start["headers"])[b"content-type"].startswith(b"text/event-stream")
+        assert [frame["data"] for frame in frames()] == [
+            {"id": None, "data": {"n": 1}},
+            {"id": "durable-2", "data": {"n": 2}},
+        ]
+
+    def test_no_ack_route_is_attached(self) -> None:
+        app = _build_app(mailbox=None, cursors=None, hub=RealtimeSseHub())
+        client = TestClient(app)
+
+        acked = client.post("/realtime/sse/ack", json={"up_to": "x"}, params={"device_id": "d1"})
+
+        assert acked.status_code == 404
+        paths = app.openapi()["paths"]
+        assert set(paths) == {"/realtime/sse"}
+        assert paths["/realtime/sse"]["get"]["summary"].endswith("(live only)")
+
+    @pytest.mark.parametrize("missing", ["mailbox_factory", "cursors_factory"])
+    def test_one_store_without_the_other_is_refused_at_attach(self, missing: str) -> None:
+        stores: dict[str, Any] = {
+            "mailbox_factory": lambda _ctx: InMemoryRealtimeMailbox(),
+            "cursors_factory": lambda _ctx: InMemoryMailboxCursors(),
+        }
+        del stores[missing]
+
+        with pytest.raises(CoreException, match="needs both mailbox_factory and cursors_factory"):
+            attach_realtime_sse_route(
+                APIRouter(),
+                ctx_dep=lambda: None,  # type: ignore[arg-type, return-value]
+                hub=RealtimeSseHub(),
+                **stores,
+            )
+
+    def test_a_live_only_stream_without_a_hub_is_refused_at_attach(self) -> None:
+        with pytest.raises(CoreException, match="needs a hub"):
+            attach_realtime_sse_route(
+                APIRouter(),
+                ctx_dep=lambda: None,  # type: ignore[arg-type, return-value]
+            )
+
+    def test_ack_route_options_without_an_ack_route_are_refused_at_attach(self) -> None:
+        with pytest.raises(CoreException, match="does not attach"):
+            attach_realtime_sse_route(
+                APIRouter(),
+                ctx_dep=lambda: None,  # type: ignore[arg-type, return-value]
+                hub=RealtimeSseHub(),
+                ack_route_options={"operation_id": "realtime.ack"},
             )
 
 
