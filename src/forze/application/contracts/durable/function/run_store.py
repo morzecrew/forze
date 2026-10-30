@@ -300,6 +300,7 @@ class DurableRunStorePort(Protocol):
         *,
         limit: int,
         lease_for: timedelta,
+        functions: frozenset[str] | None = None,
     ) -> Awaitable[Sequence[DurableRunRecord]]:
         """Claim up to *limit* abandoned runs for recovery.
 
@@ -307,6 +308,10 @@ class DurableRunStorePort(Protocol):
         or a ``RUNNING`` run with an expired lease; each is moved to ``RUNNING`` with a fresh
         lease and an incremented attempt count (its new fence token). Concurrent scanners
         never claim the same run (``FOR UPDATE SKIP LOCKED``), so it is multi-worker-safe.
+
+        *functions* restricts the claim to runs whose ``name`` is in it, so a worker can
+        leave slow functions to another one; an empty set claims nothing. ``None`` (the
+        default) claims a run of any name.
 
         A claimed run whose payload cannot be decrypted is left out of the result. One whose
         tenant's key is gone is held out of the scan for longer than *lease_for*, doubling with

@@ -327,6 +327,7 @@ class DurableFunctionRunner:
         *,
         limit: int = 10,
         max_concurrency: int | None = None,
+        functions: frozenset[str] | None = None,
     ) -> int:
         """Claim up to *limit* abandoned runs and re-invoke them; return how many it re-invoked.
 
@@ -336,10 +337,13 @@ class DurableFunctionRunner:
         recorded on the run and swallowed (the scanner keeps draining), never propagated. With *max_concurrency* set the claimed runs are
         recovered concurrently up to that bound (each run executes in its own task, so its
         ambient run binding stays isolated); ``None`` recovers them sequentially.
+        *functions* claims only runs of those names (``None`` claims any).
         """
 
         store = resolve_durable_run_store(ctx)
-        claimed = await store.claim_abandoned(limit=limit, lease_for=self.lease_for)
+        claimed = await store.claim_abandoned(
+            limit=limit, lease_for=self.lease_for, functions=functions
+        )
 
         if not claimed:
             return 0

@@ -161,13 +161,16 @@ class PostgresDurableRunStore(
         -- scan claims it; a re-submit of an existing key fails like a read.
 
         -- Recommended: back the recovery scan (claim_abandoned), which filters on
-        -- status/available_at/leased_until and orders by created_at under
-        -- FOR UPDATE SKIP LOCKED. Without it the claim seq-scans + sorts under lock as
-        -- the table grows.
-        CREATE INDEX ON <relation> (status, created_at);
+        -- status/available_at/leased_until (and `name` for a worker claiming only some
+        -- functions) and orders by created_at under FOR UPDATE SKIP LOCKED. Without it the
+        -- claim seq-scans + sorts under lock as the table grows, and a worker claiming only
+        -- some functions reads every pending run of the others. It replaces the earlier
+        -- (status, created_at), which serves the unfiltered scan only; create it first.
+        CREATE INDEX ON <relation> (status, name, created_at);
         -- On a shared tagged table claim_abandoned also filters `tenant_id = …` for a bound
-        -- tenant, so lead the index with tenant_id to skip other tenants' rows:
-        CREATE INDEX ON <relation> (tenant_id, status, created_at);
+        -- tenant, so lead the index with tenant_id to skip other tenants' rows (it replaces
+        -- the earlier (tenant_id, status, created_at)):
+        CREATE INDEX ON <relation> (tenant_id, status, name, created_at);
 
         -- Recommended where runs are purged: purge_finished filters on status and
         -- updated_at (when the run landed) and deletes the oldest landings first.
@@ -446,6 +449,7 @@ class PostgresDurableRunStore(
         *,
         limit: int,
         lease_for: timedelta,
+        functions: frozenset[str] | None = None,
     ) -> Sequence[DurableRunRecord]:
         table = await self._table()
         params: dict[str, object] = {"limit": limit, "lease": lease_for}
@@ -455,11 +459,17 @@ class PostgresDurableRunStore(
         # run's tenant to execute it). On a namespace table the resolved table is already
         # per-tenant, so the filter is a redundant no-op.
         tenant_id = self._tenant_id_for_resolve()
-        tenant_filter = sql.SQL("")
+        filters: sql.Composable = sql.SQL("")
 
         if tenant_id is not None:
-            tenant_filter = sql.SQL("AND tenant_id = %(tenant_id)s")
+            filters = sql.SQL("AND tenant_id = %(tenant_id)s")
             params["tenant_id"] = tenant_id
+
+        if functions is not None:
+            # Inside the locked pick, so a run another worker's functions own is never
+            # locked, let alone leased, by this one.
+            filters = sql.SQL("{} AND name = ANY(%(functions)s)").format(filters)
+            params["functions"] = sorted(functions)
 
         rows = await self.client.fetch_all(
             sql.SQL(
@@ -471,7 +481,7 @@ class PostgresDurableRunStore(
                          AND (available_at IS NULL OR available_at <= now()))
                         OR (status = 'running'
                             AND (leased_until IS NULL OR leased_until <= now()))
-                    ) {tenant_filter}
+                    ) {filters}
                     ORDER BY created_at
                     LIMIT {limit}
                     FOR UPDATE SKIP LOCKED
@@ -486,7 +496,7 @@ class PostgresDurableRunStore(
                 RETURNING {columns}
                 """
             ).format(
-                tenant_filter=tenant_filter,
+                filters=filters,
                 table=table.ident(),
                 limit=sql.Placeholder("limit"),
                 lease=sql.Placeholder("lease"),

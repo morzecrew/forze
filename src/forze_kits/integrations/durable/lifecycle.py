@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Sequence, Set
 from datetime import timedelta
 from typing import Any, final
 from uuid import UUID
@@ -67,6 +67,15 @@ class _DurableRecoveryBackgroundStartup(LifecycleHook):
     tenant in turn and recovers its per-tenant table. The shard is frozen at startup. ``None``
     recovers unbound — one pass over a tagged table claims every tenant's runs."""
 
+    queues: frozenset[str] | None = None
+    """Claim only runs of the functions registered in these queues (``None`` = any)."""
+
+    functions: frozenset[str] | None = None
+    """Claim only runs of these registered functions; exclusive with :attr:`queues`."""
+
+    claimable: frozenset[str] | None = attrs.field(default=None, init=False)
+    """The function names :attr:`queues` or :attr:`functions` resolved to at startup."""
+
     control: BackgroundLoopControl = attrs.field(
         default=attrs.Factory(
             lambda self: BackgroundLoopControl(name="durable_recovery"),
@@ -119,6 +128,39 @@ class _DurableRecoveryBackgroundStartup(LifecycleHook):
         if self.max_batches_per_tick < 1:
             raise exc.configuration("Max batches per tick must be >= 1")
 
+        if self.queues is not None and self.functions is not None:
+            raise exc.configuration(
+                "Durable recovery selects runs by queues or by functions, not both.",
+                code="durable_selector_conflict",
+            )
+
+        if self.queues == frozenset() or self.functions == frozenset():
+            raise exc.configuration(
+                "Durable recovery would select no function; omit the selector to claim all.",
+                code="durable_selector_empty",
+            )
+
+    # ....................... #
+
+    def _resolve_claimable(self) -> frozenset[str] | None:
+        """Resolve the selector against the runner's registry, refusing a name it lacks."""
+
+        registry = self.runner.registry
+
+        if self.queues is not None:
+            return registry.functions_in(self.queues)
+
+        if self.functions is not None:
+            unregistered = sorted(name for name in self.functions if not registry.registered(name))
+
+            if unregistered:
+                raise exc.configuration(
+                    f"Durable recovery selects unregistered function(s) {', '.join(unregistered)}.",
+                    code="durable_function_unregistered",
+                )
+
+        return self.functions
+
     # ....................... #
 
     async def _drain(self, ctx: ExecutionContext) -> None:
@@ -126,7 +168,10 @@ class _DurableRecoveryBackgroundStartup(LifecycleHook):
 
         for _ in range(self.max_batches_per_tick):
             claimed = await self.runner.recover(
-                ctx, limit=self.limit, max_concurrency=self.max_concurrency
+                ctx,
+                limit=self.limit,
+                max_concurrency=self.max_concurrency,
+                functions=self.claimable,
             )
 
             if claimed < self.limit:
@@ -169,6 +214,16 @@ class _DurableRecoveryBackgroundStartup(LifecycleHook):
         if tenants is None:
             # One unbound sweep: a tenant-scoped store would refuse every one of them.
             require_tenant_global(resolve_durable_run_store(ctx), what="Durable recovery")
+
+        # Resolved here, not at construction: the registry is complete once the app starts.
+        self.claimable = self._resolve_claimable()
+
+        if self.claimable is not None:
+            logger.info(
+                "Durable recovery claims only the selected functions' runs; another worker "
+                "must claim the rest",
+                functions=sorted(self.claimable),
+            )
 
         async def _loop() -> None:
             while True:
@@ -239,6 +294,8 @@ def durable_recovery_background_lifecycle_step(
     max_batches_per_tick: int = 100,
     max_concurrency: int | None = None,
     tenants: Callable[[], Sequence[UUID]] | None = None,
+    queues: Set[str] | None = None,
+    functions: Set[str] | None = None,
     step_id: StrKey = "durable_recovery",
 ) -> LifecycleStep:
     """Build a lifecycle step that recovers abandoned durable runs on a background interval.
@@ -261,6 +318,18 @@ def durable_recovery_background_lifecycle_step(
     the runner re-binds each run's tenant to execute it. Without *tenants*, a tenant-aware
     store, or one on a client routed per tenant, fails startup (``tenant_global_required``).
 
+    *queues* makes this worker claim only runs of the functions registered in those queues
+    (``registry.register(..., queue="llm")``; every function is in ``"default"`` unless
+    registered elsewhere), so slow functions can run on their own worker without delaying
+    the rest: one worker passes ``queues={"llm"}``, another ``queues={"default"}``.
+    *functions* names the functions instead. Both are resolved against the runner's registry
+    at startup, which fails on a queue no function is registered in
+    (``durable_queue_unknown``) or an unregistered function
+    (``durable_function_unregistered``); passing both (``durable_selector_conflict``) or an
+    empty one (``durable_selector_empty``) fails here. A run no recovery worker selects stays
+    ``PENDING``, so some worker must claim every queue. ``run_now`` executes in its caller
+    whatever the queue, a re-submit that claims the pending run it converges on included.
+
     Concurrent scanners are safe (``FOR UPDATE SKIP LOCKED`` + a fence on the terminal
     write), so run this unwrapped on every replica. Do not wrap it in the ``forze_kits``
     singleton lifecycle guard to elect one scanner: the guard holds its lock only while
@@ -278,6 +347,8 @@ def durable_recovery_background_lifecycle_step(
         max_batches_per_tick=max_batches_per_tick,
         max_concurrency=max_concurrency,
         tenants=tenants,
+        queues=None if queues is None else frozenset(queues),
+        functions=None if functions is None else frozenset(functions),
     )
     shutdown = _DurableRecoveryBackgroundShutdown(startup=startup)
 

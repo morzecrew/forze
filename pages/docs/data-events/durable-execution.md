@@ -117,6 +117,30 @@ loop, so later replicas scan too, and one that starts while another holds the lo
 `max_concurrency` bounds how many runs a sweep recovers at once. Enqueue with
 `run_at=<when>` for a **delayed** run — the scan skips it until it's due.
 
+A sweep claims whatever is due, so one slow run (an LLM call, say) holds its batch open,
+and runs enqueued meanwhile wait for the next sweep. To keep slow functions from delaying
+the rest, register them in their own **queue** and give each queue its own worker:
+
+```python
+registry.register("draft-spec", draft_spec, queue="llm")  # the rest stay in "default"
+
+# the worker for short runs
+durable_recovery_background_lifecycle_step(runner=runner, queues={"default"})
+# the worker for LLM runs
+durable_recovery_background_lifecycle_step(runner=runner, queues={"llm"})
+```
+
+`register_operation_functions(..., queue="llm")` puts operation-backed specs in a queue, and
+`functions={...}` on the step selects functions by name instead of by queue. Startup checks
+the selector against the registry and fails on a queue no function is registered in or on
+an unregistered function. The recovery scan never claims a run outside the worker's
+selection, so a run whose queue no worker serves stays `pending`: some worker must serve
+every queue, `default` included. `run_now` is the exception: it executes its run in the
+caller whatever the queue, including a re-submit under an `idempotency_key` that claims the
+run already waiting. A worker that claims only some functions needs the `name` index from
+the [schema](../reference/durable-schema.md), or each scan reads the other functions'
+pending runs.
+
 To **coalesce** "recompute after a change", enqueue with a `coalesce_key`: a submit joins the
 run waiting unclaimed under that key and records a new run once that one is claimed. A
 joined submit's own input and `run_at` are discarded — the record returned is the joined run,
