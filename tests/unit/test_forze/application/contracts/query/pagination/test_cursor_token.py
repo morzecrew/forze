@@ -217,6 +217,51 @@ async def test_cursor_signer_is_isolated_across_concurrent_contexts() -> None:
     assert current_cursor_signer() is None
 
 
+@pytest.mark.asyncio
+async def test_a_context_binding_no_signer_reads_the_held_one() -> None:
+    # A runtime scope holds its signer process-wide, for a context it never bound anything in
+    # (an ASGI request); configure(None) clears back to it, bind(None) opts out for the block.
+    import asyncio
+
+    from forze.application.contracts.querying.pagination.cursor_token import (
+        CursorTokenSigner,
+        bind_cursor_signer,
+        configure_cursor_signer,
+        current_cursor_signer,
+        hold_cursor_signer,
+    )
+
+    held = CursorTokenSigner(secret=b"h" * 32)
+    other = CursorTokenSigner(secret=b"o" * 32)
+    holding, release = asyncio.Event(), asyncio.Event()
+
+    async def scope() -> None:
+        with hold_cursor_signer(held):
+            holding.set()
+            await release.wait()
+
+    task = asyncio.create_task(scope())
+    await holding.wait()
+
+    try:
+        assert current_cursor_signer() is held
+
+        previous = configure_cursor_signer(other)
+        assert current_cursor_signer() is other
+
+        configure_cursor_signer(previous)
+        assert current_cursor_signer() is held
+
+        with bind_cursor_signer(None):
+            assert current_cursor_signer() is None
+
+    finally:
+        release.set()
+        await task
+
+    assert current_cursor_signer() is None
+
+
 # ----------------------- #
 # Context binding (spec + tenant + filter): P2
 

@@ -17,11 +17,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- ...
+- **`configure_cursor_signer(None)` and `configure_cursor_cipher(None)` clear the context's own key** (**Breaking**). The key an open runtime scope holds then applies again. `bind_cursor_signer(None)` and `bind_cursor_cipher(None)` still turn protection off for a block.
 
 ### Fixed
 
+- **`run_cpu` in a request offloads to the runtime's pool instead of running inline.** A runtime scope holds its pool process-wide while open, the oldest scope's when several are. New `hold_cpu_executor`; a closed `ThreadPoolCpuExecutor` refuses work (`cpu_executor_closed`).
+
 - **Postgres schema validation no longer warns that declared derived read fields are missing from the write relation.** A field in `derived_read_fields` comes from the read view, so the startup warning now names only read fields that are neither derived nor omitted.
+
+### Security
+
+- **Cursor signing and encryption set on an `ExecutionRuntime` apply to every request** (**Breaking**). Code outside the scope's task now mints and requires protected cursors, refused (`cursor_protection_ambiguous`) while open scopes hold different keys. New `hold_cursor_signer` and `hold_cursor_cipher`.
 
 ## [0.17.0] - 2026-10-30
 

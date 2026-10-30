@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import secrets
 import signal
 import threading
 from collections.abc import AsyncIterator
@@ -655,3 +656,53 @@ class TestRuntimeLifespanDrain:
 
         logger.warning.assert_called_once()
         assert server.config.timeout_graceful_shutdown is None
+
+
+# ....................... #
+
+
+class TestRuntimeLifespanUnderUvicorn:
+    """uvicorn runs the lifespan in a task of its own: a request still sees the scope's bindings."""
+
+    async def test_a_request_offloads_to_the_pool_and_protects_cursors(self) -> None:
+        import httpx
+
+        from forze.application.contracts.querying import CursorTokenCipher, encode_keyset_v1
+        from forze.base.primitives import run_cpu
+
+        runtime = ExecutionRuntime(
+            cursor_token_cipher=CursorTokenCipher(secret=secrets.token_bytes(32))
+        )
+        app = FastAPI(lifespan=runtime_lifespan(runtime))
+
+        @app.get("/probe")
+        async def probe() -> dict[str, str]:
+            return {
+                "thread": await run_cpu(lambda: threading.current_thread().name),
+                "cursor": encode_keyset_v1(sort_keys=["id"], directions=["asc"], values=[1]),
+            }
+
+        server = uvicorn.Server(
+            uvicorn.Config(app, host="127.0.0.1", port=0, log_level="error", lifespan="on")
+        )
+        serving = asyncio.ensure_future(server.serve())
+
+        try:
+            for _ in range(500):  # bounded: 5 s
+                if server.started:
+                    break
+
+                await asyncio.sleep(0.01)
+
+            assert server.started, "uvicorn did not start within 5 s"
+            port = server.servers[0].sockets[0].getsockname()[1]
+
+            async with httpx.AsyncClient() as client:
+                body = (await client.get(f"http://127.0.0.1:{port}/probe")).json()
+
+        finally:
+            server.should_exit = True
+            await asyncio.wait_for(serving, timeout=10)
+
+        assert body["thread"].startswith("forze-cpu")
+        assert body["cursor"].startswith("~")
