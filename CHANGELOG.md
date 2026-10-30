@@ -23,6 +23,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Postgres schema validation no longer warns that declared derived read fields are missing from the write relation.** A field in `derived_read_fields` comes from the read view, so the startup warning now names only read fields that are neither derived nor omitted.
 
+- **Startup accepts an index over `tenant_id` plus the fields for a guarantee on a tenant-aware route.** It keeps the guarantee per tenant, as the mock does, so Postgres and Mongo print that index when it is missing. The Postgres undeclared-index warning no longer suggests naming `tenant_id`, which a spec cannot.
+
 ## [0.17.0] - 2026-10-30
 
 ### Added

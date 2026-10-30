@@ -376,6 +376,15 @@ async def _require_guarantee_mechanisms(
     for guarantee in guarantees:
         columns = tuple(guarantee.fields)
         wanted = frozenset(columns)
+        # A tenant-aware relation scopes every read and write by tenant, and the in-memory store
+        # keeps one partition per tenant, so an index over the tenant column plus the fields, in
+        # any order, keeps the guarantee as that store does. One over the fields alone still
+        # counts: it is stricter. The printed DDL puts the tenant column first.
+        scoped = (
+            (TENANT_ID_FIELD, *columns)
+            if spec.tenant_aware and TENANT_ID_FIELD not in wanted
+            else columns
+        )
         # A filter over a column the index does not mention cannot restrict the guarantee's
         # rows, so the predicate has to name every field the declaration selects on. The null
         # exemption adds nothing here: an ordinary unique index already never matches a tuple
@@ -404,7 +413,7 @@ async def _require_guarantee_mechanisms(
         deferral_mismatch = False
 
         for index in indexes:
-            if index.columns != wanted:
+            if index.columns not in (wanted, frozenset(scoped)):
                 continue
 
             if predicate_columns:
@@ -443,7 +452,7 @@ async def _require_guarantee_mechanisms(
             ddl = _unique_ddl(
                 schema=schema,
                 table=table,
-                columns=columns,
+                columns=scoped,
                 predicate_columns=predicate_columns,
                 nulls_not_distinct=needs_nulls_not_distinct,
                 holds=guarantee.holds,
@@ -453,7 +462,7 @@ async def _require_guarantee_mechanisms(
                 _deferral_refusal(
                     spec_name=str(spec.name),
                     relation=f"{schema}.{table}",
-                    described=f"at most one row per ({', '.join(columns)})",
+                    described=f"at most one row per ({', '.join(scoped)})",
                     holds=guarantee.holds,
                     ddl=ddl,
                 )
@@ -464,7 +473,7 @@ async def _require_guarantee_mechanisms(
                     spec_name=str(spec.name),
                     schema=schema,
                     table=table,
-                    columns=columns,
+                    columns=scoped,
                     predicate_columns=predicate_columns,
                     nulls_not_distinct=needs_nulls_not_distinct,
                     nulls_distinct=guarantee.skip_null and bool(nullable),
@@ -1186,7 +1195,14 @@ async def _warn_undeclared_mechanisms(
         if index.primary or (identity and identity <= index.columns) or index.name in declared:
             continue
 
-        parts = [f"fields={tuple(sorted(index.columns))!r}"]
+        # A tenant-aware spec cannot name the tenant column, and need not: its guarantees are
+        # already kept per tenant, which is what an index over that column plus them keeps.
+        fields = index.columns
+
+        if spec.tenant_aware and len(fields) > 1:
+            fields -= {TENANT_ID_FIELD}
+
+        parts = [f"fields={tuple(sorted(fields))!r}"]
 
         if not index.nulls_not_distinct and any(
             column in write_column_types and not write_column_types[column].not_null

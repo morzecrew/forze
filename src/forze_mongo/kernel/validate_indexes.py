@@ -30,6 +30,7 @@ from forze.application.contracts.resolution import (
     is_static_relation,
     require_static_relation,
 )
+from forze.application.contracts.tenancy import TENANT_ID_FIELD
 from forze.base.exceptions import exc
 
 from ._logger import logger
@@ -53,6 +54,10 @@ class MongoDocumentIndexSpec:
 
     Reconciliation at wiring said Mongo can keep these; this says whether the deployment
     created the index."""
+
+    tenant_aware: bool = False
+    """Whether the route scopes its documents by ``tenant_id``, so a guarantee's index may
+    cover that field as well and keep it per tenant, as the in-memory store does."""
 
     read_model: type[BaseModel] | None = None
     """The aggregate's read model, for the fields a ``skip_null`` guarantee names.
@@ -565,6 +570,13 @@ def _require_guarantee_indexes(
 
         fields = tuple(guarantee.fields)
         wanted = frozenset(fields)
+        # Over the tenant field plus the fields, in any order, as on Postgres; over the fields
+        # alone it is stricter, and counts. The printed index puts the tenant field first.
+        scoped = (
+            (TENANT_ID_FIELD, *fields)
+            if spec.tenant_aware and TENANT_ID_FIELD not in wanted
+            else fields
+        )
         predicate_fields = (
             collect_filter_field_roots(guarantee.where) if guarantee.where else frozenset()
         )
@@ -577,7 +589,7 @@ def _require_guarantee_indexes(
             if any(not isinstance(direction, int) for _, direction in index.keys):
                 continue
 
-            if frozenset(key for key, _ in index.keys) != wanted:
+            if frozenset(key for key, _ in index.keys) not in (wanted, frozenset(scoped)):
                 continue
 
             if guarantee.where is not None or guarantee.skip_null:
@@ -593,8 +605,8 @@ def _require_guarantee_indexes(
             break
 
         else:
-            field_list = ", ".join(fields)
-            keys = ", ".join(f"{_mongosh_field(field)}: 1" for field in fields)
+            field_list = ", ".join(scoped)
+            keys = ", ".join(f"{_mongosh_field(field)}: 1" for field in scoped)
             # What the *validation* asks for, not what the filter happens to mention: a filter
             # naming no field at all still needs a partialFilterExpression, and a message that
             # suggested a plain index for one would send an operator to a migration that leaves

@@ -306,6 +306,15 @@ periods and takes every other overlapping pair.
     created. A spec with soft deletion usually filters the deleted rows out — which also means
     an un-delete can conflict, and is refused.
 
+!!! note "A tenant-aware route keeps a guarantee per tenant"
+
+    The in-memory store keeps one partition per tenant, so on a `tenant_aware` route two tenants
+    may share a tuple. Startup therefore accepts an index over `tenant_id` plus the fields, in
+    any order, such as `UNIQUE (tenant_id, number_id)`, and prints that form when the index is
+    missing. An index over the fields alone also counts, but it is stricter: it refuses a
+    duplicate across tenants that the in-memory store accepts. The undeclared-index warning
+    leaves `tenant_id` out of its suggestion, since the spec cannot name it.
+
 #### Guarantee or invariant?
 
 Both can express "one current row per fact", and the question comes up immediately.

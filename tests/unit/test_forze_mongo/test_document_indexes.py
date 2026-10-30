@@ -83,6 +83,14 @@ class TestMongoDocumentIndexSpecForBinding:
             read_model=spec.read,
         )
 
+    def test_carries_the_route_tenancy(self) -> None:
+        # A tenant-aware route keeps its guarantees per tenant, so its index may cover it too.
+        config = MongoDocumentConfig(read=("db", "col"), write=("db", "col"), tenant_aware=True)
+
+        built = mongo_document_index_spec_for_binding("items", spec=_write_spec(), config=config)
+
+        assert built is not None and built.tenant_aware is True
+
 
 class TestMongoDocumentIndexValidationHook:
     @pytest.mark.asyncio
