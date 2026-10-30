@@ -5580,6 +5580,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#guarantees-the-domain-model-implies" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Guarantees the domain model implies
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#guarantee-or-invariant" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -6683,6 +6694,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#guarantees-the-domain-model-implies" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Guarantees the domain model implies
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#guarantee-or-invariant" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -7334,6 +7356,46 @@ the rows the exemption lets through.</p>
 created. A spec with soft deletion usually filters the deleted rows out — which also means
 an un-delete can conflict, and is refused.</p>
 </div>
+<div class="admonition note">
+<p class="admonition-title">A tenant-aware route keeps a guarantee per tenant</p>
+<p>The in-memory store keeps one partition per tenant, so on a <code>tenant_aware</code> route two tenants
+may share a tuple. Startup therefore accepts an index over <code>tenant_id</code> plus the fields, in
+any order, such as <code>UNIQUE (tenant_id, number_id)</code>, and prints that form when the index is
+missing. An index over the fields alone also counts, but it is stricter: it refuses a
+duplicate across tenants that the in-memory store accepts. The undeclared-index warning
+leaves <code>tenant_id</code> out of its suggestion, since the spec cannot name it.</p>
+</div>
+<h4 id="guarantees-the-domain-model-implies">Guarantees the domain model implies<a class="headerlink" href="#guarantees-the-domain-model-implies" title="Permanent link">&para;</a></h4>
+<p>Some fields carry their own guarantee. <code>NumberIdMixin</code> gives a <code>number_id</code> that a counter hands
+out once, so a spec whose write domain model uses it declares
+<code>UniqueTogether(fields=("number_id",))</code> by itself. You add no line to the spec. The in-memory
+store refuses a duplicate number, and startup expects the unique index on <code>number_id</code> (per
+tenant on a tenant-aware route).</p>
+<p>The rules:</p>
+<ul>
+<li>A uniqueness you declare over the same fields replaces the implied one, whatever its
+  <code>where</code>, <code>skip_null</code> or <code>holds</code>. The spec never carries two, so there is never a second index
+  to migrate.</li>
+<li>Only the write domain model counts. A read-only spec implies nothing, because nothing writes
+  through it and its relation may be a view. Likewise, Postgres startup checks only declared
+  guarantees on a route bound in <code>ro_documents</code>: the implied ones bind the writer's table.</li>
+<li><code>spec.guarantees</code> lists both kinds, and every store reads it. <code>spec.declared_guarantees</code> holds
+  only what you passed as <code>guarantees=</code>.</li>
+<li>The counter numbers per tenant only when its own route is <code>tenant_aware</code>. Give the counter
+  route and the document route the same tenancy. A per-tenant counter feeding a relation that
+  tenants share hands two tenants the same number, and the guarantee refuses the second.</li>
+<li>An implied guarantee needs a backend that keeps it, as a declared one does. The wiring
+  refusal marks it <code>(implied by the domain model)</code> and names the opt-out. Firestore keeps no
+  uniqueness, so wiring refuses a numbered spec there. To opt out, override the attribute on
+  your domain model:
+  <code>implied_guarantees: ClassVar[StorageGuarantees] = ()</code>. Nothing then refuses a duplicate
+  number.</li>
+<li>A numbered domain whose read model does not store <code>number_id</code> is refused when the spec is
+  built, because a guarantee must name a stored field.</li>
+</ul>
+<p>A mixin of your own can do the same: set <code>implied_guarantees</code> as a <code>ClassVar</code> holding a tuple
+of guarantees (<code>GuaranteeImplying</code> is the protocol). Anything else, such as a bare guarantee
+outside a tuple, is refused as <code>implied_guarantees_invalid</code> when the spec is built.</p>
 <h4 id="guarantee-or-invariant">Guarantee or invariant?<a class="headerlink" href="#guarantee-or-invariant" title="Permanent link">&para;</a></h4>
 <p>Both can express "one current row per fact", and the question comes up immediately.</p>
 <table>

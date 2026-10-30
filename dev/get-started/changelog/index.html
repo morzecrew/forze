@@ -10341,14 +10341,27 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <li>
 <p><strong>A mock derived source can aggregate child rows.</strong> A <code>MockDerivedRegistry</code> source with two required positional parameters gets <code>(row, view)</code>, the view analytics resolvers get, so <code>view.rows(spec)</code> counts the caller's own uncommitted children. Existing <code>(row)</code> sources keep working.</p>
 </li>
+<li>
+<p><strong><code>GuaranteeImplying</code> lets a domain model declare the guarantees its fields need.</strong> A tuple of guarantees in the model's <code>implied_guarantees</code> class attribute is added to every document spec over it. <code>implied_guarantees_of(model)</code> reads it and refuses anything else as <code>implied_guarantees_invalid</code>.</p>
+</li>
 </ul>
 <h3 id="changed">Changed<a class="headerlink" href="#changed" title="Permanent link">&para;</a></h3>
 <ul>
-<li>...</li>
+<li>
+<p><strong>A spec over a <code>NumberIdMixin</code> domain declares <code>number_id</code> unique by itself</strong> (<strong>Breaking</strong>). The mock refuses a duplicate, and startup needs the unique index, per tenant on a tenant-aware route. A declared uniqueness over <code>number_id</code> replaces it; on Firestore, set <code>implied_guarantees = ()</code> on the model.</p>
+</li>
+<li>
+<p><strong><code>DocumentSpec</code> keeps what <code>guarantees=</code> passes in a field named <code>declared_guarantees</code></strong> (<strong>Breaking</strong>). Passing <code>guarantees=</code> and reading <code>spec.guarantees</code> still work; the latter adds what the domain model implies. A numbered domain whose read model does not store <code>number_id</code> is now refused when the spec is built.</p>
+</li>
 </ul>
 <h3 id="fixed">Fixed<a class="headerlink" href="#fixed" title="Permanent link">&para;</a></h3>
 <ul>
-<li><strong>Postgres schema validation no longer warns that declared derived read fields are missing from the write relation.</strong> A field in <code>derived_read_fields</code> comes from the read view, so the startup warning now names only read fields that are neither derived nor omitted.</li>
+<li>
+<p><strong>Postgres schema validation no longer warns that declared derived read fields are missing from the write relation.</strong> A field in <code>derived_read_fields</code> comes from the read view, so the startup warning now names only read fields that are neither derived nor omitted.</p>
+</li>
+<li>
+<p><strong>Startup accepts an index over <code>tenant_id</code> plus the fields for a guarantee on a tenant-aware route.</strong> It keeps the guarantee per tenant, as the mock does, so Postgres and Mongo print that index when it is missing. The Postgres undeclared-index warning no longer suggests naming <code>tenant_id</code>, which a spec cannot.</p>
+</li>
 </ul>
 <h2 id="0170-2026-10-30"><a href="https://github.com/morzecrew/forze/compare/v0.16.2...v0.17.0">0.17.0</a> - 2026-10-30<a class="headerlink" href="#0170-2026-10-30" title="Permanent link">&para;</a></h2>
 <h3 id="added_1">Added<a class="headerlink" href="#added_1" title="Permanent link">&para;</a></h3>
