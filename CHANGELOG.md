@@ -17,6 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **`GuaranteeImplying` lets a domain model declare the guarantees its fields need.** A tuple of guarantees in the model's `implied_guarantees` class attribute is added to every document spec over it. `implied_guarantees_of(model)` reads it and refuses anything else as `implied_guarantees_invalid`.
 
+- **A `Reference` guarantee declares a foreign key's `ON DELETE`, which the mock applies.** `Reference(field=, spec=, on_delete="cascade"|"restrict"|"set_null")` on the child spec. Postgres schema validation checks the key and warns about undeclared cascading ones; Mongo and Firestore refuse it.
+
 ### Changed
 
 - **`configure_cursor_signer(None)` and `configure_cursor_cipher(None)` clear the context's own key** (**Breaking**). The key an open runtime scope holds then applies again. `bind_cursor_signer(None)` and `bind_cursor_cipher(None)` still turn protection off for a block.
@@ -24,10 +26,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **A spec over a `NumberIdMixin` domain declares `number_id` unique by itself** (**Breaking**). The mock refuses a duplicate, and startup needs the unique index, per tenant on a tenant-aware route. A declared uniqueness over `number_id` replaces it; on Firestore, set `implied_guarantees = ()` on the model.
 
 - **`DocumentSpec` keeps what `guarantees=` passes in a field named `declared_guarantees`** (**Breaking**). Passing `guarantees=` and reading `spec.guarantees` still work; the latter adds what the domain model implies. A numbered domain whose read model does not store `number_id` is now refused when the spec is built.
-
-- **A `Reference` guarantee declares a foreign key's `ON DELETE`, which the mock applies.** `Reference(field=, spec=, on_delete="cascade"|"restrict"|"set_null")` on the child spec. Postgres schema validation checks the key and warns about undeclared cascading ones; Mongo and Firestore refuse it.
-
-### Changed
 
 - **The mock's `kill_many` deletes all of its rows or none** (**behaviour change**). A missing id or a declared `restrict` now refuses before any row is removed, as on Postgres.
 
@@ -39,13 +37,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Postgres schema validation no longer warns that declared derived read fields are missing from the write relation.** A field in `derived_read_fields` comes from the read view, so the startup warning now names only read fields that are neither derived nor omitted.
 
-### Security
-
-- **Cursor signing and encryption set on an `ExecutionRuntime` apply to every request** (**Breaking**). Code outside the scope's task now mints and requires protected cursors, refused (`cursor_protection_ambiguous`) while open scopes hold different keys. New `hold_cursor_signer` and `hold_cursor_cipher`.
-
 - **Startup accepts an index over `tenant_id` plus the fields for a guarantee on a tenant-aware route.** It keeps the guarantee per tenant, as the mock does, so Postgres and Mongo print that index when it is missing. The Postgres undeclared-index warning no longer suggests naming `tenant_id`, which a spec cannot.
 
 - **A Postgres hard delete refused by a foreign key raises `conflict`, not `not_found`** (**behaviour change**). `kill`/`kill_many` on a row a plain foreign key still references no longer reads as "Reference document not found"; `ON DELETE RESTRICT` maps to `conflict` too.
+
+### Security
+
+- **Cursor signing and encryption set on an `ExecutionRuntime` apply to every request** (**Breaking**). Code outside the scope's task now mints and requires protected cursors, refused (`cursor_protection_ambiguous`) while open scopes hold different keys. New `hold_cursor_signer` and `hold_cursor_cipher`.
 
 ## [0.17.0] - 2026-10-30
 
