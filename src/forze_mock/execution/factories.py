@@ -386,6 +386,28 @@ class _MockFactoryBase:
             tenant_id=tenant_id,
         )
 
+    # ....................... #
+
+    def _document_scope(self, ctx: ExecutionContext, spec_name: str) -> tuple[str, UUID | None]:
+        """The namespace the document adapter for *spec_name* keeps this caller's rows in, and
+        the tenant it narrows them to.
+
+        Resolved the way :class:`ConfigurableMockDocument` resolves its own, tenant partition
+        and row filter included, so a view reads the rows a document read would — and a
+        tenant-aware document route with no tenant bound refuses here, as it refuses there.
+        """
+
+        cfg = self._route(spec_name)
+        tenant_id = TenancyMixin(
+            tenant_aware=cfg.tenant_aware if cfg else False,
+            tenant_provider=_tenant_provider(ctx),
+        ).require_tenant_if_aware()
+
+        return (
+            partition_namespace(tenant_id, self._namespace_for(ctx, spec_name, default=spec_name)),
+            tenant_id,
+        )
+
 
 # ....................... #
 
@@ -440,6 +462,10 @@ class ConfigurableMockDocument(_MockFactoryBase):
                 name for name, declared in spec.derived_read_fields.items() if not declared.resolved
             ),
             derived_source=derived_source,
+            derived_view=MockAnalyticsView(
+                state=state,
+                scope_for=lambda name: self._document_scope(context, name),
+            ),
             block_rows=self.module.row_locks == "block",
         )
 
@@ -489,28 +515,6 @@ class ConfigurableMockAnalytics(_MockFactoryBase):
                 state=state,
                 scope_for=lambda name: self._document_scope(context, name),
             ),
-        )
-
-    # ....................... #
-
-    def _document_scope(self, ctx: ExecutionContext, spec_name: str) -> tuple[str, UUID | None]:
-        """The namespace the document adapter for *spec_name* keeps this caller's rows in, and
-        the tenant it narrows them to.
-
-        Resolved the way :class:`ConfigurableMockDocument` resolves its own, tenant partition
-        and row filter included, so a resolver reads the rows a document read would — and a
-        tenant-aware document route with no tenant bound refuses here, as it refuses there.
-        """
-
-        cfg = self._route(spec_name)
-        tenant_id = TenancyMixin(
-            tenant_aware=cfg.tenant_aware if cfg else False,
-            tenant_provider=_tenant_provider(ctx),
-        ).require_tenant_if_aware()
-
-        return (
-            partition_namespace(tenant_id, self._namespace_for(ctx, spec_name, default=spec_name)),
-            tenant_id,
         )
 
 
