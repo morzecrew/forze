@@ -852,15 +852,29 @@ class DocumentSpec(BaseSpec, Generic[R, D, C, U]):
     def _refuse_unkeepable_reference(self, guarantee: Reference) -> None:
         """Refuse a reference no store can keep as declared.
 
-        A sealed field holds ciphertext under a fresh nonce per write, so it never equals the
-        id it encrypts and no row would ever match its parent. A ``set_null`` reference over a
-        field that cannot hold a null leaves a row its own models refuse to read back, and a
-        foreign key would refuse the delete instead.
+        A field that is not a ``UUID`` never equals the parent's id, so no row would match it. A
+        sealed field holds ciphertext under a fresh nonce per write, so it never equals the id it
+        encrypts either. A ``set_null`` reference over a field that cannot hold a null leaves a
+        row its own models refuse to read back, and a foreign key would refuse the delete instead.
 
         :raises CoreException: ``configuration`` naming the field.
         """
 
         field = guarantee.field
+        models = [self.read] + ([self.write["domain"]] if self.write is not None else [])
+
+        for model in models:
+            declared = model.model_fields.get(field)
+
+            if declared is not None and _without_none(
+                unwrap_annotated(declared.annotation)
+            ) != frozenset({UUID}):
+                raise exc.configuration(
+                    f"Reference on spec {self.name!r} keys by {model.__name__}.{field}, which is "
+                    "not a UUID, so it never equals the id of the row it names. Type it UUID, "
+                    "or UUID | None.",
+                    details={"spec": str(self.name), "field": field},
+                )
 
         if self.encryption is not None and self.encryption.sealed_fields_in((field,)):
             raise exc.configuration(
@@ -872,8 +886,6 @@ class DocumentSpec(BaseSpec, Generic[R, D, C, U]):
 
         if guarantee.on_delete != "set_null":
             return
-
-        models = [self.read] + ([self.write["domain"]] if self.write is not None else [])
 
         for model in models:
             declared = model.model_fields.get(field)

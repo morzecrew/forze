@@ -7,12 +7,14 @@ from uuid import UUID
 import pytest
 import structlog
 from pydantic import (
+    UUID4,
     BaseModel,
     Field,
     PlainSerializer,
     SerializerFunctionWrapHandler,
     ValidationInfo,
     computed_field,
+    create_model,
     field_serializer,
     field_validator,
     model_serializer,
@@ -1251,6 +1253,9 @@ def test_a_set_based_upsert_is_judged_on_the_update_types_it_writes() -> None:
 # ....................... #
 
 
+type _StageId = UUID
+
+
 class _LineRead(ReadDocument):
     stage_id: UUID | None = None
     owner_id: UUID
@@ -1301,3 +1306,32 @@ class TestReferenceDeclaration:
                 Reference(field="stage_id", spec="stages", on_delete="cascade"),
                 encryption=FieldEncryption(encrypted=frozenset({"stage_id"})),
             )
+
+    @staticmethod
+    def _typed(read: Any, domain: Any) -> DocumentSpec[Any, Any, Any, Any]:
+        return DocumentSpec(
+            name="lines",
+            read=create_model("_TypedRead", __base__=ReadDocument, stage_id=(read, None)),
+            write=DocumentWriteTypes(
+                domain=create_model("_TypedDomain", __base__=Document, stage_id=(domain, None)),
+                create_cmd=CreateDocumentCmd,
+            ),
+            guarantees=(Reference(field="stage_id", spec="stages", on_delete="cascade"),),
+        )
+
+    @pytest.mark.parametrize(
+        "annotation",
+        [UUID, UUID | None, Annotated[UUID, Field(description="stage")] | None, _StageId, UUID4],
+    )
+    def test_a_uuid_field_is_accepted_however_spelled(self, annotation: Any) -> None:
+        self._typed(annotation, annotation)
+
+    @pytest.mark.parametrize("annotation", [int, str | None, UUID | int])
+    def test_a_field_that_is_not_a_uuid_is_refused(self, annotation: Any) -> None:
+        # It never equals the parent's id, so the delete action would never fire.
+        with pytest.raises(CoreException, match="not a UUID"):
+            self._typed(annotation, annotation)
+
+    def test_the_domain_model_is_checked_too(self) -> None:
+        with pytest.raises(CoreException, match="_TypedDomain.stage_id"):
+            self._typed(UUID | None, int | None)

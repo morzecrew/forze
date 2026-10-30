@@ -11,6 +11,8 @@ are not written by its author.
 
 from __future__ import annotations
 
+from uuid import UUID
+
 import attrs
 import pytest
 from pydantic import BaseModel
@@ -426,14 +428,18 @@ def test_a_dangling_edge_is_a_failure() -> None:
 
 def test_a_reference_to_an_uncatalogued_document_is_a_failure() -> None:
     # A delete action keyed by a spec nothing catalogues can never fire.
+    class _Line(BaseModel):
+        id: str
+        stage_id: UUID
+
     lines = DocumentSpec(
         name="lines",
-        read=_Model,
-        write={"domain": _Model, "create_cmd": _Model, "update_cmd": _Model},
-        guarantees=(Reference(field="id", spec="stages", on_delete="cascade"),),
+        read=_Line,
+        write={"domain": _Line, "create_cmd": _Line, "update_cmd": _Line},
+        guarantees=(Reference(field="stage_id", spec="stages", on_delete="cascade"),),
     )
 
-    with pytest.raises(CoreException, match="Reference on 'id' points at document:stages"):
+    with pytest.raises(CoreException, match="Reference on 'stage_id' points at document:stages"):
         reconcile_specs(SpecRegistry().register(lines).freeze(), _frames("lines"))
 
     catalogued = SpecRegistry().register(lines, _document("stages")).freeze()
