@@ -622,6 +622,32 @@ on a client routed per tenant; rooms already carry their tenant. A closing strea
 its client gone, or cut off by a drain — within 2 s; past that, a warning is logged and the
 rest expire with the store's TTL.
 
+### Documenting the SSE routes
+
+The stream and ack routes ship with a summary and a description on every query parameter
+(`protocol`, `device_id`, `topics`), and the stream's 200 is documented as
+`text/event-stream`. Pass `route_options` for the stream and `ack_route_options` for the ack
+to add what your OpenAPI document needs: `operation_id`, `description`, `tags`,
+`openapi_extra`, `summary`, `deprecated` and `responses` (a `RealtimeSseRouteOptions`):
+
+```python
+attach_realtime_sse_route(
+    router,
+    ...,
+    route_options={
+        "operation_id": "realtime.events",
+        "description": "The signed-in user's realtime events.",
+        "tags": ["realtime"],
+    },
+    ack_route_options={"operation_id": "realtime.ack", "tags": ["realtime"]},
+)
+```
+
+Your `responses` merge over the built-in ones, and a status code you give replaces forze's.
+Any other key, such as the route's path, methods, endpoint, name or response class, is
+refused at attach time. `attach_realtime_ws_route` takes no such options: OpenAPI does not
+describe WebSocket routes, so FastAPI leaves them out of the document.
+
 ### Offline delivery without Socket.IO
 
 The SSE and WebSocket routes replay the mailbox and ack against it; they never write it.

@@ -25,6 +25,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **The isolated executor has its own slot: `bind_isolated_cpu_executor`, `hold_isolated_cpu_executor`, `current_isolated_cpu_executor` and `isolated_cpu_executor_bound`.** They mirror the default executor's, but nothing bound or held gives `None`. `InlineCpuExecutor(pickled=True)` adds the pickle round trip, for tests.
 
+- **`attach_realtime_sse_route` takes `route_options` and `ack_route_options` to document its routes.** Each sets the route's `operation_id`, `description`, `tags`, `openapi_extra` and the like; other keys are refused. The query parameters now ship described, and the stream's 200 is documented as `text/event-stream`.
+
+- **`attach_realtime_sse_route` serves a live-only stream without a mailbox.** Leave out `mailbox_factory` and `cursors_factory` and it serves the hub's live tail with no replay, ignores `Last-Event-ID` and attaches no ack route. It needs a hub, and one factory without the other is refused at attach time.
+
 ### Changed
 
 - **`configure_cursor_signer(None)` and `configure_cursor_cipher(None)` clear the context's own key** (**Breaking**). The key an open runtime scope holds then applies again. `bind_cursor_signer(None)` and `bind_cursor_cipher(None)` still turn protection off for a block.

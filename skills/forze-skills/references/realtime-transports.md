@@ -52,6 +52,11 @@ attach_realtime_sse_route(
 step = realtime_sse_tail_lifecycle_step(hub, stream_spec=realtime_stream_spec())
 ```
 
+The SSE routes ship with described query parameters and a `text/event-stream` 200. Set
+their `operation_id`, `description`, `tags`, `openapi_extra` and the rest through
+`route_options=` (stream) and `ack_route_options=` (ack), not by patching the attached
+route: FastAPI derives an included route's parameters from the endpoint again.
+
 Client-side rules that hold on every transport:
 
 - **Dedup by `id`.** Delivery is at-least-once; reconnect replay and the

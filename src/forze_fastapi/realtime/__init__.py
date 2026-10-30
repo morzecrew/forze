@@ -20,6 +20,7 @@ from .sse import (
     LAST_EVENT_ID_HEADER,
     RealtimeAckBody,
     RealtimeAckResult,
+    RealtimeSseRouteOptions,
     TopicAuthorizer,
     attach_realtime_sse_route,
 )
@@ -51,5 +52,6 @@ __all__ = [
     "TopicAuthorizer",
     "RealtimeAckBody",
     "RealtimeAckResult",
+    "RealtimeSseRouteOptions",
     "LAST_EVENT_ID_HEADER",
 ]
