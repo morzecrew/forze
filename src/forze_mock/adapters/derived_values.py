@@ -64,10 +64,14 @@ def as_view_source(source: MockDerivedSource) -> MockDerivedViewSource:
             code="mock.derived.source_shape",
         )
 
-    # The type's ``__call__`` covers an instance whose ``__call__`` is async, under any partials.
+    # The type's ``__call__`` covers an instance whose ``__call__`` is async, under any plain
+    # partials; a partial subclass with its own ``__call__`` is that callable, so stop there.
     target: object = source
 
-    while isinstance(target, functools.partial):
+    while (
+        isinstance(target, functools.partial)
+        and type(target).__call__ is functools.partial.__call__
+    ):
         target = cast("functools.partial[object]", target).func
 
     if inspect.iscoroutinefunction(target) or inspect.iscoroutinefunction(type(target).__call__):

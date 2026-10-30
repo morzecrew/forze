@@ -248,6 +248,11 @@ async def _async_row_only(row: JsonDict) -> dict[str, Any]:
     return {"released_quantity": -1}
 
 
+class _AsyncPartial(functools.partial[Any]):
+    async def __call__(self, *args: Any, **kwargs: Any) -> Any:
+        return self.func(*args, **kwargs)
+
+
 class _AsyncCall:
     async def __call__(self, row: JsonDict) -> dict[str, Any]:
         return {"released_quantity": -1}
@@ -295,6 +300,7 @@ class TestRegistration:
             functools.partial(_async_row_only),
             _AsyncCall(),
             functools.partial(_AsyncCall()),
+            _AsyncPartial(_row_only),
         ],
     )
     def test_an_unsupported_shape_is_refused_where_it_is_registered(self, source: Any) -> None:
