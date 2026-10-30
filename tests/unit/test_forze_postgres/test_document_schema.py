@@ -29,7 +29,10 @@ from forze_postgres.execution.lifecycle import (
     postgres_document_schema_validation_lifecycle_step,
 )
 from forze_postgres.kernel.catalog.introspect import PostgresIntrospector, PostgresType
-from forze_postgres.kernel.catalog.validation.validate_schema import PostgresDocumentSchemaSpec
+from forze_postgres.kernel.catalog.validation.validate_schema import (
+    PostgresDocumentSchemaSpec,
+    validate_postgres_document_schemas,
+)
 from tests.support.execution_context import (
     context_from_deps,
 )
@@ -122,6 +125,65 @@ def test_postgres_document_schema_spec_history_requires_relation() -> None:
     )
     with pytest.raises(CoreException, match="no 'history' relation"):
         postgres_document_schema_spec_for_binding("doc", spec=spec, config=config)
+
+
+class _ViewRead(_Read):
+    supplier: str
+    note: str
+
+
+def _derived_view_case(
+    read_columns: tuple[str, ...],
+) -> tuple[MagicMock, PostgresDocumentSchemaSpec]:
+    # The view produces `supplier` by declaration; `note` is an extra nothing explains.
+    spec = DocumentSpec(
+        name="doc",
+        read=_ViewRead,
+        write={"domain": _Domain, "create_cmd": _Create},
+        derived_read_fields={"supplier": None},
+    )
+    config = PostgresDocumentConfig(
+        read=("public", "items_v"),
+        write=("public", "items"),
+        bookkeeping_strategy="application",
+    )
+    text = PostgresType(base="text", is_array=False, not_null=True)
+    columns = {
+        "items_v": dict.fromkeys(read_columns, text),
+        "items": dict.fromkeys(("id", "name"), text)
+        | {"rev": PostgresType(base="int4", is_array=False, not_null=True)},
+    }
+
+    async def _types(*, schema: str, relation: str) -> dict[str, PostgresType]:
+        return columns[relation]
+
+    intro = MagicMock(spec=PostgresIntrospector)
+    intro.get_column_types = AsyncMock(side_effect=_types)
+    intro.get_primary_key_columns = AsyncMock(return_value=["id"])
+    intro.unique_indexes = AsyncMock(return_value=())
+    intro.exclusion_constraints = AsyncMock(return_value=())
+
+    return intro, postgres_document_schema_spec_for_binding("doc", spec=spec, config=config)
+
+
+@pytest.mark.asyncio
+async def test_a_declared_derived_field_is_not_reported_off_the_write_relation() -> None:
+    intro, schema_spec = _derived_view_case(("id", "name", "supplier", "note"))
+
+    with patch("forze_postgres.kernel.catalog.validation.validate_schema.logger") as log:
+        await validate_postgres_document_schemas(intro, [schema_spec])
+
+    reported = [call.args[1:] for call in log.warning.call_args_list]
+
+    assert reported == [("doc", ["note"], "public", "items")]
+
+
+@pytest.mark.asyncio
+async def test_a_declared_derived_field_is_still_required_on_the_read_relation() -> None:
+    intro, schema_spec = _derived_view_case(("id", "name", "note"))
+
+    with pytest.raises(CoreException, match="supplier"):
+        await validate_postgres_document_schemas(intro, [schema_spec])
 
 
 @pytest.mark.asyncio

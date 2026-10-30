@@ -68,6 +68,11 @@ class PostgresDocumentSchemaSpec:
     read_omit_fields: frozenset[str] = frozenset()
     """Read model field names that are not stored on the read relation (computed, etc.)."""
 
+    derived_read_fields: frozenset[str] = frozenset()
+    """Read model field names the read relation produces (see
+    :attr:`DocumentSpec.derived_read_fields`); required on the read relation, never expected
+    on the write relation."""
+
     tenant_aware: bool = False
     """When ``True``, the write relation must expose :data:`~forze.application.contracts.tenancy.TENANT_ID_FIELD`."""
 
@@ -268,12 +273,12 @@ def _warn_read_not_subset_of_write(
 
     read_fields = (
         stored_field_names_for(spec.read_model, include_computed=False) | spec.materialized
-    ) - spec.read_omit_fields
+    ) - (spec.read_omit_fields | spec.derived_read_fields)
 
     if extra := read_fields - frozenset(write_column_types.keys()):
         logger.warning(
             "Postgres schema validation for document %r: read fields %s are not on "
-            "write relation %s.%s (expected for views; silence with read_omit_fields).",
+            "write relation %s.%s (expected for views; declare them in derived_read_fields).",
             spec.name,
             sorted(extra),
             spec.write_relation[0],

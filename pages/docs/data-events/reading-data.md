@@ -98,7 +98,8 @@ reference object, a `COALESCE` over sibling rows and a `CASE` expression are all
 the same declaration, because none of them is computed by this aggregate. On a real
 backend the declaration changes nothing at runtime — the view already produces the
 column — while the write-column, sealing and settable-command guards all follow from
-it.
+it, and Postgres startup validation stops warning that the field is missing from the
+write table.
 
 In `forze_mock` a marked field's value comes from the stored row, which is where
 [`SpecSeed(derived={...})`](../testing/overview.md) puts it — seeding goes through the
