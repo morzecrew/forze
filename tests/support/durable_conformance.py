@@ -402,6 +402,81 @@ async def run_claim_scenario(store: DurableRunStorePort) -> dict[str, Any]:
 # ....................... #
 
 
+async def run_function_filter_scenario(
+    store_for: Callable[[UUID | None], DurableRunStorePort],
+) -> dict[str, Any]:
+    """Drive a recovery scan restricted to some functions and collect what it claimed.
+
+    What a worker serving only some functions relies on: it never claims a run of another
+    name, neither a due one nor one whose lease lapsed, so that run waits for the worker that
+    serves it. A scan without the filter still claims any name. Takes a factory because the
+    filter must narrow a bound tenant's scan, not replace it.
+    """
+
+    out: dict[str, Any] = {}
+    tenant = UUID("00000000-0000-0000-0000-00000000000a")
+    lease = timedelta(minutes=5)
+    unbound = store_for(None)
+
+    for name in ("fast", "slow", "other"):
+        await unbound.enqueue(name, input_json=None)
+
+    await unbound.enqueue("fast", input_json=None, tenant_id=tenant)
+
+    out["empty_selects_nothing"] = [
+        record.name
+        for record in await unbound.claim_abandoned(
+            limit=10, lease_for=lease, functions=frozenset()
+        )
+    ]
+    out["bound_scan"] = [
+        (record.name, record.tenant_id == tenant)
+        for record in await store_for(tenant).claim_abandoned(
+            limit=10, lease_for=lease, functions=frozenset({"fast", "slow"})
+        )
+    ]
+    out["filtered_scan"] = sorted(
+        record.name
+        for record in await unbound.claim_abandoned(
+            limit=10, lease_for=lease, functions=frozenset({"fast", "unregistered"})
+        )
+    )
+
+    # A zero lease leaves the claimed run abandoned at once, as a crashed worker would.
+    out["lapsed_claim"] = [
+        (record.name, record.attempts)
+        for record in await unbound.claim_abandoned(
+            limit=10, lease_for=timedelta(0), functions=frozenset({"slow"})
+        )
+    ]
+    out["lapsed_left_to_its_worker"] = sorted(
+        record.name
+        for record in await unbound.claim_abandoned(
+            limit=10, lease_for=lease, functions=frozenset({"other", "fast"})
+        )
+    )
+    out["unfiltered_reclaims"] = [
+        (record.name, record.attempts)
+        for record in await unbound.claim_abandoned(limit=10, lease_for=lease)
+    ]
+
+    return out
+
+
+FUNCTION_FILTER_OUTCOME: dict[str, Any] = {
+    "empty_selects_nothing": [],
+    "bound_scan": [("fast", True)],
+    "filtered_scan": ["fast"],
+    "lapsed_claim": [("slow", 1)],
+    "lapsed_left_to_its_worker": ["other"],
+    "unfiltered_reclaims": [("slow", 2)],
+}
+"""What :func:`run_function_filter_scenario` answers on every engine, the mock included."""
+
+
+# ....................... #
+
+
 async def run_retry_scenario(store: DurableRunStorePort) -> dict[str, Any]:
     """Send a running run back for a retry and collect plane-independent observables.
 

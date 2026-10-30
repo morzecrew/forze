@@ -206,6 +206,7 @@ class MockDurableRunStore(DurableRunStorePort, DurableRunAdminPort, DurableRunCo
         *,
         limit: int,
         lease_for: timedelta,
+        functions: frozenset[str] | None = None,
     ) -> Sequence[DurableRunRecord]:
         now = utcnow()
         bound_tenant = self._bound_tenant()
@@ -218,6 +219,9 @@ class MockDurableRunStore(DurableRunStorePort, DurableRunAdminPort, DurableRunCo
 
                 # Bound → recover only that tenant's runs (per-tenant recovery).
                 if bound_tenant is not None and data["tenant_id"] != bound_tenant:
+                    continue
+
+                if functions is not None and data["name"] not in functions:
                     continue
 
                 if not _is_abandoned(data, now):

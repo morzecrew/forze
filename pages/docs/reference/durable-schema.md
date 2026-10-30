@@ -52,10 +52,11 @@ Recommended indexes:
 
 ```sql
 -- the recovery scan (claim_abandoned) filters on status, available_at and leased_until,
--- and orders by created_at under FOR UPDATE SKIP LOCKED
-CREATE INDEX ON public.durable_run (status, created_at);
+-- and on name for a worker that claims only some functions, and orders by created_at
+-- under FOR UPDATE SKIP LOCKED
+CREATE INDEX ON public.durable_run (status, name, created_at);
 -- on a shared tagged table a bound scan also filters tenant_id
-CREATE INDEX ON public.durable_run (tenant_id, status, created_at);
+CREATE INDEX ON public.durable_run (tenant_id, status, name, created_at);
 
 -- where runs are purged: purge_finished filters on status and updated_at (when the run
 -- landed) and deletes the oldest landings first
@@ -69,6 +70,12 @@ CREATE INDEX ON public.durable_run (tenant_id, created_at DESC, run_id DESC);
 
 Without them, the recovery scan, the purge and the listing scan and sort the whole table
 as it grows.
+
+The two recovery-scan indexes replace `(status, created_at)` and
+`(tenant_id, status, created_at)`. The old ones still serve a scan of every function, but
+a worker that claims only some functions would read every pending run of the others on
+each scan. On an existing table, create the new indexes (`CONCURRENTLY` on a live one)
+before such a worker starts, then drop the old ones.
 
 ### Steps
 
@@ -196,6 +203,10 @@ db.durable_run.createIndex({ created_at: -1, _id: -1 })
 // on a shared tagged collection a bound scan and listing also filter tenant_id
 db.durable_run.createIndex({ tenant_id: 1, status: 1, created_at: 1 })
 db.durable_run.createIndex({ tenant_id: 1, created_at: -1, _id: -1 })
+// a worker that claims only some functions also filters name; these do not replace the
+// ones above, which a scan of every function reads in created_at order
+db.durable_run.createIndex({ status: 1, name: 1, created_at: 1 })
+db.durable_run.createIndex({ tenant_id: 1, status: 1, name: 1, created_at: 1 })
 // where runs are purged: status and updated_at (when the run landed), oldest first
 db.durable_run.createIndex({ status: 1, updated_at: 1 })
 // sparse: only a run some scan has claimed carries a token

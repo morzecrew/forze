@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Set
 from typing import TYPE_CHECKING, final
 
 import attrs
@@ -73,6 +73,7 @@ class DurableFunctionRegistry:
 
     _handlers: dict[str, DurableFunctionHandler] = attrs.field(factory=dict, init=False)
     _retries: dict[str, RetryStrategy] = attrs.field(factory=dict, init=False)
+    _queues: dict[str, str] = attrs.field(factory=dict, init=False)
 
     # ....................... #
 
@@ -82,11 +83,14 @@ class DurableFunctionRegistry:
         handler: DurableFunctionHandler,
         *,
         retry: RetryStrategy | None = None,
+        queue: str = "default",
     ) -> None:
         """Register *handler* under *name* (rejects a duplicate name).
 
         *retry* replaces the runner's :attr:`~DurableFunctionRunner.retry` for this function's
         runs; a strategy with ``max_attempts=1`` opts the function out of the runner's.
+        *queue* is the group a recovery worker selects to claim this function's runs (see
+        :func:`~forze_kits.integrations.durable.durable_recovery_background_lifecycle_step`).
         """
 
         if name in self._handlers:
@@ -94,8 +98,12 @@ class DurableFunctionRegistry:
                 f"Durable function {name!r} is already registered.",
             )
 
+        if not queue.strip():
+            raise exc.configuration(f"Durable function {name!r} needs a non-blank queue name.")
+
         check_run_retry(retry)
         self._handlers[name] = handler
+        self._queues[name] = queue
 
         if retry is not None:
             self._retries[name] = retry
@@ -126,3 +134,22 @@ class DurableFunctionRegistry:
         """Return the retry strategy registered with *name*'s body, or ``None``."""
 
         return self._retries.get(name)
+
+    # ....................... #
+
+    def functions_in(self, queues: Set[str]) -> frozenset[str]:
+        """Return the names registered in any of *queues*.
+
+        :raises CoreException: ``configuration`` (``durable_queue_unknown``) for a queue no
+            registered function is in: a misspelt one would leave its runs to no worker.
+        """
+
+        unknown = sorted(queues - set(self._queues.values()))
+
+        if unknown:
+            raise exc.configuration(
+                f"No durable function is registered in queue(s) {', '.join(unknown)}.",
+                code="durable_queue_unknown",
+            )
+
+        return frozenset(name for name, queue in self._queues.items() if queue in queues)

@@ -61,6 +61,7 @@ from tests.support.durable_cancel_races import (
 )
 from tests.support.durable_conformance import (
     COALESCE_OUTCOME,
+    FUNCTION_FILTER_OUTCOME,
     LOOKALIKE_OUTCOME,
     PURGE_OUTCOME,
     PURGE_WINDOW_OUTCOME,
@@ -74,6 +75,7 @@ from tests.support.durable_conformance import (
     run_coalesce_race_scenario,
     run_coalesce_scenario,
     run_control_scenario,
+    run_function_filter_scenario,
     run_lifecycle_scenario,
     run_list_scenario,
     run_lookalike_scenario,
@@ -318,6 +320,26 @@ class TestDurableMockVsMongo:
         mongo_out = await run_retry_scenario(_mongo_store(mongo_client, run_collection))
 
         assert mock_out == mongo_out == RETRY_OUTCOME
+
+    async def test_mock_matches_mongo_for_a_scan_of_some_functions(
+        self, mongo_client: MongoClient, run_collection: tuple[str, str]
+    ) -> None:
+        mock_state = MockState()
+        mock_out = await run_function_filter_scenario(
+            lambda tenant: MockDurableRunStore(
+                state=mock_state, tenant_provider=tenant_provider_for(tenant)
+            )
+        )
+
+        mongo_out = await run_function_filter_scenario(
+            lambda tenant: MongoDurableRunStore(
+                client=mongo_client,
+                config=MongoDurableRunConfig(collection=run_collection),
+                tenant_provider=tenant_provider_for(tenant),
+            )
+        )
+
+        assert mock_out == mongo_out == FUNCTION_FILTER_OUTCOME
 
     async def test_mock_matches_mongo_for_the_tenant_boundary(
         self,

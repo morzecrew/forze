@@ -328,16 +328,19 @@ def register_operation_functions(
     *,
     operations: FrozenOperationRegistry,
     identity: DurableServiceIdentity | None = None,
+    queue: str = "default",
 ) -> None:
     """Register every operation-backed spec in *specs* on *registry*.
 
     Specs without an ``operation`` are refused rather than skipped: a silent skip
     would leave their runs unresumable (no registered body) and read as "wired".
-    *identity* is passed to :func:`operation_durable_handler` for each.
+    *identity* is passed to :func:`operation_durable_handler` for each, and every spec is
+    registered in *queue*.
     """
 
     for spec in specs:
         registry.register(
             str(spec.name),
             operation_durable_handler(spec, operations, identity=identity),
+            queue=queue,
         )

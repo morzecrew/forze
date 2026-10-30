@@ -419,6 +419,28 @@ async def test_the_mock_sends_a_running_run_back_for_a_retry() -> None:
     assert await run_retry_scenario(MockDurableRunStore(state=MockState())) == RETRY_OUTCOME
 
 
+async def test_the_mock_claims_only_the_selected_functions() -> None:
+    """# covers: DurableRunStorePort.claim_abandoned"""
+
+    from forze_mock.adapters.durable import MockDurableRunStore
+    from tests.support.durable_conformance import (
+        FUNCTION_FILTER_OUTCOME,
+        run_function_filter_scenario,
+        tenant_provider_for,
+    )
+
+    state = MockState()
+
+    assert (
+        await run_function_filter_scenario(
+            lambda tenant: MockDurableRunStore(
+                state=state, tenant_provider=tenant_provider_for(tenant)
+            )
+        )
+        == FUNCTION_FILTER_OUTCOME
+    )
+
+
 async def test_the_mock_requeues_failed_and_timed_out_runs() -> None:
     """# covers: DurableRunAdminPort.requeue_failed"""
 

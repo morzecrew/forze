@@ -155,6 +155,13 @@ class MongoDurableRunStore(
         db.<collection>.createIndex({tenant_id: 1, status: 1, created_at: 1})
         db.<collection>.createIndex({tenant_id: 1, created_at: -1, _id: -1})
 
+        // A recovery worker claiming only some functions also filters `name`: without these
+        // it reads every pending run of the other functions on each scan. They do not replace
+        // the ones above, which the unfiltered scan reads in created_at order.
+        db.<collection>.createIndex({status: 1, name: 1, created_at: 1})
+        // On a shared tagged collection scanned per tenant:
+        db.<collection>.createIndex({tenant_id: 1, status: 1, name: 1, created_at: 1})
+
         // Recommended where runs are purged: purge_finished filters on status and
         // updated_at (when the run landed) and deletes the oldest landings first.
         db.<collection>.createIndex({status: 1, updated_at: 1})
@@ -418,6 +425,7 @@ class MongoDurableRunStore(
         *,
         limit: int,
         lease_for: timedelta,
+        functions: frozenset[str] | None = None,
     ) -> Sequence[DurableRunRecord]:
         if limit <= 0:
             # The driver refuses a zero cursor length, where Postgres answers ``LIMIT 0``
@@ -441,6 +449,10 @@ class MongoDurableRunStore(
             ],
             **self._tenant_filter(),
         }
+
+        if functions is not None:
+            # Part of the claimable predicate, so the batch update re-checks it too.
+            claimable["name"] = {"$in": sorted(functions)}
 
         candidates = await self.client.find_many(
             coll,

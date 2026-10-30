@@ -60,6 +60,7 @@ from tests.support.durable_cancel_races import (
 )
 from tests.support.durable_conformance import (
     COALESCE_OUTCOME,
+    FUNCTION_FILTER_OUTCOME,
     LOOKALIKE_OUTCOME,
     PURGE_OUTCOME,
     PURGE_WINDOW_OUTCOME,
@@ -73,6 +74,7 @@ from tests.support.durable_conformance import (
     run_coalesce_race_scenario,
     run_coalesce_scenario,
     run_control_scenario,
+    run_function_filter_scenario,
     run_lifecycle_scenario,
     run_list_scenario,
     run_lookalike_scenario,
@@ -316,6 +318,26 @@ class TestDurableMockVsPostgres:
         )
 
         assert mock_out == pg_out == RETRY_OUTCOME
+
+    async def test_mock_matches_postgres_for_a_scan_of_some_functions(
+        self, pg_client: PostgresClient, run_table: str
+    ) -> None:
+        mock_state = MockState()
+        mock_out = await run_function_filter_scenario(
+            lambda tenant: MockDurableRunStore(
+                state=mock_state, tenant_provider=tenant_provider_for(tenant)
+            )
+        )
+
+        pg_out = await run_function_filter_scenario(
+            lambda tenant: PostgresDurableRunStore(
+                client=pg_client,
+                config=PostgresDurableRunConfig(relation=("public", run_table)),
+                tenant_provider=tenant_provider_for(tenant),
+            )
+        )
+
+        assert mock_out == pg_out == FUNCTION_FILTER_OUTCOME
 
     async def test_mock_matches_postgres_for_the_tenant_boundary(
         self, pg_client: PostgresClient, run_table: str, schedule_table: str
