@@ -63,6 +63,10 @@ def _raise_unpicklable_back() -> None:
     raise _UnpicklableBack("only", "here")
 
 
+def _read_probe() -> str:
+    return _probe.get()
+
+
 # ----------------------- #
 
 
@@ -754,6 +758,16 @@ class TestPickledInlineCpuExecutor:
             await InlineCpuExecutor(pickled=True).run(functools.partial(json.loads, "not json"))
 
         assert "decoder.py" in str(ei.value.__cause__)
+
+    async def test_runs_without_the_callers_context_as_a_worker_does(self) -> None:
+        token = _probe.set("caller")
+
+        try:
+            assert await InlineCpuExecutor(pickled=True).run(_read_probe) == "unset"
+            assert await InlineCpuExecutor().run(_read_probe) == "caller"
+
+        finally:
+            _probe.reset(token)
 
     async def test_refuses_an_outcome_that_cannot_come_back(self) -> None:
         with pytest.raises(CoreException) as ei:

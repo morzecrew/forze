@@ -43,7 +43,7 @@ import traceback
 from collections.abc import Callable, Generator, Iterable, Sequence
 from concurrent.futures import BrokenExecutor, ThreadPoolExecutor
 from contextlib import contextmanager
-from contextvars import ContextVar, copy_context
+from contextvars import Context, ContextVar, copy_context
 from itertools import batched
 from typing import TYPE_CHECKING, Protocol, cast, final, runtime_checkable
 
@@ -239,7 +239,11 @@ class InlineCpuExecutor:
         if not self.pickled:
             return fn()
 
-        return cast("T", _unpack_outcome(_call_pickled(_pickle_call(fn, label)), label))
+        # A worker starts with no context: run its half in an empty one, so a call reading the
+        # tenant, the deadline or log fields fails here as it would there.
+        outcome = Context().run(_call_pickled, _pickle_call(fn, label))
+
+        return cast("T", _unpack_outcome(outcome, label))
 
 
 # ....................... #
