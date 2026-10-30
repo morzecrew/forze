@@ -294,6 +294,7 @@ class TestRegistration:
             _async_row_only,
             functools.partial(_async_row_only),
             _AsyncCall(),
+            functools.partial(_AsyncCall()),
         ],
     )
     def test_an_unsupported_shape_is_refused_where_it_is_registered(self, source: Any) -> None:

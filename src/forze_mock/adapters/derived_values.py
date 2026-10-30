@@ -13,6 +13,7 @@ counter) is what keeps a simulation replayable.
 
 from __future__ import annotations
 
+import functools
 import inspect
 from collections.abc import Callable, Mapping
 from typing import Any, cast
@@ -63,8 +64,13 @@ def as_view_source(source: MockDerivedSource) -> MockDerivedViewSource:
             code="mock.derived.source_shape",
         )
 
-    # The type's ``__call__`` covers an instance whose ``__call__`` is async.
-    if inspect.iscoroutinefunction(source) or inspect.iscoroutinefunction(type(source).__call__):
+    # The type's ``__call__`` covers an instance whose ``__call__`` is async, under any partials.
+    target: object = source
+
+    while isinstance(target, functools.partial):
+        target = cast("functools.partial[object]", target).func
+
+    if inspect.iscoroutinefunction(target) or inspect.iscoroutinefunction(type(target).__call__):
         raise exc.configuration(
             f"A mock derived source must be synchronous; {source!r} is async, and a read "
             "never awaits it.",
