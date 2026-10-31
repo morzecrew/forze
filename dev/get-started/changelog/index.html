@@ -10423,6 +10423,9 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <li>
 <p><strong>A document cache entry that does not decode is a miss.</strong> The read refetches the document and logs a warning instead of failing. Crypto and configuration errors still raise.</p>
 </li>
+<li>
+<p><strong>The Postgres pool no longer hands out connections the server has ended</strong> (<strong>behaviour change</strong>). Each checkout now pings the connection first, one round trip, so a restart or failover no longer fails one request per pooled connection. <code>PostgresConfig(check_on_checkout=False)</code> turns it off.</p>
+</li>
 </ul>
 <h3 id="security">Security<a class="headerlink" href="#security" title="Permanent link">&para;</a></h3>
 <ul>
