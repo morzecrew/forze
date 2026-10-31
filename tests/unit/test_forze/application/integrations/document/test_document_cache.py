@@ -7,7 +7,9 @@ from uuid import UUID
 import pytest
 from pydantic import BaseModel, Field
 
+from forze.application.contracts.crypto import ENCRYPTED_PAYLOAD_KEY
 from forze.application.integrations.document import DocumentCache
+from forze.base.exceptions import CoreException
 from forze.base.primitives import uuid7
 from tests.unit._gateway_codec_helpers import codec_for
 
@@ -374,14 +376,16 @@ async def test_get_read_through_fallback_when_cache_raises() -> None:
 
 
 class _RecordingLogger:
-    """Records the level name of each log call (``error``/``debug``/…)."""
+    """Records the level name and arguments of each log call (``error``/``debug``/…)."""
 
     def __init__(self) -> None:
         self.levels: list[str] = []
+        self.args: list[tuple] = []
 
     def __getattr__(self, name: str):
         def _record(*_a, **_k) -> None:
             self.levels.append(name)
+            self.args.append(_a)
 
         return _record
 
@@ -437,3 +441,90 @@ async def test_aclose_cancels_bg_tasks_and_releases_subscription() -> None:
 
     # Idempotent: a second close finds no live task and no subscription.
     await coord.aclose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "cached",
+    [
+        b"\x00not json",
+        {"id": "not-a-uuid", "rev": 1},
+        {"_xf": {}, "doc": []},
+        {"_xf": [], "doc": {"id": str(_pk), "rev": 1, "payload": "stale"}},
+    ],
+    ids=[
+        "corrupt-bytes",
+        "stale-shape",
+        "envelope-doc-not-a-mapping",
+        "envelope-meta-not-a-mapping",
+    ],
+)
+async def test_get_read_through_undecodable_entry_is_a_miss(monkeypatch, cached) -> None:
+    """An entry that does not decode costs a refetch, never a failed read; the warning
+    names the document, not the payload."""
+
+    from forze.application.integrations.document import cache as cache_module
+
+    backend = AsyncMock()
+    backend.get = AsyncMock(return_value=cached)
+    coord = _coord(cache=backend)
+    rec = _RecordingLogger()
+    monkeypatch.setattr(cache_module, "logger", rec)
+    doc = DocModel(id=_pk, rev=5, payload="fresh")
+    miss = AsyncMock(return_value=doc)
+
+    out = await coord.get_read_through(
+        _pk,
+        fetch_on_cache_fault=AsyncMock(),
+        fetch_on_miss_without_lock=miss,
+    )
+
+    assert out == doc
+    miss.assert_awaited_once()
+    assert "warning" in rec.levels
+    assert all(cached not in args for args in rec.args)
+
+
+@pytest.mark.asyncio
+async def test_get_many_read_through_refetches_an_undecodable_hit() -> None:
+    pk0 = UUID("00000000-0000-0000-0000-000000000001")
+    pk1 = UUID("00000000-0000-0000-0000-000000000002")
+    doc0 = DocModel(id=pk0, rev=1, payload="a")
+    doc1 = DocModel(id=pk1, rev=2, payload="b")
+    backend = AsyncMock()
+    backend.get_many = AsyncMock(return_value=({str(pk0): b"\x00not json"}, [str(pk1)]))
+    coord = _coord(cache=backend)
+    fetched = AsyncMock(return_value=[doc1, doc0])
+
+    out = await coord.get_many_read_through(
+        [pk0, pk1],
+        fetch_many_on_cache_fault=AsyncMock(),
+        fetch_misses_many=fetched,
+    )
+
+    fetched.assert_awaited_once_with([str(pk1), str(pk0)])
+    assert out == [doc0, doc1]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "cached",
+    [
+        {ENCRYPTED_PAYLOAD_KEY: "AAAA"},
+        {"_xf": [], "doc": {ENCRYPTED_PAYLOAD_KEY: "AAAA"}},
+    ],
+    ids=["sealed", "sealed-in-a-malformed-envelope"],
+)
+async def test_get_read_through_sealed_entry_without_keyring_still_fails(cached) -> None:
+    """Only decode failures become misses: a crypto misconfiguration stays loud."""
+
+    backend = AsyncMock()
+    backend.get = AsyncMock(return_value=cached)
+    coord = _coord(cache=backend)
+
+    with pytest.raises(CoreException):
+        await coord.get_read_through(
+            _pk,
+            fetch_on_cache_fault=AsyncMock(),
+            fetch_on_miss_without_lock=AsyncMock(),
+        )

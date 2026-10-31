@@ -38,7 +38,8 @@ class CacheCommandPort(Protocol):  # pragma: no cover
     keeps the configured default.
 
     **Value contract:** values must be JSON-serializable, or pre-encoded
-    ``bytes`` (stored verbatim and returned for the caller to decode).
+    ``bytes`` (stored verbatim and returned as the same ``bytes`` for the
+    caller to decode; JSON values come back parsed).
     Adapters may serialize with any JSON codec — do not rely on key ordering
     or non-JSON types surviving a round trip.
     """

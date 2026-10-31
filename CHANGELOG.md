@@ -41,6 +41,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **`run_cpu` reserves the keyword `isolated`** (**Breaking**). A call that passed `isolated=` through to its function now selects the isolated executor instead; pass that argument with `functools.partial`.
 
+- **The Redis cache returns pre-encoded `bytes` values verbatim, as the mock does** (**Breaking**). It parsed them as JSON. Replicas on different releases miss or parse each other's `bytes` entries, so flush the cache namespace once every replica runs the new release.
+
 ### Fixed
 
 - **`run_cpu` in a request offloads to the runtime's pool instead of running inline.** A runtime scope holds its pool process-wide while open, the oldest scope's when several are. New `hold_cpu_executor`; a closed `ThreadPoolCpuExecutor` refuses work (`cpu_executor_closed`).
@@ -50,6 +52,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Startup accepts an index over `tenant_id` plus the fields for a guarantee on a tenant-aware route.** It keeps the guarantee per tenant, as the mock does, so Postgres and Mongo print that index when it is missing. The Postgres undeclared-index warning no longer suggests naming `tenant_id`, which a spec cannot.
 
 - **A Postgres hard delete refused by a foreign key raises `conflict`, not `not_found`** (**behaviour change**). `kill`/`kill_many` on a row a plain foreign key still references no longer reads as "Reference document not found"; `ON DELETE RESTRICT` maps to `conflict` too.
+
+- **A document cache entry that does not decode is a miss.** The read refetches the document and logs a warning instead of failing. Crypto and configuration errors still raise.
 
 ### Security
 

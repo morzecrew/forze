@@ -6,7 +6,9 @@ summary: What the cache contract gives you beyond read-through — stampede prot
 
 Attaching a `CacheSpec` to a document gives you read-through caching: reads serve
 from the cache, writes invalidate, and a cached read is never stale within the
-contract you opted into. The [Cache reads with Redis](../recipes/cache-reads-with-redis.md)
+contract you opted into. An entry that does not decode — corrupt, or cached under
+an older read-model shape — counts as a miss: the read refetches the document and
+logs a warning. The [Cache reads with Redis](../recipes/cache-reads-with-redis.md)
 recipe is the wiring. This page explains the behaviors the contract layers on top
 — protections you get for free, and knobs you opt into when a read pattern needs
 them. They are backend-agnostic (the mock cache honors them too); where a feature

@@ -13,8 +13,10 @@ is in [Contracts](../../core-concepts/contracts.md).
 
 `ctx.cache(spec)` returns a combined read/write `CachePort`. Keys are strings
 within the spec's namespace. **Values must be JSON-serializable, or
-pre-encoded `bytes`** (stored verbatim, returned for the caller to decode) —
-don't rely on key ordering or non-JSON types surviving a round trip.
+pre-encoded `bytes`.** JSON values come back parsed; `bytes` come back as the
+same bytes on every adapter, for the caller to decode (for example with
+`TypeAdapter.validate_json`) — don't rely on key ordering or non-JSON types
+surviving a round trip.
 
 `CacheSpec` — most fields tune document read-through; the deep behavior is in
 [Caching](../../data-events/caching.md):

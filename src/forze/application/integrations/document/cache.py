@@ -41,6 +41,20 @@ from .l1 import L1Store, LruTtlStore, register_l1_store
 CACHE_PAYLOAD_DOMAIN = "cache"
 """AAD domain isolating cache-entry ciphertext from other contexts (messaging, etc.)."""
 
+# ....................... #
+
+
+def _require_mapping(value: object) -> JsonDict:
+    """*value* as a document mapping, or ``TypeError`` — a decode failure — for anything else."""
+
+    if not isinstance(value, dict):
+        raise TypeError("Cached document body is not a mapping")
+
+    return cast(JsonDict, value)
+
+
+# ....................... #
+
 
 @runtime_checkable
 class _ReadModelWithIdAndRev(Protocol):
@@ -466,14 +480,47 @@ class DocumentCache[R: BaseModel]:
         sealed document body if present."""
 
         if isinstance(cached, dict) and "_xf" in cached and "doc" in cached:
-            opened = await self._open_doc(cached["doc"], pk)
-            return self.read_codec.decode_mapping(opened), cast(JsonDict, cached["_xf"])
+            meta = cached["_xf"]  # pyright: ignore[reportUnknownVariableType]
+            # Opened first, so a sealed body without a keyring still fails loudly.
+            opened = _require_mapping(await self._open_doc(cached["doc"], pk))
+
+            # A malformed envelope is a decode failure, so the caller treats it as a miss.
+            if not isinstance(meta, dict):
+                raise TypeError("Cached refresh metadata is not a mapping")
+
+            return self.read_codec.decode_mapping(opened), cast(JsonDict, meta)
 
         if is_encrypted_payload(cached):  # pyright: ignore[reportUnknownArgumentType]
-            opened = await self._open_doc(cached, pk)
+            opened = _require_mapping(await self._open_doc(cached, pk))
             return self.read_codec.decode_mapping(opened), None
 
         return self._decode_from_cache(cached), None
+
+    # ....................... #
+
+    async def _decode_cached_or_miss(
+        self,
+        cached: Any,
+        *,
+        pk: UUID | str,
+    ) -> tuple[R, JsonDict | None] | None:
+        """:meth:`_decode_cached`, or ``None`` — a miss — for an entry that does not decode.
+
+        A corrupt or stale-shaped entry must cost a refetch, not fail the read. Crypto and
+        configuration errors are not decode failures and still propagate.
+        """
+
+        try:
+            return await self._decode_cached(cached, pk=pk)
+
+        except (ValueError, TypeError):
+            logger.warning(
+                "Cache decode failed for '%s' document %s, treating it as a miss",
+                self.document_name,
+                pk,
+            )
+
+            return None
 
     # ....................... #
 
@@ -794,8 +841,10 @@ class DocumentCache[R: BaseModel]:
 
             return await fetch_on_cache_fault()
 
-        if cached is not None:
-            doc, meta = await self._decode_cached(cached, pk=pk)
+        decoded = None if cached is None else await self._decode_cached_or_miss(cached, pk=pk)
+
+        if decoded is not None:
+            doc, meta = decoded
 
             if not self._elects_early_refresh(meta):
                 logger.trace("Retrieved 1 cached '%s' document", self.document_name)
@@ -920,6 +969,18 @@ class DocumentCache[R: BaseModel]:
 
             return await fetch_many_on_cache_fault()
 
+        misses = list(misses)
+        hits_validated: list[R] = []
+
+        for key, value in hits.items():
+            decoded = await self._decode_cached_or_miss(value, pk=key)
+
+            if decoded is None:
+                misses.append(key)
+
+            else:
+                hits_validated.append(decoded[0])
+
         miss_res: list[R] = []
 
         if misses:
@@ -938,9 +999,6 @@ class DocumentCache[R: BaseModel]:
 
             await self.after_commit_or_now(lambda: self.set_many(miss_res, delta=delta))
 
-        hits_validated = [
-            (await self._decode_cached(value, pk=key))[0] for key, value in hits.items()
-        ]
         hits_validated_cast = [cast(_ReadModelWithIdAndRev, x) for x in hits_validated]
         miss_res_cast = [cast(_ReadModelWithIdAndRev, x) for x in miss_res]
 

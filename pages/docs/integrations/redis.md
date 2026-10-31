@@ -309,6 +309,15 @@ it is a server setting forze cannot check.
 - **TTLs are logical.** `CacheSpec` / `IdempotencySpec` TTLs are expiry intents —
   Redis memory eviction can drop keys earlier, so size and policy the server
   accordingly.
+- **Pre-encoded cache values carry a marker.** A `bytes` cache value is stored
+  behind a fixed prefix that starts with a NUL byte, so reads return it
+  verbatim; JSON values are stored as plain JSON. A replica on an older release
+  misses on marked entries, and `bytes` entries it wrote come back parsed, or as
+  a miss, on a newer one. While both releases run, an older replica can also keep
+  serving a value it can still read after a newer one rewrote the entry. To avoid
+  mixed reads, cut over without overlap or point the new release at a fresh cache
+  namespace; otherwise flush the namespace once every replica runs the new
+  release. Document read-through caching accepts both forms.
 - **Idempotency** needs stable keys and a TTL longer than client retries; every
   worker that can handle an operation must share the same namespace.
 - **Routed clients** use `routed_client_lifecycle_step` — don't mix routed and
