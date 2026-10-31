@@ -38,9 +38,11 @@ async def validate_postgres_document_bookkeeping(
 ) -> None:
     """Check write-relation triggers align with ``bookkeeping_strategy``.
 
-    With ``'database'``, a write relation without a ``BEFORE UPDATE … FOR EACH ROW`` trigger
-    is refused, and a history-enabled one without an INSERT trigger is warned about. With
-    ``'application'``, such UPDATE triggers are warned about: they risk double revision bumps.
+    Only enabled triggers count, and on a partitioned write relation only those that fire on
+    every partition. With ``'database'``, a write relation without a
+    ``BEFORE UPDATE … FOR EACH ROW`` trigger is refused, and a history-enabled one without an
+    INSERT trigger is warned about. With ``'application'``, such UPDATE triggers are warned
+    about: they risk double revision bumps.
 
     :raises CoreException: ``internal``, code ``postgres_bookkeeping_validation_failed``,
         when ``'database'`` finds no ``BEFORE UPDATE … FOR EACH ROW`` trigger on the write
@@ -59,9 +61,9 @@ async def validate_postgres_document_bookkeeping(
             if not triggers:
                 raise exc.internal(
                     f"Postgres bookkeeping validation failed for {label!r}: "
-                    f"bookkeeping_strategy='database' requires at least one user "
-                    "BEFORE UPDATE ... FOR EACH ROW trigger on the write relation to bump rev "
-                    f"(for example {relation!r}_bump_rev).",
+                    f"bookkeeping_strategy='database' requires an enabled user "
+                    "BEFORE UPDATE ... FOR EACH ROW trigger on the write relation, or on each "
+                    f"of its partitions, to bump rev (for example {relation!r}_bump_rev).",
                     code="postgres_bookkeeping_validation_failed",
                     details={
                         "document": spec.name,
@@ -79,9 +81,9 @@ async def validate_postgres_document_bookkeeping(
             ):
                 logger.warning(
                     "Postgres bookkeeping for document %r write relation %s.%s: "
-                    "history_enabled=True with bookkeeping_strategy='database', but no trigger "
-                    "fires on INSERT — created documents get no history row, since database "
-                    "triggers must write history under this strategy.",
+                    "history_enabled=True with bookkeeping_strategy='database', but no enabled "
+                    "trigger fires on every INSERT — created documents may get no history row, "
+                    "since database triggers must write history under this strategy.",
                     spec.name,
                     schema,
                     relation,

@@ -869,36 +869,96 @@ class PostgresIntrospector:
 
     # ....................... #
 
+    async def _fetch_covering_triggers(
+        self,
+        schema: str,
+        relation: str,
+        *,
+        tgtype: int,
+    ) -> frozenset[str]:
+        """Return the enabled triggers matching *tgtype* that fire for every row written through
+        *relation*.
+
+        A trigger matches when its ``tgtype`` has every bit of *tgtype*. It is enabled when it
+        fires under the default ``session_replication_role``: ``tgenabled`` ``O`` or ``A``, not
+        disabled (``D``) or replica-only (``R``).
+
+        A partitioned relation runs its row triggers as clones on each leaf partition, where each
+        clone can be disabled on its own. So with partitions, the relation's own statement-level
+        triggers count, and the leaves' row-level ones only when every leaf has one. Without
+        partitions, the relation's own triggers count.
+        """
+
+        await self.require_relation(schema=schema, relation=relation)
+
+        stmt = sql.SQL(
+            """
+            WITH rel AS (
+                SELECT c.oid
+                FROM pg_class c
+                JOIN pg_namespace n ON n.oid = c.relnamespace
+                WHERE n.nspname = {schema}
+                  AND c.relname = {relation}
+            ),
+            members AS (
+                SELECT rel.oid AS relid, true AS own FROM rel
+                UNION ALL
+                SELECT p.relid, false
+                FROM rel, pg_partition_tree(rel.oid) p
+                WHERE p.isleaf AND p.relid <> rel.oid
+            )
+            SELECT m.relid::bigint AS relid, m.own, t.tgname AS trigger_name, t.tgtype
+            FROM members m
+            LEFT JOIN pg_trigger t
+              ON t.tgrelid = m.relid
+             AND NOT t.tgisinternal
+             AND t.tgenabled IN ('O', 'A')
+             AND (t.tgtype & {tgtype}) = {tgtype}
+            """
+        ).format(
+            schema=sql.Placeholder(),
+            relation=sql.Placeholder(),
+            tgtype=sql.Literal(tgtype),
+        )
+
+        rows = await self.client.fetch_all(
+            stmt,
+            [schema, relation],
+            row_factory="dict",
+            commit=False,
+        )
+
+        own: dict[str, int] = {}
+        leaves: dict[int, dict[str, int]] = {}
+
+        for r in rows:
+            bucket = own if r["own"] else leaves.setdefault(int(r["relid"]), {})
+
+            if r["trigger_name"] is not None:
+                bucket[str(r["trigger_name"])] = int(r["tgtype"])
+
+        if not leaves:
+            return frozenset(own)
+
+        # tgtype bit 1 is TRIGGER_TYPE_ROW (pg_trigger.h).
+        names = {name for name, ty in own.items() if not ty & 1}
+        leaf_rows = [{name for name, ty in bucket.items() if ty & 1} for bucket in leaves.values()]
+
+        if all(leaf_rows):
+            names.update(*leaf_rows)
+
+        return frozenset(names)
+
+    # ....................... #
+
     async def _fetch_relation_update_triggers_uncached(
         self,
         schema: str,
         relation: str,
         key: CacheKey,
     ) -> PostgresRelationTriggers:
-        await self.require_relation(schema=schema, relation=relation)
-
         # tgtype bits 1, 2 and 16 are TRIGGER_TYPE_ROW, _BEFORE and _UPDATE (pg_trigger.h).
-        stmt = sql.SQL(
-            """
-            SELECT t.tgname AS trigger_name
-            FROM pg_trigger t
-            JOIN pg_class c ON t.tgrelid = c.oid
-            JOIN pg_namespace n ON c.relnamespace = n.oid
-            WHERE n.nspname = {schema}
-              AND c.relname = {relation}
-              AND NOT t.tgisinternal
-              AND (t.tgtype & 1) <> 0
-              AND (t.tgtype & 2) <> 0
-              AND (t.tgtype & 16) <> 0
-            """
-        ).format(schema=sql.Placeholder(), relation=sql.Placeholder())
-
-        rows = await self.client.fetch_all(
-            stmt,
-            [schema, relation],
-            row_factory="dict",
-        )
-        names = frozenset(str(r["trigger_name"]) for r in rows)
+        names = await self._fetch_covering_triggers(schema, relation, tgtype=1 | 2 | 16)
 
         self.__trigger_lane.store(key, names)
 
@@ -912,10 +972,11 @@ class PostgresIntrospector:
         schema: str | None,
         relation: str,
     ) -> PostgresRelationTriggers:
-        """Return user-visible ``BEFORE UPDATE … FOR EACH ROW`` trigger names on *relation*.
+        """Return the enabled ``BEFORE UPDATE … FOR EACH ROW`` triggers on *relation*.
 
         Only such a trigger can change the row being written, as a revision bump does: a
-        statement-level or ``AFTER`` trigger's returned row is ignored.
+        statement-level or ``AFTER`` trigger's returned row is ignored. On a partitioned
+        relation, the names come back only when every leaf partition has one.
         """
 
         schema = self.__normalize_schema(schema)
@@ -940,39 +1001,19 @@ class PostgresIntrospector:
         schema: str | None,
         relation: str,
     ) -> frozenset[str]:
-        """Return user-visible trigger names on *relation* that fire on INSERT.
+        """Return the enabled triggers that fire on every INSERT into *relation*.
 
         Any timing and level counts: an ``AFTER … FOR EACH STATEMENT`` trigger with a transition
-        table can write a row per inserted row as well as a row-level one can.
+        table can write a row per inserted row as well as a row-level one can. On a partitioned
+        relation, a partition's row triggers count only when every leaf partition has one.
 
         Uncached, for the same reason as :meth:`unique_indexes` — once per relation at startup.
         """
 
         schema = self.__normalize_schema(schema)
-        await self.require_relation(schema=schema, relation=relation)
 
         # tgtype bit 4 is TRIGGER_TYPE_INSERT (pg_trigger.h).
-        stmt = sql.SQL(
-            """
-            SELECT t.tgname AS trigger_name
-            FROM pg_trigger t
-            JOIN pg_class c ON t.tgrelid = c.oid
-            JOIN pg_namespace n ON c.relnamespace = n.oid
-            WHERE n.nspname = {schema}
-              AND c.relname = {relation}
-              AND NOT t.tgisinternal
-              AND (t.tgtype & 4) <> 0
-            """
-        ).format(schema=sql.Placeholder(), relation=sql.Placeholder())
-
-        rows = await self.client.fetch_all(
-            stmt,
-            [schema, relation],
-            row_factory="dict",
-            commit=False,
-        )
-
-        return frozenset(str(r["trigger_name"]) for r in rows)
+        return await self._fetch_covering_triggers(schema, relation, tgtype=4)
 
     # ....................... #
 

@@ -106,7 +106,7 @@ async def test_bookkeeping_database_history_warns_without_insert_trigger() -> No
     intro.insert_triggers.assert_awaited_once_with(schema="public", relation="projects")
     mock_logger.warning.assert_called_once()
     args = mock_logger.warning.call_args.args
-    assert "no trigger fires on INSERT" in args[0]
+    assert "no enabled trigger fires on every INSERT" in args[0]
     assert args[1:] == ("doc", "public", "projects")
 
 

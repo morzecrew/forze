@@ -217,7 +217,8 @@ PostgresLifecycleModule(
   `last_update_at` in the write gateway; `"database"` defers to a
   `BEFORE UPDATE … FOR EACH ROW` trigger you supply. With `history_enabled`, your triggers also write the history row of
   every revision, the created one included; startup validation warns when no trigger on the
-  write relation fires on `INSERT`.
+  write relation fires on `INSERT`. Validation counts only enabled triggers, and on a
+  partitioned table one on the table itself or on every partition.
 - **Routed clients** require `introspector_cache_partition_key` on the deps
   module so the catalog cache partitions by tenant.
 - **Connections the server ended.** A restart, a failover, `pg_terminate_backend` or
