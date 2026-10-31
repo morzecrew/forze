@@ -669,9 +669,10 @@ class HubSearchSpec[M: BaseModel](BaseSpec):
     """Hub-relation columns outside :attr:`model_type` that a search aggregate may also group
     by, measure or name in a per-metric filter (see :attr:`aggregatable_fields`), such as a
     view's computed totals a hit does not return; the search's own filters stay on the read
-    model. None may name a read-model field. Relational only; on the first aggregate, Postgres
-    checks the columns exist and refuses a name its pipeline reserves (such as ``_hub_rank``),
-    and types a metric filter on one by the column. Empty by default."""
+    model. None may name a read-model field. The Postgres and in-memory hubs support it. On
+    the first aggregate, Postgres checks the columns exist and refuses a name its pipeline
+    reserves (such as ``_hub_rank``), and types a metric filter on one by the column; the
+    in-memory hub types it by the values the matched rows hold. Empty by default."""
 
     # ....................... #
 

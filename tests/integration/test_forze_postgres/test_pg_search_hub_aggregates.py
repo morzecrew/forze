@@ -7,6 +7,7 @@ is capped at one row, so an aggregate that measured the capped page set would co
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any
 from uuid import UUID, uuid4
@@ -66,6 +67,8 @@ async def _hub(pg_client: PostgresClient, *, extra: frozenset[str]) -> Any:
     Link ``k`` is in the north when ``k`` is even, holds ``k + 1`` units at 10.5 each. Its
     ``upd_or_quantity`` (an update's quantity, else the listed one) is 2, 4 and 8 for links 1,
     2 and 4, and null for the rest. Its ``upd_meta`` (``jsonb``) is set for links 1 and 4 only.
+    Columns with a declared precision: ``upd_amount`` is ``upd_or_quantity`` times 1.25,
+    ``region_code`` is ``R-<region>``, and ``checked_at`` is ``k + 1`` days into 2026 (UTC).
     """
 
     tag = uuid4().hex[:8]
@@ -90,7 +93,12 @@ async def _hub(pg_client: PostgresClient, *, extra: frozenset[str]) -> Any:
             SELECT l.*, l.quantity * l.price AS price_upd_quantity,
                 COALESCE(l.upd_quantity, l.listed_quantity) AS upd_or_quantity,
                 CASE WHEN l.upd_quantity IS NOT NULL
-                    THEN jsonb_build_object('qty', l.upd_quantity) END AS upd_meta
+                    THEN jsonb_build_object('qty', l.upd_quantity) END AS upd_meta,
+                (COALESCE(l.upd_quantity, l.listed_quantity) * 1.25)::numeric(12, 2)
+                    AS upd_amount,
+                ('R-' || l.region)::varchar(20) AS region_code,
+                (timestamptz '2026-01-01 00:00:00+00' + l.quantity * interval '1 day')
+                    ::timestamptz(3) AS checked_at
             FROM {links} l;
         CREATE INDEX idx_{items} ON {items} USING pgroonga ((ARRAY[name]));
         CREATE INDEX idx_{specs} ON {specs} USING pgroonga ((ARRAY[name]));
@@ -348,3 +356,53 @@ async def test_an_untyped_extra_column_refuses_a_value_operator(
 
     assert refused.value.code == OPERATOR_TYPE_MISMATCH_CODE
     assert "upd_meta" in str(refused.value)
+
+
+PRECISE_EXTRA = frozenset({"upd_amount", "region_code", "checked_at"})
+
+
+async def test_an_extra_column_with_a_declared_precision_is_typed(
+    pg_client: PostgresClient,
+) -> None:
+    """``numeric(12,2)``, ``varchar(20)`` and ``timestamptz(3)`` compare as their types do."""
+
+    hub = await _hub(pg_client, extra=PRECISE_EXTRA)
+
+    def count(predicate: dict[str, Any]) -> dict[str, Any]:
+        return {"$count": {"filter": {"$values": predicate}}}
+
+    page = await hub.aggregate_search(
+        {
+            "$computed": {
+                "mid": count({"upd_amount": {"$gte": "4.5"}}),
+                "exact": count({"upd_amount": {"$eq": 10}}),
+                "north": count({"region_code": {"$in": ["R-north"]}}),
+                "south": count({"region_code": {"$like": "R-s%"}}),
+                "late": count({"checked_at": {"$gt": "2026-01-03T12:00:00Z"}}),
+                "early": count({"checked_at": {"$lt": datetime(2026, 1, 3, 12, tzinfo=UTC)}}),
+            }
+        },
+        "omega",
+    )
+
+    # Omega: links 0 (no amount, north, Jan 2), 1 (2.50, south, Jan 3), 2 (5.00, north,
+    # Jan 4) and 4 (10.00, north, Jan 6).
+    assert [dict(row) for row in page.hits] == [
+        {"mid": 2, "exact": 1, "north": 3, "south": 1, "late": 2, "early": 2}
+    ]
+
+
+async def test_a_varchar_extra_column_takes_no_ordering(pg_client: PostgresClient) -> None:
+    hub = await _hub(pg_client, extra=PRECISE_EXTRA)
+
+    with pytest.raises(CoreException) as refused:
+        await hub.aggregate_search(
+            {
+                "$computed": {
+                    "n": {"$count": {"filter": {"$values": {"region_code": {"$gt": "R"}}}}}
+                }
+            },
+            "omega",
+        )
+
+    assert refused.value.code == OPERATOR_TYPE_MISMATCH_CODE

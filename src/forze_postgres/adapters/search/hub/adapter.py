@@ -51,6 +51,7 @@ from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict
 
 from ....kernel.catalog.introspect import PostgresType
+from ....kernel.catalog.introspect.utils import normalize_pg_type, strip_type_modifier
 from ....kernel.gateways import PostgresGateway
 from ....kernel.sql.query import PsycopgQueryRenderer, compose_aggregate_statement
 from .._aggregate_run import execute_search_aggregate
@@ -91,8 +92,14 @@ by the column's base type. A column of a type missing here (``jsonb``, ``time``,
 only ``$null``: the renderer has no rule to bind a value to it."""
 
 
-def _python_type_of(t: PostgresType) -> Any:
-    scalar = _PYTHON_TYPE_OF[t.base]
+def _python_type_of(t: PostgresType) -> Any | None:
+    """The Python type of column type *t*, or ``None`` for one :data:`_PYTHON_TYPE_OF` does not
+    map. A declared precision does not change the type: ``numeric(12,2)`` is a number."""
+
+    scalar = _PYTHON_TYPE_OF.get(normalize_pg_type(strip_type_modifier(t.base)))
+
+    if scalar is None:
+        return None
 
     return GenericAlias(list, (scalar,)) if t.is_array else scalar
 
@@ -242,10 +249,9 @@ class PostgresHubSearchAdapter[M: BaseModel](  # pyright: ignore[reportIncompati
         # No read-model field types an extra column, so a metric filter's operators on one
         # are checked against the column's own type, as a filter's are against the read model.
         if extras := self.hub_spec.extra_aggregatable_fields:
-            hints = {
-                n: _python_type_of(types[n]) for n in extras if types[n].base in _PYTHON_TYPE_OF
-            }
-            untyped = {n: types[n].base for n in extras if types[n].base not in _PYTHON_TYPE_OF}
+            typed = {n: _python_type_of(types[n]) for n in extras}
+            hints = {n: ann for n, ann in typed.items() if ann is not None}
+            untyped = {n: types[n].base for n, ann in typed.items() if ann is None}
 
             for raw in collect_aggregate_filter_expressions(aggregates, parser=self.filter_parser):
                 expr = self.filter_parser.parse_filter(raw)

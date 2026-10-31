@@ -9,7 +9,11 @@ import pytest
 from pydantic import BaseModel
 
 from forze.application.contracts.crypto import FieldEncryption
-from forze.application.contracts.querying import UNSUPPORTED_QUERY_FEATURE_CODE
+from forze.application.contracts.querying import (
+    UNSUPPORTED_QUERY_FEATURE_CODE,
+    QueryExpr,
+    QueryFilterExpressionParser,
+)
 from forze.application.contracts.search import (
     DEFAULT_SEARCH_CAPABILITIES,
     FULL_SEARCH_CAPABILITIES,
@@ -17,6 +21,9 @@ from forze.application.contracts.search import (
     SearchSpec,
     validate_aggregates_supported,
     validate_search_aggregates,
+)
+from forze.application.contracts.search.aggregates import (
+    _paths_into,  # pyright: ignore[reportPrivateUsage]
 )
 from forze.base.exceptions import CoreException
 
@@ -243,3 +250,21 @@ def test_a_hub_group_or_measure_reaching_into_an_extra_column_is_refused(
 
     assert refused.value.code == UNSUPPORTED_QUERY_FEATURE_CODE
     assert "quantity" in str(refused.value)
+
+
+def test_a_metric_filter_on_a_stored_field_passes() -> None:
+    """A plain search spec has no extra columns to reach into."""
+
+    validate_search_aggregates(
+        _SPEC,
+        {"$computed": {"n": {"$count": {"filter": {"$values": {"category": "books"}}}}}},
+        None,
+        parser=QueryFilterExpressionParser(),
+    )
+
+
+def test_a_node_with_no_field_names_no_path() -> None:
+    class _Leaf(QueryExpr):
+        pass
+
+    assert _paths_into(_Leaf(), frozenset({"quantity"})) == frozenset()

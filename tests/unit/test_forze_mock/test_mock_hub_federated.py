@@ -1,9 +1,11 @@
 """Hub and federated mock search adapters."""
 
+from typing import Any
+
 import pytest
 from pydantic import BaseModel
 
-from forze.application.contracts.querying import QueryFilterLimits
+from forze.application.contracts.querying import OPERATOR_TYPE_MISMATCH_CODE, QueryFilterLimits
 from forze.application.contracts.search import (
     FederatedSearchSpec,
     HubSearchSpec,
@@ -407,6 +409,9 @@ async def test_a_hub_metric_filter_names_an_extra_field() -> None:
                 "total": {"$sum": "quantity"},
                 "missing": {"$count": {"filter": {"$values": {"quantity": {"$null": True}}}}},
                 "large": {"$count": {"filter": {"$values": {"quantity": {"$gte": 2}}}}},
+                # A string bound casts to the stored value's type, as Postgres casts it to the
+                # column's: 8 is at least "4", and 1 and 2 are not.
+                "over": {"$count": {"filter": {"$values": {"quantity": {"$gte": "4"}}}}},
             },
         },
         "omega",
@@ -414,8 +419,52 @@ async def test_a_hub_metric_filter_names_an_extra_field() -> None:
     )
 
     assert [
-        (row["region"], row["total"], row["missing"], row["large"]) for row in page.hits
-    ] == [("north", 9, 0, 1), ("south", 2, 1, 1)]
+        (row["region"], row["total"], row["missing"], row["large"], row["over"])
+        for row in page.hits
+    ] == [("north", 9, 0, 1, 1), ("south", 2, 1, 1, 0)]
+
+
+@pytest.mark.parametrize(
+    ("op", "code"),
+    [
+        ({"$gte": "many"}, "core.precondition"),
+        ({"$like": "8%"}, OPERATOR_TYPE_MISMATCH_CODE),
+    ],
+)
+@pytest.mark.asyncio
+async def test_a_hub_metric_filter_on_an_extra_field_is_typed_by_its_values(
+    op: dict[str, Any], code: str
+) -> None:
+    """An int column takes no text operator, and a bound that is not a number is refused,
+    never read as no match."""
+
+    hub = await _stock_hub()
+
+    with pytest.raises(CoreException) as refused:
+        await hub.aggregate_search(
+            {"$computed": {"n": {"$count": {"filter": {"$values": {"quantity": op}}}}}}, "omega"
+        )
+
+    assert refused.value.code == code
+
+
+@pytest.mark.asyncio
+async def test_an_extra_field_no_match_holds_goes_untyped() -> None:
+    """Stock 5 alone matches and holds no quantity, so nothing types it: no row reaches 4."""
+
+    hub = await _stock_hub()
+
+    page = await hub.aggregate_search(
+        {
+            "$computed": {
+                "bare": {"$count": {"filter": {"$values": {"quantity": {"$null": True}}}}},
+                "over": {"$count": {"filter": {"$values": {"quantity": {"$gte": "4"}}}}},
+            }
+        },
+        "five",
+    )
+
+    assert [(row["bare"], row["over"]) for row in page.hits] == [(1, 0)]
 
 
 @pytest.mark.asyncio

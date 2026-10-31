@@ -191,8 +191,10 @@ An aggregate names an extra column by its own value: a dotted path into one, in 
 measure or a per-metric `filter`, is refused, as is a filter's element quantifier over one.
 Postgres checks a metric filter's operators against the column's type, as it checks a search
 filter against the read model, so `$null`, ranges and `$in` work on a numeric column, and
-`$like` or `$empty` on one is refused. A column of a type with no value rule (`jsonb`,
-`time`, …) takes only `$null`:
+`$like` or `$empty` on one is refused. A declared precision (`numeric(12,2)`) keeps the type,
+and a column of a type with no value rule (`jsonb`, `time`, …) takes only `$null`. The
+in-memory hub types an extra column by the values its matched rows hold, so a string range
+bound casts there as it does on Postgres:
 
 ```python
 await hub.aggregate_search(

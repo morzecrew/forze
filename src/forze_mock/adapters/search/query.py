@@ -148,8 +148,19 @@ def mock_aggregate_page(
 ) -> CountlessPage[JsonDict] | Page[JsonDict]:
     """Group *matched*, then order and window the groups (counting them on request)."""
 
+    extra = spec.extra_aggregatable_fields if isinstance(spec, HubSearchSpec) else frozenset()
+    hints: dict[str, Any] = {}
+
+    for name in extra:
+        # shortcut: the first matched value types the column (Postgres reads the catalog), so
+        # an extra no matched row holds goes untyped; type it from the legs if that matters.
+        value = next((doc[name] for doc in matched if doc.get(name) is not None), None)
+
+        if value is not None:
+            hints[name] = type(value)
+
     rows = _sort_docs(
-        _aggregate_docs(matched, aggregates, parser, spec.model_type),
+        _aggregate_docs(matched, aggregates, parser, spec.model_type, field_type_hints=hints),
         with_group_tiebreakers(aggregates, sorts),
     )
     window: dict[str, Any] = dict(pagination or {})

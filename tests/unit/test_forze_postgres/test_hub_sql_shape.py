@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import datetime
+from decimal import Decimal
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
@@ -13,13 +15,22 @@ pytest.importorskip("psycopg")
 from psycopg import sql
 from pydantic import BaseModel
 
+from forze.application.contracts.querying import (
+    OPERATOR_TYPE_MISMATCH_CODE,
+    QueryFilterExpressionParser,
+)
 from forze.application.contracts.search import HubSearchSpec, SearchSpec
-from forze_postgres.adapters.search.hub.adapter import PostgresHubSearchAdapter
+from forze.base.exceptions import CoreException
+from forze_postgres.adapters.search.hub.adapter import (
+    PostgresHubSearchAdapter,
+    _python_type_of,  # pyright: ignore[reportPrivateUsage]
+    _refuse_untyped,  # pyright: ignore[reportPrivateUsage]
+)
 from forze_postgres.adapters.search.hub.constants import COMBO_ALIAS
 from forze_postgres.adapters.search.hub.plan import HubSearchPlan, build_hub_search_plan
 from forze_postgres.adapters.search.hub.runtime import HubLegRuntime
 from forze_postgres.adapters.search.hub.sql import HubSearchSqlMixin
-from forze_postgres.kernel.catalog.introspect.types import PostgresIndexInfo
+from forze_postgres.kernel.catalog.introspect.types import PostgresIndexInfo, PostgresType
 
 # ----------------------- #
 
@@ -282,3 +293,64 @@ class TestCursorSelectShape:
 
         assert '"comb"."title"' in select
         assert '"comb"."fk_a"' in select
+
+
+# ....................... #
+
+
+class TestExtraColumnTyping:
+    """An extra column's metric-filter operators are checked against its catalog type."""
+
+    @pytest.mark.parametrize(
+        ("base", "is_array", "expected"),
+        [
+            ("numeric(12,2)", False, Decimal),
+            ("varchar", False, str),
+            ("timestamp(3) with time zone", False, datetime),
+            ("timestamp(6) without time zone", False, datetime),
+            ("character(10)", False, str),
+            ("bpchar", False, str),
+            ("int4", True, list[int]),
+            ("time(3) without time zone", False, None),
+            ("jsonb", False, None),
+        ],
+    )
+    def test_a_declared_precision_keeps_the_type(
+        self, base: str, is_array: bool, expected: Any
+    ) -> None:
+        t = PostgresType(base=base, is_array=is_array, not_null=False)
+
+        assert _python_type_of(t) == expected
+
+    # ....................... #
+
+    @pytest.mark.parametrize(
+        "filters",
+        [
+            {"$values": {"meta": {"$null": True}, "title": "x"}},
+            {"$or": [{"$values": {"meta": {"$null": False}}}, {"$values": {"title": "x"}}]},
+            {"$not": {"$values": {"meta": {"$null": True}}}},
+            {"$values": {"tags": {"$any": "x"}}},
+        ],
+    )
+    def test_an_untyped_column_takes_null(self, filters: dict[str, Any]) -> None:
+        _refuse_untyped(QueryFilterExpressionParser.parse(filters), {"meta": "jsonb"})
+
+    # ....................... #
+
+    @pytest.mark.parametrize(
+        "filters",
+        [
+            {"$values": {"title": "x", "meta": {"$eq": 8}}},
+            {"$or": [{"$values": {"title": "x"}}, {"$values": {"meta": {"$gt": 1}}}]},
+            {"$not": {"$values": {"meta": {"$in": [1]}}}},
+            {"$fields": {"meta": {"$eq": "title"}}},
+            {"$fields": {"title": {"$eq": "meta"}}},
+        ],
+    )
+    def test_an_untyped_column_refuses_a_value_operator(self, filters: dict[str, Any]) -> None:
+        with pytest.raises(CoreException) as refused:
+            _refuse_untyped(QueryFilterExpressionParser.parse(filters), {"meta": "jsonb"})
+
+        assert refused.value.code == OPERATOR_TYPE_MISMATCH_CODE
+        assert "meta" in str(refused.value)
