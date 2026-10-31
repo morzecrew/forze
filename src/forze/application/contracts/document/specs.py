@@ -1,7 +1,7 @@
 """Specifications for document models and storage layout."""
 
 import functools
-from collections.abc import Iterable, Iterator, Mapping, Sequence
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from datetime import datetime
 from types import UnionType
 from typing import Annotated, Any, Generic, TypeAliasType, TypeVar, Union, get_args, get_origin
@@ -370,6 +370,7 @@ def serialization_keys(
     domain: type[Document],
     scope: str,
     tenant: UUID | None,
+    as_stored: Callable[[dict[str, Any]], Mapping[str, Any]] | None = None,
 ) -> list[int]:
     """The lock keys a write for each of *owners* takes, sorted and without repeats.
 
@@ -383,6 +384,8 @@ def serialization_keys(
     :param domain: The domain model, whose fields carry the key.
     :param scope: The spec's name, which every key carries.
     :param tenant: The tenant every key carries, or ``None`` for a spec without tenancy.
+    :param as_stored: Each owner's validated values as the store keeps them, where it rounds or
+        pads them, so a key is the one its writes take; ``None`` where it keeps them as they are.
     :returns: The keys, in the order a holder takes them.
     :raises CoreException: ``configuration`` when nothing is declared, when no owner is named,
         when an owner's fields are not exactly the fields of a declared key, or when a key
@@ -412,8 +415,14 @@ def serialization_keys(
             )
 
         _refuse_unholdable(domain, declared.key, scope=scope)
-        values = [_stored_as(domain, f).validate_python(owner[f]) for f in declared.key]
-        keys.add(advisory_lock_key(scope, tenant, *declared.key, *values))
+        values = {f: _stored_as(domain, f).validate_python(owner[f]) for f in declared.key}
+
+        if as_stored is not None:
+            values = dict(as_stored(values))
+
+        keys.add(
+            advisory_lock_key(scope, tenant, *declared.key, *(values[f] for f in declared.key))
+        )
 
     return sorted(keys)
 

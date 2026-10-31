@@ -172,7 +172,7 @@ PostgresLifecycleModule(
 - **Values a column rounds or pads.** An update compares a value as its column stores it, so
   resending an unchanged one writes nothing: `timestamp(p)`, `timestamptz(p)`, `time(p)` and
   `timetz(p)` round to their precision, `numeric(p,s)` to its scale, `real` to single precision,
-  and `char(n)` pads with blanks. The limits:
+  and `char(n)` pads with blanks. A `SerializedBy` key locks on that stored value too. The limits:
 
     - A `time(p)` value that rounds up to `24:00:00` is compared as sent: Postgres stores it, and
       psycopg cannot read it back.

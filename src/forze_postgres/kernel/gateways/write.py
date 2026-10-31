@@ -622,10 +622,11 @@ class PostgresWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
         if not self.serialized_by:
             return
 
+        column_types = await self.column_types()
         stmt = sql.SQL("SELECT pg_advisory_xact_lock({})").format(sql.Placeholder())
         held: set[int] = set()
 
-        while wanted := sorted(self._owner_keys(await touched()) - held):
+        while wanted := sorted(self._owner_keys(await touched(), column_types) - held):
             for key in wanted:
                 await self.client.execute(stmt, [key])
                 held.add(key)
@@ -648,6 +649,7 @@ class PostgresWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
             domain=self.model_type,
             scope=self.serialization_scope,
             tenant=self.require_tenant_if_aware() if self.tenant_aware else None,
+            as_stored=partial(_as_stored, column_types=await self.column_types()),
         )
         stmt = sql.SQL("SELECT pg_advisory_xact_lock({})").format(sql.Placeholder())
 
@@ -662,18 +664,22 @@ class PostgresWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
 
         await self._serialize(fixed)
 
-    def _owner_keys(self, rows: Sequence[Any]) -> set[int]:
-        """The lock keys *rows* contend on — derived as the in-memory store derives them."""
+    def _owner_keys(self, rows: Sequence[Any], column_types: PostgresColumnTypes) -> set[int]:
+        """The lock keys *rows* contend on — derived as the in-memory store derives them, from
+        each value as its column stores it (:func:`_as_stored`): a row a write sends finer than
+        the column keeps is the owner a stored row reads back as."""
 
         tenant = self.require_tenant_if_aware() if self.tenant_aware else None
         keys: set[int] = set()
 
         for guarantee in self.serialized_by:
             for row in rows:
-                values = [
-                    row.get(field) if isinstance(row, Mapping) else getattr(row, field, None)
+                sent = {
+                    field: row.get(field) if isinstance(row, Mapping) else getattr(row, field, None)
                     for field in guarantee.key
-                ]
+                }
+                stored = _as_stored(sent, column_types)
+                values = [stored[field] for field in guarantee.key]
                 keys.add(
                     advisory_lock_key(self.serialization_scope, tenant, *guarantee.key, *values)
                 )

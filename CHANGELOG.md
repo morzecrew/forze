@@ -33,6 +33,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Postgres no longer rewrites an unchanged value its column rounds or pads.** Updates and upserts compare a value as its `timestamp(p)`, `timestamptz(p)`, `time(p)`, `timetz(p)`, `numeric(p,s)`, `real` or `char(n)` column stores it, arrays too. A resend no longer bumps `rev` or conflicts at a stale revision.
 
+- **A Postgres `SerializedBy` key locks on the value its column stores.** Two writes whose key values the column rounds or pads alike take one lock, a create's sent value and an update's stored one included, and so does `hold`.
+
 ## [0.18.0] - 2026-10-31
 
 ### Added
