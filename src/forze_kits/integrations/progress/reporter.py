@@ -96,12 +96,13 @@ class RealtimeProgressSink:
     relayed after commit).
 
     Each transition is staged **and flushed**, which is why :attr:`route` has to be a route
-    of this plane's own. Staging buffers per task and a flush closes the route for the rest
-    of that task, so a job that reports ``running`` and later ``succeeded`` from one task —
-    every long sweep — could otherwise stage exactly once. Re-opening the flag before each
-    stage is the sanctioned move on a *dedicated* route (the search-sync marker route does
-    the same); on a shared route it would flush somebody else's staged rows early, so
-    :func:`build_progress_reporter` refuses a route it can tell is shared.
+    of this plane's own. Staging buffers per task and a flush closes the route until the
+    task's next root transaction, so a job that reports ``running`` and later ``succeeded``
+    without one in between — every long sweep — could otherwise stage exactly once.
+    Re-opening the flag before each stage is the sanctioned move on a *dedicated* route (the
+    search-sync marker route does the same); on a shared route it would flush somebody
+    else's staged rows early, so :func:`build_progress_reporter` refuses a route it can tell
+    is shared.
 
     Waiting for the caller's unit of work to flush is not an option here: a job can sit in
     ``waiting`` across the end of the run that paused it (the terminate-and-resume grain),

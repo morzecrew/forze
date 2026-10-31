@@ -212,6 +212,60 @@ async def test_outbox_rollback_discards_staged_rows(
     assert rows == []
 
 
+@pytest.mark.asyncio
+async def test_outbox_staging_follows_each_transaction_in_one_task(
+    pg_client: PostgresClient,
+    outbox_table: str,
+) -> None:
+    """One task, several units of work: each root stages and flushes its own rows (#785).
+
+    A rolled-back root leaves nothing staged for the next one, and a rolled-back savepoint
+    hands the rows its flush wrote back to the root that is still running.
+    """
+
+    outbox_spec = OutboxSpec(name="integration", codec=PydanticModelCodec(_OutboxPayload))
+    pg_module = PostgresDepsModule(
+        client=pg_client,
+        tx={"default"},
+        outboxes={"integration": PostgresOutboxConfig(relation=("public", outbox_table))},
+    )
+    runtime = ExecutionRuntime(deps=DepsRegistry.from_modules(pg_module).freeze())
+
+    async def _stage(label: str) -> None:
+        await ctx.outbox.command(outbox_spec).stage("demo.created", _OutboxPayload(label=label))
+
+    async with runtime.scope():
+        ctx = runtime.get_context()
+
+        async with ctx.tx_ctx.scope("default"):
+            await _stage("first")
+            assert await ctx.outbox.command(outbox_spec).flush() == 1
+
+        with pytest.raises(RuntimeError):
+            async with ctx.tx_ctx.scope("default"):
+                await _stage("rolled-back")
+                raise RuntimeError("abort")
+
+        async with ctx.tx_ctx.scope("default"):
+            await _stage("second")
+
+            with pytest.raises(RuntimeError):
+                async with ctx.tx_ctx.scope("default"):
+                    await _stage("savepoint")
+                    assert await ctx.outbox.command(outbox_spec).flush() == 2
+                    raise RuntimeError("abort savepoint")
+
+            assert await ctx.outbox.command(outbox_spec).flush() == 1
+
+        rows = await pg_client.fetch_all(
+            sql.SQL("SELECT payload FROM {t} ORDER BY created_at").format(
+                t=sql.Identifier("public", outbox_table)
+            )
+        )
+
+    assert [row["payload"]["label"] for row in rows] == ["first", "second"]
+
+
 def test_the_hybrid_context_serves_the_outbox_from_postgres_not_the_mock(
     pg_client: PostgresClient,
     outbox_table: str,

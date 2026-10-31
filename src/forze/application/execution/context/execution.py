@@ -414,6 +414,7 @@ class ExecutionContext:
             self.transaction,
             tx_tracer=tx_tracer_from_runtime(self.deps.runtime_tracer),
             after_commit_error_handler=self.after_commit_error_handler,
+            outbox_staging=self.outbox_staging,
         )
 
 

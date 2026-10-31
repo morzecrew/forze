@@ -36,6 +36,24 @@ In a real handler you'd attach `outbox_flush_tx_on_success_factory` to the
 operation so the flush fires automatically on transaction success, rather than
 calling `flush()` by hand.
 
+A flush closes the route for the rest of its transaction: staging after it raises,
+savepoints included, because nothing would write those events. The next root
+transaction reopens the route, so one task can run one unit of work after another.
+Events still staged when a transaction commits without a flush stay staged, and the
+task's next flush writes them. A transaction or savepoint that rolls back drops the
+events it staged and stages again the ones its flush wrote. On Mongo a nested scope
+is not a savepoint, so its writes, events included, stay in the transaction, and
+that second flush relies on the outbox skipping an event id it already holds.
+
+This follows the scopes `ctx.tx_ctx.scope` opens, as operations do. A transaction
+opened on the raw manager, `ctx.transaction(route).transaction()`, bypasses it:
+nothing reopens the route or restores what was staged.
+
+Staging belongs to the task that stages. A task started from another, with
+`asyncio.gather` or `create_task`, begins with a copy of what that task had staged,
+and what it stages afterwards never reaches the parent, so flush in the task that
+stages.
+
 ## Relay to the broker
 
 A relay claims staged rows and publishes them to the queue, returning what it did:

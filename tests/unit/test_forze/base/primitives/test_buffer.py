@@ -1,5 +1,7 @@
 """Unit tests for forze.base.primitives.buffer."""
 
+import asyncio
+
 import pytest
 
 from forze.base.primitives.buffer import ContextualBuffer
@@ -19,11 +21,26 @@ class TestContextualBuffer:
         buf.push([1, 2])
         assert buf.peek() == [1, 2]
 
-    def test_push_multiple_extends_in_place(self) -> None:
+    def test_push_multiple_appends_in_order(self) -> None:
         buf = ContextualBuffer[int]()
         buf.push([1])
         buf.push([2, 3])
         assert buf.peek() == [1, 2, 3]
+
+    async def test_a_child_task_and_its_parent_never_see_each_others_pushes(self) -> None:
+        buf = ContextualBuffer[int]()
+        buf.push([1])
+
+        async def _child() -> list[int]:
+            buf.push([2])
+
+            return buf.peek()
+
+        child = asyncio.create_task(_child())
+        buf.push([3])
+
+        assert await child == [1, 2]
+        assert buf.peek() == [1, 3]
 
     def test_clear_empties_buffer(self) -> None:
         buf = ContextualBuffer[int]()

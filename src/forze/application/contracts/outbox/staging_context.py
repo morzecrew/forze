@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+from contextlib import contextmanager
 from contextvars import ContextVar
 
 import attrs
@@ -21,7 +23,10 @@ class OutboxStagingContext:
     :class:`~forze.base.primitives.ContextualBuffer` and flushed flag, so one
     route's flush never pops or blocks another route's staged rows. Both the
     buffer contents and the flushed flag are additionally scoped per async
-    task via :class:`~contextvars.ContextVar`.
+    task via :class:`~contextvars.ContextVar`, and follow the transaction scopes
+    the task opens (see :meth:`transaction_scope`). A task started from another
+    begins with a copy of what that one had staged; what it stages afterwards is
+    its own, so it must flush it itself.
 
     The per-route buffers create per-instance ``ContextVar``s. This is intentional and
     safe because an ``OutboxStagingContext`` is a per-runtime-scope singleton (one per
@@ -91,6 +96,49 @@ class OutboxStagingContext:
             )
 
         var.set(value)
+
+    # ....................... #
+
+    @contextmanager
+    def transaction_scope(self, *, root: bool) -> Iterator[None]:
+        """Scope staging to one transaction scope of the current task.
+
+        A *root* scope is a new unit of work: it reopens every route's flushed flag, so one
+        task can run one transaction after another and each can stage and flush. Events still
+        staged when a transaction commits without a flush stay staged, and the task's next
+        flush writes them. A nested scope (a savepoint) leaves the flags alone — a route its
+        root already flushed stays closed, as rows staged after that flush would never be
+        written.
+
+        A scope that exits with an exception rolled back, so it restores the buffers and flags
+        it found on entry: the events it staged are discarded, and those its flush wrote in
+        the rolled-back transaction are staged again for the transaction still running.
+
+        :param root: Whether the scope is a root transaction rather than a savepoint.
+        """
+
+        # Copied up front: the dicts may grow while the scope runs (a first stage on a route).
+        buffers = {route: list(buffer.peek()) for route, buffer in list(self._buffers.items())}
+        flushed = {route: var.get() for route, var in list(self._flushed_vars.items())}
+
+        if root:
+            for var in list(self._flushed_vars.values()):
+                var.set(False)
+
+        try:
+            yield
+
+        except BaseException:
+            # Buffers are copy-on-write, so this changes the current task's alone: a task
+            # started from it keeps whatever it staged, and flushes that itself.
+            for route, buffer in list(self._buffers.items()):
+                buffer.clear()
+                buffer.push(buffers.get(route, []))
+
+            for route, var in list(self._flushed_vars.items()):
+                var.set(flushed.get(route, False))
+
+            raise
 
     # ....................... #
 
