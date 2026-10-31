@@ -1273,6 +1273,30 @@ class DocumentSpec(BaseSpec, Generic[R, D, C, U]):
             what rules it out.
         """
 
+        key = None if updates is None else frozenset(updates)
+        reasons = self._set_based_refusals.get(key)
+
+        if reasons is None:
+            reasons = self._set_based_refusals[key] = self.__set_based_reasons(key)
+
+        if not reasons:
+            return
+
+        raise exc.configuration(
+            f"Document {self.name!r} cannot upsert set-based: {', '.join(reasons)} need the "
+            "domain path; call upsert_many without set_based.",
+            code="set_based_upsert_unsupported",
+            details={"spec": str(self.name), "reasons": list(reasons)},
+        )
+
+    @functools.cached_property
+    def _set_based_refusals(self) -> dict[frozenset[type[BaseModel]] | None, tuple[str, ...]]:
+        """What rules a set-based upsert out, per set of update types asked about so far: it
+        reads only the frozen spec and the types, so each set is worked out once."""
+
+        return {}
+
+    def __set_based_reasons(self, updates: frozenset[type[BaseModel]] | None) -> tuple[str, ...]:
         reasons: list[str] = []
 
         if self.history_enabled:
@@ -1311,7 +1335,7 @@ class DocumentSpec(BaseSpec, Generic[R, D, C, U]):
             update_cmd = self.write.get("update_cmd")
 
             if updates is None:
-                updates = () if update_cmd is None else (update_cmd,)
+                updates = frozenset() if update_cmd is None else frozenset({update_cmd})
 
             written = list(updates)
 
@@ -1349,15 +1373,7 @@ class DocumentSpec(BaseSpec, Generic[R, D, C, U]):
                         f"update fields the domain derives, merges or refuses ({', '.join(merged)})"
                     )
 
-        if not reasons:
-            return
-
-        raise exc.configuration(
-            f"Document {self.name!r} cannot upsert set-based: {', '.join(reasons)} need the "
-            "domain path; call upsert_many without set_based.",
-            code="set_based_upsert_unsupported",
-            details={"spec": str(self.name), "reasons": reasons},
-        )
+        return tuple(reasons)
 
     # ....................... #
 

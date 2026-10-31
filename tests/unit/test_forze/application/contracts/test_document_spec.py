@@ -1250,6 +1250,49 @@ def test_a_set_based_upsert_is_judged_on_the_update_types_it_writes() -> None:
     ]
 
 
+def test_a_set_based_verdict_is_worked_out_once_per_set_of_update_types(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Every call of a bulk load asks again; the answer is kept per set of update types, in
+    any order, and a refusal is raised afresh each time."""
+
+    import forze.application.contracts.document.specs as specs
+
+    seen: list[type[Any]] = []
+    validated = specs._validated_fields
+
+    def counted(domain: type[Any]) -> frozenset[str]:
+        seen.append(domain)
+        return validated(domain)
+
+    monkeypatch.setattr(specs, "_validated_fields", counted)
+    spec = DocumentSpec(
+        name="doc",
+        read=_Read,
+        write=DocumentWriteTypes(
+            domain=_TaggedDomain, create_cmd=_TaggedCreate, update_cmd=_PydanticUpdate
+        ),
+    )
+
+    for _ in range(3):
+        spec.require_set_based_upsert({_PydanticUpdate})
+        spec.require_set_based_upsert()
+
+        with pytest.raises(CoreException) as refused:
+            spec.require_set_based_upsert([_TaggedCreate, _PydanticUpdate])
+
+        refused.value.details["reasons"].clear()
+        spec.require_set_based_upsert([_PydanticUpdate])
+
+    with pytest.raises(CoreException) as again:
+        spec.require_set_based_upsert({_PydanticUpdate, _TaggedCreate})
+
+    assert again.value.details["reasons"] == [
+        "update fields the domain derives, merges or refuses (tags)"
+    ]
+    assert len(seen) == 3
+
+
 # ....................... #
 
 
