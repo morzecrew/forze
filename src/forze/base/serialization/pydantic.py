@@ -581,6 +581,7 @@ def pydantic_transform_many[Out: BaseModel](
     *,
     mode: Literal["json", "python"] = "python",
     exclude: ModelDumpExcludeOptions | None = None,
+    update: Sequence[JsonDict] | None = None,
 ) -> list[Out]:
     """Batch model-to-model transformation.
 
@@ -589,11 +590,17 @@ def pydantic_transform_many[Out: BaseModel](
     holds both the dumped dicts and the output models. For very large batches,
     prefer :func:`pydantic_validate_many_batched` / :func:`pydantic_dump_many_batched`
     or a domain-specific streaming pipeline.
+
+    :param update: Per model, positionally, fields set on its dump before it is validated.
     """
 
     if exclude is None:
         exclude = {"unset": True}
     dumps = pydantic_dump_many(models, mode=mode, exclude=exclude)
+
+    if update is not None:
+        for dump, fields in zip(dumps, update, strict=True):
+            dump.update(fields)
 
     return pydantic_validate_many(cls, dumps)
 

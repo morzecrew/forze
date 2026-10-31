@@ -876,10 +876,11 @@ class EncryptingModelCodec[T](ModelCodec[T, Any]):
         *,
         mode: Literal["json", "python"] = "python",
         exclude: ModelDumpExcludeOptions | None = None,
+        update: Sequence[JsonDict] | None = None,
     ) -> list[T]:
         if exclude is None:
             exclude = {"unset": True}
-        return self.inner.transform_many(sources, mode=mode, exclude=exclude)
+        return self.inner.transform_many(sources, mode=mode, exclude=exclude, update=update)
 
     @property
     def materialized(self) -> frozenset[str]:

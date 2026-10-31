@@ -174,6 +174,7 @@ class PydanticModelCodec[T: BaseModel](ModelCodec[T, BaseModel]):
         *,
         mode: Literal["json", "python"] = "python",
         exclude: ModelDumpExcludeOptions | None = None,
+        update: Sequence[JsonDict] | None = None,
     ) -> list[T]:
         if exclude is None:
             exclude = {"unset": True}
@@ -182,6 +183,7 @@ class PydanticModelCodec[T: BaseModel](ModelCodec[T, BaseModel]):
             sources,
             mode=mode,
             exclude=exclude,
+            update=update,
         )
 
     # ....................... #
