@@ -264,3 +264,30 @@ async def test_insert_triggers_lists_user_insert_triggers_only(
     )
 
     assert await intro.insert_triggers(schema="public", relation=t) == frozenset({f"{t}_hist"})
+
+
+@pytest.mark.asyncio
+async def test_update_triggers_lists_row_level_before_update_only(
+    pg_client: PostgresClient,
+) -> None:
+    """Only a BEFORE UPDATE row trigger can bump ``rev``, so only one is listed."""
+    suf = uuid4().hex[:12]
+    t = f"intro_utrg_{suf}"
+    fn = f"intro_utrg_fn_{suf}"
+    await pg_client.execute(
+        f"""
+        CREATE TABLE {t} (id int PRIMARY KEY, rev int NOT NULL);
+        CREATE FUNCTION {fn}() RETURNS trigger AS $$ BEGIN RETURN NEW; END; $$ LANGUAGE plpgsql;
+        CREATE TRIGGER {t}_bi BEFORE INSERT ON {t} FOR EACH ROW EXECUTE FUNCTION {fn}();
+        CREATE TRIGGER {t}_au AFTER UPDATE ON {t} FOR EACH ROW EXECUTE FUNCTION {fn}();
+        CREATE TRIGGER {t}_bus BEFORE UPDATE ON {t}
+        FOR EACH STATEMENT EXECUTE FUNCTION {fn}();
+        CREATE TRIGGER {t}_bu BEFORE UPDATE ON {t} FOR EACH ROW EXECUTE FUNCTION {fn}();
+        """
+    )
+
+    intro = PostgresIntrospector(client=pg_client)
+
+    assert await intro.get_relation_update_triggers(schema="public", relation=t) == frozenset(
+        {f"{t}_bu"}
+    )

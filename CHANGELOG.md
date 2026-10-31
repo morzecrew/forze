@@ -19,6 +19,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Postgres startup no longer warns about every history document on the `database` bookkeeping strategy.** It warns only when no trigger on the write relation fires on `INSERT`, so created documents would get no history row.
 
+- **Postgres bookkeeping validation counts only `BEFORE UPDATE … FOR EACH ROW` triggers** (**behaviour change**). Startup now refuses a `database`-strategy write relation whose only trigger is `BEFORE INSERT` or statement-level, and `application` no longer warns of double revision bumps for those.
+
 ## [0.18.0] - 2026-10-31
 
 ### Added

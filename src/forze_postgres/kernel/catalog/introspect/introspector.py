@@ -877,6 +877,7 @@ class PostgresIntrospector:
     ) -> PostgresRelationTriggers:
         await self.require_relation(schema=schema, relation=relation)
 
+        # tgtype bits 1, 2 and 16 are TRIGGER_TYPE_ROW, _BEFORE and _UPDATE (pg_trigger.h).
         stmt = sql.SQL(
             """
             SELECT t.tgname AS trigger_name
@@ -886,7 +887,9 @@ class PostgresIntrospector:
             WHERE n.nspname = {schema}
               AND c.relname = {relation}
               AND NOT t.tgisinternal
+              AND (t.tgtype & 1) <> 0
               AND (t.tgtype & 2) <> 0
+              AND (t.tgtype & 16) <> 0
             """
         ).format(schema=sql.Placeholder(), relation=sql.Placeholder())
 
@@ -909,7 +912,11 @@ class PostgresIntrospector:
         schema: str | None,
         relation: str,
     ) -> PostgresRelationTriggers:
-        """Return user-visible trigger names on *relation* that fire on UPDATE."""
+        """Return user-visible ``BEFORE UPDATE … FOR EACH ROW`` trigger names on *relation*.
+
+        Only such a trigger can change the row being written, as a revision bump does: a
+        statement-level or ``AFTER`` trigger's returned row is ignored.
+        """
 
         schema = self.__normalize_schema(schema)
         key = self._rel_key(schema, relation)
