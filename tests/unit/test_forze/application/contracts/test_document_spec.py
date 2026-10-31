@@ -1,7 +1,7 @@
 """Tests for :class:`~forze.application.contracts.document.DocumentSpec`."""
 
 from datetime import datetime
-from typing import Annotated, Any, Literal, TypedDict
+from typing import Annotated, Any, ClassVar, Literal, TypedDict
 from uuid import UUID
 
 import pytest
@@ -1460,6 +1460,46 @@ class TestReferenceMismatches:
         assert child.reference_mismatches(_composite_reference(), parent) == [
             "'stages' does not store 'source_id'"
         ]
+
+    _BY_SOURCE = Reference(
+        fields=("source_id",), references=("source_id",), spec="stages", on_delete="cascade"
+    )
+
+    @pytest.mark.parametrize(
+        "guarantees",
+        [
+            (),
+            (UniqueTogether(fields=("source_id", "rev")),),  # not exactly the fields
+            (UniqueTogether(fields=("source_id",), where={"$values": {"rev": 1}}),),
+            (UniqueTogether(fields=("source_id",), holds="commit"),),
+        ],
+    )
+    def test_referenced_fields_without_id_must_be_unique_on_the_parent(
+        self, guarantees: tuple[UniqueTogether, ...]
+    ) -> None:
+        # Not unique, a row names several parent rows, and Postgres creates no key onto them.
+        parent = self._stages(guarantees=guarantees)
+
+        assert _composite(self._BY_SOURCE).reference_mismatches(self._BY_SOURCE, parent) == [
+            "'stages' declares no unfiltered UniqueTogether over ['source_id'] holding always, "
+            "so a row could name several of its rows"
+        ]
+
+    def test_a_declared_or_implied_uniqueness_counts(self) -> None:
+        class _Implying(Document):
+            implied_guarantees: ClassVar[Any] = (UniqueTogether(fields=("source_id",)),)
+            source_id: int
+
+        implied = DocumentSpec(
+            name="stages",
+            read=create_model("_ImplyingRead", __base__=ReadDocument, source_id=(int, ...)),
+            write=DocumentWriteTypes(domain=_Implying, create_cmd=CreateDocumentCmd),
+        )
+        declared = self._stages(guarantees=(UniqueTogether(fields=("source_id",)),))
+        child = _composite(self._BY_SOURCE)
+
+        assert child.reference_mismatches(self._BY_SOURCE, implied) == []
+        assert child.reference_mismatches(self._BY_SOURCE, declared) == []
 
     def test_a_referenced_field_the_parent_seals_is_named(self) -> None:
         child = _composite(_composite_reference())

@@ -175,7 +175,7 @@ def _refuse_stranded(
                     raise _restricted(
                         f"A delete would clear {sorted(cleared & set(references))} on a row of "
                         f"{name!r} while rows of {child!r} reference it through "
-                        f"{_through(fields)!r}.",
+                        f"{_through(fields)!r}, as under ON UPDATE NO ACTION.",
                         child=child,
                         fields=fields,
                         parent=name,

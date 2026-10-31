@@ -75,8 +75,9 @@ def reconcile_specs(
       an export driven by it carries nothing while reporting success.
     - **An edge points at a spec that is not in the inventory.**
     - **A document's** :class:`~forze.application.contracts.guarantees.Reference` **names a
-      document spec that is not in the inventory, or fields of it that its rows cannot match**
-      (see :meth:`~forze.application.contracts.document.DocumentSpec.reference_mismatches`).
+      document spec that is not in the inventory, or fields of it that its rows cannot match
+      or that are not unique on it** (see
+      :meth:`~forze.application.contracts.document.DocumentSpec.reference_mismatches`).
 
     **The routeless-provider gap and its second half:** a *plain* (routeless) provider — one
     object serving every route of a key, the shape of the mock backend *and* of most

@@ -456,7 +456,8 @@ def test_a_composite_reference_typed_apart_from_its_parent_is_a_failure() -> Non
         source_id: int
 
     def _stages(source: type) -> DocumentSpec[Any, Any, Any, Any]:
-        stage = create_model("_Stage", id=(str, ...), source_id=(source, ...))
+        # `id` typed as `stage_id` is, so the pair holding it is a valid one.
+        stage = create_model("_Stage", id=(UUID, ...), source_id=(source, ...))
 
         return DocumentSpec(
             name="stages",
@@ -486,6 +487,19 @@ def test_a_composite_reference_typed_apart_from_its_parent_is_a_failure() -> Non
         reconcile_specs(SpecRegistry().register(lines, _stages(str)).freeze(), frames)
 
     assert reconcile_specs(SpecRegistry().register(lines, _stages(int)).freeze(), frames) == ()
+
+    # Without `id`, the referenced fields must be unique on the parent too.
+    by_source = attrs.evolve(
+        lines,
+        guarantees=(
+            Reference(
+                fields=("source_id",), references=("source_id",), spec="stages", on_delete="cascade"
+            ),
+        ),
+    )
+
+    with pytest.raises(CoreException, match="declares no unfiltered UniqueTogether"):
+        reconcile_specs(SpecRegistry().register(by_source, _stages(int)).freeze(), frames)
 
 
 # ----------------------- #

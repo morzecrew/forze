@@ -278,8 +278,11 @@ Reference(
 A row names a parent when every field holds the paired parent value, an aware datetime compared
 as its instant; a row holding a null in any of them names nothing, as under the key's
 `MATCH SIMPLE`. A field paired with `id` must be a
-`UUID`. A field paired with another parent field must have that field's type, `None` aside,
-which a spec catalogue checks once it holds both specs.
+`UUID`. A field paired with another parent field must have that field's type, `None` aside.
+Referenced fields without `id` must be unique on the parent, through an unfiltered
+`UniqueTogether` over exactly them that holds always, declared or implied by its domain model;
+on a tenant-scoped parent that uniqueness is per tenant, as the key beside `tenant_id` is. A
+spec catalogue checks both once it holds both specs.
 
 `"cascade"` deletes them too, and their own referencing rows in turn. `"restrict"` refuses the
 delete with `conflict` while any remain. `"set_null"` clears every field of the reference, or
@@ -287,10 +290,12 @@ only those `set_null_fields` names, as `SET NULL (stage_id)` clears the stage an
 source; each cleared field must accept `None`. The cleared row keeps the child's guarantees, so
 one it would break refuses the delete with the write's `conflict`. Clearing a field that another
 `Reference` keys on refuses it too while a row names the old value, as Postgres refuses that
-update under a key with no `ON UPDATE` action. Only `kill` and `kill_many`
-apply it: a soft delete is an update and leaves the rows alone. On Postgres the foreign key does
-the work. The in-memory store does the same inside the transaction's view, so a rollback
-restores the parent and its children together.
+update under the default `ON UPDATE NO ACTION`. No other `ON UPDATE` action is modelled: a key
+declaring `ON UPDATE CASCADE` or `SET NULL` passes the change on where the in-memory store
+refuses, and startup does not check it. Only `kill` and `kill_many` apply a reference: a soft
+delete is an update and leaves the rows alone. On Postgres the foreign key does the work. The
+in-memory store does the same inside the transaction's view, so a rollback restores the parent
+and its children together.
 It plans the whole cascade first, so a `restrict` anywhere in it refuses the delete with nothing
 removed. It plans from the transaction's view, so under snapshot isolation a child another
 transaction committed meanwhile survives, where Postgres's referential check would still find

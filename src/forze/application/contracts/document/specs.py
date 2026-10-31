@@ -941,11 +941,32 @@ class DocumentSpec(BaseSpec, Generic[R, D, C, U]):
         aside): a value of another type never equals it. ``id`` is left to the declaration's
         own check, since every document stores it as a ``UUID``.
 
-        :returns: One reason per mismatched pair; empty when every pair can match.
+        Referenced fields without ``id`` must also be unique on *parent*: an unfiltered
+        :class:`~forze.application.contracts.guarantees.UniqueTogether` holding always, declared
+        or implied, over exactly those fields in any order. Otherwise a row would name several
+        parent rows, and Postgres creates no foreign key onto such columns. On a tenant-scoped
+        parent that uniqueness is kept per tenant, which a key beside ``tenant_id`` references.
+
+        :returns: One reason per mismatched pair or missing uniqueness; empty when every pair can
+            match.
         """
 
         problems: list[str] = []
         stored = parent._stored_guarantee_fields()  # pyright: ignore[reportPrivateUsage]
+        referenced_set = frozenset(reference.references)
+
+        if ID_FIELD not in referenced_set and not any(
+            isinstance(g, UniqueTogether)
+            and g.where is None
+            and g.holds == "always"
+            and frozenset(g.fields) == referenced_set
+            for g in parent.guarantees
+        ):
+            problems.append(
+                f"{parent.name!r} declares no unfiltered UniqueTogether over "
+                f"{sorted(referenced_set)} holding always, so a row could name several of its "
+                "rows"
+            )
 
         for field, referenced in zip(reference.fields, reference.references, strict=True):
             if referenced == ID_FIELD:
