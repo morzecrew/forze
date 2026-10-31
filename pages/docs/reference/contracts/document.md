@@ -275,8 +275,9 @@ Reference(
 )
 ```
 
-A row names a parent when every field holds the paired parent value; a row holding a null in
-any of them names nothing, as under the key's `MATCH SIMPLE`. A field paired with `id` must be a
+A row names a parent when every field holds the paired parent value, an aware datetime compared
+as its instant; a row holding a null in any of them names nothing, as under the key's
+`MATCH SIMPLE`. A field paired with `id` must be a
 `UUID`. A field paired with another parent field must have that field's type, `None` aside,
 which a spec catalogue checks once it holds both specs.
 

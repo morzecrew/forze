@@ -7,6 +7,7 @@ children listed and colliding with their replacements.
 
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta, timezone
 from typing import Any, Literal
 from uuid import UUID, uuid4
 
@@ -635,6 +636,53 @@ class TestCompositeReference:
         # Refused whole: the revision and the bom are as they were.
         assert await _ids(ctx, REVISIONS) == {revision.id}
         assert (await ctx.doc.query(boms).get(bom.id)).source_id == 7
+
+    async def test_a_datetime_in_the_key_matches_the_instant_in_any_offset(self) -> None:
+        # timestamptz compares instants: 12:00+02:00 and 10:00+00:00 are one key component.
+        class _Edition(Document):
+            effective_at: datetime
+
+        class _EditionRead(ReadDocument):
+            effective_at: datetime
+
+        class _Entry(Document):
+            edition_id: UUID
+            effective_at: datetime
+
+        class _EntryRead(ReadDocument):
+            edition_id: UUID
+            effective_at: datetime
+
+        editions = DocumentSpec(
+            name="editions",
+            read=_EditionRead,
+            write=DocumentWriteTypes(domain=_Edition, create_cmd=_Edition),
+        )
+        entries = DocumentSpec(
+            name="entries",
+            read=_EntryRead,
+            write=DocumentWriteTypes(domain=_Entry, create_cmd=_Entry),
+            guarantees=(
+                Reference(
+                    fields=("edition_id", "effective_at"),
+                    spec="editions",
+                    references=("id", "effective_at"),
+                    on_delete="cascade",
+                ),
+            ),
+        )
+        at = datetime(2026, 6, 1, 12, 0, tzinfo=timezone(timedelta(hours=2)))
+        ctx = context_from_modules(MockDepsModule())
+        edition = await ctx.doc.command(editions).create(_Edition(effective_at=at))
+        command = ctx.doc.command(entries)
+        await command.create(_Entry(edition_id=edition.id, effective_at=at.astimezone(UTC)))
+        later = await command.create(
+            _Entry(edition_id=edition.id, effective_at=at + timedelta(hours=1))
+        )
+
+        await ctx.doc.command(editions).kill(edition.id)
+
+        assert await _ids(ctx, entries) == {later.id}
 
     async def test_a_parent_holding_a_null_is_named_by_nothing(self) -> None:
         ctx = context_from_modules(MockDepsModule())

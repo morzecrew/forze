@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
 from forze.application.contracts.guarantees import Reference
+from forze.application.contracts.querying.internal.matching import instant_key
 from forze.base.exceptions import CoreException, exc
 from forze.base.primitives import JsonDict
 from forze_mock.adapters._mvcc import current_mvcc_tx
@@ -96,17 +97,19 @@ def _partitions(state: MockState, namespace: str) -> Iterator[tuple[str, UUID]]:
 # ....................... #
 
 
-def _key(row: JsonDict, names: tuple[str, ...]) -> tuple[str, ...] | None:
-    """*row*'s values under *names*, as text, or ``None`` when one is null: a null matches
-    nothing, as a foreign key leaves a row holding one unchecked (``MATCH SIMPLE``)."""
+def _key(row: JsonDict, names: tuple[str, ...]) -> tuple[Any, ...] | None:
+    """*row*'s values under *names*, compared as a foreign key compares them, or ``None`` when
+    one is null: a null matches nothing, as a key leaves a row holding one unchecked
+    (``MATCH SIMPLE``)."""
 
     values = [row.get(name) for name in names]
 
     if any(value is None for value in values):
         return None
 
-    # As text, so a UUID still held as one meets its JSON string.
-    return tuple(str(value) for value in values)
+    # A UUID meets its JSON string, as a seeded row holds it; an aware datetime is the instant
+    # it is, as `timestamptz` compares, whatever offset it was written in.
+    return tuple(str(value) if isinstance(value, UUID) else instant_key(value) for value in values)
 
 
 def _stores(
