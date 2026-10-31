@@ -4,9 +4,19 @@ from __future__ import annotations
 
 import asyncio
 import contextvars
+import functools
+import json
+import math
+import os
+import pickle
+import signal
+import sys
 import threading
 import time
+from collections.abc import Iterator
+from concurrent.futures import BrokenExecutor, Future, ThreadPoolExecutor
 from typing import Any
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -14,14 +24,21 @@ from forze.base.exceptions import CoreException, ExceptionKind
 from forze.base.primitives import (
     CancelToken,
     InlineCpuExecutor,
+    InterpreterPoolCpuExecutor,
+    ProcessPoolCpuExecutor,
     ThreadPoolCpuExecutor,
     bind_cpu_executor,
     bind_deadline,
+    bind_isolated_cpu_executor,
     checkpoint,
     current_cpu_executor,
+    current_isolated_cpu_executor,
+    hold_isolated_cpu_executor,
+    isolated_cpu_executor_bound,
     run_cpu,
     run_cpu_map,
 )
+from forze.base.primitives import cpu as cpu_module
 from forze.base.primitives.cpu import _CANCEL
 
 pytestmark = pytest.mark.asyncio
@@ -33,6 +50,21 @@ _probe: contextvars.ContextVar[str] = contextvars.ContextVar("probe", default="u
 
 def _double(x: int) -> int:
     return x * 2
+
+
+class _UnpicklableBack(Exception):
+    """Pickles fine, but unpickling calls ``cls(message)`` and the constructor needs two args."""
+
+    def __init__(self, first: str, second: str) -> None:
+        super().__init__(f"{first} {second}")
+
+
+def _raise_unpicklable_back() -> None:
+    raise _UnpicklableBack("only", "here")
+
+
+def _read_probe() -> str:
+    return _probe.get()
 
 
 # ----------------------- #
@@ -360,3 +392,626 @@ class TestCooperativeCancellation:
                 await task
 
             assert await asyncio.to_thread(observed_cancel.wait, 2.0)
+
+
+# ----------------------- #
+# Isolated executors: stdlib callables only, so a worker process or interpreter can always
+# resolve them (a test module is not importable in a subinterpreter: forze pulls in orjson).
+
+_needs_interpreters = pytest.mark.skipif(
+    sys.version_info < (3, 14), reason="InterpreterPoolExecutor is Python 3.14+"
+)
+
+
+@pytest.fixture(scope="module")
+def process_executor() -> Iterator[ProcessPoolCpuExecutor]:
+    # One shared pool: starting worker processes dominates these tests' cost.
+    executor = ProcessPoolCpuExecutor(max_workers=2)
+    yield executor
+    executor.close()
+
+
+class TestProcessPoolCpuExecutor:
+    async def test_returns_result(self, process_executor: ProcessPoolCpuExecutor) -> None:
+        result = await process_executor.run(functools.partial(math.factorial, 20))
+
+        assert result == math.factorial(20)
+
+    async def test_runs_in_other_processes(self, process_executor: ProcessPoolCpuExecutor) -> None:
+        pids = await asyncio.gather(
+            process_executor.run(os.getpid), process_executor.run(os.getpid)
+        )
+
+        assert os.getpid() not in pids
+
+    async def test_propagates_exception_with_remote_traceback(
+        self, process_executor: ProcessPoolCpuExecutor
+    ) -> None:
+        with pytest.raises(json.JSONDecodeError) as ei:
+            await process_executor.run(functools.partial(json.loads, "not json"))
+
+        assert ei.value.__cause__ is not None
+        assert "decoder.py" in str(ei.value.__cause__)
+
+    async def test_refuses_unpicklable_before_submitting(self) -> None:
+        executor = ProcessPoolCpuExecutor(max_workers=1)
+
+        with pytest.raises(CoreException) as ei:
+            await executor.run(functools.partial(print, threading.Lock()), label="site.fn")
+
+        assert ei.value.kind is ExceptionKind.CONFIGURATION
+        assert ei.value.code == "cpu_offload_not_picklable"
+        assert "site.fn" in str(ei.value)
+        assert executor._pool is None  # refused before the pool was even created
+
+    async def test_close_terminates_an_abandoned_worker(self) -> None:
+        executor = ProcessPoolCpuExecutor(max_workers=1)
+
+        with (
+            bind_isolated_cpu_executor(executor),
+            bind_deadline(0.2),
+            pytest.raises(CoreException) as ei,
+        ):
+            await run_cpu(time.sleep, 30, isolated=True)
+
+        assert ei.value.code == "cpu_offload_deadline"
+        assert executor._pool is not None
+        workers = list(executor._pool._processes.values())
+
+        started = time.monotonic()
+        executor.close()
+        await asyncio.to_thread(lambda: [w.join(10) for w in workers])
+
+        assert time.monotonic() - started < 10
+        assert not any(w.is_alive() for w in workers)
+        assert executor._pool is None
+        executor.close()  # idempotent
+
+    async def test_a_closed_executor_refuses_rather_than_building_a_new_pool(self) -> None:
+        executor = ProcessPoolCpuExecutor(max_workers=1)
+        executor.close()
+
+        with pytest.raises(CoreException) as ei:
+            await executor.run(os.getpid)
+
+        assert ei.value.kind is ExceptionKind.UNAVAILABLE
+        assert ei.value.code == "cpu_executor_closed"
+        assert executor._pool is None
+
+    async def test_first_use_from_two_threads_creates_one_pool(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import concurrent.futures
+
+        real = concurrent.futures.ProcessPoolExecutor
+        created: list[Any] = []
+
+        def slow_pool(**kwargs: Any) -> Any:
+            time.sleep(0.05)  # widen the window between the check and the assignment
+            pool = real(**kwargs)
+            created.append(pool)
+            return pool
+
+        monkeypatch.setattr(concurrent.futures, "ProcessPoolExecutor", slow_pool)
+        executor = ProcessPoolCpuExecutor(max_workers=1)
+        barrier = threading.Barrier(2)
+        seen: list[object] = []
+
+        def first_use() -> None:
+            barrier.wait()
+            seen.append(executor._require_pool())
+
+        threads = [threading.Thread(target=first_use) for _ in range(2)]
+
+        for thread in threads:
+            thread.start()
+
+        for thread in threads:
+            thread.join(timeout=5)
+
+        try:
+            assert len(created) == 1
+            assert seen[0] is seen[1]
+
+        finally:
+            executor.close()
+
+    async def test_an_outcome_that_cannot_come_back_fails_only_its_own_call(self) -> None:
+        executor = ProcessPoolCpuExecutor(max_workers=2)
+
+        try:
+            bad, good = await asyncio.gather(
+                executor.run(_raise_unpicklable_back),
+                executor.run(functools.partial(divmod, 7, 2)),
+                return_exceptions=True,
+            )
+
+            assert good == (3, 1)  # the concurrent call is untouched ...
+            assert isinstance(bad, CoreException)
+            assert bad.code == "cpu_offload_result_not_picklable"
+            assert "_UnpicklableBack" in str(bad.__cause__)  # with the worker's traceback
+            assert await executor.run(os.getpid) != os.getpid()  # ... and the pool still works
+
+        finally:
+            executor.close()
+
+    async def test_a_result_the_worker_cannot_pickle_fails_only_its_own_call(self) -> None:
+        executor = ProcessPoolCpuExecutor(max_workers=1)
+
+        try:
+            with pytest.raises(CoreException) as ei:
+                await executor.run(threading.Lock)
+
+            assert ei.value.code == "cpu_offload_result_not_picklable"
+            assert await executor.run(functools.partial(divmod, 7, 2)) == (3, 1)
+
+        finally:
+            executor.close()
+
+    async def test_dead_worker_fails_its_call_and_the_next_call_gets_a_fresh_pool(self) -> None:
+        executor = ProcessPoolCpuExecutor(max_workers=1)
+
+        try:
+            pid = await executor.run(os.getpid)
+            running = asyncio.ensure_future(executor.run(functools.partial(time.sleep, 30)))
+            await asyncio.sleep(0)  # one loop turn: the call is submitted, not finished
+            assert executor._pool is not None and executor._pool._pending_work_items
+            os.kill(pid, signal.SIGKILL)
+
+            with pytest.raises(CoreException) as ei:
+                await running
+
+            assert ei.value.kind is ExceptionKind.UNAVAILABLE
+            assert ei.value.code == "cpu_offload_worker_lost"
+            assert isinstance(ei.value.__cause__, BrokenExecutor)
+            assert await executor.run(os.getpid) != pid
+
+        finally:
+            executor.close()
+
+    async def test_a_submit_racing_close_is_refused_as_closed(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        executor = ProcessPoolCpuExecutor(max_workers=1)
+        pool = executor._require_pool()
+        executor.close()
+        # The pool handed out just before the close, as a concurrent call would see it.
+        monkeypatch.setattr(ProcessPoolCpuExecutor, "_require_pool", lambda self: pool)
+
+        with pytest.raises(CoreException) as ei:
+            await executor.run(os.getpid)
+
+        assert ei.value.kind is ExceptionKind.UNAVAILABLE
+        assert ei.value.code == "cpu_executor_closed"
+
+    async def test_a_submit_racing_a_dropped_broken_pool_is_a_lost_worker(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        executor = ProcessPoolCpuExecutor(max_workers=1)
+        pool = executor._require_pool()
+        # Another call found the pool broken, dropped it and shut it down meanwhile.
+        executor._pool = None
+        pool.shutdown()
+        monkeypatch.setattr(ProcessPoolCpuExecutor, "_require_pool", lambda self: pool)
+
+        with pytest.raises(CoreException) as ei:
+            await executor.run(os.getpid)
+
+        assert ei.value.code == "cpu_offload_worker_lost"
+
+    async def test_a_submit_error_from_an_open_executor_is_not_relabelled(self) -> None:
+        executor = ProcessPoolCpuExecutor(max_workers=1)
+        executor._require_pool().shutdown()  # not by close(), and still the current pool
+
+        try:
+            with pytest.raises(RuntimeError):
+                await executor.run(os.getpid)
+
+        finally:
+            executor.close()
+
+    async def test_an_abandoned_running_call_logs_one_warning(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        logger = MagicMock()
+        monkeypatch.setattr(cpu_module, "logger", logger)
+        executor = ProcessPoolCpuExecutor(max_workers=1)
+
+        try:
+            with (
+                bind_isolated_cpu_executor(executor),
+                bind_deadline(0.5),
+                pytest.raises(CoreException),
+            ):
+                await run_cpu(time.sleep, 30, isolated=True)
+
+        finally:
+            executor.close()
+
+        logger.warning.assert_called_once()
+        assert logger.warning.call_args.args[1:] == ("sleep",)  # the call site, no arguments
+
+    async def test_close_kills_a_worker_that_ignores_sigterm(self) -> None:
+        executor = ProcessPoolCpuExecutor(max_workers=1)
+        await executor.run(functools.partial(signal.signal, signal.SIGTERM, signal.SIG_IGN))
+
+        with (
+            bind_isolated_cpu_executor(executor),
+            bind_deadline(0.2),
+            pytest.raises(CoreException),
+        ):
+            await run_cpu(time.sleep, 30, isolated=True)
+
+        assert executor._pool is not None
+        workers = list(executor._pool._processes.values())
+        executor.close()
+
+        # Killed by close(), so it is reaped long before the 30 s sleep would end.
+        await asyncio.to_thread(lambda: [w.join(5) for w in workers])
+        assert not any(w.is_alive() for w in workers)
+
+    async def test_a_submit_to_a_broken_pool_drops_it_as_a_lost_worker(self) -> None:
+        executor = ProcessPoolCpuExecutor(max_workers=1)
+        broken = MagicMock(spec=["submit", "shutdown"])
+        broken.submit.side_effect = BrokenExecutor("a worker died")
+        executor._pool = broken
+
+        with pytest.raises(CoreException) as ei:
+            await executor.run(os.getpid)
+
+        assert ei.value.code == "cpu_offload_worker_lost"
+        assert executor._pool is None  # dropped: the next call starts a fresh pool
+        broken.shutdown.assert_called_once_with(wait=False, cancel_futures=True)
+
+    async def test_a_broken_pool_another_call_already_dropped_is_left_alone(self) -> None:
+        executor = ProcessPoolCpuExecutor(max_workers=1)
+        stale = MagicMock(spec=["shutdown"])
+
+        assert executor._broken(stale, "site.fn").code == "cpu_offload_worker_lost"
+        executor.close()
+        assert executor._broken(stale, "site.fn").code == "cpu_executor_closed"
+        stale.shutdown.assert_not_called()
+
+    async def test_close_without_terminate_workers_terminates_then_kills(self) -> None:
+        # Python 3.13's pool has no terminate_workers(): close() stops the workers itself.
+        executor = ProcessPoolCpuExecutor(max_workers=1)
+        stubborn = MagicMock(spec=["is_alive", "terminate", "join", "kill"])
+        exited = MagicMock(spec=["is_alive", "terminate", "join", "kill"])
+        stubborn.is_alive.return_value = True  # ignores SIGTERM
+        exited.is_alive.return_value = False
+        pool = MagicMock(spec=["_shutdown_lock", "_processes", "shutdown"])
+        pool._shutdown_lock = threading.Lock()
+        pool._processes = {1: stubborn, 2: exited}
+        executor._pool = pool
+
+        executor.close()
+
+        pool.shutdown.assert_called_once_with(wait=False, cancel_futures=True)
+        stubborn.terminate.assert_called_once_with()
+        stubborn.join.assert_called_once_with(0.25)  # 0.5 s shared by both
+        stubborn.kill.assert_called_once_with()
+        exited.terminate.assert_not_called()
+        exited.kill.assert_not_called()
+
+
+class TestAwaitWorker:
+    async def test_cancelling_a_queued_call_drops_it_without_a_warning(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        logger = MagicMock()
+        monkeypatch.setattr(cpu_module, "logger", logger)
+        future: Future[int] = Future()
+        waiting = asyncio.ensure_future(cpu_module._await_worker(future, "site.fn"))
+        await asyncio.sleep(0)  # one loop turn: it now awaits the future
+        waiting.cancel()
+
+        with pytest.raises(asyncio.CancelledError):
+            await waiting
+
+        assert future.cancelled()
+        logger.warning.assert_not_called()
+
+    async def test_cancelling_a_running_call_warns_once(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        logger = MagicMock()
+        monkeypatch.setattr(cpu_module, "logger", logger)
+        future: Future[int] = Future()
+        assert future.set_running_or_notify_cancel()  # a worker has taken it
+        waiting = asyncio.ensure_future(cpu_module._await_worker(future, "site.fn"))
+        await asyncio.sleep(0)
+        waiting.cancel()
+
+        with pytest.raises(asyncio.CancelledError):
+            await waiting
+
+        assert not future.cancelled()
+        logger.warning.assert_called_once()
+        assert logger.warning.call_args.args[1:] == ("site.fn",)
+
+
+class TestInterpreterPoolCpuExecutor:
+    async def test_refuses_construction_without_interpreter_pool(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(cpu_module, "_interpreter_pool_type", lambda: None)
+
+        with pytest.raises(CoreException) as ei:
+            InterpreterPoolCpuExecutor()
+
+        assert ei.value.kind is ExceptionKind.CONFIGURATION
+        assert ei.value.code == "cpu_offload_interpreters_unavailable"
+
+    async def test_a_first_use_that_waited_on_the_lock_takes_the_pool_built_meanwhile(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # A thread pool stands in for the interpreter pool, so this runs on Python 3.13 too.
+        monkeypatch.setattr(cpu_module, "_interpreter_pool_type", lambda: ThreadPoolExecutor)
+        executor = InterpreterPoolCpuExecutor(max_workers=1)
+        built = ThreadPoolExecutor(max_workers=1)
+
+        class _BuiltMeanwhile:
+            # Another thread builds the pool while this one waits for the lock.
+            def __enter__(self) -> None:
+                executor._pool = built
+
+            def __exit__(self, *_: object) -> None:
+                return None
+
+        executor._lock = _BuiltMeanwhile()  # type: ignore[assignment]
+
+        try:
+            assert executor._require_pool() is built
+
+        finally:
+            built.shutdown()
+
+    @_needs_interpreters
+    async def test_a_worker_that_failed_to_start_is_a_lost_worker(self) -> None:
+        executor = InterpreterPoolCpuExecutor(max_workers=1)
+        pool = MagicMock(spec=["submit"])
+        pool.submit.side_effect = BrokenExecutor("interpreter failed to start")
+        executor._pool = pool
+
+        with pytest.raises(CoreException) as ei:
+            await executor.run(os.getpid)
+
+        assert ei.value.code == "cpu_offload_worker_lost"
+
+    @_needs_interpreters
+    async def test_a_submit_error_from_an_open_executor_is_not_relabelled(self) -> None:
+        executor = InterpreterPoolCpuExecutor(max_workers=1)
+        pool = MagicMock(spec=["submit"])
+        pool.submit.side_effect = RuntimeError("cannot schedule new futures after shutdown")
+        executor._pool = pool
+
+        with pytest.raises(RuntimeError, match="after shutdown"):
+            await executor.run(os.getpid)
+
+    @_needs_interpreters
+    @pytest.mark.parametrize("error", [pickle.PicklingError, TypeError])
+    async def test_a_sharing_error_the_call_raised_itself_is_not_relabelled(
+        self, error: type[Exception]
+    ) -> None:
+        from concurrent.interpreters import ExecutionFailed, NotShareableError
+
+        # Raised inside the worker, it arrives chained to ExecutionFailed: the call's own error.
+        raised = NotShareableError("x") if error is TypeError else error("x")
+        raised.__cause__ = ExecutionFailed.__new__(ExecutionFailed)
+        done: Future[object] = Future()
+        done.set_exception(raised)
+        executor = InterpreterPoolCpuExecutor(max_workers=1)
+        executor._pool = MagicMock(spec=["submit"], **{"submit.return_value": done})
+
+        with pytest.raises(type(raised)) as ei:
+            await executor.run(os.getpid)
+
+        assert ei.value is raised
+
+    @_needs_interpreters
+    async def test_runs_in_other_interpreters_of_this_process(self) -> None:
+        from concurrent import interpreters
+
+        executor = InterpreterPoolCpuExecutor(max_workers=2)
+
+        try:
+            with bind_isolated_cpu_executor(executor):
+                ran_in = await asyncio.gather(
+                    run_cpu(interpreters.get_current, isolated=True),
+                    run_cpu(interpreters.get_current, isolated=True),
+                )
+                pid = await run_cpu(os.getpid, isolated=True)
+
+            main_id = interpreters.get_current().id
+            assert all(interp.id != main_id for interp in ran_in)
+            assert pid == os.getpid()
+
+        finally:
+            executor.close()
+
+    @_needs_interpreters
+    async def test_propagates_exception_with_remote_traceback(self) -> None:
+        executor = InterpreterPoolCpuExecutor(max_workers=1)
+
+        try:
+            with pytest.raises(json.JSONDecodeError) as ei:
+                await executor.run(functools.partial(json.loads, "not json"))
+
+            assert ei.value.__cause__ is not None
+            assert "decoder.py" in str(ei.value.__cause__)
+
+        finally:
+            executor.close()
+
+    @_needs_interpreters
+    async def test_a_closed_executor_refuses_rather_than_building_a_new_pool(self) -> None:
+        executor = InterpreterPoolCpuExecutor(max_workers=1)
+        executor.close()
+
+        with pytest.raises(CoreException) as ei:
+            await executor.run(os.getpid)
+
+        assert ei.value.kind is ExceptionKind.UNAVAILABLE
+        assert ei.value.code == "cpu_executor_closed"
+
+    @_needs_interpreters
+    async def test_a_submit_racing_close_is_refused_as_closed(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        executor = InterpreterPoolCpuExecutor(max_workers=1)
+        pool = executor._require_pool()
+        executor.close()
+        monkeypatch.setattr(InterpreterPoolCpuExecutor, "_require_pool", lambda self: pool)
+
+        with pytest.raises(CoreException) as ei:
+            await executor.run(os.getpid)
+
+        assert ei.value.code == "cpu_executor_closed"
+
+    @_needs_interpreters
+    async def test_refuses_unshareable_call(self) -> None:
+        executor = InterpreterPoolCpuExecutor(max_workers=1)
+
+        try:
+            with pytest.raises(CoreException) as ei:
+                await executor.run(functools.partial(print, threading.Lock()), label="site.fn")
+
+            assert ei.value.kind is ExceptionKind.CONFIGURATION
+            assert ei.value.code == "cpu_offload_not_shareable"
+            assert "site.fn" in str(ei.value)
+
+        finally:
+            executor.close()
+
+
+class TestPickledInlineCpuExecutor:
+    async def test_runs_the_call_on_a_pickled_copy(self) -> None:
+        with bind_isolated_cpu_executor(InlineCpuExecutor(pickled=True)):
+            assert await run_cpu(divmod, 7, 2, isolated=True) == (3, 1)
+
+    async def test_refuses_a_lambda_as_a_worker_process_would(self) -> None:
+        with (
+            bind_isolated_cpu_executor(InlineCpuExecutor(pickled=True)),
+            pytest.raises(CoreException) as ei,
+        ):
+            await run_cpu(lambda: 1, isolated=True)
+
+        assert ei.value.code == "cpu_offload_not_picklable"
+
+    async def test_raises_the_call_exception_with_its_traceback(self) -> None:
+        with pytest.raises(json.JSONDecodeError) as ei:
+            await InlineCpuExecutor(pickled=True).run(functools.partial(json.loads, "not json"))
+
+        assert "decoder.py" in str(ei.value.__cause__)
+
+    async def test_runs_without_the_callers_context_as_a_worker_does(self) -> None:
+        token = _probe.set("caller")
+
+        try:
+            assert await InlineCpuExecutor(pickled=True).run(_read_probe) == "unset"
+            assert await InlineCpuExecutor().run(_read_probe) == "caller"
+
+        finally:
+            _probe.reset(token)
+
+    async def test_refuses_an_outcome_that_cannot_come_back(self) -> None:
+        with pytest.raises(CoreException) as ei:
+            await InlineCpuExecutor(pickled=True).run(_raise_unpicklable_back)
+
+        assert ei.value.code == "cpu_offload_result_not_picklable"
+
+    async def test_refuses_a_result_the_worker_side_cannot_pickle(self) -> None:
+        with pytest.raises(CoreException) as ei:
+            await InlineCpuExecutor(pickled=True).run(threading.Lock)
+
+        assert ei.value.code == "cpu_offload_result_not_picklable"
+        assert "lock" in str(ei.value.__cause__)  # the worker side's pickling error
+
+
+class TestIsolatedRunCpu:
+    async def test_refuses_when_no_isolated_executor_is_bound(self) -> None:
+        assert current_isolated_cpu_executor() is None
+
+        with pytest.raises(CoreException) as ei:
+            await run_cpu(_double, 1, isolated=True)
+
+        assert ei.value.kind is ExceptionKind.CONFIGURATION
+        assert ei.value.code == "cpu_offload_isolated_unbound"
+        assert "_double" in str(ei.value)
+
+    async def test_uses_the_isolated_slot_with_a_bare_picklable_thunk(self) -> None:
+        seen: list[object] = []
+
+        class _Capture:
+            async def run(self, fn, *, label=None):  # type: ignore[no-untyped-def]
+                seen.append(fn)
+                return fn()
+
+        class _Unused:
+            async def run(self, fn, *, label=None):  # type: ignore[no-untyped-def]
+                raise AssertionError("the default executor must not run isolated work")
+
+        with (
+            bind_cpu_executor(_Unused()),  # type: ignore[arg-type]
+            bind_isolated_cpu_executor(_Capture()),  # type: ignore[arg-type]
+        ):
+            assert await run_cpu(_double, 21, isolated=True) == 42
+
+        # No context copy wrapped around it: the thunk pickles as it is.
+        assert pickle.loads(pickle.dumps(seen[0]))() == 42
+
+    async def test_binds_and_restores(self) -> None:
+        inline = InlineCpuExecutor()
+
+        with bind_isolated_cpu_executor(inline):
+            assert current_isolated_cpu_executor() is inline
+            assert isolated_cpu_executor_bound() is True
+
+        assert current_isolated_cpu_executor() is None
+        assert isolated_cpu_executor_bound() is False
+
+    async def test_a_held_executor_reaches_a_context_that_binds_none(self) -> None:
+        held, bound = InlineCpuExecutor(), InlineCpuExecutor()
+
+        with hold_isolated_cpu_executor(held):
+            # A fresh context binds nothing, like an ASGI request task.
+            elsewhere = contextvars.Context()
+            assert elsewhere.run(current_isolated_cpu_executor) is held
+            assert elsewhere.run(isolated_cpu_executor_bound) is False
+
+            with bind_isolated_cpu_executor(bound):
+                assert current_isolated_cpu_executor() is bound  # a binding wins
+
+        assert contextvars.Context().run(current_isolated_cpu_executor) is None
+
+    async def test_runs_in_a_worker_process(self, process_executor: ProcessPoolCpuExecutor) -> None:
+        with bind_isolated_cpu_executor(process_executor):
+            assert await run_cpu(os.getpid, isolated=True) != os.getpid()
+            assert await run_cpu(divmod, 7, 2, isolated=True) == (3, 1)
+
+    async def test_refuses_a_local_function_naming_it(
+        self, process_executor: ProcessPoolCpuExecutor
+    ) -> None:
+        def local_compute() -> int:
+            return 1
+
+        with bind_isolated_cpu_executor(process_executor), pytest.raises(CoreException) as ei:
+            await run_cpu(local_compute, isolated=True)
+
+        assert ei.value.code == "cpu_offload_not_picklable"
+        assert "local_compute" in str(ei.value)
+
+    async def test_cancellation_stops_the_wait(self) -> None:
+        executor = ProcessPoolCpuExecutor(max_workers=1)
+
+        try:
+            with bind_isolated_cpu_executor(executor):
+                task = asyncio.ensure_future(run_cpu(time.sleep, 30, isolated=True))
+                await asyncio.sleep(0.2)
+                task.cancel()
+
+                with pytest.raises(asyncio.CancelledError):
+                    await asyncio.wait_for(task, 10)
+
+        finally:
+            executor.close()

@@ -85,6 +85,8 @@ def build_runtime(
     deployment: DeploymentProfile = DeploymentProfile.SINGLE_PROCESS,
     cpu_executor: CpuExecutor | None = None,
     cpu_workers: int | None = None,
+    isolated_cpu_executor: CpuExecutor | None = None,
+    isolated_cpu_workers: int | None = None,
     after_commit_error_handler: AfterCommitErrorHandler | None = None,
     cursor_token_signer: CursorTokenSigner | None = None,
     cursor_token_cipher: CursorTokenCipher | None = None,
@@ -153,6 +155,13 @@ def build_runtime(
         it closes on exit, unless one is already bound in the surrounding context.
     :param cpu_workers: Size of the runtime-owned CPU pool when ``cpu_executor`` is
         ``None`` (see :attr:`ExecutionRuntime.cpu_workers`); ``None`` uses default sizing.
+    :param isolated_cpu_executor: Executor to inject for ``run_cpu(..., isolated=True)``
+        (see :attr:`ExecutionRuntime.isolated_cpu_executor`); caller-owned. ``None``
+        (default) lets the runtime own a lazy scope-lifetime process pool it closes on exit,
+        unless one is already bound in the surrounding context.
+    :param isolated_cpu_workers: Size of the runtime-owned isolated pool when
+        ``isolated_cpu_executor`` is ``None`` (see
+        :attr:`ExecutionRuntime.isolated_cpu_workers`); ``None`` uses default sizing.
     :param after_commit_error_handler: Passed through to
         :attr:`ExecutionRuntime.after_commit_error_handler` — an out-of-band handler
         notified when a non-fatal post-commit callback fails on an already-committed
@@ -223,6 +232,8 @@ def build_runtime(
         deployment=deployment,
         cpu_executor=cpu_executor,
         cpu_workers=cpu_workers,
+        isolated_cpu_executor=isolated_cpu_executor,
+        isolated_cpu_workers=isolated_cpu_workers,
         after_commit_error_handler=after_commit_error_handler,
         cursor_token_signer=cursor_token_signer,
         cursor_token_cipher=cursor_token_cipher,

@@ -21,6 +21,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **A durable recovery worker can claim only some functions, so slow ones get their own worker.** Register one with `queue="llm"`, then pass `queues={"llm"}` to `durable_recovery_background_lifecycle_step`. Existing tables add the new `(status, name, created_at)` index first.
 
+- **`run_cpu(..., isolated=True)` runs pure-Python compute outside the event loop's GIL.** The runtime holds a lazy `ProcessPoolCpuExecutor` beside its thread pool (`isolated_cpu_workers=`), or an `isolated_cpu_executor=` such as `InterpreterPoolCpuExecutor` on Python 3.14. Inputs must pickle; unbound, it refuses.
+
+- **The isolated executor has its own slot: `bind_isolated_cpu_executor`, `hold_isolated_cpu_executor`, `current_isolated_cpu_executor` and `isolated_cpu_executor_bound`.** They mirror the default executor's, but nothing bound or held gives `None`. `InlineCpuExecutor(pickled=True)` adds the pickle round trip, for tests.
+
 ### Changed
 
 - **`configure_cursor_signer(None)` and `configure_cursor_cipher(None)` clear the context's own key** (**Breaking**). The key an open runtime scope holds then applies again. `bind_cursor_signer(None)` and `bind_cursor_cipher(None)` still turn protection off for a block.
@@ -34,6 +38,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Mock state snapshots written before this release are refused at load** (**behaviour change**). A snapshot now carries the declared references with the rows; delete the old file to start fresh.
 
 - **`DurableRunStorePort.claim_abandoned` takes `functions=`** (**Breaking**). A run store implemented outside forze must accept it. The Postgres recovery indexes `(status, created_at)` and `(tenant_id, status, created_at)` are replaced by `(status, name, created_at)` and `(tenant_id, status, name, created_at)`.
+
+- **`run_cpu` reserves the keyword `isolated`** (**Breaking**). A call that passed `isolated=` through to its function now selects the isolated executor instead; pass that argument with `functools.partial`.
 
 ### Fixed
 

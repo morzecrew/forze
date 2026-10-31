@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import secrets
 import signal
 import threading
@@ -679,6 +680,7 @@ class TestRuntimeLifespanUnderUvicorn:
         async def probe() -> dict[str, str]:
             return {
                 "thread": await run_cpu(lambda: threading.current_thread().name),
+                "pid": str(await run_cpu(os.getpid, isolated=True)),
                 "cursor": encode_keyset_v1(sort_keys=["id"], directions=["asc"], values=[1]),
             }
 
@@ -705,4 +707,5 @@ class TestRuntimeLifespanUnderUvicorn:
             await asyncio.wait_for(serving, timeout=10)
 
         assert body["thread"].startswith("forze-cpu")
+        assert body["pid"] != str(os.getpid())  # the runtime's isolated process pool
         assert body["cursor"].startswith("~")

@@ -29,6 +29,22 @@ class TestRunCpuUnderSimulation:
 
         assert run_simulation(scenario) == 42
 
+    def test_isolated_run_cpu_runs_inline(self) -> None:
+        # A real worker process would be wall-clock work the simulation refuses.
+        async def scenario() -> int:
+            return await run_cpu(_parse, 21, isolated=True)
+
+        assert run_simulation(scenario) == 42
+
+    def test_isolated_run_cpu_refuses_what_production_cannot_pickle(self) -> None:
+        async def scenario() -> int:
+            return await run_cpu(lambda: 1, isolated=True)
+
+        with pytest.raises(CoreException) as ei:
+            run_simulation(scenario)
+
+        assert ei.value.code == "cpu_offload_not_picklable"
+
     def test_deterministic_across_runs(self) -> None:
         async def scenario() -> list[int]:
             return await run_cpu_map(range(6), _parse, chunk_size=2)
