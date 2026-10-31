@@ -21,7 +21,11 @@ from forze.application.integrations.realtime import (
     InMemoryRealtimeMailbox,
 )
 from forze.base.exceptions import CoreException, ExceptionKind
-from forze_fastapi.realtime import RealtimeSseRouteOptions, attach_realtime_sse_route
+from forze_fastapi.realtime import (
+    RealtimeSseHub,
+    RealtimeSseRouteOptions,
+    attach_realtime_sse_route,
+)
 
 # ----------------------- #
 
@@ -29,13 +33,17 @@ from forze_fastapi.realtime import RealtimeSseRouteOptions, attach_realtime_sse_
 def _paths(
     route_options: RealtimeSseRouteOptions | None = None,
     ack_route_options: RealtimeSseRouteOptions | None = None,
+    *,
+    stores: bool = True,
+    hub: bool = False,
 ) -> dict[str, Any]:
     router = APIRouter()
     attach_realtime_sse_route(
         router,
         ctx_dep=lambda: None,  # type: ignore[arg-type, return-value]  # never called
-        mailbox_factory=lambda _ctx: InMemoryRealtimeMailbox(),
-        cursors_factory=lambda _ctx: InMemoryMailboxCursors(),
+        mailbox_factory=(lambda _ctx: InMemoryRealtimeMailbox()) if stores else None,
+        cursors_factory=(lambda _ctx: InMemoryMailboxCursors()) if stores else None,
+        hub=RealtimeSseHub() if hub else None,
         route_options=route_options,
         ack_route_options=ack_route_options,
     )
@@ -84,6 +92,28 @@ class TestBuiltInDocumentation:
 
         assert _stream(paths)["summary"].startswith("Realtime egress over Server-Sent Events")
         assert _ack(paths)["summary"].startswith("Cumulative realtime ack")
+
+    @pytest.mark.parametrize(
+        ("stores", "hub", "mode"),
+        [
+            (True, True, "(replay, then live)"),
+            (True, False, "(replay only)"),
+            (False, True, "(live only)"),
+        ],
+    )
+    def test_the_summary_names_the_delivery_mode(self, stores: bool, hub: bool, mode: str) -> None:
+        summary = _stream(_paths(stores=stores, hub=hub))["summary"]
+
+        assert summary == f"Realtime egress over Server-Sent Events {mode}"
+
+    def test_device_id_is_described_by_the_delivery_mode(self) -> None:
+        durable = _descriptions(_stream(_paths()))["device_id"]
+        live = _descriptions(_stream(_paths(stores=False, hub=True)))["device_id"]
+
+        assert "replay cursor" in durable
+        assert "Last-Event-ID" in durable
+        assert live.startswith("Unused: a live-only stream keeps no replay cursor")
+        assert "Last-Event-ID" not in live
 
 
 class TestRouteOptions:
