@@ -81,6 +81,15 @@ class TestBuiltInDocumentation:
             assert set(described) == names
             assert all(text.strip() for text in described.values())
 
+    def test_the_ack_documents_device_id_as_required(self) -> None:
+        # The endpoint refuses an ack without one (realtime_ack_requires_device).
+        [device_id] = _ack(_paths())["parameters"]
+
+        assert device_id["name"] == "device_id"
+        assert device_id["in"] == "query"
+        assert device_id["required"] is True
+        assert device_id["schema"] == {"type": "string"}
+
     def test_the_stream_is_documented_as_an_event_stream(self) -> None:
         ok = _stream(_paths())["responses"]["200"]
 
@@ -150,6 +159,19 @@ class TestRouteOptions:
 
         assert responses["401"]["description"] == "Not signed in"
         assert set(responses["200"]["content"]) == {"text/event-stream"}
+
+    def test_the_callers_ack_parameters_join_the_documented_device_id(self) -> None:
+        trace = {"name": "X-Trace", "in": "header", "schema": {"type": "string"}}
+        ack = _ack(
+            _paths(
+                ack_route_options={
+                    "openapi_extra": {"parameters": [trace], "x-audience": "browser"},
+                }
+            )
+        )
+
+        assert [param["name"] for param in ack["parameters"]] == ["device_id", "X-Trace"]
+        assert ack["x-audience"] == "browser"
 
     @pytest.mark.parametrize("key", ["path", "methods", "endpoint", "response_class", "name"])
     def test_a_key_forze_controls_is_refused_at_attach(self, key: str) -> None:

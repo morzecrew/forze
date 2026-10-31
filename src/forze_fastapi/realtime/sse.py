@@ -149,8 +149,11 @@ def _route_kwargs(
     *,
     argument: str,
     defaults: dict[str, Any],
+    parameters: tuple[dict[str, Any], ...] = (),
 ) -> dict[str, Any]:
-    """The route's arguments: forze's *defaults* with the caller's *options* over them."""
+    """The route's arguments: forze's *defaults* with the caller's *options* over them, and
+    *parameters* — OpenAPI parameter objects forze documents by hand — ahead of the caller's
+    ``openapi_extra`` ones."""
 
     options = {} if options is None else options
 
@@ -167,8 +170,12 @@ def _route_kwargs(
         )
 
     responses = {**defaults.get("responses", {}), **options.get("responses", {})}
+    extra = dict(options.get("openapi_extra", {}))
 
-    return {**defaults, **options, "responses": responses}
+    if parameters:
+        extra["parameters"] = [*parameters, *extra.get("parameters", [])]
+
+    return {**defaults, **options, "responses": responses, "openapi_extra": extra or None}
 
 
 _END_GRACE_SECONDS = 5.0
@@ -517,6 +524,14 @@ _ACK_DEVICE_ID_DESCRIPTION = (
     "The stable per-device id the stream was opened with; required, since an ack advances "
     "that device's replay cursor."
 )
+_ACK_DEVICE_ID_PARAMETER: dict[str, Any] = {
+    "name": "device_id",
+    "in": "query",
+    "required": True,
+    "description": _ACK_DEVICE_ID_DESCRIPTION,
+    "schema": {"type": "string"},
+}
+"""The ack's ``device_id`` as OpenAPI documents it (see the ack endpoint)."""
 
 
 def attach_realtime_sse_route(
@@ -598,6 +613,7 @@ def attach_realtime_sse_route(
         ack_route_options,
         argument="ack_route_options",
         defaults={"summary": "Cumulative realtime ack (advance this device's replay cursor)"},
+        parameters=(_ACK_DEVICE_ID_PARAMETER,),
     )
 
     if (mailbox_factory is None) != (cursors_factory is None):
@@ -767,7 +783,9 @@ def attach_realtime_sse_route(
 
     async def ack_endpoint(
         body: RealtimeAckBody,
-        device_id: Annotated[str | None, Query(description=_ACK_DEVICE_ID_DESCRIPTION)] = None,
+        # Optional here and documented required by hand (_ACK_DEVICE_ID_PARAMETER): a missing
+        # one meets the refusal below, not FastAPI's generic request_validation_error.
+        device_id: Annotated[str | None, Query(include_in_schema=False)] = None,
     ) -> RealtimeAckResult:
         ctx = ctx_dep()
         principal = _authenticated_principal(ctx)
