@@ -7,8 +7,8 @@ require_psycopg()
 # ....................... #
 
 import math
-from collections.abc import Mapping
-from datetime import date, datetime, timedelta
+from collections.abc import Callable, Mapping
+from datetime import date, datetime, time, timedelta
 from decimal import Decimal
 from types import UnionType
 from typing import Any, Union, get_args, get_origin
@@ -73,6 +73,11 @@ column's storage shape the AST cannot see, so it stays a backend-internal check
 (raising the same ``query_feature_unsupported`` code)."""
 
 # ....................... #
+
+_PLAIN: frozenset[type] = frozenset(
+    {str, bytes, int, float, bool, Decimal, UUID, date, datetime, time, timedelta}
+)
+"""Exact types :func:`enum_values` returns as they are: neither a member nor a container."""
 
 _NESTED_JSON_UNSUPPORTED: frozenset[str] = frozenset(
     ("$empty", "$superset", "$subset", "$disjoint", "$overlaps"),
@@ -262,6 +267,45 @@ class PsycopgValueCoercer:
 
             case _:
                 return v
+
+    # ....................... #
+
+    @staticmethod
+    def kept(base: str) -> Callable[[Any], bool]:
+        """Whether :meth:`scalar` returns a value of a *base* column as it is, judged from its
+        exact type: a ``StrEnum`` member, a ``str`` subclass, is never kept. Mirrors
+        :meth:`scalar` case by case, so a case added there needs its line here."""
+
+        match base:
+            case "uuid":
+                return lambda v: type(v) is UUID
+
+            case "text" | "varchar" | "char" | "citext":
+                return lambda v: type(v) is str
+
+            case "bool":
+                return lambda v: type(v) is bool
+
+            case "int2" | "int4" | "int8":
+                return lambda v: type(v) is int
+
+            case "float4" | "float8":
+                return lambda v: type(v) is float and math.isfinite(v)
+
+            case "numeric":
+                return lambda v: type(v) is Decimal and v.is_finite()
+
+            case "date":
+                return lambda v: type(v) is date
+
+            case "timestamptz":
+                return lambda v: type(v) is datetime and v.tzinfo is not None
+
+            case "timestamp":
+                return lambda v: type(v) is datetime and v.tzinfo is None
+
+            case _:
+                return lambda v: type(v) in _PLAIN
 
     # ....................... #
 
