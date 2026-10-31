@@ -7215,6 +7215,13 @@ wiring:</p>
 <td>—</td>
 <td>✅</td>
 </tr>
+<tr>
+<td><code>Reference(fields=…, references=…, spec=…, on_delete=…)</code></td>
+<td>…through a composite key</td>
+<td><code>FOREIGN KEY (…, …) REFERENCES … (…, …)</code></td>
+<td>—</td>
+<td>✅</td>
+</tr>
 </tbody>
 </table>
 <p><code>SerializedBy</code> is the one member about write <em>ordering</em> rather than about stored rows. It says
@@ -7311,12 +7318,37 @@ what a hard delete of that row does to the rows naming it. The field must be a <
 
 <span class="n">Reference</span><span class="p">(</span><span class="n">field</span><span class="o">=</span><span class="s2">"stage_id"</span><span class="p">,</span> <span class="n">spec</span><span class="o">=</span><span class="s2">"stages"</span><span class="p">,</span> <span class="n">on_delete</span><span class="o">=</span><span class="s2">"cascade"</span><span class="p">)</span>
 </code></pre></div>
+<p>A composite foreign key names its columns on both sides, paired in order. <code>field="stage_id"</code> is
+the shorthand for <code>fields=("stage_id",)</code>, and a single field references <code>id</code> unless <code>references</code>
+says otherwise:</p>
+<div class="highlight"><pre><span></span><code><span class="c1"># FOREIGN KEY (stage_id, source_id) REFERENCES stages (id, source_id) ON DELETE CASCADE</span>
+<span class="n">Reference</span><span class="p">(</span>
+    <span class="n">fields</span><span class="o">=</span><span class="p">(</span><span class="s2">"stage_id"</span><span class="p">,</span> <span class="s2">"source_id"</span><span class="p">),</span>
+    <span class="n">spec</span><span class="o">=</span><span class="s2">"stages"</span><span class="p">,</span>
+    <span class="n">references</span><span class="o">=</span><span class="p">(</span><span class="s2">"id"</span><span class="p">,</span> <span class="s2">"source_id"</span><span class="p">),</span>
+    <span class="n">on_delete</span><span class="o">=</span><span class="s2">"cascade"</span><span class="p">,</span>
+<span class="p">)</span>
+</code></pre></div>
+<p>A row names a parent when every field holds the paired parent value, an aware datetime compared
+as its instant; a row holding a null in any of them names nothing, as under the key's
+<code>MATCH SIMPLE</code>. A field paired with <code>id</code> must be a
+<code>UUID</code>. A field paired with another parent field must have that field's type, <code>None</code> aside.
+Referenced fields without <code>id</code> must be unique on the parent, through an unfiltered
+<code>UniqueTogether</code> over exactly them that holds always, declared or implied by its domain model;
+on a tenant-scoped parent that uniqueness is per tenant, as the key beside <code>tenant_id</code> is. A
+spec catalogue checks both once it holds both specs.</p>
 <p><code>"cascade"</code> deletes them too, and their own referencing rows in turn. <code>"restrict"</code> refuses the
-delete with <code>conflict</code> while any remain. <code>"set_null"</code> clears the field, which must accept
-<code>None</code>; the cleared row keeps the child's guarantees, so one it would break refuses the delete
-with the write's <code>conflict</code>. Only <code>kill</code> and <code>kill_many</code> apply it: a soft delete is an update and
-leaves the rows alone. On Postgres the foreign key does the work. The in-memory store does the
-same inside the transaction's view, so a rollback restores the parent and its children together.
+delete with <code>conflict</code> while any remain. <code>"set_null"</code> clears every field of the reference, or
+only those <code>set_null_fields</code> names, as <code>SET NULL (stage_id)</code> clears the stage and keeps the
+source; each cleared field must accept <code>None</code>. The cleared row keeps the child's guarantees, so
+one it would break refuses the delete with the write's <code>conflict</code>. Clearing a field that another
+<code>Reference</code> keys on refuses it too while a row names the old value, as Postgres refuses that
+update under the default <code>ON UPDATE NO ACTION</code>. No other <code>ON UPDATE</code> action is modelled: a key
+declaring <code>ON UPDATE CASCADE</code> or <code>SET NULL</code> passes the change on where the in-memory store
+refuses, and startup does not check it. Only <code>kill</code> and <code>kill_many</code> apply a reference: a soft
+delete is an update and leaves the rows alone. On Postgres the foreign key does the work. The
+in-memory store does the same inside the transaction's view, so a rollback restores the parent
+and its children together.
 It plans the whole cascade first, so a <code>restrict</code> anywhere in it refuses the delete with nothing
 removed. It plans from the transaction's view, so under snapshot isolation a child another
 transaction committed meanwhile survives, where Postgres's referential check would still find
@@ -7355,15 +7387,20 @@ periods and takes every other overlapping pair.</p>
    back a deparsed SQL predicate, so only the columns it restricts on are checked — an index on
    the right column and the wrong value passes there. Neither is a proof that the mechanism
    matches; on Postgres it is a floor under a forgotten migration. For a <code>Reference</code>, Postgres
-   wants a foreign key from the field to <code>id</code> on the referenced spec's relation, alone or beside
+   wants a foreign key on the referenced spec's relation pairing exactly the declared fields with
+   the referenced ones (<code>id</code> for a single field), in any column order, alone or beside
    <code>tenant_id</code>, with the declared <code>ON DELETE</code>. A referenced spec bound in another Postgres
    module is refused, since a foreign key lives in one database. <code>"restrict"</code> takes
    <code>ON DELETE RESTRICT</code> or a plain <code>NO ACTION</code> key, unless it is deferred to commit. <code>"set_null"</code>
-   needs a nullable column, and over a key beside <code>tenant_id</code> it needs
-   <code>ON DELETE SET NULL (field)</code> (Postgres 15), which leaves <code>tenant_id</code> alone. Postgres also
-   warns about each unique index, <code>EXCLUDE</code> constraint and <code>ON DELETE CASCADE</code> or <code>SET NULL</code>
-   foreign key on the write table that no guarantee declares, other than the primary key and an
-   index over all its columns, and suggests the declaration.
+   needs the columns it clears nullable, and a key clearing exactly those: a plain
+   <code>ON DELETE SET NULL</code> only when they are all the key's columns, and otherwise — always beside
+   <code>tenant_id</code>, which a delete never clears — <code>ON DELETE SET NULL (…)</code> naming them
+   (Postgres 15). Postgres also warns about each unique index, <code>EXCLUDE</code> constraint and
+   <code>ON DELETE CASCADE</code> or <code>SET NULL</code> foreign key on the write table that no guarantee declares,
+   other than the primary key and an index over all its columns, and suggests the declaration —
+   <code>fields=…, references=…</code> for a composite foreign key, <code>set_null_fields=…</code> for a key clearing
+   some of its columns. A key whose <code>SET NULL</code> clears <code>tenant_id</code> gets the migration to a key
+   that leaves it, then the declaration, since no declaration keeps a row moved out of its tenant.
    A <code>conflict_target</code> over other columns is reported too, since it refuses duplicates. Without it
    the in-memory store accepts writes the database refuses. An index counts as declared only
    when it is the one that keeps a guarantee, so a partial index beside an unfiltered

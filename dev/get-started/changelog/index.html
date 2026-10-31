@@ -10454,11 +10454,16 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <h2 id="unreleased"><a href="https://github.com/morzecrew/forze/compare/v0.18.0...HEAD">Unreleased</a><a class="headerlink" href="#unreleased" title="Permanent link">&para;</a></h2>
 <h3 id="added">Added<a class="headerlink" href="#added" title="Permanent link">&para;</a></h3>
 <ul>
-<li>...</li>
+<li><strong>A <code>Reference</code> can declare a composite foreign key.</strong> <code>Reference(fields=("stage_id", "source_id"), references=("id", "source_id"), ...)</code> pairs each field with a parent field, and <code>set_null_fields=</code> names the ones <code>SET NULL (…)</code> clears. The undeclared-key warning suggests these forms, so it can be silenced.</li>
 </ul>
 <h3 id="changed">Changed<a class="headerlink" href="#changed" title="Permanent link">&para;</a></h3>
 <ul>
-<li>...</li>
+<li>
+<p><strong><code>Reference.field</code> is <code>None</code> unless the reference is one field holding the parent's id</strong> (<strong>behaviour change</strong>). Read <code>fields</code> and <code>references</code>. The mock's restrict refusal and Postgres's reference refusals carry <code>fields</code> as a list in their details instead of <code>field</code>.</p>
+</li>
+<li>
+<p><strong>Mock state snapshots written by 0.18.0 are refused at load</strong> (<strong>behaviour change</strong>). The references recorded with the rows now carry composite keys; delete the old file to start fresh.</p>
+</li>
 </ul>
 <h3 id="fixed">Fixed<a class="headerlink" href="#fixed" title="Permanent link">&para;</a></h3>
 <ul>
