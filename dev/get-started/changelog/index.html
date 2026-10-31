@@ -10372,6 +10372,12 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <li>
 <p><strong>A durable recovery worker can claim only some functions, so slow ones get their own worker.</strong> Register one with <code>queue="llm"</code>, then pass <code>queues={"llm"}</code> to <code>durable_recovery_background_lifecycle_step</code>. Existing tables add the new <code>(status, name, created_at)</code> index first.</p>
 </li>
+<li>
+<p><strong><code>run_cpu(..., isolated=True)</code> runs pure-Python compute outside the event loop's GIL.</strong> The runtime holds a lazy <code>ProcessPoolCpuExecutor</code> beside its thread pool (<code>isolated_cpu_workers=</code>), or an <code>isolated_cpu_executor=</code> such as <code>InterpreterPoolCpuExecutor</code> on Python 3.14. Inputs must pickle; unbound, it refuses.</p>
+</li>
+<li>
+<p><strong>The isolated executor has its own slot: <code>bind_isolated_cpu_executor</code>, <code>hold_isolated_cpu_executor</code>, <code>current_isolated_cpu_executor</code> and <code>isolated_cpu_executor_bound</code>.</strong> They mirror the default executor's, but nothing bound or held gives <code>None</code>. <code>InlineCpuExecutor(pickled=True)</code> adds the pickle round trip, for tests.</p>
+</li>
 </ul>
 <h3 id="changed">Changed<a class="headerlink" href="#changed" title="Permanent link">&para;</a></h3>
 <ul>
@@ -10392,6 +10398,9 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 </li>
 <li>
 <p><strong><code>DurableRunStorePort.claim_abandoned</code> takes <code>functions=</code></strong> (<strong>Breaking</strong>). A run store implemented outside forze must accept it. The Postgres recovery indexes <code>(status, created_at)</code> and <code>(tenant_id, status, created_at)</code> are replaced by <code>(status, name, created_at)</code> and <code>(tenant_id, status, name, created_at)</code>.</p>
+</li>
+<li>
+<p><strong><code>run_cpu</code> reserves the keyword <code>isolated</code></strong> (<strong>Breaking</strong>). A call that passed <code>isolated=</code> through to its function now selects the isolated executor instead; pass that argument with <code>functools.partial</code>.</p>
 </li>
 </ul>
 <h3 id="fixed">Fixed<a class="headerlink" href="#fixed" title="Permanent link">&para;</a></h3>

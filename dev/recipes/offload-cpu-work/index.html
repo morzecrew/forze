@@ -4724,6 +4724,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#when-the-gil-itself-is-the-problem" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        When the GIL itself is the problem
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#when-to-use-it" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -6538,6 +6549,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#when-the-gil-itself-is-the-problem" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        When the GIL itself is the problem
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#when-to-use-it" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -6715,6 +6737,64 @@ offloads in chunks and checkpoints cancellation at each boundary.</p>
 the GIL, so <code>run_cpu</code> won't speed it up — you get real parallelism only for GIL-releasing
 C extensions (database drivers, <code>orjson</code>, <code>numpy</code>). Reach for it to stop one long
 synchronous call from monopolizing the loop, not to parse faster.</p>
+<h2 id="when-the-gil-itself-is-the-problem">When the GIL itself is the problem<a class="headerlink" href="#when-the-gil-itself-is-the-problem" title="Permanent link">&para;</a></h2>
+<p>A thread keeps the loop running, but the loop still shares the GIL with it. While a long
+pure-Python call runs, a concurrent request waits for the GIL each time its I/O completes,
+and a request that makes a few dozen such handoffs slows down noticeably. Pass
+<code>isolated=True</code> to run the call in a worker process that has its own GIL:</p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">forze.base.primitives</span><span class="w"> </span><span class="kn">import</span> <span class="n">run_cpu</span>
+
+
+<span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">score</span><span class="p">(</span><span class="n">rows</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">tuple</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="nb">float</span><span class="p">]])</span> <span class="o">-&gt;</span> <span class="nb">float</span><span class="p">:</span>
+    <span class="k">return</span> <span class="k">await</span> <span class="n">run_cpu</span><span class="p">(</span><span class="n">fit_model</span><span class="p">,</span> <span class="n">rows</span><span class="p">,</span> <span class="n">isolated</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+</code></pre></div>
+<p>The runtime binds a process pool for this beside its thread pool. The pool starts no
+process until the first isolated call, and the runtime terminates its workers when the
+scope exits. <code>isolated_cpu_workers=</code> sizes it.</p>
+<p><strong>What suits it</strong> is a large, self-contained computation over plain data: scoring a batch,
+fitting a model, diffing two documents. The function takes plain values and returns plain
+values. <strong>What does not</strong>:</p>
+<ul>
+<li>small offloads, such as pydantic validation or decoding: they finish quickly on a
+  thread, and the trip across would cost more than it saves;</li>
+<li>a per-row callback: every call pays for the trip, so send the whole batch in one call;</li>
+<li>work that needs the request: its tenant, its tracing, a database connection.</li>
+</ul>
+<p>What crosses the boundary, and what does not:</p>
+<ul>
+<li><strong>Inputs are pickled on the event loop</strong> before submission, and the loop waits while
+  they are. On a typical core, 10,000 small dicts (about 400 KiB) take about 2 ms; a
+  <code>bytes</code> payload costs far less per megabyte. Pass a module-level function and only the
+  data the call needs, or a path to read it from. A lambda, a local function or an
+  argument that cannot be pickled is refused with a <code>configuration</code> error that names the
+  call.</li>
+<li><strong>The result or exception is pickled back.</strong> One that cannot make the trip fails its
+  own call with a <code>configuration</code> error (<code>cpu_offload_result_not_picklable</code>), carrying the
+  worker's traceback.</li>
+<li><strong>The calling context stays behind.</strong> The worker has no tenant, trace, log fields,
+  deadline or cancellation token, so <code>checkpoint()</code> there does nothing.</li>
+<li><strong>The deadline and cancellation end the wait, not the work.</strong> The caller gets its
+  timeout or cancellation at once. The worker cannot be signalled, so its call runs to
+  completion and the result is discarded. Killing one worker would fail every other call
+  on the pool. For work you need to kill, or do not fully trust, use the
+  <a href="../../data-events/sandbox/">sandbox plane</a>.</li>
+<li><strong>An abandoned call keeps its worker until it returns.</strong> The pool has a fixed number
+  of workers, so calls that never return starve every isolated call after them. Bound the
+  work itself, and always run isolated calls under a deadline so no caller waits forever.
+  Each time a running call is abandoned, forze logs a warning naming the function.</li>
+<li><strong>A worker that dies</strong> (killed for memory, crashed) fails its calls with a retryable
+  <code>unavailable</code> error (<code>cpu_offload_worker_lost</code>), and the next call starts a fresh pool.</li>
+<li><strong>Workers start with <code>forkserver</code></strong>, or <code>spawn</code> where the platform lacks it, never with
+  <code>fork</code>. Each worker imports your main module, so keep its startup code under
+  <code>if __name__ == "__main__":</code>.</li>
+<li><strong>Nothing bound means a refusal.</strong> With no runtime scope open, <code>isolated=True</code> raises a
+  <code>configuration</code> error instead of falling back to threads or running inline.</li>
+<li><strong>Test with the pickle round trip.</strong> In a unit test, bind
+  <code>bind_isolated_cpu_executor(InlineCpuExecutor(pickled=True))</code>. A plain
+  <code>InlineCpuExecutor()</code> runs the call without pickling it, so a lambda or a local function
+  passes the test and fails in production. Under simulation the call runs inline and takes
+  the round trip too.</li>
+</ul>
 <h2 id="when-to-use-it">When to use it<a class="headerlink" href="#when-to-use-it" title="Permanent link">&para;</a></h2>
 <ul>
 <li><strong>Use it</strong> for a heavy synchronous parse, validation, serialization, or crypto inside
@@ -6740,6 +6820,17 @@ oldest one's pool. Only with no scope open at all does <code>run_cpu</code> run 
 executor bound around the scope, which it defers to, stays in the scope's own task.
 Once its scope exits, a closed pool refuses further work with a retryable
 <code>unavailable</code> error.</p>
+<p>The isolated pool works the same way, held for the process too: <code>isolated_cpu_workers=</code>
+sizes the runtime's own, and <code>isolated_cpu_executor=</code> injects yours. On Python 3.14 you can
+inject an <code>InterpreterPoolCpuExecutor</code>, whose workers are subinterpreters with a GIL each:
+cheaper to start and lighter than processes. Each worker interpreter imports the function's module,
+and many C extensions refuse to load there, <code>orjson</code> among them, which forze itself
+imports. Keep the function in a module that imports only the standard library and
+pure-Python code. On Python 3.13 the constructor refuses with a <code>configuration</code> error.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">forze.base.primitives</span><span class="w"> </span><span class="kn">import</span> <span class="n">InterpreterPoolCpuExecutor</span>
+
+<span class="n">runtime</span> <span class="o">=</span> <span class="n">build_runtime</span><span class="p">(</span><span class="n">MyModule</span><span class="p">(),</span> <span class="n">isolated_cpu_executor</span><span class="o">=</span><span class="n">InterpreterPoolCpuExecutor</span><span class="p">())</span>
+</code></pre></div>
 
 
 
