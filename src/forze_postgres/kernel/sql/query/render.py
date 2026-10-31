@@ -274,9 +274,10 @@ class PsycopgValueCoercer:
     def matched(t: PostgresType) -> str:
         """The type name :meth:`scalar` converts a value of a *t* column by, and :meth:`kept`
         decides by: one for both, so neither can read a type (a modifier) as the other does
-        not."""
+        not. A declared precision or length is the column's, not its kind: ``timestamp(3)``
+        takes a value as ``timestamp`` does, so the session's time zone never converts it."""
 
-        return t.base
+        return normalize_pg_type(strip_type_modifier(t.base))
 
     # ....................... #
 

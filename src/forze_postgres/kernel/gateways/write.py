@@ -136,11 +136,10 @@ _BINARY_BASES: frozenset[str] = frozenset(
         "bytea",
     }
 )
-"""Types whose ``unnest`` array goes in binary, named bare (no modifier): a few times cheaper to
-encode than text, and the same array type and values. Not ``float4`` (a ``float8`` rounded
-again), ``numeric``, a string type with a modifier (``varchar(n)``), which text sends as an
-untyped literal, or ``timestamptz(3)``, whose values the write coercion leaves naive or aware
-as they come."""
+"""Types whose ``unnest`` array goes in binary, whatever their modifier (the cast to
+``timestamptz(3)[]`` rounds as the column does): a few times cheaper to encode than text, and
+the same array type and values. Not ``float4`` (a ``float8`` rounded again), ``numeric``, or a
+string type with a modifier (``varchar(n)``), which text sends as an untyped literal."""
 
 _NO_EQUALITY: frozenset[str] = frozenset(
     {
@@ -213,10 +212,10 @@ def _row_source(
         if pg_t is None or pg_t.is_array or _scalar_base(pg_t) not in _UNNEST_BASES:
             break
 
-        # The type exactly as introspected: the write coercion normalizes values (a naive
-        # datetime made aware) only for a bare name, and binary needs them uniform.
+        # Binary needs the values uniform, which the write coercion makes them for a type with a
+        # modifier too (a naive datetime made aware for ``timestamptz(3)``).
         placeholder = sql.Placeholder(
-            format=PyFormat.BINARY if pg_t.base in _BINARY_BASES else PyFormat.AUTO
+            format=PyFormat.BINARY if _scalar_base(pg_t) in _BINARY_BASES else PyFormat.AUTO
         )
         casts.append(sql.SQL("{}::{}[]").format(placeholder, _pg_cast_type_sql(pg_t)))
 

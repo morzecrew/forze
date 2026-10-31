@@ -29,6 +29,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **A hub search aggregate's metric filter can name an `extra_aggregatable_fields` column.** It was refused as off the read model. Postgres checks the filter's operators against the hub relation's column type; the search's own `filters` stay on the read model.
 
+- **Postgres `timestamp(p)` and `timestamptz(p)` ignore the session's `TimeZone`** (**Breaking**). An aware value stores its UTC wall clock and a naive one reads as UTC, in writes and filters. `numeric(p,s)` and `char(n)` coerce as their bare types: a float goes as `str()`, so a tie may round differently; NaN is refused.
+
 ## [0.18.0] - 2026-10-31
 
 ### Added
