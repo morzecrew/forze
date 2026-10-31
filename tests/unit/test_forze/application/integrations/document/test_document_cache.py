@@ -507,11 +507,19 @@ async def test_get_many_read_through_refetches_an_undecodable_hit() -> None:
 
 
 @pytest.mark.asyncio
-async def test_get_read_through_sealed_entry_without_keyring_still_fails() -> None:
+@pytest.mark.parametrize(
+    "cached",
+    [
+        {ENCRYPTED_PAYLOAD_KEY: "AAAA"},
+        {"_xf": [], "doc": {ENCRYPTED_PAYLOAD_KEY: "AAAA"}},
+    ],
+    ids=["sealed", "sealed-in-a-malformed-envelope"],
+)
+async def test_get_read_through_sealed_entry_without_keyring_still_fails(cached) -> None:
     """Only decode failures become misses: a crypto misconfiguration stays loud."""
 
     backend = AsyncMock()
-    backend.get = AsyncMock(return_value={ENCRYPTED_PAYLOAD_KEY: "AAAA"})
+    backend.get = AsyncMock(return_value=cached)
     coord = _coord(cache=backend)
 
     with pytest.raises(CoreException):

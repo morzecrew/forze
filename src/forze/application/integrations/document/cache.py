@@ -481,12 +481,13 @@ class DocumentCache[R: BaseModel]:
 
         if isinstance(cached, dict) and "_xf" in cached and "doc" in cached:
             meta = cached["_xf"]  # pyright: ignore[reportUnknownVariableType]
+            # Opened first, so a sealed body without a keyring still fails loudly.
+            opened = _require_mapping(await self._open_doc(cached["doc"], pk))
 
             # A malformed envelope is a decode failure, so the caller treats it as a miss.
             if not isinstance(meta, dict):
                 raise TypeError("Cached refresh metadata is not a mapping")
 
-            opened = _require_mapping(await self._open_doc(cached["doc"], pk))
             return self.read_codec.decode_mapping(opened), cast(JsonDict, meta)
 
         if is_encrypted_payload(cached):  # pyright: ignore[reportUnknownArgumentType]
