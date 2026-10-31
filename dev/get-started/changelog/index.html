@@ -10432,6 +10432,12 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <li>
 <p><strong>The Postgres pool no longer hands out connections the server has ended</strong> (<strong>behaviour change</strong>). Each checkout now pings the connection first, one round trip, so a restart or failover no longer fails one request per pooled connection. <code>PostgresConfig(check_on_checkout=False)</code> turns it off.</p>
 </li>
+<li>
+<p><strong>Outbox staging follows the transaction, not the task</strong> (<strong>behaviour change</strong>). A root transaction reopens the routes a flush closed; rows a committed one left unflushed stay staged for the task's next flush. A rolled-back scope drops what it staged and stages again what its flush wrote.</p>
+</li>
+<li>
+<p><strong>Outbox events a child task stages stay in that task</strong> (<strong>behaviour change</strong>). A task started from another begins with a copy of its staging and no longer adds to the parent's buffer, so one task's rollback cannot erase another's events. Flush in the task that stages.</p>
+</li>
 </ul>
 <h3 id="security">Security<a class="headerlink" href="#security" title="Permanent link">&para;</a></h3>
 <ul>
