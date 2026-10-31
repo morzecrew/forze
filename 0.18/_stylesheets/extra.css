@@ -1,0 +1,361 @@
+/* Hero lattice colour — orange in dark, steel blue in light.
+   (Swap the light value for the exact logo hex when available.) */
+/* The hero is always dark, so the lattice is always the orange accent. */
+[data-md-color-scheme="default"],
+[data-md-color-scheme="slate"] {
+  --forze-hero-color: var(--md-accent-fg-color);
+  --forze-hero-boost: 1;
+}
+
+/* Home is forced to the dark scheme — hide the palette toggle there. */
+.forze-home [data-md-component="palette"] {
+  display: none;
+}
+
+/* No footer on the home page. */
+.forze-home .md-footer {
+  display: none;
+}
+
+/* Home is a full-bleed, vertically scrolling landing page. Strip the docs
+   content column (max-width + gutters) so the hero can span the viewport. */
+.forze-home {
+  overflow-x: clip;
+}
+
+.forze-home .md-main__inner {
+  margin: 0;
+  max-width: none;
+}
+
+.forze-home .md-content,
+.forze-home .md-content__inner {
+  margin: 0;
+  padding: 0;
+  max-width: none;
+}
+
+.forze-home .md-content__inner::before {
+  display: none;
+}
+
+.forze-home .forze-hero {
+  min-height: 0;
+  height: calc(100vh - var(--forze-top, 4.8rem));
+}
+
+/* Center diagrams and content images. */
+.md-typeset img {
+  display: block;
+  margin-left: auto;
+  margin-right: auto;
+}
+
+/* Make markdown tables use the full content width */
+.md-typeset .md-typeset__table {
+  display: block !important;
+  width: 100% !important;
+}
+
+.md-typeset .md-typeset__table > table {
+  display: table !important;
+  width: 100% !important;
+  max-width: none !important;
+}
+
+/* ---- Landing hero ---- */
+.md-typeset .forze-hero {
+  position: relative;
+  display: flex;
+  align-items: center;
+  /* full-bleed: break out of the content column to span the viewport */
+  width: 100vw;
+  left: 50%;
+  right: 50%;
+  margin-left: -50vw;
+  margin-right: -50vw;
+  min-height: calc(100vh - 6rem);
+  padding: 1rem 1.5rem 1rem max(1.2rem, calc((100vw - 61rem) / 2));
+  overflow: hidden;
+}
+
+.forze-hero__canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 0;
+  pointer-events: none;
+}
+
+.md-typeset .forze-hero__text {
+  position: relative;
+  z-index: 1;
+  max-width: 34rem;
+}
+
+.md-typeset .forze-hero__text h1 {
+  font-weight: 800;
+  font-size: 3.2rem;
+  line-height: 1.1;
+  margin: 0 0 0.8rem;
+}
+
+/* No permalink pilcrow on the hero title. */
+.md-typeset .forze-hero .headerlink {
+  display: none;
+}
+
+.md-typeset .forze-hero__text > p:first-of-type {
+  font-size: 1.1rem;
+  color: var(--md-default-fg-color--light);
+  margin: 0 0 1.6rem;
+}
+
+.md-typeset .forze-hero .md-button {
+  margin: 0.3rem 0.5rem 0.3rem 0;
+}
+
+@media screen and (max-width: 59.9375em) {
+  .md-typeset .forze-hero {
+    min-height: 72vh;
+  }
+
+  /* On small screens let the home flow/scroll naturally (browser-chrome vh). */
+  .forze-home {
+    overflow: visible;
+  }
+
+  .forze-home .forze-hero {
+    height: auto;
+  }
+
+  .forze-hero__canvas {
+    opacity: 0.6;
+  }
+}
+
+.md-typeset .forze-hero .md-button--primary {
+  background-color: var(--md-accent-fg-color);
+  border-color: var(--md-accent-fg-color);
+  color: #fff;
+}
+
+.md-typeset .forze-hero .md-button--primary:hover {
+  background-color: var(--md-default-fg-color);
+  border-color: var(--md-default-fg-color);
+  color: var(--md-default-bg-color);
+}
+
+/* ---- fz cards ---- */
+
+.md-typeset .grid.cards.fz-cards > ul > li {
+  position: relative;
+  overflow: hidden;
+  transition: transform .25s ease, background .25s ease;
+}
+
+.md-typeset .grid.cards.fz-cards > ul > li > p:first-child > strong > a::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+}
+
+.md-typeset .grid.cards.fz-cards > ul > li:hover > p:first-child svg {
+  color: var(--md-accent-fg-color);
+}
+
+.md-typeset .grid.cards.fz-cards > ul > li > p:first-child > strong > a {
+  position: static;
+  text-decoration: none;
+}
+
+.md-typeset .grid.cards.fz-cards > ul > li > p:first-child > strong > a:hover {
+  text-decoration: none;
+  color: var(--md-accent-fg-color);
+}
+
+/* ---- Card hover lift ---- */
+/* .md-typeset .grid.cards > ul > li {
+  transition: border-color 0.2s ease, box-shadow 0.2s ease, transform 0.2s ease;
+}
+
+.md-typeset .grid.cards > ul > li:hover {
+  border-color: var(--md-accent-fg-color);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.08);
+  transform: translateY(-2px);
+} */
+
+/* ---- Version warning banner (dev / older release) ---- */
+/* The visible bar is an inner `<aside class="md-banner md-banner--warning">`
+   whose colors come from --md-warning-* (default: yellow #ff9) — not the outer
+   [data-md-component=outdated] div. Override those vars on the container so the
+   inner aside picks up the brand deep-orange with dark, legible text. */
+[data-md-component="outdated"] {
+  position: relative;
+  --md-warning-bg-color: #ff6e42;
+  --md-warning-fg-color: rgba(0, 0, 0, 0.87);
+}
+
+[data-md-component="outdated"] a {
+  color: inherit;
+  font-weight: 700;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+[data-md-component="outdated"] a:hover {
+  color: #fff !important;
+}
+
+[data-md-component="outdated"] .forze-banner__close {
+  position: absolute;
+  top: 50%;
+  right: 0.6rem;
+  transform: translateY(-50%);
+  padding: 0.1rem 0.4rem;
+  border: 0;
+  background: transparent;
+  color: rgba(0, 0, 0, 0.87);
+  font-size: 1.2rem;
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0.7;
+}
+
+[data-md-component="outdated"] .forze-banner__close:hover {
+  opacity: 1;
+}
+
+/* ---- Version switcher: open on click (not hover), rounded corners ---- */
+/* Rounded to match Zensical's 0.4rem convention (theme default is a square 0.1rem). */
+.md-version__list {
+  border-radius: 0.4rem;
+  overflow: hidden;
+  /* Drives the CLOSE (the theme's base is a slow, delayed fade): quick fade
+     out, then collapse. !important to beat the theme's base transition. */
+  transition: max-height 0ms 0.1s, opacity 0.1s !important;
+}
+
+/* Subtle affordance on the trigger (it no longer opens on hover). */
+.md-version__current:hover {
+  opacity: 0.7;
+}
+
+/* Neutralize the theme's hover/focus-to-open (and its hover animation) — the
+   list is now driven by a click-toggled `.md-version--open` class (theme.js). */
+.md-version:hover .md-version__list,
+.md-version:focus-within .md-version__list {
+  max-height: 0;
+  opacity: 0;
+  animation: none;
+}
+
+/* Click-toggled open state. !important so it beats the higher-specificity
+   `:focus-within` selector above (which fires because the trigger is a
+   <button> that takes focus on click). Open: expand instantly, fade in fast. */
+.md-version--open .md-version__list {
+  max-height: 12rem !important;
+  opacity: 1 !important;
+  transition: max-height 0ms, opacity 0.1s !important;
+}
+
+/* Separator between the pinned current version and the rest (theme.js). */
+.md-version__list .forze-version-sep {
+  margin: 0.25rem 0.7rem;
+  border-top: 1px solid var(--md-default-fg-color--lightest);
+}
+
+/* ---- Scrollbars: thin & neutral everywhere; hidden on the nav/TOC with a soft
+   edge-fade as the "more content" cue ---- */
+
+/* Global: thin, neutral, and no accent (orange) on hover. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--md-default-fg-color--lightest) transparent;
+}
+
+::-webkit-scrollbar {
+  width: 0.5rem;
+  height: 0.5rem;
+}
+
+::-webkit-scrollbar-thumb {
+  background-color: var(--md-default-fg-color--lightest);
+  border-radius: 0.4rem;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background-color: var(--md-default-fg-color--lighter);
+}
+
+/* Drop the theme's orange thumb-hover on code blocks and tooltips. */
+.md-typeset pre > code::-webkit-scrollbar-thumb:hover,
+.md-tooltip2__inner::-webkit-scrollbar-thumb:hover {
+  background-color: var(--md-default-fg-color--lighter);
+}
+
+/* Sidebars (left nav + right TOC): scrollbar fully hidden; a compact, sticky
+   "scroll for more" indicator (theme.js) fades in at the bottom only when there
+   is more below, and hides at the end. */
+.md-sidebar__scrollwrap {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.md-sidebar__scrollwrap::-webkit-scrollbar {
+  display: none;
+}
+
+.forze-scroll-more {
+  /* Zero-height marker at the end of the scroll content; `sticky` pins it to the
+     visible bottom edge of the nav/TOC. Height 0 so it reserves no flow space. */
+  position: sticky;
+  bottom: 0;
+  height: 0;
+  z-index: 1;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.2s;
+}
+
+.forze-scroll-more.is-visible {
+  opacity: 1;
+}
+
+/* The visible label hangs upward from the marker's bottom; the tall gradient
+   fades the nav content out beneath it. */
+.forze-scroll-more__label {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  padding: 2.4rem 0 0.4rem;
+  font-size: 0.6rem;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  color: var(--md-default-fg-color--light);
+  background: linear-gradient(
+    to top,
+    var(--md-default-bg-color) 30%,
+    var(--md-default-bg-color) 45%,
+    transparent
+  );
+}
+
+/* increase content width */
+.md-grid {
+  margin-left: auto;
+  margin-right: auto;
+  max-width: 72rem;
+}
+
+* {
+  /* --md-accent-fg-color: #aa6e42; */
+  --md-accent-fg-color--alternative: #f0461a;
+  --md-accent-fg-color--transparent: rgb(from var(--md-accent-fg-color) r g b / 0.1);
+}
