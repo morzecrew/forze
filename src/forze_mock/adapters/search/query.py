@@ -157,7 +157,9 @@ def mock_aggregate_page(
         value = next((doc[name] for doc in matched if doc.get(name) is not None), None)
 
         if value is not None:
-            hints[name] = type(value)
+            # A bare ``list`` reads as untyped to the operator checks; name it a collection.
+            is_collection = isinstance(value, (list, tuple, set, frozenset))
+            hints[name] = list[Any] if is_collection else type(value)
 
     rows = _sort_docs(
         _aggregate_docs(matched, aggregates, parser, spec.model_type, field_type_hints=hints),

@@ -339,6 +339,7 @@ class _Stock(BaseModel):
     title: str
     region: str
     quantity: int | None = None
+    tags: list[str] | None = None
 
 
 class _HubStock(BaseModel):
@@ -356,7 +357,7 @@ async def _stock_hub() -> MockHubSearchAdapter[_HubStock]:
     leg_b = SearchSpec(name="b", model_type=_Stock, fields=["title"])
     await MockSearchCommandAdapter(state=state, spec=leg_a).upsert(
         [
-            _Stock(id="1", title="omega one", region="north", quantity=1),
+            _Stock(id="1", title="omega one", region="north", quantity=1, tags=["alpha"]),
             _Stock(id="2", title="omega two", region="south", quantity=2),
             _Stock(id="3", title="alpha", region="north", quantity=4),
         ]
@@ -373,7 +374,7 @@ async def _stock_hub() -> MockHubSearchAdapter[_HubStock]:
             name="hub",
             model_type=_HubStock,
             members=[leg_a, leg_b],
-            extra_aggregatable_fields=frozenset({"quantity"}),
+            extra_aggregatable_fields=frozenset({"quantity", "tags"}),
         ),
         legs=[
             ("a", MockSearchAdapter(state=state, spec=leg_a)),
@@ -446,6 +447,21 @@ async def test_a_hub_metric_filter_on_an_extra_field_is_typed_by_its_values(
         )
 
     assert refused.value.code == code
+
+
+@pytest.mark.asyncio
+async def test_a_hub_metric_filter_on_a_list_extra_takes_no_text_operator() -> None:
+    """A list column is a collection, so ``$like`` is refused, never matched against the
+    list's text."""
+
+    hub = await _stock_hub()
+
+    like = {"$values": {"tags": {"$like": "%alpha%"}}}
+
+    with pytest.raises(CoreException) as refused:
+        await hub.aggregate_search({"$computed": {"n": {"$count": {"filter": like}}}}, "omega")
+
+    assert refused.value.code == OPERATOR_TYPE_MISMATCH_CODE
 
 
 @pytest.mark.asyncio
