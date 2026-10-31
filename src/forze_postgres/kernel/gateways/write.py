@@ -6,12 +6,15 @@ require_psycopg()
 
 # ....................... #
 
+import math
 import re
+import struct
 from collections import defaultdict
 from collections.abc import AsyncGenerator, Awaitable, Callable, Mapping, Sequence
-from contextlib import asynccontextmanager, nullcontext
+from contextlib import asynccontextmanager, nullcontext, suppress
 from datetime import UTC, datetime, time, timedelta
-from functools import partial
+from decimal import MAX_PREC, ROUND_HALF_UP, Context, Decimal
+from functools import lru_cache, partial
 from typing import Any, LiteralString, cast, final, get_args
 from uuid import UUID
 
@@ -191,19 +194,8 @@ def _compared(alias: str, column: str, pg_t: PostgresType | None) -> sql.Composa
 
 _PG_EPOCH = datetime(2000, 1, 1)
 _MICROSECOND = timedelta(microseconds=1)
-_DIGITS_RE = re.compile(r"\((\d+)\)")
-
-
-def _kept_digits(pg_t: PostgresType | None) -> int | None:
-    """The fractional digits a ``timestamp``, ``timestamptz``, ``time`` or ``timetz`` column
-    keeps, when fewer than a Python value's six; ``None`` for any other column."""
-
-    if pg_t is None or _scalar_base(pg_t) not in {"timestamp", "timestamptz", "time", "timetz"}:
-        return None
-
-    m = _DIGITS_RE.search(pg_t.base)
-
-    return int(m.group(1)) if m is not None and int(m.group(1)) < 6 else None
+_EXACT = Context(prec=MAX_PREC)
+_MODIFIER_RE = re.compile(r"\((\d+)(?:,\s*(-?\d+))?\)")
 
 
 def _half_away(us: int, step: int) -> int:
@@ -215,17 +207,14 @@ def _half_away(us: int, step: int) -> int:
 
 
 def _rounded_as_stored(value: Any, digits: int) -> Any:
-    """*value* (a ``datetime`` or ``time``, or a list of them) as a column keeping *digits*
-    fractional digits stores it.
+    """*value*, a ``datetime`` or ``time``, as a column keeping *digits* fractional digits
+    stores it.
 
     Postgres rounds an instant half away from zero on its microseconds since its epoch,
     2000-01-01 (UTC when aware), so half a step rounds down before it; and a time of day half
     up. A value that rounds past what Python holds, a ``datetime`` past 9999-12-31 or a
     ``time`` up to ``24:00:00``, both of which Postgres keeps, is returned as sent.
     """
-
-    if isinstance(value, list):
-        return [_rounded_as_stored(x, digits) for x in value]
 
     step = 10 ** (6 - digits)
 
@@ -252,17 +241,169 @@ def _rounded_as_stored(value: Any, digits: int) -> Any:
     return value
 
 
+def _as_numeric(value: Any, precision: int, scale: int) -> Any:
+    """*value*, a ``Decimal`` or ``float``, as a ``numeric(precision, scale)`` column stores it:
+    rounded half away from zero to *scale* places.
+
+    Returned as sent: a NaN or an infinity, and a value with more integer digits than the column
+    holds, for the write to refuse; and a float whose rounded value no float spells exactly, so
+    the write could not store that value from it.
+    """
+
+    if isinstance(value, float):
+        if not math.isfinite(value):
+            return value
+
+        # As the write sends it: its ``str()``, never the binary fraction.
+        rounded = _as_numeric(Decimal(str(value)), precision, scale)
+        stored = float(rounded)
+
+        return stored if Decimal(str(stored)) == rounded else value
+
+    if not isinstance(value, Decimal) or not value.is_finite():
+        return value
+
+    # Refused by the write anyway; quantizing a vast exponent would build a vast coefficient.
+    if value.adjusted() >= precision - scale:
+        return value
+
+    return value.quantize(Decimal(1).scaleb(-scale), rounding=ROUND_HALF_UP, context=_EXACT)
+
+
+def _single_spelling(single: float) -> Decimal:
+    """The digits Postgres prints for *single*, a finite nonzero single: the fewest that name it
+    (round to nearest, ties to even), and the closest to it of those."""
+
+    bits = struct.unpack("<I", struct.pack("<f", abs(single)))[0]
+    exact = Decimal(abs(single))
+    below, above = (
+        Decimal(struct.unpack("<f", struct.pack("<I", n))[0]) for n in (bits - 1, bits + 1)
+    )
+
+    # Past the largest single, its interval reaches as far above it as below.
+    if above.is_infinite():
+        above = _EXACT.subtract(_EXACT.multiply(exact, 2), below)
+
+    low = _EXACT.divide(_EXACT.add(below, exact), 2)
+    high = _EXACT.divide(_EXACT.add(exact, above), 2)
+    # A tie rounds to the even single, so an even one owns its interval's ends.
+    even = bits % 2 == 0
+
+    def names(spelled: Decimal) -> bool:
+        return low <= spelled <= high if even else low < spelled < high
+
+    for digits in range(1, 10):
+        step = Decimal(1).scaleb(exact.adjusted() - digits + 1)
+        nearest = exact.quantize(step, context=_EXACT)
+        # The nearest spelling, or a neighbour where the interval is lopsided (a power of two).
+        named = [c for c in (nearest, nearest - step, nearest + step) if names(c)]
+
+        if named:
+            spelled = min(named, key=lambda c: _EXACT.subtract(c, exact).copy_abs())
+
+            return spelled if single > 0 else -spelled
+
+    return exact if single > 0 else -exact
+
+
+def _as_real(value: Any) -> Any:
+    """*value*, a ``float``, as a ``real`` column stores it and reads it back.
+
+    The write sends a float8, which Postgres rounds to the nearest single; a read returns that
+    single as Postgres prints it (:func:`_single_spelling`), read as a float. Returned as sent:
+    a value out of range, which Postgres refuses, and one whose spelling, written back, would
+    name another single.
+    """
+
+    if not isinstance(value, float):
+        return value
+
+    try:
+        packed = struct.pack("f", value)
+
+    except OverflowError:
+        return value
+
+    single = struct.unpack("f", packed)[0]
+
+    if single == 0 and value != 0:
+        return value
+
+    if single == 0 or not math.isfinite(single):
+        return single
+
+    read = float(_single_spelling(single))
+
+    with suppress(OverflowError):
+        if struct.pack("f", read) == packed:
+            return read
+
+    return value
+
+
+def _padded(value: Any, length: int) -> Any:
+    """*value*, a ``str``, as a ``char(n)`` column stores it: blank-padded to *length*, blanks
+    past it dropped, so trailing blanks compare as Postgres compares them. A longer value is
+    returned as sent, for the write to refuse."""
+
+    if not isinstance(value, str):
+        return value
+
+    kept = value.rstrip(" ")
+
+    return kept.ljust(length) if len(kept) <= length else value
+
+
+@lru_cache(maxsize=256)
+def _stored_as(pg_t: PostgresType) -> Callable[[Any], Any] | None:
+    """How a column stores a value it rounds or pads, one array element at a time: ``real``,
+    and a declared precision, scale or length (``timestamp(p)``, ``timestamptz(p)``,
+    ``time(p)``, ``timetz(p)``, ``numeric(p,s)``, ``char(n)``). ``None`` for any other."""
+
+    base = _scalar_base(pg_t)
+
+    if base == "float4":
+        return _as_real
+
+    m = _MODIFIER_RE.search(pg_t.base)
+
+    if m is None:
+        return None
+
+    first = int(m.group(1))
+
+    if base in {"timestamp", "timestamptz", "time", "timetz"}:
+        return partial(_rounded_as_stored, digits=first) if first < 6 else None
+
+    if base == "numeric":
+        return partial(_as_numeric, precision=first, scale=int(m.group(2) or 0))
+
+    if base == "char":
+        return partial(_padded, length=first)
+
+    return None
+
+
 def _as_stored(patch: JsonDict, column_types: PostgresColumnTypes) -> JsonDict:
-    """*patch* with each instant in a column of fewer fractional digits rounded as that
-    column stores it, so a value it would round finds no change."""
+    """*patch* with each value its column rounds or pads (:func:`_stored_as`) as the column
+    stores it, so a value it would round finds no change."""
 
-    rounded = {
-        k: _rounded_as_stored(v, digits)
-        for k, v in patch.items()
-        if (digits := _kept_digits(column_types.get(k))) is not None
-    }
+    stored: JsonDict = {}
 
-    return {**patch, **rounded} if rounded else patch
+    for key, value in patch.items():
+        pg_t = column_types.get(key)
+        convert = None if pg_t is None else _stored_as(pg_t)
+
+        if pg_t is None or convert is None:
+            continue
+
+        if pg_t.is_array and isinstance(value, list):
+            stored[key] = [convert(x) for x in value]
+
+        else:
+            stored[key] = convert(value)
+
+    return {**patch, **stored} if stored else patch
 
 
 def _row_source(

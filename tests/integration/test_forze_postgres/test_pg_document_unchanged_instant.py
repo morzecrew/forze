@@ -201,7 +201,7 @@ async def test_an_instant_rounds_as_postgres_stores_it(
 
         # An array, element by element.
         stored = await pg_client.fetch_value(f"SELECT %s::{column}({digits})[]", [sent])
-        assert _rounded_as_stored(sent, digits) == stored, column
+        assert [_rounded_as_stored(x, digits) for x in sent] == stored, column
 
 
 class _Instants(BaseModel):

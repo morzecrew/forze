@@ -169,12 +169,16 @@ PostgresLifecycleModule(
 - **You own the schema.** Forze *introspects* existing relations; it never
   creates application tables. Provision read / write / history / search relations
   (and extensions) with your migration tool first.
-- **Instants a column rounds.** An update compares a value as its column stores it, so
+- **Values a column rounds or pads.** An update compares a value as its column stores it, so
   resending an unchanged one writes nothing: `timestamp(p)`, `timestamptz(p)`, `time(p)` and
-  `timetz(p)` round to their precision. The limits:
+  `timetz(p)` round to their precision, `numeric(p,s)` to its scale, `real` to single precision,
+  and `char(n)` pads with blanks. The limits:
 
     - A `time(p)` value that rounds up to `24:00:00` is compared as sent: Postgres stores it, and
       psycopg cannot read it back.
+    - `real` assumes the shortest spelling Postgres prints by default since Postgres 12
+      (`extra_float_digits` of 1 or more); otherwise an unchanged `real` is rewritten. Forze's
+      tests run on Postgres 18.
     - `interval(p)` is compared as sent.
 - **Counter lifetimes need one column.** A counter written with a `ttl` stores its lapse
   instant in an optional `expires_at timestamptz` column:
