@@ -63,6 +63,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Outbox staging follows the transaction, not the task** (**behaviour change**). A root transaction reopens the routes a flush closed; rows a committed one left unflushed stay staged for the task's next flush. A rolled-back scope drops what it staged and stages again what its flush wrote.
 
+- **Outbox events a child task stages stay in that task** (**behaviour change**). A task started from another begins with a copy of its staging and no longer adds to the parent's buffer, so one task's rollback cannot erase another's events. Flush in the task that stages.
+
 ### Security
 
 - **Cursor signing and encryption set on an `ExecutionRuntime` apply to every request** (**Breaking**). Code outside the scope's task now mints and requires protected cursors, refused (`cursor_protection_ambiguous`) while open scopes hold different keys. New `hold_cursor_signer` and `hold_cursor_cipher`.

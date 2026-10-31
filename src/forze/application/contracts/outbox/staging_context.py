@@ -24,7 +24,9 @@ class OutboxStagingContext:
     route's flush never pops or blocks another route's staged rows. Both the
     buffer contents and the flushed flag are additionally scoped per async
     task via :class:`~contextvars.ContextVar`, and follow the transaction scopes
-    the task opens (see :meth:`transaction_scope`).
+    the task opens (see :meth:`transaction_scope`). A task started from another
+    begins with a copy of what that one had staged; what it stages afterwards is
+    its own, so it must flush it itself.
 
     The per-route buffers create per-instance ``ContextVar``s. This is intentional and
     safe because an ``OutboxStagingContext`` is a per-runtime-scope singleton (one per
@@ -116,14 +118,7 @@ class OutboxStagingContext:
         """
 
         # Copied up front: the dicts may grow while the scope runs (a first stage on a route).
-        # Each list is kept beside its contents: tasks started from this one share the list
-        # object, so the restore changes it in place for every holder to see.
-        entered: dict[str, tuple[list[StagedOutboxEntry], list[StagedOutboxEntry]]] = {}
-
-        for route, buffer in list(self._buffers.items()):
-            held = buffer.peek()
-            entered[route] = (held, list(held))
-
+        buffers = {route: list(buffer.peek()) for route, buffer in list(self._buffers.items())}
         flushed = {route: var.get() for route, var in list(self._flushed_vars.items())}
 
         if root:
@@ -134,12 +129,11 @@ class OutboxStagingContext:
             yield
 
         except BaseException:
+            # Buffers are copy-on-write, so this changes the current task's alone: a task
+            # started from it keeps whatever it staged, and flushes that itself.
             for route, buffer in list(self._buffers.items()):
-                held, contents = entered.get(route, ([], []))
-
-                # The task's current list too: a flush in the scope replaced the one it held.
-                for entries in (held, buffer.peek()):
-                    entries[:] = contents
+                buffer.clear()
+                buffer.push(buffers.get(route, []))
 
             for route, var in list(self._flushed_vars.items()):
                 var.set(flushed.get(route, False))

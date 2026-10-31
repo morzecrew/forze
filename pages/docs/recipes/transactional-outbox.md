@@ -49,6 +49,11 @@ This follows the scopes `ctx.tx_ctx.scope` opens, as operations do. A transactio
 opened on the raw manager, `ctx.transaction(route).transaction()`, bypasses it:
 nothing reopens the route or restores what was staged.
 
+Staging belongs to the task that stages. A task started from another, with
+`asyncio.gather` or `create_task`, begins with a copy of what that task had staged,
+and what it stages afterwards never reaches the parent, so flush in the task that
+stages.
+
 ## Relay to the broker
 
 A relay claims staged rows and publishes them to the queue, returning what it did:

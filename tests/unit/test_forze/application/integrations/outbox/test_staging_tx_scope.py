@@ -155,7 +155,7 @@ async def test_a_savepoint_rollback_the_journal_mock_cannot_undo_writes_the_even
     assert _notes(state).count("outer") == 1
 
 
-async def test_a_rolled_back_savepoint_restores_the_list_its_sibling_task_holds() -> None:
+async def test_a_sibling_task_never_flushes_what_a_rolled_back_savepoint_staged() -> None:
     ctx, state = _ctx()
     savepoint_done = asyncio.Event()
 
@@ -173,11 +173,58 @@ async def test_a_rolled_back_savepoint_restores_the_list_its_sibling_task_holds(
         return await _flush(ctx)
 
     async with ctx.tx_ctx.scope("mock"):
-        # Staged before the gather, so both children share this task's list object.
+        # Staged before the gather, so both children start from a non-empty buffer.
         await _stage(ctx, "outer")
         await asyncio.gather(_fail_in_a_savepoint(), _flush_after_it())
 
     assert _notes(state) == ["outer"]
+
+
+async def test_a_rollback_in_one_task_keeps_what_a_sibling_staged_meanwhile() -> None:
+    ctx, state = _ctx()
+    savepoint_entered = asyncio.Event()
+    sibling_staged = asyncio.Event()
+    rolled_back = asyncio.Event()
+
+    async def _roll_back() -> None:
+        with pytest.raises(_Boom):
+            async with ctx.tx_ctx.scope("mock"):
+                savepoint_entered.set()
+                await sibling_staged.wait()
+                await _stage(ctx, "rolled-back")
+                raise _Boom
+
+        rolled_back.set()
+
+    async def _stage_then_flush() -> None:
+        await savepoint_entered.wait()
+        await _stage(ctx, "sibling")
+        sibling_staged.set()
+        await rolled_back.wait()
+        await _flush(ctx)
+
+    async with ctx.tx_ctx.scope("mock"):
+        # Both children inherit this non-empty buffer; the sibling stages after the
+        # savepoint took its snapshot, and must still flush its own entry.
+        await _stage(ctx, "outer")
+        await asyncio.gather(_roll_back(), _stage_then_flush())
+
+    assert sorted(_notes(state)) == ["outer", "sibling"]
+
+
+async def test_what_a_child_task_stages_stays_in_that_task() -> None:
+    # A child begins with a copy of the parent's staging; its own stages never reach the
+    # parent, so a child that stages must flush them itself.
+    ctx, _ = _ctx()
+
+    async def _child() -> None:
+        await _stage(ctx, "child")
+
+    async with ctx.tx_ctx.scope("mock"):
+        await _stage(ctx, "outer")
+        await asyncio.create_task(_child())
+
+        assert [entry.event.payload.note for entry in ctx.outbox_staging.peek()] == ["outer"]
 
 
 async def test_events_staged_before_a_rolled_back_root_survive_it() -> None:
