@@ -55,6 +55,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **A document cache entry that does not decode is a miss.** The read refetches the document and logs a warning instead of failing. Crypto and configuration errors still raise.
 
+- **The Postgres pool no longer hands out connections the server has ended** (**behaviour change**). Each checkout now pings the connection first, one round trip, so a restart or failover no longer fails one request per pooled connection. `PostgresConfig(check_on_checkout=False)` turns it off.
+
 ### Security
 
 - **Cursor signing and encryption set on an `ExecutionRuntime` apply to every request** (**Breaking**). Code outside the scope's task now mints and requires protected cursors, refused (`cursor_protection_ambiguous`) while open scopes hold different keys. New `hold_cursor_signer` and `hold_cursor_cipher`.
