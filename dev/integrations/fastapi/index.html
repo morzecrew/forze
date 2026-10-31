@@ -3930,6 +3930,28 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#live-only-sse-streams" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Live-only SSE streams
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#documenting-the-sse-routes" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Documenting the SSE routes
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#offline-delivery-without-socketio" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -6824,6 +6846,28 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#live-only-sse-streams" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Live-only SSE streams
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#documenting-the-sse-routes" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Documenting the SSE routes
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#offline-delivery-without-socketio" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -7538,6 +7582,38 @@ re-assert within the TTL. The heartbeat runs with no tenant bound, so it refuses
 on a client routed per tenant; rooms already carry their tenant. A closing stream leaves its rooms even when it closes cancelled —
 its client gone, or cut off by a drain — within 2 s; past that, a warning is logged and the
 rest expire with the store's TTL.</p>
+<h3 id="live-only-sse-streams">Live-only <abbr title="Server-Side Encryption">SSE</abbr> streams<a class="headerlink" href="#live-only-sse-streams" title="Permanent link">&para;</a></h3>
+<p>A deployment whose signals are all ephemeral (<code>publish</code>, never <code>stage</code>) has nothing for a
+mailbox to hold, since topic broadcasts are never mailboxed. Leave out <code>mailbox_factory</code> and
+<code>cursors_factory</code>:</p>
+<div class="highlight"><pre><span></span><code><span class="n">attach_realtime_sse_route</span><span class="p">(</span><span class="n">router</span><span class="p">,</span> <span class="n">ctx_dep</span><span class="o">=</span><span class="n">runtime</span><span class="o">.</span><span class="n">get_context</span><span class="p">,</span> <span class="n">hub</span><span class="o">=</span><span class="n">hub</span><span class="p">)</span>
+</code></pre></div>
+<p>The stream then serves the live tail with no replay, and no <code>POST …/ack</code> route is attached.
+A <code>Last-Event-ID</code> the browser sends on reconnect is ignored, so a signal published while
+the client was away is not delivered. Durable delivery still takes both factories. Attach
+refuses one factory without the other, a live-only stream without a hub, and
+<code>ack_route_options</code> on a live-only stream.</p>
+<h3 id="documenting-the-sse-routes">Documenting the <abbr title="Server-Side Encryption">SSE</abbr> routes<a class="headerlink" href="#documenting-the-sse-routes" title="Permanent link">&para;</a></h3>
+<p>The stream and ack routes ship with a summary and a description on every query parameter
+(<code>protocol</code>, <code>device_id</code>, <code>topics</code>), and the stream's 200 is documented as
+<code>text/event-stream</code>. Pass <code>route_options</code> for the stream and <code>ack_route_options</code> for the ack
+to add what your OpenAPI document needs: <code>operation_id</code>, <code>description</code>, <code>tags</code>,
+<code>openapi_extra</code>, <code>summary</code>, <code>deprecated</code> and <code>responses</code> (a <code>RealtimeSseRouteOptions</code>):</p>
+<div class="highlight"><pre><span></span><code><span class="n">attach_realtime_sse_route</span><span class="p">(</span>
+    <span class="n">router</span><span class="p">,</span>
+    <span class="o">...</span><span class="p">,</span>
+    <span class="n">route_options</span><span class="o">=</span><span class="p">{</span>
+        <span class="s2">"operation_id"</span><span class="p">:</span> <span class="s2">"realtime.events"</span><span class="p">,</span>
+        <span class="s2">"description"</span><span class="p">:</span> <span class="s2">"The signed-in user's realtime events."</span><span class="p">,</span>
+        <span class="s2">"tags"</span><span class="p">:</span> <span class="p">[</span><span class="s2">"realtime"</span><span class="p">],</span>
+    <span class="p">},</span>
+    <span class="n">ack_route_options</span><span class="o">=</span><span class="p">{</span><span class="s2">"operation_id"</span><span class="p">:</span> <span class="s2">"realtime.ack"</span><span class="p">,</span> <span class="s2">"tags"</span><span class="p">:</span> <span class="p">[</span><span class="s2">"realtime"</span><span class="p">]},</span>
+<span class="p">)</span>
+</code></pre></div>
+<p>Your <code>responses</code> merge over the built-in ones, and a status code you give replaces forze's.
+Any other key, such as the route's path, methods, endpoint, name or response class, is
+refused at attach time. <code>attach_realtime_ws_route</code> takes no such options: OpenAPI does not
+describe WebSocket routes, so FastAPI leaves them out of the document.</p>
 <h3 id="offline-delivery-without-socketio">Offline delivery without Socket.IO<a class="headerlink" href="#offline-delivery-without-socketio" title="Permanent link">&para;</a></h3>
 <p>The <abbr title="Server-Side Encryption">SSE</abbr> and WebSocket routes replay the mailbox and ack against it; they never write it.
 Something has to consume the realtime stream through a consumer group and store each
@@ -7622,7 +7698,9 @@ tenancy rules, the dedup mark and the store-before-ack order are identical:</p>
   so no Socket.IO install is needed.</li>
 </ul>
 <p>With neither a writer nor a gateway, the mailbox stays empty. The routes still serve and
-accept acks, but a durable signal that lands while a client is disconnected is lost.</p>
+accept acks, but a durable signal that lands while a client is disconnected is lost. An <abbr title="Server-Side Encryption">SSE</abbr>
+deployment with no durable signals at all can drop the mailbox: see <a href="#live-only-sse-streams">live-only <abbr title="Server-Side Encryption">SSE</abbr>
+streams</a>.</p>
 <h2 id="realtime-over-raw-websocket">Realtime over raw WebSocket<a class="headerlink" href="#realtime-over-raw-websocket" title="Permanent link">&para;</a></h2>
 <p><code>attach_realtime_ws_route</code> is the duplex sibling for clients that cannot run
 Socket.IO (strict-protocol peers, non-JS embedded clients): the same replay + live

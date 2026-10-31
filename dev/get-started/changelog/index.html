@@ -10378,6 +10378,12 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <li>
 <p><strong>The isolated executor has its own slot: <code>bind_isolated_cpu_executor</code>, <code>hold_isolated_cpu_executor</code>, <code>current_isolated_cpu_executor</code> and <code>isolated_cpu_executor_bound</code>.</strong> They mirror the default executor's, but nothing bound or held gives <code>None</code>. <code>InlineCpuExecutor(pickled=True)</code> adds the pickle round trip, for tests.</p>
 </li>
+<li>
+<p><strong><code>attach_realtime_sse_route</code> takes <code>route_options</code> and <code>ack_route_options</code> to document its routes.</strong> Each sets the route's <code>operation_id</code>, <code>description</code>, <code>tags</code>, <code>openapi_extra</code> and the like; other keys are refused. The query parameters now ship described, and the stream's 200 is documented as <code>text/event-stream</code>.</p>
+</li>
+<li>
+<p><strong><code>attach_realtime_sse_route</code> serves a live-only stream without a mailbox.</strong> Leave out <code>mailbox_factory</code> and <code>cursors_factory</code> and it serves the hub's live tail with no replay, ignores <code>Last-Event-ID</code> and attaches no ack route. It needs a hub, and one factory without the other is refused at attach time.</p>
+</li>
 </ul>
 <h3 id="changed">Changed<a class="headerlink" href="#changed" title="Permanent link">&para;</a></h3>
 <ul>
