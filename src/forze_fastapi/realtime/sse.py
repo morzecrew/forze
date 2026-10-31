@@ -505,6 +505,10 @@ _DEVICE_ID_DESCRIPTION = (
     "A stable per-device id that keys this device's replay cursor. Without one, the "
     "principal's device-less streams share one cursor and resume by `Last-Event-ID`."
 )
+_LIVE_DEVICE_ID_DESCRIPTION = (
+    "Unused: a live-only stream keeps no replay cursor. Accepted so a client sends the same "
+    "parameters to either kind of stream."
+)
 _TOPICS_DESCRIPTION = (
     "Comma-separated topics to subscribe to. The connection is refused unless the app "
     "grants every one."
@@ -573,12 +577,20 @@ def attach_realtime_sse_route(
     200 is documented as ``text/event-stream``.
     """
 
+    if mailbox_factory is None:
+        mode = "live only"
+
+    elif hub is None:
+        mode = "replay only"
+
+    else:
+        mode = "replay, then live"
+
     stream_kwargs = _route_kwargs(
         route_options,
         argument="route_options",
         defaults={
-            "summary": "Realtime egress over Server-Sent Events "
-            + ("(replay, then live)" if mailbox_factory is not None else "(live only)"),
+            "summary": f"Realtime egress over Server-Sent Events ({mode})",
             "responses": _STREAM_RESPONSES,
         },
     )
@@ -615,13 +627,16 @@ def attach_realtime_sse_route(
         raise exc.configuration("max_topics must be positive")
 
     ack_path = f"{path}/ack"
+    device_id_description = (
+        _DEVICE_ID_DESCRIPTION if mailbox_factory is not None else _LIVE_DEVICE_ID_DESCRIPTION
+    )
 
     # ....................... #
 
     async def stream_endpoint(
         request: Request,
         protocol: Annotated[str | None, Query(description=_PROTOCOL_DESCRIPTION)] = None,
-        device_id: Annotated[str | None, Query(description=_DEVICE_ID_DESCRIPTION)] = None,
+        device_id: Annotated[str | None, Query(description=device_id_description)] = None,
         topics: Annotated[str | None, Query(description=_TOPICS_DESCRIPTION)] = None,
     ) -> StreamingResponse:
         ctx = ctx_dep()
