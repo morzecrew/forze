@@ -6717,8 +6717,10 @@ is in <a href="../../../core-concepts/contracts/">Contracts</a>.</p>
 <h2 id="cache">Cache<a class="headerlink" href="#cache" title="Permanent link">&para;</a></h2>
 <p><code>ctx.cache(spec)</code> returns a combined read/write <code>CachePort</code>. Keys are strings
 within the spec's namespace. <strong>Values must be JSON-serializable, or
-pre-encoded <code>bytes</code></strong> (stored verbatim, returned for the caller to decode) —
-don't rely on key ordering or non-JSON types surviving a round trip.</p>
+pre-encoded <code>bytes</code>.</strong> JSON values come back parsed; <code>bytes</code> come back as the
+same bytes on every adapter, for the caller to decode (for example with
+<code>TypeAdapter.validate_json</code>) — don't rely on key ordering or non-JSON types
+surviving a round trip.</p>
 <p><code>CacheSpec</code> — most fields tune document read-through; the deep behavior is in
 <a href="../../../data-events/caching/">Caching</a>:</p>
 <table>

@@ -10402,6 +10402,9 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <li>
 <p><strong><code>run_cpu</code> reserves the keyword <code>isolated</code></strong> (<strong>Breaking</strong>). A call that passed <code>isolated=</code> through to its function now selects the isolated executor instead; pass that argument with <code>functools.partial</code>.</p>
 </li>
+<li>
+<p><strong>The Redis cache returns pre-encoded <code>bytes</code> values verbatim, as the mock does</strong> (<strong>Breaking</strong>). It parsed them as JSON. Replicas on different releases miss or parse each other's <code>bytes</code> entries, so flush the cache namespace once every replica runs the new release.</p>
+</li>
 </ul>
 <h3 id="fixed">Fixed<a class="headerlink" href="#fixed" title="Permanent link">&para;</a></h3>
 <ul>
@@ -10416,6 +10419,9 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 </li>
 <li>
 <p><strong>A Postgres hard delete refused by a foreign key raises <code>conflict</code>, not <code>not_found</code></strong> (<strong>behaviour change</strong>). <code>kill</code>/<code>kill_many</code> on a row a plain foreign key still references no longer reads as "Reference document not found"; <code>ON DELETE RESTRICT</code> maps to <code>conflict</code> too.</p>
+</li>
+<li>
+<p><strong>A document cache entry that does not decode is a miss.</strong> The read refetches the document and logs a warning instead of failing. Crypto and configuration errors still raise.</p>
 </li>
 </ul>
 <h3 id="security">Security<a class="headerlink" href="#security" title="Permanent link">&para;</a></h3>

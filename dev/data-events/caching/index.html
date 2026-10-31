@@ -6665,7 +6665,9 @@
 
 <p>Attaching a <code>CacheSpec</code> to a document gives you read-through caching: reads serve
 from the cache, writes invalidate, and a cached read is never stale within the
-contract you opted into. The <a href="../../recipes/cache-reads-with-redis/">Cache reads with Redis</a>
+contract you opted into. An entry that does not decode — corrupt, or cached under
+an older read-model shape — counts as a miss: the read refetches the document and
+logs a warning. The <a href="../../recipes/cache-reads-with-redis/">Cache reads with Redis</a>
 recipe is the wiring. This page explains the behaviors the contract layers on top
 — protections you get for free, and knobs you opt into when a read pattern needs
 them. They are backend-agnostic (the mock cache honors them too); where a feature

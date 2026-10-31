@@ -7097,6 +7097,15 @@ it is a server setting forze cannot check.</p>
 <li><strong>TTLs are logical.</strong> <code>CacheSpec</code> / <code>IdempotencySpec</code> TTLs are expiry intents —
   Redis memory eviction can drop keys earlier, so size and policy the server
   accordingly.</li>
+<li><strong>Pre-encoded cache values carry a marker.</strong> A <code>bytes</code> cache value is stored
+  behind a fixed prefix that starts with a NUL byte, so reads return it
+  verbatim; JSON values are stored as plain JSON. A replica on an older release
+  misses on marked entries, and <code>bytes</code> entries it wrote come back parsed, or as
+  a miss, on a newer one. While both releases run, an older replica can also keep
+  serving a value it can still read after a newer one rewrote the entry. To avoid
+  mixed reads, cut over without overlap or point the new release at a fresh cache
+  namespace; otherwise flush the namespace once every replica runs the new
+  release. Document read-through caching accepts both forms.</li>
 <li><strong>Idempotency</strong> needs stable keys and a TTL longer than client retries; every
   worker that can handle an operation must share the same namespace.</li>
 <li><strong>Routed clients</strong> use <code>routed_client_lifecycle_step</code> — don't mix routed and
