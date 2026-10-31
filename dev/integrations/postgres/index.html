@@ -6930,8 +6930,11 @@ index so it does not scan the live rows:</p>
 </code></pre></div>
 <p>See <a href="../../reference/contracts/stores/#lifetimes-ttl">Lifetimes</a>.
 - <strong>Bookkeeping.</strong> <code>bookkeeping_strategy="application"</code> bumps <code>rev</code> /
-  <code>last_update_at</code> in the write gateway; <code>"database"</code> defers to a <code>BEFORE UPDATE</code>
-  trigger you supply.
+  <code>last_update_at</code> in the write gateway; <code>"database"</code> defers to a
+  <code>BEFORE UPDATE … FOR EACH ROW</code> trigger you supply. With <code>history_enabled</code>, your triggers also write the history row of
+  every revision, the created one included; startup validation warns when no trigger on the
+  write relation fires on <code>INSERT</code>. Validation counts only enabled triggers, and on a
+  partitioned table one on the table itself or on every partition.
 - <strong>Routed clients</strong> require <code>introspector_cache_partition_key</code> on the deps
   module so the catalog cache partitions by tenant.
 - <strong>Connections the server ended.</strong> A restart, a failover, <code>pg_terminate_backend</code> or
