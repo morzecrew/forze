@@ -240,7 +240,7 @@ class PsycopgValueCoercer:
         if t.is_array:
             raise exc.internal(f"Array type not supported: {t!r}")
 
-        match t.base:
+        match base := self.matched(t):
             case "uuid":
                 return self.caster.as_uuid(v)
 
@@ -263,7 +263,7 @@ class PsycopgValueCoercer:
                 return self.caster.as_date(v)
 
             case "timestamptz" | "timestamp":
-                return self.caster.as_datetime(v, force_tz=t.base == "timestamptz")
+                return self.caster.as_datetime(v, force_tz=base == "timestamptz")
 
             case _:
                 return v
@@ -271,12 +271,23 @@ class PsycopgValueCoercer:
     # ....................... #
 
     @staticmethod
-    def kept(base: str) -> Callable[[Any], bool]:
-        """Whether :meth:`scalar` returns a value of a *base* column as it is, judged from its
-        exact type: a ``StrEnum`` member, a ``str`` subclass, is never kept. Mirrors
-        :meth:`scalar` case by case, so a case added there needs its line here."""
+    def matched(t: PostgresType) -> str:
+        """The type name :meth:`scalar` converts a value of a *t* column by, and :meth:`kept`
+        decides by: one for both, so neither can read a type (a modifier) as the other does
+        not."""
 
-        match base:
+        return t.base
+
+    # ....................... #
+
+    @classmethod
+    def kept(cls, t: PostgresType) -> Callable[[Any], bool]:
+        """Whether :meth:`scalar` returns a value of a *t* column as it is, judged from its
+        exact type: a ``StrEnum`` member, a ``str`` subclass, is never kept. Mirrors
+        :meth:`scalar` case by case on :meth:`matched`, so a case added there needs its line
+        here."""
+
+        match cls.matched(t):
             case "uuid":
                 return lambda v: type(v) is UUID
 

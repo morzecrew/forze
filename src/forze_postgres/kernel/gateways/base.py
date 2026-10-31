@@ -504,7 +504,10 @@ class PostgresGateway[M: BaseModel](
         if t.base in {"jsonb", "json"}:
             return adapt
 
-        kept = _WRITE_VALUE_COERCER.kept(t.base)
+        # The type the coercion converts by: an array's element type, as the coercion makes it.
+        kept = _WRITE_VALUE_COERCER.kept(
+            PostgresType(base=t.base, is_array=False, not_null=True) if t.is_array else t
+        )
 
         if t.is_array:
             # Rebuilt as a new list either way, each element as the scalar coercion leaves it.

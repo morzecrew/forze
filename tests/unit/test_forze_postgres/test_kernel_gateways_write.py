@@ -206,6 +206,10 @@ _ADAPTED_BASES = [
     "uuid", "text", "varchar", "char", "citext", "bool", "int2", "int4", "int8", "float4",
     "float8", "numeric", "date", "timestamptz", "timestamp", "jsonb", "json", "bytea",
     "varchar(8)", "timestamptz(3)", "numeric(10,2)", "inet", "interval", "time", "mood",
+    # With a modifier, as catalog and normalized names spell it: if either side starts reading
+    # one as its bare type and the other does not, values come out apart here.
+    "timestamp(3)", "timestamp(3) with time zone", "character(3)", "bpchar(3)", "char(3)",
+    "time(3)",
 ]  # fmt: skip
 
 _ADAPTED_VALUES: list[object] = [
@@ -220,6 +224,10 @@ _ADAPTED_VALUES: list[object] = [
     [datetime(2026, 1, 2)], {"k": 1}, {"k": _Mood.HAPPY}, {_Mood.HAPPY: [1]},
     _Moment(2026, 1, 2, 3, 4, 5), _Moment(2026, 1, 2, 3, 4, 5, tzinfo=UTC), _Label("label"),
     memoryview(b"mv"), [_Moment(2026, 1, 2)], [_Label("a")], [memoryview(b"m")],
+    # For the modifier-typed columns: extra scale, sub-millisecond instants, short strings.
+    Decimal("12.345678"), Decimal("1.5E+3"), "ab", "x", time(1, 2, 3, 456789),
+    datetime(2026, 1, 2, 3, 4, 5, 678901), datetime(2026, 1, 2, 3, 4, 5, 678901, tzinfo=UTC),
+    [datetime(2026, 1, 2, 3, 4, 5, 678901, tzinfo=UTC), None], [Decimal("1.005")], ["ab"],
 ]  # fmt: skip
 
 
