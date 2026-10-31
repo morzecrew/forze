@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+from contextlib import contextmanager
 from contextvars import ContextVar
 
 import attrs
@@ -21,7 +23,8 @@ class OutboxStagingContext:
     :class:`~forze.base.primitives.ContextualBuffer` and flushed flag, so one
     route's flush never pops or blocks another route's staged rows. Both the
     buffer contents and the flushed flag are additionally scoped per async
-    task via :class:`~contextvars.ContextVar`.
+    task via :class:`~contextvars.ContextVar`, and follow the transaction scopes
+    the task opens (see :meth:`transaction_scope`).
 
     The per-route buffers create per-instance ``ContextVar``s. This is intentional and
     safe because an ``OutboxStagingContext`` is a per-runtime-scope singleton (one per
@@ -91,6 +94,57 @@ class OutboxStagingContext:
             )
 
         var.set(value)
+
+    # ....................... #
+
+    @contextmanager
+    def transaction_scope(self, *, root: bool) -> Iterator[None]:
+        """Scope staging to one transaction scope of the current task.
+
+        A *root* scope is a new unit of work: it reopens every route's flushed flag, so one
+        task can run one transaction after another and each can stage and flush. Events still
+        staged when a transaction commits without a flush stay staged, and the task's next
+        flush writes them. A nested scope (a savepoint) leaves the flags alone — a route its
+        root already flushed stays closed, as rows staged after that flush would never be
+        written.
+
+        A scope that exits with an exception rolled back, so it restores the buffers and flags
+        it found on entry: the events it staged are discarded, and those its flush wrote in
+        the rolled-back transaction are staged again for the transaction still running.
+
+        :param root: Whether the scope is a root transaction rather than a savepoint.
+        """
+
+        # Copied up front: the dicts may grow while the scope runs (a first stage on a route).
+        # Each list is kept beside its contents: tasks started from this one share the list
+        # object, so the restore changes it in place for every holder to see.
+        entered: dict[str, tuple[list[StagedOutboxEntry], list[StagedOutboxEntry]]] = {}
+
+        for route, buffer in list(self._buffers.items()):
+            held = buffer.peek()
+            entered[route] = (held, list(held))
+
+        flushed = {route: var.get() for route, var in list(self._flushed_vars.items())}
+
+        if root:
+            for var in list(self._flushed_vars.values()):
+                var.set(False)
+
+        try:
+            yield
+
+        except BaseException:
+            for route, buffer in list(self._buffers.items()):
+                held, contents = entered.get(route, ([], []))
+
+                # The task's current list too: a flush in the scope replaced the one it held.
+                for entries in (held, buffer.peek()):
+                    entries[:] = contents
+
+            for route, var in list(self._flushed_vars.items()):
+                var.set(flushed.get(route, False))
+
+            raise
 
     # ....................... #
 
