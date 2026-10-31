@@ -15,12 +15,13 @@ kept beside it, for the rows a ``set_null`` clears; it lives only as long as the
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable, Iterator
+from collections.abc import Callable, Iterator, Mapping
 from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
 from forze.application.contracts.guarantees import Reference
-from forze.base.exceptions import exc
+from forze.application.contracts.querying.internal.matching import instant_key
+from forze.base.exceptions import CoreException, exc
 from forze.base.primitives import JsonDict
 from forze_mock.adapters._mvcc import current_mvcc_tx
 from forze_mock.tenancy import partition_namespace
@@ -62,7 +63,15 @@ def record_references(
 
         for reference in references:
             state.document_references.setdefault(reference.spec, set()).add(
-                (str(spec.name), namespace, tenant_scoped, reference.field, reference.on_delete)
+                (
+                    str(spec.name),
+                    namespace,
+                    tenant_scoped,
+                    reference.fields,
+                    reference.references,
+                    reference.on_delete,
+                    reference.set_null_fields or reference.fields,
+                )
             )
 
 
@@ -88,16 +97,107 @@ def _partitions(state: MockState, namespace: str) -> Iterator[tuple[str, UUID]]:
 # ....................... #
 
 
+def _key(row: JsonDict, names: tuple[str, ...]) -> tuple[Any, ...] | None:
+    """*row*'s values under *names*, compared as a foreign key compares them, or ``None`` when
+    one is null: a null matches nothing, as a key leaves a row holding one unchecked
+    (``MATCH SIMPLE``)."""
+
+    values = [row.get(name) for name in names]
+
+    if any(value is None for value in values):
+        return None
+
+    # A UUID meets its JSON string, as a seeded row holds it; an aware datetime is the instant
+    # it is, as `timestamptz` compares, whatever offset it was written in.
+    return tuple(str(value) if isinstance(value, UUID) else instant_key(value) for value in values)
+
+
+def _stores(
+    state: MockState, namespace: str, tenant_scoped: bool, tenant: UUID | None
+) -> list[tuple[str, UUID | None]]:
+    """Where a referencing spec's rows naming a row of *tenant* live, with their tenant."""
+
+    if not tenant_scoped:
+        return [(namespace, None)]
+
+    if tenant is not None:
+        return [(partition_namespace(tenant, namespace), tenant)]
+
+    return list(_partitions(state, namespace))
+
+
+def _restricted(summary: str, *, child: str, fields: tuple[str, ...], parent: str) -> CoreException:
+    """The ``conflict`` a restricted delete raises, as Postgres's restrict violation maps."""
+
+    refusal = exc.conflict(
+        summary, details={"spec": child, "fields": list(fields), "references": parent}
+    )
+    # For the logs only, as Postgres's: below an unscoped parent the child may belong to
+    # another tenant.
+    refusal.expose_details = False
+
+    return refusal
+
+
+def _through(fields: tuple[str, ...]) -> str | tuple[str, ...]:
+    return fields[0] if len(fields) == 1 else fields
+
+
+def _refuse_stranded(
+    state: MockState,
+    *,
+    name: str,
+    row: JsonDict,
+    cleared: set[str],
+    tenant: UUID | None,
+    gone: set[tuple[str, UUID]],
+    store_for: Callable[[str], dict[UUID, JsonDict]],
+) -> None:
+    """Refuse clearing *cleared* on *row*, of spec *name*, while a row another reference keys
+    on those fields still names its old values.
+
+    No key here updates its referencing rows, so Postgres refuses the ``SET NULL``'s update
+    under that key (``ON UPDATE NO ACTION``). A row the same delete removes, in *gone*, does
+    not count.
+
+    :raises CoreException: ``conflict``, as a restricted delete.
+    """
+
+    for child, child_ns, tenant_scoped, fields, references, _, _ in sorted(
+        state.document_references.get(name, ())
+    ):
+        if not cleared & set(references) or (wanted := _key(row, references)) is None:
+            continue
+
+        for ns, _ in _stores(state, child_ns, tenant_scoped, tenant):
+            for pk, stranded in store_for(ns).items():
+                if (ns, pk) not in gone and _key(stranded, fields) == wanted:
+                    raise _restricted(
+                        f"A delete would clear {sorted(cleared & set(references))} on a row of "
+                        f"{name!r} while rows of {child!r} reference it through "
+                        f"{_through(fields)!r}, as under ON UPDATE NO ACTION.",
+                        child=child,
+                        fields=fields,
+                        parent=name,
+                    )
+
+
+# ....................... #
+
+
 def apply_references(
     state: MockState,
     *,
     parent: str,
     namespace: str,
-    pks: Iterable[UUID],
+    rows: Mapping[UUID, JsonDict],
     tenant: UUID | None,
     store_for: Callable[[str], dict[UUID, JsonDict]],
 ) -> None:
-    """Apply each declared ``on_delete`` to the rows naming *pks*, and to theirs in turn.
+    """Apply each declared ``on_delete`` to the rows naming *rows*, and to theirs in turn.
+
+    A row names a parent row when its reference's fields hold, pairwise, the values of the
+    parent's referenced fields; a row holding a null in any of them names nothing.
 
     The whole cascade is planned before anything changes, so a ``restrict`` anywhere in it
     refuses the delete with nothing written, as one Postgres statement does. Rows are read and
@@ -113,80 +213,90 @@ def apply_references(
     one its own adapter reads under that tenant. Below an unscoped row it is searched in every
     tenant's partition, since a foreign key reaches every tenant's rows.
 
-    A ``set_null`` is an update of the child, so it keeps the child's guarantees, checked as a
-    write of the child checks them against what the whole cascade leaves, before anything
-    changes. A violation refuses the delete with the write's ``conflict``, as Postgres checks
-    the child's constraints after the action. The revision is left as it was, as under
-    application bookkeeping; a trigger keeping it (``database`` bookkeeping) would bump it.
+    A ``set_null`` clears the reference's ``set_null_fields``, every field by default. It is an
+    update of the child, so it keeps the child's guarantees, checked as a write of the child
+    checks them against what the whole cascade leaves, before anything changes. A violation
+    refuses the delete with the write's ``conflict``, as Postgres checks the child's constraints
+    after the action. The revision is left as it was, as under application bookkeeping; a
+    trigger keeping it (``database`` bookkeeping) would bump it. A cleared field that another
+    reference names on the cleared row's side refuses the delete while rows reference the old
+    value, as Postgres refuses the update under their key (``ON UPDATE NO ACTION``).
 
     The caller holds ``state.lock`` and deletes the parent rows itself.
 
-    :param parent: The name of the spec *pks* belong to.
+    :param parent: The name of the spec *rows* belong to.
     :param namespace: The parent rows' namespace, tenant partition included.
+    :param rows: The parent rows, by primary key.
     :param tenant: The parent rows' tenant, or ``None`` when the parent is not tenant-scoped.
     :param store_for: The rows of a namespace, through the transaction's view.
     :raises CoreException: ``conflict``, as Postgres's restrict and foreign-key violations map
         on a hard delete, when a ``restrict`` reference still names a row, and as the child's
-        own write raises it when a cleared row breaks one of its guarantees; ``configuration``
+        own write raises it when a cleared row breaks one of its guarantees or leaves rows
+        referencing a value it cleared; ``configuration``
         when a row to clear belongs to a spec with no adapter built in this process, whose
         guarantees therefore cannot be checked.
     """
 
-    pending = [(parent, pk, tenant) for pk in pks]
-    killed = frozenset((namespace, pk) for _, pk, _ in pending)
+    pending = [(parent, row, tenant) for row in rows.values()]
+    killed = frozenset((namespace, pk) for pk in rows)
     seen = set(killed)
     doomed: list[tuple[dict[UUID, JsonDict], UUID]] = []
     # (namespace, row) -> (store, spec, fields to clear)
     nulled: dict[tuple[str, UUID], tuple[dict[UUID, JsonDict], str, set[str]]] = {}
+    tenants: dict[tuple[str, UUID], UUID | None] = {}
 
     while pending:
-        name, pk, row_tenant = pending.pop()
+        name, parent_row, row_tenant = pending.pop()
 
         # Sorted, so a run reaches the same refusal first whatever the set's hash order.
-        for child, child_ns, tenant_scoped, field, on_delete in sorted(
+        for child, child_ns, tenant_scoped, fields, references, on_delete, nullable in sorted(
             state.document_references.get(name, ())
         ):
-            stores: list[tuple[str, UUID | None]]
+            wanted = _key(parent_row, references)
 
-            if not tenant_scoped:
-                stores = [(child_ns, None)]
-
-            elif row_tenant is not None:
-                stores = [(partition_namespace(row_tenant, child_ns), row_tenant)]
-
-            else:
-                stores = list(_partitions(state, child_ns))
+            if wanted is None:
+                continue
 
             # shortcut: a scan per referenced row; index the reference field if cascades get big.
-            for ns, child_tenant in stores:
+            for ns, child_tenant in _stores(state, child_ns, tenant_scoped, row_tenant):
                 store = store_for(ns)
 
                 for child_pk, row in store.items():
-                    if (ns, child_pk) in killed or str(row.get(field)) != str(pk):
+                    if (ns, child_pk) in killed or _key(row, fields) != wanted:
                         continue
 
                     if on_delete == "restrict":
-                        refusal = exc.conflict(
+                        raise _restricted(
                             f"A row of {name!r} cannot be deleted while rows of {child!r} "
-                            f"reference it through {field!r} (on_delete='restrict').",
-                            details={"spec": child, "field": field, "references": name},
+                            f"reference it through {_through(fields)!r} (on_delete='restrict').",
+                            child=child,
+                            fields=fields,
+                            parent=name,
                         )
-                        # For the logs only, as Postgres's: below an unscoped parent the child
-                        # may belong to another tenant.
-                        refusal.expose_details = False
-
-                        raise refusal
 
                     if (ns, child_pk) in seen:
                         continue
 
                     if on_delete == "set_null":
-                        nulled.setdefault((ns, child_pk), (store, child, set()))[2].add(field)
+                        nulled.setdefault((ns, child_pk), (store, child, set()))[2].update(nullable)
+                        tenants[(ns, child_pk)] = child_tenant
                         continue
 
                     seen.add((ns, child_pk))
                     doomed.append((store, child_pk))
-                    pending.append((child, child_pk, child_tenant))
+                    pending.append((child, row, child_tenant))
+
+    for (ns, child_pk), (store, child, fields_cleared) in nulled.items():
+        if (ns, child_pk) not in seen:
+            _refuse_stranded(
+                state,
+                name=child,
+                row=store[child_pk],
+                cleared=fields_cleared,
+                tenant=tenants[(ns, child_pk)],
+                gone=seen,
+                store_for=store_for,
+            )
 
     cleared = _check_cleared(state, nulled, gone=seen)
 

@@ -10,6 +10,7 @@ the same error kind the client maps Postgres's restrict violation to.
 
 from __future__ import annotations
 
+import ast
 from typing import Any
 from unittest.mock import patch
 from uuid import UUID, uuid4
@@ -103,17 +104,23 @@ async def _validate(
     *guarantees: Reference,
     bound: bool = True,
     warn_undeclared: bool = True,
+    models: tuple[type[BaseModel], type[Document], type[CreateDocumentCmd]] = (
+        _LineRead,
+        _Line,
+        _LineCreate,
+    ),
 ) -> list[str]:
     intro = PostgresIntrospector(client=pg_client)
     ctx = context_from_deps(Deps.plain({PostgresIntrospectorDepKey: intro}))
+    read, domain, create = models
     hook = PostgresDocumentSchemaValidationHook(
         specs=(
             PostgresDocumentSchemaSpec(
                 name="lines",
-                read_model=_LineRead,
+                read_model=read,
                 read_relation=("public", lines),
-                write_domain_model=_Line,
-                write_create_model=_LineCreate,
+                write_domain_model=domain,
+                write_create_model=create,
                 write_relation=("public", lines),
                 bookkeeping_strategy="application",
                 guarantees=guarantees,
@@ -322,6 +329,340 @@ class TestValidation:
 # ....................... #
 
 
+class _BomRead(BaseModel):
+    id: UUID
+    stage_id: UUID | None = None
+    source_id: int | None = None
+
+
+class _Bom(Document):
+    stage_id: UUID | None = None
+    source_id: int | None = None
+
+
+class _BomCreate(CreateDocumentCmd):
+    stage_id: UUID | None = None
+    source_id: int | None = None
+
+
+class _MockBomRead(ReadDocument):
+    stage_id: UUID | None = None
+    source_id: int | None = None
+
+
+_BOM_MODELS = (_BomRead, _Bom, _BomCreate)
+
+
+def _composite(
+    on_delete: ReferenceAction, set_null_fields: tuple[str, ...] | None = None
+) -> Reference:
+    return Reference(
+        fields=("stage_id", "source_id"),
+        spec="stages",
+        references=("id", "source_id"),
+        on_delete=on_delete,
+        set_null_fields=set_null_fields,
+    )
+
+
+async def _composite_tables(pg_client: PostgresClient, *, tenant: bool = False) -> tuple[str, str]:
+    """A stage table keyed by ``(id, source_id)`` as well as ``id``, and a bill of materials."""
+
+    suffix = uuid4().hex[:10]
+    stages, boms = f"ref_cstages_{suffix}", f"ref_boms_{suffix}"
+    bookkeeping = (
+        "rev integer NOT NULL, created_at timestamptz NOT NULL, last_update_at timestamptz NOT NULL"
+    )
+    scoped = "tenant_id uuid NOT NULL, " if tenant else ""
+
+    await pg_client.execute(
+        f"CREATE TABLE {stages} (id uuid PRIMARY KEY, {scoped}source_id integer NOT NULL, "
+        f"alt_source_id integer NOT NULL, {bookkeeping}, UNIQUE (id, source_id), "
+        "UNIQUE (id, alt_source_id)"
+        + (", UNIQUE (tenant_id, id, source_id)" if tenant else "")
+        + ");"
+    )
+    await pg_client.execute(
+        f"CREATE TABLE {boms} (id uuid PRIMARY KEY, {scoped}{bookkeeping}, stage_id uuid, "
+        "source_id integer);"
+    )
+
+    return stages, boms
+
+
+def _declared(warning: str) -> Reference:
+    """The ``Reference`` a warning suggests, built from its text without evaluating it."""
+
+    suggestion = warning.rsplit("eclare it: ", 1)[1].removesuffix(".")
+    call = ast.parse(suggestion, mode="eval").body
+    assert isinstance(call, ast.Call) and isinstance(call.func, ast.Name)
+    assert call.func.id == "Reference" and not call.args
+
+    return Reference(**{str(kw.arg): ast.literal_eval(kw.value) for kw in call.keywords})
+
+
+class TestCompositeValidation:
+    @pytest.mark.parametrize(
+        ("columns", "targets"),
+        [("stage_id, source_id", "id, source_id"), ("source_id, stage_id", "source_id, id")],
+    )
+    async def test_a_matching_composite_key_passes_in_either_order(
+        self, pg_client: PostgresClient, columns: str, targets: str
+    ) -> None:
+        stages, boms = await _composite_tables(pg_client)
+        await pg_client.execute(
+            f"ALTER TABLE {boms} ADD FOREIGN KEY ({columns}) REFERENCES {stages} ({targets}) "
+            "ON DELETE CASCADE;"
+        )
+
+        reported = await _validate(
+            pg_client, stages, boms, _composite("cascade"), models=_BOM_MODELS
+        )
+
+        assert not [warning for warning in reported if "foreign key" in warning]
+
+    async def test_a_key_beside_the_tenant_column_counts(self, pg_client: PostgresClient) -> None:
+        stages, boms = await _composite_tables(pg_client, tenant=True)
+        await pg_client.execute(
+            f"ALTER TABLE {boms} ADD FOREIGN KEY (tenant_id, stage_id, source_id) "
+            f"REFERENCES {stages} (tenant_id, id, source_id) ON DELETE CASCADE;"
+        )
+
+        reported = await _validate(
+            pg_client, stages, boms, _composite("cascade"), models=_BOM_MODELS
+        )
+
+        assert not [warning for warning in reported if "foreign key" in warning]
+
+    @pytest.mark.parametrize(
+        ("columns", "targets"),
+        [
+            ("stage_id, source_id", "id, alt_source_id"),  # paired with another column
+            ("stage_id", "id"),  # a part of the key
+        ],
+    )
+    async def test_a_key_pairing_other_columns_does_not_count(
+        self, pg_client: PostgresClient, columns: str, targets: str
+    ) -> None:
+        stages, boms = await _composite_tables(pg_client)
+        await pg_client.execute(
+            f"ALTER TABLE {boms} ADD FOREIGN KEY ({columns}) REFERENCES {stages} ({targets}) "
+            "ON DELETE CASCADE;"
+        )
+
+        with pytest.raises(CoreException) as caught:
+            await _validate(pg_client, stages, boms, _composite("cascade"), models=_BOM_MODELS)
+
+        ddl = (
+            f"ALTER TABLE public.{boms} ADD FOREIGN KEY (stage_id, source_id) REFERENCES "
+            f"public.{stages} (id, source_id) ON DELETE CASCADE;"
+        )
+        assert ddl in caught.value.summary
+        assert "through ('stage_id', 'source_id')" in caught.value.summary
+        assert "DROP CONSTRAINT" not in caught.value.summary
+
+        await pg_client.execute(ddl)
+        await _validate(pg_client, stages, boms, _composite("cascade"), models=_BOM_MODELS)
+
+    async def test_another_delete_action_does_not_count(self, pg_client: PostgresClient) -> None:
+        stages, boms = await _composite_tables(pg_client)
+        await pg_client.execute(
+            f"ALTER TABLE {boms} ADD CONSTRAINT {boms}_stage FOREIGN KEY (stage_id, source_id) "
+            f"REFERENCES {stages} (id, source_id) ON DELETE RESTRICT;"
+        )
+
+        with pytest.raises(CoreException, match="ON DELETE CASCADE") as caught:
+            await _validate(pg_client, stages, boms, _composite("cascade"), models=_BOM_MODELS)
+
+        assert f"DROP CONSTRAINT {boms}_stage;" in caught.value.summary
+
+    async def test_set_null_must_clear_every_field_of_the_reference(
+        self, pg_client: PostgresClient
+    ) -> None:
+        # The in-memory store clears both, as SET NULL without a column list does.
+        stages, boms = await _composite_tables(pg_client)
+        key = (
+            f"ALTER TABLE {boms} ADD CONSTRAINT {boms}_stage FOREIGN KEY (stage_id, source_id) "
+            f"REFERENCES {stages} (id, source_id) ON DELETE SET NULL"
+        )
+        await pg_client.execute(key + " (stage_id);")
+
+        with pytest.raises(CoreException) as caught:
+            await _validate(pg_client, stages, boms, _composite("set_null"), models=_BOM_MODELS)
+
+        assert "clears (stage_id), where the in-memory store clears (stage_id, source_id)" in (
+            caught.value.summary
+        )
+        assert "ON DELETE SET NULL;" in caught.value.summary
+
+        await pg_client.execute(f"ALTER TABLE {boms} DROP CONSTRAINT {boms}_stage;")
+        await pg_client.execute(key + ";")
+
+        await _validate(pg_client, stages, boms, _composite("set_null"), models=_BOM_MODELS)
+
+    async def test_set_null_fields_is_kept_by_a_key_clearing_those(
+        self, pg_client: PostgresClient
+    ) -> None:
+        stages, boms = await _composite_tables(pg_client)
+        await pg_client.execute(
+            f"ALTER TABLE {boms} ADD FOREIGN KEY (stage_id, source_id) "
+            f"REFERENCES {stages} (id, source_id) ON DELETE SET NULL (stage_id);"
+        )
+
+        reported = await _validate(
+            pg_client, stages, boms, _composite("set_null", ("stage_id",)), models=_BOM_MODELS
+        )
+
+        assert not [warning for warning in reported if "foreign key" in warning]
+
+    @pytest.mark.parametrize(
+        ("tail", "reason"),
+        [
+            ("", "clears every column of the key, source_id included"),
+            (" (source_id)", "clears (source_id), where the in-memory store clears (stage_id)"),
+        ],
+    )
+    async def test_set_null_fields_is_not_kept_by_a_key_clearing_others(
+        self, pg_client: PostgresClient, tail: str, reason: str
+    ) -> None:
+        stages, boms = await _composite_tables(pg_client)
+        await pg_client.execute(
+            f"ALTER TABLE {boms} ADD CONSTRAINT {boms}_stage FOREIGN KEY (stage_id, source_id) "
+            f"REFERENCES {stages} (id, source_id) ON DELETE SET NULL{tail};"
+        )
+
+        with pytest.raises(CoreException) as caught:
+            await _validate(
+                pg_client, stages, boms, _composite("set_null", ("stage_id",)), models=_BOM_MODELS
+            )
+
+        assert reason in caught.value.summary
+        assert f"DROP CONSTRAINT {boms}_stage;" in caught.value.summary
+        assert (
+            f"ADD FOREIGN KEY (stage_id, source_id) REFERENCES public.{stages} (id, source_id) "
+            "ON DELETE SET NULL (stage_id);"
+        ) in caught.value.summary
+
+    async def test_set_null_over_a_not_null_field_is_refused(
+        self, pg_client: PostgresClient
+    ) -> None:
+        stages, boms = await _composite_tables(pg_client)
+        await pg_client.execute(
+            f"ALTER TABLE {boms} ADD FOREIGN KEY (stage_id, source_id) "
+            f"REFERENCES {stages} (id, source_id) ON DELETE SET NULL;"
+        )
+        await pg_client.execute(f"ALTER TABLE {boms} ALTER COLUMN source_id SET NOT NULL;")
+
+        with pytest.raises(CoreException, match=f"{boms}.source_id is NOT NULL"):
+            await _validate(pg_client, stages, boms, _composite("set_null"), models=_BOM_MODELS)
+
+    async def test_an_undeclared_composite_key_suggests_a_declarable_reference(
+        self, pg_client: PostgresClient
+    ) -> None:
+        # The suggestion used to name both columns as one field, which no Reference could take.
+        stages, boms = await _composite_tables(pg_client, tenant=True)
+        await pg_client.execute(
+            f"ALTER TABLE {boms} ADD FOREIGN KEY (tenant_id, stage_id, source_id) "
+            f"REFERENCES {stages} (tenant_id, id, source_id) ON DELETE CASCADE;"
+        )
+
+        reported = await _validate(pg_client, stages, boms, models=_BOM_MODELS)
+        keys = [warning for warning in reported if "foreign key" in warning]
+
+        assert len(keys) == 1
+        assert (
+            "Reference(fields=('stage_id', 'source_id'), references=('id', 'source_id'), "
+            "spec='stages', on_delete='cascade')"
+        ) in keys[0]
+
+        declared = _declared(keys[0])
+
+        assert declared == _composite("cascade")
+
+        # Declared as suggested, the key is matched and the warning stops.
+        reported = await _validate(pg_client, stages, boms, declared, models=_BOM_MODELS)
+
+        assert not [warning for warning in reported if "foreign key" in warning]
+
+    async def test_an_undeclared_key_clearing_some_columns_suggests_set_null_fields(
+        self, pg_client: PostgresClient
+    ) -> None:
+        # Beside the tenant column too, which the declaration leaves unsaid and never clears.
+        stages, boms = await _composite_tables(pg_client, tenant=True)
+        await pg_client.execute(
+            f"ALTER TABLE {boms} ADD FOREIGN KEY (tenant_id, stage_id, source_id) "
+            f"REFERENCES {stages} (tenant_id, id, source_id) ON DELETE SET NULL (stage_id);"
+        )
+
+        reported = await _validate(pg_client, stages, boms, models=_BOM_MODELS)
+        keys = [warning for warning in reported if "foreign key" in warning]
+
+        assert len(keys) == 1
+        assert "on_delete='set_null', set_null_fields=('stage_id',))" in keys[0]
+
+        declared = _declared(keys[0])
+
+        assert declared == _composite("set_null", ("stage_id",))
+
+        reported = await _validate(pg_client, stages, boms, declared, models=_BOM_MODELS)
+
+        assert not [warning for warning in reported if "foreign key" in warning]
+
+    @pytest.mark.parametrize("cleared", ["", " (tenant_id, stage_id)"])
+    async def test_an_undeclared_key_clearing_the_tenant_names_the_migration(
+        self, pg_client: PostgresClient, cleared: str
+    ) -> None:
+        # No declaration keeps a row cleared out of its tenant, so none is offered alone: the
+        # warning names the key to migrate to, and the declaration that then matches it.
+        stages, lines = await _tables(pg_client, tenant=True)
+        await pg_client.execute(
+            f"ALTER TABLE {lines} ADD CONSTRAINT {lines}_stage FOREIGN KEY (tenant_id, stage_id) "
+            f"REFERENCES {stages} (tenant_id, id) ON DELETE SET NULL{cleared};"
+        )
+
+        reported = await _validate(pg_client, stages, lines)
+        keys = [warning for warning in reported if "foreign key" in warning]
+
+        assert len(keys) == 1
+        assert "clears tenant_id when its parent row is deleted" in keys[0]
+        assert "declared by no guarantee, so" not in keys[0]
+
+        declared = _declared(keys[0])
+
+        assert declared == _reference("set_null")
+
+        # Startup refuses the declaration against the key as it is.
+        with pytest.raises(CoreException, match="tenant_id"):
+            await _validate(pg_client, stages, lines, declared)
+
+        migration = keys[0].split("Migrate it (Postgres 15 or later): ", 1)[1]
+        migration = migration.split(" Then declare it: ", 1)[0]
+
+        assert migration.endswith(
+            f"REFERENCES public.{stages} (tenant_id, id) ON DELETE SET NULL (stage_id);"
+        )
+
+        for statement in migration.split("; "):
+            await pg_client.execute(statement.removesuffix(";") + ";")
+
+        reported = await _validate(pg_client, stages, lines, declared)
+
+        assert not [warning for warning in reported if "foreign key" in warning]
+
+    async def test_an_undeclared_single_column_key_keeps_the_short_form(
+        self, pg_client: PostgresClient
+    ) -> None:
+        stages, lines = await _tables(pg_client)
+        await _foreign_key(pg_client, stages, lines, "ON DELETE SET NULL")
+
+        reported = await _validate(pg_client, stages, lines)
+
+        assert _declared(reported[0]) == _reference("set_null")
+
+
+# ....................... #
+
+
 def _mock_specs(on_delete: ReferenceAction) -> tuple[DocumentSpec[Any, Any, Any, Any], ...]:
     stages = DocumentSpec(
         name="stages",
@@ -441,3 +782,89 @@ class TestMockAndPostgresAgree:
 
         assert left == []
         assert (await ctx.doc.query(line_spec).find_many()).hits == []
+
+    @pytest.mark.parametrize(("cleared", "refused"), [("", True), (" (stage_id)", False)])
+    async def test_postgres_refuses_a_set_null_clearing_a_column_a_grandchild_keys_on(
+        self, pg_client: PostgresClient, cleared: str, refused: bool
+    ) -> None:
+        # What the mock mirrors: the SET NULL updates the bom's (id, source_id), which the note
+        # still references, and the note's key has no ON UPDATE action.
+        suffix = uuid4().hex[:10]
+        stages, boms, notes = (f"ref_{name}_{suffix}" for name in ("gs", "gb", "gn"))
+        await pg_client.execute(
+            f"CREATE TABLE {stages} (id uuid PRIMARY KEY, source_id integer, "
+            "UNIQUE (id, source_id));"
+        )
+        await pg_client.execute(
+            f"CREATE TABLE {boms} (id uuid PRIMARY KEY, stage_id uuid, source_id integer, "
+            f"UNIQUE (id, source_id), FOREIGN KEY (stage_id, source_id) "
+            f"REFERENCES {stages} (id, source_id) ON DELETE SET NULL{cleared});"
+        )
+        await pg_client.execute(
+            f"CREATE TABLE {notes} (id uuid PRIMARY KEY, bom_id uuid, source_id integer, "
+            f"FOREIGN KEY (bom_id, source_id) REFERENCES {boms} (id, source_id) "
+            "ON DELETE CASCADE);"
+        )
+        stage, bom = uuid4(), uuid4()
+        await pg_client.execute(f"INSERT INTO {stages} VALUES (%s, 7);", [stage])
+        await pg_client.execute(f"INSERT INTO {boms} VALUES (%s, %s, 7);", [bom, stage])
+        await pg_client.execute(f"INSERT INTO {notes} VALUES (%s, %s, 7);", [uuid4(), bom])
+
+        if not refused:
+            await pg_client.execute(f"DELETE FROM {stages} WHERE id = %s;", [stage])
+            return
+
+        with pytest.raises(CoreException):
+            await pg_client.execute(f"DELETE FROM {stages} WHERE id = %s;", [stage])
+
+    async def test_both_stores_leave_a_row_holding_a_null_in_a_composite_key(
+        self, pg_client: PostgresClient
+    ) -> None:
+        # MATCH SIMPLE: a row with a null in the key references nothing, so no cascade reaches it.
+        stages, boms = await _composite_tables(pg_client)
+        await pg_client.execute(
+            f"ALTER TABLE {boms} ADD FOREIGN KEY (stage_id, source_id) "
+            f"REFERENCES {stages} (id, source_id) ON DELETE CASCADE;"
+        )
+        stage, kept = uuid4(), uuid4()
+        await pg_client.execute(
+            f"INSERT INTO {stages} (id, source_id, alt_source_id, rev, created_at, last_update_at)"
+            " VALUES (%s, 7, 7, 1, now(), now());",
+            [stage],
+        )
+
+        for pk, source in ((uuid4(), 7), (kept, None)):
+            await pg_client.execute(
+                f"INSERT INTO {boms} (id, rev, created_at, last_update_at, stage_id, source_id)"
+                " VALUES (%s, 1, now(), now(), %s, %s);",
+                [pk, stage, source],
+            )
+
+        await pg_client.execute(f"DELETE FROM {stages} WHERE id = %s;", [stage])
+        left = await pg_client.fetch_all(f"SELECT id FROM {boms};", [], row_factory="dict")
+
+        class _Revision(Document):
+            source_id: int | None = None
+
+        class _RevisionRead(ReadDocument):
+            source_id: int | None = None
+
+        revisions = DocumentSpec(
+            name="stages",
+            read=_RevisionRead,
+            write=DocumentWriteTypes(domain=_Revision, create_cmd=_Revision),
+        )
+        bom_spec = DocumentSpec(
+            name="boms",
+            read=_MockBomRead,
+            write=DocumentWriteTypes(domain=_Bom, create_cmd=_BomCreate),
+            guarantees=(_composite("cascade"),),
+        )
+        ctx = context_from_modules(MockDepsModule())
+        parent = await ctx.doc.command(revisions).create(_Revision(source_id=7))
+        await ctx.doc.command(bom_spec).create(_BomCreate(stage_id=parent.id, source_id=7))
+        survivor = await ctx.doc.command(bom_spec).create(_BomCreate(stage_id=parent.id))
+        await ctx.doc.command(revisions).kill(parent.id)
+
+        assert [row["id"] for row in left] == [kept]
+        assert [row.id for row in (await ctx.doc.query(bom_spec).find_many()).hits] == [survivor.id]

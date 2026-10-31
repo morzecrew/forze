@@ -14,6 +14,7 @@ from forze.application._logger import logger
 from forze.base.exceptions import exc
 from forze.base.primitives import advisory_lock_key
 from forze.base.serialization import stored_field_names_for
+from forze.domain.constants import ID_FIELD
 from forze.domain.models import AggregateRoot, BaseDTO, Document
 
 from ..base import BaseSpec
@@ -849,54 +850,150 @@ class DocumentSpec(BaseSpec, Generic[R, D, C, U]):
 
     # ....................... #
 
+    def _stored_guarantee_fields(self) -> frozenset[str]:
+        """The fields on this aggregate's persisted row, which a guarantee may name."""
+
+        stored = stored_field_names_for(self.read) - self.resolved_lenient_read_fields
+
+        if self.derived_read_fields:
+            stored -= frozenset(self.derived_read_fields)
+
+        return stored
+
+    # ....................... #
+
+    def _models(self) -> list[type[BaseModel]]:
+        """The read model, and the domain model when there is one."""
+
+        return [self.read] + ([self.write["domain"]] if self.write is not None else [])
+
+    # ....................... #
+
     def _refuse_unkeepable_reference(self, guarantee: Reference) -> None:
         """Refuse a reference no store can keep as declared.
 
-        A field that is not a ``UUID`` never equals the parent's id, so no row would match it. A
-        sealed field holds ciphertext under a fresh nonce per write, so it never equals the id it
-        encrypts either. A ``set_null`` reference over a field that cannot hold a null leaves a
-        row its own models refuse to read back, and a foreign key would refuse the delete instead.
+        A field holding the parent's id that is not a ``UUID`` never equals that id, so no row
+        would match it; a field holding another parent field is compared with that field's type
+        once the parent is known (:meth:`reference_mismatches`). A sealed field holds ciphertext
+        under a fresh nonce per write, so it never equals the value it encrypts either. A
+        ``set_null`` reference over a field that cannot hold a null leaves a row its own models
+        refuse to read back, and a foreign key would refuse the delete instead.
 
         :raises CoreException: ``configuration`` naming the field.
         """
 
-        field = guarantee.field
-        models = [self.read] + ([self.write["domain"]] if self.write is not None else [])
+        models = self._models()
 
-        for model in models:
-            declared = model.model_fields.get(field)
+        for field, referenced in zip(guarantee.fields, guarantee.references, strict=True):
+            if referenced != ID_FIELD:
+                continue
 
-            if declared is not None and _without_none(
-                unwrap_annotated(declared.annotation)
-            ) != frozenset({UUID}):
-                raise exc.configuration(
-                    f"Reference on spec {self.name!r} keys by {model.__name__}.{field}, which is "
-                    "not a UUID, so it never equals the id of the row it names. Type it UUID, "
-                    "or UUID | None.",
-                    details={"spec": str(self.name), "field": field},
-                )
+            for model in models:
+                declared = model.model_fields.get(field)
 
-        if self.encryption is not None and self.encryption.sealed_fields_in((field,)):
+                if declared is not None and _without_none(
+                    unwrap_annotated(declared.annotation)
+                ) != frozenset({UUID}):
+                    raise exc.configuration(
+                        f"Reference on spec {self.name!r} keys by {model.__name__}.{field}, which "
+                        "is not a UUID, so it never equals the id of the row it names. Type it "
+                        "UUID, or UUID | None.",
+                        details={"spec": str(self.name), "field": field},
+                    )
+
+        if self.encryption is not None and (
+            sealed := self.encryption.sealed_fields_in(guarantee.fields)
+        ):
             raise exc.configuration(
-                f"Reference on spec {self.name!r} keys by {field!r}, which this aggregate stores "
-                "encrypted: ciphertext never equals the id it seals, so no row would match its "
-                "parent. Reference by a field stored in the clear.",
-                details={"spec": str(self.name), "field": field},
+                f"Reference on spec {self.name!r} keys by {sealed[0]!r}, which this aggregate "
+                "stores encrypted: ciphertext never equals the value it seals, so no row would "
+                "match its parent. Reference by a field stored in the clear.",
+                details={"spec": str(self.name), "field": sealed[0]},
             )
 
         if guarantee.on_delete != "set_null":
             return
 
-        for model in models:
-            declared = model.model_fields.get(field)
+        for field in guarantee.set_null_fields or guarantee.fields:
+            for model in models:
+                declared = model.model_fields.get(field)
 
-            if declared is not None and not _admits_none(declared.annotation):
-                raise exc.configuration(
-                    f"Reference on spec {self.name!r} sets {field!r} to null when its parent is "
-                    f"deleted, but {model.__name__}.{field} does not accept None. Make the field "
-                    "optional, or pick another on_delete.",
-                    details={"spec": str(self.name), "field": field},
+                if declared is not None and not _admits_none(declared.annotation):
+                    raise exc.configuration(
+                        f"Reference on spec {self.name!r} sets {field!r} to null when its parent "
+                        f"is deleted, but {model.__name__}.{field} does not accept None. Make "
+                        "the field optional, or pick another on_delete.",
+                        details={"spec": str(self.name), "field": field},
+                    )
+
+    # ....................... #
+
+    def reference_mismatches(
+        self,
+        reference: Reference,
+        parent: "DocumentSpec[Any, Any, Any, Any]",
+    ) -> list[str]:
+        """Why *reference*, declared here, can match no row of *parent*, the spec it names.
+
+        Checked once both specs are known — when a spec catalogue is reconciled — since a spec
+        names its parent rather than holding it. A referenced field must be stored on
+        *parent*'s row, in the clear, with the type of the field holding it here (``None``
+        aside): a value of another type never equals it. ``id`` is left to the declaration's
+        own check, since every document stores it as a ``UUID``.
+
+        Referenced fields without ``id`` must also be unique on *parent*: an unfiltered
+        :class:`~forze.application.contracts.guarantees.UniqueTogether` holding always, declared
+        or implied, over exactly those fields in any order. Otherwise a row would name several
+        parent rows, and Postgres creates no foreign key onto such columns. On a tenant-scoped
+        parent that uniqueness is kept per tenant, which a key beside ``tenant_id`` references.
+
+        :returns: One reason per mismatched pair or missing uniqueness; empty when every pair can
+            match.
+        """
+
+        problems: list[str] = []
+        stored = parent._stored_guarantee_fields()  # pyright: ignore[reportPrivateUsage]
+        referenced_set = frozenset(reference.references)
+
+        if ID_FIELD not in referenced_set and not any(
+            isinstance(g, UniqueTogether)
+            and g.where is None
+            and g.holds == "always"
+            and frozenset(g.fields) == referenced_set
+            for g in parent.guarantees
+        ):
+            problems.append(
+                f"{parent.name!r} declares no unfiltered UniqueTogether over "
+                f"{sorted(referenced_set)} holding always, so a row could name several of its "
+                "rows"
+            )
+
+        for field, referenced in zip(reference.fields, reference.references, strict=True):
+            if referenced == ID_FIELD:
+                continue
+
+            if referenced not in stored:
+                problems.append(f"{parent.name!r} does not store {referenced!r}")
+                continue
+
+            if parent.encryption is not None and parent.encryption.sealed_fields_in((referenced,)):
+                problems.append(f"{parent.name!r} stores {referenced!r} encrypted")
+                continue
+
+            types = {
+                _without_none(unwrap_annotated(declared.annotation))
+                for owner, name in ((self, field), (parent, referenced))
+                for model in owner._models()  # pyright: ignore[reportPrivateUsage]
+                if (declared := model.model_fields.get(name)) is not None
+            }
+
+            if len(types) > 1:
+                problems.append(
+                    f"{field!r} is not typed as {parent.name!r}.{referenced} is, so it never "
+                    "equals it"
                 )
+
+        return problems
 
     # ....................... #
 
@@ -917,10 +1014,7 @@ class DocumentSpec(BaseSpec, Generic[R, D, C, U]):
         :raises CoreException: ``configuration`` when a guarantee names an unknown field.
         """
 
-        stored = stored_field_names_for(self.read) - self.resolved_lenient_read_fields
-
-        if self.derived_read_fields:
-            stored -= frozenset(self.derived_read_fields)
+        stored = self._stored_guarantee_fields()
 
         for guarantee in self.guarantees:
             match guarantee:
@@ -959,7 +1053,7 @@ class DocumentSpec(BaseSpec, Generic[R, D, C, U]):
                 case Reference():
                     # A name that is not there reads as null on every row, so no row ever
                     # references anything and the declared delete action never fires.
-                    named = frozenset({guarantee.field})
+                    named = frozenset(guarantee.fields)
                     self._refuse_unkeepable_reference(guarantee)
 
             if unknown := named - stored:

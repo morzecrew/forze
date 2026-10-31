@@ -143,6 +143,7 @@ Two sentences carry the whole doctrine:
 | `NonOverlapping(key=…, period=…, where=…)` | …among the rows the filter selects | `EXCLUDE … WHERE (…)` | — | ✅ |
 | `SerializedBy(key=…)` | two writes for one key never run at once | `pg_advisory_xact_lock` | — | ✅ |
 | `Reference(field=…, spec=…, on_delete=…)` | a hard delete of the referenced row cascades, is refused, or clears the field | `FOREIGN KEY … ON DELETE …` | — | ✅ |
+| `Reference(fields=…, references=…, spec=…, on_delete=…)` | …through a composite key | `FOREIGN KEY (…, …) REFERENCES … (…, …)` | — | ✅ |
 
 `SerializedBy` is the one member about write *ordering* rather than about stored rows. It says
 two writes for one key never run at once — the rule that otherwise lives in whichever writer
@@ -260,12 +261,41 @@ from forze.application.contracts.guarantees import Reference
 Reference(field="stage_id", spec="stages", on_delete="cascade")
 ```
 
+A composite foreign key names its columns on both sides, paired in order. `field="stage_id"` is
+the shorthand for `fields=("stage_id",)`, and a single field references `id` unless `references`
+says otherwise:
+
+```python
+# FOREIGN KEY (stage_id, source_id) REFERENCES stages (id, source_id) ON DELETE CASCADE
+Reference(
+    fields=("stage_id", "source_id"),
+    spec="stages",
+    references=("id", "source_id"),
+    on_delete="cascade",
+)
+```
+
+A row names a parent when every field holds the paired parent value, an aware datetime compared
+as its instant; a row holding a null in any of them names nothing, as under the key's
+`MATCH SIMPLE`. A field paired with `id` must be a
+`UUID`. A field paired with another parent field must have that field's type, `None` aside.
+Referenced fields without `id` must be unique on the parent, through an unfiltered
+`UniqueTogether` over exactly them that holds always, declared or implied by its domain model;
+on a tenant-scoped parent that uniqueness is per tenant, as the key beside `tenant_id` is. A
+spec catalogue checks both once it holds both specs.
+
 `"cascade"` deletes them too, and their own referencing rows in turn. `"restrict"` refuses the
-delete with `conflict` while any remain. `"set_null"` clears the field, which must accept
-`None`; the cleared row keeps the child's guarantees, so one it would break refuses the delete
-with the write's `conflict`. Only `kill` and `kill_many` apply it: a soft delete is an update and
-leaves the rows alone. On Postgres the foreign key does the work. The in-memory store does the
-same inside the transaction's view, so a rollback restores the parent and its children together.
+delete with `conflict` while any remain. `"set_null"` clears every field of the reference, or
+only those `set_null_fields` names, as `SET NULL (stage_id)` clears the stage and keeps the
+source; each cleared field must accept `None`. The cleared row keeps the child's guarantees, so
+one it would break refuses the delete with the write's `conflict`. Clearing a field that another
+`Reference` keys on refuses it too while a row names the old value, as Postgres refuses that
+update under the default `ON UPDATE NO ACTION`. No other `ON UPDATE` action is modelled: a key
+declaring `ON UPDATE CASCADE` or `SET NULL` passes the change on where the in-memory store
+refuses, and startup does not check it. Only `kill` and `kill_many` apply a reference: a soft
+delete is an update and leaves the rows alone. On Postgres the foreign key does the work. The
+in-memory store does the same inside the transaction's view, so a rollback restores the parent
+and its children together.
 It plans the whole cascade first, so a `restrict` anywhere in it refuses the delete with nothing
 removed. It plans from the transaction's view, so under snapshot isolation a child another
 transaction committed meanwhile survives, where Postgres's referential check would still find
@@ -303,15 +333,20 @@ periods and takes every other overlapping pair.
    back a deparsed SQL predicate, so only the columns it restricts on are checked — an index on
    the right column and the wrong value passes there. Neither is a proof that the mechanism
    matches; on Postgres it is a floor under a forgotten migration. For a `Reference`, Postgres
-   wants a foreign key from the field to `id` on the referenced spec's relation, alone or beside
+   wants a foreign key on the referenced spec's relation pairing exactly the declared fields with
+   the referenced ones (`id` for a single field), in any column order, alone or beside
    `tenant_id`, with the declared `ON DELETE`. A referenced spec bound in another Postgres
    module is refused, since a foreign key lives in one database. `"restrict"` takes
    `ON DELETE RESTRICT` or a plain `NO ACTION` key, unless it is deferred to commit. `"set_null"`
-   needs a nullable column, and over a key beside `tenant_id` it needs
-   `ON DELETE SET NULL (field)` (Postgres 15), which leaves `tenant_id` alone. Postgres also
-   warns about each unique index, `EXCLUDE` constraint and `ON DELETE CASCADE` or `SET NULL`
-   foreign key on the write table that no guarantee declares, other than the primary key and an
-   index over all its columns, and suggests the declaration.
+   needs the columns it clears nullable, and a key clearing exactly those: a plain
+   `ON DELETE SET NULL` only when they are all the key's columns, and otherwise — always beside
+   `tenant_id`, which a delete never clears — `ON DELETE SET NULL (…)` naming them
+   (Postgres 15). Postgres also warns about each unique index, `EXCLUDE` constraint and
+   `ON DELETE CASCADE` or `SET NULL` foreign key on the write table that no guarantee declares,
+   other than the primary key and an index over all its columns, and suggests the declaration —
+   `fields=…, references=…` for a composite foreign key, `set_null_fields=…` for a key clearing
+   some of its columns. A key whose `SET NULL` clears `tenant_id` gets the migration to a key
+   that leaves it, then the declaration, since no declaration keeps a row moved out of its tenant.
    A `conflict_target` over other columns is reported too, since it refuses duplicates. Without it
    the in-memory store accepts writes the database refuses. An index counts as declared only
    when it is the one that keeps a guarantee, so a partial index beside an unfiltered

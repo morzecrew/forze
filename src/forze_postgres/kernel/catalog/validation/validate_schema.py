@@ -1186,21 +1186,24 @@ _UNDECLARED_ACTIONS: Final[dict[str, str]] = {"c": "cascade", "n": "set_null"}
 """The delete actions that change rows, which an undeclared foreign key is reported for."""
 
 
-def _references_id(key: ForeignKeyInfo, field: str) -> bool:
-    """Whether *key* runs from *field* to ``id``, alone or beside the tenant column."""
+def _pairs_match(key: ForeignKeyInfo, reference: Reference) -> bool:
+    """Whether *key* pairs exactly the reference's fields with its referenced fields, in any
+    order, alone or beside the tenant column."""
 
     pairs = frozenset(key.columns)
-    wanted = frozenset({(field, ID_FIELD)})
+    wanted = frozenset(zip(reference.fields, reference.references, strict=True))
 
     return wanted <= pairs <= wanted | {(TENANT_ID_FIELD, TENANT_ID_FIELD)}
 
 
-def _reference_mismatch(key: ForeignKeyInfo, field: str) -> str | None:
+def _reference_mismatch(key: ForeignKeyInfo, fields: tuple[str, ...]) -> str | None:
     """Why *key*, carrying the declared action, still does not do what the in-memory store does.
 
     A deferred ``NO ACTION`` checks at commit, so a transaction deleting the children after the
-    parent passes there and is refused here. A ``SET NULL`` over a key beside the tenant column
-    clears ``tenant_id`` too, unless it names *field* alone, which Postgres 15 can.
+    parent passes there and is refused here. A ``SET NULL`` must clear exactly the *fields* the
+    in-memory store clears, the reference's ``set_null_fields``: a plain one clears every column
+    of the key, so it keeps them only when they are all of its columns — never beside the tenant
+    column, which a delete must not clear. Naming them, as Postgres 15 can, keeps a subset.
 
     :returns: The reason, for the refusal, or ``None`` when *key* keeps the reference.
     """
@@ -1210,16 +1213,31 @@ def _reference_mismatch(key: ForeignKeyInfo, field: str) -> str | None:
             f"{key.name} is NO ACTION deferred to commit, where the in-memory store refuses at once"
         )
 
-    if key.on_delete == "n" and len(key.columns) > 1 and key.set_null_columns != (field,):
-        if key.set_null_columns is None:
-            return (
-                f"{key.name} clears {TENANT_ID_FIELD} too; clearing {field} alone beside it "
-                "needs Postgres 15 or later"
-            )
+    if key.on_delete != "n":
+        return None
 
-        return f"{key.name} clears every column of the key, {TENANT_ID_FIELD} included"
+    every = frozenset(column for column, _ in key.columns)
+    cleared = frozenset(key.set_null_columns) if key.set_null_columns else every
+    wanted = frozenset(fields)
 
-    return None
+    if cleared == wanted:
+        return None
+
+    extra = ", ".join(sorted(cleared - wanted))
+
+    if key.set_null_columns is None:
+        return (
+            f"{key.name} clears {extra} too; clearing {', '.join(fields)} alone beside it needs "
+            "Postgres 15 or later"
+        )
+
+    if not key.set_null_columns:
+        return f"{key.name} clears every column of the key, {extra} included"
+
+    return (
+        f"{key.name} clears ({', '.join(key.set_null_columns)}), where the in-memory store "
+        f"clears ({', '.join(fields)})"
+    )
 
 
 async def _require_reference_mechanisms(
@@ -1231,13 +1249,14 @@ async def _require_reference_mechanisms(
     Returns the names of the foreign keys that keep the declared references, so the
     undeclared-key warning can tell those from the rest.
 
-    The key must run from the reference's field to ``id`` on the relation the referenced spec is
-    bound to, alone or beside a tenant column referencing the tenant column, and must apply the
-    declared delete action. ``restrict`` is kept by ``RESTRICT`` and by an immediate ``NO
-    ACTION``: a hard delete through the document port maps either refusal to ``conflict``, as
-    the in-memory store raises it. A ``set_null`` reference needs a nullable column, or every
-    delete reaching a row would fail. The parent must be bound in the same module: a foreign
-    key lives in one database.
+    The key must pair the reference's fields with its referenced fields (``id`` for a single
+    field) on the relation the referenced spec is bound to — exactly those pairs, in any order,
+    alone or beside a tenant column referencing the tenant column — and must apply the declared
+    delete action. ``restrict`` is kept by ``RESTRICT`` and by an immediate ``NO ACTION``: a
+    hard delete through the document port maps either refusal to ``conflict``, as the in-memory
+    store raises it. A ``set_null`` reference needs the columns it clears nullable, or every
+    delete reaching a row would fail. The parent must be bound in the same module: a foreign key
+    lives in one database.
     """
 
     references = [g for g in spec.guarantees if isinstance(g, Reference)]
@@ -1250,12 +1269,14 @@ async def _require_reference_mechanisms(
     matched: set[str] = set()
 
     for reference in references:
-        field = reference.field
+        fields = reference.fields
+        cleared = reference.set_null_fields or fields
+        through = reference.field or fields
         target = spec.bound_relations.get(reference.spec)
         details = {
             "document": spec.name,
             "relation": f"{schema}.{table}",
-            "field": field,
+            "fields": list(fields),
             "references": reference.spec,
         }
 
@@ -1268,58 +1289,75 @@ async def _require_reference_mechanisms(
             )
 
         if reference.on_delete == "set_null":
-            column = (await introspector.get_column_types(schema=schema, relation=table)).get(field)
+            columns = await introspector.get_column_types(schema=schema, relation=table)
 
-            if column is not None and column.not_null:
-                raise exc.configuration(
-                    f"Document {spec.name!r} sets {field!r} to null when its {reference.spec!r} "
-                    f"row is deleted, but {schema}.{table}.{field} is NOT NULL, so Postgres "
-                    "would refuse that delete. Drop the NOT NULL, or pick another on_delete.",
-                    details=details,
-                )
+            for field in cleared:
+                column = columns.get(field)
 
+                if column is not None and column.not_null:
+                    raise exc.configuration(
+                        f"Document {spec.name!r} sets {field!r} to null when its "
+                        f"{reference.spec!r} row is deleted, but {schema}.{table}.{field} is NOT "
+                        "NULL, so Postgres would refuse that delete. Drop the NOT NULL, or pick "
+                        "another on_delete.",
+                        details=details,
+                    )
+
+        pairs = list(zip(fields, reference.references, strict=True))
         reason: str | None = None
-        one_column = False
-        # Keys from the field to the parent that keep something else: dropped before the right one
-        # is added, or the old ON DELETE stays in force beside it.
+        tenant_kept = False
+        # Keys over the same pairs that keep something else: dropped before the right one is
+        # added, or the old ON DELETE stays in force beside it.
         stale: list[str] = []
 
         for key in keys:
-            if key.referenced != target or not _references_id(key, field):
+            if key.referenced != target or not _pairs_match(key, reference):
                 continue
 
             if key.on_delete in _ON_DELETE_TYPES[reference.on_delete]:
-                mismatch = _reference_mismatch(key, field)
+                mismatch = _reference_mismatch(key, cleared)
 
                 if mismatch is None:
                     matched.add(key.name)
                     break
 
                 reason = mismatch
-                one_column = key.on_delete == "n" and key.set_null_columns is not None
+                # Beside the tenant column, which Postgres 15 can leave as it is.
+                tenant_kept = (
+                    key.on_delete == "n"
+                    and key.set_null_columns is not None
+                    and len(key.columns) > len(pairs)
+                )
 
             stale.append(key.name)
 
         else:
             action = _ON_DELETE_SQL[reference.on_delete]
             parent = f"{target[0]}.{target[1]}"
-            columns, targets = field, ID_FIELD
+            declared = f"({', '.join(fields)}) to {parent} ({', '.join(reference.references)})"
 
-            if one_column:
-                # Keep the tenant pairing the existing key has, and clear the field alone.
-                columns, targets = f"{TENANT_ID_FIELD}, {field}", f"{TENANT_ID_FIELD}, {ID_FIELD}"
-                action = f"SET NULL ({field})"
+            if tenant_kept:
+                # Keep the tenant pairing the existing key has.
+                pairs.insert(0, (TENANT_ID_FIELD, TENANT_ID_FIELD))
 
+            if reference.on_delete == "set_null" and frozenset(cleared) != frozenset(
+                column for column, _ in pairs
+            ):
+                # Clear the declared fields alone, leaving the rest of the key.
+                action = f"SET NULL ({', '.join(cleared)})"
+
+            columns_sql = ", ".join(column for column, _ in pairs)
+            targets_sql = ", ".join(referenced for _, referenced in pairs)
             ddl = [f"ALTER TABLE {schema}.{table} DROP CONSTRAINT {name};" for name in stale]
             ddl.append(
-                f"ALTER TABLE {schema}.{table} ADD FOREIGN KEY ({columns}) "
-                f"REFERENCES {parent} ({targets}) ON DELETE {action};"
+                f"ALTER TABLE {schema}.{table} ADD FOREIGN KEY ({columns_sql}) "
+                f"REFERENCES {parent} ({targets_sql}) ON DELETE {action};"
             )
 
             raise exc.configuration(
-                f"Document {spec.name!r} references {reference.spec!r} through {field!r} with "
+                f"Document {spec.name!r} references {reference.spec!r} through {through!r} with "
                 f"on_delete={reference.on_delete!r}, and {schema}.{table} has no foreign key "
-                f"from that column to {parent} ({ID_FIELD}) with ON DELETE {action}"
+                f"from {declared} with ON DELETE {action}"
                 + (f" ({reason})" if reason is not None else "")
                 + ". The migration is what satisfies a reference — nothing here creates one. "
                 "This would:\n  " + "\n  ".join(ddl),
@@ -1431,19 +1469,62 @@ async def _warn_undeclared_mechanisms(
             (name for name, relation in spec.bound_relations.items() if relation == key.referenced),
             f"<the spec bound to {key.referenced[0]}.{key.referenced[1]}>",
         )
+        # The tenant pairing goes without saying, as a declared reference may sit beside it.
+        tenant = (TENANT_ID_FIELD, TENANT_ID_FIELD)
+        pairs = [pair for pair in key.columns if pair != tenant] or list(key.columns)
+        columns = tuple(column for column, _ in pairs)
+
+        if len(pairs) == 1 and pairs[0][1] == ID_FIELD:
+            names = f"field={pairs[0][0]!r}"
+
+        else:
+            names = f"fields={columns!r}, references={tuple(target for _, target in pairs)!r}"
+
+        # What the key clears: the columns `SET NULL (…)` names, or every column of the key.
+        named = key.set_null_columns or tuple(column for column, _ in key.columns)
+        kept = tuple(column for column in named if column != TENANT_ID_FIELD) or columns
+        clears = (
+            f", set_null_fields={kept!r}"
+            if action == "set_null" and frozenset(kept) < frozenset(columns)
+            else ""
+        )
+        declaration = f"Reference({names}, spec={referenced!r}, on_delete={action!r}{clears})"
+
+        if action == "set_null" and tenant in key.columns and TENANT_ID_FIELD in named:
+            # A row cleared out of its tenant is nothing a declaration keeps: name the key that
+            # clears the rest alone, which the declaration then matches.
+            columns_sql = ", ".join(column for column, _ in key.columns)
+            targets_sql = ", ".join(target for _, target in key.columns)
+            ddl = (
+                f"ALTER TABLE {schema}.{table} DROP CONSTRAINT {key.name}; "
+                f"ALTER TABLE {schema}.{table} ADD CONSTRAINT {key.name} FOREIGN KEY "
+                f"({columns_sql}) REFERENCES {key.referenced[0]}.{key.referenced[1]} "
+                f"({targets_sql}) ON DELETE SET NULL ({', '.join(kept)});"
+            )
+            logger.warning(
+                "Postgres schema validation for document %r: foreign key %s on %s.%s clears "
+                "%s when its parent row is deleted, moving the row out of its tenant, which no "
+                "guarantee declares. Migrate it (Postgres 15 or later): %s Then declare it: %s.",
+                spec.name,
+                key.name,
+                schema,
+                table,
+                TENANT_ID_FIELD,
+                ddl,
+                declaration,
+            )
+            continue
 
         logger.warning(
             "Postgres schema validation for document %r: foreign key %s on %s.%s is declared "
             "by no guarantee, so the in-memory store keeps rows its ON DELETE %s changes. "
-            "Declare it: Reference(field=%r, spec=%r, on_delete=%r).",
+            "Declare it: %s.",
             spec.name,
             key.name,
             schema,
             table,
             _ON_DELETE_SQL[action],
-            ", ".join(column for column, _ in key.columns if column != TENANT_ID_FIELD),
-            referenced,
-            action,
+            declaration,
         )
 
 

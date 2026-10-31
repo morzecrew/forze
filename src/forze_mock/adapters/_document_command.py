@@ -1397,8 +1397,7 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
         with self.state.lock:
             store = self._store()
 
-            for pk in pks:
-                _ = self._ensure_exists(pk)
+            rows = {pk: self._ensure_exists(pk) for pk in pks}
 
             # One statement on Postgres: the rows a declared reference reaches go with these,
             # and a refusal anywhere leaves every row as it was.
@@ -1407,7 +1406,7 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
                 self.state,
                 parent=str(self.spec.name),
                 namespace=partition_namespace(tenant, self.namespace),
-                pks=pks,
+                rows=rows,
                 tenant=tenant,
                 store_for=self._store_for,
             )

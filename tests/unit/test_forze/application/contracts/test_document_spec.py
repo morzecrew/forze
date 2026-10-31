@@ -1,7 +1,7 @@
 """Tests for :class:`~forze.application.contracts.document.DocumentSpec`."""
 
 from datetime import datetime
-from typing import Annotated, Any, Literal, TypedDict
+from typing import Annotated, Any, ClassVar, Literal, TypedDict
 from uuid import UUID
 
 import pytest
@@ -1335,3 +1335,176 @@ class TestReferenceDeclaration:
     def test_the_domain_model_is_checked_too(self) -> None:
         with pytest.raises(CoreException, match="_TypedDomain.stage_id"):
             self._typed(UUID | None, int | None)
+
+
+# ....................... #
+
+
+def _composite(
+    reference: Reference,
+    *,
+    name: str = "stage_bom",
+    stage: Any = UUID | None,
+    source: Any = int | None,
+    **kwargs: Any,
+) -> DocumentSpec[Any, Any, Any, Any]:
+    fields: Any = {"stage_id": (stage, None), "source_id": (source, None)}
+
+    return DocumentSpec(
+        name=name,
+        read=create_model(f"_{name}Read", __base__=ReadDocument, **fields),
+        write=DocumentWriteTypes(
+            domain=create_model(f"_{name}Domain", __base__=Document, **fields),
+            create_cmd=CreateDocumentCmd,
+        ),
+        guarantees=(reference,),
+        **kwargs,
+    )
+
+
+def _composite_reference(on_delete: Any = "cascade") -> Reference:
+    return Reference(
+        fields=("stage_id", "source_id"),
+        spec="stages",
+        references=("id", "source_id"),
+        on_delete=on_delete,
+    )
+
+
+class TestCompositeReferenceDeclaration:
+    def test_a_composite_reference_over_stored_fields_is_accepted(self) -> None:
+        # The non-id pair's type is the parent's business, checked once the parent is known.
+        reference = _composite_reference()
+
+        assert _composite(reference).guarantees == (reference,)
+
+    def test_every_field_must_be_stored(self) -> None:
+        with pytest.raises(CoreException, match=r"\['origin_id'\], which this aggregate does not"):
+            _composite(
+                Reference(
+                    fields=("stage_id", "origin_id"),
+                    spec="stages",
+                    references=("id", "source_id"),
+                    on_delete="cascade",
+                )
+            )
+
+    def test_the_field_holding_the_id_must_still_be_a_uuid(self) -> None:
+        with pytest.raises(CoreException, match="stage_id, which is not a UUID"):
+            _composite(_composite_reference(), stage=int | None)
+
+    def test_set_null_needs_every_field_nullable(self) -> None:
+        with pytest.raises(CoreException, match="source_id does not accept None"):
+            _composite(_composite_reference("set_null"), source=int)
+
+        _composite(_composite_reference("set_null"))
+
+    def test_set_null_needs_only_the_fields_it_clears_nullable(self) -> None:
+        def _clearing(*cleared: str) -> Reference:
+            return Reference(
+                fields=("stage_id", "source_id"),
+                spec="stages",
+                references=("id", "source_id"),
+                on_delete="set_null",
+                set_null_fields=cleared,
+            )
+
+        _composite(_clearing("stage_id"), source=int)
+
+        with pytest.raises(CoreException, match="source_id does not accept None"):
+            _composite(_clearing("source_id"), source=int)
+
+    def test_a_sealed_field_of_the_pair_is_refused(self) -> None:
+        with pytest.raises(CoreException, match="keys by 'source_id', which this aggregate"):
+            _composite(
+                _composite_reference(),
+                encryption=FieldEncryption(encrypted=frozenset({"source_id"})),
+            )
+
+
+class TestReferenceMismatches:
+    @staticmethod
+    def _stages(source: Any = int, **kwargs: Any) -> DocumentSpec[Any, Any, Any, Any]:
+        fields: Any = {"source_id": (source, ...)}
+
+        return DocumentSpec(
+            name="stages",
+            read=create_model("_StagesRead", __base__=ReadDocument, **fields),
+            write=DocumentWriteTypes(
+                domain=create_model("_StagesDomain", __base__=Document, **fields),
+                create_cmd=CreateDocumentCmd,
+            ),
+            **kwargs,
+        )
+
+    def test_a_pair_typed_alike_matches_none_aside(self) -> None:
+        child = _composite(_composite_reference())
+
+        assert child.reference_mismatches(_composite_reference(), self._stages()) == []
+
+    def test_a_pair_typed_apart_is_named(self) -> None:
+        child = _composite(_composite_reference())
+
+        assert child.reference_mismatches(_composite_reference(), self._stages(str)) == [
+            "'source_id' is not typed as 'stages'.source_id is, so it never equals it"
+        ]
+
+    def test_a_referenced_field_the_parent_does_not_store_is_named(self) -> None:
+        child = _composite(_composite_reference())
+        parent = DocumentSpec(
+            name="stages",
+            read=ReadDocument,
+            write=DocumentWriteTypes(domain=Document, create_cmd=CreateDocumentCmd),
+        )
+
+        assert child.reference_mismatches(_composite_reference(), parent) == [
+            "'stages' does not store 'source_id'"
+        ]
+
+    _BY_SOURCE = Reference(
+        fields=("source_id",), references=("source_id",), spec="stages", on_delete="cascade"
+    )
+
+    @pytest.mark.parametrize(
+        "guarantees",
+        [
+            (),
+            (UniqueTogether(fields=("source_id", "rev")),),  # not exactly the fields
+            (UniqueTogether(fields=("source_id",), where={"$values": {"rev": 1}}),),
+            (UniqueTogether(fields=("source_id",), holds="commit"),),
+        ],
+    )
+    def test_referenced_fields_without_id_must_be_unique_on_the_parent(
+        self, guarantees: tuple[UniqueTogether, ...]
+    ) -> None:
+        # Not unique, a row names several parent rows, and Postgres creates no key onto them.
+        parent = self._stages(guarantees=guarantees)
+
+        assert _composite(self._BY_SOURCE).reference_mismatches(self._BY_SOURCE, parent) == [
+            "'stages' declares no unfiltered UniqueTogether over ['source_id'] holding always, "
+            "so a row could name several of its rows"
+        ]
+
+    def test_a_declared_or_implied_uniqueness_counts(self) -> None:
+        class _Implying(Document):
+            implied_guarantees: ClassVar[Any] = (UniqueTogether(fields=("source_id",)),)
+            source_id: int
+
+        implied = DocumentSpec(
+            name="stages",
+            read=create_model("_ImplyingRead", __base__=ReadDocument, source_id=(int, ...)),
+            write=DocumentWriteTypes(domain=_Implying, create_cmd=CreateDocumentCmd),
+        )
+        declared = self._stages(guarantees=(UniqueTogether(fields=("source_id",)),))
+        child = _composite(self._BY_SOURCE)
+
+        assert child.reference_mismatches(self._BY_SOURCE, implied) == []
+        assert child.reference_mismatches(self._BY_SOURCE, declared) == []
+
+    def test_a_referenced_field_the_parent_seals_is_named(self) -> None:
+        child = _composite(_composite_reference())
+        parent = self._stages(encryption=FieldEncryption(encrypted=frozenset({"source_id"})))
+
+        assert child.reference_mismatches(_composite_reference(), parent) == [
+            "'stages' stores 'source_id' encrypted"
+        ]
