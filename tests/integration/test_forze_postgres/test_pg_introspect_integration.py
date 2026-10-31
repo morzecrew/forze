@@ -233,3 +233,34 @@ async def test_require_relation_rejects_disallowed_kind(
             relation=vname,
             allow=("table",),
         )
+
+
+@pytest.mark.asyncio
+async def test_insert_triggers_lists_user_insert_triggers_only(
+    pg_client: PostgresClient,
+) -> None:
+    """INSERT triggers: a BEFORE UPDATE one and the internal FK ones are left out."""
+    suf = uuid4().hex[:12]
+    parent = f"intro_trg_p_{suf}"
+    t = f"intro_trg_{suf}"
+    fn = f"intro_trg_fn_{suf}"
+    await pg_client.execute(
+        f"""
+        CREATE TABLE {parent} (id int PRIMARY KEY);
+        CREATE TABLE {t} (id int PRIMARY KEY, rev int NOT NULL, p int REFERENCES {parent}(id));
+        CREATE FUNCTION {fn}() RETURNS trigger AS $$ BEGIN RETURN NEW; END; $$ LANGUAGE plpgsql;
+        CREATE TRIGGER {t}_bump BEFORE UPDATE ON {t} FOR EACH ROW EXECUTE FUNCTION {fn}();
+        """
+    )
+
+    intro = PostgresIntrospector(client=pg_client)
+    assert await intro.insert_triggers(schema="public", relation=t) == frozenset()
+
+    await pg_client.execute(
+        f"""
+        CREATE TRIGGER {t}_hist AFTER INSERT OR UPDATE ON {t}
+        FOR EACH ROW EXECUTE FUNCTION {fn}();
+        """
+    )
+
+    assert await intro.insert_triggers(schema="public", relation=t) == frozenset({f"{t}_hist"})

@@ -215,7 +215,9 @@ PostgresLifecycleModule(
     See [Lifetimes](../reference/contracts/stores.md#lifetimes-ttl).
 - **Bookkeeping.** `bookkeeping_strategy="application"` bumps `rev` /
   `last_update_at` in the write gateway; `"database"` defers to a `BEFORE UPDATE`
-  trigger you supply.
+  trigger you supply. With `history_enabled`, your triggers also write the history row of
+  every revision, the created one included; startup validation warns when no trigger on the
+  write relation fires on `INSERT`.
 - **Routed clients** require `introspector_cache_partition_key` on the deps
   module so the catalog cache partitions by tenant.
 - **Connections the server ended.** A restart, a failover, `pg_terminate_backend` or

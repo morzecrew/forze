@@ -927,6 +927,48 @@ class PostgresIntrospector:
 
     # ....................... #
 
+    async def insert_triggers(
+        self,
+        *,
+        schema: str | None,
+        relation: str,
+    ) -> frozenset[str]:
+        """Return user-visible trigger names on *relation* that fire on INSERT.
+
+        Any timing and level counts: an ``AFTER … FOR EACH STATEMENT`` trigger with a transition
+        table can write a row per inserted row as well as a row-level one can.
+
+        Uncached, for the same reason as :meth:`unique_indexes` — once per relation at startup.
+        """
+
+        schema = self.__normalize_schema(schema)
+        await self.require_relation(schema=schema, relation=relation)
+
+        # tgtype bit 4 is TRIGGER_TYPE_INSERT (pg_trigger.h).
+        stmt = sql.SQL(
+            """
+            SELECT t.tgname AS trigger_name
+            FROM pg_trigger t
+            JOIN pg_class c ON t.tgrelid = c.oid
+            JOIN pg_namespace n ON c.relnamespace = n.oid
+            WHERE n.nspname = {schema}
+              AND c.relname = {relation}
+              AND NOT t.tgisinternal
+              AND (t.tgtype & 4) <> 0
+            """
+        ).format(schema=sql.Placeholder(), relation=sql.Placeholder())
+
+        rows = await self.client.fetch_all(
+            stmt,
+            [schema, relation],
+            row_factory="dict",
+            commit=False,
+        )
+
+        return frozenset(str(r["trigger_name"]) for r in rows)
+
+    # ....................... #
+
     @staticmethod
     def _index_def_stub(
         *,

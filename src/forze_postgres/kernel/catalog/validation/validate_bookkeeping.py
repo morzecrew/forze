@@ -36,7 +36,15 @@ async def validate_postgres_document_bookkeeping(
     introspector: PostgresIntrospector,
     specs: Sequence[PostgresDocumentBookkeepingSpec],
 ) -> None:
-    """Check write-relation UPDATE triggers align with ``bookkeeping_strategy``."""
+    """Check write-relation triggers align with ``bookkeeping_strategy``.
+
+    With ``'database'``, a write relation without an UPDATE trigger is refused, and a
+    history-enabled one without an INSERT trigger is warned about. With ``'application'``,
+    UPDATE triggers are warned about: they risk double revision bumps.
+
+    :raises CoreException: ``internal``, code ``postgres_bookkeeping_validation_failed``,
+        when ``'database'`` finds no UPDATE trigger on the write relation.
+    """
 
     for spec in specs:
         schema, relation = spec.write_relation
@@ -62,12 +70,20 @@ async def validate_postgres_document_bookkeeping(
                     },
                 )
 
-            if spec.history_enabled:
+            # The UPDATE side is the revision bump trigger required above, which may also write
+            # history, so only a relation with no INSERT trigger is surely missing history rows.
+            if spec.history_enabled and not await introspector.insert_triggers(
+                schema=schema,
+                relation=relation,
+            ):
                 logger.warning(
-                    "Postgres bookkeeping for document %r: history_enabled=True with "
-                    "bookkeeping_strategy='database' — the application history gateway "
-                    "is a no-op; history rows must be written by database triggers.",
+                    "Postgres bookkeeping for document %r write relation %s.%s: "
+                    "history_enabled=True with bookkeeping_strategy='database', but no trigger "
+                    "fires on INSERT — created documents get no history row, since database "
+                    "triggers must write history under this strategy.",
                     spec.name,
+                    schema,
+                    relation,
                 )
 
         elif triggers:

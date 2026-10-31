@@ -17,7 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- ...
+- **Postgres startup no longer warns about every history document on the `database` bookkeeping strategy.** It warns only when no trigger on the write relation fires on `INSERT`, so created documents would get no history row.
 
 ## [0.18.0] - 2026-10-31
 
