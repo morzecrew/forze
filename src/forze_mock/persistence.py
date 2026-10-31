@@ -70,7 +70,7 @@ log = get_logger(__name__)
 SNAPSHOT_MAGIC: Final = b"forze-mock-state"
 """First line of the file. Distinguishes a snapshot from anything else at the path."""
 
-SNAPSHOT_VERSION: Final = 1
+SNAPSHOT_VERSION: Final = 2
 """Bumped when the header or the payload's shape changes. A mismatch refuses; see
 :meth:`MockStatePersistence.read`."""
 

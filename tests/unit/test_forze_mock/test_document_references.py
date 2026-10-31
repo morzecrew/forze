@@ -221,7 +221,7 @@ class TestRestrict:
         assert caught.value.expose_details is False
         assert caught.value.details == {
             "spec": "lines",
-            "field": "stage_id",
+            "fields": ["stage_id"],
             "references": "stages",
         }
         assert await _ids(ctx, STAGES) == {stage.id}
@@ -461,6 +461,226 @@ class TestTenancy:
             bound["id"] = tenant
             assert [row.id for row in (await lines.find_many()).hits] == [kept[tenant.tenant_id]]
             assert (await notes.find_many()).hits == []
+
+
+# ....................... #
+
+
+class _Revision(Document):
+    source_id: int | None = None
+
+
+class _RevisionRead(ReadDocument):
+    source_id: int | None = None
+
+
+class _Bom(Document):
+    stage_id: UUID | None = None
+    source_id: int | None = None
+
+
+class _BomRead(ReadDocument):
+    stage_id: UUID | None = None
+    source_id: int | None = None
+
+
+REVISIONS = DocumentSpec(
+    name="revisions",
+    read=_RevisionRead,
+    write=DocumentWriteTypes(domain=_Revision, create_cmd=_Revision),
+)
+
+
+def _boms(
+    on_delete: ReferenceAction, set_null_fields: tuple[str, ...] | None = None
+) -> DocumentSpec[Any, Any, Any, Any]:
+    # FOREIGN KEY (stage_id, source_id) REFERENCES revisions (id, source_id)
+    return DocumentSpec(
+        name="boms",
+        read=_BomRead,
+        write=DocumentWriteTypes(domain=_Bom, create_cmd=_Bom),
+        guarantees=(
+            Reference(
+                fields=("stage_id", "source_id"),
+                spec="revisions",
+                references=("id", "source_id"),
+                on_delete=on_delete,
+                set_null_fields=set_null_fields,
+            ),
+        ),
+    )
+
+
+class TestCompositeReference:
+    async def _rows(self, ctx: Any, on_delete: ReferenceAction) -> tuple[UUID, UUID, set[UUID]]:
+        """A revision, a row naming it by both fields, and rows naming it by one or none."""
+
+        revision = await ctx.doc.command(REVISIONS).create(_Revision(source_id=7))
+        boms = ctx.doc.command(_boms(on_delete))
+        named = await boms.create(_Bom(stage_id=revision.id, source_id=7))
+        others = {
+            (await boms.create(row)).id
+            for row in (
+                _Bom(stage_id=revision.id, source_id=8),  # same stage, another source
+                _Bom(stage_id=revision.id, source_id=None),  # a null names nothing
+                _Bom(stage_id=None, source_id=7),
+                _Bom(stage_id=uuid4(), source_id=7),
+            )
+        }
+
+        return revision.id, named.id, others
+
+    async def test_a_cascade_takes_the_rows_matching_every_field(self) -> None:
+        ctx = context_from_modules(MockDepsModule())
+        revision, _, others = await self._rows(ctx, "cascade")
+
+        await ctx.doc.command(REVISIONS).kill(revision)
+
+        assert await _ids(ctx, _boms("cascade")) == others
+
+    async def test_a_restrict_is_refused_by_the_matching_row_alone(self) -> None:
+        ctx = context_from_modules(MockDepsModule())
+        revision, named, _ = await self._rows(ctx, "restrict")
+
+        with pytest.raises(CoreException) as caught:
+            await ctx.doc.command(REVISIONS).kill(revision)
+
+        assert _is_conflict(caught.value)
+        assert caught.value.details == {
+            "spec": "boms",
+            "fields": ["stage_id", "source_id"],
+            "references": "revisions",
+        }
+        assert "through ('stage_id', 'source_id')" in caught.value.summary
+
+        # The rows naming it by one field do not hold it.
+        await ctx.doc.command(_boms("restrict")).kill(named)
+        await ctx.doc.command(REVISIONS).kill(revision)
+
+    async def test_set_null_clears_every_field_of_the_matching_row(self) -> None:
+        # As ON DELETE SET NULL without a column list clears every column of the key.
+        ctx = context_from_modules(MockDepsModule())
+        revision, named, others = await self._rows(ctx, "set_null")
+        before = {row.id: row for row in (await ctx.doc.query(_boms("set_null")).find_many()).hits}
+
+        await ctx.doc.command(REVISIONS).kill(revision)
+
+        after = {row.id: row for row in (await ctx.doc.query(_boms("set_null")).find_many()).hits}
+        assert (after[named].stage_id, after[named].source_id) == (None, None)
+        assert {pk: after[pk] for pk in others} == {pk: before[pk] for pk in others}
+
+    async def test_set_null_fields_clears_only_those(self) -> None:
+        # As ON DELETE SET NULL (stage_id): the source the row belongs to stays.
+        ctx = context_from_modules(MockDepsModule())
+        boms = _boms("set_null", set_null_fields=("stage_id",))
+        revision = await ctx.doc.command(REVISIONS).create(_Revision(source_id=7))
+        row = await ctx.doc.command(boms).create(_Bom(stage_id=revision.id, source_id=7))
+
+        await ctx.doc.command(REVISIONS).kill(revision.id)
+
+        cleared = await ctx.doc.query(boms).get(row.id)
+        assert (cleared.stage_id, cleared.source_id) == (None, 7)
+
+    @pytest.mark.parametrize(
+        ("set_null_fields", "refused"), [(None, True), (("stage_id",), False)]
+    )
+    async def test_clearing_a_field_a_grandchild_keys_on_is_refused(
+        self, set_null_fields: tuple[str, ...] | None, refused: bool
+    ) -> None:
+        # The note references (bom id, source_id): clearing the bom's source_id would leave it
+        # naming a key no bom holds, and Postgres refuses that update (ON UPDATE NO ACTION).
+        class _Note(Document):
+            bom_id: UUID | None = None
+            source_id: int | None = None
+
+        class _NoteRead(ReadDocument):
+            bom_id: UUID | None = None
+            source_id: int | None = None
+
+        notes = DocumentSpec(
+            name="bom_notes",
+            read=_NoteRead,
+            write=DocumentWriteTypes(domain=_Note, create_cmd=_Note),
+            guarantees=(
+                Reference(
+                    fields=("bom_id", "source_id"),
+                    spec="boms",
+                    references=("id", "source_id"),
+                    on_delete="cascade",
+                ),
+            ),
+        )
+        ctx = context_from_modules(MockDepsModule())
+        boms = _boms("set_null", set_null_fields=set_null_fields)
+        revision = await ctx.doc.command(REVISIONS).create(_Revision(source_id=7))
+        bom = await ctx.doc.command(boms).create(_Bom(stage_id=revision.id, source_id=7))
+        note = await ctx.doc.command(notes).create(_Note(bom_id=bom.id, source_id=7))
+
+        if not refused:
+            await ctx.doc.command(REVISIONS).kill(revision.id)
+
+            assert await _ids(ctx, notes) == {note.id}
+            return
+
+        with pytest.raises(CoreException) as caught:
+            await ctx.doc.command(REVISIONS).kill(revision.id)
+
+        assert _is_conflict(caught.value)
+        assert caught.value.expose_details is False
+        assert caught.value.details == {
+            "spec": "bom_notes",
+            "fields": ["bom_id", "source_id"],
+            "references": "boms",
+        }
+        # Refused whole: the revision and the bom are as they were.
+        assert await _ids(ctx, REVISIONS) == {revision.id}
+        assert (await ctx.doc.query(boms).get(bom.id)).source_id == 7
+
+    async def test_a_parent_holding_a_null_is_named_by_nothing(self) -> None:
+        ctx = context_from_modules(MockDepsModule())
+        revision = await ctx.doc.command(REVISIONS).create(_Revision(source_id=None))
+        row = await ctx.doc.command(_boms("restrict")).create(
+            _Bom(stage_id=revision.id, source_id=None)
+        )
+
+        await ctx.doc.command(REVISIONS).kill(revision.id)
+
+        assert await _ids(ctx, _boms("restrict")) == {row.id}
+
+    async def test_a_kill_reaches_only_its_own_tenant_s_rows(self) -> None:
+        state = MockState()
+        bound: dict[str, TenantIdentity | None] = {"id": TenantIdentity(tenant_id=uuid4())}
+        revisions, boms = (
+            MockDocumentAdapter(
+                spec=spec,
+                state=state,
+                namespace=str(spec.name),
+                read_model=read,
+                domain_model=domain,
+                tenant_aware=True,
+                tenant_provider=lambda: bound["id"],
+            )
+            for spec, read, domain in (
+                (REVISIONS, _RevisionRead, _Revision),
+                (_boms("cascade"), _BomRead, _Bom),
+            )
+        )
+        shared, t1, t2 = uuid4(), bound["id"], TenantIdentity(tenant_id=uuid4())
+
+        await revisions.ensure(shared, _Revision(source_id=7))
+        await boms.create(_Bom(stage_id=shared, source_id=7))
+
+        bound["id"] = t2
+        await revisions.ensure(shared, _Revision(source_id=7))
+        theirs = await boms.create(_Bom(stage_id=shared, source_id=7))
+
+        bound["id"] = t1
+        await revisions.kill(shared)
+
+        assert (await boms.find_many()).hits == []
+
+        bound["id"] = t2
+        assert [row.id for row in (await boms.find_many()).hits] == [theirs.id]
 
 
 # ....................... #

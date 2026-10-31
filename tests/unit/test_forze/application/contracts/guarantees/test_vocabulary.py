@@ -620,3 +620,122 @@ class TestReference:
 
         assert caught.value.code == GUARANTEE_UNSUPPORTED
         assert "reference needs applying a reference's `on_delete`" in caught.value.summary
+
+    def test_field_is_the_shorthand_for_one_field_holding_the_id(self) -> None:
+        # Either spelling reads back, and compares, the same.
+        short = Reference(field="stage_id", spec="stages", on_delete="cascade")
+        long = Reference(fields=("stage_id",), spec="stages", on_delete="cascade")
+
+        assert short == long
+        assert hash(short) == hash(long)
+        assert (short.fields, short.references) == (("stage_id",), ("id",))
+
+    def test_a_composite_reference_pairs_its_fields_with_the_parent_s(self) -> None:
+        class _Names(StrEnum):
+            SOURCE = "source_id"
+
+        reference = Reference(
+            fields=["stage_id", _Names.SOURCE],  # type: ignore[arg-type]  # as configuration reads
+            spec="stages",
+            references=("id", "source_id"),
+            on_delete="cascade",
+        )
+
+        assert reference.fields == ("stage_id", "source_id")
+        assert type(reference.fields[1]) is str
+        assert reference.references == ("id", "source_id")
+        assert reference.field is None
+
+    def test_one_field_may_reference_another_parent_field(self) -> None:
+        reference = Reference(field="code", references=("code",), spec="s", on_delete="cascade")
+
+        assert (reference.fields, reference.references) == (("code",), ("code",))
+        # Not one field holding the id, however it was spelt.
+        assert reference.field is None
+
+    def test_field_reads_the_one_field_holding_the_id(self) -> None:
+        assert Reference(fields=("stage_id",), spec="s", on_delete="cascade").field == "stage_id"
+
+    def test_evolve_changes_the_stored_fields_and_action(self) -> None:
+        # `field` is not stored, so evolve passes the fields back rather than both spellings.
+        reference = Reference(field="stage_id", spec="stages", on_delete="set_null")
+
+        assert attrs.evolve(reference, on_delete="cascade") == Reference(
+            field="stage_id", spec="stages", on_delete="cascade"
+        )
+
+        composite = attrs.evolve(
+            reference, fields=("stage_id", "source_id"), references=("id", "source_id")
+        )
+
+        assert composite.field is None
+        assert (composite.fields, composite.references) == (
+            ("stage_id", "source_id"),
+            ("id", "source_id"),
+        )
+
+        with pytest.raises(CoreException, match="not both"):
+            attrs.evolve(reference, field="origin_id")
+
+    @pytest.mark.parametrize(
+        ("names", "match"),
+        [
+            ({"field": "stage_id", "fields": ("source_id",)}, "not both"),
+            ({"field": "stage_id", "fields": ("stage_id", "source_id")}, "not both"),
+            ({"fields": ()}, "both a field and a spec"),
+            ({"fields": ("stage_id", "source_id")}, "names no references"),
+            ({"fields": ("stage_id",), "references": ()}, "names no references"),
+            ({"fields": ("a", "b"), "references": ("id",)}, "pairs 2 field"),
+            ({"fields": ("a",), "references": ("id", "b")}, "pairs 1 field"),
+            ({"field": "a", "references": ("id", "b")}, "pairs 1 field"),
+            ({"fields": ("a", "a"), "references": ("id", "b")}, "'a' more than once"),
+            ({"fields": ("a", "b"), "references": ("id", "id")}, "'id' more than once"),
+            ({"fields": "stage_id"}, "must be a tuple of field names"),
+            ({"fields": ("a", 1), "references": ("id", "b")}, "must be a tuple of field names"),
+            ({"fields": ("a", ""), "references": ("id", "b")}, "must be a tuple of field names"),
+            ({"field": 1}, "must be strings"),
+        ],
+    )
+    def test_a_malformed_pairing_is_refused(self, names: dict[str, Any], match: str) -> None:
+        with pytest.raises(CoreException, match=match) as caught:
+            Reference(spec="s", on_delete="cascade", **names)
+
+        assert caught.value.kind is ExceptionKind.CONFIGURATION
+
+    def test_set_null_may_clear_some_fields_of_the_reference(self) -> None:
+        # ON DELETE SET NULL (stage_id): the stage goes, the source stays.
+        reference = Reference(
+            fields=("stage_id", "source_id"),
+            references=("id", "source_id"),
+            spec="stages",
+            on_delete="set_null",
+            set_null_fields=["stage_id"],  # type: ignore[arg-type]  # as configuration reads
+        )
+
+        assert reference.set_null_fields == ("stage_id",)
+        assert Reference(field="s", spec="x", on_delete="set_null").set_null_fields is None
+
+    @pytest.mark.parametrize(
+        ("on_delete", "cleared", "match"),
+        [
+            ("cascade", ("stage_id",), "but on_delete is 'cascade'"),
+            ("restrict", ("stage_id",), "but on_delete is 'restrict'"),
+            ("set_null", (), "names no field"),
+            ("set_null", ("origin_id",), r"names \['origin_id'\], which are not among"),
+            ("set_null", ("stage_id", "stage_id"), "'stage_id' more than once"),
+            ("set_null", "stage_id", "must be a tuple of field names"),
+        ],
+    )
+    def test_malformed_set_null_fields_are_refused(
+        self, on_delete: Any, cleared: Any, match: str
+    ) -> None:
+        with pytest.raises(CoreException, match=match) as caught:
+            Reference(
+                fields=("stage_id", "source_id"),
+                references=("id", "source_id"),
+                spec="stages",
+                on_delete=on_delete,
+                set_null_fields=cleared,
+            )
+
+        assert caught.value.kind is ExceptionKind.CONFIGURATION

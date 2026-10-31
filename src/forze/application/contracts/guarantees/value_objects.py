@@ -26,6 +26,7 @@ import attrs
 
 from forze.base.exceptions import exc
 from forze.base.primitives import Bounds
+from forze.domain.constants import ID_FIELD
 
 from ..querying import QueryFilterExpression
 
@@ -261,8 +262,9 @@ ReferenceAction = Literal["cascade", "restrict", "set_null"]
 """What a hard delete of a referenced row does to the rows referencing it.
 
 ``"cascade"`` deletes them too, ``"restrict"`` refuses the delete while any remain, and
-``"set_null"`` clears their reference field. The names are the SQL ``ON DELETE`` actions, so
-the declaration reads as the foreign key that keeps it."""
+``"set_null"`` clears the fields of their reference (every one, or
+:attr:`Reference.set_null_fields`). The names are the SQL ``ON DELETE`` actions, so the
+declaration reads as the foreign key that keeps it."""
 
 _ACTIONS: frozenset[str] = frozenset({"cascade", "restrict", "set_null"})
 
@@ -272,26 +274,77 @@ def _plain_str(value: object) -> object:
     return str(value) if isinstance(value, str) else value
 
 
+def _plain_names(value: object) -> object:
+    # A list read from configuration becomes a tuple. A lone string is left for the refusal:
+    # read as a tuple it would name its characters.
+    if isinstance(value, (list, tuple)):
+        return tuple(_plain_str(name) for name in value)  # pyright: ignore[reportUnknownVariableType]
+
+    return value
+
+
+def _require_names(attribute: str, names: object) -> None:
+    """Refuse *names* unless it is a tuple of distinct, non-empty field names.
+
+    :raises CoreException: ``configuration`` naming *attribute*.
+    """
+
+    if not isinstance(names, tuple) or not all(
+        isinstance(name, str) and name
+        for name in names  # pyright: ignore[reportUnknownVariableType]
+    ):
+        raise exc.configuration(
+            f"Reference.{attribute} is {names!r}; it must be a tuple of field names.",
+        )
+
+    named: tuple[str, ...] = names  # pyright: ignore[reportUnknownVariableType]
+
+    if duplicates := sorted({name for name in named if named.count(name) > 1}):
+        raise exc.configuration(
+            f"Reference.{attribute} names {', '.join(repr(name) for name in duplicates)} more "
+            "than once. A foreign key lists each column once.",
+        )
+
+
 @final
-@attrs.define(slots=True, frozen=True, kw_only=True)
+@attrs.define(slots=True, frozen=True, kw_only=True, init=False)
 class Reference:
-    """:attr:`field` holds the id of a row of the document :attr:`spec`, and a hard delete of
-    that row applies :attr:`on_delete` to every row naming it.
+    """:attr:`fields` hold the :attr:`references` values of a row of the document :attr:`spec`,
+    and a hard delete of that row applies :attr:`on_delete` to every row naming it.
 
     Declared on the referencing (child) spec, as a foreign key is declared on the referencing
     table. Only a hard delete (``kill``/``kill_many``) applies it; a soft delete is an update and
     leaves the children alone, as ``ON DELETE`` does.
 
-    :raises CoreException: ``configuration`` when :attr:`field` or :attr:`spec` is not a
-        non-empty string, or when :attr:`on_delete` is not one of :data:`ReferenceAction` — a
-        misspelt action read from configuration would otherwise be enforced as none.
+    ``field="stage_id"`` is the usual case and the shorthand for ``fields=("stage_id",)``: one
+    field holding the referenced row's id. A composite foreign key names both sides, paired in
+    order — ``fields=("stage_id", "source_id"), references=("id", "source_id")``. A single field
+    references ``id`` unless :attr:`references` says otherwise. Either spelling stores
+    :attr:`fields` and :attr:`references`, and the two compare equal. ``field=`` is a
+    constructor argument only, so ``attrs.evolve`` changes :attr:`fields`, never ``field``.
+
+    A ``set_null`` clears every field of the reference, as ``ON DELETE SET NULL`` clears every
+    column of its key; :attr:`set_null_fields` narrows that to some of them, as
+    ``SET NULL (…)`` does — a ``stage_id`` cleared while ``source_id`` stays.
+
+    :raises CoreException: ``configuration`` when neither ``field`` nor ``fields`` is given, or
+        both are; when :attr:`fields` or :attr:`references` is not a tuple of distinct, non-empty
+        names, or the two differ in length; when :attr:`spec` is not a non-empty string; when
+        :attr:`on_delete` is not one of :data:`ReferenceAction` — a misspelt action read from
+        configuration would otherwise be enforced as none; or when :attr:`set_null_fields` is given for another action, or is
+        not a non-empty tuple of distinct names among :attr:`fields`.
     """
 
     kind: GuaranteeKind = attrs.field(default="reference", init=False)
     """Discriminator, for the reconciliation and the refusal messages."""
 
-    field: str = attrs.field(converter=_plain_str)
-    """The field on this spec holding the referenced row's id."""
+    fields: tuple[str, ...] = attrs.field(converter=_plain_names)
+    """The fields on this spec forming the reference, in the order :attr:`references` pairs
+    them with the referenced row's fields."""
+
+    references: tuple[str, ...] = attrs.field(converter=_plain_names)
+    """The referenced row's fields that :attr:`fields` hold, pairwise. Defaults to ``("id",)``
+    for a single field."""
 
     spec: str = attrs.field(converter=_plain_str)
     """The name of the referenced document spec (a ``StrEnum`` member reads as its value)."""
@@ -299,24 +352,116 @@ class Reference:
     on_delete: ReferenceAction
     """What a hard delete of the referenced row does to this one (:data:`ReferenceAction`)."""
 
-    def __attrs_post_init__(self) -> None:
-        if not isinstance(self.field, str) or not isinstance(self.spec, str):  # pyright: ignore[reportUnnecessaryIsInstance]
+    set_null_fields: tuple[str, ...] | None = attrs.field(default=None, converter=_plain_names)
+    """The fields a ``set_null`` clears, among :attr:`fields`; ``None`` clears every one."""
+
+    def __init__(
+        self,
+        *,
+        spec: str,
+        on_delete: ReferenceAction,
+        field: str | None = None,
+        fields: tuple[str, ...] | None = None,
+        references: tuple[str, ...] | None = None,
+        set_null_fields: tuple[str, ...] | None = None,
+    ) -> None:
+        """Build a reference; see the class for each argument.
+
+        :param field: The shorthand for ``fields=(field,)``: one field holding the referenced
+            row's id. Not stored, so ``attrs.evolve(reference, field=...)`` passes it beside
+            the stored :attr:`fields` and is refused; evolve ``fields`` instead.
+        """
+
+        if not isinstance(spec, str) or not isinstance(field, str | None):  # pyright: ignore[reportUnnecessaryIsInstance]
             # A spec object passed for its name would read as its repr and never match a row.
             raise exc.configuration(
-                f"Reference takes names: field={self.field!r} and spec={self.spec!r} must be "
-                "strings. Pass the referenced spec's name, not the spec.",
+                f"Reference takes names: field={field!r} and spec={spec!r} must be strings. "
+                "Pass the referenced spec's name, not the spec.",
             )
 
-        if not self.field or not self.spec:
+        if field is not None:
+            if fields is not None:
+                raise exc.configuration(
+                    f"Reference takes field={field!r} or fields={fields!r}, not both: field is "
+                    "the shorthand for a one-field reference.",
+                )
+
+            fields = (field,)
+
+        fields = () if fields is None else fields
+
+        if references is None:
+            # One field holds the parent's id unless it names another parent field.
+            one = isinstance(fields, (list, tuple)) and len(fields) == 1  # pyright: ignore[reportUnnecessaryIsInstance]
+            references = (ID_FIELD,) if one else ()
+
+        self.__attrs_init__(  # pyright: ignore[reportAttributeAccessIssue]
+            fields=fields,
+            references=references,
+            spec=spec,
+            on_delete=on_delete,
+            set_null_fields=set_null_fields,
+        )
+
+    @property
+    def field(self) -> str | None:
+        """The one field holding the referenced row's id, when that is the whole reference;
+        ``None`` for a composite one, or one holding another of the parent's fields."""
+
+        return self.fields[0] if self.references == (ID_FIELD,) else None
+
+    def __attrs_post_init__(self) -> None:
+        if not self.spec or self.fields in ((), ("",)):
             raise exc.configuration(
                 "Reference needs both a field and a spec: it names the field holding the id "
                 "and the document that id belongs to.",
+            )
+
+        _require_names("fields", self.fields)
+
+        if not self.references:
+            raise exc.configuration(
+                f"Reference over {self.fields!r} names no references. A composite reference "
+                "names the referenced row's fields its fields hold, pairwise: "
+                "references=('id', ...).",
+            )
+
+        _require_names("references", self.references)
+
+        if len(self.references) != len(self.fields):
+            raise exc.configuration(
+                f"Reference pairs {len(self.fields)} field(s) {self.fields!r} with "
+                f"{len(self.references)} referenced field(s) {self.references!r}; each field "
+                "holds one referenced field.",
             )
 
         if self.on_delete not in _ACTIONS:
             raise exc.configuration(
                 f"Reference.on_delete is {self.on_delete!r}; it must be 'cascade', 'restrict' "
                 "or 'set_null'.",
+            )
+
+        if self.set_null_fields is None:
+            return
+
+        if self.on_delete != "set_null":
+            raise exc.configuration(
+                f"Reference.set_null_fields is {self.set_null_fields!r}, but on_delete is "
+                f"{self.on_delete!r}: it names the fields a 'set_null' clears.",
+            )
+
+        if self.set_null_fields == ():
+            raise exc.configuration(
+                "Reference.set_null_fields names no field. Leave it out to clear every field "
+                "of the reference.",
+            )
+
+        _require_names("set_null_fields", self.set_null_fields)
+
+        if outside := sorted(set(self.set_null_fields) - set(self.fields)):
+            raise exc.configuration(
+                f"Reference.set_null_fields names {outside}, which are not among its fields "
+                f"{self.fields!r}: a delete clears only fields of the reference.",
             )
 
 

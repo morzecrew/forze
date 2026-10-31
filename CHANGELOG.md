@@ -9,11 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- ...
+- **A `Reference` can declare a composite foreign key.** `Reference(fields=("stage_id", "source_id"), references=("id", "source_id"), ...)` pairs each field with a parent field, and `set_null_fields=` names the ones `SET NULL (…)` clears. The undeclared-key warning suggests these forms, so it can be silenced.
 
 ### Changed
 
-- ...
+- **`Reference.field` is `None` unless the reference is one field holding the parent's id** (**behaviour change**). Read `fields` and `references`. The mock's restrict refusal and Postgres's reference refusals carry `fields` as a list in their details instead of `field`.
+
+- **Mock state snapshots written by 0.18.0 are refused at load** (**behaviour change**). The references recorded with the rows now carry composite keys; delete the old file to start fresh.
 
 ### Fixed
 

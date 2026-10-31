@@ -20,6 +20,7 @@ from forze.base.exceptions import exc
 from forze.base.logging import get_logger
 
 from ..deps import ResolutionFrame
+from ..document import DocumentSpec
 from ..guarantees import Reference, guarantees_of
 from .planes import PLANE_DEP_KEYS, plane_of_key
 from .registry import FrozenSpecRegistry
@@ -74,7 +75,8 @@ def reconcile_specs(
       an export driven by it carries nothing while reporting success.
     - **An edge points at a spec that is not in the inventory.**
     - **A document's** :class:`~forze.application.contracts.guarantees.Reference` **names a
-      document spec that is not in the inventory.**
+      document spec that is not in the inventory, or fields of it that its rows cannot match**
+      (see :meth:`~forze.application.contracts.document.DocumentSpec.reference_mismatches`).
 
     **The routeless-provider gap and its second half:** a *plain* (routeless) provider — one
     object serving every route of a key, the shape of the mock backend *and* of most
@@ -164,15 +166,27 @@ def reconcile_specs(
             if (end.plane, end.name) not in catalogued
         )
 
-    # A reference to a spec nothing catalogues is a delete action that can never fire.
+    # A reference to a spec nothing catalogues, or to fields its rows cannot match, is a delete
+    # action that can never fire.
     for entry in registry.of_plane(SpecPlane.DOCUMENT):
-        problems.extend(
-            f"  - {entry.ref.label()}: its Reference on {guarantee.field!r} points at "
-            f"{SpecPlane.DOCUMENT.value}:{guarantee.spec}, which is not in the inventory"
-            for guarantee in guarantees_of(entry.spec)
-            if isinstance(guarantee, Reference)
-            and (SpecPlane.DOCUMENT, guarantee.spec) not in catalogued
-        )
+        for guarantee in guarantees_of(entry.spec):
+            if not isinstance(guarantee, Reference):
+                continue
+
+            on = guarantee.field or guarantee.fields
+            parent = registry.find(SpecPlane.DOCUMENT, guarantee.spec)
+
+            if parent is None:
+                problems.append(
+                    f"  - {entry.ref.label()}: its Reference on {on!r} points at "
+                    f"{SpecPlane.DOCUMENT.value}:{guarantee.spec}, which is not in the inventory"
+                )
+
+            elif isinstance(entry.spec, DocumentSpec) and isinstance(parent.spec, DocumentSpec):
+                problems.extend(
+                    f"  - {entry.ref.label()}: its Reference on {on!r} can match no row: {reason}"
+                    for reason in entry.spec.reference_mismatches(guarantee, parent.spec)  # pyright: ignore[reportUnknownMemberType, reportUnknownArgumentType]
+                )
 
     if problems:
         raise exc.configuration(

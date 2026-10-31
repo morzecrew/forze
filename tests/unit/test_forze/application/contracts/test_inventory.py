@@ -11,11 +11,12 @@ are not written by its author.
 
 from __future__ import annotations
 
+from typing import Any
 from uuid import UUID
 
 import attrs
 import pytest
-from pydantic import BaseModel
+from pydantic import BaseModel, create_model
 
 from forze.application.contracts.analytics import (
     AnalyticsProvenance,
@@ -445,6 +446,46 @@ def test_a_reference_to_an_uncatalogued_document_is_a_failure() -> None:
     catalogued = SpecRegistry().register(lines, _document("stages")).freeze()
 
     assert reconcile_specs(catalogued, _frames("lines", "stages")) == ()
+
+
+def test_a_composite_reference_typed_apart_from_its_parent_is_a_failure() -> None:
+    # Known only once both specs are: a source_id of another type never equals the parent's.
+    class _Line(BaseModel):
+        id: str
+        stage_id: UUID
+        source_id: int
+
+    def _stages(source: type) -> DocumentSpec[Any, Any, Any, Any]:
+        stage = create_model("_Stage", id=(str, ...), source_id=(source, ...))
+
+        return DocumentSpec(
+            name="stages",
+            read=stage,
+            write={"domain": stage, "create_cmd": stage, "update_cmd": stage},
+        )
+
+    lines = DocumentSpec(
+        name="lines",
+        read=_Line,
+        write={"domain": _Line, "create_cmd": _Line, "update_cmd": _Line},
+        guarantees=(
+            Reference(
+                fields=("stage_id", "source_id"),
+                spec="stages",
+                references=("id", "source_id"),
+                on_delete="cascade",
+            ),
+        ),
+    )
+    frames = _frames("lines", "stages")
+
+    with pytest.raises(
+        CoreException,
+        match=r"Reference on \('stage_id', 'source_id'\) can match no row: 'source_id' is not",
+    ):
+        reconcile_specs(SpecRegistry().register(lines, _stages(str)).freeze(), frames)
+
+    assert reconcile_specs(SpecRegistry().register(lines, _stages(int)).freeze(), frames) == ()
 
 
 # ----------------------- #

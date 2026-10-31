@@ -189,10 +189,12 @@ class MockState:
     Vault-backed in production and therefore excluded)."""
 
     documents: dict[str, dict[Any, dict[str, Any]]] = attrs.field(factory=dict)
-    document_references: dict[str, set[tuple[str, str, bool, str, str]]] = attrs.field(factory=dict)
-    """Referenced spec name → ``(spec, namespace, tenant-scoped, field, on_delete)`` for each
-    declared ``Reference`` naming it, recorded when the referencing spec's adapter is built and
-    on its writes.
+    document_references: dict[
+        str, set[tuple[str, str, bool, tuple[str, ...], tuple[str, ...], str, tuple[str, ...]]]
+    ] = attrs.field(factory=dict)
+    """Referenced spec name → ``(spec, namespace, tenant-scoped, fields, references,
+    on_delete, fields a set_null clears)`` for each declared ``Reference`` naming it, recorded
+    when the referencing spec's adapter is built and on its writes.
 
     What a hard delete in :attr:`documents` reads to find the rows its declared ``on_delete``
     reaches. Metadata about the rows rather than rows, so not transactional: an entry recorded
