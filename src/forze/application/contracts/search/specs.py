@@ -667,10 +667,11 @@ class HubSearchSpec[M: BaseModel](BaseSpec):
         converter=frozenset,
     )
     """Hub-relation columns outside :attr:`model_type` that a search aggregate may also group
-    by or measure (see :attr:`aggregatable_fields`), such as a view's computed totals a hit
-    does not return. None may name a read-model field. Relational only; on the first aggregate,
-    Postgres checks the columns exist and refuses a name its pipeline reserves (such as
-    ``_hub_rank``). Empty by default."""
+    by, measure or name in a per-metric filter (see :attr:`aggregatable_fields`), such as a
+    view's computed totals a hit does not return; the search's own filters stay on the read
+    model. None may name a read-model field. Relational only; on the first aggregate, Postgres
+    checks the columns exist and refuses a name its pipeline reserves (such as ``_hub_rank``),
+    and types a metric filter on one by the column. Empty by default."""
 
     # ....................... #
 

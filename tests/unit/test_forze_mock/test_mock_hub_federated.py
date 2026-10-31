@@ -336,7 +336,7 @@ class _Stock(BaseModel):
     id: str
     title: str
     region: str
-    quantity: int
+    quantity: int | None = None
 
 
 class _HubStock(BaseModel):
@@ -345,10 +345,9 @@ class _HubStock(BaseModel):
     region: str
 
 
-@pytest.mark.asyncio
-async def test_a_hub_aggregate_measures_an_extra_field_across_its_legs() -> None:
-    """As on Postgres: every merged match of a query and a filter, measured by a column the
-    hub's read model does not carry."""
+async def _stock_hub() -> MockHubSearchAdapter[_HubStock]:
+    """``omega`` matches stocks 1, 2 and 4, which hold 1, 2 and 8 units, and stock 5, which
+    holds none on record."""
 
     state = MockState()
     leg_a = SearchSpec(name="a", model_type=_Stock, fields=["title"])
@@ -361,9 +360,13 @@ async def test_a_hub_aggregate_measures_an_extra_field_across_its_legs() -> None
         ]
     )
     await MockSearchCommandAdapter(state=state, spec=leg_b).upsert(
-        [_Stock(id="4", title="omega four", region="north", quantity=8)]
+        [
+            _Stock(id="4", title="omega four", region="north", quantity=8),
+            _Stock(id="5", title="omega five", region="south"),
+        ]
     )
-    hub = MockHubSearchAdapter(
+
+    return MockHubSearchAdapter(
         hub_spec=HubSearchSpec(
             name="hub",
             model_type=_HubStock,
@@ -376,6 +379,14 @@ async def test_a_hub_aggregate_measures_an_extra_field_across_its_legs() -> None
         ],
     )
 
+
+@pytest.mark.asyncio
+async def test_a_hub_aggregate_measures_an_extra_field_across_its_legs() -> None:
+    """As on Postgres: every merged match of a query and a filter, measured by a column the
+    hub's read model does not carry."""
+
+    hub = await _stock_hub()
+
     page = await hub.aggregate_search(
         {"$computed": {"n": {"$count": None}, "q": {"$sum": "quantity"}}},
         "omega",
@@ -383,6 +394,28 @@ async def test_a_hub_aggregate_measures_an_extra_field_across_its_legs() -> None
     )
 
     assert [(row["n"], row["q"]) for row in page.hits] == [(2, 9)]
+
+
+@pytest.mark.asyncio
+async def test_a_hub_metric_filter_names_an_extra_field() -> None:
+    hub = await _stock_hub()
+
+    page = await hub.aggregate_search(
+        {
+            "$groups": {"region": "region"},
+            "$computed": {
+                "total": {"$sum": "quantity"},
+                "missing": {"$count": {"filter": {"$values": {"quantity": {"$null": True}}}}},
+                "large": {"$count": {"filter": {"$values": {"quantity": {"$gte": 2}}}}},
+            },
+        },
+        "omega",
+        sorts={"region": "asc"},
+    )
+
+    assert [
+        (row["region"], row["total"], row["missing"], row["large"]) for row in page.hits
+    ] == [("north", 9, 0, 1), ("south", 2, 1, 1)]
 
 
 @pytest.mark.asyncio

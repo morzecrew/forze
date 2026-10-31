@@ -7,7 +7,11 @@ require_psycopg()
 # ....................... #
 
 from collections.abc import Mapping, Sequence
+from datetime import date, datetime
+from decimal import Decimal
+from types import GenericAlias
 from typing import Any, Literal, cast, final
+from uuid import UUID
 
 import attrs
 from psycopg import sql
@@ -16,11 +20,20 @@ from pydantic import BaseModel
 from forze.application.contracts.base import CountlessPage, Page
 from forze.application.contracts.embeddings import EmbeddingsProviderPort
 from forze.application.contracts.querying import (
+    OPERATOR_TYPE_MISMATCH_CODE,
     UNSUPPORTED_QUERY_FEATURE_CODE,
     AggregatesExpression,
     PaginationExpression,
+    QueryAnd,
+    QueryCompare,
+    QueryExpr,
+    QueryField,
     QueryFilterExpression,
+    QueryNot,
+    QueryOr,
     QuerySortExpression,
+    collect_aggregate_filter_expressions,
+    validate_query_field_types,
 )
 from forze.application.contracts.search import (
     HubSearchSpec,
@@ -37,6 +50,7 @@ from forze.application.integrations.search import SearchResultSnapshot
 from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict
 
+from ....kernel.catalog.introspect import PostgresType
 from ....kernel.gateways import PostgresGateway
 from ....kernel.sql.query import PsycopgQueryRenderer, compose_aggregate_statement
 from .._aggregate_run import execute_search_aggregate
@@ -52,6 +66,66 @@ from .plan import build_hub_search_plan, hub_members_weighted
 from .runtime import HubLegRuntime
 
 # ----------------------- #
+
+_PYTHON_TYPE_OF: Mapping[str, type[Any]] = {
+    "uuid": UUID,
+    "bool": bool,
+    "int2": int,
+    "int4": int,
+    "int8": int,
+    "float4": float,
+    "float8": float,
+    "numeric": Decimal,
+    "text": str,
+    "varchar": str,
+    "char": str,
+    "bpchar": str,
+    "citext": str,
+    "name": str,
+    "date": date,
+    "timestamp": datetime,
+    "timestamptz": datetime,
+}
+"""The Python type a metric filter's operators on an extra hub column are checked against,
+by the column's base type. A column of a type missing here (``jsonb``, ``time``, ...) takes
+only ``$null``: the renderer has no rule to bind a value to it."""
+
+
+def _python_type_of(t: PostgresType) -> Any:
+    scalar = _PYTHON_TYPE_OF[t.base]
+
+    return GenericAlias(list, (scalar,)) if t.is_array else scalar
+
+
+def _refuse_untyped(expr: QueryExpr, untyped: Mapping[str, str]) -> None:
+    """Refuse any operator but ``$null`` on an *untyped* extra column (name to type)."""
+
+    def _refuse(op: str, name: str) -> None:
+        raise exc.precondition(
+            f"Operator {op!r} is not valid for extra column {name!r}, a {untyped[name]} "
+            "column: a metric filter takes only $null on a column of that type.",
+            code=OPERATOR_TYPE_MISMATCH_CODE,
+        )
+
+    match expr:
+        case QueryAnd(items) | QueryOr(items):
+            for item in items:
+                _refuse_untyped(item, untyped)
+
+        case QueryNot(item):
+            _refuse_untyped(item, untyped)
+
+        case QueryField(name, op, _) if name in untyped and op != "$null":
+            _refuse(op, name)
+
+        case QueryCompare(left, op, right) if left in untyped or right in untyped:
+            _refuse(op, left if left in untyped else right)
+
+        case _:
+            pass
+
+
+# ....................... #
 
 
 @final
@@ -164,6 +238,21 @@ class PostgresHubSearchAdapter[M: BaseModel](  # pyright: ignore[reportIncompati
                 code="postgres_schema_validation_failed",
                 details={"missing": sorted(missing)},
             )
+
+        # No read-model field types an extra column, so a metric filter's operators on one
+        # are checked against the column's own type, as a filter's are against the read model.
+        if extras := self.hub_spec.extra_aggregatable_fields:
+            hints = {
+                n: _python_type_of(types[n]) for n in extras if types[n].base in _PYTHON_TYPE_OF
+            }
+            untyped = {n: types[n].base for n in extras if types[n].base not in _PYTHON_TYPE_OF}
+
+            for raw in collect_aggregate_filter_expressions(aggregates, parser=self.filter_parser):
+                expr = self.filter_parser.parse_filter(raw)
+                # ``BaseModel`` has no fields: the read-model ones are typed by the renderer,
+                # as on every aggregate.
+                validate_query_field_types(expr, BaseModel, field_type_hints=hints)
+                _refuse_untyped(expr, untyped)
 
         # The cursor plan has no merge cap; ``uncapped_legs`` lifts the per-leg one.
         plan = await build_hub_search_plan(
