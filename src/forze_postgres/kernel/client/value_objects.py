@@ -75,9 +75,11 @@ class PostgresConfig:
 
     Without it, each idle connection a restart, failover or ``pg_terminate_backend`` ended
     fails the one operation it is handed to. The cost is one round trip per checkout, and a
-    transaction checks out once. A ping still unanswered at the acquire timeout fails, and the
-    pool discards that connection. The ping is an empty query, which carries no session state,
-    so it is safe behind pgbouncer in transaction pooling; there it proves the link to pgbouncer.
+    transaction checks out once. The acquire timeout covers the wait and the ping, but a ping
+    always gets at least a second (or the acquire timeout, if shorter); one unanswered by then
+    fails, and the pool discards that connection. The ping is an empty query, which carries no
+    session state, so it is safe behind pgbouncer in transaction pooling; there it proves the
+    link to pgbouncer.
     """
 
     num_workers: int = 4

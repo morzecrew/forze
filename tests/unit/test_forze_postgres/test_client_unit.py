@@ -3,6 +3,7 @@
 import asyncio
 import gc
 import socket
+from contextlib import asynccontextmanager
 from datetime import timedelta
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -20,6 +21,7 @@ from forze_postgres.kernel.client.client import (
     PostgresClient,
     PostgresConfig,
     PostgresTransactionOptions,
+    _checkout_deadline,
     _pool_check,
     _pool_reset_transaction_attributes,
 )
@@ -383,6 +385,29 @@ class TestPoolCheckCallback:
         assert elapsed < 1
 
     @pytest.mark.asyncio
+    async def test_a_ping_that_returns_as_the_deadline_shuts_it_still_fails(self) -> None:
+        """Its reply may have been read just before the socket was shut down, but the
+        connection is broken either way, so it must not be handed out."""
+
+        loop = asyncio.get_running_loop()
+        ours, theirs = socket.socketpair()
+        ours.setblocking(False)
+
+        async def returns_anyway(_query: str) -> None:
+            await loop.sock_recv(ours, 1)  # b"" once the deadline shuts the socket down
+
+        conn = _ping_conn(returns_anyway)
+        conn.pgconn.socket = ours.fileno()
+
+        try:
+            with pytest.raises(TimeoutError, match="connection check timed out"):
+                await _checker(MagicMock(check=AsyncMock()), timedelta(milliseconds=50))(conn)
+
+        finally:
+            ours.close()
+            theirs.close()
+
+    @pytest.mark.asyncio
     async def test_a_failed_sweep_is_logged_not_left_unretrieved(self) -> None:
         """The checkout stopped waiting before the sweep failed, so nothing else reads its
         error: unread, asyncio would report it when the task is collected."""
@@ -419,6 +444,104 @@ class TestPoolCheckCallback:
 
         log.warning.assert_called_once()
         assert reported == []
+
+    @pytest.mark.asyncio
+    async def test_queueing_and_the_check_share_one_acquire_timeout(self) -> None:
+        """The check ends at the checkout's deadline rather than a whole acquire timeout after
+        it starts, so the time spent queued for the connection counts against it too."""
+
+        acquire = timedelta(milliseconds=300)
+        release, finished = asyncio.Event(), asyncio.Event()
+
+        async def stalled() -> None:
+            await release.wait()
+            finished.set()
+
+        check = _checker(MagicMock(check=AsyncMock(side_effect=stalled)), acquire)
+        client = PostgresClient()
+        pool = _QueueingPool(check, queued=0.2)  # two thirds of the timeout spent queued
+        client._PostgresClient__pool = pool  # type: ignore[attr-defined]
+        client._PostgresClient__acquire_timeout = acquire  # type: ignore[attr-defined]
+        loop = asyncio.get_running_loop()
+        started = loop.time()
+
+        with pytest.raises(CoreException):
+            async with client._acquire():
+                pass
+
+        elapsed = loop.time() - started
+        release.set()
+        await asyncio.wait_for(finished.wait(), 1)
+
+        assert elapsed < acquire.total_seconds() + 0.08, elapsed
+        assert _checkout_deadline.get() is None
+
+    @pytest.mark.asyncio
+    async def test_the_checkout_deadline_is_set_only_while_waiting(self) -> None:
+        client, _conn, _pool = _client_with_stub_pool()
+
+        async with client._acquire():
+            inside = _checkout_deadline.get()
+
+        assert inside is None
+        assert _checkout_deadline.get() is None
+
+    @pytest.mark.asyncio
+    async def test_a_connection_handed_over_at_the_deadline_still_gets_its_ping(self) -> None:
+        """Under saturation each returned connection goes to the longest waiter, the one nearest
+        its deadline; cutting the ping there would discard a healthy connection."""
+
+        loop = asyncio.get_running_loop()
+        ours, theirs = socket.socketpair()
+        ours.setblocking(False)
+
+        async def answered_late(_query: str) -> None:
+            loop.call_later(0.05, theirs.send, b"I")
+
+            if not await loop.sock_recv(ours, 1):
+                raise OperationalError("server closed the connection unexpectedly")
+
+        pool = MagicMock(check=AsyncMock())
+        conn = _ping_conn(answered_late)
+        conn.pgconn.socket = ours.fileno()
+        token = _checkout_deadline.set(loop.time())  # the checkout's deadline is now
+
+        try:
+            await _checker(pool, timedelta(milliseconds=300))(conn)
+
+        finally:
+            _checkout_deadline.reset(token)
+            ours.close()
+            theirs.close()
+
+        pool.check.assert_not_awaited()
+
+
+class _QueueingPool:
+    """psycopg_pool's ``getconn`` reduced to what the shared deadline depends on: queue for a
+    connection, run the ``check`` callback in the caller's task, give up when it fails."""
+
+    def __init__(self, check: Any, *, queued: float) -> None:
+        self.check = check
+        self.queued = queued
+
+    def get_stats(self) -> dict[str, int]:
+        return {"connections_errors": 0}
+
+    def connection(self, timeout: float | None = None) -> Any:
+        @asynccontextmanager
+        async def _cm() -> Any:
+            await asyncio.sleep(self.queued)
+
+            try:
+                await self.check(_ping_conn(_lost))
+
+            except Exception:
+                raise PoolTimeout("past the deadline") from None
+
+            yield MagicMock()
+
+        return _cm()
 
 
 class _StubCursor:

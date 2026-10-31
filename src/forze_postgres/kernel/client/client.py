@@ -208,6 +208,21 @@ def _pool_configure_for_config(  # type: ignore[no-untyped-def]
 # ....................... #
 
 
+_checkout_deadline: ContextVar[float | None] = ContextVar("pg_checkout_deadline", default=None)
+"""Event-loop time the checkout waiting in this context gives up at, or ``None``.
+
+Set by :meth:`PostgresClient._acquire` while it waits for a connection. psycopg_pool runs the
+``check`` callback in that same task, so the check ends with the checkout instead of a whole
+acquire timeout after it starts, which time spent queued would otherwise be added to."""
+
+_PING_FLOOR = 1.0
+"""Seconds a ping always gets (at most the acquire timeout), however near the checkout's deadline.
+
+psycopg_pool hands a returned connection to the longest waiter, which under saturation is the
+one nearest its deadline. Cutting that ping at the deadline would discard a healthy connection
+on most handovers, and every reconnect deepens the overload."""
+
+
 async def _ping(conn: AsyncConnection, deadline: float) -> None:
     """Run psycopg_pool's connection check, failing it if it is still running at *deadline*.
 
@@ -272,25 +287,32 @@ def _pool_check(
     checkout can cancel it: it holds the idle connections outside the pool while it runs, and
     a cancelled checkout must not strand them there.
 
-    The ping and the wait for the sweep share one deadline, *timeout* after the check starts;
-    past it the check fails and the sweep carries on. The sweep's own pings have no bound
+    The check ends at the checkout's deadline (:data:`_checkout_deadline`), or *timeout* after
+    it starts when no checkout set one; past it the check fails and the sweep carries on. A
+    ping still gets :data:`_PING_FLOOR`, so a checkout handed a connection that does not answer
+    can overrun its acquire timeout by that much. The sweep's own pings have no bound
     (``check()`` takes none): on a connection that stops answering it waits until TCP gives up.
 
     :param pool: Returns the pool the callback belongs to; called only on a failed check.
-    :param timeout: How long one check may take: the client's acquire timeout.
+    :param timeout: The client's acquire timeout.
     """
 
     seconds = timeout.total_seconds()
+    floor = min(seconds, _PING_FLOOR)
     sweep: asyncio.Task[None] | None = None
 
     async def check(conn: AsyncConnection) -> None:
         nonlocal sweep
 
         loop = asyncio.get_running_loop()
-        deadline = loop.time() + seconds
+        now = loop.time()
+        deadline = now + seconds
+
+        if (checkout := _checkout_deadline.get()) is not None:
+            deadline = min(deadline, checkout)
 
         try:
-            await _ping(conn, deadline)
+            await _ping(conn, max(deadline, now + floor))
 
         except Exception:
             if sweep is None or sweep.done():
@@ -549,11 +571,16 @@ class PostgresClient(PostgresClientPort):
 
         pool = self.__require_pool()
         errors_before = self.__connection_errors(pool)
+        timeout = self.__acquire_timeout.total_seconds()
         acquiring = True
+        # Reset before the body runs: a lazy transaction enters this in its first query's context
+        # and exits it in its scope's, and a token resets only in the context that set it.
+        deadline = _checkout_deadline.set(asyncio.get_running_loop().time() + timeout)
 
         try:
-            async with pool.connection(timeout=self.__acquire_timeout.total_seconds()) as conn:
+            async with pool.connection(timeout=timeout) as conn:
                 acquiring = False
+                _checkout_deadline.reset(deadline)
 
                 yield conn
 
@@ -564,8 +591,12 @@ class PostgresClient(PostgresClientPort):
             raise pool_acquire_error(
                 connection_errors_before=errors_before,
                 connection_errors_after=self.__connection_errors(pool),
-                details={"acquire_timeout_s": self.__acquire_timeout.total_seconds()},
+                details={"acquire_timeout_s": timeout},
             ) from error
+
+        finally:
+            if acquiring:
+                _checkout_deadline.reset(deadline)
 
     # ....................... #
 
