@@ -329,9 +329,9 @@ class SearchSyncOutboxWiring:
                 document_id = document_id_of(args, result)
 
                 # The sync route is dedicated: each write stages exactly one marker and
-                # flushes it within its own transaction. Re-open the per-task flushed flag
-                # first — it guards against post-flush staging on *shared* event routes,
-                # but here a task's next write must stage (and flush) its own marker.
+                # flushes it within its own transaction. Re-open the flushed flag first —
+                # it guards against post-flush staging on *shared* event routes, but here
+                # the next write in the same root transaction must stage its own marker.
                 ctx.outbox_staging.set_flushed(route, False)
                 await command.stage(
                     SEARCH_SYNC_EVENT_TYPE,

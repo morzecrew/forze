@@ -18,7 +18,9 @@ class ContextualBuffer[T]:
     """Context-scoped buffer for collecting objects during task execution.
 
     Each async task or thread gets its own buffer via a :class:`~contextvars.ContextVar`.
-    Use :meth:`scope` to create a nested scope that clears on exit.
+    Writes never change a list in place, so a task started from this one begins with a copy
+    of what is buffered and neither task sees what the other pushes afterwards. Use
+    :meth:`scope` to create a nested scope that clears on exit.
 
     The per-instance :class:`~contextvars.ContextVar` is intentional and safe under the
     usage contract that one buffer instance lives for the whole runtime scope (e.g. one
@@ -53,14 +55,11 @@ class ContextualBuffer[T]:
     # ....................... #
 
     def push(self, e: Sequence[T]) -> None:
-        """Append objects to the buffer. Extends the current list in place."""
+        """Append objects to the buffer, as a new list (tasks sharing the old one keep it)."""
 
         logger.trace("Pushing %s item(s) to contextual buffer", len(e))
 
-        buf = self.peek()
-        buf.extend(list(e))
-
-        self.__buffer.set(buf)
+        self.__buffer.set([*self.peek(), *e])
 
     # ....................... #
 

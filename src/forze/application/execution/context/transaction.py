@@ -1,6 +1,11 @@
 import asyncio
 from collections.abc import AsyncGenerator, Awaitable, Callable
-from contextlib import AbstractAsyncContextManager, asynccontextmanager
+from contextlib import (
+    AbstractAsyncContextManager,
+    AbstractContextManager,
+    asynccontextmanager,
+    nullcontext,
+)
 from contextvars import ContextVar
 from typing import cast
 
@@ -8,6 +13,7 @@ import attrs
 
 from forze.application._logger import logger
 from forze.application.contracts.deps import backend_of
+from forze.application.contracts.outbox import OutboxStagingContext
 from forze.application.contracts.transaction import (
     COMMIT_AMBIGUOUS_CODE,
     IsolationAware,
@@ -95,6 +101,10 @@ class TransactionContext:
     )
     """Optional out-of-band handler invoked when post-commit callbacks fail (noop by default)."""
 
+    _outbox_staging: OutboxStagingContext | None = attrs.field(default=None, init=False)
+    """Outbox staging scoped to each transaction scope (see
+    :meth:`~forze.application.contracts.outbox.OutboxStagingContext.transaction_scope`)."""
+
     # ....................... #
 
     _locked: bool = attrs.field(default=False, init=False)
@@ -153,6 +163,7 @@ class TransactionContext:
         *,
         tx_tracer: TxTracer | None = None,
         after_commit_error_handler: "AfterCommitErrorHandler | None" = None,
+        outbox_staging: OutboxStagingContext | None = None,
     ) -> None:
         """Lock the transaction context."""
 
@@ -163,6 +174,7 @@ class TransactionContext:
         self.resolver = resolver
         self._tx_tracer = tx_tracer if tx_tracer is not None else NOOP_TX_TRACER
         self._after_commit_error_handler = after_commit_error_handler
+        self._outbox_staging = outbox_staging
 
     # ....................... #
 
@@ -266,6 +278,15 @@ class TransactionContext:
             return
 
         self._defer(cb, fatal=fatal)
+
+    # ....................... #
+
+    def _staging_scope(self, *, root: bool) -> AbstractContextManager[None]:
+        """The outbox staging scope for one transaction scope (a no-op when none is wired)."""
+
+        staging = self._outbox_staging
+
+        return nullcontext() if staging is None else staging.transaction_scope(root=root)
 
     # ....................... #
 
@@ -380,12 +401,13 @@ class TransactionContext:
             token_d = self.__tx_depth.set(depth + 1)
 
             try:
-                async with tx.transaction():
-                    yield
+                with self._staging_scope(root=False):
+                    async with tx.transaction():
+                        yield
 
-                    # Recorded once the body succeeds, before leaving commits it: a body that
-                    # failed rolled back, and committed nothing beside the root.
-                    entered.add(str(getattr(route, "value", route)))
+                        # Recorded once the body succeeds, before leaving commits it: a body
+                        # that failed rolled back, and committed nothing beside the root.
+                        entered.add(str(getattr(route, "value", route)))
 
             finally:
                 self.__tx_depth.reset(token_d)
@@ -439,38 +461,39 @@ class TransactionContext:
 
         try:
             try:
-                async with self._open_root(tx, read_only=root_read_only, isolation=isolation):
-                    yield
+                with self._staging_scope(root=True):
+                    async with self._open_root(tx, read_only=root_read_only, isolation=isolation):
+                        yield
 
-                    # Body completed cleanly; leaving this block runs the driver commit.
-                    # No await sits between the yield returning and here, so this always
-                    # runs *before* the commit. Marking now means a cancellation
-                    # (deadline / disconnect) landing inside that commit — or the shielded
-                    # post-commit drain below — surfaces as a non-retryable
-                    # ``commit_ambiguous`` (below, or at the boundary via the mark) rather
-                    # than a retryable deadline, so an at-least-once caller cannot
-                    # double-execute an operation that may have (or has) committed. A
-                    # body failure/cancel throws into the yield, skips this, and follows
-                    # the rollback path (safely retryable). Not reset here: it must
-                    # survive to the boundary.
-                    #
-                    # A read-only root the backend refuses writes in commits nothing, so it is
-                    # no commit point. Asked of the transaction actually opened, not the
-                    # manager: a root that became a savepoint in an outer transaction is not
-                    # read-only. Only while it is the sole route entered: another route's
-                    # nested scope may have committed a transaction of its own. Only with no
-                    # deferred callback: one runs after the root exits and may write.
-                    # Fail-closed: an unaware manager, or any answer but ``True``, marks it
-                    # like a write.
-                    if not (
-                        root_read_only
-                        and len(routes) == 1
-                        and not self.__cb_stack.get()
-                        and isinstance(tx, ReadOnlyAware)
-                        and tx.read_only_enforced() is True
-                    ):
-                        mark_commit_started()
-                        commit_reached = True
+                        # Body completed cleanly; leaving this block runs the driver commit.
+                        # No await sits between the yield returning and here, so this always
+                        # runs *before* the commit. Marking now means a cancellation
+                        # (deadline / disconnect) landing inside that commit — or the shielded
+                        # post-commit drain below — surfaces as a non-retryable
+                        # ``commit_ambiguous`` (below, or at the boundary via the mark) rather
+                        # than a retryable deadline, so an at-least-once caller cannot
+                        # double-execute an operation that may have (or has) committed. A
+                        # body failure/cancel throws into the yield, skips this, and follows
+                        # the rollback path (safely retryable). Not reset here: it must
+                        # survive to the boundary.
+                        #
+                        # A read-only root the backend refuses writes in commits nothing, so it is
+                        # no commit point. Asked of the transaction actually opened, not the
+                        # manager: a root that became a savepoint in an outer transaction is not
+                        # read-only. Only while it is the sole route entered: another route's
+                        # nested scope may have committed a transaction of its own. Only with no
+                        # deferred callback: one runs after the root exits and may write.
+                        # Fail-closed: an unaware manager, or any answer but ``True``, marks it
+                        # like a write.
+                        if not (
+                            root_read_only
+                            and len(routes) == 1
+                            and not self.__cb_stack.get()
+                            and isinstance(tx, ReadOnlyAware)
+                            and tx.read_only_enforced() is True
+                        ):
+                            mark_commit_started()
+                            commit_reached = True
 
                 # Reached only on a clean exit (no exception thrown into the scope) — capture the
                 # after-commit callbacks to drain below, and mark the transaction committed. An escaping
