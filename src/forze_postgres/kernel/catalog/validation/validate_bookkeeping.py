@@ -36,7 +36,18 @@ async def validate_postgres_document_bookkeeping(
     introspector: PostgresIntrospector,
     specs: Sequence[PostgresDocumentBookkeepingSpec],
 ) -> None:
-    """Check write-relation UPDATE triggers align with ``bookkeeping_strategy``."""
+    """Check write-relation triggers align with ``bookkeeping_strategy``.
+
+    Only enabled triggers count, and on a partitioned write relation only those that fire on
+    every partition. With ``'database'``, a write relation without a
+    ``BEFORE UPDATE … FOR EACH ROW`` trigger is refused, and a history-enabled one without an
+    INSERT trigger is warned about. With ``'application'``, such UPDATE triggers are warned
+    about: they risk double revision bumps.
+
+    :raises CoreException: ``internal``, code ``postgres_bookkeeping_validation_failed``,
+        when ``'database'`` finds no ``BEFORE UPDATE … FOR EACH ROW`` trigger on the write
+        relation.
+    """
 
     for spec in specs:
         schema, relation = spec.write_relation
@@ -50,9 +61,9 @@ async def validate_postgres_document_bookkeeping(
             if not triggers:
                 raise exc.internal(
                     f"Postgres bookkeeping validation failed for {label!r}: "
-                    f"bookkeeping_strategy='database' requires at least one user "
-                    "UPDATE trigger on the write relation (for example "
-                    f"{relation!r}_bump_rev).",
+                    f"bookkeeping_strategy='database' requires an enabled user "
+                    "BEFORE UPDATE ... FOR EACH ROW trigger on the write relation, or on each "
+                    f"of its partitions, to bump rev (for example {relation!r}_bump_rev).",
                     code="postgres_bookkeeping_validation_failed",
                     details={
                         "document": spec.name,
@@ -62,12 +73,20 @@ async def validate_postgres_document_bookkeeping(
                     },
                 )
 
-            if spec.history_enabled:
+            # The UPDATE side is the revision bump trigger required above, which may also write
+            # history, so only a relation with no INSERT trigger is surely missing history rows.
+            if spec.history_enabled and not await introspector.insert_triggers(
+                schema=schema,
+                relation=relation,
+            ):
                 logger.warning(
-                    "Postgres bookkeeping for document %r: history_enabled=True with "
-                    "bookkeeping_strategy='database' — the application history gateway "
-                    "is a no-op; history rows must be written by database triggers.",
+                    "Postgres bookkeeping for document %r write relation %s.%s: "
+                    "history_enabled=True with bookkeeping_strategy='database', but no enabled "
+                    "trigger fires on every INSERT — created documents may get no history row, "
+                    "since database triggers must write history under this strategy.",
                     spec.name,
+                    schema,
+                    relation,
                 )
 
         elif triggers:
