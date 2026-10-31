@@ -350,7 +350,7 @@ class PostgresIntrospector:
               a.attnum,
               a.attname AS column_name,
               CASE
-                WHEN t.typelem <> 0 THEN format_type(t.typelem, NULL)
+                WHEN t.typelem <> 0 THEN format_type(t.typelem, a.atttypmod)
                 ELSE NULL
               END AS array_elem_type,
               format_type(a.atttypid, a.atttypmod) AS full_type,

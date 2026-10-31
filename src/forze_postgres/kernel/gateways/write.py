@@ -6,9 +6,11 @@ require_psycopg()
 
 # ....................... #
 
+import re
 from collections import defaultdict
 from collections.abc import AsyncGenerator, Awaitable, Callable, Mapping, Sequence
 from contextlib import asynccontextmanager, nullcontext
+from datetime import UTC, datetime, time, timedelta
 from functools import partial
 from typing import Any, LiteralString, cast, final, get_args
 from uuid import UUID
@@ -185,6 +187,82 @@ def _compared(alias: str, column: str, pg_t: PostgresType | None) -> sql.Composa
         return sql.SQL("{}::jsonb").format(ref)
 
     return ref
+
+
+_PG_EPOCH = datetime(2000, 1, 1)
+_MICROSECOND = timedelta(microseconds=1)
+_DIGITS_RE = re.compile(r"\((\d+)\)")
+
+
+def _kept_digits(pg_t: PostgresType | None) -> int | None:
+    """The fractional digits a ``timestamp``, ``timestamptz``, ``time`` or ``timetz`` column
+    keeps, when fewer than a Python value's six; ``None`` for any other column."""
+
+    if pg_t is None or _scalar_base(pg_t) not in {"timestamp", "timestamptz", "time", "timetz"}:
+        return None
+
+    m = _DIGITS_RE.search(pg_t.base)
+
+    return int(m.group(1)) if m is not None and int(m.group(1)) < 6 else None
+
+
+def _half_away(us: int, step: int) -> int:
+    """*us* rounded to a multiple of *step*, half away from zero, as Postgres rounds."""
+
+    kept = (abs(us) + step // 2) // step * step
+
+    return kept if us >= 0 else -kept
+
+
+def _rounded_as_stored(value: Any, digits: int) -> Any:
+    """*value* (a ``datetime`` or ``time``, or a list of them) as a column keeping *digits*
+    fractional digits stores it.
+
+    Postgres rounds an instant half away from zero on its microseconds since its epoch,
+    2000-01-01 (UTC when aware), so half a step rounds down before it; and a time of day half
+    up. A value that rounds past what Python holds, a ``datetime`` past 9999-12-31 or a
+    ``time`` up to ``24:00:00``, both of which Postgres keeps, is returned as sent.
+    """
+
+    if isinstance(value, list):
+        return [_rounded_as_stored(x, digits) for x in value]
+
+    step = 10 ** (6 - digits)
+
+    if isinstance(value, datetime):
+        epoch = _PG_EPOCH.replace(tzinfo=None if value.tzinfo is None else UTC)
+        us = _half_away((value - epoch) // _MICROSECOND, step)
+
+        try:
+            stored = epoch + timedelta(microseconds=us)
+
+            return stored if value.tzinfo is None else stored.astimezone(value.tzinfo)
+
+        except OverflowError:
+            return value
+
+    if isinstance(value, time):
+        moved = _half_away(value.microsecond, step) - value.microsecond
+        stored = datetime.combine(_PG_EPOCH, value.replace(tzinfo=None)) + timedelta(
+            microseconds=moved
+        )
+
+        return stored.time().replace(tzinfo=value.tzinfo) if stored.day == 1 else value
+
+    return value
+
+
+def _as_stored(patch: JsonDict, column_types: PostgresColumnTypes) -> JsonDict:
+    """*patch* with each instant in a column of fewer fractional digits rounded as that
+    column stores it, so a value it would round finds no change."""
+
+    rounded = {
+        k: _rounded_as_stored(v, digits)
+        for k, v in patch.items()
+        if (digits := _kept_digits(column_types.get(k))) is not None
+    }
+
+    return {**patch, **rounded} if rounded else patch
 
 
 def _row_source(
@@ -1381,7 +1459,8 @@ class PostgresWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
                 self._require_revisions((current, rev))
 
             if update is not None:
-                patch = update
+                # As the column will keep it, so a value it would round finds no change.
+                update = patch = _as_stored(update, await self.column_types())
 
                 if rev is not None:
                     (patch,) = await self._validate_history((current, rev, update), merge=merge)
@@ -1611,6 +1690,9 @@ class PostgresWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
                     groups[key].append((cid, crev, diff))
 
             else:
+                column_types = await self.column_types()
+                # As the columns will keep them, so a value they would round finds no change.
+                updates = [_as_stored(u, column_types) for u in updates]
                 patches: Sequence[JsonDict] = updates
 
                 # if revisions are provided, validate historical consistency

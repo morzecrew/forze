@@ -762,6 +762,95 @@ def test_a_jsonb_array_compares_as_it_is_and_a_json_array_falls_back() -> None:
     assert _compared("t", "doc", json).as_string() == '"t"."doc"::jsonb'
 
 
+# ....................... #
+# An update's instants, as a column of fewer fractional digits stores them
+
+
+def test_only_a_time_column_of_fewer_digits_rounds() -> None:
+    from forze_postgres.kernel.gateways.write import _kept_digits
+
+    def t(base: str, *, is_array: bool = False) -> PostgresType:
+        return PostgresType(base=base, is_array=is_array, not_null=False)
+
+    assert _kept_digits(t("timestamp(3) with time zone")) == 3
+    assert _kept_digits(t("timestamp(0) without time zone")) == 0
+    assert _kept_digits(t("time(2) with time zone")) == 2
+    assert _kept_digits(t("time(4) without time zone", is_array=True)) == 4
+    assert _kept_digits(t("timestamp(6) with time zone")) is None
+    assert _kept_digits(t("timestamptz")) is None
+    assert _kept_digits(t("numeric(10,2)")) is None
+    assert _kept_digits(t("interval(3)")) is None
+    assert _kept_digits(None) is None
+
+
+@pytest.mark.parametrize(
+    ("sent", "digits", "stored"),
+    [
+        # Half a step rounds up after Postgres's epoch, 2000-01-01, and down before it.
+        (datetime(2026, 1, 1, 12, 0, 0, 123500), 3, datetime(2026, 1, 1, 12, 0, 0, 124000)),
+        (datetime(2026, 1, 1, 12, 0, 0, 123499), 3, datetime(2026, 1, 1, 12, 0, 0, 123000)),
+        (datetime(1999, 12, 31, 23, 59, 59, 123500), 3, datetime(1999, 12, 31, 23, 59, 59, 123000)),
+        (datetime(1999, 12, 31, 23, 59, 59, 123501), 3, datetime(1999, 12, 31, 23, 59, 59, 124000)),
+        (datetime(2026, 1, 1, 12, 0, 0, 999500), 3, datetime(2026, 1, 1, 12, 0, 1)),
+        (datetime(2026, 1, 1, 12, 0, 0, 123450), 4, datetime(2026, 1, 1, 12, 0, 0, 123500)),
+        (datetime(2026, 1, 1, 12, 0, 0, 500000), 0, datetime(2026, 1, 1, 12, 0, 1)),
+        # An aware instant counts from the epoch in UTC, and keeps its offset.
+        (
+            datetime(2000, 1, 1, 2, 0, 0, 500, tzinfo=timezone(timedelta(hours=3))),
+            3,
+            datetime(2000, 1, 1, 2, 0, 0, tzinfo=timezone(timedelta(hours=3))),
+        ),
+        (
+            datetime(2026, 1, 1, 12, 0, 0, 123456, tzinfo=UTC),
+            3,
+            datetime(2026, 1, 1, 12, 0, 0, 123000, tzinfo=UTC),
+        ),
+        # A time of day rounds half up; one that would reach 24:00:00 is left as sent.
+        (time(12, 0, 0, 123500), 3, time(12, 0, 0, 124000)),
+        (time(12, 0, 0, 123500, tzinfo=UTC), 3, time(12, 0, 0, 124000, tzinfo=UTC)),
+        (time(23, 59, 59, 999500), 3, time(23, 59, 59, 999500)),
+        (
+            [datetime(2026, 1, 1, 0, 0, 0, 1500), None],
+            3,
+            [datetime(2026, 1, 1, 0, 0, 0, 2000), None],
+        ),
+        # Rounding past 9999-12-31, which Postgres keeps and Python cannot hold: as sent.
+        (datetime.max, 3, datetime.max),
+        (datetime.max.replace(tzinfo=UTC), 3, datetime.max.replace(tzinfo=UTC)),
+        (
+            datetime(9999, 12, 31, 23, 59, 59, 999600, tzinfo=timezone(timedelta(hours=3))),
+            3,
+            datetime(9999, 12, 31, 23, 59, 59, 999600, tzinfo=timezone(timedelta(hours=3))),
+        ),
+        ("2026-01-01T12:00:00.123456", 3, "2026-01-01T12:00:00.123456"),
+    ],
+)
+def test_an_instant_rounds_as_postgres_stores_it(sent: object, digits: int, stored: object) -> None:
+    from forze_postgres.kernel.gateways.write import _rounded_as_stored
+
+    got = _rounded_as_stored(sent, digits)
+
+    assert got == stored
+    assert getattr(got, "tzinfo", None) == getattr(stored, "tzinfo", None)
+
+
+def test_an_update_rounds_only_its_reduced_precision_columns() -> None:
+    from forze_postgres.kernel.gateways.write import _as_stored
+
+    at = datetime(2026, 1, 1, 12, 0, 0, 123456, tzinfo=UTC)
+    types = {
+        "at": PostgresType(base="timestamp(3) with time zone", is_array=False, not_null=True),
+        "seen": PostgresType(base="timestamptz", is_array=False, not_null=True),
+    }
+    patch = {"at": at, "seen": at, "name": "n"}
+
+    rounded = at.replace(microsecond=123000)
+
+    assert _as_stored(patch, types) == {"at": rounded, "seen": at, "name": "n"}
+    assert patch["at"] == at
+    assert _as_stored({"name": "n"}, types) == {"name": "n"}
+
+
 @pytest.mark.asyncio
 async def test_bulk_revisions_must_match_the_keys() -> None:
     gw, _ = _build_gateway()
