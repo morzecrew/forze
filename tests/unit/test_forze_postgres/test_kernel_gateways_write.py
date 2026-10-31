@@ -960,10 +960,12 @@ def test_an_update_converts_only_the_columns_that_round_or_pad() -> None:
         "seen": _pg("timestamptz"),
         "price": _pg("numeric(10,2)"),
         "codes": _pg("character(3)", is_array=True),
+        "pair": _pg("timestamp(3) with time zone", is_array=True),
     }
     patch = {
         "at": at,
         "ats": [at, None],
+        "pair": (at, at),
         "seen": at,
         "price": Decimal("1.005"),
         "codes": ["ab", None],
@@ -973,6 +975,8 @@ def test_an_update_converts_only_the_columns_that_round_or_pad() -> None:
     assert _as_stored(patch, types) == {
         "at": rounded,
         "ats": [rounded, None],
+        # A tuple stays a tuple.
+        "pair": (rounded, rounded),
         "seen": at,
         "price": Decimal("1.01"),
         "codes": ["ab ", None],

@@ -206,6 +206,7 @@ async def test_an_instant_rounds_as_postgres_stores_it(
 
 class _Instants(BaseModel):
     ats: list[datetime]
+    pair: tuple[datetime, ...]
 
 
 class InstantsCreate(CreateDocumentCmd, _Instants):
@@ -222,6 +223,7 @@ class InstantsRead(ReadDocument, _Instants):
 
 class InstantsUpdate(BaseDTO):
     ats: list[datetime] | None = None
+    pair: tuple[datetime, ...] | None = None
 
 
 async def test_an_unchanged_instant_array_is_not_a_change(pg_client: PostgresClient) -> None:
@@ -233,7 +235,8 @@ async def test_an_unchanged_instant_array_is_not_a_change(pg_client: PostgresCli
             rev integer NOT NULL,
             created_at timestamptz NOT NULL,
             last_update_at timestamptz NOT NULL,
-            ats timestamptz(3)[] NOT NULL
+            ats timestamptz(3)[] NOT NULL,
+            pair timestamptz(3)[] NOT NULL
         );
         """
     )
@@ -248,8 +251,11 @@ async def test_an_unchanged_instant_array_is_not_a_change(pg_client: PostgresCli
     command, query = ctx.document.command(spec), ctx.document.query(spec)
     ats = [AT_UTC, AT_UTC + timedelta(days=1)]
 
-    doc = await command.create(InstantsCreate(ats=ats))
-    _, diff = await command.update(doc.id, doc.rev, InstantsUpdate(ats=ats), return_diff=True)
+    # A list and a tuple: either array rounds element by element.
+    doc = await command.create(InstantsCreate(ats=ats, pair=tuple(ats)))
+    _, diff = await command.update(
+        doc.id, doc.rev, InstantsUpdate(ats=ats, pair=tuple(ats)), return_diff=True
+    )
     stored = await query.get(doc.id, skip_cache=True)
 
     assert (diff, stored.rev) == ({}, doc.rev)

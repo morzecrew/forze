@@ -397,8 +397,12 @@ def _as_stored(patch: JsonDict, column_types: PostgresColumnTypes) -> JsonDict:
         if pg_t is None or convert is None:
             continue
 
+        # An array as the container the patch holds: a tuple field dumps a tuple.
         if pg_t.is_array and isinstance(value, list):
             stored[key] = [convert(x) for x in value]
+
+        elif pg_t.is_array and isinstance(value, tuple):
+            stored[key] = tuple(convert(x) for x in value)
 
         else:
             stored[key] = convert(value)
