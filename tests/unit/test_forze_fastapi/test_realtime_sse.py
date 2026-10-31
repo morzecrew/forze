@@ -323,7 +323,9 @@ class TestAck:
 
         response = client.post("/realtime/sse/ack", json={"up_to": ids[0]})
 
+        # The endpoint's own refusal, though OpenAPI documents device_id as required.
         assert response.status_code == 422
+        assert response.headers[ERROR_CODE_HEADER] == "realtime_ack_requires_device"
         assert "requires ?device_id" in response.text
 
     async def test_device_scoped_cursor_via_query_param(self) -> None:
