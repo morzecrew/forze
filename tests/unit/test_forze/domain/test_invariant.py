@@ -132,6 +132,16 @@ class TestInvariant:
 
         assert Restores(balance=-5).balance == 0
 
+    def test_a_subclass_instance_validated_through_its_base_is_checked(self) -> None:
+        class Savings(Account):
+            rate: int = 0
+
+        savings = Savings(balance=10)
+        savings.balance = -1
+
+        with pytest.raises(CoreException):
+            Account.model_validate(savings)
+
     def test_the_create_check_names_are_reserved(self) -> None:
         """A class's own attribute of that name would be replaced, and an invariant of that
         name would call the check that calls it."""

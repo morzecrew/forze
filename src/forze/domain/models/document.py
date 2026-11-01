@@ -40,22 +40,26 @@ _CREATE_CHECK = "_forze_invariants_on_create"
 _CREATE_CHECKS = itertools.count()
 
 
-def _invariant_check_for(owner: type["Document"]) -> Callable[[Any], Any]:
+def _invariant_check_for(owner: type["Document"]) -> Any:
     """The create-time half of invariant enforcement for *owner*, attached to it only when it
     has an invariant, under a name of its own.
 
-    Pydantic runs a class's after-validators inherited first, then its own in order, so the
-    check of the class being built runs after every validator it has; a check it inherits
-    stands down for it. Runs on construction and ``model_validate``. The merge-patch update
-    path uses ``model_copy``, which bypasses model validators, so an update enforces
-    invariants itself through ``_run_invariants``, after all validation too.
+    A wrap validator, attached last, so it wraps every validator its class has and checks the
+    model they produce. Pydantic hands it the class whose schema runs: a subclass's schema
+    inherits this check, and it stands down there for the subclass's own; validating a
+    subclass instance through *owner*'s schema runs it. Runs on construction and
+    ``model_validate``. The merge-patch update path uses ``model_copy``, which bypasses model
+    validators, so an update enforces invariants itself through ``_run_invariants``, after all
+    validation too.
     """
 
-    def check(self: Any) -> Any:
-        if type(self) is owner:
-            self._run_invariants()
+    def check(cls: type[Any], value: Any, handler: Callable[[Any], Any]) -> Any:
+        model = handler(value)
 
-        return self
+        if cls is owner:
+            model._run_invariants()
+
+        return model
 
     check.__forze_invariant_check__ = True  # type: ignore[attr-defined]
 
@@ -175,7 +179,7 @@ class Document(CoreModel):
         if cls._invariants_:
             # Attached only here, before pydantic collects the class's validators, so a
             # document without invariants pays no call per instance it validates.
-            validator = model_validator(mode="after")(_invariant_check_for(cls))
+            validator = model_validator(mode="wrap")(_invariant_check_for(cls))
             setattr(cls, f"{_CREATE_CHECK}_{next(_CREATE_CHECKS)}", validator)
 
         if has_event_emitters(cls) and not issubclass(cls, AggregateRoot):
