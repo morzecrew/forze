@@ -16,9 +16,7 @@ from forze.base.primitives import advisory_lock_key
 from forze.base.serialization import stored_field_names_for
 from forze.domain.constants import ID_FIELD
 from forze.domain.models import AggregateRoot, BaseDTO, Document
-from forze.domain.models.document import (
-    _enforce_invariants_on_create,  # pyright: ignore[reportPrivateUsage]
-)
+from forze.domain.models.document import is_invariant_check
 
 from ..base import BaseSpec
 from ..cache import CacheSpec
@@ -152,7 +150,7 @@ def _own_decorators(domain: type[Document], kind: str) -> list[Any]:
         decorator
         for name, decorator in getattr(domain.__pydantic_decorators__, kind).items()
         if (name not in base or _func(base[name]) is not _func(decorator))
-        and _func(decorator) is not _enforce_invariants_on_create
+        and not is_invariant_check(_func(decorator))
     ]
 
 

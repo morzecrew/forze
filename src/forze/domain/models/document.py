@@ -1,6 +1,7 @@
 """Domain document models and commands."""
 
-from collections.abc import Mapping
+import itertools
+from collections.abc import Callable, Mapping
 from copy import deepcopy
 from dataclasses import is_dataclass
 from datetime import datetime
@@ -34,20 +35,37 @@ from .emitters import has_event_emitters
 
 
 _CREATE_CHECK = "_forze_invariants_on_create"
-"""The name :class:`Document` attaches its create-time invariant check under."""
+"""The prefix of the names :class:`Document` attaches its create-time invariant checks under."""
+
+_CREATE_CHECKS = itertools.count()
 
 
-def _enforce_invariants_on_create[M: "Document"](self: M) -> M:
-    """The create-time half of invariant enforcement, attached to a document class only when it
-    declares an invariant.
+def _invariant_check_for(owner: type["Document"]) -> Callable[[Any], Any]:
+    """The create-time half of invariant enforcement for *owner*, attached to it only when it
+    has an invariant, under a name of its own.
 
-    Runs on construction and ``model_validate``. The merge-patch update path uses
-    ``model_copy``, which bypasses model validators, so an update enforces invariants itself
-    through ``_run_invariants``; together they make an invariant always hold.
+    Pydantic runs a class's after-validators inherited first, then its own in order, so the
+    check of the class being built runs after every validator it has; a check it inherits
+    stands down for it. Runs on construction and ``model_validate``. The merge-patch update
+    path uses ``model_copy``, which bypasses model validators, so an update enforces
+    invariants itself through ``_run_invariants``, after all validation too.
     """
 
-    self._run_invariants()
-    return self
+    def check(self: Any) -> Any:
+        if type(self) is owner:
+            self._run_invariants()
+
+        return self
+
+    check.__forze_invariant_check__ = True  # type: ignore[attr-defined]
+
+    return check
+
+
+def is_invariant_check(func: Any) -> bool:
+    """Whether *func* is a create-time invariant check :class:`Document` attached."""
+
+    return getattr(func, "__forze_invariant_check__", False) is True
 
 
 def _merge_update(live: Any, before: JsonDict, patch: JsonDict) -> JsonDict:
@@ -146,17 +164,19 @@ class Document(CoreModel):
 
         cls._invariants_ = collect_invariants(cls)
 
-        if _CREATE_CHECK in vars(cls) or _CREATE_CHECK in cls._invariants_:
+        clash = [n for n in (*vars(cls), *cls._invariants_) if n.startswith(_CREATE_CHECK)]
+
+        if clash:
             raise exc.configuration(
-                f"{cls.__qualname__}.{_CREATE_CHECK} is reserved: Document attaches its "
-                "create-time invariant check under that name."
+                f"{cls.__qualname__}.{clash[0]} is reserved: Document attaches its create-time "
+                f"invariant checks under names starting with {_CREATE_CHECK}."
             )
 
         if cls._invariants_:
             # Attached only here, before pydantic collects the class's validators, so a
             # document without invariants pays no call per instance it validates.
-            validator = model_validator(mode="after")(_enforce_invariants_on_create)
-            setattr(cls, _CREATE_CHECK, validator)
+            validator = model_validator(mode="after")(_invariant_check_for(cls))
+            setattr(cls, f"{_CREATE_CHECK}_{next(_CREATE_CHECKS)}", validator)
 
         if has_event_emitters(cls) and not issubclass(cls, AggregateRoot):
             raise exc.configuration(

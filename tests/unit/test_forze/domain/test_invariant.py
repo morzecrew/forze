@@ -12,6 +12,7 @@ from pydantic import ValidationError, model_validator
 
 from forze.base.exceptions import CoreException, ExceptionKind, exc
 from forze.domain.models import Document, invariant
+from forze.domain.models.document import is_invariant_check
 
 # ----------------------- #
 
@@ -99,18 +100,38 @@ class TestInvariant:
         class Savings(Account):
             rate: int = 0
 
-        validators = {
-            cls: set(cls.__pydantic_decorators__.model_validators)
-            for cls in (Document, Plain, Account, Savings)
-        }
+        def checks(cls: type[Document]) -> int:
+            return sum(
+                is_invariant_check(d.func) for d in cls.__pydantic_decorators__.model_validators.values()
+            )
 
-        assert validators[Document] == validators[Plain] == set()
-        assert validators[Account] == validators[Savings] == {"_forze_invariants_on_create"}
+        assert [checks(c) for c in (Document, Plain, Account, Savings)] == [0, 0, 1, 2]
 
         with pytest.raises(CoreException):
             Savings(balance=-1)
 
-    def test_the_create_check_name_is_reserved(self) -> None:
+    def test_the_check_runs_after_every_validator_of_the_class_built(self) -> None:
+        """A subclass's own after-validator runs before the check, as on the class declaring
+        the invariant: one that breaks it is caught, one that restores it is not refused."""
+
+        class Breaks(Account):
+            @model_validator(mode="after")
+            def _drain(self) -> Breaks:
+                self.balance = -1
+                return self
+
+        class Restores(Account):
+            @model_validator(mode="after")
+            def _top_up(self) -> Restores:
+                self.balance = max(self.balance, 0)
+                return self
+
+        with pytest.raises(CoreException):
+            Breaks(balance=10)
+
+        assert Restores(balance=-5).balance == 0
+
+    def test_the_create_check_names_are_reserved(self) -> None:
         """A class's own attribute of that name would be replaced, and an invariant of that
         name would call the check that calls it."""
 
