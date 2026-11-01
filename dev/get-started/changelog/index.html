@@ -10473,6 +10473,9 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <li>
 <p><strong>Postgres bookkeeping validation counts only enabled <code>BEFORE UPDATE … FOR EACH ROW</code> triggers</strong> (<strong>behaviour change</strong>). Startup refuses a <code>database</code>-strategy write relation with only a <code>BEFORE INSERT</code>, statement-level, disabled or replica-only one. On a partitioned table, one counts on the table or on every partition.</p>
 </li>
+<li>
+<p><strong>A hub search aggregate's metric filter can name an <code>extra_aggregatable_fields</code> column.</strong> It was refused as off the read model. Postgres checks the filter's operators against the hub relation's column type; the search's own <code>filters</code> stay on the read model.</p>
+</li>
 </ul>
 <h2 id="0180-2026-10-31"><a href="https://github.com/morzecrew/forze/compare/v0.17.0...v0.18.0">0.18.0</a> - 2026-10-31<a class="headerlink" href="#0180-2026-10-31" title="Permanent link">&para;</a></h2>
 <h3 id="added_1">Added<a class="headerlink" href="#added_1" title="Permanent link">&para;</a></h3>

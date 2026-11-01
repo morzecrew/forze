@@ -7083,9 +7083,27 @@ describe hits, as are <code>max_candidates</code> and a hub's <code>merge_candid
 bound a page, not an aggregate, so the groups add up to the exact page total. Its measures
 often live in columns of the hub relation that its read model leaves out, such as a view's
 computed totals; name them in <code>HubSearchSpec.extra_aggregatable_fields</code> and an aggregate may
-group by or measure them too, though not filter on them. Postgres checks they exist on the first
-aggregate. A query that reaches a vector leg is refused, since an uncapped vector leg matches
-every embedded row.</p>
+group by, measure and metric-filter on them too. Postgres checks they exist on the first
+aggregate. The search's own <code>filters</code> stay on the read model. A query that reaches a vector
+leg is refused, since an uncapped vector leg matches every embedded row.</p>
+<p>An aggregate names an extra column by its own value: a dotted path into one, in a group, a
+measure or a per-metric <code>filter</code>, is refused, as is a filter's element quantifier over one.
+Postgres checks a metric filter's operators against the column's type, as it checks a search
+filter against the read model, so <code>$null</code>, ranges and <code>$in</code> work on a numeric column, and
+<code>$like</code> or <code>$empty</code> on one is refused. A declared precision (<code>numeric(12,2)</code>) keeps the type,
+and a column of a type with no value rule (<code>jsonb</code>, <code>time</code>, …) takes only <code>$null</code>. The
+in-memory hub types an extra column by the values its matched rows hold, so a string range
+bound casts there as it does on Postgres:</p>
+<div class="highlight"><pre><span></span><code><span class="k">await</span> <span class="n">hub</span><span class="o">.</span><span class="n">aggregate_search</span><span class="p">(</span>
+    <span class="p">{</span>
+        <span class="s2">"$computed"</span><span class="p">:</span> <span class="p">{</span>
+            <span class="s2">"total"</span><span class="p">:</span> <span class="p">{</span><span class="s2">"$sum"</span><span class="p">:</span> <span class="s2">"upd_or_quantity"</span><span class="p">},</span>
+            <span class="s2">"missing"</span><span class="p">:</span> <span class="p">{</span><span class="s2">"$count"</span><span class="p">:</span> <span class="p">{</span><span class="s2">"filter"</span><span class="p">:</span> <span class="p">{</span><span class="s2">"$values"</span><span class="p">:</span> <span class="p">{</span><span class="s2">"upd_or_quantity"</span><span class="p">:</span> <span class="p">{</span><span class="s2">"$null"</span><span class="p">:</span> <span class="kc">True</span><span class="p">}}}}},</span>
+        <span class="p">}</span>
+    <span class="p">},</span>
+    <span class="s2">"catheter"</span><span class="p">,</span>
+<span class="p">)</span>
+</code></pre></div>
 <p>Aggregation is capability-gated (<code>SearchCapabilities.supports_aggregates</code>): Postgres FTS /
 PGroonga, hub search (Postgres and in-memory) and the in-memory adapter aggregate; vector
 search (every row is some embedding's neighbour), federated search, Mongo and Meilisearch
