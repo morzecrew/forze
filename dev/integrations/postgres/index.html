@@ -6894,8 +6894,20 @@ search added later is warmed too:</p>
   creates application tables. Provision read / write / history / search relations
   (and extensions) with your migration tool first.</li>
 <li>
-<p><strong>Counter lifetimes need one column.</strong> A counter written with a <code>ttl</code> stores its lapse
-  instant in an optional <code>expires_at timestamptz</code> column:</p>
+<p><strong>Values a column rounds or pads.</strong> An update compares a value as its column stores it, so
+  resending an unchanged one writes nothing: <code>timestamp(p)</code>, <code>timestamptz(p)</code>, <code>time(p)</code> and
+  <code>timetz(p)</code> round to their precision, <code>numeric(p,s)</code> to its scale, <code>real</code> to single precision,
+  and <code>char(n)</code> pads with blanks. A <code>SerializedBy</code> key locks on that stored value too. The limits:</p>
+<ul>
+<li>A <code>time(p)</code> value that rounds up to <code>24:00:00</code> is compared as sent: Postgres stores it, and
+  psycopg cannot read it back.</li>
+<li><code>real</code> assumes the shortest spelling Postgres prints by default since Postgres 12
+  (<code>extra_float_digits</code> of 1 or more); otherwise an unchanged <code>real</code> is rewritten. Forze's
+  tests run on Postgres 18.</li>
+<li><code>interval(p)</code> is compared as sent.</li>
+<li><strong>Counter lifetimes need one column.</strong> A counter written with a <code>ttl</code> stores its lapse
+  instant in an optional <code>expires_at timestamptz</code> column:</li>
+</ul>
 <div class="highlight"><pre><span></span><code><span class="k">ALTER</span><span class="w"> </span><span class="k">TABLE</span><span class="w"> </span><span class="o">&lt;</span><span class="n">counters</span><span class="o">&gt;</span><span class="w"> </span><span class="k">ADD</span><span class="w"> </span><span class="k">COLUMN</span><span class="w"> </span><span class="n">expires_at</span><span class="w"> </span><span class="n">timestamptz</span><span class="p">;</span>
 </code></pre></div>
 <p>A table without it keeps working for every call that does not pass a <code>ttl</code>; a call

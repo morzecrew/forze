@@ -6807,7 +6807,10 @@ aggregate:</p>
 instance</strong> and a minimal diff, runs the validators, and bumps <code>last_update_at</code>.
 A patch that changes nothing returns the original and an empty diff. An update compares a
 naive <code>datetime</code> with a stored aware one as UTC, as Postgres and Mongo store a naive value
-(Mongo at millisecond precision), so resending the same instant is no change.</p>
+(Mongo at millisecond precision), so resending the same instant is no change. On Postgres it
+compares a value as its column stores it: rounded to a <code>timestamp(p)</code>, <code>timestamptz(p)</code>,
+<code>time(p)</code>, <code>timetz(p)</code> or <code>numeric(p,s)</code> column's precision or scale, or to <code>real</code>, and
+blank-padded to <code>char(n)</code>, arrays element by element. Resending such a value is no change either.</p>
 <p>The patch merges into what is stored: a field it names is set, and the rest are kept. Into
 a model (the document, a nested model, or one held in a union or a mapping) it merges field
 by field, and a field set to <code>None</code> takes its default, or is refused when it has none. Into

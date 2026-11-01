@@ -3488,6 +3488,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#a-ducklake-per-tenant" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        A DuckLake per tenant
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#what-it-provides" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -6611,6 +6622,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#a-ducklake-per-tenant" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        A DuckLake per tenant
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#what-it-provides" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -6994,6 +7016,115 @@ tables bare or as <code>lake."gold.sub".&lt;table&gt;</code>.</p>
   The engine does not re-vend a credential that expires mid-statement: the
   statement fails with an HTTP 400 from the store. A statement that starts
   after expiry loads the table again and gets a fresh credential.</li>
+</ul>
+<h2 id="a-ducklake-per-tenant">A DuckLake per tenant<a class="headerlink" href="#a-ducklake-per-tenant" title="Permanent link">&para;</a></h2>
+<p>A tenant's lake can also be a <a href="https://ducklake.select/">DuckLake</a>: no REST
+catalog and no IdP, just a metadata schema in a Postgres database, read with the
+tenant's own role, and Parquet files under a data path. Return a
+<code>DuckLakeTenantCatalog</code> from <code>catalog_for_tenant</code> and keep everything else
+above, routes and wiring included:</p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">forze_duckdb</span><span class="w"> </span><span class="kn">import</span> <span class="n">DuckLakeTenantCatalog</span><span class="p">,</span> <span class="n">RoutedDuckDbClient</span>
+
+<span class="n">lake</span> <span class="o">=</span> <span class="n">RoutedDuckDbClient</span><span class="p">(</span>
+    <span class="n">secrets</span><span class="o">=</span><span class="n">secrets</span><span class="p">,</span>                       <span class="c1"># SecretsPort; holds DuckLakeCatalogCredentials</span>
+    <span class="n">secret_ref_for_tenant</span><span class="o">=</span><span class="k">lambda</span> <span class="n">t</span><span class="p">:</span> <span class="n">SecretRef</span><span class="p">(</span><span class="n">path</span><span class="o">=</span><span class="sa">f</span><span class="s2">"tenants/</span><span class="si">{</span><span class="n">t</span><span class="si">}</span><span class="s2">/ducklake"</span><span class="p">),</span>
+    <span class="n">tenant_provider</span><span class="o">=</span><span class="n">current_tenant</span><span class="p">,</span>
+    <span class="n">catalog_for_tenant</span><span class="o">=</span><span class="k">lambda</span> <span class="n">t</span><span class="p">:</span> <span class="n">DuckLakeTenantCatalog</span><span class="p">(</span>
+        <span class="n">host</span><span class="o">=</span><span class="s2">"postgres"</span><span class="p">,</span>
+        <span class="n">port</span><span class="o">=</span><span class="mi">5432</span><span class="p">,</span>
+        <span class="n">database</span><span class="o">=</span><span class="s2">"app"</span><span class="p">,</span>
+        <span class="n">metadata_schema</span><span class="o">=</span><span class="sa">f</span><span class="s2">"t</span><span class="si">{</span><span class="n">t</span><span class="o">.</span><span class="n">hex</span><span class="si">}</span><span class="s2">_lake"</span><span class="p">,</span>
+        <span class="n">data_path</span><span class="o">=</span><span class="sa">f</span><span class="s2">"/var/lib/lake/</span><span class="si">{</span><span class="n">t</span><span class="si">}</span><span class="s2">/"</span><span class="p">,</span>   <span class="c1"># or s3://lake/&lt;tenant&gt;/</span>
+    <span class="p">),</span>
+    <span class="n">extension_directory</span><span class="o">=</span><span class="s2">"/opt/duckdb/extensions"</span><span class="p">,</span>   <span class="c1"># ducklake, postgres (+ httpfs): in the image</span>
+<span class="p">)</span>
+</code></pre></div>
+<p>The secret holds <code>DuckLakeCatalogCredentials</code>: <code>user</code> and <code>password</code> for the
+tenant's metadata role and, for an <code>s3://</code> data path, <code>store</code>, an S3 key in the
+<code>S3SecretPayload</code> shape. An empty role or password is refused
+(<code>duckdb_lake_role_credentials_empty</code>), since libpq would fall back to the OS
+user or the process's own credentials. A store key on a local path, or none on
+an <code>s3://</code> one, is refused (<code>duckdb_lake_store_credentials_mismatch</code>). One client can serve
+Iceberg tenants and DuckLake tenants side by side: each tenant's catalog picks
+the shape of its secret.</p>
+<p>Each instance is built by this sequence, on DuckDB 1.5 and 2:</p>
+<div class="highlight"><pre><span></span><code>connect(":memory:", persistent secrets off, extension autoload/autoinstall off,
+        temp_directory '', extension_directory)
+LOAD ducklake; LOAD postgres [; LOAD httpfs]    -- never INSTALL; httpfs for s3://
+[SET GLOBAL enable_global_s3_configuration=false; s3 keys cleared]
+SET GLOBAL ca_cert_file                         -- if configured, s3:// only
+SET GLOBAL allowed_directories=[data_path]
+SET GLOBAL allowed_paths=[ca_cert_file]         -- empty on a local data path
+CREATE SECRET (TYPE postgres, host, port, database, user, password)
+[CREATE SECRET (TYPE s3, the store key, SCOPE data_path)]
+ATTACH 'ducklake:postgres:' AS lake (DATA_PATH, METADATA_SCHEMA, READ_ONLY)
+SET GLOBAL enable_external_access=false
+[SET GLOBAL http_timeout; HTTP metadata cache off]
+SET GLOBAL enable_external_file_cache=false
+SET GLOBAL lock_configuration=true
+attest                                          -- settings, secrets, databases,
+                                                -- refusals, the role's grants
+</code></pre></div>
+<p>It differs from the Iceberg sequence where DuckLake needs it to:</p>
+<ul>
+<li><strong>It attaches before external access goes off.</strong> The <code>postgres</code> extension
+  refuses to attach once it is off. A held instance still sees what the build
+  commits later, new tables included, with no refresh.</li>
+<li><strong>The password lives in an unnamed <code>postgres</code> secret, never in the attach
+  string.</strong> <code>duckdb_databases()</code> hands the attach string to any statement, and
+  the attestation checks that it is the bare <code>postgres:</code>. A statement sees the
+  secret only redacted.</li>
+<li><strong>The role's grants bound the metadata database.</strong> A statement can query it
+  as the role through <code>postgres_query('__ducklake_metadata_lake', …)</code> and read
+  <code>__ducklake_metadata_lake.&lt;schema&gt;.*</code>, both in a read-only transaction. The
+  attestation refuses the session when the role:<ul>
+<li>can write any table, view or sequence in its schema, or create in it;</li>
+<li>can read another DuckLake's metadata, which can hold that lake's inlined
+  rows;</li>
+<li>can read anything else outside its schema that <code>PUBLIC</code> cannot, by a
+  column grant too;</li>
+<li>finds a view in its schema that reads outside it, directly, through
+  another view or through a function, since a view runs with its owner's
+  rights;</li>
+<li>is a superuser.</li>
+</ul>
+</li>
+</ul>
+<p>Grant the role <code>USAGE</code> on its schema and <code>SELECT</code> on its tables, and nothing
+  else. A <code>SECURITY DEFINER</code> function it may execute reaches past all of this,
+  so keep none callable by it.
+- <strong><code>ATTACH</code> adds four paths named <code>postgres:…</code> in the working directory to
+  <code>allowed_paths</code>.</strong> A later <code>SET</code> does not remove them, so a statement can read
+  and write those four files. The attestation expects exactly them.</p>
+<p>A dynamic read refuses all of this already: <code>postgres_query</code>, <code>postgres_scan</code>
+and the <code>ducklake_*</code> functions are table functions outside its list, and the
+metadata database is a catalog the instance does not list. Analytics SQL, which
+the application writes, can call them.</p>
+<p>Operating it, beyond the Iceberg list:</p>
+<ul>
+<li><strong>A local data path must be its own real path,</strong> or the build is refused: the
+  allowlist matches the spelling, and the filesystem follows a symlink. Keep any
+  symlink out from under it too, since the attestation does not walk the tree.</li>
+<li><strong>On <code>s3://</code>, the store key is what confines reads to the prefix.</strong> The
+  engine refuses a <code>..</code> in a local path, and the attestation checks that, but
+  it sends <code>s3://&lt;prefix&gt;/../&lt;other&gt;/…</code> to the store as it is. Scope each
+  tenant's key to its own prefix.</li>
+<li><strong>The engine admits writes under the data path.</strong> The allowlist is not
+  read-only: <code>COPY … TO</code> a file there succeeds, and on DuckDB 2
+  <code>ducklake_delete_orphaned_files</code> deletes files there although <code>lake</code> is
+  attached <code>READ_ONLY</code>. Only the outside closes it: a read-only key for an
+  <code>s3://</code> path, a read-only mount for a local one. A builder writing the same
+  directory from the same process cannot have the mount.</li>
+<li><strong>On DuckDB 1.5, <code>postgres_scan</code> and <code>postgres_attach</code> take a connection
+  string and connect to any Postgres, whatever <code>enable_external_access</code> says.</strong>
+  libpq then also reads the process's <code>PGPASSWORD</code>, <code>PGPASSFILE</code>,
+  <code>PGSERVICEFILE</code> and <code>~/.pgpass</code>. DuckDB 2's extension has neither function.
+  Run the worker with none of those variables set and no readable <code>~/.pgpass</code>,
+  and let its egress policy allow only the metadata database and the store.</li>
+<li><strong>Run the worker in a read-only working directory</strong>, so the four
+  <code>postgres:…</code> paths cannot be written.</li>
+<li><strong>Call <code>evict_tenant</code> after rotating the role's password or the store key,</strong>
+  or set <code>fingerprint_ttl</code>, as for an Iceberg principal.</li>
 </ul>
 <h2 id="what-it-provides">What it provides<a class="headerlink" href="#what-it-provides" title="Permanent link">&para;</a></h2>
 <table>
