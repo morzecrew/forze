@@ -7700,7 +7700,13 @@ model(s), or <code>None</code> when you don't need them back.</p>
 then inserts the missing rows and patches the stored ones with set-based statements, reading
 nothing back: a stored row takes the update as its DTO encodes it, and only a row the update
 changes gets a new <code>rev</code> and <code>last_update_at</code>. The stored rows are locked in id order first,
-so concurrent loads of overlapping batches queue rather than interleave.</p>
+so concurrent loads of overlapping batches mostly queue. A chunk inserts its missing rows
+before it locks its stored ones, though, so loads whose chunks split differently can deadlock:
+Postgres aborts one, which is retried outside a caller's transaction and is <code>concurrency</code>
+inside one. It writes
+<code>set_based_batch_size</code> rows per chunk (2,000 by default, <code>PostgresDocumentConfig</code>), not
+<code>batch_size</code>: each chunk costs a few statements, and a statement-level trigger fires once per
+statement, so a chunk per few hundred rows spends its time on statements.</p>
 <p>Like <code>update_matching</code>, it skips the domain model's update, so a spec whose updates need it
 refuses <code>set_based</code> with a <code>configuration</code> error (<code>set_based_upsert_unsupported</code>): one with
 revision history, materialized fields, a <code>SerializedBy</code> guarantee or randomized field

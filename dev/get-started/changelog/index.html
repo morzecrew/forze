@@ -10558,7 +10558,15 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 </ul>
 <h3 id="changed">Changed<a class="headerlink" href="#changed" title="Permanent link">&para;</a></h3>
 <ul>
-<li>...</li>
+<li>
+<p><strong>A set-based <code>upsert_many</code> on Postgres writes 2,000 rows per chunk by default, set by <code>set_based_batch_size</code></strong> (<strong>behaviour change</strong>). It used <code>batch_size</code> (200), so a statement-level trigger now fires a tenth as often. In the bundled benchmark a 4,000-row call runs 16–30% faster; small calls are unchanged.</p>
+</li>
+<li>
+<p><strong>A write gateway's <code>upsert_many_set_based</code> takes <code>set_based_batch_size</code></strong> (<strong>Breaking</strong>). The command passes it beside <code>batch_size</code>, which now chunks only a fallback to the domain path. A gateway implemented outside forze must accept it.</p>
+</li>
+<li>
+<p><strong>A document's invariants are checked on create after its own model validators</strong> (<strong>behaviour change</strong>), as an update checks them. A class without invariants runs no check, so validating a subclass instance through it re-checks nothing. Names starting <code>_forze_invariants_on_create</code> are reserved.</p>
+</li>
 </ul>
 <h3 id="fixed">Fixed<a class="headerlink" href="#fixed" title="Permanent link">&para;</a></h3>
 <ul>
