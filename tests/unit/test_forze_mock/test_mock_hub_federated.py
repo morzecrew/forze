@@ -1,9 +1,11 @@
 """Hub and federated mock search adapters."""
 
+from typing import Any
+
 import pytest
 from pydantic import BaseModel
 
-from forze.application.contracts.querying import QueryFilterLimits
+from forze.application.contracts.querying import OPERATOR_TYPE_MISMATCH_CODE, QueryFilterLimits
 from forze.application.contracts.search import (
     FederatedSearchSpec,
     HubSearchSpec,
@@ -336,7 +338,8 @@ class _Stock(BaseModel):
     id: str
     title: str
     region: str
-    quantity: int
+    quantity: int | None = None
+    tags: list[str] | None = None
 
 
 class _HubStock(BaseModel):
@@ -345,36 +348,47 @@ class _HubStock(BaseModel):
     region: str
 
 
-@pytest.mark.asyncio
-async def test_a_hub_aggregate_measures_an_extra_field_across_its_legs() -> None:
-    """As on Postgres: every merged match of a query and a filter, measured by a column the
-    hub's read model does not carry."""
+async def _stock_hub() -> MockHubSearchAdapter[_HubStock]:
+    """``omega`` matches stocks 1, 2 and 4, which hold 1, 2 and 8 units, and stock 5, which
+    holds none on record."""
 
     state = MockState()
     leg_a = SearchSpec(name="a", model_type=_Stock, fields=["title"])
     leg_b = SearchSpec(name="b", model_type=_Stock, fields=["title"])
     await MockSearchCommandAdapter(state=state, spec=leg_a).upsert(
         [
-            _Stock(id="1", title="omega one", region="north", quantity=1),
+            _Stock(id="1", title="omega one", region="north", quantity=1, tags=["alpha"]),
             _Stock(id="2", title="omega two", region="south", quantity=2),
             _Stock(id="3", title="alpha", region="north", quantity=4),
         ]
     )
     await MockSearchCommandAdapter(state=state, spec=leg_b).upsert(
-        [_Stock(id="4", title="omega four", region="north", quantity=8)]
+        [
+            _Stock(id="4", title="omega four", region="north", quantity=8),
+            _Stock(id="5", title="omega five", region="south"),
+        ]
     )
-    hub = MockHubSearchAdapter(
+
+    return MockHubSearchAdapter(
         hub_spec=HubSearchSpec(
             name="hub",
             model_type=_HubStock,
             members=[leg_a, leg_b],
-            extra_aggregatable_fields=frozenset({"quantity"}),
+            extra_aggregatable_fields=frozenset({"quantity", "tags"}),
         ),
         legs=[
             ("a", MockSearchAdapter(state=state, spec=leg_a)),
             ("b", MockSearchAdapter(state=state, spec=leg_b)),
         ],
     )
+
+
+@pytest.mark.asyncio
+async def test_a_hub_aggregate_measures_an_extra_field_across_its_legs() -> None:
+    """As on Postgres: every merged match of a query and a filter, measured by a column the
+    hub's read model does not carry."""
+
+    hub = await _stock_hub()
 
     page = await hub.aggregate_search(
         {"$computed": {"n": {"$count": None}, "q": {"$sum": "quantity"}}},
@@ -383,6 +397,90 @@ async def test_a_hub_aggregate_measures_an_extra_field_across_its_legs() -> None
     )
 
     assert [(row["n"], row["q"]) for row in page.hits] == [(2, 9)]
+
+
+@pytest.mark.asyncio
+async def test_a_hub_metric_filter_names_an_extra_field() -> None:
+    hub = await _stock_hub()
+
+    page = await hub.aggregate_search(
+        {
+            "$groups": {"region": "region"},
+            "$computed": {
+                "total": {"$sum": "quantity"},
+                "missing": {"$count": {"filter": {"$values": {"quantity": {"$null": True}}}}},
+                "large": {"$count": {"filter": {"$values": {"quantity": {"$gte": 2}}}}},
+                # A string bound casts to the stored value's type, as Postgres casts it to the
+                # column's: 8 is at least "4", and 1 and 2 are not.
+                "over": {"$count": {"filter": {"$values": {"quantity": {"$gte": "4"}}}}},
+            },
+        },
+        "omega",
+        sorts={"region": "asc"},
+    )
+
+    assert [
+        (row["region"], row["total"], row["missing"], row["large"], row["over"])
+        for row in page.hits
+    ] == [("north", 9, 0, 1, 1), ("south", 2, 1, 1, 0)]
+
+
+@pytest.mark.parametrize(
+    ("op", "code"),
+    [
+        ({"$gte": "many"}, "core.precondition"),
+        ({"$like": "8%"}, OPERATOR_TYPE_MISMATCH_CODE),
+    ],
+)
+@pytest.mark.asyncio
+async def test_a_hub_metric_filter_on_an_extra_field_is_typed_by_its_values(
+    op: dict[str, Any], code: str
+) -> None:
+    """An int column takes no text operator, and a bound that is not a number is refused,
+    never read as no match."""
+
+    hub = await _stock_hub()
+
+    with pytest.raises(CoreException) as refused:
+        await hub.aggregate_search(
+            {"$computed": {"n": {"$count": {"filter": {"$values": {"quantity": op}}}}}}, "omega"
+        )
+
+    assert refused.value.code == code
+
+
+@pytest.mark.asyncio
+async def test_a_hub_metric_filter_on_a_list_extra_takes_no_text_operator() -> None:
+    """A list column is a collection, so ``$like`` is refused, never matched against the
+    list's text."""
+
+    hub = await _stock_hub()
+
+    like = {"$values": {"tags": {"$like": "%alpha%"}}}
+
+    with pytest.raises(CoreException) as refused:
+        await hub.aggregate_search({"$computed": {"n": {"$count": {"filter": like}}}}, "omega")
+
+    assert refused.value.code == OPERATOR_TYPE_MISMATCH_CODE
+
+
+@pytest.mark.asyncio
+async def test_an_extra_field_no_match_holds_goes_untyped() -> None:
+    """Stock 5 alone matches and holds no quantity, so nothing types it: no row reaches 4."""
+
+    hub = await _stock_hub()
+
+    page = await hub.aggregate_search(
+        {
+            "$computed": {
+                "bare": {"$count": {"filter": {"$values": {"quantity": {"$null": True}}}}},
+                "over": {"$count": {"filter": {"$values": {"quantity": {"$gte": "4"}}}}},
+            }
+        },
+        "five",
+    )
+
+    assert [(row["bare"], row["over"]) for row in page.hits] == [(1, 0)]
 
 
 @pytest.mark.asyncio

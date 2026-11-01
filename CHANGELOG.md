@@ -23,6 +23,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Postgres bookkeeping validation counts only enabled `BEFORE UPDATE … FOR EACH ROW` triggers** (**behaviour change**). Startup refuses a `database`-strategy write relation with only a `BEFORE INSERT`, statement-level, disabled or replica-only one. On a partitioned table, one counts on the table or on every partition.
 
+- **A hub search aggregate's metric filter can name an `extra_aggregatable_fields` column.** It was refused as off the read model. Postgres checks the filter's operators against the hub relation's column type; the search's own `filters` stay on the read model.
+
 ## [0.18.0] - 2026-10-31
 
 ### Added

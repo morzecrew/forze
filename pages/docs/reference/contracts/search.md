@@ -183,9 +183,30 @@ A hub aggregates its merged rows with every leg uncapped: `per_leg_limit` and th
 bound a page, not an aggregate, so the groups add up to the exact page total. Its measures
 often live in columns of the hub relation that its read model leaves out, such as a view's
 computed totals; name them in `HubSearchSpec.extra_aggregatable_fields` and an aggregate may
-group by or measure them too, though not filter on them. Postgres checks they exist on the first
-aggregate. A query that reaches a vector leg is refused, since an uncapped vector leg matches
-every embedded row.
+group by, measure and metric-filter on them too. Postgres checks they exist on the first
+aggregate. The search's own `filters` stay on the read model. A query that reaches a vector
+leg is refused, since an uncapped vector leg matches every embedded row.
+
+An aggregate names an extra column by its own value: a dotted path into one, in a group, a
+measure or a per-metric `filter`, is refused, as is a filter's element quantifier over one.
+Postgres checks a metric filter's operators against the column's type, as it checks a search
+filter against the read model, so `$null`, ranges and `$in` work on a numeric column, and
+`$like` or `$empty` on one is refused. A declared precision (`numeric(12,2)`) keeps the type,
+and a column of a type with no value rule (`jsonb`, `time`, …) takes only `$null`. The
+in-memory hub types an extra column by the values its matched rows hold, so a string range
+bound casts there as it does on Postgres:
+
+```python
+await hub.aggregate_search(
+    {
+        "$computed": {
+            "total": {"$sum": "upd_or_quantity"},
+            "missing": {"$count": {"filter": {"$values": {"upd_or_quantity": {"$null": True}}}}},
+        }
+    },
+    "catheter",
+)
+```
 
 Aggregation is capability-gated (`SearchCapabilities.supports_aggregates`): Postgres FTS /
 PGroonga, hub search (Postgres and in-memory) and the in-memory adapter aggregate; vector

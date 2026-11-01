@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import math
 import statistics
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime
 from decimal import MAX_PREC, Decimal, localcontext
 from functools import cmp_to_key, partial
@@ -28,10 +28,13 @@ from forze.application.contracts.querying import (
     AggregatesExpressionParser,
     GroupField,
     GroupTrunc,
+    QueryExpr,
     QueryFilterExpressionParser,
     QuerySortExpression,
+    coerce_query_ord_operands,
     ordered_compare,
     resolve_sort_keys,
+    validate_query_field_types,
 )
 from forze.application.contracts.querying.internal.matching import (
     _coerce_set,  # pyright: ignore[reportPrivateUsage]
@@ -228,17 +231,36 @@ def _aggregate_docs(  # pyright: ignore[reportPrivateUsage]
     aggregates: AggregatesExpression,
     parser: QueryFilterExpressionParser | None = None,
     model_type: type[BaseModel] | None = None,
+    field_type_hints: Mapping[str, Any] | None = None,
 ) -> list[JsonDict]:
+    """Group and measure *docs*.
+
+    *field_type_hints* types fields outside *model_type* (a hub's extra columns): a metric
+    filter's operators on one are checked against its type, and a string range bound is cast
+    to it, as a backend does by the column's type.
+    """
+
     parsed = AggregatesExpressionParser.parse(
         aggregates,
         filter_parser=parser,
         model_type=model_type,
     )
 
+    def _typed(expr: QueryExpr) -> QueryExpr:
+        if not field_type_hints:
+            return expr
+
+        # ``BaseModel`` has no fields: only the hinted ones are checked, as on Postgres.
+        validate_query_field_types(expr, BaseModel, field_type_hints=field_type_hints)
+
+        return coerce_query_ord_operands(
+            expr, model_type or BaseModel, field_type_hints=field_type_hints
+        )
+
     # Each computed field's filter, parsed (and cast against the read model) once rather than
     # per group or document; ``None`` means the aggregate sees every group member.
     computed_matchers = [
-        partial(_match_expr, expr=computed.parsed_filter)
+        partial(_match_expr, expr=_typed(computed.parsed_filter))
         if computed.parsed_filter is not None
         else None
         for computed in parsed.computed_fields
