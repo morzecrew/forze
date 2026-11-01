@@ -357,8 +357,9 @@ It differs from the Iceberg sequence where DuckLake needs it to:
       rows;
     - can read anything else outside its schema that `PUBLIC` cannot, by a
       column grant too;
-    - can read a view in its schema that reads outside it, since a view runs
-      with its owner's rights;
+    - finds a view in its schema that reads outside it, directly, through
+      another view or through a function, since a view runs with its owner's
+      rights;
     - is a superuser.
 
   Grant the role `USAGE` on its schema and `SELECT` on its tables, and nothing

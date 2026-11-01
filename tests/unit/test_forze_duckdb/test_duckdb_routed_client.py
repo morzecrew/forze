@@ -1043,7 +1043,7 @@ class TestDuckLakeChecks:
                     "metadata role is a superuser",
                     "metadata role can read 1 other lakes' metadata",
                     "metadata role can read 3 relations outside its schema",
-                    "metadata role can read 1 views reading outside its schema",
+                    "metadata schema holds 1 views reading outside it",
                 ],
             ),
         ],

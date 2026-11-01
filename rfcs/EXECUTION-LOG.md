@@ -3630,8 +3630,9 @@ D-104 is the one fact that probing them found.
 - **Consequence:** the attestation asks Postgres, through that function, whether the role can
   write any table, view, materialized view, foreign table or sequence in its schema, create in
   the schema, read any other schema that holds DuckLake metadata, read any other relation
-  outside its schema that `PUBLIC` cannot, or read a view in its schema that reads outside it,
-  or is a superuser, and refuses the session if so. Column grants count.
+  outside its schema that `PUBLIC` cannot, or is a superuser, or when its schema holds a view
+  that reads outside it, directly, through another view or through a function, and refuses
+  the session if so. Column grants count.
   What `PUBLIC` reads is left out: every login reads it, so it is the deployment's choice,
   and refusing it would refuse a database with `pg_stat_statements` installed. Another lake's metadata can hold its inlined rows, so reading
   it is reading that tenant's data. The battery's tenant `c` holds a stray `INSERT` grant on
@@ -3708,3 +3709,4 @@ Fresh-eyes review of the branch before it was published.
 | R-19 | Low | The unit's header claimed every probe ran on both builds, and product code in one file (cubic) | Fixed in place |
 | R-20 | Low | The docs wrote the optional CA entry as a nested list (CodeAnt) | Fixed |
 | R-21 | High | A view in the role's own schema runs with its owner's rights, so it can expose another lake's metadata past every grant check (CodeAnt) | Fixed: the attestation refuses a view or materialized view in the schema that reads outside it and that the role can read. Tenant `d` holds one over tenant `b`'s metadata. `SECURITY DEFINER` functions are left to the deployment, and the docs say so |
+| R-22 | High | R-21's view check counted only views the role can read with a direct outside dependency, so a readable view over an inner view, or over a function, passed (cubic) | Fixed: any view or materialized view in the schema that depends on a relation outside it or on a function outside `pg_catalog` is refused, readable or not. A chain leaving the schema must cross such a view. Tenant `d` holds a view over a view over tenant `b`'s metadata, and a view calling a function |

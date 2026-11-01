@@ -182,8 +182,9 @@ def ducklake_stack(*, store: S3Store | None = None) -> Iterator[DuckLakeStack]:
     ``c`` and ``d`` hold deployment mistakes the attestation must catch: ``c``'s reader can
     insert into one metadata table; ``d``'s can insert through a view in its own schema, read
     tenant ``a``'s metadata, read tables in an unrelated ``app`` schema (one by a column grant
-    only), and read tenant ``b``'s metadata through a view its schema holds. A table every role
-    may read (``public.shared``) is no mistake.
+    only), and read tenant ``b``'s metadata through a view over a view its schema holds, which
+    also holds a view calling a function. A table every role may read (``public.shared``) is no
+    mistake, nor is a view that reads only its own schema.
     """
 
     install_extensions()
@@ -241,12 +242,21 @@ def ducklake_stack(*, store: S3Store | None = None) -> Iterator[DuckLakeStack]:
             sql.SQL("GRANT UPDATE (key) ON {}.ducklake_tag TO {}").format(
                 sql.Identifier(d.schema), sql.Identifier(d.reader)
             ),
-            # Its owner's rights, not the reader's, decide what it reads.
-            sql.SQL("CREATE VIEW {}.leak AS SELECT * FROM {}.ducklake_metadata").format(
+            # Its owner's rights, not the reader's, decide what it reads: one the reader may
+            # read serves one it may not, which reads tenant b's metadata.
+            sql.SQL("CREATE VIEW {}.inner_leak AS SELECT * FROM {}.ducklake_metadata").format(
                 sql.Identifier(d.schema), sql.Identifier(b.schema)
             ),
-            sql.SQL("GRANT SELECT ON {}.leak TO {}").format(
+            sql.SQL("CREATE VIEW {}.outer_leak AS SELECT * FROM {}.inner_leak").format(
+                sql.Identifier(d.schema), sql.Identifier(d.schema)
+            ),
+            sql.SQL("GRANT SELECT ON {}.outer_leak TO {}").format(
                 sql.Identifier(d.schema), sql.Identifier(d.reader)
+            ),
+            # A function can read anything; a view calling one counts too.
+            sql.SQL("CREATE FUNCTION app.peek() RETURNS int LANGUAGE sql AS 'SELECT 1'"),
+            sql.SQL("CREATE VIEW {}.calls AS SELECT app.peek() AS x").format(
+                sql.Identifier(d.schema)
             ),
         ):
             stack.admin(statement.as_string())

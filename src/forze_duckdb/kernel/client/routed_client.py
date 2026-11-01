@@ -692,7 +692,8 @@ async def _ducklake_problems(client: DuckDbClient, catalog: DuckLakeTenantCatalo
     The attach string must carry nothing a statement could read back but the bare metadata
     path. The metadata role must be unable to write its schema, to read another lake's metadata,
     which can hold that lake's inlined rows, or to read anything else outside its schema that
-    ``PUBLIC`` cannot, itself or through a view in its schema: the role's grants are what bound
+    ``PUBLIC`` cannot, itself or through a view in its schema that reads past it, directly or
+    through a function or another view: the role's grants are what bound
     the metadata database, which a statement can query through ``postgres_query``
     (EXECUTION-LOG D-102).
     """
@@ -732,17 +733,20 @@ async def _ducklake_problems(client: DuckDbClient, catalog: DuckLakeTenantCatalo
         "AND has_any_column_privilege('public', c.oid, 'SELECT')) "
         "AND NOT EXISTS (SELECT 1 FROM pg_catalog.pg_class m "
         "WHERE m.relnamespace = n.oid AND m.relname = 'ducklake_metadata')) AS granted, "
-        # A view runs with its owner's rights, so one here can read what the role cannot.
+        # A view runs with its owner's rights, so one here can read what the role cannot, and
+        # one the role cannot read can still serve one it can: any that leaves the schema counts.
         "(SELECT count(DISTINCT v.oid) FROM pg_catalog.pg_class v "
         "JOIN pg_catalog.pg_namespace vn ON vn.oid = v.relnamespace "
         "JOIN pg_catalog.pg_rewrite r ON r.ev_class = v.oid "
         "JOIN pg_catalog.pg_depend d ON d.objid = r.oid "
         "AND d.classid = 'pg_catalog.pg_rewrite'::regclass "
-        "AND d.refclassid = 'pg_catalog.pg_class'::regclass "
-        "JOIN pg_catalog.pg_class t ON t.oid = d.refobjid "
+        "LEFT JOIN pg_catalog.pg_class t ON d.refclassid = 'pg_catalog.pg_class'::regclass "
+        "AND t.oid = d.refobjid "
+        "LEFT JOIN pg_catalog.pg_proc f ON d.refclassid = 'pg_catalog.pg_proc'::regclass "
+        "AND f.oid = d.refobjid "
         f"WHERE vn.nspname = {schema} AND v.relkind IN ('v', 'm') "
-        "AND t.relnamespace <> v.relnamespace "
-        "AND has_any_column_privilege(v.oid, 'SELECT')) AS reaching"
+        "AND (t.relnamespace <> v.relnamespace "
+        "OR f.pronamespace <> 'pg_catalog'::regnamespace)) AS reaching"
     )
 
     try:
@@ -771,9 +775,7 @@ async def _ducklake_problems(client: DuckDbClient, catalog: DuckLakeTenantCatalo
         problems.append(f"metadata role can read {row['granted']} relations outside its schema")
 
     if row["reaching"]:
-        problems.append(
-            f"metadata role can read {row['reaching']} views reading outside its schema"
-        )
+        problems.append(f"metadata schema holds {row['reaching']} views reading outside it")
 
     return problems
 

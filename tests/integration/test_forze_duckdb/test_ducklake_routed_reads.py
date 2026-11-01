@@ -371,7 +371,7 @@ class TestAttestation:
             "metadata role can write 2 tables",
             "metadata role can read 1 other lakes' metadata",
             "metadata role can read 2 relations outside its schema",
-            "metadata role can read 1 views reading outside its schema",
+            "metadata schema holds 2 views reading outside it",
         ]
 
     async def test_a_password_in_the_attach_string_is_refused(
