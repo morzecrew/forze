@@ -17,6 +17,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Mock state snapshots written by 0.18.0 are refused at load** (**behaviour change**). The references recorded with the rows now carry composite keys; delete the old file to start fresh.
 
+- **`ModelCodec.transform_many` takes `update=`, fields set on each source's dump before it is validated** (**Breaking**). A codec implemented outside forze must accept it: a bulk write given ids passes each row's id through it.
+
+- **A set-based `upsert_many` on Postgres spends less time in Python.** In the bundled benchmark (4000 rows at 40, 200 and 2000 per call, local database) a fresh load runs 19–33% faster and an unchanged reload 12–20%. A bulk ensure or upsert builds rows faster on every backend when validation doesn't read the id.
+
 ### Fixed
 
 - **Postgres startup no longer warns about every history document on the `database` bookkeeping strategy.** It warns only when no trigger on the write relation fires on `INSERT`, so created documents would get no history row.

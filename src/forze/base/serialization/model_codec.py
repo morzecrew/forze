@@ -140,9 +140,14 @@ class ModelCodec[T, TSource](Protocol):
         *,
         mode: EncodeMode = "python",
         exclude: ModelDumpExcludeOptions | None = None,
+        update: Sequence[JsonDict] | None = None,
     ) -> list[T]:
         """Build a model from each source, sharing no mutable value with it (a dump then a
-        validation), so a caller may stamp one with a shallow ``model_copy``."""
+        validation), so a caller may stamp one with a shallow ``model_copy``.
+
+        :param update: Per source, positionally, fields set on its dump before it is
+            validated: a default the model would otherwise build is then never built.
+        """
         ...
 
     @property

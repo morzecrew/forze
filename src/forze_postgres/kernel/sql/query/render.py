@@ -7,8 +7,8 @@ require_psycopg()
 # ....................... #
 
 import math
-from collections.abc import Mapping
-from datetime import date, datetime, timedelta
+from collections.abc import Callable, Mapping
+from datetime import date, datetime, time, timedelta
 from decimal import Decimal
 from types import UnionType
 from typing import Any, Union, get_args, get_origin
@@ -73,6 +73,11 @@ column's storage shape the AST cannot see, so it stays a backend-internal check
 (raising the same ``query_feature_unsupported`` code)."""
 
 # ....................... #
+
+_PLAIN: frozenset[type] = frozenset(
+    {str, bytes, int, float, bool, Decimal, UUID, date, datetime, time, timedelta}
+)
+"""Exact types :func:`enum_values` returns as they are: neither a member nor a container."""
 
 _NESTED_JSON_UNSUPPORTED: frozenset[str] = frozenset(
     ("$empty", "$superset", "$subset", "$disjoint", "$overlaps"),
@@ -235,7 +240,7 @@ class PsycopgValueCoercer:
         if t.is_array:
             raise exc.internal(f"Array type not supported: {t!r}")
 
-        match t.base:
+        match base := self.matched(t):
             case "uuid":
                 return self.caster.as_uuid(v)
 
@@ -258,10 +263,60 @@ class PsycopgValueCoercer:
                 return self.caster.as_date(v)
 
             case "timestamptz" | "timestamp":
-                return self.caster.as_datetime(v, force_tz=t.base == "timestamptz")
+                return self.caster.as_datetime(v, force_tz=base == "timestamptz")
 
             case _:
                 return v
+
+    # ....................... #
+
+    @staticmethod
+    def matched(t: PostgresType) -> str:
+        """The type name :meth:`scalar` converts a value of a *t* column by, and :meth:`kept`
+        decides by: one for both, so neither can read a type (a modifier) as the other does
+        not."""
+
+        return t.base
+
+    # ....................... #
+
+    @classmethod
+    def kept(cls, t: PostgresType) -> Callable[[Any], bool]:
+        """Whether :meth:`scalar` returns a value of a *t* column as it is, judged from its
+        exact type: a ``StrEnum`` member, a ``str`` subclass, is never kept. Mirrors
+        :meth:`scalar` case by case on :meth:`matched`, so a case added there needs its line
+        here."""
+
+        match cls.matched(t):
+            case "uuid":
+                return lambda v: type(v) is UUID
+
+            case "text" | "varchar" | "char" | "citext":
+                return lambda v: type(v) is str
+
+            case "bool":
+                return lambda v: type(v) is bool
+
+            case "int2" | "int4" | "int8":
+                return lambda v: type(v) is int
+
+            case "float4" | "float8":
+                return lambda v: type(v) is float and math.isfinite(v)
+
+            case "numeric":
+                return lambda v: type(v) is Decimal and v.is_finite()
+
+            case "date":
+                return lambda v: type(v) is date
+
+            case "timestamptz":
+                return lambda v: type(v) is datetime and v.tzinfo is not None
+
+            case "timestamp":
+                return lambda v: type(v) is datetime and v.tzinfo is None
+
+            case _:
+                return lambda v: type(v) in _PLAIN
 
     # ....................... #
 

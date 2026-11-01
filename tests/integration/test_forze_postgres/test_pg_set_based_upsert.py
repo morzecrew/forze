@@ -7,6 +7,7 @@ under the same frozen clock; every stored column must come out equal, including 
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable, Sequence
 from datetime import UTC, date, datetime
 from decimal import Decimal
 from typing import Any
@@ -15,12 +16,26 @@ from uuid import UUID, uuid4
 import pytest
 from pydantic import Field
 
-from forze.application.contracts.document import DocumentSpec, DocumentWriteTypes, UpsertItem
+from forze.application.contracts.authn import AuthnIdentity
+from forze.application.contracts.document import (
+    DocumentCommandDepKey,
+    DocumentQueryDepKey,
+    DocumentSpec,
+    DocumentWriteTypes,
+    UpsertItem,
+)
+from forze.application.contracts.tenancy import TenantIdentity
+from forze.application.execution import Deps, ExecutionContext, InvocationMetadata
 from forze.base.exceptions import CoreException
 from forze.base.primitives import FrozenTimeSource, bind_time_source
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
+from forze_postgres.execution.deps import ConfigurablePostgresDocument
+from forze_postgres.execution.deps.configs import PostgresDocumentConfig
+from forze_postgres.execution.deps.keys import PostgresClientDepKey, PostgresIntrospectorDepKey
+from forze_postgres.kernel.catalog.introspect import PostgresIntrospector
 from forze_postgres.kernel.client.client import PostgresClient, PostgresConfig
 from tests.integration.test_forze_postgres._document_fixtures import document_context
+from tests.support.execution_context import context_from_deps
 from tests.support.upsert_modes import (
     ModeCreate,
     ModeDoc,
@@ -658,23 +673,26 @@ def _typed(i: int, ratio: float) -> _TypedCreate:
     )
 
 
+_TYPED_DDL = """
+    CREATE TABLE {} (
+        id uuid PRIMARY KEY, rev integer NOT NULL, created_at timestamptz NOT NULL,
+        last_update_at timestamptz NOT NULL, flag boolean NOT NULL, small int2 NOT NULL,
+        big int8 NOT NULL, ratio float8 NOT NULL, day date NOT NULL,
+        naive timestamp NOT NULL, at timestamptz NOT NULL, blob bytea NOT NULL,
+        body text NOT NULL, doc jsonb NOT NULL, price numeric NOT NULL,
+        code varchar(8) NOT NULL, weight float4 NOT NULL, at3 timestamptz(3) NOT NULL,
+        naive3 timestamp(3) NOT NULL, note text
+    )
+"""
+
+
 async def test_every_column_type_is_written_as_the_domain_path_writes_it(
     pg_client: PostgresClient,
 ) -> None:
     """The ``unnest`` row source sends most types in binary and the rest as text; whichever,
     every stored value must equal what the domain path stores, extremes and specials included."""
 
-    ddl = """
-        CREATE TABLE {} (
-            id uuid PRIMARY KEY, rev integer NOT NULL, created_at timestamptz NOT NULL,
-            last_update_at timestamptz NOT NULL, flag boolean NOT NULL, small int2 NOT NULL,
-            big int8 NOT NULL, ratio float8 NOT NULL, day date NOT NULL,
-            naive timestamp NOT NULL, at timestamptz NOT NULL, blob bytea NOT NULL,
-            body text NOT NULL, doc jsonb NOT NULL, price numeric NOT NULL,
-            code varchar(8) NOT NULL, weight float4 NOT NULL, at3 timestamptz(3) NOT NULL,
-            naive3 timestamp(3) NOT NULL, note text
-        )
-    """
+    ddl = _TYPED_DDL
     domain_t, set_t = (f"pg_setbased_typed_{uuid4().hex[:10]}" for _ in range(2))
     ids = [uuid4() for _ in range(4)]
     ratios = [1.7976931348623157e308, -5e-324, 1e-308, 0.1 + 0.2]
@@ -712,3 +730,258 @@ async def test_every_column_type_is_written_as_the_domain_path_writes_it(
     set_rows = await pg_client.fetch_all(sql.format(set_t), [])
     assert set_rows == await pg_client.fetch_all(sql.format(domain_t), [])
     assert [row["rev"] for row in set_rows] == [2, 2, 2, 2]
+
+
+# ....................... #
+# Mirrored loads step by step: what each step leaves stored, on both paths
+
+_DAYS = [datetime(2026, 1, d, tzinfo=UTC) for d in range(1, 5)]
+
+
+def _context(
+    pg_client: PostgresClient,
+    table: str,
+    *,
+    strategy: Any = "application",
+    tenant_aware: bool = False,
+) -> ExecutionContext:
+    doc = ConfigurablePostgresDocument(
+        config=PostgresDocumentConfig(
+            read=("public", table),
+            write=("public", table),
+            bookkeeping_strategy=strategy,
+            tenant_aware=tenant_aware,
+        )
+    )
+    return context_from_deps(
+        Deps.plain(
+            {
+                PostgresClientDepKey: pg_client,
+                PostgresIntrospectorDepKey: PostgresIntrospector(client=pg_client),
+                DocumentQueryDepKey: doc,
+                DocumentCommandDepKey: doc,
+            }
+        )
+    )
+
+
+async def _run_paths(
+    pg_client: PostgresClient,
+    spec: DocumentSpec[Any, Any, Any, Any],
+    make_table: Callable[[], Awaitable[str]],
+    steps: Sequence[tuple[datetime, Sequence[UpsertItem[Any, Any]]]],
+    **context: Any,
+) -> dict[bool, list[list[dict[str, Any]]]]:
+    """Run each step, its items under its frozen instant, through the domain path and set-based,
+    each on a table of its own; the rows stored after each step, by ``set_based``."""
+
+    rows: dict[bool, list[list[dict[str, Any]]]] = {}
+
+    for set_based in (False, True):
+        t = await make_table()
+        cmd = _context(pg_client, t, **context).document.command(spec)
+        rows[set_based] = []
+
+        for instant, items in steps:
+            with bind_time_source(FrozenTimeSource(instant=instant)):
+                await cmd.upsert_many(items, return_new=False, set_based=set_based)
+
+            rows[set_based].append(await pg_client.fetch_all(f"SELECT * FROM {t} ORDER BY id", []))
+
+    return rows
+
+
+async def test_mirrors_of_every_type_move_rev_and_timestamps_only_on_a_change(
+    pg_client: PostgresClient,
+) -> None:
+    """A fresh load, an unchanged reload, a mix of changed, unchanged and new rows, and a change
+    to every row: ``rev`` and ``last_update_at`` move only on a row a step changes, and
+    ``created_at`` never does."""
+
+    async def make_table() -> str:
+        t = f"pg_setbased_steps_{uuid4().hex[:10]}"
+        await pg_client.execute(_TYPED_DDL.format(t))
+        return t
+
+    ids = sorted(uuid4() for _ in range(6))
+    ratios = [1.7976931348623157e308, -5e-324, 1e-308, 0.1 + 0.2, 2.5, 7.0]
+
+    def mirror(i: int, ratio: float | None = None) -> UpsertItem[_TypedCreate, Any]:
+        return UpsertItem.mirror(ids[i], _typed(i, ratios[i] if ratio is None else ratio))
+
+    rows = await _run_paths(
+        pg_client,
+        _TYPED_SPEC,
+        make_table,
+        [
+            (_DAYS[0], [mirror(i) for i in range(4)]),
+            (_DAYS[1], [mirror(i) for i in range(4)]),
+            (_DAYS[2], [mirror(0, 0.5), mirror(1), mirror(4), mirror(5)]),
+            (_DAYS[3], [mirror(i, -1.0) for i in range(6)]),
+        ],
+    )
+
+    # The first load is the domain path's; after it, the domain path rewrites on every reload an
+    # instant a ``timestamp(3)`` column has rounded to the millisecond, which SQL compares equal.
+    assert rows[True][0] == rows[False][0]
+
+    reload, mixed, changed = ({row["id"]: row for row in step} for step in rows[True][1:])
+    assert {(row["rev"], row["last_update_at"]) for row in reload.values()} == {(1, _DAYS[0])}
+    assert (mixed[ids[0]]["rev"], mixed[ids[0]]["last_update_at"]) == (2, _DAYS[2])
+    assert (mixed[ids[1]]["rev"], mixed[ids[1]]["last_update_at"]) == (1, _DAYS[0])
+    assert [changed[pk]["created_at"] for pk in ids] == [_DAYS[0]] * 4 + [_DAYS[2]] * 2
+    assert [changed[pk]["rev"] for pk in ids] == [3, 2, 2, 2, 2, 2]
+
+
+async def test_skip_none_mirrors_writing_different_fields_keep_what_they_leave_out(
+    pg_client: PostgresClient,
+) -> None:
+    """With ``skip_none`` the mirrors of one call write different fields; a null left out keeps
+    the stored value, and only a row a write changes moves."""
+
+    ids = sorted(uuid4() for _ in range(4))
+
+    def mirror(i: int, note: str | None, qty: int = 1) -> UpsertItem[ModeCreate, Any]:
+        payload = ModeCreate(name=f"n{i}", qty=qty, note=note)
+        return UpsertItem.mirror(ids[i], payload, skip_none=True)
+
+    again = [mirror(0, None, 2), mirror(1, "b", 2), mirror(2, None), mirror(3, "d", 2)]
+    rows = await _run_paths(
+        pg_client,
+        _MODES_SPEC,
+        lambda: _modes_table(pg_client),
+        [
+            (_DAYS[0], [mirror(0, "a"), mirror(1, None), mirror(2, "c")]),
+            (_DAYS[1], again),
+            (_DAYS[2], again),
+        ],
+    )
+
+    assert rows[True] == rows[False]
+
+    stored = {row["id"]: row for row in rows[True][2]}
+    assert [stored[pk]["note"] for pk in ids] == ["a", "b", "c", "d"]
+    assert [stored[pk]["rev"] for pk in ids] == [2, 2, 1, 1]
+
+
+async def test_database_bookkeeping_mirrors_leave_the_revision_to_the_trigger(
+    pg_client: PostgresClient,
+) -> None:
+    """Under ``"database"`` bookkeeping set-based writes no ``rev``: the ``BEFORE UPDATE``
+    trigger moves it, on a changed row only."""
+
+    async def make_table() -> str:
+        t = await _modes_table(pg_client)
+        await pg_client.execute(
+            f"CREATE FUNCTION {t}_rev() RETURNS trigger LANGUAGE plpgsql AS "
+            "$$ BEGIN NEW.rev := OLD.rev + 1; RETURN NEW; END $$; "
+            f"CREATE TRIGGER {t}_rev BEFORE UPDATE ON {t} "
+            f"FOR EACH ROW EXECUTE FUNCTION {t}_rev()"
+        )
+        return t
+
+    ids = sorted(uuid4() for _ in range(2))
+    seed = [UpsertItem.mirror(pk, ModeCreate(name=f"n{i}", qty=i)) for i, pk in enumerate(ids)]
+    changed = [seed[0], UpsertItem.mirror(ids[1], ModeCreate(name="moved", qty=1))]
+    rows = await _run_paths(
+        pg_client,
+        _MODES_SPEC,
+        make_table,
+        [(_DAYS[0], seed), (_DAYS[1], seed), (_DAYS[2], changed)],
+        strategy="database",
+    )
+
+    revs = [[(row["name"], row["rev"]) for row in step] for step in rows[True]]
+    assert revs == [[(row["name"], row["rev"]) for row in step] for step in rows[False]]
+    assert [[rev for _, rev in step] for step in revs] == [[1, 1], [1, 1], [1, 2]]
+    assert {row["last_update_at"] for row in rows[True][2]} == {_DAYS[0]}
+
+
+class _TenantFields(BaseDTO):
+    name: str
+
+
+class _TenantCreate(_TenantFields):
+    pass
+
+
+class _TenantDoc(Document, _TenantFields):
+    tenant_id: UUID | None = None
+
+
+class _TenantRead(ReadDocument, _TenantFields):
+    tenant_id: UUID
+
+
+_TENANT_SPEC = DocumentSpec(
+    name="setbased_tenant",
+    read=_TenantRead,
+    write=DocumentWriteTypes(domain=_TenantDoc, create_cmd=_TenantCreate, update_cmd=_TenantCreate),
+)
+
+
+@pytest.mark.parametrize("key", ["id", "id, tenant_id"])
+async def test_tenant_mirrors_write_their_rows_and_never_another_tenants(
+    pg_client: PostgresClient, key: str
+) -> None:
+    """Keyed by the id alone, an id another tenant stores is ``not_found``; keyed by the id and
+    the tenant, it is no conflict, and each tenant has its own row."""
+
+    first, second = sorted(uuid4() for _ in range(2))
+    ids = sorted(uuid4() for _ in range(3))
+    stored = {}
+
+    def bound(ctx: ExecutionContext, tenant: UUID) -> Any:
+        return ctx.inv_ctx.bind(
+            metadata=InvocationMetadata(execution_id=uuid4(), correlation_id=uuid4()),
+            authn=AuthnIdentity(principal_id=uuid4()),
+            tenant=TenantIdentity(tenant_id=tenant),
+        )
+
+    def mirror(i: int, name: str) -> UpsertItem[_TenantCreate, Any]:
+        return UpsertItem.mirror(ids[i], _TenantCreate(name=name))
+
+    steps = [
+        (_DAYS[0], [mirror(0, "a"), mirror(1, "b")]),
+        (_DAYS[1], [mirror(0, "a"), mirror(1, "b")]),
+        (_DAYS[2], [mirror(0, "a2"), mirror(1, "b"), mirror(2, "c")]),
+    ]
+
+    for set_based in (False, True):
+        t = f"pg_setbased_tenant_{uuid4().hex[:10]}"
+        await pg_client.execute(
+            f"CREATE TABLE {t} (id uuid NOT NULL, tenant_id uuid NOT NULL, "
+            "rev integer NOT NULL, created_at timestamptz NOT NULL, "
+            f"last_update_at timestamptz NOT NULL, name text NOT NULL, PRIMARY KEY ({key}))"
+        )
+        ctx = _context(pg_client, t, tenant_aware=True)
+
+        for instant, items in steps:
+            with bind_time_source(FrozenTimeSource(instant=instant)), bound(ctx, first):
+                await ctx.document.command(_TENANT_SPEC).upsert_many(
+                    items, return_new=False, set_based=set_based
+                )
+
+        with bind_time_source(FrozenTimeSource(instant=_DAYS[3])), bound(ctx, second):
+            cmd = ctx.document.command(_TENANT_SPEC)
+
+            if key == "id":
+                with pytest.raises(CoreException) as refused:
+                    await cmd.upsert_many(
+                        [mirror(1, "taken")], return_new=False, set_based=set_based
+                    )
+
+                assert refused.value.kind == "not_found"
+
+            else:
+                await cmd.upsert_many([mirror(1, "own")], return_new=False, set_based=set_based)
+
+        stored[set_based] = await pg_client.fetch_all(
+            f"SELECT * FROM {t} ORDER BY id, tenant_id", []
+        )
+
+    assert stored[True] == stored[False]
+    mine = [row for row in stored[True] if row["tenant_id"] == first]
+    assert [(row["name"], row["rev"]) for row in mine] == [("a2", 2), ("b", 1), ("c", 1)]
+    theirs = [row["name"] for row in stored[True] if row["tenant_id"] == second]
+    assert theirs == ([] if key == "id" else ["own"])

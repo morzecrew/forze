@@ -6,8 +6,9 @@ require_psycopg()
 
 # ....................... #
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from decimal import Decimal
+from functools import partial
 from typing import Any, final
 from uuid import UUID
 
@@ -72,6 +73,12 @@ def _json_write_default(obj: Any) -> Any:
 
 def _json_write_dumps(v: Any) -> bytes:
     return orjson.dumps(v, default=_json_write_default)
+
+
+def _as_it_is(v: Any) -> Any:
+    """A value of a column the write does not coerce: one the relation does not type."""
+
+    return v
 
 
 # ....................... #
@@ -484,6 +491,41 @@ class PostgresGateway[M: BaseModel](
 
     # ....................... #
 
+    def _write_adapter(self, t: PostgresType | None) -> Callable[[Any], Any]:
+        """:meth:`adapt_value_for_write` for a column of type *t*, worked out once per column:
+        a value its coercion would return as it is goes straight through, and any other value
+        takes :meth:`adapt_value_for_write` itself."""
+
+        if t is None:
+            return _as_it_is
+
+        adapt = partial(self.adapt_value_for_write, t=t)
+
+        if t.base in {"jsonb", "json"}:
+            return adapt
+
+        # The type the coercion converts by: an array's element type, as the coercion makes it.
+        kept = _WRITE_VALUE_COERCER.kept(
+            PostgresType(base=t.base, is_array=False, not_null=True) if t.is_array else t
+        )
+
+        if t.is_array:
+            # Rebuilt as a new list either way, each element as the scalar coercion leaves it.
+            def adapt_array(v: Any) -> Any:
+                if type(v) is list and all(x is None or kept(x) for x in v):  # pyright: ignore[reportUnknownVariableType]
+                    return list(v)  # pyright: ignore[reportUnknownArgumentType]
+
+                return adapt(v)
+
+            return adapt_array
+
+        def adapt_scalar(v: Any) -> Any:
+            return v if v is None or kept(v) else adapt(v)
+
+        return adapt_scalar
+
+    # ....................... #
+
     async def adapt_payload_for_write(
         self,
         payload: JsonDict,
@@ -512,11 +554,11 @@ class PostgresGateway[M: BaseModel](
     ) -> Sequence[JsonDict]:
         types = await self.column_types()
         omit = self.write_omit_fields
-        out = [{k: v for k, v in dict(payload).items() if k not in omit} for payload in payloads]
-
-        for payload in out:
-            for k, v in payload.items():
-                payload[k] = self.adapt_value_for_write(v, t=types.get(k))
+        adapters = {k: self._write_adapter(t) for k, t in types.items()}
+        out = [
+            {k: adapters.get(k, _as_it_is)(v) for k, v in payload.items() if k not in omit}
+            for payload in payloads
+        ]
 
         if create:
             out = [self._add_tenant_id(payload) for payload in out]

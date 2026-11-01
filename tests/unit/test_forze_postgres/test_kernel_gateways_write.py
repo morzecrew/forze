@@ -1,13 +1,16 @@
 """Unit tests for ``forze_postgres.kernel.gateways.write``."""
 
 import asyncio
-from datetime import UTC, datetime
+from collections.abc import Callable
+from datetime import UTC, date, datetime, time, timedelta, timezone
+from decimal import Decimal
 from enum import Enum, IntEnum, StrEnum
 from unittest.mock import AsyncMock, MagicMock
 from uuid import UUID
 
 import attrs
 import pytest
+from psycopg.types.json import Json, Jsonb
 
 from forze.application.contracts.guarantees import SerializedBy
 from forze.application.contracts.tenancy import TenantIdentity
@@ -176,6 +179,97 @@ def test_adapt_value_for_write_keeps_a_sequence_holding_no_enum_member() -> None
     text = PostgresType(base="text", is_array=False, not_null=True)
 
     assert gw.adapt_value_for_write(("a", 1), t=text) == str(("a", 1))
+
+
+class _Mood(StrEnum):
+    HAPPY = "happy"
+
+
+class _Level(IntEnum):
+    ONE = 1
+
+
+class _Shade(Enum):
+    DARK = "dark"
+    NONE = None
+
+
+class _Moment(datetime):
+    """A ``datetime`` subclass, as pendulum's ``DateTime`` is."""
+
+
+class _Label(str):
+    """A ``str`` subclass that is no enum member."""
+
+
+_ADAPTED_BASES = [
+    "uuid", "text", "varchar", "char", "citext", "bool", "int2", "int4", "int8", "float4",
+    "float8", "numeric", "date", "timestamptz", "timestamp", "jsonb", "json", "bytea",
+    "varchar(8)", "timestamptz(3)", "numeric(10,2)", "inet", "interval", "time", "mood",
+    # With a modifier, as catalog and normalized names spell it: if either side starts reading
+    # one as its bare type and the other does not, values come out apart here.
+    "timestamp(3)", "timestamp(3) with time zone", "character(3)", "bpchar(3)", "char(3)",
+    "time(3)",
+]  # fmt: skip
+
+_ADAPTED_VALUES: list[object] = [
+    None, "text", "", " padded ", "1", "true", "2026-01-02", _Mood.HAPPY, _Level.ONE,
+    _Shade.DARK, _Shade.NONE, 0, 1, -5, 2**63, True, False, 1.5, 0.0, -0.0, 1e20,
+    float("nan"), float("inf"), Decimal("1.50"), Decimal("-0"), Decimal("NaN"),
+    UUID(int=7), str(UUID(int=7)), date(2026, 1, 2), time(1, 2),
+    datetime(2026, 1, 2, 3, 4, 5, 6), datetime(2026, 1, 2, 3, 4, 5, 6, tzinfo=UTC),
+    datetime(2026, 1, 2, 3, 4, 5, tzinfo=timezone(timedelta(hours=5))), timedelta(days=1),
+    b"\x00\x01", bytearray(b"x"), [], ["a", "b"], ["a", None], [_Mood.HAPPY], ("a", "b"),
+    [1, 2], [1.5, None, float("nan")], [UUID(int=1)], [date(2026, 1, 2)], [[1]],
+    [datetime(2026, 1, 2)], {"k": 1}, {"k": _Mood.HAPPY}, {_Mood.HAPPY: [1]},
+    _Moment(2026, 1, 2, 3, 4, 5), _Moment(2026, 1, 2, 3, 4, 5, tzinfo=UTC), _Label("label"),
+    memoryview(b"mv"), [_Moment(2026, 1, 2)], [_Label("a")], [memoryview(b"m")],
+    # For the modifier-typed columns: extra scale, sub-millisecond instants, short strings.
+    Decimal("12.345678"), Decimal("1.5E+3"), "ab", "x", time(1, 2, 3, 456789),
+    datetime(2026, 1, 2, 3, 4, 5, 678901), datetime(2026, 1, 2, 3, 4, 5, 678901, tzinfo=UTC),
+    [datetime(2026, 1, 2, 3, 4, 5, 678901, tzinfo=UTC), None], [Decimal("1.005")], ["ab"],
+]  # fmt: skip
+
+
+def _outcome(adapt: Callable[[], object]) -> object:
+    """What *adapt* returns, spelled out (a wrapper's object, each element, the type of
+    every value and its repr), or what it raises."""
+
+    def spelled(value: object) -> object:
+        if isinstance(value, Json | Jsonb):
+            return type(value), spelled(value.obj)
+
+        if isinstance(value, list | tuple):
+            return type(value), [spelled(item) for item in value]
+
+        if isinstance(value, dict):
+            return type(value), [(spelled(k), spelled(v)) for k, v in value.items()]
+
+        return type(value), repr(value)
+
+    try:
+        return spelled(adapt())
+
+    except Exception as error:
+        return type(error), str(error)
+
+
+@pytest.mark.parametrize("is_array", [False, True])
+@pytest.mark.parametrize("base", [*_ADAPTED_BASES, None])
+def test_a_column_adapter_writes_every_value_as_adapt_value_for_write_does(
+    base: str | None, is_array: bool
+) -> None:
+    """The adapter worked out once per column lets through only what the coercion would
+    return as it is; every value, of every column type, comes out (or is refused) alike."""
+
+    gw, _ = _build_gateway()
+    t = None if base is None else PostgresType(base=base, is_array=is_array, not_null=False)
+    adapter = gw._write_adapter(t)
+
+    for value in _ADAPTED_VALUES:
+        assert _outcome(lambda v=value: adapter(v)) == _outcome(
+            lambda v=value: gw.adapt_value_for_write(v, t=t)
+        ), value
 
 
 def test_json_write_dumps_stores_decimal_exact_and_rejects_unknown_types() -> None:
