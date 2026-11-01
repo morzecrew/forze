@@ -560,8 +560,10 @@ class PostgresGateway[M: BaseModel](
             for payload in payloads
         ]
 
-        if create:
-            out = [self._add_tenant_id(payload) for payload in out]
+        # Each row is a fresh dict, so the tenant goes in place, resolved once for the batch.
+        if create and out and (tenant_id := self.require_tenant_if_aware()) is not None:
+            for payload in out:
+                payload[TENANT_ID_FIELD] = tenant_id
 
         return out
 

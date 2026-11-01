@@ -1386,10 +1386,13 @@ class PostgresWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
             await self.upsert_many(ids, creates, updates, batch_size=batch_size)
             return
 
-        # One order for every chunk: two calls over overlapping ids lock them in the same
-        # order across chunks, so neither waits on a row the other has while holding one it
-        # wants.
-        items = sorted(zip(ids, creates, updates, strict=True), key=lambda item: item[0])
+        # One id order for every chunk, so two calls over overlapping ids mostly take their
+        # locks in the same order. Not always: a chunk inserts its missing ids before it locks
+        # its stored ones, so calls whose chunks split differently can still deadlock. Postgres
+        # aborts one; outside a caller's transaction the retry runs it again, inside one it is
+        # ``concurrency`` for the scope's owner. ``int`` orders as ``UUID`` and Postgres's
+        # ``uuid`` do, without a Python comparison per pair.
+        items = sorted(zip(ids, creates, updates, strict=True), key=lambda item: item[0].int)
 
         async with self._write_tx():
             now = utcnow()
@@ -1456,9 +1459,9 @@ class PostgresWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
         if lock:
             stmt += sql.SQL(" ORDER BY {pk} FOR NO KEY UPDATE").format(pk=self.ident_pk())
 
-        rows = await self.client.fetch_all(stmt, params, row_factory="dict", commit=False)
+        rows = await self.client.fetch_all(stmt, params, row_factory="tuple", commit=False)
 
-        return {_as_uuid(row[ID_FIELD]) for row in rows}
+        return {_as_uuid(pk) for (pk,) in rows}
 
     # ....................... #
 
@@ -1468,7 +1471,11 @@ class PostgresWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
         creates_by_id: Mapping[UUID, C],
         column_types: PostgresColumnTypes,
     ) -> set[UUID]:
-        """Insert *pks* from their create payloads, skipping a conflict; the ids inserted."""
+        """Insert *pks* from their create payloads, skipping a conflict; the ids inserted.
+
+        Only the skipped ids come back, which a concurrent writer's insert alone causes, so a
+        load reads nothing back.
+        """
 
         if not pks:
             return set()
@@ -1482,23 +1489,25 @@ class PostgresWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
         )
         keys = list(rows[0].keys())
         source, params = _row_source(keys, rows, column_types)
-        inserted = await self.client.fetch_all(
+        skipped = await self.client.fetch_all(
             sql.SQL(
-                "INSERT INTO {table} ({cols}) {source} "
-                "ON CONFLICT ({conflict}) DO NOTHING RETURNING {pk}"
+                "WITH ins AS (INSERT INTO {table} ({cols}) {source} "
+                "ON CONFLICT ({conflict}) DO NOTHING RETURNING {pk}) "
+                "SELECT unnest({ids}::uuid[]) EXCEPT SELECT {pk}::uuid FROM ins"
             ).format(
                 table=(await self._qname()).ident(),
                 cols=sql.SQL(", ").join(sql.Identifier(k) for k in keys),
                 source=source,
                 conflict=await self._ident_conflict_target(),
                 pk=self.ident_pk(),
+                ids=sql.Placeholder(),
             ),
-            params,
-            row_factory="dict",
+            [*params, list(pks)],
+            row_factory="tuple",
             commit=False,
         )
 
-        return {_as_uuid(row[ID_FIELD]) for row in inserted}
+        return set(pks).difference(_as_uuid(pk) for (pk,) in skipped)
 
     # ....................... #
 
