@@ -17,7 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **A write gateway's `upsert_many_set_based` takes `set_based_batch_size`** (**Breaking**). The command passes it beside `batch_size`, which now chunks only a fallback to the domain path. A gateway implemented outside forze must accept it.
 
-- **A document's invariants are checked on create after its own model validators** (**behaviour change**). They ran first, while an update already checked them on the final state. A class without invariants no longer runs a check per instance, and one may not use the name `_forze_invariants_on_create`.
+- **A document's invariants are checked on create after its own model validators** (**behaviour change**), as an update checks them. A class without invariants runs no check, so validating a subclass instance through it re-checks nothing. Names starting `_forze_invariants_on_create` are reserved.
 
 ### Fixed
 
