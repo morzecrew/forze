@@ -3527,11 +3527,13 @@ catalog: a Postgres metadata schema read with the tenant's own role, and a local
 data path, built by a fixed sequence and attested like the Iceberg one, on DuckDB 1.5. The
 issue's own probe (DuckDB 1.5.6, `ducklake` ac7595b0, `postgres_scanner` 318dabb) is the
 design this unit is measured against, beside RFC 0078 §3.4 and §3.5. Every probe below ran on
-both builds, `duckdb==2.0.0` and `duckdb==1.5.6`, against Postgres 18 and RustFS.
+both builds, `duckdb==2.0.0` and `duckdb==1.5.6`, against Postgres 18 and RustFS, except
+where a function exists on one build only, as D-101 says.
 
-**Drift count: 0.** Seven entries, D-098 to D-104, all `discovery`. Product code changes in one
-place: `routed_client.py` gains `DuckLakeTenantCatalog`, `DuckLakeCatalogCredentials`, the
-DuckLake sequence and its attestation, and picks a tenant's secret shape from its catalog.
+**Drift count: 0.** Seven entries, D-098 to D-104, all `discovery`. Product code changes in
+`routed_client.py`, which gains `DuckLakeTenantCatalog`, `DuckLakeCatalogCredentials`, the
+DuckLake sequence and its attestation, and picks a tenant's secret shape from its catalog;
+the two package `__init__` files export the new types.
 The Iceberg sequence is unchanged.
 
 **Where each item lives.** The sequence and its checks: `_ducklake_session_statements`,
@@ -3608,9 +3610,9 @@ D-104 is the one fact that probing them found.
 - **Because:** the 1.5 extension checks external access in `ATTACH` only.
 - **Class:** `discovery`.
 - **Consequence:** a dynamic read already refuses both, as table functions outside its list
-  (D-072) and as a `CALL`. Analytics SQL is the application's. The docs say to keep libpq
-  credentials out of the worker and let egress reach only the metadata database and the
-  store. A test pins each build's answer for both functions, and that the secret stays out.
+  (D-072) and as a `CALL`. Analytics SQL is the application's. The docs say to run the worker
+  with no `PGPASSWORD`, `PGPASSFILE` or `PGSERVICEFILE` set and no readable `~/.pgpass`, and
+  to let egress reach only the metadata database and the store. A test pins each build's answer for both functions, and that the secret stays out.
 - **Proposed row (RFC 0078):** `ASSUMED` — on DuckDB 1.5 the engine does not bound Postgres
   egress from a DuckLake session; the dynamic-read classification and the deployment's
   egress policy do.
@@ -3627,11 +3629,15 @@ D-104 is the one fact that probing them found.
 - **Class:** `discovery`.
 - **Consequence:** the attestation asks Postgres, through that function, whether the role can
   write any table, view, materialized view, foreign table or sequence in its schema, create in
-  the schema, read any other schema that holds DuckLake metadata, or is a superuser, and
-  refuses the session if so. Another lake's metadata can hold its inlined rows, so reading
+  the schema, read any other schema that holds DuckLake metadata, read any other relation
+  outside its schema that `PUBLIC` cannot, or read a view in its schema that reads outside it,
+  or is a superuser, and refuses the session if so. Column grants count.
+  What `PUBLIC` reads is left out: every login reads it, so it is the deployment's choice,
+  and refusing it would refuse a database with `pg_stat_statements` installed. Another lake's metadata can hold its inlined rows, so reading
   it is reading that tenant's data. The battery's tenant `c` holds a stray `INSERT` grant on
   a table, and tenant `d` one on a view plus `SELECT` on tenant `a`'s metadata; both are
-  refused.
+  refused. Tenant `d` can also read a table in an unrelated schema, and is refused for it,
+  while a table granted to `PUBLIC` refuses no one.
 - **Proposed row (RFC 0078):** `ASSUMED` — the metadata role's grants bound the metadata
   database, and the attestation reads them back.
 
@@ -3664,7 +3670,9 @@ D-104 is the one fact that probing them found.
 - **Class:** `discovery`.
 - **Consequence:** the attestation probes `<data path>../forze-attest/x` on a local lake. On
   `s3://` the docs say the tenant's key must be scoped to its own prefix, as the Iceberg docs
-  say of vended credentials. A dynamic read refuses every path anyway.
+  say of vended credentials. A dynamic read refuses every path anyway. A test pins that the
+  engine sends the `s3://` form to the store; the store's answer is the store's, so the
+  battery, whose key reaches the whole bucket, does not pin it.
 - **Proposed row (RFC 0078):** `ASSUMED` — a local DuckLake attests the engine's refusal of a
   dot-segment; on `s3://` the store key's scope confines reads to the prefix.
 
@@ -3685,3 +3693,18 @@ Fresh-eyes review of the branch before it was published.
 | R-9 | Low | `_ducklake_problems` and `_ducklake_outside` had no unit coverage | Fixed: unit tests over a fake engine, the nested quoting included |
 | R-10 | Low | D-101 said both builds' answers are pinned, but only `postgres_scan` was | Fixed: `postgres_attach` is pinned too |
 | R-11 | Question | The libpq environment fallbacks are not pinned | Not pinned: libpq's documented behaviour, not the engine's |
+
+## Review findings — 2026-11-01 (PR #801)
+
+| # | Severity | Finding | Status |
+|---|---|---|---|
+| R-12 | High | The grants check refused only other schemas holding DuckLake metadata, so a role granted `SELECT` on application tables could read them through `postgres_query` (cubic) | Fixed: any relation outside the schema that the role reads and `PUBLIC` does not is refused (D-102) |
+| R-13 | Medium | D-104's `s3://` dot-segment path had no regression test (cubic) | Fixed: a test pins that the engine sends it to the store; the store's own answer is not pinned (D-104) |
+| R-14 | Medium | D-101's mitigation did not name the libpq credential sources to remove (cubic) | Fixed: the docs and D-101 name `PGPASSWORD`, `PGPASSFILE`, `PGSERVICEFILE` and `~/.pgpass` |
+| R-15 | — | A test held a literal wrong password, which GitGuardian scans in every commit of the PR (GitGuardian) | Fixed in code: generated with `token_hex`. An earlier commit of the PR still holds the literal, a dummy that was never a credential; clearing the check needs the incident resolved or the history rewritten, which is the maintainer's call |
+| R-16 | High | The grants check read table-level privileges only, so a column-level `UPDATE` on metadata, or a column-level `SELECT` elsewhere, passed (cubic) | Fixed: `has_any_column_privilege` for inserts, updates and reads. Tenant `d` holds one of each |
+| R-17 | High | A local data path that is a symlink passes the lexical allowlist, and the filesystem follows it to another tenant's data (cubic) | Fixed in part: the build refuses a local data path that is not its own real path. A symlink deeper under it is not walked; the docs say to keep none there |
+| R-18 | Low | An Iceberg principal and a DuckLake one with the same id and secret could share a fingerprint (cubic) | Fixed: the DuckLake fingerprint and access parts carry a kind marker |
+| R-19 | Low | The unit's header claimed every probe ran on both builds, and product code in one file (cubic) | Fixed in place |
+| R-20 | Low | The docs wrote the optional CA entry as a nested list (CodeAnt) | Fixed |
+| R-21 | High | A view in the role's own schema runs with its owner's rights, so it can expose another lake's metadata past every grant check (CodeAnt) | Fixed: the attestation refuses a view or materialized view in the schema that reads outside it and that the role can read. Tenant `d` holds one over tenant `b`'s metadata. `SECURITY DEFINER` functions are left to the deployment, and the docs say so |
