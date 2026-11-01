@@ -904,6 +904,9 @@ def test_a_float_rounds_only_to_a_value_the_write_stores_exactly() -> None:
         # Postgres has no negative numeric zero: what a read of the row returns.
         ("numeric(10,2)", Decimal("-0.004"), Decimal("0.00")),
         ("numeric(10,2)", Decimal("-0"), Decimal("0.00")),
+        # A scale past the precision still holds a zero.
+        ("numeric(3,5)", Decimal("-0"), Decimal("0.00000")),
+        ("numeric(3,5)", Decimal("-0.000001"), Decimal("0.00000")),
         ("numeric", Decimal("-0"), Decimal("0")),
         ("numeric", Decimal("-0.00"), Decimal("0.00")),
     ],

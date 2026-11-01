@@ -263,13 +263,17 @@ def _as_numeric(value: Any, precision: int, scale: int) -> Any:
     if not isinstance(value, Decimal) or not value.is_finite():
         return value
 
+    step = Decimal(1).scaleb(-scale)
+
+    # Any column holds a zero, even one whose scale passes its precision (``numeric(3,5)``).
+    if value.is_zero():
+        return _unsigned_zero(value.quantize(step, context=_EXACT))
+
     # Refused by the write anyway; quantizing a vast exponent would build a vast coefficient.
     if value.adjusted() >= precision - scale:
         return value
 
-    rounded = value.quantize(Decimal(1).scaleb(-scale), rounding=ROUND_HALF_UP, context=_EXACT)
-
-    return _unsigned_zero(rounded)
+    return _unsigned_zero(value.quantize(step, rounding=ROUND_HALF_UP, context=_EXACT))
 
 
 def _unsigned_zero(value: Any) -> Any:

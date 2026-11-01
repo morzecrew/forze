@@ -29,7 +29,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **A hub search aggregate's metric filter can name an `extra_aggregatable_fields` column.** It was refused as off the read model. Postgres checks the filter's operators against the hub relation's column type; the search's own `filters` stay on the read model.
 
-- **Postgres `timestamp(p)` and `timestamptz(p)` ignore the session's `TimeZone`** (**Breaking**). An aware value stores its UTC wall clock and a naive one reads as UTC, in writes and filters. `numeric(p,s)` and `char(n)` coerce as their bare types: a float goes as `str()`, so a tie may round differently; NaN is refused.
+- **Postgres `timestamp(p)` and `timestamptz(p)` ignore the session's `TimeZone`** (**Breaking**). An aware value stores its UTC wall clock and a naive one reads as UTC, in writes and filters. `numeric(p,s)` and `char(n)` coerce as their bare types: a float tie may round differently, and NaN and infinity are refused.
 
 - **Postgres no longer rewrites an unchanged value its column rounds or pads.** Updates and upserts compare a value as its `timestamp(p)`, `timestamptz(p)`, `time(p)`, `timetz(p)`, `numeric(p,s)`, `real` or `char(n)` column stores it, arrays too. A resend no longer bumps `rev` or conflicts at a stale revision.
 
