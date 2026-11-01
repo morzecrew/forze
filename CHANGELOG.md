@@ -9,6 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- ...
+
+### Changed
+
+- ...
+
+### Fixed
+
+- ...
+
+## [0.19.0] - 2026-11-01
+
+### Added
+
 - **A `Reference` can declare a composite foreign key.** `Reference(fields=("stage_id", "source_id"), references=("id", "source_id"), ...)` pairs each field with a parent field, and `set_null_fields=` names the ones `SET NULL (…)` clears. The undeclared-key warning suggests these forms, so it can be silenced.
 
 ### Changed
@@ -2852,7 +2866,8 @@ Execution and mapping refactor, middleware-first usecases, split search/cache/do
 
 - Packaging metadata for PyOCI classifiers.
 
-[unreleased]: https://github.com/morzecrew/forze/compare/v0.18.0...HEAD
+[unreleased]: https://github.com/morzecrew/forze/compare/v0.19.0...HEAD
+[0.19.0]: https://github.com/morzecrew/forze/compare/v0.18.0...v0.19.0
 [0.18.0]: https://github.com/morzecrew/forze/compare/v0.17.0...v0.18.0
 [0.17.0]: https://github.com/morzecrew/forze/compare/v0.16.2...v0.17.0
 [0.16.2]: https://github.com/morzecrew/forze/compare/v0.16.1...v0.16.2
