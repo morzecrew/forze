@@ -1,9 +1,11 @@
 """Set-based ``upsert_many`` on Postgres: a fresh load into an empty table and a reload of the
 same rows, unchanged.
 
-Three call shapes: a mirror per source document of a few dozen rows, the shape of a bulk import
-that upserts what each document produces, a call of one default chunk, and one call of a few
-thousand rows. Each round starts from the state it measures (an empty table for a fresh load,
+Four call shapes: a mirror per source document of a few dozen rows, the shape of a bulk import
+that upserts what each document produces, a call of one default chunk, a call of a few thousand
+rows, and one call of every row. A mixed load adds a fresh load into a table that already holds
+an eighth of the rows, unchanged, as a mirror's later revisions of a document do: there every
+set-based chunk runs all four of its statements. Each round starts from the state it measures (an empty table for a fresh load,
 the loaded rows for a reload) and times only the upserts; the payloads are built before it.
 
 Each shape runs set-based (``set_based``) and as the statement issue #792 measures it against
@@ -53,7 +55,10 @@ _SHAPES = [
     pytest.param(40, 200, id="40_per_call"),
     pytest.param(200, 200, id="200_per_call"),
     pytest.param(2_000, 1_000, id="2000_per_call"),
+    pytest.param(_ROWS, 200, id="4000_per_call"),
 ]
+_STORED_SHARE = 8
+"""One row in this many is already stored when the mixed load runs."""
 _WAYS = ["set_based", "hand_written"]
 
 
@@ -255,4 +260,25 @@ async def test_pg_set_based_upsert_reload_benchmark(
 
     await _pedantic(benchmark, load, setup)
     # Unchanged rows are not written: every one is still at its first revision.
+    assert (await pg_client.fetch_one(f"SELECT max(rev) AS rev FROM {table}", [])) == {"rev": 1}
+
+
+@pytest.mark.perf
+@pytest.mark.asyncio
+@pytest.mark.parametrize("way", _WAYS)
+@pytest.mark.parametrize(("per_call", "batch_size"), _SHAPES)
+async def test_pg_set_based_upsert_mixed_load_benchmark(
+    benchmark: Any, pg_client: PostgresClient, per_call: int, batch_size: int, way: str
+) -> None:
+    command, table = await _command(pg_client, batch_size)
+    load = _loader(command, pg_client, table, per_call, way)
+
+    async def setup() -> Sequence[Any]:
+        await pg_client.execute(f"TRUNCATE {table}")
+        items = _items([uuid4() for _ in range(_ROWS)])
+        await load(items[::_STORED_SHARE])
+        return items
+
+    await _pedantic(benchmark, load, setup)
+    assert (await pg_client.fetch_one(f"SELECT count(*) AS n FROM {table}", [])) == {"n": _ROWS}
     assert (await pg_client.fetch_one(f"SELECT max(rev) AS rev FROM {table}", [])) == {"rev": 1}
