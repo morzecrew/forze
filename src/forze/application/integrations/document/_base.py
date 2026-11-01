@@ -109,6 +109,7 @@ class DocumentAdapterMixinBase(Generic[R, D, C, U]):
         write_gw: DocumentWriteGatewayPort[D, C, U] | None
         document_cache: DocumentCache[R]
         batch_size: int
+        set_based_batch_size: int
         enforce_primary_key_cursor_sort: bool
         hydrate_from_write: bool
         max_scan_pages: int | None

@@ -66,6 +66,10 @@ class DocumentAdapter(
     write_gw: DocumentWriteGatewayPort[D, C, U] | None = attrs.field(default=None)
     document_cache: DocumentCache[R]
     batch_size: int = 200
+    set_based_batch_size: int = 2_000
+    """Rows per chunk of a set-based ``upsert_many``. Its statements cost per statement rather
+    than per row, so it takes far larger chunks than :attr:`batch_size`."""
+
     enforce_primary_key_cursor_sort: bool = False
 
     max_scan_pages: int | None = DEFAULT_MAX_SCAN_PAGES  # type: ignore[override]
@@ -119,11 +123,13 @@ class DocumentAdapter(
                 "Document document cache name mismatches document specification name."
             )
 
-        if not MIN_BATCH_SIZE <= self.batch_size <= MAX_BATCH_SIZE:
-            raise exc.configuration(
-                f"batch_size must be between {MIN_BATCH_SIZE} and "
-                f"{MAX_BATCH_SIZE}, got {self.batch_size}."
-            )
+        for name in ("batch_size", "set_based_batch_size"):
+            size = getattr(self, name)
+
+            if not MIN_BATCH_SIZE <= size <= MAX_BATCH_SIZE:
+                raise exc.configuration(
+                    f"{name} must be between {MIN_BATCH_SIZE} and {MAX_BATCH_SIZE}, got {size}."
+                )
 
     # ....................... #
 

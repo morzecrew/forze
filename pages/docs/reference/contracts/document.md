@@ -537,7 +537,10 @@ A bulk load that needs no rows back can pass `return_new=False, set_based=True`.
 then inserts the missing rows and patches the stored ones with set-based statements, reading
 nothing back: a stored row takes the update as its DTO encodes it, and only a row the update
 changes gets a new `rev` and `last_update_at`. The stored rows are locked in id order first,
-so concurrent loads of overlapping batches queue rather than interleave.
+so concurrent loads of overlapping batches queue rather than interleave. It writes
+`set_based_batch_size` rows per chunk (2,000 by default, `PostgresDocumentConfig`), not
+`batch_size`: each chunk costs a few statements, and a statement-level trigger fires once per
+statement, so a chunk per few hundred rows spends its time on statements.
 
 Like `update_matching`, it skips the domain model's update, so a spec whose updates need it
 refuses `set_based` with a `configuration` error (`set_based_upsert_unsupported`): one with

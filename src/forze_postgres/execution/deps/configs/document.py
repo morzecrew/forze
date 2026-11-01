@@ -67,3 +67,8 @@ class PostgresDocumentConfig(PostgresReadOnlyDocumentConfig):  # type: ignore[no
 
     conflict_target: tuple[str, ...] | None = None
     """``ON CONFLICT`` column(s) for ensure/upsert; omitted means infer PK from catalog."""
+
+    set_based_batch_size: int = 2_000
+    """Rows per chunk of a set-based ``upsert_many``. Each chunk costs a few statements, and a
+    statement-level trigger fires once per statement, so it takes larger chunks than
+    ``batch_size``. Above a few thousand rows the client spends more per row again."""

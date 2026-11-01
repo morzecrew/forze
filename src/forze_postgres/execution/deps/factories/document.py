@@ -265,5 +265,6 @@ class ConfigurablePostgresDocument(DocumentCommandDepPort[R, D, C, U]):
             write_gw=write,
             document_cache=cc,
             batch_size=self.config.batch_size,
+            set_based_batch_size=self.config.set_based_batch_size,
             dispatcher_provider=domain_dispatcher_provider(ctx),
         )

@@ -319,7 +319,9 @@ class TestPostgresDocumentAdapterInit:
             )
 
 class TestPostgresDocumentAdapterEffBatchSize:
-    def _adapter(self, *, batch_size: int) -> PostgresDocumentAdapter:
+    def _adapter(
+        self, *, batch_size: int = 200, set_based_batch_size: int = 2_000
+    ) -> PostgresDocumentAdapter:
         rg = _read_gw_full()
         ds = _full_spec()
         return PostgresDocumentAdapter(
@@ -327,6 +329,7 @@ class TestPostgresDocumentAdapterEffBatchSize:
             read_gw=rg,
             document_cache=_pg_cc(rg, ds),
             batch_size=batch_size,
+            set_based_batch_size=set_based_batch_size,
         )
 
     @pytest.mark.parametrize("bad", [MIN_BATCH_SIZE - 1, MAX_BATCH_SIZE + 1, 0])
@@ -336,6 +339,16 @@ class TestPostgresDocumentAdapterEffBatchSize:
 
     def test_uses_in_range_value(self) -> None:
         assert self._adapter(batch_size=150).eff_batch_size == 150
+
+    @pytest.mark.parametrize("bad", [MIN_BATCH_SIZE - 1, MAX_BATCH_SIZE + 1])
+    def test_a_set_based_chunk_size_out_of_range_is_rejected(self, bad: int) -> None:
+        with pytest.raises(CoreException, match="set_based_batch_size must be between"):
+            self._adapter(set_based_batch_size=bad)
+
+    def test_a_set_based_chunk_defaults_far_above_the_domain_paths(self) -> None:
+        adapter = self._adapter()
+
+        assert (adapter.eff_batch_size, adapter.set_based_batch_size) == (200, 2_000)
 
     def test_stream_chunk_below_min_clamps_up(self) -> None:
         adapter = self._adapter(batch_size=200)
