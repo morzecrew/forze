@@ -129,6 +129,14 @@ async def test_a_value_rounds_or_pads_as_postgres_stores_it(pg_client: PostgresC
 
         assert _as_stored({f"{column}s": sent}, types)[f"{column}s"] == stored, column
 
+    # An integer: only a negative scale rounds it.
+    for value in (149, 145, -145, 44, 7):
+        stored = await pg_client.fetch_value(
+            f"INSERT INTO {t} (id, coarse) VALUES (%s, %s) RETURNING coarse", [uuid4(), value]
+        )
+
+        assert _as_stored({"coarse": value}, types)["coarse"] == stored, value
+
     # A float into ``numeric``: the write sends its str(). It rounds to what is stored, spelled
     # exactly by the float a read returns, or stays as sent.
     for value in _FLOATS:

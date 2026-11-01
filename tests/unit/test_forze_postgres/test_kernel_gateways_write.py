@@ -882,6 +882,21 @@ def test_a_number_rounds_to_its_scale(
     assert got is sent if stored is None else got == stored
 
 
+@pytest.mark.parametrize(
+    ("sent", "scale", "stored"),
+    [(149, -2, 100), (150, -2, 200), (-150, -2, -200), (49, -2, 0), (149, 2, 149), (149, 0, 149)],
+)
+def test_an_integer_rounds_only_to_a_negative_scale(sent: int, scale: int, stored: int) -> None:
+    from forze.base.primitives.fingerprint import advisory_lock_key
+    from forze_postgres.kernel.gateways.write import _as_numeric
+
+    got = _as_numeric(sent, 5, scale)
+
+    # An int still, so a lock key hashed from it matches one hashed from the stored row.
+    assert (type(got), got) == (int, stored)
+    assert advisory_lock_key("k", got) == advisory_lock_key("k", stored)
+
+
 def test_a_float_rounds_only_to_a_value_the_write_stores_exactly() -> None:
     from forze_postgres.kernel.gateways.write import _as_numeric
 

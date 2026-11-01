@@ -242,13 +242,19 @@ def _rounded_as_stored(value: Any, digits: int) -> Any:
 
 
 def _as_numeric(value: Any, precision: int, scale: int) -> Any:
-    """*value*, a ``Decimal`` or ``float``, as a ``numeric(precision, scale)`` column stores it:
-    rounded half away from zero to *scale* places.
+    """*value*, a ``Decimal``, ``float`` or ``int``, as a ``numeric(precision, scale)`` column
+    stores it: rounded half away from zero to *scale* places.
 
     Returned as sent: a NaN or an infinity, and a value with more integer digits than the column
-    holds, for the write to refuse; and a float whose rounded value no float spells exactly, so
-    the write could not store that value from it.
+    holds, for the write to refuse; a float whose rounded value no float spells exactly, so the
+    write could not store that value from it; and an ``int`` the column keeps whole.
     """
+
+    if isinstance(value, int) and not isinstance(value, bool):
+        # Only a negative scale rounds an integer: ``numeric(5,-2)`` stores 149 as 100.
+        whole = int(_as_numeric(Decimal(value), precision, scale)) if scale < 0 else value
+
+        return value if whole == value else whole
 
     if isinstance(value, float):
         if not math.isfinite(value):
