@@ -1062,3 +1062,19 @@ async def test_only_a_strict_check_of_an_unchanged_row_locks_its_revision(name: 
     sql = client.fetch_all.await_args.args[0].as_string()
     assert ("FOR SHARE" in sql) is (name == "same")
     client.fetch_all.assert_awaited_once()
+
+
+def test_a_values_row_source_is_sliced_to_the_parameter_limit() -> None:
+    from forze_postgres.kernel.gateways.write import _MAX_BOUND_PARAMS, _source_slices
+
+    rows = list(range(2_000))
+    scalar = {f"c{i}": _pg("text") for i in range(40)}
+    with_array = {**scalar, "c0": _pg("text", is_array=True)}
+
+    # unnest binds one array per column, however many rows.
+    assert _source_slices(list(scalar), rows, scalar, reserved=1) == [rows]
+
+    slices = _source_slices(list(with_array), rows, with_array, reserved=1)
+    assert [len(s) for s in slices] == [1_638, 362]
+    assert all(len(s) * 40 + 1 <= _MAX_BOUND_PARAMS for s in slices)
+    assert [x for s in slices for x in s] == rows

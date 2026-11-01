@@ -985,3 +985,55 @@ async def test_tenant_mirrors_write_their_rows_and_never_another_tenants(
     assert [(row["name"], row["rev"]) for row in mine] == [("a2", 2), ("b", 1), ("c", 1)]
     theirs = [row["name"] for row in stored[True] if row["tenant_id"] == second]
     assert theirs == ([] if key == "id" else ["own"])
+
+
+_WIDE = 70
+"""Columns of the wide table: with a ``text[]`` column, its 2,000-row chunk spelled as
+``VALUES`` needs 140,000 parameters, past Postgres's 65,535."""
+
+
+async def test_a_wide_chunk_spelled_as_values_is_split_to_fit_the_parameter_limit(
+    pg_client: PostgresClient,
+) -> None:
+    from pydantic import create_model
+
+    names = [f"c{i:02d}" for i in range(_WIDE)]
+    fields: dict[str, Any] = dict.fromkeys(names, (str, ...))
+    fields["labels"] = (list[str], Field(default_factory=list))
+    wide = create_model("_Wide", __base__=BaseDTO, **fields)
+    create = create_model("_WideCreate", __base__=(CreateDocumentCmd, wide))
+    doc = create_model("_WideDoc", __base__=(Document, wide))
+    read = create_model("_WideRead", __base__=(ReadDocument, wide))
+    update = create_model("_WideUpdate", __base__=BaseDTO, c00=(str | None, None))
+    spec = DocumentSpec(
+        name="wide_set_based",
+        read=read,
+        write=DocumentWriteTypes(domain=doc, create_cmd=create, update_cmd=update),
+    )
+    t = f"wide_{uuid4().hex[:8]}"
+    columns = ", ".join(f"{name} text NOT NULL" for name in names)
+    await pg_client.execute(
+        f"CREATE TABLE {t} (id uuid PRIMARY KEY, rev integer NOT NULL, "
+        f"created_at timestamptz NOT NULL, last_update_at timestamptz NOT NULL, "
+        f"{columns}, labels text[] NOT NULL)"
+    )
+    cmd = document_context(pg_client, t).document.command(spec)
+    ids = [uuid4() for _ in range(2_000)]
+
+    def items(value: str) -> list[UpsertItem[Any, Any]]:
+        return [
+            UpsertItem(
+                id=pk,
+                create=create(**dict.fromkeys(names, value), labels=["x"]),
+                update=update(c00=value),
+            )
+            for pk in ids
+        ]
+
+    await cmd.upsert_many(items("a"), return_new=False, set_based=True)
+    # Every row stored: the patch's VALUES source is split too.
+    await cmd.upsert_many(items("b"), return_new=False, set_based=True)
+
+    rows = await pg_client.fetch_all(f"SELECT c00, c01, rev FROM {t}", [])
+    assert len(rows) == len(ids)
+    assert {(row["c00"], row["c01"], row["rev"]) for row in rows} == {("b", "a", 2)}
