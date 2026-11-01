@@ -850,7 +850,9 @@ class TestDuckLakeInstances:
     ) -> None:
         secrets = _MemSecrets(_A)
         secrets.payloads.update(_DuckLakeSecrets(_B).payloads)
-        routed = _routed_ducklake(secrets, catalog=lambda t: _catalog(t) if t == _A else _ducklake(t))
+        routed = _routed_ducklake(
+            secrets, catalog=lambda t: _catalog(t) if t == _A else _ducklake(t)
+        )
         await routed.startup()
 
         await _read(routed, _A)
@@ -901,6 +903,7 @@ class TestDuckLakeInstances:
         routed = _routed_ducklake(_DuckLakeSecrets(_A))
 
         assert routed.access_fingerprint_extra_parts(_A) == (
+            "ducklake",
             "meta.test",
             "5432",
             "lakemeta",
@@ -972,6 +975,33 @@ class TestDuckLakeChecks:
         assert f"SET GLOBAL allowed_paths=['{bundle.resolve()}']" in store.statements
         await routed.close()
 
+    async def test_a_local_data_path_through_a_symlink_is_refused(
+        self, fake_engine: type[_FakeEngine], tmp_path: Any
+    ) -> None:
+        real = tmp_path / "real"
+        real.mkdir()
+        (tmp_path / "link").symlink_to(real)
+        routed = _routed_ducklake(
+            _DuckLakeSecrets(_A),
+            catalog=lambda t: _catalog_with(f"{tmp_path}/link/"),
+        )
+        await routed.startup()
+
+        with pytest.raises(CoreException) as ei:
+            await _read(routed, _A)
+
+        assert ei.value.code == "duckdb_lake_catalog_invalid"
+        assert fake_engine.built == []
+        await routed.close()
+
+    def test_an_iceberg_and_a_ducklake_principal_never_share_a_fingerprint(self) -> None:
+        routed = _routed_ducklake(_DuckLakeSecrets(_A))
+        secret = token_hex(16)
+        iceberg = LakeCatalogCredentials(client_id="same", client_secret=SecretStr(secret))
+        ducklake = DuckLakeCatalogCredentials(user="same", password=SecretStr(secret))
+
+        assert routed.credential_fingerprint(iceberg) != routed.credential_fingerprint(ducklake)
+
     def test_a_local_data_path_is_probed_with_a_dot_segment_and_an_s3_one_is_not(self) -> None:
         local = routed_client._ducklake_outside(_ducklake(_A), None)
         store = routed_client._ducklake_outside(_ducklake(_A, s3=True), "/etc/ssl/ca.pem")
@@ -984,16 +1014,36 @@ class TestDuckLakeChecks:
     @pytest.mark.parametrize(
         ("path", "grants", "problems"),
         [
-            ("postgres:", {"writable": 0, "creates": False, "super": False, "others": 0}, []),
+            (
+                "postgres:",
+                {
+                    "writable": 0,
+                    "creates": False,
+                    "super": False,
+                    "others": 0,
+                    "granted": 0,
+                    "reaching": 0,
+                },
+                [],
+            ),
             (
                 "postgres:host=h password=p",
-                {"writable": 2, "creates": True, "super": True, "others": 1},
+                {
+                    "writable": 2,
+                    "creates": True,
+                    "super": True,
+                    "others": 1,
+                    "granted": 3,
+                    "reaching": 1,
+                },
                 [
                     "lake attached with more than the metadata path",
                     "metadata role can write 2 tables",
                     "metadata role can create in its schema",
                     "metadata role is a superuser",
                     "metadata role can read 1 other lakes' metadata",
+                    "metadata role can read 3 relations outside its schema",
+                    "metadata role can read 1 views reading outside its schema",
                 ],
             ),
         ],

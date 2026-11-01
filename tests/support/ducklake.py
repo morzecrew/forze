@@ -180,8 +180,10 @@ def ducklake_stack(*, store: S3Store | None = None) -> Iterator[DuckLakeStack]:
     on local data paths, and ``s`` (4) on an ``s3://`` prefix when *store* is given.
 
     ``c`` and ``d`` hold deployment mistakes the attestation must catch: ``c``'s reader can
-    insert into one metadata table; ``d``'s can insert through a view in its own schema, and
-    read tenant ``a``'s metadata.
+    insert into one metadata table; ``d``'s can insert through a view in its own schema, read
+    tenant ``a``'s metadata, read tables in an unrelated ``app`` schema (one by a column grant
+    only), and read tenant ``b``'s metadata through a view its schema holds. A table every role
+    may read (``public.shared``) is no mistake.
     """
 
     install_extensions()
@@ -209,7 +211,7 @@ def ducklake_stack(*, store: S3Store | None = None) -> Iterator[DuckLakeStack]:
         if store is not None:
             stack.tenants["s"] = _provision(stack, "s", f"s3://{BUCKET}/s/", 4)
 
-        a, c, d = (stack.tenants[name] for name in "acd")
+        a, b, c, d = (stack.tenants[name] for name in "abcd")
         stack.admin(
             sql.SQL("GRANT INSERT ON {}.ducklake_tag TO {}")
             .format(sql.Identifier(c.schema), sql.Identifier(c.reader))
@@ -228,6 +230,23 @@ def ducklake_stack(*, store: S3Store | None = None) -> Iterator[DuckLakeStack]:
             ),
             sql.SQL("GRANT SELECT ON ALL TABLES IN SCHEMA {} TO {}").format(
                 sql.Identifier(a.schema), sql.Identifier(d.reader)
+            ),
+            sql.SQL("CREATE SCHEMA app; CREATE TABLE app.rows (id int)"),
+            sql.SQL("GRANT USAGE ON SCHEMA app TO {}").format(sql.Identifier(d.reader)),
+            sql.SQL("GRANT SELECT ON app.rows TO {}").format(sql.Identifier(d.reader)),
+            sql.SQL("CREATE TABLE public.shared (id int); GRANT SELECT ON public.shared TO PUBLIC"),
+            # Column-level only: a table-level check would miss it.
+            sql.SQL("CREATE TABLE app.cols (id int, secret text)"),
+            sql.SQL("GRANT SELECT (id) ON app.cols TO {}").format(sql.Identifier(d.reader)),
+            sql.SQL("GRANT UPDATE (key) ON {}.ducklake_tag TO {}").format(
+                sql.Identifier(d.schema), sql.Identifier(d.reader)
+            ),
+            # Its owner's rights, not the reader's, decide what it reads.
+            sql.SQL("CREATE VIEW {}.leak AS SELECT * FROM {}.ducklake_metadata").format(
+                sql.Identifier(d.schema), sql.Identifier(b.schema)
+            ),
+            sql.SQL("GRANT SELECT ON {}.leak TO {}").format(
+                sql.Identifier(d.schema), sql.Identifier(d.reader)
             ),
         ):
             stack.admin(statement.as_string())

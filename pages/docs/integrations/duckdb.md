@@ -325,9 +325,9 @@ connect(":memory:", persistent secrets off, extension autoload/autoinstall off,
         temp_directory '', extension_directory)
 LOAD ducklake; LOAD postgres [; LOAD httpfs]    -- never INSTALL; httpfs for s3://
 [SET GLOBAL enable_global_s3_configuration=false; s3 keys cleared]
-[SET GLOBAL ca_cert_file]                       -- if configured, s3:// only
+SET GLOBAL ca_cert_file                         -- if configured, s3:// only
 SET GLOBAL allowed_directories=[data_path]
-SET GLOBAL allowed_paths=[[ca_cert_file]]
+SET GLOBAL allowed_paths=[ca_cert_file]         -- empty on a local data path
 CREATE SECRET (TYPE postgres, host, port, database, user, password)
 [CREATE SECRET (TYPE s3, the store key, SCOPE data_path)]
 ATTACH 'ducklake:postgres:' AS lake (DATA_PATH, METADATA_SCHEMA, READ_ONLY)
@@ -351,10 +351,19 @@ It differs from the Iceberg sequence where DuckLake needs it to:
 - **The role's grants bound the metadata database.** A statement can query it
   as the role through `postgres_query('__ducklake_metadata_lake', …)` and read
   `__ducklake_metadata_lake.<schema>.*`, both in a read-only transaction. The
-  attestation refuses a role that can write any table, view or sequence in its
-  schema, create in it, or read another DuckLake's metadata, which can hold
-  that lake's inlined rows, and a superuser. Grant the role `USAGE` on its
-  schema and `SELECT` on its tables, and nothing on another tenant's.
+  attestation refuses the session when the role:
+    - can write any table, view or sequence in its schema, or create in it;
+    - can read another DuckLake's metadata, which can hold that lake's inlined
+      rows;
+    - can read anything else outside its schema that `PUBLIC` cannot, by a
+      column grant too;
+    - can read a view in its schema that reads outside it, since a view runs
+      with its owner's rights;
+    - is a superuser.
+
+  Grant the role `USAGE` on its schema and `SELECT` on its tables, and nothing
+  else. A `SECURITY DEFINER` function it may execute reaches past all of this,
+  so keep none callable by it.
 - **`ATTACH` adds four paths named `postgres:…` in the working directory to
   `allowed_paths`.** A later `SET` does not remove them, so a statement can read
   and write those four files. The attestation expects exactly them.
@@ -366,6 +375,9 @@ the application writes, can call them.
 
 Operating it, beyond the Iceberg list:
 
+- **A local data path must be its own real path,** or the build is refused: the
+  allowlist matches the spelling, and the filesystem follows a symlink. Keep any
+  symlink out from under it too, since the attestation does not walk the tree.
 - **On `s3://`, the store key is what confines reads to the prefix.** The
   engine refuses a `..` in a local path, and the attestation checks that, but
   it sends `s3://<prefix>/../<other>/…` to the store as it is. Scope each
@@ -378,10 +390,10 @@ Operating it, beyond the Iceberg list:
   directory from the same process cannot have the mount.
 - **On DuckDB 1.5, `postgres_scan` and `postgres_attach` take a connection
   string and connect to any Postgres, whatever `enable_external_access` says.**
-  libpq then also reads the process's `PGPASSWORD`, `PGPASSFILE` and
-  `~/.pgpass`. DuckDB 2's extension has neither function. Keep libpq
-  credentials out of the worker's environment, and let its egress policy allow
-  only the metadata database and the store.
+  libpq then also reads the process's `PGPASSWORD`, `PGPASSFILE`,
+  `PGSERVICEFILE` and `~/.pgpass`. DuckDB 2's extension has neither function.
+  Run the worker with none of those variables set and no readable `~/.pgpass`,
+  and let its egress policy allow only the metadata database and the store.
 - **Run the worker in a read-only working directory**, so the four
   `postgres:…` paths cannot be written.
 - **Call `evict_tenant` after rotating the role's password or the store key,**

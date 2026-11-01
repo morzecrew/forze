@@ -690,8 +690,9 @@ async def _ducklake_problems(client: DuckDbClient, catalog: DuckLakeTenantCatalo
     """What the generic attestation cannot see on a DuckLake session.
 
     The attach string must carry nothing a statement could read back but the bare metadata
-    path. The metadata role must be unable to write its schema, and unable to read another
-    lake's metadata, which can hold that lake's inlined rows: the role's grants are what bound
+    path. The metadata role must be unable to write its schema, to read another lake's metadata,
+    which can hold that lake's inlined rows, or to read anything else outside its schema that
+    ``PUBLIC`` cannot, itself or through a view in its schema: the role's grants are what bound
     the metadata database, which a statement can query through ``postgres_query``
     (EXECUTION-LOG D-102).
     """
@@ -710,16 +711,38 @@ async def _ducklake_problems(client: DuckDbClient, catalog: DuckLakeTenantCatalo
         "JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace "
         f"WHERE n.nspname = {schema} AND ("
         "(c.relkind IN ('r', 'p', 'v', 'm', 'f') "
-        "AND has_table_privilege(c.oid, 'INSERT, UPDATE, DELETE, TRUNCATE')) "
+        "AND (has_any_column_privilege(c.oid, 'INSERT, UPDATE') "
+        "OR has_table_privilege(c.oid, 'DELETE, TRUNCATE'))) "
         "OR (c.relkind = 'S' AND has_sequence_privilege(c.oid, 'USAGE, UPDATE')))) AS writable, "
         f"has_schema_privilege({schema}, 'CREATE') AS creates, "
         "(SELECT rolsuper FROM pg_catalog.pg_roles WHERE rolname = current_user) AS super, "
         "(SELECT count(DISTINCT n.nspname) FROM pg_catalog.pg_class c "
         "JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace "
         f"WHERE n.nspname <> {schema} AND c.relkind IN ('r', 'p', 'v', 'm', 'f') "
-        "AND has_schema_privilege(n.oid, 'USAGE') AND has_table_privilege(c.oid, 'SELECT') "
+        "AND has_schema_privilege(n.oid, 'USAGE') AND has_any_column_privilege(c.oid, 'SELECT') "
         "AND EXISTS (SELECT 1 FROM pg_catalog.pg_class m "
-        "WHERE m.relnamespace = n.oid AND m.relname = 'ducklake_metadata')) AS others"
+        "WHERE m.relnamespace = n.oid AND m.relname = 'ducklake_metadata')) AS others, "
+        # What every role reads is the deployment's choice, not this role's grant.
+        "(SELECT count(*) FROM pg_catalog.pg_class c "
+        "JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace "
+        f"WHERE n.nspname <> {schema} AND n.nspname <> 'information_schema' "
+        "AND n.nspname NOT LIKE 'pg\\_%' AND c.relkind IN ('r', 'p', 'v', 'm', 'f') "
+        "AND has_schema_privilege(n.oid, 'USAGE') AND has_any_column_privilege(c.oid, 'SELECT') "
+        "AND NOT (has_schema_privilege('public', n.oid, 'USAGE') "
+        "AND has_any_column_privilege('public', c.oid, 'SELECT')) "
+        "AND NOT EXISTS (SELECT 1 FROM pg_catalog.pg_class m "
+        "WHERE m.relnamespace = n.oid AND m.relname = 'ducklake_metadata')) AS granted, "
+        # A view runs with its owner's rights, so one here can read what the role cannot.
+        "(SELECT count(DISTINCT v.oid) FROM pg_catalog.pg_class v "
+        "JOIN pg_catalog.pg_namespace vn ON vn.oid = v.relnamespace "
+        "JOIN pg_catalog.pg_rewrite r ON r.ev_class = v.oid "
+        "JOIN pg_catalog.pg_depend d ON d.objid = r.oid "
+        "AND d.classid = 'pg_catalog.pg_rewrite'::regclass "
+        "AND d.refclassid = 'pg_catalog.pg_class'::regclass "
+        "JOIN pg_catalog.pg_class t ON t.oid = d.refobjid "
+        f"WHERE vn.nspname = {schema} AND v.relkind IN ('v', 'm') "
+        "AND t.relnamespace <> v.relnamespace "
+        "AND has_any_column_privilege(v.oid, 'SELECT')) AS reaching"
     )
 
     try:
@@ -743,6 +766,14 @@ async def _ducklake_problems(client: DuckDbClient, catalog: DuckLakeTenantCatalo
 
     if row["others"]:
         problems.append(f"metadata role can read {row['others']} other lakes' metadata")
+
+    if row["granted"]:
+        problems.append(f"metadata role can read {row['granted']} relations outside its schema")
+
+    if row["reaching"]:
+        problems.append(
+            f"metadata role can read {row['reaching']} views reading outside its schema"
+        )
 
     return problems
 
@@ -881,7 +912,7 @@ class RoutedDuckDbClient(
     def credential_fingerprint(self, creds: BaseModel) -> str:
         if isinstance(creds, DuckLakeCatalogCredentials):
             store = creds.store
-            public = [creds.user]
+            public = ["ducklake", creds.user]
             secret: list[SecretStr | None] = [creds.password]
 
             if store is not None:
@@ -904,6 +935,7 @@ class RoutedDuckDbClient(
 
         if isinstance(catalog, DuckLakeTenantCatalog):
             return (
+                "ducklake",
                 catalog.host,
                 str(catalog.port),
                 catalog.database,
@@ -1021,6 +1053,18 @@ class RoutedDuckDbClient(
                 "The tenant's DuckLake secret needs a metadata role and its password.",
                 code="duckdb_lake_role_credentials_empty",
                 details={"tenant_id": str(tenant_id)},
+            )
+
+        real = (
+            None if catalog.on_s3 else await asyncio.to_thread(os.path.realpath, catalog.data_path)
+        )
+
+        if real is not None and real + "/" != catalog.data_path:
+            # The allowlist matches the spelling, and the filesystem follows the link.
+            raise exc.configuration(
+                "A DuckLake's local data path must be its own real path, with no symlink in it.",
+                code="duckdb_lake_catalog_invalid",
+                details={"tenant_id": str(tenant_id), "data_path": catalog.data_path},
             )
 
         http_timeout_seconds = int(self.http_timeout.total_seconds())

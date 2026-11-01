@@ -12,6 +12,7 @@ attestation leg runs the shipped code with one step taken away.
 
 from __future__ import annotations
 
+import asyncio
 import contextvars
 import json
 import os
@@ -281,8 +282,10 @@ class TestConfinement:
 
         for sql in (
             f"ATTACH '{dsn}' AS other (TYPE postgres)",
-            f"ATTACH 'ducklake:postgres:{dsn}' AS other "
-            f"(DATA_PATH '{b.data_path}', METADATA_SCHEMA '{b.schema}', READ_ONLY)",
+            (
+                f"ATTACH 'ducklake:postgres:{dsn}' AS other "
+                f"(DATA_PATH '{b.data_path}', METADATA_SCHEMA '{b.schema}', READ_ONLY)"
+            ),
         ):
             assert "disabled through configuration" in str(await _engine_refusal(routed, _A, sql))
 
@@ -357,15 +360,18 @@ class TestAttestation:
         assert error.code == _ATTESTATION_FAILED
         assert error.details["problems"] == ["metadata role can write 1 tables"]
 
-    async def test_a_reader_role_that_writes_a_view_or_reads_another_lake_is_refused(
+    async def test_a_reader_role_that_writes_a_view_or_reads_outside_its_schema_is_refused(
         self, routed: RoutedDuckDbClient
     ) -> None:
         error = await _build_refusal(routed, _D)
 
         assert error.code == _ATTESTATION_FAILED
+        # A view written through, and a column updated; a table and a column read outside.
         assert error.details["problems"] == [
-            "metadata role can write 1 tables",
+            "metadata role can write 2 tables",
             "metadata role can read 1 other lakes' metadata",
+            "metadata role can read 2 relations outside its schema",
+            "metadata role can read 1 views reading outside its schema",
         ]
 
     async def test_a_password_in_the_attach_string_is_refused(
@@ -393,7 +399,10 @@ class TestAttestation:
         ("fault", "problem"),
         [
             (_replace(", READ_ONLY)", ")"), "lake attached writable"),
-            (_replace("SET GLOBAL lock_configuration=true", "SELECT 1"), "setting lock_configuration"),
+            (
+                _replace("SET GLOBAL lock_configuration=true", "SELECT 1"),
+                "setting lock_configuration",
+            ),
             (
                 _replace("SET GLOBAL enable_external_file_cache=false", "SELECT 1"),
                 "setting enable_external_file_cache",
@@ -425,7 +434,9 @@ class TestAttestation:
         a = stack.tenants["a"]
         _fault(
             monkeypatch,
-            _replace(f"allowed_directories=['{a.data_path}']", f"allowed_directories=['{stack.root}/']"),
+            _replace(
+                f"allowed_directories=['{a.data_path}']", f"allowed_directories=['{stack.root}/']"
+            ),
         )
         client = build_routed()
         await client.startup()
@@ -434,9 +445,10 @@ class TestAttestation:
 
         assert error.code == _ATTESTATION_FAILED
         assert "setting allowed_directories" in error.details["problems"]
-        assert f"path {a.data_path.rstrip('/')}-forze-attest/x not refused" in error.details[
-            "problems"
-        ]
+        assert (
+            f"path {a.data_path.rstrip('/')}-forze-attest/x not refused"
+            in error.details["problems"]
+        )
 
 
 class TestStoreDataPath:
@@ -453,6 +465,17 @@ class TestStoreDataPath:
             routed, _S, "SELECT DISTINCT type FROM duckdb_secrets() ORDER BY type"
         )
         assert secrets == [{"type": "postgres"}, {"type": "s3"}]
+
+    async def test_a_dot_segment_under_s3_goes_to_the_store(
+        self, routed: RoutedDuckDbClient
+    ) -> None:
+        """D-104: the engine sends it to the store as it is; only the key's scope refuses it."""
+
+        sql = f"SELECT * FROM read_parquet('s3://{BUCKET}/s/../a/x.parquet')"
+        refusal = await _engine_refusal(routed, _S, sql)
+
+        assert "disabled by configuration" not in str(refusal)
+        assert "HTTP" in str(refusal)
 
 
 class TestEngineFacts:
@@ -497,11 +520,10 @@ class TestEngineFacts:
 
         try:
             await _rows(routed, _A, f"COPY (SELECT 1 AS i) TO '{target}'")
-            assert os.path.exists(target)
+            assert await asyncio.to_thread(os.path.exists, target)
 
         finally:
-            if os.path.exists(target):
-                os.remove(target)
+            await asyncio.to_thread(lambda: os.path.exists(target) and os.remove(target))
 
     @pytest.mark.parametrize(
         ("name", "sql"),
