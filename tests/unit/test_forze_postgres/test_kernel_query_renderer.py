@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import UTC, date, datetime, timedelta, timezone
 from decimal import Decimal
 from enum import Enum
 from typing import Annotated, Any, cast
@@ -2059,6 +2059,31 @@ class TestPsycopgValueCoercer:
         c = PsycopgValueCoercer()
         out = c.scalar("2024-01-02T03:04:05", t=_t("timestamp"))
         assert isinstance(out, datetime)
+
+    @pytest.mark.parametrize(
+        ("base", "value", "expected"),
+        [
+            # An aware value is its UTC wall clock, and a naive one UTC, whatever the precision.
+            (
+                "timestamp(3) without time zone",
+                datetime(2024, 1, 2, 6, 4, 5, tzinfo=timezone(timedelta(hours=3))),
+                datetime(2024, 1, 2, 3, 4, 5),
+            ),
+            (
+                "timestamp(0) with time zone",
+                datetime(2024, 1, 2, 3, 4, 5),
+                datetime(2024, 1, 2, 3, 4, 5, tzinfo=UTC),
+            ),
+            ("numeric(10,2)", "12.5", Decimal("12.5")),
+            ("character(3)", 5, "5"),
+        ],
+    )
+    def test_a_modifier_coerces_as_its_bare_type(
+        self, base: str, value: Any, expected: Any
+    ) -> None:
+        out = PsycopgValueCoercer().scalar(value, t=_t(base))
+
+        assert (out, getattr(out, "tzinfo", None)) == (expected, getattr(expected, "tzinfo", None))
 
     def test_array_none_returns_empty(self) -> None:
         c = PsycopgValueCoercer()

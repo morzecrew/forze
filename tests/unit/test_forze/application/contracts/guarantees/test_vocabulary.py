@@ -440,6 +440,27 @@ class TestTheKeysAHoldTakes:
 
         assert held == [advisory_lock_key("s", None, "owner", Shouting(owner="abc").owner)]
 
+    def test_a_store_keys_the_validated_value_as_it_keeps_it(self) -> None:
+        # A store that rounds or pads hands its own form back, after the type check.
+        order = uuid4()
+        seen: list[dict[str, object]] = []
+
+        def kept(values: dict[str, object]) -> dict[str, object]:
+            seen.append(values)
+            return {"sku": "SKU", "order_id": order}
+
+        held = serialization_keys(
+            [BY_ORDER_SKU],
+            [{"sku": "s", "order_id": str(order)}],
+            domain=_Line,
+            scope="lines",
+            tenant=None,
+            as_stored=kept,
+        )
+
+        assert seen == [{"sku": "s", "order_id": order}]
+        assert held == [advisory_lock_key("lines", None, "sku", "order_id", "SKU", order)]
+
     @pytest.mark.parametrize(
         "name",
         [

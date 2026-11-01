@@ -67,7 +67,7 @@ def normalize_pg_type(  # sourcery skip: assign-if-exp, reintroduce-else
 
 # ....................... #
 
-_TYPE_MODIFIER_RE = re.compile(r"\s*\(\s*\d+\s*(?:,\s*\d+\s*)?\)")
+_TYPE_MODIFIER_RE = re.compile(r"\s*\(\s*\d+\s*(?:,\s*-?\d+\s*)?\)")
 
 # ....................... #
 
@@ -75,7 +75,7 @@ _TYPE_MODIFIER_RE = re.compile(r"\s*\(\s*\d+\s*(?:,\s*\d+\s*)?\)")
 def strip_type_modifier(type_name: str) -> str:
     """Drop a numeric type modifier (precision/scale/length) from a type name.
 
-    ``numeric(10,2)`` -> ``numeric``; ``timestamp(3) with time zone`` ->
+    ``numeric(10,2)`` and ``numeric(5,-1)`` -> ``numeric``; ``timestamp(3) with time zone`` ->
     ``timestamp with time zone``; ``bit(8)`` -> ``bit``; ``varchar(255)`` ->
     ``varchar``. Array ``[]`` markers and the rest of the spelling are left
     intact. Type modifiers are always numeric, so non-modifier parentheses

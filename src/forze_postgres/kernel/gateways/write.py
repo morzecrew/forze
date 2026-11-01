@@ -6,10 +6,15 @@ require_psycopg()
 
 # ....................... #
 
+import math
+import re
+import struct
 from collections import defaultdict
 from collections.abc import AsyncGenerator, Awaitable, Callable, Mapping, Sequence
-from contextlib import asynccontextmanager, nullcontext
-from functools import partial
+from contextlib import asynccontextmanager, nullcontext, suppress
+from datetime import UTC, datetime, time, timedelta
+from decimal import MAX_PREC, ROUND_HALF_UP, Context, Decimal
+from functools import lru_cache, partial
 from typing import Any, LiteralString, cast, final, get_args
 from uuid import UUID
 
@@ -136,11 +141,10 @@ _BINARY_BASES: frozenset[str] = frozenset(
         "bytea",
     }
 )
-"""Types whose ``unnest`` array goes in binary, named bare (no modifier): a few times cheaper to
-encode than text, and the same array type and values. Not ``float4`` (a ``float8`` rounded
-again), ``numeric``, a string type with a modifier (``varchar(n)``), which text sends as an
-untyped literal, or ``timestamptz(3)``, whose values the write coercion leaves naive or aware
-as they come."""
+"""Types whose ``unnest`` array goes in binary, whatever their modifier (the cast to
+``timestamptz(3)[]`` rounds as the column does): a few times cheaper to encode than text, and
+the same array type and values. Not ``float4`` (a ``float8`` rounded again), ``numeric``, or a
+string type with a modifier (``varchar(n)``), which text sends as an untyped literal."""
 
 _NO_EQUALITY: frozenset[str] = frozenset(
     {
@@ -188,6 +192,243 @@ def _compared(alias: str, column: str, pg_t: PostgresType | None) -> sql.Composa
     return ref
 
 
+_PG_EPOCH = datetime(2000, 1, 1)
+_MICROSECOND = timedelta(microseconds=1)
+_EXACT = Context(prec=MAX_PREC)
+_MODIFIER_RE = re.compile(r"\((\d+)(?:,\s*(-?\d+))?\)")
+
+
+def _half_away(us: int, step: int) -> int:
+    """*us* rounded to a multiple of *step*, half away from zero, as Postgres rounds."""
+
+    kept = (abs(us) + step // 2) // step * step
+
+    return kept if us >= 0 else -kept
+
+
+def _rounded_as_stored(value: Any, digits: int) -> Any:
+    """*value*, a ``datetime`` or ``time``, as a column keeping *digits* fractional digits
+    stores it.
+
+    Postgres rounds an instant half away from zero on its microseconds since its epoch,
+    2000-01-01 (UTC when aware), so half a step rounds down before it; and a time of day half
+    up. A value that rounds past what Python holds, a ``datetime`` past 9999-12-31 or a
+    ``time`` up to ``24:00:00``, both of which Postgres keeps, is returned as sent.
+    """
+
+    step = 10 ** (6 - digits)
+
+    if isinstance(value, datetime):
+        epoch = _PG_EPOCH.replace(tzinfo=None if value.tzinfo is None else UTC)
+        us = _half_away((value - epoch) // _MICROSECOND, step)
+
+        try:
+            stored = epoch + timedelta(microseconds=us)
+
+            return stored if value.tzinfo is None else stored.astimezone(value.tzinfo)
+
+        except OverflowError:
+            return value
+
+    if isinstance(value, time):
+        moved = _half_away(value.microsecond, step) - value.microsecond
+        stored = datetime.combine(_PG_EPOCH, value.replace(tzinfo=None)) + timedelta(
+            microseconds=moved
+        )
+
+        return stored.time().replace(tzinfo=value.tzinfo) if stored.day == 1 else value
+
+    return value
+
+
+def _as_numeric(value: Any, precision: int, scale: int) -> Any:
+    """*value*, a ``Decimal``, ``float`` or ``int``, as a ``numeric(precision, scale)`` column
+    stores it: rounded half away from zero to *scale* places.
+
+    Returned as sent: a NaN or an infinity, and a value with more integer digits than the column
+    holds, for the write to refuse; a float whose rounded value no float spells exactly, so the
+    write could not store that value from it; and an ``int`` the column keeps whole.
+    """
+
+    if isinstance(value, int) and not isinstance(value, bool):
+        # Only a negative scale rounds an integer: ``numeric(5,-2)`` stores 149 as 100.
+        whole = int(_as_numeric(Decimal(value), precision, scale)) if scale < 0 else value
+
+        return value if whole == value else whole
+
+    if isinstance(value, float):
+        if not math.isfinite(value):
+            return value
+
+        # As the write sends it: its ``str()``, never the binary fraction.
+        rounded = _as_numeric(Decimal(str(value)), precision, scale)
+        stored = float(rounded)
+
+        return stored if Decimal(str(stored)) == rounded else value
+
+    if not isinstance(value, Decimal) or not value.is_finite():
+        return value
+
+    step = Decimal(1).scaleb(-scale)
+
+    # Any column holds a zero, even one whose scale passes its precision (``numeric(3,5)``).
+    if value.is_zero():
+        return _unsigned_zero(value.quantize(step, context=_EXACT))
+
+    # Refused by the write anyway; quantizing a vast exponent would build a vast coefficient.
+    if value.adjusted() >= precision - scale:
+        return value
+
+    return _unsigned_zero(value.quantize(step, rounding=ROUND_HALF_UP, context=_EXACT))
+
+
+def _unsigned_zero(value: Any) -> Any:
+    """*value* with a negative zero made positive, as a ``numeric`` column stores it, so a lock
+    key hashed from it matches one hashed from the stored row."""
+
+    return value.copy_abs() if isinstance(value, Decimal) and value.is_zero() else value
+
+
+def _single_spelling(single: float) -> Decimal:
+    """The digits Postgres prints for *single*, a finite nonzero single: the fewest that name it
+    (round to nearest, ties to even), and the closest to it of those."""
+
+    bits = struct.unpack("<I", struct.pack("<f", abs(single)))[0]
+    exact = Decimal(abs(single))
+    below, above = (
+        Decimal(struct.unpack("<f", struct.pack("<I", n))[0]) for n in (bits - 1, bits + 1)
+    )
+
+    # Past the largest single, its interval reaches as far above it as below.
+    if above.is_infinite():
+        above = _EXACT.subtract(_EXACT.multiply(exact, 2), below)
+
+    low = _EXACT.divide(_EXACT.add(below, exact), 2)
+    high = _EXACT.divide(_EXACT.add(exact, above), 2)
+    # A tie rounds to the even single, so an even one owns its interval's ends.
+    even = bits % 2 == 0
+
+    def names(spelled: Decimal) -> bool:
+        return low <= spelled <= high if even else low < spelled < high
+
+    for digits in range(1, 10):
+        step = Decimal(1).scaleb(exact.adjusted() - digits + 1)
+        nearest = exact.quantize(step, context=_EXACT)
+        # The nearest spelling, or a neighbour where the interval is lopsided (a power of two).
+        named = [c for c in (nearest, nearest - step, nearest + step) if names(c)]
+
+        if named:
+            spelled = min(named, key=lambda c: _EXACT.subtract(c, exact).copy_abs())
+
+            return spelled if single > 0 else -spelled
+
+    return exact if single > 0 else -exact
+
+
+def _as_real(value: Any) -> Any:
+    """*value*, a ``float``, as a ``real`` column stores it and reads it back.
+
+    The write sends a float8, which Postgres rounds to the nearest single; a read returns that
+    single as Postgres prints it (:func:`_single_spelling`), read as a float. Returned as sent:
+    a value out of range, which Postgres refuses, and one whose spelling, written back, would
+    name another single.
+    """
+
+    if not isinstance(value, float):
+        return value
+
+    try:
+        packed = struct.pack("f", value)
+
+    except OverflowError:
+        return value
+
+    single = struct.unpack("f", packed)[0]
+
+    if single == 0 and value != 0:
+        return value
+
+    if single == 0 or not math.isfinite(single):
+        return single
+
+    read = float(_single_spelling(single))
+
+    with suppress(OverflowError):
+        if struct.pack("f", read) == packed:
+            return read
+
+    return value
+
+
+def _padded(value: Any, length: int) -> Any:
+    """*value*, a ``str``, as a ``char(n)`` column stores it: blank-padded to *length*, blanks
+    past it dropped, so trailing blanks compare as Postgres compares them. A longer value is
+    returned as sent, for the write to refuse."""
+
+    if not isinstance(value, str):
+        return value
+
+    kept = value.rstrip(" ")
+
+    return kept.ljust(length) if len(kept) <= length else value
+
+
+@lru_cache(maxsize=256)
+def _stored_as(pg_t: PostgresType) -> Callable[[Any], Any] | None:
+    """How a column stores a value it rounds or pads, one array element at a time: ``real``,
+    and a declared precision, scale or length (``timestamp(p)``, ``timestamptz(p)``,
+    ``time(p)``, ``timetz(p)``, ``numeric(p,s)``, ``char(n)``). ``None`` for any other."""
+
+    base = _scalar_base(pg_t)
+
+    if base == "float4":
+        return _as_real
+
+    m = _MODIFIER_RE.search(pg_t.base)
+
+    if m is None:
+        return _unsigned_zero if base == "numeric" else None
+
+    first = int(m.group(1))
+
+    if base in {"timestamp", "timestamptz", "time", "timetz"}:
+        return partial(_rounded_as_stored, digits=first) if first < 6 else None
+
+    if base == "numeric":
+        return partial(_as_numeric, precision=first, scale=int(m.group(2) or 0))
+
+    if base == "char":
+        return partial(_padded, length=first)
+
+    return None
+
+
+def _as_stored(patch: JsonDict, column_types: PostgresColumnTypes) -> JsonDict:
+    """*patch* with each value its column rounds or pads (:func:`_stored_as`) as the column
+    stores it, so a value it would round finds no change."""
+
+    stored: JsonDict = {}
+
+    for key, value in patch.items():
+        pg_t = column_types.get(key)
+        convert = None if pg_t is None else _stored_as(pg_t)
+
+        if pg_t is None or convert is None:
+            continue
+
+        # An array as the container the patch holds: a tuple field dumps a tuple.
+        if pg_t.is_array and isinstance(value, list):
+            stored[key] = [convert(x) for x in value]
+
+        elif pg_t.is_array and isinstance(value, tuple):
+            stored[key] = tuple(convert(x) for x in value)
+
+        else:
+            stored[key] = convert(value)
+
+    return {**patch, **stored} if stored else patch
+
+
 def _row_source(
     columns: Sequence[str],
     rows: Sequence[Mapping[str, Any]],
@@ -213,10 +454,10 @@ def _row_source(
         if pg_t is None or pg_t.is_array or _scalar_base(pg_t) not in _UNNEST_BASES:
             break
 
-        # The type exactly as introspected: the write coercion normalizes values (a naive
-        # datetime made aware) only for a bare name, and binary needs them uniform.
+        # Binary needs the values uniform, which the write coercion makes them for a type with a
+        # modifier too (a naive datetime made aware for ``timestamptz(3)``).
         placeholder = sql.Placeholder(
-            format=PyFormat.BINARY if pg_t.base in _BINARY_BASES else PyFormat.AUTO
+            format=PyFormat.BINARY if _scalar_base(pg_t) in _BINARY_BASES else PyFormat.AUTO
         )
         casts.append(sql.SQL("{}::{}[]").format(placeholder, _pg_cast_type_sql(pg_t)))
 
@@ -400,10 +641,11 @@ class PostgresWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
         if not self.serialized_by:
             return
 
+        column_types = await self.column_types()
         stmt = sql.SQL("SELECT pg_advisory_xact_lock({})").format(sql.Placeholder())
         held: set[int] = set()
 
-        while wanted := sorted(self._owner_keys(await touched()) - held):
+        while wanted := sorted(self._owner_keys(await touched(), column_types) - held):
             for key in wanted:
                 await self.client.execute(stmt, [key])
                 held.add(key)
@@ -426,6 +668,7 @@ class PostgresWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
             domain=self.model_type,
             scope=self.serialization_scope,
             tenant=self.require_tenant_if_aware() if self.tenant_aware else None,
+            as_stored=partial(_as_stored, column_types=await self.column_types()),
         )
         stmt = sql.SQL("SELECT pg_advisory_xact_lock({})").format(sql.Placeholder())
 
@@ -440,18 +683,22 @@ class PostgresWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
 
         await self._serialize(fixed)
 
-    def _owner_keys(self, rows: Sequence[Any]) -> set[int]:
-        """The lock keys *rows* contend on — derived as the in-memory store derives them."""
+    def _owner_keys(self, rows: Sequence[Any], column_types: PostgresColumnTypes) -> set[int]:
+        """The lock keys *rows* contend on — derived as the in-memory store derives them, from
+        each value as its column stores it (:func:`_as_stored`): a row a write sends finer than
+        the column keeps is the owner a stored row reads back as."""
 
         tenant = self.require_tenant_if_aware() if self.tenant_aware else None
         keys: set[int] = set()
 
         for guarantee in self.serialized_by:
             for row in rows:
-                values = [
-                    row.get(field) if isinstance(row, Mapping) else getattr(row, field, None)
+                sent = {
+                    field: row.get(field) if isinstance(row, Mapping) else getattr(row, field, None)
                     for field in guarantee.key
-                ]
+                }
+                stored = _as_stored(sent, column_types)
+                values = [stored[field] for field in guarantee.key]
                 keys.add(
                     advisory_lock_key(self.serialization_scope, tenant, *guarantee.key, *values)
                 )
@@ -1382,7 +1629,8 @@ class PostgresWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
                 self._require_revisions((current, rev))
 
             if update is not None:
-                patch = update
+                # As the column will keep it, so a value it would round finds no change.
+                update = patch = _as_stored(update, await self.column_types())
 
                 if rev is not None:
                     (patch,) = await self._validate_history((current, rev, update), merge=merge)
@@ -1612,6 +1860,9 @@ class PostgresWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
                     groups[key].append((cid, crev, diff))
 
             else:
+                column_types = await self.column_types()
+                # As the columns will keep them, so a value they would round finds no change.
+                updates = [_as_stored(u, column_types) for u in updates]
                 patches: Sequence[JsonDict] = updates
 
                 # if revisions are provided, validate historical consistency

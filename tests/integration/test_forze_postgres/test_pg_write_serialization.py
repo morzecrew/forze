@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import AsyncIterator, Awaitable, Callable
 from datetime import UTC, datetime, timedelta, timezone
+from decimal import Decimal
 from typing import Any
 from unittest.mock import patch
 from uuid import UUID, uuid4
@@ -45,7 +46,7 @@ HOLD = 0.6
 """How long the holder keeps its transaction open after writing."""
 
 LAG = 0.15
-"""How long the other writer waits before it starts, so the holder has its lock first."""
+"""How long a read-then-write handler waits between its read and its write."""
 
 
 class _Booking(Document):
@@ -135,23 +136,26 @@ async def _landed_while_held(
 ) -> bool:
     """Whether *other*'s write landed while *hold*'s transaction still held its owners.
 
-    Observed rather than timed: each side records when it wrote and when the holder let go, and
-    the question is only whether the second write came before the release.
+    Observed rather than timed: the other writer starts once the holder has written, so holds
+    its locks, however long that took; each side records when it wrote and when the holder let
+    go, and the question is only whether the second write came before the release.
     """
 
     order: list[str] = []
     holder_ctx = _ctx(pg_client, table)
     other_ctx = _ctx(second_client, table)
+    wrote = asyncio.Event()
 
     async def holder() -> None:
         async with pg_client.transaction():
             await hold(holder_ctx)
             order.append("holder:wrote")
+            wrote.set()
             await asyncio.sleep(HOLD)
             order.append("holder:done")
 
     async def writer() -> None:
-        await asyncio.sleep(LAG)
+        await wrote.wait()
 
         if other_in_transaction:
             async with second_client.transaction():
@@ -507,6 +511,22 @@ class TestTheLockIsTheOneTheMockTakes:
         assert (key >> 32, key & 0xFFFF_FFFF) in seen, seen
 
 
+class _Priced(Document):
+    price: Decimal
+
+
+class _PricedRead(ReadDocument):
+    price: Decimal
+
+
+class _PricedCreate(CreateDocumentCmd):
+    price: Decimal
+
+
+class _PricedUpdate(BaseDTO):
+    price: Decimal | None = None
+
+
 # ....................... #
 
 BY_SLOT = SerializedBy(key=("slot",))
@@ -625,6 +645,52 @@ class TestAnInstantIsOneOwnerInAnyOffset:
         assert not await _landed_while_held(utc_writer, zoned_client, table, create, update)
 
 
+
+class TestAnInstantKeysAsItsColumnStoresIt:
+    """A ``timestamptz(3)`` key rounds what a write sends: two instants it stores alike are one
+    owner, whether a write sends one finer than the column keeps or reads it back as stored."""
+
+    @pytest.mark.parametrize("other", ["create", "update", "move"])
+    async def test_instants_stored_alike_take_one_lock(
+        self, other: str, pg_client: PostgresClient, second_client: PostgresClient
+    ) -> None:
+        table = f"slots3_{uuid4().hex[:10]}"
+        await pg_client.execute(
+            f"""
+            CREATE TABLE {table} (
+                id uuid PRIMARY KEY,
+                rev integer NOT NULL,
+                created_at timestamptz NOT NULL,
+                last_update_at timestamptz NOT NULL,
+                slot timestamptz(3) NOT NULL,
+                label text NOT NULL DEFAULT ''
+            );
+            """
+        )
+        # Both round to 09:00:00.123, which the stored row already holds.
+        sent, alike = (_SLOT_UTC.replace(microsecond=us) for us in (123456, 123400))
+        cmd = _ctx(pg_client, table).doc.command(_slot_spec(table))
+        stored = await cmd.create(_SlotCreate(slot=alike))
+        elsewhere = await cmd.create(_SlotCreate(slot=_SLOT_UTC + timedelta(hours=1)))
+
+        async def create(ctx: ExecutionContext) -> None:
+            await ctx.doc.command(_slot_spec(table, BY_SLOT)).create(_SlotCreate(slot=sent))
+
+        async def write(ctx: ExecutionContext) -> None:
+            command = ctx.doc.command(_slot_spec(table, BY_SLOT))
+
+            if other == "create":
+                await command.create(_SlotCreate(slot=alike))
+
+            elif other == "update":
+                await command.update(stored.id, stored.rev, _SlotUpdate(label="x"))
+
+            else:
+                await command.update(elsewhere.id, elsewhere.rev, _SlotUpdate(slot=alike))
+
+        assert not await _landed_while_held(pg_client, second_client, table, create, write)
+
+
 # ....................... #
 
 def _hold(table: str, owner: str) -> Write:
@@ -652,6 +718,39 @@ class TestAHoldTakesTheWriteLockWithoutWriting:
         assert await _landed_while_held(
             pg_client, second_client, table, _hold(table, "o1"), _create(table, "o2", BY_OWNER)
         )
+
+    async def test_a_hold_keys_the_owner_its_column_stores(
+        self, pg_client: PostgresClient, second_client: PostgresClient
+    ) -> None:
+        # ``numeric(10,2)`` rounds both to 1.01, the owner a write for either takes.
+        table = f"priced_{uuid4().hex[:10]}"
+        await pg_client.execute(
+            f"""
+            CREATE TABLE {table} (
+                id uuid PRIMARY KEY,
+                rev integer NOT NULL,
+                created_at timestamptz NOT NULL,
+                last_update_at timestamptz NOT NULL,
+                price numeric(10,2) NOT NULL
+            );
+            """
+        )
+        spec = DocumentSpec[_PricedRead, _Priced, _PricedCreate, _PricedUpdate](
+            name=table,
+            read=_PricedRead,
+            write=DocumentWriteTypes(
+                domain=_Priced, create_cmd=_PricedCreate, update_cmd=_PricedUpdate
+            ),
+            guarantees=(SerializedBy(key=("price",)),),
+        )
+
+        async def hold(ctx: ExecutionContext) -> None:
+            await ctx.doc.command(spec).hold({"price": Decimal("1.005")})
+
+        async def create(ctx: ExecutionContext) -> None:
+            await ctx.doc.command(spec).create(_PricedCreate(price=Decimal("1.01")))
+
+        assert not await _landed_while_held(pg_client, second_client, table, hold, create)
 
     @pytest.mark.parametrize("held", [True, False])
     async def test_two_read_then_write_handlers_decide_one_at_a_time(

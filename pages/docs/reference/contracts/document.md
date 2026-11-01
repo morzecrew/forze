@@ -159,9 +159,11 @@ same way. Mongo has no advisory-lock mechanism and refuses the declaration.
 
 A datetime key field locks on the instant, not on its offset: a create written in `+03:00` and an
 update of the row Postgres reads back in the session's time zone take one lock. A naive datetime
-is read as UTC, which matches what Postgres stores for it only when the writing session's
-`TimeZone` is UTC; the client sets none, so the server's default applies. An instant whose UTC
-spelling falls outside the years 1 to 9999 is refused as `lock_key_instant_out_of_range`.
+is read as UTC, as Postgres stores it in a `timestamptz` column whatever the session's
+`TimeZone`. An instant whose UTC spelling falls outside the years 1 to 9999 is refused as
+`lock_key_instant_out_of_range`. On Postgres a key locks on the value as its column stores it,
+writes and `hold` alike: in a `timestamptz(3)` column, `09:00:00.1234` and `09:00:00.1229` are
+one owner.
 
 Those locks add up in a long transaction. A transaction holds one for each distinct owner it writes
 under until it ends, and they all live in Postgres's shared lock table. Every session shares that

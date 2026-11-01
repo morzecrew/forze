@@ -1,9 +1,10 @@
 """Unit tests for ``forze_postgres.kernel.gateways.write``."""
 
 import asyncio
+import random
 from collections.abc import Callable
 from datetime import UTC, date, datetime, time, timedelta, timezone
-from decimal import Decimal
+from decimal import ROUND_HALF_UP, Context, Decimal
 from enum import Enum, IntEnum, StrEnum
 from unittest.mock import AsyncMock, MagicMock
 from uuid import UUID
@@ -760,6 +761,273 @@ def test_a_jsonb_array_compares_as_it_is_and_a_json_array_falls_back() -> None:
     # json has none: a json[] column takes the domain path; a json one compares as jsonb.
     assert not _comparable(json_array)
     assert _compared("t", "doc", json).as_string() == '"t"."doc"::jsonb'
+
+
+# ....................... #
+# An update's values, as a column that rounds or pads them stores them
+
+
+def _pg(base: str, *, is_array: bool = False) -> PostgresType:
+    return PostgresType(base=base, is_array=is_array, not_null=False)
+
+
+def test_only_a_column_that_rounds_or_pads_converts() -> None:
+    from forze_postgres.kernel.gateways.write import _stored_as
+
+    converts = [
+        "timestamp(3) with time zone",
+        "timestamp(0) without time zone",
+        "time(2) with time zone",
+        "numeric(10,2)",
+        "numeric(5,-1)",
+        "numeric(7,0)",
+        # A bare numeric drops a zero's sign.
+        "numeric",
+        "float4",
+        "character(3)",
+    ]
+    stores_as_sent = [
+        "timestamp(6) with time zone",
+        "timestamptz",
+        "float8",
+        "bpchar",
+        "varchar",
+        "interval(3)",
+        "bit(8)",
+    ]
+
+    assert all(_stored_as(_pg(base)) is not None for base in converts)
+    assert all(_stored_as(_pg(base, is_array=True)) is not None for base in converts)
+    assert all(_stored_as(_pg(base)) is None for base in stores_as_sent)
+
+
+@pytest.mark.parametrize(
+    ("sent", "digits", "stored"),
+    [
+        # Half a step rounds up after Postgres's epoch, 2000-01-01, and down before it.
+        (datetime(2026, 1, 1, 12, 0, 0, 123500), 3, datetime(2026, 1, 1, 12, 0, 0, 124000)),
+        (datetime(2026, 1, 1, 12, 0, 0, 123499), 3, datetime(2026, 1, 1, 12, 0, 0, 123000)),
+        (datetime(1999, 12, 31, 23, 59, 59, 123500), 3, datetime(1999, 12, 31, 23, 59, 59, 123000)),
+        (datetime(1999, 12, 31, 23, 59, 59, 123501), 3, datetime(1999, 12, 31, 23, 59, 59, 124000)),
+        (datetime(2026, 1, 1, 12, 0, 0, 999500), 3, datetime(2026, 1, 1, 12, 0, 1)),
+        (datetime(2026, 1, 1, 12, 0, 0, 123450), 4, datetime(2026, 1, 1, 12, 0, 0, 123500)),
+        (datetime(2026, 1, 1, 12, 0, 0, 500000), 0, datetime(2026, 1, 1, 12, 0, 1)),
+        # An aware instant counts from the epoch in UTC, and keeps its offset.
+        (
+            datetime(2000, 1, 1, 2, 0, 0, 500, tzinfo=timezone(timedelta(hours=3))),
+            3,
+            datetime(2000, 1, 1, 2, 0, 0, tzinfo=timezone(timedelta(hours=3))),
+        ),
+        (
+            datetime(2026, 1, 1, 12, 0, 0, 123456, tzinfo=UTC),
+            3,
+            datetime(2026, 1, 1, 12, 0, 0, 123000, tzinfo=UTC),
+        ),
+        # A time of day rounds half up; one that would reach 24:00:00 is left as sent.
+        (time(12, 0, 0, 123500), 3, time(12, 0, 0, 124000)),
+        (time(12, 0, 0, 123500, tzinfo=UTC), 3, time(12, 0, 0, 124000, tzinfo=UTC)),
+        (time(23, 59, 59, 999500), 3, time(23, 59, 59, 999500)),
+        # Rounding past 9999-12-31, which Postgres keeps and Python cannot hold: as sent.
+        (datetime.max, 3, datetime.max),
+        (datetime.max.replace(tzinfo=UTC), 3, datetime.max.replace(tzinfo=UTC)),
+        (
+            datetime(9999, 12, 31, 23, 59, 59, 999600, tzinfo=timezone(timedelta(hours=3))),
+            3,
+            datetime(9999, 12, 31, 23, 59, 59, 999600, tzinfo=timezone(timedelta(hours=3))),
+        ),
+        ("2026-01-01T12:00:00.123456", 3, "2026-01-01T12:00:00.123456"),
+    ],
+)
+def test_an_instant_rounds_as_postgres_stores_it(sent: object, digits: int, stored: object) -> None:
+    from forze_postgres.kernel.gateways.write import _rounded_as_stored
+
+    got = _rounded_as_stored(sent, digits)
+
+    assert got == stored
+    assert getattr(got, "tzinfo", None) == getattr(stored, "tzinfo", None)
+
+
+@pytest.mark.parametrize(
+    ("sent", "precision", "scale", "stored"),
+    [
+        # Half away from zero, to a negative scale too.
+        (Decimal("1.005"), 10, 2, Decimal("1.01")),
+        (Decimal("-1.005"), 10, 2, Decimal("-1.01")),
+        (Decimal("0.0049"), 10, 2, Decimal("0.00")),
+        (Decimal("123.456"), 5, -1, Decimal("120")),
+        (Decimal("1E-999999999"), 10, 2, Decimal("0.00")),
+        # Too large for the precision once rounded: the write refuses it.
+        (Decimal("999.995"), 5, 2, Decimal("1000.00")),
+        # Too large as sent, however vast: as sent, never quantized.
+        (Decimal("1000"), 5, 2, Decimal("1000")),
+        (Decimal("1E+999999999"), 10, 2, Decimal("1E+999999999")),
+        (Decimal("-Infinity"), 10, 2, Decimal("-Infinity")),
+        # A float as the write sends it, its str(); one whose rounded value no float spells
+        # exactly, as sent.
+        (1.005, 10, 2, 1.01),
+        (0.12499999999999999, 10, 2, 0.12),
+        (12345678901234.567, 20, 2, 12345678901234.57),
+        (0.1234567890123456, 20, 17, 0.1234567890123456),
+        (float("nan"), 10, 2, None),
+        ("1.005", 10, 2, "1.005"),
+    ],
+)
+def test_a_number_rounds_to_its_scale(
+    sent: object, precision: int, scale: int, stored: object
+) -> None:
+    from forze_postgres.kernel.gateways.write import _as_numeric
+
+    got = _as_numeric(sent, precision, scale)
+
+    assert got is sent if stored is None else got == stored
+
+
+@pytest.mark.parametrize(
+    ("sent", "scale", "stored"),
+    [(149, -2, 100), (150, -2, 200), (-150, -2, -200), (49, -2, 0), (149, 2, 149), (149, 0, 149)],
+)
+def test_an_integer_rounds_only_to_a_negative_scale(sent: int, scale: int, stored: int) -> None:
+    from forze.base.primitives.fingerprint import advisory_lock_key
+    from forze_postgres.kernel.gateways.write import _as_numeric
+
+    got = _as_numeric(sent, 5, scale)
+
+    # An int still, so a lock key hashed from it matches one hashed from the stored row.
+    assert (type(got), got) == (int, stored)
+    assert advisory_lock_key("k", got) == advisory_lock_key("k", stored)
+
+
+def test_a_float_rounds_only_to_a_value_the_write_stores_exactly() -> None:
+    from forze_postgres.kernel.gateways.write import _as_numeric
+
+    rng = random.Random(792)
+
+    for _ in range(5000):
+        sent = rng.uniform(1, 10) * 10.0 ** rng.randint(-6, 15)
+        scale = rng.randint(0, 17)
+        # What the write stores from either float: its str(), rounded half away from zero.
+        step = Decimal(1).scaleb(-scale)
+        stored = Decimal(str(sent)).quantize(step, rounding=ROUND_HALF_UP, context=Context(prec=60))
+        got = _as_numeric(sent, 40, scale)
+
+        assert got is sent or Decimal(str(got)) == stored, (sent, scale)
+
+
+@pytest.mark.parametrize(
+    ("base", "sent", "stored"),
+    [
+        # Postgres has no negative numeric zero: what a read of the row returns.
+        ("numeric(10,2)", Decimal("-0.004"), Decimal("0.00")),
+        ("numeric(10,2)", Decimal("-0"), Decimal("0.00")),
+        # A scale past the precision still holds a zero.
+        ("numeric(3,5)", Decimal("-0"), Decimal("0.00000")),
+        ("numeric(3,5)", Decimal("-0.000001"), Decimal("0.00000")),
+        ("numeric", Decimal("-0"), Decimal("0")),
+        ("numeric", Decimal("-0.00"), Decimal("0.00")),
+    ],
+)
+def test_a_negative_zero_number_is_stored_and_locked_as_zero(
+    base: str, sent: Decimal, stored: Decimal
+) -> None:
+    from forze.base.primitives.fingerprint import advisory_lock_key
+    from forze_postgres.kernel.gateways.write import _stored_as
+
+    as_stored = _stored_as(PostgresType(base=base, is_array=False, not_null=False))
+
+    assert as_stored is not None
+    got = as_stored(sent)
+
+    assert str(got) == str(stored)
+    assert advisory_lock_key("k", got) == advisory_lock_key("k", stored)
+
+
+def test_a_nan_number_is_left_as_sent() -> None:
+    from forze_postgres.kernel.gateways.write import _as_numeric
+
+    nan = Decimal("NaN")
+
+    assert _as_numeric(nan, 10, 2) is nan
+
+
+@pytest.mark.parametrize(
+    ("sent", "stored"),
+    [
+        (0.1, 0.1),
+        (0.123456789, 0.12345679),
+        (1 / 3, 0.33333334),
+        (16777217.0, 16777216.0),
+        (2.0**-149, 1e-45),
+        # A power of two: the shortest spelling lies on the wider side of its interval.
+        (2.0**-96, 1.2621775e-29),
+        # Nine digits, a tie between two eight-digit spellings: the even one.
+        (1.00390625, 1.0039062),
+        (-0.0, -0.0),
+        (float("inf"), float("inf")),
+        # Out of range, which Postgres refuses: as sent.
+        (3.5e38, 3.5e38),
+        (1e-50, 1e-50),
+        (1, 1),
+    ],
+)
+def test_a_real_reads_back_as_its_nearest_single(sent: object, stored: object) -> None:
+    from forze_postgres.kernel.gateways.write import _as_real
+
+    assert _as_real(sent) == stored
+
+
+@pytest.mark.parametrize(
+    ("sent", "stored"),
+    [
+        ("ab", "ab "),
+        ("ab ", "ab "),
+        ("ab   ", "ab "),
+        ("", "   "),
+        ("a\t", "a\t "),
+        # Too long: the write refuses it.
+        ("abcd", "abcd"),
+    ],
+)
+def test_a_char_is_blank_padded(sent: str, stored: str) -> None:
+    from forze_postgres.kernel.gateways.write import _padded
+
+    assert _padded(sent, 3) == stored
+
+
+def test_an_update_converts_only_the_columns_that_round_or_pad() -> None:
+    from forze_postgres.kernel.gateways.write import _as_stored
+
+    at = datetime(2026, 1, 1, 12, 0, 0, 123456, tzinfo=UTC)
+    rounded = at.replace(microsecond=123000)
+    types = {
+        "at": _pg("timestamp(3) with time zone"),
+        "ats": _pg("timestamp(3) with time zone", is_array=True),
+        "seen": _pg("timestamptz"),
+        "price": _pg("numeric(10,2)"),
+        "codes": _pg("character(3)", is_array=True),
+        "pair": _pg("timestamp(3) with time zone", is_array=True),
+    }
+    patch = {
+        "at": at,
+        "ats": [at, None],
+        "pair": (at, at),
+        "seen": at,
+        "price": Decimal("1.005"),
+        "codes": ["ab", None],
+        "name": "n",
+    }
+
+    assert _as_stored(patch, types) == {
+        "at": rounded,
+        "ats": [rounded, None],
+        # A tuple stays a tuple.
+        "pair": (rounded, rounded),
+        "seen": at,
+        "price": Decimal("1.01"),
+        "codes": ["ab ", None],
+        "name": "n",
+    }
+    assert patch["at"] == at
+    assert _as_stored({"name": "n"}, types) == {"name": "n"}
 
 
 @pytest.mark.asyncio

@@ -55,6 +55,12 @@ FORMS: dict[str, datetime] = {
 """One instant in each form a caller may send it in."""
 
 
+def _instant(at: datetime) -> datetime:
+    """*at* as an aware instant: a naive one, as a ``timestamp`` column reads back, is UTC."""
+
+    return at if at.tzinfo is not None else at.replace(tzinfo=UTC)
+
+
 async def assert_an_unchanged_instant_is_not_a_change(
     command: Any, query: Any, *, set_based: bool = True
 ) -> list[Any]:
@@ -96,7 +102,7 @@ async def assert_an_unchanged_instant_is_not_a_change(
         doc.id, InstantCreate(name="n", at=moved), InstantUpdate(at=moved), return_new=False
     )
     stored = await query.get(doc.id, skip_cache=True)
-    assert (stored.rev, stored.at) == (doc.rev + 1, moved)
+    assert (stored.rev, _instant(stored.at)) == (doc.rev + 1, moved)
 
     return created
 
@@ -116,7 +122,7 @@ async def assert_a_stale_resend_keeps_a_concurrent_change(command: Any, query: A
         await command.update(doc.id, doc.rev, InstantUpdate(name="b", at=sent_at))
         stored = await query.get(doc.id, skip_cache=True)
 
-        assert (stored.name, stored.at, stored.rev) == ("b", moved, doc.rev + 2), form
+        assert (stored.name, _instant(stored.at), stored.rev) == ("b", moved, doc.rev + 2), form
 
 
 async def assert_a_batch_writes_only_the_rows_it_changes(
@@ -152,4 +158,4 @@ async def assert_a_batch_writes_only_the_rows_it_changes(
         assert (stored.name, stored.rev, await history_rows(pk)) == (name, rev, rev), name
 
         if pk in (resend.id, change.id):
-            assert stored.at == moved, name
+            assert _instant(stored.at) == moved, name

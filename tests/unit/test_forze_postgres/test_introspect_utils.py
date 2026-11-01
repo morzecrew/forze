@@ -8,6 +8,7 @@ from forze_postgres.kernel.catalog.introspect.utils import (
     index_expr_uses_to_tsvector,
     mask_sql_literals,
     normalize_pg_type,
+    strip_type_modifier,
 )
 
 
@@ -101,6 +102,20 @@ class TestNormalizePgType:
         a = normalize_pg_type("integer")
         b = normalize_pg_type("integer")
         assert a == b == "int4"
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        ("numeric(10,2)", "numeric"),
+        ("numeric(5,-1)", "numeric"),
+        ("timestamp(3) with time zone", "timestamp with time zone"),
+        ("character(3)", "character"),
+        ("text", "text"),
+    ],
+)
+def test_a_type_modifier_is_stripped(raw: str, expected: str) -> None:
+    assert strip_type_modifier(raw) == expected
 
 
 class TestExtractIndexExprFromIndexdef:

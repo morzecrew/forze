@@ -99,7 +99,10 @@ Updates are structured. `order.update({"total": 99})` returns a **new immutable
 instance** and a minimal diff, runs the validators, and bumps `last_update_at`.
 A patch that changes nothing returns the original and an empty diff. An update compares a
 naive `datetime` with a stored aware one as UTC, as Postgres and Mongo store a naive value
-(Mongo at millisecond precision), so resending the same instant is no change.
+(Mongo at millisecond precision), so resending the same instant is no change. On Postgres it
+compares a value as its column stores it: rounded to a `timestamp(p)`, `timestamptz(p)`,
+`time(p)`, `timetz(p)` or `numeric(p,s)` column's precision or scale, or to `real`, and
+blank-padded to `char(n)`, arrays element by element. Resending such a value is no change either.
 
 The patch merges into what is stored: a field it names is set, and the rest are kept. Into
 a model (the document, a nested model, or one held in a union or a mapping) it merges field
