@@ -33,6 +33,10 @@ from .emitters import has_event_emitters
 # ----------------------- #
 
 
+_CREATE_CHECK = "_forze_invariants_on_create"
+"""The name :class:`Document` attaches its create-time invariant check under."""
+
+
 def _enforce_invariants_on_create[M: "Document"](self: M) -> M:
     """The create-time half of invariant enforcement, attached to a document class only when it
     declares an invariant.
@@ -142,11 +146,17 @@ class Document(CoreModel):
 
         cls._invariants_ = collect_invariants(cls)
 
+        if _CREATE_CHECK in vars(cls) or _CREATE_CHECK in cls._invariants_:
+            raise exc.configuration(
+                f"{cls.__qualname__}.{_CREATE_CHECK} is reserved: Document attaches its "
+                "create-time invariant check under that name."
+            )
+
         if cls._invariants_:
             # Attached only here, before pydantic collects the class's validators, so a
             # document without invariants pays no call per instance it validates.
             validator = model_validator(mode="after")(_enforce_invariants_on_create)
-            setattr(cls, "_enforce_invariants_on_create", validator)  # noqa: B010
+            setattr(cls, _CREATE_CHECK, validator)
 
         if has_event_emitters(cls) and not issubclass(cls, AggregateRoot):
             raise exc.configuration(

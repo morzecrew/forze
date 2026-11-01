@@ -105,7 +105,21 @@ class TestInvariant:
         }
 
         assert validators[Document] == validators[Plain] == set()
-        assert validators[Account] == validators[Savings] == {"_enforce_invariants_on_create"}
+        assert validators[Account] == validators[Savings] == {"_forze_invariants_on_create"}
 
         with pytest.raises(CoreException):
             Savings(balance=-1)
+
+    def test_the_create_check_name_is_reserved(self) -> None:
+        """A class's own attribute of that name would be replaced, and an invariant of that
+        name would call the check that calls it."""
+
+        with pytest.raises(CoreException) as ei:
+
+            class Clash(Document):
+                n: int = 0
+
+                @invariant
+                def _forze_invariants_on_create(self) -> None: ...
+
+        assert ei.value.kind is ExceptionKind.CONFIGURATION
