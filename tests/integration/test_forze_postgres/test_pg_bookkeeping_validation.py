@@ -110,6 +110,31 @@ async def test_disabled_insert_trigger_keeps_the_history_warning(
     assert await _validate(pg_client, t, history_enabled=True) == []
 
 
+@pytest.mark.parametrize(
+    ("hist", "quiet"),
+    [
+        ("BEFORE UPDATE OR DELETE ON {t} FOR EACH ROW", True),
+        ("AFTER UPDATE OR DELETE ON {t} FOR EACH STATEMENT", False),
+        ("AFTER DELETE ON {t} FOR EACH ROW", False),
+    ],
+)
+async def test_superseded_row_history_trigger_silences_the_history_warning(
+    pg_client: PostgresClient,
+    hist: str,
+    quiet: bool,
+) -> None:
+    t, fn = await _setup(
+        pg_client,
+        """
+        CREATE TABLE {t} (id int PRIMARY KEY, rev int NOT NULL);
+        CREATE TRIGGER {t}_bump BEFORE UPDATE ON {t} FOR EACH ROW EXECUTE FUNCTION {fn}();
+        """,
+    )
+    await pg_client.execute(f"CREATE TRIGGER {t}_hist {hist.format(t=t)} EXECUTE FUNCTION {fn}();")
+
+    assert len(await _validate(pg_client, t, history_enabled=True)) == (0 if quiet else 1)
+
+
 # ....................... #
 
 _PARTITIONED = """
@@ -184,6 +209,25 @@ async def test_partitioned_history_needs_an_insert_trigger_on_every_leaf(
     )
 
     assert await _validate(pg_client, t, history_enabled=True) == []
+
+
+async def test_partitioned_history_needs_a_superseded_row_trigger_on_every_leaf(
+    pg_client: PostgresClient,
+) -> None:
+    t, fn = await _setup(
+        pg_client,
+        _PARTITIONED
+        + """
+        CREATE TRIGGER bump BEFORE UPDATE ON {t} FOR EACH ROW EXECUTE FUNCTION {fn}();
+        CREATE TRIGGER hist BEFORE UPDATE OR DELETE ON {t} FOR EACH ROW EXECUTE FUNCTION {fn}();
+        """,
+    )
+
+    assert await _validate(pg_client, t, history_enabled=True) == []
+
+    await pg_client.execute(f"ALTER TABLE {t}_b1 DISABLE TRIGGER hist")
+
+    assert len(await _validate(pg_client, t, history_enabled=True)) == 1
 
 
 async def test_partitioned_parent_statement_insert_trigger_counts(

@@ -40,9 +40,10 @@ async def validate_postgres_document_bookkeeping(
 
     Only enabled triggers count, and on a partitioned write relation only those that fire on
     every partition. With ``'database'``, a write relation without a
-    ``BEFORE UPDATE … FOR EACH ROW`` trigger is refused, and a history-enabled one without an
-    INSERT trigger is warned about. With ``'application'``, such UPDATE triggers are warned
-    about: they risk double revision bumps.
+    ``BEFORE UPDATE … FOR EACH ROW`` trigger is refused. A history-enabled one is warned about
+    when no trigger fires on INSERT, to write each new row, and no row trigger fires on both
+    UPDATE and DELETE, to write each superseded one. With ``'application'``, such UPDATE
+    triggers are warned about: they risk double revision bumps.
 
     :raises CoreException: ``internal``, code ``postgres_bookkeeping_validation_failed``,
         when ``'database'`` finds no ``BEFORE UPDATE … FOR EACH ROW`` trigger on the write
@@ -73,17 +74,25 @@ async def validate_postgres_document_bookkeeping(
                     },
                 )
 
-            # The UPDATE side is the revision bump trigger required above, which may also write
-            # history, so only a relation with no INSERT trigger is surely missing history rows.
-            if spec.history_enabled and not await introspector.insert_triggers(
-                schema=schema,
-                relation=relation,
+            # History is read only to merge an update at an older revision. Triggers writing
+            # each new row need INSERT for the first one; triggers writing each superseded row
+            # need none, and firing on DELETE too is what tells them apart from a revision bump.
+            # shortcut: events are checked, not what a trigger writes (OLD or NEW); reading
+            # function bodies would be needed to tell.
+            if (
+                spec.history_enabled
+                and not await introspector.insert_triggers(schema=schema, relation=relation)
+                and not await introspector.update_and_delete_row_triggers(
+                    schema=schema,
+                    relation=relation,
+                )
             ):
                 logger.warning(
                     "Postgres bookkeeping for document %r write relation %s.%s: "
                     "history_enabled=True with bookkeeping_strategy='database', but no enabled "
-                    "trigger fires on every INSERT — created documents may get no history row, "
-                    "since database triggers must write history under this strategy.",
+                    "trigger fires on every INSERT to write each new row, and no row trigger "
+                    "fires on both UPDATE and DELETE to write each superseded one — an update "
+                    "at an older revision may find no history row to merge against.",
                     spec.name,
                     schema,
                     relation,

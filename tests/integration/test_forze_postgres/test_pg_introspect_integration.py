@@ -267,6 +267,35 @@ async def test_insert_triggers_lists_user_insert_triggers_only(
 
 
 @pytest.mark.asyncio
+async def test_update_and_delete_row_triggers_lists_row_level_ones_on_both_events(
+    pg_client: PostgresClient,
+) -> None:
+    """Only a row trigger firing on both UPDATE and DELETE can write each superseded row."""
+    suf = uuid4().hex[:12]
+    t = f"intro_udtrg_{suf}"
+    fn = f"intro_udtrg_fn_{suf}"
+    await pg_client.execute(
+        f"""
+        CREATE TABLE {t} (id int PRIMARY KEY, rev int NOT NULL);
+        CREATE FUNCTION {fn}() RETURNS trigger AS $$ BEGIN RETURN OLD; END; $$ LANGUAGE plpgsql;
+        CREATE TRIGGER {t}_bu BEFORE UPDATE ON {t} FOR EACH ROW EXECUTE FUNCTION {fn}();
+        CREATE TRIGGER {t}_ad AFTER DELETE ON {t} FOR EACH ROW EXECUTE FUNCTION {fn}();
+        CREATE TRIGGER {t}_uds AFTER UPDATE OR DELETE ON {t}
+        FOR EACH STATEMENT EXECUTE FUNCTION {fn}();
+        CREATE TRIGGER {t}_hist BEFORE UPDATE OR DELETE ON {t}
+        FOR EACH ROW EXECUTE FUNCTION {fn}();
+        """
+    )
+
+    intro = PostgresIntrospector(client=pg_client)
+
+    assert await intro.update_and_delete_row_triggers(
+        schema="public",
+        relation=t,
+    ) == frozenset({f"{t}_hist"})
+
+
+@pytest.mark.asyncio
 async def test_update_triggers_lists_row_level_before_update_only(
     pg_client: PostgresClient,
 ) -> None:
