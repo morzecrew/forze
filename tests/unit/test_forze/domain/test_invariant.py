@@ -88,3 +88,24 @@ class TestInvariant:
         plain = Plain()
         updated, _ = plain.update({"name": "y"})
         assert updated.name == "y"
+
+    def test_only_a_class_with_invariants_validates_them_on_create(self) -> None:
+        """A document without invariants carries no create-time validator, so validating one
+        costs no call into it; one that declares or inherits an invariant still enforces it."""
+
+        class Plain(Document):
+            name: str = "x"
+
+        class Savings(Account):
+            rate: int = 0
+
+        validators = {
+            cls: set(cls.__pydantic_decorators__.model_validators)
+            for cls in (Document, Plain, Account, Savings)
+        }
+
+        assert validators[Document] == validators[Plain] == set()
+        assert validators[Account] == validators[Savings] == {"_enforce_invariants_on_create"}
+
+        with pytest.raises(CoreException):
+            Savings(balance=-1)

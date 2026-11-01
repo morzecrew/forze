@@ -33,6 +33,19 @@ from .emitters import has_event_emitters
 # ----------------------- #
 
 
+def _enforce_invariants_on_create[M: "Document"](self: M) -> M:
+    """The create-time half of invariant enforcement, attached to a document class only when it
+    declares an invariant.
+
+    Runs on construction and ``model_validate``. The merge-patch update path uses
+    ``model_copy``, which bypasses model validators, so an update enforces invariants itself
+    through ``_run_invariants``; together they make an invariant always hold.
+    """
+
+    self._run_invariants()
+    return self
+
+
 def _merge_update(live: Any, before: JsonDict, patch: JsonDict) -> JsonDict:
     """Merge an update *patch* into *before*, the python-mode dump of *live*.
 
@@ -128,6 +141,12 @@ class Document(CoreModel):
         )
 
         cls._invariants_ = collect_invariants(cls)
+
+        if cls._invariants_:
+            # Attached only here, before pydantic collects the class's validators, so a
+            # document without invariants pays no call per instance it validates.
+            validator = model_validator(mode="after")(_enforce_invariants_on_create)
+            setattr(cls, "_enforce_invariants_on_create", validator)  # noqa: B010
 
         if has_event_emitters(cls) and not issubclass(cls, AggregateRoot):
             raise exc.configuration(
@@ -329,16 +348,6 @@ class Document(CoreModel):
 
             method = cast(UpdateValidator[Self], getattr(cls, name))
             method(self, after, diff)
-
-    # ....................... #
-
-    @model_validator(mode="after")
-    def _enforce_invariants_on_create(self) -> Self:
-        # Runs on construction / model_validate (create). The merge-patch update path uses
-        # ``model_copy``, which bypasses model validators, so update enforces invariants
-        # explicitly via ``_run_invariants`` — together they make an invariant always hold.
-        self._run_invariants()
-        return self
 
     # ....................... #
 
