@@ -537,7 +537,10 @@ A bulk load that needs no rows back can pass `return_new=False, set_based=True`.
 then inserts the missing rows and patches the stored ones with set-based statements, reading
 nothing back: a stored row takes the update as its DTO encodes it, and only a row the update
 changes gets a new `rev` and `last_update_at`. The stored rows are locked in id order first,
-so concurrent loads of overlapping batches queue rather than interleave. It writes
+so concurrent loads of overlapping batches mostly queue. A chunk inserts its missing rows
+before it locks its stored ones, though, so loads whose chunks split differently can deadlock:
+Postgres aborts one, which is retried outside a caller's transaction and is `concurrency`
+inside one. It writes
 `set_based_batch_size` rows per chunk (2,000 by default, `PostgresDocumentConfig`), not
 `batch_size`: each chunk costs a few statements, and a statement-level trigger fires once per
 statement, so a chunk per few hundred rows spends its time on statements.
