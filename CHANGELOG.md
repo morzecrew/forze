@@ -13,7 +13,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- ...
+- **A set-based `upsert_many` on Postgres writes 2,000 rows per chunk by default, set by `set_based_batch_size`** (**behaviour change**). It used `batch_size` (200), so a statement-level trigger now fires a tenth as often. In the bundled benchmark a 4,000-row call runs 16–30% faster; small calls are unchanged.
+
+- **A write gateway's `upsert_many_set_based` takes `set_based_batch_size`** (**Breaking**). The command passes it beside `batch_size`, which now chunks only a fallback to the domain path. A gateway implemented outside forze must accept it.
+
+- **A document's invariants are checked on create after its own model validators** (**behaviour change**), as an update checks them. A class without invariants runs no check, so validating a subclass instance through it re-checks nothing. Names starting `_forze_invariants_on_create` are reserved.
 
 ### Fixed
 

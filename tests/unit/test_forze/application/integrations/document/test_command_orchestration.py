@@ -231,11 +231,13 @@ class CommandHarness(DocumentCommandMixin[_Row, _Domain, _Dto, _Dto]):
         cache: FakeCache | None = None,
         *,
         eff_batch_size: int = 50,
+        set_based_batch_size: int = 500,
         hard_delete: bool = True,
     ) -> None:
         self.write_gw = write_gw  # type: ignore[assignment]
         self.document_cache = cache or FakeCache()  # type: ignore[assignment]
         self._eff_batch_size = eff_batch_size
+        self.set_based_batch_size = set_based_batch_size
 
         class _Spec:
             name = "thing"
@@ -682,9 +684,10 @@ async def test_upsert_many_populates_cache(return_new: bool) -> None:
 
 class _SetBasedWriteGateway(FakeWriteGateway):
     async def upsert_many_set_based(
-        self, ids: Any, creates: Any, updates: Any, *, batch_size: int
+        self, ids: Any, creates: Any, updates: Any, *, batch_size: int, set_based_batch_size: int
     ) -> None:
         self.calls.append("upsert_many_set_based")
+        self.batch_sizes = (batch_size, set_based_batch_size)
 
 
 _PAIR = [
@@ -705,6 +708,8 @@ async def test_a_set_based_upsert_takes_the_gateway_statement_and_reads_nothing_
     assert res is None
     assert write_gw.calls == ["upsert_many_set_based"]
     assert cache.invalidated == [_UID_A, _UID_B]
+    # Its own chunk size, and the domain path's for a spec it hands over to that path.
+    assert write_gw.batch_sizes == (50, 500)
 
 
 @pytest.mark.asyncio

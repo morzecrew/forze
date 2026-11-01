@@ -289,7 +289,13 @@ class DocumentCommandMixin(
         write_set_based = getattr(w, "upsert_many_set_based", None) if set_based else None
 
         if write_set_based is not None:
-            await write_set_based(ids, creates, updates, batch_size=self.eff_batch_size)
+            await write_set_based(
+                ids,
+                creates,
+                updates,
+                batch_size=self.eff_batch_size,
+                set_based_batch_size=self.set_based_batch_size,
+            )
             await self.document_cache.invalidate_keys_now(*ids)
             return None
 

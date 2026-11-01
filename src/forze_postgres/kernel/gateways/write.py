@@ -429,6 +429,53 @@ def _as_stored(patch: JsonDict, column_types: PostgresColumnTypes) -> JsonDict:
     return {**patch, **stored} if stored else patch
 
 
+_MAX_BOUND_PARAMS = 65_535
+"""Postgres's limit on one statement's bound parameters. A ``VALUES`` row source spends one per
+cell, so a set-based chunk that falls back to it is split to fit."""
+
+
+def _unnest_casts(
+    columns: Sequence[str], column_types: PostgresColumnTypes
+) -> list[sql.Composable] | None:
+    """One ``%s::type[]`` per column when every column takes ``unnest``, else ``None``."""
+
+    casts: list[sql.Composable] = []
+
+    for column in columns:
+        pg_t = column_types.get(column)
+
+        if pg_t is None or pg_t.is_array or _scalar_base(pg_t) not in _UNNEST_BASES:
+            return None
+
+        # Binary needs the values uniform, which the write coercion makes them for a type with a
+        # modifier too (a naive datetime made aware for ``timestamptz(3)``).
+        placeholder = sql.Placeholder(
+            format=PyFormat.BINARY if _scalar_base(pg_t) in _BINARY_BASES else PyFormat.AUTO
+        )
+        casts.append(sql.SQL("{}::{}[]").format(placeholder, _pg_cast_type_sql(pg_t)))
+
+    return casts
+
+
+def _source_slices[T](
+    columns: Sequence[str],
+    rows: Sequence[T],
+    column_types: PostgresColumnTypes,
+    *,
+    reserved: int,
+) -> list[Sequence[T]]:
+    """*rows* in slices one statement can bind beside *reserved* other parameters: all of them
+    over ``unnest``, whose parameters do not grow with the rows, and as many as fit over
+    ``VALUES`` (:data:`_MAX_BOUND_PARAMS`)."""
+
+    if _unnest_casts(columns, column_types) is not None:
+        return [rows]
+
+    size = max(1, (_MAX_BOUND_PARAMS - reserved) // len(columns))
+
+    return [rows[i : i + size] for i in range(0, len(rows), size)]
+
+
 def _row_source(
     columns: Sequence[str],
     rows: Sequence[Mapping[str, Any]],
@@ -446,22 +493,9 @@ def _row_source(
     batched update casts them.
     """
 
-    casts: list[sql.Composable] = []
+    casts = _unnest_casts(columns, column_types)
 
-    for column in columns:
-        pg_t = column_types.get(column)
-
-        if pg_t is None or pg_t.is_array or _scalar_base(pg_t) not in _UNNEST_BASES:
-            break
-
-        # Binary needs the values uniform, which the write coercion makes them for a type with a
-        # modifier too (a naive datetime made aware for ``timestamptz(3)``).
-        placeholder = sql.Placeholder(
-            format=PyFormat.BINARY if _scalar_base(pg_t) in _BINARY_BASES else PyFormat.AUTO
-        )
-        casts.append(sql.SQL("{}::{}[]").format(placeholder, _pg_cast_type_sql(pg_t)))
-
-    else:
+    if casts is not None:
         return (
             sql.SQL("SELECT * FROM unnest({})").format(sql.SQL(", ").join(casts)),
             [[row[column] for row in rows] for column in columns],
@@ -1364,8 +1398,10 @@ class PostgresWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
         updates: Sequence[U],
         *,
         batch_size: int = 200,
+        set_based_batch_size: int = 2_000,
     ) -> None:
-        """Insert the missing rows and patch the stored ones, a statement each per chunk.
+        """Insert the missing rows and patch the stored ones, a statement each per chunk of
+        *set_based_batch_size* rows.
 
         Nothing is read back or decoded. A missing row is the create payload's domain, as
         :meth:`upsert_many` inserts it; a stored row takes the update as its DTO encodes it,
@@ -1376,7 +1412,8 @@ class PostgresWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
         caller has refused a spec whose updates need the stored row or the domain model
         (:meth:`~forze.application.contracts.document.DocumentSpec.require_set_based_upsert`);
         a relation keyed by more than the id (and tenant), or a column an update can write
-        that SQL cannot compare, takes :meth:`upsert_many` instead.
+        that SQL cannot compare, takes :meth:`upsert_many` instead, in chunks of *batch_size*:
+        that path always spells its rows out, a parameter per value.
         """
 
         self._require_update_cmd()
@@ -1386,16 +1423,19 @@ class PostgresWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
             await self.upsert_many(ids, creates, updates, batch_size=batch_size)
             return
 
-        # One order for every chunk: two calls over overlapping ids lock them in the same
-        # order across chunks, so neither waits on a row the other has while holding one it
-        # wants.
-        items = sorted(zip(ids, creates, updates, strict=True), key=lambda item: item[0])
+        # One id order for every chunk, so two calls over overlapping ids mostly take their
+        # locks in the same order. Not always: a chunk inserts its missing ids before it locks
+        # its stored ones, so calls whose chunks split differently can still deadlock. Postgres
+        # aborts one; outside a caller's transaction the retry runs it again, inside one it is
+        # ``concurrency`` for the scope's owner. ``int`` orders as ``UUID`` and Postgres's
+        # ``uuid`` do, without a Python comparison per pair.
+        items = sorted(zip(ids, creates, updates, strict=True), key=lambda item: item[0].int)
 
         async with self._write_tx():
             now = utcnow()
 
-            for offset in range(0, len(items), batch_size):
-                chunk = items[offset : offset + batch_size]
+            for offset in range(0, len(items), set_based_batch_size):
+                chunk = items[offset : offset + set_based_batch_size]
                 id_batch = [pk for pk, _, _ in chunk]
                 creates_by_id = {pk: create for pk, create, _ in chunk}
                 updates_by_id = {pk: update for pk, _, update in chunk}
@@ -1456,9 +1496,9 @@ class PostgresWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
         if lock:
             stmt += sql.SQL(" ORDER BY {pk} FOR NO KEY UPDATE").format(pk=self.ident_pk())
 
-        rows = await self.client.fetch_all(stmt, params, row_factory="dict", commit=False)
+        rows = await self.client.fetch_all(stmt, params, row_factory="tuple", commit=False)
 
-        return {_as_uuid(row[ID_FIELD]) for row in rows}
+        return {_as_uuid(pk) for (pk,) in rows}
 
     # ....................... #
 
@@ -1468,7 +1508,11 @@ class PostgresWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
         creates_by_id: Mapping[UUID, C],
         column_types: PostgresColumnTypes,
     ) -> set[UUID]:
-        """Insert *pks* from their create payloads, skipping a conflict; the ids inserted."""
+        """Insert *pks* from their create payloads, skipping a conflict; the ids inserted.
+
+        Only the skipped ids come back, which a concurrent writer's insert alone causes, so a
+        load reads nothing back.
+        """
 
         if not pks:
             return set()
@@ -1481,24 +1525,36 @@ class PostgresWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
             create=True,
         )
         keys = list(rows[0].keys())
-        source, params = _row_source(keys, rows, column_types)
-        inserted = await self.client.fetch_all(
-            sql.SQL(
-                "INSERT INTO {table} ({cols}) {source} "
-                "ON CONFLICT ({conflict}) DO NOTHING RETURNING {pk}"
-            ).format(
-                table=(await self._qname()).ident(),
-                cols=sql.SQL(", ").join(sql.Identifier(k) for k in keys),
-                source=source,
-                conflict=await self._ident_conflict_target(),
-                pk=self.ident_pk(),
-            ),
-            params,
-            row_factory="dict",
-            commit=False,
-        )
+        table = (await self._qname()).ident()
+        conflict = await self._ident_conflict_target()
+        skipped: set[UUID] = set()
+        start = 0
 
-        return {_as_uuid(row[ID_FIELD]) for row in inserted}
+        # The rows keep the order of *pks*, so a slice of one is the slice of the other.
+        for part in _source_slices(keys, rows, column_types, reserved=1):
+            part_pks = list(pks[start : start + len(part)])
+            start += len(part)
+            source, params = _row_source(keys, part, column_types)
+            found = await self.client.fetch_all(
+                sql.SQL(
+                    "WITH ins AS (INSERT INTO {table} ({cols}) {source} "
+                    "ON CONFLICT ({conflict}) DO NOTHING RETURNING {pk}) "
+                    "SELECT unnest({ids}::uuid[]) EXCEPT SELECT {pk}::uuid FROM ins"
+                ).format(
+                    table=table,
+                    cols=sql.SQL(", ").join(sql.Identifier(k) for k in keys),
+                    source=source,
+                    conflict=conflict,
+                    pk=self.ident_pk(),
+                    ids=sql.Placeholder(),
+                ),
+                [*params, part_pks],
+                row_factory="tuple",
+                commit=False,
+            )
+            skipped.update(_as_uuid(pk) for (pk,) in found)
+
+        return set(pks) - skipped
 
     # ....................... #
 
@@ -1549,9 +1605,8 @@ class PostgresWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
 
         table = (await self._qname()).ident()
 
-        for key, batch in groups.items():
+        for key, group in groups.items():
             columns = (ID_FIELD, *key)
-            source, params = _row_source(columns, batch, column_types, typed_values=True)
             sets = [sql.SQL("{c} = v.{c}").format(c=sql.Identifier(k)) for k in key]
             stamp: list[Any] = []
 
@@ -1584,18 +1639,22 @@ class PostgresWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
             )
 
             where, where_params = self._add_tenant_where(match, [], table_alias="t")
-            await self.client.execute(
-                sql.SQL(
-                    "UPDATE {table} AS t SET {sets} FROM ({source}) AS v({cols}) WHERE {where}"
-                ).format(
-                    table=table,
-                    sets=sql.SQL(", ").join(sets),
-                    source=source,
-                    cols=sql.SQL(", ").join(sql.Identifier(c) for c in columns),
-                    where=where,
-                ),
-                [*stamp, *params, *where_params],
-            )
+            reserved = len(stamp) + len(where_params)
+
+            for batch in _source_slices(columns, group, column_types, reserved=reserved):
+                source, params = _row_source(columns, batch, column_types, typed_values=True)
+                await self.client.execute(
+                    sql.SQL(
+                        "UPDATE {table} AS t SET {sets} FROM ({source}) AS v({cols}) WHERE {where}"
+                    ).format(
+                        table=table,
+                        sets=sql.SQL(", ").join(sets),
+                        source=source,
+                        cols=sql.SQL(", ").join(sql.Identifier(c) for c in columns),
+                        where=where,
+                    ),
+                    [*stamp, *params, *where_params],
+                )
 
     # ....................... #
 

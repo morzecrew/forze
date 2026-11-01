@@ -16,6 +16,7 @@ from forze.base.primitives import advisory_lock_key
 from forze.base.serialization import stored_field_names_for
 from forze.domain.constants import ID_FIELD
 from forze.domain.models import AggregateRoot, BaseDTO, Document
+from forze.domain.models.document import is_invariant_check
 
 from ..base import BaseSpec
 from ..cache import CacheSpec
@@ -136,7 +137,8 @@ def _own_decorators(domain: type[Document], kind: str) -> list[Any]:
     """The pydantic decorators of *kind* *domain* declares or overrides beyond :class:`Document`'s.
 
     Compared by function, not name: a domain re-declaring a base validator under its name
-    replaces what it does.
+    replaces what it does. The create-time invariant check :class:`Document` attaches to a
+    class with invariants is not the domain's own: the invariants are.
     """
 
     def _func(decorator: Any) -> Any:
@@ -147,7 +149,8 @@ def _own_decorators(domain: type[Document], kind: str) -> list[Any]:
     return [
         decorator
         for name, decorator in getattr(domain.__pydantic_decorators__, kind).items()
-        if name not in base or _func(base[name]) is not _func(decorator)
+        if (name not in base or _func(base[name]) is not _func(decorator))
+        and not is_invariant_check(_func(decorator))
     ]
 
 
