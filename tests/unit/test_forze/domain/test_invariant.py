@@ -102,7 +102,8 @@ class TestInvariant:
 
         def checks(cls: type[Document]) -> int:
             return sum(
-                is_invariant_check(d.func) for d in cls.__pydantic_decorators__.model_validators.values()
+                is_invariant_check(d.func)
+                for d in cls.__pydantic_decorators__.model_validators.values()
             )
 
         assert [checks(c) for c in (Document, Plain, Account, Savings)] == [0, 0, 1, 2]
