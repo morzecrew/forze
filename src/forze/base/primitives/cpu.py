@@ -591,7 +591,11 @@ class InterpreterPoolCpuExecutor:
         return pool
 
     async def run[T](self, fn: Callable[[], T], *, label: str | None = None) -> T:
-        from concurrent.interpreters import ExecutionFailed, NotShareableError
+        # Python 3.14+, which construction requires; a 3.13 type check finds no such module.
+        from concurrent.interpreters import (  # type: ignore[import-not-found]
+            ExecutionFailed,
+            NotShareableError,
+        )
 
         pool = self._require_pool()
 
