@@ -267,7 +267,16 @@ def _as_numeric(value: Any, precision: int, scale: int) -> Any:
     if value.adjusted() >= precision - scale:
         return value
 
-    return value.quantize(Decimal(1).scaleb(-scale), rounding=ROUND_HALF_UP, context=_EXACT)
+    rounded = value.quantize(Decimal(1).scaleb(-scale), rounding=ROUND_HALF_UP, context=_EXACT)
+
+    return _unsigned_zero(rounded)
+
+
+def _unsigned_zero(value: Any) -> Any:
+    """*value* with a negative zero made positive, as a ``numeric`` column stores it, so a lock
+    key hashed from it matches one hashed from the stored row."""
+
+    return value.copy_abs() if isinstance(value, Decimal) and value.is_zero() else value
 
 
 def _single_spelling(single: float) -> Decimal:
@@ -368,7 +377,7 @@ def _stored_as(pg_t: PostgresType) -> Callable[[Any], Any] | None:
     m = _MODIFIER_RE.search(pg_t.base)
 
     if m is None:
-        return None
+        return _unsigned_zero if base == "numeric" else None
 
     first = int(m.group(1))
 

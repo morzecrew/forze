@@ -781,13 +781,14 @@ def test_only_a_column_that_rounds_or_pads_converts() -> None:
         "numeric(10,2)",
         "numeric(5,-1)",
         "numeric(7,0)",
+        # A bare numeric drops a zero's sign.
+        "numeric",
         "float4",
         "character(3)",
     ]
     stores_as_sent = [
         "timestamp(6) with time zone",
         "timestamptz",
-        "numeric",
         "float8",
         "bpchar",
         "varchar",
@@ -895,6 +896,31 @@ def test_a_float_rounds_only_to_a_value_the_write_stores_exactly() -> None:
         got = _as_numeric(sent, 40, scale)
 
         assert got is sent or Decimal(str(got)) == stored, (sent, scale)
+
+
+@pytest.mark.parametrize(
+    ("base", "sent", "stored"),
+    [
+        # Postgres has no negative numeric zero: what a read of the row returns.
+        ("numeric(10,2)", Decimal("-0.004"), Decimal("0.00")),
+        ("numeric(10,2)", Decimal("-0"), Decimal("0.00")),
+        ("numeric", Decimal("-0"), Decimal("0")),
+        ("numeric", Decimal("-0.00"), Decimal("0.00")),
+    ],
+)
+def test_a_negative_zero_number_is_stored_and_locked_as_zero(
+    base: str, sent: Decimal, stored: Decimal
+) -> None:
+    from forze.base.primitives.fingerprint import advisory_lock_key
+    from forze_postgres.kernel.gateways.write import _stored_as
+
+    as_stored = _stored_as(PostgresType(base=base, is_array=False, not_null=False))
+
+    assert as_stored is not None
+    got = as_stored(sent)
+
+    assert str(got) == str(stored)
+    assert advisory_lock_key("k", got) == advisory_lock_key("k", stored)
 
 
 def test_a_nan_number_is_left_as_sent() -> None:
