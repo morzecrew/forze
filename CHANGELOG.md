@@ -9,6 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- ...
+
+### Changed
+
+- ...
+
+### Fixed
+
+- ...
+
+## [0.20.0] - 2026-11-01
+
+### Added
+
 - **A `RoutedDuckDbClient` tenant's lake can be a DuckLake.** `catalog_for_tenant` may return a `DuckLakeTenantCatalog`: a Postgres metadata schema read with the tenant's role, and a local or `s3://` data path. The session is locked and attested, grants included; on DuckDB 1.5 the engine does not bound Postgres egress.
 
 ### Changed
@@ -18,10 +32,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **A write gateway's `upsert_many_set_based` takes `set_based_batch_size`** (**Breaking**). The command passes it beside `batch_size`, which now chunks only a fallback to the domain path. A gateway implemented outside forze must accept it.
 
 - **A document's invariants are checked on create after its own model validators** (**behaviour change**), as an update checks them. A class without invariants runs no check, so validating a subclass instance through it re-checks nothing. Names starting `_forze_invariants_on_create` are reserved.
-
-### Fixed
-
-- ...
 
 ## [0.19.0] - 2026-11-01
 
@@ -2870,7 +2880,8 @@ Execution and mapping refactor, middleware-first usecases, split search/cache/do
 
 - Packaging metadata for PyOCI classifiers.
 
-[unreleased]: https://github.com/morzecrew/forze/compare/v0.19.0...HEAD
+[unreleased]: https://github.com/morzecrew/forze/compare/v0.20.0...HEAD
+[0.20.0]: https://github.com/morzecrew/forze/compare/v0.19.0...v0.20.0
 [0.19.0]: https://github.com/morzecrew/forze/compare/v0.18.0...v0.19.0
 [0.18.0]: https://github.com/morzecrew/forze/compare/v0.17.0...v0.18.0
 [0.17.0]: https://github.com/morzecrew/forze/compare/v0.16.2...v0.17.0
