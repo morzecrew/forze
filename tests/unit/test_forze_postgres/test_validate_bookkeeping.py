@@ -86,12 +86,19 @@ def _history_spec(strategy: str = "database") -> PostgresDocumentBookkeepingSpec
     )
 
 
-def _intro(*, insert_triggers: frozenset[str]) -> MagicMock:
+def _intro(
+    *,
+    insert_triggers: frozenset[str],
+    update_and_delete_row_triggers: frozenset[str] = frozenset(),
+) -> MagicMock:
     intro = MagicMock(spec=PostgresIntrospector)
     intro.get_relation_update_triggers = AsyncMock(
         return_value=frozenset({"projects_bump_rev"}),
     )
     intro.insert_triggers = AsyncMock(return_value=insert_triggers)
+    intro.update_and_delete_row_triggers = AsyncMock(
+        return_value=update_and_delete_row_triggers,
+    )
 
     return intro
 
@@ -104,6 +111,10 @@ async def test_bookkeeping_database_history_warns_without_insert_trigger() -> No
         await validate_postgres_document_bookkeeping(intro, [_history_spec()])
 
     intro.insert_triggers.assert_awaited_once_with(schema="public", relation="projects")
+    intro.update_and_delete_row_triggers.assert_awaited_once_with(
+        schema="public",
+        relation="projects",
+    )
     mock_logger.warning.assert_called_once()
     args = mock_logger.warning.call_args.args
     assert "no enabled trigger fires on every INSERT" in args[0]
@@ -113,6 +124,19 @@ async def test_bookkeeping_database_history_warns_without_insert_trigger() -> No
 @pytest.mark.asyncio
 async def test_bookkeeping_database_history_quiet_with_insert_trigger() -> None:
     intro = _intro(insert_triggers=frozenset({"projects_history"}))
+
+    with patch(_LOGGER) as mock_logger:
+        await validate_postgres_document_bookkeeping(intro, [_history_spec()])
+
+    mock_logger.warning.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_bookkeeping_database_history_quiet_with_superseded_row_trigger() -> None:
+    intro = _intro(
+        insert_triggers=frozenset(),
+        update_and_delete_row_triggers=frozenset({"projects_history"}),
+    )
 
     with patch(_LOGGER) as mock_logger:
         await validate_postgres_document_bookkeeping(intro, [_history_spec()])
