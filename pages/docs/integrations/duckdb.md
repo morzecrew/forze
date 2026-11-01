@@ -283,6 +283,110 @@ Operating it:
   statement fails with an HTTP 400 from the store. A statement that starts
   after expiry loads the table again and gets a fresh credential.
 
+## A DuckLake per tenant
+
+A tenant's lake can also be a [DuckLake](https://ducklake.select/): no REST
+catalog and no IdP, just a metadata schema in a Postgres database, read with the
+tenant's own role, and Parquet files under a data path. Return a
+`DuckLakeTenantCatalog` from `catalog_for_tenant` and keep everything else
+above, routes and wiring included:
+
+```python
+from forze_duckdb import DuckLakeTenantCatalog, RoutedDuckDbClient
+
+lake = RoutedDuckDbClient(
+    secrets=secrets,                       # SecretsPort; holds DuckLakeCatalogCredentials
+    secret_ref_for_tenant=lambda t: SecretRef(path=f"tenants/{t}/ducklake"),
+    tenant_provider=current_tenant,
+    catalog_for_tenant=lambda t: DuckLakeTenantCatalog(
+        host="postgres",
+        port=5432,
+        database="app",
+        metadata_schema=f"t{t.hex}_lake",
+        data_path=f"/var/lib/lake/{t}/",   # or s3://lake/<tenant>/
+    ),
+    extension_directory="/opt/duckdb/extensions",   # ducklake, postgres (+ httpfs): in the image
+)
+```
+
+The secret holds `DuckLakeCatalogCredentials`: `user` and `password` for the
+tenant's metadata role and, for an `s3://` data path, `store`, an S3 key in the
+`S3SecretPayload` shape. An empty role or password is refused
+(`duckdb_lake_role_credentials_empty`), since libpq would fall back to the OS
+user or the process's own credentials. A store key on a local path, or none on
+an `s3://` one, is refused (`duckdb_lake_store_credentials_mismatch`). One client can serve
+Iceberg tenants and DuckLake tenants side by side: each tenant's catalog picks
+the shape of its secret.
+
+Each instance is built by this sequence, on DuckDB 1.5 and 2:
+
+```text
+connect(":memory:", persistent secrets off, extension autoload/autoinstall off,
+        temp_directory '', extension_directory)
+LOAD ducklake; LOAD postgres [; LOAD httpfs]    -- never INSTALL; httpfs for s3://
+[SET GLOBAL enable_global_s3_configuration=false; s3 keys cleared]
+[SET GLOBAL ca_cert_file]                       -- if configured, s3:// only
+SET GLOBAL allowed_directories=[data_path]
+SET GLOBAL allowed_paths=[[ca_cert_file]]
+CREATE SECRET (TYPE postgres, host, port, database, user, password)
+[CREATE SECRET (TYPE s3, the store key, SCOPE data_path)]
+ATTACH 'ducklake:postgres:' AS lake (DATA_PATH, METADATA_SCHEMA, READ_ONLY)
+SET GLOBAL enable_external_access=false
+[SET GLOBAL http_timeout; HTTP metadata cache off]
+SET GLOBAL enable_external_file_cache=false
+SET GLOBAL lock_configuration=true
+attest                                          -- settings, secrets, databases,
+                                                -- refusals, the role's grants
+```
+
+It differs from the Iceberg sequence where DuckLake needs it to:
+
+- **It attaches before external access goes off.** The `postgres` extension
+  refuses to attach once it is off. A held instance still sees what the build
+  commits later, new tables included, with no refresh.
+- **The password lives in an unnamed `postgres` secret, never in the attach
+  string.** `duckdb_databases()` hands the attach string to any statement, and
+  the attestation checks that it is the bare `postgres:`. A statement sees the
+  secret only redacted.
+- **The role's grants bound the metadata database.** A statement can query it
+  as the role through `postgres_query('__ducklake_metadata_lake', …)` and read
+  `__ducklake_metadata_lake.<schema>.*`, both in a read-only transaction. The
+  attestation refuses a role that can write any table, view or sequence in its
+  schema, create in it, or read another DuckLake's metadata, which can hold
+  that lake's inlined rows, and a superuser. Grant the role `USAGE` on its
+  schema and `SELECT` on its tables, and nothing on another tenant's.
+- **`ATTACH` adds four paths named `postgres:…` in the working directory to
+  `allowed_paths`.** A later `SET` does not remove them, so a statement can read
+  and write those four files. The attestation expects exactly them.
+
+A dynamic read refuses all of this already: `postgres_query`, `postgres_scan`
+and the `ducklake_*` functions are table functions outside its list, and the
+metadata database is a catalog the instance does not list. Analytics SQL, which
+the application writes, can call them.
+
+Operating it, beyond the Iceberg list:
+
+- **On `s3://`, the store key is what confines reads to the prefix.** The
+  engine refuses a `..` in a local path, and the attestation checks that, but
+  it sends `s3://<prefix>/../<other>/…` to the store as it is. Scope each
+  tenant's key to its own prefix.
+- **The engine admits writes under the data path.** The allowlist is not
+  read-only: `COPY … TO` a file there succeeds, and on DuckDB 2
+  `ducklake_delete_orphaned_files` deletes files there although `lake` is
+  attached `READ_ONLY`. Only the outside closes it: a read-only key for an
+  `s3://` path, a read-only mount for a local one. A builder writing the same
+  directory from the same process cannot have the mount.
+- **On DuckDB 1.5, `postgres_scan` and `postgres_attach` take a connection
+  string and connect to any Postgres, whatever `enable_external_access` says.**
+  libpq then also reads the process's `PGPASSWORD`, `PGPASSFILE` and
+  `~/.pgpass`. DuckDB 2's extension has neither function. Keep libpq
+  credentials out of the worker's environment, and let its egress policy allow
+  only the metadata database and the store.
+- **Run the worker in a read-only working directory**, so the four
+  `postgres:…` paths cannot be written.
+- **Call `evict_tenant` after rotating the role's password or the store key,**
+  or set `fingerprint_ttl`, as for an Iceberg principal.
+
 ## What it provides
 
 | Contract | Keyed by |

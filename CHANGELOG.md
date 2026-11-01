@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- ...
+- **A `RoutedDuckDbClient` tenant's lake can be a DuckLake.** `catalog_for_tenant` may return a `DuckLakeTenantCatalog`: a Postgres metadata schema read with the tenant's role, and a local or `s3://` data path. The session is locked and attested, grants included; on DuckDB 1.5 the engine does not bound Postgres egress.
 
 ### Changed
 

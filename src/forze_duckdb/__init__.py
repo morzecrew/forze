@@ -6,8 +6,8 @@ binds in :class:`DuckDbAnalyticsConfig` / the lifecycle step, below the handler
 boundary; handlers only ever name a ``query_key`` and an output type.
 
 :class:`RoutedDuckDbClient` gives each tenant its own locked-down instance over its own
-Iceberg warehouse, which is what lets ``DynamicReadPort`` run trusted, runtime-compiled
-statements here (RFC 0078).
+Iceberg warehouse or DuckLake, which is what lets ``DynamicReadPort`` run trusted,
+runtime-compiled statements here (RFC 0078).
 """
 
 from ._compat import require_duckdb
@@ -30,6 +30,8 @@ from .kernel.client import (
     DuckDbConfig,
     DuckDbDynamicReadClientPort,
     DuckDbQueryResult,
+    DuckLakeCatalogCredentials,
+    DuckLakeTenantCatalog,
     LakeCatalogCredentials,
     LakeTenantCatalog,
     RoutedDuckDbClient,
@@ -64,6 +66,8 @@ __all__ = [
     "RoutedDuckDbClient",
     "LakeTenantCatalog",
     "LakeCatalogCredentials",
+    "DuckLakeTenantCatalog",
+    "DuckLakeCatalogCredentials",
     "DuckDbClientDepKey",
     "duckdb_lifecycle_step",
     "DuckDbAnalyticsConfig",

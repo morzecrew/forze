@@ -16,6 +16,7 @@ import random
 from collections.abc import AsyncIterator, Iterator
 from datetime import UTC, datetime, timedelta
 from secrets import token_hex
+from types import SimpleNamespace
 from typing import Any, ClassVar
 from unittest.mock import MagicMock
 from uuid import UUID, uuid4
@@ -26,12 +27,20 @@ from cryptography import x509
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.x509.oid import NameOID
+from pydantic import SecretStr
 
 from forze.application.contracts.secrets import SecretRef
 from forze.base.exceptions import CoreException, ExceptionKind, exc
 from forze_dst.runtime import run_simulation
 from forze_dst.scheduler import PCTReorderer
-from forze_duckdb import DuckDbConfig, LakeTenantCatalog, RoutedDuckDbClient
+from forze_duckdb import (
+    DuckDbConfig,
+    DuckLakeCatalogCredentials,
+    DuckLakeTenantCatalog,
+    LakeCatalogCredentials,
+    LakeTenantCatalog,
+    RoutedDuckDbClient,
+)
 from forze_duckdb.adapters import dynamic_read_error
 from forze_duckdb.kernel.client import routed_client
 
@@ -110,10 +119,13 @@ class _FakeEngine:
         self.admission = kwargs["admission"]
         self.install_extensions = kwargs["install_extensions"]
         self.drop_vended_secrets = kwargs["drop_vended_secrets"]
+        self.extensions = tuple(kwargs["extensions"])
+        self.connect_config = kwargs["connect_config"]
 
     async def run_command(self, command: str, *args: Any, **kwargs: Any) -> None:
-        if command.startswith("CREATE SECRET"):
-            self.secret = command.split("CLIENT_SECRET '", 1)[1].split("'", 1)[0]
+        for key in ("CLIENT_SECRET '", "PASSWORD '"):
+            if command.startswith("CREATE SECRET") and key in command:
+                self.secret = command.split(key, 1)[1].split("'", 1)[0]
         self.statements.append(command)
 
     async def run_dynamic(self, statement: str, *args: Any, **kwargs: Any) -> list[Any]:
@@ -156,6 +168,7 @@ def fake_engine(monkeypatch: pytest.MonkeyPatch) -> Iterator[type[_FakeEngine]]:
     _FakeEngine.built = []
     monkeypatch.setattr(routed_client, "DuckDbClient", _FakeEngine)
     monkeypatch.setattr(routed_client, "_attest", _attested)
+    monkeypatch.setattr(routed_client, "_ducklake_problems", _attested)
     yield _FakeEngine
 
 
@@ -650,6 +663,395 @@ class TestTeardownAndRemapping:
         assert old.closed and not new.closed
         assert any("ATTACH 'wh-new'" in statement for statement in new.statements)
         await routed.close()
+
+
+# ....................... #
+
+
+class _DuckLakeSecrets:
+    """Metadata-role payloads by tenant, with a store key for each tenant in *store*."""
+
+    def __init__(self, *tenants: UUID, store: tuple[UUID, ...] = ()) -> None:
+        self.payloads: dict[UUID, dict[str, Any]] = {
+            t: {"user": f"r_{t.hex[:4]}", "password": token_hex(16)} for t in tenants
+        }
+
+        for tenant in store:
+            self.payloads[tenant]["store"] = {
+                "access_key_id": f"k-{tenant.hex[:4]}",
+                "secret_access_key": token_hex(16),
+                "endpoint": "store.test:9000",
+                "url_style": "path",
+                "use_ssl": False,
+            }
+
+    async def resolve_str(self, ref: SecretRef) -> str:
+        return json.dumps(self.payloads[UUID(ref.path)])
+
+    async def exists(self, ref: SecretRef) -> bool:
+        return UUID(ref.path) in self.payloads
+
+
+def _ducklake(tenant: UUID, *, s3: bool = False) -> DuckLakeTenantCatalog:
+    key = tenant.hex[:4]
+
+    return DuckLakeTenantCatalog(
+        host="meta.test",
+        database="lakemeta",
+        metadata_schema=f"t_{key}",
+        data_path=f"s3://lake/{key}/" if s3 else f"/data/{key}/",
+    )
+
+
+def _routed_ducklake(secrets: Any, catalog: Any = _ducklake, **kwargs: Any) -> RoutedDuckDbClient:
+    return RoutedDuckDbClient(
+        secrets=secrets,
+        secret_ref_for_tenant=lambda tenant: SecretRef(path=str(tenant)),
+        tenant_provider=_tenant.get,
+        catalog_for_tenant=catalog,
+        **kwargs,
+    )
+
+
+def _catalog_with(data_path: str = "/data/a/", **fields: Any) -> DuckLakeTenantCatalog:
+    return DuckLakeTenantCatalog(
+        **{"host": "h", "database": "d", "metadata_schema": "m", "data_path": data_path, **fields}
+    )
+
+
+class TestDuckLakeCatalog:
+    @pytest.mark.parametrize("path", ["/data/a/", "/data/", "s3://lake/a/", "s3://lake/"])
+    def test_a_data_path_is_an_absolute_directory_or_an_s3_prefix(self, path: str) -> None:
+        assert _catalog_with(path).data_path == path
+
+    @pytest.mark.parametrize(
+        "path",
+        [
+            "/data/a",
+            "data/a/",
+            "/data/../a/",
+            "/data/./a/",
+            "/data//a/",
+            "/",
+            "s3://lake",
+            "s3:///a/",
+            "http://store.test/a/",
+            "",
+        ],
+    )
+    def test_a_data_path_the_allowlist_would_misread_is_refused(self, path: str) -> None:
+        with pytest.raises(CoreException) as ei:
+            _catalog_with(path)
+
+        assert ei.value.code == "duckdb_lake_catalog_invalid"
+
+    @pytest.mark.parametrize("field", ["host", "database", "metadata_schema"])
+    def test_the_metadata_database_must_be_named(self, field: str) -> None:
+        with pytest.raises(CoreException) as ei:
+            _catalog_with(**{field: ""})
+
+        assert ei.value.code == "duckdb_lake_catalog_invalid"
+
+    @pytest.mark.parametrize("port", [0, 65536])
+    def test_the_port_must_be_a_tcp_port(self, port: int) -> None:
+        with pytest.raises(CoreException) as ei:
+            _catalog_with(port=port)
+
+        assert ei.value.code == "duckdb_lake_catalog_invalid"
+
+
+class TestDuckLakeInstances:
+    async def test_the_password_goes_in_the_unnamed_secret_never_the_attach_string(
+        self, fake_engine: type[_FakeEngine]
+    ) -> None:
+        """D-099: ``duckdb_databases()`` hands the attach string to any statement."""
+
+        secrets = _DuckLakeSecrets(_A)
+        routed = _routed_ducklake(secrets)
+        await routed.startup()
+
+        await _read(routed, _A)
+
+        (engine,) = fake_engine.built
+        password = secrets.payloads[_A]["password"]
+        (holding,) = [s for s in engine.statements if password in s]
+        assert holding.startswith("CREATE SECRET (TYPE postgres, HOST 'meta.test', PORT 5432, ")
+        attach = next(s for s in engine.statements if s.startswith("ATTACH"))
+        assert attach == (
+            "ATTACH 'ducklake:postgres:' AS lake "
+            "(DATA_PATH '/data/aaaa/', METADATA_SCHEMA 't_aaaa', READ_ONLY)"
+        )
+        steps = (
+            "SET GLOBAL allowed_directories=['/data/aaaa/']",
+            "SET GLOBAL allowed_paths=[]",
+            holding,
+            attach,
+            "SET GLOBAL enable_external_access=false",
+        )
+        order = [engine.statements.index(step) for step in steps]
+        assert order == sorted(order)
+        assert engine.statements[-1] == "SET GLOBAL lock_configuration=true"
+        await routed.close()
+
+    async def test_a_local_lake_loads_no_httpfs_and_keeps_persistent_secrets_off(
+        self, fake_engine: type[_FakeEngine]
+    ) -> None:
+        routed = _routed_ducklake(_DuckLakeSecrets(_A))
+        await routed.startup()
+
+        await _read(routed, _A)
+
+        (engine,) = fake_engine.built
+        assert engine.extensions == ("ducklake", "postgres")
+        assert engine.install_extensions is False
+        assert engine.drop_vended_secrets is False
+        assert engine.connect_config["allow_persistent_secrets"] is False
+        assert not any("s3_" in s or "http_timeout" in s for s in engine.statements)
+        await routed.close()
+
+    async def test_a_lake_on_s3_scopes_the_store_key_to_its_data_path(
+        self, fake_engine: type[_FakeEngine]
+    ) -> None:
+        secrets = _DuckLakeSecrets(_A, store=(_A,))
+        routed = _routed_ducklake(secrets, catalog=lambda t: _ducklake(t, s3=True))
+        await routed.startup()
+
+        await _read(routed, _A)
+
+        (engine,) = fake_engine.built
+        assert engine.extensions == ("ducklake", "postgres", "httpfs")
+        (store,) = [s for s in engine.statements if "SECRET lake_store" in s]
+        assert "TYPE S3" in store and "SCOPE 's3://lake/aaaa/'" in store
+        assert engine.statements.index("SET GLOBAL enable_global_s3_configuration=false") < (
+            engine.statements.index(store)
+        )
+        assert "SET GLOBAL allowed_directories=['s3://lake/aaaa/']" in engine.statements
+        assert "SET GLOBAL http_timeout=5" in engine.statements
+        await routed.close()
+
+    @pytest.mark.parametrize(("s3", "store"), [(False, True), (True, False)])
+    async def test_a_store_key_that_does_not_fit_the_data_path_is_refused(
+        self, fake_engine: type[_FakeEngine], s3: bool, store: bool
+    ) -> None:
+        secrets = _DuckLakeSecrets(_A, store=(_A,) if store else ())
+        routed = _routed_ducklake(secrets, catalog=lambda t: _ducklake(t, s3=s3))
+        await routed.startup()
+
+        with pytest.raises(CoreException) as ei:
+            await _read(routed, _A)
+
+        assert ei.value.code == "duckdb_lake_store_credentials_mismatch"
+        assert ei.value.kind is ExceptionKind.CONFIGURATION
+        assert fake_engine.built == []
+        await routed.close()
+
+    async def test_each_tenant_resolves_the_secret_its_catalog_kind_needs(
+        self, fake_engine: type[_FakeEngine]
+    ) -> None:
+        secrets = _MemSecrets(_A)
+        secrets.payloads.update(_DuckLakeSecrets(_B).payloads)
+        routed = _routed_ducklake(secrets, catalog=lambda t: _catalog(t) if t == _A else _ducklake(t))
+        await routed.startup()
+
+        await _read(routed, _A)
+        await _read(routed, _B)
+
+        iceberg, ducklake = fake_engine.built
+        assert any("TYPE iceberg" in s for s in iceberg.statements)
+        assert any("TYPE postgres" in s for s in ducklake.statements)
+        await routed.close()
+
+    async def test_a_catalog_that_changed_kind_since_its_secret_builds_nothing(
+        self, fake_engine: type[_FakeEngine]
+    ) -> None:
+        routed = _routed_ducklake(_DuckLakeSecrets(_A))
+        creds = LakeCatalogCredentials(client_id="id", client_secret=SecretStr(token_hex(16)))
+
+        with pytest.raises(CoreException) as ei:
+            await routed.initialize_client(_A, creds)
+
+        assert ei.value.code == "duckdb_lake_catalog_kind_changed"
+        assert fake_engine.built == []
+
+    def test_rotating_the_password_or_the_store_key_changes_the_fingerprint(self) -> None:
+        routed = _routed_ducklake(_DuckLakeSecrets(_A))
+        base = DuckLakeCatalogCredentials.model_validate(
+            _DuckLakeSecrets(_A, store=(_A,)).payloads[_A]
+        )
+        assert base.store is not None
+        variants = [
+            base,
+            base.model_copy(update={"password": SecretStr(token_hex(16))}),
+            base.model_copy(update={"user": "other"}),
+            base.model_copy(
+                update={
+                    "store": base.store.model_copy(
+                        update={"secret_access_key": SecretStr(token_hex(16))}
+                    )
+                }
+            ),
+            base.model_copy(
+                update={"store": base.store.model_copy(update={"endpoint": "other.test"})}
+            ),
+        ]
+
+        assert len({routed.credential_fingerprint(v) for v in variants}) == len(variants)
+
+    def test_a_remapped_lake_changes_the_access_fingerprint(self) -> None:
+        routed = _routed_ducklake(_DuckLakeSecrets(_A))
+
+        assert routed.access_fingerprint_extra_parts(_A) == (
+            "meta.test",
+            "5432",
+            "lakemeta",
+            "t_aaaa",
+            "/data/aaaa/",
+        )
+
+    async def test_a_failed_build_step_never_reports_the_password_or_the_store_key(
+        self, fake_engine: type[_FakeEngine], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        secrets = _DuckLakeSecrets(_A, store=(_A,))
+        payload = secrets.payloads[_A]
+        hidden = (payload["password"], payload["store"]["secret_access_key"])
+
+        async def failing(engine: _FakeEngine, command: str, *args: Any, **kwargs: Any) -> None:
+            if command.startswith("ATTACH"):
+                raise duckdb.IOException(f"could not connect: {hidden[0]} / {hidden[1]}")
+
+        monkeypatch.setattr(_FakeEngine, "run_command", failing)
+        routed = _routed_ducklake(secrets, catalog=lambda t: _ducklake(t, s3=True))
+        await routed.startup()
+
+        with pytest.raises(CoreException) as ei:
+            await _read(routed, _A)
+
+        assert ei.value.code == "duckdb_session_setup_failed"
+        assert ei.value.details["error"] == "could not connect: *** / ***"
+        await routed.close()
+
+
+class TestDuckLakeChecks:
+    async def test_empty_role_credentials_are_refused_before_any_instance(
+        self, fake_engine: type[_FakeEngine]
+    ) -> None:
+        """libpq would fall back to the OS user, or to PGPASSWORD and ~/.pgpass."""
+
+        for field in ("user", "password"):
+            secrets = _DuckLakeSecrets(_A)
+            secrets.payloads[_A][field] = ""
+            routed = _routed_ducklake(secrets)
+            await routed.startup()
+
+            with pytest.raises(CoreException) as ei:
+                await _read(routed, _A)
+
+            assert ei.value.code == "duckdb_lake_role_credentials_empty", field
+            await routed.close()
+
+        assert fake_engine.built == []
+
+    async def test_a_local_lake_takes_no_ca_bundle(
+        self, fake_engine: type[_FakeEngine], tmp_path: Any
+    ) -> None:
+        bundle = tmp_path / "ca.pem"
+        bundle.write_text(_PEM)
+        secrets = _DuckLakeSecrets(_A, _B, store=(_B,))
+        routed = _routed_ducklake(
+            secrets,
+            catalog=lambda t: _ducklake(t, s3=t == _B),
+            ca_cert_file=str(bundle),
+        )
+        await routed.startup()
+
+        await _read(routed, _A)
+        await _read(routed, _B)
+
+        local, store = fake_engine.built
+        assert not any("ca_cert_file" in s or str(bundle) in s for s in local.statements)
+        assert f"SET GLOBAL allowed_paths=['{bundle.resolve()}']" in store.statements
+        await routed.close()
+
+    def test_a_local_data_path_is_probed_with_a_dot_segment_and_an_s3_one_is_not(self) -> None:
+        local = routed_client._ducklake_outside(_ducklake(_A), None)
+        store = routed_client._ducklake_outside(_ducklake(_A, s3=True), "/etc/ssl/ca.pem")
+
+        assert "/data/aaaa/../forze-attest/x" in local
+        assert "/data/aaaa-forze-attest/x" in local
+        assert not any(".." in path for path in store)
+        assert "/etc/ssl/forze-attest" in store
+
+    @pytest.mark.parametrize(
+        ("path", "grants", "problems"),
+        [
+            ("postgres:", {"writable": 0, "creates": False, "super": False, "others": 0}, []),
+            (
+                "postgres:host=h password=p",
+                {"writable": 2, "creates": True, "super": True, "others": 1},
+                [
+                    "lake attached with more than the metadata path",
+                    "metadata role can write 2 tables",
+                    "metadata role can create in its schema",
+                    "metadata role is a superuser",
+                    "metadata role can read 1 other lakes' metadata",
+                ],
+            ),
+        ],
+    )
+    async def test_the_lake_path_and_the_roles_grants_are_read_back(
+        self, path: str, grants: dict[str, Any], problems: list[str]
+    ) -> None:
+        asked: list[str] = []
+
+        class _Engine:
+            async def run_query(self, sql: str) -> Any:
+                asked.append(sql)
+                rows = [{"path": path}] if "duckdb_databases" in sql else [grants]
+                return SimpleNamespace(rows=rows)
+
+        catalog = DuckLakeTenantCatalog(
+            host="h", database="d", metadata_schema="t'x", data_path="/data/a/"
+        )
+
+        assert await routed_client._ducklake_problems(_Engine(), catalog) == problems  # type: ignore[arg-type]
+        # The schema reaches Postgres as a literal inside a DuckDB literal: quoted twice.
+        assert "nspname = ''t''''x''" in asked[-1]
+        assert asked[-1].startswith("SELECT * FROM postgres_query('__ducklake_metadata_lake', ")
+
+    async def test_unreadable_grants_are_a_problem(self) -> None:
+        class _Engine:
+            async def run_query(self, sql: str) -> Any:
+                if "postgres_query" in sql:
+                    raise duckdb.CatalogException("postgres_query does not exist")
+                return SimpleNamespace(rows=[{"path": "postgres:"}])
+
+        problems = await routed_client._ducklake_problems(_Engine(), _ducklake(_A))  # type: ignore[arg-type]
+
+        assert problems == ["metadata role's grants unreadable"]
+
+
+def test_a_ducklake_session_attests_its_persistent_secrets_off_and_attached_paths() -> None:
+    """D-100: ``ATTACH`` appends the metadata path, read as files in the working directory."""
+
+    expected = routed_client._ducklake_expected_settings(
+        _ducklake(_A),
+        on_s3=False,
+        working_directory="/srv",
+        http_timeout_seconds=5,
+        engine=DuckDbConfig(threads=None),
+        extension_directory=None,
+        ca_cert_file=None,
+    )
+
+    assert expected["allow_persistent_secrets"] is False
+    assert expected["allowed_directories"] == ["/data/aaaa/"]
+    assert expected["allowed_paths"] == [
+        "/srv/postgres:",
+        "/srv/postgres:.wal",
+        "/srv/postgres:.wal.checkpoint",
+        "/srv/postgres:.wal.recovery",
+    ]
+    assert "http_timeout" not in expected and "threads" not in expected
 
 
 # ....................... #
