@@ -17,6 +17,7 @@ import json
 import os
 from collections.abc import AsyncIterator, Callable, Iterator
 from datetime import timedelta
+from secrets import token_hex
 from typing import Any
 from uuid import UUID
 
@@ -336,14 +337,15 @@ class TestThePasswordStaysOut:
     async def test_a_failed_attach_reports_no_password(
         self, build_routed: Callable[..., RoutedDuckDbClient], secrets: _Secrets
     ) -> None:
-        secrets.overrides[_A] = {"password": "forze-wrong-" + "x" * 8}
+        wrong = token_hex(16)
+        secrets.overrides[_A] = {"password": wrong}
         client = build_routed()
         await client.startup()
 
         error = await _build_refusal(client, _A)
 
         assert error.code == _SETUP_FAILED
-        assert "forze-wrong" not in json.dumps(error.details)
+        assert wrong not in json.dumps(error.details)
 
 
 class TestAttestation:
