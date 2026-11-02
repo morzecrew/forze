@@ -11,6 +11,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Grants-cache invalidations can reach every process.** With `AuthzKernelConfig(grants_invalidation=...)`, each committed one is broadcast through a push-capable cache such as Redis; `grants_invalidation_lifecycle_step` subscribes each process or fails startup. `invalidate_grants` covers plain document commands.
 
+- **`OidcIdpPreset.from_issuer` configures an OIDC issuer from its discovery document.** It refuses a document naming another issuer, or an endpoint that is not https (plain http only on loopback); `fetch_oidc_configuration` returns the validated `OidcProviderMetadata`. Discovery runs at startup, never per request.
+
+- **`IntrospectionTokenVerifier` verifies opaque access tokens by RFC 7662 introspection** (Ory Hydra, Zitadel), authenticating with `BasicClientAuth` or `PrivateKeyJwtAuth`. Inactive tokens and failed calls are refused; active verdicts are cached by token digest for at most `cache_ttl`, clamped to the token's expiry.
+
+- **`WhoamiSessionVerifier` verifies Ory Kratos sessions at `/sessions/whoami`**, forwarding the session cookie or `X-Session-Token`. Identity traits and public metadata reach the claims, and verdicts are cached as introspection's are.
+
+- **`OidcClaimMapper` normalizes `email`, `roles` and `groups` into a `_forze` claim.** `ClaimsPath` reads Keycloak and Casdoor shapes, `ZitadelProjectRoles` Zitadel's org map; a malformed claim yields no roles. A `_forze` claim the issuer sent is dropped (**behaviour change**).
+
 ### Changed
 
 - ...
@@ -18,6 +26,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - **Redis invalidation push notices a half-open connection.** A keepalive `PING` left unanswered for five seconds now flushes every subscriber, the document L1 included, and reconnects; closing the client flushes them once more.
+
+- **`OidcTokenVerifier` refuses a malformed signed token as an authentication failure** (`invalid_oidc_token`). An out-of-range `exp` or `iat` (such as `1e20`), an empty `sub`, or a missing claim a custom `OidcClaimMapper` requires raised a raw `ValueError` instead; a boolean `iat` is refused too.
 
 ## [0.21.0] - 2026-11-02
 
