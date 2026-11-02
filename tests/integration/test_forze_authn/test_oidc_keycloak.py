@@ -270,6 +270,8 @@ async def test_introspection_with_wrong_client_secret_fails_closed(realm: Realm)
         await verifier.verify_token(AccessTokenCredentials(token=realm.token()))
 
     assert caught.value.kind is ExceptionKind.INFRASTRUCTURE
+    # The refusal is about this client, not the token (RFC 7662 §2.3).
+    assert caught.value.details == {"status": 401}
 
 
 async def test_introspection_private_key_jwt(realm: Realm) -> None:

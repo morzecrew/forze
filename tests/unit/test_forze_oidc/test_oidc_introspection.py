@@ -210,6 +210,8 @@ def test_private_key_jwt_refused_at_construction(kwargs: dict[str, Any], match: 
         pytest.param(_active(exp=True), id="exp-bool"),
         pytest.param(_active(nbf="later"), id="nbf-not-number"),
         pytest.param(_active(iat="then"), id="iat-not-number"),
+        pytest.param(_active(aud=[AUDIENCE, 7]), id="aud-list-with-non-string"),
+        pytest.param(_active(aud=[AUDIENCE, None]), id="aud-list-with-null"),
     ],
 )
 async def test_inactive_or_unacceptable_verdict_is_one_authentication_shape(body: Any) -> None:
@@ -369,9 +371,46 @@ async def test_secrets_and_tokens_stay_out_of_errors_and_reprs() -> None:
         assert password not in rendered
 
 
+async def test_missing_claim_the_mapper_requires_is_authentication() -> None:
+    verifier = _verifier(Idp(), claim_mapper=OidcClaimMapper(subject_claim="uid"))
+
+    with pytest.raises(CoreException) as caught:
+        await verifier.verify_token(_creds())
+
+    assert caught.value.kind is ExceptionKind.AUTHENTICATION
+    assert caught.value.code == "invalid_oidc_token"
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "match"),
+    [
+        pytest.param({"audience": []}, "audience", id="empty-audience-list"),
+        pytest.param({"audience": ("api", "")}, "audience", id="blank-audience-member"),
+        pytest.param(
+            {"claim_mapper": OidcClaimMapper(issuer_claim="issuer")}, "iss", id="custom-iss"
+        ),
+        *(
+            pytest.param({"timeout": t}, "timeout", id=f"timeout-{t!r}")
+            for t in (float("nan"), float("inf"), 0, -1.0, True, "10", 10**400)
+        ),
+    ],
+)
+def test_configuration_refused(kwargs: dict[str, Any], match: str) -> None:
+    with pytest.raises(CoreException, match=match) as caught:
+        _config(**kwargs)
+
+    assert caught.value.kind is ExceptionKind.CONFIGURATION
+
+
 @pytest.mark.parametrize(
     "endpoint",
-    ["http://idp.example/introspect", "idp.example/introspect", "https://"],
+    [
+        "http://idp.example/introspect",
+        "idp.example/introspect",
+        "https://",
+        "https://idp.example:port/introspect",
+        "https://idp.example:99999/introspect",
+    ],
 )
 def test_insecure_endpoint_refused(endpoint: str) -> None:
     with pytest.raises(CoreException) as caught:

@@ -25,7 +25,7 @@ from forze.base.primitives import utcnow
 
 from ._cache import TokenCache
 from .claims import OidcClaimMapper
-from .discovery import require_https
+from .discovery import require_https, require_timeout
 
 # ----------------------- #
 
@@ -35,10 +35,20 @@ _COOKIE_UNSAFE: Final[frozenset[str]] = frozenset('";,\\')
 """Characters RFC 6265 excludes from a cookie value, beyond controls and whitespace."""
 
 
+_TOKEN_SEPARATORS: Final[frozenset[str]] = frozenset('()<>@,;:\\"/[]?={}')
+"""RFC 2616 separators, which RFC 6265 excludes from a cookie name."""
+
+
 def _is_safe_credential(value: str) -> bool:
     """Printable ASCII with no cookie separators, so it cannot smuggle a cookie or header."""
 
     return bool(value) and all("!" <= c <= "~" and c not in _COOKIE_UNSAFE for c in value)
+
+
+def _is_cookie_name(value: str) -> bool:
+    """An RFC 6265 cookie name: a non-empty token of printable ASCII without separators."""
+
+    return bool(value) and all("!" <= c <= "~" and c not in _TOKEN_SEPARATORS for c in value)
 
 
 def _timestamp(raw: object) -> datetime | None:
@@ -116,11 +126,17 @@ class WhoamiConfig:
                 f"credential_style must be one of {sorted(_CREDENTIAL_STYLES)}",
             )
 
-        if not _is_safe_credential(self.cookie_name) or "=" in self.cookie_name:
-            raise exc.configuration("cookie_name must be a valid cookie name")
+        if not _is_cookie_name(self.cookie_name):
+            raise exc.configuration("cookie_name must be an RFC 6265 token (no separators)")
 
-        if self.timeout <= 0:
-            raise exc.configuration("Timeout must be positive")
+        if self.claim_mapper.issuer_claim != "iss" or self.claim_mapper.subject_claim != "sub":
+            # The session claims carry the configured issuer as `iss` and identity.id as
+            # `sub`; a mapper reading other claims could record something else.
+            raise exc.configuration(
+                "Whoami claim_mapper must read the issuer from 'iss' and the subject from 'sub'",
+            )
+
+        require_timeout(self.timeout, what="Whoami timeout")
 
 
 # ....................... #
@@ -147,8 +163,8 @@ class WhoamiSessionVerifier(TokenVerifierPort):
     assurance level), ``active`` other than ``true``, an identity whose ``state`` is not
     ``active`` (a missing ``state`` included), an expired session or a credential that is not
     a plain cookie-safe string is an ``authentication`` failure (``invalid_session_token``). A
-    transport failure, timeout, other status or malformed body is an ``infrastructure``
-    failure.
+    transport failure, timeout, other status, a body that is not a JSON object, or a session
+    whose ``expires_at`` is missing or malformed is an ``infrastructure`` failure.
 
     Active verdicts are cached per credential digest; build it once and reuse it (the
     :class:`ConfigurableWhoamiVerifier` factory does). The credential is never logged.
@@ -243,7 +259,7 @@ class WhoamiSessionVerifier(TokenVerifierPort):
 
     # ....................... #
 
-    def _accept(self, session: dict[str, Any]) -> tuple[VerifiedAssertion, float | None]:
+    def _accept(self, session: dict[str, Any]) -> tuple[VerifiedAssertion, float]:
         """The session's assertion, and the expiry it was checked against."""
 
         identity = session.get("identity")
@@ -258,20 +274,30 @@ class WhoamiSessionVerifier(TokenVerifierPort):
         if not isinstance(subject, str) or not subject.strip() or state != "active":
             raise _invalid()
 
+        issued_raw = session.get("issued_at")
+
+        if issued_raw is None:
+            issued_raw = session.get("authenticated_at")
+
         try:
             expires_at = _timestamp(session.get("expires_at"))
-            issued_at = _timestamp(session.get("issued_at") or session.get("authenticated_at"))
+            issued_at = _timestamp(issued_raw)
 
         except ValueError as e:
             raise _invalid_response("Session whoami returned a malformed timestamp") from e
 
-        if expires_at is not None and expires_at <= utcnow():
+        if expires_at is None:
+            # Kratos always sets it; a session without one would be cached as if it never ends.
+            raise _invalid_response("Session whoami returned a session without expires_at")
+
+        if expires_at <= utcnow():
             raise _invalid()
 
-        claims: dict[str, Any] = {"iss": self.config.issuer, "sub": subject}
-
-        if expires_at is not None:
-            claims["exp"] = expires_at.timestamp()
+        claims: dict[str, Any] = {
+            "iss": self.config.issuer,
+            "sub": subject,
+            "exp": expires_at.timestamp(),
+        }
 
         if issued_at is not None:
             claims["iat"] = issued_at.timestamp()
@@ -286,7 +312,7 @@ class WhoamiSessionVerifier(TokenVerifierPort):
                 if isinstance(value, Mapping):
                     claims[target] = dict(cast(Mapping[str, Any], value))
 
-        return self.config.claim_mapper.map(claims), claims.get("exp")
+        return self.config.claim_mapper.map(claims), claims["exp"]
 
 
 # ....................... #

@@ -30,7 +30,7 @@ from forze.base.primitives import secure_token_urlsafe, utcnow
 
 from ._cache import TokenCache
 from .claims import OidcClaimMapper
-from .discovery import require_https
+from .discovery import require_https, require_timeout
 
 # ----------------------- #
 
@@ -215,11 +215,24 @@ class IntrospectionConfig:
                 "issuer that mints tokens without one",
             )
 
+        if self.audience is not None:
+            configured = (self.audience,) if isinstance(self.audience, str) else self.audience
+
+            if not configured or any(not isinstance(a, str) or not a.strip() for a in configured):
+                raise exc.configuration(
+                    "Introspection audience must be a non-empty string or a non-empty sequence "
+                    "of them",
+                )
+
+        if self.claim_mapper.issuer_claim != "iss":
+            # The issuer is checked as `iss`; a mapper reading another claim could record an
+            # issuer other than the configured one on the assertion.
+            raise exc.configuration("Introspection claim_mapper must read the issuer from 'iss'")
+
         if self.leeway < timedelta(0):
             raise exc.configuration("Leeway must not be negative")
 
-        if self.timeout <= 0:
-            raise exc.configuration("Timeout must be positive")
+        require_timeout(self.timeout, what="Introspection timeout")
 
 
 # ....................... #
@@ -256,11 +269,12 @@ class IntrospectionTokenVerifier(TokenVerifierPort):
     """Verify an opaque access token by introspecting it at the issuer (RFC 7662).
 
     Fails closed: ``active`` other than ``true``, an ``error`` in a 2xx body, a foreign
-    ``iss``, a missing ``sub``, a missing or foreign ``aud`` (when required) or an expired /
-    not-yet-valid token is an ``authentication`` failure (``invalid_oidc_token``). A transport
-    failure, timeout, non-2xx status or malformed body is an ``infrastructure`` failure —
-    those say nothing about the token, so they are not reported as one. No path emits an
-    assertion without an active verdict.
+    ``iss``, a missing ``sub``, a missing, foreign or malformed ``aud`` (when required), a
+    time claim that is not a finite number, a claim the mapper requires that is missing, or an
+    expired / not-yet-valid token is an ``authentication`` failure (``invalid_oidc_token``). A
+    transport failure, timeout, non-2xx status, or a body that is not a JSON object is an
+    ``infrastructure`` failure — those say nothing about the token, so they are not reported
+    as one. No path emits an assertion without an active verdict.
 
     Active verdicts are cached per token digest (see
     :class:`~forze_identity.oidc._cache.TokenCache`). Build it once and reuse it — the
@@ -384,12 +398,20 @@ class IntrospectionTokenVerifier(TokenVerifierPort):
         if cfg.audience is not None and validated_audience is None:
             raise _invalid()
 
-        return cfg.claim_mapper.map(payload, validated_audience=validated_audience)
+        try:
+            return cfg.claim_mapper.map(payload, validated_audience=validated_audience)
+
+        except ValueError as e:  # a claim the mapper is configured to require is missing
+            raise _invalid() from e
 
     # ....................... #
 
     def _validated_audience(self, token_aud: object) -> str | None:
-        """The configured audience the response presented, or ``None``."""
+        """The configured audience the response presented, or ``None``.
+
+        :raises CoreException: ``authentication`` when ``aud`` is a list with a non-string
+            member — a malformed claim, refused rather than read around.
+        """
 
         audience = self.config.audience
 
@@ -402,11 +424,12 @@ class IntrospectionTokenVerifier(TokenVerifierPort):
             presented: set[str] = {token_aud}
 
         elif isinstance(token_aud, list):
-            presented = {
-                aud
-                for aud in token_aud  # pyright: ignore[reportUnknownVariableType]
-                if isinstance(aud, str)
-            }
+            members = cast(list[object], token_aud)
+
+            if not all(isinstance(aud, str) for aud in members):
+                raise _invalid()
+
+            presented = set(cast(list[str], members))
 
         else:
             presented = set()

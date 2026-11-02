@@ -127,6 +127,8 @@ async def test_issuer_mismatch_fails_closed(doc_issuer: object) -> None:
         "https://idp.example?x=1",
         "https://idp.example#frag",
         "http://[::1",
+        "https://idp.example:port",
+        "https://idp.example:99999",
     ],
 )
 async def test_insecure_or_malformed_issuer_refused_before_any_request(issuer: str) -> None:
@@ -252,3 +254,14 @@ def test_preset_refuses_metadata_of_another_issuer() -> None:
             audience="a",
             metadata=OidcProviderMetadata(issuer="https://other.example", jwks_uri="https://o/j"),
         )
+
+
+@pytest.mark.parametrize("timeout", [float("nan"), float("inf"), 0, -1.0, True])
+async def test_unusable_timeout_refused_before_any_request(timeout: float) -> None:
+    seen: list[httpx.Request] = []
+
+    with pytest.raises(CoreException, match="timeout") as caught:
+        await fetch_oidc_configuration(ISSUER, timeout=timeout, transport=_transport(seen=seen))
+
+    assert caught.value.kind is ExceptionKind.CONFIGURATION
+    assert seen == []

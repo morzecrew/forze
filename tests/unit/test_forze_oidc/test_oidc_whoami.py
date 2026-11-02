@@ -220,6 +220,12 @@ async def test_timeout_fails_closed() -> None:
         pytest.param(_session(expires_at="tomorrow"), id="bad-expiry"),
         pytest.param(_session(expires_at="2030-01-01T00:00:00"), id="naive-expiry"),
         pytest.param(_session(expires_at=1_900_000_000), id="numeric-expiry"),
+        pytest.param(
+            {k: v for k, v in _session().items() if k != "expires_at"}, id="missing-expiry"
+        ),
+        pytest.param(_session(expires_at=None), id="null-expiry"),
+        pytest.param(_session(issued_at="nope"), id="bad-issued-at"),
+        pytest.param(_session(issued_at=""), id="empty-issued-at-not-skipped"),
     ],
 )
 async def test_malformed_body_fails_closed(body: Any) -> None:
@@ -228,6 +234,20 @@ async def test_malformed_body_fails_closed(body: Any) -> None:
 
     assert caught.value.kind is ExceptionKind.INFRASTRUCTURE
     assert caught.value.code == "session_whoami_invalid_response"
+
+
+async def test_missing_issued_at_falls_back_to_authenticated_at() -> None:
+    body = _session(issued_at=None, authenticated_at="2026-01-02T03:04:05Z")
+
+    assertion = await _verifier(Kratos(body)).verify_token(_creds())
+
+    assert assertion.issued_at is not None
+    assert assertion.issued_at.isoformat() == "2026-01-02T03:04:05+00:00"
+
+
+def test_rfc6265_token_cookie_names_accepted() -> None:
+    for name in ("ory_kratos_session", "__Host-session", "a.b~c!#$%&'*+-^`|"):
+        WhoamiConfig(endpoint=ENDPOINT, issuer=ISSUER, credential_style="cookie", cookie_name=name)
 
 
 # Revocation at the TTL, the expiry clamp and digest-only keys are in the shared battery.
@@ -240,8 +260,24 @@ async def test_malformed_body_fails_closed(body: Any) -> None:
         pytest.param({"credential_style": "bearer"}, "credential_style", id="unknown-style"),
         pytest.param({"cookie_name": "a=b"}, "cookie_name", id="cookie-name-with-equals"),
         pytest.param({"cookie_name": "a b"}, "cookie_name", id="cookie-name-with-space"),
+        *(
+            pytest.param({"cookie_name": f"a{c}b"}, "cookie_name", id=f"cookie-name-with-{c}")
+            for c in ":/()<>@?[]{}"
+        ),
         pytest.param({"issuer": " "}, "issuer", id="blank-issuer"),
         pytest.param({"cache_ttl": timedelta(hours=1)}, "TTL", id="ttl-too-long"),
+        pytest.param({"cache_ttl": 30}, "TTL", id="ttl-not-timedelta"),
+        pytest.param({"cache_max_entries": float("nan")}, "max entries", id="max-entries-nan"),
+        *(
+            pytest.param({"timeout": t}, "timeout", id=f"timeout-{t!r}")
+            for t in (float("nan"), float("inf"), 0, -1.0, True, "10")
+        ),
+        pytest.param(
+            {"claim_mapper": OidcClaimMapper(issuer_claim="issuer")}, "iss", id="custom-iss"
+        ),
+        pytest.param(
+            {"claim_mapper": OidcClaimMapper(subject_claim="uid")}, "sub", id="custom-sub"
+        ),
     ],
 )
 def test_configuration_refused(kwargs: dict[str, Any], match: str) -> None:

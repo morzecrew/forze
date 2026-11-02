@@ -11,6 +11,7 @@ require_oidc()
 
 # ....................... #
 
+import math
 from ipaddress import ip_address
 from typing import Any, cast, final
 from urllib.parse import urlsplit
@@ -48,6 +49,7 @@ def require_https(url: str, *, what: str) -> None:
 
     try:
         parts = urlsplit(url)
+        _ = parts.port  # parsed lazily: a malformed port raises only when read
 
     except ValueError as e:
         raise exc.configuration(f"{what} is not a parseable URL") from e
@@ -63,6 +65,32 @@ def require_https(url: str, *, what: str) -> None:
     raise exc.configuration(
         f"{what} must be an absolute https URL (http is allowed only on a loopback host)",
     )
+
+
+# ....................... #
+
+
+def require_timeout(timeout: object, *, what: str) -> None:
+    """Refuse a timeout that is not a finite, positive number of seconds.
+
+    ``NaN`` passes a ``<= 0`` check, and an infinite timeout is no timeout at all.
+
+    :raises CoreException: ``configuration`` when *timeout* is unusable.
+    """
+
+    try:
+        usable = (
+            isinstance(timeout, (int, float))
+            and not isinstance(timeout, bool)
+            and math.isfinite(timeout)
+            and timeout > 0
+        )
+
+    except OverflowError:  # an integer too large for a float
+        usable = False
+
+    if not usable:
+        raise exc.configuration(f"{what} must be a finite, positive number of seconds")
 
 
 # ....................... #
@@ -145,8 +173,7 @@ async def fetch_oidc_configuration(
     if parts.query or parts.fragment:
         raise exc.configuration("OIDC issuer must not carry a query or fragment")
 
-    if timeout <= 0:
-        raise exc.configuration("Timeout must be positive")
+    require_timeout(timeout, what="Discovery timeout")
 
     # OIDC Discovery §4: a terminating "/" is removed before appending the well-known path.
     url = issuer.rstrip("/") + "/.well-known/openid-configuration"

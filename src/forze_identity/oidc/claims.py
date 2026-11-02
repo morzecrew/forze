@@ -59,9 +59,10 @@ def _split_path(path: str, *, params: Mapping[str, str], owner: str) -> tuple[st
         try:
             segment = raw.format_map(params)
 
-        except (KeyError, IndexError, ValueError) as e:
+        except (KeyError, IndexError, ValueError, TypeError, AttributeError) as e:
+            # Missing values, and malformed placeholder syntax ("{a[x]}", "{a!z}").
             raise exc.configuration(
-                f"{owner} path {path!r} has a placeholder with no value: {e}",
+                f"{owner} path {path!r} has a placeholder that cannot be filled: {e}",
             ) from e
 
         if not segment:
@@ -353,7 +354,8 @@ class OidcClaimMapper:
 
         :raises CoreException: ``authentication`` (``invalid_oidc_token``) when the claim is a
             number that is not finite or not representable as a datetime (``NaN``, ``1e400``,
-            ``1e20``) — a token carrying one is malformed, not merely without the claim.
+            ``1e20``), or a JSON boolean — a token carrying one is malformed, not merely without
+            the claim.
         """
 
         if name is None:
@@ -365,7 +367,7 @@ class OidcClaimMapper:
             return None
 
         try:
-            if not math.isfinite(raw):
+            if isinstance(raw, bool) or not math.isfinite(raw):
                 raise ValueError("timestamp is not finite")
 
             return datetime.fromtimestamp(raw, tz=UTC)

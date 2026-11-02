@@ -30,7 +30,9 @@ class TokenCache:
     The key is the SHA-256 of the token, never the token. An entry lives :attr:`ttl` from when
     the remote call began, clamped to the expiry the verifier checked and to the assertion's
     ``expires_at``, so a token dies here at the TTL or at its expiry, whichever is first —
-    never later. Only positive verdicts are stored.
+    never later. The expiry is also checked against the wall clock on every hit, so a forward
+    jump of the system clock cannot serve an expired credential. Only positive verdicts are
+    stored.
     """
 
     ttl: timedelta
@@ -42,23 +44,29 @@ class TokenCache:
     clock: Callable[[], float] = monotonic
     """Seconds, for expiry."""
 
-    _entries: OrderedDict[bytes, tuple[float, VerifiedAssertion]] = attrs.field(
-        factory=OrderedDict[bytes, tuple[float, VerifiedAssertion]],
+    _entries: OrderedDict[bytes, tuple[float, float | None, VerifiedAssertion]] = attrs.field(
+        factory=OrderedDict[bytes, tuple[float, float | None, VerifiedAssertion]],
         init=False,
     )
+    """Per digest: the monotonic deadline, the wall-clock expiry (POSIX) and the assertion."""
+
     _lock: threading.Lock = attrs.field(factory=threading.Lock, init=False)
 
     # ....................... #
 
     def __attrs_post_init__(self) -> None:
-        if not timedelta(0) <= self.ttl <= MAX_CACHE_TTL:
+        if not isinstance(self.ttl, timedelta) or not timedelta(0) <= self.ttl <= MAX_CACHE_TTL:
             raise exc.configuration(
-                f"Cache TTL must be between 0 and {MAX_CACHE_TTL}; these caches absorb bursts "
-                "and must not outlive a revocation for long",
+                f"Cache TTL must be a timedelta between 0 and {MAX_CACHE_TTL}; these caches "
+                "absorb bursts and must not outlive a revocation for long",
             )
 
-        if isinstance(self.max_entries, bool) or self.max_entries < 1:
-            raise exc.configuration("Cache max entries must be at least 1")
+        if (
+            not isinstance(self.max_entries, int)
+            or isinstance(self.max_entries, bool)
+            or self.max_entries < 1
+        ):
+            raise exc.configuration("Cache max entries must be an integer of at least 1")
 
     # ....................... #
 
@@ -86,9 +94,13 @@ class TokenCache:
             if entry is None:
                 return None
 
-            expires_at, assertion = entry
+            deadline, wall_expiry, assertion = entry
 
-            if self.clock() >= expires_at:
+            # The wall-clock check catches a forward jump of the system clock, which the
+            # monotonic deadline cannot see: the credential's own expiry is wall-clock time.
+            expired = wall_expiry is not None and utcnow().timestamp() >= wall_expiry
+
+            if expired or self.clock() >= deadline:
                 del self._entries[key]
                 return None
 
@@ -115,12 +127,18 @@ class TokenCache:
 
         now, wall = self.clock(), utcnow().timestamp()
         deadline = began + self.ttl.total_seconds()
-
-        if assertion.expires_at is not None:
-            deadline = min(deadline, now + assertion.expires_at.timestamp() - wall)
+        expiries: list[float] = []
 
         if expires_at is not None:
-            deadline = min(deadline, now + expires_at - wall)
+            expiries.append(float(expires_at))
+
+        if assertion.expires_at is not None:
+            expiries.append(assertion.expires_at.timestamp())
+
+        wall_expiry = min(expiries, default=None)
+
+        if wall_expiry is not None:
+            deadline = min(deadline, now + wall_expiry - wall)
 
         if deadline <= now:
             return
@@ -128,7 +146,7 @@ class TokenCache:
         key = self._key(token)
 
         with self._lock:
-            self._entries[key] = (deadline, assertion)
+            self._entries[key] = (deadline, wall_expiry, assertion)
             self._entries.move_to_end(key)
 
             while len(self._entries) > self.max_entries:

@@ -37,7 +37,7 @@ from forze.application.contracts.authn import (
     VerifiedAssertion,
 )
 from forze.base.exceptions import CoreException, ExceptionKind
-from forze.base.primitives import utcnow
+from forze.base.primitives import FrozenTimeSource, bind_time_source, utcnow
 from forze_identity.oidc import (
     BasicClientAuth,
     IntrospectionConfig,
@@ -167,6 +167,7 @@ async def test_multi_audience_records_the_validated_one(verify: Verify) -> None:
         pytest.param({"aud": None}, id="missing-audience"),
         pytest.param({"iss": "https://evil.example"}, id="wrong-issuer"),
         pytest.param({"sub": None}, id="missing-subject"),
+        pytest.param({"sub": ""}, id="empty-subject"),
     ],
 )
 async def test_rejected_as_authentication(verify: Verify, overrides: dict[str, Any]) -> None:
@@ -470,3 +471,36 @@ async def test_remote_cache_keys_are_digests_never_credentials(remote: Remote) -
     assert keys == [hashlib.sha256(token.encode()).digest()]
     assert token.encode() not in b"".join(keys)
     assert token not in repr(remote.verifier)
+
+
+async def test_remote_wall_clock_jump_past_expiry_is_not_served(remote: Remote) -> None:
+    """The monotonic deadline cannot see a forward jump of the system clock; the wall check does."""
+
+    remote.accept(expires_in=60)
+    await remote.verify()
+    remote.revoke()
+
+    later = FrozenTimeSource(instant=utcnow() + timedelta(minutes=2))
+
+    with bind_time_source(later), pytest.raises(CoreException):
+        await remote.verify()
+
+    assert remote.calls == 2
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        pytest.param({"ttl": 30, "max_entries": 16}, id="ttl-not-timedelta"),
+        pytest.param({"ttl": timedelta(seconds=30), "max_entries": 1.5}, id="max-entries-float"),
+        pytest.param(
+            {"ttl": timedelta(seconds=30), "max_entries": float("nan")}, id="max-entries-nan"
+        ),
+        pytest.param({"ttl": timedelta(seconds=30), "max_entries": True}, id="max-entries-bool"),
+    ],
+)
+def test_cache_refuses_unusable_bounds(kwargs: dict[str, Any]) -> None:
+    with pytest.raises(CoreException) as caught:
+        TokenCache(**kwargs)
+
+    assert caught.value.kind is ExceptionKind.CONFIGURATION

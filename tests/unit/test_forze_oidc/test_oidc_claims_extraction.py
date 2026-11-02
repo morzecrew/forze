@@ -217,8 +217,17 @@ class TestMapperNormalization:
 @pytest.mark.parametrize("claim", ["exp", "iat"])
 @pytest.mark.parametrize(
     "value",
-    [float("nan"), float("inf"), float("-inf"), 1e20, -1e20, 10**400],
-    ids=["nan", "infinity", "minus-infinity", "1e20", "minus-1e20", "int-beyond-float"],
+    [float("nan"), float("inf"), float("-inf"), 1e20, -1e20, 10**400, True, False],
+    ids=[
+        "nan",
+        "infinity",
+        "minus-infinity",
+        "1e20",
+        "minus-1e20",
+        "int-beyond-float",
+        "true",
+        "false",
+    ],
 )
 def test_unrepresentable_timestamp_is_authentication_not_a_raw_error(
     claim: str,
@@ -248,6 +257,9 @@ def test_non_numeric_timestamp_is_still_absent() -> None:
         pytest.param(lambda: ClaimsPath("a..b"), id="empty-segment"),
         pytest.param(lambda: ClaimsPath(""), id="empty-path"),
         pytest.param(lambda: ClaimsPath("roles", item_key=""), id="empty-item-key"),
+        pytest.param(lambda: ClaimsPath("{a[x]}", a="roles"), id="placeholder-index"),
+        pytest.param(lambda: ClaimsPath("{a!z}", a="roles"), id="placeholder-conversion"),
+        pytest.param(lambda: ClaimsPath("{a", a="roles"), id="placeholder-unclosed"),
         pytest.param(lambda: ZitadelProjectRoles(org_id=" "), id="blank-org"),
         pytest.param(lambda: ZitadelProjectRoles(project_id=""), id="blank-project"),
         pytest.param(lambda: OidcClaimMapper(email_claim="traits."), id="bad-email-path"),
