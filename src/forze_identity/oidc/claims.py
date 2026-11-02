@@ -4,6 +4,7 @@ require_oidc()
 
 # ....................... #
 
+import math
 from collections.abc import Mapping
 from datetime import UTC, datetime
 from typing import Any, Final, Protocol, final
@@ -348,14 +349,26 @@ class OidcClaimMapper:
         claims: Mapping[str, Any],
         name: str | None,
     ) -> datetime | None:
-        """Coerce timestamp claim to a :class:`datetime` if present."""
+        """Coerce timestamp claim to a :class:`datetime` if present.
+
+        :raises CoreException: ``authentication`` (``invalid_oidc_token``) when the claim is a
+            number that is not finite or not representable as a datetime (``NaN``, ``1e400``,
+            ``1e20``) — a token carrying one is malformed, not merely without the claim.
+        """
 
         if name is None:
             return None
 
         raw = claims.get(name)
 
-        if isinstance(raw, (int, float)):
+        if not isinstance(raw, (int, float)):
+            return None
+
+        try:
+            if not math.isfinite(raw):
+                raise ValueError("timestamp is not finite")
+
             return datetime.fromtimestamp(raw, tz=UTC)
 
-        return None
+        except (ValueError, OverflowError, OSError) as e:
+            raise exc.authentication("Invalid OIDC token", code="invalid_oidc_token") from e

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import base64
-import hashlib
 import secrets
 from datetime import timedelta
 from typing import Any
@@ -170,7 +169,10 @@ async def test_private_key_jwt_client_assertion() -> None:
     claims = jwt.decode(assertion, key.public_key(), algorithms=["ES256"], audience=ISSUER)
     assert claims["iss"] == claims["sub"] == "rs"
     assert claims["exp"] - claims["iat"] == 60
-    assert claims["jti"]
+
+    # A fresh jti per assertion: an issuer that stores seen ones refuses a repeat.
+    second = jwt.decode(auth.assertion(), key.public_key(), algorithms=["ES256"], audience=ISSUER)
+    assert claims["jti"] and second["jti"] and claims["jti"] != second["jti"]
 
 
 @pytest.mark.parametrize(
@@ -207,6 +209,7 @@ def test_private_key_jwt_refused_at_construction(kwargs: dict[str, Any], match: 
         pytest.param(_active(exp="soon"), id="exp-not-number"),
         pytest.param(_active(exp=True), id="exp-bool"),
         pytest.param(_active(nbf="later"), id="nbf-not-number"),
+        pytest.param(_active(iat="then"), id="iat-not-number"),
     ],
 )
 async def test_inactive_or_unacceptable_verdict_is_one_authentication_shape(body: Any) -> None:
@@ -293,44 +296,7 @@ async def test_claim_mapper_extracts_roles_from_the_response() -> None:
 
 
 # ....................... #
-
-
-async def test_revoked_token_dies_at_ttl_never_later() -> None:
-    clock = Clock()
-    idp = Idp()
-    verifier = _verifier(idp, clock=clock, ttl=timedelta(seconds=30))
-
-    await verifier.verify_token(_creds())
-    idp.body = {"active": False}  # revoked at the issuer
-
-    clock.now += 29.9
-    assert (await verifier.verify_token(_creds())).subject == "user-1"
-    assert len(idp.requests) == 1
-
-    clock.now += 0.1
-    with pytest.raises(CoreException):
-        await verifier.verify_token(_creds())
-
-    assert len(idp.requests) == 2
-
-
-async def test_cache_lifetime_is_clamped_by_token_exp() -> None:
-    clock = Clock()
-    exp = int(utcnow().timestamp()) + 5
-    idp = Idp(_active(exp=exp))
-    verifier = _verifier(idp, clock=clock, ttl=timedelta(seconds=30), leeway=timedelta(0))
-
-    await verifier.verify_token(_creds())
-    clock.now += 2
-    await verifier.verify_token(_creds())
-    assert len(idp.requests) == 1
-
-    clock.now += 4  # past exp, well inside the 30 s TTL
-    idp.body = {"active": False}
-    with pytest.raises(CoreException):
-        await verifier.verify_token(_creds())
-
-    assert len(idp.requests) == 2
+# Revocation at the TTL, the expiry clamp and digest-only keys are in the shared battery.
 
 
 async def test_negative_verdicts_are_not_cached() -> None:
@@ -368,18 +334,6 @@ async def test_cache_is_bounded_least_recently_used_first() -> None:
 
     await verifier.verify_token(_creds("t2"))
     assert len(idp.requests) == 4
-
-
-async def test_cache_keys_are_token_digests_never_tokens() -> None:
-    token = secrets.token_hex(16)
-    verifier = _verifier(Idp())
-
-    await verifier.verify_token(_creds(token))
-
-    keys = list(verifier.cache._entries)  # pyright: ignore[reportPrivateUsage]
-    assert keys == [hashlib.sha256(token.encode()).digest()]
-    assert token not in repr(verifier)
-    assert token.encode() not in b"".join(keys)
 
 
 @pytest.mark.parametrize("ttl", [timedelta(seconds=-1), timedelta(minutes=5, seconds=1)])

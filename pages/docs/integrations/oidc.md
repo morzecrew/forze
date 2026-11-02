@@ -78,13 +78,17 @@ every issuer:
   cache TTL.
 - Discovery is construction-time only: an IdP outage can delay startup, never fail
   a request. It does not read algorithms from the document — pass `algorithms`
-  yourself, so a remote file cannot widen the allowlist.
+  yourself, so a remote file cannot widen the allowlist. It does trust the document
+  for endpoint locations, which may sit on other hosts than the issuer (Google's do);
+  when that trust is not acceptable, pin the endpoints by hand.
 - Discovery, introspection and whoami endpoints must be `https` (plain `http` only
   on a loopback host); redirects are not followed.
 - Introspection and whoami fail closed. An inactive, revoked, expired, foreign-issuer
   or foreign-audience token is an authentication failure with one shape
-  (`invalid_oidc_token`; `invalid_session_token` for whoami). A timeout, a non-2xx
-  status or a malformed body is an infrastructure failure — never an accepted token.
+  (`invalid_oidc_token`; `invalid_session_token` for whoami), and so is a time claim
+  that is not a finite, representable number. A Kratos identity must say
+  `state: active`; one without a `state` is refused. A timeout, a non-2xx status or a
+  malformed body is an infrastructure failure — never an accepted token.
 - Their caches keep only active verdicts, keyed by the token's SHA-256 digest, for
   `cache_ttl` (default 30 s, at most 5 minutes, `0` disables) clamped to the token's
   own expiry. A revoked token keeps working until its entry expires, never longer.

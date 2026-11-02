@@ -7,6 +7,7 @@ require_oidc()
 # ....................... #
 
 import base64
+import math
 from collections.abc import Sequence
 from datetime import timedelta
 from typing import Any, Final, cast, final
@@ -224,6 +225,22 @@ class IntrospectionConfig:
 # ....................... #
 
 
+def _is_timestamp(value: object) -> bool:
+    """A finite JSON number: ``NaN`` compares false both ways and would slip past a bound."""
+
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return False
+
+    try:
+        return math.isfinite(value)
+
+    except OverflowError:  # an integer too large for a float
+        return False
+
+
+# ....................... #
+
+
 def _invalid() -> Exception:
     # One shape for every rejected token: an inactive, revoked, expired or foreign token must
     # not be distinguishable by the caller.
@@ -295,6 +312,8 @@ class IntrospectionTokenVerifier(TokenVerifierPort):
         form["token"] = token
         headers["Accept"] = "application/json"
 
+        # shortcut: a client per call, as the VK verifier and the code-exchange helpers do, so
+        # a cache miss pays a TLS handshake; a lifecycle-closed client if miss latency matters.
         try:
             async with httpx.AsyncClient(
                 timeout=self.config.timeout,
@@ -352,10 +371,7 @@ class IntrospectionTokenVerifier(TokenVerifierPort):
         leeway = cfg.leeway.total_seconds()
         exp, nbf = payload.get("exp"), payload.get("nbf")
 
-        if isinstance(exp, bool) or (exp is not None and not isinstance(exp, (int, float))):
-            raise _invalid()
-
-        if isinstance(nbf, bool) or (nbf is not None and not isinstance(nbf, (int, float))):
+        if any(v is not None and not _is_timestamp(v) for v in (exp, nbf, payload.get("iat"))):
             raise _invalid()
 
         if (exp is not None and exp <= now - leeway) or (nbf is not None and nbf > now + leeway):

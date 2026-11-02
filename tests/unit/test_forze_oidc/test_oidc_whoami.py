@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
-import secrets
 from datetime import timedelta
 from typing import Any
 from unittest.mock import MagicMock
@@ -165,6 +163,8 @@ async def test_no_or_insufficient_session_is_authentication(status: int) -> None
         pytest.param(_session(identity={"id": ""}), id="empty-identity-id"),
         pytest.param(_session(identity={"id": 7}), id="identity-id-not-string"),
         pytest.param(_session(identity={"id": IDENTITY_ID, "state": "inactive"}), id="inactive-id"),
+        pytest.param(_session(identity={"id": IDENTITY_ID}), id="identity-without-state"),
+        pytest.param(_session(identity={"id": IDENTITY_ID, "state": None}), id="null-state"),
         pytest.param(_session(expires_at=_iso(timedelta(seconds=-1))), id="expired"),
     ],
 )
@@ -230,38 +230,7 @@ async def test_malformed_body_fails_closed(body: Any) -> None:
     assert caught.value.code == "session_whoami_invalid_response"
 
 
-async def test_revoked_session_dies_at_ttl_and_keys_are_digests() -> None:
-    clock = Clock()
-    kratos = Kratos()
-    token = "ory_st_" + secrets.token_hex(16)
-    verifier = _verifier(kratos, clock=clock, ttl=timedelta(seconds=10))
-
-    await verifier.verify_token(_creds(token))
-    kratos.status = 401  # session revoked
-
-    clock.now += 9.9
-    await verifier.verify_token(_creds(token))
-    assert len(kratos.requests) == 1
-    assert list(verifier.cache._entries) == [  # pyright: ignore[reportPrivateUsage]
-        hashlib.sha256(token.encode()).digest()
-    ]
-
-    clock.now += 0.1
-    with pytest.raises(CoreException):
-        await verifier.verify_token(_creds(token))
-
-
-async def test_cache_clamped_by_session_expiry() -> None:
-    clock = Clock()
-    kratos = Kratos(_session(expires_at=_iso(timedelta(seconds=3))))
-    verifier = _verifier(kratos, clock=clock, ttl=timedelta(seconds=30))
-
-    await verifier.verify_token(_creds())
-    clock.now += 4
-    kratos.status = 401
-
-    with pytest.raises(CoreException):
-        await verifier.verify_token(_creds())
+# Revocation at the TTL, the expiry clamp and digest-only keys are in the shared battery.
 
 
 @pytest.mark.parametrize(

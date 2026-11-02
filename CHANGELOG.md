@@ -23,7 +23,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- ...
+- **`OidcTokenVerifier` refuses an `exp` or `iat` it cannot represent as an authentication failure** (`invalid_oidc_token`). A signed token whose `exp` was out of range, such as `1e20`, raised a raw `ValueError` from `OidcClaimMapper` instead.
 
 ## [0.21.0] - 2026-11-02
 

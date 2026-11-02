@@ -3778,8 +3778,12 @@ has a fixture today.
 - **Class:** `spec-gap`.
 - **Consequence:** `IntrospectionConfig.issuer: str` is required. A response without `iss`
   gets it; one with a different `iss` is refused. An active verdict is also refused when it
-  lacks a non-empty `sub`, or when its `exp` or `nbf` is malformed or outside the leeway.
-  `active: true` alone does not admit a token.
+  lacks a non-empty `sub`, when its `exp` or `nbf` is outside the leeway, or when its `exp`,
+  `nbf` or `iat` is not a finite number. JSON parsing admits `NaN` and `Infinity`, and `NaN`
+  compares false both ways, so a bound check alone would admit it. `active: true` alone does
+  not admit a token. The shared `OidcClaimMapper` refuses a numeric `exp` or `iat` it cannot
+  turn into a datetime (`NaN`, `1e20`) as `invalid_oidc_token` too. It used to raise a raw
+  `ValueError`, which the JWKS verifier let escape for a signed `exp` of `1e20`.
 - **Proposed row (RFC 0009):** `ASSUMED` — introspection requires the issuer. It is recorded on
   every assertion, and a different `iss` in the response is refused.
 
@@ -3925,9 +3929,12 @@ has a fixture today.
   `credential_style` (required, with no default to guess), `cookie_name`
   (`ory_kratos_session`), `traits_to_claims`, cache bounds, `timeout` and `claim_mapper`. The
   claims are `iss`, `sub`, `exp`, `iat`, `sid`, `traits` and `metadata` (from
-  `metadata_public`), so 5.4 extraction works as for a token. A credential that is not
-  printable ASCII free of cookie separators is refused before any request, so it cannot smuggle
-  a cookie or a header.
+  `metadata_public`), so 5.4 extraction works as for a token. The identity must carry
+  `state: "active"`; a missing `state` is refused rather than read as active. A credential that
+  is not printable ASCII free of cookie separators is refused before any request, so it cannot
+  smuggle a cookie or a header. Like the VK verifier and the code-exchange helpers, both
+  remote verifiers open an `httpx` client per call: nothing in `forze_identity` holds a
+  lifecycle-closed client, and the verdict cache absorbs bursts.
 - **Proposed row (RFC 0009):** `ASSUMED` — the whoami verifier is Kratos-shaped. A second
   session endpoint generalizes it when one exists.
 

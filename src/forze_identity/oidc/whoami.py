@@ -145,9 +145,10 @@ class WhoamiSessionVerifier(TokenVerifierPort):
     Kratos-shaped: the subject is ``identity.id`` and the expiry the session's
     ``expires_at``. Fails closed: 401/403 (no valid session, or one below the required
     assurance level), ``active`` other than ``true``, an identity whose ``state`` is not
-    ``active``, an expired session or a credential that is not a plain cookie-safe string is
-    an ``authentication`` failure (``invalid_session_token``). A transport failure, timeout,
-    other status or malformed body is an ``infrastructure`` failure.
+    ``active`` (a missing ``state`` included), an expired session or a credential that is not
+    a plain cookie-safe string is an ``authentication`` failure (``invalid_session_token``). A
+    transport failure, timeout, other status or malformed body is an ``infrastructure``
+    failure.
 
     Active verdicts are cached per credential digest; build it once and reuse it (the
     :class:`ConfigurableWhoamiVerifier` factory does). The credential is never logged.
@@ -207,6 +208,8 @@ class WhoamiSessionVerifier(TokenVerifierPort):
         else:
             headers["X-Session-Token"] = token
 
+        # shortcut: a client per call, as the VK verifier and the code-exchange helpers do, so
+        # a cache miss pays a TLS handshake; a lifecycle-closed client if miss latency matters.
         try:
             async with httpx.AsyncClient(timeout=cfg.timeout, transport=self.transport) as client:
                 response = await client.get(cfg.endpoint, headers=headers)
@@ -248,7 +251,7 @@ class WhoamiSessionVerifier(TokenVerifierPort):
 
         identity = cast(Mapping[str, Any], identity)
         subject = identity.get("id")
-        state = identity.get("state", "active")
+        state = identity.get("state")
 
         if not isinstance(subject, str) or not subject.strip() or state != "active":
             raise _invalid()

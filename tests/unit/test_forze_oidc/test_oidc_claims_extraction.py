@@ -8,7 +8,7 @@ import pytest
 
 pytest.importorskip("jwt")
 
-from forze.base.exceptions import CoreException
+from forze.base.exceptions import CoreException, ExceptionKind
 from forze_identity.oidc import (
     FORZE_CLAIMS,
     ClaimsExtractor,
@@ -212,6 +212,30 @@ class TestMapperNormalization:
         mapper = OidcClaimMapper(roles=ClaimsPath("realm_access.roles"))
 
         assert mapper.map(forged).claims[FORZE_CLAIMS] == {"roles": []}
+
+
+@pytest.mark.parametrize("claim", ["exp", "iat"])
+@pytest.mark.parametrize(
+    "value",
+    [float("nan"), float("inf"), float("-inf"), 1e20, -1e20, 10**400],
+    ids=["nan", "infinity", "minus-infinity", "1e20", "minus-1e20", "int-beyond-float"],
+)
+def test_unrepresentable_timestamp_is_authentication_not_a_raw_error(
+    claim: str,
+    value: float,
+) -> None:
+    with pytest.raises(CoreException) as caught:
+        OidcClaimMapper().map({"iss": "i", "sub": "s", claim: value})
+
+    assert caught.value.kind is ExceptionKind.AUTHENTICATION
+    assert caught.value.code == "invalid_oidc_token"
+
+
+def test_non_numeric_timestamp_is_still_absent() -> None:
+    assertion = OidcClaimMapper().map({"iss": "i", "sub": "s", "exp": "soon", "iat": None})
+
+    assert assertion.expires_at is None
+    assert assertion.issued_at is None
 
 
 # ....................... #
