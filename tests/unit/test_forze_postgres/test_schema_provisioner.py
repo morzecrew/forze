@@ -766,6 +766,7 @@ async def test_a_role_bound_to_the_schema_is_given_login_again(can_login: bool) 
     statements = "\n".join(client.executed)
 
     assert """ALTER ROLE "acme_reader" LOGIN PASSWORD 'SCRAM-SHA-256$""" in statements
+    assert "VALID UNTIL 'infinity'" in statements
     assert "CREATE ROLE" not in statements
     assert 'GRANT USAGE ON SCHEMA "acme" TO "acme_reader"' in statements
 

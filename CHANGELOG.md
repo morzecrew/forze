@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **`PostgresSchemaTenantProvisioner(login=...)` provisions a tenant role that logs in.** It takes the password from the tenant's secret, as a `DuckLakeTenantCatalog` reads it, and sets it on every provisioning as a SCRAM verifier. It adopts an existing role only once provisioned for the schema.
+- **`PostgresSchemaTenantProvisioner(login=...)` provisions a tenant role that logs in.** Its password comes from the tenant's secret, as `RoutedDuckDbClient` reads it for a `DuckLakeTenantCatalog`, and is set on every provisioning as a SCRAM verifier. It adopts an existing role only once provisioned for the schema.
 
 ### Changed
 

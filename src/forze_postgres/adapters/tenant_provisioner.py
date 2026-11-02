@@ -124,8 +124,8 @@ class PostgresSchemaTenantProvisioner(TenantProvisionerPort):
 
     For a role a client connects as: a ``DuckLakeTenantCatalog``'s metadata role, whose session
     attests the grants made here. Every provisioning resolves the secret, refuses it unless its
-    ``user`` is the role, and sets the password again, replacing an adopted role's, so a
-    rotation needs only a provisioning. The statement carries a SCRAM-SHA-256 verifier computed
+    ``user`` is the role, and sets the password again, replacing an adopted role's and clearing
+    its ``VALID UNTIL``, so a rotation needs only a provisioning. The statement carries a SCRAM-SHA-256 verifier computed
     here instead of the password: a statement log or ``pg_stat_activity`` can still test
     guesses against it, so give the role a long random password. The role connects through the
     database's ``CONNECT`` grant to ``PUBLIC``; where that is revoked, grant it ``CONNECT``
@@ -358,7 +358,9 @@ class PostgresSchemaTenantProvisioner(TenantProvisionerPort):
                 await self.client.execute(
                     cast(
                         QueryNoTemplate,
-                        sql.SQL("ALTER ROLE {} LOGIN PASSWORD {}").format(role_ident, verifier),
+                        sql.SQL("ALTER ROLE {} LOGIN PASSWORD {} VALID UNTIL 'infinity'").format(
+                            role_ident, verifier
+                        ),
                     )
                 )
 
@@ -379,7 +381,8 @@ class PostgresSchemaTenantProvisioner(TenantProvisionerPort):
 
         The signal is :meth:`_refuse_role_bound_elsewhere`'s, for this schema: the ``SELECT``
         default privilege this class grants. A role provisioned without ``login`` has it, so it
-        can be switched over; one made for anything else does not.
+        can be switched over; one made for anything else does not. Only an entry the connection's
+        user made counts, since any role may add default privileges for what it creates itself.
         """
 
         bound = await self.client.fetch_value(
@@ -388,6 +391,7 @@ class PostgresSchemaTenantProvisioner(TenantProvisionerPort):
             FROM pg_default_acl d
             JOIN pg_namespace n ON n.oid = d.defaclnamespace
             WHERE d.defaclobjtype = 'r'
+              AND d.defaclrole = (SELECT oid FROM pg_roles WHERE rolname = current_user)
               AND n.nspname = %(schema)s
               AND EXISTS (
                   SELECT 1 FROM aclexplode(d.defaclacl) a

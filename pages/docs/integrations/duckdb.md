@@ -340,7 +340,8 @@ It grants the role `USAGE` on the schema and `SELECT` on its tables, which is
 what the session attests, and sets the password from the secret on every
 provisioning, so provisioning again rotates it. Its default privileges cover
 the tables DuckLake adds later only when the build writes as the user that
-provisioned.
+provisioned. The role connects through the database's `CONNECT` grant to
+`PUBLIC`; where that is revoked, grant it `CONNECT` too.
 
 Each instance is built by this sequence, on DuckDB 1.5 and 2:
 

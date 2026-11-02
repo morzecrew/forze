@@ -165,6 +165,54 @@ async def test_a_role_provisioned_without_login_is_switched_over(
         pass
 
 
+async def test_an_expired_role_logs_in_again_after_provisioning(
+    pg_client: PostgresClient,
+    postgres_container: Any,
+    names: tuple[str, str],
+) -> None:
+    _, role = names
+    store = _Secrets(role)
+    provisioner = _provisioner(pg_client, names, store)
+    await provisioner.provision(_TENANT)
+    await pg_client.execute(
+        sql.SQL("ALTER ROLE {} VALID UNTIL '2000-01-01'").format(sql.Identifier(role))
+    )
+
+    await provisioner.provision(_TENANT)
+
+    async with await _connect(postgres_container, role, store.password):
+        pass
+
+
+async def test_another_users_default_privileges_do_not_bind_the_role(
+    pg_client: PostgresClient,
+    names: tuple[str, str],
+) -> None:
+    schema, role = names
+    grantor = f"{role}_grantor"
+    await pg_client.execute(
+        sql.SQL("CREATE SCHEMA {}; CREATE ROLE {}; CREATE ROLE {}").format(
+            sql.Identifier(schema), sql.Identifier(role), sql.Identifier(grantor)
+        )
+    )
+
+    try:
+        await pg_client.execute(
+            sql.SQL(
+                "ALTER DEFAULT PRIVILEGES FOR ROLE {} IN SCHEMA {} GRANT SELECT ON TABLES TO {}"
+            ).format(sql.Identifier(grantor), sql.Identifier(schema), sql.Identifier(role))
+        )
+
+        with pytest.raises(CoreException) as ei:
+            await _provisioner(pg_client, names, _Secrets(role)).provision(_TENANT)
+
+        assert ei.value.code == "tenant_role_not_adoptable"
+
+    finally:
+        await pg_client.execute(sql.SQL("DROP OWNED BY {}").format(sql.Identifier(grantor)))
+        await pg_client.execute(sql.SQL("DROP ROLE {}").format(sql.Identifier(grantor)))
+
+
 async def test_a_role_made_elsewhere_keeps_its_password(
     pg_client: PostgresClient,
     postgres_container: Any,
