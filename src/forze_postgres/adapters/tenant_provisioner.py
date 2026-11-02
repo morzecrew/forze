@@ -246,7 +246,13 @@ class PostgresSchemaTenantProvisioner(TenantProvisionerPort):
 
         name = await resolve_value(self.schema, tenant.tenant_id)
 
-        role = await resolve_value(self.role, tenant.tenant_id) if self.role is not None else None
+        # Refused before anything is dropped: `DROP ROLE` would act on the truncated prefix,
+        # which may be another role.
+        role = (
+            _require_untruncated(await resolve_value(self.role, tenant.tenant_id))
+            if self.role is not None
+            else None
+        )
 
         # One transaction, so the lock `provision` binds under is held continuously from
         # before the revoke to after the role drop. Splitting it released the lock in between,

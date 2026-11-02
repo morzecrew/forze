@@ -870,6 +870,25 @@ async def test_a_role_name_postgres_would_truncate_is_refused(login: bool) -> No
     assert client.executed == []
 
 
+@pytest.mark.asyncio
+async def test_teardown_refuses_a_role_name_postgres_would_truncate() -> None:
+    """``DROP ROLE`` would drop whichever role holds the 63-byte prefix."""
+
+    client = _FakeClient(existing_role=True)
+    provisioner = PostgresSchemaTenantProvisioner(
+        client=client,  # type: ignore[arg-type]
+        schema="acme",
+        role="r" * 64,
+        drop_on_deprovision=True,
+    )
+
+    with pytest.raises(CoreException) as ei:
+        await provisioner.deprovision(TenantIdentity(tenant_id=uuid4()))
+
+    assert ei.value.code == "tenant_role_name_too_long"
+    assert client.executed == []
+
+
 def test_login_without_a_role_is_refused() -> None:
     with pytest.raises(CoreException) as ei:
         PostgresSchemaTenantProvisioner(
