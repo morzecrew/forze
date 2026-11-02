@@ -139,8 +139,9 @@ _LIVE_FIELDS: Final = frozenset(
 serializer, the rotating-credential stripe table, the per-owner write locks, the blocking
 row locks and the cache ports' invalidation subscribers.
 
-A new process builds its own, so a restore leaves them alone entirely — rebuilding a lock
-table mid-flight would hand the next caller a different lock than the one a waiter is on."""
+A new process builds its own, so a restore keeps them — rebuilding a lock table mid-flight
+would hand the next caller a different lock than the one a waiter is on. The cache
+subscribers are kept but flushed, since the values they copied are gone."""
 
 RESET_FIELDS: Final = _LIVE_FIELDS | frozenset(
     {

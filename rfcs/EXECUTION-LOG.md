@@ -3761,8 +3761,9 @@ single-process simulation, now also with the broadcast on),
 - **Class:** `discovery`.
 - **Consequence:** `invalidate_grants(ctx, kernel, principal_id=None)` is exported from
   `forze_identity.authz`. The resolver keeps its method's name, `forget`, which the services
-  package exports: it now takes `principal_id: UUID | None = None` and broadcasts, and role
-  assignment, its only caller, is unchanged. Both run one function,
+  package exports: it now takes `principal_id: UUID | None` with no default, so flushing
+  everyone takes an explicit `None`, and it broadcasts; role assignment, its only caller, is
+  unchanged. Both run one function,
   `invalidate_after_commit`: the local forget or clear, then the publish, deferred to the
   commit. `GrantsCache.forget` and `clear` stay synchronous and local.
 - **Proposed row (RFC 0068):** `ASSUMED` — app code calls `invalidate_grants(ctx, kernel,
