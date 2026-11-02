@@ -704,13 +704,18 @@ def test_a_routed_client_is_refused() -> None:
 
 
 class _Secrets:
-    """A secrets backend holding one tenant secret, as JSON."""
+    """A secrets backend holding one tenant secret, as JSON; each read is logged to *log*."""
 
-    def __init__(self, payload: dict[str, Any]) -> None:
+    def __init__(self, payload: dict[str, Any], log: list[str] | None = None) -> None:
         self.payload = payload
+        self.log = log
 
     async def resolve_str(self, ref: SecretRef) -> str:
         _ = ref
+
+        if self.log is not None:
+            self.log.append("SECRET")
+
         return json.dumps(self.payload)
 
 
@@ -871,8 +876,9 @@ async def test_a_role_name_postgres_would_truncate_is_refused(login: bool) -> No
 
 
 @pytest.mark.asyncio
-async def test_teardown_refuses_a_role_name_postgres_would_truncate() -> None:
-    """``DROP ROLE`` would drop whichever role holds the 63-byte prefix."""
+async def test_teardown_drops_the_schema_but_not_a_role_postgres_would_truncate() -> None:
+    """``DROP ROLE`` would drop whichever role holds the 63-byte prefix, so the role is left
+    and reported after the commit, while the tenant's data still goes."""
 
     client = _FakeClient(existing_role=True)
     provisioner = PostgresSchemaTenantProvisioner(
@@ -886,7 +892,51 @@ async def test_teardown_refuses_a_role_name_postgres_would_truncate() -> None:
         await provisioner.deprovision(TenantIdentity(tenant_id=uuid4()))
 
     assert ei.value.code == "tenant_role_name_too_long"
+    assert client.executed == ["BEGIN", 'DROP SCHEMA IF EXISTS "acme" CASCADE', "COMMIT"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("teardown", [False, True], ids=["provision", "deprovision"])
+async def test_a_schema_name_postgres_would_truncate_is_refused(teardown: bool) -> None:
+    """Two tenants' names sharing the 63-byte prefix would reach one schema."""
+
+    client = _FakeClient()
+    provisioner = PostgresSchemaTenantProvisioner(
+        client=client,  # type: ignore[arg-type]
+        schema="s" * 64,
+        drop_on_deprovision=True,
+    )
+    tenant = TenantIdentity(tenant_id=uuid4())
+
+    with pytest.raises(CoreException) as ei:
+        await (provisioner.deprovision(tenant) if teardown else provisioner.provision(tenant))
+
+    assert ei.value.code == "tenant_schema_name_too_long"
     assert client.executed == []
+
+
+@pytest.mark.asyncio
+async def test_the_login_secret_is_read_under_the_role_lock() -> None:
+    """A provisioning that read the secret before a rotation could otherwise commit the old
+    password after one that read the new."""
+
+    client = _FakeClient()
+    provisioner = PostgresSchemaTenantProvisioner(
+        client=client,  # type: ignore[arg-type]
+        schema="acme",
+        role="acme_reader",
+        login=PostgresTenantRoleLogin(
+            secrets=_Secrets(  # type: ignore[arg-type]
+                {"user": "acme_reader", "password": secrets.token_hex(16)}, client.executed
+            ),
+            secret_ref_for_tenant=lambda tenant_id: SecretRef(path=str(tenant_id)),
+        ),
+    )
+
+    await provisioner.provision(TenantIdentity(tenant_id=uuid4()))
+
+    lock = next(i for i, q in enumerate(client.executed) if "pg_advisory_xact_lock" in q)
+    assert lock < client.executed.index("SECRET")
 
 
 def test_login_without_a_role_is_refused() -> None:

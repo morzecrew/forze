@@ -17,7 +17,7 @@ import base64
 import hashlib
 import hmac
 from collections.abc import Callable, Mapping
-from typing import cast
+from typing import Literal, cast
 from uuid import UUID
 
 import attrs
@@ -192,18 +192,12 @@ class PostgresSchemaTenantProvisioner(TenantProvisionerPort):
             )
 
     async def provision(self, tenant: TenantIdentity) -> None:
-        name = await resolve_value(self.schema, tenant.tenant_id)
+        # Checked before the schema is created, so a refusal here changes nothing.
+        name = _require_untruncated(await resolve_value(self.schema, tenant.tenant_id), "schema")
         role = None
 
-        # Resolved before the schema is created, so a refusal here changes nothing.
         if self.role is not None:
-            role = _require_untruncated(await resolve_value(self.role, tenant.tenant_id))
-
-        password = (
-            None
-            if self.login is None or role is None
-            else await self._login_password(self.login, tenant.tenant_id, role)
-        )
+            role = _require_untruncated(await resolve_value(self.role, tenant.tenant_id), "role")
 
         try:
             await self.client.execute(
@@ -224,8 +218,8 @@ class PostgresSchemaTenantProvisioner(TenantProvisionerPort):
         if role is None:
             return
 
-        if password is not None:
-            await self._provision_login_role(schema=name, role=role, password=password)
+        if self.login is not None:
+            await self._provision_login_role(self.login, tenant.tenant_id, schema=name, role=role)
             return
 
         await self._ensure_role(role)
@@ -244,15 +238,23 @@ class PostgresSchemaTenantProvisioner(TenantProvisionerPort):
         if not self.drop_on_deprovision:
             return
 
-        name = await resolve_value(self.schema, tenant.tenant_id)
+        # Refused before anything is dropped: `DROP SCHEMA` would act on the truncated prefix,
+        # which may be another tenant's.
+        name = _require_untruncated(await resolve_value(self.schema, tenant.tenant_id), "schema")
+        role = None
+        stranded: CoreException | None = None
 
-        # Refused before anything is dropped: `DROP ROLE` would act on the truncated prefix,
-        # which may be another role.
-        role = (
-            _require_untruncated(await resolve_value(self.role, tenant.tenant_id))
-            if self.role is not None
-            else None
-        )
+        if self.role is not None:
+            try:
+                role = _require_untruncated(
+                    await resolve_value(self.role, tenant.tenant_id), "role"
+                )
+
+            except CoreException as error:
+                # `DROP ROLE` would act on the truncated prefix, which may be another role, so
+                # the role is left alone. The schema still goes, as beside a role that cannot
+                # be dropped, and the refusal is raised after the commit.
+                stranded = error
 
         # One transaction, so the lock `provision` binds under is held continuously from
         # before the revoke to after the role drop. Splitting it released the lock in between,
@@ -263,8 +265,6 @@ class PostgresSchemaTenantProvisioner(TenantProvisionerPort):
         # What the lock still does not do is make contradictory operations succeed: a provision
         # and a deprovision of the same tenant at the same moment resolve to one of them
         # failing, which is the honest outcome. It stops them leaving a half-torn-down tenant.
-        stranded: CoreException | None = None
-
         async with self.client.transaction():
             if role is not None:
                 await self._lock_role(role)
@@ -351,8 +351,15 @@ class PostgresSchemaTenantProvisioner(TenantProvisionerPort):
 
     # ....................... #
 
-    async def _provision_login_role(self, *, schema: str, role: str, password: str) -> None:
-        """Create or adopt *role* with ``LOGIN`` and *password*, and confine it to *schema*.
+    async def _provision_login_role(
+        self,
+        login: PostgresTenantRoleLogin,
+        tenant_id: UUID,
+        *,
+        schema: str,
+        role: str,
+    ) -> None:
+        """Create or adopt *role* with ``LOGIN`` and its secret's password, confined to *schema*.
 
         One transaction under the binding lock, unlike the ``NOLOGIN`` path: a role created here
         commits with its grants or not at all. Otherwise a failed onboarding could leave a role
@@ -360,10 +367,14 @@ class PostgresSchemaTenantProvisioner(TenantProvisionerPort):
         """
 
         role_ident = sql.Identifier(role)
-        verifier = sql.Literal(_scram_sha_256_verifier(password))
 
         async with self.client.transaction():
             await self._lock_role(role)
+
+            # Read under the lock: an onboarding that read the secret before a rotation could
+            # otherwise commit the old password after one that read the new.
+            password = await self._login_password(login, tenant_id, role)
+            verifier = sql.Literal(_scram_sha_256_verifier(password))
 
             if await self._role_exists(role):
                 await self._refuse_privileged_role(role, login=True)
@@ -773,22 +784,23 @@ def _advisory_key(role: str) -> int:
 # ....................... #
 
 
-def _require_untruncated(role: str) -> str:
-    """*role*, refused when PostgreSQL would truncate it to 63 bytes (``NAMEDATALEN - 1``).
+def _require_untruncated(name: str, kind: Literal["schema", "role"]) -> str:
+    """*name*, refused when PostgreSQL would truncate it to 63 bytes (``NAMEDATALEN - 1``).
 
-    The statements would act on the truncated name while every ``pg_roles`` probe looks up the
-    full one and finds nothing, so the guards would pass a role they never saw.
+    The statements would act on the truncated name while every catalog probe looks up the full
+    one, so the guards would pass an object they never saw, and two names sharing a prefix would
+    reach one object.
     """
 
-    if len(role.encode("utf-8")) > 63:
+    if len(name.encode("utf-8")) > 63:
         raise exc.configuration(
-            f"Tenant role name {role!r} is longer than the 63 bytes PostgreSQL keeps of a "
-            "name, so the role created would not be the one the provisioner checks.",
-            code="tenant_role_name_too_long",
-            details={"role": role},
+            f"Tenant {kind} name {name!r} is longer than the 63 bytes PostgreSQL keeps of a "
+            f"name, so the {kind} acted on would not be the one the provisioner checks.",
+            code=f"tenant_{kind}_name_too_long",
+            details={kind: name},
         )
 
-    return role
+    return name
 
 
 # ....................... #

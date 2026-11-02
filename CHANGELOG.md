@@ -17,7 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- **`PostgresSchemaTenantProvisioner` refuses a role name longer than 63 bytes, at onboarding and teardown** (**behaviour change**). PostgreSQL truncated it, so statements acted on a role the checks never looked up, and teardown could drop the role holding that prefix (`tenant_role_name_too_long`).
+- **`PostgresSchemaTenantProvisioner` refuses a schema or role name longer than 63 bytes** (**behaviour change**). PostgreSQL truncated it, so statements could reach another tenant's schema or role. Teardown still drops a valid schema beside such a role, then raises `tenant_role_name_too_long`.
 
 - **Postgres startup no longer warns about history written from superseded rows.** On the `database` bookkeeping strategy, a row trigger firing on both `UPDATE` and `DELETE`, as one writing each `OLD` row does, counts as writing history. History is read only to merge an update at an older revision.
 
