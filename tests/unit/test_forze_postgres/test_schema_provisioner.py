@@ -18,7 +18,7 @@ from psycopg import sql
 
 from forze.application.contracts.secrets import SecretRef
 from forze.application.contracts.tenancy import TenantIdentity
-from forze.base.exceptions import CoreException, ExceptionKind
+from forze.base.exceptions import CoreException, ExceptionKind, exc
 from forze_postgres import PostgresSchemaTenantProvisioner, PostgresTenantRoleLogin
 from forze_postgres.adapters.tenant_provisioner import _scram_sha_256_verifier
 
@@ -893,6 +893,26 @@ async def test_teardown_drops_the_schema_but_not_a_role_postgres_would_truncate(
 
     assert ei.value.code == "tenant_role_name_too_long"
     assert client.executed == ["BEGIN", 'DROP SCHEMA IF EXISTS "acme" CASCADE', "COMMIT"]
+
+
+@pytest.mark.asyncio
+async def test_teardown_drops_nothing_when_the_role_resolver_fails() -> None:
+    client = _FakeClient(existing_role=True)
+
+    def _resolver(_tenant_id: object) -> str:
+        raise exc.not_found("no such tenant")
+
+    provisioner = PostgresSchemaTenantProvisioner(
+        client=client,  # type: ignore[arg-type]
+        schema=lambda tenant_id: f"t_{tenant_id.hex}",
+        role=_resolver,
+        drop_on_deprovision=True,
+    )
+
+    with pytest.raises(CoreException, match="no such tenant"):
+        await provisioner.deprovision(TenantIdentity(tenant_id=uuid4()))
+
+    assert client.executed == []
 
 
 @pytest.mark.asyncio

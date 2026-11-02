@@ -245,10 +245,11 @@ class PostgresSchemaTenantProvisioner(TenantProvisionerPort):
         stranded: CoreException | None = None
 
         if self.role is not None:
+            # Resolved outside the `try`: only the length refusal may let the schema go.
+            resolved = await resolve_value(self.role, tenant.tenant_id)
+
             try:
-                role = _require_untruncated(
-                    await resolve_value(self.role, tenant.tenant_id), "role"
-                )
+                role = _require_untruncated(resolved, "role")
 
             except CoreException as error:
                 # `DROP ROLE` would act on the truncated prefix, which may be another role, so
