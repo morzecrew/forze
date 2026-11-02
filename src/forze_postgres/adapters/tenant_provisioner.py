@@ -13,25 +13,62 @@ require_psycopg()
 
 # ....................... #
 
+import base64
 import hashlib
+import hmac
+from collections.abc import Callable, Mapping
 from typing import cast
+from uuid import UUID
 
 import attrs
 from psycopg import errors, sql
 from psycopg.abc import QueryNoTemplate
+from pydantic import BaseModel, SecretStr
 
 from forze.application.contracts.resolution import (
     NamedResourceSpec,
     coerce_optional_named_resource_spec,
     resolve_value,
 )
+from forze.application.contracts.secrets import SecretRef, SecretsPort, TenantSecretResolver
 from forze.application.contracts.tenancy import TenantIdentity, TenantProvisionerPort
 from forze.application.contracts.tenancy.routed_client_base import RoutedTenantClientBase
 from forze.base.exceptions import CoreException, exc
+from forze.base.primitives import secure_random_bytes
 
 from ..kernel.client import PostgresClientPort
 
 # ----------------------- #
+
+
+@attrs.define(slots=True, frozen=True, kw_only=True)
+class PostgresTenantRoleLogin:
+    """Where a tenant role that logs in finds its password: the tenant's secret.
+
+    Pass the ``secrets`` and ``secret_ref_for_tenant`` of the routed client that logs in as the
+    role, so both read one secret: ``RoutedDuckDbClient`` over a ``DuckLakeTenantCatalog``, say.
+    The secret holds JSON with ``user``, the role's name, and ``password``. Other keys are
+    ignored, so a ``DuckLakeCatalogCredentials`` secret qualifies.
+    """
+
+    secrets: SecretsPort
+    """Backend the tenant's secret resolves from."""
+
+    secret_ref_for_tenant: Callable[[UUID], SecretRef] | Mapping[UUID, SecretRef]
+    """The tenant's secret reference (callable or mapping)."""
+
+
+# ....................... #
+
+
+class _RoleLoginSecret(BaseModel):
+    """The part of a tenant's secret a login role is provisioned from."""
+
+    user: str
+    password: SecretStr
+
+
+# ....................... #
 
 
 @attrs.define(slots=True, frozen=True, kw_only=True)
@@ -78,6 +115,28 @@ class PostgresSchemaTenantProvisioner(TenantProvisionerPort):
     of per-tenant scoping without the substance. That case is caught at the second onboarding
     instead, where the server can be asked
     (:meth:`_refuse_role_bound_elsewhere`).
+
+    With :attr:`login`, the role logs in itself instead of being entered with ``SET ROLE``.
+    """
+
+    login: PostgresTenantRoleLogin | None = None
+    """Give :attr:`role` ``LOGIN``, with the password in the tenant's secret.
+
+    For a role a client connects as: a ``DuckLakeTenantCatalog``'s metadata role, whose session
+    attests the grants made here. Every provisioning resolves the secret, refuses it unless its
+    ``user`` is the role, and sets the password again, replacing an adopted role's, so a
+    rotation needs only a provisioning. The statement carries a SCRAM-SHA-256 verifier computed
+    here instead of the password: a statement log or ``pg_stat_activity`` can still test
+    guesses against it, so give the role a long random password. The role connects through the
+    database's ``CONNECT`` grant to ``PUBLIC``; where that is revoked, grant it ``CONNECT``
+    yourself.
+
+    With ``login``, an existing role is adopted only once a provisioning, with or without
+    ``login``, has bound it to the tenant's schema: giving ``LOGIN`` and the tenant's password
+    to a role made for something else would hand that role to the tenant's client. As without
+    ``login``, a superuser, a role that bypasses row-level security and a member of another role
+    are refused; so is a role that creates roles or databases or replicates. Grants the role
+    holds elsewhere are not checked here; a ``DuckLakeTenantCatalog`` session attests them.
     """
 
     def __attrs_post_init__(self) -> None:
@@ -125,6 +184,13 @@ class PostgresSchemaTenantProvisioner(TenantProvisionerPort):
                 details={"role": repr(self.role)},
             )
 
+        if self.login is not None and self.role is None:
+            raise exc.configuration(
+                "PostgresSchemaTenantProvisioner was given `login` without a `role` to log in "
+                "as. Resolve the tenant's role with `role`; the secret's `user` must name it.",
+                code="tenant_role_login_without_role",
+            )
+
     async def provision(self, tenant: TenantIdentity) -> None:
         name = await resolve_value(self.schema, tenant.tenant_id)
 
@@ -148,6 +214,12 @@ class PostgresSchemaTenantProvisioner(TenantProvisionerPort):
             return
 
         role = await resolve_value(self.role, tenant.tenant_id)
+
+        if self.login is not None:
+            password = await self._login_password(self.login, tenant.tenant_id, role)
+            await self._provision_login_role(schema=name, role=role, password=password)
+            return
+
         await self._ensure_role(role)
 
         # The binding is check-then-act too, and unlike the creates above there is no server
@@ -216,6 +288,127 @@ class PostgresSchemaTenantProvisioner(TenantProvisionerPort):
         # sits in a savepoint rather than being caught in place.
         if stranded is not None:
             raise stranded
+
+    # ....................... #
+
+    async def _login_password(
+        self,
+        login: PostgresTenantRoleLogin,
+        tenant_id: UUID,
+        role: str,
+    ) -> str:
+        """The password in *tenant_id*'s secret, refused unless the secret names *role*."""
+
+        creds = await TenantSecretResolver(
+            secrets=login.secrets,
+            ref_for_tenant=login.secret_ref_for_tenant,
+            backend="Postgres tenant role",
+        ).resolve_structured(_RoleLoginSecret, tenant_id)
+
+        if creds.user != role:
+            raise exc.configuration(
+                f"The tenant's secret names user {creds.user!r}, but the provisioner resolves "
+                f"role {role!r}. The client would log in as a role this provisioning never "
+                "set up, so the two must agree.",
+                code="tenant_role_login_user_mismatch",
+                details={"role": role, "user": creds.user},
+            )
+
+        password = creds.password.get_secret_value()
+
+        if not password:
+            raise exc.configuration(
+                f"The tenant's secret holds an empty password for role {role!r}.",
+                code="tenant_role_login_password_empty",
+                details={"role": role},
+            )
+
+        # shortcut: a non-ASCII password is refused, since hashing one as the server does
+        # needs SASLprep (RFC 4013); add it if a deployment's secrets ever hold one.
+        if not password.isascii():
+            raise exc.configuration(
+                f"The tenant's secret holds a non-ASCII password for role {role!r}, which "
+                "the provisioner cannot hash as the server would.",
+                code="tenant_role_login_password_not_ascii",
+                details={"role": role},
+            )
+
+        return password
+
+    # ....................... #
+
+    async def _provision_login_role(self, *, schema: str, role: str, password: str) -> None:
+        """Create or adopt *role* with ``LOGIN`` and *password*, and confine it to *schema*.
+
+        One transaction under the binding lock, unlike the ``NOLOGIN`` path: a role created here
+        commits with its grants or not at all. Otherwise a failed onboarding could leave a role
+        that logs in and is bound to nothing, which the adoption check would refuse ever after.
+        """
+
+        role_ident = sql.Identifier(role)
+        verifier = sql.Literal(_scram_sha_256_verifier(password))
+
+        async with self.client.transaction():
+            await self._lock_role(role)
+
+            if await self._role_exists(role):
+                await self._refuse_privileged_role(role, login=True)
+                await self._refuse_role_bound_elsewhere(schema=schema, role=role)
+                await self._refuse_role_unbound(schema=schema, role=role)
+                await self.client.execute(
+                    cast(
+                        QueryNoTemplate,
+                        sql.SQL("ALTER ROLE {} LOGIN PASSWORD {}").format(role_ident, verifier),
+                    )
+                )
+
+            else:
+                await self.client.execute(
+                    cast(
+                        QueryNoTemplate,
+                        sql.SQL("CREATE ROLE {} LOGIN PASSWORD {}").format(role_ident, verifier),
+                    )
+                )
+
+            await self._grant_read_only(schema=schema, role=role)
+
+    # ....................... #
+
+    async def _refuse_role_unbound(self, *, schema: str, role: str) -> None:
+        """Refuse to give ``LOGIN`` to an existing role this provisioner never bound to *schema*.
+
+        The signal is :meth:`_refuse_role_bound_elsewhere`'s, for this schema: the ``SELECT``
+        default privilege this class grants. A role provisioned without ``login`` has it, so it
+        can be switched over; one made for anything else does not.
+        """
+
+        bound = await self.client.fetch_value(
+            """
+            SELECT 1
+            FROM pg_default_acl d
+            JOIN pg_namespace n ON n.oid = d.defaclnamespace
+            WHERE d.defaclobjtype = 'r'
+              AND n.nspname = %(schema)s
+              AND EXISTS (
+                  SELECT 1 FROM aclexplode(d.defaclacl) a
+                  JOIN pg_roles r ON r.oid = a.grantee
+                  WHERE r.rolname = %(role)s AND a.privilege_type = 'SELECT'
+              )
+            """,
+            {"schema": schema, "role": role},
+        )
+
+        if bound is not None:
+            return
+
+        raise exc.configuration(
+            f"Role {role!r} already exists but was not provisioned for schema {schema!r}, so "
+            "it cannot be given LOGIN and the tenant's password: that would hand a role made "
+            "for something else to the tenant's client. Drop it and let the provisioner create "
+            "it.",
+            code="tenant_role_not_adoptable",
+            details={"role": role, "schema": schema},
+        )
 
     # ....................... #
 
@@ -400,7 +593,7 @@ class PostgresSchemaTenantProvisioner(TenantProvisionerPort):
 
     # ....................... #
 
-    async def _refuse_privileged_role(self, role: str) -> None:
+    async def _refuse_privileged_role(self, role: str, *, login: bool = False) -> None:
         """Refuse to adopt an existing role that can log in or is a superuser.
 
         All four are disqualifying for one reason: statements run *as* this role via ``SET
@@ -425,24 +618,42 @@ class PostgresSchemaTenantProvisioner(TenantProvisionerPort):
         a shared reference schema. The cross-tenant case that matters — this role already
         bound to another tenant's schema — is :meth:`_refuse_role_bound_elsewhere`, which uses
         a signal only this class produces and so has no such false positive.
+
+        With *login*, ``LOGIN`` is what is being granted, so it does not disqualify; creating
+        roles or databases and replicating do instead, since a session logged in as the role
+        holds them, and replication reads every database.
         """
 
+        held = "r.rolcreaterole OR r.rolcreatedb OR r.rolreplication" if login else "r.rolcanlogin"
         privileged = await self.client.fetch_value(
-            """
-            SELECT 1 FROM pg_roles r
-            WHERE r.rolname = %(role)s
-              AND (
-                  r.rolcanlogin
-                  OR r.rolsuper
-                  OR r.rolbypassrls
-                  OR EXISTS (SELECT 1 FROM pg_auth_members m WHERE m.member = r.oid)
-              )
-            """,
+            sql.SQL(
+                """
+                SELECT 1 FROM pg_roles r
+                WHERE r.rolname = %(role)s
+                  AND (
+                      {held}
+                      OR r.rolsuper
+                      OR r.rolbypassrls
+                      OR EXISTS (SELECT 1 FROM pg_auth_members m WHERE m.member = r.oid)
+                  )
+                """
+            ).format(held=sql.SQL(held)),
             {"role": role},
         )
 
         if privileged is None:
             return
+
+        if login:
+            raise exc.configuration(
+                f"Role {role!r} already exists and already reaches somewhere — it is a "
+                "superuser, bypasses row-level security, can create roles or databases, can "
+                "replicate, or is a member of another role — so it cannot be adopted as a "
+                "tenant login role. A session logged in as it would hold that reach beside the "
+                "tenant's schema.",
+                code="tenant_role_not_confinable",
+                details={"role": role},
+            )
 
         raise exc.configuration(
             f"Role {role!r} already exists and already reaches somewhere — it can log in, is "
@@ -539,6 +750,29 @@ def _advisory_key(role: str) -> int:
         "big",
         signed=True,
     )
+
+
+# ....................... #
+
+
+def _scram_sha_256_verifier(password: str) -> str:
+    """A SCRAM-SHA-256 verifier for *password*, in the form ``pg_authid.rolpassword`` holds.
+
+    The server stores a verifier it is given as it is, so the password never reaches the
+    statement, ``pg_stat_activity`` or a statement log; only the verifier does. A 16-byte salt and 4096 iterations are
+    the server's defaults. The password is hashed as its bytes, which is what the server's
+    SASLprep leaves of an ASCII one.
+    """
+
+    salt = secure_random_bytes(16)
+    salted = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, 4096)
+    stored_key = hashlib.sha256(hmac.digest(salted, b"Client Key", "sha256")).digest()
+    server_key = hmac.digest(salted, b"Server Key", "sha256")
+    salt_b64, stored_b64, server_b64 = (
+        base64.b64encode(part).decode("ascii") for part in (salt, stored_key, server_key)
+    )
+
+    return f"SCRAM-SHA-256$4096:{salt_b64}${stored_b64}:{server_b64}"
 
 
 # ....................... #

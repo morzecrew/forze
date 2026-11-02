@@ -2,7 +2,12 @@
 
 from __future__ import annotations
 
+import base64
+import hashlib
+import hmac
+import json
 import os
+import secrets
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Any
@@ -11,9 +16,11 @@ from uuid import uuid4
 import pytest
 from psycopg import sql
 
+from forze.application.contracts.secrets import SecretRef
 from forze.application.contracts.tenancy import TenantIdentity
 from forze.base.exceptions import CoreException, ExceptionKind
-from forze_postgres import PostgresSchemaTenantProvisioner
+from forze_postgres import PostgresSchemaTenantProvisioner, PostgresTenantRoleLogin
+from forze_postgres.adapters.tenant_provisioner import _scram_sha_256_verifier
 
 # ----------------------- #
 
@@ -28,6 +35,9 @@ class _FakeClient:
         role_is_superuser: bool = False,
         role_bypasses_rls: bool = False,
         role_has_memberships: bool = False,
+        role_creates_roles: bool = False,
+        role_creates_databases: bool = False,
+        role_replicates: bool = False,
         role_bound_to: str | None = None,
     ) -> None:
         self.executed: list[str] = []
@@ -37,6 +47,9 @@ class _FakeClient:
         self.role_is_superuser = role_is_superuser
         self.role_bypasses_rls = role_bypasses_rls
         self.role_has_memberships = role_has_memberships
+        self.role_creates_roles = role_creates_roles
+        self.role_creates_databases = role_creates_databases
+        self.role_replicates = role_replicates
         self.role_bound_to = role_bound_to
         self.depth = 0
 
@@ -74,7 +87,7 @@ class _FakeClient:
         self.executed.append(query.as_string(None) if hasattr(query, "as_string") else str(query))
 
     async def fetch_value(self, query: Any, params: Any = None, **kwargs: Any) -> Any:
-        _ = params, kwargs
+        _ = kwargs
         text = query if isinstance(query, str) else str(query)
 
         # Most specific first. The default-ACL probe joins `pg_namespace` too, so a bare
@@ -82,7 +95,12 @@ class _FakeClient:
         # affirmatively, refusing every onboarding in this file for a reason none of them are
         # about.
         if "pg_default_acl" in text:
-            return self.role_bound_to
+            # Two probes share the catalog: bound to a schema other than this one (`<>`), and
+            # bound to this one. The binding is one schema, answered against the probe's.
+            if "<>" in text:
+                return None if self.role_bound_to == params["schema"] else self.role_bound_to
+
+            return 1 if self.role_bound_to == params["schema"] else None
 
         if "pg_namespace" in text:
             return 1 if self.existing_schema else None
@@ -101,6 +119,9 @@ class _FakeClient:
                 "rolsuper": self.role_is_superuser,
                 "rolbypassrls": self.role_bypasses_rls,
                 "pg_auth_members": self.role_has_memberships,
+                "rolcreaterole": self.role_creates_roles,
+                "rolcreatedb": self.role_creates_databases,
+                "rolreplication": self.role_replicates,
             }
             hit = any(held for token, held in signals.items() if token in text)
             return 1 if (self.existing_role and hit) else None
@@ -677,3 +698,178 @@ def test_a_routed_client_is_refused() -> None:
 
     assert caught.value.kind is ExceptionKind.CONFIGURATION
     assert caught.value.code == "tenant_provisioner_routed_client"
+
+
+# ....................... #
+
+
+class _Secrets:
+    """A secrets backend holding one tenant secret, as JSON."""
+
+    def __init__(self, payload: dict[str, Any]) -> None:
+        self.payload = payload
+
+    async def resolve_str(self, ref: SecretRef) -> str:
+        _ = ref
+        return json.dumps(self.payload)
+
+
+def _login_provisioner(
+    client: _FakeClient,
+    *,
+    user: str = "acme_reader",
+    password: str | None = None,
+) -> PostgresSchemaTenantProvisioner:
+    payload = {"user": user, "password": secrets.token_hex(16) if password is None else password}
+
+    return PostgresSchemaTenantProvisioner(
+        client=client,  # type: ignore[arg-type]
+        schema="acme",
+        role="acme_reader",
+        login=PostgresTenantRoleLogin(
+            secrets=_Secrets(payload),  # type: ignore[arg-type]
+            secret_ref_for_tenant=lambda tenant_id: SecretRef(path=f"tenants/{tenant_id}"),
+        ),
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_login_role_is_created_with_its_grants_in_one_transaction() -> None:
+    client = _FakeClient()
+    password = secrets.token_hex(16)
+
+    await _login_provisioner(client, password=password).provision(TenantIdentity(tenant_id=uuid4()))
+
+    executed = client.executed
+    begin = executed.index("BEGIN")
+    create = next(i for i, q in enumerate(executed) if q.startswith('CREATE ROLE "acme_reader"'))
+
+    assert executed[create].startswith(
+        """CREATE ROLE "acme_reader" LOGIN PASSWORD 'SCRAM-SHA-256$4096:"""
+    )
+    assert "pg_advisory_xact_lock" in executed[begin + 1]
+    assert begin < create < executed.index("COMMIT")
+    assert any(q.startswith("ALTER DEFAULT PRIVILEGES") for q in executed[create:])
+    assert password not in "\n".join(executed)
+    assert "NOLOGIN" not in "\n".join(executed)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("can_login", [False, True], ids=["nologin", "login"])
+async def test_a_role_bound_to_the_schema_is_given_login_again(can_login: bool) -> None:
+    """A role provisioned without ``login`` switches over; a login role's password is reset."""
+
+    client = _FakeClient(existing_role=True, role_can_login=can_login, role_bound_to="acme")
+
+    await _login_provisioner(client).provision(TenantIdentity(tenant_id=uuid4()))
+
+    statements = "\n".join(client.executed)
+
+    assert """ALTER ROLE "acme_reader" LOGIN PASSWORD 'SCRAM-SHA-256$""" in statements
+    assert "CREATE ROLE" not in statements
+    assert 'GRANT USAGE ON SCHEMA "acme" TO "acme_reader"' in statements
+
+
+@pytest.mark.asyncio
+async def test_a_role_never_bound_to_the_schema_is_not_given_login() -> None:
+    client = _FakeClient(existing_role=True, role_can_login=True)
+
+    with pytest.raises(CoreException) as ei:
+        await _login_provisioner(client).provision(TenantIdentity(tenant_id=uuid4()))
+
+    assert ei.value.code == "tenant_role_not_adoptable"
+    statements = "\n".join(client.executed)
+    assert "ALTER ROLE" not in statements
+    assert "GRANT" not in statements
+    assert client.executed[-1] == "ROLLBACK"
+
+
+@pytest.mark.asyncio
+async def test_a_role_bound_to_another_schema_is_not_given_login() -> None:
+    client = _FakeClient(existing_role=True, role_bound_to="other")
+
+    with pytest.raises(CoreException) as ei:
+        await _login_provisioner(client).provision(TenantIdentity(tenant_id=uuid4()))
+
+    assert ei.value.code == "tenant_role_already_bound"
+    assert "ALTER ROLE" not in "\n".join(client.executed)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "attribute",
+    [
+        "role_is_superuser",
+        "role_bypasses_rls",
+        "role_has_memberships",
+        "role_creates_roles",
+        "role_creates_databases",
+        "role_replicates",
+    ],
+)
+async def test_a_privileged_role_is_not_given_login(attribute: str) -> None:
+    client = _FakeClient(existing_role=True, role_bound_to="acme", **{attribute: True})
+
+    with pytest.raises(CoreException) as ei:
+        await _login_provisioner(client).provision(TenantIdentity(tenant_id=uuid4()))
+
+    assert ei.value.code == "tenant_role_not_confinable"
+    assert "ALTER ROLE" not in "\n".join(client.executed)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("user", "password", "code"),
+    [
+        ("someone_else", None, "tenant_role_login_user_mismatch"),
+        ("acme_reader", "", "tenant_role_login_password_empty"),
+        ("acme_reader", "pässword", "tenant_role_login_password_not_ascii"),
+    ],
+    ids=["user", "empty", "non-ascii"],
+)
+async def test_a_secret_the_role_cannot_log_in_with_is_refused(
+    user: str,
+    password: str | None,
+    code: str,
+) -> None:
+    client = _FakeClient()
+
+    with pytest.raises(CoreException) as ei:
+        await _login_provisioner(client, user=user, password=password).provision(
+            TenantIdentity(tenant_id=uuid4())
+        )
+
+    assert ei.value.code == code
+    assert not any("ROLE" in q for q in client.executed)
+
+
+def test_login_without_a_role_is_refused() -> None:
+    with pytest.raises(CoreException) as ei:
+        PostgresSchemaTenantProvisioner(
+            client=_FakeClient(),  # type: ignore[arg-type]
+            schema="acme",
+            login=PostgresTenantRoleLogin(
+                secrets=_Secrets({}),  # type: ignore[arg-type]
+                secret_ref_for_tenant={},
+            ),
+        )
+
+    assert ei.value.code == "tenant_role_login_without_role"
+
+
+def test_the_verifier_holds_the_keys_of_its_salt() -> None:
+    """RFC 5802's StoredKey and ServerKey, salted afresh each time; a real login is in the
+    integration tests."""
+
+    password = secrets.token_hex(16)
+    verifier = _scram_sha_256_verifier(password)
+    scheme, keys = verifier.split("$", 1)[0], verifier.split("$", 1)[1]
+    head, tail = keys.split("$")
+    iterations, salt = head.split(":")
+    stored, server = (base64.b64decode(part) for part in tail.split(":"))
+    salted = hashlib.pbkdf2_hmac("sha256", password.encode(), base64.b64decode(salt), 4096)
+
+    assert (scheme, iterations) == ("SCRAM-SHA-256", "4096")
+    assert stored == hashlib.sha256(hmac.digest(salted, b"Client Key", "sha256")).digest()
+    assert server == hmac.digest(salted, b"Server Key", "sha256")
+    assert _scram_sha_256_verifier(password) != verifier

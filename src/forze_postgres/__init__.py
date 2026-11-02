@@ -10,6 +10,7 @@ from .adapters import (
     PostgresRotatingCredentialStore,
     PostgresRotationTarget,
     PostgresSchemaTenantProvisioner,
+    PostgresTenantRoleLogin,
 )
 from .execution import (
     POSTGRES_CLIENT_CAPABILITY,
@@ -64,6 +65,7 @@ __all__ = [
     "PostgresPrincipalEpochConfig",
     "PostgresRotatingCredentialsConfig",
     "PostgresSchemaTenantProvisioner",
+    "PostgresTenantRoleLogin",
     "PostgresClient",
     "PostgresClientPort",
     "PostgresConfig",

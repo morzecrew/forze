@@ -15,7 +15,7 @@ from .search import (
     VectorHubLegEngine,
     hub_leg_engine_for,
 )
-from .tenant_provisioner import PostgresSchemaTenantProvisioner
+from .tenant_provisioner import PostgresSchemaTenantProvisioner, PostgresTenantRoleLogin
 from .txmanager import PostgresTxLockAdapter, PostgresTxManagerAdapter, PostgresTxScopeKey
 
 # ----------------------- #
@@ -25,6 +25,7 @@ __all__ = [
     "PostgresRotatingCredentialStore",
     "PostgresRotationTarget",
     "PostgresSchemaTenantProvisioner",
+    "PostgresTenantRoleLogin",
     "FtsHubLegEngine",
     "HubLegRuntime",
     "HubSearchLegEngine",

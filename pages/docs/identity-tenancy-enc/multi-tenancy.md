@@ -223,8 +223,9 @@ Compose one per integration with `CompositeTenantProvisioner`, wrap a callable
 with `FunctionTenantProvisioner`, or ship nothing (`NoopTenantProvisioner`, the
 default) and provision out of band. Forze includes
 `ObjectStorageTenantProvisioner` (ensures a bucket) and, from `forze_postgres`,
-`PostgresSchemaTenantProvisioner` (`CREATE SCHEMA IF NOT EXISTS`) — teardown is
-opt-in wherever it would destroy data.
+`PostgresSchemaTenantProvisioner` (`CREATE SCHEMA IF NOT EXISTS`, optionally with a read-only
+role confined to the schema, which can log in with the password in the tenant's secret) —
+teardown is opt-in wherever it would destroy data.
 
 A tenant-routed client resolves its backend from the ambient tenant, so the database
 provisioners (Postgres, MongoDB) refuse one: pass the unrouted admin client for the
