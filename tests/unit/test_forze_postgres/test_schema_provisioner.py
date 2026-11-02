@@ -844,6 +844,32 @@ async def test_a_secret_the_role_cannot_log_in_with_is_refused(
     assert not any("ROLE" in q for q in client.executed)
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("login", [False, True], ids=["nologin", "login"])
+async def test_a_role_name_postgres_would_truncate_is_refused(login: bool) -> None:
+    """Statements would act on the 63-byte prefix while the guards look up the full name."""
+
+    client = _FakeClient()
+    role = "r" * 64
+    store = _Secrets({"user": role, "password": secrets.token_hex(16)})
+    provisioner = PostgresSchemaTenantProvisioner(
+        client=client,  # type: ignore[arg-type]
+        schema="acme",
+        role=role,
+        login=(
+            PostgresTenantRoleLogin(secrets=store, secret_ref_for_tenant={})  # type: ignore[arg-type]
+            if login
+            else None
+        ),
+    )
+
+    with pytest.raises(CoreException) as ei:
+        await provisioner.provision(TenantIdentity(tenant_id=uuid4()))
+
+    assert ei.value.code == "tenant_role_name_too_long"
+    assert client.executed == []
+
+
 def test_login_without_a_role_is_refused() -> None:
     with pytest.raises(CoreException) as ei:
         PostgresSchemaTenantProvisioner(

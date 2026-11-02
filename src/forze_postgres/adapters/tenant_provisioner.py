@@ -193,6 +193,17 @@ class PostgresSchemaTenantProvisioner(TenantProvisionerPort):
 
     async def provision(self, tenant: TenantIdentity) -> None:
         name = await resolve_value(self.schema, tenant.tenant_id)
+        role = None
+
+        # Resolved before the schema is created, so a refusal here changes nothing.
+        if self.role is not None:
+            role = _require_untruncated(await resolve_value(self.role, tenant.tenant_id))
+
+        password = (
+            None
+            if self.login is None or role is None
+            else await self._login_password(self.login, tenant.tenant_id, role)
+        )
 
         try:
             await self.client.execute(
@@ -210,13 +221,10 @@ class PostgresSchemaTenantProvisioner(TenantProvisionerPort):
             if not _is_already_exists(error):
                 raise
 
-        if self.role is None:
+        if role is None:
             return
 
-        role = await resolve_value(self.role, tenant.tenant_id)
-
-        if self.login is not None:
-            password = await self._login_password(self.login, tenant.tenant_id, role)
+        if password is not None:
             await self._provision_login_role(schema=name, role=role, password=password)
             return
 
@@ -754,6 +762,27 @@ def _advisory_key(role: str) -> int:
         "big",
         signed=True,
     )
+
+
+# ....................... #
+
+
+def _require_untruncated(role: str) -> str:
+    """*role*, refused when PostgreSQL would truncate it to 63 bytes (``NAMEDATALEN - 1``).
+
+    The statements would act on the truncated name while every ``pg_roles`` probe looks up the
+    full one and finds nothing, so the guards would pass a role they never saw.
+    """
+
+    if len(role.encode("utf-8")) > 63:
+        raise exc.configuration(
+            f"Tenant role name {role!r} is longer than the 63 bytes PostgreSQL keeps of a "
+            "name, so the role created would not be the one the provisioner checks.",
+            code="tenant_role_name_too_long",
+            details={"role": role},
+        )
+
+    return role
 
 
 # ....................... #
