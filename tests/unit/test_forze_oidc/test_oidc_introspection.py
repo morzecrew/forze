@@ -386,6 +386,7 @@ async def test_missing_claim_the_mapper_requires_is_authentication() -> None:
     [
         pytest.param({"audience": []}, "audience", id="empty-audience-list"),
         pytest.param({"audience": ("api", "")}, "audience", id="blank-audience-member"),
+        pytest.param({"audience": 42}, "audience", id="non-sequence-audience"),
         pytest.param(
             {"claim_mapper": OidcClaimMapper(issuer_claim="issuer")}, "iss", id="custom-iss"
         ),

@@ -218,7 +218,11 @@ class IntrospectionConfig:
         if self.audience is not None:
             configured = (self.audience,) if isinstance(self.audience, str) else self.audience
 
-            if not configured or any(not isinstance(a, str) or not a.strip() for a in configured):
+            if (
+                not isinstance(configured, Sequence)
+                or not configured
+                or any(not isinstance(a, str) or not a.strip() for a in configured)
+            ):
                 raise exc.configuration(
                     "Introspection audience must be a non-empty string or a non-empty sequence "
                     "of them",

@@ -3787,9 +3787,10 @@ has a fixture today.
   used to raise a raw `ValueError`, which the JWKS verifier let escape for a signed `exp` of
   `1e20`. A mapper's own `ValueError` (an empty `iss` or `sub`, or a missing claim a custom
   `subject_claim` names) is now `invalid_oidc_token` in both the introspection and the JWKS
-  verifier; the JWKS one let a signed empty `sub` escape the same way. A `claim_mapper` whose
-  `issuer_claim` is not `iss` is refused at construction, so the assertion's issuer is always
-  the configured one.
+  verifier; the JWKS one let a signed empty `sub` escape the same way. The introspection and
+  whoami configs refuse a `claim_mapper` whose `issuer_claim` is not `iss`, so their assertion's
+  issuer is always the configured one; the JWKS verifier is unchanged and still records
+  whatever claim its mapper names.
 - **Proposed row (RFC 0009):** `ASSUMED` — introspection requires the issuer. It is recorded on
   every assertion, and a different `iss` in the response is refused.
 
