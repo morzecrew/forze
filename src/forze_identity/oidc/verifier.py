@@ -129,10 +129,17 @@ class OidcTokenVerifier(TokenVerifierPort):
                 code="invalid_oidc_token",
             ) from e
 
-        return self.claim_mapper.map(
-            claims,
-            validated_audience=self._validated_audience(claims.get("aud")),
-        )
+        try:
+            return self.claim_mapper.map(
+                claims,
+                validated_audience=self._validated_audience(claims.get("aud")),
+            )
+
+        except ValueError as e:  # an empty iss/sub, or a custom claim the mapper requires
+            raise exc.authentication(
+                "Invalid OIDC token",
+                code="invalid_oidc_token",
+            ) from e
 
     # ....................... #
 

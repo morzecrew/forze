@@ -3710,3 +3710,321 @@ Fresh-eyes review of the branch before it was published.
 | R-20 | Low | The docs wrote the optional CA entry as a nested list (CodeAnt) | Fixed |
 | R-21 | High | A view in the role's own schema runs with its owner's rights, so it can expose another lake's metadata past every grant check (CodeAnt) | Fixed: the attestation refuses a view or materialized view in the schema that reads outside it and that the role can read. Tenant `d` holds one over tenant `b`'s metadata. `SECURITY DEFINER` functions are left to the deployment, and the docs say so |
 | R-22 | High | R-21's view check counted only views the role can read with a direct outside dependency, so a readable view over an inner view, or over a function, passed (cubic) | Fixed: any view or materialized view in the schema that depends on a relation outside it or on a function outside `pg_catalog` is refused, readable or not. A chain leaving the schema must cross such a view. Tenant `d` holds a view over a view over tenant `b`'s metadata, and a view calling a function |
+
+---
+
+# Unit 14 · RFC 0009 P1 — OIDC completeness
+
+Branch `feat/oidc-completeness`. RFC 0009 §5 in full: §5.1 discovery
+(`oidc/discovery.py`, `OidcIdpPreset.from_issuer`), §5.2 the RFC 7662 introspection verifier
+(`oidc/introspection.py`), §5.3 the Kratos whoami verifier (`oidc/whoami.py`), §5.4 claim-mapper
+growth and extractors (`oidc/claims.py`), plus the shared verdict cache (`oidc/_cache.py`). The
+§11 P1 tests: the verifier battery, the claims tables, the wiring guard, and a Keycloak 26.8.1
+testcontainer for discovery → JWKS → claims and introspection, Basic and `private_key_jwt`. No
+P2–P4 work: no assertion slot, no `AuthnResult.assertion`, no claims-backed grants. Zero
+framework change, as §5's heading says. The RFC was written on 2026-08-08; this unit is measured
+against it and against the code as it stood at `579059c63`.
+
+**Drift count: 3.** Fourteen entries, D-150 to D-163: three `drift` (D-150, D-153, D-159),
+nine `spec-gap`, two `discovery`. No §10 decision was contradicted. Decision #2 (`_forze.*`
+normalization at the mapper), #4 (discovery is construction-time only) and #9 (bounded, short
+caches clamped by `exp`, digest keys) are built as written; D-154 and D-158 tighten #9 and #2
+without departing from them.
+
+**Where each item lives.** Discovery: `fetch_oidc_configuration`, `require_https`,
+`OidcIdpPreset.from_issuer`. Introspection: `IntrospectionTokenVerifier._accept` holds every
+acceptance rule. Whoami: `WhoamiSessionVerifier._accept`. Cache: `TokenCache`. Tests:
+`tests/unit/test_forze_oidc/test_oidc_{discovery,introspection,whoami,claims_extraction,
+verifier_battery,wiring_guard}.py` and
+`tests/integration/test_forze_authn/test_oidc_keycloak.py`, over the new
+`tests/support/keycloak.py`, which now owns the Keycloak image pin `tests/support/lakekeeper.py`
+also uses. `httpx` was already in the `oidc` extra, as §5 says; `pyproject.toml` and `uv.lock`
+are unchanged. No Zitadel container was run: §11 names Zitadel and Keycloak, and only Keycloak
+has a fixture today.
+
+## D-150 — Client credentials are inline `str | SecretStr`, not `SecretRef`
+
+- **Touches:** §5.2, last sentence. No §10 row.
+- **RFC said:** "Client credentials resolve via the secrets plane (`SecretRef`), not inline
+  strings, matching [[identity-hardening-plan-2026-07]] posture."
+- **Found:** nothing in `forze_identity` resolves a secret through the secrets plane. The
+  Telegram preset takes `client_secret: str | SecretStr` (`telegram/config.py:31`), the VK
+  preset an optional `str | SecretStr | None` (`builtin/idp/vk/config.py:34`), and
+  `AuthnKernelConfig` takes raw `bytes`. A `SecretRef` needs a
+  `SecretsPort`, which comes from `ctx.deps`. `TokenVerifierPort.verify_token` receives no
+  context, and the factory that does is synchronous and builds the verifier once, so a ref
+  would need a context-bound resolution seam that does not exist yet. `forze_kits`'
+  `OAuth2TokenClient` resolves its refs per call through `ctx` for exactly this reason.
+- **Because:** the RFC's premise — a posture to match — is not in the code. Matching what is
+  there means inline `SecretStr`.
+- **Class:** `drift`. The RFC covered it, and it was built otherwise.
+- **Consequence:** `BasicClientAuth.client_secret` and `PrivateKeyJwtAuth.private_key` are
+  `str | SecretStr`, `repr=False`, and are never logged or echoed in an error. A private key is
+  probed at construction by signing once, and the probe's error is not chained, so key material
+  cannot reach a traceback. Rotating a secret needs a restart.
+- **Proposed row (RFC 0009):** `ASSUMED` — introspection client credentials are inline
+  `str | SecretStr`, like the other identity presets. `SecretRef` support is a follow-up that
+  needs a context-bound secrets seam on the verifier factory. It is additive: the field's type
+  widens to `str | SecretStr | SecretRef`.
+
+## D-151 — The introspection issuer is required, and an active verdict is still checked
+
+- **Touches:** §5.2 (`expected_issuer: str | None = None`).
+- **RFC said:** `expected_issuer` cross-checks `iss` "when present".
+- **Found:** RFC 7662 §2.2 makes `iss` and `sub` optional in the response.
+  `VerifiedAssertion.issuer` is required, and `MappingTableResolver` keys on
+  `(issuer, subject)`. With no configured issuer and no `iss` in the response, no assertion can
+  be built, and that misconfiguration would surface on the first request instead of at wiring.
+- **Because:** the design took the claims map to be a full token claim set.
+- **Class:** `spec-gap`.
+- **Consequence:** `IntrospectionConfig.issuer: str` is required. A response without `iss`
+  gets it; one with a different `iss` is refused. An active verdict is also refused when it
+  lacks a non-empty `sub`, when its `exp` or `nbf` is outside the leeway, or when its `exp`,
+  `nbf` or `iat` is not a finite number. JSON parsing admits `NaN` and `Infinity`, and `NaN`
+  compares false both ways, so a bound check alone would admit it. `active: true` alone does
+  not admit a token. The shared `OidcClaimMapper` refuses a numeric `exp` or `iat` it cannot
+  turn into a datetime (`NaN`, `1e20`), or a JSON boolean, as `invalid_oidc_token` too. It
+  used to raise a raw `ValueError`, which the JWKS verifier let escape for a signed `exp` of
+  `1e20`. A mapper's own `ValueError` (an empty `iss` or `sub`, or a missing claim a custom
+  `subject_claim` names) is now `invalid_oidc_token` in both the introspection and the JWKS
+  verifier; the JWKS one let a signed empty `sub` escape the same way. The introspection and
+  whoami configs refuse a `claim_mapper` whose `issuer_claim` is not `iss`, so their assertion's
+  issuer is always the configured one; the JWKS verifier is unchanged and still records
+  whatever claim its mapper names.
+- **Proposed row (RFC 0009):** `ASSUMED` — introspection requires the issuer. It is recorded on
+  every assertion, and a different `iss` in the response is refused.
+
+## D-152 — Audience is required unless explicitly waived
+
+- **Touches:** §5.2 (`audience: str | Sequence[str] | None = None`).
+- **RFC said:** the audience is optional and defaults to `None`.
+- **Found:** with no audience, any active token the issuer minted is accepted, for whichever
+  client it was minted. `OidcTokenVerifier` refuses to construct without one by default
+  (`enforce_issuer_and_audience=True`). Some issuers mint audience-less tokens: a Hydra client
+  that requests no audience gets one.
+- **Because:** the RFC did not apply the JWKS verifier's default to introspection.
+- **Class:** `spec-gap`.
+- **Consequence:** `require_audience: bool = True`. Construction refuses `audience=None` unless
+  it is turned off, and the field's docstring names what turning it off accepts. An empty
+  audience sequence, or one with a blank member, is refused at construction. A response whose
+  `aud` list holds a non-string member is a rejected token, not read around.
+- **Proposed row (RFC 0009):** `ASSUMED` — introspection requires an audience by default;
+  `require_audience=False` is the explicit waiver.
+
+## D-153 — Which failures are authentication and which are infrastructure, and their codes
+
+- **Touches:** §5.2 ("`active: false` … → `exc.authentication(code="token_invalid")`") and
+  §11 ("introspection 5xx (fail-closed)").
+- **RFC said:** a rejected token is `token_invalid`. A 5xx fails closed, kind unstated.
+- **Found:** RFC 7662 answers an unknown, revoked or expired token with 200 and
+  `active: false`. A non-2xx is about the introspecting client (401: bad client credentials) or
+  the issuer, never the token. The Keycloak test pins this: a wrong client secret is refused
+  with `details == {"status": 401}`. The
+  JWKS verifier already rejects with `invalid_oidc_token`. The VK verifier, the precedent for
+  remote verification here, makes transport failures `infrastructure`.
+- **Because:** reporting an outage or our own misconfiguration as "your token is invalid" sends
+  clients to re-authenticate against an IdP that is down. Two codes for one meaning makes every
+  client handle both.
+- **Class:** `drift` for the code: the RFC named one and another was used. The taxonomy itself
+  is a `spec-gap`.
+- **Consequence:** rejected tokens are `authentication` with one code, `invalid_oidc_token`:
+  inactive, `error` in a 2xx body, foreign `iss` or `aud`, missing `sub`, expired, not yet
+  valid, and a JSON object with a malformed field (a non-finite time claim, a non-string `aud`
+  member, a claim the mapper requires). Revoked and expired cannot be told apart. Transport
+  errors, timeouts, non-2xx, and bodies that are not JSON or not a JSON object are
+  `infrastructure` (`oidc_introspection_unavailable`, `oidc_introspection_invalid_response`).
+  Both fail closed: no path emits an assertion without an active verdict. Whoami follows the
+  same split. Kratos' 401 and 403 are about the session, so they are `authentication`
+  (`invalid_session_token`); a session whose `expires_at` or `issued_at` is missing or
+  malformed is `infrastructure` (`session_whoami_invalid_response`), as Kratos always sends
+  `expires_at`.
+- **Proposed row (RFC 0009):** `ASSUMED` — a rejected external credential is `authentication`
+  with one code per verifier family (`invalid_oidc_token`, `invalid_session_token`). Anything
+  that says nothing about the credential is `infrastructure`. Both fail closed.
+
+## D-154 — The verdict cache keeps positives only, caps the TTL at five minutes, counts from the call
+
+- **Touches:** §5.2 (`cache_ttl`, `cache_max_entries`, TTL clamped to `min(cache_ttl, exp - now)`)
+  and decision #9.
+- **RFC said:** bounded, short, clamped by `exp`, digest keys. It is silent on negative
+  verdicts, on a maximum TTL, and on when the TTL starts.
+- **Found:** each silence is a place a cache can outlive a revocation. A TTL counted from when
+  the entry is stored stretches by the call's latency. A configurable TTL with no ceiling turns
+  "short" into a default rather than a property.
+- **Class:** `spec-gap`.
+- **Consequence:** `TokenCache` stores only active verdicts. The TTL is counted from when the
+  remote call began, at most `MAX_CACHE_TTL` (five minutes, the JWKS cache default), and zero
+  disables it. It is clamped to the expiry the verifier checked and to the assertion's
+  `expires_at`, measured from when the call returned. That wall-clock expiry is stored with
+  the entry and checked again on every hit, so a forward jump of the system clock cannot serve
+  an expired credential past the monotonic deadline. `ttl` must be a `timedelta` and
+  `max_entries` an integer, or construction is refused. Eviction is least-recently-used at
+  `max_entries`. Keys are the SHA-256 digest of the token. Tests pin that a revoked token dies
+  at the TTL and never later, that the clamp applies inside the TTL, and the clock jump.
+- **Proposed row (RFC 0009):** `ASSUMED` — verdict caches store active verdicts only, count the
+  TTL from the start of the call, and refuse a TTL above five minutes.
+
+## D-155 — Casdoor's default JWT carries roles as objects
+
+- **Touches:** §5.4 ("`ClaimsPath("realm_access.roles")` — dotted path to a string list
+  (Keycloak realm roles, Casdoor `roles`)") and the §4 survey row.
+- **RFC said:** Casdoor's `roles` claim is a string list a `ClaimsPath` reads directly.
+- **Found:** in Casdoor's default `JWT` token format the claims embed the user object, where
+  `Roles []*Role` serializes as role objects (`{"owner", "name", "displayName", …}`) and only
+  `Groups` is `[]string` (`object/token_jwt.go`, `object/role.go`, read 2026-11-02).
+  `ClaimsPath("roles")` on that shape yields nothing.
+- **Because:** the survey recorded the claim's name, not its element type.
+- **Class:** `spec-gap`.
+- **Consequence:** `ClaimsPath` takes `item_key`. `ClaimsPath("roles", item_key="name")` reads
+  Casdoor's role objects, and string items still count as themselves. The claims table pins
+  both, and pins that the objects yield nothing without `item_key`.
+- **Proposed row (RFC 0009):** `ASSUMED` — `ClaimsPath(..., item_key=)` reads lists of objects.
+  The Casdoor preset (P4) uses `item_key="name"` for roles.
+
+## D-156 — Paths: placeholders fill after the split; `email_claim` is a dotted path
+
+- **Touches:** §5.4 (`ClaimsPath("resource_access.{client}.roles", client=...)`;
+  `email_claim: str | None = None  # "email"`).
+- **RFC said:** a parametrized path, and an email claim name. Neither says how dots in a
+  parameter or in the email's location are read.
+- **Found:** Keycloak client ids may contain dots (`my.app`), and namespaced claims are URLs
+  (`https://app.example/roles`). Formatting the template before splitting it would cut either
+  into several segments. Kratos puts the email at `traits.email`.
+- **Class:** `spec-gap`.
+- **Consequence:** `ClaimsPath` splits the template on dots, then fills each segment, so
+  `ClaimsPath("{c}", c="https://app.example/roles")` reads a namespaced top-level claim. An
+  unfilled or malformed placeholder (`{a[x]}`, `{a!z}`, `{a`) or an empty segment is refused at
+  construction as a configuration error. `email_claim` uses the
+  same splitter and is a dotted path, so `"traits.email"` works for a Kratos session. The
+  existing `tenant_claim` is unchanged: a literal top-level name.
+- **Proposed row (RFC 0009):** `ASSUMED` — claim paths fill `{name}` placeholders after
+  splitting on dots, and `email_claim` is a dotted path.
+
+## D-157 — `ZitadelProjectRoles` emits no tenant hint in P1
+
+- **Touches:** §5.4 ("when `org_id` is set, keeps only roles granted by that org and can emit
+  the org id as the tenant hint"), §8.3 and decision #8.
+- **RFC said:** the extractor can emit the org id as the tenant hint, which "is what makes
+  Zitadel's claim also a tenancy source".
+- **Found:** with a fixed `org_id`, the hint would be a constant, the same for every token. A
+  per-token org hint is claims-derived tenancy, which decision #8 makes an explicit,
+  config-gated posture, built in §8.3 as `ClaimsTenantResolver` in P4. `ClaimsExtractor`
+  returns names, and the mapper owns the hint.
+- **Because:** §5.4's sentence and §8.3 describe one capability in two phases.
+- **Class:** `spec-gap`.
+- **Consequence:** the extractor filters roles by org and nothing more. The user's own org
+  reaches the hint through the existing `tenant_claim="urn:zitadel:iam:user:resourceowner:id"`,
+  a literal top-level claim, and it stays a hint that membership validates.
+- **Proposed row (RFC 0009):** `ASSUMED` — org-derived tenant hints belong to
+  `ClaimsTenantResolver` (§8.3, P4), not to the roles extractor.
+
+## D-158 — The mapper always drops a `_forze` claim the issuer sent
+
+- **Touches:** §5.4 and decision #2 ("one grant resolver serves every IdP" from `_forze.*`).
+- **RFC said:** extracted values land under `_forze` in the claims. It is silent on a `_forze`
+  key the token already carries.
+- **Found:** before this unit the mapper copied every claim. Some IdPs let users edit claims
+  they emit: Kratos traits, custom user attributes. A token carrying `_forze.roles` would then
+  read as normalized roles to every W2 consumer, the moment P2 ships.
+- **Class:** `spec-gap`.
+- **Consequence:** `OidcClaimMapper` drops any incoming `_forze` key and writes its own only
+  when it is configured to extract something. With nothing configured, `_forze` is absent. The
+  changelog marks this a behaviour change: an issuer-sent `_forze` claim no longer reaches the
+  snapshot.
+- **Proposed row (RFC 0009):** `ASSUMED` — `_forze` in `VerifiedAssertion.claims` is written by
+  the mapper alone. An issuer-supplied one is dropped.
+
+## D-159 — The whoami verifier is Kratos-shaped, with no configurable identity path
+
+- **Touches:** §5.3 ("`identity_path` defaults (`identity.id` → subject, configured issuer
+  constant, `expires_at` from the session)"; "protocol-generic 'session endpoint' shaped").
+- **RFC said:** a config with identity-path defaults, implying they can be overridden.
+- **Found:** besides the subject path, every rule is Kratos': `active: true`,
+  `identity.state == "active"`, an RFC 3339 `expires_at`, 401 for no session and 403 for an
+  assurance level too low. A `subject_path` knob alone would not fit a second session endpoint.
+  No second endpoint shape exists to design against.
+- **Class:** `drift`. The RFC described a knob that was not built.
+- **Consequence:** the subject is `identity.id`. `WhoamiConfig` carries `endpoint`, `issuer`,
+  `credential_style` (required, with no default to guess), `cookie_name`
+  (`ory_kratos_session`, which must be an RFC 6265 token), `traits_to_claims`, cache bounds,
+  `timeout` and `claim_mapper`, which must read the issuer from `iss` and the subject from
+  `sub`. The claims are `iss`, `sub`, `exp`, `iat`, `sid`, `traits` and `metadata` (from
+  `metadata_public`), so 5.4 extraction works as for a token. The identity must carry
+  `state: "active"`; a missing `state` is refused rather than read as active. A session must
+  carry a valid `expires_at`. `issued_at` falls back to `authenticated_at` only when it is
+  absent or null, and a malformed one is refused. A credential that
+  is not printable ASCII free of cookie separators is refused before any request, so it cannot
+  smuggle a cookie or a header. Like the VK verifier and the code-exchange helpers, both
+  remote verifiers open an `httpx` client per call: nothing in `forze_identity` holds a
+  lifecycle-closed client, and the verdict cache absorbs bursts.
+- **Proposed row (RFC 0009):** `ASSUMED` — the whoami verifier is Kratos-shaped. A second
+  session endpoint generalizes it when one exists.
+
+## D-160 — Discovery requires https, reads no algorithms, follows no redirects
+
+- **Touches:** §5.1. Decision #4 is honored.
+- **RFC said:** fetch the document, check `issuer` equality, extract four endpoints. It is
+  silent on scheme, algorithms and redirects.
+- **Found:** a document over http, an http introspection endpoint in it, or an
+  `id_token_signing_alg_values_supported` read into the allowlist would each let the network
+  choose what the verifier trusts. `oauth/authorize.py` already allows plain http only on a
+  loopback host (RFC 8252's carve-out). That is the repo's one development exemption, and it
+  needs no flag.
+- **Class:** `spec-gap`.
+- **Consequence:** the issuer and every endpoint read from the document must be https, or http
+  on a loopback host, parsed with `urlsplit`. The issuer may carry no query or fragment.
+  A malformed port is a configuration error. Redirects are not followed. Every timeout here
+  and on the remote verifiers must be a finite, positive number. The document's algorithms
+  are ignored: `from_issuer` keeps the preset's default `("RS256",)` unless `algorithms` is
+  passed. Transport failure is
+  `infrastructure` (`oidc_discovery_unavailable`). Everything else is `configuration`
+  (`oidc_issuer_mismatch`, `oidc_discovery_invalid`). `OidcIdpPreset` gains `metadata` and
+  `claim_mapper`; a `claim_mapper` beside `tenant_claim` is refused rather than one silently
+  winning. `from_issuer` also takes `timeout` and `transport`.
+- **Proposed row (RFC 0009):** `ASSUMED` — discovery and remote-verifier endpoints are https,
+  or http on loopback only. Algorithms are never read from the discovery document.
+
+## D-161 — `private_key_jwt` takes an explicit audience and refuses HMAC algorithms
+
+- **Touches:** §5.2 (`client_auth: BasicClientAuth | PrivateKeyJwtAuth`).
+- **RFC said:** the two client-auth types, with no fields.
+- **Found:** RFC 7523's `aud` "identifies the authorization server". Zitadel wants its issuer,
+  and Keycloak accepts its issuer: the integration test authenticates with `aud` = issuer, a
+  `kid` header and a client JWKS. An HMAC algorithm is `client_secret_jwt`, another method.
+  RFC 6749 §2.3.1 form-urlencodes the Basic credentials before encoding them, and `httpx`'s
+  `auth=` does not.
+- **Class:** `spec-gap`.
+- **Consequence:** `PrivateKeyJwtAuth(client_id, private_key, audience, key_id=None,
+  algorithm="RS256")`. The audience is required, the algorithm must be asymmetric, and the
+  assertion lives 60 seconds with a CSPRNG `jti`. `BasicClientAuth` form-urlencodes both parts.
+- **Proposed row (RFC 0009):** `ASSUMED` — the `private_key_jwt` audience is explicit
+  configuration, conventionally the issuer.
+
+## D-162 — Keycloak answers `active: false` to a client outside the token's audience
+
+- **Touches:** §11 (Keycloak end to end) and the docs.
+- **Found:** Keycloak 26.8.1 answered `{"active": false}` with HTTP 200 when a
+  correctly-authenticated client introspected a valid token whose `aud` did not include it.
+  The same token was active for a client in its audience.
+- **Because:** Keycloak's own introspection policy. It cannot be seen before a real server is
+  run.
+- **Class:** `discovery`.
+- **Consequence:** the test realm puts each resource server in the token's audience, which is
+  how a real deployment is shaped. The integration page says so, since otherwise the symptom is
+  an unexplained `invalid_oidc_token`.
+- **Proposed row (RFC 0009):** none. This is an engine fact, recorded for the Keycloak preset
+  (P4).
+
+## D-163 — The wiring guard already covered the new verifiers
+
+- **Touches:** §11 ("the existing external-verifier + `JwtNativeUuidResolver` guard extends to
+  the new verifiers").
+- **Found:** the guard in `AuthnDepsModule.__call__`
+  (`authn/execution/deps/module.py`, the `token_overrides_keys - resolver_overrides_keys` loop)
+  refuses any `token_verifiers` override on a token route without a `resolvers` override,
+  whatever the verifier's type.
+- **Class:** `discovery`.
+- **Consequence:** no guard code changed. `test_oidc_wiring_guard.py` pins that the JWKS,
+  introspection and whoami factories are each refused without a resolver, resolve to their
+  verifier with one, and wire through `oidc_bootstrap_identity_deps`.
+- **Proposed row (RFC 0009):** none.
