@@ -1,6 +1,6 @@
 # RFC 0070 — Outbox consume mode
 
-- **Status:** 🚧 In progress
+- **Status:** 🚧 In progress — **consume mode (#566) and the delivery log (#570) shipped.** The load comparison against retain mode (§12 step 3) waits on hh-backend-v2 running it on their mix.
 - **Scope:** An opt-in storage mode for the Postgres outbox that writes a row that publishes on
   its first try twice, at staging and when it is deleted after its publish, rather than three
   times plus a retention delete. A retry or a park adds an update, as today.
