@@ -300,8 +300,10 @@ class IntrospectionTokenVerifier(TokenVerifierPort):
             return cached
 
         began = self.cache.begin()
-        assertion = self._accept(await self._introspect(credentials.token))
-        self.cache.put(credentials.token, assertion, began=began)
+        payload = await self._introspect(credentials.token)
+        assertion = self._accept(payload)
+        # _accept has checked exp is a finite number or absent.
+        self.cache.put(credentials.token, assertion, began=began, expires_at=payload.get("exp"))
 
         return assertion
 

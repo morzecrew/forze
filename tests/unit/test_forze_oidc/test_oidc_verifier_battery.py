@@ -42,6 +42,7 @@ from forze_identity.oidc import (
     BasicClientAuth,
     IntrospectionConfig,
     IntrospectionTokenVerifier,
+    OidcClaimMapper,
     OidcTokenVerifier,
     StaticKeyProvider,
     WhoamiConfig,
@@ -246,10 +247,17 @@ class Clock:
 class Remote:
     """A remote verifier over a mock endpoint whose reply a test changes."""
 
-    def __init__(self, kind: str, *, ttl: timedelta = timedelta(seconds=30)) -> None:
+    def __init__(
+        self,
+        kind: str,
+        *,
+        ttl: timedelta = timedelta(seconds=30),
+        mapper: OidcClaimMapper | None = None,
+    ) -> None:
         self.kind = kind
         self.clock = Clock()
         self.calls = 0
+        self.latency = 0.0
         self.error: httpx.HTTPError | None = None
         self.status = 200
         self.body: object = None
@@ -259,7 +267,10 @@ class Remote:
 
         if kind == "introspection":
             self.verifier = IntrospectionTokenVerifier(
-                config=_introspection_config(leeway=timedelta(0)),
+                config=_introspection_config(
+                    leeway=timedelta(0),
+                    claim_mapper=mapper or OidcClaimMapper(),
+                ),
                 transport=transport,
                 cache=cache,
             )
@@ -270,6 +281,7 @@ class Remote:
                     endpoint=f"{ISSUER}/sessions/whoami",
                     issuer=ISSUER,
                     credential_style="x_session_token",
+                    claim_mapper=mapper or OidcClaimMapper(),
                 ),
                 transport=transport,
                 cache=cache,
@@ -279,6 +291,7 @@ class Remote:
 
     def _handle(self, request: httpx.Request) -> httpx.Response:
         self.calls += 1
+        self.clock.now += self.latency
 
         if self.error is not None:
             raise self.error
@@ -395,6 +408,41 @@ async def test_remote_cache_is_clamped_by_expiry(remote: Remote) -> None:
     assert remote.calls == 1
 
     remote.clock.now += 4  # past the credential's expiry, well inside the 30 s TTL
+    remote.revoke()
+    with pytest.raises(CoreException):
+        await remote.verify()
+
+    assert remote.calls == 2
+
+
+@pytest.mark.parametrize("kind", ["introspection", "whoami"])
+async def test_remote_cache_is_clamped_by_expiry_the_mapper_drops(kind: str) -> None:
+    remote = Remote(kind, mapper=OidcClaimMapper(expires_at_claim=None))
+    remote.accept(expires_in=5)
+
+    assert (await remote.verify()).expires_at is None
+
+    remote.clock.now += 6  # past the checked expiry, well inside the 30 s TTL
+    remote.revoke()
+    with pytest.raises(CoreException):
+        await remote.verify()
+
+    assert remote.calls == 2
+
+
+@pytest.mark.parametrize("kind", ["introspection", "whoami"])
+async def test_remote_expiry_counts_from_when_the_call_returned(kind: str) -> None:
+    remote = Remote(kind, ttl=timedelta(seconds=60))
+    remote.accept(expires_in=20)
+    remote.latency = 10  # the fake clock moves during the call; the wall clock does not
+
+    await remote.verify()
+
+    remote.clock.now += 15  # 25 s after the call began, 15 s after it returned
+    await remote.verify()
+    assert remote.calls == 1
+
+    remote.clock.now += 6  # 21 s after it returned: past the 20 s the token had left
     remote.revoke()
     with pytest.raises(CoreException):
         await remote.verify()

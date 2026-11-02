@@ -191,8 +191,8 @@ class WhoamiSessionVerifier(TokenVerifierPort):
             return cached
 
         began = self.cache.begin()
-        assertion = self._accept(await self._whoami(token))
-        self.cache.put(token, assertion, began=began)
+        assertion, expires_at = self._accept(await self._whoami(token))
+        self.cache.put(token, assertion, began=began, expires_at=expires_at)
 
         return assertion
 
@@ -243,7 +243,9 @@ class WhoamiSessionVerifier(TokenVerifierPort):
 
     # ....................... #
 
-    def _accept(self, session: dict[str, Any]) -> VerifiedAssertion:
+    def _accept(self, session: dict[str, Any]) -> tuple[VerifiedAssertion, float | None]:
+        """The session's assertion, and the expiry it was checked against."""
+
         identity = session.get("identity")
 
         if session.get("active") is not True or not isinstance(identity, Mapping):
@@ -284,7 +286,7 @@ class WhoamiSessionVerifier(TokenVerifierPort):
                 if isinstance(value, Mapping):
                     claims[target] = dict(cast(Mapping[str, Any], value))
 
-        return self.config.claim_mapper.map(claims)
+        return self.config.claim_mapper.map(claims), claims.get("exp")
 
 
 # ....................... #

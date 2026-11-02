@@ -27,10 +27,10 @@ revoked token or session keeps working here until its entry expires."""
 class TokenCache:
     """Remember verified assertions per token for at most :attr:`ttl`, keyed by digest.
 
-    The key is the SHA-256 of the token, never the token. An entry's lifetime counts from when
-    the remote call began and is clamped to the assertion's ``expires_at``, so a token dies
-    here at the TTL or at its expiry, whichever is first — never later. Only positive verdicts
-    are stored.
+    The key is the SHA-256 of the token, never the token. An entry lives :attr:`ttl` from when
+    the remote call began, clamped to the expiry the verifier checked and to the assertion's
+    ``expires_at``, so a token dies here at the TTL or at its expiry, whichever is first —
+    never later. Only positive verdicts are stored.
     """
 
     ttl: timedelta
@@ -98,21 +98,37 @@ class TokenCache:
 
     # ....................... #
 
-    def put(self, token: str, assertion: VerifiedAssertion, *, began: float) -> None:
-        """Remember *assertion* for *token* from a call that began at *began*."""
+    def put(
+        self,
+        token: str,
+        assertion: VerifiedAssertion,
+        *,
+        began: float,
+        expires_at: float | None,
+    ) -> None:
+        """Remember *assertion* for *token* from a call that began at *began*.
 
-        lifetime = self.ttl.total_seconds()
+        :param expires_at: The POSIX time the verifier checked the credential's expiry against,
+            or ``None`` when the issuer gave none. Passed separately because the claim mapper
+            may not carry it into the assertion.
+        """
+
+        now, wall = self.clock(), utcnow().timestamp()
+        deadline = began + self.ttl.total_seconds()
 
         if assertion.expires_at is not None:
-            lifetime = min(lifetime, (assertion.expires_at - utcnow()).total_seconds())
+            deadline = min(deadline, now + assertion.expires_at.timestamp() - wall)
 
-        if lifetime <= 0:
+        if expires_at is not None:
+            deadline = min(deadline, now + expires_at - wall)
+
+        if deadline <= now:
             return
 
         key = self._key(token)
 
         with self._lock:
-            self._entries[key] = (began + lifetime, assertion)
+            self._entries[key] = (deadline, assertion)
             self._entries.move_to_end(key)
 
             while len(self._entries) > self.max_entries:
