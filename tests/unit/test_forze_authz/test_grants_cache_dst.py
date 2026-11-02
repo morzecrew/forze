@@ -3,7 +3,8 @@
 One seeded workload: a member holding a role writes to a ledger the role permits, and a role
 revocation, or a deactivation, lands somewhere in the run. With the cache forgetting on the
 revocation the invariant holds; with a cache that never forgets it must fire, which also proves
-the workload reaches writes after the revocation at all.
+the workload reaches writes after the revocation at all. Each runs with and without the
+cross-process broadcast, whose subscription the runtime starts with the run.
 """
 
 from __future__ import annotations
@@ -18,8 +19,10 @@ import pytest
 
 from forze.application.contracts.authn import AuthnIdentity
 from forze.application.contracts.authz import AuthzSpec
+from forze.application.contracts.cache import CacheSpec
 from forze.application.contracts.execution import Handler
 from forze.application.execution import ExecutionContext
+from forze.application.execution.lifecycle import LifecyclePlan
 from forze.application.execution.operations.descriptors import OperationDescriptor
 from forze.application.execution.operations.registry import (
     FrozenOperationRegistry,
@@ -28,7 +31,12 @@ from forze.application.execution.operations.registry import (
 from forze.application.hooks.authz import authorize_action
 from forze_dst import ModelState, Rule, Scenario, Simulation, SimulationConfig, Strategy
 from forze_dst.invariants import no_permission_after_deactivation
-from forze_identity.authz import AuthzKernelConfig, GrantsCache
+from forze_identity.authz import (
+    AuthzKernelConfig,
+    GrantsCache,
+    GrantsInvalidation,
+    grants_invalidation_lifecycle_step,
+)
 from forze_identity.authz.application.specs import (
     permission_definition_spec,
     role_definition_spec,
@@ -40,7 +48,7 @@ from forze_identity.authz.domain.models.permission_definition import (
 )
 from forze_identity.authz.domain.models.role_definition import CreateRoleDefinitionCmd
 from forze_identity.authz.execution import AuthzDepsModule
-from forze_mock import MockDepsModule
+from forze_mock import MockDepsModule, MockRouteConfig
 
 pytestmark = pytest.mark.unit
 
@@ -50,6 +58,7 @@ MEMBER = UUID(int=1)
 WRITE = "ledger.write"
 REAL = AuthzSpec(name="real")
 """Routed apart from the mock's own ``main`` authz ports."""
+MARKERS = CacheSpec(name="grants_markers")
 
 
 class _NeverForgets(GrantsCache):
@@ -117,12 +126,25 @@ def _registry() -> FrozenOperationRegistry:
     ).freeze()
 
 
-def _run(closing: str, cache: Callable[[], GrantsCache], *, concurrency: int) -> Any:
+def _run(
+    closing: str,
+    cache: Callable[[], GrantsCache],
+    *,
+    concurrency: int,
+    broadcast: bool,
+) -> Any:
+    # One kernel for every run, as the lifecycle step needs it: each run's subscription starts
+    # with the flush a connect sends, so no run is served another's entries.
+    kernel = AuthzKernelConfig(
+        grants_cache=cache(),
+        grants_invalidation=GrantsInvalidation(cache=MARKERS) if broadcast else None,
+    )
+
     def deps() -> list[Any]:
         return [
-            MockDepsModule(),
+            MockDepsModule(routes={MARKERS.name: MockRouteConfig(invalidation_push=True)}),
             AuthzDepsModule(
-                kernel=AuthzKernelConfig(grants_cache=cache()),
+                kernel=kernel if broadcast else AuthzKernelConfig(grants_cache=cache()),
                 principal_registry={"real"},
                 role_assignment={"real"},
                 decision={"real"},
@@ -135,13 +157,20 @@ def _run(closing: str, cache: Callable[[], GrantsCache], *, concurrency: int) ->
         act=(Rule(op="write", weight=4.0), Rule(op=closing)),
     )
 
+    steps = (grants_invalidation_lifecycle_step(kernel),) if broadcast else ()
+
     return Simulation(
         operations=_registry(),
         deps=deps,
         invariants=[no_permission_after_deactivation(closing, ["write"])],
+        lifecycle=LifecyclePlan.from_steps(*steps).freeze(),
     ).run(
         SimulationConfig(
-            strategy=Strategy.SCENARIO, act_count=12, concurrency=concurrency, seeds=range(5)
+            strategy=Strategy.SCENARIO,
+            act_count=12,
+            concurrency=concurrency,
+            seeds=range(5),
+            runtime=broadcast,
         ),
         scenario=scenario,
     )
@@ -155,16 +184,17 @@ def _never_forgets() -> GrantsCache:
     return _NeverForgets(ttl=timedelta(hours=1))
 
 
+@pytest.mark.parametrize("broadcast", [False, True])
 @pytest.mark.parametrize("concurrency", [1, 3])
 class TestWithTheCacheOn:
-    def test_a_revocation_closes_the_permission(self, concurrency: int) -> None:
-        assert _run("revoke", _cache, concurrency=concurrency) is None
+    def test_a_revocation_closes_the_permission(self, concurrency: int, broadcast: bool) -> None:
+        assert _run("revoke", _cache, concurrency=concurrency, broadcast=broadcast) is None
 
-    def test_a_deactivation_closes_the_permission(self, concurrency: int) -> None:
-        assert _run("deactivate", _cache, concurrency=concurrency) is None
+    def test_a_deactivation_closes_the_permission(self, concurrency: int, broadcast: bool) -> None:
+        assert _run("deactivate", _cache, concurrency=concurrency, broadcast=broadcast) is None
 
-    def test_a_cache_that_never_forgets_is_caught(self, concurrency: int) -> None:
-        report = _run("revoke", _never_forgets, concurrency=concurrency)
+    def test_a_cache_that_never_forgets_is_caught(self, concurrency: int, broadcast: bool) -> None:
+        report = _run("revoke", _never_forgets, concurrency=concurrency, broadcast=broadcast)
 
         assert report is not None
         assert "no_permission_after_deactivation" in str(report)

@@ -183,6 +183,8 @@ class RoutedRedisClient(DsnRoutedTenantClientBase[RedisClient], RedisClientPort)
         prefixes: Sequence[str],
         on_keys: Callable[[Sequence[str]], None],
         on_reset: Callable[[], None],
+        on_end: Callable[[], None] | None = None,
+        live_within: timedelta | None = None,
     ) -> Callable[[], Awaitable[None]] | None:
         # A tracking subscription outlives any single request, but the routed
         # client picks its endpoint per *current tenant* — a long-lived stream

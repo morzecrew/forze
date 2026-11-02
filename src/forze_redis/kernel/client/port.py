@@ -151,11 +151,15 @@ class RedisClientPort(Protocol):
         prefixes: Sequence[str],
         on_keys: Callable[[Sequence[str]], None],
         on_reset: Callable[[], None],
+        on_end: Callable[[], None] | None = None,
+        live_within: timedelta | None = None,
     ) -> Awaitable[Callable[[], Awaitable[None]] | None]:
         """Subscribe to server-side key invalidations (``CLIENT TRACKING`` BCAST).
 
         Returns an unsubscribe callable, or ``None`` when the client cannot
-        provide push (e.g. tenant-routed clients).
+        provide push (e.g. tenant-routed clients) or, with *live_within*, when
+        tracking is not set up within that bound. *on_end* fires when the
+        client closes.
         """
         ...  # pragma: no cover
 

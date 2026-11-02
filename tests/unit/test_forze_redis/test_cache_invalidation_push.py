@@ -30,6 +30,7 @@ class TrackingFakeClient:
         prefixes: Sequence[str],
         on_keys: Callable[[Sequence[str]], None],
         on_reset: Callable[[], None],
+        **_kwargs: object,
     ) -> Callable[[], Awaitable[None]] | None:
         self.prefixes = tuple(prefixes)
         self.on_keys = on_keys

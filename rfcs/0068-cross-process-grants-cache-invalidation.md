@@ -1,6 +1,6 @@
 # RFC 0068 — Cross-process grants cache invalidation
 
-- **Status:** 📝 Draft — design proposed; builds on the opt-in grants cache shipped in #506
+- **Status:** 🚧 In progress — **P1 shipped 2026-11-02** (this PR): `GrantsInvalidation` on the authz kernel, `grants_invalidation_lifecycle_step`, the after-commit marker publish, `invalidate_grants(ctx, kernel, principal_id=None)`, the opt-in `forze_mock` push, and the simulation and Redis tests. Rows 7 and 8 are decided in [`EXECUTION-LOG.md`](EXECUTION-LOG.md) Unit 13 (D-105, D-106), with eight more entries there; their proposed rows await acceptance. **P2 stays demand-gated.** Builds on the opt-in grants cache shipped in #506
 - **Scope:** Makes a grants-cache invalidation in one process reach every other process that holds
   a `GrantsCache`, so a revoked role stops granting everywhere within broadcast latency instead of
   within the TTL. Adds an optional broadcast setting on the authz kernel, a lifecycle step that

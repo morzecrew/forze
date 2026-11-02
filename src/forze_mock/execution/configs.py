@@ -30,6 +30,10 @@ class MockRouteConfig:
     the loss of trimmed-but-undelivered entries — is testable offline. Ignored by
     non-stream routes."""
 
+    invalidation_push: bool = False
+    """Cache routes only: the port's ``subscribe_invalidations`` subscribes, as
+    ``RedisCacheConfig.invalidation_push`` has it. Off, it returns ``None``."""
+
     def __attrs_post_init__(self) -> None:
         if self.stream_retention_max_entries is not None and self.stream_retention_max_entries <= 0:
             raise exc.configuration("stream_retention_max_entries must be positive when set")

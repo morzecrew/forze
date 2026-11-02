@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- ...
+- **Grants-cache invalidations can reach every process.** With `AuthzKernelConfig(grants_invalidation=...)`, each committed one is broadcast through a push-capable cache such as Redis; `grants_invalidation_lifecycle_step` subscribes each process or fails startup. `invalidate_grants` covers plain document commands.
 
 ### Changed
 
@@ -17,7 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- ...
+- **Redis invalidation push notices a half-open connection.** A keepalive `PING` left unanswered for five seconds now flushes every subscriber, the document L1 included, and reconnects; closing the client flushes them once more.
 
 ## [0.21.0] - 2026-11-02
 

@@ -301,6 +301,8 @@ class RedisCacheAdapter(CachePort, RedisBaseAdapter):
     async def subscribe_invalidations(
         self,
         callback: InvalidationCallback,
+        *,
+        live_within: timedelta | None = None,
     ) -> Callable[[], Awaitable[None]] | None:
         """Stream pointer-key invalidations to *callback* (L1 consumers).
 
@@ -314,6 +316,9 @@ class RedisCacheAdapter(CachePort, RedisBaseAdapter):
         Returns ``None`` (push unavailable) when the feature is disabled, the
         namespace is dynamic (per-tenant-resolved namespaces have no stable
         broadcast prefix), or the client cannot track (tenant-routed clients).
+        With *live_within*, it also returns ``None`` when ``CLIENT TRACKING`` is
+        not set up within that bound (a RESP2 connection, a refusal, a timeout).
+        When the client closes, *callback* gets a last flush with ``ended`` set.
 
         **Requires redis-py 8+** (the RESP3 push API); on redis-py 7 the client raises
         ``configuration`` (``redis.client_side_caching_unsupported``). Everything else in
@@ -379,10 +384,15 @@ class RedisCacheAdapter(CachePort, RedisBaseAdapter):
         def _on_reset() -> None:
             callback(CacheInvalidation(key=None))
 
+        def _on_end() -> None:
+            callback(CacheInvalidation(key=None, ended=True))
+
         return await self.client.track_invalidations(
             prefixes=prefixes,
             on_keys=_on_keys,
             on_reset=_on_reset,
+            on_end=_on_end,
+            live_within=live_within,
         )
 
     # ....................... #

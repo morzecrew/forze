@@ -40,7 +40,13 @@ from ..domain.models.bindings import (
     ReadRolePermissionBinding,
 )
 from ..domain.models.group import ReadGroup
-from .grants_cache import CatalogGrants, GrantsCache, GrantsCacheKey
+from .grants_cache import (
+    CatalogGrants,
+    GrantsCache,
+    GrantsCacheKey,
+    GrantsInvalidation,
+    invalidate_after_commit,
+)
 
 if TYPE_CHECKING:
     from forze.application.execution.context import ExecutionContext
@@ -138,6 +144,10 @@ class AuthzGrantResolver:
     cache: GrantsCache | None = None
     """Remembers the catalog part of :meth:`resolve_effective_grants`; ``None`` caches nothing.
     Needs :attr:`ctx`, which the key's tenant and the transaction state are read from."""
+
+    invalidation: GrantsInvalidation | None = None
+    """Broadcasts each invalidation to every subscribed process once it commits. While no
+    subscription in this process keeps :attr:`cache` current, decisions read the bindings."""
 
     # ....................... #
 
@@ -247,8 +257,15 @@ class AuthzGrantResolver:
         cache = self.cache
 
         # Inside a transaction the bindings may include its own uncommitted writes, which a
-        # savepoint can still roll back: read them, and neither serve nor keep an entry.
-        if cache is None or self.ctx is None or self.ctx.tx_ctx.depth() > 0:
+        # savepoint can still roll back: read them, and neither serve nor keep an entry. With a
+        # broadcast configured and no subscription keeping the cache current, other processes'
+        # revocations would wait out the TTL here: read them too.
+        if (
+            cache is None
+            or self.ctx is None
+            or self.ctx.tx_ctx.depth() > 0
+            or (self.invalidation is not None and not self.invalidation.listening(cache))
+        ):
             catalog = await self._catalog_grants(principal_id)
 
         else:
@@ -274,23 +291,19 @@ class AuthzGrantResolver:
 
     # ....................... #
 
-    async def forget(self, principal_id: UUID) -> None:
-        """Drop *principal_id*'s cached grants when the current transaction commits, or now.
+    async def forget(self, principal_id: UUID | None = None) -> None:
+        """Forget *principal_id*'s cached grants, or everyone's for ``None``, here and, with
+        :attr:`invalidation`, in every subscribed process, once the current transaction commits.
 
         Until the change commits, the committed bindings are still the truth a decision outside
         the transaction may read and cache; decisions inside it never use the cache. A decision
         that read before the forget does not store what it read. No-op without :attr:`cache`.
         """
 
-        cache = self.cache
-
-        if cache is None or self.ctx is None:
+        if self.cache is None or self.ctx is None:
             return
 
-        async def _forget() -> None:
-            cache.forget(principal_id)
-
-        await self.ctx.tx_ctx.run_or_defer(_forget)
+        await invalidate_after_commit(self.ctx, self.cache, self.invalidation, principal_id)
 
     # ....................... #
 

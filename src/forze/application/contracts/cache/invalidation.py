@@ -8,6 +8,7 @@ the L1 TTL, which demotes the TTL from "the staleness budget" to a backstop.
 """
 
 from collections.abc import Awaitable, Callable
+from datetime import timedelta
 from typing import Protocol, final, runtime_checkable
 
 import attrs
@@ -31,6 +32,10 @@ class CacheInvalidation:
     tenant: str | None = None
     """Tenant discriminator parsed from the backend key, when tenant-scoped."""
 
+    ended: bool = False
+    """Set on a subscription's last event, a flush: the stream stopped for good (its client
+    closed), so push keeps nothing current from here on."""
+
 
 # ....................... #
 
@@ -51,6 +56,8 @@ class SupportsInvalidationPush(Protocol):
     async def subscribe_invalidations(
         self,
         callback: InvalidationCallback,
+        *,
+        live_within: timedelta | None = None,
     ) -> Unsubscribe | None:
         """Subscribe *callback* to this port's invalidation stream.
 
@@ -59,6 +66,11 @@ class SupportsInvalidationPush(Protocol):
         its TTL-only semantics. Implementations emit a flush event
         (``CacheInvalidation(key=None)``) on every (re)connect and on
         degradation, so a subscriber never trusts state that predates a gap
-        in the stream.
+        in the stream, and one with ``ended`` set when the stream stops.
+
+        With *live_within*, it returns only once the stream is live, and
+        ``None`` when the stream does not come up within that bound; that
+        attempt is then detached. Without it, a stream may still be
+        connecting when it returns.
         """
         ...

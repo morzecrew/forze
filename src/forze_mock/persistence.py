@@ -128,6 +128,7 @@ _LIVE_FIELDS: Final = frozenset(
     {
         "_MockState__lock",
         "_MockState__tx_serializer",
+        "_MockState__cache_push",  # this process's subscribers, not data
         "rotating_credential_locks",
         "write_serialization",
         "row_locks",
@@ -135,8 +136,8 @@ _LIVE_FIELDS: Final = frozenset(
     }
 )
 """The state's machinery rather than its data: a re-entrant lock, the strict-transaction
-serializer, the rotating-credential stripe table, the per-owner write locks and the blocking
-row locks.
+serializer, the rotating-credential stripe table, the per-owner write locks, the blocking
+row locks and the cache ports' invalidation subscribers.
 
 A new process builds its own, so a restore leaves them alone entirely — rebuilding a lock
 table mid-flight would hand the next caller a different lock than the one a waiter is on."""

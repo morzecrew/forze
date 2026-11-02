@@ -11,7 +11,7 @@ from typing import (
 
 import attrs
 
-from forze.application.contracts.cache import CachePort
+from forze.application.contracts.cache import CachePort, InvalidationCallback, Unsubscribe
 from forze_mock.state import MockState
 from forze_mock.tenancy import MockTenancyMixin
 
@@ -21,10 +21,17 @@ from ..query._types import _MISSING  # pyright: ignore[reportPrivateUsage]
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class MockCacheAdapter(MockTenancyMixin, CachePort):
-    """In-memory cache adapter with plain and versioned entries."""
+    """In-memory cache adapter with plain and versioned entries.
+
+    Like Redis tracking pointers, a versioned write and the delete of a versioned entry are
+    broadcast through :attr:`MockState.cache_push`; a plain write is not.
+    """
 
     state: MockState
     namespace: str
+
+    invalidation_push: bool = False
+    """Whether :meth:`subscribe_invalidations` subscribes, as ``RedisCacheConfig`` has it."""
 
     # ....................... #
 
@@ -43,6 +50,40 @@ class MockCacheAdapter(MockTenancyMixin, CachePort):
 
     def _bodies(self) -> dict[tuple[str, str], Any]:
         return self.state.cache_bodies.setdefault(self._ns(), {})
+
+    # ....................... #
+
+    def _channel(self) -> tuple[bool, str]:
+        # A tenant-aware writer's keys carry the tenant, so only a tenant-aware subscriber
+        # hears them, as with Redis key prefixes.
+        return self.tenant_aware, self.namespace
+
+    def _push(self, keys: Sequence[str]) -> None:
+        tenant = self.require_tenant_if_aware()
+        self.state.cache_push.publish(
+            self._channel(),
+            keys,
+            tenant=str(tenant) if tenant is not None else None,
+        )
+
+    # ....................... #
+
+    async def subscribe_invalidations(
+        self,
+        callback: InvalidationCallback,
+        *,
+        live_within: timedelta | None = None,
+    ) -> Unsubscribe | None:
+        """Hear every versioned write and delete in this namespace, from any port on this state.
+
+        ``None`` unless :attr:`invalidation_push`. A tenant-aware port hears every tenant, the
+        tenant on each event. The stream is live at once, so *live_within* changes nothing.
+        """
+
+        if not self.invalidation_push:
+            return None
+
+        return self.state.cache_push.subscribe(self._channel(), callback)
 
     # ....................... #
 
@@ -109,6 +150,8 @@ class MockCacheAdapter(MockTenancyMixin, CachePort):
             self._pointers()[key] = version
             self._bodies()[(key, version)] = value
 
+        self._push([key])
+
     # ....................... #
 
     async def set_many(
@@ -133,6 +176,8 @@ class MockCacheAdapter(MockTenancyMixin, CachePort):
                 self._pointers()[key] = version
                 self._bodies()[(key, version)] = value
 
+        self._push([key for key, _version in key_version_mapping])
+
     # ....................... #
 
     async def delete(self, key: str, *, hard: bool) -> None:
@@ -142,7 +187,10 @@ class MockCacheAdapter(MockTenancyMixin, CachePort):
                 stale = [k for k in self._bodies() if k[0] == key]
                 for item in stale:
                     self._bodies().pop(item, None)
-            self._pointers().pop(key, None)
+            unlinked = self._pointers().pop(key, None) is not None
+
+        if unlinked:
+            self._push([key])
 
     # ....................... #
 

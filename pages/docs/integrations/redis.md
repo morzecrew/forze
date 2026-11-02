@@ -153,9 +153,12 @@ one pinned connection per client receives an invalidation push for every
 write, expiration, or eviction under the cache's key prefix — by any replica —
 and the in-process L1 drops the entry immediately, demoting the L1 TTL to a
 backstop. Requires redis-py 8+ — on redis-py 7, enabling it fails closed with a
-`configuration` error. Fails open at runtime (stream loss flushes the L1 and falls back to TTL
-semantics while reconnecting); tenant-routed clients and dynamic namespaces
-stay TTL-only by design.
+`configuration` error. Fails open at runtime (stream loss, or a keepalive `PING`
+unanswered for five seconds, flushes the L1 and falls back to TTL semantics while
+reconnecting; closing the client flushes it once more); tenant-routed clients and
+dynamic namespaces stay TTL-only by design. The
+[grants-cache broadcast](../identity-tenancy-enc/identity.md#reaching-every-process) rides the
+same stream and, unlike the L1, refuses to start on one that does not come up.
 
 ## Fleet-wide resilience state
 

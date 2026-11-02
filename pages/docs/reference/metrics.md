@@ -247,3 +247,17 @@ path for sessions and API keys. Labelled `forze.revocation_states` and `forze.cr
 **The alert that matters:** every `write_failures` increment is a revoked credential that
 stays admitted for up to the states' `ttl`. See
 [Authentication](../integrations/authn.md#the-window) for every cause of that window.
+
+## Grants invalidation
+
+`instrument_grants_invalidation({"default": grants_invalidation})` — the broadcast that keeps
+every process's grants cache current. Labelled `forze.grants_invalidation`.
+
+| Metric | Instrument | Unit | Notes |
+|---|---|---|---|
+| `forze.authz.grants_invalidation.publish_failures` | observable counter | 1 | committed invalidations whose marker write failed |
+| `forze.authz.grants_invalidation.flushes` | observable counter | 1 | whole grants caches dropped on a gap in the stream or a catalog change |
+
+Every `publish_failures` increment leaves other processes on the old grants for up to the
+cache's TTL. A steady `flushes` rate is a flapping connection: the cache stays correct and stops
+helping. See [Identity](../identity-tenancy-enc/identity.md#reaching-every-process).

@@ -245,17 +245,68 @@ kernel = AuthzKernelConfig(grants_cache=grants_cache)
 - Decisions inside a transaction read the bindings and leave the cache alone: what they read may
   still roll back.
 - `assign_role` and `revoke_role` forget the principal in this process once their write commits,
-  even when another process made the change first. **For everything else the TTL is how long a
-  removed grant can keep working**, counted from when the cached read began: in other processes,
-  and for changes written through plain document commands, which nothing announces. After such a
-  change commits, call:
+  even when another process made the change first, and in every other process when the kernel
+  [broadcasts](#reaching-every-process). **The TTL is how long a change nothing broadcasts can
+  keep a removed grant working**, counted from when the cached read began: in other processes
+  without a broadcast, and for changes written through plain document commands, which nothing
+  announces. After such a change, call `invalidate_grants` with the kernel:
 
     | Change | Call |
     |--------|------|
-    | One principal's own role, permission or group-membership binding | `grants_cache.forget(principal_id)` |
-    | A role's permissions or parent, a group's roles, permissions or active flag, a deleted role or permission | `grants_cache.clear()` |
+    | One principal's own role, permission or group-membership binding | `await invalidate_grants(ctx, kernel, principal_id)` |
+    | A role's permissions or parent, a group's roles, permissions or active flag, a deleted role or permission | `await invalidate_grants(ctx, kernel)` |
+
+    It waits for the current transaction to commit, as role assignment does, and broadcasts
+    when the kernel does. `grants_cache.forget(principal_id)` and `grants_cache.clear()` act at
+    once and in this process only.
 
 - One cache serves one catalog: give each kernel over a different catalog its own.
+
+#### Reaching every process
+
+Without a broadcast, every other process keeps serving a revoked grant until its entry expires.
+With one, each committed invalidation writes a marker key through a cache backend that pushes
+every write to its subscribers, and each process drops what the marker names: one principal's
+entries, or all of them.
+
+```python
+from forze.application.contracts.cache import CacheSpec
+from forze_identity.authz import GrantsInvalidation, grants_invalidation_lifecycle_step
+from forze_redis import RedisCacheConfig
+
+markers = CacheSpec(name="grants_markers")
+kernel = AuthzKernelConfig(
+    grants_cache=grants_cache,
+    grants_invalidation=GrantsInvalidation(cache=markers),
+)
+caches = {"grants_markers": RedisCacheConfig(namespace="app:grants", invalidation_push=True)}
+startup = grants_invalidation_lifecycle_step(kernel)  # in every process, after Redis starts
+```
+
+- Give the markers a spec of their own, routed to a cache that pushes invalidations: Redis with
+  `invalidation_push=True`, redis-py 8 or later and a RESP3 connection, on a static namespace
+  and a client not routed per tenant. The route must not be tenant-aware: a principal is
+  forgotten in every tenant anyway. Keys that are not markers are ignored.
+- Register the step in every process. Startup fails with `authz_grants_invalidation_unavailable`
+  when the port cannot push, declines to, or does not bring its stream up within ten seconds,
+  and with `authz_grants_invalidation_tenant_aware` on a tenant-aware route. A broadcast that
+  cannot run never falls back to the TTL unnoticed. A `SERVERLESS` runtime refuses the step.
+- Decisions use the cache only while the subscription is live, and the cache starts empty each
+  time it goes live. Before the step subscribes, after it stops, and once the Redis client
+  closes, decisions read the bindings.
+- It is not instant. Between a commit and the broadcast's arrival another process can still
+  serve the revoked grant, as a request in this process can between the commit and the forget.
+- A process that may have missed a broadcast drops its whole cache: when its connection drops
+  or reconnects, or a keepalive `PING` goes five seconds unanswered. While Redis is down
+  nothing arrives and the TTL bounds staleness again; on a flapping connection the cache stays
+  correct and stops helping.
+- A marker write that fails after the commit is logged
+  (`authz.grants_invalidation_publish_failed`) and counted, never raised. The TTL bounds what
+  it missed.
+- A catalog-wide `invalidate_grants(ctx, kernel)` flushes every process twice: when its marker
+  arrives and when the marker expires, `marker_ttl` (one minute) later.
+- `instrument_grants_invalidation({"default": kernel.grants_invalidation})` exports the
+  publish failures and the flushes; see [Metrics](../reference/metrics.md#grants-invalidation).
 
 ## Authn events and login lockout
 

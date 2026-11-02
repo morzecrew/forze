@@ -801,6 +801,7 @@ class ConfigurableMockCache(_MockFactoryBase):
         return MockCacheAdapter(
             state=self._state(context),
             namespace=self._namespace_for(context, spec.name, default=str(spec.name)),
+            invalidation_push=cfg.invalidation_push if cfg else False,
             tenant_aware=cfg.tenant_aware if cfg else False,
             tenant_provider=_tenant_provider(context),
         )
