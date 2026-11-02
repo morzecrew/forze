@@ -17,7 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- ...
+- **Postgres startup no longer warns about history written from superseded rows.** On the `database` bookkeeping strategy, a row trigger firing on both `UPDATE` and `DELETE`, as one writing each `OLD` row does, counts as writing history. History is read only to merge an update at an older revision.
 
 ## [0.20.0] - 2026-11-01
 

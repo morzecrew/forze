@@ -1017,6 +1017,28 @@ class PostgresIntrospector:
 
     # ....................... #
 
+    async def update_and_delete_row_triggers(
+        self,
+        *,
+        schema: str | None,
+        relation: str,
+    ) -> frozenset[str]:
+        """Return the enabled row-level triggers that fire on both UPDATE and DELETE of *relation*.
+
+        Such a trigger can write each superseded row (``OLD``). A statement-level one sees rows
+        only through a transition table, and a trigger with one fires on a single event. On a
+        partitioned relation, the names come back only when every leaf partition has one.
+
+        Uncached, for the same reason as :meth:`unique_indexes` — once per relation at startup.
+        """
+
+        schema = self.__normalize_schema(schema)
+
+        # tgtype bits 1, 8 and 16 are TRIGGER_TYPE_ROW, _DELETE and _UPDATE (pg_trigger.h).
+        return await self._fetch_covering_triggers(schema, relation, tgtype=1 | 8 | 16)
+
+    # ....................... #
+
     @staticmethod
     def _index_def_stub(
         *,
