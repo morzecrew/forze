@@ -11,6 +11,7 @@ from typing import Any
 import attrs
 import pytest
 import structlog
+from redis.exceptions import ResponseError
 
 from forze_redis.kernel.client.invalidation import InvalidationHub
 
@@ -41,6 +42,7 @@ class _Conn:
 
     clock: _Clock
     protocol: int = 3
+    tracking_reply: Any = b"OK"
     answers_ping: bool = True
     push_before_pong: bool = False
     sent: list[tuple[Any, ...]] = attrs.field(factory=list)
@@ -55,8 +57,11 @@ class _Conn:
     async def read_response(self, timeout: float | None = None, **_kwargs: Any) -> Any:
         await asyncio.sleep(0)
 
-        if timeout is None:
-            return b"OK"  # the CLIENT TRACKING reply
+        if timeout is None:  # the CLIENT TRACKING reply
+            if isinstance(self.tracking_reply, Exception):
+                raise self.tracking_reply
+
+            return self.tracking_reply
 
         if self._pong and self.push_before_pong and not self._pushed:
             # An invalidation the server sent before its PONG: the parser hands the frame to
@@ -90,14 +95,22 @@ class _Subscriber:
         self.ends += 1
 
 
-def _hub(conn: _Conn, *, gate: asyncio.Event | None = None) -> tuple[InvalidationHub, list[_Conn]]:
-    """A hub over *conn*; with *gate*, checking the connection out waits for it."""
+def _hub(
+    conn: _Conn, *, gate: asyncio.Event | None = None, drops: int = 0
+) -> tuple[InvalidationHub, list[_Conn]]:
+    """A hub over *conn*; with *gate*, checking the connection out waits for it, and the first
+    *drops* checkouts fail as a dropped connection does."""
 
     released: list[_Conn] = []
+    failures = [drops]
 
     async def acquire() -> _Conn:
         if gate is not None:
             await gate.wait()
+
+        if failures[0] > 0:
+            failures[0] -= 1
+            raise ConnectionError("connection dropped")
 
         return conn
 
@@ -145,6 +158,42 @@ class TestGoingLive:
             unsubscribe = await _subscribe(hub, _Subscriber(), live_within=timedelta(seconds=30))
 
         assert unsubscribe is None
+        await hub.stop()
+
+    async def test_a_tracking_command_the_server_refuses_returns_none_at_once(self) -> None:
+        conn = _Conn(clock=_Clock(), tracking_reply=ResponseError("NOPERM no CLIENT TRACKING"))
+        hub, _released = _hub(conn)
+
+        async with asyncio.timeout(5):
+            unsubscribe = await _subscribe(hub, _Subscriber(), live_within=timedelta(seconds=30))
+
+        assert unsubscribe is None
+        await hub.stop()
+
+    async def test_a_dropped_connection_is_retried_within_the_bound(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr("forze_redis.kernel.client.invalidation._BACKOFF_BASE_S", 0.01)
+        hub, _released = _hub(_Conn(clock=_Clock()), drops=2)
+
+        unsubscribe = await _subscribe(hub, _Subscriber(), live_within=timedelta(seconds=5))
+
+        assert unsubscribe is not None
+        await hub.stop()
+
+    async def test_a_connection_that_never_comes_waits_out_the_bound(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr("forze_redis.kernel.client.invalidation._BACKOFF_BASE_S", 0.01)
+        hub, _released = _hub(_Conn(clock=_Clock()), drops=1_000_000)
+        loop = asyncio.get_running_loop()
+        started = loop.time()
+
+        unsubscribe = await _subscribe(hub, _Subscriber(), live_within=timedelta(seconds=0.2))
+
+        assert unsubscribe is None
+        assert loop.time() - started >= 0.19  # the bound, not the first failure
+        assert _active(hub) == []
         await hub.stop()
 
     async def test_without_a_bound_it_returns_before_the_setup(self) -> None:

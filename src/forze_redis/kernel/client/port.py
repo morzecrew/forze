@@ -157,9 +157,11 @@ class RedisClientPort(Protocol):
         """Subscribe to server-side key invalidations (``CLIENT TRACKING`` BCAST).
 
         Returns an unsubscribe callable, or ``None`` when the client cannot
-        provide push (e.g. tenant-routed clients) or, with *live_within*, when
-        tracking is not set up within that bound. *on_end* fires when the
-        client closes.
+        provide push (e.g. tenant-routed clients). With *live_within* it returns
+        only once tracking is set up, and ``None`` also when the server or the
+        connection refuses tracking, when no setup succeeds within that bound,
+        or when the client closes meanwhile. *on_end* fires when the client
+        closes; when it is not given, *on_reset* fires instead.
         """
         ...  # pragma: no cover
 

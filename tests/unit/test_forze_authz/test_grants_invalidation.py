@@ -22,7 +22,12 @@ from opentelemetry.sdk.metrics import MeterProvider
 from opentelemetry.sdk.metrics.export import InMemoryMetricReader
 
 from forze.application.contracts.authz import AuthzRequest, AuthzSpec, AuthzSubject
-from forze.application.contracts.cache import CacheDepKey, CacheSpec, InvalidationCallback
+from forze.application.contracts.cache import (
+    CacheDepKey,
+    CacheInvalidation,
+    CacheSpec,
+    InvalidationCallback,
+)
 from forze.application.contracts.deps import Deps
 from forze.base.exceptions import CoreException, ExceptionKind
 from forze.testing import context_from_modules
@@ -211,6 +216,22 @@ class _Quiet:
         return None
 
 
+@attrs.define(slots=True, kw_only=True)
+class _EndsAtOnce:
+    """A push-capable cache port whose stream comes up and ends before the subscribe returns."""
+
+    unsubscribed: bool = False
+
+    async def subscribe_invalidations(self, callback: InvalidationCallback, **_kwargs: Any) -> Any:
+        callback(CacheInvalidation(key=None))
+        callback(CacheInvalidation(key=None, ended=True))
+
+        async def _unsubscribe() -> None:
+            self.unsubscribed = True
+
+        return _unsubscribe
+
+
 class _Gate:
     """Reads the principal-role bindings, then holds them back until :attr:`release` is set."""
 
@@ -284,6 +305,17 @@ class TestTheSetting:
             await process.start()
 
         assert refused.value.code == "authz_grants_invalidation_unavailable"
+
+    async def test_startup_fails_on_a_stream_that_ends_before_it_attaches(self) -> None:
+        port = _EndsAtOnce()
+        process = _process(MockState(), extra=(_cache_route(lambda _ctx, _spec: port),))
+
+        with pytest.raises(CoreException) as refused:
+            await process.start()
+
+        assert refused.value.code == "authz_grants_invalidation_unavailable"
+        assert not process.invalidation.listening(process.cache)
+        assert port.unsubscribed
 
     async def test_startup_fails_on_a_tenant_aware_marker_route(self) -> None:
         kernel = _kernel()
@@ -429,6 +461,21 @@ class TestPublishing:
 
         assert state.cache_pointers[MARKERS.name].keys() == {f"principal:{principal}"}
         assert state.cache_kv.get(MARKERS.name, {}) == {}
+
+    async def test_repeated_markers_keep_one_body_each_in_the_mock(self) -> None:
+        # Every publish writes a fresh version; a long-running mock must not keep the old ones.
+        state = MockState()
+        process = _process(state)
+        (principal,) = await _seed(process)
+
+        for _ in range(50):
+            await process.invalidation.publish(process.ctx, principal)
+            await process.invalidation.publish(process.ctx, None)
+
+        assert sorted(key for key, _version in state.cache_bodies[MARKERS.name]) == [
+            "all",
+            f"principal:{principal}",
+        ]
 
     async def test_the_marker_is_written_after_commit_and_not_on_rollback(self) -> None:
         state = MockState()

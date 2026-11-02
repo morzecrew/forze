@@ -291,9 +291,10 @@ class AuthzGrantResolver:
 
     # ....................... #
 
-    async def forget(self, principal_id: UUID | None = None) -> None:
-        """Forget *principal_id*'s cached grants, or everyone's for ``None``, here and, with
-        :attr:`invalidation`, in every subscribed process, once the current transaction commits.
+    async def forget(self, principal_id: UUID | None) -> None:
+        """Forget *principal_id*'s cached grants, or everyone's for an explicit ``None``, here
+        and, with :attr:`invalidation`, in every subscribed process, once the current
+        transaction commits.
 
         Until the change commits, the committed bindings are still the truth a decision outside
         the transaction may read and cache; decisions inside it never use the cache. A decision

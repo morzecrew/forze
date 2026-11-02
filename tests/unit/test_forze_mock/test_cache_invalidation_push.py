@@ -5,6 +5,7 @@ included; a plain write broadcasts nothing, as an untracked Redis KV key does. A
 loses events without a word, and a reset flushes every subscriber.
 """
 
+from pathlib import Path
 from uuid import uuid4
 
 import pytest
@@ -12,6 +13,7 @@ import pytest
 from forze.application.contracts.cache import CacheInvalidation, SupportsInvalidationPush
 from forze.application.contracts.tenancy import TenantIdentity
 from forze_mock.adapters import MockCacheAdapter
+from forze_mock.persistence import MockStatePersistence
 from forze_mock.state import MockState
 from forze_mock.tenancy import MockRoutedStateRegistry
 
@@ -69,6 +71,23 @@ class TestSubscribing:
             CacheInvalidation(key=None),
             CacheInvalidation(key="k"),
         ]
+
+    async def test_restoring_a_snapshot_flushes_the_subscribers(self, tmp_path: Path) -> None:
+        persistence = MockStatePersistence(path=tmp_path / "mvp.state")
+        saved = MockState()
+        await _port(saved).set_versioned("k", "1", "old")
+        persistence.acquire()
+
+        try:
+            persistence.save(saved)
+            state = MockState()
+            events = await _heard(_port(state))
+            persistence.load(state)
+
+        finally:
+            persistence.release()
+
+        assert events == [CacheInvalidation(key=None), CacheInvalidation(key=None)]
 
     async def test_disposing_a_routed_tenant_state_ends_its_subscriptions(self) -> None:
         registry = MockRoutedStateRegistry()
@@ -139,6 +158,12 @@ class TestWhatBroadcasts:
 
         assert events[-1] == CacheInvalidation(key="k", tenant=str(tenant.tenant_id))
         assert plain == [CacheInvalidation(key=None)]  # its keys carry no tenant
+
+
+    async def test_an_empty_batch_needs_no_tenant(self) -> None:
+        port = _port(MockState(), tenant_aware=True)  # no tenant bound
+
+        await port.set_many_versioned({})
 
 
 class TestABrokenStream:

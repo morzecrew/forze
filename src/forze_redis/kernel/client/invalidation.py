@@ -35,6 +35,7 @@ from datetime import timedelta
 from typing import Any
 
 import attrs
+from redis.exceptions import ResponseError
 
 from forze.base.primitives import current_entropy_source, monotonic
 from forze_redis.kernel._logger import logger
@@ -46,6 +47,10 @@ _KEEPALIVE_EVERY_S = 15.0
 _PONG_TIMEOUT_S = 5.0
 _BACKOFF_BASE_S = 0.5
 _BACKOFF_MAX_S = 15.0
+
+
+class _TrackingRefused(RuntimeError):
+    """The server or the connection cannot track at all; retrying will not change that."""
 
 
 @attrs.define(slots=True)
@@ -92,8 +97,9 @@ class InvalidationHub:
         """Register a subscriber; starts (or re-arms) the listener task.
 
         With *live_within*, returns once tracking is set up with this subscriber's prefixes,
-        or ``None``, detached, when that setup fails, takes longer or the hub stops; a wait
-        that is cancelled detaches too. *on_end* is told when the hub stops; without it,
+        or ``None``, detached, when the server or the connection refuses tracking, when no
+        setup succeeds within the bound (a dropped connection is retried meanwhile), or when
+        the hub stops; a wait that is cancelled detaches too. *on_end* is told when the hub stops; without it,
         *on_reset* is.
         """
 
@@ -257,7 +263,7 @@ class InvalidationHub:
             # RESP3 is required for server ``invalidate`` push frames. redis-py 8 negotiates
             # it by default; guard against a client explicitly pinned to RESP2.
             if getattr(conn, "protocol", None) != 3:
-                raise RuntimeError(
+                raise _TrackingRefused(
                     "Client-side caching requires a RESP3 connection; configure the Redis "
                     "client with protocol=3."
                 )
@@ -283,7 +289,7 @@ class InvalidationHub:
             response = await conn.read_response()
 
             if response not in (b"OK", "OK", True):
-                raise RuntimeError(f"CLIENT TRACKING refused: {response!r}")
+                raise _TrackingRefused(f"CLIENT TRACKING refused: {response!r}")
 
             logger.debug("Invalidation tracking enabled (prefixes=%s)", prefixes)
 
@@ -364,7 +370,7 @@ class InvalidationHub:
             except asyncio.CancelledError:
                 raise
 
-            except Exception:
+            except Exception as error:
                 if self._stopped:
                     break
 
@@ -374,7 +380,11 @@ class InvalidationHub:
                     exc_info=True,
                 )
                 self._notify_reset()
-                self._settle(included, live=False)
+
+                # A refusal is final; a dropped or slow connection may come back within a
+                # waiter's bound, so the waiter keeps waiting for the retry.
+                if isinstance(error, (_TrackingRefused, ResponseError)):
+                    self._settle(included, live=False)
                 # Reconnect jitter — not security randomness.
                 await asyncio.sleep(
                     backoff * current_entropy_source().as_random().uniform(0.8, 1.2)

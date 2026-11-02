@@ -53,12 +53,28 @@ class MockCacheAdapter(MockTenancyMixin, CachePort):
 
     # ....................... #
 
+    def _repoint(self, key: str, version: str, value: Any) -> None:
+        pointers, bodies = self._pointers(), self._bodies()
+        previous = pointers.get(key)
+        pointers[key] = version
+        bodies[(key, version)] = value
+
+        # Only the pointer reaches a body, so the one it left is unreachable; Redis lets the
+        # body's TTL take it, and the mock has no expiry to do the same.
+        if previous is not None and previous != version:
+            bodies.pop((key, previous), None)
+
+    # ....................... #
+
     def _channel(self) -> tuple[bool, str]:
         # A tenant-aware writer's keys carry the tenant, so only a tenant-aware subscriber
         # hears them, as with Redis key prefixes.
         return self.tenant_aware, self.namespace
 
     def _push(self, keys: Sequence[str]) -> None:
+        if not keys:
+            return  # an empty batch writes nothing, and needs no tenant (as on Redis)
+
         tenant = self.require_tenant_if_aware()
         self.state.cache_push.publish(
             self._channel(),
@@ -74,7 +90,8 @@ class MockCacheAdapter(MockTenancyMixin, CachePort):
         *,
         live_within: timedelta | None = None,
     ) -> Unsubscribe | None:
-        """Hear every versioned write and delete in this namespace, from any port on this state.
+        """Hear every versioned write and delete in this namespace by a port on this state with
+        the same ``tenant_aware`` setting, as Redis key prefixes separate them.
 
         ``None`` unless :attr:`invalidation_push`. A tenant-aware port hears every tenant, the
         tenant on each event. The stream is live at once, so *live_within* changes nothing.
@@ -147,8 +164,7 @@ class MockCacheAdapter(MockTenancyMixin, CachePort):
         ttl: timedelta | None = None,
     ) -> None:
         with self.state.lock:
-            self._pointers()[key] = version
-            self._bodies()[(key, version)] = value
+            self._repoint(key, version, value)
 
         self._push([key])
 
@@ -173,8 +189,7 @@ class MockCacheAdapter(MockTenancyMixin, CachePort):
     ) -> None:
         with self.state.lock:
             for (key, version), value in key_version_mapping.items():
-                self._pointers()[key] = version
-                self._bodies()[(key, version)] = value
+                self._repoint(key, version, value)
 
         self._push([key for key, _version in key_version_mapping])
 

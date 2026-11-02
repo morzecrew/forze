@@ -637,7 +637,9 @@ class RedisClient(RedisClientPort):
         failure) — subscribers must flush on it; *on_end* fires when the client
         closes, and *on_reset* in its place when it is not given. Returns an
         unsubscribe callable; with *live_within*, only once tracking is set up,
-        and ``None`` when it fails or does not finish within that bound. The
+        and ``None`` when tracking is refused, no setup succeeds within that
+        bound (a dropped connection is retried meanwhile), or the client closes
+        first. The
         hub (one pinned RESP3 connection consuming the server's ``invalidate``
         push frames) starts lazily on first subscription, takes one pool slot
         while active, and stops with the client.

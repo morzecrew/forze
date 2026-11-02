@@ -307,8 +307,9 @@ class GrantsInvalidation:
         trusted.
 
         :raises CoreException: ``configuration``: ``authz_grants_invalidation_unavailable``
-            when the port of :attr:`cache` cannot push invalidations, declines to, or does not
-            bring its stream up within ten seconds; ``authz_grants_invalidation_tenant_aware``
+            when the port of :attr:`cache` cannot push invalidations, declines to, does not
+            bring its stream up within ten seconds, or the stream ends before this returns;
+            ``authz_grants_invalidation_tenant_aware``
             when that port is tenant-aware.
         """
 
@@ -334,6 +335,8 @@ class GrantsInvalidation:
 
         attached = False
 
+        ended = False
+
         def _detach() -> None:
             nonlocal attached
 
@@ -342,12 +345,15 @@ class GrantsInvalidation:
                 self._listening.remove(cache)  # GrantsCache compares by identity
 
         def _on_invalidation(inv: CacheInvalidation) -> None:
+            nonlocal ended
+
             if inv.key is None or inv.key == ALL_MARKER:
                 # A gap in the stream, or a catalog change: nothing cached can be trusted.
                 self.counters.add("flush")
                 cache.clear()
 
                 if inv.ended:
+                    ended = True
                     _detach()
 
             elif (principal_id := parse_principal_marker(inv.key)) is not None:
@@ -357,12 +363,18 @@ class GrantsInvalidation:
             _on_invalidation, live_within=_LIVE_WITHIN
         )
 
+        if unsubscribe is not None and ended:
+            # The stream ended between coming up and this line: nothing would reach the cache.
+            await unsubscribe()
+            unsubscribe = None
+
         if unsubscribe is None:
             raise exc.configuration(
                 f"GrantsInvalidation.cache {self.cache.name!r}: its cache port declined to push "
-                "invalidations, or its stream did not come up within ten seconds. Push must be "
-                "on for its route (invalidation_push), with a static namespace and a client not "
-                "routed per tenant; Redis needs redis-py 8 or later and a RESP3 connection.",
+                "invalidations, its stream did not come up within ten seconds, or it ended at "
+                "once. Push must be on for its route (invalidation_push), with a static "
+                "namespace and a client not routed per tenant; Redis needs redis-py 8 or later "
+                "and a RESP3 connection.",
                 code="authz_grants_invalidation_unavailable",
             )
 

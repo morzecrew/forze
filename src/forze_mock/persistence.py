@@ -451,6 +451,9 @@ class MockStatePersistence:
             for name in RESET_FIELDS - _LIVE_FIELDS:
                 self._set_field(state, name, _fresh_default(state, _FIELDS[name].default))
 
+        # The cache now holds other values: a push subscriber keeping copies must drop them.
+        state.cache_push.reset()
+
         log.info("restored mock state from a snapshot", path=str(self.path))
 
     # ....................... #
