@@ -6643,28 +6643,34 @@
 
   <h1>OIDC</h1>
 
-<p><code>forze[oidc]</code> (the <code>forze_identity.oidc</code> plane) is a generic <abbr title="OpenID Connect">OIDC</abbr> token verifier
-— RS256/ES256/HS256 JWTs validated against a <abbr title="JSON Web Key Set">JWKS</abbr>. It's a <strong>verifier only</strong>: it
-slots into the <a href="../authn/">authentication</a> verify-then-resolve seam and reuses the
-authn resolvers to produce a <code>UUID</code> principal.</p>
+<p><code>forze[oidc]</code> (the <code>forze_identity.oidc</code> plane) verifies credentials an external
+identity provider issued: JWTs against the issuer's <abbr title="JSON Web Key Set">JWKS</abbr>, opaque access tokens by
+RFC 7662 introspection, and Ory Kratos sessions at <code>/sessions/whoami</code>. It's a
+<strong>verifier only</strong>: each verifier slots into the <a href="../authn/">authentication</a>
+verify-then-resolve seam and reuses the authn resolvers to produce a <code>UUID</code>
+principal.</p>
 <h2 id="install">Install<a class="headerlink" href="#install" title="Permanent link">&para;</a></h2>
 <div class="highlight"><pre><span></span><code>uv<span class="w"> </span>add<span class="w"> </span><span class="s1">'forze[oidc]'</span>
 </code></pre></div>
 <h2 id="wire-it">Wire it<a class="headerlink" href="#wire-it" title="Permanent link">&para;</a></h2>
-<p><abbr title="OpenID Connect">OIDC</abbr> has no deps module of its own — register its verifier under
-<code>TokenVerifierDepKey</code> for the routes that accept external tokens, and choose a
-resolver. Construct the verifier from a <abbr title="JSON Web Key Set">JWKS</abbr> key provider:</p>
-<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">datetime</span><span class="w"> </span><span class="kn">import</span> <span class="n">timedelta</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">forze_identity.oidc</span><span class="w"> </span><span class="kn">import</span> <span class="n">JwksKeyProvider</span><span class="p">,</span> <span class="n">OidcTokenVerifier</span>
+<p><abbr title="OpenID Connect">OIDC</abbr> has no deps module of its own — register a verifier factory under
+<code>TokenVerifierDepKey</code> for the routes that accept external credentials (via
+<code>AuthnDepsModule.token_verifiers</code>), and choose a resolver. For a JWT issuer, build
+the preset from its discovery document once, at startup:</p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">forze_identity.oidc</span><span class="w"> </span><span class="kn">import</span> <span class="n">ConfigurableOidcIdpVerifier</span><span class="p">,</span> <span class="n">OidcIdpPreset</span>
 
-<span class="n">verifier</span> <span class="o">=</span> <span class="n">OidcTokenVerifier</span><span class="p">(</span>
-    <span class="n">key_provider</span><span class="o">=</span><span class="n">JwksKeyProvider</span><span class="p">(</span><span class="n">jwks_uri</span><span class="o">=</span><span class="s2">"https://idp.example.com/.well-known/jwks.json"</span><span class="p">),</span>
-    <span class="n">issuer</span><span class="o">=</span><span class="s2">"https://idp.example.com/"</span><span class="p">,</span>
-    <span class="n">audience</span><span class="o">=</span><span class="s2">"my-api"</span><span class="p">,</span>
-<span class="p">)</span>
+
+<span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">build_verifier</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="n">ConfigurableOidcIdpVerifier</span><span class="p">:</span>
+    <span class="n">preset</span> <span class="o">=</span> <span class="k">await</span> <span class="n">OidcIdpPreset</span><span class="o">.</span><span class="n">from_issuer</span><span class="p">(</span><span class="s2">"https://idp.example.com"</span><span class="p">,</span> <span class="n">audience</span><span class="o">=</span><span class="s2">"my-api"</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">ConfigurableOidcIdpVerifier</span><span class="p">(</span><span class="n">preset</span><span class="o">=</span><span class="n">preset</span><span class="p">)</span>
 </code></pre></div>
-<p>Wire it onto a route via <code>AuthnDepsModule.token_verifiers</code> (the shipped
-<code>ConfigurableOidcIdpVerifier</code> + <code>OidcIdpPreset</code> cover the routed-factory case).</p>
+<p><code>from_issuer</code> reads <code>{issuer}/.well-known/openid-configuration</code>, refuses a document
+whose <code>issuer</code> differs from the one you asked for, and fills <code>jwks_uri</code>. A
+hand-built <code>OidcIdpPreset(issuer=..., jwks_uri=..., audience=...)</code> is the pinned,
+offline path and needs no network at startup. Opaque tokens and Kratos sessions are
+wired the same way through <code>ConfigurableIntrospectionVerifier</code> and
+<code>ConfigurableWhoamiVerifier</code> — the <a href="../../recipes/external-idp-oidc/">recipe</a> shows
+all three.</p>
 <h2 id="what-it-provides">What it provides<a class="headerlink" href="#what-it-provides" title="Permanent link">&para;</a></h2>
 <table>
 <thead>
@@ -6675,8 +6681,24 @@ resolver. Construct the verifier from a <abbr title="JSON Web Key Set">JWKS</abb
 </thead>
 <tbody>
 <tr>
-<td><abbr title="OpenID Connect">OIDC</abbr> token verification</td>
+<td>JWT verification against a <abbr title="JSON Web Key Set">JWKS</abbr></td>
 <td><code>OidcTokenVerifier</code> → a <code>TokenVerifierPort</code></td>
+</tr>
+<tr>
+<td>Discovery</td>
+<td><code>fetch_oidc_configuration</code> → <code>OidcProviderMetadata</code>; <code>OidcIdpPreset.from_issuer</code></td>
+</tr>
+<tr>
+<td>Opaque-token introspection (RFC 7662)</td>
+<td><code>IntrospectionTokenVerifier</code> + <code>IntrospectionConfig</code>, client auth <code>BasicClientAuth</code> or <code>PrivateKeyJwtAuth</code></td>
+</tr>
+<tr>
+<td>Kratos session verification</td>
+<td><code>WhoamiSessionVerifier</code> + <code>WhoamiConfig</code></td>
+</tr>
+<tr>
+<td>Routed factories (built once)</td>
+<td><code>ConfigurableOidcIdpVerifier</code>, <code>ConfigurableIntrospectionVerifier</code>, <code>ConfigurableWhoamiVerifier</code></td>
 </tr>
 <tr>
 <td><abbr title="JSON Web Key Set">JWKS</abbr> key resolution (cached)</td>
@@ -6684,17 +6706,89 @@ resolver. Construct the verifier from a <abbr title="JSON Web Key Set">JWKS</abb
 </tr>
 <tr>
 <td>Claim mapping</td>
-<td><code>OidcClaimMapper</code> (incl. an optional tenant claim)</td>
+<td><code>OidcClaimMapper</code> — tenant claim, plus opt-in <code>email_claim</code>, <code>roles</code>, <code>groups</code></td>
+</tr>
+<tr>
+<td>Role and group extractors</td>
+<td><code>ClaimsPath</code> (dotted path; <code>item_key</code> for lists of objects), <code>ZitadelProjectRoles</code></td>
+</tr>
+</tbody>
+</table>
+<p><code>OidcClaimMapper</code> writes what <code>email_claim</code>, <code>roles</code> and <code>groups</code> extract under one
+key, <code>FORZE_CLAIMS</code> (<code>"_forze"</code>), inside the assertion's claims — the same shape for
+every issuer:</p>
+<table>
+<thead>
+<tr>
+<th>IdP</th>
+<th>Roles extractor</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Keycloak realm roles</td>
+<td><code>ClaimsPath("realm_access.roles")</code></td>
+</tr>
+<tr>
+<td>Keycloak client roles</td>
+<td><code>ClaimsPath("resource_access.{client}.roles", client="my-api")</code></td>
+</tr>
+<tr>
+<td>Zitadel project roles</td>
+<td><code>ZitadelProjectRoles(org_id=...)</code></td>
+</tr>
+<tr>
+<td>Casdoor (default JWT)</td>
+<td><code>ClaimsPath("roles", item_key="name")</code></td>
+</tr>
+<tr>
+<td>Kratos session</td>
+<td><code>ClaimsPath("metadata.roles")</code></td>
 </tr>
 </tbody>
 </table>
 <h2 id="notes">Notes<a class="headerlink" href="#notes" title="Permanent link">&para;</a></h2>
 <ul>
-<li>The verifier only proves the token; the <strong>resolver</strong> decides the principal —
-  pair with <code>MappingTableResolver</code> (production SSO), <code>DeterministicUuidResolver</code>,
-  or <code>JwtNativeUuidResolver</code>. See <a href="../../identity-tenancy-enc/identity/">Identity &amp; access</a>.</li>
+<li>The verifier only proves the credential; the <strong>resolver</strong> decides the principal —
+  register <code>ConfigurableMappingTableResolver</code> (production SSO) or
+  <code>ConfigurableDeterministicUuidResolver</code> under <code>AuthnDepsModule.resolvers</code>.
+  A <code>token_verifiers</code> override without a <code>resolvers</code> override is refused, because
+  the default <code>JwtNativeUuidResolver</code> would take an external subject as an internal
+  principal id. See <a href="../../identity-tenancy-enc/identity/">Identity &amp; access</a>.</li>
 <li>Forze logout does <strong>not</strong> revoke third-party access tokens — enforce
-  eligibility instead.</li>
+  eligibility instead, or use introspection, which sees a revocation within its
+  cache TTL.</li>
+<li>Discovery is construction-time only: an IdP outage can delay startup, never fail
+  a request. It does not read algorithms from the document — pass <code>algorithms</code>
+  yourself, so a remote file cannot widen the allowlist. It does trust the document
+  for endpoint locations, which may sit on other hosts than the issuer (Google's do);
+  when that trust is not acceptable, pin the endpoints by hand.</li>
+<li>Discovery, introspection and whoami endpoints must be <code>https</code> (plain <code>http</code> only
+  on a loopback host); redirects are not followed.</li>
+<li>Introspection and whoami fail closed. An inactive, revoked, expired, foreign-issuer
+  or foreign-audience token is an authentication failure with one shape
+  (<code>invalid_oidc_token</code>; <code>invalid_session_token</code> for whoami), and so is a time claim
+  that is not a finite, representable number or an <code>aud</code> list with a non-string
+  member. A Kratos identity must say <code>state: active</code>; one without a <code>state</code> is
+  refused. A timeout, a non-2xx status, a body that is not a JSON object, or a Kratos
+  session without a valid <code>expires_at</code> is an infrastructure failure — never an
+  accepted token.</li>
+<li>Their caches keep only active verdicts, keyed by the token's SHA-256 digest, for
+  <code>cache_ttl</code> (default 30 s, at most 5 minutes, <code>0</code> disables) clamped to the token's
+  own expiry. A revoked token keeps working until its entry expires, never longer.
+  Build each verifier once (the <code>Configurable*</code> factories do), or the cache never
+  hits.</li>
+<li>Introspection requires an <code>audience</code> unless you set <code>require_audience=False</code>, and
+  records the configured <code>issuer</code> (RFC 7662 makes <code>iss</code> optional; a response that
+  carries a different one is refused). Both remote verifiers refuse a <code>claim_mapper</code>
+  that reads the issuer from anything but <code>iss</code> (whoami: the subject from anything but
+  <code>sub</code>), since the assertion's issuer must be the configured one. Keycloak answers
+  <code>active: false</code> to an introspecting client that is not in the token's audience.</li>
+<li>Client secrets and private keys take a <code>str</code> or a pydantic <code>SecretStr</code> and stay
+  out of <code>repr</code>; tokens and secrets are never logged.</li>
+<li>Kratos lets users edit their own <code>traits</code>: read roles from <code>metadata</code>
+  (<code>metadata_public</code>, admin-written), never from <code>traits</code>. <code>_forze.email</code> is not
+  proof the user owns the address.</li>
 <li><code>JwksKeyProvider</code>'s <code>cache_ttl</code> and <code>timeout</code> are <code>timedelta</code>s. Issuer and
   audience are required by default.</li>
 <li><code>require_nonce=True</code> (on the verifier or <code>OidcIdpPreset</code>) rejects tokens

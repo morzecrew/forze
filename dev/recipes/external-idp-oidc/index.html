@@ -4967,6 +4967,45 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Build a verifier">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#jwt-access-tokens-keycloak-casdoor-zitadel-in-jwt-mode" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        JWT access tokens (Keycloak, Casdoor, Zitadel in JWT mode)
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#opaque-access-tokens-ory-hydra-zitadel-by-default" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Opaque access tokens (Ory Hydra, Zitadel by default)
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#kratos-sessions" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Kratos sessions
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -6504,6 +6543,45 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Build a verifier">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#jwt-access-tokens-keycloak-casdoor-zitadel-in-jwt-mode" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        JWT access tokens (Keycloak, Casdoor, Zitadel in JWT mode)
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#opaque-access-tokens-ory-hydra-zitadel-by-default" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Opaque access tokens (Ory Hydra, Zitadel by default)
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#kratos-sessions" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Kratos sessions
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -6647,35 +6725,111 @@
 
   <h1>Accept external OIDC tokens</h1>
 
-<p>Sometimes you want to accept an IdP's tokens <em>directly</em> — every request carries a
-third-party <abbr title="OpenID Connect">OIDC</abbr> access token, and your API verifies it against the IdP's <abbr title="JSON Web Key Set">JWKS</abbr>
-and resolves it to a principal. No first-party tokens are minted (that's the
+<p>Sometimes you want to accept an IdP's credentials <em>directly</em> — every request
+carries a third-party access token (or session), and your API verifies it and
+resolves it to a principal. No first-party tokens are minted (that's the
 <a href="../external-bootstrap-forze-jwt/">bootstrap</a> pattern); the verification is the
 seam.</p>
 <p>The conceptual model is in <a href="../../integrations/oidc/"><abbr title="OpenID Connect">OIDC</abbr></a>; this is the wiring.</p>
 <h2 id="build-a-verifier">Build a verifier<a class="headerlink" href="#build-a-verifier" title="Permanent link">&para;</a></h2>
-<p>An <code>OidcTokenVerifier</code> validates the JWT signature against a <abbr title="JSON Web Key Set">JWKS</abbr>, plus issuer,
-audience, and expiry. All arguments are keyword-only, and <code>cache_ttl</code> / <code>timeout</code>
-are <code>timedelta</code>s:</p>
-<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">datetime</span><span class="w"> </span><span class="kn">import</span> <span class="n">timedelta</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">forze_identity.oidc</span><span class="w"> </span><span class="kn">import</span> <span class="n">JwksKeyProvider</span><span class="p">,</span> <span class="n">OidcClaimMapper</span><span class="p">,</span> <span class="n">OidcTokenVerifier</span>
+<p>Pick the verifier by what your IdP puts on the request, and build its factory once,
+at startup — each factory builds its verifier once, so the <abbr title="JSON Web Key Set">JWKS</abbr> or verdict cache
+spans requests.</p>
+<h3 id="jwt-access-tokens-keycloak-casdoor-zitadel-in-jwt-mode">JWT access tokens (Keycloak, Casdoor, Zitadel in JWT mode)<a class="headerlink" href="#jwt-access-tokens-keycloak-casdoor-zitadel-in-jwt-mode" title="Permanent link">&para;</a></h3>
+<p>Build the preset from the issuer's discovery document, and say which claims carry
+roles and groups:</p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">forze_identity.oidc</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+    <span class="n">ClaimsPath</span><span class="p">,</span>
+    <span class="n">ConfigurableOidcIdpVerifier</span><span class="p">,</span>
+    <span class="n">OidcClaimMapper</span><span class="p">,</span>
+    <span class="n">OidcIdpPreset</span><span class="p">,</span>
+<span class="p">)</span>
 
-<span class="n">verifier</span> <span class="o">=</span> <span class="n">OidcTokenVerifier</span><span class="p">(</span>
-    <span class="n">key_provider</span><span class="o">=</span><span class="n">JwksKeyProvider</span><span class="p">(</span>
-        <span class="n">jwks_uri</span><span class="o">=</span><span class="s2">"https://idp.example.com/.well-known/jwks.json"</span><span class="p">,</span>
-        <span class="n">cache_ttl</span><span class="o">=</span><span class="n">timedelta</span><span class="p">(</span><span class="n">minutes</span><span class="o">=</span><span class="mi">10</span><span class="p">),</span>
+
+<span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">jwt_verifier</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="n">ConfigurableOidcIdpVerifier</span><span class="p">:</span>
+    <span class="n">preset</span> <span class="o">=</span> <span class="k">await</span> <span class="n">OidcIdpPreset</span><span class="o">.</span><span class="n">from_issuer</span><span class="p">(</span>
+        <span class="s2">"https://kc.example.com/realms/acme"</span><span class="p">,</span>
+        <span class="n">audience</span><span class="o">=</span><span class="s2">"my-api"</span><span class="p">,</span>
+        <span class="n">claim_mapper</span><span class="o">=</span><span class="n">OidcClaimMapper</span><span class="p">(</span>
+            <span class="n">email_claim</span><span class="o">=</span><span class="s2">"email"</span><span class="p">,</span>
+            <span class="n">roles</span><span class="o">=</span><span class="n">ClaimsPath</span><span class="p">(</span><span class="s2">"realm_access.roles"</span><span class="p">),</span>
+            <span class="n">groups</span><span class="o">=</span><span class="n">ClaimsPath</span><span class="p">(</span><span class="s2">"groups"</span><span class="p">),</span>
+        <span class="p">),</span>
+    <span class="p">)</span>
+    <span class="k">return</span> <span class="n">ConfigurableOidcIdpVerifier</span><span class="p">(</span><span class="n">preset</span><span class="o">=</span><span class="n">preset</span><span class="p">)</span>
+</code></pre></div>
+<p>The extracted values land under <code>_forze</code> in the assertion's claims
+(<code>{"email": ..., "roles": [...], "groups": [...]}</code>). For a pinned, offline setup,
+build <code>OidcIdpPreset(issuer=..., jwks_uri=..., audience=...)</code> by hand instead, or
+construct an <code>OidcTokenVerifier</code> over a <code>JwksKeyProvider</code> directly. Issuer and
+audience are required by default.</p>
+<h3 id="opaque-access-tokens-ory-hydra-zitadel-by-default">Opaque access tokens (Ory Hydra, Zitadel by default)<a class="headerlink" href="#opaque-access-tokens-ory-hydra-zitadel-by-default" title="Permanent link">&para;</a></h3>
+<p>An opaque token can only be checked by asking the issuer. Introspect it with the
+endpoint discovery advertises:</p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">datetime</span><span class="w"> </span><span class="kn">import</span> <span class="n">timedelta</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">pydantic</span><span class="w"> </span><span class="kn">import</span> <span class="n">SecretStr</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">forze_identity.oidc</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+    <span class="n">BasicClientAuth</span><span class="p">,</span>
+    <span class="n">ConfigurableIntrospectionVerifier</span><span class="p">,</span>
+    <span class="n">IntrospectionConfig</span><span class="p">,</span>
+    <span class="n">OidcProviderMetadata</span><span class="p">,</span>
+<span class="p">)</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">introspection_verifier</span><span class="p">(</span>
+    <span class="n">metadata</span><span class="p">:</span> <span class="n">OidcProviderMetadata</span><span class="p">,</span>
+    <span class="n">client_secret</span><span class="p">:</span> <span class="n">SecretStr</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">ConfigurableIntrospectionVerifier</span><span class="p">:</span>
+    <span class="k">if</span> <span class="n">metadata</span><span class="o">.</span><span class="n">introspection_endpoint</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">RuntimeError</span><span class="p">(</span><span class="s2">"the issuer advertises no introspection endpoint"</span><span class="p">)</span>
+
+    <span class="k">return</span> <span class="n">ConfigurableIntrospectionVerifier</span><span class="p">(</span>
+        <span class="n">config</span><span class="o">=</span><span class="n">IntrospectionConfig</span><span class="p">(</span>
+            <span class="n">endpoint</span><span class="o">=</span><span class="n">metadata</span><span class="o">.</span><span class="n">introspection_endpoint</span><span class="p">,</span>
+            <span class="n">issuer</span><span class="o">=</span><span class="n">metadata</span><span class="o">.</span><span class="n">issuer</span><span class="p">,</span>
+            <span class="n">audience</span><span class="o">=</span><span class="s2">"my-api"</span><span class="p">,</span>
+            <span class="n">client_auth</span><span class="o">=</span><span class="n">BasicClientAuth</span><span class="p">(</span><span class="n">client_id</span><span class="o">=</span><span class="s2">"my-api"</span><span class="p">,</span> <span class="n">client_secret</span><span class="o">=</span><span class="n">client_secret</span><span class="p">),</span>
+            <span class="n">cache_ttl</span><span class="o">=</span><span class="n">timedelta</span><span class="p">(</span><span class="n">seconds</span><span class="o">=</span><span class="mi">30</span><span class="p">),</span>
+        <span class="p">),</span>
+    <span class="p">)</span>
+</code></pre></div>
+<p>Get the metadata from <code>fetch_oidc_configuration(issuer)</code> or from
+<code>preset.metadata</code>. For Zitadel's recommended <code>private_key_jwt</code>, pass
+<code>PrivateKeyJwtAuth(client_id=..., private_key=..., key_id=..., audience=issuer)</code>
+instead. <code>active: false</code> and any refusal are an authentication failure; an
+unreachable endpoint is an infrastructure failure, never an accepted token. The
+<code>cache_ttl</code> bounds how long a revoked token keeps working.</p>
+<h3 id="kratos-sessions">Kratos sessions<a class="headerlink" href="#kratos-sessions" title="Permanent link">&para;</a></h3>
+<p>Ory Kratos issues sessions, not tokens. Forward the session cookie (what a
+<code>CookieTokenAuthn</code> ingress delivers) or a session token to <code>/sessions/whoami</code>:</p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">forze_identity.oidc</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+    <span class="n">ClaimsPath</span><span class="p">,</span>
+    <span class="n">ConfigurableWhoamiVerifier</span><span class="p">,</span>
+    <span class="n">OidcClaimMapper</span><span class="p">,</span>
+    <span class="n">WhoamiConfig</span><span class="p">,</span>
+<span class="p">)</span>
+
+<span class="n">whoami</span> <span class="o">=</span> <span class="n">ConfigurableWhoamiVerifier</span><span class="p">(</span>
+    <span class="n">config</span><span class="o">=</span><span class="n">WhoamiConfig</span><span class="p">(</span>
+        <span class="n">endpoint</span><span class="o">=</span><span class="s2">"https://kratos.example.com/sessions/whoami"</span><span class="p">,</span>
+        <span class="n">issuer</span><span class="o">=</span><span class="s2">"https://kratos.example.com"</span><span class="p">,</span>
+        <span class="n">credential_style</span><span class="o">=</span><span class="s2">"cookie"</span><span class="p">,</span>
+        <span class="n">claim_mapper</span><span class="o">=</span><span class="n">OidcClaimMapper</span><span class="p">(</span>
+            <span class="n">email_claim</span><span class="o">=</span><span class="s2">"traits.email"</span><span class="p">,</span>
+            <span class="n">roles</span><span class="o">=</span><span class="n">ClaimsPath</span><span class="p">(</span><span class="s2">"metadata.roles"</span><span class="p">),</span>
+        <span class="p">),</span>
     <span class="p">),</span>
-    <span class="n">issuer</span><span class="o">=</span><span class="s2">"https://idp.example.com/"</span><span class="p">,</span>
-    <span class="n">audience</span><span class="o">=</span><span class="s2">"my-api"</span><span class="p">,</span>
-    <span class="n">claim_mapper</span><span class="o">=</span><span class="n">OidcClaimMapper</span><span class="p">(</span><span class="n">tenant_claim</span><span class="o">=</span><span class="s2">"org_id"</span><span class="p">),</span>  <span class="c1"># optional tenant claim</span>
 <span class="p">)</span>
 </code></pre></div>
-<p>Issuer and audience are required by default (the verifier refuses to start
-without them).</p>
+<p>The subject is the Kratos identity id. Read roles from <code>metadata</code>
+(<code>metadata_public</code>), never from <code>traits</code>, which users can edit themselves.</p>
 <h2 id="register-it-on-a-route">Register it on a route<a class="headerlink" href="#register-it-on-a-route" title="Permanent link">&para;</a></h2>
 <p>A verifier only <em>proves</em> the token — a <strong>resolver</strong> decides the principal.
-Register both on the auth route via <code>AuthnDepsModule</code>. For real SSO, the
-mapping-table resolver provisions a principal on first sight:</p>
+Register both on the auth route via <code>AuthnDepsModule</code>, passing the factory you
+built above (a factory, not a bare verifier). For real SSO, the mapping-table
+resolver provisions a principal on first sight:</p>
 <div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">forze_identity.authn</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
     <span class="n">AuthnDepsModule</span><span class="p">,</span>
     <span class="n">AuthnKernelConfig</span><span class="p">,</span>
@@ -6686,7 +6840,7 @@ mapping-table resolver provisions a principal on first sight:</p>
     <span class="n">AuthnDepsModule</span><span class="p">(</span>
         <span class="n">kernel</span><span class="o">=</span><span class="n">AuthnKernelConfig</span><span class="p">(),</span>  <span class="c1"># no signing secret — this route only verifies</span>
         <span class="n">authn</span><span class="o">=</span><span class="p">{</span><span class="s2">"api"</span><span class="p">:</span> <span class="nb">frozenset</span><span class="p">({</span><span class="s2">"token"</span><span class="p">})},</span>
-        <span class="n">token_verifiers</span><span class="o">=</span><span class="p">{</span><span class="s2">"api"</span><span class="p">:</span> <span class="n">verifier</span><span class="p">},</span>
+        <span class="n">token_verifiers</span><span class="o">=</span><span class="p">{</span><span class="s2">"api"</span><span class="p">:</span> <span class="n">factory</span><span class="p">},</span>
         <span class="n">resolvers</span><span class="o">=</span><span class="p">{</span><span class="s2">"api"</span><span class="p">:</span> <span class="n">ConfigurableMappingTableResolver</span><span class="p">(</span><span class="n">provision_on_first_sight</span><span class="o">=</span><span class="kc">True</span><span class="p">)},</span>
     <span class="p">),</span>
 <span class="p">)</span>
@@ -6726,11 +6880,12 @@ the route's <code>AuthnSpec</code> (see <a href="../authn-authz-tenancy-fastapi/
 <li>The shipped <code>ConfigurableOidcIdpVerifier</code> + <code>OidcIdpPreset</code> cover the common
   provider cases — use them instead of hand-building a verifier when one fits.</li>
 <li>Verifying on every request means every request depends on the IdP's <abbr title="JSON Web Key Set">JWKS</abbr> being
-  reachable (the provider caches it for <code>cache_ttl</code>). If that coupling is a
+  reachable (the provider caches it for <code>cache_ttl</code>) — and, for introspection and
+  whoami, on one round trip per token per cache TTL. If that coupling is a
   problem, mint first-party tokens with the <a href="../external-bootstrap-forze-jwt/">bootstrap</a>
   pattern instead.</li>
 <li>Forze logout can't revoke a third-party token — enforce eligibility on your
-  side.</li>
+  side, or introspect, which sees a revocation within <code>cache_ttl</code>.</li>
 </ul>
 
 
