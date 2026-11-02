@@ -2,15 +2,17 @@
 
 from collections.abc import Sequence
 from datetime import timedelta
-from typing import final
+from typing import Any, Self, final
 
 import attrs
+import httpx
 
 from forze.application.contracts.authn import AuthnSpec, TokenVerifierPort
 from forze.application.execution import ExecutionContext
 from forze.base.exceptions import exc
 
 from .claims import OidcClaimMapper
+from .discovery import OidcProviderMetadata, fetch_oidc_configuration
 from .keys import JwksKeyProvider
 from .verifier import OidcTokenVerifier
 
@@ -46,11 +48,66 @@ class OidcIdpPreset:
     Off by default. Forwarded to :attr:`OidcTokenVerifier.require_nonce`; value binding
     to the per-request nonce stays the callback handler's job (see that field's docs)."""
 
+    claim_mapper: OidcClaimMapper | None = attrs.field(default=None)
+    """Claim mapper for the verifier, for ``email`` / ``roles`` / ``groups`` extraction. When
+    set, put the tenant claim on it rather than on :attr:`tenant_claim`."""
+
+    metadata: OidcProviderMetadata | None = attrs.field(default=None)
+    """The discovery document this preset was built from (see :meth:`from_issuer`), kept for
+    the introspection and token endpoints it advertises."""
+
     # ....................... #
 
     def __attrs_post_init__(self) -> None:
         if self.leeway.total_seconds() <= 0:
             raise exc.configuration("Leeway must be positive")
+
+        if self.claim_mapper is not None and self.tenant_claim is not None:
+            raise exc.configuration(
+                "Set tenant_claim on the claim_mapper, not on the preset: with both set, "
+                "one would be silently ignored",
+            )
+
+        if self.metadata is not None and self.metadata.issuer != self.issuer:
+            raise exc.configuration("Preset metadata belongs to a different issuer")
+
+    # ....................... #
+
+    @classmethod
+    async def from_issuer(
+        cls,
+        issuer: str,
+        *,
+        audience: str | Sequence[str],
+        timeout: float = 10.0,
+        transport: httpx.AsyncBaseTransport | None = None,
+        **overrides: Any,
+    ) -> Self:
+        """Build a preset from the issuer's discovery document.
+
+        A construction-time call — run it at startup, never per request. Fills
+        :attr:`jwks_uri` and :attr:`metadata`; the remaining fields come from *overrides*
+        (``algorithms``, ``claim_mapper``, ``leeway``, …). See
+        :func:`~forze_identity.oidc.fetch_oidc_configuration` for what is validated.
+
+        :param issuer: The issuer URL exactly as tokens carry it in ``iss``.
+        :param audience: Required ``aud`` value(s).
+        :param timeout: Discovery request timeout in seconds.
+        :param transport: Optional httpx transport (inject a mock in tests).
+        :param overrides: Further preset fields.
+        :returns: The preset.
+        :raises CoreException: When discovery fails or the document is refused.
+        """
+
+        metadata = await fetch_oidc_configuration(issuer, timeout=timeout, transport=transport)
+
+        return cls(
+            issuer=metadata.issuer,
+            jwks_uri=metadata.jwks_uri,
+            audience=audience,
+            metadata=metadata,
+            **overrides,
+        )
 
 
 # ....................... #
@@ -93,7 +150,11 @@ class ConfigurableOidcIdpVerifier:
             enforce_issuer_and_audience=True,
             leeway=self.preset.leeway,
             require_nonce=self.preset.require_nonce,
-            claim_mapper=OidcClaimMapper(tenant_claim=self.preset.tenant_claim),
+            claim_mapper=(
+                self.preset.claim_mapper
+                if self.preset.claim_mapper is not None
+                else OidcClaimMapper(tenant_claim=self.preset.tenant_claim)
+            ),
         )
 
     # ....................... #

@@ -53,11 +53,11 @@ import pytest
 from testcontainers.core.container import DockerContainer
 from testcontainers.core.network import Network
 
+from tests.support.keycloak import KEYCLOAK_IMAGE
 from tests.support.rustfs import RustfsContainer
 
 LAKEKEEPER_IMAGE = "quay.io/lakekeeper/catalog:v0.14.2"
 OPENFGA_IMAGE = "openfga/openfga:v1.22.0"
-KEYCLOAK_IMAGE = "quay.io/keycloak/keycloak:26.8.1"
 POSTGRES_IMAGE = "ghcr.io/morzecrew/postgres:18"
 
 REALM = "iceberg"

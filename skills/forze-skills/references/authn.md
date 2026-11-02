@@ -34,7 +34,7 @@ Authentication is split into two seams:
 - Resolvers — `JwtNativeUuidResolver` (subject is already a UUID), `DeterministicUuidResolver` (`uuid4({"iss": ..., "sub": ...})`), `MappingTableResolver` (document-backed registry with optional just-in-time provisioning).
 - `AuthnOrchestrator` and the `Configurable*` factories that compose them through the dep keys.
 
-External IdPs plug in via `TokenVerifierPort` and reuse a Forze resolver — `forze_identity.oidc` covers any OIDC-compliant IdP (Google, Firebase Auth, Casdoor, …); handlers stay on existing authn ports.
+External IdPs plug in via `TokenVerifierPort` and reuse a Forze resolver — `forze_identity.oidc` covers any OIDC-compliant IdP (Google, Firebase Auth, Casdoor, Keycloak, …), opaque tokens by RFC 7662 introspection (Ory Hydra, Zitadel) and Ory Kratos sessions — see [OIDC](oidc.md); handlers stay on existing authn ports.
 
 See [Authentication](https://morzecrew.github.io/forze/latest/identity-tenancy-enc/identity/) for the full architectural rationale.
 
@@ -67,6 +67,7 @@ from forze_identity.authn import (
     AuthnKernelConfig,
     ConfigurableMappingTableResolver,
 )
+from forze_identity.oidc import ConfigurableOidcIdpVerifier
 
 authn_module = AuthnDepsModule(
     kernel=AuthnKernelConfig(
@@ -78,7 +79,7 @@ authn_module = AuthnDepsModule(
         "internal": frozenset({"token", "password"}),
         "api": frozenset({"token"}),
     },
-    token_verifiers={"api": ConfigurableOidcTokenVerifier(...)},
+    token_verifiers={"api": ConfigurableOidcIdpVerifier(preset=preset)},
     resolvers={"api": ConfigurableMappingTableResolver(provision_on_first_sight=True)},
     token_lifecycle={"internal"},
     password_lifecycle={"internal"},
