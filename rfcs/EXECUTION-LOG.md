@@ -3814,8 +3814,9 @@ single-process simulation, now also with the broadcast on),
 - **Touches:** RFC 0068 §5.2. Unlisted: the RFC does not say where the subscription can run.
 - **Found:** the Redis subscription is a listener task on one pinned connection. While a
   serverless function is frozen, the network path can drop that connection silently. After
-  the thaw the hub notices only when its keepalive `PING` fails, up to 15 s later. Until
-  then the process trusts a stream that may have a gap and has sent no flush.
+  the thaw the hub notices only once a keepalive `PING` goes unanswered: one goes out every
+  15 s and counts as failed after 5 s (D-114), so up to about 20 s later. Until then the
+  process trusts a stream that may have a gap and has sent no flush.
 - **Because:** decision 3 rests on a gap being signalled, and a frozen listener cannot signal
   one in time.
 - **Class:** `spec-gap`.
@@ -3836,10 +3837,13 @@ single-process simulation, now also with the broadcast on),
   - Delivery is synchronous, inside the write, so the window between commit and arrival is
     zero in the simulation.
   - The mock has no clock-based expiry, so nothing broadcasts on expiry and §9's second
-    flush is not modelled.
+    flush is not modelled. Nor would a superseded body ever go, and every marker is a new
+    version, so a versioned write drops the body its pointer left, which nothing else
+    reaches.
 
   The subscribers sit on `MockState` as machinery, beside the lock: snapshots leave them out
-  (`_LIVE_FIELDS`), and `clear()` keeps them and flushes them, as `FLUSHALL` does. Disposing
+  (`_LIVE_FIELDS`), and `clear()` and restoring a snapshot keep them and flush them, as
+  `FLUSHALL` does. Disposing
   a routed tenant state ends them with `ended` set, as a closing client does (D-113). As with
   Redis, only versioned writes and the
   delete of a versioned entry broadcast, and only a tenant-aware subscriber hears a
@@ -3901,8 +3905,11 @@ single-process simulation, now also with the broadcast on),
 - **Consequence:** `SupportsInvalidationPush.subscribe_invalidations` gains a keyword,
   `live_within: timedelta | None = None`. With it, the port returns only once the stream is
   live, and `None` when it fails or takes longer, detaching the attempt. The Redis hub
-  settles each waiting subscriber when a setup that includes its prefixes succeeds or fails,
-  so a refusal answers at once. A wait that times out, is cancelled or is ended by `stop()`
+  settles each waiting subscriber when a setup that includes its prefixes succeeds, or is
+  refused for good (a RESP2 connection, a refused `CLIENT TRACKING`, a server error), so a
+  refusal answers at once. A dropped or slow connection leaves the waiter waiting while the
+  hub retries, so one that recovers within the bound still starts. A wait that times out,
+  is cancelled or is ended by `stop()`
   detaches; one that times out at the moment the stream came up counts as live. Because a
   waiter can now leave while the connection is being checked out, the hub arms no tracking
   when no subscriber is left: `BCAST` with no prefix would track every key. The grants step
@@ -3924,8 +3931,9 @@ single-process simulation, now also with the broadcast on),
   each subscriber, through a new `on_end` callback or, without one, its reset, and the Redis
   adapter sends a last flush with `ended` set. The grants subscription clears the cache and
   detaches, so decisions read the bindings again. The L1 treats it as the flush it is, and
-  does not subscribe again; a client closes at process shutdown. The mock ends its
-  subscriptions when a routed tenant state is disposed.
+  does not subscribe again; a client closes at process shutdown. A stream that ends after
+  coming up but before the grants subscription attaches fails startup, as an unavailable one
+  does. The mock ends its subscriptions when a routed tenant state is disposed.
 - **Proposed row (RFC 0068):** `ASSUMED` — the end of a push stream is an event; a subscriber
   that relies on push stops trusting its cache on it.
 
@@ -3974,6 +3982,21 @@ Review of the unit's first commit, before it was published.
 | R-14 | Test | The L1 tests' push stubs lacked `live_within` | Fixed |
 | R-15 | Test | The hub's fake connection never interleaved a push frame with the `PONG`; hanging, cancelled and stopped waits were untested | Fixed: hub tests for each, and for backoff growth |
 | R-16 | Test | Whether the re-attach test needs the clear in `subscribe` | Confirmed by mutation: without it the test fails |
+
+## Review findings — 2026-11-02 (PR #815)
+
+| # | Severity | Finding | Status |
+|---|---|---|---|
+| R-17 | API | A bare `forget()` on the resolver flushed and broadcast catalog-wide | Fixed: `principal_id` has no default; `None` is passed to flush everyone. `invalidate_grants` keeps the RFC's default |
+| R-18 | Bug | A transient setup failure answered a `live_within` waiter as unavailable at once, though a retry could recover within the bound | Fixed (D-112): only a refusal answers at once; hub tests pin both paths |
+| R-19 | Bug | A stream that ended after coming up but before the subscription attached left the cache counted as current on a dead stream | Fixed (D-113): startup fails as for an unavailable stream; tested |
+| R-20 | Fidelity | Restoring a mock snapshot left push subscribers holding values from the previous state | Fixed (D-109): the restore flushes them; tested |
+| R-21 | Bug | The mock's push raised for an empty batch on a tenant-aware port with no tenant; Redis returns early | Fixed: an empty batch returns first; its docstring names the `tenant_aware` split |
+| R-22 | Docs | The client port's docstring left out the `on_end` fallback and the other `None` cases | Fixed |
+| R-23 | Docs | The changelog left out the TTL fallback and the app's `invalidate_grants` duty, and the Fixed entry carried transport mechanics | Fixed |
+| R-24 | Docs | The index row and the status line said "this PR" | Fixed: #815 |
+| R-25 | Docs | D-108 put detection at 15 s, which D-114 and the code contradict | Fixed: up to about 20 s, a `PING` every 15 s failing after 5 s |
+| R-26 | Fidelity | The mock ignores `ttl`, so each marker publish left an unreachable body and a long-running mock grew without bound | Fixed (D-109): a versioned write drops the body its pointer left; 100 publishes leave one body per marker key |
 
 ---
 

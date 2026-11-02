@@ -288,8 +288,10 @@ startup = grants_invalidation_lifecycle_step(kernel)  # in every process, after 
   and a client not routed per tenant. The route must not be tenant-aware: a principal is
   forgotten in every tenant anyway. Keys that are not markers are ignored.
 - Register the step in every process. Startup fails with `authz_grants_invalidation_unavailable`
-  when the port cannot push, declines to, or does not bring its stream up within ten seconds,
-  and with `authz_grants_invalidation_tenant_aware` on a tenant-aware route. A broadcast that
+  when the port cannot push, declines to, or does not bring its stream up within ten seconds
+  (a dropped connection is retried meanwhile; a RESP2 connection or a refused `CLIENT TRACKING`
+  fails at once), and with `authz_grants_invalidation_tenant_aware` on a tenant-aware route.
+  A broadcast that
   cannot run never falls back to the TTL unnoticed. A `SERVERLESS` runtime refuses the step.
 - Decisions use the cache only while the subscription is live, and the cache starts empty each
   time it goes live. Before the step subscribes, after it stops, and once the Redis client
