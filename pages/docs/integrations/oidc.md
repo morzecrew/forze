@@ -69,7 +69,8 @@ every issuer:
 ## Notes
 
 - The verifier only proves the credential; the **resolver** decides the principal —
-  pair with `MappingTableResolver` (production SSO) or `DeterministicUuidResolver`.
+  register `ConfigurableMappingTableResolver` (production SSO) or
+  `ConfigurableDeterministicUuidResolver` under `AuthnDepsModule.resolvers`.
   A `token_verifiers` override without a `resolvers` override is refused, because
   the default `JwtNativeUuidResolver` would take an external subject as an internal
   principal id. See [Identity & access](../identity-tenancy-enc/identity.md).
@@ -86,9 +87,11 @@ every issuer:
 - Introspection and whoami fail closed. An inactive, revoked, expired, foreign-issuer
   or foreign-audience token is an authentication failure with one shape
   (`invalid_oidc_token`; `invalid_session_token` for whoami), and so is a time claim
-  that is not a finite, representable number. A Kratos identity must say
-  `state: active`; one without a `state` is refused. A timeout, a non-2xx status or a
-  malformed body is an infrastructure failure — never an accepted token.
+  that is not a finite, representable number or an `aud` list with a non-string
+  member. A Kratos identity must say `state: active`; one without a `state` is
+  refused. A timeout, a non-2xx status, a body that is not a JSON object, or a Kratos
+  session without a valid `expires_at` is an infrastructure failure — never an
+  accepted token.
 - Their caches keep only active verdicts, keyed by the token's SHA-256 digest, for
   `cache_ttl` (default 30 s, at most 5 minutes, `0` disables) clamped to the token's
   own expiry. A revoked token keeps working until its entry expires, never longer.
@@ -96,8 +99,10 @@ every issuer:
   hits.
 - Introspection requires an `audience` unless you set `require_audience=False`, and
   records the configured `issuer` (RFC 7662 makes `iss` optional; a response that
-  carries a different one is refused). Keycloak answers `active: false` to an
-  introspecting client that is not in the token's audience.
+  carries a different one is refused). Both remote verifiers refuse a `claim_mapper`
+  that reads the issuer from anything but `iss` (whoami: the subject from anything but
+  `sub`), since the assertion's issuer must be the configured one. Keycloak answers
+  `active: false` to an introspecting client that is not in the token's audience.
 - Client secrets and private keys take a `str` or a pydantic `SecretStr` and stay
   out of `repr`; tokens and secrets are never logged.
 - Kratos lets users edit their own `traits`: read roles from `metadata`

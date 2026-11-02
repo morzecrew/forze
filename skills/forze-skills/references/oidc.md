@@ -12,7 +12,7 @@ Delegating authentication to an external issuer: token verifiers, claim mapping,
 | An opaque access token (Ory Hydra, Zitadel by default) | `IntrospectionTokenVerifier` (RFC 7662) | `ConfigurableIntrospectionVerifier(config=IntrospectionConfig(...))` |
 | An Ory Kratos session cookie or token | `WhoamiSessionVerifier` | `ConfigurableWhoamiVerifier(config=WhoamiConfig(...))` |
 
-Register the factory under `TokenVerifierDepKey` for the relevant routes (`AuthnDepsModule.token_verifiers`) and pair it with `MappingTableResolver` (production SSO) or `DeterministicUuidResolver` (stateless prototyping) — a `token_verifiers` override without a `resolvers` override is refused.
+Register the factory under `TokenVerifierDepKey` for the relevant routes (`AuthnDepsModule.token_verifiers`) and register a resolver factory on the same route (`AuthnDepsModule.resolvers`): `ConfigurableMappingTableResolver(provision_on_first_sight=True)` (production SSO) or `ConfigurableDeterministicUuidResolver()` (stateless prototyping) — a `token_verifiers` override without a `resolvers` override is refused.
 
 Build the JWT preset from the issuer's discovery document once, at startup:
 

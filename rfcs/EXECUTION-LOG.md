@@ -3747,9 +3747,10 @@ has a fixture today.
 - **Touches:** §5.2, last sentence. No §10 row.
 - **RFC said:** "Client credentials resolve via the secrets plane (`SecretRef`), not inline
   strings, matching [[identity-hardening-plan-2026-07]] posture."
-- **Found:** nothing in `forze_identity` resolves a secret through the secrets plane. The VK and
-  Telegram presets take `client_secret: str | SecretStr` (`builtin/idp/vk/config.py:34`,
-  `telegram/config.py:31`), and `AuthnKernelConfig` takes raw `bytes`. A `SecretRef` needs a
+- **Found:** nothing in `forze_identity` resolves a secret through the secrets plane. The
+  Telegram preset takes `client_secret: str | SecretStr` (`telegram/config.py:31`), the VK
+  preset an optional `str | SecretStr | None` (`builtin/idp/vk/config.py:34`), and
+  `AuthnKernelConfig` takes raw `bytes`. A `SecretRef` needs a
   `SecretsPort`, which comes from `ctx.deps`. `TokenVerifierPort.verify_token` receives no
   context, and the factory that does is synchronous and builds the verifier once, so a ref
   would need a context-bound resolution seam that does not exist yet. `forze_kits`'
@@ -3782,8 +3783,13 @@ has a fixture today.
   `nbf` or `iat` is not a finite number. JSON parsing admits `NaN` and `Infinity`, and `NaN`
   compares false both ways, so a bound check alone would admit it. `active: true` alone does
   not admit a token. The shared `OidcClaimMapper` refuses a numeric `exp` or `iat` it cannot
-  turn into a datetime (`NaN`, `1e20`) as `invalid_oidc_token` too. It used to raise a raw
-  `ValueError`, which the JWKS verifier let escape for a signed `exp` of `1e20`.
+  turn into a datetime (`NaN`, `1e20`), or a JSON boolean, as `invalid_oidc_token` too. It
+  used to raise a raw `ValueError`, which the JWKS verifier let escape for a signed `exp` of
+  `1e20`. A mapper's own `ValueError` (an empty `iss` or `sub`, or a missing claim a custom
+  `subject_claim` names) is now `invalid_oidc_token` in both the introspection and the JWKS
+  verifier; the JWKS one let a signed empty `sub` escape the same way. A `claim_mapper` whose
+  `issuer_claim` is not `iss` is refused at construction, so the assertion's issuer is always
+  the configured one.
 - **Proposed row (RFC 0009):** `ASSUMED` — introspection requires the issuer. It is recorded on
   every assertion, and a different `iss` in the response is refused.
 
@@ -3798,7 +3804,9 @@ has a fixture today.
 - **Because:** the RFC did not apply the JWKS verifier's default to introspection.
 - **Class:** `spec-gap`.
 - **Consequence:** `require_audience: bool = True`. Construction refuses `audience=None` unless
-  it is turned off, and the field's docstring names what turning it off accepts.
+  it is turned off, and the field's docstring names what turning it off accepts. An empty
+  audience sequence, or one with a blank member, is refused at construction. A response whose
+  `aud` list holds a non-string member is a rejected token, not read around.
 - **Proposed row (RFC 0009):** `ASSUMED` — introspection requires an audience by default;
   `require_audience=False` is the explicit waiver.
 
@@ -3809,7 +3817,8 @@ has a fixture today.
 - **RFC said:** a rejected token is `token_invalid`. A 5xx fails closed, kind unstated.
 - **Found:** RFC 7662 answers an unknown, revoked or expired token with 200 and
   `active: false`. A non-2xx is about the introspecting client (401: bad client credentials) or
-  the issuer, never the token. The Keycloak test pins this: a wrong client secret is a 401. The
+  the issuer, never the token. The Keycloak test pins this: a wrong client secret is refused
+  with `details == {"status": 401}`. The
   JWKS verifier already rejects with `invalid_oidc_token`. The VK verifier, the precedent for
   remote verification here, makes transport failures `infrastructure`.
 - **Because:** reporting an outage or our own misconfiguration as "your token is invalid" sends
@@ -3819,11 +3828,15 @@ has a fixture today.
   is a `spec-gap`.
 - **Consequence:** rejected tokens are `authentication` with one code, `invalid_oidc_token`:
   inactive, `error` in a 2xx body, foreign `iss` or `aud`, missing `sub`, expired, not yet
-  valid. Revoked and expired cannot be told apart. Transport errors, timeouts, non-2xx and
-  malformed bodies are `infrastructure` (`oidc_introspection_unavailable`,
-  `oidc_introspection_invalid_response`). Both fail closed: no path emits an assertion without
-  an active verdict. Whoami follows the same split. Kratos' 401 and 403 are about the session,
-  so they are `authentication` (`invalid_session_token`).
+  valid, and a JSON object with a malformed field (a non-finite time claim, a non-string `aud`
+  member, a claim the mapper requires). Revoked and expired cannot be told apart. Transport
+  errors, timeouts, non-2xx, and bodies that are not JSON or not a JSON object are
+  `infrastructure` (`oidc_introspection_unavailable`, `oidc_introspection_invalid_response`).
+  Both fail closed: no path emits an assertion without an active verdict. Whoami follows the
+  same split. Kratos' 401 and 403 are about the session, so they are `authentication`
+  (`invalid_session_token`); a session whose `expires_at` or `issued_at` is missing or
+  malformed is `infrastructure` (`session_whoami_invalid_response`), as Kratos always sends
+  `expires_at`.
 - **Proposed row (RFC 0009):** `ASSUMED` — a rejected external credential is `authentication`
   with one code per verifier family (`invalid_oidc_token`, `invalid_session_token`). Anything
   that says nothing about the credential is `infrastructure`. Both fail closed.
@@ -3839,10 +3852,14 @@ has a fixture today.
   "short" into a default rather than a property.
 - **Class:** `spec-gap`.
 - **Consequence:** `TokenCache` stores only active verdicts. The TTL is counted from when the
-  remote call began, clamped to the assertion's `expires_at`, at most `MAX_CACHE_TTL` (five
-  minutes, the JWKS cache default), and zero disables it. Eviction is least-recently-used at
+  remote call began, at most `MAX_CACHE_TTL` (five minutes, the JWKS cache default), and zero
+  disables it. It is clamped to the expiry the verifier checked and to the assertion's
+  `expires_at`, measured from when the call returned. That wall-clock expiry is stored with
+  the entry and checked again on every hit, so a forward jump of the system clock cannot serve
+  an expired credential past the monotonic deadline. `ttl` must be a `timedelta` and
+  `max_entries` an integer, or construction is refused. Eviction is least-recently-used at
   `max_entries`. Keys are the SHA-256 digest of the token. Tests pin that a revoked token dies
-  at the TTL and never later, and that the clamp applies inside the TTL.
+  at the TTL and never later, that the clamp applies inside the TTL, and the clock jump.
 - **Proposed row (RFC 0009):** `ASSUMED` — verdict caches store active verdicts only, count the
   TTL from the start of the call, and refuse a TTL above five minutes.
 
@@ -3875,7 +3892,8 @@ has a fixture today.
 - **Class:** `spec-gap`.
 - **Consequence:** `ClaimsPath` splits the template on dots, then fills each segment, so
   `ClaimsPath("{c}", c="https://app.example/roles")` reads a namespaced top-level claim. An
-  unfilled placeholder or an empty segment is refused at construction. `email_claim` uses the
+  unfilled or malformed placeholder (`{a[x]}`, `{a!z}`, `{a`) or an empty segment is refused at
+  construction as a configuration error. `email_claim` uses the
   same splitter and is a dotted path, so `"traits.email"` works for a Kratos session. The
   existing `tenant_claim` is unchanged: a literal top-level name.
 - **Proposed row (RFC 0009):** `ASSUMED` — claim paths fill `{name}` placeholders after
@@ -3927,10 +3945,13 @@ has a fixture today.
 - **Class:** `drift`. The RFC described a knob that was not built.
 - **Consequence:** the subject is `identity.id`. `WhoamiConfig` carries `endpoint`, `issuer`,
   `credential_style` (required, with no default to guess), `cookie_name`
-  (`ory_kratos_session`), `traits_to_claims`, cache bounds, `timeout` and `claim_mapper`. The
-  claims are `iss`, `sub`, `exp`, `iat`, `sid`, `traits` and `metadata` (from
+  (`ory_kratos_session`, which must be an RFC 6265 token), `traits_to_claims`, cache bounds,
+  `timeout` and `claim_mapper`, which must read the issuer from `iss` and the subject from
+  `sub`. The claims are `iss`, `sub`, `exp`, `iat`, `sid`, `traits` and `metadata` (from
   `metadata_public`), so 5.4 extraction works as for a token. The identity must carry
-  `state: "active"`; a missing `state` is refused rather than read as active. A credential that
+  `state: "active"`; a missing `state` is refused rather than read as active. A session must
+  carry a valid `expires_at`. `issued_at` falls back to `authenticated_at` only when it is
+  absent or null, and a malformed one is refused. A credential that
   is not printable ASCII free of cookie separators is refused before any request, so it cannot
   smuggle a cookie or a header. Like the VK verifier and the code-exchange helpers, both
   remote verifiers open an `httpx` client per call: nothing in `forze_identity` holds a
@@ -3951,8 +3972,10 @@ has a fixture today.
 - **Class:** `spec-gap`.
 - **Consequence:** the issuer and every endpoint read from the document must be https, or http
   on a loopback host, parsed with `urlsplit`. The issuer may carry no query or fragment.
-  Redirects are not followed. The document's algorithms are ignored: `from_issuer` keeps the
-  preset's default `("RS256",)` unless `algorithms` is passed. Transport failure is
+  A malformed port is a configuration error. Redirects are not followed. Every timeout here
+  and on the remote verifiers must be a finite, positive number. The document's algorithms
+  are ignored: `from_issuer` keeps the preset's default `("RS256",)` unless `algorithms` is
+  passed. Transport failure is
   `infrastructure` (`oidc_discovery_unavailable`). Everything else is `configuration`
   (`oidc_issuer_mismatch`, `oidc_discovery_invalid`). `OidcIdpPreset` gains `metadata` and
   `claim_mapper`; a `claim_mapper` beside `tenant_claim` is refused rather than one silently
