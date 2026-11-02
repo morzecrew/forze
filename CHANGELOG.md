@@ -9,13 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- ...
+- **`PostgresSchemaTenantProvisioner(login=...)` provisions a tenant role that logs in.** Its password comes from the tenant's secret, as `RoutedDuckDbClient` reads it for a `DuckLakeTenantCatalog`, and is set on every provisioning as a SCRAM verifier. It adopts an existing role only once provisioned for the schema.
 
 ### Changed
 
 - ...
 
 ### Fixed
+
+- **`PostgresSchemaTenantProvisioner` refuses a schema or role name longer than 63 bytes** (**behaviour change**). PostgreSQL truncated it, so statements could reach another tenant's schema or role. Teardown still drops a valid schema beside such a role, then raises `tenant_role_name_too_long`.
 
 - **Postgres startup no longer warns about history written from superseded rows.** On the `database` bookkeeping strategy, a row trigger firing on both `UPDATE` and `DELETE`, as one writing each `OLD` row does, counts as writing history. History is read only to merge an update at an older revision.
 

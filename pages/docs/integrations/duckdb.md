@@ -318,6 +318,31 @@ an `s3://` one, is refused (`duckdb_lake_store_credentials_mismatch`). One clien
 Iceberg tenants and DuckLake tenants side by side: each tenant's catalog picks
 the shape of its secret.
 
+`PostgresSchemaTenantProvisioner` from `forze_postgres` provisions the
+metadata schema and the role at onboarding. Pass it the client's `secrets` and
+`secret_ref_for_tenant` through `login`:
+
+```python
+from forze_postgres import PostgresSchemaTenantProvisioner, PostgresTenantRoleLogin
+
+provisioner = PostgresSchemaTenantProvisioner(
+    client=pg_admin,                       # unrouted, on the metadata database
+    schema=lambda t: f"t{t.hex}_lake",
+    role=lambda t: f"t{t.hex}_reader",     # the secret's `user` must name it
+    login=PostgresTenantRoleLogin(
+        secrets=secrets,
+        secret_ref_for_tenant=lambda t: SecretRef(path=f"tenants/{t}/ducklake"),
+    ),
+)
+```
+
+It grants the role `USAGE` on the schema and `SELECT` on its tables, which is
+what the session attests, and sets the password from the secret on every
+provisioning, so provisioning again rotates it. Its default privileges cover
+the tables DuckLake adds later only when the build writes as the user that
+provisioned. The role connects through the database's `CONNECT` grant to
+`PUBLIC`; where that is revoked, grant it `CONNECT` too.
+
 Each instance is built by this sequence, on DuckDB 1.5 and 2:
 
 ```text

@@ -18,12 +18,14 @@ import json
 import os
 from collections.abc import AsyncIterator, Callable, Iterator
 from datetime import timedelta
+from pathlib import Path
 from secrets import token_hex
 from typing import Any
 from uuid import UUID
 
 import duckdb
 import pytest
+from psycopg.conninfo import make_conninfo
 
 from forze.application.contracts.dynamic_read import DynamicReadPort, DynamicReadSpec
 from forze.application.contracts.secrets import SecretRef
@@ -37,6 +39,8 @@ from forze_duckdb import (
 )
 from forze_duckdb.adapters import DuckDbDynamicReadAdapter
 from forze_duckdb.kernel.client import routed_client
+from forze_postgres import PostgresSchemaTenantProvisioner, PostgresTenantRoleLogin
+from forze_postgres.kernel.client.client import PostgresClient, PostgresConfig
 from tests.integration.test_forze_duckdb.conftest import S3_ACCESS_KEY, S3_SECRET_KEY
 from tests.support.ducklake import (
     BUCKET,
@@ -54,6 +58,7 @@ _B = UUID("bbbbbbbb-0000-0000-0000-00000000000b")
 _C = UUID("cccccccc-0000-0000-0000-00000000000c")
 _D = UUID("dddddddd-0000-0000-0000-00000000000d")
 _S = UUID("eeeeeeee-0000-0000-0000-00000000000e")
+_P = UUID("ffffffff-0000-0000-0000-00000000000f")
 _NAMES = {_A: "a", _B: "b", _C: "c", _D: "d", _S: "s"}
 
 _ATTESTATION_FAILED = "duckdb_session_attestation_failed"
@@ -581,3 +586,93 @@ class TestEngineFacts:
 
 def _tenant_of(stack: DuckLakeStack, tenant: UUID) -> DuckLakeTenant:
     return stack.tenants[_NAMES[tenant]]
+
+
+# ....................... #
+
+
+class _RoleSecret:
+    """One tenant's secret, read by the provisioner and the client alike."""
+
+    def __init__(self, user: str) -> None:
+        self.payload = {"user": user, "password": token_hex(16)}
+
+    async def resolve_str(self, ref: SecretRef) -> str:
+        _ = ref
+        return json.dumps(self.payload)
+
+    async def exists(self, ref: SecretRef) -> bool:
+        _ = ref
+        return True
+
+
+def _write_lake(dsn: str, data_path: str, schema: str) -> None:
+    """Build a three-row lake as the user that provisioned, so its default privileges cover the
+    metadata tables DuckLake creates on attach."""
+
+    Path(data_path).mkdir()
+    con = duckdb.connect(":memory:")
+
+    try:
+        con.execute("LOAD ducklake; LOAD postgres")
+        con.execute(
+            f"ATTACH 'ducklake:postgres:{dsn}' AS lake "
+            f"(DATA_PATH '{data_path}', METADATA_SCHEMA '{schema}')"
+        )
+        con.execute("CREATE SCHEMA lake.gold")
+        con.execute("CREATE TABLE lake.gold.orders AS SELECT i AS id FROM range(3) t(i)")
+
+    finally:
+        con.close()
+
+
+class TestProvisionedRole:
+    async def test_the_role_forze_provisions_passes_the_attestation(
+        self, stack: DuckLakeStack
+    ) -> None:
+        """#806: the grants ``PostgresSchemaTenantProvisioner(login=...)`` makes are the ones the
+        session attests, tables DuckLake creates after provisioning included."""
+
+        schema, role, data_path = "p_meta", "p_reader", f"{stack.root}/p/"
+        admin_dsn = make_conninfo(stack.admin_dsn, dbname=DATABASE)
+        secret = _RoleSecret(role)
+        ref = {_P: SecretRef(path=str(_P))}
+        admin = PostgresClient()
+        await admin.initialize(dsn=admin_dsn, config=PostgresConfig(min_size=1, max_size=2))
+
+        try:
+            await PostgresSchemaTenantProvisioner(
+                client=admin,
+                schema=schema,
+                role=role,
+                login=PostgresTenantRoleLogin(secrets=secret, secret_ref_for_tenant=ref),  # type: ignore[arg-type]
+            ).provision(TenantIdentity(tenant_id=_P))
+
+        finally:
+            await admin.close()
+
+        client = RoutedDuckDbClient(
+            secrets=secret,  # type: ignore[arg-type]
+            secret_ref_for_tenant=ref,
+            tenant_provider=_tenant.get,
+            catalog_for_tenant=lambda _: DuckLakeTenantCatalog(
+                host=stack.host,
+                port=stack.port,
+                database=DATABASE,
+                metadata_schema=schema,
+                data_path=data_path,
+            ),
+        )
+
+        try:
+            _write_lake(admin_dsn, data_path, schema)
+            await client.startup()
+
+            assert await _rows(client, _P, "SELECT count(*) AS n FROM lake.gold.orders") == [
+                {"n": 3}
+            ]
+
+        finally:
+            await client.close()
+            # The schema takes the role's grants with it, so the role then drops on its own.
+            stack.admin(f"DROP SCHEMA IF EXISTS {schema} CASCADE; DROP ROLE IF EXISTS {role}")
