@@ -63,4 +63,8 @@ lifecycle = LifecyclePlan.from_steps(bigquery_lifecycle_step(project_id="my-proj
   placeholders bound from each query's params model. Forze does **not** rewrite
   read SQL — qualify tables yourself.
 - Ingest targets a relation `(dataset, table)`, static or a per-tenant resolver.
+- Each query is bounded by its `timeout` (60 s unless set): how long the client waits
+  for the job. A per-call `timeout` option lowers it, never raises it. BigQuery keeps
+  running a job the client stopped waiting for, so cap a query's cost with
+  `maximum_bytes_billed` ([analytics](../reference/contracts/analytics.md)).
 - Out of scope: load jobs, `MERGE`, and DDL — manage those externally.

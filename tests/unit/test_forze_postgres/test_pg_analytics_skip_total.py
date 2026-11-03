@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from typing import Any
 
 import pytest
@@ -27,6 +29,17 @@ class _Params(BaseModel):
 class _MockClient:
     def __init__(self) -> None:
         self.queries: list[str] = []
+
+    # Every read runs in its own transaction to scope the route's statement_timeout.
+    def is_in_transaction(self) -> bool:
+        return False
+
+    @asynccontextmanager
+    async def transaction(self) -> AsyncIterator[None]:
+        yield
+
+    async def execute(self, query: Any, params: Any = None, **kwargs: Any) -> None:
+        _ = query, params, kwargs
 
     async def fetch_all(
         self,

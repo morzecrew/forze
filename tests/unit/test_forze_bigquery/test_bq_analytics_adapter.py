@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import timedelta
 from typing import Any
 
 import pytest
@@ -22,7 +23,10 @@ from forze_bigquery.kernel.client.value_objects import (
     BigQueryInsertResult,
     BigQueryQueryResult,
 )
-from tests.support.analytics_options import assert_every_path_refuses_an_unknown_option
+from tests.support.analytics_options import (
+    assert_every_path_refuses_an_unknown_option,
+    assert_every_read_is_bounded_by_the_route_timeout,
+)
 
 
 class _Row(BaseModel):
@@ -37,7 +41,7 @@ class _Ingest(BaseModel):
     event: str
 
 
-def _adapter(mock: Any) -> BigQueryAnalyticsAdapter[_Row, _Ingest]:
+def _adapter(mock: Any, **query: Any) -> BigQueryAnalyticsAdapter[_Row, _Ingest]:
     spec = AnalyticsSpec(
         name="events",
         read=_Row,
@@ -49,6 +53,7 @@ def _adapter(mock: Any) -> BigQueryAnalyticsAdapter[_Row, _Ingest]:
         queries={
             "counts": BigQueryQueryConfig(
                 sql="SELECT value FROM t WHERE day = @day",
+                **query,
             ),
         },
         ingest=IngestSpec(("analytics", "events_raw")),
@@ -342,3 +347,32 @@ async def test_no_query_dataset_leaves_default_unset() -> None:
 
 async def test_every_path_refuses_an_unknown_option() -> None:
     await assert_every_path_refuses_an_unknown_option(_adapter(_MockClient()), "counts", _Params())
+
+
+class _TimedClient(_MockClient):
+    """Records the timeout each read hands the client."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.timeouts: list[Any] = []
+
+    async def run_query(self, sql: str, params: Any = None, **kwargs: Any) -> Any:
+        self.timeouts.append(kwargs.pop("timeout", None))
+        return await super().run_query(sql, params, **kwargs)
+
+    async def run_query_streamed(self, sql: str, params: Any = None, **kwargs: Any) -> Any:
+        self.timeouts.append(kwargs.get("timeout"))
+        yield (await super().run_query(sql, params)).rows
+
+
+@pytest.mark.asyncio
+async def test_every_read_is_bounded_by_the_route_timeout() -> None:
+    mock = _TimedClient()
+
+    await assert_every_read_is_bounded_by_the_route_timeout(
+        _adapter(mock, timeout=timedelta(seconds=7)),
+        "counts",
+        _Params(),
+        route=timedelta(seconds=7),
+        seen=mock.timeouts,
+    )

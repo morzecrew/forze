@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+import time
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from enum import Enum, IntEnum
 from uuid import UUID, uuid4
@@ -15,7 +16,7 @@ from forze.application.contracts.analytics import (
     AnalyticsSpec,
     IngestSpec,
 )
-from forze.base.exceptions import CoreException
+from forze.base.exceptions import CoreException, ExceptionKind
 from forze_clickhouse.adapters import ClickHouseAnalyticsAdapter
 from forze_clickhouse.execution import ClickHouseAnalyticsConfig, ClickHouseDepsModule
 from forze_clickhouse.execution.deps.configs import ClickHouseQueryConfig
@@ -306,3 +307,32 @@ async def test_ingest_of_uuid_datetime_and_decimal_binds_natively(clickhouse_cli
     assert page.count == 1
     assert page.hits[0].order_id == sent.order_id
     assert isinstance(page.hits[0].order_id, UUID)
+
+
+# ....................... #
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("options", [None, {"timeout": timedelta(hours=1)}])
+async def test_the_route_timeout_stops_the_query_on_the_server(
+    clickhouse_client, analytics_table, options
+) -> None:
+    """With no option the route's timeout reaches the server as ``max_execution_time``, and
+    a per-call timeout above it is clamped down to it (RFC 0028 §6.1)."""
+
+    database_id, table_id = analytics_table
+    endless = "SELECT count() AS value, 'x' AS event FROM system.numbers"
+    config = ClickHouseAnalyticsConfig(
+        database=database_id,
+        queries={"all": ClickHouseQueryConfig(sql=endless, timeout=timedelta(seconds=1))},
+        ingest=IngestSpec((database_id, table_id)),
+    )
+    adapter = ClickHouseAnalyticsAdapter(client=clickhouse_client, spec=_spec(), config=config)
+    started = time.monotonic()
+
+    with pytest.raises(CoreException) as caught:
+        await adapter.run("all", _Params(), options=options)
+
+    assert caught.value.kind is ExceptionKind.INFRASTRUCTURE
+    assert "TIMEOUT_EXCEEDED" in str(caught.value.__cause__)
+    assert time.monotonic() - started < 15

@@ -11,6 +11,7 @@ from collections.abc import (
 )
 from contextlib import contextmanager
 from contextvars import ContextVar
+from datetime import timedelta
 from typing import (
     Any,
     TypeVar,
@@ -175,13 +176,48 @@ def validate_fetch_batch_size(fetch_batch_size: int) -> None:
 # ....................... #
 
 
-def timeout_seconds(options: AnalyticsRunOptions | None) -> int | None:
-    if options is None:
-        return None
+DEFAULT_ROUTE_TIMEOUT = timedelta(seconds=60)
+"""Timeout of a registered analytics query that sets none: the ClickHouse and BigQuery clients'
+own default before routes carried one."""
 
-    timeout = options.get("timeout")
 
-    return None if timeout is None else max(1, int(timeout.total_seconds()))
+def validate_route_timeout(timeout: object) -> None:
+    """Refuse a route timeout that is not a positive :class:`~datetime.timedelta`.
+
+    There is no ``unlimited`` spelling: a query that needs longer sets a longer value.
+    """
+
+    if not isinstance(timeout, timedelta) or timeout <= timedelta(0):
+        raise exc.configuration(
+            "Analytics query timeout must be a positive timedelta.",
+            code="analytics_timeout_invalid",
+            details={"timeout": repr(timeout)},
+        )
+
+
+# ....................... #
+
+
+def route_timeout(options: AnalyticsRunOptions | None, ceiling: timedelta) -> timedelta:
+    """Timeout for one execution: the per-call ``timeout`` option clamped to the route's.
+
+    With no option the route's *ceiling* applies. An option above it is clamped down, never
+    up, so a caller cannot lift the bound its wiring set.
+    """
+
+    requested = (options or {}).get("timeout")
+
+    if requested is None:
+        return ceiling
+
+    if not isinstance(requested, timedelta) or requested <= timedelta(0):
+        raise exc.validation(
+            "Analytics options.timeout must be a positive timedelta.",
+            code="analytics_option_invalid",
+            details={"timeout": repr(requested)},
+        )
+
+    return min(requested, ceiling)
 
 
 # ....................... #

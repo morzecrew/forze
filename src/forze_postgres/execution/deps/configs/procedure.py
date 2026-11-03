@@ -38,8 +38,15 @@ class PostgresProcedureConfig(TenantAwareIntegrationConfig):
     """Run inside a transaction (default). Set ``False`` for statements that cannot run in one
     (``REFRESH MATERIALIZED VIEW CONCURRENTLY``, some maintenance) — uses the autocommit path."""
 
-    statement_timeout: timedelta | None = None
-    """Optional ``SET LOCAL statement_timeout`` for long compute. Requires a transaction."""
+    statement_timeout: timedelta = timedelta(seconds=60)
+    """Ceiling on how long one run may take. Always on, and there is no ``unlimited``
+    spelling: long compute sets a longer value.
+
+    In a transaction it is ``SET LOCAL statement_timeout``, tighten-only: a lower
+    ``statement_timeout`` already in force (the pool's, or an invocation deadline's) still
+    wins. On the autocommit path, where ``SET LOCAL`` has nothing to scope to, the client
+    cancels the statement when the time is up, and psycopg sends the server a cancel request.
+    """
 
     query_schema: NamedResourceSpec | None = attrs.field(
         default=None,
@@ -55,11 +62,13 @@ class PostgresProcedureConfig(TenantAwareIntegrationConfig):
         if not self.sql.strip():
             raise exc.internal("Procedure sql must be non-empty.")
 
-        if not self.in_transaction and self.statement_timeout is not None:
+        timeout: object = self.statement_timeout
+
+        if not isinstance(timeout, timedelta) or timeout <= timedelta(0):
             raise exc.configuration(
-                "Procedure statement_timeout requires in_transaction=True "
-                "(SET LOCAL needs a transaction).",
-                code="procedures_autocommit_timeout",
+                "Procedure statement_timeout must be a positive timedelta.",
+                code="procedures_timeout_invalid",
+                details={"statement_timeout": repr(timeout)},
             )
 
         if not self.in_transaction and self.query_schema is not None:

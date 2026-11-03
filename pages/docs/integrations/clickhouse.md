@@ -74,3 +74,7 @@ lifecycle = LifecyclePlan.from_steps(
   credentials, database).
 - For stable deep pagination, set `cursor_column` on the query config (keyset)
   instead of offset cursors.
+- Each query is bounded by its `timeout` (60 s unless set), sent as
+  `max_execution_time` so the server stops it. A per-call `timeout` option lowers it,
+  never raises it. It replaces `ClickHouseConfig.timeout` for queries; ingest keeps that
+  ([analytics](../reference/contracts/analytics.md)).

@@ -24,4 +24,5 @@ class AnalyticsRunOptions(TypedDict, total=False):
     """Upper bound on rows returned for this execution."""
 
     timeout: timedelta
-    """Maximum time allowed for the query execution."""
+    """Maximum time allowed for the query execution. Every registered query carries its own
+    timeout; this one may lower it for a single call, never raise it."""

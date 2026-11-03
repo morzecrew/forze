@@ -16,6 +16,7 @@ require_psycopg()
 
 from collections.abc import AsyncGenerator, Awaitable, Callable, Sequence
 from contextlib import asynccontextmanager
+from datetime import timedelta
 
 from psycopg import errors, sql
 
@@ -160,3 +161,28 @@ async def restore_local_settings_on_exit(
 
     async with undo_local_settings_on_exit(_restore):
         yield
+
+
+# ....................... #
+
+
+async def tighten_local_statement_timeout(
+    client: PostgresClientPort,
+    timeout: timedelta,
+) -> None:
+    """Lower the transaction's ``statement_timeout`` to *timeout*, never raise it.
+
+    A route's own bound must not loosen one already in force: the pool's session
+    ``statement_timeout`` (:attr:`~forze_postgres.PostgresConfig.statement_timeout`) or an
+    invocation deadline's backstop. The server takes the smaller of the two, counting ``0``
+    (no bound) as the larger. Call it inside a transaction: the value is transaction-local.
+    """
+
+    ms = max(1, int(timeout.total_seconds() * 1000))  # 0 would mean no bound at all
+
+    await client.execute(
+        sql.SQL(
+            "SELECT set_config('statement_timeout', LEAST({}, NULLIF(EXTRACT(EPOCH FROM "
+            "current_setting('statement_timeout')::interval) * 1000, 0))::bigint::text, true)"
+        ).format(sql.Literal(ms)),
+    )

@@ -23,7 +23,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- ...
+- **Every registered analytics query is bounded by its own `timeout`, 60 s unless set** (**behaviour change**). It is on each engine's `*QueryConfig`, and a per-call `options["timeout"]` lowers it, never raises it. Postgres and DuckDB reads were unbounded; on Postgres it never loosens a lower `statement_timeout`.
+
+- **`PostgresProcedureConfig.statement_timeout` is always on, 60 s unless set** (**Breaking**). `None` is refused. An autocommit route takes one too: the client cancels the statement when it expires, so `procedures_autocommit_timeout` is gone.
 
 ### Fixed
 

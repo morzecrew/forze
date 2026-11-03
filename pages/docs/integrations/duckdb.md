@@ -109,6 +109,10 @@ lifecycle = LifecyclePlan.from_steps(
 )
 ```
 
+Each query is bounded by its `timeout` (60 s unless set on the `DuckDbQueryConfig`),
+enforced by interrupting its cursor; a per-call `timeout` option lowers it, never raises
+it ([analytics](../reference/contracts/analytics.md)).
+
 For a runnable, Docker-free walkthrough, see the
 [analytics recipe](../recipes/analytics-over-a-data-lake.md).
 

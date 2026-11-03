@@ -78,15 +78,25 @@ PostgresProcedureConfig(
         "ON CONFLICT (region) DO UPDATE SET total = excluded.total"
     ),
     in_transaction=True,            # False for REFRESH MATERIALIZED VIEW CONCURRENTLY
-    statement_timeout=None,         # SET LOCAL statement_timeout for long compute
+    statement_timeout=timedelta(seconds=60),  # the default; always on
     query_schema=None,              # per-tenant schema (namespace tier)
 )
 ```
 
 Set `in_transaction=False` for statements that cannot run inside a transaction
 (`REFRESH MATERIALIZED VIEW CONCURRENTLY` and some maintenance); they take the
-autocommit path. `statement_timeout` and `query_schema` both need a transaction,
-so they are rejected at wiring when combined with `in_transaction=False`.
+autocommit path. `query_schema` needs a transaction, so it is rejected at wiring
+when combined with `in_transaction=False`.
+
+Every run is bounded by `statement_timeout`, 60 seconds unless the route sets
+another positive value. There is no way to turn it off: long compute sets a longer
+value. In a transaction it is a `SET LOCAL statement_timeout` that only tightens, so
+a lower `statement_timeout` already in force (the pool's, or one pushed down from an
+invocation deadline) still wins. On the autocommit path there is no transaction to
+scope a `SET LOCAL` to, so the client cancels the statement when the time is up and
+psycopg sends the server a cancel request. That clock also counts the wait for a pool
+connection. Either way the run fails as `infrastructure`, "Database query canceled
+(timeout)".
 
 ## Tenancy
 

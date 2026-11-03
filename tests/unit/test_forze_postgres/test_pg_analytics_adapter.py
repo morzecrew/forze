@@ -30,7 +30,7 @@ class _Ingest(BaseModel):
     event: str
 
 
-def _adapter(mock: Any) -> PostgresAnalyticsAdapter[_Row, _Ingest]:
+def _adapter(mock: Any, **query: Any) -> PostgresAnalyticsAdapter[_Row, _Ingest]:
     spec = AnalyticsSpec(
         name="events",
         read=_Row,
@@ -41,6 +41,7 @@ def _adapter(mock: Any) -> PostgresAnalyticsAdapter[_Row, _Ingest]:
         queries={
             "counts": PostgresQueryConfig(
                 sql="SELECT value FROM t WHERE day = %(day)s",
+                **query,
             ),
         },
         ingest=IngestSpec(("public", "events_raw")),
@@ -353,14 +354,51 @@ async def test_tenant_aware_query_schema_fails_closed_without_tenant() -> None:
         await adapter.run("counts", _Params())
 
 
+def _timeouts_set(mock: _MockClient) -> list[str]:
+    """The ``statement_timeout`` statements the adapter sent, rendered."""
+
+    rendered = (_rendered(q) for q, _ in mock.executes)
+
+    return [r for r in rendered if "set_config('statement_timeout'" in r]
+
+
 @pytest.mark.asyncio
-async def test_no_query_schema_does_not_open_transaction() -> None:
+async def test_a_read_with_no_option_is_bounded_by_the_route_timeout() -> None:
     mock = _MockClient()
-    adapter = _adapter(mock)  # no query_schema, no timeout
+    adapter = _adapter(mock)  # no query_schema, no option: the 60 s default applies
 
     await adapter.run("counts", _Params())
 
-    assert mock.executes == []  # no SET LOCAL search_path
+    [statement] = _timeouts_set(mock)
+    assert "LEAST(60000," in statement
+    assert "current_setting('statement_timeout')" in statement  # tighten-only, never loosen
+
+
+@pytest.mark.asyncio
+async def test_a_per_call_timeout_above_the_route_timeout_clamps_down() -> None:
+    from datetime import timedelta
+
+    mock = _MockClient()
+    adapter = _adapter(mock, timeout=timedelta(seconds=5))
+
+    await adapter.run("counts", _Params(), options={"timeout": timedelta(minutes=10)})
+    await adapter.run("counts", _Params(), options={"timeout": timedelta(seconds=2)})
+
+    assert ["LEAST(5000," in s for s in _timeouts_set(mock)] == [True, False]
+    assert "LEAST(2000," in _timeouts_set(mock)[1]
+
+
+@pytest.mark.asyncio
+async def test_the_count_of_run_page_is_bounded_too() -> None:
+    from datetime import timedelta
+
+    mock = _MockClient()
+    adapter = _adapter(mock, timeout=timedelta(seconds=7))
+
+    await adapter.run_page("counts", _Params(), pagination={"limit": 1})
+
+    assert len(_timeouts_set(mock)) == 2
+    assert all("LEAST(7000," in s for s in _timeouts_set(mock))
 
 
 @pytest.mark.asyncio
@@ -401,7 +439,12 @@ async def test_query_schema_restores_search_path_inside_a_caller_transaction() -
 
     restore_query, restore_params = mock.executes[-1]
     assert "set_config" in _rendered(restore_query)
-    assert restore_params == ["search_path", "prior_search_path"]
+    assert restore_params == [
+        "statement_timeout",
+        "prior_statement_timeout",
+        "search_path",
+        "prior_search_path",
+    ]
 
 
 @pytest.mark.asyncio
@@ -417,7 +460,8 @@ async def test_timeout_at_the_root_skips_capture_and_restore() -> None:
     await adapter.run("counts", _Params(), options={"timeout": timedelta(seconds=5)})
 
     assert mock.fetch_one_calls == []
-    assert all("set_config" not in _rendered(q) for q, _ in mock.executes)
+    # One statement: the timeout itself. A restore would bind the captured priors.
+    assert [params for _, params in mock.executes] == [None]
 
 
 async def test_every_path_refuses_an_unknown_option() -> None:

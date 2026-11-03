@@ -1,6 +1,7 @@
 """Query execution helpers for Postgres analytics."""
 
 from collections.abc import Awaitable, Callable, Sequence
+from datetime import timedelta
 from typing import Any, TypeVar, cast
 from uuid import UUID
 
@@ -19,7 +20,7 @@ from forze.application.integrations.analytics.adapter_common import (
     dry_run_offset_page,
     execute_analytics_offset_page,
     parse_count_row,
-    timeout_seconds,
+    route_timeout,
     validated_params,
 )
 from forze.base.exceptions import exc
@@ -31,6 +32,7 @@ from forze_postgres.execution.deps.configs import (
 from forze_postgres.kernel.client import (
     PostgresClientPort,
     restore_local_settings_on_exit,
+    tighten_local_statement_timeout,
 )
 from forze_postgres.kernel.gateways import PostgresQualifiedName
 from forze_postgres.kernel.relation import is_static_relation, resolve_postgres_qname
@@ -140,8 +142,8 @@ class PostgresAnalyticsQueryMixin[R: BaseModel, Ing: BaseModel]:
 
     # ....................... #
 
-    def _timeout_sec(self, options: AnalyticsRunOptions | None) -> int | None:
-        return timeout_seconds(options)
+    def _timeout(self, query_key: StrKey, options: AnalyticsRunOptions | None) -> timedelta:
+        return route_timeout(options, self._query_config(query_key).timeout)
 
     # ....................... #
 
@@ -179,18 +181,17 @@ class PostgresAnalyticsQueryMixin[R: BaseModel, Ing: BaseModel]:
 
     async def _run_with_timeout(
         self,
-        options: AnalyticsRunOptions | None,
+        timeout: timedelta | None,
         fn: Callable[[], Awaitable[Any]],
     ) -> Any:
-        timeout_sec = self._timeout_sec(options)
         schema = await self._query_schema()
 
-        if timeout_sec is None and schema is None:
+        if timeout is None and schema is None:
             return await fn()
 
         overridden: list[str] = []
 
-        if timeout_sec is not None:
+        if timeout is not None:
             overridden.append("statement_timeout")
 
         if schema is not None:
@@ -215,12 +216,8 @@ class PostgresAnalyticsQueryMixin[R: BaseModel, Ing: BaseModel]:
                 enabled=in_caller_transaction,
             ),
         ):
-            if timeout_sec is not None:
-                await self.client.execute(
-                    sql.SQL("SET LOCAL statement_timeout = {}").format(
-                        sql.Literal(timeout_sec * 1000),
-                    ),
-                )
+            if timeout is not None:
+                await tighten_local_statement_timeout(self.client, timeout)
 
             if schema is not None:
                 # Tenant schema first (so its tables shadow ``public``), then ``public``
@@ -278,7 +275,7 @@ class PostgresAnalyticsQueryMixin[R: BaseModel, Ing: BaseModel]:
         async def _run() -> list[JsonDict]:
             return await self.client.fetch_all(cast(QueryNoTemplate, query_sql), bound)
 
-        return await self._run_with_timeout(options, _run)
+        return await self._run_with_timeout(self._timeout(query_key, options), _run)
 
     # ....................... #
 
@@ -296,7 +293,7 @@ class PostgresAnalyticsQueryMixin[R: BaseModel, Ing: BaseModel]:
             rows = await self.client.fetch_all(cast(QueryNoTemplate, count_sql), bound)
             return parse_count_row(rows)
 
-        return await self._run_with_timeout(options, _run)
+        return await self._run_with_timeout(self._timeout(query_key, options), _run)
 
     # ....................... #
 

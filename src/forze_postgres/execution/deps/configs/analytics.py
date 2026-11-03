@@ -1,5 +1,6 @@
 """Postgres analytics execution configs."""
 
+from datetime import timedelta
 from typing import TYPE_CHECKING, Any
 
 import attrs
@@ -10,7 +11,11 @@ from forze.application.contracts.resolution import (
     coerce_optional_named_resource_spec,
 )
 from forze.application.contracts.tenancy import TenantAwareIntegrationConfig
-from forze.application.integrations.analytics import assert_tenant_param_referenced
+from forze.application.integrations.analytics import (
+    DEFAULT_ROUTE_TIMEOUT,
+    assert_tenant_param_referenced,
+    validate_route_timeout,
+)
 from forze.base.exceptions import exc
 from forze.base.primitives import MappingConverter, StrKeyMapping
 from forze_postgres.kernel.relation import RelationSpec
@@ -34,11 +39,22 @@ class PostgresQueryConfig:
     cursor_column: str | None = None
     """Keyset cursor column (SQL must include ``%(forze_after)s``)."""
 
+    timeout: timedelta = DEFAULT_ROUTE_TIMEOUT
+    """Ceiling on how long one execution of this query may run. Always on; a per-call
+    ``options["timeout"]`` may lower it, never raise it.
+
+    Applied as ``SET LOCAL statement_timeout``, tighten-only: a lower ``statement_timeout``
+    already in force (the pool's, or an invocation deadline's) still wins. Each statement
+    is bounded on its own, so the count of ``run_page`` and each batch of ``run_chunked``
+    get the whole timeout."""
+
     # ....................... #
 
     def __attrs_post_init__(self) -> None:
         if not self.sql.strip():
             raise exc.internal("Analytics query sql must be non-empty.")
+
+        validate_route_timeout(self.timeout)
 
 
 # ....................... #

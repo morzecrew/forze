@@ -4341,3 +4341,235 @@ other proposed rows in this unit, D-159's among them, await the author.
 |---|---|---|---|---|---|
 | 0009 | 12 | Accepted | `ASSUMED` | Introspection client credentials are inline `SecretStr` or `str`, like the other identity presets. `SecretRef` support is a follow-up that needs a context-bound secrets seam on the verifier factory, and only widens the field's type | D-150 |
 | 0009 | 13 | Accepted | `ASSUMED` | A rejected external credential is `authentication` with one code per verifier family (`invalid_oidc_token`, `invalid_session_token`). Anything that says nothing about the credential is `infrastructure`. Both fail closed | D-153 |
+
+
+---
+
+# Unit 17 · RFC 0028 W4 — route resource policy, split out ahead of W1
+
+Branch `feat/route-timeout-defaults`. RFC 0028 §6 and §6.1, for the engines that have
+registered routes today: Postgres analytics and procedures, and ClickHouse, BigQuery and
+DuckDB analytics. From §7 and §8: battery item 5 (the timeout fires on a real server, maps
+to the shared taxonomy, the connection is reused) on Postgres analytics and procedures,
+ClickHouse and DuckDB; item 7's non-positive-timeout refusal on every config; and P1's own
+case, a read with no option bounded by its route and a per-call timeout above it clamped
+down. Not built: W1–W3, `ProcedureCapabilities`, and battery items 1–4, 6, 8 and 9, which
+belong to the adapters W1–W3 add. RFC 0015's vocabulary is reused as §6 says: a mandatory
+positive timeout, on by default, with no `unlimited` spelling.
+
+**Drift count: 1.** Ten entries, D-190 to D-199: one `drift` (D-190), seven `spec-gap`, two
+`discovery`. Decisions 6 and 6a are built as written. Decision 8 (re-verify §2 at pickup)
+is honoured for the timeout row only, by D-191, D-198 and D-199.
+
+**Where each item lives.** The shared rule is `route_timeout` and `validate_route_timeout`
+in [`adapter_common.py`](../src/forze/application/integrations/analytics/adapter_common.py),
+with `DEFAULT_ROUTE_TIMEOUT`. Each engine's `*QueryConfig` carries `timeout`, and its
+adapter's `_run_timeout` (`_timeout` on Postgres) applies the rule. The Postgres bound is
+`tighten_local_statement_timeout` in
+[`session_settings.py`](../src/forze_postgres/kernel/client/session_settings.py), used by
+the analytics adapter and by
+[`procedure/adapter.py`](../src/forze_postgres/adapters/procedure/adapter.py), whose
+autocommit path carries the client-side cancel. Tests:
+`tests/unit/test_forze/application/integrations/analytics/test_adapter_common.py`, the
+per-engine adapter unit tests (the shared battery is
+`assert_every_read_is_bounded_by_the_route_timeout` in `tests/support/analytics_options.py`;
+DuckDB's runs on the real in-process engine),
+`tests/integration/test_forze_postgres/test_pg_route_timeouts.py` and
+`tests/integration/test_forze_clickhouse/test_clickhouse_analytics_integration.py`.
+
+## D-190 — W4 runs ahead of W1, as its own phase
+
+- **Touches:** RFC 0028 §8 P1 and §6. Decision 6a covers what W4 does, not when.
+- **RFC said:** P1 is "W1 ClickHouse + capabilities + W4 policy including §6.1 read-route
+  defaults", ClickHouse first because "Gold-on-ClickHouse is the likeliest first consumer".
+- **Found:** no consumer project uses ClickHouse or BigQuery. The one analytics consumer,
+  erp-backend, registers seven Postgres analytics reads with no bound, and its deployment
+  sets no server `statement_timeout`. That is §6.1's hazard in a running service, on an
+  engine P1 does not name.
+- **Because:** the consumer P1 was ordered for did not appear, and the gap §6.1 describes is
+  open on Postgres today. W4 needs nothing from W1 except the capability matrix, and no
+  engine in scope here fails to enforce a timeout (D-196).
+- **Class:** `drift`. §8 covered the order, and it was built otherwise.
+- **Consequence:** W4 ships for every engine with a registered read or procedure route.
+  `ProcedureCapabilities` is not built: it is W1's, and nothing in this unit would report
+  `enforces_statement_timeout=False`. §6's bullet giving BigQuery procedure routes
+  `maximum_bytes_billed` waits for W2, since no BigQuery procedure config exists. RFC 0028's
+  Status line records W1–W3 as parked with the trigger "a ClickHouse or BigQuery consumer";
+  RFC 0029 and RFC 0030 are marked parked on their own Status lines.
+- **Proposed row (RFC 0028):** `ASSUMED` — W4, including §6.1, ships ahead of W1 as its own
+  phase, for every engine with a registered read or procedure route. W1–W3 wait for a
+  ClickHouse or BigQuery consumer.
+
+## D-191 — ClickHouse and BigQuery reads already had a 60 s bound; a call could lift it
+
+- **Touches:** RFC 0028 §6.1 and decision 6a.
+- **RFC said:** `AnalyticsRunOptions["timeout"]` "is per-call and defaults to `None`", "so
+  the shipped default for a registered analytics read is *unbounded*".
+- **Found:** true of Postgres and DuckDB, not of the two warehouses. The ClickHouse client
+  sends `ClickHouseConfig.timeout` (60 s by default) as `max_execution_time` on every query
+  that names no timeout (`__timeout_sec` in
+  [`client.py`](../src/forze_clickhouse/kernel/client/client.py)). The BigQuery client bounds
+  its HTTP calls and its job polling by `BigQueryConfig.timeout`, also 60 s. On every engine,
+  though, a per-call timeout replaced the default instead of being capped by it, so a caller
+  could raise it without limit. Postgres sent nothing when the option was absent, and the
+  DuckDB client set no deadline for `timeout=None`.
+- **Because:** the RFC read the adapters and the configs, not the clients beneath them.
+- **Class:** `spec-gap`. Reading the client shows it.
+- **Consequence:** on ClickHouse and BigQuery the change is the clamp, plus one shift: a
+  query's timeout now comes from its config, so a client `timeout` other than 60 s no longer
+  governs queries. Ingest still uses the client's.
+- **Proposed row (RFC 0028):** `ASSUMED` — on ClickHouse and BigQuery a query's own timeout
+  replaces the client's for that query; ingest keeps the client's.
+
+## D-192 — The timeout lives on each query config, under the name `timeout`
+
+- **Touches:** RFC 0028 §6.1 and decision 6a.
+- **RFC said:** "a route-level default timeout on each engine's query config".
+- **Found:** an analytics route is an `AnalyticsSpec` with several named queries, and the
+  "query config" is the per-query type (`PostgresQueryConfig`, `ClickHouseQueryConfig`, …).
+  "Route-level" and "query config" name different objects. §6.1 says the fix "mirrors what
+  BigQuery's read config already does for cost", and `maximum_bytes_billed` sits on
+  `BigQueryQueryConfig`, per query.
+- **Because:** a dashboard route often has one heavy query among light ones. A per-query
+  bound lets the heavy one say ten minutes without loosening its siblings, and that is the
+  registered statement a reviewer reads.
+- **Class:** `spec-gap`. The RFC wrote at an altitude where the two readings coincide.
+- **Consequence:** each `*QueryConfig` gains `timeout: timedelta`, named after the option
+  key it caps. There is no route-wide default above it: a second knob would add a precedence
+  rule and no bound. `PostgresProcedureConfig` keeps its existing name, `statement_timeout`.
+- **Proposed row (RFC 0028):** `ASSUMED` — a registered analytics query's timeout is a
+  `timeout` field on that query's config; a per-call option is clamped to it.
+
+## D-193 — The default is 60 seconds for every registered read and procedure
+
+- **Touches:** RFC 0028 §6.1 ("the value is chosen generously") and §3's sketch
+  (`max_execution_time: timedelta = timedelta(seconds=60)` for ClickHouse procedures).
+- **Found:** 60 s is what the ClickHouse and BigQuery clients already applied (D-191), so no
+  warehouse deployment on default settings is newly bounded. It is twelve times the 5 s the
+  dynamic-read plane ships for runtime-authored statements, and the value §3 sketched for
+  procedures. erp-backend's seven reads are bulk replay inputs run by workers; their
+  durations could not be measured from here. No consumer registers a procedure route.
+- **Because:** one number across planes is easier to review than four. A longer default
+  would bound little that 60 s does not: a statement that needs more should say so in its
+  config.
+- **Class:** `spec-gap`. The RFC left the value open.
+- **Consequence:** Postgres and DuckDB reads, and Postgres procedures, that ran longer than
+  60 s now fail as `infrastructure` until their config sets a longer timeout. The changelog
+  marks it a behaviour change, and the procedure entry `(**Breaking**)`, since `None` is now
+  refused (D-197).
+- **Proposed row (RFC 0028):** `ASSUMED` — a registered read query or procedure route that
+  sets no timeout is bounded at 60 s.
+
+## D-194 — On Postgres a route's timeout only lowers the bound in force
+
+- **Touches:** RFC 0028 §6.1 ("the per-call option clamps *down*, never up"). The RFC says
+  nothing about bounds set outside the route.
+- **Found:** two `statement_timeout` bounds can already be in force when an analytics query
+  or a procedure runs. `PostgresConfig.statement_timeout` is set on every pool connection.
+  The invocation-deadline backstop (`push_invocation_deadline`, on by default) is set on the
+  root transaction, tighten-only against the pool's (`_statement_timeout_ms` in
+  [`txmanager.py`](../src/forze_postgres/adapters/txmanager.py)). A plain
+  `SET LOCAL statement_timeout = <route>`, which is what the per-call path issued, raises
+  whichever of them is lower. With a default on every read it would do so on every read.
+- **Because:** the RFC's rule (a caller cannot lift a ceiling) applies equally to the
+  operator's ceiling and the deadline's, and the route is the caller there.
+- **Class:** `spec-gap`. The client's own doctrine was readable before any code.
+- **Consequence:** the bound is one statement,
+  `set_config('statement_timeout', LEAST(<route>, current or none), true)`, where a current
+  `0` counts as no bound. Two integration cases pin it: a caller's `SET LOCAL
+  statement_timeout = 300` and a pool cap of 300 ms each stop a read whose route allows 60 s.
+  A per-call timeout no longer raises a tighter caller bound either; before this unit it
+  did.
+- **Proposed row (RFC 0028):** `ASSUMED` — on Postgres a route's timeout only lowers the
+  `statement_timeout` already in force, whether the pool or an invocation deadline set it.
+
+## D-195 — Every Postgres analytics read now runs in a transaction
+
+- **Touches:** RFC 0028 §6.1 ("the fix is small and additive").
+- **Found:** `SET LOCAL` needs a transaction. A read used to run bare unless it had a
+  per-call timeout or a `query_schema`. Now every read opens one: `BEGIN`, the bound, the
+  query and `COMMIT`. Inside a caller transaction it is a savepoint, and the caller's value
+  is captured first and restored after (the seam `restore_local_settings_on_exit` already
+  provides).
+- **Because:** Postgres has no per-statement timeout. A session-level `SET` on a pinned
+  connection is the only other form, and it outlives a cancelled statement on a pooled
+  connection.
+- **Class:** `spec-gap`.
+- **Consequence:** three extra round trips per read at the root, and two more inside a
+  caller transaction. Not measured; the statements they wrap are analytics queries.
+- **Proposed row (RFC 0028):** `ASSUMED` — a bounded Postgres read pays for its own
+  transaction. Optimizing it waits for a measurement.
+
+## D-196 — An autocommit procedure is bounded by a client-side cancel
+
+- **Touches:** RFC 0028 §6, first bullet: "a mandatory positive timeout … on every engine
+  that can enforce one; engines that cannot … say so in the capability".
+- **Found:** `PostgresProcedureConfig(in_transaction=False)` exists for statements that
+  cannot run in a transaction (`REFRESH MATERIALIZED VIEW CONCURRENTLY`), and the config
+  refused a `statement_timeout` there (`procedures_autocommit_timeout`): there is no
+  transaction for `SET LOCAL`. psycopg 3.3 sends the server a cancel request when an async
+  statement's task is cancelled, then drains the connection (`AsyncConnection.wait`).
+- **Because:** a mandatory timeout leaves no room for a route without one, and the server
+  can still stop the statement.
+- **Class:** `spec-gap`.
+- **Consequence:** the autocommit path runs under `asyncio.timeout`. On expiry the statement
+  is cancelled on the server and the run fails with the error a server-side timeout maps to
+  (`infrastructure`, "Database query canceled (timeout)"); a `TimeoutError` the statement
+  raised itself passes through. The clock also counts the wait for a pool connection. The
+  integration test checks that no `pg_sleep` is left running and the pool hands out a
+  working connection. `procedures_autocommit_timeout` is gone. Postgres enforces the
+  timeout on both paths, so there was nothing for a capability to report.
+- **Proposed row (RFC 0028):** `ASSUMED` — an autocommit Postgres procedure is bounded by a
+  client-side cancel, which psycopg turns into a server cancel request.
+
+## D-197 — Refusals, codes and precision
+
+- **Touches:** RFC 0028 §7 item 7 ("non-positive timeout fails") and RFC 0015 §3.2.
+- **Found:** a configured timeout was not checked anywhere, and a procedure's could be
+  `None`. A per-call timeout was rounded to whole seconds with a floor of 1 on Postgres,
+  ClickHouse and BigQuery, so `timedelta(0)` meant one second and 1.5 s meant one.
+- **Class:** `spec-gap`.
+- **Consequence:** a configured timeout that is not a positive `timedelta` fails at
+  construction: `analytics_timeout_invalid` on the four query configs,
+  `procedures_timeout_invalid` on the procedure config, both `configuration`. A per-call
+  one is refused as `validation` `analytics_option_invalid`, the analytics twin of
+  `dynamic_read_option_invalid`. Postgres analytics now bounds in milliseconds, as procedures
+  already did, floored at 1 so the bound never becomes `0`. The ClickHouse and BigQuery clients still round to seconds.
+  `timeout_seconds` in `forze.application.integrations.analytics` is replaced by
+  `route_timeout`; nothing outside the Postgres adapter used it.
+- **Proposed row (RFC 0028):** `ASSUMED` — a non-positive configured timeout fails at wiring
+  with the plane's `*_timeout_invalid` code, and a non-positive per-call one is a
+  `validation` refusal.
+
+## D-198 — BigQuery's timeout bounds the client's wait, not the job
+
+- **Touches:** RFC 0028 §2 (BigQuery: "⚠️ job-level timeout, not statement-level") and §6.1.
+- **Found:** the route's timeout reaches the client's existing per-call path, which bounds
+  the `jobs.query` HTTP call and the polling after it. When polling runs out the client
+  raises `internal` ("BigQuery job polling timed out.") and does not cancel the job, which
+  keeps running and billing. The request builder takes a `timeout_ms` (how long `jobs.query`
+  waits) that the client never passes.
+- **Because:** stopping the job server-side means `jobs.cancel` on expiry or a job timeout
+  in the request, neither verifiable here: no BigQuery consumer, and no test server that
+  models job time.
+- **Class:** `discovery`.
+- **Consequence:** the BigQuery config docstring and integration page say the bound is the
+  client's wait and point at `maximum_bytes_billed` for cost. BigQuery has no real-server
+  timeout test in this unit; the unit battery proves the value reaches the client.
+- **Proposed row (RFC 0028):** `OPEN` — W2 decides whether a BigQuery route timeout cancels
+  the job and maps to `infrastructure`; until then it bounds only the client's wait.
+
+## D-199 — A timeout is `infrastructure` on every engine but BigQuery, under different codes
+
+- **Touches:** RFC 0028 §7 item 5 ("maps to the shared taxonomy").
+- **Found:** on a real server, Postgres maps SQLSTATE `57014` to `infrastructure` with no
+  code, and ClickHouse's `TIMEOUT_EXCEEDED` (code 159) arrives as `infrastructure`
+  `core.infrastructure`, "An error occurred during ClickHouse operation
+  clickhouse.run_query". DuckDB raises `infrastructure` `duckdb_query_timeout`. BigQuery's
+  polling timeout is `internal` (D-198). The kind agrees on three engines; nothing lets a
+  caller tell a timeout from another infrastructure failure on two of them.
+- **Class:** `discovery`.
+- **Consequence:** no mapping changed. The tests pin the kind, and on ClickHouse the server
+  error in the cause chain.
+- **Proposed row (RFC 0028):** `OPEN` — whether a route timeout gets one code on every
+  engine, decided with W1's battery item 5.

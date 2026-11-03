@@ -7,6 +7,7 @@ dispatches the result on the spec's declared cardinality.
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Awaitable, Callable
 from typing import Any, cast, final
 from uuid import UUID
@@ -31,6 +32,7 @@ from forze_postgres.execution.deps.configs import PostgresProcedureConfig
 from forze_postgres.kernel.client import (
     PostgresClientPort,
     restore_local_settings_on_exit,
+    tighten_local_statement_timeout,
 )
 
 # ----------------------- #
@@ -122,19 +124,31 @@ class PostgresProcedureAdapter[In: BaseModel, Out](ProcedurePort[In, Out]):
     # ....................... #
 
     async def _execute(self, fn: Callable[[], Awaitable[Any]]) -> Any:
-        if not self.config.in_transaction:
-            # Autocommit path: REFRESH ... CONCURRENTLY and some maintenance cannot run in a
-            # transaction. The config forbids query_schema / statement_timeout here, so there is
-            # no SET LOCAL to scope.
-            return await fn()
-
-        schema = await self._query_schema()
         timeout = self.config.statement_timeout
 
-        overridden: list[str] = []
+        if not self.config.in_transaction:
+            # Autocommit path: REFRESH ... CONCURRENTLY and some maintenance cannot run in a
+            # transaction, so there is no SET LOCAL to scope (the config forbids query_schema).
+            # The bound is a client-side cancel instead: psycopg sends the server a cancel
+            # request when the statement's task is cancelled.
+            deadline = asyncio.timeout(timeout.total_seconds())
 
-        if timeout is not None:
-            overridden.append("statement_timeout")
+            try:
+                async with deadline:
+                    return await fn()
+
+            except TimeoutError:
+                if not deadline.expired():
+                    raise
+
+                # The same error a server-side statement_timeout maps to on the other path.
+                raise exc.infrastructure(
+                    "Database query canceled (timeout).",
+                    details={"route": str(self.spec.name)},
+                ) from None
+
+        schema = await self._query_schema()
+        overridden = ["statement_timeout"]
 
         if schema is not None:
             overridden.append("search_path")
@@ -156,12 +170,7 @@ class PostgresProcedureAdapter[In: BaseModel, Out](ProcedurePort[In, Out]):
                 enabled=in_caller_transaction,
             ),
         ):
-            if timeout is not None:
-                await self.client.execute(
-                    sql.SQL("SET LOCAL statement_timeout = {}").format(
-                        sql.Literal(int(timeout.total_seconds() * 1000)),
-                    ),
-                )
+            await tighten_local_statement_timeout(self.client, timeout)
 
             if schema is not None:
                 # Tenant schema first (its tables shadow ``public``), then ``public`` so

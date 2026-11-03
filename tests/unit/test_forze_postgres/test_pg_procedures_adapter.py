@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import base64
 from contextlib import asynccontextmanager
 from datetime import timedelta
@@ -237,6 +238,44 @@ async def test_autocommit_path_opens_no_transaction() -> None:
     assert mock.tx_opened == 0
 
 
+@pytest.mark.asyncio
+async def test_autocommit_path_cancels_a_statement_past_its_timeout() -> None:
+    class _Slow(_MockClient):
+        async def execute(self, query: Any, params: Any = None, **kwargs: Any) -> Any:
+            await asyncio.sleep(10)
+
+    adapter = _adapter(
+        _Slow(),
+        spec=ProcedureSpec(name="refresh", params=_Params),
+        config=PostgresProcedureConfig(
+            sql="REFRESH MATERIALIZED VIEW CONCURRENTLY mv",
+            in_transaction=False,
+            statement_timeout=timedelta(milliseconds=50),
+        ),
+    )
+
+    with pytest.raises(CoreException, match="canceled") as caught:
+        await adapter.run(_Params())
+
+    assert caught.value.kind == "infrastructure"
+
+
+@pytest.mark.asyncio
+async def test_autocommit_path_keeps_a_timeout_the_statement_raised_itself() -> None:
+    class _Raises(_MockClient):
+        async def execute(self, query: Any, params: Any = None, **kwargs: Any) -> Any:
+            raise TimeoutError("the pool, not the route")
+
+    adapter = _adapter(
+        _Raises(),
+        spec=ProcedureSpec(name="refresh", params=_Params),
+        config=PostgresProcedureConfig(sql="REFRESH MATERIALIZED VIEW mv", in_transaction=False),
+    )
+
+    with pytest.raises(TimeoutError, match="the pool"):
+        await adapter.run(_Params())
+
+
 # ----------------------- #
 # tenancy
 
@@ -366,22 +405,27 @@ def test_tenant_id_for_resolve_unbound_tenant() -> None:
 
 
 @pytest.mark.asyncio
-async def test_statement_timeout_sets_local() -> None:
+@pytest.mark.parametrize(
+    ("configured", "expected"),
+    [({}, "LEAST(60000,"), ({"statement_timeout": timedelta(seconds=5)}, "LEAST(5000,")],
+)
+async def test_statement_timeout_tightens_the_transaction_bound(
+    configured: dict[str, Any], expected: str
+) -> None:
     mock = _MockClient(rowcount=1)
     adapter = _adapter(
         mock,
         spec=ProcedureSpec(name="recompute", params=_Params),
-        config=PostgresProcedureConfig(
-            sql="SELECT recompute(%(window)s)",
-            statement_timeout=timedelta(seconds=5),
-        ),
+        config=PostgresProcedureConfig(sql="SELECT recompute(%(window)s)", **configured),
     )
     await adapter.run(_Params())
     rendered = [
         q.as_string(None) if hasattr(q, "as_string") else str(q)
         for q, _ in mock.executes
     ]
-    assert any("statement_timeout" in s for s in rendered)
+    [statement] = [s for s in rendered if "set_config('statement_timeout'" in s]
+    assert expected in statement
+    assert "current_setting('statement_timeout')" in statement  # never loosens
 
 
 class TestSetLocalDoesNotLeakIntoTheCallerTransaction:
@@ -457,7 +501,10 @@ class TestSetLocalDoesNotLeakIntoTheCallerTransaction:
         await adapter.run(_Params())
 
         assert mock.captured == []
-        assert not any("set_config" in s for s in self._rendered(mock))
+        # The timeout is the only statement besides the call; a restore would bind priors.
+        assert [params for _, params in mock.executes if params is not None] == [
+            {"window": "2026-01-01"}
+        ]
 
     @pytest.mark.asyncio
     async def test_restores_even_when_the_procedure_raises(self) -> None:
@@ -588,13 +635,22 @@ def test_config_static_schema_still_requires_tenant_param() -> None:
         config.validate_against_spec(spec)
 
 
-def test_config_autocommit_with_timeout_rejected() -> None:
-    with pytest.raises(CoreException, match="procedures_autocommit_timeout"):
-        PostgresProcedureConfig(
-            sql="REFRESH MATERIALIZED VIEW CONCURRENTLY mv",
-            in_transaction=False,
-            statement_timeout=timedelta(seconds=5),
-        )
+def test_config_autocommit_accepts_a_timeout() -> None:
+    config = PostgresProcedureConfig(
+        sql="REFRESH MATERIALIZED VIEW CONCURRENTLY mv",
+        in_transaction=False,
+        statement_timeout=timedelta(minutes=10),
+    )
+
+    assert config.statement_timeout == timedelta(minutes=10)
+
+
+@pytest.mark.parametrize("bad", [timedelta(0), timedelta(seconds=-1), None, 60])
+def test_config_refuses_a_timeout_that_is_not_positive(bad: object) -> None:
+    with pytest.raises(CoreException) as caught:
+        PostgresProcedureConfig(sql="SELECT 1", statement_timeout=bad)  # type: ignore[arg-type]
+
+    assert caught.value.code == "procedures_timeout_invalid"
 
 
 def test_config_autocommit_with_schema_rejected() -> None:

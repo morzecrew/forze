@@ -7,7 +7,11 @@ import attrs
 
 from forze.application.contracts.dynamic_read import DynamicReadProvenance
 from forze.application.contracts.tenancy import TenantAwareIntegrationConfig
-from forze.application.integrations.analytics import assert_tenant_param_referenced
+from forze.application.integrations.analytics import (
+    DEFAULT_ROUTE_TIMEOUT,
+    assert_tenant_param_referenced,
+    validate_route_timeout,
+)
 from forze.base.exceptions import exc
 from forze.base.primitives import MappingConverter, StrKeyMapping
 
@@ -35,11 +39,19 @@ class DuckDbQueryConfig:
     skip_total: bool = False
     """When True, ``run_page`` skips the COUNT wrapper."""
 
+    timeout: timedelta = DEFAULT_ROUTE_TIMEOUT
+    """Ceiling on how long one execution of this query may run. Always on; a per-call
+    ``options["timeout"]`` may lower it, never raise it.
+
+    Enforced by interrupting the query's cursor, as for the dynamic-read route."""
+
     # ....................... #
 
     def __attrs_post_init__(self) -> None:
         if not self.sql.strip():
             raise exc.configuration("Analytics query sql must be non-empty.")
+
+        validate_route_timeout(self.timeout)
 
 
 # ....................... #

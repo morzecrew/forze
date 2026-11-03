@@ -157,11 +157,11 @@ PostgresLifecycleModule(
 | Document query / command | `DocumentSpec.name` (`rw_documents`, `ro_documents`) | read-write or read-only relations |
 | Search | `SearchSpec.name` (`searches`, `hub_searches`, `federated_searches`) | `engine="pgroonga"`, `FtsEngine(...)`, or `VectorEngine(...)` |
 | Transactions | route in the module `tx` set | coordinates Postgres-backed ports on one connection |
-| Analytics | `AnalyticsSpec.name` (`analytics`) | named, parameterized warehouse SQL — optional |
+| Analytics | `AnalyticsSpec.name` (`analytics`) | named, parameterized warehouse SQL — optional; each query is bounded by its `timeout` (60 s unless set) as a tighten-only `SET LOCAL statement_timeout` ([analytics](../reference/contracts/analytics.md)) |
 | Outbox / inbox | `OutboxSpec.name` (`outboxes`), `InboxSpec.name` (`inboxes`) | transactional outbox + consumer-side dedup inbox |
 | Idempotency | `IdempotencySpec.name` (`idempotencies`) | co-located store — the record commits inside the business transaction; add the optional `owner uuid` column to fence a reclaimed claim ([idempotency](../writing-operation/idempotency.md)) |
 | Counter | `CounterSpec.name` (`counters`) | atomic upsert-increment over an app-provided table (admin enumeration included) |
-| Procedures | `ProcedureSpec.name` (`procedures`) | named, governed SQL command / compute |
+| Procedures | `ProcedureSpec.name` (`procedures`) | named, governed SQL command / compute; each run is bounded by `statement_timeout` (60 s unless set) ([procedures](../data-events/procedures.md)) |
 | Durable execution | `durable_step` / `durable_run` / `durable_schedule` | step memo, run store, and cron schedules — optional |
 
 ## Notes

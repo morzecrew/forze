@@ -21,6 +21,7 @@ from pydantic import BaseModel
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
+    from datetime import timedelta
     from typing import Any
 
     from forze.application.contracts.analytics import AnalyticsRunOptions, AnalyticsSpec
@@ -64,6 +65,6 @@ class PostgresAnalyticsMixinBase[R: BaseModel, Ing: BaseModel]:
 
         async def _run_with_timeout(
             self,
-            options: AnalyticsRunOptions | None,
+            timeout: timedelta | None,
             fn: Callable[[], Awaitable[Any]],
         ) -> Any: ...
