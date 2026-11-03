@@ -160,6 +160,7 @@ nav = [
             "recipes/crud-fastapi-postgres.md",
             "recipes/governed-aggregate-kit.md",
             "recipes/read-only-document-api.md",
+            "recipes/reconcile-child-collection.md",
             "recipes/cache-reads-with-redis.md",
             "recipes/analytics-over-a-data-lake.md",
             "recipes/expose-an-aggregate-over-mcp.md",

@@ -4341,3 +4341,237 @@ other proposed rows in this unit, D-159's among them, await the author.
 |---|---|---|---|---|---|
 | 0009 | 12 | Accepted | `ASSUMED` | Introspection client credentials are inline `SecretStr` or `str`, like the other identity presets. `SecretRef` support is a follow-up that needs a context-bound secrets seam on the verifier factory, and only widens the field's type | D-150 |
 | 0009 | 13 | Accepted | `ASSUMED` | A rejected external credential is `authentication` with one code per verifier family (`invalid_oidc_token`, `invalid_session_token`). Anything that says nothing about the credential is `infrastructure`. Both fail closed | D-153 |
+
+---
+
+# Unit 16 · RFC 0050 P0+P1 — child collection reconciliation
+
+Branch `feat/child-collection-reconcile`. RFC 0050 §12 P0 then P1. P0 read the origin
+application's three helpers in `app/src/erp/application/services/items.py` (`reconcile`,
+`reconcile_held`, `reconcile_slot`) and their six callers (supply, outsource, manufacturing
+task, replacement group, shipment task, reserving task), plus the two diffs it still writes by
+hand (`allocation.py` `write`, `process.py` `_rewrite`). The RFC's other three origin cases
+(acceptance, customer order, specification eBOM) no longer reconcile a collection: acceptance
+only updates, customer-order lines are created once, and the eBOM diff is `process.py`'s. P1
+built §5 parent-agnostic, with the §6 tests and the §7 recipe. The decision table is the design
+this unit is measured against. Rows 7, 8 and 9 were `OPEN` and are settled here (D-180, D-182,
+D-183). Every `LOCKED` row held as written, and row 6 held too (D-189).
+
+**Drift count: 0.** Ten entries, D-180 to D-189: two `discovery`, eight `spec-gap`. Rows 7 to
+9 were open by design and settled by the reading P0 scheduled, so their entries are
+`spec-gap`: knowable before code, and left unanswered on purpose.
+
+**Where each item lives.** The component is `ChildCollectionSync` and its result
+`ChildCollectionChanges`, in
+[`child_collection.py`](../src/forze_kits/aggregates/child_collection.py), exported from
+`forze_kits.aggregates`. Tests: `tests/unit/test_forze_kits/test_child_collection.py` (mock),
+`tests/integration/test_forze_postgres/test_pg_child_collection.py` (real unique constraints),
+and `tests/unit/test_examples/test_child_collection.py` over the recipe's example
+`examples/recipes/child_collection/app.py`. The recipe is
+`pages/docs/recipes/reconcile-child-collection.md`. No published skill reference was added:
+§7 gates it on the shape being settled, and rows 7 to 9 are still proposals.
+
+## D-180 — A child is identified by a required, unique business key
+
+- **Touches:** RFC 0050 §10 (first question) and decision row 7. `OPEN` — "a required business
+  `key_field`, or a fallback for keyless collections".
+- **RFC said:** "Answerable by looking at the nine origin cases: if any reconciles a keyless
+  collection, §5.1's shape is wrong."
+- **Found:** all six helper callers and both hand-written diffs match by a business key: an
+  article id, a detail or revision id, or a pick's line, article and unit. None reconciles a
+  keyless collection. The application's one keyless list, a process's stages, is matched by
+  position when the build is unchanged and otherwise deleted and recreated whole
+  (`process.py`). It never reaches the helpers. The helpers build both sides as dicts, so two
+  lines or two rows with one key silently keep the last.
+- **Because:** a key is what lets "changed" differ from "removed and another added"; the one
+  collection without one is not reconciled at all.
+- **Class:** `spec-gap` — settled by the reading P0 scheduled.
+- **Consequence:** `key_fields` is required and an empty tuple is refused at construction. Two
+  incoming commands with one key are refused (`validation`, `child_key_duplicate`), and two
+  stored children with one key (`conflict`, `child_key_ambiguous`), before anything is written.
+  No positional fallback exists.
+- **Proposed row (RFC 0050, settles row 7):** `ASSUMED` — a child is identified by a required
+  business key. A keyless collection is out of scope, and an ambiguous key on either side is
+  refused rather than resolved.
+
+## D-181 — The key is a tuple of fields, not one field
+
+- **Touches:** RFC 0050 §5.1 (`key_field: str`) and row 7.
+- **RFC said:** `key_field` is "the field identifying a child within the collection".
+- **Found:** four of the six callers key on something no single stored field holds.
+  Manufacturing and outsource lines key on `article_id`, a property returning `revision_id or
+  subproduct_id`; replacement-group items on `detail_id or revision_id`; shipment picks on
+  `(ref_item_id, revision_id, unit_id)`; reserving picks on `(ref_item_id, article, unit_id)`.
+  The helpers take a callable per side for this. Each is a tuple of stored fields when a null
+  counts as part of the key: `("revision_id", "subproduct_id")` keys a line holding exactly one.
+- **Because:** field names can be checked at construction against the read model and the create
+  command, which a callable cannot; a tuple covers every case read.
+- **Class:** `spec-gap` — §5.1 was at the wrong altitude for the cases it was drawn from.
+- **Consequence:** `key_fields: tuple[str, ...]`. A computed key, like `article_id`, is spelled
+  as the fields it is computed from.
+- **Proposed row (RFC 0050):** `ASSUMED` — the key is a tuple of stored fields read off both
+  the stored child and the incoming command, with a null as part of the key. It replaces
+  §5.1's `key_field`, which stands as written.
+
+## D-182 — No ordering support: a position is a compared field like any other
+
+- **Touches:** RFC 0050 §10 (second question), decision row 8 (`OPEN` — "index in the incoming
+  list, a sparse ordering, or no ordering support in P1"), §5.1's `position_field` and §6's
+  reorder test.
+- **RFC said:** `position_field`, when set, receives each child's index in the incoming list.
+- **Found:** no helper writes an index. Supply, outsource and manufacturing lines carry a
+  client-sent `position`: required on the update DTO, optional on the create DTO, where the
+  caller's own create mapping falls back to the index (`i if item.position is None else
+  item.position`). The helpers compare it like quantity or price. Replacement items use
+  `priority`, compared too; shipment and reserving picks have no order. Every `(parent,
+  position)` constraint in the schema is `DEFERRABLE INITIALLY DEFERRED`, which is what lets an
+  in-place renumbering commit. The rules do disagree, as §10 suspected, but outside the helpers:
+  `process.py` deletes and recreates a BOM line whose position moved instead of updating it.
+- **Because:** `position_field` would serve none of the callers, each of which owns its position.
+- **Class:** `spec-gap` — settled by the reading P0 scheduled.
+- **Consequence:** no `position_field`. A caller puts the position in its create commands and in
+  `compare_fields`. A reorder updates every moved child, and the §6 reorder test asserts that
+  set: moving the last of four first writes four, swapping two writes two. The recipe says a
+  unique position must hold at commit (`UniqueTogether(holds="commit")`, a deferred constraint).
+- **Proposed row (RFC 0050, settles row 8):** `ASSUMED` — no ordering support in P1. A position
+  is the caller's field, compared like any other; a reorder is an update of each moved child.
+  §5.1's `position_field` stands as written and is not built.
+
+## D-183 — The delete path is inferred from the spec, and an unwired one is refused
+
+- **Touches:** RFC 0050 §5.2 (current-only children) and decision row 9 (`OPEN` — the
+  soft-delete registry when the spec carries `is_deleted`, or the caller declares it).
+- **RFC said:** "inferring it is probably right and probably wants a refusal when the spec's
+  soft-delete is not wired".
+- **Found:** every origin child is hard-deleted with `kill_many`. The application strips the
+  kill operation from child registries but keeps `hard_delete` on their specs, because the parent
+  rewrites the rows; no child spec carries `is_deleted`. The soft path therefore has no origin
+  caller. It is built because §5.2 commits to it and §6 tests it. The soft-delete registry is an
+  operation surface (`DeleteDocument` writes `is_deleted=True` through `update`); the component
+  runs inside an operation, so it writes the same flag through the port.
+- **Because:** the spec already says which delete applies, so a declaration would only be a
+  second place to get it wrong.
+- **Class:** `spec-gap` — settled by the reading P0 scheduled.
+- **Consequence:** a domain carrying `is_deleted` is soft-deleted with `update_many` at the
+  revision read, and deleted children are excluded from the current read. Construction refuses
+  such a spec when its read model does not store `is_deleted` or its update command cannot write
+  it (`configuration`, `child_soft_delete_unwired`). Any other spec is hard-deleted, and one
+  declaring `hard_delete=False` is refused at construction (`hard_delete_forbidden`), not at its
+  first dropped child. A re-added key creates a new row, so a uniqueness over the key must skip
+  deleted rows; the recipe says so.
+- **Proposed row (RFC 0050, settles row 9):** `ASSUMED` — the delete path is inferred: soft when
+  the child's domain carries `is_deleted`, hard otherwise. A soft-deletable spec that cannot
+  read or write the flag, and a hard-delete spec that forbids hard deletes, are refused at
+  construction.
+
+## D-184 — Incoming children are the child's create commands, and a patch carries only what changed
+
+- **Touches:** RFC 0050 §5.2 ("incoming only — a `KeyedCreate`"; "then, in one batch each:
+  `kill_many`, `create_many`, `update_many`"). Unlisted in §11.
+- **RFC said:** an incoming-only child is "a `KeyedCreate`", and creates go through
+  `create_many`. The two do not fit: `KeyedCreate` pairs a caller-chosen primary key with a
+  payload for `ensure_many`, while `create_many` takes plain create commands. §5 does not say
+  what type the incoming list is.
+- **Found:** the helpers take a `create` callback, because turning a line into a create command
+  needs the parent id, the position fallback, and for two callers a lookup (subproducts, article
+  kinds). They also take the update DTO type, which the spec already names, and write every
+  compare field into each patch.
+- **Because:** a create command already carries the parent, the key and every compared field,
+  so it is the one value the component needs per child; the mapping stays with the caller.
+- **Class:** `spec-gap` — §5.2 is inconsistent about it.
+- **Consequence:** `reconcile(ctx, parent_id, incoming: Sequence[C])`. New children are created
+  with `create_many` and get server ids. A command naming another parent is refused
+  (`validation`, `child_parent_mismatch`). The patch is the spec's update command holding only
+  the compare fields that differ. Mapping every line up front moves manufacturing's subproduct
+  lookup from the new lines to all of them: one wider query, not a second one.
+- **Proposed row (RFC 0050):** `ASSUMED` — the incoming list is the child's create commands, each
+  naming the parent; the component builds each patch from the compare fields that differ.
+
+## D-185 — It returns what it wrote
+
+- **Touches:** RFC 0050 §5.3. Unlisted: the RFC says what the component does not return (the
+  parent), not what it does.
+- **Found:** `reconcile_held`, which two of the six callers reach through `reconcile_slot`, moves
+  stock from the rows it killed, the rows it created and each update's quantity delta. It reads
+  the update's diff to skip a patch the store already held: "forze takes a stale `rev` whose
+  patch matches the row as it stands". Without a result, such a caller would have to diff again.
+- **Because:** the component is the only place that knows which rows each batch touched.
+- **Class:** `spec-gap`.
+- **Consequence:** `ChildCollectionChanges(removed, created, updated)`: removed rows as read,
+  created rows as returned, and `(as read, as written)` pairs only for rows whose write changed
+  something. Creates and updates therefore run with `return_new=True`, a re-read on stores that
+  do not return rows from the write. The mock keeps no history, so the stale-revision case is
+  covered there by a domain that normalizes a compared value; the history merge itself is the
+  shared gateway's.
+- **Proposed row (RFC 0050):** `ASSUMED` — `reconcile` returns the children removed, created and
+  changed, the last as before-and-after pairs that leave out writes the store found already
+  applied.
+
+## D-186 — It refuses to run outside a transaction
+
+- **Touches:** RFC 0050 §4 ("rides the ambient transaction, so a partial diff cannot commit")
+  and §6 (transaction test). Unlisted: the RFC does not say what happens outside one.
+- **Found:** outside a transaction each of the three batches commits on its own, so a refused
+  update batch leaves the deletes and creates before it in place. Opening a scope inside the
+  component would make its own batches atomic, but not atomic with the caller's parent write,
+  and would need a route parameter.
+- **Because:** atomicity with the parent is the caller's to give, so the component can only
+  insist on it.
+- **Class:** `spec-gap`.
+- **Consequence:** `reconcile` raises `precondition` (`child_sync_outside_transaction`) when
+  `ctx.tx_ctx.depth()` is 0. The recipe binds its operation with `bind_tx`.
+- **Proposed row (RFC 0050):** `ASSUMED` — `reconcile` runs only inside a transaction and refuses
+  otherwise; it never opens one of its own.
+
+## D-187 — Concurrency stays with the caller: no lock, and no error translation
+
+- **Touches:** RFC 0050 §5.2. Unlisted.
+- **Found:** two saves of one parent both read the children before either commits. The
+  application handles this twice over: its handlers check the parent's revision before
+  reconciling and touch the parent after, and `reconcile_held` turns a kill's `not_found` and a
+  create's `conflict` into `conflict` (`stale_revision`). forze already offers
+  `DocumentCommandPort.hold` over a `SerializedBy` key to serialize a read-then-write per owner.
+- **Because:** which guard fits (a parent revision, a hold, a retry) depends on the app's specs;
+  translating errors would hide a genuine uniqueness refusal behind "stale".
+- **Class:** `spec-gap`.
+- **Consequence:** the component takes no lock and translates nothing. The recipe touches the
+  parent at the client's revision first, which refuses a stale save and, on Postgres, makes a
+  second save wait on the row lock. It names `hold` as the alternative, and lists the error each
+  concurrent loss raises.
+- **Proposed row (RFC 0050):** `ASSUMED` — the component takes no lock and passes the ports'
+  errors through; serializing saves of one parent is the caller's, by the parent's revision or
+  a `hold`.
+
+## D-188 — The mock enforces the uniqueness the ordering test needs
+
+- **Touches:** RFC 0050 §6 ("against Postgres for the uniqueness-ordering case, which the mock
+  cannot express").
+- **Found:** `UniqueTogether` landed in the in-memory store on 2026-09-19 (#444), nine days after
+  this RFC. The mock now refuses a duplicate tuple at the write, or at commit for
+  `holds="commit"`, as a real index does.
+- **Because:** the capability postdates the RFC.
+- **Class:** `discovery`.
+- **Consequence:** the decision-5 test runs on both stores. On the mock it declares
+  `UniqueTogether(("order_id", "position"))`; on Postgres the table has a plain unique
+  constraint the spec does not declare. Both fail when the delete and create batches are
+  swapped, and both carry a control showing the store refuses the create while the old row
+  exists. The order test uses a unique field outside the key, since a key both removed and
+  re-added in one call is a match, not a delete and a create.
+- **Proposed row (RFC 0050):** none.
+
+## D-189 — Every origin caller touches the parent; row 6 holds until P2
+
+- **Touches:** RFC 0050 decision row 6 (`ASSUMED` — the component does not touch or re-read the
+  parent) and §12 P2.
+- **RFC said:** "execution may depart if every real caller ends up writing the same parent
+  touch, which would be evidence the boundary is in the wrong place".
+- **Found:** all six callers end with `return await self.<parent>.touch(parent_id)`, and each
+  of their handlers checks the parent's revision first (`require_rev`). The touch both marks the
+  parent changed and returns the read model the handler returns.
+- **Because:** folding the touch in would make the component return the parent, which is the
+  stage question §12 gates on P2.
+- **Class:** `discovery` — row 6 left this to execution.
+- **Consequence:** row 6 stands. The recipe's handler touches the parent itself, at the client's
+  revision and before reconciling (D-187).
+- **Proposed row (RFC 0050):** none. P2 should take this as the evidence row 6 named: every
+  origin caller touches the parent and guards its revision.
