@@ -4484,8 +4484,20 @@ and `tests/unit/test_examples/test_child_collection.py` over the recipe's exampl
   (`validation`, `child_parent_mismatch`). The patch is the spec's update command holding only
   the compare fields that differ. Mapping every line up front moves manufacturing's subproduct
   lookup from the new lines to all of them: one wider query, not a second one.
+  The key and compare values now come from two models, which may type one field differently: a
+  float against a stored decimal, a string against a stored enum, a naive datetime against the
+  aware one a timestamptz column returns. Compared raw, each makes every save remove and
+  recreate the child, or write it again. So each incoming key and compare value is read through
+  the read model's bare field type (a pydantic `TypeAdapter` of its annotation, constraints
+  left out), and a naive datetime on either side is read as UTC, as the guarantees reference
+  says Postgres stores one. A value the read model cannot hold is refused (`validation`,
+  `child_value_unreadable`). Refusing differing types at construction was the alternative; it
+  would refuse the common float/decimal and string/enum pairs that coerce exactly, and could not
+  see naive against aware, which is a property of the value. The patch still carries the
+  command's own value, for the update command to validate.
 - **Proposed row (RFC 0050):** `ASSUMED` — the incoming list is the child's create commands, each
-  naming the parent; the component builds each patch from the compare fields that differ.
+  naming the parent. Their key and compare values are read as the read model's field types,
+  a naive datetime as UTC, before matching; each patch holds the compare fields that differ.
 
 ## D-185 — It returns what it wrote
 
@@ -4502,7 +4514,8 @@ and `tests/unit/test_examples/test_child_collection.py` over the recipe's exampl
   something. Creates and updates therefore run with `return_new=True`, a re-read on stores that
   do not return rows from the write. The mock keeps no history, so the stale-revision case is
   covered there by a domain that normalizes a compared value; the history merge itself is the
-  shared gateway's.
+  shared gateway's. The bulk port does not promise its results in input order, so updates are
+  paired with the rows read by id, and `created` makes no order claim.
 - **Proposed row (RFC 0050):** `ASSUMED` — `reconcile` returns the children removed, created and
   changed, the last as before-and-after pairs that leave out writes the store found already
   applied.
@@ -4537,19 +4550,26 @@ and `tests/unit/test_examples/test_child_collection.py` over the recipe's exampl
 - **Consequence:** the component takes no lock and translates nothing. The recipe touches the
   parent at the client's revision first, which refuses a stale save and, on Postgres, makes a
   second save wait on the row lock. It names `hold` as the alternative, and lists the error each
-  concurrent loss raises.
+  concurrent loss raises. Every child write still carries the revision read: updates and soft
+  deletes in their `KeyedUpdate`, and a hard delete through a `touch_many(ids, revs=...)` just
+  before `kill_many`, which takes no revision. A child another writer changed since the read is
+  refused (`revision_mismatch`) instead of deleted; the touch is one batched statement, and on
+  Postgres its row locks hold the rows until the kill. A child another writer adds after the
+  read is not seen.
 - **Proposed row (RFC 0050):** `ASSUMED` — the component takes no lock and passes the ports'
   errors through; serializing saves of one parent is the caller's, by the parent's revision or
-  a `hold`.
+  a `hold`. Every child write is checked against the revision read, a hard delete by a touch at
+  that revision first.
 
 ## D-188 — The mock enforces the uniqueness the ordering test needs
 
 - **Touches:** RFC 0050 §6 ("against Postgres for the uniqueness-ordering case, which the mock
-  cannot express").
-- **Found:** `UniqueTogether` landed in the in-memory store on 2026-09-19 (#444), nine days after
-  this RFC. The mock now refuses a duplicate tuple at the write, or at commit for
-  `holds="commit"`, as a real index does.
-- **Because:** the capability postdates the RFC.
+  cannot express"). Nothing in this unit changes the mock.
+- **Found:** the in-memory store already enforces `UniqueTogether`, and has since 2026-09-19
+  (#444), nine days after this RFC was written
+  (`forze_mock/adapters/_document_command.py`, `_check_guarantees`). It refuses a duplicate
+  tuple at the write, or at commit for `holds="commit"`, as a real index does.
+- **Because:** the capability was added to the mock after the RFC, by other work.
 - **Class:** `discovery`.
 - **Consequence:** the decision-5 test runs on both stores. On the mock it declares
   `UniqueTogether(("order_id", "position"))`; on Postgres the table has a plain unique
@@ -4575,3 +4595,16 @@ and `tests/unit/test_examples/test_child_collection.py` over the recipe's exampl
   revision and before reconciling (D-187).
 - **Proposed row (RFC 0050):** none. P2 should take this as the evidence row 6 named: every
   origin caller touches the parent and guards its revision.
+
+## Review findings — 2026-11-03
+
+Review of the unit's first commit, before it was published.
+
+| # | Severity | Finding | Status |
+|---|---|---|---|
+| R-1 | Bug | The children were read with `find_many` and no pagination, which the port does not promise returns every row | Fixed: read with `find_stream`. Through the shared document adapter a limitless `find_many` already scans every row, so the 10,000-row gateway cap did not reproduce: a Postgres test with read batches of ten passed before the fix and guards it now. A mock test whose `find_many` stops at two rows fails without the fix |
+| R-2 | Bug | A hard delete carried no revision, so a child another writer changed since the read was deleted | Fixed (D-187): a `touch_many` at the revisions read precedes `kill_many`; mock and Postgres tests |
+| R-3 | Bug | Keys and compare values were compared raw across two models, so a float against a decimal, a string against an enum, or a naive against an aware datetime churned every save | Fixed (D-184): incoming values are read as the read model's field types, naive datetimes as UTC; mock and Postgres tests |
+| R-4 | Bug | Updates were paired with the port's results by position, which the port does not promise | Fixed (D-185): paired by id; `created` drops its order claim; a test reverses the port's results |
+| R-5 | Test | No test for a stale revision on update or delete, a compare field cleared to `None`, or tenancy | Fixed: tests for each, on the mock; the hard-delete guard on Postgres too |
+| R-6 | Docs | D-188 read as though the mock's `UniqueTogether` came with this unit | Fixed: reworded as pre-existing |

@@ -35,7 +35,8 @@ This is the procedure, by hand. Read the current lines, match them to the incomi
 ```
 
 The batches run in a fixed order: deletes, then creates, then updates. Deletes come first so a
-new line can take a unique value a removed line held, such as its position.
+new line can take a unique value a removed line held, such as its position. This version deletes
+a line whatever another writer did to it since the read; the component does not (see the notes).
 
 ## The same, declared
 
@@ -55,7 +56,11 @@ any line is written:
 | `compare_fields` | The fields whose change makes a kept child an update. Any other field is ignored. |
 
 Construction checks that every named field is stored on the read model and present on the
-create command, and that every compare field can be written by the update command.
+create command, and that every compare field can be written by the update command. Each
+incoming key and compare value is read as the read model's type for that field before it is
+matched, so a float meets a stored decimal and a string a stored enum, and a naive datetime is
+read as UTC. A value the read model cannot hold is refused (`validation`,
+`child_value_unreadable`).
 
 ## Run it in a transaction
 
@@ -74,7 +79,7 @@ later batch must undo the earlier ones. Bind the operation to a transaction rout
 | Attribute | Holds |
 |---|---|
 | `removed` | The children it deleted, as they were read before the delete. |
-| `created` | The children it created, as the store returned them, in incoming order. |
+| `created` | The children it created, as the store returned them. |
 | `updated` | `(as read, as written)` pairs for each child the store changed. |
 
 A handler that moves stock or writes a ledger per line reads these instead of diffing again.
@@ -103,15 +108,18 @@ made the same change is not counted twice.
   must skip deleted rows: `where={"$values": {"is_deleted": False}}`. Any other child is
   hard-deleted with `kill_many`, and a spec declaring `hard_delete=False` is refused at
   construction.
-- **It takes no lock.** A concurrent save of the same parent loses with the port's own error:
-  `revision_mismatch` from an update, `not_found` from a delete, or `conflict` from a create
-  against a unique key. Touching the parent at the client's revision first, as the recipe does,
-  refuses a stale save outright; on Postgres the row lock it takes also makes a second save wait.
-  A spec declaring `SerializedBy` on the parent key can instead `hold` that owner before
-  reconciling.
+- **Every write checks the revision read.** An update and a soft delete carry it, and a hard
+  delete is preceded by a touch at it, because `kill_many` takes no revision. A child another
+  writer changed since the read is refused (`revision_mismatch`) rather than overwritten or
+  deleted; one it deleted is `not_found`, and one it created with a unique key is `conflict`.
+- **It takes no lock.** A child another writer adds after the read is not seen, so it survives
+  the save. Touching the parent at the client's revision first, as the recipe does, refuses a
+  stale save outright; on Postgres the row lock it takes also makes a second save wait. A spec
+  declaring `SerializedBy` on the parent key can instead `hold` that owner before reconciling.
 - **The parent is the handler's.** `reconcile` neither touches nor re-reads the parent. A handler
   that returns the parent with its children re-reads it after reconciling.
-- **It reads back what it writes.** Creates and updates return the written rows, which costs a
+- **It reads every child.** The current children are read as a stream, so a collection larger
+  than one read batch is read whole. Creates and updates return the written rows, which costs a
   re-read on stores that do not return rows from the write itself.
 
 ## See also

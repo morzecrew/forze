@@ -1,12 +1,17 @@
 """``ChildCollectionSync`` reconciles a parent's children against an incoming list (RFC 0050).
 
 Each partition on its own, the delete-before-create order against a declared uniqueness, both
-delete paths, the transaction, and a reorder's writes — all on the in-memory store, which
-enforces ``UniqueTogether`` as a real index does.
+delete paths, the transaction, a reorder's writes, values typed differently on the two models,
+stale revisions, and tenancy — all on the in-memory store, which enforces ``UniqueTogether`` as
+a real index does.
 """
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator, Sequence
+from datetime import UTC, datetime
+from decimal import Decimal
+from enum import Enum
 from typing import Annotated, Any
 from unittest.mock import patch
 from uuid import UUID, uuid4
@@ -16,13 +21,14 @@ from pydantic import StringConstraints
 
 from forze.application.contracts.document import DocumentSpec, DocumentWriteTypes
 from forze.application.contracts.guarantees import UniqueTogether
+from forze.application.contracts.tenancy import TenantIdentity
 from forze.application.execution import ExecutionContext
 from forze.base.exceptions import CoreException, ExceptionKind
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
 from forze.testing import context_from_modules, unguarded
 from forze_kits.aggregates import ChildCollectionChanges, ChildCollectionSync
 from forze_kits.domain.soft_deletion import DocWithSoftDeletion, UpdateCmdWithSoftDeletion
-from forze_mock import MockDepsModule
+from forze_mock import MockDepsModule, MockRouteConfig
 
 # ----------------------- #
 
@@ -44,6 +50,7 @@ class CreateLine(CreateDocumentCmd):
 
 
 class UpdateLine(BaseDTO):
+    unit: str | None = None
     quantity: int | None = None
     position: int | None = None
 
@@ -156,7 +163,7 @@ class TestTheDeclaration:
 
     def test_a_compare_field_the_update_cannot_write_is_refused(self) -> None:
         with pytest.raises(CoreException, match="update command") as ei:
-            _sync(compare=frozenset({"unit"}))
+            _sync(compare=frozenset({"sku"}))
 
         assert ei.value.kind is ExceptionKind.CONFIGURATION
 
@@ -560,3 +567,258 @@ class TestAPatchTheStoreAlreadyHolds:
 
         assert changes.updated == []
         assert (await ctx.document.query(spec).get(a.id)).rev == a.rev
+
+
+# ....................... #
+
+
+class Grade(Enum):
+    A = "a"
+    B = "b"
+
+
+class Priced(Document):
+    order_id: UUID
+    grade: Grade
+    price: Decimal
+    due: datetime
+
+
+class CreatePriced(CreateDocumentCmd):
+    order_id: UUID
+    grade: str
+    price: float
+    due: datetime
+
+
+class UpdatePriced(BaseDTO):
+    price: Decimal | None = None
+    due: datetime | None = None
+
+
+class ReadPriced(ReadDocument):
+    order_id: UUID
+    grade: Grade
+    price: Decimal
+    due: datetime
+
+
+class TestValuesTypedDifferently:
+    """The create command's float, string and naive datetime meet the stored types."""
+
+    SPEC = DocumentSpec(
+        name="priced_lines",
+        read=ReadPriced,
+        write=DocumentWriteTypes(domain=Priced, create_cmd=CreatePriced, update_cmd=UpdatePriced),
+    )
+    SYNC = ChildCollectionSync(
+        child_spec=SPEC,
+        parent_fk="order_id",
+        key_fields=("grade",),
+        compare_fields=frozenset({"price", "due"}),
+    )
+    DUE = datetime(2026, 1, 1, 9, 30)
+
+    async def test_equal_values_are_neither_recreated_nor_rewritten(
+        self, ctx: ExecutionContext
+    ) -> None:
+        # Stored: an enum, a decimal and an aware instant. Sent: a string, a float, and the same
+        # instant as a naive UTC datetime.
+        order = uuid4()
+        due = self.DUE.replace(tzinfo=UTC)
+        (a,) = await _seed(
+            ctx, self.SPEC, CreatePriced(order_id=order, grade="a", price=1.1, due=due)
+        )
+        assert (a.grade, a.price, a.due) == (Grade.A, Decimal("1.1"), due)
+
+        port = type(unguarded(ctx.document.command(self.SPEC)))
+        sent = CreatePriced(order_id=order, grade="a", price=1.1, due=self.DUE)
+
+        with patch.object(port, "update_many", side_effect=AssertionError("written")):
+            changes = await _reconcile(ctx, self.SYNC, order, sent)
+
+        assert changes == ChildCollectionChanges(removed=[], created=[], updated=[])
+
+    async def test_a_changed_value_is_an_update(self, ctx: ExecutionContext) -> None:
+        order = uuid4()
+        await _seed(
+            ctx, self.SPEC, CreatePriced(order_id=order, grade="a", price=1.1, due=self.DUE)
+        )
+
+        changes = await _reconcile(
+            ctx, self.SYNC, order, CreatePriced(order_id=order, grade="a", price=2.5, due=self.DUE)
+        )
+
+        ((_, after),) = changes.updated
+        assert after.price == Decimal("2.5")
+
+    async def test_a_value_the_read_model_cannot_hold_is_refused(
+        self, ctx: ExecutionContext
+    ) -> None:
+        order = uuid4()
+
+        with pytest.raises(CoreException) as ei:
+            await _reconcile(
+                ctx,
+                self.SYNC,
+                order,
+                CreatePriced(order_id=order, grade="z", price=1, due=self.DUE),
+            )
+
+        assert _refusal(ei) == (ExceptionKind.VALIDATION, "child_value_unreadable")
+
+
+# ....................... #
+
+
+class TestStaleRevisions:
+    """A child another writer changed after the read is refused, never overwritten or deleted."""
+
+    @staticmethod
+    async def _changed_after_read(
+        ctx: ExecutionContext, spec: Any, order: UUID, row: Any, dto: BaseDTO
+    ) -> Sequence[Any]:
+        page = await ctx.document.query(spec).find_many(filters={"$values": {"order_id": order}})
+
+        async with ctx.tx_ctx.scope("mock"):
+            await ctx.document.command(spec).update(row.id, row.rev, dto)
+
+        return page.hits
+
+    @staticmethod
+    def _reading(ctx: ExecutionContext, spec: Any, stale: Sequence[Any]) -> Any:
+        async def stream(*_: Any, **__: Any) -> AsyncIterator[Sequence[Any]]:
+            yield stale
+
+        return patch.object(type(ctx.document.query(spec)), "find_stream", stream)
+
+    async def test_an_update(self, ctx: ExecutionContext) -> None:
+        order = uuid4()
+        (a,) = await _seed(ctx, _spec(), CreateLine(order_id=order, sku="a", quantity=1))
+        stale = await self._changed_after_read(ctx, _spec(), order, a, UpdateLine(quantity=2))
+
+        with self._reading(ctx, _spec(), stale), pytest.raises(CoreException) as ei:
+            await _reconcile(ctx, _sync(), order, CreateLine(order_id=order, sku="a", quantity=5))
+
+        assert _refusal(ei) == (ExceptionKind.PRECONDITION, "revision_mismatch")
+        assert (await _children(ctx, _spec(), order))["a"].quantity == 2
+
+    async def test_a_hard_delete(self, ctx: ExecutionContext) -> None:
+        order = uuid4()
+        a, _ = await _seed(
+            ctx, _spec(), CreateLine(order_id=order, sku="a"), CreateLine(order_id=order, sku="b")
+        )
+        stale = await self._changed_after_read(ctx, _spec(), order, a, UpdateLine(quantity=2))
+
+        with self._reading(ctx, _spec(), stale), pytest.raises(CoreException) as ei:
+            await _reconcile(ctx, _sync(), order, CreateLine(order_id=order, sku="b"))
+
+        assert _refusal(ei) == (ExceptionKind.PRECONDITION, "revision_mismatch")
+        assert set(await _children(ctx, _spec(), order)) == {"a", "b"}
+
+    async def test_a_soft_delete(self, ctx: ExecutionContext) -> None:
+        spec, sync = TestSoftDeletion.SPEC, TestSoftDeletion()._sync()
+        order = uuid4()
+        (a,) = await _seed(ctx, spec, CreateSoftLine(order_id=order, sku="a"))
+        stale = await self._changed_after_read(ctx, spec, order, a, UpdateSoftLine(quantity=2))
+
+        with self._reading(ctx, spec, stale), pytest.raises(CoreException) as ei:
+            await _reconcile(ctx, sync, order)
+
+        assert _refusal(ei) == (ExceptionKind.PRECONDITION, "revision_mismatch")
+        assert (await ctx.document.query(spec).get(a.id)).is_deleted is False
+
+
+# ....................... #
+
+
+class TestTheRead:
+    async def test_every_child_is_read_though_a_list_read_would_stop_short(
+        self, ctx: ExecutionContext
+    ) -> None:
+        # A port whose ``find_many`` stops at two rows: the other children must still be seen,
+        # or they would be created a second time.
+        order = uuid4()
+        lines = [CreateLine(order_id=order, sku=f"s{i}", position=i) for i in range(5)]
+        await _seed(ctx, _spec(), *lines)
+        query = type(ctx.document.query(_spec()))
+        find_many = query.find_many
+
+        async def two_rows(self: Any, *args: Any, **kwargs: Any) -> Any:
+            page = await find_many(self, *args, **kwargs)
+            page.hits[2:] = []
+
+            return page
+
+        with patch.object(query, "find_many", two_rows):
+            changes = await _reconcile(ctx, _sync(), order, *lines)
+
+        assert changes == ChildCollectionChanges(removed=[], created=[], updated=[])
+
+    async def test_updates_pair_by_id_when_the_port_reorders_its_results(
+        self, ctx: ExecutionContext
+    ) -> None:
+        order = uuid4()
+        await _seed(
+            ctx,
+            _spec(),
+            CreateLine(order_id=order, sku="a", quantity=1),
+            CreateLine(order_id=order, sku="b", quantity=1),
+        )
+        port = type(unguarded(ctx.document.command(_spec())))
+        update_many = port.update_many
+
+        async def reversed_results(self: Any, *args: Any, **kwargs: Any) -> Any:
+            return list(reversed(await update_many(self, *args, **kwargs)))
+
+        with patch.object(port, "update_many", reversed_results):
+            changes = await _reconcile(
+                ctx,
+                _sync(),
+                order,
+                CreateLine(order_id=order, sku="a", quantity=2),
+                CreateLine(order_id=order, sku="b", quantity=3),
+            )
+
+        assert {(b.sku, a.sku, a.quantity) for b, a in changes.updated} == {
+            ("a", "a", 2),
+            ("b", "b", 3),
+        }
+
+    async def test_a_compare_field_cleared_to_none_is_written(self, ctx: ExecutionContext) -> None:
+        order = uuid4()
+        await _seed(ctx, _spec(), CreateLine(order_id=order, sku="a", unit="box"))
+
+        changes = await _reconcile(
+            ctx,
+            _sync(compare=frozenset({"unit"})),
+            order,
+            CreateLine(order_id=order, sku="a", unit=None),
+        )
+
+        ((before, after),) = changes.updated
+        assert (before.unit, after.unit) == ("box", None)
+        assert (await _children(ctx, _spec(), order))["a"].unit is None
+
+
+# ....................... #
+
+
+class TestTenancy:
+    async def test_another_tenants_children_of_the_same_parent_are_not_seen(self) -> None:
+        ctx = context_from_modules(
+            MockDepsModule(routes={"lines": MockRouteConfig(tenant_aware=True)})
+        )
+        first, second = TenantIdentity(tenant_id=uuid4()), TenantIdentity(tenant_id=uuid4())
+        order = uuid4()
+
+        with ctx.inv_ctx.bind_identity(tenant=first):
+            await _seed(ctx, _spec(), CreateLine(order_id=order, sku="a"))
+
+        with ctx.inv_ctx.bind_identity(tenant=second):
+            changes = await _reconcile(ctx, _sync(), order, CreateLine(order_id=order, sku="b"))
+
+        assert (changes.removed, [row.sku for row in changes.created]) == ([], ["b"])
+
+        with ctx.inv_ctx.bind_identity(tenant=first):
+            assert set(await _children(ctx, _spec(), order)) == {"a"}

@@ -9,12 +9,15 @@ It is a standalone component, not an :class:`~forze_kits.aggregates.AggregateKit
 neither touches nor re-reads the parent: both stay with the caller (RFC 0050).
 """
 
+import functools
 from collections.abc import Sequence
+from contextlib import aclosing
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, final
 from uuid import UUID
 
 import attrs
-from pydantic import BaseModel
+from pydantic import BaseModel, TypeAdapter, ValidationError
 
 from forze.application.contracts.document import DocumentSpec, KeyedUpdate
 from forze.base.exceptions import exc
@@ -28,6 +31,27 @@ if TYPE_CHECKING:
 # ----------------------- #
 
 
+@functools.cache
+def _read_as(model: type[BaseModel], field: str) -> TypeAdapter[Any]:
+    """The bare type of *model*'s *field*: what to read a value as, not constraints to check."""
+
+    annotation: Any = model.model_fields[field].annotation
+
+    return TypeAdapter(annotation)
+
+
+def _comparable(value: Any) -> Any:
+    """*value*, a naive datetime read as UTC, as a timestamptz column stores it."""
+
+    if isinstance(value, datetime) and value.tzinfo is None:
+        return value.replace(tzinfo=UTC)
+
+    return value
+
+
+# ....................... #
+
+
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class ChildCollectionChanges[R: BaseModel]:
@@ -37,7 +61,7 @@ class ChildCollectionChanges[R: BaseModel]:
     """Children deleted, as they were read before the delete."""
 
     created: Sequence[R]
-    """Children created, as the store returned them, in incoming order."""
+    """Children created, as the store returned them."""
 
     updated: Sequence[tuple[R, R]]
     """``(as read, as written)`` for each child the store changed. A patch the store found
@@ -58,9 +82,15 @@ class ChildCollectionSync[R: BaseModel, C: BaseDTO]:
     position. A new child taking a value a kept child gives up in the same call needs that
     uniqueness to hold at commit (``UniqueTogether(holds="commit")``, a deferred constraint).
 
+    Incoming key and compare values are read as the read model's field types before they are
+    matched, so a float meets a stored decimal and a string a stored enum; a naive datetime is
+    read as UTC.
+
     A child spec whose domain carries ``is_deleted`` is soft-deleted, by writing the flag at the
     revision read; deleted children are not part of the current collection. Any other spec is
-    hard-deleted with ``kill_many``.
+    hard-deleted with ``kill_many``, after a touch at the revision read. Every write is thus
+    checked against the revision read: a child changed since is refused, not overwritten or
+    deleted.
 
     :raises CoreException: ``configuration`` at construction when the spec has no write side,
         a named field is not a stored field of the read model and the create command, a compare
@@ -79,8 +109,8 @@ class ChildCollectionSync[R: BaseModel, C: BaseDTO]:
     the key, so ``("revision_id", "subproduct_id")`` keys a child holding exactly one of them."""
 
     compare_fields: frozenset[str] = frozenset()
-    """The fields whose change makes a kept child an update. Compared with ``==``; a child
-    differing on none of them is not written."""
+    """The fields whose change makes a kept child an update. A child differing on none of them
+    is not written; any other field is ignored."""
 
     # ....................... #
 
@@ -133,8 +163,29 @@ class ChildCollectionSync[R: BaseModel, C: BaseDTO]:
 
     # ....................... #
 
-    def _key(self, model: BaseModel) -> tuple[Any, ...]:
-        return tuple(getattr(model, field) for field in self.key_fields)
+    def _incoming(self, cmd: C, field: str) -> Any:
+        """*cmd*'s *field*, read as the read model's type for it, so it compares as stored."""
+
+        read = self.child_spec.read
+
+        try:
+            value = _read_as(read, field).validate_python(getattr(cmd, field), from_attributes=True)
+
+        except ValidationError as error:
+            raise exc.validation(
+                f"A child's {field!r} is not a value {read.__name__} can hold.",
+                code="child_value_unreadable",
+            ) from error
+
+        return _comparable(value)
+
+    # ....................... #
+
+    def _row_key(self, row: R) -> tuple[Any, ...]:
+        return tuple(_comparable(getattr(row, field)) for field in self.key_fields)
+
+    def _cmd_key(self, cmd: C) -> tuple[Any, ...]:
+        return tuple(self._incoming(cmd, field) for field in self.key_fields)
 
     # ....................... #
 
@@ -147,7 +198,9 @@ class ChildCollectionSync[R: BaseModel, C: BaseDTO]:
         """Make *parent_id*'s children match *incoming*.
 
         Runs inside the caller's transaction, so a failure in any batch leaves none committed.
-        It takes no lock: a concurrent writer surfaces as the port's own error.
+        It takes no lock. A child another writer changed since the read is refused
+        (``revision_mismatch``); one another writer added after the read is not seen. Touching
+        the parent at the revision the client read, before reconciling, serializes saves.
 
         :param ctx: Execution context, inside a transaction.
         :param parent_id: The parent whose children are reconciled.
@@ -156,9 +209,10 @@ class ChildCollectionSync[R: BaseModel, C: BaseDTO]:
         :returns: The children removed, created and updated.
         :raises CoreException: ``precondition`` (``child_sync_outside_transaction``) outside a
             transaction; ``validation`` (``child_parent_mismatch``) when a command names another
-            parent, or (``child_key_duplicate``) when two share a key; ``conflict``
-            (``child_key_ambiguous``) when two stored children share one. Nothing is written
-            in these cases.
+            parent, (``child_key_duplicate``) when two share a key, or
+            (``child_value_unreadable``) when a key or compare value is not one the read model
+            can hold; ``conflict`` (``child_key_ambiguous``) when two stored children share a
+            key. Nothing is written in these cases.
         """
 
         if ctx.tx_ctx.depth() == 0:
@@ -177,7 +231,7 @@ class ChildCollectionSync[R: BaseModel, C: BaseDTO]:
                     code="child_parent_mismatch",
                 )
 
-            if wanted.setdefault(self._key(cmd), cmd) is not cmd:
+            if wanted.setdefault(self._cmd_key(cmd), cmd) is not cmd:
                 raise exc.validation(
                     f"Two children share the key {self.key_fields}.",
                     code="child_key_duplicate",
@@ -188,15 +242,18 @@ class ChildCollectionSync[R: BaseModel, C: BaseDTO]:
         if self._soft_delete:
             live[SOFT_DELETE_FIELD] = False
 
-        page = await ctx.document.query(self.child_spec).find_many(filters={"$values": live})
         current: dict[tuple[Any, ...], R] = {}
+        # A stream, not ``find_many``: the port promises every row only to a stream.
+        stream = ctx.document.query(self.child_spec).find_stream(filters={"$values": live})
 
-        for row in page.hits:
-            if current.setdefault(self._key(row), row) is not row:
-                raise exc.conflict(
-                    f"Two stored children of one parent share the key {self.key_fields}.",
-                    code="child_key_ambiguous",
-                )
+        async with aclosing(stream) as batches:
+            async for batch in batches:
+                for row in batch:
+                    if current.setdefault(self._row_key(row), row) is not row:
+                        raise exc.conflict(
+                            f"Two stored children of one parent share the key {self.key_fields}.",
+                            code="child_key_ambiguous",
+                        )
 
         return await self._write(ctx, current, wanted)
 
@@ -228,7 +285,7 @@ class ChildCollectionSync[R: BaseModel, C: BaseDTO]:
             patch = {
                 field: getattr(cmd, field)
                 for field in sorted(self.compare_fields)
-                if getattr(row, field) != getattr(cmd, field)
+                if _comparable(getattr(row, field)) != self._incoming(cmd, field)
             }
 
             if patch:
@@ -239,7 +296,11 @@ class ChildCollectionSync[R: BaseModel, C: BaseDTO]:
             await port.update_many(soft, return_new=False)
 
         elif removed:
-            await port.kill_many([getattr(row, ID_FIELD) for row in removed])
+            ids = [getattr(row, ID_FIELD) for row in removed]
+            # ``kill_many`` takes no revision: the touch refuses a child changed since the read.
+            revs = [getattr(row, REV_FIELD) for row in removed]
+            await port.touch_many(ids, revs=revs, return_new=False)
+            await port.kill_many(ids)
 
         created = await port.create_many(new) if new else []
         updated: list[tuple[R, R]] = []
@@ -248,10 +309,13 @@ class ChildCollectionSync[R: BaseModel, C: BaseDTO]:
             written = await port.update_many(
                 [keyed(row, patch) for row, patch in changed], return_diff=True
             )
-            updated = [
-                (before, after)
-                for (before, _), (after, diff) in zip(changed, written, strict=True)
-                if diff
-            ]
+            # By id: the port does not promise its results in the order of the batch.
+            by_id = {getattr(after, ID_FIELD): (after, diff) for after, diff in written}
+
+            for before, _ in changed:
+                after, diff = by_id[getattr(before, ID_FIELD)]
+
+                if diff:
+                    updated.append((before, after))
 
         return ChildCollectionChanges(removed=removed, created=created, updated=updated)
