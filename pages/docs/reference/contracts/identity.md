@@ -70,7 +70,7 @@ and then checks eligibility.
 | Port | Method | Notes |
 |------|--------|-------|
 | `TokenLifecyclePort` | `issue_tokens(identity, *, tenant_id=None)` | returns `IssuedTokens`; refuses a delegated identity (`delegate_denied`). Issue and refresh check eligibility with a locking read, so run them in a transaction |
-| | `refresh_tokens(refresh_token)` | rotates the pair; a reused token must revoke its family, then raise `RefreshTokenReuseError`; within a configured reuse grace a just-rotated token is refused as `refresh_superseded` and nothing is revoked |
+| | `refresh_tokens(refresh_token)` | rotates the pair; a reused token must revoke its family, then raise `RefreshTokenReuseError`, whose raise rolls that revocation back inside your transaction: catch it after the transaction ends and call `revoke_chain_of_tokens(error.principal_id, error.family_id)` in a fresh one, as `AuthnRefreshTokens` does; within a configured reuse grace a just-rotated token is refused as `refresh_superseded` and nothing is revoked |
 | | `revoke_tokens(identity)` | logout |
 | | `revoke_tokens_by_refresh_token(refresh_token)` | logout holding only a refresh token; an unknown, revoked, rotated or expired one revokes nothing and raises nothing |
 | | `revoke_chain_of_tokens(principal_id, family_id)` | revoke every live session of one rotation family |
