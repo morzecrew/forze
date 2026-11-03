@@ -325,6 +325,23 @@ class TestConfinement:
 
             assert ei.value.code == (code or STATEMENT_INVALID_CODE), sql
 
+    async def test_a_missing_table_names_no_other_tenants_schema(
+        self, routed: RoutedDuckDbClient, stack: DuckLakeStack
+    ) -> None:
+        """The refusal's detail reaches the caller, so it names nothing outside the tenant."""
+
+        _tenant.set(_A)
+
+        with pytest.raises(CoreException) as ei:
+            await _port(routed).run("SELECT * FROM ducklake_table")
+
+        assert ei.value.code == STATEMENT_INVALID_CODE
+        detail = ei.value.details["detail"]
+        assert "ducklake_table does not exist" in detail
+
+        for other in "bcd":
+            assert stack.tenants[other].schema not in detail
+
 
 class TestThePasswordStaysOut:
     async def test_no_statement_can_read_the_metadata_password(
@@ -582,6 +599,15 @@ class TestEngineFacts:
         )
 
         assert rows == [{"u": stack.tenants["a"].reader}]
+
+    async def test_the_engines_name_guess_is_wider_on_duckdb_1_5(
+        self, routed: RoutedDuckDbClient, stack: DuckLakeStack
+    ) -> None:
+        """The engine's own message differs by major version; a dynamic read drops the guess."""
+
+        refusal = await _engine_refusal(routed, _A, "SELECT * FROM lake.gold.ducklake_table")
+
+        assert (stack.tenants["b"].schema in str(refusal)) is not _ON_DUCKDB_2
 
 
 def _tenant_of(stack: DuckLakeStack, tenant: UUID) -> DuckLakeTenant:
