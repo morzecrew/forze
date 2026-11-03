@@ -31,6 +31,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **`OidcTokenVerifier` refuses a malformed signed token as an authentication failure** (`invalid_oidc_token`). An out-of-range `exp` or `iat` (such as `1e20`), an empty `sub`, or a missing claim a custom `OidcClaimMapper` requires raised a raw `ValueError` instead; a boolean `iat` is refused too.
 
+### Security
+
+- **A DuckDB dynamic read's error detail leaves out the engine's guess at a mistyped name** (**behaviour change**). The guess could name relations outside the tenant's lake.
+
 ## [0.21.0] - 2026-11-02
 
 ### Added
