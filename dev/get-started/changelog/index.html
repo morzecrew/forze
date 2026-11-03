@@ -10738,6 +10738,9 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <p><strong>Grants-cache invalidations can reach every process.</strong> <code>AuthzKernelConfig(grants_invalidation=...)</code> broadcasts each committed one best-effort, the TTL as fallback; every process runs <code>grants_invalidation_lifecycle_step</code>, which fails startup if it cannot listen. Call <code>invalidate_grants</code> after plain document commands.</p>
 </li>
 <li>
+<p><strong><code>instrument_grants_invalidation</code> exports the broadcast's counters to OpenTelemetry.</strong> It reports failed publishes, cache flushes, and <code>forze.authz.grants_invalidation.bypasses</code>: grants reads that skipped the cache because the process had no live subscription.</p>
+</li>
+<li>
 <p><strong><code>OidcIdpPreset.from_issuer</code> configures an <abbr title="OpenID Connect">OIDC</abbr> issuer from its discovery document.</strong> It refuses a document naming another issuer, or an endpoint that is not https (plain http only on loopback); <code>fetch_oidc_configuration</code> returns the validated <code>OidcProviderMetadata</code>. Discovery runs at startup, never per request.</p>
 </li>
 <li>

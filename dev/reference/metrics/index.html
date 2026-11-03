@@ -7550,11 +7550,18 @@ every process's grants cache current. Labelled <code>forze.grants_invalidation</
 <td>1</td>
 <td>whole grants caches dropped on a gap in the stream or a catalog change</td>
 </tr>
+<tr>
+<td><code>forze.authz.grants_invalidation.bypasses</code></td>
+<td>observable counter</td>
+<td>1</td>
+<td>effective-grants reads (decisions, scoping, grant queries) that skipped the cache because no subscription kept it current</td>
+</tr>
 </tbody>
 </table>
 <p>Every <code>publish_failures</code> increment leaves other processes on the old grants for up to the
 cache's TTL. A steady <code>flushes</code> rate is a flapping connection: the cache stays correct and stops
-helping. See <a href="../../identity-tenancy-enc/identity/#reaching-every-process">Identity</a>.</p>
+helping. A rising <code>bypasses</code> count in a process that should be subscribed means the lifecycle
+step is not registered there, or its stream has ended. See <a href="../../identity-tenancy-enc/identity/#reaching-every-process">Identity</a>.</p>
 
 
 

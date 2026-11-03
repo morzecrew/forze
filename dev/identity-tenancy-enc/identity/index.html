@@ -7193,7 +7193,8 @@ entries, or all of them.</p>
   cannot run never falls back to the TTL unnoticed. A <code>SERVERLESS</code> runtime refuses the step.</li>
 <li>Decisions use the cache only while the subscription is live, and the cache starts empty each
   time it goes live. Before the step subscribes, after it stops, and once the Redis client
-  closes, decisions read the bindings.</li>
+  closes, decisions read the bindings, and <code>forze.authz.grants_invalidation.bypasses</code> counts
+  each one made outside a transaction.</li>
 <li>It is not instant. Between a commit and the broadcast's arrival another process can still
   serve the revoked grant, as a request in this process can between the commit and the forget.</li>
 <li>A process that may have missed a broadcast drops its whole cache: when its connection drops
