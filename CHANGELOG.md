@@ -35,6 +35,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **`process_with_inbox` gives every delivery invocation metadata with its own execution id** (**behaviour change**), even under metadata the consumer bound. A message without a `forze_correlation_id` header takes the bound correlation id or a fresh one, and its logs, events and idempotency claims carry the execution id.
 
+- **A DuckDB dynamic read whose route namespace is unavailable in the tenant's lake raises `dynamic_read_namespace_missing`** (**behaviour change**). It is a `precondition`, not `dynamic_read_statement_invalid`, also on Iceberg after a revoked grant. DuckLake reads a schema created later with no `evict_tenant`.
+
 - **Every registered analytics query is bounded by its own `timeout`, 60 s unless set** (**behaviour change**). It is on each engine's `*QueryConfig`, and a per-call `options["timeout"]` lowers it, never raises it. Postgres and DuckDB reads were unbounded; on DuckDB the wait for a free executor slot counts against it.
 
 - **On Postgres a read's `statement_timeout` is enforced by the server and only tightens.** A lower pool or invocation-deadline bound still wins; a stalled connection is left to the pool and TCP keepalives. Out of a transaction it shares the query's round trip; whole milliseconds up to about 24.8 days.

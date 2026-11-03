@@ -8,6 +8,7 @@ from .adapter import (
 from .errors import (
     DYNAMIC_READ_CODES,
     MULTI_STATEMENT_CODE,
+    NAMESPACE_MISSING_CODE,
     PERMISSION_DENIED_CODE,
     ROLE_UNAVAILABLE_CODE,
     ROW_CAP_EXCEEDED_CODE,
@@ -16,6 +17,7 @@ from .errors import (
     TIMEOUT_CODE,
     WRITE_REFUSED_CODE,
     multi_statement,
+    namespace_missing,
     permission_denied,
     role_unavailable,
     row_cap_exceeded,
@@ -30,6 +32,7 @@ from .errors import (
 __all__ = [
     "DYNAMIC_READ_CODES",
     "MULTI_STATEMENT_CODE",
+    "NAMESPACE_MISSING_CODE",
     "PERMISSION_DENIED_CODE",
     "POSTGRES_TENANT_PLACEHOLDER",
     "ROLE_UNAVAILABLE_CODE",
@@ -41,6 +44,7 @@ __all__ = [
     "DynamicReadAdapter",
     "DynamicReadRequest",
     "multi_statement",
+    "namespace_missing",
     "permission_denied",
     "role_unavailable",
     "row_cap_exceeded",

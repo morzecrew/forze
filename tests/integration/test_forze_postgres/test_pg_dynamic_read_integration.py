@@ -164,6 +164,20 @@ async def test_a_broken_statement_is_caller_caused_not_internal(
         assert ei.value.kind == ExceptionKind.VALIDATION, statement
 
 
+async def test_a_missing_query_schema_surfaces_as_an_undefined_relation(
+    pg_client: PostgresClient,
+) -> None:
+    """EXECUTION-LOG D-174: ``search_path`` takes a schema that does not exist, so the statement
+    fails on its relation. A DuckDB route raises ``dynamic_read_namespace_missing`` instead."""
+
+    port = _port(pg_client, f"missing_{uuid4().hex[:8]}")
+
+    with pytest.raises(CoreException) as ei:
+        await port.run("SELECT n FROM items")
+
+    assert (ei.value.code, ei.value.kind) == (STATEMENT_INVALID_CODE, ExceptionKind.VALIDATION)
+
+
 async def test_the_statement_timeout_fires_and_leaves_the_connection_reusable(
     pg_client: PostgresClient,
     schema: str,

@@ -23,6 +23,7 @@ from pydantic import BaseModel
 
 from forze.application.integrations.dynamic_read import (
     MULTI_STATEMENT_CODE,
+    NAMESPACE_MISSING_CODE,
     STATEMENT_INVALID_CODE,
     WRITE_REFUSED_CODE,
 )
@@ -807,8 +808,10 @@ class DuckDbClient(DuckDbDynamicReadClientPort):
     ) -> list[JsonDict]:
         """Run one runtime-authored ``SELECT`` and return at most *row_probe* rows.
 
-        On a fresh cursor: ``USE`` *use* when given, classify *statement* with the engine's
-        parser (exactly one ``SELECT``, else a ``dynamic_read_multi_statement`` /
+        On a fresh cursor: ``USE`` *use* when given (a ``dynamic_read_namespace_missing``
+        error without a route, carrying the engine's message, when the engine refuses the
+        schema with a ``CatalogException``), classify *statement* with
+        the engine's parser (exactly one ``SELECT``, else a ``dynamic_read_multi_statement`` /
         ``dynamic_read_write_refused`` error without a route), execute the classified statement
         unmodified, and fetch *row_probe* rows. The vended secrets the statement left behind
         are dropped afterwards, whatever the outcome.
@@ -835,7 +838,16 @@ class DuckDbClient(DuckDbDynamicReadClientPort):
                 if dot:
                     path += "." + _quote_identifier(schema)
 
-                cursor.execute(f"USE {path}")
+                try:
+                    cursor.execute(f"USE {path}")
+
+                except duckdb.CatalogException as error:
+                    # The engine's text rides along, so the adapter can tell a refusal from a miss.
+                    raise exc.precondition(
+                        "DuckDB dynamic read found the namespace unavailable in the lake.",
+                        code=NAMESPACE_MISSING_CODE,
+                        details={"detail": str(error), **({"namespace": schema} if dot else {})},
+                    ) from error
 
             single = _single_select(cursor, statement)
 

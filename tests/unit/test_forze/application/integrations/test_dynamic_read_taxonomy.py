@@ -17,6 +17,7 @@ import pytest
 from forze.application.integrations.dynamic_read import (
     DYNAMIC_READ_CODES,
     MULTI_STATEMENT_CODE,
+    NAMESPACE_MISSING_CODE,
     PERMISSION_DENIED_CODE,
     ROLE_UNAVAILABLE_CODE,
     ROW_CAP_EXCEEDED_CODE,
@@ -25,6 +26,7 @@ from forze.application.integrations.dynamic_read import (
     TIMEOUT_CODE,
     WRITE_REFUSED_CODE,
     multi_statement,
+    namespace_missing,
     permission_denied,
     role_unavailable,
     row_cap_exceeded,
@@ -53,6 +55,11 @@ BUILT: tuple[tuple[CoreException, str, ExceptionKind], ...] = (
         statement_too_large(ROUTE, size=2, limit=1),
         STATEMENT_TOO_LARGE_CODE,
         ExceptionKind.VALIDATION,
+    ),
+    (
+        namespace_missing(ROUTE, namespace="gold"),
+        NAMESPACE_MISSING_CODE,
+        ExceptionKind.PRECONDITION,
     ),
 )
 

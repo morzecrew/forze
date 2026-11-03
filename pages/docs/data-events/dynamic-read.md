@@ -288,9 +288,15 @@ rows = await port.run(sql, params, options={"row_cap": 500, "timeout": timedelta
 
 Any other option key is refused as a `precondition` naming it.
 
-Every code below is caller-caused, because on this plane the statement *is* the
-caller's input — an undefined relation here is a malformed request, not a broken
-database, and none of it egresses as `internal`.
+Every code below that names the statement is caller-caused, because on this plane
+the statement *is* the caller's input — an undefined relation here is a malformed
+request, not a broken database, and none of it egresses as `internal`. Two fire
+before the statement is sent: a missing role is the deployment's, and an
+unavailable namespace is the tenant's warehouse, which does not hold it, has not
+built it, or does not let the tenant read it. Only DuckDB raises the namespace
+code. On Postgres a `query_schema` that does not exist is accepted, and the
+statement fails as `dynamic_read_statement_invalid`, so the same missing namespace
+gets a different code on each engine.
 
 | Condition | Kind | Code |
 | --- | --- | --- |
@@ -299,6 +305,7 @@ database, and none of it egresses as `internal`.
 | Multi-command string rejected by the protocol | `validation` | `dynamic_read_multi_statement` |
 | Refused by the route's confinement (role grants) | `precondition` | `dynamic_read_permission_denied` |
 | The route's role is missing, or the user is not a member | `configuration` | `dynamic_read_role_unavailable` |
+| The route's namespace is missing, not built, or not readable (DuckDB only) | `precondition` | `dynamic_read_namespace_missing` |
 | The route's statement timeout fired | `timeout` | `dynamic_read_timeout` |
 | Result exceeded the effective row cap | `precondition` | `dynamic_read_row_cap_exceeded` |
 | Statement above `max_statement_bytes` | `validation` | `dynamic_read_statement_too_large` |

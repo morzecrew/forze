@@ -27,6 +27,7 @@ import pytest
 
 from forze.application.integrations.dynamic_read import (
     MULTI_STATEMENT_CODE,
+    NAMESPACE_MISSING_CODE,
     STATEMENT_INVALID_CODE,
     WRITE_REFUSED_CODE,
 )
@@ -132,10 +133,37 @@ async def test_use_quotes_each_part(lake_client: DuckDbClient) -> None:
     # The quote is doubled inside the identifier, so the tail never parses as a statement.
     quoted = re.escape('schema named "lake."gold""; DROP""')
 
-    with pytest.raises(duckdb.CatalogException, match=quoted):
+    with pytest.raises(CoreException) as ei:
         await lake_client.run_dynamic(
             "SELECT 1", row_probe=2, timeout=_TIMEOUT, use='lake.gold"; DROP'
         )
+
+    assert ei.value.code == NAMESPACE_MISSING_CODE
+    assert isinstance(ei.value.__cause__, duckdb.CatalogException)
+    assert re.search(quoted, str(ei.value.__cause__))
+
+
+async def test_a_missing_namespace_is_refused_before_the_statement(
+    lake_client: DuckDbClient,
+) -> None:
+    """D-171: the namespace, not the statement, is what is missing."""
+
+    with pytest.raises(CoreException) as ei:
+        await lake_client.run_dynamic("SELEC 1", row_probe=2, timeout=_TIMEOUT, use="lake.later")
+
+    assert (ei.value.code, ei.value.kind) == (NAMESPACE_MISSING_CODE, ExceptionKind.PRECONDITION)
+    assert ei.value.details is not None
+    assert ei.value.details["namespace"] == "later"
+    assert 'schema named "lake.later"' in ei.value.details["detail"]
+
+
+async def test_a_missing_catalog_alone_names_no_namespace(lake_client: DuckDbClient) -> None:
+    with pytest.raises(CoreException) as ei:
+        await lake_client.run_dynamic("SELECT 1", row_probe=2, timeout=_TIMEOUT, use="nolake")
+
+    assert ei.value.code == NAMESPACE_MISSING_CODE
+    assert ei.value.details is not None
+    assert "namespace" not in ei.value.details
 
 
 @pytest.mark.parametrize("sql", ["SELECT 1; SELECT 2", "-- only a comment"])

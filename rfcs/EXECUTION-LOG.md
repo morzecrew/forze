@@ -4949,6 +4949,223 @@ value. The `logging-metrics` and `inngest` references in `skills/forze-skills/` 
 
 ---
 
+# Unit 15 · RFC 0078 follow-up — a namespace created after a tenant's first read
+
+Branch `fix/duckdb-routed-missing-namespace`. A follow-up to Unit 12, prompted by the first
+live consumer of the DuckLake path: an API process serves dynamic reads through
+`RoutedDuckDbClient` over `DuckLakeTenantCatalog`, while a worker in another process builds
+each tenant's `silver` and `gold` with SQLMesh, and nothing calls `evict_tenant`. D-026 says a
+namespace an instance found missing stays missing, and was proven on Iceberg only. Had DuckLake
+done the same, a read served before a tenant's first build would fail until the process
+restarted, and it would fail as `dynamic_read_statement_invalid`, which reads as a bad plan.
+Every probe below ran on `duckdb==2.0.0` and `duckdb==1.5.6`, against Postgres 18.
+
+**Drift count: 0.** Six entries, D-170 to D-175: two `discovery`, four `spec-gap`. Product code changes in three places. The shared taxonomy gains
+`NAMESPACE_MISSING_CODE` and `namespace_missing`. `DuckDbClient.run_dynamic` raises that code
+when its `USE` fails with a `CatalogException`, and the DuckDB adapter adds the route, or maps
+a catalog refusal in it to `dynamic_read_permission_denied`. `RoutedDuckDbClient`'s docstring
+narrows D-026 to Iceberg.
+
+**The consumer gates its reads anyway.** A read-only look at it: every lake read first loads
+the tenant's active spec, which refuses (`no_active_spec`) until an apply has succeeded, and
+the worker records success only after the SQLMesh process exits cleanly. So a read before the
+first build does not reach the lake there. The fix below does not depend on that.
+
+**Where each item lives.** The `USE` refusal is in `DuckDbClient.run_dynamic`, its mapping in
+`_core_error` of `forze_duckdb/adapters/dynamic_read.py`. Integration tests:
+
+- `test_ducklake_routed_reads.py`, class `TestTenantReads`:
+  `test_a_namespace_or_table_created_after_a_miss_is_seen_at_the_next_statement` (D-170) and
+  `test_a_route_whose_namespace_is_not_built_says_so` (D-171).
+- `test_lake_routed_reads.py`, class `TestPool`: `test_a_restored_grant_needs_an_evict_to_be_seen`
+  (D-026), which now expects the new code for the miss that sticks, and
+  `test_a_table_created_after_a_miss_in_a_found_namespace_is_read_next`, D-026's table half on
+  the routed path.
+- `test_lake_routed_reads.py`, class `TestTaxonomy`:
+  `test_a_revoked_grant_is_refused_at_the_next_statement` (both codes after a revocation) and
+  `test_a_namespace_the_warehouse_never_had_is_unavailable_after_one_lookup` (Iceberg's lazy
+  `USE`).
+- `test_pg_dynamic_read_integration.py`:
+  `test_a_missing_query_schema_surfaces_as_an_undefined_relation` (D-174).
+
+Unit tests are in `test_duckdb_run_dynamic.py`, `test_duckdb_dynamic_read_wiring.py` and
+`test_dynamic_read_taxonomy.py`.
+
+## D-170 — A DuckLake instance keeps no miss: D-026 is Iceberg's
+
+- **Touches:** RFC 0078 §2.4 (forced eviction), and D-026 with its proposed row, which the
+  routed client's docstring and the docs applied to every catalog.
+- **RFC said:** nothing about DuckLake. §2.4 lists the reasons to evict. D-026 found that an
+  Iceberg instance caches a missing namespace for its life, and proposed that every namespace
+  creation be followed by `evict_tenant`.
+- **Found:** on both builds, an instance that failed `USE lake.later`,
+  `SELECT … FROM lake.later.t` and `SELECT … FROM lake.gold.later_table` reads all three at its
+  next statement once another DuckDB instance creates the schema and the tables. Nothing is
+  evicted or rebuilt: the pool holds the same instance. A held instance also reads a new table
+  in a schema it read before, which Unit 12's battery already pinned.
+- **Because:** DuckLake reads its catalog from the metadata database at each transaction's
+  snapshot. It keeps no schema set per attach, as duckdb-iceberg does.
+- **Class:** `discovery`.
+- **Consequence:** D-026's rule is narrowed to Iceberg in the docstring and the docs. The
+  routed client gains no automatic eviction. DuckLake does not need one. On Iceberg it would
+  rebuild an instance (a token request, an `ATTACH`, an attestation) on every request to a
+  namespace that stays missing, so it needs a bound and a design of its own, and no Iceberg
+  consumer asks for it yet. A test pins DuckLake's answer, so an extension bump that starts
+  caching fails there first.
+- **Proposed row (RFC 0078):** `ASSUMED` — the evict-after-namespace-creation rule (D-026) holds
+  for Iceberg catalogs only. A DuckLake instance reads a schema or table at the next statement
+  after it is created.
+
+## D-171 — An unavailable namespace is `dynamic_read_namespace_missing`, a `precondition`
+
+- **Touches:** RFC 0078 §4.5 ("existing codes"), decision 13 ("same … taxonomy as Postgres"),
+  and D-034's consequence ("every statement on the route is `dynamic_read_statement_invalid`").
+- **RFC said:** a `CatalogException` is `dynamic_read_statement_invalid`. §4.5 predates the
+  route's `USE lake.<namespace>` (D-034), which can fail before the statement is classified.
+- **Found:** an unavailable namespace failed every statement on the route with the code a typo
+  in one of them gets. When the `USE` fails, it raises a `CatalogException` reading
+  `SET schema: No catalog + schema named "lake.<namespace>" found`, on both builds and both
+  catalogs. When it fails differs:
+  - on a DuckLake, at once, for a schema the lake does not hold;
+  - on Iceberg, the `USE` accepts an unknown namespace, and a statement that reads no table runs.
+    The first lookup inside it fails as a missing table, and the miss is then cached (D-026), so
+    every later `USE` fails. A grant revoked after the instance resolved the namespace goes the
+    same way: the first statement fails on its table (`schema "gold" does not exist`), every one
+    after it on the `USE`. A grant revoked before the instance first looked inside the namespace
+    lets the `USE` pass too.
+
+  No probe made the `USE` raise a refusal (a 401, a 403, a Lakekeeper `NotFound_404`). A
+  principal Lakekeeper hides the warehouse from fails at `ATTACH`, as
+  `duckdb_session_setup_failed` (battery 16), so it never reaches the `USE`.
+- **Because:** the namespace is the route's configuration and the tenant's state, not the
+  caller's input.
+- **Class:** `spec-gap`.
+- **Consequence:** `run_dynamic` raises `dynamic_read_namespace_missing` when its `USE` raises
+  `CatalogException`, with the engine's message in its details. It tells by the step that
+  failed, not by the message. The adapter adds the route and the namespace. It first checks the
+  message against the refusal markers the other paths use (`_CATALOG_REFUSALS`,
+  `_HTTP_REFUSAL`), and maps a match to `dynamic_read_permission_denied`, so a catalog refusal
+  at the `USE` would never read as a missing namespace. A unit test drives that branch, since no
+  engine produced it.
+
+  The code does not say whether the namespace is absent, not built yet, or withheld from the
+  tenant: its message names all three. On Iceberg a withheld namespace and an absent one look
+  the same to the engine anyway. Telling them apart would answer "does this exist?" to a
+  tenant without the grant, the question RFC 0059's non-disclosing denials leave unanswered.
+
+  The kind is `precondition`. `egress.py` maps it to HTTP 400, with details shown and not
+  retryable (`_EXC_KIND_POLICY`, `_EXC_KIND_HTTP_STATUS`); the mock server's control plane maps
+  it to 400 too. The alternatives:
+  - `validation` would blame the statement, which is what the code exists to avoid;
+  - `not_found` (404) reads as a missing route, and a non-disclosing posture merges it with
+    authorization;
+  - `configuration` (500) would page an operator for each tenant read before its first build,
+    which is a normal state;
+  - `unavailable` is retryable, and a tenant that is never built stays so.
+
+  A misspelled namespace gives the same code for every tenant, which tells it apart. On Iceberg
+  a revoked grant now gives this code from the second statement on. The code joins the shared
+  taxonomy beside `dynamic_read_role_unavailable`, which only Postgres raises; only DuckDB
+  raises this one (D-174). A caller that matched `dynamic_read_statement_invalid` for this case
+  sees the new code, and the changelog marks it a behaviour change.
+- **Proposed row (RFC 0078):** `ASSUMED` — a route's namespace the tenant's warehouse does not
+  make available, absent or withheld alike, is `dynamic_read_namespace_missing`
+  (`precondition`) once the `USE` fails; a catalog refusal there is
+  `dynamic_read_permission_denied`. This overrides §4.5's "existing codes" for that row, and
+  §4.5 stays as written.
+
+## D-172 — A missing table stays `dynamic_read_statement_invalid`
+
+- **Touches:** §4.5 (`CatalogException` (relation does not exist)), and the shared taxonomy's
+  rule that an undefined relation is the caller's malformed request.
+- **RFC said:** a missing relation is `dynamic_read_statement_invalid`.
+- **Found:** with a trusted compiler, a table the statement names can be missing because the
+  tenant's build has not made it yet, which is the tenant's state, as in D-171. Nothing in the
+  engine's answer tells that apart from a compiler that names the wrong table.
+- **Because:** the statement names the table. The plane's differential compares codes across
+  engines, and Postgres reports an undefined relation (`42P01`) as
+  `dynamic_read_statement_invalid`.
+- **Class:** `spec-gap`.
+- **Consequence:** unchanged. A split for DuckDB alone would fail one plan with two codes on two
+  engines. On a DuckLake, a table created later is read at the next statement (D-170), so the
+  state heals without eviction. An application that wants to say "not built yet" checks its own
+  build record before the read, as the consumer does.
+- **Proposed row (RFC 0078):** `ASSUMED` — a relation the statement names that does not resolve
+  stays `dynamic_read_statement_invalid` on every engine. "Not built yet" is the application's to
+  check before it reads.
+
+## D-173 — A dynamic read's error detail carried the engine's name guesses
+
+- **Touches:** RFC 0078 §3.5 (no cross-tenant read) and §4.5, whose
+  `dynamic_read_statement_invalid` carries the engine's message in details the caller sees.
+- **RFC said:** nothing about the message. The adapter put all of it in the detail.
+- **Found:** a parser, binder or catalog error can end with the engine's guess at the name the
+  statement meant. The guess draws on every attached catalog, not only the tenant's lake, so it
+  could name relations outside it. Names only, never rows.
+- **Because:** the engine builds its suggestions before, and apart from, any grant check.
+- **Class:** `discovery`.
+- **Consequence:** shipped separately as a security fix (#818): the adapter drops the guess,
+  which the engine prints on a line of its own, and keeps the rest of the message and its
+  pointer into the caller's statement. Analytics SQL is the application's, and its errors reach
+  the application unchanged.
+- **Proposed row (RFC 0078):** `ASSUMED` — a dynamic read's error detail carries the engine's
+  message without its name guesses, which can reach outside the tenant's lake.
+
+## D-174 — A missing namespace gets a different code on Postgres
+
+- **Touches:** decision 13 ("same port, spec, caps and taxonomy as Postgres"), §5.3 (swap by
+  wiring), and D-171.
+- **RFC said:** the taxonomy is the same on both engines, so a swap is wiring plus dialect.
+- **Found:** a Postgres route's `query_schema` is issued as `SET LOCAL search_path`, which
+  accepts a schema that does not exist. The statement then fails on its relation (`42P01`), as
+  `dynamic_read_statement_invalid`. A DuckDB route over the same unbuilt tenant gets
+  `dynamic_read_namespace_missing`, at once on a DuckLake and from the second statement on
+  Iceberg.
+- **Because:** Postgres resolves the schema lazily, at the relation; DuckDB's `USE` checks it.
+- **Class:** `spec-gap`.
+- **Consequence:** Postgres is unchanged: checking the schema there would add a catalog query
+  to every read. The difference is documented beside the dynamic-read page's error table and
+  pinned by a Postgres test. A caller that swaps engines and branches on "not built" handles
+  both codes.
+- **Proposed row (RFC 0078):** `ASSUMED` — a missing namespace is
+  `dynamic_read_namespace_missing` on DuckDB and `dynamic_read_statement_invalid` on Postgres.
+  Decision 13's "same taxonomy" holds for every other refusal.
+
+## D-175 — The mock and the conformance battery never raise `dynamic_read_namespace_missing`
+
+- **Touches:** §4.6 (mock parity: a mock handler scripts engine refusals by raising the same
+  factories).
+- **RFC said:** engine-specific refusals are real-leg facts, and the mock reaches them only when
+  a handler raises the factory.
+- **Found:** `forze_mock`'s dynamic-read adapter has no namespace, and the shared conformance
+  battery (`tests/support/dynamic_read_conformance.py`) has no missing-namespace case. Neither
+  raises the new code. The same holds for `dynamic_read_role_unavailable`, which only Postgres
+  raises.
+- **Because:** parity is by design here: the mock is the shell's oracle, not an engine's.
+- **Class:** `spec-gap`.
+- **Consequence:** an application that tests a "not built yet" path against the mock scripts it
+  with `namespace_missing(route, namespace=…)`, exported from
+  `forze.application.integrations.dynamic_read`. The DuckDB legs pin the real code.
+- **Proposed row (RFC 0078):** `ASSUMED` — the mock does not model namespaces; a handler
+  scripts `dynamic_read_namespace_missing` by raising its factory, as for every engine-specific
+  refusal.
+
+## Review findings — 2026-11-03
+
+A review of the branch before publishing. Each finding was fixed in place above.
+
+| # | Severity | Finding | Status |
+|---|---|---|---|
+| R-1 | High | The `USE` step reported every `CatalogException` as a missing namespace, so a catalog refusal raised there would be misreported | Fixed: the adapter checks the engine's message against the refusal markers first and maps a match to `dynamic_read_permission_denied`. Probes on both builds found no refusal at the `USE` (D-171) |
+| R-2 | Medium | Only the first statement after a revoked Iceberg grant was pinned | Fixed: the later statement's `dynamic_read_namespace_missing` is pinned beside it |
+| R-3 | Medium | The message said the namespace "may not have been built yet", wrong when a grant is the cause | Fixed: "not available to the tenant: missing, not built, or not readable", and D-171 says why the code does not distinguish them. The HTTP mapping it cited (400, not retryable) was checked against `egress.py` and holds |
+| R-4 | Low | The docs said a table created later in a found namespace is read next, in the Iceberg list, proven only on DuckLake | Fixed: the routed Iceberg battery now pins it too; D-026's engine probe already did |
+| R-5 | Low | Postgres reports a missing schema as `dynamic_read_statement_invalid`, so the code differs per engine | Recorded as D-174, documented and pinned |
+| R-6 | Low | The client fell back to the catalog's name as the namespace | Fixed: no `namespace` detail when the `USE` names a catalog alone |
+| R-7 | Low | The mock and the conformance suite do not raise the new code | Recorded as D-175 |
+
+---
+
 # Unit 17 · RFC 0028 W4 — route resource policy, split out ahead of W1
 
 Branch `feat/route-timeout-defaults`. RFC 0028 §6 and §6.1, for the engines that have
