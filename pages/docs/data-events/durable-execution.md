@@ -268,6 +268,21 @@ the body has no actor, and a saga's guarded steps refuse. That holds for every d
 — a hand-written one, a saga, the secrets rotator and credential sweep — as it always did
 for a recovered run; a service identity covers only the operation-backed bodies.
 
+### Each attempt is an invocation
+
+Every attempt binds invocation metadata of its own: a fresh execution id, the run id as
+the correlation id, and the
+[invocation surface](../running-in-prod/observability.md#see-which-boundary-an-invocation-came-through)
+`durable`. Every attempt of one run shares the correlation id, so its log lines join up
+across a recovery. A run started by `run_now` inside a request records the request's
+execution id as the causation; the request's correlation id is not carried.
+
+The execution id owns the idempotency claims an attempt takes, so a claim must begin and
+end within one attempt. Begin and commit it in the same step: a claim begun in a journaled
+step and committed after a recovery is refused with `conflict`, because the attempt
+committing it is not the one that took it. The same fence keeps an attempt that lost its
+lease from completing a claim its successor took.
+
 ### Retrying a failed run
 
 A step that raises writes no journal row, and by default the run lands `FAILED`. Give the

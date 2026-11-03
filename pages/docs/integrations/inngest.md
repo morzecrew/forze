@@ -95,7 +95,8 @@ shutdown window.
 - The execution-context metadata travels in a `_forze` envelope. The worker restores its
   correlation id but mints its own execution id for every call, recording the producer's
   execution id as the causation; an event without one correlates every step and retry of
-  its run under an id derived from the run id. An idempotency claim therefore belongs to
+  its run under an id derived from the run id. Its invocation surface is `inngest`, and no
+  envelope key sets it. An idempotency claim therefore belongs to
   one handler entry: a claim left pending by a crashed entry blocks a retry until the
   claim's TTL expires, as on Temporal. The identity and tenant it claims are bound only with
   `bind_identity_from_event=True`, for trusted producers; a delegated identity then keeps its

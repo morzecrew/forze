@@ -21,9 +21,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **`OidcClaimMapper` normalizes `email`, `roles` and `groups` into a `_forze` claim.** `ClaimsPath` reads Keycloak and Casdoor shapes, `ZitadelProjectRoles` Zitadel's org map; a malformed claim yields no roles. A `_forze` claim the issuer sent is dropped (**behaviour change**).
 
+- **Invocation metadata names the boundary it entered through.** `InvocationMetadata.surface` takes an `InvocationSurface` value (`http`, `cli`, `durable`, …) or an app's own token; each framework boundary sets one. Logs carry `invocation_surface`, operation spans `forze.invocation_surface`, `unknown` with no metadata.
+
 ### Changed
 
-- ...
+- **The self-hosted durable runner binds invocation metadata for every attempt** (**behaviour change**): a fresh execution id, the run id as correlation id, surface `durable`. Its logs and events carry them, and a claim begun before a recovery and committed after it is now refused with `conflict`.
+
+- **`process_with_inbox` binds invocation metadata for every delivery** (**behaviour change**). A message without a `forze_correlation_id` header runs under a fresh correlation id, or the bound consumer's, so its logs, published events and idempotency claims carry an execution id.
 
 ### Fixed
 

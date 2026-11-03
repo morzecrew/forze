@@ -106,14 +106,17 @@ class TestExecutionContextInterceptorChains:
         assert isinstance(act_chain, ActivityContextInboundInterceptor)
 
         inp = MagicMock(spec=ExecuteActivityInput)
-        inp.headers = headers
+        # A caller-sent surface header is never read.
+        inp.headers = {**headers, "Forze-Surface": Payload(data=b"cli")}
 
         result = await act_chain.execute_activity(inp)
 
         assert result == "ok"
         assert captured[0] is not None
-        assert captured[0] is not None
         assert captured[0].correlation_id == cid
+        # The hop names itself: the caller's surface is not carried.
+        assert captured[0].surface == "temporal"
+        assert captured[0].causation_id == eid
 
     @pytest.mark.asyncio
     async def test_activity_runs_past_a_malformed_execution_header(self) -> None:

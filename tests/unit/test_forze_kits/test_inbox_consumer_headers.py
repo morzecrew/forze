@@ -6,6 +6,7 @@ from collections.abc import Mapping
 from uuid import UUID, uuid4
 
 import attrs
+from structlog.contextvars import get_contextvars
 
 from forze.application.contracts.envelope import (
     HEADER_CORRELATION_ID,
@@ -16,7 +17,14 @@ from forze.application.contracts.inbox import InboxSpec
 from forze.application.contracts.tenancy import TenantIdentity
 from forze.application.execution import InvocationMetadata
 from forze.application.execution.context import ExecutionContext
+from forze.application.execution.context.invocation import (
+    CORR_ID_KEY,
+    EXEC_ID_KEY,
+    SURFACE_KEY,
+)
+from forze.application.execution.outbox import InvocationOutboxEnricher
 from forze.base.primitives import uuid7
+from forze.domain.models import BaseDTO
 from forze_kits.integrations.inbox import process_with_inbox
 from forze_mock import MockDepsModule
 from tests.support.execution_context import context_from_modules
@@ -78,6 +86,8 @@ async def test_envelope_headers_rebind_correlation_and_causation() -> None:
     assert observed.metadata.correlation_id == correlation_id
     # ...and the consumed event CAUSES the handler's effects.
     assert observed.metadata.causation_id == event_id
+    # The consumer names itself; the publisher's surface is not carried.
+    assert observed.metadata.surface == "inbox"
 
 
 async def test_causation_absent_without_event_id_header() -> None:
@@ -132,9 +142,10 @@ async def test_existing_consumer_execution_id_is_kept() -> None:
     assert observed.metadata is not None
     assert observed.metadata.execution_id == consumer_metadata.execution_id
     assert observed.metadata.correlation_id == correlation_id
+    assert observed.metadata.surface == "inbox"
 
 
-async def test_without_headers_no_rebind_current_behavior() -> None:
+async def test_a_message_without_headers_still_gets_metadata() -> None:
     ctx = context_from_modules(MockDepsModule())
     observed = _Observed()
 
@@ -147,8 +158,97 @@ async def test_without_headers_no_rebind_current_behavior() -> None:
     )
 
     assert processed is True
-    assert observed.metadata is None
+    assert observed.metadata is not None
+    assert observed.metadata.surface == "inbox"
+    assert observed.metadata.causation_id is None
+    assert observed.metadata.execution_id != observed.metadata.correlation_id
     assert observed.tenant is None
+    # Scoped to the delivery.
+    assert ctx.inv_ctx.get_metadata() is None
+
+
+async def test_each_delivery_without_headers_is_an_invocation_of_its_own() -> None:
+    ctx = context_from_modules(MockDepsModule())
+    first, second = _Observed(), _Observed()
+
+    for message_id, observed in (("evt-a", first), ("evt-b", second)):
+        await process_with_inbox(
+            ctx,
+            _Msg(id=message_id),
+            inbox_spec=_SPEC,
+            handler=_observing_handler(ctx, observed),
+            tx_route="mock",
+        )
+
+    assert first.metadata is not None and second.metadata is not None
+    assert first.metadata.execution_id != second.metadata.execution_id
+    assert first.metadata.correlation_id != second.metadata.correlation_id
+
+
+async def test_without_a_header_the_consumer_metadata_keeps_its_correlation_id() -> None:
+    ctx = context_from_modules(MockDepsModule())
+    observed = _Observed()
+    consumer_metadata = InvocationMetadata(execution_id=uuid7(), correlation_id=uuid7())
+
+    with ctx.inv_ctx.bind_metadata(metadata=consumer_metadata):
+        await process_with_inbox(
+            ctx,
+            _Msg(id="evt-c"),
+            inbox_spec=_SPEC,
+            handler=_observing_handler(ctx, observed),
+            tx_route="mock",
+        )
+
+    assert observed.metadata is not None
+    assert observed.metadata.execution_id == consumer_metadata.execution_id
+    assert observed.metadata.correlation_id == consumer_metadata.correlation_id
+    assert observed.metadata.surface == "inbox"
+
+
+async def test_surface_headers_are_never_read() -> None:
+    ctx = context_from_modules(MockDepsModule())
+    observed = _Observed()
+    msg = _Msg(
+        id="evt-forged",
+        headers={
+            HEADER_CORRELATION_ID: str(uuid7()),
+            "forze_surface": "cli",
+            "invocation_surface": "cli",
+        },
+    )
+
+    await process_with_inbox(
+        ctx,
+        msg,
+        inbox_spec=_SPEC,
+        handler=_observing_handler(ctx, observed),
+        tx_route="mock",
+    )
+
+    assert observed.metadata is not None
+    assert observed.metadata.surface == "inbox"
+
+
+class _Shipped(BaseDTO):
+    n: int
+
+
+async def test_a_header_less_delivery_logs_and_publishes_its_ids() -> None:
+    ctx = context_from_modules(MockDepsModule())
+    seen: dict[str, object] = {}
+
+    async def handler(_msg: _Msg) -> None:
+        seen.update(get_contextvars())
+        enricher = InvocationOutboxEnricher(inv=ctx.inv_ctx, clock=ctx.outbox_clock)
+        seen["event"] = enricher.enrich("shipped", _Shipped(n=1))
+
+    await process_with_inbox(ctx, _Msg(id="evt-p"), inbox_spec=_SPEC, handler=handler, tx_route="mock")
+
+    event = seen["event"]
+    assert seen[SURFACE_KEY] == "inbox"
+    assert seen[EXEC_ID_KEY] == str(event.execution_id)  # type: ignore[attr-defined]
+    assert seen[CORR_ID_KEY] == str(event.correlation_id)  # type: ignore[attr-defined]
+    assert event.execution_id is not None  # type: ignore[attr-defined]
 
 
 async def test_malformed_correlation_header_is_ignored() -> None:
@@ -166,7 +266,10 @@ async def test_malformed_correlation_header_is_ignored() -> None:
     )
 
     assert processed is True
-    assert observed.metadata is None
+    # A fresh correlation id stands in for the malformed one.
+    assert observed.metadata is not None
+    assert isinstance(observed.metadata.correlation_id, UUID)
+    assert observed.metadata.surface == "inbox"
 
 
 async def test_duplicate_is_still_skipped_with_headers() -> None:
@@ -284,7 +387,7 @@ async def test_tenant_opt_in_works_without_correlation_header() -> None:
         bind_tenant_from_headers=True,
     )
 
-    assert observed.metadata is None
+    assert observed.metadata is not None
     assert observed.tenant is not None
     assert observed.tenant.tenant_id == tenant_id
 

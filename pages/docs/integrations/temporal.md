@@ -205,3 +205,7 @@ expression.
   `TemporalSaga`) are exported for the worker process.
 - The interceptor binds principal, actor chain and tenant from headers as sent; who can
   start, signal or update workflows in the namespace decides who can set them.
+- Each workflow and activity run mints its own execution id, keeps the caller's correlation
+  id, and records the
+  [invocation surface](../running-in-prod/observability.md#see-which-boundary-an-invocation-came-through)
+  `temporal`; no header sets it.

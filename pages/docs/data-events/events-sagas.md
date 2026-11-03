@@ -87,6 +87,13 @@ before; a redelivery returns `False` and does nothing. Combined with the outbox,
 that's **exactly-once** effect delivery across a boundary that only offers
 at-least-once.
 
+Every delivery runs as an invocation with metadata of its own, whose
+[invocation surface](../running-in-prod/observability.md#see-which-boundary-an-invocation-came-through)
+is `inbox`. The correlation id comes from the `forze_correlation_id` header when the
+relay wrote one, so the handler's logs join the publishing request's; a message without
+one gets a fresh correlation id. The consumed event's id becomes the causation. The
+handler's idempotency claims belong to that one delivery.
+
 ## Sagas: many steps, one outcome
 
 The `confirm` step above doesn't run alone — it's the final step of a checkout

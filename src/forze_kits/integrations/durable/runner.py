@@ -6,8 +6,8 @@ import asyncio
 from contextlib import nullcontext, suppress
 from datetime import datetime, timedelta
 from time import perf_counter
-from typing import TYPE_CHECKING, final
-from uuid import UUID
+from typing import TYPE_CHECKING, Final, final
+from uuid import UUID, uuid5
 
 import attrs
 
@@ -26,6 +26,8 @@ from forze.application.contracts.durable.function import (
 from forze.application.contracts.resilience import RetryStrategy
 from forze.application.contracts.saga import SAGA_CANCELLED_CODE, SAGA_STEP_AMBIGUOUS_CODE
 from forze.application.contracts.tenancy import TenantIdentity
+from forze.application.execution.context import InvocationSurface
+from forze.application.execution.ingress import mint_invocation_metadata
 from forze.application.execution.resilience.backoff import compute_delay, retry_after
 from forze.base.exceptions import CoreException, exc, exception_egress_policy
 from forze.base.primitives import current_entropy_source, utcnow
@@ -56,6 +58,9 @@ already retried its compensations in place."""
 _NEVER_RETRIED = frozenset({SAGA_STEP_AMBIGUOUS_CODE, _COMPENSATION_FAILED_CODE})
 """Infrastructure-kind codes a retry strategy never retries: each leaves a saga for an
 operator to reconcile, and running it again could repeat an effect that may have committed."""
+
+_RUN_CORRELATION_NAMESPACE: Final[UUID] = UUID("0b6f1c1e-5d0e-4a8e-9b0c-2f4e6d7a8c91")
+"""Derives a correlation id from a run id that is not a UUID (a custom run store's)."""
 
 _RUN_TIMED_OUT_CODE = "durable.run_timed_out"
 """A run cancelled by the deadline watchdog. Distinct from an ordinary failure: it sends an
@@ -145,6 +150,11 @@ class DurableFunctionRunner:
     bodies idempotent). With :attr:`retry`, a run whose body fails with a retryable error goes
     back to ``PENDING`` and ``recover`` claims it again once its backoff has passed, replaying
     its journal the same way.
+
+    Every attempt binds invocation metadata of its own, surface ``durable``: a fresh
+    execution id, the run id as the correlation id, and the in-process caller's execution id
+    as the causation. The execution id owns the idempotency claims the attempt takes, so a
+    claim begun in one attempt cannot be committed by a later one (``conflict``).
     """
 
     registry: DurableFunctionRegistry
@@ -409,7 +419,18 @@ class DurableFunctionRunner:
             else ctx.inv_ctx.get_tenant()
         )
 
-        with ctx.inv_ctx.bind_identity(tenant=tenant):
+        # Each attempt is an invocation of its own. Its execution id owns the idempotency
+        # claims it takes, so a claim must begin and end within one attempt, and a
+        # superseded attempt cannot complete its successor's claim. The run id is every
+        # attempt's correlation id; whatever started this attempt in-process, the causation.
+        ambient = ctx.inv_ctx.get_metadata()
+        metadata = mint_invocation_metadata(
+            surface=InvocationSurface.DURABLE,
+            correlation_id=_run_correlation_id(record.run_id),
+            causation_id=ambient.execution_id if ambient is not None else None,
+        )
+
+        with ctx.inv_ctx.bind(metadata=metadata, tenant=tenant):
             await self._execute_bound(ctx, record, reraise=reraise)
 
     # ....................... #
@@ -1062,3 +1083,17 @@ class DurableFunctionRunner:
     def _mark_span_error(self, span: Span | None, error: BaseException) -> None:
         if self.telemetry is not None and span is not None:
             self.telemetry.mark_error(span, error)
+
+
+# ....................... #
+
+
+def _run_correlation_id(run_id: str) -> UUID:
+    """The run id as a correlation id: itself when it is a UUID, as every shipped store
+    mints it, otherwise one derived from it, so every attempt of one run shares it."""
+
+    try:
+        return UUID(run_id)
+
+    except ValueError:
+        return uuid5(_RUN_CORRELATION_NAMESPACE, run_id)

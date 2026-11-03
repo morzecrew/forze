@@ -30,6 +30,7 @@ from tests.support.execution_context import context_from_deps
 
 from ._workflow_defs import (
     CTX_BOX,
+    SEEN_METADATA,
     ItContextProbeWorkflow,
     ItSumWorkflow,
     SumIn,
@@ -65,11 +66,14 @@ async def test_execution_context_interceptor_propagates_correlation_to_activity(
                 activities=[it_read_correlation],
                 workflow_runner=sandboxed_workflow_runner(),
             ):
+                SEEN_METADATA.clear()
+
                 with exec_ctx.inv_ctx.bind(
                     metadata=InvocationMetadata(
                         execution_id=uuid7(),
                         correlation_id=fixed,
                         causation_id=None,
+                        surface="http",
                     ),
                     authn=AuthnIdentity(principal_id=uuid7()),
                 ):
@@ -81,6 +85,9 @@ async def test_execution_context_interceptor_propagates_correlation_to_activity(
                     out = await handle.result()
 
             assert out == str(fixed)
+            # Started from an HTTP request, the activity names its own hop.
+            (activity_metadata,) = SEEN_METADATA
+            assert activity_metadata.surface == "temporal"
         finally:
             await env.shutdown()
     finally:
