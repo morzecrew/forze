@@ -379,19 +379,22 @@ async def test_every_read_is_bounded_by_the_route_timeout() -> None:
     )
 
 
+_NOT_WHOLE_SECONDS = [timedelta(milliseconds=500), timedelta(seconds=1.5)]
+
+
 @pytest.mark.asyncio
-async def test_a_sub_second_per_call_timeout_is_refused() -> None:
-    # The engine counts whole seconds and would round 500 ms up to a looser 1 s.
+@pytest.mark.parametrize("bad", _NOT_WHOLE_SECONDS)
+async def test_a_per_call_timeout_that_is_not_whole_seconds_is_refused(bad: timedelta) -> None:
+    # The engine counts whole seconds and would round the fraction.
     with pytest.raises(CoreException) as caught:
-        await _adapter(_MockClient()).run(
-            "counts", _Params(), options={"timeout": timedelta(milliseconds=500)}
-        )
+        await _adapter(_MockClient()).run("counts", _Params(), options={"timeout": bad})
 
     assert caught.value.code == "analytics_option_invalid"
 
 
-def test_a_sub_second_query_timeout_is_refused() -> None:
+@pytest.mark.parametrize("bad", _NOT_WHOLE_SECONDS)
+def test_a_query_timeout_that_is_not_whole_seconds_is_refused(bad: timedelta) -> None:
     with pytest.raises(CoreException) as caught:
-        BigQueryQueryConfig(sql="SELECT 1", timeout=timedelta(milliseconds=500))
+        BigQueryQueryConfig(sql="SELECT 1", timeout=bad)
 
     assert caught.value.code == "analytics_timeout_invalid"

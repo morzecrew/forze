@@ -597,6 +597,7 @@ class _StubConn:
         self.autocommit_calls: list[bool] = []
         self.commit_calls = 0
         self.autocommit = False
+        self.closed = False
         self.isolation_level = None
         self.read_only = None
         self.fail_autocommit_restore = False

@@ -62,25 +62,10 @@ class ClickHouseClient(ClickHouseClientPort):
     __client: AsyncClient | None = attrs.field(default=None, init=False)
     __config: ClickHouseConfig | None = attrs.field(default=None, init=False)
     __init_lock: asyncio.Lock = attrs.field(factory=asyncio.Lock, init=False)
-    __query_timeout_floor: timedelta = attrs.field(default=timedelta(0), init=False)
-    __read_timeout_sec: int | None = attrs.field(default=None, init=False)
-
     # ....................... #
 
-    def cover_query_timeout(self, timeout: timedelta) -> None:
-        # The transport's read timeout is fixed when the session opens (clickhouse_connect has
-        # no per-request one), so a longer route must be known before then.
-        needed = _read_timeout_sec(timeout)
-
-        if self.__read_timeout_sec is not None and needed > self.__read_timeout_sec:
-            raise exc.configuration(
-                f"ClickHouse client already waits at most {self.__read_timeout_sec}s for an "
-                f"answer, less than a route timeout of {timeout}. Wire the routes before the "
-                "client starts, or raise ClickHouseConfig.timeout.",
-                code="clickhouse_read_timeout_too_short",
-            )
-
-        self.__query_timeout_floor = max(self.__query_timeout_floor, timeout)
+    def query_timeout_limit(self) -> timedelta | None:
+        return None if self.__config is None else self.__config.timeout
 
     # ....................... #
 
@@ -93,7 +78,7 @@ class ClickHouseClient(ClickHouseClientPort):
 
             self.__config = config
             timeout_sec = int(config.timeout.total_seconds())
-            read_timeout_sec = _read_timeout_sec(max(config.timeout, self.__query_timeout_floor))
+            read_timeout_sec = _read_timeout_sec(config.timeout)
             self.__client = await create_async_client(  # type: ignore[reportUnknownReturnType]
                 host=config.host,
                 port=config.port,
@@ -107,7 +92,6 @@ class ClickHouseClient(ClickHouseClientPort):
                 connector_limit_per_host=config.connector_limit_per_host,
                 keepalive_timeout=config.keepalive_timeout.total_seconds(),
             )
-            self.__read_timeout_sec = read_timeout_sec
             logger.trace(
                 "ClickHouse client connected",
                 host=config.host,
@@ -123,7 +107,6 @@ class ClickHouseClient(ClickHouseClientPort):
             if client is not None:
                 await client.close()
                 self.__client = None
-                self.__read_timeout_sec = None
                 logger.trace("ClickHouse client closed")
 
             self.__config = None

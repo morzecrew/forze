@@ -161,7 +161,7 @@ PostgresLifecycleModule(
 | Outbox / inbox | `OutboxSpec.name` (`outboxes`), `InboxSpec.name` (`inboxes`) | transactional outbox + consumer-side dedup inbox |
 | Idempotency | `IdempotencySpec.name` (`idempotencies`) | co-located store — the record commits inside the business transaction; add the optional `owner uuid` column to fence a reclaimed claim ([idempotency](../writing-operation/idempotency.md)) |
 | Counter | `CounterSpec.name` (`counters`) | atomic upsert-increment over an app-provided table (admin enumeration included) |
-| Procedures | `ProcedureSpec.name` (`procedures`) | named, governed SQL command / compute; each run is bounded by `statement_timeout` (60 s unless set) ([procedures](../data-events/procedures.md)) |
+| Procedures | `ProcedureSpec.name` (`procedures`) | named, governed SQL command / compute; a route in a transaction is bounded by `statement_timeout` (60 s unless set) ([procedures](../data-events/procedures.md)) |
 | Durable execution | `durable_step` / `durable_run` / `durable_schedule` | step memo, run store, and cron schedules — optional |
 
 ## Notes

@@ -24,7 +24,7 @@ if TYPE_CHECKING:
     from forze.application.contracts.analytics import AnalyticsSpec
 
 TIMEOUT_RESOLUTION = timedelta(seconds=1)
-"""The client waits in whole seconds, and rounds a shorter timeout up."""
+"""The client waits in whole seconds: a fraction would be rounded."""
 
 # ....................... #
 

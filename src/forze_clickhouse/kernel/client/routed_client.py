@@ -57,7 +57,6 @@ class RoutedClickHouseClient(
         init=False,
     )
     backend: str = attrs.field(default="ClickHouse", init=False)
-    _query_timeout_floor: timedelta = attrs.field(default=timedelta(0), init=False)
     tenant_required_message: str = attrs.field(
         default="Tenant ID is required for routed ClickHouse access",
         init=False,
@@ -96,10 +95,9 @@ class RoutedClickHouseClient(
 
     # ....................... #
 
-    def cover_query_timeout(self, timeout: timedelta) -> None:
-        # Applied to each tenant's client as it is built; the deps module calls this at wiring,
-        # before any tenant client exists.
-        self._query_timeout_floor = max(self._query_timeout_floor, timeout)
+    def query_timeout_limit(self) -> timedelta:
+        # Every tenant client is built from the defaults' timeout, or the config default.
+        return (self.connection_defaults or ClickHouseConfig()).timeout
 
     # ....................... #
 
@@ -109,7 +107,6 @@ class RoutedClickHouseClient(
         creds: ClickHouseRoutingCredentials,
     ) -> ClickHouseClient:
         client = ClickHouseClient()
-        client.cover_query_timeout(self._query_timeout_floor)
         await client.initialize(self._merge_config(creds))
 
         return client

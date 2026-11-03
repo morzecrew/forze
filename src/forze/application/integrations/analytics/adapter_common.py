@@ -181,35 +181,48 @@ DEFAULT_ROUTE_TIMEOUT = timedelta(seconds=60)
 own default before routes carried one."""
 
 
+def _enforceable(
+    timeout: object,
+    resolution: timedelta | None,
+    maximum: timedelta | None,
+) -> bool:
+    return (
+        isinstance(timeout, timedelta)
+        and timeout > timedelta(0)
+        and (resolution is None or not timeout % resolution)
+        and (maximum is None or timeout <= maximum)
+    )
+
+
+def _requirement(resolution: timedelta | None, maximum: timedelta | None) -> str:
+    return (
+        "a positive timedelta"
+        + (f" in whole units of {resolution}" if resolution else "")
+        + (f", at most {maximum}" if maximum else "")
+    )
+
+
+# ....................... #
+
+
 def validate_route_timeout(
     timeout: object,
     *,
     resolution: timedelta | None = None,
     maximum: timedelta | None = None,
 ) -> None:
-    """Refuse a route timeout that is not a positive :class:`~datetime.timedelta` the engine
-    can enforce as written.
+    """Refuse a route timeout the engine cannot enforce as written.
 
     There is no ``unlimited`` spelling: a query that needs longer sets a longer value.
 
-    :param resolution: The engine's smallest unit. A shorter timeout would be rounded up to
-        it, a looser bound than the one written, so it is refused.
+    :param resolution: The engine's unit. A timeout that is not a whole number of them would
+        be rounded, and rounding up loosens the bound, so it is refused.
     :param maximum: The longest timeout the engine accepts.
     """
 
-    floor = resolution or timedelta(0)
-
-    if (
-        not isinstance(timeout, timedelta)
-        or timeout <= timedelta(0)
-        or timeout < floor
-        or (maximum is not None and timeout > maximum)
-    ):
+    if not _enforceable(timeout, resolution, maximum):
         raise exc.configuration(
-            "Analytics query timeout must be a positive timedelta"
-            + (f", at least {resolution}" if resolution else "")
-            + (f", at most {maximum}" if maximum else "")
-            + ".",
+            f"Analytics query timeout must be {_requirement(resolution, maximum)}.",
             code="analytics_timeout_invalid",
             details={"timeout": repr(timeout)},
         )
@@ -227,8 +240,9 @@ def route_timeout(
     """Timeout for one execution: the per-call ``timeout`` option clamped to the route's.
 
     With no option the route's *ceiling* applies. An option above it is clamped down, never
-    up, so a caller cannot lift the bound its wiring set. An option below the engine's
-    *resolution* is refused, since the engine would round it up.
+    up, so a caller cannot lift the bound its wiring set. An option that is not a whole
+    number of the engine's *resolution* is refused, as :func:`validate_route_timeout` refuses
+    a route's.
     """
 
     requested = (options or {}).get("timeout")
@@ -236,15 +250,9 @@ def route_timeout(
     if requested is None:
         return ceiling
 
-    if (
-        not isinstance(requested, timedelta)
-        or requested <= timedelta(0)
-        or requested < (resolution or timedelta(0))
-    ):
+    if not _enforceable(requested, resolution, None):
         raise exc.validation(
-            "Analytics options.timeout must be a positive timedelta"
-            + (f", at least {resolution}" if resolution else "")
-            + ".",
+            f"Analytics options.timeout must be {_requirement(resolution, None)}.",
             code="analytics_option_invalid",
             details={"timeout": repr(requested)},
         )

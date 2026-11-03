@@ -4,8 +4,7 @@ from __future__ import annotations
 
 from datetime import timedelta
 from typing import Any
-from unittest.mock import MagicMock, patch
-from uuid import uuid4
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from pydantic import BaseModel
@@ -25,7 +24,6 @@ from forze_clickhouse.execution.deps import (
 from forze_clickhouse.kernel.client import (
     ClickHouseClient,
     ClickHouseConfig,
-    ClickHouseRoutingCredentials,
     RoutedClickHouseClient,
 )
 from tests.support.execution_context import (
@@ -200,10 +198,7 @@ class _FakeAsyncClient:
         return None
 
 
-@pytest.mark.asyncio
-async def test_the_transport_outwaits_the_longest_route() -> None:
-    # clickhouse_connect fixes its read timeout per client; a route longer than
-    # ClickHouseConfig.timeout must not be cut by the socket before max_execution_time.
+async def _started_client(timeout: timedelta) -> tuple[ClickHouseClient, dict[str, Any]]:
     seen: dict[str, Any] = {}
 
     async def _create(**kwargs: Any) -> _FakeAsyncClient:
@@ -211,28 +206,26 @@ async def test_the_transport_outwaits_the_longest_route() -> None:
         return _FakeAsyncClient()
 
     client = ClickHouseClient()
-    ClickHouseDepsModule(
-        client=client,
-        analytics={"short": _route(timedelta(seconds=5)), "long": _route(timedelta(minutes=10))},
-    )
 
     with patch("forze_clickhouse.kernel.client.client.create_async_client", _create):
-        await client.initialize(ClickHouseConfig(timeout=timedelta(seconds=60)))
+        await client.initialize(ClickHouseConfig(timeout=timeout))
 
-    assert seen["send_receive_timeout"] == 605  # the longest route plus the margin
+    return client, seen
+
+
+@pytest.mark.asyncio
+async def test_the_transport_outwaits_the_client_timeout() -> None:
+    # The server's TIMEOUT_EXCEEDED must arrive before the socket gives up.
+    client, seen = await _started_client(timedelta(seconds=60))
+
+    assert seen["send_receive_timeout"] == 65
     assert seen["connect_timeout"] == 60
     await client.close()
 
 
 @pytest.mark.asyncio
-async def test_a_route_longer_than_a_running_client_waits_is_refused() -> None:
-    async def _create(**kwargs: Any) -> _FakeAsyncClient:
-        return _FakeAsyncClient()
-
-    client = ClickHouseClient()
-
-    with patch("forze_clickhouse.kernel.client.client.create_async_client", _create):
-        await client.initialize(ClickHouseConfig(timeout=timedelta(seconds=60)))
+async def test_a_route_longer_than_the_client_waits_is_refused_at_wiring() -> None:
+    client, _ = await _started_client(timedelta(seconds=60))
 
     ClickHouseDepsModule(client=client, analytics={"ok": _route(timedelta(seconds=60))})
 
@@ -240,35 +233,65 @@ async def test_a_route_longer_than_a_running_client_waits_is_refused() -> None:
         ClickHouseDepsModule(client=client, analytics={"long": _route(timedelta(minutes=10))})
 
     assert caught.value.code == "clickhouse_read_timeout_too_short"
+    assert "'long'" in str(caught.value)
+    assert "Raise ClickHouseConfig.timeout" in str(caught.value)
     await client.close()
 
 
 @pytest.mark.asyncio
-async def test_a_routed_client_builds_each_tenant_client_to_cover_its_routes() -> None:
-    seen: dict[str, Any] = {}
+async def test_a_client_configured_at_startup_is_checked_when_the_route_resolves() -> None:
+    # Unstarted, the client has no config to check against; resolving the route does it.
+    client = ClickHouseClient()
+    module = ClickHouseDepsModule(
+        client=client, analytics={"events": _route(timedelta(minutes=10))}
+    )
 
-    async def _create(**kwargs: Any) -> _FakeAsyncClient:
-        seen.update(kwargs)
-        return _FakeAsyncClient()
+    with patch(
+        "forze_clickhouse.kernel.client.client.create_async_client",
+        AsyncMock(return_value=_FakeAsyncClient()),
+    ):
+        await client.initialize(ClickHouseConfig(timeout=timedelta(seconds=60)))
 
+    with pytest.raises(CoreException) as caught:
+        context_from_deps(module()).analytics.query(
+            AnalyticsSpec(
+                name="events",
+                read=_Row,
+                queries={"counts": AnalyticsQueryDefinition(params=_Params)},
+            )
+        )
+
+    assert caught.value.code == "clickhouse_read_timeout_too_short"
+    await client.close()
+
+
+@pytest.mark.parametrize(
+    ("defaults", "refused"),
+    [(None, True), (ClickHouseConfig(timeout=timedelta(minutes=10)), False)],
+)
+def test_a_routed_client_is_checked_against_the_config_its_tenant_clients_use(
+    defaults: ClickHouseConfig | None, refused: bool
+) -> None:
     routed = RoutedClickHouseClient(
         secrets=MagicMock(),
         secret_ref_for_tenant=lambda _tid: MagicMock(),
         tenant_provider=lambda: None,
+        connection_defaults=defaults,
     )
-    ClickHouseDepsModule(client=routed, analytics={"long": _route(timedelta(minutes=10))})
 
-    with patch("forze_clickhouse.kernel.client.client.create_async_client", _create):
-        tenant_client = await routed.initialize_client(
-            uuid4(), ClickHouseRoutingCredentials(host="h", database="d")
-        )
+    def wire() -> None:
+        ClickHouseDepsModule(client=routed, analytics={"long": _route(timedelta(minutes=10))})
 
-    assert seen["send_receive_timeout"] == 605
-    await tenant_client.close()
+    if refused:
+        with pytest.raises(CoreException, match="clickhouse_read_timeout_too_short"):
+            wire()
+
+    else:
+        wire()
 
 
-@pytest.mark.parametrize("bad", [timedelta(milliseconds=500), timedelta(0)])
-def test_a_sub_second_query_timeout_is_refused(bad: timedelta) -> None:
+@pytest.mark.parametrize("bad", [timedelta(milliseconds=500), timedelta(seconds=1.5), timedelta(0)])
+def test_a_timeout_that_is_not_whole_seconds_is_refused(bad: timedelta) -> None:
     # max_execution_time counts whole seconds; 500 ms would be sent as a looser 1 s.
     with pytest.raises(CoreException) as caught:
         ClickHouseQueryConfig(sql="SELECT 1", timeout=bad)

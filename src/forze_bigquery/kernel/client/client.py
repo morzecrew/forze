@@ -18,7 +18,7 @@ from pydantic import BaseModel
 
 from forze.application.execution.resilience.read_retry import retry_read
 from forze.base.exceptions import exc
-from forze.base.primitives import JsonDict, clamp
+from forze.base.primitives import JsonDict
 from forze.base.primitives.owned_temp_path import OwnedTempPath
 
 from .._logger import logger
@@ -54,12 +54,6 @@ class BigQueryClient(BigQueryClientPort):
     __api_root: str | None = attrs.field(default=None, init=False)
     __session: Any = attrs.field(default=None, init=False)
     __init_lock: asyncio.Lock = attrs.field(factory=asyncio.Lock, init=False)
-    __query_timeout_floor: timedelta = attrs.field(default=timedelta(0), init=False)
-
-    # ....................... #
-
-    def cover_query_timeout(self, timeout: timedelta) -> None:
-        self.__query_timeout_floor = max(self.__query_timeout_floor, timeout)
 
     # ....................... #
 
@@ -278,36 +272,37 @@ class BigQueryClient(BigQueryClientPort):
 
     # ....................... #
 
-    async def __poll_job_done(self, job_id: str, *, timeout: int) -> None:
-        cfg = self.__require_config()
-        poll_interval = max(0.05, cfg.poll_interval.total_seconds())
-        # max_poll_attempts would cut a route that may wait longer; its deps module said so.
-        max_attempts = max(
-            cfg.max_poll_attempts,
-            math.ceil(self.__query_timeout_floor.total_seconds() / poll_interval),
-        )
-        attempts = clamp(int(timeout / poll_interval), 1, max_attempts)
+    async def __poll_job_done(self, job_id: str, *, deadline: float) -> None:
+        """Poll *job_id* until it is done or the loop's clock passes *deadline*.
+
+        Wall time, not a poll count: each poll is an RPC that takes time of its own.
+        """
+
+        poll_interval = max(0.05, self.__require_config().poll_interval.total_seconds())
         job = self.job(job_id)
 
-        for _ in range(attempts):
-            status = await job.get_job(timeout=timeout)
-            status_dict: JsonDict = status.get("status") or {}
-            state: str | None = status_dict.get("state")
+        try:
+            async with asyncio.timeout_at(deadline):
+                while True:
+                    status = await job.get_job(timeout=_remaining_sec(deadline))
+                    status_dict: JsonDict = status.get("status") or {}
+                    state: str | None = status_dict.get("state")
 
-            if state == "DONE":
-                errors = status.get("status", {}).get("errors")
+                    if state == "DONE":
+                        errors = status.get("status", {}).get("errors")
 
-                if errors:
-                    raise exc.internal(f"BigQuery job failed: {errors!r}")
+                        if errors:
+                            raise exc.internal(f"BigQuery job failed: {errors!r}")
 
-                return
+                        return
 
-            if state in {"FAILED", "CANCELLED"}:
-                raise exc.internal(f"BigQuery job ended with state {state!r}")
+                    if state in {"FAILED", "CANCELLED"}:
+                        raise exc.internal(f"BigQuery job ended with state {state!r}")
 
-            await asyncio.sleep(poll_interval)
+                    await asyncio.sleep(poll_interval)
 
-        raise exc.internal("BigQuery job polling timed out.")
+        except TimeoutError:
+            raise exc.internal("BigQuery job polling timed out.") from None
 
     # ....................... #
 
@@ -346,6 +341,8 @@ class BigQueryClient(BigQueryClientPort):
 
             job = self.job()
             timeout_sec = self.__timeout(timeout)
+            # One clock for the whole wait: the query call, the polling and the results.
+            deadline = asyncio.get_running_loop().time() + timeout_sec
             response = await job.query(body, timeout=timeout_sec)
 
             if dry_run:
@@ -368,10 +365,10 @@ class BigQueryClient(BigQueryClientPort):
             if not job_id:
                 raise exc.internal("BigQuery query did not return a job id.")
 
-            await self.__poll_job_done(job_id, timeout=timeout_sec)
+            await self.__poll_job_done(job_id, deadline=deadline)
 
             results = await self.job(job_id).get_query_results(
-                timeout=timeout_sec,
+                timeout=_remaining_sec(deadline),
                 params={"maxResults": max_results} if max_results else None,
             )
 
@@ -539,3 +536,12 @@ class BigQueryClient(BigQueryClientPort):
             rejected=rejected_total,
             errors=tuple(all_errors),
         )
+
+
+# ....................... #
+
+
+def _remaining_sec(deadline: float) -> int:
+    """Whole seconds left until *deadline* on the running loop's clock, at least one."""
+
+    return max(1, math.ceil(deadline - asyncio.get_running_loop().time()))

@@ -783,7 +783,8 @@ class PostgresClient(PostgresClientPort):
 
             finally:
                 try:
-                    await pooled_conn.set_autocommit(False)
+                    if not pooled_conn.closed:
+                        await pooled_conn.set_autocommit(False)
 
                 except Exception:
                     logger.warning(
@@ -1419,14 +1420,24 @@ class PostgresClient(PostgresClientPort):
         at_root = self.__ctx_depth.get() == 0 and self.__current_conn() is None
 
         if at_root and capabilities.has_pipeline():
-            async with self._statement_conn() as conn, conn.cursor() as cur:
-                # Autocommit: statements before the pipeline's one Sync share an implicit
-                # transaction, so the local settings bound the query and end with it.
-                async with conn.pipeline():
-                    await cur.execute(settings)
-                    await cur.execute(query, params)
+            async with self._statement_conn() as conn:
+                try:
+                    async with conn.cursor() as cur:
+                        # Autocommit: statements before the pipeline's one Sync share an
+                        # implicit transaction, so the local settings bound the query and end
+                        # with it.
+                        async with conn.pipeline():
+                            await cur.execute(settings)
+                            await cur.execute(query, params)
 
-                return self._rows_to_dicts(cur.description, await cur.fetchall())
+                        return self._rows_to_dicts(cur.description, await cur.fetchall())
+
+                except BaseException:
+                    # psycopg drains a connection only while it is ACTIVE, so a failure or a
+                    # cancel inside the pipeline can leave pipeline state behind. Never lend
+                    # it again: the pool replaces a closed connection.
+                    await conn.close()
+                    raise
 
         in_caller_transaction = self.is_in_transaction()
 

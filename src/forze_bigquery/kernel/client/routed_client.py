@@ -57,7 +57,6 @@ class RoutedBigQueryClient(
         init=False,
     )
     backend: str = attrs.field(default="BigQuery", init=False)
-    _query_timeout_floor: timedelta = attrs.field(default=timedelta(0), init=False)
     credential_file_prefix: str = attrs.field(default="forze-bq-", init=False)
     tenant_required_message: str = attrs.field(
         default="Tenant ID is required for routed BigQuery access",
@@ -67,19 +66,12 @@ class RoutedBigQueryClient(
     def credential_fingerprint(self, creds: BaseModel) -> str:
         return routing_fingerprint(cast(BigQueryRoutingCredentials, creds))
 
-    def cover_query_timeout(self, timeout: timedelta) -> None:
-        # Applied to each tenant's client as it is built.
-        self._query_timeout_floor = max(self._query_timeout_floor, timeout)
-
-    # ....................... #
-
     async def initialize_client(
         self,
         tenant_id: UUID,
         creds: BigQueryRoutingCredentials,
     ) -> BigQueryClient:
         client = BigQueryClient()
-        client.cover_query_timeout(self._query_timeout_floor)
         credential_path = credential_file_for_init(
             creds,
             prefix=self.credential_file_prefix,

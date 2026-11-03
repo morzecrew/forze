@@ -92,6 +92,22 @@ class TestRunOptionsHelpers:
 
         assert caught.value.code == "analytics_option_invalid"
 
+    def test_a_timeout_must_be_whole_units_of_the_engine_resolution(self) -> None:
+        second = timedelta(seconds=1)
+
+        validate_route_timeout(timedelta(seconds=3), resolution=second)
+
+        for bad in (timedelta(seconds=1.5), timedelta(milliseconds=500)):
+            with pytest.raises(CoreException, match="analytics_timeout_invalid"):
+                validate_route_timeout(bad, resolution=second)
+
+            with pytest.raises(CoreException, match="analytics_option_invalid"):
+                route_timeout({"timeout": bad}, timedelta(seconds=60), resolution=second)
+
+    def test_a_timeout_above_the_engine_maximum_is_refused(self) -> None:
+        with pytest.raises(CoreException, match="analytics_timeout_invalid"):
+            validate_route_timeout(timedelta(days=30), maximum=timedelta(days=24))
+
     @pytest.mark.parametrize("bad", [timedelta(0), timedelta(seconds=-1), None, 60])
     def test_validate_route_timeout_refuses_anything_but_a_positive_timedelta(
         self, bad: object

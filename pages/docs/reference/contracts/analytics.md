@@ -81,9 +81,9 @@ enforces it:
 
 | Backend | Enforced by | Accepted values |
 |---------|-------------|-----------------|
-| Postgres | `SET LOCAL statement_timeout`. It only tightens: a lower `statement_timeout` already in force (the pool's, or an invocation deadline's) still wins. Out of a transaction it goes in one round trip with the query; inside one, in a savepoint that puts the caller's value back | 1 ms to about 24.8 days |
-| ClickHouse | the `max_execution_time` setting, so the server stops the query. It replaces the client's own `timeout` for the query, and the deps module makes the client's transport wait at least the longest route's timeout plus 5 s | whole seconds, at least 1 s |
-| BigQuery | how long the client waits for the job; the deps module lets job polling run that long. BigQuery does not stop the job when the wait ends, so cap its cost with `maximum_bytes_billed` | whole seconds, at least 1 s |
+| Postgres | `SET LOCAL statement_timeout`, enforced by the server: it stops a long statement, not a stalled connection, which the pool and TCP keepalives cover. It only tightens: a lower `statement_timeout` already in force (the pool's, or an invocation deadline's) still wins. Out of a transaction it goes in one round trip with the query; inside one, in a savepoint that puts the caller's value back | whole milliseconds, 1 ms to about 24.8 days |
+| ClickHouse | the `max_execution_time` setting, so the server stops the query. It replaces the client's own `timeout` for the query, but may not exceed it: the client's transport waits `ClickHouseConfig.timeout` plus 5 s, and a longer route is refused at wiring | whole seconds, up to `ClickHouseConfig.timeout` |
+| BigQuery | how long the client waits for the job: one deadline over the query call, the polling and the results. BigQuery does not stop the job when the wait ends, so cap its cost with `maximum_bytes_billed` | whole seconds |
 | DuckDB | interrupting the query's cursor in process. A wait for a free executor slot counts against it | any positive value |
 
 ## Ingest port  (`ctx.analytics.ingest(spec)`)

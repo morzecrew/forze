@@ -12,7 +12,6 @@ from forze.base.primitives import JsonDict
 
 _DEFAULT_TIMEOUT = timedelta(seconds=60)
 _DEFAULT_POLL_INTERVAL = timedelta(milliseconds=250)
-_DEFAULT_MAX_POLL_ATTEMPTS = 240
 _DEFAULT_INSERT_BATCH_SIZE = 500
 _MAX_INSERT_ERRORS = 50
 
@@ -25,7 +24,8 @@ class BigQueryConfig:
     """Optional overrides for :class:`BigQueryClient`."""
 
     timeout: timedelta = attrs.field(default=_DEFAULT_TIMEOUT)
-    """Default HTTP timeout for BigQuery API calls."""
+    """Default HTTP timeout for BigQuery API calls, and how long a query is waited for in all
+    (the query call, job polling and the results) when the call names no timeout."""
 
     use_legacy_sql: bool = False
     """When ``True``, use legacy SQL (default Standard SQL)."""
@@ -35,10 +35,6 @@ class BigQueryConfig:
 
     poll_interval: timedelta = attrs.field(default=_DEFAULT_POLL_INTERVAL)
     """Delay between async job status polls."""
-
-    max_poll_attempts: int = _DEFAULT_MAX_POLL_ATTEMPTS
-    """Upper bound on job poll iterations (also capped by request timeout). An analytics route
-    whose timeout needs more polls raises it for that client."""
 
     read_retry_attempts: int = 0
     """Retry count for idempotent read operations."""
@@ -60,9 +56,6 @@ class BigQueryConfig:
 
         if self.poll_interval.total_seconds() <= 0:
             raise exc.configuration("Poll interval must be positive")
-
-        if self.max_poll_attempts < 1:
-            raise exc.configuration("max_poll_attempts must be >= 1")
 
 
 # ....................... #

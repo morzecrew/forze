@@ -8,10 +8,12 @@ afterwards the connection is reused and nothing is left running.
 
 from __future__ import annotations
 
+import asyncio
 import time
 from collections.abc import AsyncIterator
 from datetime import timedelta
 from typing import Any
+from unittest.mock import patch
 
 import pytest
 import pytest_asyncio
@@ -182,15 +184,6 @@ async def test_a_procedure_is_bounded_by_its_statement_timeout(
     await _assert_canceled_and_reusable(pg_client, lambda: adapter.run(_Params()))
 
 
-@pytest.mark.asyncio
-async def test_an_autocommit_procedure_is_canceled_on_the_server(
-    pg_client: PostgresClient,
-) -> None:
-    adapter = _procedure(pg_client, in_transaction=False, statement_timeout=_SHORT)
-
-    await _assert_canceled_and_reusable(pg_client, lambda: adapter.run(_Params()))
-
-
 # ....................... #
 
 
@@ -256,3 +249,57 @@ async def test_a_procedure_in_a_caller_transaction_restores_its_settings(
 
         assert await pg_client.fetch_value("SHOW statement_timeout", None) == "30s"
         assert await pg_client.fetch_value("SHOW search_path", None) == '"$user", public'
+
+
+# ....................... #
+
+
+async def _backend_pid(client: PostgresClient) -> int:
+    return int(await client.fetch_value("SELECT pg_backend_pid()", None))
+
+
+@pytest.mark.asyncio
+async def test_without_pipeline_support_a_root_read_is_still_bounded(
+    pg_client: PostgresClient,
+) -> None:
+    adapter = _analytics(pg_client, timeout=_SHORT)
+
+    with patch("forze_postgres.kernel.client.client.capabilities.has_pipeline", lambda: False):
+        await _assert_canceled_and_reusable(pg_client, lambda: adapter.run("sleep", _Params()))
+
+        page = await _analytics(pg_client, sql="SELECT 'ok' AS event, 2 AS value").run(
+            "sleep", _Params()
+        )
+
+    assert [(hit.event, hit.value) for hit in page.hits] == [("ok", 2)]
+
+
+@pytest.mark.asyncio
+async def test_an_error_inside_the_pipeline_closes_its_connection(
+    one_connection_client: PostgresClient,
+) -> None:
+    client = one_connection_client
+    before = await _backend_pid(client)
+    adapter = _analytics(client, sql="SELECT 'x' AS event, 1 / 0 AS value")
+
+    with pytest.raises(CoreException):
+        await adapter.run("sleep", _Params())
+
+    # The pool's one connection was closed and replaced, not lent out again.
+    assert await _backend_pid(client) != before
+
+
+@pytest.mark.asyncio
+async def test_a_cancel_inside_the_pipeline_closes_its_connection(
+    one_connection_client: PostgresClient,
+) -> None:
+    client = one_connection_client
+    before = await _backend_pid(client)
+    read = asyncio.ensure_future(_analytics(client).run("sleep", _Params()))
+    await asyncio.sleep(0.3)
+    read.cancel()
+
+    with pytest.raises(asyncio.CancelledError):
+        await read
+
+    assert await _backend_pid(client) != before

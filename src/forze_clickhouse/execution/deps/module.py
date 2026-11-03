@@ -65,14 +65,10 @@ class ClickHouseDepsModule(DepsModule):
             validation_failed_code="clickhouse_analytics_tenancy_validation_failed",
         )
 
-        # The transport must outwait the longest route, or it cuts the query before the
-        # server's max_execution_time does.
-        timeouts = [
-            q.timeout for cfg in (self.analytics or {}).values() for q in cfg.queries.values()
-        ]
-
-        if timeouts:
-            self.client.cover_query_timeout(max(timeouts))
+        # A plain client learns its config at startup; the adapter factory checks it then.
+        if (limit := self.client.query_timeout_limit()) is not None:
+            for name, config in (self.analytics or {}).items():
+                config.validate_against_client(str(name), limit)
 
     # ....................... #
 

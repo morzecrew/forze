@@ -19,7 +19,6 @@ CLIENT_FIELDS = (
     "maximum_bytes_billed",
     "use_legacy_sql",
     "poll_interval",
-    "max_poll_attempts",
     "insert_batch_size",
 )
 """Knobs :class:`BigQuerySettings` forwards, by their :class:`BigQueryConfig` name. Every
@@ -48,7 +47,6 @@ class BigQuerySettings(BaseModel):
 
     use_legacy_sql: bool | None = None
     poll_interval: timedelta | None = None
-    max_poll_attempts: int | None = None
     insert_batch_size: int | None = None
 
     # ....................... #

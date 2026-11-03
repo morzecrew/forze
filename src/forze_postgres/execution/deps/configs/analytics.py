@@ -24,7 +24,7 @@ if TYPE_CHECKING:
     from forze.application.contracts.analytics import AnalyticsSpec
 
 STATEMENT_TIMEOUT_RESOLUTION = timedelta(milliseconds=1)
-"""``statement_timeout`` counts milliseconds; a shorter timeout would round up to one."""
+"""``statement_timeout`` counts whole milliseconds: a fraction would be rounded."""
 
 STATEMENT_TIMEOUT_MAX = timedelta(milliseconds=2**31 - 1)
 """The largest ``statement_timeout`` Postgres accepts (``INT_MAX`` ms, about 24.8 days)."""

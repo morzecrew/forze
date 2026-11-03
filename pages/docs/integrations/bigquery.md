@@ -67,6 +67,6 @@ lifecycle = LifecyclePlan.from_steps(bigquery_lifecycle_step(project_id="my-proj
   for the job. A per-call `timeout` option lowers it, never raises it. BigQuery keeps
   running a job the client stopped waiting for, so cap a query's cost with
   `maximum_bytes_billed` ([analytics](../reference/contracts/analytics.md)). A query
-  timeout is whole seconds, at least 1 s, and `BigQueryDepsModule` raises the client's
-  `max_poll_attempts` for a route that needs more polls.
+  timeout is whole seconds. The wait is one deadline across the query call, the job
+  polling and the results, counted in wall time, not polls.
 - Out of scope: load jobs, `MERGE`, and DDL — manage those externally.

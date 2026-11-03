@@ -80,7 +80,7 @@ async def assert_every_read_is_bounded_by_the_route_timeout(
     :param seen: The timeouts the test's client was handed, in call order; cleared per path.
     """
 
-    below = route / 2
+    below = timedelta(seconds=route.total_seconds() // 2)  # whole seconds suit every engine
     cases: list[tuple[Any, timedelta]] = [
         (None, route),
         ({"timeout": route * 10}, route),

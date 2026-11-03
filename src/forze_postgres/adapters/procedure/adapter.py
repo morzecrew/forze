@@ -7,15 +7,11 @@ dispatches the result on the spec's declared cardinality.
 
 from __future__ import annotations
 
-import asyncio
-import contextlib
 from collections.abc import Awaitable, Callable
-from datetime import timedelta
 from typing import Any, cast, final
 from uuid import UUID
 
 import attrs
-from psycopg import AsyncConnection
 from psycopg.abc import QueryNoTemplate
 from pydantic import BaseModel
 
@@ -33,43 +29,7 @@ from forze.base.serialization import default_model_codec
 from forze_postgres.execution.deps.configs import PostgresProcedureConfig
 from forze_postgres.kernel.client import PostgresClientPort, scoped_local_settings
 
-from .._logger import logger
-
 # ----------------------- #
-
-CANCEL_GRACE = timedelta(seconds=5)
-"""How long a timed-out autocommit statement gets to stop after the server is asked to cancel
-it, before its connection is closed instead."""
-
-# ....................... #
-
-
-async def _stop_statement(statement: asyncio.Future[Any], conn: AsyncConnection) -> None:
-    """Cancel *statement* on the server; close *conn* if that does not finish in time.
-
-    Cancelling the task makes psycopg send the server a cancel request and then drain the
-    connection, with no bound on the drain. Only a drain that ends within
-    :data:`CANCEL_GRACE` leaves the connection usable. Otherwise a second cancel cuts the
-    drain short, or the drain failed, and the connection's state is unknown: it is closed,
-    and the pool discards a closed connection rather than lend it out again.
-    """
-
-    statement.cancel()
-    done, _ = await asyncio.wait({statement}, timeout=CANCEL_GRACE.total_seconds())
-    clean = bool(done) and (statement.cancelled() or statement.exception() is None)
-
-    if not done:
-        statement.cancel()
-        done, _ = await asyncio.wait({statement}, timeout=CANCEL_GRACE.total_seconds())
-
-        if not done:
-            logger.warning("A canceled autocommit procedure did not stop; closing its connection")
-
-    if not clean:
-        await conn.close()
-
-
-# ....................... #
 
 
 @final
@@ -157,62 +117,12 @@ class PostgresProcedureAdapter[In: BaseModel, Out](ProcedurePort[In, Out]):
 
     # ....................... #
 
-    async def _execute_autocommit(self, fn: Callable[[], Awaitable[Any]]) -> Any:
-        """Run *fn* out of transaction on its own connection, bounded by the route's timeout.
-
-        ``REFRESH ... CONCURRENTLY`` and some maintenance cannot run in a transaction, so there
-        is no ``SET LOCAL`` to scope (the config forbids ``query_schema``). The connection is
-        checked out before the clock starts, so the timeout covers the statement and not the
-        wait for a connection, which the pool's acquire timeout bounds. When it passes, the
-        statement is canceled on the server (:func:`_stop_statement`).
-
-        :raises CoreException: ``infrastructure``, "Database query canceled (timeout)", the
-            error a server-side ``statement_timeout`` maps to on the transactional path.
-        """
-
-        async with self.client.detached(), self.client.bound_connection() as conn:
-            await conn.set_autocommit(True)
-            statement = asyncio.ensure_future(fn())
-
-            try:
-                done, _ = await asyncio.wait(
-                    {statement},
-                    timeout=self.config.statement_timeout.total_seconds(),
-                )
-
-                if not done:
-                    await _stop_statement(statement, conn)
-
-            except BaseException:
-                # Our caller was canceled: the statement must not outlive it on a pooled
-                # connection.
-                await _stop_statement(statement, conn)
-                raise
-
-            finally:
-                # The pool's reset callback clears a leaked autocommit flag as well.
-                if not conn.closed:
-                    with contextlib.suppress(Exception):
-                        await conn.set_autocommit(False)
-
-        finished = statement.done() and not statement.cancelled()
-
-        # In time, or just as the timeout passed: a committed effect is reported either way.
-        if done or (finished and statement.exception() is None):
-            return statement.result()
-
-        cause = statement.exception() if finished else None
-
-        raise exc.infrastructure(
-            "Database query canceled (timeout).",
-            details={"route": str(self.spec.name)},
-        ) from cause
-
-    # ....................... #
-
     async def _execute(self, fn: Callable[[], Awaitable[Any]]) -> Any:
         if not self.config.in_transaction:
-            return await self._execute_autocommit(fn)
+            # Autocommit path: REFRESH ... CONCURRENTLY and some maintenance cannot run in a
+            # transaction. The config forbids query_schema / statement_timeout here, so there is
+            # no SET LOCAL to scope.
+            return await fn()
 
         schema = await self._query_schema()
 

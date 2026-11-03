@@ -52,8 +52,9 @@ class ClickHouseConfig:
     timeout: timedelta = attrs.field(default=DEFAULT_TIMEOUT)
     """Default query/insert timeout, sent as ``max_execution_time`` when a call names none.
 
-    The transport waits for an answer this long plus 5 s, or longer when a deps module's
-    analytics routes need it. A raw call with a longer timeout of its own is cut there."""
+    The transport waits for an answer this long plus 5 s, so the server's own
+    ``TIMEOUT_EXCEEDED`` arrives first. An analytics route allowing longer is refused at
+    wiring; a raw call with a longer timeout of its own is cut at the socket."""
 
     connector_limit: int = _DEFAULT_CONNECTOR_LIMIT
     """aiohttp connector total connection limit."""

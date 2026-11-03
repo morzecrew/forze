@@ -24,7 +24,7 @@ if TYPE_CHECKING:
     from forze.application.contracts.analytics import AnalyticsSpec
 
 TIMEOUT_RESOLUTION = timedelta(seconds=1)
-"""``max_execution_time`` counts whole seconds, and the client rounds a shorter timeout up."""
+"""``max_execution_time`` counts whole seconds: a fraction would be rounded."""
 
 # ....................... #
 
@@ -48,8 +48,9 @@ class ClickHouseQueryConfig:
 
     Sent as the ``max_execution_time`` setting, so the server stops the query. It replaces
     :attr:`~forze_clickhouse.ClickHouseConfig.timeout` for this query; ingest keeps that.
-    Whole seconds, at least 1 s. :class:`~forze_clickhouse.execution.ClickHouseDepsModule`
-    makes the client's transport wait at least this long, plus a margin."""
+    Whole seconds, and no longer than the client's ``ClickHouseConfig.timeout``, which bounds
+    how long its transport waits: a longer one is refused at wiring
+    (``clickhouse_read_timeout_too_short``)."""
 
     # ....................... #
 
@@ -113,6 +114,30 @@ class ClickHouseAnalyticsConfig(TenantAwareIntegrationConfig):
         """Effective ingest relation, or ``None`` when no ingest target is configured."""
 
         return self.ingest.relation if self.ingest is not None else None
+
+    # ....................... #
+
+    def validate_against_client(self, route: str, limit: timedelta) -> None:
+        """Refuse a query whose timeout is longer than the client waits for an answer.
+
+        :param limit: The client's ``ClickHouseConfig.timeout``.
+        """
+
+        for key, query in self.queries.items():
+            if query.timeout > limit:
+                raise exc.configuration(
+                    f"ClickHouse analytics route {route!r} query {str(key)!r} allows "
+                    f"{query.timeout}, but the client waits at most {limit} for an answer and "
+                    "would cut the query first. Raise ClickHouseConfig.timeout to at least "
+                    f"{query.timeout}.",
+                    code="clickhouse_read_timeout_too_short",
+                    details={
+                        "route": route,
+                        "query": str(key),
+                        "timeout": str(query.timeout),
+                        "client_timeout": str(limit),
+                    },
+                )
 
     # ....................... #
 

@@ -340,33 +340,62 @@ async def test_the_route_timeout_stops_the_query_on_the_server(
     assert time.monotonic() - started < 15
 
 
-@pytest.mark.asyncio
-async def test_a_route_longer_than_the_client_timeout_is_not_cut_by_the_transport(
-    clickhouse_connection, analytics_table
-) -> None:
-    """The client's own timeout is 2 s; the route allows 6 s. The query must run until the
-    server stops it at 6 s, not until the socket gives up at 2 s."""
-
-    database_id, table_id = analytics_table
-    endless = "SELECT count() AS value, 'x' AS event FROM system.numbers"
-    config = ClickHouseAnalyticsConfig(
+def _endless_config(database_id: str, table_id: str, timeout: timedelta) -> ClickHouseAnalyticsConfig:
+    return ClickHouseAnalyticsConfig(
         database=database_id,
-        queries={"all": ClickHouseQueryConfig(sql=endless, timeout=timedelta(seconds=6))},
+        queries={
+            "all": ClickHouseQueryConfig(
+                sql="SELECT count() AS value, 'x' AS event FROM system.numbers",
+                timeout=timeout,
+            )
+        },
         ingest=IngestSpec((database_id, table_id)),
     )
+
+
+@pytest.mark.asyncio
+async def test_a_route_as_long_as_the_client_timeout_is_stopped_by_the_server(
+    clickhouse_connection, analytics_table
+) -> None:
+    """Client and route both allow 3 s. The transport waits 5 s more, so the server's
+    TIMEOUT_EXCEEDED arrives before the socket gives up."""
+
+    database_id, table_id = analytics_table
     client = ClickHouseClient()
-    module = ClickHouseDepsModule(client=client, analytics={"events": config})
-    await client.initialize(attrs.evolve(clickhouse_connection, timeout=timedelta(seconds=2)))
+    await client.initialize(attrs.evolve(clickhouse_connection, timeout=timedelta(seconds=3)))
 
     try:
+        module = ClickHouseDepsModule(
+            client=client,
+            analytics={"events": _endless_config(database_id, table_id, timedelta(seconds=3))},
+        )
         port = context_from_deps(module()).analytics.query(_spec())
-        started = time.monotonic()
 
         with pytest.raises(CoreException) as caught:
             await port.run("all", _Params())
 
         assert "TIMEOUT_EXCEEDED" in str(caught.value.__cause__)
-        assert 5.5 < time.monotonic() - started < 15
+
+    finally:
+        await client.close()
+
+
+@pytest.mark.asyncio
+async def test_a_route_longer_than_the_client_timeout_is_refused_at_wiring(
+    clickhouse_connection, analytics_table
+) -> None:
+    database_id, table_id = analytics_table
+    client = ClickHouseClient()
+    await client.initialize(attrs.evolve(clickhouse_connection, timeout=timedelta(seconds=2)))
+
+    try:
+        with pytest.raises(CoreException) as caught:
+            ClickHouseDepsModule(
+                client=client,
+                analytics={"events": _endless_config(database_id, table_id, timedelta(seconds=6))},
+            )
+
+        assert caught.value.code == "clickhouse_read_timeout_too_short"
 
     finally:
         await client.close()

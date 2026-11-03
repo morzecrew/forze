@@ -1,5 +1,6 @@
 """Unit tests for :class:`~forze_bigquery.kernel.client.BigQueryClient`."""
 
+import asyncio
 from datetime import timedelta
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -38,12 +39,6 @@ async def test_close_unlinks_owned_service_file() -> None:
     assert not Path(credential_path.path).exists()
 
 
-@pytest.mark.parametrize("bad", [0, -1])
-def test_config_rejects_non_positive_max_poll_attempts(bad: int) -> None:
-    with pytest.raises(CoreException, match="max_poll_attempts must be >= 1"):
-        BigQueryConfig(max_poll_attempts=bad)
-
-
 @pytest.mark.asyncio
 async def test_poll_job_done_returns_on_done_status() -> None:
     # Exercises the poll-attempt clamp and the happy-path completion.
@@ -53,33 +48,32 @@ async def test_poll_job_done_returns_on_done_status() -> None:
 
     with patch.object(BigQueryClient, "job", return_value=fake_job):
         poll = client._BigQueryClient__poll_job_done
-        await poll("job-1", timeout=60)
+        await poll("job-1", deadline=asyncio.get_running_loop().time() + 60)
 
     fake_job.get_job.assert_awaited_once()
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(("covered", "polls"), [(None, 2), (timedelta(seconds=1), 20)])
-async def test_polling_outlasts_max_poll_attempts_for_a_covered_route(
-    covered: timedelta | None, polls: int
-) -> None:
-    # Two polls at 50 ms would give up after 0.1 s. A route that may wait 1 s raises the
-    # budget, or max_poll_attempts would cut it before its own timeout.
+async def test_polling_stops_at_the_deadline_however_slow_each_poll_is() -> None:
+    # Each poll is an RPC that takes 0.4 s. Counting polls (1 s / 50 ms = 20) would wait
+    # about 9 s; the wall-time deadline stops it at 1 s.
     client = BigQueryClient()
     fake_job = MagicMock()
-    fake_job.get_job = AsyncMock(return_value={"status": {"state": "RUNNING"}})
 
-    if covered is not None:
-        client.cover_query_timeout(covered)
+    async def _slow_rpc(**_kwargs: object) -> dict[str, object]:
+        await asyncio.sleep(0.4)
+        return {"status": {"state": "RUNNING"}}
 
-    config = BigQueryConfig(max_poll_attempts=2, poll_interval=timedelta(milliseconds=50))
+    fake_job.get_job = _slow_rpc
+    config = BigQueryConfig(poll_interval=timedelta(milliseconds=50))
+    loop = asyncio.get_running_loop()
+    started = loop.time()
 
     with (
         patch.object(BigQueryClient, "job", return_value=fake_job),
         patch.object(BigQueryClient, "_BigQueryClient__require_config", return_value=config),
-        patch("forze_bigquery.kernel.client.client.asyncio.sleep", AsyncMock()),
         pytest.raises(CoreException, match="polling timed out"),
     ):
-        await client._BigQueryClient__poll_job_done("job-1", timeout=1)  # type: ignore[attr-defined]
+        await client._BigQueryClient__poll_job_done("job-1", deadline=started + 1.0)  # type: ignore[attr-defined]
 
-    assert fake_job.get_job.await_count == polls
+    assert 0.9 < loop.time() - started < 1.3

@@ -65,14 +65,6 @@ class BigQueryDepsModule(DepsModule):
             validation_failed_code="bigquery_analytics_tenancy_validation_failed",
         )
 
-        # Job polling must outlast the longest route, or max_poll_attempts cuts it first.
-        timeouts = [
-            q.timeout for cfg in (self.analytics or {}).values() for q in cfg.queries.values()
-        ]
-
-        if timeouts:
-            self.client.cover_query_timeout(max(timeouts))
-
     # ....................... #
 
     def __call__(self) -> Deps:
