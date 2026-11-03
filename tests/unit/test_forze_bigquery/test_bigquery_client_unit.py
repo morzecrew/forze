@@ -77,3 +77,32 @@ async def test_polling_stops_at_the_deadline_however_slow_each_poll_is() -> None
         await client._BigQueryClient__poll_job_done("job-1", deadline=started + 1.0)  # type: ignore[attr-defined]
 
     assert 0.9 < loop.time() - started < 1.3
+
+
+@pytest.mark.asyncio
+async def test_the_results_fetch_counts_against_the_query_timeout() -> None:
+    # The query and the polling finish at once; the results call then hangs. The whole wait is
+    # one clock, so the 1 s route ends at 1 s, not 1 s after the results call starts.
+    client = BigQueryClient()
+    fake_job = MagicMock()
+    fake_job.query = AsyncMock(return_value={"jobComplete": False, "jobReference": {"jobId": "j"}})
+    fake_job.get_job = AsyncMock(return_value={"status": {"state": "DONE"}})
+
+    async def _hanging_results(**_kwargs: object) -> dict[str, object]:
+        await asyncio.sleep(5)
+        return {}
+
+    fake_job.get_query_results = _hanging_results
+    loop = asyncio.get_running_loop()
+    started = loop.time()
+
+    with (
+        patch.object(BigQueryClient, "job", return_value=fake_job),
+        patch.object(
+            BigQueryClient, "_BigQueryClient__require_config", return_value=BigQueryConfig()
+        ),
+        pytest.raises(CoreException, match="timed out"),
+    ):
+        await client.run_query("SELECT 1", timeout=timedelta(seconds=1))
+
+    assert 0.9 < loop.time() - started < 1.5

@@ -320,6 +320,10 @@ class BigQueryClient(BigQueryClientPort):
         timeout: timedelta | None = None,
         default_dataset: str | None = None,
     ) -> BigQueryQueryResult:
+        # One clock for the whole wait, retries included: the query call, the polling and the
+        # results all draw on it, and the bound below cuts whichever is running when it ends.
+        deadline = asyncio.get_running_loop().time() + self.__timeout(timeout)
+
         async def _run() -> BigQueryQueryResult:
             query_parameters = params_to_query_parameters(params) if params is not None else None
             max_billed = (
@@ -340,10 +344,7 @@ class BigQueryClient(BigQueryClientPort):
             )
 
             job = self.job()
-            timeout_sec = self.__timeout(timeout)
-            # One clock for the whole wait: the query call, the polling and the results.
-            deadline = asyncio.get_running_loop().time() + timeout_sec
-            response = await job.query(body, timeout=timeout_sec)
+            response = await job.query(body, timeout=_remaining_sec(deadline))
 
             if dry_run:
                 parsed = self.__parse_rows(response)
@@ -374,7 +375,7 @@ class BigQueryClient(BigQueryClientPort):
 
             return self.__parse_rows(results)
 
-        return await self.__maybe_read_retry(_run)
+        return await _bounded(deadline, lambda: self.__maybe_read_retry(_run))
 
     # ....................... #
 
@@ -418,7 +419,9 @@ class BigQueryClient(BigQueryClientPort):
 
             return all_rows
 
-        return await self.__maybe_read_retry(_run)
+        deadline = asyncio.get_running_loop().time() + self.__timeout(timeout)
+
+        return await _bounded(deadline, lambda: self.__maybe_read_retry(_run))
 
     # ....................... #
 
@@ -539,6 +542,17 @@ class BigQueryClient(BigQueryClientPort):
 
 
 # ....................... #
+
+
+async def _bounded[T](deadline: float, run: Callable[[], Awaitable[T]]) -> T:
+    """*run*, cut at *deadline* on the running loop's clock, whatever it is waiting on then."""
+
+    try:
+        async with asyncio.timeout_at(deadline):
+            return await run()
+
+    except TimeoutError:
+        raise exc.internal("BigQuery query timed out.") from None
 
 
 def _remaining_sec(deadline: float) -> int:
