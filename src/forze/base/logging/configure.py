@@ -242,8 +242,8 @@ def configure_logging(
         Narrowing capture does not narrow redaction: the root also gets a scrubbing handler
         at ``warning`` (or ``level``, if higher), so a propagating logger outside the list
         prints its warnings and above scrubbed on the configured ``stream``. Above
-        ``warning``, unlisted warnings stop printing, which Python's last-resort handler
-        printed raw. A root handler the app installed stays beside it, so those lines appear
+        ``warning``, this handler stops printing unlisted warnings, which Python's last-resort
+        handler printed raw. A root handler the app installed stays beside it, so those lines appear
         twice, and a later ``logging.basicConfig()`` is a no-op unless ``force=True``. A
         logger with ``propagate=False`` (``uvicorn``, ``uvicorn.access``) is reached only by
         naming it.
