@@ -10846,6 +10846,9 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <li>
 <p><strong><code>process_with_inbox</code> gives every delivery invocation metadata with its own execution id</strong> (<strong>behaviour change</strong>), even under metadata the consumer bound. A message without a <code>forze_correlation_id</code> header takes the bound correlation id or a fresh one, and its logs, events and idempotency claims carry the execution id.</p>
 </li>
+<li>
+<p><strong>A DuckDB dynamic read whose route namespace is unavailable in the tenant's lake raises <code>dynamic_read_namespace_missing</code></strong> (<strong>behaviour change</strong>). It is a <code>precondition</code>, not <code>dynamic_read_statement_invalid</code>, also on Iceberg after a revoked grant. DuckLake reads a schema created later with no <code>evict_tenant</code>.</p>
+</li>
 </ul>
 <h3 id="removed">Removed<a class="headerlink" href="#removed" title="Permanent link">&para;</a></h3>
 <ul>
