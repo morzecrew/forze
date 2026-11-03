@@ -23,7 +23,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- **Narrowing `logger_names` no longer narrows log redaction.** A scrubbing root handler at `warning` (or a higher `level`) prints unlisted loggers on the configured stream, not raw on stderr; above `warning`, their warnings stop (**behaviour change**). `redact_unnamed=False` declines it.
+- **Narrowing `logger_names` no longer narrows log redaction.** A forze root handler at `warning` (or a higher `level`) prints unlisted loggers scrubbed on the configured stream, not via Python's raw stderr fallback; above `warning` it drops their warnings (**behaviour change**). `redact_unnamed=False` declines it.
 
 ### Fixed
 
