@@ -4,7 +4,9 @@ Some code taken from: https://gist.github.com/nymous/f138c7f06062b7c43c060bf0375
 """
 
 import logging
+import os
 import sys
+import warnings
 from collections.abc import Callable, Sequence
 from enum import StrEnum
 from typing import Any, Final, Literal, TextIO, TypedDict
@@ -207,6 +209,10 @@ def _cast_logger_names(x: _LoggerNames) -> list[str]:
     return output
 
 
+class _UnnamedRedactionHandler(logging.StreamHandler[TextIO]):
+    """Root handler :func:`configure_logging` owns while ``logger_names`` narrows capture."""
+
+
 def configure_logging(
     *,
     level: LogLevel = "info",
@@ -220,6 +226,7 @@ def configure_logging(
     include_exception_stack: bool = True,
     enable_sampling: bool = True,
     dedup_window: float = 60.0,
+    redact_unnamed: bool = True,
 ) -> None:
     """Configure logging for the application.
 
@@ -232,6 +239,14 @@ def configure_logging(
     :param logger_names: The logger names to attach handlers to (an explicit allowlist).
         When omitted or empty, the **root** logger is configured so no logger's output is
         silently dropped; pass a list only to deliberately narrow capture to those names.
+        Narrowing capture does not narrow redaction: the root also gets a scrubbing handler
+        at ``warning`` (or ``level``, if higher), so a propagating logger outside the list
+        prints its warnings and above scrubbed on the configured ``stream``. Above
+        ``warning``, this handler stops printing unlisted warnings, which Python's last-resort
+        handler printed raw. A root handler the app installed stays beside it, so those lines appear
+        twice, and a later ``logging.basicConfig()`` is a no-op unless ``force=True``. A
+        logger with ``propagate=False`` (``uvicorn``, ``uvicorn.access``) is reached only by
+        naming it.
     :param stream: The stream to use for logging (default: stdout).
     :param sanitize_logs: Scrub sensitive keys (and optionally text PII) from log event fields.
     :param text_scrub: Apply scrub to string values in log extras when ``sanitize_logs`` is true.
@@ -239,6 +254,10 @@ def configure_logging(
     :param enable_sampling: Honor per-event ``_sample`` / ``_dedup_key`` controls to collapse
         high-volume events; a no-op for events that carry neither.
     :param dedup_window: Default dedup window in seconds for ``_dedup_key`` events.
+    :param redact_unnamed: When false, a narrowed ``logger_names`` leaves the root alone, so
+        loggers outside the list reach Python's default handling unscrubbed, with a warning.
+        Pass it when the app manages the root logger itself. No effect without
+        ``logger_names`` or with ``sanitize_logs=False``.
     """
 
     wrapper_class = (
@@ -300,9 +319,13 @@ def configure_logging(
     # last-resort handler swallows them — so a caller who omits the list (or forgets a
     # name) would lose logs invisibly. An explicit list is still honored verbatim.
     names = _cast_logger_names(logger_names) if logger_names else [""]
+    loggers = [logging.getLogger(name) for name in names]
+    root = logging.getLogger()
 
-    for name in names:
-        logger = logging.getLogger(name)
+    for stale in [h for h in root.handlers if isinstance(h, _UnnamedRedactionHandler)]:
+        root.removeHandler(stale)
+
+    for logger in loggers:
         logger.handlers.clear()
         logger.setLevel(LogLevelToRank.get(level, 0))
         logger.propagate = False
@@ -310,6 +333,26 @@ def configure_logging(
         handler = logging.StreamHandler(stream)
         handler.setFormatter(formatter)
         logger.addHandler(handler)
+
+    if root in loggers or not sanitize_logs:
+        return
+
+    if not redact_unnamed:
+        warnings.warn(
+            "redact_unnamed=False: loggers outside logger_names reach Python's default "
+            "handling unscrubbed",
+            # Point at the app's call, whether it came through bootstrap_logging or not.
+            skip_file_prefixes=(os.path.dirname(__file__) + os.sep,),
+        )
+        return
+
+    # Narrowing must not trade redaction for quiet: whatever still propagates to the root
+    # renders through the same scrub, on ``stream``. At WARNING those are the lines Python's
+    # last-resort handler printed raw; a higher configured level drops unlisted warnings too.
+    unnamed = _UnnamedRedactionHandler(stream)
+    unnamed.setLevel(max(logging.WARNING, LogLevelToRank.get(level, 0)))
+    unnamed.setFormatter(formatter)
+    root.addHandler(unnamed)
 
 
 # ....................... #
@@ -374,6 +417,7 @@ def bootstrap_logging(
     include_exception_stack: bool = True,
     enable_sampling: bool = True,
     dedup_window: float = 60.0,
+    redact_unnamed: bool = True,
     install_uncaught: bool = True,
 ) -> None:
     """One-call logging setup: framework loggers + integrations + foreign + excepthook.
@@ -386,6 +430,8 @@ def bootstrap_logging(
     :param logger_names: Integration logger roots to configure alongside the core,
         e.g. ``["forze_postgres", "forze_redis"]``. A root covers its children.
     :param third_party: Foreign stdlib logger names to route through the Forze formatter.
+        Name any that set ``propagate=False`` themselves — for uvicorn both ``uvicorn`` and
+        ``uvicorn.access`` — since the root's scrubbing handler never sees their records.
     :param install_uncaught: Install the ``forze.uncaught`` excepthook for unhandled errors.
 
     See :func:`configure_logging` for the shared rendering/sanitizing parameters.
@@ -405,6 +451,7 @@ def bootstrap_logging(
         include_exception_stack=include_exception_stack,
         enable_sampling=enable_sampling,
         dedup_window=dedup_window,
+        redact_unnamed=redact_unnamed,
     )
 
     if third_party:
