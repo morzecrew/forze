@@ -16,8 +16,9 @@ from typing import Annotated, Any
 from unittest.mock import patch
 from uuid import UUID, uuid4
 
+import attrs
 import pytest
-from pydantic import StringConstraints
+from pydantic import Field, StringConstraints
 
 from forze.application.contracts.document import DocumentSpec, DocumentWriteTypes
 from forze.application.contracts.guarantees import UniqueTogether
@@ -87,7 +88,7 @@ class ReadSoftLine(ReadDocument):
 
 
 def _spec(
-    *guarantees: UniqueTogether, hard_delete: bool = True
+    *guarantees: UniqueTogether, hard_delete: bool = True, history: bool = False
 ) -> DocumentSpec[Any, Any, Any, Any]:
     return DocumentSpec(
         name="lines",
@@ -95,6 +96,7 @@ def _spec(
         write=DocumentWriteTypes(domain=Line, create_cmd=CreateLine, update_cmd=UpdateLine),
         guarantees=guarantees,
         hard_delete=hard_delete,
+        history_enabled=history,
     )
 
 
@@ -716,32 +718,41 @@ class TestStaleRevisions:
 
         return patch.object(type(ctx.document.query(spec)), "find_stream", stream)
 
-    async def test_an_update(self, ctx: ExecutionContext) -> None:
+    @pytest.mark.parametrize("history", [False, True])
+    async def test_an_update(self, ctx: ExecutionContext, history: bool) -> None:
+        spec = _spec(history=history)
         order = uuid4()
-        (a,) = await _seed(ctx, _spec(), CreateLine(order_id=order, sku="a", quantity=1))
-        stale = await self._changed_after_read(ctx, _spec(), order, a, UpdateLine(quantity=2))
+        (a,) = await _seed(ctx, spec, CreateLine(order_id=order, sku="a", quantity=1))
+        stale = await self._changed_after_read(ctx, spec, order, a, UpdateLine(position=4))
 
-        with self._reading(ctx, _spec(), stale), pytest.raises(CoreException) as ei:
-            await _reconcile(ctx, _sync(), order, CreateLine(order_id=order, sku="a", quantity=5))
+        with self._reading(ctx, spec, stale), pytest.raises(CoreException) as ei:
+            await _reconcile(
+                ctx, _sync(spec), order, CreateLine(order_id=order, sku="a", quantity=5)
+            )
 
         assert _refusal(ei) == (ExceptionKind.PRECONDITION, "revision_mismatch")
-        assert (await _children(ctx, _spec(), order))["a"].quantity == 2
+        stored = (await _children(ctx, spec, order))["a"]
+        assert (stored.quantity, stored.position) == (1, 4)
 
-    async def test_a_hard_delete(self, ctx: ExecutionContext) -> None:
+    @pytest.mark.parametrize("history", [False, True])
+    async def test_a_hard_delete(self, ctx: ExecutionContext, history: bool) -> None:
+        spec = _spec(history=history)
         order = uuid4()
         a, _ = await _seed(
-            ctx, _spec(), CreateLine(order_id=order, sku="a"), CreateLine(order_id=order, sku="b")
+            ctx, spec, CreateLine(order_id=order, sku="a"), CreateLine(order_id=order, sku="b")
         )
-        stale = await self._changed_after_read(ctx, _spec(), order, a, UpdateLine(quantity=2))
+        stale = await self._changed_after_read(ctx, spec, order, a, UpdateLine(quantity=2))
 
-        with self._reading(ctx, _spec(), stale), pytest.raises(CoreException) as ei:
-            await _reconcile(ctx, _sync(), order, CreateLine(order_id=order, sku="b"))
+        with self._reading(ctx, spec, stale), pytest.raises(CoreException) as ei:
+            await _reconcile(ctx, _sync(spec), order, CreateLine(order_id=order, sku="b"))
 
         assert _refusal(ei) == (ExceptionKind.PRECONDITION, "revision_mismatch")
-        assert set(await _children(ctx, _spec(), order)) == {"a", "b"}
+        assert set(await _children(ctx, spec, order)) == {"a", "b"}
 
-    async def test_a_soft_delete(self, ctx: ExecutionContext) -> None:
-        spec, sync = TestSoftDeletion.SPEC, TestSoftDeletion()._sync()
+    @pytest.mark.parametrize("history", [False, True])
+    async def test_a_soft_delete(self, ctx: ExecutionContext, history: bool) -> None:
+        spec = attrs.evolve(TestSoftDeletion.SPEC, history_enabled=history)
+        sync = ChildCollectionSync(child_spec=spec, parent_fk="order_id", key_fields=("sku",))
         order = uuid4()
         (a,) = await _seed(ctx, spec, CreateSoftLine(order_id=order, sku="a"))
         stale = await self._changed_after_read(ctx, spec, order, a, UpdateSoftLine(quantity=2))
@@ -751,6 +762,27 @@ class TestStaleRevisions:
 
         assert _refusal(ei) == (ExceptionKind.PRECONDITION, "revision_mismatch")
         assert (await ctx.document.query(spec).get(a.id)).is_deleted is False
+
+
+@pytest.mark.parametrize("history", [False, True])
+async def test_a_soft_delete_another_writer_already_made_is_refused(
+    ctx: ExecutionContext, history: bool
+) -> None:
+    # Strict, the write at the revision read is refused, so ``removed`` never lists a child
+    # this call did not delete.
+    spec = attrs.evolve(TestSoftDeletion.SPEC, history_enabled=history)
+    sync = ChildCollectionSync(child_spec=spec, parent_fk="order_id", key_fields=("sku",))
+    order = uuid4()
+    (a,) = await _seed(ctx, spec, CreateSoftLine(order_id=order, sku="a"))
+    stale = await TestStaleRevisions._changed_after_read(
+        ctx, spec, order, a, UpdateSoftLine(is_deleted=True)
+    )
+
+    with TestStaleRevisions._reading(ctx, spec, stale), pytest.raises(CoreException) as ei:
+        await _reconcile(ctx, sync, order)
+
+    assert _refusal(ei) == (ExceptionKind.PRECONDITION, "revision_mismatch")
+    assert (await ctx.document.query(spec).get(a.id)).rev == a.rev + 1
 
 
 # ....................... #
@@ -846,3 +878,212 @@ class TestTenancy:
 
         with ctx.inv_ctx.bind_identity(tenant=first):
             assert set(await _children(ctx, _spec(), order)) == {"a"}
+
+
+# ....................... #
+
+
+class TestTheTransactionsConnection:
+    async def test_a_child_port_outside_the_transaction_is_refused(
+        self, ctx: ExecutionContext, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # As a port on another backend than the transaction's reports itself.
+        order = uuid4()
+        await _seed(ctx, _spec(), CreateLine(order_id=order, sku="a"))
+        port = type(unguarded(ctx.document.command(_spec())))
+        monkeypatch.setattr(port, "is_transactionally_enlisted", lambda _: False, raising=False)
+
+        with pytest.raises(CoreException) as ei:
+            await _reconcile(ctx, _sync(), order, CreateLine(order_id=order, sku="b"))
+
+        assert _refusal(ei) == (ExceptionKind.CONFIGURATION, "core.tx.not_enlisted")
+        assert set(await _children(ctx, _spec(), order)) == {"a"}
+
+
+# ....................... #
+
+
+class Box(BaseDTO):
+    width: int = 0
+
+
+class _Tagged(Document):
+    order_id: UUID
+    sku: str
+    tags: dict[str, int] = Field(default_factory=dict)
+    box: Box | None = None
+    loose: Any = None
+    labels: list[str] = Field(default_factory=list)
+
+
+class _CreateTagged(CreateDocumentCmd):
+    order_id: UUID
+    sku: str
+    tags: dict[str, int] = Field(default_factory=dict)
+    box: Box | None = None
+    loose: Any = None
+    labels: list[str] = Field(default_factory=list)
+
+
+class _UpdateTagged(BaseDTO):
+    tags: dict[str, int] | None = None
+    box: Box | None = None
+    loose: Any = None
+    labels: list[str] | None = None
+
+
+class _ReadTagged(ReadDocument):
+    order_id: UUID
+    sku: str
+    tags: dict[str, int] = Field(default_factory=dict)
+    box: Box | None = None
+    loose: Any = None
+    labels: list[str] = Field(default_factory=list)
+
+
+class TestFieldsAnUpdateMerges:
+    """A compare field an update merges into would keep a key the incoming value drops."""
+
+    SPEC = DocumentSpec(
+        name="tagged_lines",
+        read=_ReadTagged,
+        write=DocumentWriteTypes(
+            domain=_Tagged, create_cmd=_CreateTagged, update_cmd=_UpdateTagged
+        ),
+    )
+
+    @pytest.mark.parametrize("field", ["tags", "box", "loose"])
+    def test_a_mapping_a_model_or_any_is_refused(self, field: str) -> None:
+        with pytest.raises(CoreException, match=field) as ei:
+            ChildCollectionSync(
+                child_spec=self.SPEC,
+                parent_fk="order_id",
+                key_fields=("sku",),
+                compare_fields=frozenset({field}),
+            )
+
+        assert _refusal(ei) == (ExceptionKind.CONFIGURATION, "child_compare_field_merged")
+
+    def test_a_key_field_whose_type_may_not_hash_is_refused(self) -> None:
+        with pytest.raises(CoreException, match="labels") as ei:
+            ChildCollectionSync(
+                child_spec=self.SPEC, parent_fk="order_id", key_fields=("sku", "labels")
+            )
+
+        assert _refusal(ei) == (ExceptionKind.CONFIGURATION, "child_key_unhashable")
+
+    def test_a_list_is_replaced_and_may_be_compared(self) -> None:
+        ChildCollectionSync(
+            child_spec=self.SPEC,
+            parent_fk="order_id",
+            key_fields=("sku",),
+            compare_fields=frozenset({"labels"}),
+        )
+
+
+# ....................... #
+
+
+class _Coded(Document):
+    order_id: UUID
+    sku: str
+    code: str = ""
+    quantity: int = 1
+
+
+class _CreateCoded(CreateDocumentCmd):
+    order_id: UUID
+    sku: str
+    code: str = ""
+    quantity: int = 1
+
+
+class _UpdateCoded(BaseDTO):
+    quantity: int | None = None
+
+
+class _UpdateCodedStrictly(BaseDTO):
+    quantity: int | None = None
+    reason: str
+
+
+class _ReadCoded(ReadDocument):
+    order_id: UUID
+    sku: str
+    code: str = ""
+    quantity: int = 1
+
+
+class _Window(BaseDTO):
+    day: int
+
+
+def _coded(**overrides: Any) -> DocumentSpec[Any, Any, Any, Any]:
+    fields: dict[str, Any] = {
+        "name": "coded_lines",
+        "read": _ReadCoded,
+        "write": DocumentWriteTypes(
+            domain=_Coded, create_cmd=_CreateCoded, update_cmd=_UpdateCoded
+        ),
+    }
+
+    return DocumentSpec(**(fields | overrides))
+
+
+class TestSpecsItCannotServe:
+    def test_a_field_the_write_omits_is_refused_as_a_key(self) -> None:
+        # Omitted, it reads back as its default, so two children would share one key.
+        with pytest.raises(CoreException, match="code") as ei:
+            ChildCollectionSync(
+                child_spec=_coded(write_omit_fields=frozenset({"code"})),
+                parent_fk="order_id",
+                key_fields=("sku", "code"),
+            )
+
+        assert _refusal(ei) == (ExceptionKind.CONFIGURATION, "child_field_not_stored")
+
+    def test_a_field_the_read_does_not_store_is_refused_as_compared(self) -> None:
+        with pytest.raises(CoreException, match="quantity") as ei:
+            ChildCollectionSync(
+                child_spec=_coded(lenient_read_fields=frozenset({"quantity"})),
+                parent_fk="order_id",
+                key_fields=("sku",),
+                compare_fields=frozenset({"quantity"}),
+            )
+
+        assert _refusal(ei) == (ExceptionKind.CONFIGURATION, "child_field_not_stored")
+
+    def test_a_parametrized_spec_is_refused(self) -> None:
+        with pytest.raises(CoreException) as ei:
+            ChildCollectionSync(
+                child_spec=_coded(query_params=_Window), parent_fk="order_id", key_fields=("sku",)
+            )
+
+        assert _refusal(ei) == (ExceptionKind.CONFIGURATION, "child_spec_parametrized")
+
+    def test_an_update_command_requiring_an_unpatched_field_is_refused(self) -> None:
+        spec = _coded(
+            write=DocumentWriteTypes(
+                domain=_Coded, create_cmd=_CreateCoded, update_cmd=_UpdateCodedStrictly
+            )
+        )
+
+        with pytest.raises(CoreException, match="reason") as ei:
+            ChildCollectionSync(
+                child_spec=spec,
+                parent_fk="order_id",
+                key_fields=("sku",),
+                compare_fields=frozenset({"quantity"}),
+            )
+
+        assert _refusal(ei) == (ExceptionKind.CONFIGURATION, "child_update_requires_fields")
+
+    def test_an_update_command_never_built_may_require_anything(self) -> None:
+        # Hard deletes and no compare fields: no patch is ever made.
+        spec = _coded(
+            write=DocumentWriteTypes(
+                domain=_Coded, create_cmd=_CreateCoded, update_cmd=_UpdateCodedStrictly
+            )
+        )
+
+        ChildCollectionSync(child_spec=spec, parent_fk="order_id", key_fields=("sku",))

@@ -5,7 +5,8 @@ real index instead, declared nowhere in the spec. A new child taking a position 
 held commits only because the delete runs first, and a reorder commits under a deferred
 constraint. A refused batch rolls back the creates before it. A collection larger than one read
 batch is read whole, a child changed since the read is not deleted, and values a timestamptz
-and a numeric column return meet a naive datetime and a float.
+and a numeric column return meet a naive datetime and a float. With revision history on,
+a change another writer made since the read is refused, never merged.
 """
 
 from __future__ import annotations
@@ -30,6 +31,7 @@ from forze.application.execution import Deps, ExecutionContext
 from forze.base.exceptions import CoreException, ExceptionKind
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
 from forze_kits.aggregates import ChildCollectionChanges, ChildCollectionSync
+from forze_kits.domain.soft_deletion import DocWithSoftDeletion, UpdateCmdWithSoftDeletion
 from forze_postgres.execution.deps import ConfigurablePostgresDocument, postgres_txmanager
 from forze_postgres.execution.deps.configs import PostgresDocumentConfig
 from forze_postgres.execution.deps.keys import PostgresClientDepKey, PostgresIntrospectorDepKey
@@ -101,11 +103,18 @@ async def _ctx(
     return _context(pg_client, table, batch_size=batch_size)
 
 
-def _context(pg_client: PostgresClient, table: str, *, batch_size: int = 200) -> ExecutionContext:
+def _context(
+    pg_client: PostgresClient,
+    table: str,
+    *,
+    batch_size: int = 200,
+    history: str | None = None,
+) -> ExecutionContext:
     doc = ConfigurablePostgresDocument(
         config=PostgresDocumentConfig(
             read=("public", table),
             write=("public", table),
+            history=("public", history) if history is not None else None,
             bookkeeping_strategy="application",
             batch_size=batch_size,
         )
@@ -316,3 +325,170 @@ async def test_stored_values_meet_a_float_a_string_and_a_naive_datetime(
         changes = await sync.reconcile(ctx, order, [line])
 
     assert changes == ChildCollectionChanges(removed=[], created=[], updated=[])
+
+
+# ....................... #
+
+
+class _HLine(Document):
+    order_id: UUID
+    sku: str
+    quantity: int = 1
+    position: int = 0
+
+
+class _HSoftLine(DocWithSoftDeletion):
+    order_id: UUID
+    sku: str
+    quantity: int = 1
+    position: int = 0
+
+
+class _HCreate(CreateDocumentCmd):
+    order_id: UUID
+    sku: str
+    quantity: int = 1
+    position: int = 0
+
+
+class _HUpdate(BaseDTO):
+    quantity: int | None = None
+    position: int | None = None
+
+
+class _HSoftUpdate(UpdateCmdWithSoftDeletion):
+    quantity: int | None = None
+    position: int | None = None
+
+
+class _HRead(ReadDocument):
+    order_id: UUID
+    sku: str
+    quantity: int = 1
+    position: int = 0
+
+
+class _HSoftRead(_HRead):
+    is_deleted: bool = False
+
+
+HARD = DocumentSpec(
+    name="pg_child_hist",
+    read=_HRead,
+    write={"domain": _HLine, "create_cmd": _HCreate, "update_cmd": _HUpdate},
+    history_enabled=True,
+)
+SOFT = DocumentSpec(
+    name="pg_child_hist",
+    read=_HSoftRead,
+    write={"domain": _HSoftLine, "create_cmd": _HCreate, "update_cmd": _HSoftUpdate},
+    history_enabled=True,
+)
+
+
+async def _history_ctx(pg_client: PostgresClient) -> ExecutionContext:
+    suffix = uuid4().hex[:12]
+    table, history = f"child_hist_{suffix}", f"child_hist_h_{suffix}"
+
+    await pg_client.execute(
+        f"""
+        CREATE TABLE {table} (
+            id uuid PRIMARY KEY,
+            rev integer NOT NULL,
+            created_at timestamptz NOT NULL,
+            last_update_at timestamptz NOT NULL,
+            order_id uuid NOT NULL,
+            sku text NOT NULL,
+            quantity integer NOT NULL,
+            position integer NOT NULL,
+            is_deleted boolean NOT NULL DEFAULT false
+        );
+        CREATE TABLE {history} (
+            source text NOT NULL,
+            id uuid NOT NULL,
+            rev integer NOT NULL,
+            created_at timestamptz NOT NULL,
+            data jsonb NOT NULL,
+            PRIMARY KEY (source, id, rev)
+        );
+        """
+    )
+
+    return _context(pg_client, table, history=history)
+
+
+async def _changed_after_read(
+    ctx: ExecutionContext, spec: Any, order: UUID, dto: BaseDTO, *skus: str
+) -> tuple[Sequence[Any], Any]:
+    """Seed *skus*, read them, then change the first through another write: the stale read."""
+
+    async with ctx.tx_ctx.scope("main"):
+        rows = await ctx.document.command(spec).create_many(
+            [_HCreate(order_id=order, sku=s) for s in skus]
+        )
+
+    first = next(row for row in rows if row.sku == skus[0])
+
+    async with ctx.tx_ctx.scope("main"):
+        await ctx.document.command(spec).update(first.id, first.rev, dto)
+
+    return rows, first
+
+
+def _reading(ctx: ExecutionContext, spec: Any, stale: Sequence[Any]) -> Any:
+    async def stream(*_: Any, **__: Any) -> AsyncIterator[Sequence[Any]]:
+        yield stale
+
+    return patch.object(type(ctx.document.query(spec)), "find_stream", stream)
+
+
+async def test_history_does_not_merge_a_change_into_a_kept_child(
+    pg_client: PostgresClient,
+) -> None:
+    # The other writer moved the position; this save changes the quantity. History could merge
+    # the two, and the reported pair would carry both.
+    ctx = await _history_ctx(pg_client)
+    sync = ChildCollectionSync(
+        child_spec=HARD,
+        parent_fk="order_id",
+        key_fields=("sku",),
+        compare_fields=frozenset({"quantity", "position"}),
+    )
+    order = uuid4()
+    stale, a = await _changed_after_read(ctx, HARD, order, _HUpdate(position=5), "a")
+
+    with _reading(ctx, HARD, stale), pytest.raises(CoreException) as ei:
+        async with ctx.tx_ctx.scope("main"):
+            await sync.reconcile(ctx, order, [_HCreate(order_id=order, sku="a", quantity=2)])
+
+    assert (ei.value.kind, ei.value.code) == (ExceptionKind.PRECONDITION, "revision_mismatch")
+    stored = await ctx.document.query(HARD).get(a.id)
+    assert (stored.quantity, stored.position) == (1, 5)
+
+
+async def test_history_does_not_merge_a_soft_delete(pg_client: PostgresClient) -> None:
+    ctx = await _history_ctx(pg_client)
+    sync = ChildCollectionSync(child_spec=SOFT, parent_fk="order_id", key_fields=("sku",))
+    order = uuid4()
+    stale, a = await _changed_after_read(ctx, SOFT, order, _HSoftUpdate(quantity=3), "a")
+
+    with _reading(ctx, SOFT, stale), pytest.raises(CoreException) as ei:
+        async with ctx.tx_ctx.scope("main"):
+            await sync.reconcile(ctx, order, [])
+
+    assert (ei.value.kind, ei.value.code) == (ExceptionKind.PRECONDITION, "revision_mismatch")
+    assert (await ctx.document.query(SOFT).get(a.id)).is_deleted is False
+
+
+async def test_history_does_not_let_a_hard_delete_through(pg_client: PostgresClient) -> None:
+    ctx = await _history_ctx(pg_client)
+    sync = ChildCollectionSync(child_spec=HARD, parent_fk="order_id", key_fields=("sku",))
+    order = uuid4()
+    stale, a = await _changed_after_read(ctx, HARD, order, _HUpdate(quantity=3), "a", "b")
+
+    with _reading(ctx, HARD, stale), pytest.raises(CoreException) as ei:
+        async with ctx.tx_ctx.scope("main"):
+            await sync.reconcile(ctx, order, [_HCreate(order_id=order, sku="b")])
+
+    assert (ei.value.kind, ei.value.code) == (ExceptionKind.PRECONDITION, "revision_mismatch")
+    assert (await ctx.document.query(HARD).get(a.id)).quantity == 3

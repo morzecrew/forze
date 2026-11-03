@@ -10,10 +10,12 @@ neither touches nor re-reads the parent: both stay with the caller (RFC 0050).
 """
 
 import functools
-from collections.abc import Sequence
+from collections.abc import Hashable, Iterator, Mapping, Sequence
 from contextlib import aclosing
+from dataclasses import is_dataclass
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any, final
+from types import UnionType
+from typing import TYPE_CHECKING, Annotated, Any, TypeAliasType, Union, final, get_args, get_origin
 from uuid import UUID
 
 import attrs
@@ -38,6 +40,43 @@ def _read_as(model: type[BaseModel], field: str) -> TypeAdapter[Any]:
     annotation: Any = model.model_fields[field].annotation
 
     return TypeAdapter(annotation)
+
+
+def _arms(annotation: Any) -> Iterator[Any]:
+    """The types *annotation* admits, reading through aliases, ``Annotated`` and unions."""
+
+    if isinstance(annotation, TypeAliasType):
+        yield from _arms(annotation.__value__)
+
+    elif (origin := get_origin(annotation)) is Annotated:
+        yield from _arms(get_args(annotation)[0])
+
+    elif origin in (Union, UnionType):
+        for arm in get_args(annotation):
+            yield from _arms(arm)
+
+    else:
+        yield origin or annotation
+
+
+def _merged_by_update(annotation: Any) -> bool:
+    """Whether an update merges into a value of this type key by key instead of replacing it:
+    a mapping, a nested model or dataclass, or ``Any``, in any arm of a union."""
+
+    return any(
+        arm is Any
+        or (isinstance(arm, type) and (issubclass(arm, (Mapping, BaseModel)) or is_dataclass(arm)))
+        for arm in _arms(annotation)
+    )
+
+
+def _unhashable(annotation: Any) -> bool:
+    """Whether a value of this type may not hash, as a key must: ``Any`` may not either."""
+
+    return any(
+        arm is Any or (isinstance(arm, type) and not issubclass(arm, Hashable))
+        for arm in _arms(annotation)
+    )
 
 
 def _comparable(value: Any) -> Any:
@@ -65,7 +104,8 @@ class ChildCollectionChanges[R: BaseModel]:
 
     updated: Sequence[tuple[R, R]]
     """``(as read, as written)`` for each child the store changed. A patch the store found
-    already applied is left out, so the pairs list only changes this call made."""
+    already applied is left out. Every write is checked strictly against the revision read, so
+    the pairs list only changes this call made."""
 
 
 # ....................... #
@@ -88,14 +128,18 @@ class ChildCollectionSync[R: BaseModel, C: BaseDTO]:
 
     A child spec whose domain carries ``is_deleted`` is soft-deleted, by writing the flag at the
     revision read; deleted children are not part of the current collection. Any other spec is
-    hard-deleted with ``kill_many``, after a touch at the revision read. Every write is thus
-    checked against the revision read: a child changed since is refused, not overwritten or
-    deleted.
+    hard-deleted with ``kill_many``, after a touch at the revision read. Every write to an
+    existing child is thus checked strictly against the revision read, never merged by a
+    revision history: a child changed since is refused, not overwritten or deleted.
 
-    :raises CoreException: ``configuration`` at construction when the spec has no write side,
-        a named field is not a stored field of the read model and the create command, a compare
-        field is not on the update command, the soft-delete flag is not readable and writable,
-        or a spec without it forbids hard deletes (``hard_delete_forbidden``).
+    :raises CoreException: ``configuration`` at construction when the spec has no write side
+        or declares query parameters (``child_spec_parametrized``); a named field is not on the
+        read model and the create command, or is not stored (``child_field_not_stored``); a key
+        field's type may not hash (``child_key_unhashable``); a compare field is not on the
+        update command, or is one an update merges into (``child_compare_field_merged``); the
+        update command requires a field no patch carries (``child_update_requires_fields``);
+        the soft-delete flag is not readable and writable (``child_soft_delete_unwired``); or a
+        spec without it forbids hard deletes (``hard_delete_forbidden``).
     """
 
     child_spec: DocumentSpec[R, Any, C, Any]
@@ -110,7 +154,8 @@ class ChildCollectionSync[R: BaseModel, C: BaseDTO]:
 
     compare_fields: frozenset[str] = frozenset()
     """The fields whose change makes a kept child an update. A child differing on none of them
-    is not written; any other field is ignored."""
+    is not written; any other field is ignored. A mapping or nested-model field cannot be one:
+    an update merges into it key by key, so a key the incoming value drops would stay stored."""
 
     # ....................... #
 
@@ -121,20 +166,27 @@ class ChildCollectionSync[R: BaseModel, C: BaseDTO]:
         if spec.write is None:
             raise exc.configuration(f"Child collection {name!r} needs a writable child spec.")
 
+        if spec.query_params is not None:
+            raise exc.configuration(
+                f"Child collection {name!r} reads its children without query parameters, but "
+                "the spec declares query_params, so every read would be refused.",
+                code="child_spec_parametrized",
+            )
+
         if not self.key_fields:
             raise exc.configuration(
                 f"Child collection {name!r} names no key field. Without a business key a "
                 "changed child cannot be told from one removed and another added.",
             )
 
+        read = spec.read.model_fields
         create = spec.write["create_cmd"].model_fields.keys()
         update = spec.write.get("update_cmd")
         writable = update.model_fields.keys() if update is not None else set[str]()
-        stored = spec.read.model_fields.keys() - spec.resolved_lenient_read_fields
         named = {self.parent_fk, *self.key_fields, *self.compare_fields}
 
         for missing, where in (
-            ({ID_FIELD, REV_FIELD, *named} - stored, f"stored fields of {spec.read.__name__}"),
+            ({ID_FIELD, REV_FIELD, *named} - read.keys(), f"fields of {spec.read.__name__}"),
             (named - create, "fields of its create command"),
             (self.compare_fields - writable, "fields its update command writes"),
         ):
@@ -143,10 +195,52 @@ class ChildCollectionSync[R: BaseModel, C: BaseDTO]:
                     f"Child collection {name!r} reads {sorted(missing)}, which are not {where}.",
                 )
 
+        unstored = spec.resolved_lenient_read_fields | spec.write_omit_fields
+        patched = self.compare_fields | ({SOFT_DELETE_FIELD} if self._soft_delete else set())
+        required = (
+            {f for f, info in update.model_fields.items() if info.is_required()}
+            if (update is not None and patched)
+            else set[str]()
+        )
+
+        for refused, why, code in (
+            (
+                {ID_FIELD, REV_FIELD, *named} & unstored,
+                "they are not stored, so a read returns the model's default",
+                "child_field_not_stored",
+            ),
+            (
+                {f for f in self.key_fields if _unhashable(read[f].annotation)},
+                "a key's value must hash, and their types may not",
+                "child_key_unhashable",
+            ),
+            (
+                {f for f in self.compare_fields if _merged_by_update(read[f].annotation)},
+                (
+                    "an update merges into them key by key, so a key the incoming value drops "
+                    "would stay stored and every later save would find the same difference"
+                ),
+                "child_compare_field_merged",
+            ),
+            (
+                required - patched,
+                (
+                    "its update command requires them, and a patch carries only the compare "
+                    "fields and the soft-delete flag"
+                ),
+                "child_update_requires_fields",
+            ),
+        ):
+            if refused:
+                raise exc.configuration(
+                    f"Child collection {name!r} cannot use {sorted(refused)}: {why}.",
+                    code=code,
+                )
+
         if not self._soft_delete:
             spec.require_hard_delete()
 
-        elif SOFT_DELETE_FIELD not in writable or SOFT_DELETE_FIELD not in stored:
+        elif SOFT_DELETE_FIELD not in writable or SOFT_DELETE_FIELD not in read.keys() - unstored:
             raise exc.configuration(
                 f"Child collection {name!r} soft-deletes its children, so its read model must "
                 f"store {SOFT_DELETE_FIELD!r} and its update command write it.",
@@ -197,9 +291,10 @@ class ChildCollectionSync[R: BaseModel, C: BaseDTO]:
     ) -> ChildCollectionChanges[R]:
         """Make *parent_id*'s children match *incoming*.
 
-        Runs inside the caller's transaction, so a failure in any batch leaves none committed.
-        It takes no lock. A child another writer changed since the read is refused
-        (``revision_mismatch``); one another writer added after the read is not seen. Touching
+        Runs inside the caller's transaction, so a failure in any batch leaves none committed;
+        the child port must write in that transaction. It takes no lock. A child another writer
+        changed since the read is refused (``revision_mismatch``), even where revision history
+        could merge the change; one another writer added after the read is not seen. Touching
         the parent at the revision the client read, before reconciling, serializes saves.
 
         :param ctx: Execution context, inside a transaction.
@@ -208,7 +303,8 @@ class ChildCollectionSync[R: BaseModel, C: BaseDTO]:
             empty list deletes every child.
         :returns: The children removed, created and updated.
         :raises CoreException: ``precondition`` (``child_sync_outside_transaction``) outside a
-            transaction; ``validation`` (``child_parent_mismatch``) when a command names another
+            transaction; ``configuration`` (``core.tx.not_enlisted``) when the child port writes
+            on another connection than the transaction's; ``validation`` (``child_parent_mismatch``) when a command names another
             parent, (``child_key_duplicate``) when two share a key, or
             (``child_value_unreadable``) when a key or compare value is not one the read model
             can hold; ``conflict`` (``child_key_ambiguous``) when two stored children share a
@@ -221,6 +317,13 @@ class ChildCollectionSync[R: BaseModel, C: BaseDTO]:
                 "inside a transaction: outside one, a failed batch leaves the others committed.",
                 code="child_sync_outside_transaction",
             )
+
+        # Writing on another connection, each batch would commit alone, and the touch that
+        # guards a hard delete would release its locks before the delete.
+        ctx.tx_ctx.assert_enlisted(
+            ctx.document.command(self.child_spec),
+            what=f"Child collection {str(self.child_spec.name)!r}",
+        )
 
         wanted: dict[tuple[Any, ...], C] = {}
 
@@ -301,11 +404,12 @@ class ChildCollectionSync[R: BaseModel, C: BaseDTO]:
 
         if removed and self._soft_delete:
             soft = [keyed(row, {SOFT_DELETE_FIELD: True}) for row in removed]
-            await port.update_many(soft, return_new=False)
+            await port.update_many(soft, return_new=False, merge=False)
 
         elif removed:
             ids = [getattr(row, ID_FIELD) for row in removed]
-            # ``kill_many`` takes no revision: the touch refuses a child changed since the read.
+            # ``kill_many`` takes no revision: the touch, strict like ``touch``, refuses a child
+            # changed since the read.
             revs = [getattr(row, REV_FIELD) for row in removed]
             await port.touch_many(ids, revs=revs, return_new=False)
             await port.kill_many(ids)
@@ -314,8 +418,9 @@ class ChildCollectionSync[R: BaseModel, C: BaseDTO]:
         updated: list[tuple[R, R]] = []
 
         if changed:
+            # Strict: a revision history would merge another writer's change into the pair.
             written = await port.update_many(
-                [keyed(row, patch) for row, patch in changed], return_diff=True
+                [keyed(row, patch) for row, patch in changed], return_diff=True, merge=False
             )
             # By id: the port does not promise its results in the order of the batch.
             by_id = {getattr(after, ID_FIELD): (after, diff) for after, diff in written}

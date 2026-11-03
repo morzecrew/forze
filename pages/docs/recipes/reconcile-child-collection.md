@@ -56,8 +56,18 @@ any line is written:
 | `compare_fields` | The fields whose change makes a kept child an update. Any other field is ignored. |
 
 Construction checks that every named field is stored on the read model and present on the
-create command, and that every compare field can be written by the update command. Each
-incoming key and compare value is read as the read model's type for that field before it is
+create command, and that every compare field can be written by the update command. It refuses
+what it could not serve correctly, each with its own `configuration` code:
+
+| Refused | Code |
+|---|---|
+| A key or compare field the spec does not store (`lenient_read_fields`, `write_omit_fields`): it reads back as its default. | `child_field_not_stored` |
+| A key field whose type may not hash, such as a list, a mutable model or `Any`. | `child_key_unhashable` |
+| A compare field that is a mapping, a nested model or `Any`: an update merges into it key by key, so a key the incoming value drops would stay stored. | `child_compare_field_merged` |
+| An update command requiring a field no patch carries: a patch holds only compare fields and the soft-delete flag. | `child_update_requires_fields` |
+| A spec declaring `query_params`: the children are read without parameters. | `child_spec_parametrized` |
+
+Each incoming key and compare value is read as the read model's type for that field before it is
 matched, so a float meets a stored decimal and a string a stored enum, and a naive datetime is
 read as UTC. A value the read model cannot hold is refused (`validation`,
 `child_value_unreadable`).
@@ -66,7 +76,10 @@ read as UTC. A value the read model cannot hold is refused (`validation`,
 
 `reconcile` refuses to run outside a transaction
 (`precondition`, `child_sync_outside_transaction`). Up to three batches run, and a failure in a
-later batch must undo the earlier ones. Bind the operation to a transaction route:
+later batch must undo the earlier ones. The child's port must write on the transaction's own
+connection too: one on another backend or pool is refused (`configuration`,
+`core.tx.not_enlisted`), since each batch would commit alone. Bind the operation to a transaction
+route that reaches the child's store:
 
 ```python
 --8<-- "recipes/child_collection/app.py:registry"
@@ -83,9 +96,10 @@ later batch must undo the earlier ones. Bind the operation to a transaction rout
 | `updated` | `(as read, as written)` pairs for each child the store changed. |
 
 A handler that moves stock or writes a ledger per line reads these instead of diffing again.
-`updated` leaves out a patch the store found already applied. A store keeping revision history
-can accept a stale revision whose patch matches the row as it stands, so a concurrent save that
-made the same change is not counted twice.
+`updated` leaves out a patch the store found already applied, such as a value the domain
+normalizes to what is stored. Every write is checked strictly against the revision read, so a
+pair never carries another writer's change and `removed` never lists a child someone else
+deleted.
 
 ## Notes
 
@@ -108,10 +122,12 @@ made the same change is not counted twice.
   must skip deleted rows: `where={"$values": {"is_deleted": False}}`. Any other child is
   hard-deleted with `kill_many`, and a spec declaring `hard_delete=False` is refused at
   construction.
-- **Every write checks the revision read.** An update and a soft delete carry it, and a hard
-  delete is preceded by a touch at it, because `kill_many` takes no revision. A child another
-  writer changed since the read is refused (`revision_mismatch`) rather than overwritten or
-  deleted; one it deleted is `not_found`, and one it created with a unique key is `conflict`.
+- **Every write checks the revision read, strictly.** An update and a soft delete carry it with
+  `merge=False`, and a hard delete is preceded by a touch at it, because `kill_many` takes no
+  revision. A child another writer changed since the read is refused (`revision_mismatch`)
+  rather than overwritten or deleted, even on a spec with revision history, which would
+  otherwise merge the two changes. One another writer erased is `not_found`, and one it created
+  with a unique key is `conflict`.
 - **It takes no lock.** A child another writer adds after the read is not seen, so it survives
   the save. Touching the parent at the client's revision first, as the recipe does, refuses a
   stale save outright; on Postgres the row lock it takes also makes a second save wait. A spec

@@ -4495,9 +4495,21 @@ and `tests/unit/test_examples/test_child_collection.py` over the recipe's exampl
   would refuse the common float/decimal and string/enum pairs that coerce exactly, and could not
   see naive against aware, which is a property of the value. The patch still carries the
   command's own value, for the update command to validate.
+  Construction refuses, each with its own `configuration` code, what the matching and the patch
+  could not serve: a key or compare field the spec does not store (`lenient_read_fields`,
+  `write_omit_fields`), which reads back as its default so two children would share a key
+  (`child_field_not_stored`); a key field whose type may not hash, `Any` included
+  (`child_key_unhashable`); a compare field that is a mapping, a nested model, a dataclass or
+  `Any`, because an update merges into it key by key and has no replace mode, so a key the
+  incoming value drops would stay stored and every later save would find the same difference
+  (`child_compare_field_merged`); an update command requiring a field no patch carries
+  (`child_update_requires_fields`); and a spec declaring `query_params`, since the children are
+  read unparametrized (`child_spec_parametrized`). A list is replaced by an update and may be
+  compared.
 - **Proposed row (RFC 0050):** `ASSUMED` — the incoming list is the child's create commands, each
   naming the parent. Their key and compare values are read as the read model's field types,
-  a naive datetime as UTC, before matching; each patch holds the compare fields that differ.
+  a naive datetime as UTC, before matching; each patch holds the compare fields that differ. A
+  compare field an update would merge into rather than replace is refused at construction.
 
 ## D-185 — It returns what it wrote
 
@@ -4512,10 +4524,13 @@ and `tests/unit/test_examples/test_child_collection.py` over the recipe's exampl
 - **Consequence:** `ChildCollectionChanges(removed, created, updated)`: removed rows as read,
   created rows as returned, and `(as read, as written)` pairs only for rows whose write changed
   something. Creates and updates therefore run with `return_new=True`, a re-read on stores that
-  do not return rows from the write. The mock keeps no history, so the stale-revision case is
-  covered there by a domain that normalizes a compared value; the history merge itself is the
-  shared gateway's. The bulk port does not promise its results in input order, so updates are
-  paired with the rows read by id, and `created` makes no order claim.
+  do not return rows from the write. Every child write is strict (`merge=False`, D-187), so the
+  stale revision the origin helper relied on is refused, never merged: a pair cannot carry
+  another writer's change, and `removed` cannot list a child another writer soft-deleted after
+  the read, which a merge would have accepted as a write changing nothing. The empty diff left
+  is a patch the domain normalizes to the stored value, which the tests use. The bulk port does
+  not promise its results in input order, so updates are paired with the rows read by id, and
+  `created` makes no order claim.
 - **Proposed row (RFC 0050):** `ASSUMED` — `reconcile` returns the children removed, created and
   changed, the last as before-and-after pairs that leave out writes the store found already
   applied.
@@ -4532,9 +4547,14 @@ and `tests/unit/test_examples/test_child_collection.py` over the recipe's exampl
   insist on it.
 - **Class:** `spec-gap`.
 - **Consequence:** `reconcile` raises `precondition` (`child_sync_outside_transaction`) when
-  `ctx.tx_ctx.depth()` is 0. The recipe binds its operation with `bind_tx`.
-- **Proposed row (RFC 0050):** `ASSUMED` — `reconcile` runs only inside a transaction and refuses
-  otherwise; it never opens one of its own.
+  `ctx.tx_ctx.depth()` is 0. A transaction on one store does not cover a child port on another:
+  each batch would commit alone, and the touch guarding a hard delete would release its locks
+  before the delete. So `reconcile` then calls `ctx.tx_ctx.assert_enlisted` on the child's
+  command port before reading, and a port writing on another connection is refused
+  (`configuration`, `core.tx.not_enlisted`). A port that cannot report enlistment passes, as
+  everywhere else that check runs. The recipe binds its operation with `bind_tx`.
+- **Proposed row (RFC 0050):** `ASSUMED` — `reconcile` runs only inside a transaction its child
+  port writes in, and refuses otherwise; it never opens one of its own.
 
 ## D-187 — Concurrency stays with the caller: no lock, and no error translation
 
@@ -4556,10 +4576,16 @@ and `tests/unit/test_examples/test_child_collection.py` over the recipe's exampl
   refused (`revision_mismatch`) instead of deleted; the touch is one batched statement, and on
   Postgres its row locks hold the rows until the kill. A child another writer adds after the
   read is not seen.
+  The check is strict: the soft-delete and update batches pass `merge=False`. By default a
+  store keeping revision history merges a stale revision whose patch does not overlap the change
+  made since, which would soft-delete a child another writer just changed and report an update
+  pair carrying both writers' changes, so a stock handler would count the other writer's twice.
+  `touch_many` with revisions is strict by its contract, as `touch` is. Postgres tests on a
+  history-enabled spec pin each of the three.
 - **Proposed row (RFC 0050):** `ASSUMED` — the component takes no lock and passes the ports'
   errors through; serializing saves of one parent is the caller's, by the parent's revision or
-  a `hold`. Every child write is checked against the revision read, a hard delete by a touch at
-  that revision first.
+  a `hold`. Every child write is checked strictly against the revision read, never merged, and
+  a hard delete by a touch at that revision first.
 
 ## D-188 — The mock enforces the uniqueness the ordering test needs
 
@@ -4608,3 +4634,17 @@ Review of the unit's first commit, before it was published.
 | R-4 | Bug | Updates were paired with the port's results by position, which the port does not promise | Fixed (D-185): paired by id; `created` drops its order claim; a test reverses the port's results |
 | R-5 | Test | No test for a stale revision on update or delete, a compare field cleared to `None`, or tenancy | Fixed: tests for each, on the mock; the hard-delete guard on Postgres too |
 | R-6 | Docs | D-188 read as though the mock's `UniqueTogether` came with this unit | Fixed: reworded as pre-existing |
+
+## Review findings — 2026-11-03 (PR #820)
+
+| # | Severity | Finding | Status |
+|---|---|---|---|
+| R-7 | Bug | One command listed twice passed the duplicate-key check, and a new child's compare values were not read before the writes | Fixed: both refused before any write |
+| R-8 | Bug | Only the transaction's depth was checked, so a child port on another store committed each batch alone | Fixed (D-186): `assert_enlisted` on the child port; a mock test with a port reporting itself unenlisted |
+| R-9 | Bug | Updates and soft deletes used the default `merge=True`, so on a spec with history a concurrent change merged instead of conflicting | Fixed (D-187): `merge=False`; Postgres tests on a history spec for the update, the soft delete and the hard delete |
+| R-10 | Bug | A mapping compare field kept a key the incoming value dropped, and every later save found the same difference | Fixed (D-184): refused at construction (`child_compare_field_merged`); the update port has no replace mode |
+| R-11 | Bug | A key or compare field in `write_omit_fields` read back as its default | Fixed (D-184): refused with lenient fields (`child_field_not_stored`) |
+| R-12 | Bug | A key field of an unhashable type failed only when hashed | Fixed (D-184): refused at construction (`child_key_unhashable`) |
+| R-13 | Bug | A spec with `query_params` failed at its first read | Fixed (D-184): refused at construction (`child_spec_parametrized`) |
+| R-14 | Bug | An update command requiring a field outside the patch raised a raw validation error at the write | Fixed (D-184): refused at construction (`child_update_requires_fields`) |
+| R-15 | Bug | `removed` could list a child another writer soft-deleted after the read | Holds by R-9 (D-185): the strict write is refused (`revision_mismatch`); tested on the mock, with and without history |
