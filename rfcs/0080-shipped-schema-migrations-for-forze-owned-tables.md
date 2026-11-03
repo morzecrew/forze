@@ -307,8 +307,10 @@ where the switch is a tenant-tagged table leading its scan indexes with `tenant_
 the other eight configs and their switches:
 
 - `hlc_ordering=True` adds `hlc` and its claim index;
-- `storage="consume"` drops `processing_at` and `published_at`, as `outbox-schema.md:194`
-  documents.
+- `storage="consume"` drops `published_at`, as `outbox-schema.md:194` documents. It drops
+  `processing_at` only when stale reclaim is also off (`reclaim_stale_after=None`): the relay's
+  `reclaim_stale_processing` reads and clears that column in either storage mode, and the
+  default config has reclaim on.
 
 A tenant-scoped relation (a resolver, not a tuple) has no single table. P1 skips it with a
 warning, as document validation skips dynamic routes (`document_schema.py:217-226`). P2 binds
@@ -349,6 +351,7 @@ The command reads the catalog and compares each bound relation with its shape:
 | Found in the catalog | Printed |
 |---|---|
 | Table missing | `CREATE TABLE`, then every declared index |
+| Primary key missing, or on other columns than declared | A commented refusal naming both key column lists; `--check` fails. A table without the declared key cannot serve the adapter's `ON CONFLICT (<key>)` |
 | Column missing, nullable or with a constant default | `ALTER TABLE … ADD COLUMN` |
 | Column missing, `NOT NULL` with no constant default | A commented refusal (§5.1) |
 | Column type family differs | A commented refusal naming both types. Never `ALTER … TYPE` |

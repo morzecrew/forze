@@ -227,7 +227,8 @@ Verified against `main` at the commit this RFC was written on.
   that name would collide with it on a tenant-aware route.
 - **Mechanics are already in place.** `$values` with `None` is a null check
   (`querying/expressions.py:17-18`), and `$or` exists (`:163`). Firestore renders OR
-  (`forze_firestore/kernel/query/render.py:136-145`). Postgres refuses to boot on a missing mapped
+  (`forze_firestore/kernel/query/render.py:136-145`) but refuses a null check, so its reads take
+  the in-Python path of §5.3. Postgres refuses to boot on a missing mapped
   column (`forze_postgres/kernel/catalog/validation/validate_schema.py:166-169`), and its validator
   understands `NULLS NOT DISTINCT` (`:357`).
 
@@ -372,6 +373,15 @@ async def _find_principal_role_binding(self, principal_id, role_id, tenant_id):
         "principal_id": principal_id, "role_id": role_id,
         "scope_tenant_id": tenant_id,               # None is a null check: exact match either way
     }})
+```
+
+Firestore's query renderer refuses a null check (`$null`), so on Firestore both reads that
+match on `scope_tenant_id` (the role resolution in §5.2 and this exact-tenant lookup) filter
+on `principal_id` and `role_id` only and select the matching tenant from the hydrated rows in
+Python. A principal holds few bindings per role, so the extra rows are bounded. The Firestore
+conformance leg runs both paths; until it does, Firestore is not claimed (§6).
+
+```python
 
 
 async def assign_role(self, subject, role_key, *, scope=None) -> None:
