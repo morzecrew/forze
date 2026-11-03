@@ -748,6 +748,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#removed" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Removed
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#fixed" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -1742,7 +1753,7 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#removed" class="md-nav__link">
+  <a href="#removed_1" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
         Removed
@@ -1914,7 +1925,7 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#removed_1" class="md-nav__link">
+  <a href="#removed_2" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
         Removed
@@ -2086,7 +2097,7 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#removed_2" class="md-nav__link">
+  <a href="#removed_3" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
         Removed
@@ -2158,7 +2169,7 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#removed_3" class="md-nav__link">
+  <a href="#removed_4" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
         Removed
@@ -2219,7 +2230,7 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#removed_4" class="md-nav__link">
+  <a href="#removed_5" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
         Removed
@@ -2291,7 +2302,7 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#removed_5" class="md-nav__link">
+  <a href="#removed_6" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
         Removed
@@ -8623,6 +8634,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#removed" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Removed
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#fixed" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -9617,7 +9639,7 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#removed" class="md-nav__link">
+  <a href="#removed_1" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
         Removed
@@ -9789,7 +9811,7 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#removed_1" class="md-nav__link">
+  <a href="#removed_2" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
         Removed
@@ -9961,7 +9983,7 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#removed_2" class="md-nav__link">
+  <a href="#removed_3" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
         Removed
@@ -10033,7 +10055,7 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#removed_3" class="md-nav__link">
+  <a href="#removed_4" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
         Removed
@@ -10094,7 +10116,7 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#removed_4" class="md-nav__link">
+  <a href="#removed_5" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
         Removed
@@ -10166,7 +10188,7 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#removed_5" class="md-nav__link">
+  <a href="#removed_6" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
         Removed
@@ -10824,6 +10846,10 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <li>
 <p><strong><code>process_with_inbox</code> gives every delivery invocation metadata with its own execution id</strong> (<strong>behaviour change</strong>), even under metadata the consumer bound. A message without a <code>forze_correlation_id</code> header takes the bound correlation id or a fresh one, and its logs, events and idempotency claims carry the execution id.</p>
 </li>
+</ul>
+<h3 id="removed">Removed<a class="headerlink" href="#removed" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong><code>AuthnSpec.token_profile</code>, <code>password_profile</code>, <code>api_key_profile</code>, <code>resolver_profile</code> and <code>AccessTokenCredentials.profile</code> are gone</strong> (<strong>Breaking</strong>). Nothing read them: verifiers and the resolver are registered per route under the spec's name.</li>
 </ul>
 <h3 id="fixed">Fixed<a class="headerlink" href="#fixed" title="Permanent link">&para;</a></h3>
 <ul>
@@ -12566,7 +12592,7 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <p><strong>BREAKING — the 21 published Agent Skills are merged into one, <code>forze-skills</code>.</strong> Installing now brings a routing index over 45 lazily-read reference files; per-skill install is gone, because it left every cross-link dangling. Re-run the installer, then delete the stale directories by hand.</p>
 </li>
 </ul>
-<h3 id="removed">Removed<a class="headerlink" href="#removed" title="Permanent link">&para;</a></h3>
+<h3 id="removed_1">Removed<a class="headerlink" href="#removed_1" title="Permanent link">&para;</a></h3>
 <ul>
 <li>
 <p><strong>BREAKING — 16 <code>routed_&lt;backend&gt;_lifecycle_step</code> helpers are gone.</strong> Each only forwarded to <code>routed_client_lifecycle_step</code>, which callers now use directly, passing the step name explicitly. Postgres and Temporal keep theirs: those add a capability and schedule bootstrap.</p>
@@ -13108,7 +13134,7 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <p><strong><code>reencrypt_documents</code> returns a <code>ReencryptReport</code></strong> <em>(breaking)</em> — rewritten and skipped counts instead of a bare int; a row deleted between listing and its write-back is now skipped instead of aborting the pass.</p>
 </li>
 </ul>
-<h3 id="removed_1">Removed<a class="headerlink" href="#removed_1" title="Permanent link">&para;</a></h3>
+<h3 id="removed_2">Removed<a class="headerlink" href="#removed_2" title="Permanent link">&para;</a></h3>
 <ul>
 <li><strong><code>msgspec</code> dropped; the codec layer is Pydantic-only</strong> <em>(breaking)</em> — the msgspec codec and serialization module are removed; record models must be Pydantic. Storage value objects become frozen keyword-only attrs classes.</li>
 </ul>
@@ -13884,7 +13910,7 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <ul>
 <li><strong><code>forze_identity.oidc</code></strong> — <code>OidcTokenVerifier.enforce_issuer_and_audience</code> now defaults to <code>True</code>, so construction requires both an issuer and an audience unless explicitly opted out.</li>
 </ul>
-<h3 id="removed_2">Removed<a class="headerlink" href="#removed_2" title="Permanent link">&para;</a></h3>
+<h3 id="removed_3">Removed<a class="headerlink" href="#removed_3" title="Permanent link">&para;</a></h3>
 <ul>
 <li>
 <p><strong>Dead public surface removed</strong> — the <code>forze[arango]</code> extra, <code>AccessTokenService.try_decode_token</code>, <code>ISSUER_FORZE_JWT</code>, <code>EffectiveGrantsAdapter</code>, the GCS head and listed-object aliases, <code>PostgresQualifiedName.from_string</code>, an internal fingerprint module, and a never-honored <code>delete_many</code> batch size.</p>
@@ -14188,7 +14214,7 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <p><strong>Scrubbing/console</strong> — the log scrub mask changed and traceback frames grew; Socket.IO bind takes an operation resolver; unhandled FastAPI route exceptions return a generic JSON 500.</p>
 </li>
 </ul>
-<h3 id="removed_3">Removed<a class="headerlink" href="#removed_3" title="Permanent link">&para;</a></h3>
+<h3 id="removed_4">Removed<a class="headerlink" href="#removed_4" title="Permanent link">&para;</a></h3>
 <ul>
 <li>
 <p><strong>Execution</strong> — <code>Usecase</code>, <code>UsecaseRegistry</code>, <code>UsecasePlan</code>, the bucket module, <code>facade_call</code>, and registry graph introspection types.</p>
@@ -14273,7 +14299,7 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <p><code>forze.application.contracts.document</code> and adapters — optional return-new and return-diff on create, update, touch, and batch variants.</p>
 </li>
 </ul>
-<h3 id="removed_4">Removed<a class="headerlink" href="#removed_4" title="Permanent link">&para;</a></h3>
+<h3 id="removed_5">Removed<a class="headerlink" href="#removed_5" title="Permanent link">&para;</a></h3>
 <ul>
 <li>
 <p><code>DepRouter</code> and the deps package — use <code>Deps</code> routing and the base module for <code>DepKey</code>/<code>DepsPort</code>.</p>
@@ -14376,7 +14402,7 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <p>Logging format — escape the extras dict to avoid a key error, and exclude a redundant logger-name field.</p>
 </li>
 </ul>
-<h3 id="removed_5">Removed<a class="headerlink" href="#removed_5" title="Permanent link">&para;</a></h3>
+<h3 id="removed_6">Removed<a class="headerlink" href="#removed_6" title="Permanent link">&para;</a></h3>
 <ul>
 <li>
 <p><code>Pagination</code> and the pagination parameter from <code>forze_fastapi.routing.params</code>; use the request body instead.</p>

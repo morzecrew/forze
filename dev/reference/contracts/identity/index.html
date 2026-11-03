@@ -6831,18 +6831,6 @@ read-only (<code>QUERY</code>) operation.</p>
 <td><code>{"token"}</code></td>
 <td>credential families: <code>password</code> / <code>token</code> / <code>api_key</code>; an empty set is a configuration error, and <code>AuthnPort</code> refuses a family the route does not enable</td>
 </tr>
-<tr>
-<td><code>token_profile</code> · <code>password_profile</code> · <code>api_key_profile</code></td>
-<td><code>str \| None</code></td>
-<td><code>None</code></td>
-<td>verifier profile hints; the shipped orchestrator resolves verifiers by route and does not read them</td>
-</tr>
-<tr>
-<td><code>resolver_profile</code></td>
-<td><code>str \| None</code></td>
-<td><code>None</code></td>
-<td>principal-resolver profile hint; likewise unread by the shipped orchestrator</td>
-</tr>
 </tbody>
 </table>
 <h3 id="ports-and-dep-keys">Ports and dep keys<a class="headerlink" href="#ports-and-dep-keys" title="Permanent link">&para;</a></h3>
