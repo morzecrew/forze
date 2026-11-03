@@ -32,13 +32,13 @@ PasswordVerifierDepPort = ConfigurableDepPort[AuthnSpec, PasswordVerifierPort]
 """Password verifier dependency port."""
 
 TokenVerifierDepPort = ConfigurableDepPort[AuthnSpec, TokenVerifierPort]
-"""Token verifier dependency port (one per profile/IdP)."""
+"""Token verifier dependency port (one per route)."""
 
 ApiKeyVerifierDepPort = ConfigurableDepPort[AuthnSpec, ApiKeyVerifierPort]
 """API key verifier dependency port."""
 
 PrincipalResolverDepPort = ConfigurableDepPort[AuthnSpec, PrincipalResolverPort]
-"""Principal resolver dependency port (one per profile)."""
+"""Principal resolver dependency port (one per route)."""
 
 PasswordLifecycleDepPort = ConfigurableDepPort[AuthnSpec, PasswordLifecyclePort]
 """Password lifecycle dependency port."""
@@ -64,13 +64,13 @@ PasswordVerifierDepKey = DepKey[PasswordVerifierDepPort]("authn_password_verifie
 """Key used to register a `PasswordVerifierPort` builder implementation."""
 
 TokenVerifierDepKey = DepKey[TokenVerifierDepPort]("authn_token_verifier")
-"""Key used to register a `TokenVerifierPort` builder implementation (one per profile/IdP)."""
+"""Key used to register a `TokenVerifierPort` builder implementation (one per route)."""
 
 ApiKeyVerifierDepKey = DepKey[ApiKeyVerifierDepPort]("authn_api_key_verifier")
 """Key used to register an `ApiKeyVerifierPort` builder implementation."""
 
 PrincipalResolverDepKey = DepKey[PrincipalResolverDepPort]("authn_principal_resolver")
-"""Key used to register a `PrincipalResolverPort` builder implementation (one per profile)."""
+"""Key used to register a `PrincipalResolverPort` builder implementation (one per route)."""
 
 PasswordLifecycleDepKey = DepKey[PasswordLifecycleDepPort]("authn_password_lifecycle")
 """Key used to register the `PasswordLifecyclePort` builder implementation."""

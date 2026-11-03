@@ -35,6 +35,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **`process_with_inbox` gives every delivery invocation metadata with its own execution id** (**behaviour change**), even under metadata the consumer bound. A message without a `forze_correlation_id` header takes the bound correlation id or a fresh one, and its logs, events and idempotency claims carry the execution id.
 
+### Removed
+
+- **`AuthnSpec.token_profile`, `password_profile`, `api_key_profile`, `resolver_profile` and `AccessTokenCredentials.profile` are gone** (**Breaking**). Nothing read them: verifiers and the resolver are registered per route under the spec's name.
+
 ### Fixed
 
 - **Redis invalidation push now clears stale local entries when its connection goes half-open or the client closes**, for the document L1 and any other subscriber.
