@@ -47,7 +47,7 @@ from forze.application.contracts.authn import (
 )
 from forze.application.contracts.execution import Handler
 from forze.application.contracts.tenancy import TenantIdentity
-from forze.application.execution import ExecutionContext
+from forze.application.execution import ExecutionContext, InvocationSurface
 from forze.application.execution.ingress import mint_invocation_metadata
 from forze.application.integrations.realtime import RealtimeCommandRoute
 from forze.base.exceptions import CoreException, FrameErr, exc, guard_frame
@@ -405,7 +405,9 @@ async def _dispatch_event(
 
     # Each event is an invocation of its own, so it gets fresh metadata, as a WS frame does.
     with (
-        ctx.inv_ctx.bind_metadata(metadata=mint_invocation_metadata()),
+        ctx.inv_ctx.bind_metadata(
+            metadata=mint_invocation_metadata(surface=InvocationSurface.SOCKETIO)
+        ),
         binding,
         bind_authn_admission(session.get(AUTHN_ADMISSION_SESSION_KEY)),
     ):

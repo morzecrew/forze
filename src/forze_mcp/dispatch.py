@@ -15,7 +15,7 @@ from collections.abc import Mapping
 from typing import Any
 
 from forze.application.contracts.querying import QueryFieldGuard
-from forze.application.execution.context import ExecutionContextFactory
+from forze.application.execution.context import ExecutionContextFactory, InvocationSurface
 from forze.application.execution.ingress import (
     check_query_policy,
     invoke_at_ingress,
@@ -96,5 +96,5 @@ async def invoke_operation(
         args,
         authn=authn,
         tenant=tenant,
-        metadata=mint_invocation_metadata(),
+        metadata=mint_invocation_metadata(surface=InvocationSurface.MCP),
     )

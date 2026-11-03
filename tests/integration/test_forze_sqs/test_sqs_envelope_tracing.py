@@ -139,6 +139,7 @@ async def test_end_to_end_correlation_survives_the_sqs_hop(
         execution_id=uuid7(),
         correlation_id=uuid7(),
         causation_id=uuid7(),
+        surface="http",
     )
     tenant = TenantIdentity(tenant_id=uuid4())
 
@@ -182,6 +183,8 @@ async def test_end_to_end_correlation_survives_the_sqs_hop(
         assert metadata is not None
         assert metadata.correlation_id == original.correlation_id
         assert metadata.causation_id == UUID(message.headers[HEADER_EVENT_ID])
+        # The consumer names itself; the publisher's surface does not cross the hop.
+        assert metadata.surface == "inbox"
 
         await sqs_queue.ack("jobs", [message.id])
 

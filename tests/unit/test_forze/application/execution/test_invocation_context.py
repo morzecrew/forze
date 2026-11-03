@@ -14,10 +14,13 @@ from forze.application.execution.context.invocation import (
     EXEC_ID_KEY,
     IDEMPOTENCY_KEY_KEY,
     PRINCIPAL_ID_KEY,
+    SURFACE_KEY,
     TENANT_ID_KEY,
     InvocationContext,
     InvocationMetadata,
+    InvocationSurface,
 )
+from forze.base.exceptions import CoreException, ExceptionKind
 
 # ----------------------- #
 
@@ -45,6 +48,7 @@ def _log_keys() -> set[str]:
         PRINCIPAL_ID_KEY,
         ACTOR_ID_KEY,
         TENANT_ID_KEY,
+        SURFACE_KEY,
     }
 
 
@@ -88,6 +92,7 @@ def test_bind_matches_bind_metadata_composed_with_bind_identity() -> None:
             EXEC_ID_KEY: str(metadata.execution_id),
             CORR_ID_KEY: str(metadata.correlation_id),
             CAUS_ID_KEY: str(metadata.causation_id),
+            SURFACE_KEY: "unknown",
             PRINCIPAL_ID_KEY: authn.principal_id,
             ACTOR_ID_KEY: authn.actor.principal_id,  # type: ignore[union-attr]
             TENANT_ID_KEY: str(tenant.tenant_id),
@@ -111,6 +116,7 @@ def test_bind_optional_identities_omitted() -> None:
         assert _bound_log_vars() == {
             EXEC_ID_KEY: str(metadata.execution_id),
             CORR_ID_KEY: str(metadata.correlation_id),
+            SURFACE_KEY: "unknown",
         }
 
 
@@ -140,6 +146,7 @@ def test_bind_with_identity_sans_actor_and_tenant_binds_exact_fields() -> None:
             EXEC_ID_KEY: str(metadata.execution_id),
             CORR_ID_KEY: str(metadata.correlation_id),
             CAUS_ID_KEY: str(metadata.causation_id),
+            SURFACE_KEY: "unknown",
             PRINCIPAL_ID_KEY: authn.principal_id,
         }
 
@@ -231,3 +238,59 @@ def test_bind_nests_and_restores_outer_values() -> None:
         assert ctx.get_metadata() is outer_md
         assert ctx.get_authn() is outer_authn
         assert _bound_log_vars()[EXEC_ID_KEY] == str(outer_md.execution_id)
+
+
+# ....................... #
+# The invocation surface (RFC 0079 §5.1, §5.5).
+
+
+def test_the_surface_defaults_to_unknown() -> None:
+    assert InvocationMetadata(execution_id=uuid4(), correlation_id=uuid4()).surface == "unknown"
+
+
+@pytest.mark.parametrize("surface", list(InvocationSurface))
+def test_every_well_known_surface_is_a_valid_token(surface: InvocationSurface) -> None:
+    metadata = InvocationMetadata(execution_id=uuid4(), correlation_id=uuid4(), surface=surface)
+
+    assert metadata.surface == surface.value
+
+
+@pytest.mark.parametrize("surface", ["grpc", "billing_worker", "q2", "a" * 32])
+def test_an_application_boundary_passes_its_own_token(surface: str) -> None:
+    metadata = InvocationMetadata(execution_id=uuid4(), correlation_id=uuid4(), surface=surface)
+
+    assert metadata.surface == surface
+
+
+@pytest.mark.parametrize(
+    "surface",
+    ["", "HTTP", "1cli", "_cli", "partner-api", "cli ", "http\n", "a" * 33, "é", None, 7],
+)
+def test_a_token_outside_the_pattern_is_a_configuration_error(surface: object) -> None:
+    with pytest.raises(CoreException) as caught:
+        InvocationMetadata(
+            execution_id=uuid4(),
+            correlation_id=uuid4(),
+            surface=surface,  # type: ignore[arg-type]
+        )
+
+    assert caught.value.kind is ExceptionKind.CONFIGURATION
+    assert caught.value.code == "invocation_surface_invalid"
+
+
+def test_the_surface_is_logged_under_its_own_key_and_restored() -> None:
+    ctx = InvocationContext()
+    outer = InvocationMetadata(execution_id=uuid4(), correlation_id=uuid4(), surface="http")
+    inner = InvocationMetadata(
+        execution_id=uuid4(), correlation_id=uuid4(), surface=InvocationSurface.TEMPORAL
+    )
+
+    with ctx.bind_metadata(metadata=outer):
+        assert get_contextvars()[SURFACE_KEY] == "http"
+
+        with ctx.bind(metadata=inner):
+            assert get_contextvars()[SURFACE_KEY] == "temporal"
+
+        assert get_contextvars()[SURFACE_KEY] == "http"
+
+    assert SURFACE_KEY not in get_contextvars()
