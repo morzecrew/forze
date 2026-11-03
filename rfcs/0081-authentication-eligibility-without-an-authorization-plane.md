@@ -3,10 +3,9 @@
 - **Status:** 📝 Draft — three PRs (§12). §10 Q1 and Q2 were settled by the maintainer on 2026-11-04 (rows 7 and 9).
   - P1 has no core change and changes no deployment that works today.
   - P2 makes `allow_all` a posture finding, also with no core change. It is **breaking** under
-    a production posture and waits on §10 Q2.
+    a production posture (row 9).
   - P3 adds a requirement check to `DepsRegistry.freeze()`, a core change. It is **breaking**
-    for wiring that can never authenticate and waits on §10 Q1. If Q1 is refused, §5.8 A6
-    ships instead.
+    for wiring that can never authenticate (row 7).
 - **Scope:** How an application authenticates without wiring the authz plane, and stays fail
   closed. Today the principal-eligibility gate offers two values. `policy_principal` reads the
   authz plane's `authz_policy_principals` document. `allow_all` checks nobody. The work:
