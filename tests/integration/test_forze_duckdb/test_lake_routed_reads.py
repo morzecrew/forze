@@ -39,6 +39,7 @@ from forze.application.contracts.secrets import SecretRef
 from forze.application.contracts.tenancy import TenantIdentity
 from forze.application.integrations.dynamic_read import (
     MULTI_STATEMENT_CODE,
+    NAMESPACE_MISSING_CODE,
     PERMISSION_DENIED_CODE,
     ROW_CAP_EXCEEDED_CODE,
     STATEMENT_INVALID_CODE,
@@ -806,8 +807,9 @@ class TestPool:
         finally:
             lake.set_grant(tenant_a, tenant_a.principal, granted=True)
 
-        # D-026: the namespace stays missing for this instance's life...
-        assert (await _refused(port, _A, _ORDERS)).code == STATEMENT_INVALID_CODE
+        # D-026: the namespace stays missing for this instance's life, so from here the
+        # route's ``USE`` fails before the statement (D-171)...
+        assert (await _refused(port, _A, _ORDERS)).code == NAMESPACE_MISSING_CODE
 
         await routed.evict_tenant(_A)
         assert len(await _run(port, _A, _ORDERS)) == 3  # ...and a rebuilt one sees the grant

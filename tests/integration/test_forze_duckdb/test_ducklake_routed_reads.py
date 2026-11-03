@@ -30,8 +30,12 @@ from psycopg.conninfo import make_conninfo
 from forze.application.contracts.dynamic_read import DynamicReadPort, DynamicReadSpec
 from forze.application.contracts.secrets import SecretRef
 from forze.application.contracts.tenancy import TenantIdentity
-from forze.application.integrations.dynamic_read import STATEMENT_INVALID_CODE, WRITE_REFUSED_CODE
-from forze.base.exceptions import CoreException
+from forze.application.integrations.dynamic_read import (
+    NAMESPACE_MISSING_CODE,
+    STATEMENT_INVALID_CODE,
+    WRITE_REFUSED_CODE,
+)
+from forze.base.exceptions import CoreException, ExceptionKind
 from forze_duckdb import (
     DuckDbDynamicReadConfig,
     DuckLakeTenantCatalog,
@@ -253,6 +257,56 @@ class TestTenantReads:
             with stack.writer(b) as con:
                 con.execute("DELETE FROM lake.gold.orders WHERE id >= 100")
                 con.execute("DROP TABLE lake.gold.late")
+
+    async def test_a_namespace_or_table_created_after_a_miss_is_seen_at_the_next_statement(
+        self, routed: RoutedDuckDbClient, stack: DuckLakeStack
+    ) -> None:
+        """EXECUTION-LOG D-170: a DuckLake instance keeps no miss, unlike an Iceberg one (D-026).
+        What the build creates after a read looked for it, a schema or a table in an existing
+        one, the same instance reads next, with no eviction."""
+
+        b = stack.tenants["b"]
+        port = _port(routed, namespace="later")
+        _tenant.set(_B)
+        assert await _rows(routed, _B, "SELECT count(*) AS n FROM lake.gold.orders") == [{"n": 7}]
+        held = routed._peek_client(_B)
+
+        for sql in ("SELECT x FROM lake.later.t", "SELECT y FROM lake.gold.later_table"):
+            assert isinstance(await _engine_refusal(routed, _B, sql), duckdb.CatalogException)
+
+        with pytest.raises(CoreException):
+            await port.run("SELECT x FROM t")
+
+        with stack.writer(b) as con:
+            con.execute("CREATE SCHEMA lake.later; CREATE TABLE lake.later.t AS SELECT 1 AS x")
+            con.execute("CREATE TABLE lake.gold.later_table AS SELECT 2 AS y")
+
+        try:
+            assert await _rows(routed, _B, "SELECT x FROM lake.later.t") == [{"x": 1}]
+            assert await _rows(routed, _B, "SELECT y FROM lake.gold.later_table") == [{"y": 2}]
+            assert [dict(r) for r in await port.run("SELECT x FROM t")] == [{"x": 1}]
+            assert routed._peek_client(_B) is held
+
+        finally:
+            with stack.writer(b) as con:
+                con.execute("DROP TABLE lake.later.t; DROP SCHEMA lake.later")
+                con.execute("DROP TABLE lake.gold.later_table")
+
+    async def test_a_route_whose_namespace_is_not_built_says_so(
+        self, routed: RoutedDuckDbClient
+    ) -> None:
+        """D-171: not the statement's fault, so not ``dynamic_read_statement_invalid``."""
+
+        _tenant.set(_A)
+
+        with pytest.raises(CoreException) as ei:
+            await _port(routed, namespace="unbuilt").run("SELECT 1 AS x")
+
+        assert (ei.value.code, ei.value.kind) == (
+            NAMESPACE_MISSING_CODE,
+            ExceptionKind.PRECONDITION,
+        )
+        assert ei.value.details == {"route": "lake_orders", "namespace": "unbuilt"}
 
 
 class TestConfinement:

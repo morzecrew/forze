@@ -23,7 +23,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- ...
+- **A DuckDB dynamic read whose route namespace is missing from the tenant's lake raises `dynamic_read_namespace_missing`** (**behaviour change**). It is a `precondition` raised before the statement runs, not `dynamic_read_statement_invalid`. A DuckLake instance reads a schema created later with no `evict_tenant`.
 
 ### Fixed
 

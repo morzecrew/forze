@@ -18,6 +18,7 @@ from forze.application.contracts.secrets import SecretRef
 from forze.application.execution import DepsRegistry, ExecutionContext
 from forze.application.integrations.dynamic_read import (
     MULTI_STATEMENT_CODE,
+    NAMESPACE_MISSING_CODE,
     PERMISSION_DENIED_CODE,
     STATEMENT_INVALID_CODE,
     TIMEOUT_CODE,
@@ -269,6 +270,11 @@ def test_a_conversion_failure_does_not_echo_the_value() -> None:
             exc.validation("x", code=STATEMENT_INVALID_CODE, details={"detail": "dup: id"}),
             STATEMENT_INVALID_CODE,
             {"route": ROUTE, "detail": "dup: id"},
+        ),
+        (
+            exc.precondition("x", code=NAMESPACE_MISSING_CODE, details={"namespace": "gold"}),
+            NAMESPACE_MISSING_CODE,
+            {"route": ROUTE, "namespace": "gold"},
         ),
     ],
 )

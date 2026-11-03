@@ -1,12 +1,14 @@
 """The dynamic-read error taxonomy, shared by every adapter of the plane.
 
-Every code here is **caller-caused, with one exception** — a statement the caller compiled did
+Every code here is **caller-caused, with two exceptions** — a statement the caller compiled did
 something the engine refused, or asked for more than the route allows. None of them is
 ``internal``: on this plane the statement *is* the caller's input, so a syntax error or a
 missing relation is the exact analogue of a malformed request body, not of a broken framework.
 
-The exception is :data:`ROLE_UNAVAILABLE_CODE`, which is ``configuration``: it fires before the
-statement is sent, because the route's confinement was never deployed.
+The exceptions fire before the statement is sent. :data:`ROLE_UNAVAILABLE_CODE` is
+``configuration``, because the route's confinement was never deployed.
+:data:`NAMESPACE_MISSING_CODE` is ``precondition``, because the tenant's warehouse lacks the
+route's namespace, usually since it has not been built yet.
 
 The factories live in one module so the mock and a real engine cannot drift into raising
 different kinds for the same refusal — the differential compares codes, and a taxonomy that
@@ -52,6 +54,14 @@ The one code here that is **not** the caller's fault: it fires before the statem
 because the role does not exist or the connection user is not a member of it. Both are
 deployment facts, so this egresses as ``configuration`` — blaming a widget's SQL for a missing
 ``GRANT`` would send whoever reads it to debug the wrong system."""
+
+NAMESPACE_MISSING_CODE = "dynamic_read_namespace_missing"
+"""The route's namespace is not in the tenant's warehouse, or the tenant cannot see it.
+
+Not the statement's fault: it fires before the statement is classified, for every statement on
+the route, until the namespace exists. A tenant whose first build has not run is the usual
+cause, so it is a ``precondition``, kept apart from :data:`STATEMENT_INVALID_CODE` so that it
+does not read as a bad plan."""
 
 # ....................... #
 
@@ -136,6 +146,17 @@ def role_unavailable(route: str, *, role: str, detail: str | None = None) -> Cor
     )
 
 
+def namespace_missing(route: str, *, namespace: str | None = None) -> CoreException:
+    """The route's *namespace* is missing from the tenant's warehouse, or hidden from it."""
+
+    return CoreException.precondition(
+        "Dynamic read route's namespace does not exist in the tenant's warehouse, or the "
+        "tenant cannot see it; it may not have been built yet.",
+        code=NAMESPACE_MISSING_CODE,
+        details=_details(route, **({"namespace": namespace} if namespace else {})),
+    )
+
+
 def statement_too_large(route: str, *, size: int, limit: int) -> CoreException:
     """The statement is longer than the route allows."""
 
@@ -158,6 +179,7 @@ DYNAMIC_READ_CODES: frozenset[str] = frozenset(
         TIMEOUT_CODE,
         ROW_CAP_EXCEEDED_CODE,
         STATEMENT_TOO_LARGE_CODE,
+        NAMESPACE_MISSING_CODE,
     }
 )
 """Every code this plane raises."""

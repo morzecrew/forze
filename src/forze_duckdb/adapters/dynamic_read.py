@@ -36,11 +36,13 @@ import duckdb
 
 from forze.application.integrations.dynamic_read import (
     MULTI_STATEMENT_CODE,
+    NAMESPACE_MISSING_CODE,
     STATEMENT_INVALID_CODE,
     WRITE_REFUSED_CODE,
     DynamicReadAdapter,
     DynamicReadRequest,
     multi_statement,
+    namespace_missing,
     permission_denied,
     statement_invalid,
     timed_out,
@@ -94,7 +96,7 @@ def dynamic_read_error(error: Exception, *, route: str) -> Exception:
     What is not the statement's doing — an ``IOException`` from a hung or failing request, an
     ``OutOfMemoryException`` — becomes an ``infrastructure`` error. A
     :class:`~forze.base.exceptions.CoreException` the client raised passes through, except
-    the classification refusals and the timeout, which gain the route.
+    the classification refusals, a missing namespace and the timeout, which gain the route.
     """
 
     if isinstance(error, CoreException):
@@ -143,6 +145,9 @@ def _core_error(error: CoreException, *, route: str) -> CoreException:
 
     if error.code == STATEMENT_INVALID_CODE:
         return statement_invalid(route, detail=(error.details or {}).get("detail"))
+
+    if error.code == NAMESPACE_MISSING_CODE:
+        return namespace_missing(route, namespace=(error.details or {}).get("namespace"))
 
     return error
 

@@ -805,9 +805,11 @@ class RoutedDuckDbClient(
     :func:`~forze.application.execution.lifecycle.builtin.routed_client_lifecycle_step`, not
     :func:`~forze_duckdb.execution.lifecycle.duckdb_lifecycle_step`.
 
-    An instance resolves a namespace once: a namespace it found missing stays missing, even
-    after the grant or the namespace appears (EXECUTION-LOG D-026). Call :meth:`evict_tenant`
-    after restoring a grant or creating a namespace, as after rotating credentials.
+    On an Iceberg catalog, an instance resolves a namespace once: a namespace it found missing
+    stays missing, even after the grant or the namespace appears (EXECUTION-LOG D-026). Call
+    :meth:`evict_tenant` after restoring a grant or creating a namespace there, as after
+    rotating credentials. A DuckLake instance reads its catalog at every statement, so a schema
+    or table created after a miss is read at the next one with no eviction (D-170).
 
     An evicted or drained instance closes in the background: closing waits for its workers, and
     one stuck on a hung request takes about 120 s on DuckDB 1.x (D-028), or ``http_timeout``
