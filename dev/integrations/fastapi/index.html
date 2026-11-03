@@ -7178,7 +7178,9 @@ returns the current <code>ExecutionContext</code> — <code>runtime.get_context<
 </code></pre></div>
 <p><code>InvocationMetadataMiddleware</code> binds correlation/execution metadata and the
 <code>Idempotency-Key</code> header; <code>SecurityContextMiddleware</code> binds the authenticated
-identity and tenant.</p>
+identity and tenant. The metadata records the
+<a href="../../running-in-prod/observability/#see-which-boundary-an-invocation-came-through">invocation surface</a>
+<code>http</code>, and no header is read for it.</p>
 <p>Outside a short list of exact paths, a request whose credential fails to verify is
 refused before routing, and so is one that no ingress authenticates at all
 (<code>AuthnRequirement(required=True)</code>, the default; a CORS preflight passes, for a CORS
@@ -7744,7 +7746,9 @@ inline (<code>{"type": "realtime.ack", "up_to"}</code>), a rotating token refres
 plus <code>RealtimeCommandRoute</code> declarations (the same ones a Socket.IO namespace
 router registers) — <code>{"type": "cmd", …}</code> frames dispatch through the identical
 governed operation path as HTTP, error-acked with the shared envelope and bounded
-by in-flight and frame-size limits. The full framing is normative in the
+by in-flight and frame-size limits. Each command frame is an invocation of its own,
+with fresh metadata whose surface is <code>websocket</code>; no frame or payload key sets it. The
+full framing is normative in the
 <a href="../../reference/realtime-protocol/">realtime wire protocol</a>; <code>asyncapi_document</code>
 documents WS commands via its <code>commands=</code> parameter.</p>
 <h3 id="authenticate-the-connection">Authenticate the connection<a class="headerlink" href="#authenticate-the-connection" title="Permanent link">&para;</a></h3>

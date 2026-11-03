@@ -10806,10 +10806,24 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <li>
 <p><strong><code>ChildCollectionSync</code> makes a parent's child rows match an incoming list.</strong> It matches children by a business key, deletes the dropped first (soft when the spec carries <code>is_deleted</code>), then creates the new and updates only changed fields. It runs inside a transaction and returns what it wrote.</p>
 </li>
+<li>
+<p><strong>Invocation metadata names the boundary it entered through.</strong> <code>InvocationMetadata.surface</code> takes an <code>InvocationSurface</code> value (<code>http</code>, <code>cli</code>, <code>durable</code>, …) or an app's own token; each framework boundary sets one. Logs carry <code>invocation_surface</code>, operation spans <code>forze.invocation_surface</code>, <code>unknown</code> with no metadata.</p>
+</li>
 </ul>
 <h3 id="changed">Changed<a class="headerlink" href="#changed" title="Permanent link">&para;</a></h3>
 <ul>
-<li><strong>Narrowing <code>logger_names</code> keeps unlisted loggers that propagate redacted.</strong> A forze root handler at <code>warning</code> (or a higher <code>level</code>) prints them scrubbed; above <code>warning</code> it drops their warnings (<strong>behaviour change</strong>). Name <code>propagate=False</code> loggers; <code>redact_unnamed=False</code> leaves unlisted ones raw.</li>
+<li>
+<p><strong>Narrowing <code>logger_names</code> keeps unlisted loggers that propagate redacted.</strong> A forze root handler at <code>warning</code> (or a higher <code>level</code>) prints them scrubbed; above <code>warning</code> it drops their warnings (<strong>behaviour change</strong>). Name <code>propagate=False</code> loggers; <code>redact_unnamed=False</code> leaves unlisted ones raw.</p>
+</li>
+<li>
+<p><strong>The self-hosted durable runner binds invocation metadata for every attempt</strong> (<strong>behaviour change</strong>): a fresh execution id, the run id as correlation id, surface <code>durable</code>. Its logs and events carry them, and a claim begun before a recovery and committed after it is now refused with <code>conflict</code>.</p>
+</li>
+<li>
+<p><strong>A durable body started by <code>run_now</code> inside a request no longer runs under the request's metadata</strong> (<strong>behaviour change</strong>). It runs under the run id as correlation id, so the request's correlation id no longer reaches the body or the events it publishes; the request is linked only as the causation.</p>
+</li>
+<li>
+<p><strong><code>process_with_inbox</code> gives every delivery invocation metadata with its own execution id</strong> (<strong>behaviour change</strong>), even under metadata the consumer bound. A message without a <code>forze_correlation_id</code> header takes the bound correlation id or a fresh one, and its logs, events and idempotency claims carry the execution id.</p>
+</li>
 </ul>
 <h3 id="fixed">Fixed<a class="headerlink" href="#fixed" title="Permanent link">&para;</a></h3>
 <ul>

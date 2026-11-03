@@ -6866,6 +6866,16 @@ handling the same message twice creates one shipment, not two:</p>
 before; a redelivery returns <code>False</code> and does nothing. Combined with the outbox,
 that's <strong>exactly-once</strong> effect delivery across a boundary that only offers
 at-least-once.</p>
+<p>Every delivery runs as an invocation with metadata of its own, whose
+<a href="../../running-in-prod/observability/#see-which-boundary-an-invocation-came-through">invocation surface</a>
+is <code>inbox</code>. Each delivery gets a fresh execution id, even when your consumer bound
+metadata around the call, so the handler's idempotency claims belong to that one
+delivery. The correlation id comes from the <code>forze_correlation_id</code> header when the relay
+wrote one, so the handler's logs join the publishing request's. Without the header it
+comes from metadata you bound, or is fresh. The consumed event's id becomes the causation.
+A claim the handler takes in a store outside the delivery's transaction, such as Redis,
+outlives a delivery that crashes. Its redelivery's claim on the same key then gets
+<code>conflict</code> until the pending claim's <code>IdempotencySpec.ttl</code> expires, as on Inngest.</p>
 <h2 id="sagas-many-steps-one-outcome">Sagas: many steps, one outcome<a class="headerlink" href="#sagas-many-steps-one-outcome" title="Permanent link">&para;</a></h2>
 <p>The <code>confirm</code> step above doesn't run alone — it's the final step of a checkout
 <strong>saga</strong>. Reserving inventory and confirming the order can't share a single

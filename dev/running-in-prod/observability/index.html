@@ -2406,6 +2406,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#see-which-boundary-an-invocation-came-through" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        See which boundary an invocation came through
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#trace-every-outbound-call" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -6663,6 +6674,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#see-which-boundary-an-invocation-came-through" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        See which boundary an invocation came through
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#trace-every-outbound-call" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -6942,6 +6964,10 @@ unchanged. The span carries:</p>
 <td>the invocation metadata</td>
 </tr>
 <tr>
+<td><code>forze.invocation_surface</code></td>
+<td>the <a href="#see-which-boundary-an-invocation-came-through">boundary the invocation entered through</a>, or <code>unknown</code></td>
+</tr>
+<tr>
 <td><code>forze.tenant_id</code> / <code>forze.principal_id</code></td>
 <td>the bound tenant and principal</td>
 </tr>
@@ -6955,6 +6981,89 @@ and outcome: <code>success</code>, <code>failed</code> for a failure the caller 
 <code>forze.outcome="error"</code> leaves it out. The operation metrics carry no error code, so if
 switch-offs matter to you, track them at the edge: count responses whose <code>X-Error-Code</code> is
 the code your app raises with <code>exc.unavailable</code>, or 503s at your proxy.</p>
+<h2 id="see-which-boundary-an-invocation-came-through">See which boundary an invocation came through<a class="headerlink" href="#see-which-boundary-an-invocation-came-through" title="Permanent link">&para;</a></h2>
+<p>Every boundary that starts an invocation names itself on the invocation metadata, so a
+log line or span says whether the work arrived over HTTP, from <code>forze ops</code>, or from a
+recovered durable run. Each line logged inside an operation carries the
+<code>invocation_surface</code> field, and the operation span carries <code>forze.invocation_surface</code>.
+An operation run outside any boundary, such as a test harness calling <code>run_operation</code>,
+records <code>unknown</code>.</p>
+<table>
+<thead>
+<tr>
+<th>Value</th>
+<th>Boundary</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>http</code></td>
+<td><code>forze_fastapi</code>'s <code>InvocationMetadataMiddleware</code>: generated routes and <abbr title="Server-Side Encryption">SSE</abbr></td>
+</tr>
+<tr>
+<td><code>websocket</code></td>
+<td>a <code>forze_fastapi</code> realtime WebSocket command frame</td>
+</tr>
+<tr>
+<td><code>socketio</code></td>
+<td>a <code>forze_socketio</code> command event</td>
+</tr>
+<tr>
+<td><code>mcp</code></td>
+<td>a <code>forze_mcp</code> tool call</td>
+</tr>
+<tr>
+<td><code>cli</code></td>
+<td><code>forze ops call</code></td>
+</tr>
+<tr>
+<td><code>inbox</code></td>
+<td><code>process_with_inbox</code>, once per delivery</td>
+</tr>
+<tr>
+<td><code>temporal</code></td>
+<td>a workflow or activity behind <code>forze_temporal</code>'s interceptors</td>
+</tr>
+<tr>
+<td><code>inngest</code></td>
+<td>a <code>forze_inngest</code> function call</td>
+</tr>
+<tr>
+<td><code>durable</code></td>
+<td>one attempt of a self-hosted durable run</td>
+</tr>
+<tr>
+<td><code>unknown</code></td>
+<td>no boundary bound metadata</td>
+</tr>
+</tbody>
+</table>
+<p>The values are <code>InvocationSurface</code> members in <code>forze.application.execution</code>. A nested
+call keeps the surface of the invocation around it: an agent tool call made while serving
+an HTTP request records <code>http</code>. A hop names itself and carries nothing: a Temporal
+activity started from an HTTP request records <code>temporal</code>, and the request is found
+through the shared <code>correlation_id</code>.</p>
+<p>The field is a log field, not a metric label and not a Loki label, so it adds no series.
+The key is <code>invocation_surface</code> and not <code>surface</code> because <code>surface</code> is the port-call key
+that <code>with_port_logging()</code> writes, and both appear on one port-call line.</p>
+<p><strong>Your own boundary.</strong> A gRPC server or a queue worker of your own passes its own token:
+<code>mint_invocation_metadata(surface="grpc")</code>, from <code>forze.application.execution.ingress</code>,
+or <code>InvocationMetadata(..., surface="grpc")</code>. A token must match
+<code>^[a-z][a-z0-9_]{0,31}$</code>, or construction raises <code>configuration</code> with code
+<code>invocation_surface_invalid</code>. Pass a literal from your boundary's source:</p>
+<ul>
+<li>never a value read from a header, a frame, a message or an event, which a caller would
+  then choose;</li>
+<li>never a token that names a person, a tenant or a customer, since it reaches every log
+  line and span.</li>
+</ul>
+<div class="admonition warning">
+<p class="admonition-title">Attribution, not authority</p>
+<p>No framework hook, policy or guard reads the surface, and your code should not either.
+Any code in the process can build metadata with any valid token, so a check such as
+"only if the surface is <code>cli</code>" proves nothing. Restrict which operations a surface may
+call with its exposure allowlist instead.</p>
+</div>
 <h2 id="trace-every-outbound-call">Trace every outbound call<a class="headerlink" href="#trace-every-outbound-call" title="Permanent link">&para;</a></h2>
 <p>The operation span tells you <em>that</em> an operation ran and how long it took; to see
 <em>where</em> the time went — which database read, which cache call, which outbound

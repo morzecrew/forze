@@ -7018,7 +7018,10 @@ typed payload and optional ack — then bind them through the adapter:</p>
 <span class="n">adapter</span><span class="o">.</span><span class="n">include_router</span><span class="p">(</span><span class="n">chat</span><span class="p">)</span>
 </code></pre></div>
 <p>On each event the adapter builds the context, validates the payload, runs the
-operation, and returns the (validated) result as the Socket.IO ack.</p>
+operation, and returns the (validated) result as the Socket.IO ack. Each event is an
+invocation of its own, with fresh metadata whose
+<a href="../../running-in-prod/observability/#see-which-boundary-an-invocation-came-through">invocation surface</a>
+is <code>socketio</code>; no payload key sets it.</p>
 <h2 id="errors-and-identity">Errors and identity<a class="headerlink" href="#errors-and-identity" title="Permanent link">&para;</a></h2>
 <p>Every handler runs inside an error boundary: a <code>CoreException</code> is acked as
 <code>{"error": {"detail", "code", "kind", ...}}</code> honoring the same egress policy as
