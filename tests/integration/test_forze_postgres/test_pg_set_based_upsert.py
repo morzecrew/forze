@@ -7,6 +7,7 @@ under the same frozen clock; every stored column must come out equal, including 
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Awaitable, Callable, Sequence
 from datetime import UTC, date, datetime
 from decimal import Decimal
@@ -178,7 +179,7 @@ async def test_a_row_stored_after_the_look_up_is_patched_not_lost(
     pg_client: PostgresClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """A writer can store an id between the look-up and the insert; the insert then skips it,
-    and the update must still reach it. Simulated by a look-up that misses a stored row."""
+    and the update must still reach it. Simulated by a first look-up that misses a stored row."""
 
     t = await _table(pg_client)
     cmd = document_context(pg_client, t).document.command(_SPEC)
@@ -186,14 +187,18 @@ async def test_a_row_stored_after_the_look_up_is_patched_not_lost(
     await cmd.upsert_many([_item(pk, "stored", 1)], return_new=False)
 
     fetch_all = pg_client.fetch_all
+    look_ups: list[str] = []
 
     async def missing_look_up(query: Any, params: Any = None, **kwargs: Any) -> Any:
         rows = await fetch_all(query, params, **kwargs)
 
         text = query if isinstance(query, str) else query.as_string(None)
 
-        if text.startswith('SELECT "id" FROM') and "FOR NO KEY UPDATE" not in text:
-            return []
+        if text.startswith('SELECT "id" FROM'):
+            look_ups.append(text)
+
+            if len(look_ups) == 1:
+                return []
 
         return rows
 
@@ -205,6 +210,8 @@ async def test_a_row_stored_after_the_look_up_is_patched_not_lost(
 
     row = await pg_client.fetch_one(f"SELECT name, rev FROM {t} WHERE id = %s", [pk])
     assert row == {"name": "patched", "rev": 2}
+    # The skipped id was looked up again, and locked, before its patch.
+    assert len(look_ups) == 2 and "FOR NO KEY UPDATE" in look_ups[1]
 
 
 @pytest.mark.parametrize("field", ["name", "ref"])
@@ -237,7 +244,8 @@ async def test_a_null_the_domain_refuses_is_refused_set_based_too(
 async def test_a_row_deleted_before_it_is_locked_is_not_found(
     pg_client: PostgresClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A row the look-up saw but a delete removed before the lock is reported, not dropped."""
+    """A row the insert skipped but a delete removed before the lock is reported, not dropped.
+    Simulated by a first look-up that misses the stored row, deleted after the insert."""
 
     t = await _table(pg_client)
     cmd = document_context(pg_client, t).document.command(_SPEC)
@@ -245,17 +253,24 @@ async def test_a_row_deleted_before_it_is_locked_is_not_found(
     await cmd.upsert_many([_item(pk, "stored", 1)], return_new=False)
 
     fetch_all = pg_client.fetch_all
+    look_ups: list[str] = []
 
-    async def delete_after_look_up(query: Any, params: Any = None, **kwargs: Any) -> Any:
+    async def delete_after_insert(query: Any, params: Any = None, **kwargs: Any) -> Any:
         rows = await fetch_all(query, params, **kwargs)
         text = query if isinstance(query, str) else query.as_string(None)
 
-        if text.startswith('SELECT "id" FROM') and "FOR NO KEY UPDATE" not in text:
+        if text.startswith('SELECT "id" FROM'):
+            look_ups.append(text)
+
+            if len(look_ups) == 1:
+                return []
+
+        if text.startswith("WITH ins AS (INSERT"):
             await pg_client.execute(f"DELETE FROM {t} WHERE id = %s", [pk])
 
         return rows
 
-    monkeypatch.setattr(pg_client, "fetch_all", delete_after_look_up)
+    monkeypatch.setattr(pg_client, "fetch_all", delete_after_insert)
 
     with pytest.raises(CoreException) as refused:
         await cmd.upsert_many(
@@ -1038,6 +1053,7 @@ async def test_a_wide_chunk_spelled_as_values_is_split_to_fit_the_parameter_limi
     assert len(rows) == len(ids)
     assert {(row["c00"], row["c01"], row["rev"]) for row in rows} == {("b", "a", 2)}
 
+
 async def _session(postgres_container: Any) -> PostgresClient:
     """A client of its own over one connection: one session, apart from ``pg_client``."""
 
@@ -1105,3 +1121,103 @@ async def test_a_look_up_is_never_held_to_a_plan_made_for_an_empty_table(
         await client.close()
 
     assert held == []
+
+
+async def test_a_row_another_session_stores_after_the_look_up_is_locked_and_patched(
+    postgres_container: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Another session inserts and commits an id this call found missing; the insert skips
+    it, and it is locked and patched like a stored row, not lost or written twice."""
+
+    mine, theirs = await _session(postgres_container), await _session(postgres_container)
+
+    try:
+        t = await _table(mine)
+        cmd = _chunked_command(mine, t, chunk=2_000)
+        their_cmd = _chunked_command(theirs, t, chunk=2_000)
+        stored, raced, fresh = uuid4(), uuid4(), uuid4()
+        await cmd.upsert_many([_item(stored, "stored", 1)], return_new=False)
+
+        fetch_all = mine.fetch_all
+        look_ups: list[str] = []
+
+        async def store_after_look_up(query: Any, params: Any = None, **kwargs: Any) -> Any:
+            rows = await fetch_all(query, params, **kwargs)
+            text = query if isinstance(query, str) else query.as_string(None)
+
+            if text.startswith('SELECT "id" FROM'):
+                look_ups.append(text)
+
+                if len(look_ups) == 1:
+                    await their_cmd.upsert_many(
+                        [_item(raced, "theirs", 7)], return_new=False, set_based=True
+                    )
+
+            return rows
+
+        monkeypatch.setattr(mine, "fetch_all", store_after_look_up)
+        await cmd.upsert_many(
+            [_item(pk, "mine", 0, {"name": "patched"}) for pk in (stored, raced, fresh)],
+            return_new=False,
+            set_based=True,
+        )
+        monkeypatch.undo()
+
+        rows = await mine.fetch_all(f"SELECT id, name, qty, rev FROM {t}", [])
+
+    finally:
+        await mine.close()
+        await theirs.close()
+
+    assert {row["id"]: (row["name"], row["qty"], row["rev"]) for row in rows} == {
+        stored: ("patched", 1, 2),
+        raced: ("patched", 7, 2),
+        fresh: ("mine", 0, 1),
+    }
+    assert len(look_ups) == 2
+
+
+async def test_concurrent_set_based_upserts_over_shared_ids_both_land(
+    postgres_container: Any,
+) -> None:
+    """Two sessions upsert the same ids at once, some stored and some new. Each takes the
+    stored rows' locks in id order before it inserts, so one waits for the other rather than
+    deadlocking, and the later one patches every row the earlier one wrote."""
+
+    first, second = await _session(postgres_container), await _session(postgres_container)
+
+    try:
+        t = await _table(first)
+        cmds = [_chunked_command(c, t, chunk=2_000) for c in (first, second)]
+
+        for _ in range(5):
+            stored = [uuid4() for _ in range(50)]
+            new = [uuid4() for _ in range(50)]
+            await cmds[0].upsert_many(
+                [_item(pk, "stored", 1) for pk in stored], return_new=False, set_based=True
+            )
+            await asyncio.gather(
+                *(
+                    cmd.upsert_many(
+                        [_item(pk, f"c{n}", 1, {"name": f"u{n}"}) for pk in stored + new],
+                        return_new=False,
+                        set_based=True,
+                    )
+                    for n, cmd in enumerate(cmds)
+                )
+            )
+            rows = await first.fetch_all(
+                f"SELECT id, name, rev FROM {t} WHERE id = ANY(%s)", [stored + new]
+            )
+            by_id = {row["id"]: (row["name"], row["rev"]) for row in rows}
+            # Whichever committed last named every row; a stored row moved twice, a new one
+            # was inserted by one call and patched by the other.
+            (last,) = {name for name, _ in by_id.values()}
+
+            assert last in {"u0", "u1"}
+            assert {by_id[pk][1] for pk in stored} == {3}
+            assert {by_id[pk][1] for pk in new} == {2}
+
+    finally:
+        await first.close()
+        await second.close()

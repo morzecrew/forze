@@ -1407,8 +1407,10 @@ class PostgresWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
         :meth:`upsert_many` inserts it; a stored row takes the update as its DTO encodes it,
         as :meth:`update_matching` writes one, and only where that changes it or names a
         searchable field (sealed afresh, as on the domain path), so ``rev`` and
-        ``last_update_at`` move only then. Stored rows are locked in id order before they are
-        patched, and one this tenant cannot see is ``not_found``, as on the domain path. The
+        ``last_update_at`` move only then. Stored rows are locked in id order as they are found,
+        before the chunk's missing ones are inserted; a row a concurrent writer stored meanwhile
+        is locked after the insert skips it, and one this tenant cannot see is ``not_found``, as
+        on the domain path. The
         caller has refused a spec whose updates need the stored row or the domain model
         (:meth:`~forze.application.contracts.document.DocumentSpec.require_set_based_upsert`);
         a relation keyed by more than the id (and tenant), or a column an update can write
@@ -1424,11 +1426,10 @@ class PostgresWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
             return
 
         # One id order for every chunk, so two calls over overlapping ids mostly take their
-        # locks in the same order. Not always: a chunk inserts its missing ids before it locks
-        # its stored ones, so calls whose chunks split differently can still deadlock. Postgres
-        # aborts one; outside a caller's transaction the retry runs it again, inside one it is
-        # ``concurrency`` for the scope's owner. ``int`` orders as ``UUID`` and Postgres's
-        # ``uuid`` do, without a Python comparison per pair.
+        # locks in the same order. Not always: calls whose chunks split differently can still
+        # deadlock. Postgres aborts one; outside a caller's transaction the retry runs it again,
+        # inside one it is ``concurrency`` for the scope's owner. ``int`` orders as ``UUID`` and
+        # Postgres's ``uuid`` do, without a Python comparison per pair.
         items = sorted(zip(ids, creates, updates, strict=True), key=lambda item: item[0].int)
 
         async with self._write_tx():
@@ -1440,25 +1441,25 @@ class PostgresWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
                 creates_by_id = {pk: create for pk, create, _ in chunk}
                 updates_by_id = {pk: update for pk, _, update in chunk}
 
-                # A create payload becomes a domain only for an id not stored yet: a reload
-                # builds none.
-                present = await self.__visible_ids(id_batch, lock=False)
-                inserted = await self.__insert_set_based(
-                    [pk for pk in id_batch if pk not in present], creates_by_id, column_types
-                )
-                # Everything not inserted is patched, a row a concurrent writer stored between
-                # the look-up and the insert included. Locked in id order first, as the domain
-                # path locks what it patches; a row gone by then (deleted, or another
-                # tenant's) is not this call's to write.
+                # The stored rows are found and locked in one statement, in id order, as the
+                # domain path locks what it patches, so none is deleted before its patch. A
+                # create payload becomes a domain only for an id not stored: a reload builds
+                # none.
+                present = await self.__visible_ids(id_batch, lock=True)
+                missing = [pk for pk in id_batch if pk not in present]
+                inserted = await self.__insert_set_based(missing, creates_by_id, column_types)
+                # An id the insert skipped was stored by a concurrent writer after the look-up,
+                # and is patched too, once locked; one gone by then (deleted, or another
+                # tenant's) is not this call's to write. Usually there is none to look up.
+                raced = [pk for pk in missing if pk not in inserted]
+
+                if raced and len(await self.__visible_ids(raced, lock=True)) != len(raced):
+                    raise exc.not_found("Record not found after upsert_many conflict")
+
                 stored = [pk for pk in id_batch if pk not in inserted]
 
                 if not stored:
                     continue
-
-                visible = await self.__visible_ids(stored, lock=True)
-
-                if len(visible) != len(stored):
-                    raise exc.not_found("Record not found after upsert_many conflict")
 
                 await self.__patch_stored_set_based(
                     [(pk, updates_by_id[pk], creates_by_id[pk]) for pk in stored],

@@ -51,6 +51,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **`PostgresClientPort` requires `fetch_all_scoped`, and `ClickHouseClientPort` requires `query_timeout_limit`** (**Breaking**). A client implemented outside forze must add them.
 
+- **A set-based `upsert_many` on Postgres sends one statement fewer per chunk that holds stored rows, so reloads run faster.** It locks those rows as it finds them, before inserting the missing ones; a row deleted while it waits for the lock is inserted, not `not_found` (**behaviour change**).
+
 ### Removed
 
 - **`AuthnSpec.token_profile`, `password_profile`, `api_key_profile`, `resolver_profile` and `AccessTokenCredentials.profile` are gone** (**Breaking**). Nothing read them: verifiers and the resolver are registered per route under the spec's name.
