@@ -136,7 +136,9 @@ app.add_middleware(SecurityContextMiddleware, ctx_dep=runtime.get_context)
 
 `InvocationMetadataMiddleware` binds correlation/execution metadata and the
 `Idempotency-Key` header; `SecurityContextMiddleware` binds the authenticated
-identity and tenant.
+identity and tenant. The metadata records the
+[invocation surface](../running-in-prod/observability.md#see-which-boundary-an-invocation-came-through)
+`http`, and no header is read for it.
 
 Outside a short list of exact paths, a request whose credential fails to verify is
 refused before routing, and so is one that no ingress authenticates at all
@@ -768,7 +770,9 @@ inline (`{"type": "realtime.ack", "up_to"}`), a rotating token refreshes in plac
 plus `RealtimeCommandRoute` declarations (the same ones a Socket.IO namespace
 router registers) — `{"type": "cmd", …}` frames dispatch through the identical
 governed operation path as HTTP, error-acked with the shared envelope and bounded
-by in-flight and frame-size limits. The full framing is normative in the
+by in-flight and frame-size limits. Each command frame is an invocation of its own,
+with fresh metadata whose surface is `websocket`; no frame or payload key sets it. The
+full framing is normative in the
 [realtime wire protocol](../reference/realtime-protocol.md); `asyncapi_document`
 documents WS commands via its `commands=` parameter.
 

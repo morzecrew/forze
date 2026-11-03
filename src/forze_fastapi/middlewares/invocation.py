@@ -15,6 +15,7 @@ from forze.application.contracts.envelope import HTTP_HEADER_DEADLINE_BUDGET
 from forze.application.execution.context import (
     ExecutionContextFactory,
     InvocationMetadata,
+    InvocationSurface,
 )
 from forze.application.execution.ingress import mint_invocation_metadata
 
@@ -121,7 +122,9 @@ class InvocationMetadataMiddleware:
     def _decode_metadata(self, request: Request) -> InvocationMetadata:
         # The headers are advisory client input: fall back to a fresh id
         # (or no causation) instead of failing the request on garbage values.
+        # The surface is this boundary's own; no header is read for it.
         return mint_invocation_metadata(
+            surface=InvocationSurface.HTTP,
             correlation_id=self._parse_uuid_header(request.headers.get(self.corr_header)),
             causation_id=self._parse_uuid_header(request.headers.get(self.caus_header)),
         )

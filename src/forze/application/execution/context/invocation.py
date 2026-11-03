@@ -1,6 +1,8 @@
+import re
 from collections.abc import Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar, Token
+from enum import StrEnum
 from typing import Any, Final, final
 from uuid import UUID
 
@@ -9,6 +11,7 @@ from structlog.contextvars import bind_contextvars, reset_contextvars
 
 from forze.application.contracts.authn import AuthnIdentity
 from forze.application.contracts.tenancy import TenantIdentity
+from forze.base.exceptions import exc
 
 from .deadline import bind_deadline, current_deadline, remaining_time
 
@@ -21,6 +24,67 @@ PRINCIPAL_ID_KEY: Final = "principal_id"
 ACTOR_ID_KEY: Final = "actor_id"
 TENANT_ID_KEY: Final = "tenant_id"
 IDEMPOTENCY_KEY_KEY: Final = "idempotency_key"
+SURFACE_KEY: Final = "invocation_surface"
+"""Not bare ``surface``: that is the port-call log key, and an event's own key wins over a
+bound one, so a bare key would vanish from exactly the port-call lines."""
+
+# ....................... #
+
+
+class InvocationSurface(StrEnum):
+    """The framework boundaries that mint invocation metadata.
+
+    Attribution, never authority: the value says which boundary minted the metadata, so a
+    reader knows which rule produced the bound identity. Nothing may branch on it, since any
+    code in the process can construct metadata with any valid token.
+    """
+
+    HTTP = "http"
+    """``forze_fastapi``'s ``InvocationMetadataMiddleware``: generated routes and SSE."""
+
+    WEBSOCKET = "websocket"
+    """``forze_fastapi`` realtime WebSocket command frames."""
+
+    SOCKETIO = "socketio"
+    """``forze_socketio`` command events."""
+
+    MCP = "mcp"
+    """``forze_mcp`` tool calls."""
+
+    CLI = "cli"
+    """``forze ops call``."""
+
+    INBOX = "inbox"
+    """``process_with_inbox``, once per delivery."""
+
+    TEMPORAL = "temporal"
+    """``forze_temporal``'s interceptors, for workflows and activities."""
+
+    INNGEST = "inngest"
+    """``forze_inngest`` function calls."""
+
+    DURABLE = "durable"
+    """The self-hosted durable runner in ``forze_kits.integrations.durable``, per attempt."""
+
+    UNKNOWN = "unknown"
+    """No boundary said: the default, and what an operation run outside any boundary logs."""
+
+
+_KNOWN_SURFACES: Final = frozenset(InvocationSurface)
+_SURFACE_TOKEN: Final = re.compile(r"[a-z][a-z0-9_]{0,31}")
+
+
+def _check_surface(_instance: object, _attribute: object, value: object) -> None:
+    # The set lookup is the hot path: every framework boundary passes a well-known value.
+    if isinstance(value, str) and (value in _KNOWN_SURFACES or _SURFACE_TOKEN.fullmatch(value)):
+        return
+
+    raise exc.configuration(
+        "An invocation surface must be a short token matching ^[a-z][a-z0-9_]{0,31}$, "
+        "a literal in the boundary's own source",
+        code="invocation_surface_invalid",
+    )
+
 
 # ....................... #
 
@@ -38,6 +102,15 @@ class InvocationMetadata:
 
     causation_id: UUID | None = attrs.field(default=None)
     """The causation ID of the invocation."""
+
+    surface: str = attrs.field(default=InvocationSurface.UNKNOWN, validator=_check_surface)
+    """The boundary that minted this metadata (see :class:`InvocationSurface`).
+
+    Set by boundary code from a literal, never from anything the caller sent. An
+    application's own boundary passes its own token, matching ``^[a-z][a-z0-9_]{0,31}$``;
+    anything else raises ``configuration`` with code ``invocation_surface_invalid``. A token
+    must not name a person, a tenant or a customer: it reaches logs and spans.
+    """
 
 
 # ....................... #
@@ -235,6 +308,7 @@ class InvocationContext:
         bound: dict[str, Any] = {
             EXEC_ID_KEY: str(metadata.execution_id),
             CORR_ID_KEY: str(metadata.correlation_id),
+            SURFACE_KEY: metadata.surface,
         }
 
         if metadata.causation_id is not None:

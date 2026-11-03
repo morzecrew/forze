@@ -93,6 +93,7 @@ class Bound(BaseDTO):
     execution_id: UUID
     correlation_id: UUID
     causation_id: UUID | None
+    surface: str
     idempotency_key: str | None
     deadline_set: bool
 
@@ -206,6 +207,7 @@ def _bound(ctx: ExecutionContext) -> Callable[[None], Awaitable[Bound]]:
             execution_id=meta.execution_id,
             correlation_id=meta.correlation_id,
             causation_id=meta.causation_id,
+            surface=meta.surface,
             idempotency_key=inv.get_idempotency_key(),
             deadline_set=inv.get_deadline() is not None,
         )

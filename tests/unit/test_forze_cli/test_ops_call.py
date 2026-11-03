@@ -265,6 +265,7 @@ class TestEnvelope:
 
         assert bound["correlation_id"] == str(correlation)
         assert bound["causation_id"] == str(causation)
+        assert bound["surface"] == "cli"
         assert bound["deadline_set"] is True
 
     def test_the_error_object_echoes_the_correlation_id(self) -> None:
