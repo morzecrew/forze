@@ -23,7 +23,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- **Narrowing `logger_names` no longer narrows log redaction.** `configure_logging` and `bootstrap_logging` add a scrubbing root handler at `warning` and above, so unlisted loggers print redacted on the configured stream instead of raw on stderr (**behaviour change**). `redact_unnamed=False` declines it, with a warning.
+- **Narrowing `logger_names` no longer narrows log redaction.** A scrubbing root handler at `warning` (or a higher `level`) prints unlisted loggers on the configured stream, not raw on stderr; above `warning`, their warnings stop (**behaviour change**). `redact_unnamed=False` declines it.
 
 ### Fixed
 

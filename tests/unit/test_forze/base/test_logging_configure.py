@@ -454,8 +454,12 @@ def _bare_root() -> Iterator[logging.Logger]:
         root.handlers[:] = saved
 
 
+def _redaction_handlers_of(handlers: list[logging.Handler]) -> list[logging.Handler]:
+    return [h for h in handlers if isinstance(h, _UnnamedRedactionHandler)]
+
+
 def _redaction_handlers(root: logging.Logger) -> list[logging.Handler]:
-    return [h for h in root.handlers if isinstance(h, _UnnamedRedactionHandler)]
+    return _redaction_handlers_of(root.handlers)
 
 
 class TestRedactUnnamed:
@@ -531,6 +535,65 @@ class TestRedactUnnamed:
         assert row["event"] == "login"
         assert row["password"] == SECRET_PLACEHOLDER
 
+    def test_unlisted_stdlib_extra_is_dropped_not_rendered(self) -> None:
+        stream = io.StringIO()
+
+        with _bare_root():
+            configure_logging(render_mode="json", logger_names=["app"], stream=stream)
+            logging.getLogger("vendor.client").warning(
+                "login", extra={"password": "fixture-7chr"}
+            )
+
+        row = _json_records(stream)[-1]
+        assert row["event"] == "login"
+        assert "password" not in row
+        assert "fixture-7chr" not in stream.getvalue()
+
+    def test_level_above_warning_drops_unlisted_warnings(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """The cost of following a higher level: the last resort printed these raw."""
+
+        stream = io.StringIO()
+        vendor = logging.getLogger("vendor.client")
+
+        with _bare_root():
+            configure_logging(
+                level="error", render_mode="json", logger_names=["app"], stream=stream
+            )
+            vendor.warning("warning-line")
+            vendor.error("error-line")
+
+        assert [row["event"] for row in _json_records(stream)] == ["error-line"]
+        assert capsys.readouterr().err == ""
+
+    def test_existing_root_handler_stays_beside_the_scrubbing_one(self) -> None:
+        own, stream = io.StringIO(), io.StringIO()
+        theirs = logging.StreamHandler(own)
+
+        with _bare_root() as root:
+            root.addHandler(theirs)
+            configure_logging(render_mode="json", logger_names=["app"], stream=stream)
+            logging.getLogger("vendor.client").warning("auth Bearer abc.def.ghi")
+            handlers = list(root.handlers)
+
+        assert handlers[0] is theirs
+        assert len(_redaction_handlers_of(handlers)) == 1
+        # Fail closed: the app's handler still prints its raw line, ours a scrubbed one.
+        assert "abc.def.ghi" in own.getvalue()
+        assert "abc.def.ghi" not in stream.getvalue()
+        assert SECRET_PLACEHOLDER in stream.getvalue()
+
+    def test_later_basic_config_is_a_no_op(self) -> None:
+        with _bare_root() as root:
+            configure_logging(logger_names=["app"], stream=io.StringIO())
+            before = list(root.handlers)
+            logging.basicConfig(stream=io.StringIO())
+            after = list(root.handlers)
+
+        assert len(_redaction_handlers_of(before)) == 1
+        assert after == before
+
     def test_named_logger_record_is_emitted_once(self) -> None:
         stream = io.StringIO()
 
@@ -549,6 +612,7 @@ class TestRedactUnnamed:
         assert handlers == []
         assert len(caught) == 1
         assert "unscrubbed" in str(caught[0].message)
+        assert caught[0].filename == __file__
 
     def test_root_handler_follows_a_higher_level_and_is_replaced(self) -> None:
         with _bare_root() as root:
@@ -628,3 +692,4 @@ class TestRedactUnnamed:
         assert len(attached) == 1
         assert declined == []
         assert len(caught) == 1
+        assert caught[0].filename == __file__
