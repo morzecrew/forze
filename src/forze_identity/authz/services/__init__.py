@@ -1,5 +1,5 @@
 from .grants import AuthzGrantResolver, AuthzGrantResolverDeps
-from .grants_cache import GrantsCache
+from .grants_cache import GrantsCache, GrantsInvalidation
 from .policy import DEFAULT_OWNER_OVERRIDE_PERMISSIONS, AuthzPolicyService
 
 # ----------------------- #
@@ -10,4 +10,5 @@ __all__ = [
     "AuthzGrantResolverDeps",
     "AuthzPolicyService",
     "GrantsCache",
+    "GrantsInvalidation",
 ]

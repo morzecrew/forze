@@ -12,11 +12,14 @@ installs its own and drives frame consumption with a timeout read loop (plus
 a periodic PING that keeps the connection alive; server-side tracking lives
 and dies with it).
 
-Failure posture is fail-open: any setup or stream error notifies subscribers
-with a **reset** (their caches flush — events may have been missed) and the
-hub rebuilds with jittered exponential backoff. Subscribers keep their own
-TTL backstop, so a hub outage degrades to TTL-only staleness, never to
-incorrectness.
+Failure posture is fail-open: any setup or stream error, or a keepalive PING
+left unanswered, notifies subscribers with a **reset** (their caches flush —
+events may have been missed) and the hub rebuilds with jittered exponential
+backoff, which resets only once a connection has answered a keepalive PING.
+Subscribers keep their own TTL backstop, so a hub outage degrades to
+TTL-only staleness, never to incorrectness. A subscriber that must not start
+on a stream that never came up asks to wait until it is live; stopping the
+hub tells every subscriber the stream has ended.
 """
 
 from forze_redis._compat import require_redis
@@ -28,9 +31,11 @@ require_redis()
 import asyncio
 import contextlib
 from collections.abc import Awaitable, Callable, Sequence
+from datetime import timedelta
 from typing import Any
 
 import attrs
+from redis.exceptions import ResponseError
 
 from forze.base.primitives import current_entropy_source, monotonic
 from forze_redis.kernel._logger import logger
@@ -39,8 +44,13 @@ from forze_redis.kernel._logger import logger
 
 _POLL_TIMEOUT_S = 1.0
 _KEEPALIVE_EVERY_S = 15.0
+_PONG_TIMEOUT_S = 5.0
 _BACKOFF_BASE_S = 0.5
 _BACKOFF_MAX_S = 15.0
+
+
+class _TrackingRefused(RuntimeError):
+    """The server or the connection cannot track at all; retrying will not change that."""
 
 
 @attrs.define(slots=True)
@@ -48,6 +58,8 @@ class _Subscription:
     prefixes: tuple[str, ...]
     on_keys: Callable[[Sequence[str]], None]
     on_reset: Callable[[], None]
+    on_end: Callable[[], None] | None = None
+    live: "asyncio.Future[bool] | None" = None
     active: bool = True
 
 
@@ -79,13 +91,24 @@ class InvalidationHub:
         prefixes: Sequence[str],
         on_keys: Callable[[Sequence[str]], None],
         on_reset: Callable[[], None],
-    ) -> Callable[[], Awaitable[None]]:
-        """Register a subscriber; starts (or re-arms) the listener task."""
+        on_end: Callable[[], None] | None = None,
+        live_within: timedelta | None = None,
+    ) -> Callable[[], Awaitable[None]] | None:
+        """Register a subscriber; starts (or re-arms) the listener task.
+
+        With *live_within*, returns once tracking is set up with this subscriber's prefixes,
+        or ``None``, detached, when the server or the connection refuses tracking, when no
+        setup succeeds within the bound (a dropped connection is retried meanwhile), or when
+        the hub stops; a wait that is cancelled detaches too. *on_end* is told when the hub stops; without it,
+        *on_reset* is.
+        """
 
         sub = _Subscription(
             prefixes=tuple(prefixes),
             on_keys=on_keys,
             on_reset=on_reset,
+            on_end=on_end,
+            live=asyncio.get_running_loop().create_future() if live_within is not None else None,
         )
         self._subs.append(sub)
 
@@ -107,12 +130,33 @@ class InvalidationHub:
                 # subscriber remains (same path as a prefix-set change).
                 self._resubscribe.set()
 
+        if sub.live is not None and live_within is not None:
+            live = False
+
+            try:
+                # Shielded, so a timeout leaves the outcome readable.
+                live = await asyncio.wait_for(
+                    asyncio.shield(sub.live), timeout=live_within.total_seconds()
+                )
+
+            except TimeoutError:
+                # The stream may have come up at the deadline itself.
+                live = sub.live.done() and not sub.live.cancelled() and sub.live.result()
+
+            finally:
+                # Timed out, refused, stopped or cancelled: nobody holds this subscription.
+                if not live:
+                    await _unsubscribe()
+
+            if not live:
+                return None
+
         return _unsubscribe
 
     # ....................... #
 
     async def stop(self) -> None:
-        """Cancel the listener task and drop all subscriptions."""
+        """Cancel the listener task, tell every subscriber the stream ended, and drop them."""
 
         self._stopped = True
         task = self._task
@@ -124,6 +168,15 @@ class InvalidationHub:
                 await task
 
         self._task = None
+
+        for sub in self._active_subs():
+            try:
+                (sub.on_end or sub.on_reset)()
+
+            except Exception:
+                logger.warning("Invalidation end callback failed", exc_info=True)
+
+        self._settle(self._subs, live=False)
         self._subs.clear()
 
     # ....................... #
@@ -145,6 +198,14 @@ class InvalidationHub:
 
             except Exception:
                 logger.warning("Invalidation reset callback failed", exc_info=True)
+
+    # ....................... #
+
+    @staticmethod
+    def _settle(subs: Sequence[_Subscription], *, live: bool) -> None:
+        for sub in subs:
+            if sub.live is not None and not sub.live.done():
+                sub.live.set_result(live)
 
     # ....................... #
 
@@ -194,13 +255,15 @@ class InvalidationHub:
     # ....................... #
 
     async def _setup(self) -> Any:
+        """The tracking connection, or ``None`` when no subscriber is left to track for."""
+
         conn = await self.acquire_connection()
 
         try:
             # RESP3 is required for server ``invalidate`` push frames. redis-py 8 negotiates
             # it by default; guard against a client explicitly pinned to RESP2.
             if getattr(conn, "protocol", None) != 3:
-                raise RuntimeError(
+                raise _TrackingRefused(
                     "Client-side caching requires a RESP3 connection; configure the Redis "
                     "client with protocol=3."
                 )
@@ -210,6 +273,13 @@ class InvalidationHub:
             conn._parser.set_invalidation_push_handler(self._on_push)
 
             prefixes = sorted({p for sub in self._active_subs() for p in sub.prefixes})
+
+            if not prefixes:
+                # Every subscriber left while the connection was coming: BCAST with no
+                # prefix would track every key.
+                await self._teardown(conn)
+                return None
+
             args: list[Any] = ["CLIENT", "TRACKING", "ON", "BCAST"]
 
             for prefix in prefixes:
@@ -219,7 +289,7 @@ class InvalidationHub:
             response = await conn.read_response()
 
             if response not in (b"OK", "OK", True):
-                raise RuntimeError(f"CLIENT TRACKING refused: {response!r}")
+                raise _TrackingRefused(f"CLIENT TRACKING refused: {response!r}")
 
             logger.debug("Invalidation tracking enabled (prefixes=%s)", prefixes)
 
@@ -247,37 +317,60 @@ class InvalidationHub:
         backoff = _BACKOFF_BASE_S
 
         while not self._stopped:
+            if not self._active_subs():
+                # Every subscriber detached: stop listening until the next one.
+                break
+
             conn: Any = None
             self._resubscribe.clear()
+            # The subscribers whose prefixes this setup registers.
+            included = list(self._active_subs())
 
             try:
                 conn = await self._setup()
 
+                if conn is None:
+                    continue
+
                 # Events before/while (re)connecting may have been missed:
                 # every subscriber flushes rather than trusting stale state.
                 self._notify_reset()
-                backoff = _BACKOFF_BASE_S
+                self._settle(included, live=True)
                 last_ping = self.clock()
+                pinged_at: float | None = None
 
                 while not self._stopped and not self._resubscribe.is_set():
                     # Push frames are dispatched to ``_on_push`` by the parser
-                    # inside this read; PONGs and timeouts surface here and
-                    # are ignored. The read is what drives the stream.
-                    await conn.read_response(
+                    # inside this read; PONGs and timeouts surface here. The
+                    # read is what drives the stream.
+                    response = await conn.read_response(
                         timeout=_POLL_TIMEOUT_S,
                         push_request=True,
                     )
 
-                    if self.clock() - last_ping >= _KEEPALIVE_EVERY_S:
+                    if response in (b"PONG", "PONG"):
+                        pinged_at = None
+                        # Only a connection that has answered counts as recovered: one
+                        # that sets up and then stalls keeps backing off.
+                        backoff = _BACKOFF_BASE_S
+
+                    now = self.clock()
+
+                    if pinged_at is not None and now - pinged_at >= _PONG_TIMEOUT_S:
+                        # A half-open connection reads as quiet, not closed:
+                        # a missing PONG is the only sign of the gap.
+                        raise ConnectionError("Invalidation keepalive PING went unanswered")
+
+                    if pinged_at is None and now - last_ping >= _KEEPALIVE_EVERY_S:
                         # Tracking lives and dies with this connection — keep
                         # it alive and fail fast when it silently died.
                         await conn.send_command("PING")
-                        last_ping = self.clock()
+                        last_ping = pinged_at = now
 
             except asyncio.CancelledError:
                 raise
 
-            except Exception:
+            except Exception as error:
                 if self._stopped:
                     break
 
@@ -287,6 +380,11 @@ class InvalidationHub:
                     exc_info=True,
                 )
                 self._notify_reset()
+
+                # A refusal is final; a dropped or slow connection may come back within a
+                # waiter's bound, so the waiter keeps waiting for the retry.
+                if isinstance(error, (_TrackingRefused, ResponseError)):
+                    self._settle(included, live=False)
                 # Reconnect jitter — not security randomness.
                 await asyncio.sleep(
                     backoff * current_entropy_source().as_random().uniform(0.8, 1.2)
@@ -295,7 +393,3 @@ class InvalidationHub:
 
             finally:
                 await self._teardown(conn)
-
-            if not self._active_subs():
-                # Every subscriber detached: stop listening until the next one.
-                break

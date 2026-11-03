@@ -54,6 +54,8 @@ class _PushCache:
     async def subscribe_invalidations(
         self,
         callback: InvalidationCallback,
+        *,
+        live_within: timedelta | None = None,
     ) -> Callable[[], Awaitable[None]] | None:
         self.subscriptions += 1
 
@@ -74,6 +76,8 @@ class _YieldingPushCache(_PushCache):
     async def subscribe_invalidations(
         self,
         callback: InvalidationCallback,
+        *,
+        live_within: timedelta | None = None,
     ) -> Callable[[], Awaitable[None]] | None:
         self.subscriptions += 1
         await asyncio.sleep(0)  # suspend so a concurrent first-reader can interleave here

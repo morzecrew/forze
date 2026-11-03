@@ -4,12 +4,17 @@ import asyncio
 import copy
 import threading
 from collections import OrderedDict
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, ClassVar, final
 
 import attrs
 
+from forze.application.contracts.cache import (
+    CacheInvalidation,
+    InvalidationCallback,
+    Unsubscribe,
+)
 from forze.base.primitives import AsyncLockTable, PerOwnerAsyncLocks, StripedAsyncLocks
 
 if TYPE_CHECKING:
@@ -122,6 +127,76 @@ class RowLockTable(AsyncLockTable):
             del self._tables[finished]
 
         return self._tables.setdefault(loop, {})
+
+
+# ....................... #
+
+
+@final
+@attrs.define(slots=True, eq=False)
+class MockInvalidationPush:
+    """What Redis ``CLIENT TRACKING`` BCAST is to a Redis cache, for the mock cache ports.
+
+    Each subscriber of a channel (a cache namespace) hears every versioned write and every
+    delete there, its own included, inside the write that made it. :attr:`dropping` and
+    :meth:`reset` stand in for a broken stream: the first loses events without a word, the
+    second is the reconnect that flushes every subscriber. The mock has no clock-based expiry,
+    so an expiry broadcasts nothing.
+    """
+
+    dropping: bool = False
+    """While set, writes reach no subscriber, as on a stream that broke unnoticed."""
+
+    _subscribers: dict[object, tuple[object, InvalidationCallback]] = attrs.field(
+        factory=dict[object, tuple[object, InvalidationCallback]],
+        init=False,
+    )
+
+    # ....................... #
+
+    def subscribe(self, channel: object, callback: InvalidationCallback) -> Unsubscribe:
+        """Deliver *channel*'s events to *callback*, starting with the flush a connect sends."""
+
+        token = object()
+        self._subscribers[token] = (channel, callback)
+        callback(CacheInvalidation(key=None))
+
+        async def _unsubscribe() -> None:
+            self._subscribers.pop(token, None)
+
+        return _unsubscribe
+
+    # ....................... #
+
+    def publish(self, channel: object, keys: Sequence[str], *, tenant: str | None) -> None:
+        """Tell *channel*'s subscribers that *keys* changed, unless :attr:`dropping`."""
+
+        if self.dropping:
+            return
+
+        for subscribed, callback in list(self._subscribers.values()):
+            if subscribed == channel:
+                for key in keys:
+                    callback(CacheInvalidation(key=key, tenant=tenant))
+
+    # ....................... #
+
+    def reset(self) -> None:
+        """Flush every subscriber, as a stream reconnecting after a gap does."""
+
+        for _channel, callback in list(self._subscribers.values()):
+            callback(CacheInvalidation(key=None))
+
+    # ....................... #
+
+    def end(self) -> None:
+        """End every subscription with a last flush marked ``ended``, as a client closing does."""
+
+        subscribers = list(self._subscribers.values())
+        self._subscribers.clear()
+
+        for _channel, callback in subscribers:
+            callback(CacheInvalidation(key=None, ended=True))
 
 
 # ....................... #
@@ -393,11 +468,24 @@ class MockState:
     Created on first use so a :class:`MockState` can be built outside an event
     loop; strict transactions expect a single event loop per state."""
 
+    __cache_push: MockInvalidationPush = attrs.field(
+        factory=MockInvalidationPush, init=False, repr=False
+    )
+
     # ....................... #
 
     @property
     def lock(self) -> threading.RLock:
         return self.__lock
+
+    # ....................... #
+
+    @property
+    def cache_push(self) -> MockInvalidationPush:
+        """The cache ports' invalidation broadcast. Machinery, like the lock: :meth:`clear`
+        keeps its subscribers and flushes them, as ``FLUSHALL`` does on Redis."""
+
+        return self.__cache_push
 
     # ....................... #
 
@@ -499,6 +587,9 @@ class MockState:
 
                 if not _emptied_in_place(current, fresh):
                     setattr(self, field.name, fresh)
+
+        # Every cached value just went: a subscriber keeping copies of them must drop them.
+        self.__cache_push.reset()
 
     # ....................... #
 

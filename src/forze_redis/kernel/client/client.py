@@ -626,16 +626,23 @@ class RedisClient(RedisClientPort):
         prefixes: Sequence[str],
         on_keys: Callable[[Sequence[str]], None],
         on_reset: Callable[[], None],
+        on_end: Callable[[], None] | None = None,
+        live_within: timedelta | None = None,
     ) -> Callable[[], Awaitable[None]] | None:
         """Subscribe to server-side key invalidations (``CLIENT TRACKING`` BCAST).
 
         *on_keys* receives raw server keys touched by any client's writes (and
         expirations/evictions) under the registered *prefixes*; *on_reset*
         fires whenever events may have been missed (stream (re)connect or
-        failure) — subscribers must flush on it. Returns an unsubscribe
-        callable. The hub (one pinned RESP3 connection consuming the server's
-        ``invalidate`` push frames) starts lazily on first subscription, takes
-        one pool slot while active, and stops with the client.
+        failure) — subscribers must flush on it; *on_end* fires when the client
+        closes, and *on_reset* in its place when it is not given. Returns an
+        unsubscribe callable; with *live_within*, only once tracking is set up,
+        and ``None`` when tracking is refused, no setup succeeds within that
+        bound (a dropped connection is retried meanwhile), or the client closes
+        first. The
+        hub (one pinned RESP3 connection consuming the server's ``invalidate``
+        push frames) starts lazily on first subscription, takes one pool slot
+        while active, and stops with the client.
         """
 
         self.__require_client()
@@ -675,6 +682,8 @@ class RedisClient(RedisClientPort):
             prefixes=prefixes,
             on_keys=on_keys,
             on_reset=on_reset,
+            on_end=on_end,
+            live_within=live_within,
         )
 
     # ....................... #

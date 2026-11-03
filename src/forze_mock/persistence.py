@@ -128,6 +128,7 @@ _LIVE_FIELDS: Final = frozenset(
     {
         "_MockState__lock",
         "_MockState__tx_serializer",
+        "_MockState__cache_push",  # this process's subscribers, not data
         "rotating_credential_locks",
         "write_serialization",
         "row_locks",
@@ -135,11 +136,12 @@ _LIVE_FIELDS: Final = frozenset(
     }
 )
 """The state's machinery rather than its data: a re-entrant lock, the strict-transaction
-serializer, the rotating-credential stripe table, the per-owner write locks and the blocking
-row locks.
+serializer, the rotating-credential stripe table, the per-owner write locks, the blocking
+row locks and the cache ports' invalidation subscribers.
 
-A new process builds its own, so a restore leaves them alone entirely — rebuilding a lock
-table mid-flight would hand the next caller a different lock than the one a waiter is on."""
+A new process builds its own, so a restore keeps them — rebuilding a lock table mid-flight
+would hand the next caller a different lock than the one a waiter is on. The cache
+subscribers are kept but flushed, since the values they copied are gone."""
 
 RESET_FIELDS: Final = _LIVE_FIELDS | frozenset(
     {
@@ -449,6 +451,9 @@ class MockStatePersistence:
             # used before loading does not carry its own stale holders past the boundary.
             for name in RESET_FIELDS - _LIVE_FIELDS:
                 self._set_field(state, name, _fresh_default(state, _FIELDS[name].default))
+
+        # The cache now holds other values: a push subscriber keeping copies must drop them.
+        state.cache_push.reset()
 
         log.info("restored mock state from a snapshot", path=str(self.path))
 

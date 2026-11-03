@@ -3713,6 +3713,294 @@ Fresh-eyes review of the branch before it was published.
 
 ---
 
+# Unit 13 · RFC 0068 P1 — cross-process grants cache invalidation
+
+Branch `feat/grants-invalidation-broadcast`. RFC 0068 P1 per §12: the in-memory push port in
+`forze_mock`, `GrantsInvalidation`, the lifecycle step, after-commit publishing,
+`invalidate_grants`, the simulation and Redis tests, and the docs. The decision table is the
+design this unit is measured against. Rows 7 and 8 were `OPEN` and are decided here (D-105,
+D-106). Every `LOCKED` and `ASSUMED` row held as written, but row 5 needed two additive
+fields on the cache push contract the RFC's scope says it would not touch (D-112, D-113).
+
+**Drift count: 0.** Ten entries, D-105 to D-114: four `discovery`, six `spec-gap`.
+
+**Where each item lives.** The broadcast (markers, `GrantsInvalidation.subscribe` and
+`publish`, `invalidate_after_commit`) is in
+[`grants_cache.py`](../src/forze_identity/authz/services/grants_cache.py). The resolver's
+`forget` and the cache bypass are in
+[`grants.py`](../src/forze_identity/authz/services/grants.py). The step and the app-facing
+`invalidate_grants` are in
+[`execution/grants_invalidation.py`](../src/forze_identity/authz/execution/grants_invalidation.py),
+the metrics exporter in [`observability.py`](../src/forze_identity/authz/observability.py).
+The contract's `live_within` and `ended` are in
+[`invalidation.py`](../src/forze/application/contracts/cache/invalidation.py), and the Redis
+hub's side of them in
+[`kernel/client/invalidation.py`](../src/forze_redis/kernel/client/invalidation.py).
+The mock push is `MockInvalidationPush` in [`state.py`](../src/forze_mock/state.py), used by
+[`adapters/cache.py`](../src/forze_mock/adapters/cache.py). Tests:
+`tests/unit/test_forze_authz/test_grants_invalidation.py` (unit and two-process scenarios),
+`test_grants_invalidation_dst.py` (a two-node `Cluster`), `test_grants_cache_dst.py` (the
+single-process simulation, now also with the broadcast on),
+`tests/unit/test_forze_mock/test_cache_invalidation_push.py`,
+`tests/unit/test_forze_redis/test_invalidation_hub.py` and
+`tests/integration/test_forze_redis/test_redis_grants_invalidation.py`.
+
+## D-105 — App code reaches `invalidate_grants` as a function over the kernel it registered
+
+- **Touches:** RFC 0068 §5.4 and decision row 7. `OPEN` — "a resolver method via the kernel,
+  or a dedicated port. Decide by what the kernel already exposes for `forget`".
+- **RFC said:** the resolver gains `invalidate_grants(principal_id=None)`, "reachable from app
+  code the same way `forget` is today".
+- **Found:** app code reaches `forget` today only through the `GrantsCache` object it built
+  and passed to `AuthzKernelConfig`. The resolver is built per port by a private factory over
+  nine document query ports, so app code holds none. A dedicated port means a dependency key
+  and a contract in `forze.application.contracts.authz` that every authz backend, the mock
+  included, would implement for an identity-plane feature; the RFC's scope says no new port.
+- **Because:** the object app code already holds is the kernel, the value it passes to
+  `AuthzDepsModule(kernel=...)`, and the kernel carries both the cache and the broadcast.
+- **Class:** `discovery`.
+- **Consequence:** `invalidate_grants(ctx, kernel, principal_id=None)` is exported from
+  `forze_identity.authz`. The resolver keeps its method's name, `forget`, which the services
+  package exports: it now takes `principal_id: UUID | None` with no default, so flushing
+  everyone takes an explicit `None`, and it broadcasts; role assignment, its only caller, is
+  unchanged. Both run one function,
+  `invalidate_after_commit`: the local forget or clear, then the publish, deferred to the
+  commit. `GrantsCache.forget` and `clear` stay synchronous and local.
+- **Proposed row (RFC 0068):** `ASSUMED` — app code calls `invalidate_grants(ctx, kernel,
+  principal_id=None)` with the kernel it registered. There is no port and no dependency key;
+  the resolver's own `forget` serves role assignment.
+
+## D-106 — The marker's value is its version token and nothing else
+
+- **Touches:** RFC 0068 §5.3 and decision row 8. `OPEN` — "nothing, an origin id, a
+  timestamp. Correctness does not depend on it; decide and log".
+- **Found:** the push contract delivers `CacheInvalidation(key, tenant)` and no value, and
+  Redis `CLIENT TRACKING` BCAST sends key names only. Only a reader of the key sees a value,
+  and no subscriber reads it. An origin id could skip self-echo only by reading the key on
+  every event, which costs more than the idempotent forget row 10 accepts. A timestamp would
+  serve only an operator reading the key within `marker_ttl`.
+- **Because:** nothing put in the value can reach the receiving side of a broadcast.
+- **Class:** `discovery`.
+- **Consequence:** the marker is written as `set_versioned(marker, token, token,
+  ttl=marker_ttl)`. The token is a fresh `uuid4().hex` from the entropy source, so it is
+  deterministic under simulation.
+- **Proposed row (RFC 0068):** `ASSUMED` — the marker value is its version token; anything a
+  subscriber could act on has to travel in the key.
+
+## D-107 — A broadcast with no live subscription makes decisions read the bindings
+
+- **Touches:** RFC 0068 §5.2 and decision row 5. The row covers a step that cannot subscribe,
+  not a step that never runs.
+- **RFC said:** "Configuring a broadcast that cannot run … fails at startup. A silent
+  fall-back to TTL-only would leave the app believing revocation is prompt."
+- **Found:** no deps module can add a lifecycle step, and the kernel cannot see whether one
+  is registered. A process configured with the broadcast and no step receives nothing. That
+  covers a forgotten registration, a job reusing the kernel without a lifecycle, and a
+  decision before startup or after shutdown. Each would serve cached grants for the TTL after
+  a revocation elsewhere, and no startup hook runs to refuse it.
+- **Because:** the configuration is the same in a process that runs the step and in one that
+  does not, so only the running process can tell.
+- **Class:** `spec-gap` — knowable from the lifecycle contract before any code.
+- **Consequence:** `GrantsInvalidation.listening` says whether a live subscription in this
+  process keeps a given cache current. The resolver serves from the cache only then, and
+  reads the bindings otherwise. Reading rather than raising keeps every decision correct and
+  available, at the cost of the cache's saving. It logs nothing: the docs say so, and a
+  warning issued once would need mutable state on a frozen configuration.
+- **Proposed row (RFC 0068):** `ASSUMED` — while a configured broadcast has no live
+  subscription in the process, decisions read the bindings instead of the cache. A missing
+  step costs the cache's speed, never the revocation's reach.
+
+## D-108 — The step requires a long-running process
+
+- **Touches:** RFC 0068 §5.2. Unlisted: the RFC does not say where the subscription can run.
+- **Found:** the Redis subscription is a listener task on one pinned connection. While a
+  serverless function is frozen, the network path can drop that connection silently. After
+  the thaw the hub notices only once a keepalive `PING` goes unanswered: one goes out every
+  15 s and counts as failed after 5 s (D-114), so up to about 20 s later. Until then the
+  process trusts a stream that may have a gap and has sent no flush.
+- **Because:** decision 3 rests on a gap being signalled, and a frozen listener cannot signal
+  one in time.
+- **Class:** `spec-gap`.
+- **Consequence:** the step is marked `requires_long_running=True`. A `SERVERLESS` runtime
+  refuses to assemble with it, and such a deployment stays TTL-only, knowingly.
+- **Proposed row (RFC 0068):** `ASSUMED` — the subscription needs a process that keeps
+  running; a serverless runtime refuses the step rather than trust a listener it freezes.
+
+## D-109 — The mock push is opt-in per route, synchronous, and has no expiry
+
+- **Touches:** RFC 0068 §6 ("a `forze_mock` cache port implementing
+  `SupportsInvalidationPush` … with a way to drop events and to trigger a reset"). The
+  fidelity choices are unlisted.
+- **Found:** three choices the RFC does not make.
+  - The document L1 subscribes whenever its cache port can push. On by default, the mock push
+    would change L1 behaviour in every existing mock test. It is opt-in per route,
+    `MockRouteConfig(invalidation_push=True)`, as `RedisCacheConfig` has it.
+  - Delivery is synchronous, inside the write, so the window between commit and arrival is
+    zero in the simulation.
+  - The mock has no clock-based expiry, so nothing broadcasts on expiry and §9's second
+    flush is not modelled. Nor would a superseded body ever go, and every marker is a new
+    version, so a versioned write drops the body its pointer left, which nothing else
+    reaches.
+
+  The subscribers sit on `MockState` as machinery, beside the lock: snapshots leave them out
+  (`_LIVE_FIELDS`), and `clear()` and restoring a snapshot keep them and flush them, as
+  `FLUSHALL` does. Disposing
+  a routed tenant state ends them with `ended` set, as a closing client does (D-113). As with
+  Redis, only versioned writes and the
+  delete of a versioned entry broadcast, and only a tenant-aware subscriber hears a
+  tenant-aware writer.
+- **Because:** each is the smallest model that still exercises rows 2, 3, 9 and 10, with
+  `dropping` and `reset()` standing in for a broken stream and its reconnect.
+- **Class:** `spec-gap`.
+- **Consequence:** the simulation proves ordering and flushing, not latency. The window and
+  the second flush are documented; the window is exercised against Redis only.
+- **Proposed row (RFC 0068):** `ASSUMED` — the mock push is opt-in per route, delivers inside
+  the write and models no expiry; latency and the expiry flush are outside the simulation.
+
+## D-110 — The two-process simulation records its own operation events
+
+- **Touches:** RFC 0068 §6 ("`no_permission_after_deactivation` runs with the broadcast on").
+- **Found:** `forze_dst.Cluster` runs node workloads, not registered operations. It projects
+  no `operation` events and drives no lifecycle plan, and its virtual-time stamps can tie, so
+  they cannot order a revoke against a write.
+- **Because:** the invariant reads `op`, `outcome`, `start_seq` and `end_seq`, and nothing in
+  a cluster run produces them.
+- **Class:** `discovery`.
+- **Consequence:** each node records its calls as `operation` events, numbered from one
+  counter the run shares, and runs the step's startup and shutdown itself. The
+  single-process invariant then judges the cluster unchanged. A `node_error` guard stops a
+  node that failed from passing vacuously, and a run with the broadcast dropped must fire.
+  The single-process `Simulation` runs the step through its lifecycle plan (`runtime=True`).
+- **Proposed row (RFC 0068):** none. A test-harness fact, not a design decision.
+
+## D-111 — A tenant-aware marker route fails every untenanted publish
+
+- **Touches:** RFC 0068 §5.1 (`cache` "with a static namespace") and decision row 4.
+- **Found:** a tenant-aware cache port refuses a write with no tenant bound. A marker
+  published outside a tenant fails, and is only logged and counted (row 6). A tenant-aware
+  Redis subscriber still hears every tenant's markers, so inside a tenant the broadcast works
+  and the failure is intermittent. A principal is forgotten in every tenant anyway, so the
+  marker gains nothing from a tenant.
+- **Because:** tenancy is a property of the route, which the RFC's "static namespace" does
+  not cover.
+- **Class:** `discovery`.
+- **Consequence:** startup refuses a tenant-aware marker route
+  (`authz_grants_invalidation_tenant_aware`). The cache contract does not report
+  tenant-awareness, so the step reads `tenant_aware` off the backend behind the port, which
+  every tenancy-capable adapter carries through `TenancyMixin`. The docs say so.
+- **Proposed row (RFC 0068):** `ASSUMED` — startup refuses a tenant-aware marker route; a
+  marker names a principal, and the forget it causes spans tenants.
+
+## D-112 — A returned subscription is not a live stream
+
+- **Touches:** RFC 0068 §5.2, decision row 5, and the scope's "no new port, no new contract".
+- **RFC said:** startup fails when "the call returns `None`"; §3 reads the contract as
+  returning `None` "when push is unavailable".
+- **Found:** Redis's `track_invalidations` returns the unsubscribe before `CLIENT TRACKING`
+  is set up. A RESP2 connection or a refused `CLIENT TRACKING` only fails in the hub's own
+  task, which logs, flushes and retries. Startup passed, the cache counted as current, and
+  no push ever arrived.
+- **Because:** the hub was built for the document L1, which may start TTL-only and pick push
+  up later; a broadcast that row 5 must refuse cannot.
+- **Class:** `spec-gap` — the hub's behaviour was readable before the design.
+- **Consequence:** `SupportsInvalidationPush.subscribe_invalidations` gains a keyword,
+  `live_within: timedelta | None = None`. With it, the port returns only once the stream is
+  live, and `None` when it fails or takes longer, detaching the attempt. The Redis hub
+  settles each waiting subscriber when a setup that includes its prefixes succeeds, or is
+  refused for good (a RESP2 connection, a refused `CLIENT TRACKING`, a server error), so a
+  refusal answers at once. A dropped or slow connection leaves the waiter waiting while the
+  hub retries, so one that recovers within the bound still starts. A wait that times out,
+  is cancelled or is ended by `stop()`
+  detaches; one that times out at the moment the stream came up counts as live. Because a
+  waiter can now leave while the connection is being checked out, the hub arms no tracking
+  when no subscriber is left: `BCAST` with no prefix would track every key. The grants step
+  waits up to ten seconds. The L1 passes no bound and behaves as before; the mock is live at
+  once.
+- **Proposed row (RFC 0068):** `ASSUMED` — startup waits, up to ten seconds, for the push
+  stream to be live, through an additive keyword on the push contract; a port that answers
+  "subscribed" but never connects fails startup like one that declines.
+
+## D-113 — A stream that stops has to say so
+
+- **Touches:** RFC 0068 §5.2 and decision rows 3 and 5.
+- **Found:** `RedisClient.close()` stopped the hub and dropped its subscribers without a
+  word. The grants cache kept counting as current and kept caching, with nothing left to
+  invalidate it.
+- **Because:** the contract had flushes for gaps and nothing for an end.
+- **Class:** `spec-gap`.
+- **Consequence:** `CacheInvalidation` gains `ended: bool = False`. Stopping the hub tells
+  each subscriber, through a new `on_end` callback or, without one, its reset, and the Redis
+  adapter sends a last flush with `ended` set. The grants subscription clears the cache and
+  detaches, so decisions read the bindings again. The L1 treats it as the flush it is, and
+  does not subscribe again; a client closes at process shutdown. A stream that ends after
+  coming up but before the grants subscription attaches fails startup, as an unavailable one
+  does. The mock ends its subscriptions when a routed tenant state is disposed.
+- **Proposed row (RFC 0068):** `ASSUMED` — the end of a push stream is an event; a subscriber
+  that relies on push stops trusting its cache on it.
+
+## D-114 — A half-open tracking connection reads as quiet
+
+- **Touches:** RFC 0068 decision row 3 and §9 ("the tracking hub reports a reset on
+  reconnect").
+- **Found:** the hub sent a keepalive `PING` every 15 s and never checked for its reply. On
+  a half-open TCP connection every read times out as a quiet stream does, so no error, no
+  reset and no reconnect came until the operating system gave up on the socket.
+- **Because:** a gap the transport cannot see has to be inferred from a reply that does not
+  come.
+- **Class:** `spec-gap`.
+- **Consequence:** a `PING` left unanswered for five seconds is a stream failure: every
+  subscriber flushes and the hub reconnects with backoff, as on any other failure. The
+  backoff resets only once a connection has answered a `PING`, not when it sets up, so a
+  server that stalls past five seconds, or accepts tracking and then drops, is retried less
+  and less often rather than every 20 s.
+- **Proposed row (RFC 0068):** `ASSUMED` — a keepalive `PING` unanswered within five seconds
+  is a gap in the stream, and row 3's flush applies.
+
+## Review findings — 2026-11-02
+
+Review of the unit's first commit, before it was published.
+
+| # | Severity | Finding | Status |
+|---|---|---|---|
+| R-1 | Bug | A RESP2 client or a refused `CLIENT TRACKING` passed startup: the subscription returned before tracking was set up (row 5) | Fixed (D-112): startup waits for the live stream; a Redis test pins the RESP2 refusal |
+| R-2 | Risk | The keepalive `PONG` was never checked, so a half-open connection stayed "live" | Fixed (D-114) |
+| R-3 | Risk | Closing the Redis client dropped subscribers silently; the cache stayed in use | Fixed (D-113) |
+| R-4 | Risk | A re-attached cache could serve an entry from before the gap until the transport's first flush arrived | Fixed: `subscribe` clears the cache before it counts as current |
+| R-5 | Risk | A tenant-aware marker route was only warned against | Fixed (D-111): startup refuses it |
+| R-6 | API | The resolver's `forget` was renamed, removing an exported method | Fixed (D-105): `forget` keeps its name, with the widened signature |
+| R-7 | Test | Decision 9 was not tested through the broadcast | Fixed: a read in flight when a broadcast lands is not stored |
+| R-8 | Docs | The changelog entry was over 320 characters | Fixed |
+
+## Review findings — 2026-11-02 (second round)
+
+| # | Severity | Finding | Status |
+|---|---|---|---|
+| R-9 | Bug | A setup reached with no subscriber left armed `CLIENT TRACKING ON BCAST` with no prefix, tracking every key | Fixed (D-112): no tracking without a prefix; a hub test pins it |
+| R-10 | Bug | A waiter cancelled during the live wait stayed subscribed, its callback firing into an orphaned cache | Fixed (D-112): any exit but success detaches, then cancellation propagates |
+| R-11 | Risk | A wait timing out just as the stream came up failed startup | Fixed (D-112): the settled outcome is read after a timeout |
+| R-12 | Risk | Backoff reset on every setup, so a stalling server cycled flush-and-reconnect about every 20 s | Fixed (D-114): it resets on the first answered `PING` |
+| R-13 | Fidelity | The mock never ended a subscription | Fixed (D-109, D-113): disposing a routed tenant state ends them; `clear()` flushes them |
+| R-14 | Test | The L1 tests' push stubs lacked `live_within` | Fixed |
+| R-15 | Test | The hub's fake connection never interleaved a push frame with the `PONG`; hanging, cancelled and stopped waits were untested | Fixed: hub tests for each, and for backoff growth |
+| R-16 | Test | Whether the re-attach test needs the clear in `subscribe` | Confirmed by mutation: without it the test fails |
+
+## Review findings — 2026-11-02 (PR #815)
+
+| # | Severity | Finding | Status |
+|---|---|---|---|
+| R-17 | API | A bare `forget()` on the resolver flushed and broadcast catalog-wide | Fixed: `principal_id` has no default; `None` is passed to flush everyone. `invalidate_grants` keeps the RFC's default |
+| R-18 | Bug | A transient setup failure answered a `live_within` waiter as unavailable at once, though a retry could recover within the bound | Fixed (D-112): only a refusal answers at once; hub tests pin both paths |
+| R-19 | Bug | A stream that ended after coming up but before the subscription attached left the cache counted as current on a dead stream | Fixed (D-113): startup fails as for an unavailable stream; tested |
+| R-20 | Fidelity | Restoring a mock snapshot left push subscribers holding values from the previous state | Fixed (D-109): the restore flushes them; tested |
+| R-21 | Bug | The mock's push raised for an empty batch on a tenant-aware port with no tenant; Redis returns early | Fixed: an empty batch returns first; its docstring names the `tenant_aware` split |
+| R-22 | Docs | The client port's docstring left out the `on_end` fallback and the other `None` cases | Fixed |
+| R-23 | Docs | The changelog left out the TTL fallback and the app's `invalidate_grants` duty, and the Fixed entry carried transport mechanics | Fixed |
+| R-24 | Docs | The index row and the status line said "this PR" | Fixed: #815 |
+| R-25 | Docs | D-108 put detection at 15 s, which D-114 and the code contradict | Fixed: up to about 20 s, a `PING` every 15 s failing after 5 s |
+| R-26 | Fidelity | The mock ignores `ttl`, so each marker publish left an unreachable body and a long-running mock grew without bound | Fixed (D-109): a versioned write drops the body its pointer left; 100 publishes leave one body per marker key |
+
+---
+
 # Unit 14 · RFC 0009 P1 — OIDC completeness
 
 Branch `feat/oidc-completeness`. RFC 0009 §5 in full: §5.1 discovery

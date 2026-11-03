@@ -41,8 +41,9 @@ class MockRoutedStateRegistry:
         async def _create(_tenant_id: UUID) -> MockState:
             return self.state_factory()
 
-        async def _dispose(_state: MockState) -> None:
-            del _state
+        async def _dispose(state: MockState) -> None:
+            # A disposed state is a closed client: its push subscribers hear the end.
+            state.cache_push.end()
 
         self.__pool = TenantClientRegistry(
             max_entries=self.max_entries,

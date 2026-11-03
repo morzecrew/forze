@@ -15,7 +15,7 @@ from forze.base.exceptions import exc
 from forze_identity.authn.services import RevocationStates
 
 from ...services.grants import ProviderKeyCheck
-from ...services.grants_cache import GrantsCache
+from ...services.grants_cache import GrantsCache, GrantsInvalidation
 from ...services.policy import (
     DEFAULT_OWNER_OVERRIDE_PERMISSIONS,
     AuthzPolicyService,
@@ -59,8 +59,16 @@ class AuthzKernelConfig:
 
     grants_cache: GrantsCache | None = None
     """Remembers each principal's catalog grants for its TTL, which is then how long a removed
-    binding keeps granting. ``None`` (the default) reads the bindings on every decision. See
+    binding that nothing broadcasts keeps granting. ``None`` (the default) reads the bindings on
+    every decision. See
     :class:`~forze_identity.authz.services.grants_cache.GrantsCache`."""
+
+    grants_invalidation: GrantsInvalidation | None = None
+    """Broadcasts each committed invalidation of :attr:`grants_cache` to every process that
+    registers :func:`~forze_identity.authz.grants_invalidation_lifecycle_step`, so a revoked
+    grant stops working there within broadcast latency rather than the TTL. Needs
+    :attr:`grants_cache`. See
+    :class:`~forze_identity.authz.services.grants_cache.GrantsInvalidation`."""
 
     revocation_states: RevocationStates | None = None
     """When set, every write that may deactivate a policy principal (``is_active`` set to
@@ -79,6 +87,20 @@ class AuthzKernelConfig:
             raise exc.configuration(
                 f"AuthzKernelConfig.grants_cache must be a GrantsCache, not {self.grants_cache!r}"
             )
+
+        if self.grants_invalidation is not None:
+            if not isinstance(self.grants_invalidation, GrantsInvalidation):
+                raise exc.configuration(
+                    "AuthzKernelConfig.grants_invalidation must be a GrantsInvalidation, not "
+                    f"{self.grants_invalidation!r}"
+                )
+
+            if self.grants_cache is None:
+                raise exc.configuration(
+                    "AuthzKernelConfig.grants_invalidation broadcasts invalidations of the grants "
+                    "cache, and there is none: set grants_cache too.",
+                    code="authz_grants_invalidation_without_cache",
+                )
 
         if self.revocation_states is not None and self.revocation_states.key_mac is None:
             raise exc.configuration(
@@ -106,6 +128,9 @@ class AuthzSharedServices:
     grants_cache: GrantsCache | None = None
     """Shared by every resolver built from this graph; ``None`` caches nothing."""
 
+    grants_invalidation: GrantsInvalidation | None = None
+    """Shared by every resolver built from this graph; ``None`` broadcasts nothing."""
+
 
 # ....................... #
 
@@ -125,4 +150,5 @@ def build_authz_shared_services(
         permission_provider_timeout=kernel.permission_provider_timeout,
         provider_key_check=ProviderKeyCheck(providers=kernel.permission_providers),
         grants_cache=kernel.grants_cache,
+        grants_invalidation=kernel.grants_invalidation,
     )
