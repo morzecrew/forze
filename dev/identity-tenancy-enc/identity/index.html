@@ -1972,6 +1972,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Remembering grants between decisions">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#reaching-every-process" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Reaching every process
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
         
       </ul>
@@ -6677,6 +6694,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Remembering grants between decisions">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#reaching-every-process" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Reaching every process
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
         
       </ul>
@@ -7098,10 +7132,11 @@ remember them, per process, for a fixed time:</p>
   still roll back.</li>
 <li>
 <p><code>assign_role</code> and <code>revoke_role</code> forget the principal in this process once their write commits,
-  even when another process made the change first. <strong>For everything else the TTL is how long a
-  removed grant can keep working</strong>, counted from when the cached read began: in other processes,
-  and for changes written through plain document commands, which nothing announces. After such a
-  change commits, call:</p>
+  even when another process made the change first, and in every other process when the kernel
+  <a href="#reaching-every-process">broadcasts</a>. <strong>The TTL is how long a change nothing broadcasts can
+  keep a removed grant working</strong>, counted from when the cached read began: in other processes
+  without a broadcast, and for changes written through plain document commands, which nothing
+  announces. After such a change, call <code>invalidate_grants</code> with the kernel:</p>
 <table>
 <thead>
 <tr>
@@ -7112,18 +7147,66 @@ remember them, per process, for a fixed time:</p>
 <tbody>
 <tr>
 <td>One principal's own role, permission or group-membership binding</td>
-<td><code>grants_cache.forget(principal_id)</code></td>
+<td><code>await invalidate_grants(ctx, kernel, principal_id)</code></td>
 </tr>
 <tr>
 <td>A role's permissions or parent, a group's roles, permissions or active flag, a deleted role or permission</td>
-<td><code>grants_cache.clear()</code></td>
+<td><code>await invalidate_grants(ctx, kernel)</code></td>
 </tr>
 </tbody>
 </table>
+<p>It waits for the current transaction to commit, as role assignment does, and broadcasts
+when the kernel does. <code>grants_cache.forget(principal_id)</code> and <code>grants_cache.clear()</code> act at
+once and in this process only.</p>
 </li>
 <li>
 <p>One cache serves one catalog: give each kernel over a different catalog its own.</p>
 </li>
+</ul>
+<h4 id="reaching-every-process">Reaching every process<a class="headerlink" href="#reaching-every-process" title="Permanent link">&para;</a></h4>
+<p>Without a broadcast, every other process keeps serving a revoked grant until its entry expires.
+With one, each committed invalidation writes a marker key through a cache backend that pushes
+every write to its subscribers, and each process drops what the marker names: one principal's
+entries, or all of them.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">forze.application.contracts.cache</span><span class="w"> </span><span class="kn">import</span> <span class="n">CacheSpec</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">forze_identity.authz</span><span class="w"> </span><span class="kn">import</span> <span class="n">GrantsInvalidation</span><span class="p">,</span> <span class="n">grants_invalidation_lifecycle_step</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">forze_redis</span><span class="w"> </span><span class="kn">import</span> <span class="n">RedisCacheConfig</span>
+
+<span class="n">markers</span> <span class="o">=</span> <span class="n">CacheSpec</span><span class="p">(</span><span class="n">name</span><span class="o">=</span><span class="s2">"grants_markers"</span><span class="p">)</span>
+<span class="n">kernel</span> <span class="o">=</span> <span class="n">AuthzKernelConfig</span><span class="p">(</span>
+    <span class="n">grants_cache</span><span class="o">=</span><span class="n">grants_cache</span><span class="p">,</span>
+    <span class="n">grants_invalidation</span><span class="o">=</span><span class="n">GrantsInvalidation</span><span class="p">(</span><span class="n">cache</span><span class="o">=</span><span class="n">markers</span><span class="p">),</span>
+<span class="p">)</span>
+<span class="n">caches</span> <span class="o">=</span> <span class="p">{</span><span class="s2">"grants_markers"</span><span class="p">:</span> <span class="n">RedisCacheConfig</span><span class="p">(</span><span class="n">namespace</span><span class="o">=</span><span class="s2">"app:grants"</span><span class="p">,</span> <span class="n">invalidation_push</span><span class="o">=</span><span class="kc">True</span><span class="p">)}</span>
+<span class="n">startup</span> <span class="o">=</span> <span class="n">grants_invalidation_lifecycle_step</span><span class="p">(</span><span class="n">kernel</span><span class="p">)</span>  <span class="c1"># in every process, after Redis starts</span>
+</code></pre></div>
+<ul>
+<li>Give the markers a spec of their own, routed to a cache that pushes invalidations: Redis with
+  <code>invalidation_push=True</code>, redis-py 8 or later and a RESP3 connection, on a static namespace
+  and a client not routed per tenant. The route must not be tenant-aware: a principal is
+  forgotten in every tenant anyway. Keys that are not markers are ignored.</li>
+<li>Register the step in every process. Startup fails with <code>authz_grants_invalidation_unavailable</code>
+  when the port cannot push, declines to, or does not bring its stream up within ten seconds
+  (a dropped connection is retried meanwhile; a RESP2 connection or a refused <code>CLIENT TRACKING</code>
+  fails at once), and with <code>authz_grants_invalidation_tenant_aware</code> on a tenant-aware route.
+  A broadcast that
+  cannot run never falls back to the TTL unnoticed. A <code>SERVERLESS</code> runtime refuses the step.</li>
+<li>Decisions use the cache only while the subscription is live, and the cache starts empty each
+  time it goes live. Before the step subscribes, after it stops, and once the Redis client
+  closes, decisions read the bindings.</li>
+<li>It is not instant. Between a commit and the broadcast's arrival another process can still
+  serve the revoked grant, as a request in this process can between the commit and the forget.</li>
+<li>A process that may have missed a broadcast drops its whole cache: when its connection drops
+  or reconnects, or a keepalive <code>PING</code> goes five seconds unanswered. While Redis is down
+  nothing arrives and the TTL bounds staleness again; on a flapping connection the cache stays
+  correct and stops helping.</li>
+<li>A marker write that fails after the commit is logged
+  (<code>authz.grants_invalidation_publish_failed</code>) and counted, never raised. The TTL bounds what
+  it missed.</li>
+<li>A catalog-wide <code>invalidate_grants(ctx, kernel)</code> flushes every process twice: when its marker
+  arrives and when the marker expires, <code>marker_ttl</code> (one minute) later.</li>
+<li><code>instrument_grants_invalidation({"default": kernel.grants_invalidation})</code> exports the
+  publish failures and the flushes; see <a href="../../reference/metrics/#grants-invalidation">Metrics</a>.</li>
 </ul>
 <h2 id="authn-events-and-login-lockout">Authn events and login lockout<a class="headerlink" href="#authn-events-and-login-lockout" title="Permanent link">&para;</a></h2>
 <p>Authentication flows can narrate themselves. Wire an optional <strong>authn event

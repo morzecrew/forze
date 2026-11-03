@@ -6963,9 +6963,12 @@ one pinned connection per client receives an invalidation push for every
 write, expiration, or eviction under the cache's key prefix — by any replica —
 and the in-process L1 drops the entry immediately, demoting the L1 TTL to a
 backstop. Requires redis-py 8+ — on redis-py 7, enabling it fails closed with a
-<code>configuration</code> error. Fails open at runtime (stream loss flushes the L1 and falls back to TTL
-semantics while reconnecting); tenant-routed clients and dynamic namespaces
-stay TTL-only by design.</p>
+<code>configuration</code> error. Fails open at runtime (stream loss, or a keepalive <code>PING</code>
+unanswered for five seconds, flushes the L1 and falls back to TTL semantics while
+reconnecting; closing the client flushes it once more); tenant-routed clients and
+dynamic namespaces stay TTL-only by design. The
+<a href="../../identity-tenancy-enc/identity/#reaching-every-process">grants-cache broadcast</a> rides the
+same stream and, unlike the L1, refuses to start on one that does not come up.</p>
 <h2 id="fleet-wide-resilience-state">Fleet-wide resilience state<a class="headerlink" href="#fleet-wide-resilience-state" title="Permanent link">&para;</a></h2>
 <p>Two builders turn the process-local <a href="../../running-in-prod/resilience/">resilience</a>
 state into shared, fleet-wide state:</p>

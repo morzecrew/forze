@@ -6539,6 +6539,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#grants-invalidation" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Grants invalidation
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -6749,6 +6760,17 @@
     <span class="md-ellipsis">
       <span class="md-typeset">
         Revocation states
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#grants-invalidation" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Grants invalidation
       </span>
     </span>
   </a>
@@ -7503,6 +7525,36 @@ path for sessions and API keys. Labelled <code>forze.revocation_states</code> an
 <p><strong>The alert that matters:</strong> every <code>write_failures</code> increment is a revoked credential that
 stays admitted for up to the states' <code>ttl</code>. See
 <a href="../../integrations/authn/#the-window">Authentication</a> for every cause of that window.</p>
+<h2 id="grants-invalidation">Grants invalidation<a class="headerlink" href="#grants-invalidation" title="Permanent link">&para;</a></h2>
+<p><code>instrument_grants_invalidation({"default": grants_invalidation})</code> — the broadcast that keeps
+every process's grants cache current. Labelled <code>forze.grants_invalidation</code>.</p>
+<table>
+<thead>
+<tr>
+<th>Metric</th>
+<th>Instrument</th>
+<th>Unit</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>forze.authz.grants_invalidation.publish_failures</code></td>
+<td>observable counter</td>
+<td>1</td>
+<td>committed invalidations whose marker write failed</td>
+</tr>
+<tr>
+<td><code>forze.authz.grants_invalidation.flushes</code></td>
+<td>observable counter</td>
+<td>1</td>
+<td>whole grants caches dropped on a gap in the stream or a catalog change</td>
+</tr>
+</tbody>
+</table>
+<p>Every <code>publish_failures</code> increment leaves other processes on the old grants for up to the
+cache's TTL. A steady <code>flushes</code> rate is a flapping connection: the cache stays correct and stops
+helping. See <a href="../../identity-tenancy-enc/identity/#reaching-every-process">Identity</a>.</p>
 
 
 

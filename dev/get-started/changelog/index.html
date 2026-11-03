@@ -10735,6 +10735,9 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <h3 id="added">Added<a class="headerlink" href="#added" title="Permanent link">&para;</a></h3>
 <ul>
 <li>
+<p><strong>Grants-cache invalidations can reach every process.</strong> <code>AuthzKernelConfig(grants_invalidation=...)</code> broadcasts each committed one best-effort, the TTL as fallback; every process runs <code>grants_invalidation_lifecycle_step</code>, which fails startup if it cannot listen. Call <code>invalidate_grants</code> after plain document commands.</p>
+</li>
+<li>
 <p><strong><code>OidcIdpPreset.from_issuer</code> configures an <abbr title="OpenID Connect">OIDC</abbr> issuer from its discovery document.</strong> It refuses a document naming another issuer, or an endpoint that is not https (plain http only on loopback); <code>fetch_oidc_configuration</code> returns the validated <code>OidcProviderMetadata</code>. Discovery runs at startup, never per request.</p>
 </li>
 <li>
@@ -10753,7 +10756,12 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 </ul>
 <h3 id="fixed">Fixed<a class="headerlink" href="#fixed" title="Permanent link">&para;</a></h3>
 <ul>
-<li><strong><code>OidcTokenVerifier</code> refuses a malformed signed token as an authentication failure</strong> (<code>invalid_oidc_token</code>). An out-of-range <code>exp</code> or <code>iat</code> (such as <code>1e20</code>), an empty <code>sub</code>, or a missing claim a custom <code>OidcClaimMapper</code> requires raised a raw <code>ValueError</code> instead; a boolean <code>iat</code> is refused too.</li>
+<li>
+<p><strong>Redis invalidation push now clears stale local entries when its connection goes half-open or the client closes</strong>, for the document L1 and any other subscriber.</p>
+</li>
+<li>
+<p><strong><code>OidcTokenVerifier</code> refuses a malformed signed token as an authentication failure</strong> (<code>invalid_oidc_token</code>). An out-of-range <code>exp</code> or <code>iat</code> (such as <code>1e20</code>), an empty <code>sub</code>, or a missing claim a custom <code>OidcClaimMapper</code> requires raised a raw <code>ValueError</code> instead; a boolean <code>iat</code> is refused too.</p>
+</li>
 </ul>
 <h2 id="0210-2026-11-02"><a href="https://github.com/morzecrew/forze/compare/v0.20.0...v0.21.0">0.21.0</a> - 2026-11-02<a class="headerlink" href="#0210-2026-11-02" title="Permanent link">&para;</a></h2>
 <h3 id="added_1">Added<a class="headerlink" href="#added_1" title="Permanent link">&para;</a></h3>
