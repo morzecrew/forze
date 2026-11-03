@@ -24,8 +24,6 @@ read-only (`QUERY`) operation.
 |-------|------|---------|---------|
 | `name` | `str \| StrEnum` | required | route name — every authn port resolves under it |
 | `enabled_methods` | `frozenset[AuthnMethod]` | `{"token"}` | credential families: `password` / `token` / `api_key`; an empty set is a configuration error, and `AuthnPort` refuses a family the route does not enable |
-| `token_profile` · `password_profile` · `api_key_profile` | `str \| None` | `None` | verifier profile hints; the shipped orchestrator resolves verifiers by route and does not read them |
-| `resolver_profile` | `str \| None` | `None` | principal-resolver profile hint; likewise unread by the shipped orchestrator |
 
 ### Ports and dep keys
 
