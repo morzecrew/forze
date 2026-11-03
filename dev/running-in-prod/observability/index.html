@@ -7088,12 +7088,22 @@ formatter, and the uncaught-exception hook.</p>
     <span class="n">level</span><span class="o">=</span><span class="s2">"info"</span><span class="p">,</span>
     <span class="n">render_mode</span><span class="o">=</span><span class="s2">"json"</span><span class="p">,</span>  <span class="c1"># "console" for local dev</span>
     <span class="n">logger_names</span><span class="o">=</span><span class="p">[</span><span class="s2">"forze_postgres"</span><span class="p">,</span> <span class="s2">"forze_redis"</span><span class="p">],</span>
-    <span class="n">third_party</span><span class="o">=</span><span class="p">[</span><span class="s2">"uvicorn"</span><span class="p">,</span> <span class="s2">"sqlalchemy.engine"</span><span class="p">],</span>
+    <span class="n">third_party</span><span class="o">=</span><span class="p">[</span><span class="s2">"uvicorn"</span><span class="p">,</span> <span class="s2">"uvicorn.access"</span><span class="p">,</span> <span class="s2">"sqlalchemy.engine"</span><span class="p">],</span>
 <span class="p">)</span>
 </code></pre></div>
 <p>Name a package root and the stdlib logger hierarchy carries the setting to every
 logger under it (<code>forze_postgres.kernel</code>, <code>forze_postgres.adapters</code>, …), so there
 is nothing per-subpackage to enumerate.</p>
+<p>Naming loggers narrows capture, not redaction: a logger you did not list still reaches a
+scrubbing handler on the root at <code>warning</code> and above (or your <code>level</code>, if higher), and
+prints scrubbed on the configured stream where Python's last-resort handler printed it raw
+on stderr. With <code>level</code> above <code>warning</code>, forze's handler stops printing unlisted warnings. A root
+handler you installed yourself stays, so each unlisted line then appears twice; an app that
+manages the root itself passes <code>redact_unnamed=False</code>, which declines the root handler with
+a warning and leaves unlisted loggers to Python's default handling, unscrubbed. A later
+<code>logging.basicConfig()</code> does nothing, because the root already has a handler: call it with
+<code>force=True</code>, or before <code>bootstrap_logging</code>. Uvicorn sets <code>propagate=False</code> on <code>uvicorn</code> and
+on <code>uvicorn.access</code>, so neither reaches the root: name both in <code>third_party</code>.</p>
 <p>Until structlog is configured (<code>configure_logging</code>, <code>bootstrap_logging</code> or your own
 <code>structlog.configure</code>), forze does not print to stdout itself: it hands each event to
 the stdlib logger of the same name at that logger's level, so warnings and above reach
