@@ -171,9 +171,9 @@ class AuthnDepsModule(DepsModule):
     module's cross-cutting policy knobs (``actor_claim``,
     ``revoke_sessions_on_*``) are likewise module-wide, and observability is the
     same kind of concern. For a different sink per route, leave ``events`` unset
-    and register :data:`AuthnEventSinkDepKey` for each route yourself: a second
-    registration for a route the module already wired is refused when the deps
-    merge."""
+    and register :data:`AuthnEventSinkDepKey` for each route yourself. A second
+    non-fallback registration for a route the module already wired is refused when
+    the deps merge; a fallback one is shadowed by the module's sink."""
 
     lockout: LockoutConfig | None = attrs.field(default=None)
     """Optional fixed-window login lockout for password routes. ``None``
