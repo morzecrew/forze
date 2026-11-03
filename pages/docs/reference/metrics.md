@@ -257,7 +257,7 @@ every process's grants cache current. Labelled `forze.grants_invalidation`.
 |---|---|---|---|
 | `forze.authz.grants_invalidation.publish_failures` | observable counter | 1 | committed invalidations whose marker write failed |
 | `forze.authz.grants_invalidation.flushes` | observable counter | 1 | whole grants caches dropped on a gap in the stream or a catalog change |
-| `forze.authz.grants_invalidation.bypasses` | observable counter | 1 | decisions that read the bindings because no subscription kept the cache current |
+| `forze.authz.grants_invalidation.bypasses` | observable counter | 1 | effective-grants reads (decisions, scoping, grant queries) that skipped the cache because no subscription kept it current |
 
 Every `publish_failures` increment leaves other processes on the old grants for up to the
 cache's TTL. A steady `flushes` rate is a flapping connection: the cache stays correct and stops

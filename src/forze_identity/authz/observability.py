@@ -36,7 +36,7 @@ _COUNTERS: tuple[tuple[str, GrantsInvalidationEvent, str], ...] = (
     (
         BYPASSES_COUNTER,
         "bypass",
-        "Grants decisions that read the bindings because no subscription kept the cache current.",
+        "Effective-grants reads that skipped the cache because no subscription kept it current.",
     ),
 )
 
@@ -58,10 +58,11 @@ def instrument_grants_invalidation(
     - ``forze.authz.grants_invalidation.flushes`` — whole grants caches this process dropped, on
       a gap in the stream or a catalog change. A steady rate means a flapping connection: the
       cache stays correct and stops helping.
-    - ``forze.authz.grants_invalidation.bypasses`` — decisions that read the bindings because no
-      subscription in this process kept the cache current. A rising count in a process that
-      should be subscribed means ``grants_invalidation_lifecycle_step`` is not registered there,
-      or its stream has ended: decisions stay correct, at the cost of the cache's saving.
+    - ``forze.authz.grants_invalidation.bypasses`` — effective-grants reads (decisions, scoping,
+      grant queries) that skipped the cache because no subscription in this process kept it
+      current. A rising count in a process that should be subscribed means
+      ``grants_invalidation_lifecycle_step`` is not registered there, or its stream has ended:
+      reads stay correct, at the cost of the cache's saving.
 
     Emits via the global OTel meter unless *meter* is supplied. Call once at assembly time.
     """
