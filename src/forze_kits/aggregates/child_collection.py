@@ -42,21 +42,28 @@ def _read_as(model: type[BaseModel], field: str) -> TypeAdapter[Any]:
     return TypeAdapter(annotation)
 
 
-def _arms(annotation: Any) -> Iterator[Any]:
-    """The types *annotation* admits, reading through aliases, ``Annotated`` and unions."""
+def _leaves(annotation: Any) -> Iterator[Any]:
+    """The annotations *annotation* admits, read through aliases, ``Annotated`` and unions."""
 
     if isinstance(annotation, TypeAliasType):
-        yield from _arms(annotation.__value__)
+        yield from _leaves(annotation.__value__)
 
     elif (origin := get_origin(annotation)) is Annotated:
-        yield from _arms(get_args(annotation)[0])
+        yield from _leaves(get_args(annotation)[0])
 
     elif origin in (Union, UnionType):
         for arm in get_args(annotation):
-            yield from _arms(arm)
+            yield from _leaves(arm)
 
     else:
-        yield origin or annotation
+        yield annotation
+
+
+def _arms(annotation: Any) -> Iterator[Any]:
+    """The types *annotation* admits: each leaf's origin, or the leaf itself."""
+
+    for leaf in _leaves(annotation):
+        yield get_origin(leaf) or leaf
 
 
 def _merged_by_update(annotation: Any) -> bool:
@@ -74,33 +81,16 @@ def _unhashable(annotation: Any) -> bool:
     """Whether a value of this type may not hash, as a key must: ``Any`` may not either, and a
     hashable container hashes only if every element type does."""
 
-    for arm in _arms(annotation):
+    for leaf in _leaves(annotation):
+        arm = get_origin(leaf) or leaf
+
         if arm is Any or (isinstance(arm, type) and not issubclass(arm, Hashable)):
             return True
 
-    for unwrapped in _unwrapped(annotation):
-        if any(_unhashable(arg) for arg in get_args(unwrapped) if arg is not Ellipsis):
+        if any(_unhashable(arg) for arg in get_args(leaf) if arg is not Ellipsis):
             return True
 
     return False
-
-
-def _unwrapped(annotation: Any) -> Iterator[Any]:
-    """The parameterized forms *annotation* admits, reading through aliases, ``Annotated`` and
-    unions, so a container's element types can be read."""
-
-    if isinstance(annotation, TypeAliasType):
-        yield from _unwrapped(annotation.__value__)
-
-    elif (origin := get_origin(annotation)) is Annotated:
-        yield from _unwrapped(get_args(annotation)[0])
-
-    elif origin in (Union, UnionType):
-        for arm in get_args(annotation):
-            yield from _unwrapped(arm)
-
-    elif origin is not None:
-        yield annotation
 
 
 def _comparable(value: Any) -> Any:
@@ -328,8 +318,9 @@ class ChildCollectionSync[R: BaseModel, C: BaseDTO]:
         :returns: The children removed, created and updated.
         :raises CoreException: ``precondition`` (``child_sync_outside_transaction``) outside a
             transaction; ``configuration`` (``core.tx.not_enlisted``) when the child port writes
-            on another connection than the transaction's; ``validation`` (``child_parent_mismatch``) when a command names another
-            parent, (``child_key_duplicate``) when two share a key, or
+            on another connection than the transaction's; ``validation``
+            (``child_parent_mismatch``) when a command names another parent,
+            (``child_key_duplicate``) when two share a key, or
             (``child_value_unreadable``) when a key or compare value is not one the read model
             can hold; ``conflict`` (``child_key_ambiguous``) when two stored children share a
             key. Nothing is written in these cases.

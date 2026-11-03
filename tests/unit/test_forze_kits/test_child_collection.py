@@ -1007,6 +1007,9 @@ class _UpdateCodedStrictly(BaseDTO):
     reason: str
 
 
+type _ListedSkus = Annotated[tuple[list[int], ...], "skus"]
+
+
 class _UpdateCodedRequiringQuantity(BaseDTO):
     quantity: int
     code: str | None = None
@@ -1111,6 +1114,42 @@ class TestSpecsItCannotServe:
             ChildCollectionSync(child_spec=spec, parent_fk="order_id", key_fields=("sku",))
 
         assert _refusal(ei) == (ExceptionKind.CONFIGURATION, "child_key_unhashable")
+
+    def test_a_key_read_through_an_alias_or_annotated_is_checked(self) -> None:
+        class _Aliased(_ReadCoded):
+            sku: _ListedSkus  # type: ignore[assignment]
+
+        class _Annotated(_ReadCoded):
+            sku: Annotated[tuple[str, ...], "hashable"]  # type: ignore[assignment]
+
+        with pytest.raises(CoreException) as ei:
+            ChildCollectionSync(
+                child_spec=_coded(read=_Aliased), parent_fk="order_id", key_fields=("sku",)
+            )
+
+        assert _refusal(ei) == (ExceptionKind.CONFIGURATION, "child_key_unhashable")
+
+        ChildCollectionSync(
+            child_spec=_coded(read=_Annotated), parent_fk="order_id", key_fields=("sku",)
+        )
+
+        class _OneArmUnhashable(_ReadCoded):
+            sku: str | list[int]  # type: ignore[assignment]
+
+        with pytest.raises(CoreException) as ei:
+            ChildCollectionSync(
+                child_spec=_coded(read=_OneArmUnhashable), parent_fk="order_id", key_fields=("sku",)
+            )
+
+        assert _refusal(ei) == (ExceptionKind.CONFIGURATION, "child_key_unhashable")
+
+    def test_a_read_only_child_spec_is_refused(self) -> None:
+        with pytest.raises(CoreException) as ei:
+            ChildCollectionSync(
+                child_spec=_coded(write=None), parent_fk="order_id", key_fields=("sku",)
+            )
+
+        assert ei.value.kind is ExceptionKind.CONFIGURATION
 
     def test_an_update_command_never_built_may_require_anything(self) -> None:
         # Hard deletes and no compare fields: no patch is ever made.
