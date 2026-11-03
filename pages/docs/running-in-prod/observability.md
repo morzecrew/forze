@@ -40,6 +40,7 @@ unchanged. The span carries:
 |-----------|-------|
 | `forze.operation` / `forze.operation.kind` | the operation key and `query` / `command` |
 | `forze.execution_id` / `forze.correlation_id` / `forze.causation_id` | the invocation metadata |
+| `forze.invocation_surface` | the [boundary the invocation entered through](#see-which-boundary-an-invocation-came-through), or `unknown` |
 | `forze.tenant_id` / `forze.principal_id` | the bound tenant and principal |
 
 Alongside each span, two **metrics** — `forze.operations` (a counter) and
@@ -51,6 +52,56 @@ An `unavailable` error — something an operator switched off — counts as `fai
 `forze.outcome="error"` leaves it out. The operation metrics carry no error code, so if
 switch-offs matter to you, track them at the edge: count responses whose `X-Error-Code` is
 the code your app raises with `exc.unavailable`, or 503s at your proxy.
+
+## See which boundary an invocation came through
+
+Every boundary that starts an invocation names itself on the invocation metadata, so a
+log line or span says whether the work arrived over HTTP, from `forze ops`, or from a
+recovered durable run. Each line logged inside an operation carries the
+`invocation_surface` field, and the operation span carries `forze.invocation_surface`.
+An operation run outside any boundary, such as a test harness calling `run_operation`,
+records `unknown`.
+
+| Value | Boundary |
+|-------|----------|
+| `http` | `forze_fastapi`'s `InvocationMetadataMiddleware`: generated routes and SSE |
+| `websocket` | a `forze_fastapi` realtime WebSocket command frame |
+| `socketio` | a `forze_socketio` command event |
+| `mcp` | a `forze_mcp` tool call |
+| `cli` | `forze ops call` |
+| `inbox` | `process_with_inbox`, once per delivery |
+| `temporal` | a workflow or activity behind `forze_temporal`'s interceptors |
+| `inngest` | a `forze_inngest` function call |
+| `durable` | one attempt of a self-hosted durable run |
+| `unknown` | no boundary bound metadata |
+
+The values are `InvocationSurface` members in `forze.application.execution`. A nested
+call keeps the surface of the invocation around it: an agent tool call made while serving
+an HTTP request records `http`. A hop names itself and carries nothing: a Temporal
+activity started from an HTTP request records `temporal`, and the request is found
+through the shared `correlation_id`.
+
+The field is a log field, not a metric label and not a Loki label, so it adds no series.
+The key is `invocation_surface` and not `surface` because `surface` is the port-call key
+that `with_port_logging()` writes, and both appear on one port-call line.
+
+**Your own boundary.** A gRPC server or a queue worker of your own passes its own token:
+`mint_invocation_metadata(surface="grpc")`, from `forze.application.execution.ingress`,
+or `InvocationMetadata(..., surface="grpc")`. A token must match
+`^[a-z][a-z0-9_]{0,31}$`, or construction raises `configuration` with code
+`invocation_surface_invalid`. Pass a literal from your boundary's source:
+
+- never a value read from a header, a frame, a message or an event, which a caller would
+  then choose;
+- never a token that names a person, a tenant or a customer, since it reaches every log
+  line and span.
+
+!!! warning "Attribution, not authority"
+
+    No framework hook, policy or guard reads the surface, and your code should not either.
+    Any code in the process can build metadata with any valid token, so a check such as
+    "only if the surface is `cli`" proves nothing. Restrict which operations a surface may
+    call with its exposure allowlist instead.
 
 ## Trace every outbound call
 
@@ -207,13 +258,24 @@ bootstrap_logging(
     level="info",
     render_mode="json",  # "console" for local dev
     logger_names=["forze_postgres", "forze_redis"],
-    third_party=["uvicorn", "sqlalchemy.engine"],
+    third_party=["uvicorn", "uvicorn.access", "sqlalchemy.engine"],
 )
 ```
 
 Name a package root and the stdlib logger hierarchy carries the setting to every
 logger under it (`forze_postgres.kernel`, `forze_postgres.adapters`, …), so there
 is nothing per-subpackage to enumerate.
+
+Naming loggers narrows capture, not redaction: a logger you did not list still reaches a
+scrubbing handler on the root at `warning` and above (or your `level`, if higher), and
+prints scrubbed on the configured stream where Python's last-resort handler printed it raw
+on stderr. With `level` above `warning`, forze's handler stops printing unlisted warnings. A root
+handler you installed yourself stays, so each unlisted line then appears twice; an app that
+manages the root itself passes `redact_unnamed=False`, which declines the root handler with
+a warning and leaves unlisted loggers to Python's default handling, unscrubbed. A later
+`logging.basicConfig()` does nothing, because the root already has a handler: call it with
+`force=True`, or before `bootstrap_logging`. Uvicorn sets `propagate=False` on `uvicorn` and
+on `uvicorn.access`, so neither reaches the root: name both in `third_party`.
 
 Until structlog is configured (`configure_logging`, `bootstrap_logging` or your own
 `structlog.configure`), forze does not print to stdout itself: it hands each event to

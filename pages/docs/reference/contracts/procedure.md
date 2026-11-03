@@ -55,6 +55,6 @@ closed at wiring if the SQL never references it. See
 
 | Backend | Notes | Integration |
 |---------|-------|-------------|
-| Postgres | a function / `CALL` / set-based statement / `REFRESH` | [Postgres](../../integrations/postgres.md) |
+| Postgres | a function / `CALL` / set-based statement / `REFRESH`; a route in a transaction is bounded by `statement_timeout` (60 s unless set) | [Postgres](../../integrations/postgres.md) |
 
 A programmable mock implements it for tests.

@@ -4341,3 +4341,1152 @@ other proposed rows in this unit, D-159's among them, await the author.
 |---|---|---|---|---|---|
 | 0009 | 12 | Accepted | `ASSUMED` | Introspection client credentials are inline `SecretStr` or `str`, like the other identity presets. `SecretRef` support is a follow-up that needs a context-bound secrets seam on the verifier factory, and only widens the field's type | D-150 |
 | 0009 | 13 | Accepted | `ASSUMED` | A rejected external credential is `authentication` with one code per verifier family (`invalid_oidc_token`, `invalid_session_token`). Anything that says nothing about the credential is `infrastructure`. Both fail closed | D-153 |
+
+---
+
+# Unit 16 · RFC 0050 P0+P1 — child collection reconciliation
+
+Branch `feat/child-collection-reconcile`. RFC 0050 §12 P0 then P1. P0 read the origin
+application's three helpers in `app/src/erp/application/services/items.py` (`reconcile`,
+`reconcile_held`, `reconcile_slot`) and their six callers (supply, outsource, manufacturing
+task, replacement group, shipment task, reserving task), plus the two diffs it still writes by
+hand (`allocation.py` `write`, `process.py` `_rewrite`). The RFC's other three origin cases
+(acceptance, customer order, specification eBOM) no longer reconcile a collection: acceptance
+only updates, customer-order lines are created once, and the eBOM diff is `process.py`'s. P1
+built §5 parent-agnostic, with the §6 tests and the §7 recipe. The decision table is the design
+this unit is measured against. Rows 7, 8 and 9 were `OPEN` and are settled here (D-180, D-182,
+D-183). Every `LOCKED` row held as written, and row 6 held too (D-189).
+
+**Drift count: 0.** Ten entries, D-180 to D-189: two `discovery`, eight `spec-gap`. Rows 7 to
+9 were open by design and settled by the reading P0 scheduled, so their entries are
+`spec-gap`: knowable before code, and left unanswered on purpose.
+
+**Where each item lives.** The component is `ChildCollectionSync` and its result
+`ChildCollectionChanges`, in
+[`child_collection.py`](../src/forze_kits/aggregates/child_collection.py), exported from
+`forze_kits.aggregates`. Tests: `tests/unit/test_forze_kits/test_child_collection.py` (mock),
+`tests/integration/test_forze_postgres/test_pg_child_collection.py` (real unique constraints),
+and `tests/unit/test_examples/test_child_collection.py` over the recipe's example
+`examples/recipes/child_collection/app.py`. The recipe is
+`pages/docs/recipes/reconcile-child-collection.md`. No published skill reference was added:
+§7 gates it on the shape being settled, and rows 7 to 9 are still proposals.
+
+## D-180 — A child is identified by a required, unique business key
+
+- **Touches:** RFC 0050 §10 (first question) and decision row 7. `OPEN` — "a required business
+  `key_field`, or a fallback for keyless collections".
+- **RFC said:** "Answerable by looking at the nine origin cases: if any reconciles a keyless
+  collection, §5.1's shape is wrong."
+- **Found:** all six helper callers and both hand-written diffs match by a business key: an
+  article id, a detail or revision id, or a pick's line, article and unit. None reconciles a
+  keyless collection. The application's one keyless list, a process's stages, is matched by
+  position when the build is unchanged and otherwise deleted and recreated whole
+  (`process.py`). It never reaches the helpers. The helpers build both sides as dicts, so two
+  lines or two rows with one key silently keep the last.
+- **Because:** a key is what lets "changed" differ from "removed and another added"; the one
+  collection without one is not reconciled at all.
+- **Class:** `spec-gap` — settled by the reading P0 scheduled.
+- **Consequence:** `key_fields` is required and an empty tuple is refused at construction. Two
+  incoming commands with one key are refused (`validation`, `child_key_duplicate`), and two
+  stored children with one key (`conflict`, `child_key_ambiguous`), before anything is written.
+  No positional fallback exists.
+- **Proposed row (RFC 0050, settles row 7):** `ASSUMED` — a child is identified by a required
+  business key. A keyless collection is out of scope, and an ambiguous key on either side is
+  refused rather than resolved.
+
+## D-181 — The key is a tuple of fields, not one field
+
+- **Touches:** RFC 0050 §5.1 (`key_field: str`) and row 7.
+- **RFC said:** `key_field` is "the field identifying a child within the collection".
+- **Found:** four of the six callers key on something no single stored field holds.
+  Manufacturing and outsource lines key on `article_id`, a property returning `revision_id or
+  subproduct_id`; replacement-group items on `detail_id or revision_id`; shipment picks on
+  `(ref_item_id, revision_id, unit_id)`; reserving picks on `(ref_item_id, article, unit_id)`.
+  The helpers take a callable per side for this. Each is a tuple of stored fields when a null
+  counts as part of the key: `("revision_id", "subproduct_id")` keys a line holding exactly one.
+- **Because:** field names can be checked at construction against the read model and the create
+  command, which a callable cannot; a tuple covers every case read.
+- **Class:** `spec-gap` — §5.1 was at the wrong altitude for the cases it was drawn from.
+- **Consequence:** `key_fields: tuple[str, ...]`. A computed key, like `article_id`, is spelled
+  as the fields it is computed from.
+- **Proposed row (RFC 0050):** `ASSUMED` — the key is a tuple of stored fields read off both
+  the stored child and the incoming command, with a null as part of the key. It replaces
+  §5.1's `key_field`, which stands as written.
+
+## D-182 — No ordering support: a position is a compared field like any other
+
+- **Touches:** RFC 0050 §10 (second question), decision row 8 (`OPEN` — "index in the incoming
+  list, a sparse ordering, or no ordering support in P1"), §5.1's `position_field` and §6's
+  reorder test.
+- **RFC said:** `position_field`, when set, receives each child's index in the incoming list.
+- **Found:** no helper writes an index. Supply, outsource and manufacturing lines carry a
+  client-sent `position`: required on the update DTO, optional on the create DTO, where the
+  caller's own create mapping falls back to the index (`i if item.position is None else
+  item.position`). The helpers compare it like quantity or price. Replacement items use
+  `priority`, compared too; shipment and reserving picks have no order. Every `(parent,
+  position)` constraint in the schema is `DEFERRABLE INITIALLY DEFERRED`, which is what lets an
+  in-place renumbering commit. The rules do disagree, as §10 suspected, but outside the helpers:
+  `process.py` deletes and recreates a BOM line whose position moved instead of updating it.
+- **Because:** `position_field` would serve none of the callers, each of which owns its position.
+- **Class:** `spec-gap` — settled by the reading P0 scheduled.
+- **Consequence:** no `position_field`. A caller puts the position in its create commands and in
+  `compare_fields`. A reorder updates every moved child, and the §6 reorder test asserts that
+  set: moving the last of four first writes four, swapping two writes two. The recipe says a
+  unique position must hold at commit (`UniqueTogether(holds="commit")`, a deferred constraint).
+- **Proposed row (RFC 0050, settles row 8):** `ASSUMED` — no ordering support in P1. A position
+  is the caller's field, compared like any other; a reorder is an update of each moved child.
+  §5.1's `position_field` stands as written and is not built.
+
+## D-183 — The delete path is inferred from the spec, and an unwired one is refused
+
+- **Touches:** RFC 0050 §5.2 (current-only children) and decision row 9 (`OPEN` — the
+  soft-delete registry when the spec carries `is_deleted`, or the caller declares it).
+- **RFC said:** "inferring it is probably right and probably wants a refusal when the spec's
+  soft-delete is not wired".
+- **Found:** every origin child is hard-deleted with `kill_many`. The application strips the
+  kill operation from child registries but keeps `hard_delete` on their specs, because the parent
+  rewrites the rows; no child spec carries `is_deleted`. The soft path therefore has no origin
+  caller. It is built because §5.2 commits to it and §6 tests it. The soft-delete registry is an
+  operation surface (`DeleteDocument` writes `is_deleted=True` through `update`); the component
+  runs inside an operation, so it writes the same flag through the port.
+- **Because:** the spec already says which delete applies, so a declaration would only be a
+  second place to get it wrong.
+- **Class:** `spec-gap` — settled by the reading P0 scheduled.
+- **Consequence:** a domain carrying `is_deleted` is soft-deleted with `update_many` at the
+  revision read, and deleted children are excluded from the current read. Construction refuses
+  such a spec when its read model does not store `is_deleted` or its update command cannot write
+  it (`configuration`, `child_soft_delete_unwired`). Any other spec is hard-deleted, and one
+  declaring `hard_delete=False` is refused at construction (`hard_delete_forbidden`), not at its
+  first dropped child. A re-added key creates a new row, so a uniqueness over the key must skip
+  deleted rows; the recipe says so.
+- **Proposed row (RFC 0050, settles row 9):** `ASSUMED` — the delete path is inferred: soft when
+  the child's domain carries `is_deleted`, hard otherwise. A soft-deletable spec that cannot
+  read or write the flag, and a hard-delete spec that forbids hard deletes, are refused at
+  construction.
+
+## D-184 — Incoming children are the child's create commands, and a patch carries only what changed
+
+- **Touches:** RFC 0050 §5.2 ("incoming only — a `KeyedCreate`"; "then, in one batch each:
+  `kill_many`, `create_many`, `update_many`"). Unlisted in §11.
+- **RFC said:** an incoming-only child is "a `KeyedCreate`", and creates go through
+  `create_many`. The two do not fit: `KeyedCreate` pairs a caller-chosen primary key with a
+  payload for `ensure_many`, while `create_many` takes plain create commands. §5 does not say
+  what type the incoming list is.
+- **Found:** the helpers take a `create` callback, because turning a line into a create command
+  needs the parent id, the position fallback, and for two callers a lookup (subproducts, article
+  kinds). They also take the update DTO type, which the spec already names, and write every
+  compare field into each patch.
+- **Because:** a create command already carries the parent, the key and every compared field,
+  so it is the one value the component needs per child; the mapping stays with the caller.
+- **Class:** `spec-gap` — §5.2 is inconsistent about it.
+- **Consequence:** `reconcile(ctx, parent_id, incoming: Sequence[C])`. New children are created
+  with `create_many` and get server ids. A command naming another parent is refused
+  (`validation`, `child_parent_mismatch`). The patch is the spec's update command holding only
+  the compare fields that differ. Mapping every line up front moves manufacturing's subproduct
+  lookup from the new lines to all of them: one wider query, not a second one.
+  The key and compare values now come from two models, which may type one field differently: a
+  float against a stored decimal, a string against a stored enum, a naive datetime against the
+  aware one a timestamptz column returns. Compared raw, each makes every save remove and
+  recreate the child, or write it again. So each incoming key and compare value is read through
+  the read model's bare field type (a pydantic `TypeAdapter` of its annotation, constraints
+  left out), and a naive datetime on either side is read as UTC, as the guarantees reference
+  says Postgres stores one. A value the read model cannot hold is refused (`validation`,
+  `child_value_unreadable`). Refusing differing types at construction was the alternative; it
+  would refuse the common float/decimal and string/enum pairs that coerce exactly, and could not
+  see naive against aware, which is a property of the value. The patch still carries the
+  command's own value, for the update command to validate.
+  Construction refuses, each with its own `configuration` code, what the matching and the patch
+  could not serve: a key or compare field the spec does not store (`lenient_read_fields`,
+  `write_omit_fields`), which reads back as its default so two children would share a key
+  (`child_field_not_stored`); a key field whose type may not hash, `Any` included
+  (`child_key_unhashable`); a compare field that is a mapping, a nested model, a dataclass or
+  `Any`, because an update merges into it key by key and has no replace mode, so a key the
+  incoming value drops would stay stored and every later save would find the same difference
+  (`child_compare_field_merged`); an update command requiring a field no patch carries
+  (`child_update_requires_fields`); and a spec declaring `query_params`, since the children are
+  read unparametrized (`child_spec_parametrized`). A list is replaced by an update and may be
+  compared.
+- **Proposed row (RFC 0050):** `ASSUMED` — the incoming list is the child's create commands, each
+  naming the parent. Their key and compare values are read as the read model's field types,
+  a naive datetime as UTC, before matching; each patch holds the compare fields that differ. A
+  compare field an update would merge into rather than replace is refused at construction.
+
+## D-185 — It returns what it wrote
+
+- **Touches:** RFC 0050 §5.3. Unlisted: the RFC says what the component does not return (the
+  parent), not what it does.
+- **Found:** `reconcile_held`, which two of the six callers reach through `reconcile_slot`, moves
+  stock from the rows it killed, the rows it created and each update's quantity delta. It reads
+  the update's diff to skip a patch the store already held: "forze takes a stale `rev` whose
+  patch matches the row as it stands". Without a result, such a caller would have to diff again.
+- **Because:** the component is the only place that knows which rows each batch touched.
+- **Class:** `spec-gap`.
+- **Consequence:** `ChildCollectionChanges(removed, created, updated)`: removed rows as read,
+  created rows as returned, and `(as read, as written)` pairs only for rows whose write changed
+  something. Creates and updates therefore run with `return_new=True`, a re-read on stores that
+  do not return rows from the write. Every child write is strict (`merge=False`, D-187), so the
+  stale revision the origin helper relied on is refused, never merged: a pair cannot carry
+  another writer's change, and `removed` cannot list a child another writer soft-deleted after
+  the read, which a merge would have accepted as a write changing nothing. The empty diff left
+  is a patch the domain normalizes to the stored value, which the tests use. The bulk port does
+  not promise its results in input order, so updates are paired with the rows read by id, and
+  `created` makes no order claim.
+- **Proposed row (RFC 0050):** `ASSUMED` — `reconcile` returns the children removed, created and
+  changed, the last as before-and-after pairs that leave out writes the store found already
+  applied.
+
+## D-186 — It refuses to run outside a transaction
+
+- **Touches:** RFC 0050 §4 ("rides the ambient transaction, so a partial diff cannot commit")
+  and §6 (transaction test). Unlisted: the RFC does not say what happens outside one.
+- **Found:** outside a transaction each of the three batches commits on its own, so a refused
+  update batch leaves the deletes and creates before it in place. Opening a scope inside the
+  component would make its own batches atomic, but not atomic with the caller's parent write,
+  and would need a route parameter.
+- **Because:** atomicity with the parent is the caller's to give, so the component can only
+  insist on it.
+- **Class:** `spec-gap`.
+- **Consequence:** `reconcile` raises `precondition` (`child_sync_outside_transaction`) when
+  `ctx.tx_ctx.depth()` is 0. A transaction on one store does not cover a child port on another:
+  each batch would commit alone, and the touch guarding a hard delete would release its locks
+  before the delete. So `reconcile` then calls `ctx.tx_ctx.assert_enlisted` on the child's
+  command port before reading, and a port writing on another connection is refused
+  (`configuration`, `core.tx.not_enlisted`). A port that cannot report enlistment passes, as
+  everywhere else that check runs. The recipe binds its operation with `bind_tx`.
+- **Proposed row (RFC 0050):** `ASSUMED` — `reconcile` runs only inside a transaction its child
+  port writes in, and refuses otherwise; it never opens one of its own.
+
+## D-187 — Concurrency stays with the caller: no lock, and no error translation
+
+- **Touches:** RFC 0050 §5.2. Unlisted.
+- **Found:** two saves of one parent both read the children before either commits. The
+  application handles this twice over: its handlers check the parent's revision before
+  reconciling and touch the parent after, and `reconcile_held` turns a kill's `not_found` and a
+  create's `conflict` into `conflict` (`stale_revision`). forze already offers
+  `DocumentCommandPort.hold` over a `SerializedBy` key to serialize a read-then-write per owner.
+- **Because:** which guard fits (a parent revision, a hold, a retry) depends on the app's specs;
+  translating errors would hide a genuine uniqueness refusal behind "stale".
+- **Class:** `spec-gap`.
+- **Consequence:** the component takes no lock and translates nothing. The recipe touches the
+  parent at the client's revision first, which refuses a stale save and, on Postgres, makes a
+  second save wait on the row lock. It names `hold` as the alternative, and lists the error each
+  concurrent loss raises. Every write to an existing child still carries the revision read: updates and soft
+  deletes in their `KeyedUpdate`, and a hard delete through a `touch_many(ids, revs=...)` just
+  before `kill_many`, which takes no revision. A child another writer changed since the read is
+  refused (`revision_mismatch`) instead of deleted; the touch is one batched statement, and on
+  Postgres its row locks hold the rows until the kill. A child another writer adds after the
+  read is not seen.
+  The check is strict: the soft-delete and update batches pass `merge=False`. By default a
+  store keeping revision history merges a stale revision whose patch does not overlap the change
+  made since, which would soft-delete a child another writer just changed and report an update
+  pair carrying both writers' changes, so a stock handler would count the other writer's twice.
+  `touch_many` with revisions is strict by its contract, as `touch` is. Postgres tests on a
+  history-enabled spec pin each of the three.
+- **Proposed row (RFC 0050):** `ASSUMED` — the component takes no lock and passes the ports'
+  errors through; serializing saves of one parent is the caller's, by the parent's revision or
+  a `hold`. Every write to an existing child is checked strictly against the revision read,
+  never merged, and a hard delete by a touch at that revision first; a create carries none.
+
+## D-188 — The mock enforces the uniqueness the ordering test needs
+
+- **Touches:** RFC 0050 §6 ("against Postgres for the uniqueness-ordering case, which the mock
+  cannot express"). Nothing in this unit changes the mock.
+- **Found:** the in-memory store already enforces `UniqueTogether`, and has since 2026-09-19
+  (#444), nine days after this RFC was written
+  (`forze_mock/adapters/_document_command.py`, `_check_guarantees`). It refuses a duplicate
+  tuple at the write, or at commit for `holds="commit"`, as a real index does.
+- **Because:** the capability was added to the mock after the RFC, by other work.
+- **Class:** `discovery`.
+- **Consequence:** the decision-5 test runs on both stores. On the mock it declares
+  `UniqueTogether(("order_id", "position"))`; on Postgres the table has a plain unique
+  constraint the spec does not declare. Both fail when the delete and create batches are
+  swapped, and both carry a control showing the store refuses the create while the old row
+  exists. The order test uses a unique field outside the key, since a key both removed and
+  re-added in one call is a match, not a delete and a create.
+- **Proposed row (RFC 0050):** none.
+
+## D-189 — Every origin caller touches the parent; row 6 holds until P2
+
+- **Touches:** RFC 0050 decision row 6 (`ASSUMED` — the component does not touch or re-read the
+  parent) and §12 P2.
+- **RFC said:** "execution may depart if every real caller ends up writing the same parent
+  touch, which would be evidence the boundary is in the wrong place".
+- **Found:** all six callers end with `return await self.<parent>.touch(parent_id)`, and each
+  of their handlers checks the parent's revision first (`require_rev`). The touch both marks the
+  parent changed and returns the read model the handler returns.
+- **Because:** folding the touch in would make the component return the parent, which is the
+  stage question §12 gates on P2.
+- **Class:** `discovery` — row 6 left this to execution.
+- **Consequence:** row 6 stands. The recipe's handler touches the parent itself, at the client's
+  revision and before reconciling (D-187).
+- **Proposed row (RFC 0050):** none. P2 should take this as the evidence row 6 named: every
+  origin caller touches the parent and guards its revision.
+
+## Review findings — 2026-11-03
+
+Review of the unit's first commit, before it was published.
+
+| # | Severity | Finding | Status |
+|---|---|---|---|
+| R-1 | Bug | The children were read with `find_many` and no pagination, which the port does not promise returns every row | Fixed: read with `find_stream`. Through the shared document adapter a limitless `find_many` already scans every row, so the 10,000-row gateway cap did not reproduce: a Postgres test with read batches of ten passed before the fix and guards it now. A mock test whose `find_many` stops at two rows fails without the fix |
+| R-2 | Bug | A hard delete carried no revision, so a child another writer changed since the read was deleted | Fixed (D-187): a `touch_many` at the revisions read precedes `kill_many`; mock and Postgres tests |
+| R-3 | Bug | Keys and compare values were compared raw across two models, so a float against a decimal, a string against an enum, or a naive against an aware datetime churned every save | Fixed (D-184): incoming values are read as the read model's field types, naive datetimes as UTC; mock and Postgres tests |
+| R-4 | Bug | Updates were paired with the port's results by position, which the port does not promise | Fixed (D-185): paired by id; `created` drops its order claim; a test reverses the port's results |
+| R-5 | Test | No test for a stale revision on update or delete, a compare field cleared to `None`, or tenancy | Fixed: tests for each, on the mock; the hard-delete guard on Postgres too |
+| R-6 | Docs | D-188 read as though the mock's `UniqueTogether` came with this unit | Fixed: reworded as pre-existing |
+
+## Review findings — 2026-11-03 (PR #820)
+
+| # | Severity | Finding | Status |
+|---|---|---|---|
+| R-7 | Bug | One command listed twice passed the duplicate-key check, and a new child's compare values were not read before the writes | Fixed: both refused before any write |
+| R-8 | Bug | Only the transaction's depth was checked, so a child port on another store committed each batch alone | Fixed (D-186): `assert_enlisted` on the child port; a mock test with a port reporting itself unenlisted |
+| R-9 | Bug | Updates and soft deletes used the default `merge=True`, so on a spec with history a concurrent change merged instead of conflicting | Fixed (D-187): `merge=False`; Postgres tests on a history spec for the update, the soft delete and the hard delete |
+| R-10 | Bug | A mapping compare field kept a key the incoming value dropped, and every later save found the same difference | Fixed (D-184): refused at construction (`child_compare_field_merged`); the update port has no replace mode |
+| R-11 | Bug | A key or compare field in `write_omit_fields` read back as its default | Fixed (D-184): refused with lenient fields (`child_field_not_stored`) |
+| R-12 | Bug | A key field of an unhashable type failed only when hashed | Fixed (D-184): refused at construction (`child_key_unhashable`) |
+| R-13 | Bug | A spec with `query_params` failed at its first read | Fixed (D-184): refused at construction (`child_spec_parametrized`) |
+| R-14 | Bug | An update command requiring a field outside the patch raised a raw validation error at the write | Fixed (D-184): refused at construction (`child_update_requires_fields`) |
+| R-15 | Bug | `removed` could list a child another writer soft-deleted after the read | Holds by R-9 (D-185): the strict write is refused (`revision_mismatch`); tested on the mock, with and without history |
+
+---
+
+# Unit 18 · RFC 0079 P1 — invocation surface on metadata, logs and spans
+
+Branch `feat/invocation-surface`. RFC 0079 P1 per §12: §5.1–§5.5, tests 1–8 of §6, and the §7
+observability and integration docs. No P2 work: `AuditEntry` and the audit collection are
+untouched, and §10 Q1–Q3 stay open. §10 Q4 was open and is decided here at the RFC's own lean
+(D-200). This unit is measured against the decision table and the code as it stood at
+`21146218b`. Decisions 1–9 hold as written; D-205 records the measurement decision 10 asks for.
+
+**Drift count: 0.** Ten entries, D-200 to D-209: four `discovery`, six `spec-gap`. D-204
+settles a case §5.3 never considered, metadata already bound around the inbox call, on the
+fail-closed reading of Q4's "one owner per delivery".
+
+**Where each item lives.** The field, `InvocationSurface`, the token check and the
+`invocation_surface` log key (`SURFACE_KEY`) are in
+[`context/invocation.py`](../src/forze/application/execution/context/invocation.py);
+`mint_invocation_metadata(surface=)` in
+[`ingress/invoke.py`](../src/forze/application/execution/ingress/invoke.py); the `unknown` log
+binding at a top-level operation's entry in
+[`operations/run/invoke.py`](../src/forze/application/execution/operations/run/invoke.py); the
+span attribute in [`observability.py`](../src/forze/application/execution/observability.py).
+Each boundary passes its own literal:
+
+| Boundary | Site | Value |
+|---|---|---|
+| HTTP middleware | `forze_fastapi/middlewares/invocation.py`, `_decode_metadata` | `http` |
+| WS command frame | `forze_fastapi/realtime/ws.py`, the frame's `invoke_at_ingress` | `websocket` |
+| Socket.IO event | `forze_socketio/routing.py`, `_dispatch_event` | `socketio` |
+| MCP tool call | `forze_mcp/dispatch.py`, `invoke_operation` | `mcp` |
+| `forze ops call` | `forze_cli/ops/call.py`, the single call and each `--batch` line | `cli` |
+| inbox | `forze_kits/integrations/inbox/consumer.py`, `process_with_inbox`, which now always binds | `inbox` |
+| Temporal | `forze_temporal/interceptors/codecs.py`, `TemporalContextBinder.bind` | `temporal` |
+| Inngest | `forze_inngest/execution/registration.py`, `_bind_invocation` | `inngest` |
+| self-hosted durable | `forze_kits/integrations/durable/runner.py`, `_execute`, which now binds | `durable` |
+
+Tests:
+
+- `tests/unit/test_invocation_surface_guard.py`: the decision 5 sweep.
+- `test_invocation_context.py`, `test_invocation_surface_logs.py` and
+  `test_operation_telemetry.py` under `tests/unit/test_forze/application/execution/`: the
+  vocabulary, logs and spans.
+- `tests/unit/test_forze_kits/test_durable_invocation.py`: the durable binding and Q4's two
+  tests.
+- One surface test and its forgeries per boundary, in the existing suites:
+  `test_middleware_context.py`, `test_realtime_ws_metadata.py`, `test_routing_metadata.py`,
+  `test_mcp_server.py`, `test_ops_call.py`, `test_ops_batch.py`,
+  `test_inbox_consumer_headers.py`, `test_interceptors_context.py` and
+  `test_ig_identity_trust.py`.
+- The nesting test in `test_agent_tools_dispatch.py`.
+- The hop assertions in the RabbitMQ, SQS, Temporal and Inngest integration suites.
+
+Docs: `running-in-prod/observability.md` holds the vocabulary and the token rule.
+`integrations/fastapi.md`, `socketio.md`, `temporal.md`, `inngest.md`,
+`data-events/events-sagas.md` (the inbox) and `data-events/durable-execution.md` name their
+value. The `logging-metrics` and `inngest` references in `skills/forze-skills/` follow.
+
+## D-200 — §10 Q4: a fresh execution id per durable attempt, the run id as correlation id
+
+- **Touches:** §10 Q4, decision 9, §5.3's durable row.
+- **RFC said:** Q4 is open. *Lean:* "a fresh execution id per attempt and the run id as the
+  correlation id. The docs say a claim must begin and end within one attempt", matching #683's
+  choice for Inngest. P1 adds two tests.
+- **Found:** each claim of a run reaches `DurableFunctionRunner._execute` once, whether through
+  `run_now` or `recover`, so minting there is minting per attempt. The runner spawns the body
+  as a task, which copies the context, so a binding made in `_execute` reaches the body and
+  the step journal. The mock store fences commit and release on the owner as the shipped
+  stores do, and each of those has its own owner-fence conformance battery.
+- **Because:** the lean is the Inngest precedent, and the execution id is what owns a claim. If
+  an attempt shared an id with its predecessor, a superseded attempt could complete its
+  successor's claim.
+- **Class:** `spec-gap`: an open question, decided at its lean.
+- **Consequence:** `_execute` binds `mint_invocation_metadata(surface=DURABLE,
+  correlation_id=<run id>, causation_id=…)` next to the tenant, in one `bind`. Both Q4 tests
+  pass, and both fail without the binding:
+  1. A body begins a claim in a journaled step, its worker dies, and recovery replays the step.
+     The new attempt's commit is refused with `conflict` ("claim reclaimed" on the mock).
+  2. The first attempt overruns its lease and its claim's window. Its late commit is refused
+     with `conflict`, the successor's commit lands, and a replay returns the successor's
+     record.
+
+  `durable-execution.md` says to begin and commit a claim inside one step.
+- **Proposed row (RFC 0079):** `ASSUMED`: every self-hosted durable attempt binds a fresh
+  execution id and the run id as its correlation id. A claim must begin and end within one
+  attempt: one begun before a recovery and committed after it is refused with `conflict`.
+
+## D-201 — A run id that is not a UUID becomes a derived correlation id
+
+- **Touches:** §10 Q4 ("or the run id (a uuid7)").
+- **RFC said:** the run id is a uuid7.
+- **Found:** every shipped run store (Postgres, MongoDB, the mock) mints `str(uuid7())`, but
+  `DurableRunRecord.run_id` is typed `str`. A custom store may use any string, and
+  `InvocationMetadata.correlation_id` is a `UUID`.
+- **Because:** a run id that does not parse cannot be used as the correlation id.
+- **Class:** `discovery`.
+- **Consequence:** `_run_correlation_id` returns `UUID(run_id)` when it parses, so on every
+  shipped store a log line's `correlation_id` equals the run's id. Otherwise it returns
+  `uuid5(<a fixed namespace>, run_id)`, as Inngest derives one from its run id, and every
+  attempt of the run still shares it.
+- **Proposed row (RFC 0079):** `ASSUMED`: the correlation id is the run id when it is a UUID,
+  otherwise a UUIDv5 derived from it under a fixed namespace.
+
+## D-202 — A durable attempt's causation is the in-process caller's execution id
+
+- **Touches:** §10 Q4 and §5.4's durable row. The RFC is silent on the causation id.
+- **Found:** `run_now` runs an attempt inside its caller, often an HTTP request with metadata
+  bound, so the caller's execution id is in hand without any persistence. `recover` normally
+  runs with no metadata bound. When it does run under an invocation, that invocation caused
+  the attempt.
+- **Because:** Inngest records the producer's execution id as the causation (#683), and this is
+  the same link without the envelope. Carrying the *correlation* id across the hop stays out of
+  scope (§8), because it needs a `DurableRunRecord` column.
+- **Class:** `spec-gap`.
+- **Consequence:** the causation is the execution id of the metadata already bound when
+  `_execute` starts, read before the attempt binds its own, or
+  `None` when nothing is bound. The run's logs lead back to the request that called `run_now`
+  through the causation id.
+- **Proposed row (RFC 0079):** `ASSUMED`: a durable attempt records the execution id of the
+  invocation it runs inside, if any, as its causation. Nothing is persisted for it, so a
+  recovered attempt has none.
+
+## D-203 — `run_now` inside an invocation no longer inherits the caller's metadata
+
+- **Touches:** §3 ("self-hosted durable runner | none"), §9 (the new bindings' effects).
+- **RFC said:** the runner binds no metadata, and binding it "has effects beyond the surface":
+  ids in logs and events, and claims that gain an owner.
+- **Found:** "none" holds for recovery. Under `run_now` in a request, the body inherited the
+  request's whole metadata: its execution id, correlation id and causation. A claim the body
+  took was owned by the request.
+- **Because:** the RFC read the runner's own code, which binds nothing, and not what a body
+  inherits from its caller.
+- **Class:** `spec-gap`: knowable from `run_now`'s callers before any code.
+- **Consequence:** a body run by `run_now` now logs its own execution id and the run id as its
+  correlation id, not the request's. A claim it takes belongs to the attempt. The causation
+  links back to the request (D-202). The changelog gives this case a behaviour-change entry of
+  its own.
+- **Proposed row (RFC 0079):** `ASSUMED`: the durable runner rebinds metadata for every
+  attempt, including a `run_now` inside another invocation. The caller is linked through the
+  causation id only.
+
+## D-204 — Every inbox delivery mints its own execution id, whatever is bound around it
+
+- **Touches:** §5.3's inbox row ("the correlation id from the header or a fresh one, the event
+  id as causation") and §10 Q4 ("The inbox is the same with one owner per delivery").
+- **Found:** `process_with_inbox` used to keep the execution id of metadata bound around it,
+  and `test_existing_consumer_execution_id_is_kept` pinned that. The framework's consumer
+  runners bind none, so there each delivery already got a fresh execution id. An app's own
+  consumer loop can bind one metadata around many deliveries, and §5.3 does not say what
+  happens then.
+- **Because:** an execution id owns idempotency claims. If deliveries shared the consumer's
+  id, one delivery's late commit could land on another delivery's claim, the failure the
+  durable fence (D-200) exists to prevent. Q4's "one owner per delivery" is read the
+  fail-closed way: unconditionally. The bound metadata is still the context the delivery runs
+  in, so its correlation id and execution id remain useful for tracing.
+- **Class:** `spec-gap`.
+- **Consequence:**
+  - The execution id is always fresh. The earlier test is replaced by one asserting the
+    opposite.
+  - The correlation id comes from the `forze_correlation_id` header, else from the bound
+    metadata, else it is fresh.
+  - The causation id comes from the event-id header, else from the bound metadata's execution
+    id, else it is `None`.
+  - The surface is always `inbox`.
+
+  Tests pin that two deliveries under one bound metadata get distinct execution ids and share
+  its correlation id, and that a claim begun in delivery A is refused with `conflict` when
+  delivery B commits it. All three fail on the previous code. The changelog's inbox entry
+  marks the change to the bound case as a behaviour change.
+- **Proposed row (RFC 0079):** `ASSUMED`: every inbox delivery binds a fresh execution id,
+  even under metadata bound around the call, so it owns its own claims. The correlation id
+  comes from the header, else the bound metadata, else it is fresh. The causation id comes
+  from the event-id header, else the bound execution id.
+
+## D-205 — Decision 10 measured: validation stays at construction
+
+- **Touches:** decision 10, §5.5 ("The cost on the common path is one context-variable read").
+- **Found:** measured on one host, pinned to one core, base `21146218b` against this branch:
+  - **Construction.** `InvocationMetadata(...)` with the default surface costs about 450 ns,
+    against about 340 ns before (the median of three runs of 200,000 constructions). That is
+    about 110 ns of attrs validator overhead per invocation.
+  - **Common path.** An empty-plan dispatch under bound metadata is unchanged at 2.5–2.7 µs.
+  - **Unbound path.** An empty-plan dispatch with no metadata goes from about 2.5 µs before
+    to 3.3–3.6 µs after: roughly +1 µs, or +30–45%, on every top-level dispatch with no
+    metadata bound. The difference is the structlog bind and reset of
+    `invocation_surface="unknown"`. Measured alone, `bind_contextvars` plus
+    `reset_contextvars` for one key costs about 740 ns, against about 130 ns for a raw
+    `ContextVar` set and reset (structlog 26.1.0).
+  - **The gate.** The CONTRIBUTING gate comparator passes over the full `perf_gate` subset.
+    Two rows exceed 15%: `test_dispatch_hookless_benchmark` (+16.8%) and
+    `test_invoke_hookless_benchmark` (+17.0%). Both run unbound and sit below the 1 ms floor,
+    so the gate reports them for trend only. `test_invoke_direct_baseline_benchmark` runs no
+    code this change touches and moved +5.8%, so the noise is about 6%.
+- **Because:** decision 10 moves validation only if it regresses the gate, and it does not.
+  The unbound binding cannot simply be dropped: §5.5 ("Emitted even when no metadata is
+  bound") and decision 8 require the field on every operation, so its absence cannot stand
+  for `unknown`. No cheaper public path exists. `merge_contextvars` finds a field by its
+  `ContextVar`'s name, and a variable of the framework's own under that name would race
+  structlog's private registry for the same key.
+- **Class:** `discovery`.
+- **Consequence:** validation stays in `InvocationMetadata`'s validator: a set lookup first,
+  then the pattern. The unbound binding stays at a top-level operation's entry, and its cost
+  is accepted. It falls only on operations run outside any boundary: harnesses, DST, and an
+  app's own direct `run_operation` calls. Every framework boundary binds metadata, and that
+  path is unchanged. Two new gated benchmarks guard both costs:
+  `test_dispatch_hookless_bound_metadata_benchmark` and `test_mint_invocation_metadata_benchmark`.
+- **Proposed row (RFC 0079):** `ASSUMED`: the `unknown` surface is bound per top-level
+  operation with no metadata, through structlog's public API, at about 1 µs a dispatch.
+  Validation stays at construction (decision 10 held). A cheaper alternative would be a
+  processor in `configure_logging` that fills `invocation_surface="unknown"` on lines logged
+  inside an operation with no metadata. It costs nothing at dispatch, but it reaches only apps
+  that use `configure_logging`. It is left for the author, since it changes the logging
+  configuration.
+
+## D-206 — What the token check refuses, and what its error says
+
+- **Touches:** §5.1 ("Anything else raises `configuration` with code
+  `invocation_surface_invalid`"). The RFC is silent on the message and on non-string values.
+- **Found:** `surface` is typed `str`, but nothing stops a caller passing `None` or a number.
+  A token computed from a request, which the docs forbid, could carry personal data.
+- **Class:** `spec-gap`.
+- **Consequence:** any value that is not a `str` is refused with the same code. The message
+  states the pattern and says the value must be a literal. It does not echo the value. A value
+  is stored as passed, so a framework boundary's metadata holds the `InvocationSurface`
+  member, a `str` subclass. Logs, spans and equality checks see the plain value.
+- **Proposed row (RFC 0079):** none.
+
+## D-207 — The decision 5 sweep checks each site's own member, and its own coverage
+
+- **Touches:** decision 5 and §6 test 2 (the sweep, with one exemption).
+- **RFC said:** the sweep fails when a framework call site of `mint_invocation_metadata` or
+  `InvocationMetadata(` passes no `surface`. It exempts the Inngest envelope decode.
+- **Found:** "passes a `surface`" would accept a boundary that passes another boundary's value
+  or one computed at run time. The body of `mint_invocation_metadata` itself constructs
+  `InvocationMetadata` and forwards its parameter. And a sweep over a set of sites passes
+  vacuously when a boundary stops minting.
+- **Class:** `spec-gap`.
+- **Consequence:** the guard maps each boundary file to its `InvocationSurface` member. Every
+  minting call in that file must pass exactly that member as a literal attribute. Two files
+  are exempt per call, not wholesale, and each names the one form its calls may take:
+  - The Inngest envelope decode (`forze_inngest/adapters/context.py`) builds metadata from
+    caller data, so its calls must pass no `surface` at all.
+  - The minting function's own body may pass only `surface=surface`.
+
+  A `**` splat in a minting call counts as passing a surface. A second test fails when a
+  mapped boundary or an exempt site no longer mints at all. Sabotage runs confirmed the guard:
+  `InvocationSurface.CLI` at the MCP site fails it, and so does `surface=raw["surface"]`
+  added to the envelope decode.
+- **Proposed row (RFC 0079):** none.
+
+## D-208 — How tests 4 and 8 reach their hops
+
+- **Touches:** §6 tests 4 (hops) and 8 (the new bindings).
+- **RFC said:** "An HTTP operation publishes an event that `process_with_inbox` consumes", and
+  "A Temporal activity started from HTTP". Durable runs and header-less inbox messages "carry
+  `execution_id` and `correlation_id` in their log lines and in the events they publish".
+- **Found:** the end-to-end hops already exist as integration tests: the RabbitMQ and SQS
+  envelope-tracing suites (outbox, relay, broker, `process_with_inbox`) and the Temporal
+  time-skipping suite. In each, the publisher binds metadata directly, not through the FastAPI
+  middleware.
+- **Class:** `discovery`.
+- **Consequence:**
+  - **Test 4.** Those suites now bind the publisher's metadata with surface `http`. They
+    assert that the consumer records `inbox` and the activity records `temporal`, each under
+    the publisher's correlation id. The Inngest end-to-end suite asserts `inngest` the same
+    way. The HTTP middleware's own value has its unit test, and test 5 (nesting) runs through
+    the real middleware.
+  - **Test 8.** Inside the handler or body, the test reads the structlog context and builds an
+    event through `InvocationOutboxEnricher`. Outbox staging calls that same object, so the
+    test needs no outbox route.
+- **Proposed row (RFC 0079):** none.
+
+## D-209 — A claim a crashed delivery left pending blocks its redelivery until the TTL
+
+- **Touches:** §10 Q4 ("The inbox is the same with one owner per delivery") and §7 (the inbox
+  page). The RFC does not say what a delivery's crash leaves behind.
+- **Found:** a crash rolls back the delivery's transaction, and with it the inbox's dedup mark,
+  so the message is redelivered. A claim the handler took in a store outside that transaction
+  survives, owned by the dead delivery, and the redelivery has an execution id of its own
+  (D-204). Every store refuses a live pending claim, and frees it only once its TTL lapses:
+  - the mock (`forze_mock/adapters/idempotency.py:152`, `:164`);
+  - Redis (`SET NX` with `ex=ttl`, `forze_redis/adapters/idempotency.py:149`, `:199`);
+  - MongoDB (`expires_at = now + ttl`, `forze_mongo/adapters/idempotency.py:140`, `:181`);
+  - Postgres (it reclaims only `WHERE expires_at <= now()`,
+    `forze_postgres/adapters/idempotency.py:381`).
+
+  On Postgres a statement joins the transaction already bound to its client
+  (`_statement_conn`, `forze_postgres/kernel/client/client.py:762`), so a claim on the
+  inbox's own client rolls back with the crash and blocks nothing.
+- **Because:** this is the same at-least-once gap `inngest.md` documents for Inngest, and the
+  inbox page did not say it.
+- **Class:** `discovery`.
+- **Consequence:** `data-events/events-sagas.md` says a claim in a store outside the
+  delivery's transaction outlives a crashed delivery. Its redelivery's claim on the same key
+  gets `conflict` until the pending claim's `IdempotencySpec.ttl` expires. A unit test pins it
+  on the mock: a failed delivery's claim makes the redelivery fail with `conflict`, and once
+  the claim expires the next delivery runs.
+- **Proposed row (RFC 0079):** none.
+
+---
+
+# Unit 15 · RFC 0078 follow-up — a namespace created after a tenant's first read
+
+Branch `fix/duckdb-routed-missing-namespace`. A follow-up to Unit 12, prompted by the first
+live consumer of the DuckLake path: an API process serves dynamic reads through
+`RoutedDuckDbClient` over `DuckLakeTenantCatalog`, while a worker in another process builds
+each tenant's `silver` and `gold` with SQLMesh, and nothing calls `evict_tenant`. D-026 says a
+namespace an instance found missing stays missing, and was proven on Iceberg only. Had DuckLake
+done the same, a read served before a tenant's first build would fail until the process
+restarted, and it would fail as `dynamic_read_statement_invalid`, which reads as a bad plan.
+Every probe below ran on `duckdb==2.0.0` and `duckdb==1.5.6`, against Postgres 18.
+
+**Drift count: 0.** Six entries, D-170 to D-175: two `discovery`, four `spec-gap`. Product code changes in three places. The shared taxonomy gains
+`NAMESPACE_MISSING_CODE` and `namespace_missing`. `DuckDbClient.run_dynamic` raises that code
+when its `USE` fails with a `CatalogException`, and the DuckDB adapter adds the route, or maps
+a catalog refusal in it to `dynamic_read_permission_denied`. `RoutedDuckDbClient`'s docstring
+narrows D-026 to Iceberg.
+
+**The consumer gates its reads anyway.** A read-only look at it: every lake read first loads
+the tenant's active spec, which refuses (`no_active_spec`) until an apply has succeeded, and
+the worker records success only after the SQLMesh process exits cleanly. So a read before the
+first build does not reach the lake there. The fix below does not depend on that.
+
+**Where each item lives.** The `USE` refusal is in `DuckDbClient.run_dynamic`, its mapping in
+`_core_error` of `forze_duckdb/adapters/dynamic_read.py`. Integration tests:
+
+- `test_ducklake_routed_reads.py`, class `TestTenantReads`:
+  `test_a_namespace_or_table_created_after_a_miss_is_seen_at_the_next_statement` (D-170) and
+  `test_a_route_whose_namespace_is_not_built_says_so` (D-171).
+- `test_lake_routed_reads.py`, class `TestPool`: `test_a_restored_grant_needs_an_evict_to_be_seen`
+  (D-026), which now expects the new code for the miss that sticks, and
+  `test_a_table_created_after_a_miss_in_a_found_namespace_is_read_next`, D-026's table half on
+  the routed path.
+- `test_lake_routed_reads.py`, class `TestTaxonomy`:
+  `test_a_revoked_grant_is_refused_at_the_next_statement` (both codes after a revocation) and
+  `test_a_namespace_the_warehouse_never_had_is_unavailable_after_one_lookup` (Iceberg's lazy
+  `USE`).
+- `test_pg_dynamic_read_integration.py`:
+  `test_a_missing_query_schema_surfaces_as_an_undefined_relation` (D-174).
+
+Unit tests are in `test_duckdb_run_dynamic.py`, `test_duckdb_dynamic_read_wiring.py` and
+`test_dynamic_read_taxonomy.py`.
+
+## D-170 — A DuckLake instance keeps no miss: D-026 is Iceberg's
+
+- **Touches:** RFC 0078 §2.4 (forced eviction), and D-026 with its proposed row, which the
+  routed client's docstring and the docs applied to every catalog.
+- **RFC said:** nothing about DuckLake. §2.4 lists the reasons to evict. D-026 found that an
+  Iceberg instance caches a missing namespace for its life, and proposed that every namespace
+  creation be followed by `evict_tenant`.
+- **Found:** on both builds, an instance that failed `USE lake.later`,
+  `SELECT … FROM lake.later.t` and `SELECT … FROM lake.gold.later_table` reads all three at its
+  next statement once another DuckDB instance creates the schema and the tables. Nothing is
+  evicted or rebuilt: the pool holds the same instance. A held instance also reads a new table
+  in a schema it read before, which Unit 12's battery already pinned.
+- **Because:** DuckLake reads its catalog from the metadata database at each transaction's
+  snapshot. It keeps no schema set per attach, as duckdb-iceberg does.
+- **Class:** `discovery`.
+- **Consequence:** D-026's rule is narrowed to Iceberg in the docstring and the docs. The
+  routed client gains no automatic eviction. DuckLake does not need one. On Iceberg it would
+  rebuild an instance (a token request, an `ATTACH`, an attestation) on every request to a
+  namespace that stays missing, so it needs a bound and a design of its own, and no Iceberg
+  consumer asks for it yet. A test pins DuckLake's answer, so an extension bump that starts
+  caching fails there first.
+- **Proposed row (RFC 0078):** `ASSUMED` — the evict-after-namespace-creation rule (D-026) holds
+  for Iceberg catalogs only. A DuckLake instance reads a schema or table at the next statement
+  after it is created.
+
+## D-171 — An unavailable namespace is `dynamic_read_namespace_missing`, a `precondition`
+
+- **Touches:** RFC 0078 §4.5 ("existing codes"), decision 13 ("same … taxonomy as Postgres"),
+  and D-034's consequence ("every statement on the route is `dynamic_read_statement_invalid`").
+- **RFC said:** a `CatalogException` is `dynamic_read_statement_invalid`. §4.5 predates the
+  route's `USE lake.<namespace>` (D-034), which can fail before the statement is classified.
+- **Found:** an unavailable namespace failed every statement on the route with the code a typo
+  in one of them gets. When the `USE` fails, it raises a `CatalogException` reading
+  `SET schema: No catalog + schema named "lake.<namespace>" found`, on both builds and both
+  catalogs. When it fails differs:
+  - on a DuckLake, at once, for a schema the lake does not hold;
+  - on Iceberg, the `USE` accepts an unknown namespace, and a statement that reads no table runs.
+    The first lookup inside it fails as a missing table, and the miss is then cached (D-026), so
+    every later `USE` fails. A grant revoked after the instance resolved the namespace goes the
+    same way: the first statement fails on its table (`schema "gold" does not exist`), every one
+    after it on the `USE`. A grant revoked before the instance first looked inside the namespace
+    lets the `USE` pass too.
+
+  No probe made the `USE` raise a refusal (a 401, a 403, a Lakekeeper `NotFound_404`). A
+  principal Lakekeeper hides the warehouse from fails at `ATTACH`, as
+  `duckdb_session_setup_failed` (battery 16), so it never reaches the `USE`.
+- **Because:** the namespace is the route's configuration and the tenant's state, not the
+  caller's input.
+- **Class:** `spec-gap`.
+- **Consequence:** `run_dynamic` raises `dynamic_read_namespace_missing` when its `USE` raises
+  `CatalogException`, with the engine's message in its details. It tells by the step that
+  failed, not by the message. The adapter adds the route and the namespace. It first checks the
+  message against the refusal markers the other paths use (`_CATALOG_REFUSALS`,
+  `_HTTP_REFUSAL`), and maps a match to `dynamic_read_permission_denied`, so a catalog refusal
+  at the `USE` would never read as a missing namespace. A unit test drives that branch, since no
+  engine produced it.
+
+  The code does not say whether the namespace is absent, not built yet, or withheld from the
+  tenant: its message names all three. On Iceberg a withheld namespace and an absent one look
+  the same to the engine anyway. Telling them apart would answer "does this exist?" to a
+  tenant without the grant, the question RFC 0059's non-disclosing denials leave unanswered.
+
+  The kind is `precondition`. `egress.py` maps it to HTTP 400, with details shown and not
+  retryable (`_EXC_KIND_POLICY`, `_EXC_KIND_HTTP_STATUS`); the mock server's control plane maps
+  it to 400 too. The alternatives:
+  - `validation` would blame the statement, which is what the code exists to avoid;
+  - `not_found` (404) reads as a missing route, and a non-disclosing posture merges it with
+    authorization;
+  - `configuration` (500) would page an operator for each tenant read before its first build,
+    which is a normal state;
+  - `unavailable` is retryable, and a tenant that is never built stays so.
+
+  A misspelled namespace gives the same code for every tenant, which tells it apart. On Iceberg
+  a revoked grant now gives this code from the second statement on. The code joins the shared
+  taxonomy beside `dynamic_read_role_unavailable`, which only Postgres raises; only DuckDB
+  raises this one (D-174). A caller that matched `dynamic_read_statement_invalid` for this case
+  sees the new code, and the changelog marks it a behaviour change.
+- **Proposed row (RFC 0078):** `ASSUMED` — a route's namespace the tenant's warehouse does not
+  make available, absent or withheld alike, is `dynamic_read_namespace_missing`
+  (`precondition`) once the `USE` fails; a catalog refusal there is
+  `dynamic_read_permission_denied`. This overrides §4.5's "existing codes" for that row, and
+  §4.5 stays as written.
+
+## D-172 — A missing table stays `dynamic_read_statement_invalid`
+
+- **Touches:** §4.5 (`CatalogException` (relation does not exist)), and the shared taxonomy's
+  rule that an undefined relation is the caller's malformed request.
+- **RFC said:** a missing relation is `dynamic_read_statement_invalid`.
+- **Found:** with a trusted compiler, a table the statement names can be missing because the
+  tenant's build has not made it yet, which is the tenant's state, as in D-171. Nothing in the
+  engine's answer tells that apart from a compiler that names the wrong table.
+- **Because:** the statement names the table. The plane's differential compares codes across
+  engines, and Postgres reports an undefined relation (`42P01`) as
+  `dynamic_read_statement_invalid`.
+- **Class:** `spec-gap`.
+- **Consequence:** unchanged. A split for DuckDB alone would fail one plan with two codes on two
+  engines. On a DuckLake, a table created later is read at the next statement (D-170), so the
+  state heals without eviction. An application that wants to say "not built yet" checks its own
+  build record before the read, as the consumer does.
+- **Proposed row (RFC 0078):** `ASSUMED` — a relation the statement names that does not resolve
+  stays `dynamic_read_statement_invalid` on every engine. "Not built yet" is the application's to
+  check before it reads.
+
+## D-173 — A dynamic read's error detail carried the engine's name guesses
+
+- **Touches:** RFC 0078 §3.5 (no cross-tenant read) and §4.5, whose
+  `dynamic_read_statement_invalid` carries the engine's message in details the caller sees.
+- **RFC said:** nothing about the message. The adapter put all of it in the detail.
+- **Found:** a parser, binder or catalog error can end with the engine's guess at the name the
+  statement meant. The guess draws on every attached catalog, not only the tenant's lake, so it
+  could name relations outside it. Names only, never rows.
+- **Because:** the engine builds its suggestions before, and apart from, any grant check.
+- **Class:** `discovery`.
+- **Consequence:** shipped separately as a security fix (#818): the adapter drops the guess,
+  which the engine prints on a line of its own, and keeps the rest of the message and its
+  pointer into the caller's statement. Analytics SQL is the application's, and its errors reach
+  the application unchanged.
+- **Proposed row (RFC 0078):** `ASSUMED` — a dynamic read's error detail carries the engine's
+  message without its name guesses, which can reach outside the tenant's lake.
+
+## D-174 — A missing namespace gets a different code on Postgres
+
+- **Touches:** decision 13 ("same port, spec, caps and taxonomy as Postgres"), §5.3 (swap by
+  wiring), and D-171.
+- **RFC said:** the taxonomy is the same on both engines, so a swap is wiring plus dialect.
+- **Found:** a Postgres route's `query_schema` is issued as `SET LOCAL search_path`, which
+  accepts a schema that does not exist. The statement then fails on its relation (`42P01`), as
+  `dynamic_read_statement_invalid`. A DuckDB route over the same unbuilt tenant gets
+  `dynamic_read_namespace_missing`, at once on a DuckLake and from the second statement on
+  Iceberg.
+- **Because:** Postgres resolves the schema lazily, at the relation; DuckDB's `USE` checks it.
+- **Class:** `spec-gap`.
+- **Consequence:** Postgres is unchanged: checking the schema there would add a catalog query
+  to every read. The difference is documented beside the dynamic-read page's error table and
+  pinned by a Postgres test. A caller that swaps engines and branches on "not built" handles
+  both codes.
+- **Proposed row (RFC 0078):** `ASSUMED` — a missing namespace is
+  `dynamic_read_namespace_missing` on DuckDB and `dynamic_read_statement_invalid` on Postgres.
+  Decision 13's "same taxonomy" holds for every other refusal.
+
+## D-175 — The mock and the conformance battery never raise `dynamic_read_namespace_missing`
+
+- **Touches:** §4.6 (mock parity: a mock handler scripts engine refusals by raising the same
+  factories).
+- **RFC said:** engine-specific refusals are real-leg facts, and the mock reaches them only when
+  a handler raises the factory.
+- **Found:** `forze_mock`'s dynamic-read adapter has no namespace, and the shared conformance
+  battery (`tests/support/dynamic_read_conformance.py`) has no missing-namespace case. Neither
+  raises the new code. The same holds for `dynamic_read_role_unavailable`, which only Postgres
+  raises.
+- **Because:** parity is by design here: the mock is the shell's oracle, not an engine's.
+- **Class:** `spec-gap`.
+- **Consequence:** an application that tests a "not built yet" path against the mock scripts it
+  with `namespace_missing(route, namespace=…)`, exported from
+  `forze.application.integrations.dynamic_read`. The DuckDB legs pin the real code.
+- **Proposed row (RFC 0078):** `ASSUMED` — the mock does not model namespaces; a handler
+  scripts `dynamic_read_namespace_missing` by raising its factory, as for every engine-specific
+  refusal.
+
+## Review findings — 2026-11-03
+
+A review of the branch before publishing. Each finding was fixed in place above.
+
+| # | Severity | Finding | Status |
+|---|---|---|---|
+| R-1 | High | The `USE` step reported every `CatalogException` as a missing namespace, so a catalog refusal raised there would be misreported | Fixed: the adapter checks the engine's message against the refusal markers first and maps a match to `dynamic_read_permission_denied`. Probes on both builds found no refusal at the `USE` (D-171) |
+| R-2 | Medium | Only the first statement after a revoked Iceberg grant was pinned | Fixed: the later statement's `dynamic_read_namespace_missing` is pinned beside it |
+| R-3 | Medium | The message said the namespace "may not have been built yet", wrong when a grant is the cause | Fixed: "not available to the tenant: missing, not built, or not readable", and D-171 says why the code does not distinguish them. The HTTP mapping it cited (400, not retryable) was checked against `egress.py` and holds |
+| R-4 | Low | The docs said a table created later in a found namespace is read next, in the Iceberg list, proven only on DuckLake | Fixed: the routed Iceberg battery now pins it too; D-026's engine probe already did |
+| R-5 | Low | Postgres reports a missing schema as `dynamic_read_statement_invalid`, so the code differs per engine | Recorded as D-174, documented and pinned |
+| R-6 | Low | The client fell back to the catalog's name as the namespace | Fixed: no `namespace` detail when the `USE` names a catalog alone |
+| R-7 | Low | The mock and the conformance suite do not raise the new code | Recorded as D-175 |
+
+---
+
+# Unit 17 · RFC 0028 W4 — route resource policy, split out ahead of W1
+
+Branch `feat/route-timeout-defaults`. RFC 0028 §6 and §6.1, for the engines that have
+registered routes today: Postgres analytics and procedures, and ClickHouse, BigQuery and
+DuckDB analytics. From §7 and §8: battery item 5 (the timeout fires on a real server, maps
+to the shared taxonomy, the connection is reused) on Postgres analytics and procedures,
+ClickHouse and DuckDB; item 7's non-positive-timeout refusal on every config; and P1's own
+case, a read with no option bounded by its route and a per-call timeout above it clamped
+down. Not built: W1–W3, `ProcedureCapabilities`, and battery items 1–4, 6, 8 and 9, which
+belong to the adapters W1–W3 add. RFC 0015's vocabulary is reused as §6 says: a mandatory
+positive timeout, on by default, with no `unlimited` spelling.
+
+**Drift count: 1.** Ten entries, D-190 to D-199: one `drift` (D-190), seven `spec-gap`, two
+`discovery`. Decisions 6 and 6a are built as written. Decision 8 (re-verify §2 at pickup)
+is honoured for the timeout row only, by D-191, D-198 and D-199. Two reviews followed the
+first commit. The first amended D-191 and D-193 and rewrote D-195 to D-197; the second
+replaced three of those fixes with simpler ones and reverted the autocommit bound (D-196);
+a third narrowed when a pipelined read closes its connection (D-195). Their findings close
+the unit, including the designs that were superseded.
+
+**Where each item lives.** The shared rule is `route_timeout` and `validate_route_timeout`
+in [`adapter_common.py`](../src/forze/application/integrations/analytics/adapter_common.py),
+with `DEFAULT_ROUTE_TIMEOUT`. Each engine's `*QueryConfig` carries `timeout`, and its
+adapter's `_run_timeout` (`_timeout` on Postgres) applies the rule. The Postgres bound is
+built by `local_settings_statement` and `scoped_local_settings` in
+[`session_settings.py`](../src/forze_postgres/kernel/client/session_settings.py). Analytics
+reads send it through `PostgresClient.fetch_all_scoped`; procedures through
+`scoped_local_settings` in
+[`procedure/adapter.py`](../src/forze_postgres/adapters/procedure/adapter.py). The
+ClickHouse check is `ClickHouseAnalyticsConfig.validate_against_client` against the port's
+`query_timeout_limit`; the BigQuery deadline is in `BigQueryClient.run_query`. Tests:
+`tests/unit/test_forze/application/integrations/analytics/test_adapter_common.py`, the
+per-engine adapter unit tests (the shared battery is
+`assert_every_read_is_bounded_by_the_route_timeout` in `tests/support/analytics_options.py`;
+DuckDB's runs on the real in-process engine), `test_session_settings.py`,
+`test_ch_deps.py` and `test_bigquery_client_unit.py`,
+`tests/integration/test_forze_postgres/test_pg_route_timeouts.py` and
+`tests/integration/test_forze_clickhouse/test_clickhouse_analytics_integration.py`.
+
+## D-190 — W4 runs ahead of W1, as its own phase
+
+- **Touches:** RFC 0028 §8 P1 and §6. Decision 6a covers what W4 does, not when.
+- **RFC said:** P1 is "W1 ClickHouse + capabilities + W4 policy including §6.1 read-route
+  defaults", ClickHouse first because "Gold-on-ClickHouse is the likeliest first consumer".
+- **Found:** no consumer project uses ClickHouse or BigQuery. The one analytics consumer,
+  erp-backend, registers seven Postgres analytics reads with no bound, and its deployment
+  sets no server `statement_timeout`. That is §6.1's hazard in a running service, on an
+  engine P1 does not name.
+- **Because:** the consumer P1 was ordered for did not appear, and the gap §6.1 describes is
+  open on Postgres today. W4 needs nothing from W1 except the capability matrix, and no
+  engine in scope here fails to enforce a timeout (D-196).
+- **Class:** `drift`. §8 covered the order, and it was built otherwise.
+- **Consequence:** W4 ships for every engine with a registered read or procedure route.
+  `ProcedureCapabilities` is not built: it is W1's, and nothing in this unit would report
+  `enforces_statement_timeout=False`. §6's bullet giving BigQuery procedure routes
+  `maximum_bytes_billed` waits for W2, since no BigQuery procedure config exists. RFC 0028's
+  Status line records W1–W3 as parked with the trigger "a ClickHouse or BigQuery consumer";
+  RFC 0029 and RFC 0030 are marked parked on their own Status lines.
+- **Proposed row (RFC 0028):** `ASSUMED` — W4, including §6.1, ships ahead of W1 as its own
+  phase, for every engine with a registered read or procedure route. W1–W3 wait for a
+  ClickHouse or BigQuery consumer.
+
+## D-191 — The warehouse clients bounded reads already, and cut routes longer than their own timeout
+
+- **Touches:** RFC 0028 §6.1 and decision 6a.
+- **RFC said:** `AnalyticsRunOptions["timeout"]` "is per-call and defaults to `None`", "so
+  the shipped default for a registered analytics read is *unbounded*".
+- **Found:** true of Postgres and DuckDB, not of the two warehouses. The ClickHouse client
+  sends `ClickHouseConfig.timeout` (60 s by default) as `max_execution_time` on every query
+  that names no timeout (`__timeout_sec` in
+  [`client.py`](../src/forze_clickhouse/kernel/client/client.py)). The BigQuery client bounds
+  its HTTP calls and its job polling by `BigQueryConfig.timeout`, also 60 s. On every engine,
+  though, a per-call timeout replaced the default instead of being capped by it, so a caller
+  could raise it without limit. Postgres sent nothing when the option was absent, and the
+  DuckDB client set no deadline for `timeout=None`. Found in review: the clients also cut a
+  longer timeout short. ClickHouse's HTTP read timeout is fixed per client at
+  `ClickHouseConfig.timeout` (clickhouse_connect has no per-request one), so a 10-minute
+  route on a 60 s client failed at the socket, "Timeout on reading data from socket", before
+  the server's `max_execution_time` fired. BigQuery's polling stopped after
+  `max_poll_attempts` (240 polls of 250 ms) whatever the timeout, and counted polls, not
+  time, though each poll is an RPC.
+- **Because:** the RFC read the adapters and the configs, not the clients beneath them.
+- **Class:** `spec-gap`. Reading the client shows it.
+- **Consequence:** on ClickHouse and BigQuery a query's timeout now comes from its config,
+  so a client `timeout` other than 60 s no longer governs queries; ingest still uses the
+  client's. A ClickHouse query may not allow longer than its client's
+  `ClickHouseConfig.timeout`: the deps module refuses such a route at wiring
+  (`clickhouse_read_timeout_too_short`, naming the route, both values and the fix). A plain
+  client is configured only at startup, so for it the check also runs when the route first
+  resolves; a routed client is checked against the config its tenant clients are built
+  from. The transport waits the client's timeout plus 5 s, so the server's
+  `TIMEOUT_EXCEEDED` arrives before the socket gives up; a real-server test runs a 3 s route
+  on a 3 s client and gets the server's error. BigQuery waits against one wall-time
+  deadline across the query call, the polling and the results, and `max_poll_attempts` is
+  removed.
+- **Proposed row (RFC 0028):** `ASSUMED` — on ClickHouse and BigQuery a query's own timeout
+  replaces the client's for that query. A ClickHouse route may not exceed its client's
+  timeout, refused at wiring; a BigQuery wait is a wall-time deadline. Ingest keeps the
+  client's timeout.
+
+## D-192 — The timeout lives on each query config, under the name `timeout`
+
+- **Touches:** RFC 0028 §6.1 and decision 6a.
+- **RFC said:** "a route-level default timeout on each engine's query config".
+- **Found:** an analytics route is an `AnalyticsSpec` with several named queries, and the
+  "query config" is the per-query type (`PostgresQueryConfig`, `ClickHouseQueryConfig`, …).
+  "Route-level" and "query config" name different objects. §6.1 says the fix "mirrors what
+  BigQuery's read config already does for cost", and `maximum_bytes_billed` sits on
+  `BigQueryQueryConfig`, per query.
+- **Because:** a dashboard route often has one heavy query among light ones. A per-query
+  bound lets the heavy one say ten minutes without loosening its siblings, and that is the
+  registered statement a reviewer reads.
+- **Class:** `spec-gap`. The RFC wrote at an altitude where the two readings coincide.
+- **Consequence:** each `*QueryConfig` gains `timeout: timedelta`, named after the option
+  key it caps. There is no route-wide default above it: a second knob would add a precedence
+  rule and no bound. `PostgresProcedureConfig` keeps its existing name, `statement_timeout`.
+- **Proposed row (RFC 0028):** `ASSUMED` — a registered analytics query's timeout is a
+  `timeout` field on that query's config; a per-call option is clamped to it.
+
+## D-193 — The default is 60 seconds for every registered read and in-transaction procedure
+
+- **Touches:** RFC 0028 §6.1 ("the value is chosen generously") and §3's sketch
+  (`max_execution_time: timedelta = timedelta(seconds=60)` for ClickHouse procedures).
+- **Found:** 60 s is what the ClickHouse and BigQuery clients already applied (D-191), so no
+  warehouse deployment on default settings is newly bounded. It is twelve times the 5 s the
+  dynamic-read plane ships for runtime-authored statements, and the value §3 sketched for
+  procedures. erp-backend's seven reads are bulk replay inputs run by workers; their
+  durations could not be measured from here. No consumer registers a procedure route.
+- **Because:** one number across planes is easier to review than four. A longer default
+  would bound little that 60 s does not: a statement that needs more should say so in its
+  config.
+- **Class:** `spec-gap`. The RFC left the value open.
+- **Consequence:** Postgres and DuckDB reads, and Postgres procedures that run in a
+  transaction, that ran longer than 60 s now fail as `infrastructure` until their config
+  sets a longer timeout. An autocommit procedure keeps no route bound (D-196). The changelog
+  marks it a behaviour change, and the procedure entry `(**Breaking**)`, since `None` is now
+  refused on a route in a transaction (D-197). On DuckDB the client starts the deadline before a read waits for a free
+  executor slot, so on a saturated client a read now fails with `duckdb_query_timeout`
+  "waiting for a slot" instead of queueing without end. That is kept: a production bound
+  should cover queueing. The DuckDB page and the changelog say so.
+- **Proposed row (RFC 0028):** `ASSUMED` — a registered read query, or a procedure route that
+  runs in a transaction, that sets no timeout is bounded at 60 s.
+
+## D-194 — On Postgres a route's timeout only lowers the bound in force
+
+- **Touches:** RFC 0028 §6.1 ("the per-call option clamps *down*, never up"). The RFC says
+  nothing about bounds set outside the route.
+- **Found:** two `statement_timeout` bounds can already be in force when an analytics query
+  or a procedure runs. `PostgresConfig.statement_timeout` is set on every pool connection.
+  The invocation-deadline backstop (`push_invocation_deadline`, on by default) is set on the
+  root transaction, tighten-only against the pool's (`_statement_timeout_ms` in
+  [`txmanager.py`](../src/forze_postgres/adapters/txmanager.py)). A plain
+  `SET LOCAL statement_timeout = <route>`, which is what the per-call path issued, raises
+  whichever of them is lower. With a default on every read it would do so on every read.
+- **Because:** the RFC's rule (a caller cannot lift a ceiling) applies equally to the
+  operator's ceiling and the deadline's, and the route is the caller there.
+- **Class:** `spec-gap`. The client's own doctrine was readable before any code.
+- **Consequence:** the bound is one statement,
+  `set_config('statement_timeout', LEAST(<route>, current or none), true)`, where a current
+  `0` counts as no bound. Two integration cases pin it: a caller's `SET LOCAL
+  statement_timeout = 300` and a pool cap of 300 ms each stop a read whose route allows 60 s.
+  A per-call timeout no longer raises a tighter caller bound either; before this unit it
+  did.
+- **Proposed row (RFC 0028):** `ASSUMED` — on Postgres a route's timeout only lowers the
+  `statement_timeout` already in force, whether the pool or an invocation deadline set it.
+
+## D-195 — What the bound costs a Postgres read, measured, and how it was cut
+
+- **Touches:** RFC 0028 §6.1 ("the fix is small and additive").
+- **Found:** `SET LOCAL` needs a transaction. A read used to run bare unless it had a
+  per-call timeout or a `query_schema`. With the bound on every read, the first commit of
+  this unit sent four exchanges at the root (`BEGIN`, the bound, the query, `COMMIT`) where
+  one had been. Inside a caller transaction it sent six (`SAVEPOINT`, capture, the bound, the
+  query, restore, `RELEASE`), seven with a `query_schema`; an in-transaction procedure paid
+  the same capture and restore. Measured against the test container (median of 600 reads):
+  a root read went from 185 µs to 414 µs, one in a caller transaction from 360 µs to 842 µs.
+- **Because:** Postgres has no per-statement timeout. A session-level `SET` on a pinned
+  connection is the only other form, and it outlives a cancelled statement on a pooled
+  connection.
+- **Class:** `spec-gap`.
+- **Consequence:** two cuts, the server-side bound kept. At the root,
+  `PostgresClient.fetch_all_scoped` sends the bound and the query in one psycopg pipeline on
+  an autocommit connection: statements before the pipeline's one Sync share an implicit
+  transaction, so the transaction-local bound applies to the query and ends with it. That is
+  one round trip. In a transaction, one statement captures the caller's values and sets the
+  new ones (a materialized CTE read before the projection that sets), so a read or a
+  procedure there costs five exchanges whatever it sets. Measured locally the pipeline barely
+  pays (about 440 µs against about 510 µs for the four exchanges): pipeline mode's fixed cost
+  is close to the round trips it saves on a local socket. Through a proxy adding 1 ms per
+  round trip it does: a root read took 5.1 ms bare, 6.6 ms bounded in the pipeline and
+  12.9 ms bounded in four exchanges; a read in a caller transaction 13.2 ms bare and 23.3 ms
+  bounded. The machine was shared, so read these as ratios. Without libpq pipeline support
+  the client falls back to the four exchanges. psycopg drains a connection only while it is
+  `ACTIVE`, so a cancel inside the pipeline can leave pipeline state behind: the client
+  closes that connection rather than return it to the pool. A server error, a
+  `statement_timeout` among them, is synced and rolled back by the pipeline's exit; the
+  connection goes back to the pool when it came out of pipeline mode idle, and is
+  closed otherwise, so an ordinary failed read costs no reconnect. Integration tests force
+  the fallback, check that a SQL error and a fired `statement_timeout` leave the same
+  connection in the pool, and that a cancel replaces it.
+- **Proposed row (RFC 0028):** `ASSUMED` — a bounded Postgres read at the root costs one
+  round trip (a pipeline), and in a transaction five exchanges. Pipelining the savepoint
+  case too waits until a consumer measures what those exchanges cost it.
+
+## D-196 — An autocommit procedure keeps no route timeout
+
+- **Touches:** RFC 0028 §6, first bullet: "a mandatory positive timeout … on every engine
+  that can enforce one; engines that cannot … say so in the capability".
+- **Found:** `PostgresProcedureConfig(in_transaction=False)` exists for statements that
+  cannot run in a transaction (`REFRESH MATERIALIZED VIEW CONCURRENTLY`) or that control
+  their own transactions, and the config refuses a `statement_timeout` there
+  (`procedures_autocommit_timeout`): `SET LOCAL` needs a transaction. A bound from the client
+  side was built twice and withdrawn twice (see the review findings): an `asyncio.timeout`
+  whose psycopg cancel drains without a bound, then a second, pinned connection with a
+  bounded drain that closes the connection on a failed cancel.
+- **Because:** a client-side bound on this path needs a second connection, and that changes
+  what the statement is. It no longer sees or joins the caller's transaction, it can block
+  on the caller's own locks, and it doubles pool use, all to stop a statement whose author
+  chose to manage its transaction. A server-side bound for such a route belongs to the
+  role's or the database's `statement_timeout`, which needs no connection of its own.
+- **Class:** `spec-gap`. The RFC asked for a timeout "on every engine that can enforce one"
+  without separating the paths of one engine.
+- **Consequence:** the autocommit path is main's again. The 60 s default applies to routes
+  that run in a transaction; an autocommit route defaults to no `statement_timeout` and
+  refuses one. The procedures page says to bound it with `ALTER ROLE … SET
+  statement_timeout` or the database's setting.
+- **Proposed row (RFC 0028):** `ASSUMED` — an autocommit procedure route carries no route
+  timeout; the role's or the database's `statement_timeout` bounds it, and a client-side
+  bound waits for a later phase that can bound it without a second connection.
+
+## D-197 — Refusals, codes, and what each engine can hold
+
+- **Touches:** RFC 0028 §7 item 7 ("non-positive timeout fails") and RFC 0015 §3.2.
+- **Found:** a configured timeout was not checked anywhere, and a procedure's could be
+  `None`. The ClickHouse and BigQuery clients send whole seconds, `max(1, int(seconds))`:
+  a fraction is cut down, which tightens, but anything under 1 s becomes 1 s, which loosens.
+  The Postgres adapter rounded a per-call timeout the same way before this unit. Found in
+  review: Postgres holds `statement_timeout` as an `int` of milliseconds, so a timeout above
+  `INT_MAX` ms (about 24.8 days) passed validation and then failed every read at
+  `set_config`.
+- **Class:** `spec-gap`.
+- **Consequence:** a timeout the engine cannot enforce as written is refused, never rounded.
+  It must be a whole number of the engine's unit: milliseconds on Postgres, up to `INT_MAX`
+  ms; seconds on ClickHouse and BigQuery; any positive value on DuckDB. A configured one
+  fails at construction (`analytics_timeout_invalid` on the four query configs,
+  `procedures_timeout_invalid` on the procedure config, both `configuration`); a per-call
+  one is refused as `validation` `analytics_option_invalid`, the analytics twin of
+  `dynamic_read_option_invalid`. `timeout_seconds` in
+  `forze.application.integrations.analytics` is replaced by `route_timeout`; nothing outside
+  the Postgres adapter used it. In `forze_postgres.kernel.client`, `scoped_local_settings`
+  replaces `restore_local_settings_on_exit`, which only these two adapters used.
+- **Proposed row (RFC 0028):** `ASSUMED` — a timeout that is not a whole number of the
+  engine's unit, or is beyond what it can hold, fails at wiring with the plane's
+  `*_timeout_invalid` code, or as a `validation` refusal per call. Nothing is rounded.
+
+## D-198 — BigQuery's timeout bounds the client's wait, not the job
+
+- **Touches:** RFC 0028 §2 (BigQuery: "⚠️ job-level timeout, not statement-level") and §6.1.
+- **Found:** the route's timeout reaches the client's existing per-call path, which bounds
+  the `jobs.query` HTTP call and the polling after it. When polling runs out the client
+  raises `internal` ("BigQuery job polling timed out.") and does not cancel the job, which
+  keeps running and billing. The request builder takes a `timeout_ms` (how long `jobs.query`
+  waits) that the client never passes.
+- **Because:** stopping the job server-side means `jobs.cancel` on expiry or a job timeout
+  in the request, neither verifiable here: no BigQuery consumer, and no test server that
+  models job time.
+- **Class:** `discovery`.
+- **Consequence:** the BigQuery config docstring and integration page say the bound is the
+  client's wait and point at `maximum_bytes_billed` for cost. BigQuery has no real-server
+  timeout test in this unit; the unit battery proves the value reaches the client.
+- **Proposed row (RFC 0028):** `OPEN` — W2 decides whether a BigQuery route timeout cancels
+  the job and maps to `infrastructure`; until then it bounds only the client's wait.
+
+## D-199 — A timeout is `infrastructure` on every engine but BigQuery, under different codes
+
+- **Touches:** RFC 0028 §7 item 5 ("maps to the shared taxonomy").
+- **Found:** on a real server, Postgres maps SQLSTATE `57014` to `infrastructure` with no
+  code, and ClickHouse's `TIMEOUT_EXCEEDED` (code 159) arrives as `infrastructure`
+  `core.infrastructure`, "An error occurred during ClickHouse operation
+  clickhouse.run_query". DuckDB raises `infrastructure` `duckdb_query_timeout`. BigQuery's
+  polling timeout is `internal` (D-198). The kind agrees on three engines; nothing lets a
+  caller tell a timeout from another infrastructure failure on two of them.
+- **Class:** `discovery`.
+- **Consequence:** no mapping changed. The tests pin the kind, and on ClickHouse the server
+  error in the cause chain.
+- **Proposed row (RFC 0028):** `OPEN` — whether a route timeout gets one code on every
+  engine, decided with W1's battery item 5.
+
+## Review findings — 2026-11-03
+
+Review of the unit's first commit, before it was published.
+
+| # | Severity | Finding | Status |
+|---|---|---|---|
+| R-1 | Bug | ClickHouse's HTTP read timeout is fixed per client at `ClickHouseConfig.timeout`, so a longer route was cut at the socket before `max_execution_time` | Fixed (D-191): the deps module makes the transport wait the longest route plus 5 s, or refuses a client already running shorter; a 6 s route on a 2 s client is tested on a real server |
+| R-2 | Bug | Found while fixing R-1: BigQuery's `max_poll_attempts` stopped polling at about 60 s whatever the route allowed | Fixed (D-191): the deps module raises the poll budget; tested |
+| R-3 | Bug | The autocommit cancel's drain had no bound and kept the pooled connection; a drain error replaced the timeout's mapping | Fixed (D-196): bounded by `CANCEL_GRACE`, the connection closed when the cancel does not land or the drain fails, the mapping kept; the failed-cancel path is tested with a stub |
+| R-4 | Cost | A root read went from 1 to 4 exchanges, and from 1 to 6 inside a caller transaction | Measured and cut (D-195): one round trip at the root, five exchanges in a transaction |
+| R-5 | Bug | A Postgres timeout above `INT_MAX` ms passed validation and failed every read | Fixed (D-197): refused at construction; tested |
+| R-6 | Bug | ClickHouse and BigQuery rounded a sub-second timeout up to 1 s, loosening the ceiling | Fixed (D-197): refused at construction and per call; tested |
+| R-7 | Docs | The changelog left out the removal of `timeout_seconds` and that the route timeout replaces the warehouse clients' | Fixed: two entries added, the Postgres bound split into its own |
+| R-8 | Docs | DuckDB now bounds the wait for an executor slot, undocumented | Kept and documented (D-193): the DuckDB page, the config docstring and the changelog |
+| R-9 | Docs | The autocommit clock included the pool checkout without saying so | Fixed (D-196): the checkout now happens before the clock starts, and the error's docstring says the pool's acquire timeout bounds it |
+
+## Review findings — 2026-11-03 (second round)
+
+Review of the fix commit. It found 14 risks, most in machinery that commit added, so the
+fixes simplify rather than patch. Superseded designs are kept here, since the entries above
+now describe only what stands.
+
+| # | Severity | Finding | Status |
+|---|---|---|---|
+| R-10 | Design | The autocommit bound, first an `asyncio.timeout` (whose psycopg cancel drains without a bound, R-3), then a pinned second connection with a bounded drain that closes on a failed cancel, changed what an autocommit statement is: it no longer saw or joined the caller's transaction, could wait on the caller's locks and doubled pool use | Superseded (D-196): reverted to main; an autocommit route refuses `statement_timeout`, and the role's or database's setting bounds it |
+| R-11 | Bug | `cover_query_timeout` (R-1) mutated a client at wiring: it raced the client's own startup and silently missed tenant clients a routed client had already built | Superseded (D-191): no mutation. A route longer than its client's `ClickHouseConfig.timeout` is refused at wiring, or when it first resolves if the client is configured at startup; a routed client is checked against its tenant clients' config |
+| R-12 | Bug | Raising `max_poll_attempts` (R-2) still counted polls, though each poll is an RPC of unknown length | Superseded (D-191): one wall-time deadline over the query call, polling and results; `max_poll_attempts` is removed; tested with a slow fake RPC |
+| R-13 | Bug | ClickHouse and BigQuery truncated a fractional timeout, and refused only values under 1 s | Fixed (D-197): any timeout that is not whole seconds is refused, in config and per call |
+| R-14 | Risk | An error or a cancel inside the Postgres pipeline could return a connection with pipeline state to the pool | Fixed (D-195): the connection is closed; tests force the fallback, an error and a cancel |
+| R-15 | Docs | The changelog did not say the Postgres bound is server-side, nor list every removed or newly required public symbol | Fixed: entries for `timeout_seconds`, `restore_local_settings_on_exit`, `max_poll_attempts`, `PostgresClientPort.fetch_all_scoped` and `ClickHouseClientPort.query_timeout_limit`; `tighten_local_statement_timeout` and `cover_query_timeout`, never released, are named in the commit footer |
+
+## Review findings — 2026-11-03 (third round)
+
+| # | Severity | Finding | Status |
+|---|---|---|---|
+| R-16 | Cost | R-14's fix closed the connection on every failure in the pipeline, so an ordinary SQL error or a fired `statement_timeout` forced the next read to reconnect | Fixed (D-195): only a cancel, or a connection not left idle and out of pipeline mode, is closed; tests pin both |

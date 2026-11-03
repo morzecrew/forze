@@ -39,9 +39,7 @@ class AccessTokenCredentials:
     """Credentials carrying an access token presented for verification.
 
     ``scheme`` is a routing/labeling hint (for OAuth2-style ``Bearer ...``
-    headers); ``profile`` selects an explicit verifier registration when more
-    than one token verifier is wired on the same authn route (overrides the
-    spec hint when set).
+    headers).
     """
 
     token: str = attrs.field(repr=False)
@@ -49,9 +47,6 @@ class AccessTokenCredentials:
 
     scheme: str = attrs.field(default="Bearer")
     """Token scheme label, e.g. ``"Bearer"``."""
-
-    profile: str | None = attrs.field(default=None)
-    """Optional verifier profile name; overrides ``AuthnSpec.token_profile`` when set."""
 
 
 # ....................... #
@@ -63,7 +58,7 @@ class RefreshTokenCredentials:
     """Credentials carrying a refresh token presented for token rotation.
 
     Refresh tokens are validated by the lifecycle service (digest/expiry/chain),
-    never by a token verifier port; therefore there is no ``profile`` knob.
+    never by a token verifier port.
     """
 
     token: str = attrs.field(repr=False)

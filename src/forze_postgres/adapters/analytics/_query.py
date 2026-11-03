@@ -1,10 +1,10 @@
 """Query execution helpers for Postgres analytics."""
 
 from collections.abc import Awaitable, Callable, Sequence
+from datetime import timedelta
 from typing import Any, TypeVar, cast
 from uuid import UUID
 
-from psycopg import sql
 from psycopg.abc import QueryNoTemplate
 from pydantic import BaseModel
 
@@ -19,7 +19,7 @@ from forze.application.integrations.analytics.adapter_common import (
     dry_run_offset_page,
     execute_analytics_offset_page,
     parse_count_row,
-    timeout_seconds,
+    route_timeout,
     validated_params,
 )
 from forze.base.exceptions import exc
@@ -28,10 +28,8 @@ from forze_postgres.execution.deps.configs import (
     PostgresAnalyticsConfig,
     PostgresQueryConfig,
 )
-from forze_postgres.kernel.client import (
-    PostgresClientPort,
-    restore_local_settings_on_exit,
-)
+from forze_postgres.execution.deps.configs.analytics import STATEMENT_TIMEOUT_RESOLUTION
+from forze_postgres.kernel.client import PostgresClientPort, scoped_local_settings
 from forze_postgres.kernel.gateways import PostgresQualifiedName
 from forze_postgres.kernel.relation import is_static_relation, resolve_postgres_qname
 from forze_postgres.kernel.sql import (
@@ -140,8 +138,12 @@ class PostgresAnalyticsQueryMixin[R: BaseModel, Ing: BaseModel]:
 
     # ....................... #
 
-    def _timeout_sec(self, options: AnalyticsRunOptions | None) -> int | None:
-        return timeout_seconds(options)
+    def _timeout(self, query_key: StrKey, options: AnalyticsRunOptions | None) -> timedelta:
+        return route_timeout(
+            options,
+            self._query_config(query_key).timeout,
+            resolution=STATEMENT_TIMEOUT_RESOLUTION,
+        )
 
     # ....................... #
 
@@ -177,64 +179,40 @@ class PostgresAnalyticsQueryMixin[R: BaseModel, Ing: BaseModel]:
 
     # ....................... #
 
-    async def _run_with_timeout(
+    async def _fetch_all(
         self,
+        query_key: StrKey,
+        query_sql: str,
+        bound: dict[str, object],
         options: AnalyticsRunOptions | None,
-        fn: Callable[[], Awaitable[Any]],
-    ) -> Any:
-        timeout_sec = self._timeout_sec(options)
+    ) -> list[JsonDict]:
+        # The client scopes the route's statement_timeout and the tenant's search_path to
+        # this one statement (schema-per-tenant isolation on a shared connection).
+        return await self.client.fetch_all_scoped(
+            cast(QueryNoTemplate, query_sql),
+            bound,
+            statement_timeout=self._timeout(query_key, options),
+            search_path=await self._query_schema(),
+        )
+
+    # ....................... #
+
+    async def _run_in_query_schema(self, fn: Callable[[], Awaitable[Any]]) -> Any:
         schema = await self._query_schema()
 
-        if timeout_sec is None and schema is None:
+        if schema is None:
             return await fn()
 
-        overridden: list[str] = []
-
-        if timeout_sec is not None:
-            overridden.append("statement_timeout")
-
-        if schema is not None:
-            overridden.append("search_path")
-
-        in_caller_transaction = self.client.is_in_transaction()
-
-        # A per-tenant query schema or a statement timeout needs a transaction so the
-        # ``SET LOCAL`` is scoped to this query (schema-per-tenant isolation on a shared
-        # connection: unqualified table names in the registered SQL resolve in the
-        # tenant's own schema).
-        #
-        # Inside a caller transaction that transaction is a savepoint, and ``SET LOCAL``
-        # merges into the outer transaction on the savepoint's release — so the caller's
-        # values are captured first and restored after the query. At the root there is
-        # nothing to restore: the transaction ends with the query.
+        # Inside a caller transaction ours is a savepoint, whose SET LOCAL would merge into
+        # the caller's on release: the caller's search_path is captured and put back.
         async with (
             self.client.transaction(),
-            restore_local_settings_on_exit(
+            scoped_local_settings(
                 self.client,
-                overridden,
-                enabled=in_caller_transaction,
+                search_path=schema,
+                restore=self.client.is_in_transaction(),
             ),
         ):
-            if timeout_sec is not None:
-                await self.client.execute(
-                    sql.SQL("SET LOCAL statement_timeout = {}").format(
-                        sql.Literal(timeout_sec * 1000),
-                    ),
-                )
-
-            if schema is not None:
-                # Tenant schema first (so its tables shadow ``public``), then ``public``
-                # so unqualified extension objects (uuid-ossp / pgcrypto / PostGIS,
-                # installed in public by default) and shared lookup tables stay
-                # reachable — a bare search_path would silently drop them and fail at
-                # query time.
-                await self.client.execute(
-                    sql.SQL("SET LOCAL search_path TO {}, {}").format(
-                        sql.Identifier(schema),
-                        sql.Identifier("public"),
-                    ),
-                )
-
             return await fn()
 
     # ....................... #
@@ -273,12 +251,7 @@ class PostgresAnalyticsQueryMixin[R: BaseModel, Ing: BaseModel]:
             limit=eff_limit,
             offset=offset,
         )
-        bound = self._param_dict(params)
-
-        async def _run() -> list[JsonDict]:
-            return await self.client.fetch_all(cast(QueryNoTemplate, query_sql), bound)
-
-        return await self._run_with_timeout(options, _run)
+        return await self._fetch_all(query_key, query_sql, self._param_dict(params), options)
 
     # ....................... #
 
@@ -290,13 +263,9 @@ class PostgresAnalyticsQueryMixin[R: BaseModel, Ing: BaseModel]:
         options: AnalyticsRunOptions | None,
     ) -> int:
         count_sql = build_count_sql(self._sql(query_key))
-        bound = self._param_dict(params)
+        rows = await self._fetch_all(query_key, count_sql, self._param_dict(params), options)
 
-        async def _run() -> int:
-            rows = await self.client.fetch_all(cast(QueryNoTemplate, count_sql), bound)
-            return parse_count_row(rows)
-
-        return await self._run_with_timeout(options, _run)
+        return parse_count_row(rows)
 
     # ....................... #
 

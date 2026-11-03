@@ -46,12 +46,14 @@ from forze.application.integrations.analytics.adapter_common import (
     parse_count_row,
     parse_keyset_cursor_after,
     parse_offset_cursor_after,
+    route_timeout,
     validate_fetch_batch_size,
     validated_params,
 )
 from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict, OnceCell
 from forze_clickhouse.execution.deps.configs import (
+    TIMEOUT_RESOLUTION,
     ClickHouseAnalyticsConfig,
     ClickHouseQueryConfig,
 )
@@ -177,12 +179,16 @@ class ClickHouseAnalyticsAdapter[R: BaseModel, Ing: BaseModel](
 
     # ....................... #
 
-    @staticmethod
-    def _run_timeout(options: AnalyticsRunOptions | None) -> timedelta | None:
-        if options is None:
-            return None
+    def _run_timeout(self, query_key: str, options: AnalyticsRunOptions | None) -> timedelta:
+        # A port resolved before a plain client started skipped the wiring check: run it now.
+        if (limit := self.client.query_timeout_limit()) is not None:
+            self.config.validate_against_client(str(self.spec.name), limit)
 
-        return options.get("timeout")
+        return route_timeout(
+            options,
+            self._query_config(query_key).timeout,
+            resolution=TIMEOUT_RESOLUTION,
+        )
 
     # ....................... #
 
@@ -220,7 +226,7 @@ class ClickHouseAnalyticsAdapter[R: BaseModel, Ing: BaseModel](
             database=await self._database(),
             limit=limit,
             offset=offset,
-            timeout=self._run_timeout(options),
+            timeout=self._run_timeout(query_key, options),
             max_rows=int(max_rows) if max_rows is not None else None,
         )
 
@@ -239,7 +245,7 @@ class ClickHouseAnalyticsAdapter[R: BaseModel, Ing: BaseModel](
             self._bind_tenant(params),
             database=await self._database(),
             limit=1,
-            timeout=self._run_timeout(options),
+            timeout=self._run_timeout(query_key, options),
         )
 
         return parse_count_row(result.rows)
@@ -308,7 +314,7 @@ class ClickHouseAnalyticsAdapter[R: BaseModel, Ing: BaseModel](
             self._bind_tenant(params),
             database=await self._database(),
             max_rows=int(max_rows) if max_rows is not None else None,
-            timeout=self._run_timeout(options),
+            timeout=self._run_timeout(query_key, options),
             fetch_batch_size=fetch_batch_size,
         )
 
@@ -346,7 +352,7 @@ class ClickHouseAnalyticsAdapter[R: BaseModel, Ing: BaseModel](
             self._bind_tenant(params),
             database=await self._database(),
             max_rows=int(max_rows) if max_rows is not None else None,
-            timeout=self._run_timeout(options),
+            timeout=self._run_timeout(query_key, options),
             fetch_batch_size=fetch_batch_size,
         )
 
@@ -479,7 +485,6 @@ class ClickHouseAnalyticsAdapter[R: BaseModel, Ing: BaseModel](
             database,
             table,
             payloads,
-            timeout=self._run_timeout(None),
         )
 
         return AnalyticsAppendResult(

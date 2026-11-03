@@ -349,6 +349,24 @@ class RoutedPostgresClient(DsnRoutedTenantClientBase[PostgresClient], PostgresCl
 
     # ....................... #
 
+    async def fetch_all_scoped(
+        self,
+        query: QueryNoTemplate,
+        params: Params | None = None,
+        *,
+        statement_timeout: timedelta | None = None,
+        search_path: str | None = None,
+    ) -> list[JsonDict]:
+        async with self.client_scope() as inner:
+            return await inner.fetch_all_scoped(
+                query,
+                params,
+                statement_timeout=statement_timeout,
+                search_path=search_path,
+            )
+
+    # ....................... #
+
     async def fetch_all_batched(
         self,
         query: QueryNoTemplate,

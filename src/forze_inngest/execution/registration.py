@@ -26,6 +26,7 @@ from forze.application.contracts.execution import Handler
 from forze.application.execution.context import (
     ExecutionContext,
     ExecutionContextFactory,
+    InvocationSurface,
 )
 from forze.application.execution.ingress import mint_invocation_metadata
 from forze.application.execution.operations.registry import FrozenOperationRegistry
@@ -169,6 +170,7 @@ def _bind_invocation(
     producer = envelope.metadata
 
     metadata = mint_invocation_metadata(
+        surface=InvocationSurface.INNGEST,
         correlation_id=(
             envelope.correlation_id
             or (producer.correlation_id if producer is not None else None)

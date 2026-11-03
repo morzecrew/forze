@@ -21,15 +21,51 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **`OidcClaimMapper` normalizes `email`, `roles` and `groups` into a `_forze` claim.** `ClaimsPath` reads Keycloak and Casdoor shapes, `ZitadelProjectRoles` Zitadel's org map; a malformed claim yields no roles. A `_forze` claim the issuer sent is dropped (**behaviour change**).
 
+- **`ChildCollectionSync` makes a parent's child rows match an incoming list.** It matches children by a business key, deletes the dropped first (soft when the spec carries `is_deleted`), then creates the new and updates only changed fields. It runs inside a transaction and returns what it wrote.
+
+- **Invocation metadata names the boundary it entered through.** `InvocationMetadata.surface` takes an `InvocationSurface` value (`http`, `cli`, `durable`, …) or an app's own token; each framework boundary sets one. Logs carry `invocation_surface`, operation spans `forze.invocation_surface`, `unknown` with no metadata.
+
 ### Changed
 
-- ...
+- **Narrowing `logger_names` keeps unlisted loggers that propagate redacted.** A forze root handler at `warning` (or a higher `level`) prints them scrubbed; above `warning` it drops their warnings (**behaviour change**). Name `propagate=False` loggers; `redact_unnamed=False` leaves unlisted ones raw.
+
+- **The self-hosted durable runner binds invocation metadata for every attempt** (**behaviour change**): a fresh execution id, the run id as correlation id, surface `durable`. Its logs and events carry them, and a claim begun before a recovery and committed after it is now refused with `conflict`.
+
+- **A durable body started by `run_now` inside a request no longer runs under the request's metadata** (**behaviour change**). It runs under the run id as correlation id, so the request's correlation id no longer reaches the body or the events it publishes; the request is linked only as the causation.
+
+- **`process_with_inbox` gives every delivery invocation metadata with its own execution id** (**behaviour change**), even under metadata the consumer bound. A message without a `forze_correlation_id` header takes the bound correlation id or a fresh one, and its logs, events and idempotency claims carry the execution id.
+
+- **A DuckDB dynamic read whose route namespace is unavailable in the tenant's lake raises `dynamic_read_namespace_missing`** (**behaviour change**). It is a `precondition`, not `dynamic_read_statement_invalid`, also on Iceberg after a revoked grant. DuckLake reads a schema created later with no `evict_tenant`.
+
+- **Every registered analytics query is bounded by its own `timeout`, 60 s unless set** (**behaviour change**). It is on each engine's `*QueryConfig`, and a per-call `options["timeout"]` lowers it, never raises it. Postgres and DuckDB reads were unbounded; on DuckDB the wait for a free executor slot counts against it.
+
+- **On Postgres a read's `statement_timeout` is enforced by the server and only tightens.** A lower pool or invocation-deadline bound still wins; a stalled connection is left to the pool and TCP keepalives. Out of a transaction it shares the query's round trip; whole milliseconds up to about 24.8 days.
+
+- **On ClickHouse and BigQuery a query's `timeout` replaces the client's `timeout`** (**behaviour change**): a client set to 300 s no longer stretches a route's 60 s. A ClickHouse route longer than its client's timeout is refused at wiring, and timeouts must be whole seconds.
+
+- **`BigQueryConfig.max_poll_attempts` and its `BigQuerySettings` field are removed** (**Breaking**). A query's wait is one wall-time deadline from its timeout, across the query call, job polling and results, so slow polls cannot stretch it.
+
+- **`PostgresProcedureConfig.statement_timeout` is 60 s unless set, on a route that runs in a transaction** (**Breaking**). `None` is refused there. An autocommit route still takes none; bound it with the role's or the database's `statement_timeout`.
+
+- **`timeout_seconds` is removed from `forze.application.integrations.analytics`** (**Breaking**). `route_timeout` replaces it and clamps a per-call timeout to the route's. In `forze_postgres.kernel.client`, `scoped_local_settings` replaces `restore_local_settings_on_exit`.
+
+- **`PostgresClientPort` requires `fetch_all_scoped`, and `ClickHouseClientPort` requires `query_timeout_limit`** (**Breaking**). A client implemented outside forze must add them.
+
+### Removed
+
+- **`AuthnSpec.token_profile`, `password_profile`, `api_key_profile`, `resolver_profile` and `AccessTokenCredentials.profile` are gone** (**Breaking**). Nothing read them: verifiers and the resolver are registered per route under the spec's name.
 
 ### Fixed
 
 - **Redis invalidation push now clears stale local entries when its connection goes half-open or the client closes**, for the document L1 and any other subscriber.
 
 - **`OidcTokenVerifier` refuses a malformed signed token as an authentication failure** (`invalid_oidc_token`). An out-of-range `exp` or `iat` (such as `1e20`), an empty `sub`, or a missing claim a custom `OidcClaimMapper` requires raised a raw `ValueError` instead; a boolean `iat` is refused too.
+
+### Security
+
+- **A tenant-scoped Postgres read searches its schema and `public` before temporary tables.** A temporary table left on a pooled connection could otherwise stand in for the tenant's table.
+
+- **A DuckDB dynamic read's error detail leaves out the engine's guess at a mistyped name** (**behaviour change**). The guess could name relations outside the tenant's lake.
 
 ## [0.21.0] - 2026-11-02
 

@@ -16,7 +16,7 @@ bootstrap_logging(
 )
 ```
 
-Pass extra integration logger roots via `logger_names=[...]` when an integration's loggers are not already covered.
+Pass extra integration logger roots via `logger_names=[...]` when an integration's loggers are not already covered. Naming loggers does not narrow redaction: unlisted loggers that propagate still print at `warning` and above (or a higher configured `level`) through a scrubbing root handler, on the configured stream. Uvicorn's `uvicorn` and `uvicorn.access` loggers do not propagate: name both in `third_party`. `redact_unnamed=False` turns that off: every logger outside `logger_names` then prints unredacted, and a warning says so. It is only for an app that manages the root logger and its redaction itself.
 
 `configure_logging` / `attach_foreign_loggers` (from `forze.base.logging`) remain the lower-level entry points when you want to wire the pieces yourself. Pass `otel_config=...` to inject the active span's `trace_id` / `span_id` into every log line.
 
@@ -37,7 +37,7 @@ logger = get_logger("app.projects").bind(component="projects")
 logger.info("project_created", project_id=str(project_id))
 ```
 
-`ExecutionContext.inv_ctx.bind(...)` binds `execution_id`, `correlation_id`, optional `causation_id`, `principal_id`, and `tenant_id` into logging context.
+`ExecutionContext.inv_ctx.bind(...)` binds `execution_id`, `correlation_id`, optional `causation_id`, `invocation_surface`, `principal_id`, and `tenant_id` into logging context. `invocation_surface` names the boundary that minted the metadata (`http`, `websocket`, `socketio`, `mcp`, `cli`, `inbox`, `temporal`, `inngest`, `durable`, or `unknown` when none did); operation spans carry it as `forze.invocation_surface`. A boundary of your own passes a literal token: `mint_invocation_metadata(surface="grpc")` from `forze.application.execution.ingress`, matching `^[a-z][a-z0-9_]{0,31}$`.
 
 ## Operation and resilience metrics
 
@@ -47,6 +47,8 @@ logger.info("project_created", project_id=str(project_id))
 
 - **Logging secrets or raw credentials** — log logical refs and ids only.
 - **Binding log context manually in handlers** — bind request identity at the boundary.
+- **Branching on `invocation_surface`** — it is attribution, not authority: any code can mint metadata with any valid token. Restrict per-surface access with the surface's exposure allowlist.
+- **Reading the surface from the request** — pass a literal; never a header, frame or message value, and never a token naming a person, tenant or customer.
 
 ## Reference
 

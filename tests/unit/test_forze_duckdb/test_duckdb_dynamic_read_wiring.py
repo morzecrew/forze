@@ -18,6 +18,7 @@ from forze.application.contracts.secrets import SecretRef
 from forze.application.execution import DepsRegistry, ExecutionContext
 from forze.application.integrations.dynamic_read import (
     MULTI_STATEMENT_CODE,
+    NAMESPACE_MISSING_CODE,
     PERMISSION_DENIED_CODE,
     STATEMENT_INVALID_CODE,
     TIMEOUT_CODE,
@@ -37,6 +38,8 @@ from forze_duckdb.adapters import DuckDbDynamicReadAdapter, dynamic_read_error
 from forze_duckdb.kernel.client import QUERY_TIMEOUT_CODE
 
 ROUTE = "widgets"
+_SET_SCHEMA = 'Catalog Error: SET schema: No catalog + schema named "lake.gold" found.'
+"""What ``USE`` raises for an unavailable namespace on both builds and both catalogs."""
 
 # ----------------------- #
 
@@ -241,6 +244,35 @@ def test_a_refusal_carries_the_engine_message_for_diagnosis() -> None:
     assert mapped.details == {"route": ROUTE, "detail": message}
 
 
+def test_the_engines_guess_at_a_name_is_left_out_of_the_detail() -> None:
+    """The guess can name relations outside the route's namespace."""
+
+    error = duckdb.CatalogException(
+        "Catalog Error: Table with name t does not exist!\n"
+        'Did you mean "__ducklake_metadata_lake.other_meta.t"?\n\nLINE 1: SELECT * FROM t'
+    )
+
+    mapped = dynamic_read_error(error, route=ROUTE)
+
+    assert isinstance(mapped, CoreException)
+    assert mapped.details == {
+        "route": ROUTE,
+        "detail": "Catalog Error: Table with name t does not exist!\n\nLINE 1: SELECT * FROM t",
+    }
+
+
+def test_the_callers_own_words_are_not_taken_for_the_guess() -> None:
+    message = (
+        'Binder Error: Referenced column "Did you mean x" not found in FROM clause!\n'
+        'Candidate bindings: "name"\n\nLINE 1: SELECT "Did you mean x" FROM customers'
+    )
+
+    mapped = dynamic_read_error(duckdb.BinderException(message), route=ROUTE)
+
+    assert isinstance(mapped, CoreException)
+    assert mapped.details == {"route": ROUTE, "detail": message}
+
+
 def test_a_conversion_failure_does_not_echo_the_value() -> None:
     error = duckdb.ConversionException("Could not convert string 'secret-row' to INT32")
 
@@ -270,6 +302,15 @@ def test_a_conversion_failure_does_not_echo_the_value() -> None:
             STATEMENT_INVALID_CODE,
             {"route": ROUTE, "detail": "dup: id"},
         ),
+        (
+            exc.precondition(
+                "x",
+                code=NAMESPACE_MISSING_CODE,
+                details={"namespace": "gold", "detail": _SET_SCHEMA},
+            ),
+            NAMESPACE_MISSING_CODE,
+            {"route": ROUTE, "namespace": "gold"},
+        ),
     ],
 )
 def test_the_client_refusals_gain_the_route(
@@ -279,6 +320,42 @@ def test_the_client_refusals_gain_the_route(
 
     assert isinstance(mapped, CoreException)
     assert (mapped.code, mapped.details) == (code, details)
+
+
+def test_a_namespace_named_like_a_refusal_is_still_missing() -> None:
+    detail = 'Catalog Error: SET schema: No catalog + schema named "lake.NotFound_404" found.'
+    raised = exc.precondition(
+        "x", code=NAMESPACE_MISSING_CODE, details={"namespace": "NotFound_404", "detail": detail}
+    )
+
+    mapped = dynamic_read_error(raised, route=ROUTE)
+
+    assert isinstance(mapped, CoreException)
+    assert mapped.code == NAMESPACE_MISSING_CODE
+
+
+@pytest.mark.parametrize(
+    "detail",
+    [
+        "Catalog Error: returned a non-200 status code (Forbidden_403)",
+        "Catalog Error: returned a non-200 status code (NotFound_404)",
+        "Catalog Error: Unable to connect to URL x: Unauthorized (HTTP code 401)",
+    ],
+)
+def test_a_catalog_refusal_at_use_is_a_refusal_not_a_missing_namespace(detail: str) -> None:
+    """Never observed at ``USE`` (EXECUTION-LOG D-171), but mapped as every other path maps it."""
+
+    raised = exc.precondition(
+        "x", code=NAMESPACE_MISSING_CODE, details={"namespace": "gold", "detail": detail}
+    )
+
+    mapped = dynamic_read_error(raised, route=ROUTE)
+
+    assert isinstance(mapped, CoreException)
+    assert (mapped.code, mapped.details) == (
+        PERMISSION_DENIED_CODE,
+        {"route": ROUTE, "detail": detail},
+    )
 
 
 def test_anything_else_passes_through_unchanged() -> None:

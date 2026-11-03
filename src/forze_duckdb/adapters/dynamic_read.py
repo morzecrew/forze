@@ -36,11 +36,13 @@ import duckdb
 
 from forze.application.integrations.dynamic_read import (
     MULTI_STATEMENT_CODE,
+    NAMESPACE_MISSING_CODE,
     STATEMENT_INVALID_CODE,
     WRITE_REFUSED_CODE,
     DynamicReadAdapter,
     DynamicReadRequest,
     multi_statement,
+    namespace_missing,
     permission_denied,
     statement_invalid,
     timed_out,
@@ -78,6 +80,14 @@ _HTTP_REFUSAL = re.compile(r"HTTP (?:code )?40[13]\b|Unauthorized_401|Forbidden_
 DuckDB 2, where a catalog refusal is no longer the bare ``Error``) as its status name
 (EXECUTION-LOG D-060)."""
 
+_GUESS = re.compile(r"^Did you mean [^\n]*\n?", re.MULTILINE)
+"""DuckDB's guess at the name a statement meant, left out of the detail the caller sees: it can
+name relations outside the route's namespace. The engine puts it on a line of its own, so the
+caller's text, which can contain the same words, is kept."""
+
+_QUOTED = re.compile(r'"[^"]*"')
+"""A double-quoted name in an engine message, such as the namespace ``USE`` looked for."""
+
 _READ_ONLY_ATTACH = "attached in read-only mode"
 
 _LOCKED = ("the configuration has been locked", "Displaying unredacted secrets is disabled")
@@ -94,7 +104,7 @@ def dynamic_read_error(error: Exception, *, route: str) -> Exception:
     What is not the statement's doing — an ``IOException`` from a hung or failing request, an
     ``OutOfMemoryException`` — becomes an ``infrastructure`` error. A
     :class:`~forze.base.exceptions.CoreException` the client raised passes through, except
-    the classification refusals and the timeout, which gain the route.
+    the classification refusals, an unavailable namespace and the timeout, which gain the route.
     """
 
     if isinstance(error, CoreException):
@@ -126,7 +136,7 @@ def dynamic_read_error(error: Exception, *, route: str) -> Exception:
         return statement_invalid(route, detail=type(error).__name__)
 
     if isinstance(error, (duckdb.ParserException, duckdb.BinderException, duckdb.CatalogException)):
-        return statement_invalid(route, detail=message)
+        return statement_invalid(route, detail=_GUESS.sub("", message))
 
     return _fallback(error, site="dynamic_read", details={"route": route})
 
@@ -143,6 +153,19 @@ def _core_error(error: CoreException, *, route: str) -> CoreException:
 
     if error.code == STATEMENT_INVALID_CODE:
         return statement_invalid(route, detail=(error.details or {}).get("detail"))
+
+    if error.code == NAMESPACE_MISSING_CODE:
+        details = error.details or {}
+        detail = str(details.get("detail", ""))
+
+        # A catalog that refused the principal at ``USE`` is a refusal, as on every other path.
+        # The engine quotes the namespace it looked for; a marker inside that name is not one.
+        probe = _QUOTED.sub('""', detail)
+
+        if _HTTP_REFUSAL.search(probe) or any(marker in probe for marker in _CATALOG_REFUSALS):
+            return permission_denied(route, detail=detail)
+
+        return namespace_missing(route, namespace=details.get("namespace"))
 
     return error
 

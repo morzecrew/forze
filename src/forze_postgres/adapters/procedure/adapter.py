@@ -12,7 +12,6 @@ from typing import Any, cast, final
 from uuid import UUID
 
 import attrs
-from psycopg import sql
 from psycopg.abc import QueryNoTemplate
 from pydantic import BaseModel
 
@@ -28,10 +27,7 @@ from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict, OnceCell
 from forze.base.serialization import default_model_codec
 from forze_postgres.execution.deps.configs import PostgresProcedureConfig
-from forze_postgres.kernel.client import (
-    PostgresClientPort,
-    restore_local_settings_on_exit,
-)
+from forze_postgres.kernel.client import PostgresClientPort, scoped_local_settings
 
 # ----------------------- #
 
@@ -129,15 +125,6 @@ class PostgresProcedureAdapter[In: BaseModel, Out](ProcedurePort[In, Out]):
             return await fn()
 
         schema = await self._query_schema()
-        timeout = self.config.statement_timeout
-
-        overridden: list[str] = []
-
-        if timeout is not None:
-            overridden.append("statement_timeout")
-
-        if schema is not None:
-            overridden.append("search_path")
 
         # Inside a caller transaction (the normal command-handler case) ours is a savepoint, and
         # ``SET LOCAL`` merges into the *outer* transaction when the savepoint is released — so
@@ -150,29 +137,13 @@ class PostgresProcedureAdapter[In: BaseModel, Out](ProcedurePort[In, Out]):
 
         async with (
             self.client.transaction(),
-            restore_local_settings_on_exit(
+            scoped_local_settings(
                 self.client,
-                overridden,
-                enabled=in_caller_transaction,
+                statement_timeout=self.config.statement_timeout,
+                search_path=schema,
+                restore=in_caller_transaction,
             ),
         ):
-            if timeout is not None:
-                await self.client.execute(
-                    sql.SQL("SET LOCAL statement_timeout = {}").format(
-                        sql.Literal(int(timeout.total_seconds() * 1000)),
-                    ),
-                )
-
-            if schema is not None:
-                # Tenant schema first (its tables shadow ``public``), then ``public`` so
-                # unqualified extension objects and shared lookups stay reachable.
-                await self.client.execute(
-                    sql.SQL("SET LOCAL search_path TO {}, {}").format(
-                        sql.Identifier(schema),
-                        sql.Identifier("public"),
-                    ),
-                )
-
             return await fn()
 
     # ....................... #

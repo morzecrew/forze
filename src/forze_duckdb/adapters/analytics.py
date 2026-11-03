@@ -35,6 +35,7 @@ from forze.application.integrations.analytics.adapter_common import (
     execute_analytics_offset_page,
     parse_count_row,
     parse_offset_cursor_after,
+    route_timeout,
     validate_fetch_batch_size,
     validated_params,
 )
@@ -107,12 +108,8 @@ class DuckDbAnalyticsAdapter[R: BaseModel](
 
     # ....................... #
 
-    @staticmethod
-    def _run_timeout(options: AnalyticsRunOptions | None) -> timedelta | None:
-        if options is None:
-            return None
-
-        return options.get("timeout")
+    def _run_timeout(self, query_key: str, options: AnalyticsRunOptions | None) -> timedelta:
+        return route_timeout(options, self._query_config(query_key).timeout)
 
     # ....................... #
 
@@ -132,7 +129,7 @@ class DuckDbAnalyticsAdapter[R: BaseModel](
             limit=limit,
             offset=offset,
             max_rows=int(max_rows) if max_rows is not None else None,
-            timeout=self._run_timeout(options),
+            timeout=self._run_timeout(query_key, options),
         )
 
         return result.rows
@@ -150,7 +147,7 @@ class DuckDbAnalyticsAdapter[R: BaseModel](
             build_count_sql(self._sql(query_key)),
             self._bind_tenant(params),
             limit=1,
-            timeout=self._run_timeout(options),
+            timeout=self._run_timeout(query_key, options),
         )
 
         return parse_count_row(result.rows)
@@ -216,7 +213,7 @@ class DuckDbAnalyticsAdapter[R: BaseModel](
             self._sql(query_key),
             self._bind_tenant(params),
             max_rows=int(max_rows) if max_rows is not None else None,
-            timeout=self._run_timeout(options),
+            timeout=self._run_timeout(query_key, options),
             fetch_batch_size=fetch_batch_size,
         )
 
@@ -253,7 +250,7 @@ class DuckDbAnalyticsAdapter[R: BaseModel](
             self._sql(query_key),
             self._bind_tenant(params),
             max_rows=int(max_rows) if max_rows is not None else None,
-            timeout=self._run_timeout(options),
+            timeout=self._run_timeout(query_key, options),
             fetch_batch_size=fetch_batch_size,
         )
 

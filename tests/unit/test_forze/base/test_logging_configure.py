@@ -3,19 +3,23 @@
 import io
 import json
 import logging
+import warnings
+from collections.abc import Iterator
+from contextlib import contextmanager
 
 import pytest
-import structlog
 
 from forze.base.logging.configure import (
     OpenTelemetryConfig,
+    _UnnamedRedactionHandler,
     attach_foreign_loggers,
+    bootstrap_logging,
     build_common_processors,
     build_foreign_formatter,
     build_renderer,
     configure_logging,
 )
-from forze.base.logging.logger import Logger, set_configured_min_rank
+from forze.base.logging.logger import Logger
 from forze.base.logging.processors import (
     ExceptionFieldsSanitizer,
     ExceptionInfoFormatter,
@@ -24,17 +28,15 @@ from forze.base.logging.processors import (
 )
 from forze.base.logging.renderers import ForzeConsoleRenderer
 from forze.base.scrubbing import SECRET_PLACEHOLDER
+from tests.support.logging import reset_forze_stdlib_loggers
 
 
 @pytest.fixture(autouse=True)
-def _reset_logging() -> None:
+def _reset_logging() -> Iterator[None]:
     yield
-    structlog.reset_defaults()
-    set_configured_min_rank("info")
-    for name in ("foreign.test", "foreign.keep", "forze.test", "forze.other"):
-        logger = logging.getLogger(name)
-        logger.handlers.clear()
-        logger.propagate = True
+    reset_forze_stdlib_loggers(
+        "foreign.test", "foreign.keep", "app", "vendor.client", "vendor.access", "unlisted.app"
+    )
 
 
 def _json_records(stream: io.StringIO) -> list[dict[str, object]]:
@@ -432,3 +434,262 @@ class TestConfigureLogging:
 
         row = _json_records(stream)[-1]
         assert row["password"] == "fixture-7chr"
+
+
+@contextmanager
+def _bare_root() -> Iterator[logging.Logger]:
+    """The root as a fresh process has it: no handlers, so Python's last resort is in play.
+
+    pytest keeps capture handlers on the root, which would hide that fallback entirely.
+    """
+
+    root = logging.getLogger()
+    saved = list(root.handlers)
+    root.handlers.clear()
+
+    try:
+        yield root
+
+    finally:
+        root.handlers[:] = saved
+
+
+def _redaction_handlers_of(handlers: list[logging.Handler]) -> list[logging.Handler]:
+    return [h for h in handlers if isinstance(h, _UnnamedRedactionHandler)]
+
+
+def _redaction_handlers(root: logging.Logger) -> list[logging.Handler]:
+    return _redaction_handlers_of(root.handlers)
+
+
+class TestRedactUnnamed:
+    """Narrowing ``logger_names`` keeps the scrub on loggers outside the list."""
+
+    def test_default_path_scrubs_an_unlisted_foreign_logger(self) -> None:
+        stream = io.StringIO()
+        root = logging.getLogger()
+        saved_handlers, saved_level = list(root.handlers), root.level
+
+        try:
+            configure_logging(render_mode="json", stream=stream)
+            logging.getLogger("vendor.client").warning("auth Bearer abc.def.ghi")
+
+        finally:
+            root.handlers[:] = saved_handlers
+            root.setLevel(saved_level)
+
+        row = _json_records(stream)[-1]
+        assert "abc.def.ghi" not in str(row["event"])
+        assert SECRET_PLACEHOLDER in str(row["event"])
+
+    def test_last_resort_prints_warning_raw_and_drops_info(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """What a narrowed call left before: the configure.py comment's claim, measured."""
+
+        stream = io.StringIO()
+        vendor = logging.getLogger("vendor.client")
+        vendor.setLevel(logging.INFO)  # past the root's level, so only a handler can drop it
+
+        with _bare_root(), warnings.catch_warnings(record=True):
+            configure_logging(
+                render_mode="json", logger_names=["app"], stream=stream, redact_unnamed=False
+            )
+            vendor.info("info-line")
+            vendor.warning("auth Bearer abc.def.ghi")
+
+        err = capsys.readouterr().err
+        assert "info-line" not in err
+        assert "auth Bearer abc.def.ghi" in err
+        assert stream.getvalue() == ""
+
+    def test_narrowed_path_scrubs_an_unlisted_logger_message(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        stream = io.StringIO()
+        vendor = logging.getLogger("vendor.client")
+        vendor.setLevel(logging.INFO)
+
+        with _bare_root():
+            configure_logging(render_mode="json", logger_names=["app"], stream=stream)
+            vendor.info("info-line")
+            vendor.warning("auth Bearer abc.def.ghi, token=%s", "fixture-7chr")
+
+        rows = _json_records(stream)
+        assert [row["logger"] for row in rows] == ["vendor.client"]
+        assert "abc.def.ghi" not in str(rows[0]["event"])
+        assert "fixture-7chr" not in str(rows[0]["event"])
+        assert SECRET_PLACEHOLDER in str(rows[0]["event"])
+        # Nothing new: INFO stays dropped and the WARNING no longer reaches stderr raw.
+        assert "info-line" not in stream.getvalue()
+        assert capsys.readouterr().err == ""
+
+    def test_narrowed_path_scrubs_an_unlisted_logger_extras(self) -> None:
+        stream = io.StringIO()
+
+        with _bare_root():
+            configure_logging(render_mode="json", logger_names=["app"], stream=stream)
+            Logger("unlisted.app").warning("login", password="fixture-7chr")
+
+        row = _json_records(stream)[-1]
+        assert row["event"] == "login"
+        assert row["password"] == SECRET_PLACEHOLDER
+
+    def test_unlisted_stdlib_extra_is_dropped_not_rendered(self) -> None:
+        stream = io.StringIO()
+
+        with _bare_root():
+            configure_logging(render_mode="json", logger_names=["app"], stream=stream)
+            logging.getLogger("vendor.client").warning(
+                "login", extra={"password": "fixture-7chr"}
+            )
+
+        row = _json_records(stream)[-1]
+        assert row["event"] == "login"
+        assert "password" not in row
+        assert "fixture-7chr" not in stream.getvalue()
+
+    def test_level_above_warning_drops_unlisted_warnings(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """The cost of following a higher level: the last resort printed these raw."""
+
+        stream = io.StringIO()
+        vendor = logging.getLogger("vendor.client")
+
+        with _bare_root():
+            configure_logging(
+                level="error", render_mode="json", logger_names=["app"], stream=stream
+            )
+            vendor.warning("warning-line")
+            vendor.error("error-line")
+
+        assert [row["event"] for row in _json_records(stream)] == ["error-line"]
+        assert capsys.readouterr().err == ""
+
+    def test_existing_root_handler_stays_beside_the_scrubbing_one(self) -> None:
+        own, stream = io.StringIO(), io.StringIO()
+        theirs = logging.StreamHandler(own)
+
+        with _bare_root() as root:
+            root.addHandler(theirs)
+            configure_logging(render_mode="json", logger_names=["app"], stream=stream)
+            logging.getLogger("vendor.client").warning("auth Bearer abc.def.ghi")
+            handlers = list(root.handlers)
+
+        assert handlers[0] is theirs
+        assert len(_redaction_handlers_of(handlers)) == 1
+        # Fail closed: the app's handler still prints its raw line, ours a scrubbed one.
+        assert "abc.def.ghi" in own.getvalue()
+        assert "abc.def.ghi" not in stream.getvalue()
+        assert SECRET_PLACEHOLDER in stream.getvalue()
+
+    def test_later_basic_config_is_a_no_op(self) -> None:
+        with _bare_root() as root:
+            configure_logging(logger_names=["app"], stream=io.StringIO())
+            before = list(root.handlers)
+            logging.basicConfig(stream=io.StringIO())
+            after = list(root.handlers)
+
+        assert len(_redaction_handlers_of(before)) == 1
+        assert after == before
+
+    def test_named_logger_record_is_emitted_once(self) -> None:
+        stream = io.StringIO()
+
+        with _bare_root():
+            configure_logging(render_mode="json", logger_names=["app"], stream=stream)
+            logging.getLogger("app").warning("only-once")
+
+        assert [row["event"] for row in _json_records(stream)] == ["only-once"]
+
+    def test_opt_out_warns_once_and_leaves_the_root_alone(self) -> None:
+        with _bare_root() as root, warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            configure_logging(logger_names=["app"], stream=io.StringIO(), redact_unnamed=False)
+            handlers = list(root.handlers)
+
+        assert handlers == []
+        assert len(caught) == 1
+        assert "unscrubbed" in str(caught[0].message)
+        assert caught[0].filename == __file__
+
+    def test_root_handler_follows_a_higher_level_and_is_replaced(self) -> None:
+        with _bare_root() as root:
+            configure_logging(logger_names=["app"], stream=io.StringIO())
+            configure_logging(level="error", logger_names=["app"], stream=io.StringIO())
+            reconfigured = _redaction_handlers(root)
+
+            with warnings.catch_warnings(record=True):
+                configure_logging(
+                    logger_names=["app"], stream=io.StringIO(), redact_unnamed=False
+                )
+
+            opted_out = _redaction_handlers(root)
+
+        assert [h.level for h in reconfigured] == [logging.ERROR]
+        assert opted_out == []
+
+    def test_no_second_root_handler_when_root_is_named(self) -> None:
+        root = logging.getLogger()
+        saved_level = root.level
+
+        with _bare_root():
+            configure_logging(logger_names=["root", "app"], stream=io.StringIO())
+            handlers = list(root.handlers)
+
+        root.setLevel(saved_level)
+        root.propagate = True
+        assert len(handlers) == 1
+        assert not isinstance(handlers[0], _UnnamedRedactionHandler)
+
+    def test_sanitize_disabled_neither_attaches_nor_warns(self) -> None:
+        with _bare_root() as root, warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            configure_logging(
+                logger_names=["app"],
+                stream=io.StringIO(),
+                sanitize_logs=False,
+                redact_unnamed=False,
+            )
+            handlers = list(root.handlers)
+
+        assert handlers == []
+        assert caught == []
+
+    def test_non_propagating_logger_is_reached_only_by_naming_it(self) -> None:
+        """The ``uvicorn.access`` shape: its own handler and ``propagate=False``."""
+
+        own, stream = io.StringIO(), io.StringIO()
+        access = logging.getLogger("vendor.access")
+        access.addHandler(logging.StreamHandler(own))
+        access.propagate = False
+
+        with _bare_root():
+            configure_logging(render_mode="json", logger_names=["app"], stream=stream)
+            access.warning("GET /cb?access_token=fixture-7chr")
+            attach_foreign_loggers(["vendor.access"], render_mode="json", stream=stream)
+            access.warning("GET /cb?access_token=fixture-7chr")
+
+        assert "fixture-7chr" in own.getvalue()
+        rows = _json_records(stream)
+        assert len(rows) == 1
+        assert "fixture-7chr" not in str(rows[0]["event"])
+
+    def test_bootstrap_logging_threads_the_opt_out(self) -> None:
+        with _bare_root() as root:
+            bootstrap_logging(stream=io.StringIO(), install_uncaught=False)
+            attached = _redaction_handlers(root)
+
+            with warnings.catch_warnings(record=True) as caught:
+                warnings.simplefilter("always")
+                bootstrap_logging(
+                    stream=io.StringIO(), install_uncaught=False, redact_unnamed=False
+                )
+
+            declined = _redaction_handlers(root)
+
+        assert len(attached) == 1
+        assert declined == []
+        assert len(caught) == 1
+        assert caught[0].filename == __file__

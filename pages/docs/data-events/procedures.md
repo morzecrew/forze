@@ -78,7 +78,7 @@ PostgresProcedureConfig(
         "ON CONFLICT (region) DO UPDATE SET total = excluded.total"
     ),
     in_transaction=True,            # False for REFRESH MATERIALIZED VIEW CONCURRENTLY
-    statement_timeout=None,         # SET LOCAL statement_timeout for long compute
+    statement_timeout=timedelta(seconds=60),  # the default in a transaction
     query_schema=None,              # per-tenant schema (namespace tier)
 )
 ```
@@ -87,6 +87,21 @@ Set `in_transaction=False` for statements that cannot run inside a transaction
 (`REFRESH MATERIALIZED VIEW CONCURRENTLY` and some maintenance); they take the
 autocommit path. `statement_timeout` and `query_schema` both need a transaction,
 so they are rejected at wiring when combined with `in_transaction=False`.
+
+A route that runs in a transaction is bounded by `statement_timeout`, 60 seconds unless
+it sets another value; there is no way to turn it off, so long compute sets a longer
+one. It is a `SET LOCAL statement_timeout` that only tightens: a lower
+`statement_timeout` already in force (the pool's, or one pushed down from an invocation
+deadline) still wins. It takes whole milliseconds, from 1 ms to about 24.8 days. When it
+fires the run fails as `infrastructure`, "Database query canceled (timeout)". The
+server enforces it, so it stops a statement that runs too long, not a connection that
+stalls; the pool's checks and TCP keepalives cover that.
+
+An autocommit route has no `statement_timeout` of its own. It exists for statements
+that manage their own transaction, and bounding it from the client would take a
+second connection that no longer sees the caller's transaction and can wait on its
+locks. Bound it on the server: give the role it runs as, or its database, a
+`statement_timeout` (`ALTER ROLE … SET statement_timeout = '15min'`).
 
 ## Tenancy
 

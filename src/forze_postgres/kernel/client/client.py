@@ -37,7 +37,7 @@ from datetime import timedelta
 from typing import Any, Literal, final, overload
 
 import attrs
-from psycopg import AsyncConnection, Column, OperationalError, sql
+from psycopg import AsyncConnection, Column, OperationalError, capabilities, pq, sql
 from psycopg.abc import Params, QueryNoTemplate
 from psycopg_pool import AsyncConnectionPool, PoolTimeout
 
@@ -50,6 +50,7 @@ from .errors import copy_data_error, exc_interceptor, pool_acquire_error
 from .helpers import isolation_level_enum
 from .port import PostgresClientPort
 from .read_only_root import bypass_read_only_root
+from .session_settings import local_settings_statement, scoped_local_settings
 from .types import RowFactory
 from .value_objects import (
     DeadlinePushdownPolicy,
@@ -148,6 +149,20 @@ def _timeout_ms(t: timedelta) -> int:
     ms = int(t.total_seconds() * 1000)
 
     return max(1, ms)
+
+
+# ....................... #
+
+
+def _left_clean(conn: AsyncConnection) -> bool:
+    """Whether *conn* came out of a failed pipeline idle and out of pipeline mode."""
+
+    pgconn = conn.pgconn
+
+    return (
+        pgconn.pipeline_status == pq.PipelineStatus.OFF
+        and pgconn.transaction_status == pq.TransactionStatus.IDLE
+    )
 
 
 # ....................... #
@@ -782,7 +797,8 @@ class PostgresClient(PostgresClientPort):
 
             finally:
                 try:
-                    await pooled_conn.set_autocommit(False)
+                    if not pooled_conn.closed:
+                        await pooled_conn.set_autocommit(False)
 
                 except Exception:
                     logger.warning(
@@ -1387,6 +1403,75 @@ class PostgresClient(PostgresClientPort):
                     res = self._rows_to_dicts(cur.description, rows)
 
             return res
+
+    # ....................... #
+
+    @exc_interceptor.coroutine("postgres.fetch_all_scoped")  # type: ignore[untyped-decorator]
+    async def fetch_all_scoped(
+        self,
+        query: QueryNoTemplate,
+        params: Params | None = None,
+        *,
+        statement_timeout: timedelta | None = None,
+        search_path: str | None = None,
+    ) -> list[JsonDict]:
+        """Return all rows of *query* under a transaction-local ``statement_timeout`` and
+        ``search_path``. The timeout only lowers the one in force.
+
+        Out of any transaction the settings and the query go in one pipeline: one implicit
+        transaction, one round trip, and the settings end with it. Inside a transaction they
+        run in a savepoint, set and captured by one statement and restored after the query.
+        """
+
+        settings = local_settings_statement(
+            statement_timeout=statement_timeout,
+            search_path=search_path,
+        )
+
+        if settings is None:
+            return await self.fetch_all(query, params)
+
+        at_root = self.__ctx_depth.get() == 0 and self.__current_conn() is None
+
+        if at_root and capabilities.has_pipeline():
+            async with self._statement_conn() as conn:
+                try:
+                    async with conn.cursor() as cur:
+                        # Autocommit: statements before the pipeline's one Sync share an
+                        # implicit transaction, so the local settings bound the query and end
+                        # with it.
+                        async with conn.pipeline():
+                            await cur.execute(settings)
+                            await cur.execute(query, params)
+
+                        return self._rows_to_dicts(cur.description, await cur.fetchall())
+
+                except Exception:
+                    # A server error (a statement_timeout among them) is synced and rolled back
+                    # by the pipeline's exit, and the connection is reusable. Anything else
+                    # left it in a state nobody can vouch for: the pool replaces it.
+                    if not _left_clean(conn):
+                        await conn.close()
+
+                    raise
+
+                except BaseException:
+                    # A cancel can land mid-sync, and psycopg drains only while ACTIVE.
+                    await conn.close()
+                    raise
+
+        in_caller_transaction = self.is_in_transaction()
+
+        async with (
+            self.transaction(),
+            scoped_local_settings(
+                self,
+                statement_timeout=statement_timeout,
+                search_path=search_path,
+                restore=in_caller_transaction,
+            ),
+        ):
+            return await self.fetch_all(query, params)
 
     # ....................... #
 

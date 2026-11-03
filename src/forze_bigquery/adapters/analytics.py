@@ -42,6 +42,7 @@ from forze.application.integrations.analytics.adapter_common import (
     execute_analytics_offset_page,
     parse_analytics_cursor_limit,
     parse_count_row,
+    route_timeout,
     validate_fetch_batch_size,
     validated_params,
 )
@@ -49,6 +50,7 @@ from forze.base.codecs import B64UrlJsonCodec
 from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict, OnceCell
 from forze_bigquery.execution.deps.configs import (
+    TIMEOUT_RESOLUTION,
     BigQueryAnalyticsConfig,
     BigQueryQueryConfig,
 )
@@ -186,9 +188,12 @@ class BigQueryAnalyticsAdapter[R: BaseModel, Ing: BaseModel](
 
     # ....................... #
 
-    @staticmethod
-    def _run_timeout(options: AnalyticsRunOptions | None) -> timedelta | None:
-        return None if options is None else options.get("timeout")
+    def _run_timeout(self, query_key: str, options: AnalyticsRunOptions | None) -> timedelta:
+        return route_timeout(
+            options,
+            self._query_config(query_key).timeout,
+            resolution=TIMEOUT_RESOLUTION,
+        )
 
     # ....................... #
 
@@ -269,7 +274,7 @@ class BigQueryAnalyticsAdapter[R: BaseModel, Ing: BaseModel](
             max_results=effective_max,
             start_index=start_index,
             page_token=page_token,
-            timeout=self._run_timeout(options),
+            timeout=self._run_timeout(query_key, options),
             default_dataset=await self._dataset(),
         )
 
@@ -289,7 +294,7 @@ class BigQueryAnalyticsAdapter[R: BaseModel, Ing: BaseModel](
             dry_run=False,
             maximum_bytes_billed=self._max_bytes(query_key, options),
             max_results=1,
-            timeout=self._run_timeout(options),
+            timeout=self._run_timeout(query_key, options),
             default_dataset=await self._dataset(),
         )
 
@@ -360,7 +365,7 @@ class BigQueryAnalyticsAdapter[R: BaseModel, Ing: BaseModel](
             self._bind_tenant(params),
             maximum_bytes_billed=self._max_bytes(query_key, options),
             max_rows=max_rows,
-            timeout=self._run_timeout(options),
+            timeout=self._run_timeout(query_key, options),
             fetch_batch_size=fetch_batch_size,
             default_dataset=await self._dataset(),
         )
@@ -398,7 +403,7 @@ class BigQueryAnalyticsAdapter[R: BaseModel, Ing: BaseModel](
             self._bind_tenant(params),
             maximum_bytes_billed=self._max_bytes(query_key, options),
             max_rows=max_rows,
-            timeout=self._run_timeout(options),
+            timeout=self._run_timeout(query_key, options),
             fetch_batch_size=fetch_batch_size,
             default_dataset=await self._dataset(),
         )

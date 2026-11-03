@@ -5,6 +5,7 @@ require_clickhouse()
 # ....................... #
 
 import asyncio
+import math
 from collections.abc import AsyncGenerator, Awaitable, Callable, Sequence
 from datetime import timedelta
 from operator import itemgetter
@@ -46,6 +47,10 @@ from .value_objects import (
 
 T = TypeVar("T")
 
+_READ_TIMEOUT_MARGIN_SEC = 5
+"""Seconds the transport waits past a query's ``max_execution_time``, so the server's own
+``TIMEOUT_EXCEEDED`` arrives before the socket gives up."""
+
 # ....................... #
 
 
@@ -57,6 +62,10 @@ class ClickHouseClient(ClickHouseClientPort):
     __client: AsyncClient | None = attrs.field(default=None, init=False)
     __config: ClickHouseConfig | None = attrs.field(default=None, init=False)
     __init_lock: asyncio.Lock = attrs.field(factory=asyncio.Lock, init=False)
+    # ....................... #
+
+    def query_timeout_limit(self) -> timedelta | None:
+        return None if self.__config is None else self.__config.timeout
 
     # ....................... #
 
@@ -69,6 +78,7 @@ class ClickHouseClient(ClickHouseClientPort):
 
             self.__config = config
             timeout_sec = int(config.timeout.total_seconds())
+            read_timeout_sec = _read_timeout_sec(config.timeout)
             self.__client = await create_async_client(  # type: ignore[reportUnknownReturnType]
                 host=config.host,
                 port=config.port,
@@ -77,7 +87,7 @@ class ClickHouseClient(ClickHouseClientPort):
                 database=config.database,
                 secure=config.secure,
                 connect_timeout=timeout_sec,
-                send_receive_timeout=timeout_sec,
+                send_receive_timeout=read_timeout_sec,
                 connector_limit=config.connector_limit,
                 connector_limit_per_host=config.connector_limit_per_host,
                 keepalive_timeout=config.keepalive_timeout.total_seconds(),
@@ -467,3 +477,10 @@ class ClickHouseClient(ClickHouseClientPort):
                 timeout_sec=timeout_sec,
             ),
         )
+
+
+# ....................... #
+
+
+def _read_timeout_sec(query_timeout: timedelta) -> int:
+    return math.ceil(query_timeout.total_seconds()) + _READ_TIMEOUT_MARGIN_SEC

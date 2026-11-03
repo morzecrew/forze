@@ -38,6 +38,10 @@ class ConfigurableClickHouseAnalytics:
     ) -> ClickHouseAnalyticsAdapter[Any, Any]:
         self.config.validate_against_spec(spec)
         client = ctx.deps.provide(ClickHouseClientDepKey)
+
+        if (limit := client.query_timeout_limit()) is not None:
+            self.config.validate_against_client(str(spec.name), limit)
+
         spec = resolve_analytics_codecs_spec(
             spec,
             keyring=(ctx.deps.provide(KeyringDepKey) if ctx.deps.exists(KeyringDepKey) else None),

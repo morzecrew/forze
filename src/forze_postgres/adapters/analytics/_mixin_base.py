@@ -62,8 +62,4 @@ class PostgresAnalyticsMixinBase[R: BaseModel, Ing: BaseModel]:
             offset: int | None,
         ) -> list[JsonDict]: ...
 
-        async def _run_with_timeout(
-            self,
-            options: AnalyticsRunOptions | None,
-            fn: Callable[[], Awaitable[Any]],
-        ) -> Any: ...
+        async def _run_in_query_schema(self, fn: Callable[[], Awaitable[Any]]) -> Any: ...

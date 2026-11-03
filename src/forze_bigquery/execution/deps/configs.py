@@ -1,5 +1,6 @@
 """BigQuery analytics execution configs."""
 
+from datetime import timedelta
 from typing import TYPE_CHECKING, Any
 
 import attrs
@@ -10,13 +11,20 @@ from forze.application.contracts.resolution import (
     coerce_optional_named_resource_spec,
 )
 from forze.application.contracts.tenancy import TenantAwareIntegrationConfig
-from forze.application.integrations.analytics import assert_tenant_param_referenced
+from forze.application.integrations.analytics import (
+    DEFAULT_ROUTE_TIMEOUT,
+    assert_tenant_param_referenced,
+    validate_route_timeout,
+)
 from forze.base.exceptions import exc
 from forze.base.primitives import MappingConverter, StrKeyMapping
 from forze_bigquery.kernel.relation import RelationSpec
 
 if TYPE_CHECKING:
     from forze.application.contracts.analytics import AnalyticsSpec
+
+TIMEOUT_RESOLUTION = timedelta(seconds=1)
+"""The client waits in whole seconds: a fraction would be rounded."""
 
 # ....................... #
 
@@ -34,11 +42,22 @@ class BigQueryQueryConfig:
     skip_total: bool = False
     """When True, ``run_page`` skips the COUNT wrapper."""
 
+    timeout: timedelta = DEFAULT_ROUTE_TIMEOUT
+    """Ceiling on how long one execution of this query may run. Always on; a per-call
+    ``options["timeout"]`` may lower it, never raise it.
+
+    It bounds how long the client waits for the job, replacing
+    :attr:`~forze_bigquery.BigQueryConfig.timeout` for this query. BigQuery does not stop
+    the job when the wait ends; set :attr:`maximum_bytes_billed` to cap its cost. Whole
+    seconds, at least 1 s."""
+
     # ....................... #
 
     def __attrs_post_init__(self) -> None:
         if not self.sql.strip():
             raise exc.internal("Analytics query sql must be non-empty.")
+
+        validate_route_timeout(self.timeout, resolution=TIMEOUT_RESOLUTION)
 
 
 # ....................... #

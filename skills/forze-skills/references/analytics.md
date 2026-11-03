@@ -125,6 +125,7 @@ async with runtime.scope():
 - **Putting SQL or dataset/database names in `AnalyticsSpec`** — the spec carries the logical name and param/read types; the deps config carries SQL and physical names.
 - **Building SQL strings in handlers** — reference a named query key; parameterize with the backend's placeholder syntax (`@param` / `{name:Type}`).
 - **Using `run_page` for large scans you don't need a total for** — it runs a COUNT; prefer `run` / `run_cursor`.
+- **Raising the per-call `timeout` for a slow query** — each `*QueryConfig` carries a `timeout` (60 s unless set), and `options={"timeout": ...}` can only lower it; give the slow query a longer `timeout` in its config.
 - **Treating analytics as a write store** — it is append/query only; durable state belongs in document/storage ports.
 - **Hard-coding warehouse credentials** — use a secrets/env layer, ADC, or workload identity.
 

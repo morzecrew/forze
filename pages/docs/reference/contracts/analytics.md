@@ -69,6 +69,23 @@ Run a registered query by key with typed params; the shape × pagination naming 
 `options: AnalyticsRunOptions` carries the per-run knobs — `dry_run`, `max_rows`, and
 `timeout`. Any other key is refused as a `precondition` naming it.
 
+Every registered query carries its own `timeout` in the backend's query config: 60
+seconds unless the wiring sets another positive value, with no way to turn it off. A
+call with no `timeout` option is bounded by it. A per-call `timeout` lowers it for that
+call and never raises it: a value above the query's is clamped down to it. A
+configured timeout the backend cannot enforce as written fails at wiring
+(`analytics_timeout_invalid`), and such a per-call one is refused as `validation`
+(`analytics_option_invalid`). The bound covers one statement, so the count of
+`run_page` and each batch of `run_chunked` get the whole timeout. How each backend
+enforces it:
+
+| Backend | Enforced by | Accepted values |
+|---------|-------------|-----------------|
+| Postgres | `SET LOCAL statement_timeout`, enforced by the server: it stops a long statement, not a stalled connection, which the pool and TCP keepalives cover. It only tightens: a lower `statement_timeout` already in force (the pool's, or an invocation deadline's) still wins. Out of a transaction it goes in one round trip with the query; inside one, in a savepoint that puts the caller's value back | whole milliseconds, 1 ms to about 24.8 days |
+| ClickHouse | the `max_execution_time` setting, so the server stops the query. It replaces the client's own `timeout` for the query, but may not exceed it: the client's transport waits `ClickHouseConfig.timeout` plus 5 s, and a longer route is refused at wiring | whole seconds, up to `ClickHouseConfig.timeout` |
+| BigQuery | how long the client waits for the job: one deadline over the query call, the polling and the results. BigQuery does not stop the job when the wait ends, so cap its cost with `maximum_bytes_billed` | whole seconds |
+| DuckDB | interrupting the query's cursor in process. A wait for a free executor slot counts against it | any positive value |
+
 ## Ingest port  (`ctx.analytics.ingest(spec)`)
 
 | Method | Signature | Notes |

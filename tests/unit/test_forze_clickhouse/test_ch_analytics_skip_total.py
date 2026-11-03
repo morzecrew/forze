@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import timedelta
 from typing import Any
 
 import pytest
@@ -34,6 +35,9 @@ class _Params(BaseModel):
 class _MockClient:
     def __init__(self) -> None:
         self.queries: list[str] = []
+
+    def query_timeout_limit(self) -> timedelta | None:
+        return None  # not started: no limit to check against
 
     async def run_query(self, sql: str, *args: Any, **kwargs: Any) -> ClickHouseQueryResult:
         _ = args, kwargs
