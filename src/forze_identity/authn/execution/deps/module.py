@@ -170,9 +170,10 @@ class AuthnDepsModule(DepsModule):
     One **shared** sink registered for every route this module wires — the
     module's cross-cutting policy knobs (``actor_claim``,
     ``revoke_sessions_on_*``) are likewise module-wide, and observability is the
-    same kind of concern. Per-route divergence uses the module's standard
-    override path: merge an extra routed :data:`AuthnEventSinkDepKey`
-    registration after the module's output."""
+    same kind of concern. For a different sink per route, leave ``events`` unset
+    and register :data:`AuthnEventSinkDepKey` for each route yourself: a second
+    registration for a route the module already wired is refused when the deps
+    merge."""
 
     lockout: LockoutConfig | None = attrs.field(default=None)
     """Optional fixed-window login lockout for password routes. ``None``
