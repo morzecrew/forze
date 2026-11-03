@@ -6973,14 +6973,38 @@ the name a resolution error prints. Handlers should keep to the accessor.</p>
 <tr>
 <td><a href="../contracts/identity/#authentication">Authentication</a></td>
 <td><code>AuthnSpec</code></td>
-<td><code>ctx.authn</code></td>
-<td><code>AuthnDepKey</code> (the lifecycle ports it composes are in <a href="../contracts/identity/">identity</a>)</td>
+<td><code>ctx.authn.authn(spec)</code></td>
+<td><code>AuthnDepKey</code> (+ <code>PasswordVerifierDepKey</code>, <code>TokenVerifierDepKey</code>, <code>ApiKeyVerifierDepKey</code>, <code>PrincipalResolverDepKey</code>, which the orchestrator resolves for its route; <code>AuthnEventSinkDepKey</code> for the optional event sink)</td>
+</tr>
+<tr>
+<td><a href="../contracts/identity/#credential-lifecycle">Credential lifecycle</a></td>
+<td><code>AuthnSpec</code></td>
+<td><code>ctx.authn.token_lifecycle(spec)</code> and its siblings</td>
+<td><code>TokenLifecycleDepKey</code> / <code>PasswordLifecycleDepKey</code> / <code>PasswordResetDepKey</code> / <code>ApiKeyLifecycleDepKey</code> / <code>PasswordAccountProvisioningDepKey</code></td>
+</tr>
+<tr>
+<td><a href="../contracts/identity/#principal-state-and-events">Principal state</a></td>
+<td><code>AuthnSpec</code></td>
+<td><code>ctx.authn.eligibility(spec)</code> / <code>ctx.authn.principal_deactivation(spec)</code></td>
+<td><code>PrincipalEligibilityDepKey</code> / <code>PrincipalDeactivationDepKey</code></td>
+</tr>
+<tr>
+<td><a href="../contracts/identity/#revocation-fast-path">Revocation fast path</a></td>
+<td><code>RevocationStatesSpec</code></td>
+<td>by dep key</td>
+<td><code>RevocationStatesDepKey</code> (+ <code>PrincipalEpochDepKey</code>, unrouted)</td>
 </tr>
 <tr>
 <td><a href="../contracts/identity/#authorization">Authorization</a></td>
 <td><code>AuthzSpec</code></td>
 <td><code>ctx.authz.decision(spec)</code> / <code>ctx.authz.scope(spec)</code></td>
 <td><code>AuthzDecisionDepKey</code> / <code>AuthzScopeDepKey</code></td>
+</tr>
+<tr>
+<td><a href="../contracts/identity/#authorization">Grants &amp; delegation</a></td>
+<td><code>AuthzSpec</code></td>
+<td><code>ctx.authz.grant_query(spec)</code> and its siblings</td>
+<td><code>GrantQueryDepKey</code> / <code>RoleAssignmentDepKey</code> / <code>PrincipalRegistryDepKey</code> (+ <code>DelegationDepKey</code>, <code>DelegationGrantDepKey</code>)</td>
 </tr>
 <tr>
 <td><a href="../tenancy-matrix/">Tenancy</a></td>

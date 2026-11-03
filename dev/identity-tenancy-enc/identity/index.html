@@ -6919,18 +6919,19 @@ whether you need stored accounts:</p>
 </tbody>
 </table>
 <h2 id="plugging-in-a-provider">Plugging in a provider<a class="headerlink" href="#plugging-in-a-provider" title="Permanent link">&para;</a></h2>
-<p>A route's <code>AuthnSpec</code> selects verifiers and a resolver by <strong>profile name</strong>. An
-integration registers a verifier under a profile; the spec references it without
-owning any vendor knowledge:</p>
+<p>A route's verifiers and resolver are registered under its <code>AuthnSpec</code>'s <strong>name</strong>. The
+spec only says which credential families the route accepts, and owns no vendor knowledge:</p>
 <div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">forze.application.contracts.authn</span><span class="w"> </span><span class="kn">import</span> <span class="n">AuthnSpec</span>
 
 <span class="n">api_authn</span> <span class="o">=</span> <span class="n">AuthnSpec</span><span class="p">(</span>
     <span class="n">name</span><span class="o">=</span><span class="s2">"api"</span><span class="p">,</span>
     <span class="n">enabled_methods</span><span class="o">=</span><span class="nb">frozenset</span><span class="p">({</span><span class="s2">"token"</span><span class="p">,</span> <span class="s2">"api_key"</span><span class="p">}),</span>
-    <span class="n">token_profile</span><span class="o">=</span><span class="s2">"oidc"</span><span class="p">,</span>
-    <span class="n">resolver_profile</span><span class="o">=</span><span class="s2">"mapping"</span><span class="p">,</span>
 <span class="p">)</span>
 </code></pre></div>
+<p>An integration supplies the verifier factory, and <code>AuthnDepsModule</code> registers it for that
+route through <code>token_verifiers={"api": ...}</code>, with a matching <code>resolvers</code> entry. The
+<a href="../../reference/contracts/identity/#replacing-one-port">identity reference</a> lists which
+field registers each port.</p>
 <p>Providers ship as integrations — see <a href="../../integrations/oidc/"><abbr title="OpenID Connect">OIDC</abbr></a> and
 <a href="../../integrations/authn/">authentication</a>. The
 <a href="../../recipes/external-idp-oidc/">external IdP recipe</a> wires a third-party identity

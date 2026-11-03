@@ -5834,6 +5834,67 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Authentication">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#ports-and-dep-keys" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Ports and dep keys
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#verifying-a-credential" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Verifying a credential
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#credential-lifecycle" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Credential lifecycle
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#principal-state-and-events" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Principal state and events
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#revocation-fast-path" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Revocation fast path
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -5845,13 +5906,30 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Authorization">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#ports-and-dep-keys_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Ports and dep keys
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
-  <a href="#implemented-by" class="md-nav__link">
+  <a href="#replacing-one-port" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        Implemented by
+        Replacing one port
       </span>
     </span>
   </a>
@@ -6491,6 +6569,67 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Authentication">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#ports-and-dep-keys" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Ports and dep keys
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#verifying-a-credential" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Verifying a credential
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#credential-lifecycle" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Credential lifecycle
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#principal-state-and-events" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Principal state and events
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#revocation-fast-path" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Revocation fast path
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -6502,13 +6641,30 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Authorization">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#ports-and-dep-keys_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Ports and dep keys
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
-  <a href="#implemented-by" class="md-nav__link">
+  <a href="#replacing-one-port" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        Implemented by
+        Replacing one port
       </span>
     </span>
   </a>
@@ -6613,14 +6769,17 @@
   <h1>Identity (authn & authz)</h1>
 
 <p>Identity splits into <strong>authentication</strong> (who is calling — <code>ctx.authn.*</code>) and
-<strong>authorization</strong> (what they may do — <code>ctx.authz.*</code>). Both are large port families; the
-concepts and wiring are in <a href="../../../identity-tenancy-enc/identity/">Identity</a> and the
-<a href="../../../integrations/authn/">authn</a> / <a href="../../../integrations/oidc/"><abbr title="OpenID Connect">OIDC</abbr></a> integrations — this
-is the port catalog.</p>
+<strong>authorization</strong> (what they may do — <code>ctx.authz.*</code>), each a family of small ports. The
+concepts are in <a href="../../../identity-tenancy-enc/identity/">Identity &amp; access</a> and the shipped
+stack in the <a href="../../../integrations/authn/">authn</a> / <a href="../../../integrations/oidc/"><abbr title="OpenID Connect">OIDC</abbr></a>
+integrations; this page is the port catalog — what each port promises, the dep key it binds
+under, and how to replace one port without the rest.</p>
+<p>Every port is routed by its spec's <code>name</code>: <code>ctx.authn.token_lifecycle(spec)</code> resolves
+<code>TokenLifecycleDepKey</code> under the route <code>spec.name</code>. A provider is a factory
+<code>(ctx, spec) -&gt; port</code>. A <strong>write</strong> accessor hands back a port that refuses any use inside a
+read-only (<code>QUERY</code>) operation.</p>
 <h2 id="authentication">Authentication<a class="headerlink" href="#authentication" title="Permanent link">&para;</a></h2>
-<p><code>AuthnSpec</code> declares which credential families a route accepts and which named verifier /
-resolver profiles to use (profiles are how external IdPs plug in without changing the
-contract):</p>
+<p><code>AuthnSpec</code> declares which credential families a route accepts:</p>
 <table>
 <thead>
 <tr>
@@ -6635,82 +6794,330 @@ contract):</p>
 <td><code>name</code></td>
 <td><code>str \| StrEnum</code></td>
 <td>required</td>
-<td>route name</td>
+<td>route name — every authn port resolves under it</td>
 </tr>
 <tr>
 <td><code>enabled_methods</code></td>
 <td><code>frozenset[AuthnMethod]</code></td>
 <td><code>{"token"}</code></td>
-<td>credential families: <code>password</code> / <code>token</code> / <code>api_key</code></td>
+<td>credential families: <code>password</code> / <code>token</code> / <code>api_key</code>; an empty set is a configuration error, and <code>AuthnPort</code> refuses a family the route does not enable</td>
 </tr>
 <tr>
 <td><code>token_profile</code> · <code>password_profile</code> · <code>api_key_profile</code></td>
 <td><code>str \| None</code></td>
 <td><code>None</code></td>
-<td>named verifier profiles (else the route default)</td>
+<td>verifier profile hints; the shipped orchestrator resolves verifiers by route and does not read them</td>
 </tr>
 <tr>
 <td><code>resolver_profile</code></td>
 <td><code>str \| None</code></td>
 <td><code>None</code></td>
-<td>named principal-resolver profile</td>
+<td>principal-resolver profile hint; likewise unread by the shipped orchestrator</td>
 </tr>
 </tbody>
 </table>
-<p>Ports, via <code>ctx.authn.&lt;x&gt;(spec)</code>:</p>
+<h3 id="ports-and-dep-keys">Ports and dep keys<a class="headerlink" href="#ports-and-dep-keys" title="Permanent link">&para;</a></h3>
 <table>
 <thead>
 <tr>
-<th>Accessor</th>
+<th>Accessor <code>ctx.authn.&lt;x&gt;(spec)</code></th>
 <th>Port</th>
-<th>For</th>
+<th>Dep key</th>
+<th>Write</th>
 </tr>
 </thead>
 <tbody>
 <tr>
 <td><code>authn</code></td>
 <td><code>AuthnPort</code></td>
-<td>authenticate a credential → <code>AuthnIdentity</code></td>
+<td><code>AuthnDepKey</code></td>
+<td></td>
 </tr>
 <tr>
 <td><code>eligibility</code></td>
 <td><code>PrincipalEligibilityPort</code></td>
-<td>whether a principal may authenticate</td>
+<td><code>PrincipalEligibilityDepKey</code></td>
+<td></td>
 </tr>
 <tr>
 <td><code>token_lifecycle</code></td>
 <td><code>TokenLifecyclePort</code></td>
-<td>issue / refresh / revoke tokens</td>
+<td><code>TokenLifecycleDepKey</code></td>
+<td>yes</td>
 </tr>
 <tr>
 <td><code>password_lifecycle</code></td>
 <td><code>PasswordLifecyclePort</code></td>
-<td>set / change a password</td>
+<td><code>PasswordLifecycleDepKey</code></td>
+<td>yes</td>
 </tr>
 <tr>
 <td><code>password_reset</code></td>
 <td><code>PasswordResetPort</code></td>
-<td>request / confirm a reset (the <a href="../../../recipes/password-reset/">recipe</a>)</td>
+<td><code>PasswordResetDepKey</code></td>
+<td>yes</td>
 </tr>
 <tr>
 <td><code>api_key_lifecycle</code></td>
 <td><code>ApiKeyLifecyclePort</code></td>
-<td>mint / rotate / revoke API keys</td>
+<td><code>ApiKeyLifecycleDepKey</code></td>
+<td>yes</td>
 </tr>
 <tr>
 <td><code>password_account_provisioning</code></td>
 <td><code>PasswordAccountProvisioningPort</code></td>
-<td>register / provision password accounts, issue + accept invites</td>
+<td><code>PasswordAccountProvisioningDepKey</code></td>
+<td>yes</td>
 </tr>
 <tr>
 <td><code>principal_deactivation</code></td>
 <td><code>PrincipalDeactivationPort</code></td>
-<td>deactivate a principal (cascades logout, and closes the password and API-key accounts of every store the application wires)</td>
+<td><code>PrincipalDeactivationDepKey</code></td>
+<td>yes</td>
 </tr>
 <tr>
 <td><code>event_sink</code></td>
 <td><code>AuthnEventSink</code></td>
-<td>structured authn events (login, lockout, refresh-reuse)</td>
+<td><code>AuthnEventSinkDepKey</code></td>
+<td></td>
+</tr>
+</tbody>
+</table>
+<p>Six more keys have no accessor. The orchestrator behind <code>AuthnDepKey</code> resolves the first
+four for its own route, and session issue and revocation resolve the last two:</p>
+<table>
+<thead>
+<tr>
+<th>Port</th>
+<th>Dep key</th>
+<th>Resolved by</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>PasswordVerifierPort</code> · <code>TokenVerifierPort</code> · <code>ApiKeyVerifierPort</code></td>
+<td><code>PasswordVerifierDepKey</code> · <code>TokenVerifierDepKey</code> · <code>ApiKeyVerifierDepKey</code></td>
+<td>the orchestrator, one per enabled family, under <code>spec.name</code></td>
+</tr>
+<tr>
+<td><code>PrincipalResolverPort</code></td>
+<td><code>PrincipalResolverDepKey</code></td>
+<td>the orchestrator, under <code>spec.name</code></td>
+</tr>
+<tr>
+<td><code>RevocationStatesPort</code></td>
+<td><code>RevocationStatesDepKey</code></td>
+<td>verification, session issue and revocation, under the route <code>AuthnKernelConfig.revocation_states</code> names (a <code>RevocationStatesSpec</code>)</td>
+</tr>
+<tr>
+<td><code>PrincipalEpochPort</code></td>
+<td><code>PrincipalEpochDepKey</code></td>
+<td>session issue and revocation; one store per deployment, unrouted</td>
+</tr>
+</tbody>
+</table>
+<h3 id="verifying-a-credential">Verifying a credential<a class="headerlink" href="#verifying-a-credential" title="Permanent link">&para;</a></h3>
+<p>The verify-then-resolve seam. A verifier proves a credential and emits a
+<code>VerifiedAssertion</code>; the resolver maps it to an <code>AuthnIdentity</code>; the orchestrator runs both
+and then checks eligibility.</p>
+<table>
+<thead>
+<tr>
+<th>Port</th>
+<th>Method</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>AuthnPort</code></td>
+<td><code>authenticate_with_password(credentials)</code> · <code>authenticate_with_token(credentials)</code> · <code>authenticate_with_api_key(credentials)</code></td>
+<td>each returns an <code>AuthnResult</code>; a family the route does not enable is refused as <code>authentication</code></td>
+</tr>
+<tr>
+<td><code>PasswordVerifierPort</code></td>
+<td><code>verify_password(credentials)</code></td>
+<td><code>PasswordCredentials</code> → <code>VerifiedAssertion</code></td>
+</tr>
+<tr>
+<td><code>TokenVerifierPort</code></td>
+<td><code>verify_token(credentials)</code></td>
+<td><code>AccessTokenCredentials</code> → <code>VerifiedAssertion</code>; the assertion's <code>issuer</code> is what a resolver discriminates on; refresh tokens never reach a verifier</td>
+</tr>
+<tr>
+<td><code>ApiKeyVerifierPort</code></td>
+<td><code>verify_api_key(credentials)</code></td>
+<td><code>ApiKeyCredentials</code> → <code>VerifiedAssertion</code></td>
+</tr>
+<tr>
+<td><code>PrincipalResolverPort</code></td>
+<td><code>resolve(assertion)</code></td>
+<td><code>VerifiedAssertion</code> → <code>AuthnIdentity</code> — trust the subject as a UUID, derive one from <code>(issuer, subject)</code>, or look it up</td>
+</tr>
+</tbody>
+</table>
+<h3 id="credential-lifecycle">Credential lifecycle<a class="headerlink" href="#credential-lifecycle" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Port</th>
+<th>Method</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>TokenLifecyclePort</code></td>
+<td><code>issue_tokens(identity, *, tenant_id=None)</code></td>
+<td>returns <code>IssuedTokens</code>; refuses a delegated identity (<code>delegate_denied</code>). Issue and refresh check eligibility with a locking read, so run them in a transaction</td>
+</tr>
+<tr>
+<td></td>
+<td><code>refresh_tokens(refresh_token)</code></td>
+<td>rotates the pair; a reused token must revoke its family, then raise <code>RefreshTokenReuseError</code>, whose raise rolls that revocation back inside your transaction: catch it after the transaction ends and call <code>revoke_chain_of_tokens(error.principal_id, error.family_id)</code> in a fresh one, as <code>AuthnRefreshTokens</code> does; within a configured reuse grace a just-rotated token is refused as <code>refresh_superseded</code> and nothing is revoked</td>
+</tr>
+<tr>
+<td></td>
+<td><code>revoke_tokens(identity)</code></td>
+<td>logout</td>
+</tr>
+<tr>
+<td></td>
+<td><code>revoke_tokens_by_refresh_token(refresh_token)</code></td>
+<td>logout holding only a refresh token; an unknown, revoked, rotated or expired one revokes nothing and raises nothing</td>
+</tr>
+<tr>
+<td></td>
+<td><code>revoke_chain_of_tokens(principal_id, family_id)</code></td>
+<td>revoke every live session of one rotation family</td>
+</tr>
+<tr>
+<td><code>PasswordLifecyclePort</code></td>
+<td><code>change_password(identity, current_password, new_password)</code></td>
+<td>re-authenticates with the current password first</td>
+</tr>
+<tr>
+<td><code>PasswordResetPort</code></td>
+<td><code>request_reset(login)</code></td>
+<td>returns an <code>IssuedPasswordReset</code> carrying the raw token, or <code>None</code> for an unknown or ineligible login; a new reset invalidates the previous one. Keeping the <em>caller's</em> response uniform is the handler's job</td>
+</tr>
+<tr>
+<td></td>
+<td><code>reset_password(token, new_password)</code></td>
+<td>an invalid, expired or used token is one uniform <code>authentication</code> error; success marks the token used and revokes the principal's sessions (the shipped adapter keeps them only with <code>revoke_sessions_on_reset=False</code>)</td>
+</tr>
+<tr>
+<td><code>ApiKeyLifecyclePort</code></td>
+<td><code>issue_api_key(identity, *, actor_principal_id=None, label=None)</code> · <code>refresh_api_key(credentials)</code></td>
+<td>return an <code>IssuedApiKey</code></td>
+</tr>
+<tr>
+<td></td>
+<td><code>list_api_keys(identity)</code></td>
+<td>the caller's keys as <code>ApiKeyInfo</code> descriptors, never secrets</td>
+</tr>
+<tr>
+<td></td>
+<td><code>revoke_api_key(identity, key_id)</code> · <code>revoke_many_api_keys(identity, key_ids)</code></td>
+<td>the caller's own keys</td>
+</tr>
+<tr>
+<td></td>
+<td><code>list_principal_api_keys(principal_id)</code> · <code>revoke_principal_api_key(key_id)</code></td>
+<td>administrator calls: no identity check, so who may make them is the calling operation's authorization to settle; global lookup, since API-key accounts are not tenant-scoped; revoking an unknown key is <code>not_found</code></td>
+</tr>
+<tr>
+<td><code>PasswordAccountProvisioningPort</code></td>
+<td><code>register_with_password(principal_id, credentials)</code></td>
+<td>create the password account of a known principal id</td>
+</tr>
+<tr>
+<td></td>
+<td><code>provision_password_account(operator, principal_id, credentials)</code></td>
+<td>the same, on an operator's behalf</td>
+</tr>
+<tr>
+<td></td>
+<td><code>issue_password_invite(operator, principal_id)</code> · <code>accept_invite_with_password(invite_token, principal_id, credentials)</code></td>
+<td>invite flow; the first returns an <code>IssuedInvite</code></td>
+</tr>
+</tbody>
+</table>
+<h3 id="principal-state-and-events">Principal state and events<a class="headerlink" href="#principal-state-and-events" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Port</th>
+<th>Method</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>PrincipalEligibilityPort</code></td>
+<td><code>require_authentication_allowed(principal_id, *, for_update=False)</code></td>
+<td>raises when the principal is missing or inactive; <code>for_update</code> takes a row lock held until the caller's transaction ends. Session issue passes it, so on Postgres a concurrent deactivation either waits for the new session and revokes it, or commits first and the issue is refused</td>
+</tr>
+<tr>
+<td><code>PrincipalDeactivationPort</code></td>
+<td><code>deactivate(principal_id)</code></td>
+<td>idempotent; cascades logout and closes the password and API-key accounts of every store the application wires; with revocation states wired it must run inside a transaction (<code>authn_revocation_requires_transaction</code> otherwise)</td>
+</tr>
+<tr>
+<td><code>AuthnEventSink</code></td>
+<td><code>record(event)</code></td>
+<td>receives an <code>AuthnEvent</code> (<code>AuthnEventKind</code>, principal, <code>login_digest</code> — never the raw login). Optional and best-effort: flows emit through <code>resolve_authn_event_emitter</code>, which treats a missing registration as emission off and a raising sink as a logged warning. <code>ctx.authn.event_sink(spec)</code> raises when none is registered</td>
+</tr>
+</tbody>
+</table>
+<h3 id="revocation-fast-path">Revocation fast path<a class="headerlink" href="#revocation-fast-path" title="Permanent link">&para;</a></h3>
+<p>Postgres stays the truth; these cache what a session or API-key lookup read there, so a
+verification can skip the row. A missing or unreadable state means "read Postgres", never
+"admitted". Wiring is in <a href="../../../integrations/authn/#check-sessions-and-api-keys-from-redis">Check sessions and API keys from
+Redis</a>.</p>
+<table>
+<thead>
+<tr>
+<th>Port</th>
+<th>Method</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>RevocationStatesPort</code></td>
+<td><code>read(principal_id, key)</code></td>
+<td>the principal's epoch and one family (<code>f:&lt;id&gt;</code>) or session (<code>s:&lt;id&gt;</code>) state, with the store's clock, in one read</td>
+</tr>
+<tr>
+<td></td>
+<td><code>fill(principal_id, states, *, expire_at_ms)</code></td>
+<td>set absent keys only; a write landing at or after <code>expire_at_ms</code> leaves nothing</td>
+</tr>
+<tr>
+<td></td>
+<td><code>revoke(principal_id, keys, *, ttl)</code></td>
+<td>overwrite with <code>revoked</code> — a revocation always wins</td>
+</tr>
+<tr>
+<td></td>
+<td><code>now_ms(principal_id)</code> · <code>raise_epoch(principal_id, epoch, *, expire_at_ms, state=None)</code></td>
+<td>the store's clock; keep the larger cached epoch</td>
+</tr>
+<tr>
+<td><code>ApiKeyStatesPort</code></td>
+<td><code>read_api_key(digest)</code> · <code>fill_api_key(digest, state, *, expire_at_ms)</code> · <code>revoke_api_keys(digests, *, ttl)</code></td>
+<td>opt-in extension of the same store for API keys; the build refuses a states store that lacks it when API keys verify from cached states</td>
+</tr>
+<tr>
+<td><code>PrincipalEpochPort</code></td>
+<td><code>current(principal_id)</code></td>
+<td>unlocked read; a principal with no row has epoch <code>0</code></td>
+</tr>
+<tr>
+<td></td>
+<td><code>hold(principal_id)</code> · <code>advance(principal_id)</code></td>
+<td>issue creates the row if absent and holds the epoch under a share lock; a revocation raises it by one. Both refuse to run outside a transaction. The epoch only rises, and its row is never deleted while a token might carry it</td>
 </tr>
 </tbody>
 </table>
@@ -6748,70 +7155,214 @@ contract):</p>
 <td><code>enforce_delegation_grant</code></td>
 <td><code>bool</code></td>
 <td><code>False</code></td>
-<td>a delegated identity (<code>actor</code> set) also needs a recorded delegation grant</td>
+<td>a delegated identity (<code>actor</code> set) also needs a recorded delegation grant; enabling it with no delegation port wired is a configuration error</td>
 </tr>
 </tbody>
 </table>
-<p>Ports, via <code>ctx.authz.&lt;x&gt;(spec)</code>:</p>
+<h3 id="ports-and-dep-keys_1">Ports and dep keys<a class="headerlink" href="#ports-and-dep-keys_1" title="Permanent link">&para;</a></h3>
 <table>
 <thead>
 <tr>
-<th>Accessor</th>
+<th>Accessor <code>ctx.authz.&lt;x&gt;(spec)</code></th>
 <th>Port</th>
-<th>For</th>
+<th>Dep key</th>
+<th>Write</th>
 </tr>
 </thead>
 <tbody>
 <tr>
 <td><code>decision</code></td>
 <td><code>AuthzDecisionPort</code></td>
-<td>may this principal run this operation?</td>
+<td><code>AuthzDecisionDepKey</code></td>
+<td></td>
 </tr>
 <tr>
 <td><code>scope</code></td>
 <td><code>AuthzScopePort</code></td>
-<td>which rows may they see — a <a href="../../query-syntax/">query-DSL</a> filter</td>
+<td><code>AuthzScopeDepKey</code></td>
+<td></td>
 </tr>
 <tr>
 <td><code>grant_query</code></td>
 <td><code>GrantQueryPort</code></td>
-<td>read roles / permissions / bindings</td>
+<td><code>GrantQueryDepKey</code></td>
+<td></td>
 </tr>
 <tr>
 <td><code>role_assignment</code></td>
 <td><code>RoleAssignmentPort</code></td>
-<td>assign / revoke roles</td>
+<td><code>RoleAssignmentDepKey</code></td>
+<td>yes</td>
 </tr>
 <tr>
 <td><code>principal_registry</code></td>
 <td><code>PrincipalRegistryPort</code></td>
-<td>provision principals</td>
+<td><code>PrincipalRegistryDepKey</code></td>
+<td>yes</td>
 </tr>
 <tr>
-<td><code>delegation</code> · <code>delegation_grant</code></td>
-<td><code>DelegationPort</code> · <code>DelegationGrantPort</code></td>
-<td>act-on-behalf-of delegation</td>
+<td><code>delegation</code></td>
+<td><code>DelegationPort</code></td>
+<td><code>DelegationDepKey</code></td>
+<td></td>
+</tr>
+<tr>
+<td><code>delegation_grant</code></td>
+<td><code>DelegationGrantPort</code></td>
+<td><code>DelegationGrantDepKey</code></td>
+<td>yes</td>
 </tr>
 </tbody>
 </table>
-<h2 id="implemented-by">Implemented by<a class="headerlink" href="#implemented-by" title="Permanent link">&para;</a></h2>
+<p>A <em>subject</em> below is any of <code>PrincipalRef \| UUID \| AuthnIdentity \| AuthzSubject</code>, and
+<code>scope</code> is an optional <code>AuthzScope</code> policy partition.</p>
 <table>
 <thead>
 <tr>
-<th>Surface</th>
-<th>Provider</th>
-<th>Integration</th>
+<th>Port</th>
+<th>Method</th>
+<th>Notes</th>
 </tr>
 </thead>
 <tbody>
 <tr>
-<td>Authn + authz</td>
-<td><code>forze_identity</code> (local + external-IdP presets)</td>
-<td><a href="../../../integrations/authn/">Authn</a> · <a href="../../../integrations/oidc/"><abbr title="OpenID Connect">OIDC</abbr></a></td>
+<td><code>AuthzDecisionPort</code></td>
+<td><code>authorize(request)</code></td>
+<td><code>AuthzRequest</code> → <code>AuthzDecision</code>: may this principal run this operation?</td>
+</tr>
+<tr>
+<td><code>AuthzScopePort</code></td>
+<td><code>scope_document(request)</code></td>
+<td><code>AuthzDocumentScopeRequest</code> → <code>AuthzDocumentScope</code>, a <a href="../../query-syntax/">query-DSL</a> constraint for list, search and read paths. Scopes the request's subject alone; <code>AuthzDocumentScopeWrap</code> walks a delegation chain and conjoins the answers</td>
+</tr>
+<tr>
+<td></td>
+<td><code>authorize_sensitive_resource(request)</code></td>
+<td><code>AuthzSensitiveAccessRequest</code> → <code>bool</code>; a delegated subject passes only when every principal in its chain does</td>
+</tr>
+<tr>
+<td><code>GrantQueryPort</code></td>
+<td><code>resolve_effective_grants(subject, *, scope=None)</code></td>
+<td>the subject's <code>EffectiveGrants</code></td>
+</tr>
+<tr>
+<td><code>RoleAssignmentPort</code></td>
+<td><code>assign_role(subject, role_key, *, scope=None)</code> · <code>revoke_role(…)</code></td>
+<td><code>role_key</code> names a catalog role</td>
+</tr>
+<tr>
+<td></td>
+<td><code>list_roles(subject, *, scope=None)</code></td>
+<td><code>frozenset[RoleRef]</code></td>
+</tr>
+<tr>
+<td><code>PrincipalRegistryPort</code></td>
+<td><code>ensure_principal(principal_id, kind, *, is_active=True)</code></td>
+<td>idempotent create-or-return; <code>kind</code> is <code>"user"</code> or <code>"service"</code></td>
+</tr>
+<tr>
+<td></td>
+<td><code>create_principal(kind)</code> · <code>get_principal(principal_id)</code></td>
+<td>a new <code>PrincipalRef</code>; a known one, or <code>None</code></td>
+</tr>
+<tr>
+<td></td>
+<td><code>deactivate_principal(principal_id)</code></td>
+<td>mark inactive for policy</td>
+</tr>
+<tr>
+<td><code>DelegationPort</code></td>
+<td><code>may_act(actor_id, subject_id, *, scope=None)</code></td>
+<td>the pairwise grant check, consulted only when <code>enforce_delegation_grant</code> is set</td>
+</tr>
+<tr>
+<td><code>DelegationGrantPort</code></td>
+<td><code>grant_delegation(actor, subject, *, scope=None)</code> · <code>revoke_delegation(…)</code></td>
+<td>grant is idempotent</td>
+</tr>
+<tr>
+<td></td>
+<td><code>list_delegators(actor, *, scope=None)</code></td>
+<td>the principal ids <code>actor</code> may act for</td>
 </tr>
 </tbody>
 </table>
-<p>A mock identity provider implements the ports for tests.</p>
+<h2 id="replacing-one-port">Replacing one port<a class="headerlink" href="#replacing-one-port" title="Permanent link">&para;</a></h2>
+<p>Register your factory under the port's key and the route, and leave that route out of the
+module field that would register the shipped one. Two registrations of one key on one route
+are refused when the deps merge (<code>Conflicting routed dependencies for '&lt;key&gt;': &lt;route&gt;</code>), so
+the shipped default and yours never race:</p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">forze.application.contracts.authn</span><span class="w"> </span><span class="kn">import</span> <span class="n">PasswordLifecycleDepKey</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">forze.application.contracts.deps</span><span class="w"> </span><span class="kn">import</span> <span class="n">Deps</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">forze.application.execution</span><span class="w"> </span><span class="kn">import</span> <span class="n">DepsRegistry</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">forze_identity.authn</span><span class="w"> </span><span class="kn">import</span> <span class="n">AuthnDepsModule</span>
+
+<span class="n">deps</span> <span class="o">=</span> <span class="n">DepsRegistry</span><span class="p">(</span>
+    <span class="n">modules</span><span class="o">=</span><span class="p">(</span>
+        <span class="n">AuthnDepsModule</span><span class="p">(</span>
+            <span class="n">kernel</span><span class="o">=</span><span class="n">kernel</span><span class="p">,</span>
+            <span class="n">authn</span><span class="o">=</span><span class="p">{</span><span class="s2">"main"</span><span class="p">:</span> <span class="nb">frozenset</span><span class="p">({</span><span class="s2">"password"</span><span class="p">,</span> <span class="s2">"token"</span><span class="p">})},</span>
+            <span class="n">token_lifecycle</span><span class="o">=</span><span class="p">[</span><span class="s2">"main"</span><span class="p">],</span>  <span class="c1"># password_lifecycle unset: that slot is yours</span>
+        <span class="p">),</span>
+    <span class="p">),</span>
+    <span class="n">deps</span><span class="o">=</span><span class="p">(</span><span class="n">Deps</span><span class="o">.</span><span class="n">routed</span><span class="p">({</span><span class="n">PasswordLifecycleDepKey</span><span class="p">:</span> <span class="p">{</span><span class="s2">"main"</span><span class="p">:</span> <span class="n">build_password_lifecycle</span><span class="p">}}),),</span>
+<span class="p">)</span>
+</code></pre></div>
+<p>Which field registers each shipped port, and the exceptions to the rule:</p>
+<table>
+<thead>
+<tr>
+<th>Dep key</th>
+<th>Registered by</th>
+<th>To replace it</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>AuthnDepKey</code></td>
+<td><code>AuthnDepsModule.authn</code></td>
+<td>register your own orchestrator for a route you leave out of <code>authn</code></td>
+</tr>
+<tr>
+<td><code>TokenVerifierDepKey</code> · <code>PasswordVerifierDepKey</code> · <code>ApiKeyVerifierDepKey</code></td>
+<td><code>AuthnDepsModule.authn</code>, per enabled family</td>
+<td>pass <code>token_verifiers</code> / <code>password_verifiers</code> / <code>api_key_verifiers</code> for the route; a token-verifier override also needs a <code>resolvers</code> override</td>
+</tr>
+<tr>
+<td><code>PrincipalResolverDepKey</code></td>
+<td><code>AuthnDepsModule.authn</code></td>
+<td>pass <code>resolvers</code> for the route</td>
+</tr>
+<tr>
+<td><code>TokenLifecycleDepKey</code> · <code>PasswordLifecycleDepKey</code> · <code>PasswordResetDepKey</code> · <code>ApiKeyLifecycleDepKey</code> · <code>PasswordAccountProvisioningDepKey</code> · <code>PrincipalDeactivationDepKey</code></td>
+<td>the <code>AuthnDepsModule</code> field of the same name</td>
+<td>leave the route out of that field</td>
+</tr>
+<tr>
+<td><code>PrincipalEligibilityDepKey</code></td>
+<td><code>AuthnDepsModule</code>, for every route it wires</td>
+<td>on those routes, choose <code>eligibility="policy_principal"</code> or <code>"allow_all"</code>; a second registration conflicts</td>
+</tr>
+<tr>
+<td><code>AuthnEventSinkDepKey</code></td>
+<td><code>AuthnDepsModule.events</code>, for every route it wires</td>
+<td>leave <code>events</code> unset and register a sink per route, or one unrouted sink for all</td>
+</tr>
+<tr>
+<td><code>RevocationStatesDepKey</code> · <code>PrincipalEpochDepKey</code></td>
+<td><code>RedisDepsModule(revocation_states=…)</code> · <code>PostgresDepsModule(principal_epochs=…)</code></td>
+<td>register another store in their place</td>
+</tr>
+<tr>
+<td><code>AuthzDecisionDepKey</code> · <code>AuthzScopeDepKey</code> · <code>GrantQueryDepKey</code> · <code>RoleAssignmentDepKey</code> · <code>PrincipalRegistryDepKey</code> · <code>DelegationDepKey</code> · <code>DelegationGrantDepKey</code></td>
+<td>the <code>AuthzDepsModule</code> field named for the accessor (<code>decision</code>, <code>scope</code>, …)</td>
+<td>leave the route out of that field</td>
+</tr>
+</tbody>
+</table>
+<p>Keep the contract obligations above when you replace a port — in particular the refresh
+reuse signal, the uniform reset error, and the locking eligibility read — since the shipped
+flows and kits rely on them. <code>forze_mock</code> implements every port on this page for tests.</p>
 
 
 
