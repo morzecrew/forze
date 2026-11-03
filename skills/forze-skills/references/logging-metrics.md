@@ -16,7 +16,7 @@ bootstrap_logging(
 )
 ```
 
-Pass extra integration logger roots via `logger_names=[...]` when an integration's loggers are not already covered.
+Pass extra integration logger roots via `logger_names=[...]` when an integration's loggers are not already covered. Naming loggers does not narrow redaction: unlisted loggers that propagate still render through a scrubbing root handler at `warning` and above. A logger with `propagate=False` of its own (`uvicorn.access`) is scrubbed only when named in `third_party`.
 
 `configure_logging` / `attach_foreign_loggers` (from `forze.base.logging`) remain the lower-level entry points when you want to wire the pieces yourself. Pass `otel_config=...` to inject the active span's `trace_id` / `span_id` into every log line.
 

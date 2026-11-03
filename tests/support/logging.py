@@ -4,6 +4,7 @@ import logging
 
 import structlog
 
+from forze.base.logging.configure import _UnnamedRedactionHandler
 from forze.base.logging.logger import set_configured_min_rank
 
 
@@ -11,9 +12,10 @@ def reset_forze_stdlib_loggers(*extra_names: str) -> None:
     """Reset structlog defaults, forze's level gates, and every ``forze*`` (plus *extra_names*) stdlib logger.
 
     ``configure_logging`` / ``bootstrap_logging`` mutate global stdlib logger state
-    (handlers, ``propagate=False``, level); left in place it leaks across tests — a parent
-    configured with ``propagate=False`` then swallows a later test's records. Call in
-    teardown to restore a clean baseline.
+    (handlers, ``propagate=False``, level, and a scrubbing handler on the root when the
+    names are narrowed); left in place it leaks across tests — a parent configured with
+    ``propagate=False`` then swallows a later test's records. Call in teardown to restore
+    a clean baseline.
     """
 
     structlog.reset_defaults()
@@ -27,3 +29,8 @@ def reset_forze_stdlib_loggers(*extra_names: str) -> None:
         logger.handlers.clear()
         logger.propagate = True
         logger.setLevel(logging.NOTSET)
+
+    root = logging.getLogger()
+
+    for handler in [h for h in root.handlers if isinstance(h, _UnnamedRedactionHandler)]:
+        root.removeHandler(handler)
