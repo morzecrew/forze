@@ -4334,7 +4334,7 @@ has a fixture today.
 ## Decision-row outcomes — 2026-11-03 (RFC 0009)
 
 The author accepted D-150 and D-153 as proposed. Both are `drift` from §5.2, accepted as
-departures from its letter: §5.2 stands as written, and §10 items 12 and 13 override it. The
+departures from its letter: §5.2 stands as written, and §10 rows 12 and 13 override it. The
 other proposed rows in this unit, D-159's among them, await the author.
 
 | RFC | Row | Outcome | Grade | Decision | From |

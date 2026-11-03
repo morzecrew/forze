@@ -11,6 +11,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Grants-cache invalidations can reach every process.** `AuthzKernelConfig(grants_invalidation=...)` broadcasts each committed one best-effort, the TTL as fallback; every process runs `grants_invalidation_lifecycle_step`, which fails startup if it cannot listen. Call `invalidate_grants` after plain document commands.
 
+- **`instrument_grants_invalidation` exports the broadcast's counters to OpenTelemetry.** It reports failed publishes, cache flushes, and `forze.authz.grants_invalidation.bypasses`: grants reads that skipped the cache because the process had no live subscription.
+
 - **`OidcIdpPreset.from_issuer` configures an OIDC issuer from its discovery document.** It refuses a document naming another issuer, or an endpoint that is not https (plain http only on loopback); `fetch_oidc_configuration` returns the validated `OidcProviderMetadata`. Discovery runs at startup, never per request.
 
 - **`IntrospectionTokenVerifier` verifies opaque access tokens by RFC 7662 introspection** (Ory Hydra, Zitadel), authenticating with `BasicClientAuth` or `PrivateKeyJwtAuth`. Inactive tokens and failed calls are refused; active verdicts are cached by token digest for at most `cache_ttl`, clamped to the token's expiry.
