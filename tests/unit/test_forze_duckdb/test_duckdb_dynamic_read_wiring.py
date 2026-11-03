@@ -258,6 +258,18 @@ def test_the_engines_guess_at_a_name_is_left_out_of_the_detail() -> None:
     }
 
 
+def test_the_callers_own_words_are_not_taken_for_the_guess() -> None:
+    message = (
+        'Binder Error: Referenced column "Did you mean x" not found in FROM clause!\n'
+        'Candidate bindings: "name"\n\nLINE 1: SELECT "Did you mean x" FROM customers'
+    )
+
+    mapped = dynamic_read_error(duckdb.BinderException(message), route=ROUTE)
+
+    assert isinstance(mapped, CoreException)
+    assert mapped.details == {"route": ROUTE, "detail": message}
+
+
 def test_a_conversion_failure_does_not_echo_the_value() -> None:
     error = duckdb.ConversionException("Could not convert string 'secret-row' to INT32")
 

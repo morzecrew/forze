@@ -78,9 +78,10 @@ _HTTP_REFUSAL = re.compile(r"HTTP (?:code )?40[13]\b|Unauthorized_401|Forbidden_
 DuckDB 2, where a catalog refusal is no longer the bare ``Error``) as its status name
 (EXECUTION-LOG D-060)."""
 
-_GUESS = re.compile(r"\s*Did you mean [^\n]*")
+_GUESS = re.compile(r"^Did you mean [^\n]*\n?", re.MULTILINE)
 """DuckDB's guess at the name a statement meant, left out of the detail the caller sees: it can
-name relations outside the route's namespace."""
+name relations outside the route's namespace. The engine puts it on a line of its own, so the
+caller's text, which can contain the same words, is kept."""
 
 _READ_ONLY_ATTACH = "attached in read-only mode"
 
