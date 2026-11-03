@@ -216,7 +216,12 @@ tenant's client secret and DuckDB's quote of the statement removed, and does not
 chain the engine's error. Each statement then runs on a fresh cursor:
 `USE lake.<namespace>`, DuckDB's own parser checks that the text is exactly one
 `SELECT`, the classified statement runs unmodified, and a result with two columns
-of the same name is refused. A dynamic read may read only tables it names
+of the same name is refused. When the tenant's lake does not hold the namespace,
+has not built it yet, or does not let the tenant read it, the `USE` fails and
+every statement gets `dynamic_read_namespace_missing`, a `precondition` that
+does not say which. On Iceberg the `USE` accepts an unknown namespace until a
+lookup in it misses, so that first statement gets `dynamic_read_statement_invalid`.
+A dynamic read may read only tables it names
 (`dynamic_read_statement_invalid` otherwise):
 
 - no table function but `range`, `generate_series` and `unnest`. The others take
@@ -266,9 +271,10 @@ Operating it:
   against a statement's timeout.
 - **Call `evict_tenant` after a grant is restored or a namespace is created.**
   An instance that once found a namespace missing keeps it missing for its
-  life. Rotate credentials or remap a tenant's catalog the same way, or set
-  `fingerprint_ttl`. An evicted instance closes in the background, and
-  `close()` waits for those teardowns.
+  life, as `dynamic_read_namespace_missing`. A table created later in a
+  namespace it already found is read at the next statement. Rotate credentials
+  or remap a tenant's catalog the same way, or set `fingerprint_ttl`. An evicted
+  instance closes in the background, and `close()` waits for those teardowns.
 - **A revocation lands at the next statement**, or after the authorizer's
   check cache expires: OpenFGA caches checks for 10 s when its cache is on.
 - **The deployment owns the outer controls.** The worker must hold no ambient
@@ -401,6 +407,11 @@ the application writes, can call them.
 
 Operating it, beyond the Iceberg list:
 
+- **A namespace needs no eviction to be seen.** An instance reads the lake's
+  catalog at every statement, so a schema or a table the build creates after a
+  read found it missing is read by the same instance at the next statement. A
+  dynamic read before a tenant's first build gets `dynamic_read_namespace_missing`
+  until that build commits. Evict only after rotating credentials, as below.
 - **A local data path must be its own real path,** or the build is refused: the
   allowlist matches the spelling, and the filesystem follows a symlink. Keep any
   symlink out from under it too, since the attestation does not walk the tree.

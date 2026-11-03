@@ -35,6 +35,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **`process_with_inbox` gives every delivery invocation metadata with its own execution id** (**behaviour change**), even under metadata the consumer bound. A message without a `forze_correlation_id` header takes the bound correlation id or a fresh one, and its logs, events and idempotency claims carry the execution id.
 
+- **A DuckDB dynamic read whose route namespace is unavailable in the tenant's lake raises `dynamic_read_namespace_missing`** (**behaviour change**). It is a `precondition`, not `dynamic_read_statement_invalid`, also on Iceberg after a revoked grant. DuckLake reads a schema created later with no `evict_tenant`.
+
 ### Removed
 
 - **`AuthnSpec.token_profile`, `password_profile`, `api_key_profile`, `resolver_profile` and `AccessTokenCredentials.profile` are gone** (**Breaking**). Nothing read them: verifiers and the resolver are registered per route under the spec's name.
