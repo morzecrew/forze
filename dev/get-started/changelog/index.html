@@ -6526,6 +6526,35 @@
   
   
     <li class="md-nav__item">
+      <a href="../../recipes/reconcile-child-collection/" class="md-nav__link">
+        
+  
+  
+    <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-list-checks" viewBox="0 0 24 24"><path d="M13 5h8M13 12h8M13 19h8M3 17l2 2 4-4M3 7l2 2 4-4"/></svg>
+  
+  <span class="md-ellipsis">
+    
+  
+  Save a parent's child rows
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../recipes/cache-reads-with-redis/" class="md-nav__link">
         
   
@@ -10773,6 +10802,9 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 </li>
 <li>
 <p><strong><code>OidcClaimMapper</code> normalizes <code>email</code>, <code>roles</code> and <code>groups</code> into a <code>_forze</code> claim.</strong> <code>ClaimsPath</code> reads Keycloak and Casdoor shapes, <code>ZitadelProjectRoles</code> Zitadel's org map; a malformed claim yields no roles. A <code>_forze</code> claim the issuer sent is dropped (<strong>behaviour change</strong>).</p>
+</li>
+<li>
+<p><strong><code>ChildCollectionSync</code> makes a parent's child rows match an incoming list.</strong> It matches children by a business key, deletes the dropped first (soft when the spec carries <code>is_deleted</code>), then creates the new and updates only changed fields. It runs inside a transaction and returns what it wrote.</p>
 </li>
 </ul>
 <h3 id="changed">Changed<a class="headerlink" href="#changed" title="Permanent link">&para;</a></h3>
