@@ -443,6 +443,10 @@ class BigQueryClient(BigQueryClientPort):
         accumulated, so peak memory is one page rather than the full table. Each
         underlying page fetch still retries independently via :meth:`run_query`,
         so per-page resilience is preserved.
+
+        *timeout* bounds each page fetch, not the whole stream: the time between pages is
+        the caller's own pace, which a stream-wide deadline would count. Unlike
+        :meth:`run_query_all_pages`, which holds every page to one deadline.
         """
 
         if fetch_batch_size < 1:
