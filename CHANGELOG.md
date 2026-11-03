@@ -33,7 +33,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
-- **A DuckDB dynamic read's error detail leaves out the engine's guess at a mistyped name.** On DuckDB 1.5 with a DuckLake catalog, the guess could name schemas outside the tenant's lake.
+- **A DuckDB dynamic read's error detail leaves out the engine's guess at a mistyped name** (**behaviour change**). The guess could name relations outside the tenant's lake.
 
 ## [0.21.0] - 2026-11-02
 
