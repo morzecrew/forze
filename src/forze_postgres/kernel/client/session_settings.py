@@ -14,7 +14,7 @@ require_psycopg()
 
 # ....................... #
 
-from collections.abc import AsyncGenerator, Awaitable, Callable, Sequence
+from collections.abc import AsyncGenerator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from datetime import timedelta
 
@@ -111,39 +111,120 @@ async def undo_local_settings_on_exit(
 # ....................... #
 
 
-@asynccontextmanager
-async def restore_local_settings_on_exit(
-    client: PostgresClientPort,
-    names: Sequence[str],
+def _setting_values(
     *,
-    enabled: bool = True,
-) -> AsyncGenerator[None]:
-    """Capture the current values of *names* and put them back when the body exits.
+    statement_timeout: timedelta | None,
+    search_path: str | None,
+) -> list[tuple[str, sql.Composable]]:
+    """The ``(name, value expression)`` pairs to set, each evaluated server-side."""
 
-    For built-in settings (``statement_timeout``, ``search_path``) the body is about to
-    override with ``SET LOCAL``: unlike a custom parameter GUC there is no ``NULL``
-    default to reset to — the caller transaction's own values must come back. Enter this
-    scope inside the transaction but *before* issuing the ``SET LOCAL`` statements.
+    values: list[tuple[str, sql.Composable]] = []
 
-    Pass ``enabled=False`` when the scope's transaction is the root (no caller
-    transaction): it then ends right after the body, taking the ``SET LOCAL`` values
-    with it, so the capture/restore round-trips are skipped.
+    if statement_timeout is not None:
+        # Tighten-only: the bound in force (the pool's, or an invocation deadline's) still wins
+        # when lower; ``0`` there means no bound at all. 0 ms here would mean the same.
+        ms = max(1, int(statement_timeout.total_seconds() * 1000))
+        values.append(
+            (
+                "statement_timeout",
+                sql.SQL(
+                    "LEAST({}, NULLIF(EXTRACT(EPOCH FROM current_setting('statement_timeout')"
+                    "::interval) * 1000, 0))::bigint::text"
+                ).format(sql.Literal(ms)),
+            )
+        )
 
-    The restore itself follows :func:`undo_local_settings_on_exit`: it never masks an
-    error raised by the body.
+    if search_path is not None:
+        # The tenant schema first (its tables shadow ``public``), then ``public``, so
+        # unqualified extension objects and shared lookups stay reachable.
+        values.append(
+            (
+                "search_path",
+                sql.SQL("quote_ident({}) || ', public'").format(sql.Literal(search_path)),
+            )
+        )
+
+    return values
+
+
+# ....................... #
+
+
+def _set_configs(values: list[tuple[str, sql.Composable]]) -> sql.Composed:
+    return sql.SQL(", ").join(
+        sql.SQL("set_config({}, {}, true)").format(sql.Literal(name), value)
+        for name, value in values
+    )
+
+
+# ....................... #
+
+
+def local_settings_statement(
+    *,
+    statement_timeout: timedelta | None = None,
+    search_path: str | None = None,
+) -> sql.Composed | None:
+    """One statement setting the transaction-local ``statement_timeout`` and ``search_path``.
+
+    The timeout only ever lowers the one in force. ``None`` when there is nothing to set.
     """
 
-    if not enabled or not names:
+    values = _setting_values(statement_timeout=statement_timeout, search_path=search_path)
+
+    return sql.SQL("SELECT {}").format(_set_configs(values)) if values else None
+
+
+# ....................... #
+
+
+@asynccontextmanager
+async def scoped_local_settings(
+    client: PostgresClientPort,
+    *,
+    statement_timeout: timedelta | None = None,
+    search_path: str | None = None,
+    restore: bool,
+) -> AsyncGenerator[None]:
+    """Set the transaction-local ``statement_timeout`` and ``search_path`` for the body.
+
+    Enter it inside the transaction. With *restore* (the transaction is a savepoint in a
+    caller's), the caller's values are captured by the same statement that sets the new
+    ones, and put back when the body exits: ``SET LOCAL`` is transaction-scoped, and a
+    released savepoint would merge it into the caller's transaction. Without it the
+    transaction ends with the body and takes the values along. The restore follows
+    :func:`undo_local_settings_on_exit`: it never masks an error raised by the body.
+    """
+
+    values = _setting_values(statement_timeout=statement_timeout, search_path=search_path)
+
+    if not values:
         yield
         return
 
-    capture_stmt = sql.SQL("SELECT {}").format(
+    if not restore:
+        await client.execute(sql.SQL("SELECT {}").format(_set_configs(values)))
+        yield
+        return
+
+    names = [name for name, _ in values]
+    # The CTE is computed before the projection that sets, so it holds the caller's values.
+    capture_and_set = sql.SQL(
+        "WITH prior AS MATERIALIZED (SELECT {}) SELECT {}, {} FROM prior"
+    ).format(
         sql.SQL(", ").join(
-            sql.SQL("current_setting({}, true)").format(sql.Placeholder()) for _ in names
-        )
+            sql.SQL("current_setting({}, true) AS {}").format(
+                sql.Literal(name), sql.Identifier(f"p{i}")
+            )
+            for i, name in enumerate(names)
+        ),
+        sql.SQL(", ").join(sql.Identifier("prior", f"p{i}") for i in range(len(names))),
+        _set_configs(values),
     )
-    row = await client.fetch_one(capture_stmt, list(names), row_factory="tuple")
-    priors: tuple[str | None, ...] = tuple(row) if row is not None else (None,) * len(names)
+    row = await client.fetch_one(capture_and_set, None, row_factory="tuple")
+    priors: tuple[str | None, ...] = (
+        tuple(row[: len(names)]) if row is not None else (None,) * len(names)
+    )
 
     async def _restore() -> None:
         restore_stmt = sql.SQL("SELECT {}").format(
@@ -161,28 +242,3 @@ async def restore_local_settings_on_exit(
 
     async with undo_local_settings_on_exit(_restore):
         yield
-
-
-# ....................... #
-
-
-async def tighten_local_statement_timeout(
-    client: PostgresClientPort,
-    timeout: timedelta,
-) -> None:
-    """Lower the transaction's ``statement_timeout`` to *timeout*, never raise it.
-
-    A route's own bound must not loosen one already in force: the pool's session
-    ``statement_timeout`` (:attr:`~forze_postgres.PostgresConfig.statement_timeout`) or an
-    invocation deadline's backstop. The server takes the smaller of the two, counting ``0``
-    (no bound) as the larger. Call it inside a transaction: the value is transaction-local.
-    """
-
-    ms = max(1, int(timeout.total_seconds() * 1000))  # 0 would mean no bound at all
-
-    await client.execute(
-        sql.SQL(
-            "SELECT set_config('statement_timeout', LEAST({}, NULLIF(EXTRACT(EPOCH FROM "
-            "current_setting('statement_timeout')::interval) * 1000, 0))::bigint::text, true)"
-        ).format(sql.Literal(ms)),
-    )

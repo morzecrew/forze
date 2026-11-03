@@ -13,6 +13,8 @@ from forze.application.contracts.tenancy import TenantAwareIntegrationConfig
 from forze.application.integrations.tenancy_sql import unreferenced_param_keys
 from forze.base.exceptions import exc
 
+from .analytics import STATEMENT_TIMEOUT_MAX, STATEMENT_TIMEOUT_RESOLUTION
+
 if TYPE_CHECKING:
     from forze.application.contracts.procedure import ProcedureSpec
 
@@ -44,8 +46,9 @@ class PostgresProcedureConfig(TenantAwareIntegrationConfig):
 
     In a transaction it is ``SET LOCAL statement_timeout``, tighten-only: a lower
     ``statement_timeout`` already in force (the pool's, or an invocation deadline's) still
-    wins. On the autocommit path, where ``SET LOCAL`` has nothing to scope to, the client
-    cancels the statement when the time is up, and psycopg sends the server a cancel request.
+    wins. On the autocommit path, where ``SET LOCAL`` has nothing to scope to, the statement
+    runs on a connection of its own, and the server is asked to cancel it when the time is
+    up. From 1 ms to about 24.8 days.
     """
 
     query_schema: NamedResourceSpec | None = attrs.field(
@@ -64,9 +67,13 @@ class PostgresProcedureConfig(TenantAwareIntegrationConfig):
 
         timeout: object = self.statement_timeout
 
-        if not isinstance(timeout, timedelta) or timeout <= timedelta(0):
+        if not (
+            isinstance(timeout, timedelta)
+            and STATEMENT_TIMEOUT_RESOLUTION <= timeout <= STATEMENT_TIMEOUT_MAX
+        ):
             raise exc.configuration(
-                "Procedure statement_timeout must be a positive timedelta.",
+                "Procedure statement_timeout must be a timedelta from "
+                f"{STATEMENT_TIMEOUT_RESOLUTION} to {STATEMENT_TIMEOUT_MAX}.",
                 code="procedures_timeout_invalid",
                 details={"statement_timeout": repr(timeout)},
             )

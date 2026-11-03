@@ -53,6 +53,7 @@ from forze.application.integrations.analytics.adapter_common import (
 from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict, OnceCell
 from forze_clickhouse.execution.deps.configs import (
+    TIMEOUT_RESOLUTION,
     ClickHouseAnalyticsConfig,
     ClickHouseQueryConfig,
 )
@@ -179,7 +180,11 @@ class ClickHouseAnalyticsAdapter[R: BaseModel, Ing: BaseModel](
     # ....................... #
 
     def _run_timeout(self, query_key: str, options: AnalyticsRunOptions | None) -> timedelta:
-        return route_timeout(options, self._query_config(query_key).timeout)
+        return route_timeout(
+            options,
+            self._query_config(query_key).timeout,
+            resolution=TIMEOUT_RESOLUTION,
+        )
 
     # ....................... #
 

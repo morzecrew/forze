@@ -23,6 +23,9 @@ from forze_clickhouse.kernel.relation import RelationSpec
 if TYPE_CHECKING:
     from forze.application.contracts.analytics import AnalyticsSpec
 
+TIMEOUT_RESOLUTION = timedelta(seconds=1)
+"""``max_execution_time`` counts whole seconds, and the client rounds a shorter timeout up."""
+
 # ....................... #
 
 
@@ -44,7 +47,9 @@ class ClickHouseQueryConfig:
     ``options["timeout"]`` may lower it, never raise it.
 
     Sent as the ``max_execution_time`` setting, so the server stops the query. It replaces
-    :attr:`~forze_clickhouse.ClickHouseConfig.timeout` for this query; ingest keeps that."""
+    :attr:`~forze_clickhouse.ClickHouseConfig.timeout` for this query; ingest keeps that.
+    Whole seconds, at least 1 s. :class:`~forze_clickhouse.execution.ClickHouseDepsModule`
+    makes the client's transport wait at least this long, plus a margin."""
 
     # ....................... #
 
@@ -52,7 +57,7 @@ class ClickHouseQueryConfig:
         if not self.sql.strip():
             raise exc.internal("Analytics query sql must be non-empty.")
 
-        validate_route_timeout(self.timeout)
+        validate_route_timeout(self.timeout, resolution=TIMEOUT_RESOLUTION)
 
 
 # ....................... #

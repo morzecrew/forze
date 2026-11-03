@@ -20,6 +20,14 @@ class ClickHouseClientPort(Protocol):
 
     def health(self) -> Awaitable[tuple[str, bool]]: ...  # pragma: no cover
 
+    def cover_query_timeout(self, timeout: timedelta) -> None:
+        """Make the transport wait for a query's answer at least *timeout*, plus a margin.
+
+        :class:`~forze_clickhouse.execution.ClickHouseDepsModule` calls it with its routes'
+        longest timeout. A client already running with a shorter read timeout refuses.
+        """
+        ...  # pragma: no cover
+
     def run_query(
         self,
         sql: str,

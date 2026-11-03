@@ -23,6 +23,9 @@ from forze_bigquery.kernel.relation import RelationSpec
 if TYPE_CHECKING:
     from forze.application.contracts.analytics import AnalyticsSpec
 
+TIMEOUT_RESOLUTION = timedelta(seconds=1)
+"""The client waits in whole seconds, and rounds a shorter timeout up."""
+
 # ....................... #
 
 
@@ -45,7 +48,8 @@ class BigQueryQueryConfig:
 
     It bounds how long the client waits for the job, replacing
     :attr:`~forze_bigquery.BigQueryConfig.timeout` for this query. BigQuery does not stop
-    the job when the wait ends; set :attr:`maximum_bytes_billed` to cap its cost."""
+    the job when the wait ends; set :attr:`maximum_bytes_billed` to cap its cost. Whole
+    seconds, at least 1 s."""
 
     # ....................... #
 
@@ -53,7 +57,7 @@ class BigQueryQueryConfig:
         if not self.sql.strip():
             raise exc.internal("Analytics query sql must be non-empty.")
 
-        validate_route_timeout(self.timeout)
+        validate_route_timeout(self.timeout, resolution=TIMEOUT_RESOLUTION)
 
 
 # ....................... #

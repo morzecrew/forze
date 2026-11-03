@@ -132,9 +132,7 @@ async def test_the_route_timeout_never_loosens_a_tighter_caller_bound(
 async def capped_client(postgres_container: Any) -> AsyncIterator[PostgresClient]:
     """A client whose pool sets a session ``statement_timeout`` of 300 ms."""
 
-    url = postgres_container.get_connection_url().replace(
-        "postgresql+psycopg://", "postgresql://"
-    )
+    url = postgres_container.get_connection_url().replace("postgresql+psycopg://", "postgresql://")
     client = PostgresClient()
     await client.initialize(
         dsn=url,
@@ -191,3 +189,70 @@ async def test_an_autocommit_procedure_is_canceled_on_the_server(
     adapter = _procedure(pg_client, in_transaction=False, statement_timeout=_SHORT)
 
     await _assert_canceled_and_reusable(pg_client, lambda: adapter.run(_Params()))
+
+
+# ....................... #
+
+
+@pytest_asyncio.fixture
+async def one_connection_client(postgres_container: Any) -> AsyncIterator[PostgresClient]:
+    """A client whose pool holds one connection, so a later statement sees the same one."""
+
+    url = postgres_container.get_connection_url().replace("postgresql+psycopg://", "postgresql://")
+    client = PostgresClient()
+    await client.initialize(dsn=url, config=PostgresConfig(min_size=1, max_size=1))
+
+    try:
+        yield client
+
+    finally:
+        await client.close()
+
+
+@pytest.mark.asyncio
+async def test_a_root_read_leaves_nothing_on_its_pooled_connection(
+    one_connection_client: PostgresClient,
+) -> None:
+    client = one_connection_client
+    sql = (
+        "SELECT current_setting('search_path') || ' / ' "
+        "|| current_setting('statement_timeout') AS event, 1 AS value"
+    )
+    adapter = PostgresAnalyticsAdapter(
+        client=client,
+        spec=_analytics(client).spec,
+        config=PostgresAnalyticsConfig(
+            queries={"sleep": PostgresQueryConfig(sql=sql, timeout=timedelta(seconds=7))},
+            query_schema="pg_catalog",
+        ),
+    )
+
+    page = await adapter.run("sleep", _Params())
+
+    # Both settings applied to the read, the tenant schema before public...
+    assert page.hits[0].event == "pg_catalog, public / 7s"
+    # ...and ended with its implicit transaction, on the pool's one connection.
+    assert await client.fetch_value("SHOW statement_timeout", None) == "0"
+    assert await client.fetch_value("SHOW search_path", None) == '"$user", public'
+
+
+@pytest.mark.asyncio
+async def test_a_procedure_in_a_caller_transaction_restores_its_settings(
+    pg_client: PostgresClient,
+) -> None:
+    adapter = PostgresProcedureAdapter(
+        client=pg_client,
+        spec=ProcedureSpec(name="noop", params=_Params),
+        config=PostgresProcedureConfig(
+            sql="SELECT 1",
+            statement_timeout=timedelta(seconds=7),
+            query_schema="pg_catalog",
+        ),
+    )
+
+    async with pg_client.transaction():
+        await pg_client.execute("SET LOCAL statement_timeout = 30000")
+        await adapter.run(_Params())
+
+        assert await pg_client.fetch_value("SHOW statement_timeout", None) == "30s"
+        assert await pg_client.fetch_value("SHOW search_path", None) == '"$user", public'

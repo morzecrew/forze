@@ -20,6 +20,14 @@ class BigQueryClientPort(Protocol):
 
     def health(self) -> Awaitable[tuple[str, bool]]: ...  # pragma: no cover
 
+    def cover_query_timeout(self, timeout: timedelta) -> None:
+        """Let job polling run for at least *timeout*, whatever ``max_poll_attempts`` allows.
+
+        :class:`~forze_bigquery.execution.BigQueryDepsModule` calls it with its routes'
+        longest timeout.
+        """
+        ...  # pragma: no cover
+
     def run_query(
         self,
         sql: str,

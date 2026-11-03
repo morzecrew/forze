@@ -23,9 +23,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- **Every registered analytics query is bounded by its own `timeout`, 60 s unless set** (**behaviour change**). It is on each engine's `*QueryConfig`, and a per-call `options["timeout"]` lowers it, never raises it. Postgres and DuckDB reads were unbounded; on Postgres it never loosens a lower `statement_timeout`.
+- **Every registered analytics query is bounded by its own `timeout`, 60 s unless set** (**behaviour change**). It is on each engine's `*QueryConfig`, and a per-call `options["timeout"]` lowers it, never raises it. Postgres and DuckDB reads were unbounded; on DuckDB the wait for a free executor slot counts against it.
 
-- **`PostgresProcedureConfig.statement_timeout` is always on, 60 s unless set** (**Breaking**). `None` is refused. An autocommit route takes one too: the client cancels the statement when it expires, so `procedures_autocommit_timeout` is gone.
+- **On Postgres a read's `statement_timeout` only tightens, and travels with the query.** A lower pool or invocation-deadline bound still wins. Out of a transaction the bound and the query share one round trip; values outside 1 ms to about 24.8 days are refused.
+
+- **On ClickHouse and BigQuery a query's `timeout` replaces the client's `timeout`** (**behaviour change**): a client set to 300 s no longer stretches a route's 60 s. The deps module makes the transport and job polling outwait its longest route, and refuses a timeout under 1 s.
+
+- **`PostgresProcedureConfig.statement_timeout` is always on, 60 s unless set** (**Breaking**). `None` is refused. An autocommit route takes one too and runs on its own connection: the server is asked to cancel it on expiry, and a connection that has not stopped 5 s later is closed.
+
+- **`timeout_seconds` is removed from `forze.application.integrations.analytics`** (**Breaking**). `route_timeout` replaces it and clamps a per-call timeout to the route's. In `forze_postgres.kernel.client`, `scoped_local_settings` replaces `restore_local_settings_on_exit`.
 
 ### Fixed
 

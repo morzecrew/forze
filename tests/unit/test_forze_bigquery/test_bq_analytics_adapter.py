@@ -14,6 +14,7 @@ from forze.application.contracts.analytics import (
     IngestSpec,
 )
 from forze.application.contracts.base import CountlessPage, Page
+from forze.base.exceptions import CoreException
 from forze_bigquery.adapters import BigQueryAnalyticsAdapter
 from forze_bigquery.execution.deps.configs import (
     BigQueryAnalyticsConfig,
@@ -376,3 +377,21 @@ async def test_every_read_is_bounded_by_the_route_timeout() -> None:
         route=timedelta(seconds=7),
         seen=mock.timeouts,
     )
+
+
+@pytest.mark.asyncio
+async def test_a_sub_second_per_call_timeout_is_refused() -> None:
+    # The engine counts whole seconds and would round 500 ms up to a looser 1 s.
+    with pytest.raises(CoreException) as caught:
+        await _adapter(_MockClient()).run(
+            "counts", _Params(), options={"timeout": timedelta(milliseconds=500)}
+        )
+
+    assert caught.value.code == "analytics_option_invalid"
+
+
+def test_a_sub_second_query_timeout_is_refused() -> None:
+    with pytest.raises(CoreException) as caught:
+        BigQueryQueryConfig(sql="SELECT 1", timeout=timedelta(milliseconds=500))
+
+    assert caught.value.code == "analytics_timeout_invalid"

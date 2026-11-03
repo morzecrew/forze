@@ -50,7 +50,10 @@ class ClickHouseConfig:
     """Use HTTPS when ``True``."""
 
     timeout: timedelta = attrs.field(default=DEFAULT_TIMEOUT)
-    """Default query/insert timeout."""
+    """Default query/insert timeout, sent as ``max_execution_time`` when a call names none.
+
+    The transport waits for an answer this long plus 5 s, or longer when a deps module's
+    analytics routes need it. A raw call with a longer timeout of its own is cut there."""
 
     connector_limit: int = _DEFAULT_CONNECTOR_LIMIT
     """aiohttp connector total connection limit."""

@@ -111,7 +111,9 @@ lifecycle = LifecyclePlan.from_steps(
 
 Each query is bounded by its `timeout` (60 s unless set on the `DuckDbQueryConfig`),
 enforced by interrupting its cursor; a per-call `timeout` option lowers it, never raises
-it ([analytics](../reference/contracts/analytics.md)).
+it ([analytics](../reference/contracts/analytics.md)). The bound starts before the query
+waits for a free executor slot, so on a saturated client a query fails with
+`duckdb_query_timeout` "waiting for a slot" rather than queueing without end.
 
 For a runnable, Docker-free walkthrough, see the
 [analytics recipe](../recipes/analytics-over-a-data-lake.md).

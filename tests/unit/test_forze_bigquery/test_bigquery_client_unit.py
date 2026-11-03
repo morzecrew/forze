@@ -1,5 +1,6 @@
 """Unit tests for :class:`~forze_bigquery.kernel.client.BigQueryClient`."""
 
+from datetime import timedelta
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -55,3 +56,30 @@ async def test_poll_job_done_returns_on_done_status() -> None:
         await poll("job-1", timeout=60)
 
     fake_job.get_job.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("covered", "polls"), [(None, 2), (timedelta(seconds=1), 20)])
+async def test_polling_outlasts_max_poll_attempts_for_a_covered_route(
+    covered: timedelta | None, polls: int
+) -> None:
+    # Two polls at 50 ms would give up after 0.1 s. A route that may wait 1 s raises the
+    # budget, or max_poll_attempts would cut it before its own timeout.
+    client = BigQueryClient()
+    fake_job = MagicMock()
+    fake_job.get_job = AsyncMock(return_value={"status": {"state": "RUNNING"}})
+
+    if covered is not None:
+        client.cover_query_timeout(covered)
+
+    config = BigQueryConfig(max_poll_attempts=2, poll_interval=timedelta(milliseconds=50))
+
+    with (
+        patch.object(BigQueryClient, "job", return_value=fake_job),
+        patch.object(BigQueryClient, "_BigQueryClient__require_config", return_value=config),
+        patch("forze_bigquery.kernel.client.client.asyncio.sleep", AsyncMock()),
+        pytest.raises(CoreException, match="polling timed out"),
+    ):
+        await client._BigQueryClient__poll_job_done("job-1", timeout=1)  # type: ignore[attr-defined]
+
+    assert fake_job.get_job.await_count == polls

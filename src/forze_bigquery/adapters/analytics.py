@@ -50,6 +50,7 @@ from forze.base.codecs import B64UrlJsonCodec
 from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict, OnceCell
 from forze_bigquery.execution.deps.configs import (
+    TIMEOUT_RESOLUTION,
     BigQueryAnalyticsConfig,
     BigQueryQueryConfig,
 )
@@ -188,7 +189,11 @@ class BigQueryAnalyticsAdapter[R: BaseModel, Ing: BaseModel](
     # ....................... #
 
     def _run_timeout(self, query_key: str, options: AnalyticsRunOptions | None) -> timedelta:
-        return route_timeout(options, self._query_config(query_key).timeout)
+        return route_timeout(
+            options,
+            self._query_config(query_key).timeout,
+            resolution=TIMEOUT_RESOLUTION,
+        )
 
     # ....................... #
 

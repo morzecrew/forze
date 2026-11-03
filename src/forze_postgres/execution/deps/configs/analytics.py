@@ -23,6 +23,12 @@ from forze_postgres.kernel.relation import RelationSpec
 if TYPE_CHECKING:
     from forze.application.contracts.analytics import AnalyticsSpec
 
+STATEMENT_TIMEOUT_RESOLUTION = timedelta(milliseconds=1)
+"""``statement_timeout`` counts milliseconds; a shorter timeout would round up to one."""
+
+STATEMENT_TIMEOUT_MAX = timedelta(milliseconds=2**31 - 1)
+"""The largest ``statement_timeout`` Postgres accepts (``INT_MAX`` ms, about 24.8 days)."""
+
 # ....................... #
 
 
@@ -46,7 +52,7 @@ class PostgresQueryConfig:
     Applied as ``SET LOCAL statement_timeout``, tighten-only: a lower ``statement_timeout``
     already in force (the pool's, or an invocation deadline's) still wins. Each statement
     is bounded on its own, so the count of ``run_page`` and each batch of ``run_chunked``
-    get the whole timeout."""
+    get the whole timeout. From 1 ms to :data:`STATEMENT_TIMEOUT_MAX`."""
 
     # ....................... #
 
@@ -54,7 +60,11 @@ class PostgresQueryConfig:
         if not self.sql.strip():
             raise exc.internal("Analytics query sql must be non-empty.")
 
-        validate_route_timeout(self.timeout)
+        validate_route_timeout(
+            self.timeout,
+            resolution=STATEMENT_TIMEOUT_RESOLUTION,
+            maximum=STATEMENT_TIMEOUT_MAX,
+        )
 
 
 # ....................... #

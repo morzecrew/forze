@@ -5,6 +5,7 @@ require_bigquery()
 # ....................... #
 
 import asyncio
+import math
 import os
 from collections.abc import AsyncGenerator, Awaitable, Callable, Sequence
 from datetime import timedelta
@@ -53,6 +54,12 @@ class BigQueryClient(BigQueryClientPort):
     __api_root: str | None = attrs.field(default=None, init=False)
     __session: Any = attrs.field(default=None, init=False)
     __init_lock: asyncio.Lock = attrs.field(factory=asyncio.Lock, init=False)
+    __query_timeout_floor: timedelta = attrs.field(default=timedelta(0), init=False)
+
+    # ....................... #
+
+    def cover_query_timeout(self, timeout: timedelta) -> None:
+        self.__query_timeout_floor = max(self.__query_timeout_floor, timeout)
 
     # ....................... #
 
@@ -274,7 +281,12 @@ class BigQueryClient(BigQueryClientPort):
     async def __poll_job_done(self, job_id: str, *, timeout: int) -> None:
         cfg = self.__require_config()
         poll_interval = max(0.05, cfg.poll_interval.total_seconds())
-        attempts = clamp(int(timeout / poll_interval), 1, cfg.max_poll_attempts)
+        # max_poll_attempts would cut a route that may wait longer; its deps module said so.
+        max_attempts = max(
+            cfg.max_poll_attempts,
+            math.ceil(self.__query_timeout_floor.total_seconds() / poll_interval),
+        )
+        attempts = clamp(int(timeout / poll_interval), 1, max_attempts)
         job = self.job(job_id)
 
         for _ in range(attempts):

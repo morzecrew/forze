@@ -43,7 +43,8 @@ class DuckDbQueryConfig:
     """Ceiling on how long one execution of this query may run. Always on; a per-call
     ``options["timeout"]`` may lower it, never raise it.
 
-    Enforced by interrupting the query's cursor, as for the dynamic-read route."""
+    Enforced by interrupting the query's cursor, as for the dynamic-read route. The wait for
+    a free executor slot counts against it."""
 
     # ....................... #
 

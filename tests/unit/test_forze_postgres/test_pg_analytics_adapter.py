@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import timedelta
 from typing import Any
 
 import pytest
@@ -15,7 +16,10 @@ from forze.application.contracts.analytics import (
 from forze.base.exceptions import CoreException
 from forze_postgres.adapters.analytics import PostgresAnalyticsAdapter
 from forze_postgres.execution.deps.configs import PostgresAnalyticsConfig, PostgresQueryConfig
-from tests.support.analytics_options import assert_every_path_refuses_an_unknown_option
+from tests.support.analytics_options import (
+    assert_every_path_refuses_an_unknown_option,
+    assert_every_read_is_bounded_by_the_route_timeout,
+)
 
 
 class _Row(BaseModel):
@@ -56,6 +60,8 @@ class _MockClient:
         self.executes: list[tuple[Any, Any]] = []
         self.copies: list[tuple[Any, list[Any], list[Any]]] = []
         self.fetch_one_calls: list[tuple[Any, Any]] = []
+        self.timeouts: list[Any] = []
+        self.search_paths: list[str | None] = []
         self._in_tx = False
 
     def is_in_transaction(self) -> bool:
@@ -86,6 +92,18 @@ class _MockClient:
         if "COUNT(*)" in query:
             return [{"forze_cnt": 2}]
         return [{"value": 10}, {"value": 20}]
+
+    async def fetch_all_scoped(
+        self,
+        query: str,
+        params: dict[str, object] | None = None,
+        *,
+        statement_timeout: Any = None,
+        search_path: str | None = None,
+    ) -> list[dict[str, Any]]:
+        self.timeouts.append(statement_timeout)
+        self.search_paths.append(search_path)
+        return await self.fetch_all(query, params)
 
     async def fetch_one(
         self,
@@ -284,13 +302,6 @@ def test_tenant_aware_config_rejects_unscoped_sql() -> None:
 # per-tenant query schema (search_path namespace routing)
 
 
-def _rendered(query: Any) -> str:
-    try:
-        return query.as_string(None)
-    except Exception:
-        return str(query)
-
-
 @pytest.mark.asyncio
 async def test_query_schema_sets_search_path_per_tenant() -> None:
     from uuid import uuid4
@@ -318,14 +329,8 @@ async def test_query_schema_sets_search_path_per_tenant() -> None:
     page = await adapter.run("counts", _Params())
 
     assert len(page.hits) == 2
-    set_calls = [_rendered(q) for q, _ in mock.executes]
-    expected = f"tenant_{str(tid).replace('-', '')}"
-    # search_path must scope to the tenant schema FIRST, then keep `public` reachable so
-    # unqualified extension objects / shared lookups don't break at query time.
-    search_path = next(s for s in set_calls if "search_path" in s)
-    assert expected in search_path
-    assert "public" in search_path
-    assert search_path.index(expected) < search_path.index("public")
+    # The client puts the schema first and keeps `public` after it (session_settings tests).
+    assert mock.search_paths == [f"tenant_{str(tid).replace('-', '')}"]
 
 
 @pytest.mark.asyncio
@@ -354,115 +359,63 @@ async def test_tenant_aware_query_schema_fails_closed_without_tenant() -> None:
         await adapter.run("counts", _Params())
 
 
-def _timeouts_set(mock: _MockClient) -> list[str]:
-    """The ``statement_timeout`` statements the adapter sent, rendered."""
-
-    rendered = (_rendered(q) for q, _ in mock.executes)
-
-    return [r for r in rendered if "set_config('statement_timeout'" in r]
-
-
 @pytest.mark.asyncio
-async def test_a_read_with_no_option_is_bounded_by_the_route_timeout() -> None:
-    mock = _MockClient()
-    adapter = _adapter(mock)  # no query_schema, no option: the 60 s default applies
-
-    await adapter.run("counts", _Params())
-
-    [statement] = _timeouts_set(mock)
-    assert "LEAST(60000," in statement
-    assert "current_setting('statement_timeout')" in statement  # tighten-only, never loosen
-
-
-@pytest.mark.asyncio
-async def test_a_per_call_timeout_above_the_route_timeout_clamps_down() -> None:
+async def test_every_read_is_bounded_by_the_route_timeout() -> None:
     from datetime import timedelta
 
     mock = _MockClient()
-    adapter = _adapter(mock, timeout=timedelta(seconds=5))
 
-    await adapter.run("counts", _Params(), options={"timeout": timedelta(minutes=10)})
-    await adapter.run("counts", _Params(), options={"timeout": timedelta(seconds=2)})
-
-    assert ["LEAST(5000," in s for s in _timeouts_set(mock)] == [True, False]
-    assert "LEAST(2000," in _timeouts_set(mock)[1]
-
-
-@pytest.mark.asyncio
-async def test_the_count_of_run_page_is_bounded_too() -> None:
-    from datetime import timedelta
-
-    mock = _MockClient()
-    adapter = _adapter(mock, timeout=timedelta(seconds=7))
-
-    await adapter.run_page("counts", _Params(), pagination={"limit": 1})
-
-    assert len(_timeouts_set(mock)) == 2
-    assert all("LEAST(7000," in s for s in _timeouts_set(mock))
-
-
-@pytest.mark.asyncio
-async def test_timeout_restores_statement_timeout_inside_a_caller_transaction() -> None:
-    """A run inside a caller transaction executes in a savepoint whose ``SET LOCAL``
-    merges outward on release — the caller's value must be captured and put back."""
-
-    from datetime import timedelta
-
-    mock = _MockClient()
-    adapter = _adapter(mock)
-
-    async with mock.transaction():
-        await adapter.run("counts", _Params(), options={"timeout": timedelta(seconds=5)})
-
-    assert mock.fetch_one_calls  # the caller's setting was captured first
-    restore_query, restore_params = mock.executes[-1]
-    assert "set_config" in _rendered(restore_query)
-    assert restore_params == ["statement_timeout", "prior_statement_timeout"]
-
-
-@pytest.mark.asyncio
-async def test_query_schema_restores_search_path_inside_a_caller_transaction() -> None:
-    mock = _MockClient()
-    spec = AnalyticsSpec(
-        name="events",
-        read=_Row,
-        queries={"counts": AnalyticsQueryDefinition(params=_Params)},
+    await assert_every_read_is_bounded_by_the_route_timeout(
+        _adapter(mock, timeout=timedelta(seconds=7)),
+        "counts",
+        _Params(),
+        route=timedelta(seconds=7),
+        seen=mock.timeouts,
     )
-    config = PostgresAnalyticsConfig(
-        query_schema="tenant_a",
-        queries={"counts": PostgresQueryConfig(sql="SELECT value FROM t")},
-    )
-    adapter = PostgresAnalyticsAdapter(client=mock, spec=spec, config=config)
-
-    async with mock.transaction():
-        await adapter.run("counts", _Params())
-
-    restore_query, restore_params = mock.executes[-1]
-    assert "set_config" in _rendered(restore_query)
-    assert restore_params == [
-        "statement_timeout",
-        "prior_statement_timeout",
-        "search_path",
-        "prior_search_path",
-    ]
 
 
 @pytest.mark.asyncio
-async def test_timeout_at_the_root_skips_capture_and_restore() -> None:
-    """With no caller transaction the run's own transaction ends with the query, taking
-    the ``SET LOCAL`` with it — no capture/restore round-trips are spent."""
-
+async def test_a_read_with_no_option_gets_the_60_second_default() -> None:
     from datetime import timedelta
 
     mock = _MockClient()
-    adapter = _adapter(mock)
 
-    await adapter.run("counts", _Params(), options={"timeout": timedelta(seconds=5)})
+    await _adapter(mock).run("counts", _Params())
 
-    assert mock.fetch_one_calls == []
-    # One statement: the timeout itself. A restore would bind the captured priors.
-    assert [params for _, params in mock.executes] == [None]
+    assert mock.timeouts == [timedelta(seconds=60)]
+    assert mock.search_paths == [None]
+
+
+@pytest.mark.asyncio
+async def test_a_per_call_timeout_below_a_millisecond_is_refused() -> None:
+    from datetime import timedelta
+
+    with pytest.raises(CoreException) as caught:
+        await _adapter(_MockClient()).run(
+            "counts", _Params(), options={"timeout": timedelta(microseconds=500)}
+        )
+
+    assert caught.value.code == "analytics_option_invalid"
 
 
 async def test_every_path_refuses_an_unknown_option() -> None:
     await assert_every_path_refuses_an_unknown_option(_adapter(_MockClient()), "counts", _Params())
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [timedelta(milliseconds=2**31), timedelta(days=30), timedelta(microseconds=500)],
+)
+def test_a_timeout_postgres_cannot_hold_is_refused(bad: timedelta) -> None:
+    # statement_timeout is an int of milliseconds: above INT_MAX every read would fail at
+    # set_config, and below 1 ms it would round up.
+    with pytest.raises(CoreException) as caught:
+        PostgresQueryConfig(sql="SELECT 1", timeout=bad)
+
+    assert caught.value.code == "analytics_timeout_invalid"
+
+
+def test_the_longest_postgres_timeout_is_accepted() -> None:
+    longest = timedelta(milliseconds=2**31 - 1)
+
+    assert PostgresQueryConfig(sql="SELECT 1", timeout=longest).timeout == longest

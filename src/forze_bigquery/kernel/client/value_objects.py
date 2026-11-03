@@ -37,7 +37,8 @@ class BigQueryConfig:
     """Delay between async job status polls."""
 
     max_poll_attempts: int = _DEFAULT_MAX_POLL_ATTEMPTS
-    """Upper bound on job poll iterations (also capped by request timeout)."""
+    """Upper bound on job poll iterations (also capped by request timeout). An analytics route
+    whose timeout needs more polls raises it for that client."""
 
     read_retry_attempts: int = 0
     """Retry count for idempotent read operations."""

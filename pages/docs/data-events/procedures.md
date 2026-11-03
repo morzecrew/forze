@@ -92,10 +92,12 @@ Every run is bounded by `statement_timeout`, 60 seconds unless the route sets
 another positive value. There is no way to turn it off: long compute sets a longer
 value. In a transaction it is a `SET LOCAL statement_timeout` that only tightens, so
 a lower `statement_timeout` already in force (the pool's, or one pushed down from an
-invocation deadline) still wins. On the autocommit path there is no transaction to
-scope a `SET LOCAL` to, so the client cancels the statement when the time is up and
-psycopg sends the server a cancel request. That clock also counts the wait for a pool
-connection. Either way the run fails as `infrastructure`, "Database query canceled
+invocation deadline) still wins. It accepts 1 ms to about 24.8 days. On the
+autocommit path there is no transaction to scope a `SET LOCAL` to. The statement runs
+on a connection of its own, outside any caller's transaction, checked out before the
+clock starts. When the time is up the server is asked to cancel the statement; a
+connection whose statement has not stopped 5 seconds later is closed, and the pool
+replaces it. Either way the run fails as `infrastructure`, "Database query canceled
 (timeout)".
 
 ## Tenancy

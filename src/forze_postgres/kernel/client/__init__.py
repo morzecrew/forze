@@ -3,8 +3,8 @@ from .db_gather import gather_db_work
 from .port import PostgresClientPort
 from .routed_client import RoutedPostgresClient
 from .session_settings import (
-    restore_local_settings_on_exit,
-    tighten_local_statement_timeout,
+    local_settings_statement,
+    scoped_local_settings,
     undo_local_settings_on_exit,
 )
 from .value_objects import PostgresConfig, PostgresTransactionOptions
@@ -18,7 +18,7 @@ __all__ = [
     "PostgresTransactionOptions",
     "RoutedPostgresClient",
     "gather_db_work",
-    "restore_local_settings_on_exit",
-    "tighten_local_statement_timeout",
+    "local_settings_statement",
+    "scoped_local_settings",
     "undo_local_settings_on_exit",
 ]

@@ -181,15 +181,35 @@ DEFAULT_ROUTE_TIMEOUT = timedelta(seconds=60)
 own default before routes carried one."""
 
 
-def validate_route_timeout(timeout: object) -> None:
-    """Refuse a route timeout that is not a positive :class:`~datetime.timedelta`.
+def validate_route_timeout(
+    timeout: object,
+    *,
+    resolution: timedelta | None = None,
+    maximum: timedelta | None = None,
+) -> None:
+    """Refuse a route timeout that is not a positive :class:`~datetime.timedelta` the engine
+    can enforce as written.
 
     There is no ``unlimited`` spelling: a query that needs longer sets a longer value.
+
+    :param resolution: The engine's smallest unit. A shorter timeout would be rounded up to
+        it, a looser bound than the one written, so it is refused.
+    :param maximum: The longest timeout the engine accepts.
     """
 
-    if not isinstance(timeout, timedelta) or timeout <= timedelta(0):
+    floor = resolution or timedelta(0)
+
+    if (
+        not isinstance(timeout, timedelta)
+        or timeout <= timedelta(0)
+        or timeout < floor
+        or (maximum is not None and timeout > maximum)
+    ):
         raise exc.configuration(
-            "Analytics query timeout must be a positive timedelta.",
+            "Analytics query timeout must be a positive timedelta"
+            + (f", at least {resolution}" if resolution else "")
+            + (f", at most {maximum}" if maximum else "")
+            + ".",
             code="analytics_timeout_invalid",
             details={"timeout": repr(timeout)},
         )
@@ -198,11 +218,17 @@ def validate_route_timeout(timeout: object) -> None:
 # ....................... #
 
 
-def route_timeout(options: AnalyticsRunOptions | None, ceiling: timedelta) -> timedelta:
+def route_timeout(
+    options: AnalyticsRunOptions | None,
+    ceiling: timedelta,
+    *,
+    resolution: timedelta | None = None,
+) -> timedelta:
     """Timeout for one execution: the per-call ``timeout`` option clamped to the route's.
 
     With no option the route's *ceiling* applies. An option above it is clamped down, never
-    up, so a caller cannot lift the bound its wiring set.
+    up, so a caller cannot lift the bound its wiring set. An option below the engine's
+    *resolution* is refused, since the engine would round it up.
     """
 
     requested = (options or {}).get("timeout")
@@ -210,9 +236,15 @@ def route_timeout(options: AnalyticsRunOptions | None, ceiling: timedelta) -> ti
     if requested is None:
         return ceiling
 
-    if not isinstance(requested, timedelta) or requested <= timedelta(0):
+    if (
+        not isinstance(requested, timedelta)
+        or requested <= timedelta(0)
+        or requested < (resolution or timedelta(0))
+    ):
         raise exc.validation(
-            "Analytics options.timeout must be a positive timedelta.",
+            "Analytics options.timeout must be a positive timedelta"
+            + (f", at least {resolution}" if resolution else "")
+            + ".",
             code="analytics_option_invalid",
             details={"timeout": repr(requested)},
         )

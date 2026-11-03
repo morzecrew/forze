@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import re
 from contextlib import asynccontextmanager
 from datetime import timedelta
 from typing import Any
@@ -65,6 +66,8 @@ class _MockClient:
         # The caller transaction's own GUC values, as `current_setting` would report them.
         self.session_settings = session_settings or {}
         self.captured: list[Any] = []
+        self.conn = _FakeConnection()
+        self.bound = 0
 
     def transaction(self) -> Any:
         @asynccontextmanager
@@ -76,6 +79,15 @@ class _MockClient:
 
     def is_in_transaction(self) -> bool:
         return self.in_caller_tx
+
+    @asynccontextmanager
+    async def detached(self) -> Any:
+        yield
+
+    @asynccontextmanager
+    async def bound_connection(self) -> Any:
+        self.bound += 1
+        yield self.conn
 
     async def execute(
         self, query: Any, params: Any = None, *, return_rowcount: bool = False
@@ -89,12 +101,27 @@ class _MockClient:
 
     async def fetch_one(self, query: Any, params: Any = None, **kwargs: Any) -> Any:
         if kwargs.get("row_factory") == "tuple":
-            # The settings-capture probe (`SELECT current_setting(%s, true), ...`).
-            self.captured.append(params)
-            return tuple(self.session_settings.get(name) for name in (params or []))
+            # The capture-and-set statement: one prior per setting it reads.
+            names = re.findall(r"current_setting\('(\w+)', true\) AS", query.as_string(None))
+            self.captured.append(names)
+            return tuple(self.session_settings.get(name) for name in names)
 
         self.fetch_one_calls.append((query, params))
         return self.row
+
+
+class _FakeConnection:
+    """The pooled connection an autocommit route pins."""
+
+    def __init__(self) -> None:
+        self.autocommit = False
+        self.closed = False
+
+    async def set_autocommit(self, value: bool) -> None:
+        self.autocommit = value
+
+    async def close(self) -> None:
+        self.closed = True
 
 
 def _adapter(
@@ -238,42 +265,111 @@ async def test_autocommit_path_opens_no_transaction() -> None:
     assert mock.tx_opened == 0
 
 
-@pytest.mark.asyncio
-async def test_autocommit_path_cancels_a_statement_past_its_timeout() -> None:
-    class _Slow(_MockClient):
-        async def execute(self, query: Any, params: Any = None, **kwargs: Any) -> Any:
-            await asyncio.sleep(10)
-
-    adapter = _adapter(
-        _Slow(),
+def _autocommit(mock: Any, timeout: timedelta = timedelta(milliseconds=50)) -> Any:
+    return _adapter(
+        mock,
         spec=ProcedureSpec(name="refresh", params=_Params),
         config=PostgresProcedureConfig(
             sql="REFRESH MATERIALIZED VIEW CONCURRENTLY mv",
             in_transaction=False,
-            statement_timeout=timedelta(milliseconds=50),
+            statement_timeout=timeout,
         ),
     )
 
-    with pytest.raises(CoreException, match="canceled") as caught:
-        await adapter.run(_Params())
 
-    assert caught.value.kind == "infrastructure"
+@pytest.mark.asyncio
+async def test_autocommit_path_runs_on_its_own_autocommit_connection() -> None:
+    class _Seen(_MockClient):
+        async def execute(self, query: Any, params: Any = None, **kwargs: Any) -> Any:
+            assert self.conn.autocommit
+            return await super().execute(query, params, **kwargs)
+
+    mock = _Seen(rowcount=3)
+
+    result = await _autocommit(mock, timedelta(seconds=5)).run(_Params())
+
+    assert result.affected_count == 3
+    assert mock.bound == 1
+    assert mock.conn.autocommit is False  # restored before it goes back to the pool
+    assert mock.conn.closed is False
 
 
 @pytest.mark.asyncio
-async def test_autocommit_path_keeps_a_timeout_the_statement_raised_itself() -> None:
+async def test_autocommit_timeout_with_a_clean_cancel_keeps_the_connection() -> None:
+    class _Slow(_MockClient):
+        async def execute(self, query: Any, params: Any = None, **kwargs: Any) -> Any:
+            await asyncio.sleep(10)  # psycopg cancels, drains, and re-raises the cancel
+
+    mock = _Slow()
+
+    with pytest.raises(CoreException, match="canceled") as caught:
+        await _autocommit(mock).run(_Params())
+
+    assert caught.value.kind == "infrastructure"
+    assert mock.conn.closed is False
+
+
+@pytest.mark.asyncio
+async def test_autocommit_timeout_closes_the_connection_when_the_cancel_does_not_land(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from forze_postgres.adapters.procedure import adapter as module
+
+    monkeypatch.setattr(module, "CANCEL_GRACE", timedelta(milliseconds=50))
+
+    class _Stuck(_MockClient):
+        async def execute(self, query: Any, params: Any = None, **kwargs: Any) -> Any:
+            try:
+                await asyncio.sleep(10)
+
+            except asyncio.CancelledError:
+                # The cancel request got no answer: psycopg's drain waits on the statement.
+                await asyncio.sleep(10)
+
+    mock = _Stuck()
+    loop = asyncio.get_running_loop()
+    started = loop.time()
+
+    with pytest.raises(CoreException, match="canceled") as caught:
+        await _autocommit(mock).run(_Params())
+
+    assert caught.value.kind == "infrastructure"
+    assert mock.conn.closed is True  # the pool discards it instead of lending it out
+    assert loop.time() - started < 1  # timeout + grace, not the statement's 10 s
+
+
+@pytest.mark.asyncio
+async def test_autocommit_timeout_keeps_its_mapping_when_the_drain_fails() -> None:
+    class _DrainFails(_MockClient):
+        async def execute(self, query: Any, params: Any = None, **kwargs: Any) -> Any:
+            try:
+                await asyncio.sleep(10)
+
+            except asyncio.CancelledError:
+                raise OSError("connection reset during the drain") from None
+
+    mock = _DrainFails()
+
+    with pytest.raises(CoreException, match="canceled") as caught:
+        await _autocommit(mock).run(_Params())
+
+    assert caught.value.kind == "infrastructure"
+    assert isinstance(caught.value.__cause__, OSError)
+    assert mock.conn.closed is True
+
+
+@pytest.mark.asyncio
+async def test_autocommit_statement_error_within_the_timeout_passes_through() -> None:
     class _Raises(_MockClient):
         async def execute(self, query: Any, params: Any = None, **kwargs: Any) -> Any:
             raise TimeoutError("the pool, not the route")
 
-    adapter = _adapter(
-        _Raises(),
-        spec=ProcedureSpec(name="refresh", params=_Params),
-        config=PostgresProcedureConfig(sql="REFRESH MATERIALIZED VIEW mv", in_transaction=False),
-    )
+    mock = _Raises()
 
     with pytest.raises(TimeoutError, match="the pool"):
-        await adapter.run(_Params())
+        await _autocommit(mock, timedelta(seconds=5)).run(_Params())
+
+    assert mock.conn.closed is False
 
 
 # ----------------------- #
@@ -645,8 +741,11 @@ def test_config_autocommit_accepts_a_timeout() -> None:
     assert config.statement_timeout == timedelta(minutes=10)
 
 
-@pytest.mark.parametrize("bad", [timedelta(0), timedelta(seconds=-1), None, 60])
-def test_config_refuses_a_timeout_that_is_not_positive(bad: object) -> None:
+@pytest.mark.parametrize(
+    "bad",
+    [timedelta(0), timedelta(seconds=-1), None, 60, timedelta(days=30), timedelta(microseconds=1)],
+)
+def test_config_refuses_a_timeout_postgres_cannot_hold(bad: object) -> None:
     with pytest.raises(CoreException) as caught:
         PostgresProcedureConfig(sql="SELECT 1", statement_timeout=bad)  # type: ignore[arg-type]
 

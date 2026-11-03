@@ -73,18 +73,18 @@ Every registered query carries its own `timeout` in the backend's query config: 
 seconds unless the wiring sets another positive value, with no way to turn it off. A
 call with no `timeout` option is bounded by it. A per-call `timeout` lowers it for that
 call and never raises it: a value above the query's is clamped down to it. A
-non-positive per-call `timeout` is refused as `validation`
-(`analytics_option_invalid`), and a non-positive configured one fails at wiring
-(`analytics_timeout_invalid`). The bound covers one statement, so the count of
+configured timeout the backend cannot enforce as written fails at wiring
+(`analytics_timeout_invalid`), and such a per-call one is refused as `validation`
+(`analytics_option_invalid`). The bound covers one statement, so the count of
 `run_page` and each batch of `run_chunked` get the whole timeout. How each backend
 enforces it:
 
-| Backend | Enforced by |
-|---------|-------------|
-| Postgres | `SET LOCAL statement_timeout` in a transaction around the statement. It only tightens: a lower `statement_timeout` already in force (the pool's, or an invocation deadline's) still wins |
-| ClickHouse | the `max_execution_time` setting, so the server stops the query. It replaces the client's own `timeout` for the query |
-| BigQuery | how long the client waits for the job. BigQuery does not stop the job when the wait ends, so cap its cost with `maximum_bytes_billed` |
-| DuckDB | interrupting the query's cursor in process |
+| Backend | Enforced by | Accepted values |
+|---------|-------------|-----------------|
+| Postgres | `SET LOCAL statement_timeout`. It only tightens: a lower `statement_timeout` already in force (the pool's, or an invocation deadline's) still wins. Out of a transaction it goes in one round trip with the query; inside one, in a savepoint that puts the caller's value back | 1 ms to about 24.8 days |
+| ClickHouse | the `max_execution_time` setting, so the server stops the query. It replaces the client's own `timeout` for the query, and the deps module makes the client's transport wait at least the longest route's timeout plus 5 s | whole seconds, at least 1 s |
+| BigQuery | how long the client waits for the job; the deps module lets job polling run that long. BigQuery does not stop the job when the wait ends, so cap its cost with `maximum_bytes_billed` | whole seconds, at least 1 s |
+| DuckDB | interrupting the query's cursor in process. A wait for a free executor slot counts against it | any positive value |
 
 ## Ingest port  (`ctx.analytics.ingest(spec)`)
 

@@ -5,6 +5,7 @@ require_clickhouse()
 # ....................... #
 
 import asyncio
+import math
 from collections.abc import AsyncGenerator, Awaitable, Callable, Sequence
 from datetime import timedelta
 from operator import itemgetter
@@ -46,6 +47,10 @@ from .value_objects import (
 
 T = TypeVar("T")
 
+_READ_TIMEOUT_MARGIN_SEC = 5
+"""Seconds the transport waits past a query's ``max_execution_time``, so the server's own
+``TIMEOUT_EXCEEDED`` arrives before the socket gives up."""
+
 # ....................... #
 
 
@@ -57,6 +62,25 @@ class ClickHouseClient(ClickHouseClientPort):
     __client: AsyncClient | None = attrs.field(default=None, init=False)
     __config: ClickHouseConfig | None = attrs.field(default=None, init=False)
     __init_lock: asyncio.Lock = attrs.field(factory=asyncio.Lock, init=False)
+    __query_timeout_floor: timedelta = attrs.field(default=timedelta(0), init=False)
+    __read_timeout_sec: int | None = attrs.field(default=None, init=False)
+
+    # ....................... #
+
+    def cover_query_timeout(self, timeout: timedelta) -> None:
+        # The transport's read timeout is fixed when the session opens (clickhouse_connect has
+        # no per-request one), so a longer route must be known before then.
+        needed = _read_timeout_sec(timeout)
+
+        if self.__read_timeout_sec is not None and needed > self.__read_timeout_sec:
+            raise exc.configuration(
+                f"ClickHouse client already waits at most {self.__read_timeout_sec}s for an "
+                f"answer, less than a route timeout of {timeout}. Wire the routes before the "
+                "client starts, or raise ClickHouseConfig.timeout.",
+                code="clickhouse_read_timeout_too_short",
+            )
+
+        self.__query_timeout_floor = max(self.__query_timeout_floor, timeout)
 
     # ....................... #
 
@@ -69,6 +93,7 @@ class ClickHouseClient(ClickHouseClientPort):
 
             self.__config = config
             timeout_sec = int(config.timeout.total_seconds())
+            read_timeout_sec = _read_timeout_sec(max(config.timeout, self.__query_timeout_floor))
             self.__client = await create_async_client(  # type: ignore[reportUnknownReturnType]
                 host=config.host,
                 port=config.port,
@@ -77,11 +102,12 @@ class ClickHouseClient(ClickHouseClientPort):
                 database=config.database,
                 secure=config.secure,
                 connect_timeout=timeout_sec,
-                send_receive_timeout=timeout_sec,
+                send_receive_timeout=read_timeout_sec,
                 connector_limit=config.connector_limit,
                 connector_limit_per_host=config.connector_limit_per_host,
                 keepalive_timeout=config.keepalive_timeout.total_seconds(),
             )
+            self.__read_timeout_sec = read_timeout_sec
             logger.trace(
                 "ClickHouse client connected",
                 host=config.host,
@@ -97,6 +123,7 @@ class ClickHouseClient(ClickHouseClientPort):
             if client is not None:
                 await client.close()
                 self.__client = None
+                self.__read_timeout_sec = None
                 logger.trace("ClickHouse client closed")
 
             self.__config = None
@@ -467,3 +494,10 @@ class ClickHouseClient(ClickHouseClientPort):
                 timeout_sec=timeout_sec,
             ),
         )
+
+
+# ....................... #
+
+
+def _read_timeout_sec(query_timeout: timedelta) -> int:
+    return math.ceil(query_timeout.total_seconds()) + _READ_TIMEOUT_MARGIN_SEC

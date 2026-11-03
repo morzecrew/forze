@@ -2,6 +2,11 @@
 
 from __future__ import annotations
 
+from datetime import timedelta
+from typing import Any
+from unittest.mock import MagicMock, patch
+from uuid import uuid4
+
 import pytest
 from pydantic import BaseModel
 
@@ -17,7 +22,12 @@ from forze_clickhouse.execution.deps import (
     ClickHouseQueryConfig,
     ConfigurableClickHouseAnalytics,
 )
-from forze_clickhouse.kernel.client import ClickHouseClient
+from forze_clickhouse.kernel.client import (
+    ClickHouseClient,
+    ClickHouseConfig,
+    ClickHouseRoutingCredentials,
+    RoutedClickHouseClient,
+)
 from tests.support.execution_context import (
     context_from_deps,
 )
@@ -173,3 +183,94 @@ def test_namespace_floor_needs_every_database_per_tenant(static: str | None) -> 
 
     # The control: with no floor declared the same wiring stands, so the refusal is the floor's.
     assert module(floor=None) is not None
+
+
+# ....................... #
+
+
+def _route(timeout: timedelta) -> ClickHouseAnalyticsConfig:
+    return ClickHouseAnalyticsConfig(
+        database="analytics",
+        queries={"counts": ClickHouseQueryConfig(sql="SELECT 1 AS value", timeout=timeout)},
+    )
+
+
+class _FakeAsyncClient:
+    async def close(self) -> None:
+        return None
+
+
+@pytest.mark.asyncio
+async def test_the_transport_outwaits_the_longest_route() -> None:
+    # clickhouse_connect fixes its read timeout per client; a route longer than
+    # ClickHouseConfig.timeout must not be cut by the socket before max_execution_time.
+    seen: dict[str, Any] = {}
+
+    async def _create(**kwargs: Any) -> _FakeAsyncClient:
+        seen.update(kwargs)
+        return _FakeAsyncClient()
+
+    client = ClickHouseClient()
+    ClickHouseDepsModule(
+        client=client,
+        analytics={"short": _route(timedelta(seconds=5)), "long": _route(timedelta(minutes=10))},
+    )
+
+    with patch("forze_clickhouse.kernel.client.client.create_async_client", _create):
+        await client.initialize(ClickHouseConfig(timeout=timedelta(seconds=60)))
+
+    assert seen["send_receive_timeout"] == 605  # the longest route plus the margin
+    assert seen["connect_timeout"] == 60
+    await client.close()
+
+
+@pytest.mark.asyncio
+async def test_a_route_longer_than_a_running_client_waits_is_refused() -> None:
+    async def _create(**kwargs: Any) -> _FakeAsyncClient:
+        return _FakeAsyncClient()
+
+    client = ClickHouseClient()
+
+    with patch("forze_clickhouse.kernel.client.client.create_async_client", _create):
+        await client.initialize(ClickHouseConfig(timeout=timedelta(seconds=60)))
+
+    ClickHouseDepsModule(client=client, analytics={"ok": _route(timedelta(seconds=60))})
+
+    with pytest.raises(CoreException) as caught:
+        ClickHouseDepsModule(client=client, analytics={"long": _route(timedelta(minutes=10))})
+
+    assert caught.value.code == "clickhouse_read_timeout_too_short"
+    await client.close()
+
+
+@pytest.mark.asyncio
+async def test_a_routed_client_builds_each_tenant_client_to_cover_its_routes() -> None:
+    seen: dict[str, Any] = {}
+
+    async def _create(**kwargs: Any) -> _FakeAsyncClient:
+        seen.update(kwargs)
+        return _FakeAsyncClient()
+
+    routed = RoutedClickHouseClient(
+        secrets=MagicMock(),
+        secret_ref_for_tenant=lambda _tid: MagicMock(),
+        tenant_provider=lambda: None,
+    )
+    ClickHouseDepsModule(client=routed, analytics={"long": _route(timedelta(minutes=10))})
+
+    with patch("forze_clickhouse.kernel.client.client.create_async_client", _create):
+        tenant_client = await routed.initialize_client(
+            uuid4(), ClickHouseRoutingCredentials(host="h", database="d")
+        )
+
+    assert seen["send_receive_timeout"] == 605
+    await tenant_client.close()
+
+
+@pytest.mark.parametrize("bad", [timedelta(milliseconds=500), timedelta(0)])
+def test_a_sub_second_query_timeout_is_refused(bad: timedelta) -> None:
+    # max_execution_time counts whole seconds; 500 ms would be sent as a looser 1 s.
+    with pytest.raises(CoreException) as caught:
+        ClickHouseQueryConfig(sql="SELECT 1", timeout=bad)
+
+    assert caught.value.code == "analytics_timeout_invalid"

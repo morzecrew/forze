@@ -77,4 +77,9 @@ lifecycle = LifecyclePlan.from_steps(
 - Each query is bounded by its `timeout` (60 s unless set), sent as
   `max_execution_time` so the server stops it. A per-call `timeout` option lowers it,
   never raises it. It replaces `ClickHouseConfig.timeout` for queries; ingest keeps that
-  ([analytics](../reference/contracts/analytics.md)).
+  ([analytics](../reference/contracts/analytics.md)). A query timeout is whole seconds,
+  at least 1 s.
+- The client's transport waits for an answer `ClickHouseConfig.timeout` plus 5 s, or the
+  longest analytics route's timeout plus 5 s if that is longer: `ClickHouseDepsModule`
+  tells the client before it starts. Wire the module first; a client already running with
+  a shorter wait refuses the module (`clickhouse_read_timeout_too_short`).
