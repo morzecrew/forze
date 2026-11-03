@@ -85,6 +85,9 @@ _GUESS = re.compile(r"^Did you mean [^\n]*\n?", re.MULTILINE)
 name relations outside the route's namespace. The engine puts it on a line of its own, so the
 caller's text, which can contain the same words, is kept."""
 
+_QUOTED = re.compile(r'"[^"]*"')
+"""A double-quoted name in an engine message, such as the namespace ``USE`` looked for."""
+
 _READ_ONLY_ATTACH = "attached in read-only mode"
 
 _LOCKED = ("the configuration has been locked", "Displaying unredacted secrets is disabled")
@@ -156,7 +159,10 @@ def _core_error(error: CoreException, *, route: str) -> CoreException:
         detail = str(details.get("detail", ""))
 
         # A catalog that refused the principal at ``USE`` is a refusal, as on every other path.
-        if _HTTP_REFUSAL.search(detail) or any(marker in detail for marker in _CATALOG_REFUSALS):
+        # The engine quotes the namespace it looked for; a marker inside that name is not one.
+        probe = _QUOTED.sub('""', detail)
+
+        if _HTTP_REFUSAL.search(probe) or any(marker in probe for marker in _CATALOG_REFUSALS):
             return permission_denied(route, detail=detail)
 
         return namespace_missing(route, namespace=details.get("namespace"))

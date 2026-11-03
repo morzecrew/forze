@@ -59,7 +59,11 @@ NAMESPACE_MISSING_CODE = "dynamic_read_namespace_missing"
 """The route's namespace is not available to the tenant: missing, not built, or not readable.
 
 Not the statement's fault: it fires before the statement is classified, for every statement on
-the route, until the namespace is available. It is a ``precondition``, kept apart from
+the route, until the namespace is available; on DuckLake that is the next statement after it
+appears. On an Iceberg route the first statement after a namespace goes missing can still fail as
+:data:`STATEMENT_INVALID_CODE`, and the cached miss stays until the tenant's instance is evicted
+(``RoutedDuckDbClient.evict_tenant``), even after the grant or the namespace is back. It is a
+``precondition``, kept apart from
 :data:`STATEMENT_INVALID_CODE` so that it does not read as a bad plan. It does not say whether
 the namespace is absent or withheld, as a non-disclosing denial would not. Only DuckDB raises
 it: a Postgres ``search_path`` naming a missing schema surfaces as an undefined relation."""

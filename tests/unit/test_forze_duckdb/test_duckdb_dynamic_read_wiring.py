@@ -322,6 +322,18 @@ def test_the_client_refusals_gain_the_route(
     assert (mapped.code, mapped.details) == (code, details)
 
 
+def test_a_namespace_named_like_a_refusal_is_still_missing() -> None:
+    detail = 'Catalog Error: SET schema: No catalog + schema named "lake.NotFound_404" found.'
+    raised = exc.precondition(
+        "x", code=NAMESPACE_MISSING_CODE, details={"namespace": "NotFound_404", "detail": detail}
+    )
+
+    mapped = dynamic_read_error(raised, route=ROUTE)
+
+    assert isinstance(mapped, CoreException)
+    assert mapped.code == NAMESPACE_MISSING_CODE
+
+
 @pytest.mark.parametrize(
     "detail",
     [
