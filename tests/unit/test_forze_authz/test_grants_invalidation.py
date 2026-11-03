@@ -395,18 +395,33 @@ class TestTheSubscription:
         # to the TTL: the cache is not used until the step runs, nor after it stops.
         process = _process(MockState())
         (principal,) = await _seed(process)
+        bypasses = process.invalidation.counters.get("bypass")
 
         assert await process.allowed(principal)
         assert process.cached() == set()
+        assert process.invalidation.counters.get("bypass") == bypasses + 1
 
         await process.start()
         assert await process.allowed(principal)
         assert process.cached() == {principal}
+        assert process.invalidation.counters.get("bypass") == bypasses + 1
 
         await process.stop()
         await _drop_binding(process, principal)
 
         assert not await process.allowed(principal)
+        assert process.invalidation.counters.get("bypass") == bypasses + 2
+
+    async def test_a_decision_inside_a_transaction_is_not_counted_as_a_bypass(self) -> None:
+        # It would read the bindings with a live subscription too: the missing one is not why.
+        process = _process(MockState())
+        (principal,) = await _seed(process)
+        bypasses = process.invalidation.counters.get("bypass")
+
+        async with process.ctx.tx_ctx.scope("mock"):
+            assert await process.allowed(principal)
+
+        assert process.invalidation.counters.get("bypass") == bypasses
 
     async def test_a_reattached_cache_serves_nothing_from_before(self) -> None:
         # The port sends no flush when it connects: the subscription itself must start empty.
@@ -639,11 +654,14 @@ class TestTheAppCall:
 
 
 class TestMetrics:
-    async def test_publish_failures_and_flushes_are_exported(self) -> None:
+    async def test_publish_failures_flushes_and_bypasses_are_exported(self) -> None:
         invalidation = GrantsInvalidation(cache=MARKERS)
         invalidation.counters.add("flush")
         invalidation.counters.add("flush")
         invalidation.counters.add("publish_failure")
+        invalidation.counters.add("bypass")
+        invalidation.counters.add("bypass")
+        invalidation.counters.add("bypass")
 
         reader = InMemoryMetricReader()
         meter = MeterProvider(metric_readers=[reader]).get_meter("test")
@@ -664,4 +682,5 @@ class TestMetrics:
         assert seen == {
             "forze.authz.grants_invalidation.publish_failures": 1,
             "forze.authz.grants_invalidation.flushes": 2,
+            "forze.authz.grants_invalidation.bypasses": 3,
         }

@@ -194,10 +194,11 @@ PRINCIPAL_PREFIX: Final = "principal:"
 _LIVE_WITHIN: Final = timedelta(seconds=10)
 """How long a subscription may take to bring its stream up before startup fails."""
 
-GrantsInvalidationEvent = Literal["publish_failure", "flush"]
+GrantsInvalidationEvent = Literal["publish_failure", "flush", "bypass"]
 """What a broadcast counts: a committed invalidation whose marker write failed
-(``publish_failure``), and a whole grants cache dropped on a received flush or catalog marker
-(``flush``)."""
+(``publish_failure``), a whole grants cache dropped on a received flush or catalog marker
+(``flush``), and a decision that read the bindings because no subscription in this process kept
+the cache current (``bypass``)."""
 
 
 def parse_principal_marker(key: str) -> UUID | None:

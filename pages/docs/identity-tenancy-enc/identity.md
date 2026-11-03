@@ -295,7 +295,8 @@ startup = grants_invalidation_lifecycle_step(kernel)  # in every process, after 
   cannot run never falls back to the TTL unnoticed. A `SERVERLESS` runtime refuses the step.
 - Decisions use the cache only while the subscription is live, and the cache starts empty each
   time it goes live. Before the step subscribes, after it stops, and once the Redis client
-  closes, decisions read the bindings.
+  closes, decisions read the bindings, and `forze.authz.grants_invalidation.bypasses` counts
+  each one made outside a transaction.
 - It is not instant. Between a commit and the broadcast's arrival another process can still
   serve the revoked grant, as a request in this process can between the commit and the forget.
 - A process that may have missed a broadcast drops its whole cache: when its connection drops
