@@ -216,11 +216,15 @@ logger under it (`forze_postgres.kernel`, `forze_postgres.adapters`, …), so th
 is nothing per-subpackage to enumerate.
 
 Naming loggers narrows capture, not redaction: a logger you did not list still reaches a
-scrubbing handler on the root at `warning` and above (or your `level`, if higher) — the
-lines Python would print anyway, redacted and on the same stream. A logger that sets
-`propagate=False` itself, such as `uvicorn.access`, never reaches the root, so name it in
-`third_party`; `redact_unnamed=False` declines the root handler, with a warning, and leaves
-unlisted loggers to Python's default handling, unscrubbed.
+scrubbing handler on the root at `warning` and above (or your `level`, if higher), and
+prints scrubbed on the configured stream where Python's last-resort handler printed it raw
+on stderr. With `level` above `warning`, unlisted warnings stop printing at all. A root
+handler you installed yourself stays, so each unlisted line then appears twice; an app that
+manages the root itself passes `redact_unnamed=False`, which declines the root handler with
+a warning and leaves unlisted loggers to Python's default handling, unscrubbed. A later
+`logging.basicConfig()` does nothing, because the root already has a handler: call it with
+`force=True`, or before `bootstrap_logging`. Uvicorn sets `propagate=False` on `uvicorn` and
+on `uvicorn.access`, so neither reaches the root: name both in `third_party`.
 
 Until structlog is configured (`configure_logging`, `bootstrap_logging` or your own
 `structlog.configure`), forze does not print to stdout itself: it hands each event to
