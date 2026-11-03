@@ -538,8 +538,10 @@ eligibility back on, which D49 also counted against the plane; §8 names that se
 
 ### 5.8 Compatibility and migration
 
-- **Schema (every deployment).** Add the nullable column, and the unique index if wanted (§5.1),
-  before booting the release. Drop a `(principal_id, role_id)` pair constraint where one exists.
+- **Schema (every deployment).** Add the nullable column and the unique index (§5.1). The index is
+  required, not optional: the adapter's read-then-create assign can race, and two rows for one
+  tenant would leave the role held after a revoke that removes one. Do both before booting the
+  release. Drop a `(principal_id, role_id)` pair constraint where one exists.
   Postgres refuses to boot when the model has a field the table lacks. Mongo and Firestore
   documents without the field read as `None` through the model default.
 - **Existing rows:** `NULL`, global. Nothing they grant changes.
@@ -741,7 +743,7 @@ None blocks the design. Implementation settles each of these and logs the choice
 | 14 | `ASSUMED` | P1 scopes principal-role bindings only. Direct principal-permission bindings, group membership and delegation grants stay global. Extending them takes the same column and predicate (P2, demand-gated). |
 | 15 | `OPEN` | Where the predicate runs: in the binding query (an `$or` of a null check and an equality; every backend's renderer has both) or as a Python filter over the principal's rows. Settle it by whether every document adapter passes the §6 conformance test with the query form, and log the choice. |
 | 16 | `OPEN` | How `RoleAssignmentAdapter` reads the invocation tenant. Today it reads none (`role_assignment.py:79-83`). Options are through the resolver's `ctx` or a `ctx` field on the adapter. Pick by what the deps factory already passes, and log it. |
-| 17 | `ASSUMED` | The recipe's uniqueness is `UNIQUE (principal_id, role_id, scope_tenant_id) NULLS NOT DISTINCT`, which the schema validator already understands (`validate_schema.py:357`) and which needs Postgres 15 or later. A `(principal_id, role_id)` pair constraint is dropped in the same migration. The adapter's read-then-create idempotency stays as it is. |
+| 17 | `ASSUMED` | The recipe's uniqueness is `UNIQUE (principal_id, role_id, scope_tenant_id) NULLS NOT DISTINCT`, which the schema validator already understands (`validate_schema.py:357`) and which needs Postgres 15 or later. A `(principal_id, role_id)` pair constraint is dropped in the same migration. The index is required: the adapter's read-then-create assign stays as it is, and the index is what keeps a race from leaving two rows, so a revoke never leaves the role held. |
 | 18 | `OPEN` | How the runtime detects tenant management paired with a role-assignment port and no `authz_route` (row 10): at module build, or when the management port is first resolved. Pick the earliest point that sees both modules, and log it. |
 | 19 | `ASSUMED` | Exclusive roles, one role per principal per tenant as bi and eis keep them, stay app logic. The binding model allows several. |
 
