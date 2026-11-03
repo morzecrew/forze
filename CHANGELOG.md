@@ -25,6 +25,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Narrowing `logger_names` keeps unlisted loggers that propagate redacted.** A forze root handler at `warning` (or a higher `level`) prints them scrubbed; above `warning` it drops their warnings (**behaviour change**). Name `propagate=False` loggers; `redact_unnamed=False` leaves unlisted ones raw.
+
 - **The self-hosted durable runner binds invocation metadata for every attempt** (**behaviour change**): a fresh execution id, the run id as correlation id, surface `durable`. Its logs and events carry them, and a claim begun before a recovery and committed after it is now refused with `conflict`.
 
 - **A durable body started by `run_now` inside a request no longer runs under the request's metadata** (**behaviour change**). It runs under the run id as correlation id, so the request's correlation id no longer reaches the body or the events it publishes; the request is linked only as the causation.
@@ -36,6 +38,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Redis invalidation push now clears stale local entries when its connection goes half-open or the client closes**, for the document L1 and any other subscriber.
 
 - **`OidcTokenVerifier` refuses a malformed signed token as an authentication failure** (`invalid_oidc_token`). An out-of-range `exp` or `iat` (such as `1e20`), an empty `sub`, or a missing claim a custom `OidcClaimMapper` requires raised a raw `ValueError` instead; a boolean `iat` is refused too.
+
+### Security
+
+- **A DuckDB dynamic read's error detail leaves out the engine's guess at a mistyped name** (**behaviour change**). The guess could name relations outside the tenant's lake.
 
 ## [0.21.0] - 2026-11-02
 
