@@ -130,6 +130,25 @@ class TestAttemptMetadata:
         assert metadata.correlation_id == UUID(record.run_id)
         assert metadata.causation_id == caller.execution_id
 
+    async def test_run_now_inside_a_keyed_invocation_does_not_inherit_its_key(self) -> None:
+        ctx = _context()
+        keys: list[str | None] = []
+        registry = DurableFunctionRegistry()
+
+        async def body(ctx: ExecutionContext, _input: dict | None) -> dict:
+            keys.append(ctx.inv_ctx.get_idempotency_key())
+            return {}
+
+        registry.register("fn", body)
+        runner = DurableFunctionRunner(registry=registry)
+
+        with ctx.inv_ctx.bind_idempotency("request-key"):
+            await runner.run_now(ctx, "fn")
+
+            assert ctx.inv_ctx.get_idempotency_key() == "request-key"
+
+        assert keys == [None]
+
 
 # ....................... #
 

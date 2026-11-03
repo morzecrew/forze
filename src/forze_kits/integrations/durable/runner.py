@@ -423,6 +423,7 @@ class DurableFunctionRunner:
         # claims it takes, so a claim must begin and end within one attempt, and a
         # superseded attempt cannot complete its successor's claim. The run id is every
         # attempt's correlation id; whatever started this attempt in-process, the causation.
+        # A caller's idempotency key is the caller's: the attempt binds none of its own.
         ambient = ctx.inv_ctx.get_metadata()
         metadata = mint_invocation_metadata(
             surface=InvocationSurface.DURABLE,
@@ -430,7 +431,10 @@ class DurableFunctionRunner:
             causation_id=ambient.execution_id if ambient is not None else None,
         )
 
-        with ctx.inv_ctx.bind(metadata=metadata, tenant=tenant):
+        with (
+            ctx.inv_ctx.bind(metadata=metadata, tenant=tenant),
+            ctx.inv_ctx.bind_idempotency(None),
+        ):
             await self._execute_bound(ctx, record, reraise=reraise)
 
     # ....................... #
