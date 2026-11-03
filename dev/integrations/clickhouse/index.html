@@ -6795,6 +6795,15 @@ plaintext listener. See <a href="../#connection-settings">connection settings</a
   credentials, database).</li>
 <li>For stable deep pagination, set <code>cursor_column</code> on the query config (keyset)
   instead of offset cursors.</li>
+<li>Each query is bounded by its <code>timeout</code> (60 s unless set), sent as
+  <code>max_execution_time</code> so the server stops it. A per-call <code>timeout</code> option lowers it,
+  never raises it. It replaces <code>ClickHouseConfig.timeout</code> for queries; ingest keeps that
+  (<a href="../../reference/contracts/analytics/">analytics</a>). A query timeout is whole seconds.</li>
+<li>The client's transport waits for an answer <code>ClickHouseConfig.timeout</code> plus 5 s, so a
+  query may not allow longer than <code>ClickHouseConfig.timeout</code>: the socket would cut it
+  before the server stops it. Such a route is refused at wiring
+  (<code>clickhouse_read_timeout_too_short</code>), or when it first resolves if the client is
+  configured only at startup. Raise <code>ClickHouseConfig.timeout</code> to fit the longest route.</li>
 </ul>
 
 

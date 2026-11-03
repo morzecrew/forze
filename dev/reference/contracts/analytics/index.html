@@ -6837,6 +6837,46 @@ assume <em>projected</em> wrongly and the export silently drops the only copy of
 </table>
 <p><code>options: AnalyticsRunOptions</code> carries the per-run knobs — <code>dry_run</code>, <code>max_rows</code>, and
 <code>timeout</code>. Any other key is refused as a <code>precondition</code> naming it.</p>
+<p>Every registered query carries its own <code>timeout</code> in the backend's query config: 60
+seconds unless the wiring sets another positive value, with no way to turn it off. A
+call with no <code>timeout</code> option is bounded by it. A per-call <code>timeout</code> lowers it for that
+call and never raises it: a value above the query's is clamped down to it. A
+configured timeout the backend cannot enforce as written fails at wiring
+(<code>analytics_timeout_invalid</code>), and such a per-call one is refused as <code>validation</code>
+(<code>analytics_option_invalid</code>). The bound covers one statement, so the count of
+<code>run_page</code> and each batch of <code>run_chunked</code> get the whole timeout. How each backend
+enforces it:</p>
+<table>
+<thead>
+<tr>
+<th>Backend</th>
+<th>Enforced by</th>
+<th>Accepted values</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Postgres</td>
+<td><code>SET LOCAL statement_timeout</code>, enforced by the server: it stops a long statement, not a stalled connection, which the pool and TCP keepalives cover. It only tightens: a lower <code>statement_timeout</code> already in force (the pool's, or an invocation deadline's) still wins. Out of a transaction it goes in one round trip with the query; inside one, in a savepoint that puts the caller's value back</td>
+<td>whole milliseconds, 1 ms to about 24.8 days</td>
+</tr>
+<tr>
+<td>ClickHouse</td>
+<td>the <code>max_execution_time</code> setting, so the server stops the query. It replaces the client's own <code>timeout</code> for the query, but may not exceed it: the client's transport waits <code>ClickHouseConfig.timeout</code> plus 5 s, and a longer route is refused at wiring</td>
+<td>whole seconds, up to <code>ClickHouseConfig.timeout</code></td>
+</tr>
+<tr>
+<td>BigQuery</td>
+<td>how long the client waits for the job: one deadline over the query call, the polling and the results. BigQuery does not stop the job when the wait ends, so cap its cost with <code>maximum_bytes_billed</code></td>
+<td>whole seconds</td>
+</tr>
+<tr>
+<td>DuckDB</td>
+<td>interrupting the query's cursor in process. A wait for a free executor slot counts against it</td>
+<td>any positive value</td>
+</tr>
+</tbody>
+</table>
 <h2 id="ingest-port-ctxanalyticsingestspec">Ingest port  (<code>ctx.analytics.ingest(spec)</code>)<a class="headerlink" href="#ingest-port-ctxanalyticsingestspec" title="Permanent link">&para;</a></h2>
 <table>
 <thead>

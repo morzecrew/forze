@@ -6784,6 +6784,12 @@ warehouse reads, not OLTP document storage.</p>
   placeholders bound from each query's params model. Forze does <strong>not</strong> rewrite
   read SQL — qualify tables yourself.</li>
 <li>Ingest targets a relation <code>(dataset, table)</code>, static or a per-tenant resolver.</li>
+<li>Each query is bounded by its <code>timeout</code> (60 s unless set): how long the client waits
+  for the job. A per-call <code>timeout</code> option lowers it, never raises it. BigQuery keeps
+  running a job the client stopped waiting for, so cap a query's cost with
+  <code>maximum_bytes_billed</code> (<a href="../../reference/contracts/analytics/">analytics</a>). A query
+  timeout is whole seconds. The wait is one deadline across the query call, the job
+  polling and the results, counted in wall time, not polls.</li>
 <li>Out of scope: load jobs, <code>MERGE</code>, and DDL — manage those externally.</li>
 </ul>
 

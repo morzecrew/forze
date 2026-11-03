@@ -6874,7 +6874,7 @@ placeholders:</p>
         <span class="s2">"ON CONFLICT (region) DO UPDATE SET total = excluded.total"</span>
     <span class="p">),</span>
     <span class="n">in_transaction</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>            <span class="c1"># False for REFRESH MATERIALIZED VIEW CONCURRENTLY</span>
-    <span class="n">statement_timeout</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>         <span class="c1"># SET LOCAL statement_timeout for long compute</span>
+    <span class="n">statement_timeout</span><span class="o">=</span><span class="n">timedelta</span><span class="p">(</span><span class="n">seconds</span><span class="o">=</span><span class="mi">60</span><span class="p">),</span>  <span class="c1"># the default in a transaction</span>
     <span class="n">query_schema</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>              <span class="c1"># per-tenant schema (namespace tier)</span>
 <span class="p">)</span>
 </code></pre></div>
@@ -6882,6 +6882,19 @@ placeholders:</p>
 (<code>REFRESH MATERIALIZED VIEW CONCURRENTLY</code> and some maintenance); they take the
 autocommit path. <code>statement_timeout</code> and <code>query_schema</code> both need a transaction,
 so they are rejected at wiring when combined with <code>in_transaction=False</code>.</p>
+<p>A route that runs in a transaction is bounded by <code>statement_timeout</code>, 60 seconds unless
+it sets another value; there is no way to turn it off, so long compute sets a longer
+one. It is a <code>SET LOCAL statement_timeout</code> that only tightens: a lower
+<code>statement_timeout</code> already in force (the pool's, or one pushed down from an invocation
+deadline) still wins. It takes whole milliseconds, from 1 ms to about 24.8 days. When it
+fires the run fails as <code>infrastructure</code>, "Database query canceled (timeout)". The
+server enforces it, so it stops a statement that runs too long, not a connection that
+stalls; the pool's checks and TCP keepalives cover that.</p>
+<p>An autocommit route has no <code>statement_timeout</code> of its own. It exists for statements
+that manage their own transaction, and bounding it from the client would take a
+second connection that no longer sees the caller's transaction and can wait on its
+locks. Bound it on the server: give the role it runs as, or its database, a
+<code>statement_timeout</code> (<code>ALTER ROLE … SET statement_timeout = '15min'</code>).</p>
 <h2 id="tenancy">Tenancy<a class="headerlink" href="#tenancy" title="Permanent link">&para;</a></h2>
 <p>Analytics and document writes can <em>enforce</em> tenant isolation because the framework
 composes the predicate. A procedure runs author-supplied opaque SQL, so the

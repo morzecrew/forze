@@ -6890,7 +6890,7 @@ search added later is warmed too:</p>
 <tr>
 <td>Analytics</td>
 <td><code>AnalyticsSpec.name</code> (<code>analytics</code>)</td>
-<td>named, parameterized warehouse SQL — optional</td>
+<td>named, parameterized warehouse SQL — optional; each query is bounded by its <code>timeout</code> (60 s unless set) as a tighten-only <code>SET LOCAL statement_timeout</code> (<a href="../../reference/contracts/analytics/">analytics</a>)</td>
 </tr>
 <tr>
 <td>Outbox / inbox</td>
@@ -6910,7 +6910,7 @@ search added later is warmed too:</p>
 <tr>
 <td>Procedures</td>
 <td><code>ProcedureSpec.name</code> (<code>procedures</code>)</td>
-<td>named, governed SQL command / compute</td>
+<td>named, governed SQL command / compute; a route in a transaction is bounded by <code>statement_timeout</code> (60 s unless set) (<a href="../../data-events/procedures/">procedures</a>)</td>
 </tr>
 <tr>
 <td>Durable execution</td>

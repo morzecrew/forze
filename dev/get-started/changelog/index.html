@@ -10849,6 +10849,27 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <li>
 <p><strong>A DuckDB dynamic read whose route namespace is unavailable in the tenant's lake raises <code>dynamic_read_namespace_missing</code></strong> (<strong>behaviour change</strong>). It is a <code>precondition</code>, not <code>dynamic_read_statement_invalid</code>, also on Iceberg after a revoked grant. DuckLake reads a schema created later with no <code>evict_tenant</code>.</p>
 </li>
+<li>
+<p><strong>Every registered analytics query is bounded by its own <code>timeout</code>, 60 s unless set</strong> (<strong>behaviour change</strong>). It is on each engine's <code>*QueryConfig</code>, and a per-call <code>options["timeout"]</code> lowers it, never raises it. Postgres and DuckDB reads were unbounded; on DuckDB the wait for a free executor slot counts against it.</p>
+</li>
+<li>
+<p><strong>On Postgres a read's <code>statement_timeout</code> is enforced by the server and only tightens.</strong> A lower pool or invocation-deadline bound still wins; a stalled connection is left to the pool and TCP keepalives. Out of a transaction it shares the query's round trip; whole milliseconds up to about 24.8 days.</p>
+</li>
+<li>
+<p><strong>On ClickHouse and BigQuery a query's <code>timeout</code> replaces the client's <code>timeout</code></strong> (<strong>behaviour change</strong>): a client set to 300 s no longer stretches a route's 60 s. A ClickHouse route longer than its client's timeout is refused at wiring, and timeouts must be whole seconds.</p>
+</li>
+<li>
+<p><strong><code>BigQueryConfig.max_poll_attempts</code> and its <code>BigQuerySettings</code> field are removed</strong> (<strong>Breaking</strong>). A query's wait is one wall-time deadline from its timeout, across the query call, job polling and results, so slow polls cannot stretch it.</p>
+</li>
+<li>
+<p><strong><code>PostgresProcedureConfig.statement_timeout</code> is 60 s unless set, on a route that runs in a transaction</strong> (<strong>Breaking</strong>). <code>None</code> is refused there. An autocommit route still takes none; bound it with the role's or the database's <code>statement_timeout</code>.</p>
+</li>
+<li>
+<p><strong><code>timeout_seconds</code> is removed from <code>forze.application.integrations.analytics</code></strong> (<strong>Breaking</strong>). <code>route_timeout</code> replaces it and clamps a per-call timeout to the route's. In <code>forze_postgres.kernel.client</code>, <code>scoped_local_settings</code> replaces <code>restore_local_settings_on_exit</code>.</p>
+</li>
+<li>
+<p><strong><code>PostgresClientPort</code> requires <code>fetch_all_scoped</code>, and <code>ClickHouseClientPort</code> requires <code>query_timeout_limit</code></strong> (<strong>Breaking</strong>). A client implemented outside forze must add them.</p>
+</li>
 </ul>
 <h3 id="removed">Removed<a class="headerlink" href="#removed" title="Permanent link">&para;</a></h3>
 <ul>
@@ -10865,7 +10886,12 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 </ul>
 <h3 id="security">Security<a class="headerlink" href="#security" title="Permanent link">&para;</a></h3>
 <ul>
-<li><strong>A DuckDB dynamic read's error detail leaves out the engine's guess at a mistyped name</strong> (<strong>behaviour change</strong>). The guess could name relations outside the tenant's lake.</li>
+<li>
+<p><strong>A tenant-scoped Postgres read searches its schema and <code>public</code> before temporary tables.</strong> A temporary table left on a pooled connection could otherwise stand in for the tenant's table.</p>
+</li>
+<li>
+<p><strong>A DuckDB dynamic read's error detail leaves out the engine's guess at a mistyped name</strong> (<strong>behaviour change</strong>). The guess could name relations outside the tenant's lake.</p>
+</li>
 </ul>
 <h2 id="0210-2026-11-02"><a href="https://github.com/morzecrew/forze/compare/v0.20.0...v0.21.0">0.21.0</a> - 2026-11-02<a class="headerlink" href="#0210-2026-11-02" title="Permanent link">&para;</a></h2>
 <h3 id="added_1">Added<a class="headerlink" href="#added_1" title="Permanent link">&para;</a></h3>

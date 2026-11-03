@@ -6863,6 +6863,11 @@ source views:</p>
     <span class="p">),</span>
 <span class="p">)</span>
 </code></pre></div>
+<p>Each query is bounded by its <code>timeout</code> (60 s unless set on the <code>DuckDbQueryConfig</code>),
+enforced by interrupting its cursor; a per-call <code>timeout</code> option lowers it, never raises
+it (<a href="../../reference/contracts/analytics/">analytics</a>). The bound starts before the query
+waits for a free executor slot, so on a saturated client a query fails with
+<code>duckdb_query_timeout</code> "waiting for a slot" rather than queueing without end.</p>
 <p>For a runnable, Docker-free walkthrough, see the
 <a href="../../recipes/analytics-over-a-data-lake/">analytics recipe</a>.</p>
 <h2 id="per-tenant-lake-reads-dedicated">Per-tenant lake reads (<code>dedicated</code>)<a class="headerlink" href="#per-tenant-lake-reads-dedicated" title="Permanent link">&para;</a></h2>
