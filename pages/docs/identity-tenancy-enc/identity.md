@@ -46,9 +46,8 @@ whether you need stored accounts:
 
 ## Plugging in a provider
 
-A route's `AuthnSpec` selects verifiers and a resolver by **profile name**. An
-integration registers a verifier under a profile; the spec references it without
-owning any vendor knowledge:
+A route's verifiers and resolver are registered under its `AuthnSpec`'s **name**. The
+spec only says which credential families the route accepts, and owns no vendor knowledge:
 
 ```python
 from forze.application.contracts.authn import AuthnSpec
@@ -56,10 +55,13 @@ from forze.application.contracts.authn import AuthnSpec
 api_authn = AuthnSpec(
     name="api",
     enabled_methods=frozenset({"token", "api_key"}),
-    token_profile="oidc",
-    resolver_profile="mapping",
 )
 ```
+
+An integration supplies the verifier factory, and `AuthnDepsModule` registers it for that
+route through `token_verifiers={"api": ...}`, with a matching `resolvers` entry. The
+[identity reference](../reference/contracts/identity.md#replacing-one-port) lists which
+field registers each port.
 
 Providers ship as integrations — see [OIDC](../integrations/oidc.md) and
 [authentication](../integrations/authn.md). The

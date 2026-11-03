@@ -42,7 +42,7 @@ read-only (`QUERY`) operation.
 | `event_sink` | `AuthnEventSink` | `AuthnEventSinkDepKey` | |
 
 Six more keys have no accessor. The orchestrator behind `AuthnDepKey` resolves the first
-four for its own route, and the revocation fast path resolves the last two:
+four for its own route, and session issue and revocation resolve the last two:
 
 | Port | Dep key | Resolved by |
 |------|---------|-------------|
@@ -90,7 +90,7 @@ and then checks eligibility.
 | Port | Method | Notes |
 |------|--------|-------|
 | `PrincipalEligibilityPort` | `require_authentication_allowed(principal_id, *, for_update=False)` | raises when the principal is missing or inactive; `for_update` takes a row lock held until the caller's transaction ends. Session issue passes it, so on Postgres a concurrent deactivation either waits for the new session and revokes it, or commits first and the issue is refused |
-| `PrincipalDeactivationPort` | `deactivate(principal_id)` | idempotent; cascades logout and closes the password and API-key accounts of every store the application wires |
+| `PrincipalDeactivationPort` | `deactivate(principal_id)` | idempotent; cascades logout and closes the password and API-key accounts of every store the application wires; with revocation states wired it must run inside a transaction (`authn_revocation_requires_transaction` otherwise) |
 | `AuthnEventSink` | `record(event)` | receives an `AuthnEvent` (`AuthnEventKind`, principal, `login_digest` — never the raw login). Optional and best-effort: flows emit through `resolve_authn_event_emitter`, which treats a missing registration as emission off and a raising sink as a logged warning. `ctx.authn.event_sink(spec)` raises when none is registered |
 
 ### Revocation fast path
