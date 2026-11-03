@@ -627,8 +627,8 @@ second run is a no-op, as bi's `NOT LIKE ':%'` is.
    rule stands. The declaration still removes the drift, and the tests that create tables
    from it force any column an adapter reads through it. But a release may change an index
    or a stored format without touching the declaration, and the diff is then only as
-   current as the maintainer's discipline. P1 does not depend on the answer. **Settled
-   2026-11-04: accepted** (row 2).
+   current as the maintainer's discipline. P1 does not depend on the answer. Row 2 stays
+   `OPEN` until the maintainer decides.
 2. **Exit codes.** The numbers for in-sync, delta and refusal, aligned with RFC 0077's
    contract. Implementation decides (row 12).
 3. **Predicate and expression matching.** Through the catalog's rendering of a scratch

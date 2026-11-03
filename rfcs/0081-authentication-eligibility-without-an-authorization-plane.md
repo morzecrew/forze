@@ -586,12 +586,10 @@ Q4 is demand-gated.
 - **Q1 (maintainer, blocks P3).** P3 adds a provider-level requirement protocol and the
   `ProviderStore.providers()` accessor to `forze.application.contracts.deps`, which is a new core
   concept. If it is refused, P3 ships §5.8 A6 instead. The provider-level posture walk is then
-  not built, and built-`Deps` `allow_all` wiring keeps the warning only. **Settled 2026-11-04:
-  accepted** (row 7); P3 follows P1 and P2.
+  not built, and built-`Deps` `allow_all` wiring keeps the warning only.
 - **Q2 (maintainer, blocks P2).** Is the `allow_all` finding acceptable as breaking under a
   production posture? The alternative is a warning-only finding that never refuses. That keeps
   bi-backend booting unchanged, but under it `allow_all` is no louder than a log line.
-  **Settled 2026-11-04: refusing** (row 9); bi-backend adds an `Exempt` citing its D6.
 - **Q3 (implementation).** Where W3's check runs: `freeze()` (row 7) or
   `ExecutionRuntime.__attrs_post_init__` beside inventory reconciliation (`runtime.py:322-357`).
   `freeze()` also covers `context_from_modules`. Move it only if freeze proves to lack something
