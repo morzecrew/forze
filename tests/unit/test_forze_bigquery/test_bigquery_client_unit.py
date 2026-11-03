@@ -3,6 +3,7 @@
 import asyncio
 from datetime import timedelta
 from pathlib import Path
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -106,3 +107,62 @@ async def test_the_results_fetch_counts_against_the_query_timeout() -> None:
         await client.run_query("SELECT 1", timeout=timedelta(seconds=1))
 
     assert 0.9 < loop.time() - started < 1.5
+
+
+def _job_client(fake_job: MagicMock) -> tuple[BigQueryClient, Any]:
+    client = BigQueryClient()
+    patches = (
+        patch.object(BigQueryClient, "job", return_value=fake_job),
+        patch.object(
+            BigQueryClient, "_BigQueryClient__require_config", return_value=BigQueryConfig()
+        ),
+    )
+    return client, patches
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("status", "message"),
+    [
+        ({"status": {"state": "DONE", "errors": [{"reason": "x"}]}}, "job failed"),
+        ({"status": {"state": "FAILED"}}, "ended with state"),
+    ],
+)
+async def test_a_job_that_ends_badly_is_refused(status: dict[str, Any], message: str) -> None:
+    fake_job = MagicMock()
+    fake_job.query = AsyncMock(return_value={"jobComplete": False, "jobReference": {"jobId": "j"}})
+    fake_job.get_job = AsyncMock(return_value=status)
+    client, (job_patch, config_patch) = _job_client(fake_job)
+
+    with job_patch, config_patch, pytest.raises(CoreException, match=message):
+        await client.run_query("SELECT 1", timeout=timedelta(seconds=5))
+
+
+@pytest.mark.asyncio
+async def test_an_incomplete_query_without_a_job_id_is_refused() -> None:
+    fake_job = MagicMock()
+    fake_job.query = AsyncMock(return_value={"jobComplete": False, "jobReference": {}})
+    client, (job_patch, config_patch) = _job_client(fake_job)
+
+    with job_patch, config_patch, pytest.raises(CoreException, match="did not return a job id"):
+        await client.run_query("SELECT 1", timeout=timedelta(seconds=5))
+
+
+@pytest.mark.asyncio
+async def test_a_polled_job_returns_its_results() -> None:
+    fake_job = MagicMock()
+    fake_job.query = AsyncMock(return_value={"jobComplete": False, "jobReference": {"jobId": "j"}})
+    fake_job.get_job = AsyncMock(return_value={"status": {"state": "DONE"}})
+    fake_job.get_query_results = AsyncMock(
+        return_value={
+            "schema": {"fields": [{"name": "n", "type": "INTEGER", "mode": "NULLABLE"}]},
+            "rows": [{"f": [{"v": "7"}]}],
+            "totalRows": "1",
+        }
+    )
+    client, (job_patch, config_patch) = _job_client(fake_job)
+
+    with job_patch, config_patch:
+        result = await client.run_query("SELECT 7 AS n", timeout=timedelta(seconds=5))
+
+    assert result.rows == [{"n": 7}]

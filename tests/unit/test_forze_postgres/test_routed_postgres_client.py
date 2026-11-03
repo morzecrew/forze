@@ -243,6 +243,7 @@ async def test_routed_scope_methods_delegate_to_the_tenant_client() -> None:
     inner.fetch_all = AsyncMock(return_value=[{"a": 1}])
     inner.fetch_one = AsyncMock(return_value={"a": 1})
     inner.fetch_value = AsyncMock(return_value=42)
+    inner.fetch_all_scoped = AsyncMock(return_value=[{"a": 3}])
 
     @asynccontextmanager
     async def _yield(value):  # type: ignore[no-untyped-def]
@@ -268,6 +269,10 @@ async def test_routed_scope_methods_delegate_to_the_tenant_client() -> None:
         assert await routed.fetch_all("SELECT 1") == [{"a": 1}]
         assert await routed.fetch_one("SELECT 1") == {"a": 1}
         assert await routed.fetch_value("SELECT 1") == 42
+        assert await routed.fetch_all_scoped("SELECT 1", search_path="s") == [{"a": 3}]
+        inner.fetch_all_scoped.assert_awaited_once_with(
+            "SELECT 1", None, statement_timeout=None, search_path="s"
+        )
 
         chunks = [c async for c in routed.fetch_all_batched("SELECT 1", batch_size=10)]
         assert chunks == [[{"a": 1}], [{"a": 2}]]

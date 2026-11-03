@@ -310,3 +310,28 @@ async def test_a_cancel_inside_the_pipeline_closes_its_connection(
         await read
 
     assert await _backend_pid(client) != before
+
+
+@pytest.mark.asyncio
+async def test_a_scoped_read_with_nothing_to_scope_is_a_plain_read(
+    pg_client: PostgresClient,
+) -> None:
+    assert await pg_client.fetch_all_scoped("SELECT 1 AS a") == [{"a": 1}]
+
+
+@pytest.mark.asyncio
+async def test_a_failure_leaving_the_pipeline_unclean_closes_its_connection(
+    one_connection_client: PostgresClient,
+) -> None:
+    client = one_connection_client
+    before = await _backend_pid(client)
+
+    with (
+        patch("forze_postgres.kernel.client.client._left_clean", lambda _conn: False),
+        pytest.raises(CoreException),
+    ):
+        await _analytics(client, sql="SELECT 'x' AS event, 1 / 0 AS value").run(
+            "sleep", _Params()
+        )
+
+    assert await _backend_pid(client) != before
