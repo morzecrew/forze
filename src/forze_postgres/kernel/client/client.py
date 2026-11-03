@@ -37,7 +37,7 @@ from datetime import timedelta
 from typing import Any, Literal, final, overload
 
 import attrs
-from psycopg import AsyncConnection, Column, OperationalError, capabilities, sql
+from psycopg import AsyncConnection, Column, OperationalError, capabilities, pq, sql
 from psycopg.abc import Params, QueryNoTemplate
 from psycopg_pool import AsyncConnectionPool, PoolTimeout
 
@@ -149,6 +149,20 @@ def _timeout_ms(t: timedelta) -> int:
     ms = int(t.total_seconds() * 1000)
 
     return max(1, ms)
+
+
+# ....................... #
+
+
+def _left_clean(conn: AsyncConnection) -> bool:
+    """Whether *conn* came out of a failed pipeline idle and out of pipeline mode."""
+
+    pgconn = conn.pgconn
+
+    return (
+        pgconn.pipeline_status == pq.PipelineStatus.OFF
+        and pgconn.transaction_status == pq.TransactionStatus.IDLE
+    )
 
 
 # ....................... #
@@ -1432,10 +1446,17 @@ class PostgresClient(PostgresClientPort):
 
                         return self._rows_to_dicts(cur.description, await cur.fetchall())
 
+                except Exception:
+                    # A server error (a statement_timeout among them) is synced and rolled back
+                    # by the pipeline's exit, and the connection is reusable. Anything else
+                    # left it in a state nobody can vouch for: the pool replaces it.
+                    if not _left_clean(conn):
+                        await conn.close()
+
+                    raise
+
                 except BaseException:
-                    # psycopg drains a connection only while it is ACTIVE, so a failure or a
-                    # cancel inside the pipeline can leave pipeline state behind. Never lend
-                    # it again: the pool replaces a closed connection.
+                    # A cancel can land mid-sync, and psycopg drains only while ACTIVE.
                     await conn.close()
                     raise
 

@@ -14,7 +14,7 @@ from forze.base.exceptions import CoreException
 
 pytest.importorskip("psycopg")
 
-from psycopg import IsolationLevel, OperationalError
+from psycopg import IsolationLevel, OperationalError, pq
 from psycopg_pool import PoolTimeout
 
 from forze_postgres.kernel.client.client import (
@@ -955,3 +955,28 @@ class TestAcquireTranslatesOnlyItsOwnWait:
                 raise inner
 
         assert caught.value is inner
+
+
+# ....................... #
+
+
+@pytest.mark.parametrize(
+    ("pipeline", "transaction", "clean"),
+    [
+        (pq.PipelineStatus.OFF, pq.TransactionStatus.IDLE, True),
+        (pq.PipelineStatus.ON, pq.TransactionStatus.IDLE, False),
+        (pq.PipelineStatus.ABORTED, pq.TransactionStatus.IDLE, False),
+        (pq.PipelineStatus.OFF, pq.TransactionStatus.ACTIVE, False),
+        (pq.PipelineStatus.OFF, pq.TransactionStatus.INERROR, False),
+    ],
+)
+def test_a_failed_pipeline_keeps_its_connection_only_when_left_clean(
+    pipeline: pq.PipelineStatus, transaction: pq.TransactionStatus, clean: bool
+) -> None:
+    from forze_postgres.kernel.client.client import _left_clean
+
+    conn = MagicMock()
+    conn.pgconn.pipeline_status = pipeline
+    conn.pgconn.transaction_status = transaction
+
+    assert _left_clean(conn) is clean

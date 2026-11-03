@@ -4361,8 +4361,9 @@ positive timeout, on by default, with no `unlimited` spelling.
 `discovery`. Decisions 6 and 6a are built as written. Decision 8 (re-verify §2 at pickup)
 is honoured for the timeout row only, by D-191, D-198 and D-199. Two reviews followed the
 first commit. The first amended D-191 and D-193 and rewrote D-195 to D-197; the second
-replaced three of those fixes with simpler ones and reverted the autocommit bound (D-196).
-Their findings close the unit, including the designs that were superseded.
+replaced three of those fixes with simpler ones and reverted the autocommit bound (D-196);
+a third narrowed when a pipelined read closes its connection (D-195). Their findings close
+the unit, including the designs that were superseded.
 
 **Where each item lives.** The shared rule is `route_timeout` and `validate_route_timeout`
 in [`adapter_common.py`](../src/forze/application/integrations/analytics/adapter_common.py),
@@ -4537,10 +4538,13 @@ DuckDB's runs on the real in-process engine), `test_session_settings.py`,
   12.9 ms bounded in four exchanges; a read in a caller transaction 13.2 ms bare and 23.3 ms
   bounded. The machine was shared, so read these as ratios. Without libpq pipeline support
   the client falls back to the four exchanges. psycopg drains a connection only while it is
-  `ACTIVE`, so an error or a cancel inside the pipeline could leave pipeline state behind:
-  the client closes that connection rather than return it to the pool. Integration tests
-  force the fallback, raise an error inside the pipeline and cancel one, and check that the
-  pool's connection was replaced.
+  `ACTIVE`, so a cancel inside the pipeline can leave pipeline state behind: the client
+  closes that connection rather than return it to the pool. A server error, a
+  `statement_timeout` among them, is synced and rolled back by the pipeline's exit; the
+  connection goes back to the pool when it came out of pipeline mode idle, and is
+  closed otherwise, so an ordinary failed read costs no reconnect. Integration tests force
+  the fallback, check that a SQL error and a fired `statement_timeout` leave the same
+  connection in the pool, and that a cancel replaces it.
 - **Proposed row (RFC 0028):** `ASSUMED` — a bounded Postgres read at the root costs one
   round trip (a pipeline), and in a transaction five exchanges. Pipelining the savepoint
   case too waits until a consumer measures what those exchanges cost it.
@@ -4659,3 +4663,9 @@ now describe only what stands.
 | R-13 | Bug | ClickHouse and BigQuery truncated a fractional timeout, and refused only values under 1 s | Fixed (D-197): any timeout that is not whole seconds is refused, in config and per call |
 | R-14 | Risk | An error or a cancel inside the Postgres pipeline could return a connection with pipeline state to the pool | Fixed (D-195): the connection is closed; tests force the fallback, an error and a cancel |
 | R-15 | Docs | The changelog did not say the Postgres bound is server-side, nor list every removed or newly required public symbol | Fixed: entries for `timeout_seconds`, `restore_local_settings_on_exit`, `max_poll_attempts`, `PostgresClientPort.fetch_all_scoped` and `ClickHouseClientPort.query_timeout_limit`; `tighten_local_statement_timeout` and `cover_query_timeout`, never released, are named in the commit footer |
+
+## Review findings — 2026-11-03 (third round)
+
+| # | Severity | Finding | Status |
+|---|---|---|---|
+| R-16 | Cost | R-14's fix closed the connection on every failure in the pipeline, so an ordinary SQL error or a fired `statement_timeout` forced the next read to reconnect | Fixed (D-195): only a cancel, or a connection not left idle and out of pipeline mode, is closed; tests pin both |

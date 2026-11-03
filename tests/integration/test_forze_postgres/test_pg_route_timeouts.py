@@ -275,18 +275,25 @@ async def test_without_pipeline_support_a_root_read_is_still_bounded(
 
 
 @pytest.mark.asyncio
-async def test_an_error_inside_the_pipeline_closes_its_connection(
-    one_connection_client: PostgresClient,
+@pytest.mark.parametrize(
+    ("sql", "timeout"),
+    [
+        ("SELECT 'x' AS event, 1 / 0 AS value", timedelta(seconds=5)),
+        (_SLEEP_SQL, _SHORT),  # the server's statement_timeout fires inside the pipeline
+    ],
+)
+async def test_a_server_error_inside_the_pipeline_leaves_the_connection_reusable(
+    one_connection_client: PostgresClient, sql: str, timeout: timedelta
 ) -> None:
     client = one_connection_client
     before = await _backend_pid(client)
-    adapter = _analytics(client, sql="SELECT 'x' AS event, 1 / 0 AS value")
 
     with pytest.raises(CoreException):
-        await adapter.run("sleep", _Params())
+        await _analytics(client, sql=sql, timeout=timeout).run("sleep", _Params())
 
-    # The pool's one connection was closed and replaced, not lent out again.
-    assert await _backend_pid(client) != before
+    # The pipeline's exit synced and rolled back: the pool lends the same connection again.
+    assert await _backend_pid(client) == before
+    assert await client.fetch_value("SHOW statement_timeout", None) == "0"
 
 
 @pytest.mark.asyncio
