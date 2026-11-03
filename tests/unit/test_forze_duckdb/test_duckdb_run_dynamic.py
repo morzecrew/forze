@@ -152,7 +152,18 @@ async def test_a_missing_namespace_is_refused_before_the_statement(
         await lake_client.run_dynamic("SELEC 1", row_probe=2, timeout=_TIMEOUT, use="lake.later")
 
     assert (ei.value.code, ei.value.kind) == (NAMESPACE_MISSING_CODE, ExceptionKind.PRECONDITION)
-    assert ei.value.details == {"namespace": "later"}
+    assert ei.value.details is not None
+    assert ei.value.details["namespace"] == "later"
+    assert 'schema named "lake.later"' in ei.value.details["detail"]
+
+
+async def test_a_missing_catalog_alone_names_no_namespace(lake_client: DuckDbClient) -> None:
+    with pytest.raises(CoreException) as ei:
+        await lake_client.run_dynamic("SELECT 1", row_probe=2, timeout=_TIMEOUT, use="nolake")
+
+    assert ei.value.code == NAMESPACE_MISSING_CODE
+    assert ei.value.details is not None
+    assert "namespace" not in ei.value.details
 
 
 @pytest.mark.parametrize("sql", ["SELECT 1; SELECT 2", "-- only a comment"])

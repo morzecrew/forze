@@ -814,6 +814,28 @@ class TestPool:
         await routed.evict_tenant(_A)
         assert len(await _run(port, _A, _ORDERS)) == 3  # ...and a rebuilt one sees the grant
 
+    async def test_a_table_created_after_a_miss_in_a_found_namespace_is_read_next(
+        self, routed: RoutedDuckDbClient, lake: LakeVendingStack, tenant_a: LakeTenant
+    ) -> None:
+        """D-026's other half, on the routed path: a table is looked up at every statement."""
+
+        import pyarrow as pa
+
+        port = _port(routed)
+        assert len(await _run(port, _A, _ORDERS)) == 3
+        assert (await _refused(port, _A, "SELECT id FROM later_t")).code == STATEMENT_INVALID_CODE
+        held = routed._peek_client(_A)
+        catalog = lake.admin_catalog(tenant_a)
+        data = pa.table({"id": pa.array([5], pa.int64())})
+        catalog.create_table(("gold", "later_t"), schema=data.schema).append(data)
+
+        try:
+            assert await _run(port, _A, "SELECT id FROM later_t") == [{"id": 5}]
+            assert routed._peek_client(_A) is held
+
+        finally:
+            catalog.drop_table(("gold", "later_t"))
+
     async def test_a_failed_drop_retires_the_instance_and_the_next_call_rebuilds(
         self, routed: RoutedDuckDbClient, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -1242,12 +1264,30 @@ class TestTaxonomy:
 
         try:
             error = await _refused(port, _A, _ORDERS)
+            later = await _refused(port, _A, "SELECT 1 AS x")
 
         finally:
             lake.set_grant(tenant_a, tenant_a.principal, granted=True)
 
         assert error.code == STATEMENT_INVALID_CODE  # Lakekeeper's 404, as a missing schema
         assert 'schema "gold" does not exist' in error.details["detail"]
+        # D-171: from then on the route's ``USE`` fails on the cached miss (D-026), with no
+        # refusal in its message, before the statement, even one that reads no table.
+        assert (later.code, later.details) == (
+            NAMESPACE_MISSING_CODE,
+            {"route": _ROUTE, "namespace": "gold"},
+        )
+
+    async def test_a_namespace_the_warehouse_never_had_is_unavailable_after_one_lookup(
+        self, routed: RoutedDuckDbClient
+    ) -> None:
+        """D-171: on Iceberg ``USE`` takes an unknown namespace until a lookup in it misses."""
+
+        port = _port(routed, namespace="never")
+
+        assert await _run(port, _A, "SELECT 1 AS x") == [{"x": 1}]
+        assert (await _refused(port, _A, "SELECT * FROM orders")).code == STATEMENT_INVALID_CODE
+        assert (await _refused(port, _A, "SELECT 1 AS x")).code == NAMESPACE_MISSING_CODE
 
     async def test_a_principal_without_a_grant_cannot_build_an_instance(
         self, routed: RoutedDuckDbClient

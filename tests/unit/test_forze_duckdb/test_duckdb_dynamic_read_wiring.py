@@ -38,6 +38,8 @@ from forze_duckdb.adapters import DuckDbDynamicReadAdapter, dynamic_read_error
 from forze_duckdb.kernel.client import QUERY_TIMEOUT_CODE
 
 ROUTE = "widgets"
+_SET_SCHEMA = 'Catalog Error: SET schema: No catalog + schema named "lake.gold" found.'
+"""What ``USE`` raises for an unavailable namespace on both builds and both catalogs."""
 
 # ----------------------- #
 
@@ -272,7 +274,11 @@ def test_a_conversion_failure_does_not_echo_the_value() -> None:
             {"route": ROUTE, "detail": "dup: id"},
         ),
         (
-            exc.precondition("x", code=NAMESPACE_MISSING_CODE, details={"namespace": "gold"}),
+            exc.precondition(
+                "x",
+                code=NAMESPACE_MISSING_CODE,
+                details={"namespace": "gold", "detail": _SET_SCHEMA},
+            ),
             NAMESPACE_MISSING_CODE,
             {"route": ROUTE, "namespace": "gold"},
         ),
@@ -285,6 +291,30 @@ def test_the_client_refusals_gain_the_route(
 
     assert isinstance(mapped, CoreException)
     assert (mapped.code, mapped.details) == (code, details)
+
+
+@pytest.mark.parametrize(
+    "detail",
+    [
+        "Catalog Error: returned a non-200 status code (Forbidden_403)",
+        "Catalog Error: returned a non-200 status code (NotFound_404)",
+        "Catalog Error: Unable to connect to URL x: Unauthorized (HTTP code 401)",
+    ],
+)
+def test_a_catalog_refusal_at_use_is_a_refusal_not_a_missing_namespace(detail: str) -> None:
+    """Never observed at ``USE`` (EXECUTION-LOG D-171), but mapped as every other path maps it."""
+
+    raised = exc.precondition(
+        "x", code=NAMESPACE_MISSING_CODE, details={"namespace": "gold", "detail": detail}
+    )
+
+    mapped = dynamic_read_error(raised, route=ROUTE)
+
+    assert isinstance(mapped, CoreException)
+    assert (mapped.code, mapped.details) == (
+        PERMISSION_DENIED_CODE,
+        {"route": ROUTE, "detail": detail},
+    )
 
 
 def test_anything_else_passes_through_unchanged() -> None:

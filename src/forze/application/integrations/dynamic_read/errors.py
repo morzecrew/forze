@@ -7,8 +7,8 @@ missing relation is the exact analogue of a malformed request body, not of a bro
 
 The exceptions fire before the statement is sent. :data:`ROLE_UNAVAILABLE_CODE` is
 ``configuration``, because the route's confinement was never deployed.
-:data:`NAMESPACE_MISSING_CODE` is ``precondition``, because the tenant's warehouse lacks the
-route's namespace, usually since it has not been built yet.
+:data:`NAMESPACE_MISSING_CODE` is ``precondition``, because the route's namespace is not
+available to the tenant: missing, not built, or not readable.
 
 The factories live in one module so the mock and a real engine cannot drift into raising
 different kinds for the same refusal — the differential compares codes, and a taxonomy that
@@ -56,12 +56,13 @@ deployment facts, so this egresses as ``configuration`` — blaming a widget's S
 ``GRANT`` would send whoever reads it to debug the wrong system."""
 
 NAMESPACE_MISSING_CODE = "dynamic_read_namespace_missing"
-"""The route's namespace is not in the tenant's warehouse, or the tenant cannot see it.
+"""The route's namespace is not available to the tenant: missing, not built, or not readable.
 
 Not the statement's fault: it fires before the statement is classified, for every statement on
-the route, until the namespace exists. A tenant whose first build has not run is the usual
-cause, so it is a ``precondition``, kept apart from :data:`STATEMENT_INVALID_CODE` so that it
-does not read as a bad plan."""
+the route, until the namespace is available. It is a ``precondition``, kept apart from
+:data:`STATEMENT_INVALID_CODE` so that it does not read as a bad plan. It does not say whether
+the namespace is absent or withheld, as a non-disclosing denial would not. Only DuckDB raises
+it: a Postgres ``search_path`` naming a missing schema surfaces as an undefined relation."""
 
 # ....................... #
 
@@ -147,11 +148,11 @@ def role_unavailable(route: str, *, role: str, detail: str | None = None) -> Cor
 
 
 def namespace_missing(route: str, *, namespace: str | None = None) -> CoreException:
-    """The route's *namespace* is missing from the tenant's warehouse, or hidden from it."""
+    """The route's *namespace* is not available to the tenant, absent or withheld alike."""
 
     return CoreException.precondition(
-        "Dynamic read route's namespace does not exist in the tenant's warehouse, or the "
-        "tenant cannot see it; it may not have been built yet.",
+        "Dynamic read route's namespace is not available to the tenant: missing, not built, or "
+        "not readable.",
         code=NAMESPACE_MISSING_CODE,
         details=_details(route, **({"namespace": namespace} if namespace else {})),
     )
