@@ -1427,9 +1427,10 @@ class PostgresWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
 
         # One id order for every chunk, so two calls over overlapping ids mostly take their
         # locks in the same order. Not always: calls whose chunks split differently can still
-        # deadlock. Postgres aborts one; outside a caller's transaction the retry runs it again,
-        # inside one it is ``concurrency`` for the scope's owner. ``int`` orders as ``UUID`` and
-        # Postgres's ``uuid`` do, without a Python comparison per pair.
+        # deadlock, and so can a chunk that locks a raced id below one it holds (below). Postgres
+        # aborts one; outside a caller's transaction the retry runs it again, inside one it is
+        # ``concurrency`` for the scope's owner. ``int`` orders as ``UUID`` and Postgres's
+        # ``uuid`` do, without a Python comparison per pair.
         items = sorted(zip(ids, creates, updates, strict=True), key=lambda item: item[0].int)
 
         async with self._write_tx():
@@ -1451,6 +1452,11 @@ class PostgresWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
                 # An id the insert skipped was stored by a concurrent writer after the look-up,
                 # and is patched too, once locked; one gone by then (deleted, or another
                 # tenant's) is not this call's to write. Usually there is none to look up.
+                # Trade-off: a raced id can sort below a stored id this chunk already holds, so
+                # a third writer locking both in id order can deadlock with it. Locking every
+                # id after the insert, in one ordered statement, avoided that at the cost of a
+                # second scan of every stored id per chunk; the window is a writer committing
+                # the id between this look-up and the insert, and the abort is ``concurrency``.
                 raced = [pk for pk in missing if pk not in inserted]
 
                 if raced and len(await self.__visible_ids(raced, lock=True)) != len(raced):

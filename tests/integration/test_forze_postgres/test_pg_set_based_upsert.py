@@ -27,7 +27,7 @@ from forze.application.contracts.document import (
 )
 from forze.application.contracts.tenancy import TenantIdentity
 from forze.application.execution import Deps, ExecutionContext, InvocationMetadata
-from forze.base.exceptions import CoreException
+from forze.base.exceptions import CoreException, ExceptionKind
 from forze.base.primitives import FrozenTimeSource, bind_time_source
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
 from forze_postgres.execution.deps import ConfigurablePostgresDocument
@@ -1221,3 +1221,150 @@ async def test_concurrent_set_based_upserts_over_shared_ids_both_land(
     finally:
         await first.close()
         await second.close()
+
+
+async def _until_waiting_on_a_lock(observer: PostgresClient, pid: int) -> None:
+    """Return once backend *pid* waits on a lock; fail after five seconds."""
+
+    for _ in range(500):
+        state = await observer.fetch_value(
+            "SELECT wait_event_type FROM pg_stat_activity WHERE pid = %s", [pid]
+        )
+
+        if state == "Lock":
+            return
+
+        await asyncio.sleep(0.01)
+
+    pytest.fail(f"backend {pid} never waited on a lock")
+
+
+async def test_a_row_deleted_while_the_look_up_waits_for_its_lock_is_inserted(
+    postgres_container: Any,
+) -> None:
+    """Another session deletes a stored row and holds its lock; the look-up waits for it, and
+    once the delete commits the row is missing, so the upsert inserts it rather than reporting
+    it ``not_found``."""
+
+    mine, theirs = await _session(postgres_container), await _session(postgres_container)
+    observer = await _session(postgres_container)
+
+    try:
+        t = await _table(mine)
+        cmd = _chunked_command(mine, t, chunk=2_000)
+        pk = uuid4()
+        await cmd.upsert_many([_item(pk, "stored", 1)], return_new=False)
+        my_pid = await mine.fetch_value("SELECT pg_backend_pid()")
+        deleted, release = asyncio.Event(), asyncio.Event()
+
+        async def delete_and_hold() -> None:
+            async with theirs.transaction():
+                await theirs.execute(f"DELETE FROM {t} WHERE id = %s", [pk])
+                deleted.set()
+                await release.wait()
+
+        holder = asyncio.create_task(delete_and_hold())
+        await deleted.wait()
+        upsert = asyncio.create_task(
+            cmd.upsert_many(
+                [_item(pk, "mine", 3, {"name": "patched"})], return_new=False, set_based=True
+            )
+        )
+        await _until_waiting_on_a_lock(observer, my_pid)
+        release.set()
+        await asyncio.gather(holder, upsert)
+
+        row = await mine.fetch_one(f"SELECT name, qty, rev FROM {t} WHERE id = %s", [pk])
+
+    finally:
+        await mine.close()
+        await theirs.close()
+        await observer.close()
+
+    assert row == {"name": "mine", "qty": 3, "rev": 1}
+
+
+@pytest.mark.parametrize("in_callers_transaction", [False, True])
+async def test_a_deadlock_over_a_raced_row_is_concurrency(
+    postgres_container: Any, monkeypatch: pytest.MonkeyPatch, in_callers_transaction: bool
+) -> None:
+    """The chunk holds a stored id; another session commits a lower id after the look-up, so
+    the insert skips it; a third locks both in id order, taking the lower and waiting on the
+    held one; the chunk then waits on the lower: a deadlock. Postgres aborts the chunk's
+    side, which is ``concurrency``: retried outside a caller's transaction, raised in one."""
+
+    mine, theirs = await _session(postgres_container), await _session(postgres_container)
+    third = await _session(postgres_container)
+
+    try:
+        t = await _table(mine)
+        cmd = _chunked_command(mine, t, chunk=2_000)
+        their_cmd = _chunked_command(theirs, t, chunk=2_000)
+        raced, held = sorted((uuid4(), uuid4()), key=lambda pk: pk.int)
+        await cmd.upsert_many([_item(held, "stored", 1)], return_new=False)
+
+        fetch_all = mine.fetch_all
+        locker: list[asyncio.Task[None]] = []
+        failures: list[tuple[str, str]] = []
+        pids: asyncio.Future[int] = asyncio.get_running_loop().create_future()
+
+        async def lock_both() -> None:
+            async with third.transaction():
+                await third.execute("SET LOCAL deadlock_timeout = '10s'")
+                pids.set_result(await third.fetch_value("SELECT pg_backend_pid()"))
+                await third.fetch_all(
+                    f"SELECT id FROM {t} WHERE id = ANY(%s) ORDER BY id FOR NO KEY UPDATE",
+                    [[raced, held]],
+                )
+
+        async def race_after_look_up(query: Any, params: Any = None, **kwargs: Any) -> Any:
+            try:
+                rows = await fetch_all(query, params, **kwargs)
+
+            except CoreException as error:
+                failures.append((error.kind, type(error.__cause__).__name__))
+                raise
+
+            text = query if isinstance(query, str) else query.as_string(None)
+
+            if text.startswith('SELECT "id" FROM') and not locker:
+                # This side is the one Postgres aborts: it checks for a deadlock first.
+                await mine.execute("SET LOCAL deadlock_timeout = '50ms'")
+                await their_cmd.upsert_many(
+                    [_item(raced, "theirs", 7)], return_new=False, set_based=True
+                )
+                locker.append(asyncio.create_task(lock_both()))
+                await _until_waiting_on_a_lock(theirs, await pids)
+
+            return rows
+
+        monkeypatch.setattr(mine, "fetch_all", race_after_look_up)
+        items = [_item(pk, "mine", 0, {"name": "patched"}) for pk in (raced, held)]
+
+        if in_callers_transaction:
+            with pytest.raises(CoreException) as refused:
+                async with mine.transaction():
+                    await cmd.upsert_many(items, return_new=False, set_based=True)
+
+            assert refused.value.kind == ExceptionKind.CONCURRENCY
+
+        else:
+            await cmd.upsert_many(items, return_new=False, set_based=True)
+
+        monkeypatch.undo()
+        await locker[0]
+        rows = await mine.fetch_all(f"SELECT id, name, rev FROM {t}", [])
+
+    finally:
+        await mine.close()
+        await theirs.close()
+        await third.close()
+
+    assert failures == [(ExceptionKind.CONCURRENCY, "DeadlockDetected")]
+    by_id = {row["id"]: (row["name"], row["rev"]) for row in rows}
+
+    if in_callers_transaction:
+        assert by_id == {held: ("stored", 1), raced: ("theirs", 1)}
+
+    else:
+        assert by_id == {held: ("patched", 2), raced: ("patched", 2)}

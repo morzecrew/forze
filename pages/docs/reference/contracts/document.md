@@ -539,8 +539,10 @@ nothing back: a stored row takes the update as its DTO encodes it, and only a ro
 changes gets a new `rev` and `last_update_at`. Each chunk finds and locks its stored rows in id
 order before it inserts its missing ones, so concurrent loads of overlapping batches mostly
 queue; a row another load stores meanwhile is locked and patched once the insert skips it.
-Loads whose chunks split differently can still deadlock: Postgres aborts one, which is retried
-outside a caller's transaction and is `concurrency` inside one. It writes
+Concurrent loads can still deadlock: when their chunks split differently, and, with the same
+split, when such a row sorts below one the chunk already holds and a third load locks both.
+Postgres aborts one side with `concurrency`: retried outside a caller's transaction, and the
+scope's to re-run inside one. Nothing is written twice or lost. It writes
 `set_based_batch_size` rows per chunk (2,000 by default, `PostgresDocumentConfig`), not
 `batch_size`: each chunk costs a few statements, and a statement-level trigger fires once per
 statement, so a chunk per few hundred rows spends its time on statements.

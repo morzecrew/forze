@@ -51,7 +51,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **`PostgresClientPort` requires `fetch_all_scoped`, and `ClickHouseClientPort` requires `query_timeout_limit`** (**Breaking**). A client implemented outside forze must add them.
 
-- **A set-based `upsert_many` on Postgres sends one statement fewer per chunk that holds stored rows, so reloads run faster.** It locks those rows as it finds them, before inserting the missing ones; a row deleted while it waits for the lock is inserted, not `not_found` (**behaviour change**).
+- **A set-based `upsert_many` on Postgres sends one statement fewer per chunk holding stored rows, so reloads run faster** (**behaviour change**). It locks them before inserting: a row deleted meanwhile is inserted, not `not_found`, and a rare race with two other loads can deadlock as `concurrency`.
 
 ### Removed
 
