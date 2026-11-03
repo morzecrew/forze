@@ -1007,6 +1007,11 @@ class _UpdateCodedStrictly(BaseDTO):
     reason: str
 
 
+class _UpdateCodedRequiringQuantity(BaseDTO):
+    quantity: int
+    code: str | None = None
+
+
 class _ReadCoded(ReadDocument):
     order_id: UUID
     sku: str
@@ -1077,6 +1082,35 @@ class TestSpecsItCannotServe:
             )
 
         assert _refusal(ei) == (ExceptionKind.CONFIGURATION, "child_update_requires_fields")
+
+    def test_an_update_command_requiring_a_compare_field_is_refused(self) -> None:
+        # A patch carries only the fields that changed: changing ``code`` alone omits quantity.
+        spec = _coded(
+            write=DocumentWriteTypes(
+                domain=_Coded, create_cmd=_CreateCoded, update_cmd=_UpdateCodedRequiringQuantity
+            )
+        )
+
+        with pytest.raises(CoreException) as ei:
+            ChildCollectionSync(
+                child_spec=spec,
+                parent_fk="order_id",
+                key_fields=("sku",),
+                compare_fields=frozenset({"quantity", "code"}),
+            )
+
+        assert _refusal(ei) == (ExceptionKind.CONFIGURATION, "child_update_requires_fields")
+
+    def test_a_key_of_a_tuple_of_lists_is_refused(self) -> None:
+        class _Listed(_ReadCoded):
+            sku: tuple[list[int], ...]  # type: ignore[assignment]
+
+        spec = _coded(read=_Listed)
+
+        with pytest.raises(CoreException) as ei:
+            ChildCollectionSync(child_spec=spec, parent_fk="order_id", key_fields=("sku",))
+
+        assert _refusal(ei) == (ExceptionKind.CONFIGURATION, "child_key_unhashable")
 
     def test_an_update_command_never_built_may_require_anything(self) -> None:
         # Hard deletes and no compare fields: no patch is ever made.

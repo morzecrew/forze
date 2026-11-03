@@ -4584,8 +4584,8 @@ and `tests/unit/test_examples/test_child_collection.py` over the recipe's exampl
   history-enabled spec pin each of the three.
 - **Proposed row (RFC 0050):** `ASSUMED` — the component takes no lock and passes the ports'
   errors through; serializing saves of one parent is the caller's, by the parent's revision or
-  a `hold`. Every child write is checked strictly against the revision read, never merged, and
-  a hard delete by a touch at that revision first.
+  a `hold`. Every write to an existing child is checked strictly against the revision read,
+  never merged, and a hard delete by a touch at that revision first; a create carries none.
 
 ## D-188 — The mock enforces the uniqueness the ordering test needs
 

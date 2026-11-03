@@ -71,12 +71,36 @@ def _merged_by_update(annotation: Any) -> bool:
 
 
 def _unhashable(annotation: Any) -> bool:
-    """Whether a value of this type may not hash, as a key must: ``Any`` may not either."""
+    """Whether a value of this type may not hash, as a key must: ``Any`` may not either, and a
+    hashable container hashes only if every element type does."""
 
-    return any(
-        arm is Any or (isinstance(arm, type) and not issubclass(arm, Hashable))
-        for arm in _arms(annotation)
-    )
+    for arm in _arms(annotation):
+        if arm is Any or (isinstance(arm, type) and not issubclass(arm, Hashable)):
+            return True
+
+    for unwrapped in _unwrapped(annotation):
+        if any(_unhashable(arg) for arg in get_args(unwrapped) if arg is not Ellipsis):
+            return True
+
+    return False
+
+
+def _unwrapped(annotation: Any) -> Iterator[Any]:
+    """The parameterized forms *annotation* admits, reading through aliases, ``Annotated`` and
+    unions, so a container's element types can be read."""
+
+    if isinstance(annotation, TypeAliasType):
+        yield from _unwrapped(annotation.__value__)
+
+    elif (origin := get_origin(annotation)) is Annotated:
+        yield from _unwrapped(get_args(annotation)[0])
+
+    elif origin in (Union, UnionType):
+        for arm in get_args(annotation):
+            yield from _unwrapped(arm)
+
+    elif origin is not None:
+        yield annotation
 
 
 def _comparable(value: Any) -> Any:
@@ -223,10 +247,10 @@ class ChildCollectionSync[R: BaseModel, C: BaseDTO]:
                 "child_compare_field_merged",
             ),
             (
-                required - patched,
+                required,
                 (
-                    "its update command requires them, and a patch carries only the compare "
-                    "fields and the soft-delete flag"
+                    "its update command requires them, and a patch carries only the fields "
+                    "that changed, or only the soft-delete flag"
                 ),
                 "child_update_requires_fields",
             ),
