@@ -24,6 +24,7 @@ from forze.application.contracts.tenancy import TenantPoolStats
 # does not pull ``opentelemetry`` into the import path of an uninstrumented app.
 from forze.base.exceptions import CoreException, is_server_error_kind
 
+from .context.invocation import InvocationSurface
 from .operations.registry import OperationRegistry
 from .resilience import InProcessResilienceExecutor
 
@@ -473,7 +474,11 @@ def _span_attributes(ctx: "ExecutionContext", op_name: str, kind: str) -> dict[s
 
     metadata = ctx.inv_ctx.get_metadata()
 
-    if metadata is not None:
+    if metadata is None:
+        attributes["forze.invocation_surface"] = InvocationSurface.UNKNOWN.value
+
+    else:
+        attributes["forze.invocation_surface"] = metadata.surface
         attributes["forze.execution_id"] = str(metadata.execution_id)
         attributes["forze.correlation_id"] = str(metadata.correlation_id)
 

@@ -1,9 +1,12 @@
 # RFC 0079 — Invocation surface: naming the boundary an invocation entered through
 
-- **Status:** 📝 Draft. This is the surface field RFC 0077 deferred to its own RFC (§8,
-  §10 Q2, decision 16, §12 P3). Four questions wait for the maintainer (§10). It builds on
-  two changes already on main: the RFC 0077 P3 ingress change (#686) and Inngest's per-call
-  metadata (#683).
+- **Status:** 🚧 In progress — **P1 shipped**: `InvocationMetadata.surface` and the
+  `InvocationSurface` vocabulary, the value minted at all nine framework boundaries, metadata
+  bound by the self-hosted durable runner and by the inbox for a message without a
+  correlation header, the `invocation_surface` log field and the `forze.invocation_surface`
+  span attribute. §10 Q4 was taken at its lean; that and every other departure are proposed
+  in [`EXECUTION-LOG.md`](EXECUTION-LOG.md) Unit 18 (D-200 to D-209). **P2 (the audit trail)
+  waits for §10 Q1–Q3.**
 - **Scope:** One field, `InvocationMetadata.surface`, naming the framework boundary an
   invocation entered through: `http`, `mcp`, `cli`, and so on. It settles:
   - the vocabulary, and who may set it: the boundary, never the caller;

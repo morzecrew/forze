@@ -7,7 +7,7 @@ from .deadline import bind_deadline, current_deadline, remaining_time
 from .drain import OperationDrainGate, is_draining_refusal
 from .drainable import DrainableLoop, Drainables, StoppedLoops
 from .execution import ExecutionContext, ExecutionContextFactory
-from .invocation import InvocationMetadata
+from .invocation import InvocationMetadata, InvocationSurface
 from .lifecycle import DrainPhase, DrainPhaseFn, DrainPhases, LifecycleState
 
 # ----------------------- #
@@ -18,6 +18,7 @@ __all__ = [
     "StoppedLoops",
     "ExecutionContext",
     "InvocationMetadata",
+    "InvocationSurface",
     "DrainPhase",
     "DrainPhaseFn",
     "DrainPhases",

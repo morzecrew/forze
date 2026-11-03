@@ -7,7 +7,7 @@ from forze.application.contracts.authn import AuthnIdentity
 from forze.application.contracts.tenancy import TenantIdentity
 from forze.base.primitives import StrKey, uuid7
 
-from ..context import ExecutionContext, InvocationMetadata
+from ..context import ExecutionContext, InvocationMetadata, InvocationSurface
 from ..operations import FrozenOperationRegistry, run_operation
 
 # ----------------------- #
@@ -15,16 +15,25 @@ from ..operations import FrozenOperationRegistry, run_operation
 
 def mint_invocation_metadata(
     *,
+    surface: str = InvocationSurface.UNKNOWN,
     correlation_id: UUID | None = None,
     causation_id: UUID | None = None,
 ) -> InvocationMetadata:
     """Metadata for a new invocation: a fresh ``execution_id``, and a fresh
-    ``correlation_id`` unless the caller carries one."""
+    ``correlation_id`` unless the caller carries one.
+
+    :param surface: The boundary minting it, a literal in that boundary's source (see
+        :class:`~forze.application.execution.context.invocation.InvocationSurface`). Never
+        a value read from the caller's request, frame, header or envelope.
+    :param correlation_id: The caller's correlation id, if it carries one.
+    :param causation_id: The id of whatever caused this invocation, if known.
+    """
 
     return InvocationMetadata(
         execution_id=uuid7(),
         correlation_id=correlation_id or uuid7(),
         causation_id=causation_id,
+        surface=surface,
     )
 
 

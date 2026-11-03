@@ -6,6 +6,7 @@ import pytest
 
 pytest.importorskip("fastmcp")
 
+from typing import Any
 from uuid import uuid4
 
 import attrs
@@ -199,6 +200,35 @@ class TestDispatch:
 
         assert "mcp_invalid_arguments" in rendered
         assert "sk-live-nope" not in rendered
+
+    async def test_invoke_records_the_mcp_surface(self) -> None:
+        seen: list[str | None] = []
+
+        @attrs.define(slots=True)
+        class _Seen(Handler[_In, _Out]):
+            ctx: Any
+
+            async def __call__(self, args: _In) -> _Out:
+                metadata = self.ctx.inv_ctx.get_metadata()
+                seen.append(metadata.surface if metadata is not None else None)
+                return _Out(doubled=args.n)
+
+        reg = (
+            OperationRegistry(handlers={"calc.seen": lambda ctx: _Seen(ctx=ctx)})
+            .set_descriptor("calc.seen", OperationDescriptor(input_type=_In, output_type=_Out))
+            .freeze()
+        )
+
+        await invoke_operation(
+            registry=reg,
+            ctx_factory=_ctx_factory,
+            identity=StaticIdentityResolver(),
+            op="calc.seen",
+            descriptor=reg.catalog()["calc.seen"].descriptor,
+            arguments={"n": 1, "surface": "cli"},
+        )
+
+        assert seen == ["mcp"]
 
     async def test_invoke_runs_through_pipeline(self) -> None:
         reg = _registry()
