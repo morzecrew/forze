@@ -1,6 +1,6 @@
 # RFC 0081 — Authentication eligibility without an authorization plane
 
-- **Status:** 📝 Draft — three PRs (§12).
+- **Status:** 📝 Draft — three PRs (§12). §10 Q1 and Q2 were settled by the maintainer on 2026-11-04 (rows 7 and 9).
   - P1 has no core change and changes no deployment that works today.
   - P2 makes `allow_all` a posture finding, also with no core change. It is **breaking** under
     a production posture and waits on §10 Q2.
@@ -586,10 +586,12 @@ Q4 is demand-gated.
 - **Q1 (maintainer, blocks P3).** P3 adds a provider-level requirement protocol and the
   `ProviderStore.providers()` accessor to `forze.application.contracts.deps`, which is a new core
   concept. If it is refused, P3 ships §5.8 A6 instead. The provider-level posture walk is then
-  not built, and built-`Deps` `allow_all` wiring keeps the warning only.
+  not built, and built-`Deps` `allow_all` wiring keeps the warning only. **Settled 2026-11-04:
+  accepted** (row 7); P3 follows P1 and P2.
 - **Q2 (maintainer, blocks P2).** Is the `allow_all` finding acceptable as breaking under a
   production posture? The alternative is a warning-only finding that never refuses. That keeps
   bi-backend booting unchanged, but under it `allow_all` is no louder than a log line.
+  **Settled 2026-11-04: refusing** (row 9); bi-backend adds an `Exempt` citing its D6.
 - **Q3 (implementation).** Where W3's check runs: `freeze()` (row 7) or
   `ExecutionRuntime.__attrs_post_init__` beside inventory reconciliation (`runtime.py:322-357`).
   `freeze()` also covers `context_from_modules`. Move it only if freeze proves to lack something
@@ -607,9 +609,9 @@ Q4 is demand-gated.
 | 4 | `ASSUMED` | `AuthnDepsModule.eligibility` widens to `Literal["policy_principal", "allow_all"] \| PrincipalEligibilityDepPort`. It is one field, not a second one. A factory is registered routed exactly where the literals' factories are. A string other than the two literals, and a non-callable, are refused at construction (`authn_eligibility_invalid`). |
 | 5 | `ASSUMED` | Authn gains no principal registry of its own: no table, no spec. The gate reads whatever registry the deployment has: the authz plane, the application's table, or a preset's config (§5.8 A4). |
 | 6 | `ASSUMED` | `local_identity_deps` defaults to `ConfigurableLocalPrincipalEligibility`, which decides when the gate is built. If `FrozenDepsRegistry.resolvable(DocumentQueryDepKey, route="authz_policy_principals")` holds (routed, or a plain fallback such as the mock's), it builds today's policy-principal gate. Otherwise it admits exactly the principals `config.api_keys` names and refuses any other with `authentication` "Principal not found". The config gate therefore engages only where today's preset cannot authenticate at all, and no working deployment loses deactivation (§5.8 A9). An explicit `eligibility=` skips detection. Trust statement for the config gate: the config is the registry, and removing a principal's last key and restarting deactivates it. |
-| 7 | `OPEN` | The boot-time requirement check, gated on §10 Q1. If accepted: a provider may declare `Requirement(key, route, remedy)` frames through `DeclaresRequirements`. A new read-only `ProviderStore.providers()` walks the public `plain_deps` and `routed_deps` mappings. `DepsRegistry.freeze()` refuses (`configuration`, `dependency_requirement_unbound`) a declared frame that has neither its route nor a plain fallback registered. The check is per provider, not per module, so wiring passed as built `Deps` is covered. Errors name keys and routes, never values. If refused: ship §5.8 A6 and log it. |
+| 7 | `LOCKED` | The boot-time requirement check, accepted by the maintainer on 2026-11-04 (§10 Q1) and shipped in P3, after P1 and P2: a provider may declare `Requirement(key, route, remedy)` frames through `DeclaresRequirements`. A new read-only `ProviderStore.providers()` walks the public `plain_deps` and `routed_deps` mappings. `DepsRegistry.freeze()` refuses (`configuration`, `dependency_requirement_unbound`) a declared frame that has neither its route nor a plain fallback registered. The check is per provider, not per module, so wiring passed as built `Deps` is covered. Errors name keys and routes, never values. |
 | 8 | `ASSUMED` | If row 7 lands, `ConfigurablePolicyPrincipalEligibility` declares `(DocumentQueryDepKey, "authz_policy_principals")`, with a remedy naming the three ways out: wire the authz document, pass a gate, or declare `allow_all`. The same refusal reaches `oidc_bootstrap_identity_deps` without authz, and that preset's gate is otherwise unchanged. The local preset's factory declares nothing (§5.3). |
-| 9 | `OPEN` | The `allow_all` posture finding, gated on §10 Q2: refusing under a production posture, or warning-only. As designed, `AuthnDepsModule` is `PostureAware` and reports `authn_eligibility:<route>` (P2). Provider-level collection, with one `ConfigurableAllowAllEligibility` per route, covers built `Deps` (P3). There is one construction warning without a posture. Under a production posture, including an unset environment, the boot is refused unless `Exempt` covers it. That is breaking for bi-backend. |
+| 9 | `LOCKED` | The `allow_all` posture finding refuses under a production posture, accepted by the maintainer on 2026-11-04 (§10 Q2) over warning-only. As designed, `AuthnDepsModule` is `PostureAware` and reports `authn_eligibility:<route>` (P2). Provider-level collection, with one `ConfigurableAllowAllEligibility` per route, covers built `Deps` (P3). There is one construction warning without a posture. Under a production posture, including an unset environment, the boot is refused unless `Exempt` covers it. That is breaking for bi-backend. |
 | 10 | `ASSUMED` | The mock-server examples keep their policy-principal seed (`app.py:191-198`, `served.py:37-46`), and the mock-server docs warning stays. On the mock the plain fallback resolves the document, so the preset keeps today's gate there. |
 | 11 | `ASSUMED` | `principal_deactivation` still requires `authz_route` (`module.py:312-316`). An application with its own registry deactivates there and revokes tokens itself (§8). |
 | 12 | `OPEN` | The names and module of `Requirement` and `DeclaresRequirements`, and the remedy's shape (a string on the record, or a hint keyed by error code). The accessor is named and in scope (row 7). Settle these while writing P3, and log the choice. |
