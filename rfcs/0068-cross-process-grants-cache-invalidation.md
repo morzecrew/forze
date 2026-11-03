@@ -1,6 +1,6 @@
 # RFC 0068 — Cross-process grants cache invalidation
 
-- **Status:** 🚧 In progress — **P1 shipped 2026-11-02** (#815): `GrantsInvalidation` on the authz kernel, `grants_invalidation_lifecycle_step`, the after-commit marker publish, `invalidate_grants(ctx, kernel, principal_id=None)`, the opt-in `forze_mock` push, and the simulation and Redis tests. Rows 7 and 8 are decided in [`EXECUTION-LOG.md`](EXECUTION-LOG.md) Unit 13 (D-105, D-106), with eight more entries there; their proposed rows await acceptance. **P2 stays demand-gated.** Builds on the opt-in grants cache shipped in #506
+- **Status:** 🚧 In progress — **P1 shipped 2026-11-02** (#815): `GrantsInvalidation` on the authz kernel, `grants_invalidation_lifecycle_step`, the after-commit marker publish, `invalidate_grants(ctx, kernel, principal_id=None)`, the opt-in `forze_mock` push, and the simulation and Redis tests. Rows 7 and 8 are decided in [`EXECUTION-LOG.md`](EXECUTION-LOG.md) Unit 13 (D-105, D-106), with eight more entries there. D-107 and D-108 were accepted on 2026-11-03 as rows 11 and 12; the other proposed rows await acceptance. **P2 stays demand-gated.** Builds on the opt-in grants cache shipped in #506
 - **Scope:** Makes a grants-cache invalidation in one process reach every other process that holds
   a `GrantsCache`, so a revoked role stops granting everywhere within broadcast latency instead of
   within the TTL. Adds an optional broadcast setting on the authz kernel, a lifecycle step that
@@ -291,6 +291,12 @@ that `invalidate_grants` is the call after plain document commands. The TTL word
 | 8 | `OPEN` | What the marker value carries (nothing, an origin id, a timestamp). Correctness does not depend on it; decide and log. |
 | 9 | `ASSUMED` | A received invalidation advances the cache epoch exactly as a local one does, so a read in flight is not stored after it. |
 | 10 | `ASSUMED` | Self-echo is not suppressed: the publishing process receives its own marker and forgets again, which is idempotent. |
+| 11 | `ASSUMED` | While a configured broadcast has no live subscription in the process, decisions read the bindings instead of the cache, and each one outside a transaction is counted. A missing step costs the cache's speed, never the revocation's reach. Row 5 covers a step that runs and cannot subscribe; this row covers one that never runs. (D-107) |
+| 12 | `ASSUMED` | The subscription needs a process that keeps running; a serverless runtime refuses the step rather than trust a listener it freezes. (D-108) |
+
+Rows 11 and 12 were added by execution and accepted by the author on 2026-11-03; each cites the
+[`EXECUTION-LOG.md`](EXECUTION-LOG.md) entry it came from, and the sections above are left as
+designed.
 
 ## 12. Phasing
 

@@ -257,15 +257,14 @@ class AuthzGrantResolver:
         cache = self.cache
 
         # Inside a transaction the bindings may include its own uncommitted writes, which a
-        # savepoint can still roll back: read them, and neither serve nor keep an entry. With a
-        # broadcast configured and no subscription keeping the cache current, other processes'
-        # revocations would wait out the TTL here: read them too.
-        if (
-            cache is None
-            or self.ctx is None
-            or self.ctx.tx_ctx.depth() > 0
-            or (self.invalidation is not None and not self.invalidation.listening(cache))
-        ):
+        # savepoint can still roll back: read them, and neither serve nor keep an entry.
+        if cache is None or self.ctx is None or self.ctx.tx_ctx.depth() > 0:
+            catalog = await self._catalog_grants(principal_id)
+
+        # With a broadcast configured and no subscription keeping the cache current, other
+        # processes' revocations would wait out the TTL here: read them too, and count it.
+        elif self.invalidation is not None and not self.invalidation.listening(cache):
+            self.invalidation.counters.add("bypass")
             catalog = await self._catalog_grants(principal_id)
 
         else:

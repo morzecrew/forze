@@ -3999,6 +3999,20 @@ Review of the unit's first commit, before it was published.
 | R-25 | Docs | D-108 put detection at 15 s, which D-114 and the code contradict | Fixed: up to about 20 s, a `PING` every 15 s failing after 5 s |
 | R-26 | Fidelity | The mock ignores `ttl`, so each marker publish left an unreachable body and a long-running mock grew without bound | Fixed (D-109): a versioned write drops the body its pointer left; 100 publishes leave one body per marker key |
 
+## Decision-row outcomes — 2026-11-03 (RFC 0068)
+
+The author accepted D-107 and D-108 as proposed, and D-107 with one addition: each bypass is
+counted. D-107 gives a frozen configuration as the reason a forgotten step warns nobody, but
+`GrantsInvalidation` already keeps mutable counters. A follow-up exports
+`forze.authz.grants_invalidation.bypasses`, so a missing step shows as a metric rather than as
+load on the bindings. It still logs nothing. The other
+proposed rows in this unit await the author.
+
+| RFC | Row | Outcome | Grade | Decision | From |
+|---|---|---|---|---|---|
+| 0068 | 11 | Accepted, **with a counter** | `ASSUMED` | While a configured broadcast has no live subscription in the process, decisions read the bindings instead of the cache, and each one outside a transaction is counted. A missing step costs the cache's speed, never the revocation's reach | D-107 |
+| 0068 | 12 | Accepted | `ASSUMED` | The subscription needs a process that keeps running; a serverless runtime refuses the step rather than trust a listener it freezes | D-108 |
+
 ---
 
 # Unit 14 · RFC 0009 P1 — OIDC completeness
@@ -4316,3 +4330,14 @@ has a fixture today.
   introspection and whoami factories are each refused without a resolver, resolve to their
   verifier with one, and wire through `oidc_bootstrap_identity_deps`.
 - **Proposed row (RFC 0009):** none.
+
+## Decision-row outcomes — 2026-11-03 (RFC 0009)
+
+The author accepted D-150 and D-153 as proposed. Both are `drift` from §5.2, accepted as
+departures from its letter: §5.2 stands as written, and §10 rows 12 and 13 override it. The
+other proposed rows in this unit, D-159's among them, await the author.
+
+| RFC | Row | Outcome | Grade | Decision | From |
+|---|---|---|---|---|---|
+| 0009 | 12 | Accepted | `ASSUMED` | Introspection client credentials are inline `SecretStr` or `str`, like the other identity presets. `SecretRef` support is a follow-up that needs a context-bound secrets seam on the verifier factory, and only widens the field's type | D-150 |
+| 0009 | 13 | Accepted | `ASSUMED` | A rejected external credential is `authentication` with one code per verifier family (`invalid_oidc_token`, `invalid_session_token`). Anything that says nothing about the credential is `infrastructure`. Both fail closed | D-153 |

@@ -194,10 +194,11 @@ PRINCIPAL_PREFIX: Final = "principal:"
 _LIVE_WITHIN: Final = timedelta(seconds=10)
 """How long a subscription may take to bring its stream up before startup fails."""
 
-GrantsInvalidationEvent = Literal["publish_failure", "flush"]
-"""What a broadcast counts: a committed invalidation whose marker write failed
-(``publish_failure``), and a whole grants cache dropped on a received flush or catalog marker
-(``flush``)."""
+GrantsInvalidationEvent = Literal["publish_failure", "flush", "bypass"]
+"""What the broadcast counts: a committed invalidation whose marker write failed
+(``publish_failure``), a whole grants cache dropped on a received flush or catalog marker
+(``flush``), and an effective-grants read that skipped the cache because no subscription in this
+process kept it current (``bypass``)."""
 
 
 def parse_principal_marker(key: str) -> UUID | None:
@@ -216,21 +217,24 @@ def parse_principal_marker(key: str) -> UUID | None:
 @final
 @attrs.define(slots=True, kw_only=True)
 class GrantsInvalidationCounters:
-    """Cumulative broadcast counts, by event, for metrics export."""
+    """Cumulative counts of the broadcast's events, for metrics export."""
 
     _counts: Counter[GrantsInvalidationEvent] = attrs.field(factory=Counter, init=False)
+    _lock: threading.Lock = attrs.field(factory=threading.Lock, init=False)
 
     # ....................... #
 
     def add(self, event: GrantsInvalidationEvent) -> None:
         """Count one *event*."""
 
-        self._counts[event] += 1
+        with self._lock:
+            self._counts[event] += 1
 
     def get(self, event: GrantsInvalidationEvent) -> int:
         """How many *event* so far."""
 
-        return self._counts[event]
+        with self._lock:
+            return self._counts[event]
 
 
 @final
@@ -267,7 +271,7 @@ class GrantsInvalidation:
         eq=False,
         repr=False,
     )
-    """Cumulative publish-failure and flush counts, for metrics export."""
+    """Cumulative publish-failure, flush and bypass counts, for metrics export."""
 
     _listening: list[GrantsCache] = attrs.field(
         factory=list[GrantsCache],
