@@ -13,6 +13,7 @@ from forze.application.contracts.envelope import (
     HEADER_EVENT_ID,
     HEADER_TENANT_ID,
 )
+from forze.application.contracts.idempotency import IdempotencyRecord, IdempotencySpec
 from forze.application.contracts.inbox import InboxSpec
 from forze.application.contracts.tenancy import TenantIdentity
 from forze.application.execution import InvocationMetadata
@@ -23,6 +24,7 @@ from forze.application.execution.context.invocation import (
     SURFACE_KEY,
 )
 from forze.application.execution.outbox import InvocationOutboxEnricher
+from forze.base.exceptions import CoreException, ExceptionKind
 from forze.base.primitives import uuid7
 from forze.domain.models import BaseDTO
 from forze_kits.integrations.inbox import process_with_inbox
@@ -32,6 +34,7 @@ from tests.support.execution_context import context_from_modules
 # ----------------------- #
 
 _SPEC = InboxSpec(name="events")
+_IDEMPOTENCY = IdempotencySpec(name="charges")
 
 
 @attrs.define(slots=True, kw_only=True)
@@ -116,7 +119,7 @@ async def test_causation_absent_without_event_id_header() -> None:
     assert observed.metadata.causation_id is None
 
 
-async def test_existing_consumer_execution_id_is_kept() -> None:
+async def test_a_delivery_under_consumer_metadata_gets_its_own_execution_id() -> None:
     ctx = context_from_modules(MockDepsModule())
     observed = _Observed()
 
@@ -140,8 +143,11 @@ async def test_existing_consumer_execution_id_is_kept() -> None:
         assert ctx.inv_ctx.get_metadata() == consumer_metadata
 
     assert observed.metadata is not None
-    assert observed.metadata.execution_id == consumer_metadata.execution_id
+    # The execution id owns the handler's claims, so a delivery never shares the consumer's.
+    assert observed.metadata.execution_id != consumer_metadata.execution_id
     assert observed.metadata.correlation_id == correlation_id
+    # No event-id header: the consumer's invocation is the cause.
+    assert observed.metadata.causation_id == consumer_metadata.execution_id
     assert observed.metadata.surface == "inbox"
 
 
@@ -185,24 +191,63 @@ async def test_each_delivery_without_headers_is_an_invocation_of_its_own() -> No
     assert first.metadata.correlation_id != second.metadata.correlation_id
 
 
-async def test_without_a_header_the_consumer_metadata_keeps_its_correlation_id() -> None:
+async def test_deliveries_under_one_consumer_metadata_share_only_its_correlation_id() -> None:
     ctx = context_from_modules(MockDepsModule())
-    observed = _Observed()
+    first, second = _Observed(), _Observed()
     consumer_metadata = InvocationMetadata(execution_id=uuid7(), correlation_id=uuid7())
 
     with ctx.inv_ctx.bind_metadata(metadata=consumer_metadata):
+        for message_id, observed in (("evt-c1", first), ("evt-c2", second)):
+            await process_with_inbox(
+                ctx,
+                _Msg(id=message_id),
+                inbox_spec=_SPEC,
+                handler=_observing_handler(ctx, observed),
+                tx_route="mock",
+            )
+
+    assert first.metadata is not None and second.metadata is not None
+    # One owner per delivery, whatever the consumer bound around them.
+    assert len(
+        {first.metadata.execution_id, second.metadata.execution_id, consumer_metadata.execution_id}
+    ) == 3
+    assert (
+        first.metadata.correlation_id
+        == second.metadata.correlation_id
+        == consumer_metadata.correlation_id
+    )
+    assert first.metadata.surface == second.metadata.surface == "inbox"
+
+
+async def test_a_claim_begun_in_one_delivery_cannot_be_committed_by_another() -> None:
+    ctx = context_from_modules(MockDepsModule())
+    consumer_metadata = InvocationMetadata(execution_id=uuid7(), correlation_id=uuid7())
+    outcome: dict[str, BaseException | None] = {}
+
+    async def begin(_msg: _Msg) -> None:
+        await ctx.idempotency(_IDEMPOTENCY).begin("charge", "k-1", "h-1")
+
+    async def commit(_msg: _Msg) -> None:
+        try:
+            await ctx.idempotency(_IDEMPOTENCY).commit(
+                "charge", "k-1", "h-1", IdempotencyRecord(result=b"r")
+            )
+            outcome["commit"] = None
+
+        except CoreException as error:
+            outcome["commit"] = error
+
+    with ctx.inv_ctx.bind_metadata(metadata=consumer_metadata):
         await process_with_inbox(
-            ctx,
-            _Msg(id="evt-c"),
-            inbox_spec=_SPEC,
-            handler=_observing_handler(ctx, observed),
-            tx_route="mock",
+            ctx, _Msg(id="evt-a"), inbox_spec=_SPEC, handler=begin, tx_route="mock"
+        )
+        await process_with_inbox(
+            ctx, _Msg(id="evt-b"), inbox_spec=_SPEC, handler=commit, tx_route="mock"
         )
 
-    assert observed.metadata is not None
-    assert observed.metadata.execution_id == consumer_metadata.execution_id
-    assert observed.metadata.correlation_id == consumer_metadata.correlation_id
-    assert observed.metadata.surface == "inbox"
+    error = outcome["commit"]
+    assert isinstance(error, CoreException)
+    assert error.kind is ExceptionKind.CONFLICT
 
 
 async def test_surface_headers_are_never_read() -> None:

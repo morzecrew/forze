@@ -4352,9 +4352,9 @@ untouched, and §10 Q1–Q3 stay open. §10 Q4 was open and is decided here at t
 (D-200). This unit is measured against the decision table and the code as it stood at
 `21146218b`. Decisions 1–9 hold as written; D-205 records the measurement decision 10 asks for.
 
-**Drift count: 0.** Nine entries, D-200 to D-208: two `discovery`, seven `spec-gap`. D-204 is
-filed as a `spec-gap` because §5.3 never considered metadata already bound around the inbox
-call. If the author reads the row as covering that case, it is `drift`.
+**Drift count: 0.** Nine entries, D-200 to D-208: two `discovery`, seven `spec-gap`. D-204
+settles a case §5.3 never considered, metadata already bound around the inbox call, on the
+fail-closed reading of Q4's "one owner per delivery".
 
 **Where each item lives.** The field, `InvocationSurface`, the token check and the
 `invocation_surface` log key (`SURFACE_KEY`) are in
@@ -4481,32 +4481,38 @@ value. The `logging-metrics` and `inngest` references in `skills/forze-skills/` 
   attempt, including a `run_now` inside another invocation. The caller is linked through the
   causation id only.
 
-## D-204 — With consumer metadata already bound, the inbox keeps its ids
+## D-204 — Every inbox delivery mints its own execution id, whatever is bound around it
 
 - **Touches:** §5.3's inbox row ("the correlation id from the header or a fresh one, the event
   id as causation") and §10 Q4 ("The inbox is the same with one owner per delivery").
-- **Found:** `process_with_inbox` already kept the execution id of metadata bound around it,
-  and `test_existing_consumer_execution_id_is_kept` pins that. The framework's consumer runners
-  bind none, so there each delivery gets a fresh execution id. An app's own consumer loop can
-  bind metadata around the call. §5.3 does not say what happens to the correlation id then,
-  when the header is missing.
-- **Because:** a fresh correlation id under a kept execution id would split one invocation
-  across two correlation ids. Keeping both of the consumer's ids keeps the pair together.
-- **Class:** `spec-gap`. The row says "or a fresh one", and this case builds the bound one
-  instead.
+- **Found:** `process_with_inbox` used to keep the execution id of metadata bound around it,
+  and `test_existing_consumer_execution_id_is_kept` pinned that. The framework's consumer
+  runners bind none, so there each delivery already got a fresh execution id. An app's own
+  consumer loop can bind one metadata around many deliveries, and §5.3 does not say what
+  happens then.
+- **Because:** an execution id owns idempotency claims. If deliveries shared the consumer's
+  id, one delivery's late commit could land on another delivery's claim, the failure the
+  durable fence (D-200) exists to prevent. Q4's "one owner per delivery" is read the
+  fail-closed way: unconditionally. The bound metadata is still the context the delivery runs
+  in, so its correlation id and execution id remain useful for tracing.
+- **Class:** `spec-gap`.
 - **Consequence:**
-  - The correlation id comes from the header, else from the bound metadata, else it is fresh.
-  - The execution id comes from the bound metadata, else it is fresh.
-  - The surface is always `inbox`, and the causation is always the event id header.
+  - The execution id is always fresh. The earlier test is replaced by one asserting the
+    opposite.
+  - The correlation id comes from the `forze_correlation_id` header, else from the bound
+    metadata, else it is fresh.
+  - The causation id comes from the event-id header, else from the bound metadata's execution
+    id, else it is `None`.
+  - The surface is always `inbox`.
 
-  "One owner per delivery" holds wherever no metadata is bound around the call, which covers
-  every framework consumer. A loop that binds one metadata around many deliveries gives them
-  one shared owner.
-- **Proposed row (RFC 0079):** `ASSUMED`: the inbox binds metadata for every delivery. The
-  correlation id comes from the header, else from metadata already bound, else it is fresh.
-  The execution id comes from metadata already bound, else it is fresh. The author may prefer
-  a fresh execution id per delivery whatever is bound. That would make Q4's "one owner per
-  delivery" unconditional.
+  Tests pin that two deliveries under one bound metadata get distinct execution ids and share
+  its correlation id, and that a claim begun in delivery A is refused with `conflict` when
+  delivery B commits it. All three fail on the previous code. The changelog's inbox entry
+  marks the change to the bound case as a behaviour change.
+- **Proposed row (RFC 0079):** `ASSUMED`: every inbox delivery binds a fresh execution id,
+  even under metadata bound around the call, so it owns its own claims. The correlation id
+  comes from the header, else the bound metadata, else it is fresh. The causation id comes
+  from the event-id header, else the bound execution id.
 
 ## D-205 — Decision 10 measured: validation stays at construction
 

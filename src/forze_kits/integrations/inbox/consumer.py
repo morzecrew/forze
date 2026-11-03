@@ -16,9 +16,10 @@ from forze.application.contracts.envelope import (
 from forze.application.contracts.inbox import InboxSpec
 from forze.application.contracts.tenancy import TenantIdentity
 from forze.application.execution.context import ExecutionContext
-from forze.application.execution.context.invocation import InvocationMetadata, InvocationSurface
+from forze.application.execution.context.invocation import InvocationSurface
+from forze.application.execution.ingress import mint_invocation_metadata
 from forze.base.exceptions import CoreException, exc
-from forze.base.primitives import HlcTimestamp, HybridLogicalClock, StrKey, uuid7
+from forze.base.primitives import HlcTimestamp, HybridLogicalClock, StrKey
 
 # ----------------------- #
 
@@ -140,10 +141,11 @@ async def process_with_inbox[M](
     - ``causation_id`` — the consumed event's id (the ``forze_event_id``
       header): the consumed event *causes* the handler's effects, extending
       the standard causation chain. ``message.key`` is never used — it is the
-      ordering key, not an event identity.
-    - ``execution_id`` — kept from the already-bound consumer metadata when
-      present (processing a message is its own execution), otherwise a fresh
-      id.
+      ordering key, not an event identity. Without the header, the
+      already-bound consumer metadata's execution id when present.
+    - ``execution_id`` — always a fresh id: processing a message is its own
+      execution, and the execution id owns the idempotency claims the handler
+      takes, so no two deliveries may share one.
 
     No header is read for the surface. Malformed UUID header values are ignored.
 
@@ -180,14 +182,16 @@ async def process_with_inbox[M](
         # trace across the broker hop), wrapping the dedup mark, tx scope, and handler below.
         _attach_trace_context(headers, stack)
 
+        # A fresh execution id for every delivery, whatever is bound around the call: it owns
+        # the handler's idempotency claims, and a shared one would let one delivery's late
+        # commit land on another's claim.
         current = ctx.inv_ctx.get_metadata()
-        metadata = InvocationMetadata(
-            execution_id=current.execution_id if current is not None else uuid7(),
-            correlation_id=(
-                correlation_id or (current.correlation_id if current is not None else uuid7())
-            ),
-            causation_id=_parse_uuid(header_event_id),
+        metadata = mint_invocation_metadata(
             surface=InvocationSurface.INBOX,
+            correlation_id=correlation_id or (current.correlation_id if current else None),
+            causation_id=(
+                _parse_uuid(header_event_id) or (current.execution_id if current else None)
+            ),
         )
         stack.enter_context(ctx.inv_ctx.bind_metadata(metadata=metadata))
 

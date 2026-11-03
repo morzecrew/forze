@@ -89,10 +89,11 @@ at-least-once.
 
 Every delivery runs as an invocation with metadata of its own, whose
 [invocation surface](../running-in-prod/observability.md#see-which-boundary-an-invocation-came-through)
-is `inbox`. The correlation id comes from the `forze_correlation_id` header when the
-relay wrote one, so the handler's logs join the publishing request's; a message without
-one gets a fresh correlation id. The consumed event's id becomes the causation. The
-handler's idempotency claims belong to that one delivery.
+is `inbox`. Each delivery gets a fresh execution id, even when your consumer bound
+metadata around the call, so the handler's idempotency claims belong to that one
+delivery. The correlation id comes from the `forze_correlation_id` header when the relay
+wrote one, so the handler's logs join the publishing request's. Without the header it
+comes from metadata you bound, or is fresh. The consumed event's id becomes the causation.
 
 ## Sagas: many steps, one outcome
 

@@ -27,7 +27,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **The self-hosted durable runner binds invocation metadata for every attempt** (**behaviour change**): a fresh execution id, the run id as correlation id, surface `durable`. Its logs and events carry them, and a claim begun before a recovery and committed after it is now refused with `conflict`.
 
-- **`process_with_inbox` binds invocation metadata for every delivery** (**behaviour change**). A message without a `forze_correlation_id` header runs under a fresh correlation id, or the bound consumer's, so its logs, published events and idempotency claims carry an execution id.
+- **`process_with_inbox` gives every delivery invocation metadata with its own execution id** (**behaviour change**), even under metadata the consumer bound. A message without a `forze_correlation_id` header takes the bound correlation id or a fresh one, and its logs, events and idempotency claims carry the execution id.
 
 ### Fixed
 
