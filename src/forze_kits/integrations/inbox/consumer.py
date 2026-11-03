@@ -16,9 +16,10 @@ from forze.application.contracts.envelope import (
 from forze.application.contracts.inbox import InboxSpec
 from forze.application.contracts.tenancy import TenantIdentity
 from forze.application.execution.context import ExecutionContext
-from forze.application.execution.context.invocation import InvocationMetadata
+from forze.application.execution.context.invocation import InvocationSurface
+from forze.application.execution.ingress import mint_invocation_metadata
 from forze.base.exceptions import CoreException, exc
-from forze.base.primitives import HlcTimestamp, HybridLogicalClock, StrKey, uuid7
+from forze.base.primitives import HlcTimestamp, HybridLogicalClock, StrKey
 
 # ----------------------- #
 
@@ -128,23 +129,25 @@ async def process_with_inbox[M](
     delivery identity (stable across redeliveries), so a redelivery of the
     **same** message is skipped even without the header.
 
-    **Envelope rebinding** — when the message carries the well-known envelope
-    headers (see :mod:`forze.application.contracts.envelope`, written by the
-    outbox relay), invocation metadata is bound around the dedup mark and the
-    handler so tracing survives the broker hop:
+    **Invocation metadata** — every delivery binds metadata around the dedup mark
+    and the handler, with surface ``inbox``; the well-known envelope headers (see
+    :mod:`forze.application.contracts.envelope`, written by the outbox relay) carry
+    tracing across the broker hop:
 
     - ``correlation_id`` — the ``forze_correlation_id`` header value: the
-      handler runs under the *originating* correlation id.
+      handler runs under the *originating* correlation id. Without a parseable
+      header, the already-bound consumer metadata's correlation id when present,
+      otherwise a fresh one.
     - ``causation_id`` — the consumed event's id (the ``forze_event_id``
       header): the consumed event *causes* the handler's effects, extending
       the standard causation chain. ``message.key`` is never used — it is the
-      ordering key, not an event identity.
-    - ``execution_id`` — kept from the already-bound consumer metadata when
-      present (processing a message is its own execution), otherwise a fresh
-      id.
+      ordering key, not an event identity. Without the header, the
+      already-bound consumer metadata's execution id when present.
+    - ``execution_id`` — always a fresh id: processing a message is its own
+      execution, and the execution id owns the idempotency claims the handler
+      takes, so no two deliveries may share one.
 
-    Without a parseable correlation header the binding is skipped entirely
-    (current behavior). Malformed UUID header values are ignored.
+    No header is read for the surface. Malformed UUID header values are ignored.
 
     :param bind_tenant_from_headers: **Opt-in** (default ``False``): when
         ``True`` and the ``forze_tenant_id`` header carries a valid UUID, the
@@ -179,15 +182,18 @@ async def process_with_inbox[M](
         # trace across the broker hop), wrapping the dedup mark, tx scope, and handler below.
         _attach_trace_context(headers, stack)
 
-        if correlation_id is not None:
-            causation_id = _parse_uuid(header_event_id)
-            current = ctx.inv_ctx.get_metadata()
-            metadata = InvocationMetadata(
-                execution_id=current.execution_id if current is not None else uuid7(),
-                correlation_id=correlation_id,
-                causation_id=causation_id,
-            )
-            stack.enter_context(ctx.inv_ctx.bind_metadata(metadata=metadata))
+        # A fresh execution id for every delivery, whatever is bound around the call: it owns
+        # the handler's idempotency claims, and a shared one would let one delivery's late
+        # commit land on another's claim.
+        current = ctx.inv_ctx.get_metadata()
+        metadata = mint_invocation_metadata(
+            surface=InvocationSurface.INBOX,
+            correlation_id=correlation_id or (current.correlation_id if current else None),
+            causation_id=(
+                _parse_uuid(header_event_id) or (current.execution_id if current else None)
+            ),
+        )
+        stack.enter_context(ctx.inv_ctx.bind_metadata(metadata=metadata))
 
         if bind_tenant_from_headers:
             tenant_id = _parse_uuid(headers.get(HEADER_TENANT_ID))

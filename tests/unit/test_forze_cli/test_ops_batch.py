@@ -92,6 +92,7 @@ class TestBatch:
         for document in documents:
             bound = document["result"]
             assert bound["principal_id"] == str(sample.OPERATOR)
+            assert bound["surface"] == "cli"
             assert bound["idempotency_key"] is None
             assert bound["deadline_set"] is True
 

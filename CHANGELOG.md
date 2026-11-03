@@ -23,9 +23,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **`ChildCollectionSync` makes a parent's child rows match an incoming list.** It matches children by a business key, deletes the dropped first (soft when the spec carries `is_deleted`), then creates the new and updates only changed fields. It runs inside a transaction and returns what it wrote.
 
+- **Invocation metadata names the boundary it entered through.** `InvocationMetadata.surface` takes an `InvocationSurface` value (`http`, `cli`, `durable`, …) or an app's own token; each framework boundary sets one. Logs carry `invocation_surface`, operation spans `forze.invocation_surface`, `unknown` with no metadata.
+
 ### Changed
 
 - **Narrowing `logger_names` keeps unlisted loggers that propagate redacted.** A forze root handler at `warning` (or a higher `level`) prints them scrubbed; above `warning` it drops their warnings (**behaviour change**). Name `propagate=False` loggers; `redact_unnamed=False` leaves unlisted ones raw.
+
+- **The self-hosted durable runner binds invocation metadata for every attempt** (**behaviour change**): a fresh execution id, the run id as correlation id, surface `durable`. Its logs and events carry them, and a claim begun before a recovery and committed after it is now refused with `conflict`.
+
+- **A durable body started by `run_now` inside a request no longer runs under the request's metadata** (**behaviour change**). It runs under the run id as correlation id, so the request's correlation id no longer reaches the body or the events it publishes; the request is linked only as the causation.
+
+- **`process_with_inbox` gives every delivery invocation metadata with its own execution id** (**behaviour change**), even under metadata the consumer bound. A message without a `forze_correlation_id` header takes the bound correlation id or a fresh one, and its logs, events and idempotency claims carry the execution id.
 
 ### Removed
 

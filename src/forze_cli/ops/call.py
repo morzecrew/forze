@@ -24,7 +24,7 @@ from forze.application.contracts.authn import AuthnIdentity
 from forze.application.contracts.tenancy import TenantIdentity
 from forze.application.contracts.transaction import COMMIT_AMBIGUOUS_CODE
 from forze.application.execution import DeploymentProfile, ExecutionContext, ExecutionRuntime
-from forze.application.execution.context import InvocationMetadata
+from forze.application.execution.context import InvocationMetadata, InvocationSurface
 from forze.application.execution.context.commit_state import (
     commit_started,
     reset_commit_started,
@@ -176,7 +176,9 @@ def execute(
     """
 
     # Minted before anything can fail, so every error object carries both ids.
-    metadata = mint_invocation_metadata(correlation_id=correlation_id, causation_id=causation_id)
+    metadata = mint_invocation_metadata(
+        surface=InvocationSurface.CLI, correlation_id=correlation_id, causation_id=causation_id
+    )
     repeatable = False
 
     try:
@@ -446,7 +448,7 @@ def _batch_calls(
             continue
 
         metadata = mint_invocation_metadata(
-            correlation_id=correlation_id, causation_id=causation_id
+            surface=InvocationSurface.CLI, correlation_id=correlation_id, causation_id=causation_id
         )
 
         try:

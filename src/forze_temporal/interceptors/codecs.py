@@ -13,7 +13,7 @@ from temporalio.api.common.v1 import Payload
 
 from forze.application.contracts.authn import AuthnIdentity
 from forze.application.contracts.tenancy import TenantIdentity
-from forze.application.execution import InvocationMetadata
+from forze.application.execution import InvocationMetadata, InvocationSurface
 from forze.base.primitives import uuid7
 
 from ._logger import logger
@@ -148,6 +148,7 @@ class TemporalContextBinder:
             execution_id=execution_id,
             correlation_id=correlation_id,
             causation_id=decoded.execution_id,
+            surface=InvocationSurface.TEMPORAL,
         )
 
         if decoded.principal_id is None:

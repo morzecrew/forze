@@ -54,7 +54,7 @@ from forze.application.contracts.authn import (
 )
 from forze.application.contracts.tenancy import TenantIdentity
 from forze.application.execution import ExecutionContext
-from forze.application.execution.context import ExecutionContextFactory
+from forze.application.execution.context import ExecutionContextFactory, InvocationSurface
 from forze.application.execution.ingress import invoke_at_ingress, mint_invocation_metadata
 from forze.application.execution.operations import FrozenOperationRegistry
 from forze.application.integrations.realtime import (
@@ -790,7 +790,7 @@ def attach_realtime_ws_route(
                         args,
                         authn=session.connection.authn,
                         tenant=_tenant(session.connection),
-                        metadata=mint_invocation_metadata(),
+                        metadata=mint_invocation_metadata(surface=InvocationSurface.WEBSOCKET),
                         idempotency_key=idempotency_key or None,
                         # None is a no-op passthrough; a bound budget is tighten-only
                         deadline=budget,
