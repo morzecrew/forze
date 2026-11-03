@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from datetime import timedelta
 from typing import Any
 
 import pytest
@@ -297,3 +298,40 @@ async def test_every_path_refuses_an_unknown_option(
     await assert_every_path_refuses_an_unknown_option(
         make_adapter(_sql(events_parquet)), "by_day", Params(min_total=0)
     )
+
+
+# ....................... #
+
+# Heavy enough to run well past the route timeouts below, and it references the param.
+_HEAVY_SQL = (
+    "SELECT 'x' AS day, count(*) AS total FROM range(100000) a, range(100000) b "
+    "WHERE $min_total >= 0"
+)
+
+
+def _bounded_adapter(client: Any, timeout: timedelta) -> DuckDbAnalyticsAdapter[Row]:
+    spec = AnalyticsSpec(
+        name="events",
+        read=Row,
+        queries={"by_day": AnalyticsQueryDefinition(params=Params)},
+    )
+    config = DuckDbAnalyticsConfig(
+        queries={"by_day": DuckDbQueryConfig(sql=_HEAVY_SQL, timeout=timeout)},
+    )
+
+    return DuckDbAnalyticsAdapter(client=client, spec=spec, config=config)
+
+
+@pytest.mark.parametrize("options", [None, {"timeout": timedelta(hours=1)}])
+async def test_the_route_timeout_bounds_a_read_and_an_option_cannot_lift_it(
+    client: Any, options: Any
+) -> None:
+    adapter = _bounded_adapter(client, timedelta(milliseconds=100))
+
+    with pytest.raises(CoreException) as caught:
+        await adapter.run("by_day", Params(min_total=0), options=options)
+
+    assert caught.value.code == "duckdb_query_timeout"
+
+    # The interrupted statement left the client usable.
+    assert (await client.run_query("SELECT 42 AS a")).rows == [{"a": 42}]

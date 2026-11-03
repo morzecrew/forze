@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+import time
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from enum import Enum, IntEnum
 from uuid import UUID, uuid4
 
+import attrs
 import pytest
 from pydantic import BaseModel
 
@@ -15,10 +17,11 @@ from forze.application.contracts.analytics import (
     AnalyticsSpec,
     IngestSpec,
 )
-from forze.base.exceptions import CoreException
+from forze.base.exceptions import CoreException, ExceptionKind
 from forze_clickhouse.adapters import ClickHouseAnalyticsAdapter
 from forze_clickhouse.execution import ClickHouseAnalyticsConfig, ClickHouseDepsModule
 from forze_clickhouse.execution.deps.configs import ClickHouseQueryConfig
+from forze_clickhouse.kernel.client import ClickHouseClient
 from tests.support.execution_context import (
     context_from_deps,
 )
@@ -306,3 +309,93 @@ async def test_ingest_of_uuid_datetime_and_decimal_binds_natively(clickhouse_cli
     assert page.count == 1
     assert page.hits[0].order_id == sent.order_id
     assert isinstance(page.hits[0].order_id, UUID)
+
+
+# ....................... #
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("options", [None, {"timeout": timedelta(hours=1)}])
+async def test_the_route_timeout_stops_the_query_on_the_server(
+    clickhouse_client, analytics_table, options
+) -> None:
+    """With no option the route's timeout reaches the server as ``max_execution_time``, and
+    a per-call timeout above it is clamped down to it (RFC 0028 §6.1)."""
+
+    database_id, table_id = analytics_table
+    endless = "SELECT count() AS value, 'x' AS event FROM system.numbers"
+    config = ClickHouseAnalyticsConfig(
+        database=database_id,
+        queries={"all": ClickHouseQueryConfig(sql=endless, timeout=timedelta(seconds=1))},
+        ingest=IngestSpec((database_id, table_id)),
+    )
+    adapter = ClickHouseAnalyticsAdapter(client=clickhouse_client, spec=_spec(), config=config)
+    started = time.monotonic()
+
+    with pytest.raises(CoreException) as caught:
+        await adapter.run("all", _Params(), options=options)
+
+    assert caught.value.kind is ExceptionKind.INFRASTRUCTURE
+    assert "TIMEOUT_EXCEEDED" in str(caught.value.__cause__)
+    assert time.monotonic() - started < 15
+
+
+def _endless_config(database_id: str, table_id: str, timeout: timedelta) -> ClickHouseAnalyticsConfig:
+    return ClickHouseAnalyticsConfig(
+        database=database_id,
+        queries={
+            "all": ClickHouseQueryConfig(
+                sql="SELECT count() AS value, 'x' AS event FROM system.numbers",
+                timeout=timeout,
+            )
+        },
+        ingest=IngestSpec((database_id, table_id)),
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_route_as_long_as_the_client_timeout_is_stopped_by_the_server(
+    clickhouse_connection, analytics_table
+) -> None:
+    """Client and route both allow 3 s. The transport waits 5 s more, so the server's
+    TIMEOUT_EXCEEDED arrives before the socket gives up."""
+
+    database_id, table_id = analytics_table
+    client = ClickHouseClient()
+    await client.initialize(attrs.evolve(clickhouse_connection, timeout=timedelta(seconds=3)))
+
+    try:
+        module = ClickHouseDepsModule(
+            client=client,
+            analytics={"events": _endless_config(database_id, table_id, timedelta(seconds=3))},
+        )
+        port = context_from_deps(module()).analytics.query(_spec())
+
+        with pytest.raises(CoreException) as caught:
+            await port.run("all", _Params())
+
+        assert "TIMEOUT_EXCEEDED" in str(caught.value.__cause__)
+
+    finally:
+        await client.close()
+
+
+@pytest.mark.asyncio
+async def test_a_route_longer_than_the_client_timeout_is_refused_at_wiring(
+    clickhouse_connection, analytics_table
+) -> None:
+    database_id, table_id = analytics_table
+    client = ClickHouseClient()
+    await client.initialize(attrs.evolve(clickhouse_connection, timeout=timedelta(seconds=2)))
+
+    try:
+        with pytest.raises(CoreException) as caught:
+            ClickHouseDepsModule(
+                client=client,
+                analytics={"events": _endless_config(database_id, table_id, timedelta(seconds=6))},
+            )
+
+        assert caught.value.code == "clickhouse_read_timeout_too_short"
+
+    finally:
+        await client.close()

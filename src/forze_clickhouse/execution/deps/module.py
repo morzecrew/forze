@@ -65,6 +65,11 @@ class ClickHouseDepsModule(DepsModule):
             validation_failed_code="clickhouse_analytics_tenancy_validation_failed",
         )
 
+        # A plain client learns its config at startup; the adapter factory checks it then.
+        if (limit := self.client.query_timeout_limit()) is not None:
+            for name, config in (self.analytics or {}).items():
+                config.validate_against_client(str(name), limit)
+
     # ....................... #
 
     def __call__(self) -> Deps:

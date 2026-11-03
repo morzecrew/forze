@@ -95,6 +95,12 @@ class RoutedClickHouseClient(
 
     # ....................... #
 
+    def query_timeout_limit(self) -> timedelta:
+        # Every tenant client is built from the defaults' timeout, or the config default.
+        return (self.connection_defaults or ClickHouseConfig()).timeout
+
+    # ....................... #
+
     async def initialize_client(
         self,
         tenant_id: UUID,

@@ -11,6 +11,7 @@ from collections.abc import (
 )
 from contextlib import contextmanager
 from contextvars import ContextVar
+from datetime import timedelta
 from typing import (
     Any,
     TypeVar,
@@ -175,13 +176,88 @@ def validate_fetch_batch_size(fetch_batch_size: int) -> None:
 # ....................... #
 
 
-def timeout_seconds(options: AnalyticsRunOptions | None) -> int | None:
-    if options is None:
-        return None
+DEFAULT_ROUTE_TIMEOUT = timedelta(seconds=60)
+"""Timeout of a registered analytics query that sets none: the ClickHouse and BigQuery clients'
+own default before routes carried one."""
 
-    timeout = options.get("timeout")
 
-    return None if timeout is None else max(1, int(timeout.total_seconds()))
+def _enforceable(
+    timeout: object,
+    resolution: timedelta | None,
+    maximum: timedelta | None,
+) -> bool:
+    return (
+        isinstance(timeout, timedelta)
+        and timeout > timedelta(0)
+        and (resolution is None or not timeout % resolution)
+        and (maximum is None or timeout <= maximum)
+    )
+
+
+def _requirement(resolution: timedelta | None, maximum: timedelta | None) -> str:
+    return (
+        "a positive timedelta"
+        + (f" in whole units of {resolution}" if resolution else "")
+        + (f", at most {maximum}" if maximum else "")
+    )
+
+
+# ....................... #
+
+
+def validate_route_timeout(
+    timeout: object,
+    *,
+    resolution: timedelta | None = None,
+    maximum: timedelta | None = None,
+) -> None:
+    """Refuse a route timeout the engine cannot enforce as written.
+
+    There is no ``unlimited`` spelling: a query that needs longer sets a longer value.
+
+    :param resolution: The engine's unit. A timeout that is not a whole number of them would
+        be rounded, and rounding up loosens the bound, so it is refused.
+    :param maximum: The longest timeout the engine accepts.
+    """
+
+    if not _enforceable(timeout, resolution, maximum):
+        raise exc.configuration(
+            f"Analytics query timeout must be {_requirement(resolution, maximum)}.",
+            code="analytics_timeout_invalid",
+            details={"timeout": repr(timeout)},
+        )
+
+
+# ....................... #
+
+
+def route_timeout(
+    options: AnalyticsRunOptions | None,
+    ceiling: timedelta,
+    *,
+    resolution: timedelta | None = None,
+) -> timedelta:
+    """Timeout for one execution: the per-call ``timeout`` option clamped to the route's.
+
+    With no option the route's *ceiling* applies. An option above it is clamped down, never
+    up, so a caller cannot lift the bound its wiring set. An option that is not a whole
+    number of the engine's *resolution* is refused, as :func:`validate_route_timeout` refuses
+    a route's.
+    """
+
+    requested = (options or {}).get("timeout")
+
+    if requested is None:
+        return ceiling
+
+    if not _enforceable(requested, resolution, None):
+        raise exc.validation(
+            f"Analytics options.timeout must be {_requirement(resolution, None)}.",
+            code="analytics_option_invalid",
+            details={"timeout": repr(requested)},
+        )
+
+    return min(requested, ceiling)
 
 
 # ....................... #

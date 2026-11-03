@@ -13,8 +13,20 @@ from forze.application.contracts.tenancy import TenantAwareIntegrationConfig
 from forze.application.integrations.tenancy_sql import unreferenced_param_keys
 from forze.base.exceptions import exc
 
+from .analytics import STATEMENT_TIMEOUT_MAX, STATEMENT_TIMEOUT_RESOLUTION
+
 if TYPE_CHECKING:
     from forze.application.contracts.procedure import ProcedureSpec
+
+# ....................... #
+
+
+def _default_statement_timeout(config: "PostgresProcedureConfig") -> timedelta | None:
+    return DEFAULT_STATEMENT_TIMEOUT if config.in_transaction else None
+
+
+DEFAULT_STATEMENT_TIMEOUT = timedelta(seconds=60)
+"""Timeout of a procedure route that runs in a transaction and sets none."""
 
 # ....................... #
 
@@ -38,8 +50,17 @@ class PostgresProcedureConfig(TenantAwareIntegrationConfig):
     """Run inside a transaction (default). Set ``False`` for statements that cannot run in one
     (``REFRESH MATERIALIZED VIEW CONCURRENTLY``, some maintenance) — uses the autocommit path."""
 
-    statement_timeout: timedelta | None = None
-    """Optional ``SET LOCAL statement_timeout`` for long compute. Requires a transaction."""
+    statement_timeout: timedelta | None = attrs.field(
+        default=attrs.Factory(_default_statement_timeout, takes_self=True),
+    )
+    """``SET LOCAL statement_timeout`` for each run, tighten-only: a lower
+    ``statement_timeout`` already in force (the pool's, or an invocation deadline's) still
+    wins. Whole milliseconds, from 1 ms to about 24.8 days.
+
+    A route that runs in a transaction always has one, 60 s unless set; there is no
+    ``unlimited`` spelling. An autocommit route (``in_transaction=False``) takes none, since
+    ``SET LOCAL`` needs a transaction: bound it with the role's or the database's
+    ``statement_timeout``."""
 
     query_schema: NamedResourceSpec | None = attrs.field(
         default=None,
@@ -55,11 +76,26 @@ class PostgresProcedureConfig(TenantAwareIntegrationConfig):
         if not self.sql.strip():
             raise exc.internal("Procedure sql must be non-empty.")
 
-        if not self.in_transaction and self.statement_timeout is not None:
+        timeout: object = self.statement_timeout
+
+        if not self.in_transaction:
+            if timeout is not None:
+                raise exc.configuration(
+                    "Procedure statement_timeout requires in_transaction=True "
+                    "(SET LOCAL needs a transaction).",
+                    code="procedures_autocommit_timeout",
+                )
+
+        elif not (
+            isinstance(timeout, timedelta)
+            and STATEMENT_TIMEOUT_RESOLUTION <= timeout <= STATEMENT_TIMEOUT_MAX
+            and not timeout % STATEMENT_TIMEOUT_RESOLUTION
+        ):
             raise exc.configuration(
-                "Procedure statement_timeout requires in_transaction=True "
-                "(SET LOCAL needs a transaction).",
-                code="procedures_autocommit_timeout",
+                "Procedure statement_timeout must be whole milliseconds from "
+                f"{STATEMENT_TIMEOUT_RESOLUTION} to {STATEMENT_TIMEOUT_MAX}.",
+                code="procedures_timeout_invalid",
+                details={"statement_timeout": repr(timeout)},
             )
 
         if not self.in_transaction and self.query_schema is not None:

@@ -20,6 +20,14 @@ class ClickHouseClientPort(Protocol):
 
     def health(self) -> Awaitable[tuple[str, bool]]: ...  # pragma: no cover
 
+    def query_timeout_limit(self) -> timedelta | None:
+        """The longest query timeout the transport waits out: ``ClickHouseConfig.timeout``.
+
+        A query allowed longer would be cut at the socket before the server stops it. ``None``
+        until the client knows its configuration.
+        """
+        ...  # pragma: no cover
+
     def run_query(
         self,
         sql: str,

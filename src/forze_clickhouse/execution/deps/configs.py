@@ -1,5 +1,6 @@
 """ClickHouse analytics execution configs."""
 
+from datetime import timedelta
 from typing import TYPE_CHECKING, Any
 
 import attrs
@@ -10,13 +11,20 @@ from forze.application.contracts.resolution import (
     coerce_optional_named_resource_spec,
 )
 from forze.application.contracts.tenancy import TenantAwareIntegrationConfig
-from forze.application.integrations.analytics import assert_tenant_param_referenced
+from forze.application.integrations.analytics import (
+    DEFAULT_ROUTE_TIMEOUT,
+    assert_tenant_param_referenced,
+    validate_route_timeout,
+)
 from forze.base.exceptions import exc
 from forze.base.primitives import MappingConverter, StrKeyMapping
 from forze_clickhouse.kernel.relation import RelationSpec
 
 if TYPE_CHECKING:
     from forze.application.contracts.analytics import AnalyticsSpec
+
+TIMEOUT_RESOLUTION = timedelta(seconds=1)
+"""``max_execution_time`` counts whole seconds: a fraction would be rounded."""
 
 # ....................... #
 
@@ -34,11 +42,23 @@ class ClickHouseQueryConfig:
     cursor_column: str | None = None
     """Keyset cursor column (SQL must include ``{forze_after:Type}``)."""
 
+    timeout: timedelta = DEFAULT_ROUTE_TIMEOUT
+    """Ceiling on how long one execution of this query may run. Always on; a per-call
+    ``options["timeout"]`` may lower it, never raise it.
+
+    Sent as the ``max_execution_time`` setting, so the server stops the query. It replaces
+    :attr:`~forze_clickhouse.ClickHouseConfig.timeout` for this query; ingest keeps that.
+    Whole seconds, and no longer than the client's ``ClickHouseConfig.timeout``, which bounds
+    how long its transport waits: a longer one is refused at wiring
+    (``clickhouse_read_timeout_too_short``)."""
+
     # ....................... #
 
     def __attrs_post_init__(self) -> None:
         if not self.sql.strip():
             raise exc.internal("Analytics query sql must be non-empty.")
+
+        validate_route_timeout(self.timeout, resolution=TIMEOUT_RESOLUTION)
 
 
 # ....................... #
@@ -94,6 +114,30 @@ class ClickHouseAnalyticsConfig(TenantAwareIntegrationConfig):
         """Effective ingest relation, or ``None`` when no ingest target is configured."""
 
         return self.ingest.relation if self.ingest is not None else None
+
+    # ....................... #
+
+    def validate_against_client(self, route: str, limit: timedelta) -> None:
+        """Refuse a query whose timeout is longer than the client waits for an answer.
+
+        :param limit: The client's ``ClickHouseConfig.timeout``.
+        """
+
+        for key, query in self.queries.items():
+            if query.timeout > limit:
+                raise exc.configuration(
+                    f"ClickHouse analytics route {route!r} query {str(key)!r} allows "
+                    f"{query.timeout}, but the client waits at most {limit} for an answer and "
+                    "would cut the query first. Raise ClickHouseConfig.timeout to at least "
+                    f"{query.timeout}.",
+                    code="clickhouse_read_timeout_too_short",
+                    details={
+                        "route": route,
+                        "query": str(key),
+                        "timeout": str(query.timeout),
+                        "client_timeout": str(limit),
+                    },
+                )
 
     # ....................... #
 

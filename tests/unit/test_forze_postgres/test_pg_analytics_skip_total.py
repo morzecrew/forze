@@ -28,6 +28,11 @@ class _MockClient:
     def __init__(self) -> None:
         self.queries: list[str] = []
 
+    async def fetch_all_scoped(
+        self, query: str, params: dict[str, object] | None = None, **kwargs: Any
+    ) -> list[dict[str, int]]:
+        return await self.fetch_all(query, params)
+
     async def fetch_all(
         self,
         query: str,

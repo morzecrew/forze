@@ -13,8 +13,9 @@ from forze.application.integrations.analytics.adapter_common import (
     dry_run_offset_page,
     pagination_window,
     parse_count_row,
+    route_timeout,
     shape_rows,
-    timeout_seconds,
+    validate_route_timeout,
     validated_params,
 )
 from forze.base.exceptions import CoreException
@@ -71,9 +72,50 @@ class TestRunOptionsHelpers:
         with pytest.raises(CoreException, match="Unknown keys in AnalyticsRunOptions: dryrun, max_row"):
             dry_run_enabled({"dryrun": True, "max_row": 1, "timeout": timedelta(seconds=1)})  # type: ignore[typeddict-unknown-key]
 
-    def test_timeout_seconds(self) -> None:
-        assert timeout_seconds(None) is None
-        assert timeout_seconds({"timeout": timedelta(seconds=30)}) == 30
+    def test_route_timeout_applies_the_route_ceiling_without_an_option(self) -> None:
+        ceiling = timedelta(seconds=60)
+
+        assert route_timeout(None, ceiling) == ceiling
+        assert route_timeout({}, ceiling) == ceiling
+        assert route_timeout({"max_rows": 5}, ceiling) == ceiling
+
+    def test_route_timeout_clamps_down_never_up(self) -> None:
+        ceiling = timedelta(seconds=60)
+
+        assert route_timeout({"timeout": timedelta(seconds=5)}, ceiling) == timedelta(seconds=5)
+        assert route_timeout({"timeout": timedelta(minutes=10)}, ceiling) == ceiling
+
+    @pytest.mark.parametrize("bad", [timedelta(0), timedelta(seconds=-1), 30])
+    def test_route_timeout_refuses_a_non_positive_option(self, bad: object) -> None:
+        with pytest.raises(CoreException) as caught:
+            route_timeout({"timeout": bad}, timedelta(seconds=60))  # type: ignore[typeddict-item]
+
+        assert caught.value.code == "analytics_option_invalid"
+
+    def test_a_timeout_must_be_whole_units_of_the_engine_resolution(self) -> None:
+        second = timedelta(seconds=1)
+
+        validate_route_timeout(timedelta(seconds=3), resolution=second)
+
+        for bad in (timedelta(seconds=1.5), timedelta(milliseconds=500)):
+            with pytest.raises(CoreException, match="analytics_timeout_invalid"):
+                validate_route_timeout(bad, resolution=second)
+
+            with pytest.raises(CoreException, match="analytics_option_invalid"):
+                route_timeout({"timeout": bad}, timedelta(seconds=60), resolution=second)
+
+    def test_a_timeout_above_the_engine_maximum_is_refused(self) -> None:
+        with pytest.raises(CoreException, match="analytics_timeout_invalid"):
+            validate_route_timeout(timedelta(days=30), maximum=timedelta(days=24))
+
+    @pytest.mark.parametrize("bad", [timedelta(0), timedelta(seconds=-1), None, 60])
+    def test_validate_route_timeout_refuses_anything_but_a_positive_timedelta(
+        self, bad: object
+    ) -> None:
+        with pytest.raises(CoreException) as caught:
+            validate_route_timeout(bad)
+
+        assert caught.value.code == "analytics_timeout_invalid"
 
     def test_pagination_window(self) -> None:
         assert pagination_window({"limit": 10, "offset": 5}) == (10, 5)

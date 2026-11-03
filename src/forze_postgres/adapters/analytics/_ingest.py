@@ -74,6 +74,6 @@ class PostgresAnalyticsIngestMixin[R: BaseModel, Ing: BaseModel](
                 values,
             )
 
-        await host._run_with_timeout(None, _run)  # type: ignore[protected-access]
+        await host._run_in_query_schema(_run)  # type: ignore[protected-access]
 
         return AnalyticsAppendResult(accepted=len(rows))

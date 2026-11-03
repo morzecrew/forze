@@ -180,6 +180,20 @@ class PostgresClientPort(Protocol):
         commit: bool = False,
     ) -> Awaitable[list[JsonDict] | list[tuple[Any, ...]]]: ...  # pragma: no cover
 
+    def fetch_all_scoped(
+        self,
+        query: QueryNoTemplate,
+        params: Params | None = None,
+        *,
+        statement_timeout: timedelta | None = None,
+        search_path: str | None = None,
+    ) -> Awaitable[list[JsonDict]]:
+        """Return all rows of *query*, run under a transaction-local ``statement_timeout``
+        (which only lowers the one in force) and ``search_path`` (*search_path*, then
+        ``public``). The settings never outlive the query."""
+
+        ...  # pragma: no cover
+
     def fetch_all_batched(
         self,
         query: QueryNoTemplate,

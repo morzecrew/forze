@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import re
 from contextlib import asynccontextmanager
 from datetime import timedelta
 from typing import Any
@@ -88,9 +89,10 @@ class _MockClient:
 
     async def fetch_one(self, query: Any, params: Any = None, **kwargs: Any) -> Any:
         if kwargs.get("row_factory") == "tuple":
-            # The settings-capture probe (`SELECT current_setting(%s, true), ...`).
-            self.captured.append(params)
-            return tuple(self.session_settings.get(name) for name in (params or []))
+            # The capture-and-set statement: one prior per setting it reads.
+            names = re.findall(r"current_setting\('(\w+)', true\) AS", query.as_string(None))
+            self.captured.append(names)
+            return tuple(self.session_settings.get(name) for name in names)
 
         self.fetch_one_calls.append((query, params))
         return self.row
@@ -237,6 +239,17 @@ async def test_autocommit_path_opens_no_transaction() -> None:
     assert mock.tx_opened == 0
 
 
+def test_an_autocommit_route_has_no_statement_timeout() -> None:
+    # SET LOCAL needs a transaction; the role's or database's statement_timeout bounds it.
+    config = PostgresProcedureConfig(
+        sql="REFRESH MATERIALIZED VIEW CONCURRENTLY mv",
+        in_transaction=False,
+    )
+
+    assert config.statement_timeout is None
+    assert PostgresProcedureConfig(sql="SELECT 1").statement_timeout == timedelta(seconds=60)
+
+
 # ----------------------- #
 # tenancy
 
@@ -366,22 +379,27 @@ def test_tenant_id_for_resolve_unbound_tenant() -> None:
 
 
 @pytest.mark.asyncio
-async def test_statement_timeout_sets_local() -> None:
+@pytest.mark.parametrize(
+    ("configured", "expected"),
+    [({}, "LEAST(60000,"), ({"statement_timeout": timedelta(seconds=5)}, "LEAST(5000,")],
+)
+async def test_statement_timeout_tightens_the_transaction_bound(
+    configured: dict[str, Any], expected: str
+) -> None:
     mock = _MockClient(rowcount=1)
     adapter = _adapter(
         mock,
         spec=ProcedureSpec(name="recompute", params=_Params),
-        config=PostgresProcedureConfig(
-            sql="SELECT recompute(%(window)s)",
-            statement_timeout=timedelta(seconds=5),
-        ),
+        config=PostgresProcedureConfig(sql="SELECT recompute(%(window)s)", **configured),
     )
     await adapter.run(_Params())
     rendered = [
         q.as_string(None) if hasattr(q, "as_string") else str(q)
         for q, _ in mock.executes
     ]
-    assert any("statement_timeout" in s for s in rendered)
+    [statement] = [s for s in rendered if "set_config('statement_timeout'" in s]
+    assert expected in statement
+    assert "current_setting('statement_timeout')" in statement  # never loosens
 
 
 class TestSetLocalDoesNotLeakIntoTheCallerTransaction:
@@ -457,7 +475,10 @@ class TestSetLocalDoesNotLeakIntoTheCallerTransaction:
         await adapter.run(_Params())
 
         assert mock.captured == []
-        assert not any("set_config" in s for s in self._rendered(mock))
+        # The timeout is the only statement besides the call; a restore would bind priors.
+        assert [params for _, params in mock.executes if params is not None] == [
+            {"window": "2026-01-01"}
+        ]
 
     @pytest.mark.asyncio
     async def test_restores_even_when_the_procedure_raises(self) -> None:
@@ -595,6 +616,25 @@ def test_config_autocommit_with_timeout_rejected() -> None:
             in_transaction=False,
             statement_timeout=timedelta(seconds=5),
         )
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [
+        timedelta(0),
+        timedelta(seconds=-1),
+        None,
+        60,
+        timedelta(days=30),
+        timedelta(microseconds=1),
+        timedelta(microseconds=1500),
+    ],
+)
+def test_config_refuses_a_timeout_postgres_cannot_hold(bad: object) -> None:
+    with pytest.raises(CoreException) as caught:
+        PostgresProcedureConfig(sql="SELECT 1", statement_timeout=bad)  # type: ignore[arg-type]
+
+    assert caught.value.code == "procedures_timeout_invalid"
 
 
 def test_config_autocommit_with_schema_rejected() -> None:
