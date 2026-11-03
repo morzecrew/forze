@@ -80,6 +80,11 @@ _HTTP_REFUSAL = re.compile(r"HTTP (?:code )?40[13]\b|Unauthorized_401|Forbidden_
 DuckDB 2, where a catalog refusal is no longer the bare ``Error``) as its status name
 (EXECUTION-LOG D-060)."""
 
+_GUESS = re.compile(r"^Did you mean [^\n]*\n?", re.MULTILINE)
+"""DuckDB's guess at the name a statement meant, left out of the detail the caller sees: it can
+name relations outside the route's namespace. The engine puts it on a line of its own, so the
+caller's text, which can contain the same words, is kept."""
+
 _READ_ONLY_ATTACH = "attached in read-only mode"
 
 _LOCKED = ("the configuration has been locked", "Displaying unredacted secrets is disabled")
@@ -128,7 +133,7 @@ def dynamic_read_error(error: Exception, *, route: str) -> Exception:
         return statement_invalid(route, detail=type(error).__name__)
 
     if isinstance(error, (duckdb.ParserException, duckdb.BinderException, duckdb.CatalogException)):
-        return statement_invalid(route, detail=message)
+        return statement_invalid(route, detail=_GUESS.sub("", message))
 
     return _fallback(error, site="dynamic_read", details={"route": route})
 

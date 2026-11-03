@@ -74,8 +74,12 @@ the name a resolution error prints. Handlers should keep to the accessor.
 
 | Capability | Spec | Resolve via | Dep key |
 |------------|------|-------------|---------|
-| [Authentication](contracts/identity.md#authentication) | `AuthnSpec` | `ctx.authn` | `AuthnDepKey` (the lifecycle ports it composes are in [identity](contracts/identity.md)) |
+| [Authentication](contracts/identity.md#authentication) | `AuthnSpec` | `ctx.authn.authn(spec)` | `AuthnDepKey` (+ `PasswordVerifierDepKey`, `TokenVerifierDepKey`, `ApiKeyVerifierDepKey`, `PrincipalResolverDepKey`, which the orchestrator resolves for its route; `AuthnEventSinkDepKey` for the optional event sink) |
+| [Credential lifecycle](contracts/identity.md#credential-lifecycle) | `AuthnSpec` | `ctx.authn.token_lifecycle(spec)` and its siblings | `TokenLifecycleDepKey` / `PasswordLifecycleDepKey` / `PasswordResetDepKey` / `ApiKeyLifecycleDepKey` / `PasswordAccountProvisioningDepKey` |
+| [Principal state](contracts/identity.md#principal-state-and-events) | `AuthnSpec` | `ctx.authn.eligibility(spec)` / `ctx.authn.principal_deactivation(spec)` | `PrincipalEligibilityDepKey` / `PrincipalDeactivationDepKey` |
+| [Revocation fast path](contracts/identity.md#revocation-fast-path) | `RevocationStatesSpec` | by dep key | `RevocationStatesDepKey` (+ `PrincipalEpochDepKey`, unrouted) |
 | [Authorization](contracts/identity.md#authorization) | `AuthzSpec` | `ctx.authz.decision(spec)` / `ctx.authz.scope(spec)` | `AuthzDecisionDepKey` / `AuthzScopeDepKey` |
+| [Grants & delegation](contracts/identity.md#authorization) | `AuthzSpec` | `ctx.authz.grant_query(spec)` and its siblings | `GrantQueryDepKey` / `RoleAssignmentDepKey` / `PrincipalRegistryDepKey` (+ `DelegationDepKey`, `DelegationGrantDepKey`) |
 | [Tenancy](tenancy-matrix.md) | — | `ctx.tenancy` | `TenantResolverDepKey` (+ `TenantManagementDepKey` for provisioning) |
 | Secrets | `SecretRef` | by dep key | `SecretsDepKey` (+ `SecretsAdminDepKey`, `SecretsLeaseDepKey`) |
 | [Counterparty-rotated credentials](../running-in-prod/credential-rotation.md#when-the-other-side-rotates-it) | `SecretRef` | by dep key | `RotatingCredentialsDepKey` (+ `RotatingCredentialsAdminDepKey` for the refresh sweeper) |
