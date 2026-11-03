@@ -241,6 +241,35 @@ def test_a_refusal_carries_the_engine_message_for_diagnosis() -> None:
     assert mapped.details == {"route": ROUTE, "detail": message}
 
 
+def test_the_engines_guess_at_a_name_is_left_out_of_the_detail() -> None:
+    """The guess can name relations outside the route's namespace."""
+
+    error = duckdb.CatalogException(
+        "Catalog Error: Table with name t does not exist!\n"
+        'Did you mean "__ducklake_metadata_lake.other_meta.t"?\n\nLINE 1: SELECT * FROM t'
+    )
+
+    mapped = dynamic_read_error(error, route=ROUTE)
+
+    assert isinstance(mapped, CoreException)
+    assert mapped.details == {
+        "route": ROUTE,
+        "detail": "Catalog Error: Table with name t does not exist!\n\nLINE 1: SELECT * FROM t",
+    }
+
+
+def test_the_callers_own_words_are_not_taken_for_the_guess() -> None:
+    message = (
+        'Binder Error: Referenced column "Did you mean x" not found in FROM clause!\n'
+        'Candidate bindings: "name"\n\nLINE 1: SELECT "Did you mean x" FROM customers'
+    )
+
+    mapped = dynamic_read_error(duckdb.BinderException(message), route=ROUTE)
+
+    assert isinstance(mapped, CoreException)
+    assert mapped.details == {"route": ROUTE, "detail": message}
+
+
 def test_a_conversion_failure_does_not_echo_the_value() -> None:
     error = duckdb.ConversionException("Could not convert string 'secret-row' to INT32")
 
