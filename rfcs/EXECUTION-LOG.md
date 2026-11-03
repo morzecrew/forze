@@ -4355,8 +4355,7 @@ done the same, a read served before a tenant's first build would fail until the 
 restarted, and it would fail as `dynamic_read_statement_invalid`, which reads as a bad plan.
 Every probe below ran on `duckdb==2.0.0` and `duckdb==1.5.6`, against Postgres 18.
 
-**Drift count: 0.** Five entries, D-170 to D-172, D-174 and D-175: one `discovery`, four
-`spec-gap`. Product code changes in three places. The shared taxonomy gains
+**Drift count: 0.** Six entries, D-170 to D-175: two `discovery`, four `spec-gap`. Product code changes in three places. The shared taxonomy gains
 `NAMESPACE_MISSING_CODE` and `namespace_missing`. `DuckDbClient.run_dynamic` raises that code
 when its `USE` fails with a `CatalogException`, and the DuckDB adapter adds the route, or maps
 a catalog refusal in it to `dynamic_read_permission_denied`. `RoutedDuckDbClient`'s docstring
@@ -4489,6 +4488,23 @@ Unit tests are in `test_duckdb_run_dynamic.py`, `test_duckdb_dynamic_read_wiring
 - **Proposed row (RFC 0078):** `ASSUMED` — a relation the statement names that does not resolve
   stays `dynamic_read_statement_invalid` on every engine. "Not built yet" is the application's to
   check before it reads.
+
+## D-173 — A dynamic read's error detail carried the engine's name guesses
+
+- **Touches:** RFC 0078 §3.5 (no cross-tenant read) and §4.5, whose
+  `dynamic_read_statement_invalid` carries the engine's message in details the caller sees.
+- **RFC said:** nothing about the message. The adapter put all of it in the detail.
+- **Found:** a parser, binder or catalog error can end with the engine's guess at the name the
+  statement meant. The guess draws on every attached catalog, not only the tenant's lake, so it
+  could name relations outside it. Names only, never rows.
+- **Because:** the engine builds its suggestions before, and apart from, any grant check.
+- **Class:** `discovery`.
+- **Consequence:** shipped separately as a security fix (#818): the adapter drops the guess,
+  which the engine prints on a line of its own, and keeps the rest of the message and its
+  pointer into the caller's statement. Analytics SQL is the application's, and its errors reach
+  the application unchanged.
+- **Proposed row (RFC 0078):** `ASSUMED` — a dynamic read's error detail carries the engine's
+  message without its name guesses, which can reach outside the tenant's lake.
 
 ## D-174 — A missing namespace gets a different code on Postgres
 
