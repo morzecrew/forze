@@ -21,9 +21,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **`OidcClaimMapper` normalizes `email`, `roles` and `groups` into a `_forze` claim.** `ClaimsPath` reads Keycloak and Casdoor shapes, `ZitadelProjectRoles` Zitadel's org map; a malformed claim yields no roles. A `_forze` claim the issuer sent is dropped (**behaviour change**).
 
+- **`ChildCollectionSync` makes a parent's child rows match an incoming list.** It matches children by a business key, deletes the dropped first (soft when the spec carries `is_deleted`), then creates the new and updates only changed fields. It runs inside a transaction and returns what it wrote.
+
 ### Changed
 
-- ...
+- **Narrowing `logger_names` keeps unlisted loggers that propagate redacted.** A forze root handler at `warning` (or a higher `level`) prints them scrubbed; above `warning` it drops their warnings (**behaviour change**). Name `propagate=False` loggers; `redact_unnamed=False` leaves unlisted ones raw.
 
 ### Removed
 
@@ -34,6 +36,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Redis invalidation push now clears stale local entries when its connection goes half-open or the client closes**, for the document L1 and any other subscriber.
 
 - **`OidcTokenVerifier` refuses a malformed signed token as an authentication failure** (`invalid_oidc_token`). An out-of-range `exp` or `iat` (such as `1e20`), an empty `sub`, or a missing claim a custom `OidcClaimMapper` requires raised a raw `ValueError` instead; a boolean `iat` is refused too.
+
+### Security
+
+- **A DuckDB dynamic read's error detail leaves out the engine's guess at a mistyped name** (**behaviour change**). The guess could name relations outside the tenant's lake.
 
 ## [0.21.0] - 2026-11-02
 
