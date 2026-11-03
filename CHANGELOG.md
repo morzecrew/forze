@@ -21,6 +21,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **`OidcClaimMapper` normalizes `email`, `roles` and `groups` into a `_forze` claim.** `ClaimsPath` reads Keycloak and Casdoor shapes, `ZitadelProjectRoles` Zitadel's org map; a malformed claim yields no roles. A `_forze` claim the issuer sent is dropped (**behaviour change**).
 
+- **`ChildCollectionSync` makes a parent's child rows match an incoming list.** It matches children by a business key, deletes the dropped first (soft when the spec carries `is_deleted`), then creates the new and updates only changed fields. It runs inside a transaction and returns what it wrote.
+
 ### Changed
 
 - **Narrowing `logger_names` keeps unlisted loggers that propagate redacted.** A forze root handler at `warning` (or a higher `level`) prints them scrubbed; above `warning` it drops their warnings (**behaviour change**). Name `propagate=False` loggers; `redact_unnamed=False` leaves unlisted ones raw.
