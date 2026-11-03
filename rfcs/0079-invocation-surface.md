@@ -5,7 +5,7 @@
   bound by the self-hosted durable runner and by the inbox for a message without a
   correlation header, the `invocation_surface` log field and the `forze.invocation_surface`
   span attribute. §10 Q4 was taken at its lean; that and every other departure are proposed
-  in [`EXECUTION-LOG.md`](EXECUTION-LOG.md) Unit 18 (D-200 to D-208). **P2 (the audit trail)
+  in [`EXECUTION-LOG.md`](EXECUTION-LOG.md) Unit 18 (D-200 to D-209). **P2 (the audit trail)
   waits for §10 Q1–Q3.**
 - **Scope:** One field, `InvocationMetadata.surface`, naming the framework boundary an
   invocation entered through: `http`, `mcp`, `cli`, and so on. It settles:

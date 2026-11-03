@@ -94,6 +94,9 @@ metadata around the call, so the handler's idempotency claims belong to that one
 delivery. The correlation id comes from the `forze_correlation_id` header when the relay
 wrote one, so the handler's logs join the publishing request's. Without the header it
 comes from metadata you bound, or is fresh. The consumed event's id becomes the causation.
+A claim the handler takes in a store outside the delivery's transaction, such as Redis,
+outlives a delivery that crashes. Its redelivery's claim on the same key then gets
+`conflict` until the pending claim's `IdempotencySpec.ttl` expires, as on Inngest.
 
 ## Sagas: many steps, one outcome
 

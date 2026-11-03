@@ -34,14 +34,19 @@ _BOUNDARIES: dict[str, str] = {
 }
 """Path → the ``InvocationSurface`` member every minting call in it must pass."""
 
-_EXEMPT: dict[str, str] = {
-    # The minting function itself forwards its caller's ``surface`` argument.
-    "forze/application/execution/ingress/invoke.py": "mint_invocation_metadata's own body",
+_EXEMPT: dict[str, tuple[str | None, str]] = {
+    # The minting function itself forwards its caller's ``surface`` argument, and nothing else.
+    "forze/application/execution/ingress/invoke.py": (
+        "surface",
+        "mint_invocation_metadata's own body",
+    ),
     # Decodes the producer's ids from the event envelope for ``_bind_invocation`` to read as
-    # causation and correlation; the decoded value is never bound.
-    "forze_inngest/adapters/context.py": "envelope decode, never bound",
+    # causation and correlation; the decoded value is never bound. The envelope is caller
+    # data, so this is exactly where a surface must never be set: it keeps the default.
+    "forze_inngest/adapters/context.py": (None, "envelope decode, never bound"),
 }
-"""Path → why its construction of metadata is not a boundary minting one."""
+"""Path → (the one ``surface=`` expression its calls may pass, ``None`` for none; why it is
+not a boundary). Exempt per call, not per file: a new call there is held to the same form."""
 
 
 # ....................... #
@@ -65,6 +70,19 @@ def _minting_calls() -> dict[str, list[ast.Call]]:
                 found.setdefault(path.relative_to(_SRC).as_posix(), []).append(node)
 
     return found
+
+
+def _surface_expr(call: ast.Call) -> str | None:
+    """The source of the expression passed as ``surface=``, or of a ``**`` splat that could."""
+
+    for keyword in call.keywords:
+        if keyword.arg == "surface":
+            return ast.unparse(keyword.value)
+
+        if keyword.arg is None:
+            return f"**{ast.unparse(keyword.value)}"
+
+    return None
 
 
 def _surface_member(call: ast.Call) -> str | None:
@@ -92,6 +110,17 @@ def test_every_framework_call_site_passes_its_own_surface() -> None:
 
     for path, calls in _minting_calls().items():
         if path in _EXEMPT:
+            allowed, _why = _EXEMPT[path]
+
+            for call in calls:
+                passed = _surface_expr(call)
+
+                if passed != allowed:
+                    wrong.append(
+                        f"{path}:{call.lineno} passes surface={passed}, "
+                        f"expected surface={allowed}"
+                    )
+
             continue
 
         expected = _BOUNDARIES.get(path)

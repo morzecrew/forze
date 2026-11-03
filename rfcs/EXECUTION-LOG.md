@@ -4352,7 +4352,7 @@ untouched, and §10 Q1–Q3 stay open. §10 Q4 was open and is decided here at t
 (D-200). This unit is measured against the decision table and the code as it stood at
 `21146218b`. Decisions 1–9 hold as written; D-205 records the measurement decision 10 asks for.
 
-**Drift count: 0.** Nine entries, D-200 to D-208: two `discovery`, seven `spec-gap`. D-204
+**Drift count: 0.** Ten entries, D-200 to D-209: three `discovery`, seven `spec-gap`. D-204
 settles a case §5.3 never considered, metadata already bound around the inbox call, on the
 fail-closed reading of Q4's "one owner per delivery".
 
@@ -4475,8 +4475,8 @@ value. The `logging-metrics` and `inngest` references in `skills/forze-skills/` 
 - **Class:** `spec-gap`: knowable from `run_now`'s callers before any code.
 - **Consequence:** a body run by `run_now` now logs its own execution id and the run id as its
   correlation id, not the request's. A claim it takes belongs to the attempt. The causation
-  links back to the request (D-202). The changelog's behaviour-change entry for the runner
-  covers this case too.
+  links back to the request (D-202). The changelog gives this case a behaviour-change entry of
+  its own.
 - **Proposed row (RFC 0079):** `ASSUMED`: the durable runner rebinds metadata for every
   attempt, including a `run_now` inside another invocation. The caller is linked through the
   causation id only.
@@ -4522,22 +4522,37 @@ value. The `logging-metrics` and `inngest` references in `skills/forze-skills/` 
     against about 340 ns before (the median of three runs of 200,000 constructions). That is
     about 110 ns of attrs validator overhead per invocation.
   - **Common path.** An empty-plan dispatch under bound metadata is unchanged at 2.5–2.7 µs.
-  - **Unbound path.** An empty-plan dispatch with no metadata goes from about 2.5 µs to
-    3.3–3.6 µs. The difference is the structlog bind and reset of
-    `invocation_surface="unknown"`.
+  - **Unbound path.** An empty-plan dispatch with no metadata goes from about 2.5 µs before
+    to 3.3–3.6 µs after: roughly +1 µs, or +30–45%, on every top-level dispatch with no
+    metadata bound. The difference is the structlog bind and reset of
+    `invocation_surface="unknown"`. Measured alone, `bind_contextvars` plus
+    `reset_contextvars` for one key costs about 740 ns, against about 130 ns for a raw
+    `ContextVar` set and reset (structlog 26.1.0).
   - **The gate.** The CONTRIBUTING gate comparator passes over the full `perf_gate` subset.
     Two rows exceed 15%: `test_dispatch_hookless_benchmark` (+16.8%) and
     `test_invoke_hookless_benchmark` (+17.0%). Both run unbound and sit below the 1 ms floor,
     so the gate reports them for trend only. `test_invoke_direct_baseline_benchmark` runs no
     code this change touches and moved +5.8%, so the noise is about 6%.
 - **Because:** decision 10 moves validation only if it regresses the gate, and it does not.
+  The unbound binding cannot simply be dropped: §5.5 ("Emitted even when no metadata is
+  bound") and decision 8 require the field on every operation, so its absence cannot stand
+  for `unknown`. No cheaper public path exists. `merge_contextvars` finds a field by its
+  `ContextVar`'s name, and a variable of the framework's own under that name would race
+  structlog's private registry for the same key.
 - **Class:** `discovery`.
 - **Consequence:** validation stays in `InvocationMetadata`'s validator: a set lookup first,
-  then the pattern. Two new gated benchmarks guard it:
+  then the pattern. The unbound binding stays at a top-level operation's entry, and its cost
+  is accepted. It falls only on operations run outside any boundary: harnesses, DST, and an
+  app's own direct `run_operation` calls. Every framework boundary binds metadata, and that
+  path is unchanged. Two new gated benchmarks guard both costs:
   `test_dispatch_hookless_bound_metadata_benchmark` and `test_mint_invocation_metadata_benchmark`.
-  The unbound path's extra microsecond falls only on operations run outside any boundary:
-  harnesses, DST, and an app's own direct `run_operation` calls.
-- **Proposed row (RFC 0079):** none: decision 10 held.
+- **Proposed row (RFC 0079):** `ASSUMED`: the `unknown` surface is bound per top-level
+  operation with no metadata, through structlog's public API, at about 1 µs a dispatch.
+  Validation stays at construction (decision 10 held). A cheaper alternative would be a
+  processor in `configure_logging` that fills `invocation_surface="unknown"` on lines logged
+  inside an operation with no metadata. It costs nothing at dispatch, but it reaches only apps
+  that use `configure_logging`. It is left for the author, since it changes the logging
+  configuration.
 
 ## D-206 — What the token check refuses, and what its error says
 
@@ -4563,10 +4578,16 @@ value. The `logging-metrics` and `inngest` references in `skills/forze-skills/` 
   vacuously when a boundary stops minting.
 - **Class:** `spec-gap`.
 - **Consequence:** the guard maps each boundary file to its `InvocationSurface` member. Every
-  minting call in that file must pass exactly that member as a literal attribute. Two sites
-  are exempt, each with its reason: the envelope decode, and the minting function's own body.
-  A second test fails when a mapped boundary or an exempt site no longer mints at all. A
-  sabotage run confirmed the guard: passing `InvocationSurface.CLI` at the MCP site fails it.
+  minting call in that file must pass exactly that member as a literal attribute. Two files
+  are exempt per call, not wholesale, and each names the one form its calls may take:
+  - The Inngest envelope decode (`forze_inngest/adapters/context.py`) builds metadata from
+    caller data, so its calls must pass no `surface` at all.
+  - The minting function's own body may pass only `surface=surface`.
+
+  A `**` splat in a minting call counts as passing a surface. A second test fails when a
+  mapped boundary or an exempt site no longer mints at all. Sabotage runs confirmed the guard:
+  `InvocationSurface.CLI` at the MCP site fails it, and so does `surface=raw["surface"]`
+  added to the envelope decode.
 - **Proposed row (RFC 0079):** none.
 
 ## D-208 — How tests 4 and 8 reach their hops
@@ -4589,4 +4610,31 @@ value. The `logging-metrics` and `inngest` references in `skills/forze-skills/` 
   - **Test 8.** Inside the handler or body, the test reads the structlog context and builds an
     event through `InvocationOutboxEnricher`. Outbox staging calls that same object, so the
     test needs no outbox route.
+- **Proposed row (RFC 0079):** none.
+
+## D-209 — A claim a crashed delivery left pending blocks its redelivery until the TTL
+
+- **Touches:** §10 Q4 ("The inbox is the same with one owner per delivery") and §7 (the inbox
+  page). The RFC does not say what a delivery's crash leaves behind.
+- **Found:** a crash rolls back the delivery's transaction, and with it the inbox's dedup mark,
+  so the message is redelivered. A claim the handler took in a store outside that transaction
+  survives, owned by the dead delivery, and the redelivery has an execution id of its own
+  (D-204). Every store refuses a live pending claim, and frees it only once its TTL lapses:
+  - the mock (`forze_mock/adapters/idempotency.py:152`, `:164`);
+  - Redis (`SET NX` with `ex=ttl`, `forze_redis/adapters/idempotency.py:149`, `:199`);
+  - MongoDB (`expires_at = now + ttl`, `forze_mongo/adapters/idempotency.py:140`, `:181`);
+  - Postgres (it reclaims only `WHERE expires_at <= now()`,
+    `forze_postgres/adapters/idempotency.py:381`).
+
+  On Postgres a statement joins the transaction already bound to its client
+  (`_statement_conn`, `forze_postgres/kernel/client/client.py:762`), so a claim on the
+  inbox's own client rolls back with the crash and blocks nothing.
+- **Because:** this is the same at-least-once gap `inngest.md` documents for Inngest, and the
+  inbox page did not say it.
+- **Class:** `discovery`.
+- **Consequence:** `data-events/events-sagas.md` says a claim in a store outside the
+  delivery's transaction outlives a crashed delivery. Its redelivery's claim on the same key
+  gets `conflict` until the pending claim's `IdempotencySpec.ttl` expires. A unit test pins it
+  on the mock: a failed delivery's claim makes the redelivery fail with `conflict`, and once
+  the claim expires the next delivery runs.
 - **Proposed row (RFC 0079):** none.

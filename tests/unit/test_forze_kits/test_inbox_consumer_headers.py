@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from datetime import timedelta
 from uuid import UUID, uuid4
 
 import attrs
+import pytest
 from structlog.contextvars import get_contextvars
 
 from forze.application.contracts.envelope import (
@@ -25,10 +27,10 @@ from forze.application.execution.context.invocation import (
 )
 from forze.application.execution.outbox import InvocationOutboxEnricher
 from forze.base.exceptions import CoreException, ExceptionKind
-from forze.base.primitives import uuid7
+from forze.base.primitives import utcnow, uuid7
 from forze.domain.models import BaseDTO
 from forze_kits.integrations.inbox import process_with_inbox
-from forze_mock import MockDepsModule
+from forze_mock import MockDepsModule, MockState
 from tests.support.execution_context import context_from_modules
 
 # ----------------------- #
@@ -248,6 +250,43 @@ async def test_a_claim_begun_in_one_delivery_cannot_be_committed_by_another() ->
     error = outcome["commit"]
     assert isinstance(error, CoreException)
     assert error.kind is ExceptionKind.CONFLICT
+
+
+async def test_a_claim_left_pending_by_a_failed_delivery_blocks_redelivery_until_its_ttl() -> (
+    None
+):
+    # A claim in a store outside the delivery's transaction (the mock's, like Redis) survives
+    # the rollback that un-marks the message, and is owned by the dead delivery.
+    state = MockState()
+    ctx = context_from_modules(MockDepsModule(state=state))
+    deliveries: list[int] = []
+
+    async def handler(_msg: _Msg) -> None:
+        deliveries.append(len(deliveries) + 1)
+        await ctx.idempotency(_IDEMPOTENCY).begin("charge", "k-1", "h-1")
+
+        if len(deliveries) == 1:
+            raise RuntimeError("the worker died mid-delivery")
+
+    async def deliver() -> bool:
+        return await process_with_inbox(
+            ctx, _Msg(id="evt-r"), inbox_spec=_SPEC, handler=handler, tx_route="mock"
+        )
+
+    with pytest.raises(RuntimeError):
+        await deliver()
+
+    with pytest.raises(CoreException) as caught:
+        await deliver()
+
+    assert caught.value.kind is ExceptionKind.CONFLICT
+
+    for key, (status, payload_hash, entry) in list(state.idempotency.items()):
+        expired = attrs.evolve(entry, expires_at=utcnow() - timedelta(seconds=1))
+        state.idempotency[key] = (status, payload_hash, expired)
+
+    assert await deliver() is True
+    assert deliveries == [1, 2, 3]
 
 
 async def test_surface_headers_are_never_read() -> None:
