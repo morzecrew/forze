@@ -552,8 +552,9 @@ class _StubCursor:
         self.rowcount = 3
         self.description = None
 
-    async def execute(self, query, params=None) -> None:
+    async def execute(self, query, params=None, *, prepare=None) -> None:
         self.executed.append((query, params))
+        self.prepare = prepare
 
     async def executemany(self, query, params) -> None:
         self.executed.append((query, tuple(params)))
@@ -702,6 +703,16 @@ class TestStatementAutocommitPath:
 
         assert conn.autocommit_calls == [True, False, True, False]
         assert conn.commit_calls == 0
+
+    @pytest.mark.asyncio
+    async def test_fetch_all_hands_prepare_to_psycopg(self) -> None:
+        client, conn, _ = _client_with_stub_pool()
+
+        await client.fetch_all("SELECT 1")
+        assert conn.cursor_obj.prepare is None
+
+        await client.fetch_all("SELECT 1", prepare=False)
+        assert conn.cursor_obj.prepare is False
 
     @pytest.mark.asyncio
     async def test_execute_many_uses_autocommit_without_commit(self) -> None:

@@ -1037,3 +1037,71 @@ async def test_a_wide_chunk_spelled_as_values_is_split_to_fit_the_parameter_limi
     rows = await pg_client.fetch_all(f"SELECT c00, c01, rev FROM {t}", [])
     assert len(rows) == len(ids)
     assert {(row["c00"], row["c01"], row["rev"]) for row in rows} == {("b", "a", 2)}
+
+async def _session(postgres_container: Any) -> PostgresClient:
+    """A client of its own over one connection: one session, apart from ``pg_client``."""
+
+    client = PostgresClient()
+    await client.initialize(
+        dsn=postgres_container.get_connection_url().replace(
+            "postgresql+psycopg://", "postgresql://"
+        ),
+        config=PostgresConfig(min_size=1, max_size=1),
+    )
+
+    return client
+
+
+def _chunked_command(client: PostgresClient, table: str, chunk: int) -> Any:
+    doc = ConfigurablePostgresDocument(
+        config=PostgresDocumentConfig(
+            read=("public", table),
+            write=("public", table),
+            bookkeeping_strategy="application",
+            set_based_batch_size=chunk,
+        )
+    )
+    deps = {
+        PostgresClientDepKey: client,
+        PostgresIntrospectorDepKey: PostgresIntrospector(client=client),
+        DocumentQueryDepKey: doc,
+        DocumentCommandDepKey: doc,
+    }
+
+    return context_from_deps(Deps.plain(deps)).document.command(_SPEC)
+
+
+async def test_a_look_up_is_never_held_to_a_plan_made_for_an_empty_table(
+    postgres_container: Any,
+) -> None:
+    """psycopg prepares a statement run five times on a connection, and Postgres then plans it
+    once for any ids. Replanned while the table is known empty, that plan scans the table and
+    compares every row with every id, and it is kept as a load grows the table, so each chunk
+    costs more than the last. The look-up is planned with its ids instead, every time."""
+
+    client = await _session(postgres_container)
+
+    try:
+        t = await _table(client)
+        cmd = _chunked_command(client, t, chunk=10)
+        # Twenty chunks: the look-up is prepared, then planned for any ids.
+        await cmd.upsert_many(
+            [_item(uuid4(), f"w{i}", i) for i in range(200)], return_new=False, set_based=True
+        )
+        # Emptied and vacuumed: the next plan is made for a table known to be empty.
+        await client.execute(f"TRUNCATE {t}")
+        await client.execute(f"VACUUM ANALYZE {t}")
+        await cmd.upsert_many(
+            [_item(uuid4(), f"n{i}", i) for i in range(2_000)], return_new=False, set_based=True
+        )
+
+        held = await client.fetch_all(
+            "SELECT statement, generic_plans FROM pg_prepared_statements "
+            "WHERE statement LIKE %s AND generic_plans > 0",
+            [f'SELECT "id" FROM "public"."{t}"%'],
+        )
+
+    finally:
+        await client.close()
+
+    assert held == []

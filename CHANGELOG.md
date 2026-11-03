@@ -61,6 +61,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **`OidcTokenVerifier` refuses a malformed signed token as an authentication failure** (`invalid_oidc_token`). An out-of-range `exp` or `iat` (such as `1e20`), an empty `sub`, or a missing claim a custom `OidcClaimMapper` requires raised a raw `ValueError` instead; a boolean `iat` is refused too.
 
+- **A set-based `upsert_many` on Postgres no longer slows with every chunk when it loads a table vacuumed while empty.** Its id look-up is planned with its ids each time. `PostgresClientPort.fetch_all` takes `prepare` (**Breaking**: a client implemented outside forze must accept it).
+
 ### Security
 
 - **A tenant-scoped Postgres read searches its schema and `public` before temporary tables.** A temporary table left on a pooled connection could otherwise stand in for the tenant's table.

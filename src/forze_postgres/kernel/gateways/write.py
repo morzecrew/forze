@@ -1483,7 +1483,11 @@ class PostgresWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
     # ....................... #
 
     async def __visible_ids(self, pks: Sequence[UUID], *, lock: bool) -> set[UUID]:
-        """The ids among *pks* stored for this tenant; locked in id order when *lock*."""
+        """The ids among *pks* stored for this tenant; locked in id order when *lock*.
+
+        Never prepared: a plan made once for any ids, while the table was known to be empty,
+        scans it and compares each row with every id, and would be kept as a load grows it.
+        """
 
         where, params = self._add_tenant_where(
             sql.SQL("{pk} = ANY({arr})").format(pk=self.ident_pk(), arr=sql.Placeholder()),
@@ -1496,7 +1500,9 @@ class PostgresWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
         if lock:
             stmt += sql.SQL(" ORDER BY {pk} FOR NO KEY UPDATE").format(pk=self.ident_pk())
 
-        rows = await self.client.fetch_all(stmt, params, row_factory="tuple", commit=False)
+        rows = await self.client.fetch_all(
+            stmt, params, row_factory="tuple", commit=False, prepare=False
+        )
 
         return {_as_uuid(pk) for (pk,) in rows}
 
