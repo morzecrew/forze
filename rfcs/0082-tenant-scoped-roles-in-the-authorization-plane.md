@@ -284,6 +284,14 @@ stored on a tenant-aware route, which the per-tenant configuration requires.
 The canonical Postgres DDL gains:
 
 ```sql
+-- refuse to migrate over duplicates: today's assign checks then inserts without a lock, so two
+-- concurrent assigns can leave two rows for one principal and role; dedupe these first
+DO $$ BEGIN
+  IF EXISTS (SELECT 1 FROM authz_principal_role_bindings
+             GROUP BY principal_id, role_id HAVING count(*) > 1) THEN
+    RAISE EXCEPTION 'duplicate principal-role bindings: keep one row per pair before migrating';
+  END IF;
+END $$;
 ALTER TABLE authz_principal_role_bindings ADD COLUMN scope_tenant_id uuid;
 -- one row per principal, role and tenant; NULL (every tenant) counts as one value
 CREATE UNIQUE INDEX authz_principal_role_bindings_uq
@@ -459,7 +467,8 @@ Membership stays the tenancy plane's. The two compose in both directions that ma
 - **Leaving T drops the roles held in T, by default.** `detach_principal(principal, T)` first calls
   `RoleAssignmentPort.revoke_tenant_roles(principal, tenant_id=T)`, then kills the membership row,
   in the caller's transaction. Global bindings and other tenants' bindings stay. A principal who
-  is attached again starts with no roles in T.
+  is attached again starts with no tenant-held roles in T; its global roles, which detach never
+  touches, still hold there.
   - The order is deliberate. A failure between the two steps leaves a member with no roles in T,
     never a former member who still holds them.
   - The `tenancy_admin` kit's `RemoveMember` and every app that calls `detach_principal` directly
