@@ -96,7 +96,7 @@ class TestInstrumentOperations:
         tenant_id, principal_id = uuid4(), uuid4()
         with ctx.inv_ctx.bind(
             metadata=InvocationMetadata(
-                execution_id=uuid4(), correlation_id=uuid4()
+                execution_id=uuid4(), correlation_id=uuid4(), surface="mcp"
             ),
             authn=AuthnIdentity(principal_id=principal_id),
             tenant=TenantIdentity(tenant_id=tenant_id),
@@ -109,12 +109,15 @@ class TestInstrumentOperations:
         assert span.attributes["forze.operation"] == "do"
         assert span.attributes["forze.operation.kind"] == "command"
         assert span.attributes["forze.execution_id"]  # metadata flows through
+        assert span.attributes["forze.invocation_surface"] == "mcp"
         assert span.attributes["forze.tenant_id"] == str(tenant_id)
         assert span.attributes["forze.principal_id"] == str(principal_id)
         assert span.status.status_code is not StatusCode.ERROR
 
         ((labels, point),) = _points(reader, OPERATIONS_COUNTER)
         assert labels["forze.outcome"] == "success"
+        # A log field and a span attribute only: a metric label would change shipped series.
+        assert "forze.invocation_surface" not in labels
         assert point.value == 1
         ((_, hist),) = _points(reader, DURATION_HISTOGRAM)
         assert hist.count == 1
@@ -174,6 +177,8 @@ class TestInstrumentOperations:
 
         (span,) = exporter.get_finished_spans()
         assert span.attributes["forze.operation.kind"] == "query"
+        # No boundary bound metadata, and the span still says so.
+        assert span.attributes["forze.invocation_surface"] == "unknown"
 
     async def test_instruments_every_operation(self) -> None:
         tracer, meter, exporter, _ = _otel()

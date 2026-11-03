@@ -6,6 +6,7 @@ from .assemble import build_runtime
 from .context import (
     ExecutionContext,
     InvocationMetadata,
+    InvocationSurface,
     bind_deadline,
     current_deadline,
     is_draining_refusal,
@@ -111,6 +112,7 @@ from .tracing import (
 __all__ = [
     "build_runtime",
     "InvocationMetadata",
+    "InvocationSurface",
     "bind_deadline",
     "is_draining_refusal",
     "current_deadline",

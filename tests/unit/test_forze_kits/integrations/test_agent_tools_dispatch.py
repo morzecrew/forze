@@ -813,3 +813,53 @@ class TestEveryPathThroughTheAcceptedSet:
 
         assert result.is_error is False
         assert result.content == {}
+
+
+# ....................... #
+
+
+class TestNesting:
+    """RFC 0079 decision 7: a tool call keeps the surface of the invocation around it."""
+
+    async def test_a_tool_call_inside_an_http_request_records_http(self) -> None:
+        pytest.importorskip("fastapi")
+
+        from httpx import ASGITransport, AsyncClient
+
+        from forze_fastapi.middlewares import InvocationMetadataMiddleware
+
+        ctx = _ctx()
+        seen: list[InvocationMetadata | None] = []
+
+        @attrs.define(slots=True)
+        class _Seen(Handler[_In, _Out]):
+            async def __call__(self, args: _In) -> _Out:
+                seen.append(ctx.inv_ctx.get_metadata())
+                return _Out(doubled=args.n)
+
+        registry = (
+            OperationRegistry(handlers={"calc.seen": lambda _ctx: _Seen()})
+            .set_descriptor("calc.seen", OperationDescriptor(input_type=_In, output_type=_Out))
+            .bind("calc.seen")
+            .as_query()
+            .finish()
+            .freeze()
+        )
+        tools = operation_tools(registry, include=["calc.seen"])
+        request: list[InvocationMetadata | None] = []
+
+        async def agent_loop(scope: Any, receive: Any, send: Any) -> None:
+            request.append(ctx.inv_ctx.get_metadata())
+            await dispatch_tool_use(_use("calc.seen", n=1), ctx=ctx, tools=tools)
+            await send({"type": "http.response.start", "status": 200, "headers": []})
+            await send({"type": "http.response.body", "body": b"ok"})
+
+        app = InvocationMetadataMiddleware(agent_loop, ctx_dep=lambda: ctx)
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as client:
+            assert (await client.get("/")).status_code == 200
+
+        (outer,) = request
+        (inner,) = seen
+        assert outer is not None and inner is outer
+        assert inner.surface == "http"

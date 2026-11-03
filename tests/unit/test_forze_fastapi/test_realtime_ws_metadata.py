@@ -50,6 +50,7 @@ def _seen(ctx: ExecutionContext) -> Any:
         return {
             "execution_id": str(metadata.execution_id) if metadata is not None else None,
             "correlation_id": str(metadata.correlation_id) if metadata is not None else None,
+            "surface": metadata.surface if metadata is not None else None,
             "principal_id": str(authn.principal_id) if authn is not None else None,
             "tenant_id": str(tenant.tenant_id) if tenant is not None else None,
             "idempotency_key": ctx.inv_ctx.get_idempotency_key(),
@@ -111,3 +112,23 @@ def test_each_command_runs_with_fresh_invocation_metadata() -> None:
     assert second["idempotency_key"] == "k-1"
     assert first["has_deadline"] is False
     assert second["has_deadline"] is True
+
+
+def test_each_command_records_websocket_whatever_the_frame_says() -> None:
+    with _client().websocket_connect("/realtime/ws") as ws:
+        plain = _command(ws, "c1")
+        ws.send_json(
+            {
+                "type": "cmd",
+                "event": "seen",
+                "cid": "c2",
+                "payload": {"surface": "cli"},
+                "surface": "cli",
+            }
+        )
+        forged = ws.receive_json()
+
+    assert plain["surface"] == "websocket"
+    # Neither a frame key nor a payload key names the surface.
+    assert forged["cid"] == "c2", forged
+    assert forged["data"]["surface"] == "websocket"

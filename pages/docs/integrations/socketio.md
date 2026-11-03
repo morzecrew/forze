@@ -53,7 +53,10 @@ adapter.include_router(chat)
 ```
 
 On each event the adapter builds the context, validates the payload, runs the
-operation, and returns the (validated) result as the Socket.IO ack.
+operation, and returns the (validated) result as the Socket.IO ack. Each event is an
+invocation of its own, with fresh metadata whose
+[invocation surface](../running-in-prod/observability.md#see-which-boundary-an-invocation-came-through)
+is `socketio`; no payload key sets it.
 
 ## Errors and identity
 

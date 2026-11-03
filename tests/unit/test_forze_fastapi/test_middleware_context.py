@@ -212,6 +212,32 @@ class TestInvocationMetadataMiddleware:
         assert "x-correlation-id" in response.headers
         assert captured["metadata"] is not None
 
+    def test_records_http_and_reads_no_header_for_it(self) -> None:
+        ctx = _execution_ctx()
+        captured: dict[str, InvocationMetadata | None] = {}
+
+        async def _capture_app(scope, receive, send):  # type: ignore[no-untyped-def]
+            captured["metadata"] = ctx.inv_ctx.get_metadata()
+            await send({"type": "http.response.start", "status": 200, "headers": []})
+            await send({"type": "http.response.body", "body": b"ok"})
+
+        mw = InvocationMetadataMiddleware(_capture_app, ctx_dep=lambda: ctx)
+        response = TestClient(mw).get(
+            "/",
+            headers={
+                "X-Forze-Surface": "cli",
+                "Forze-Surface": "cli",
+                "X-Invocation-Surface": "cli",
+            },
+            params={"surface": "cli"},
+        )
+
+        assert response.status_code == 200
+        metadata = captured["metadata"]
+        assert metadata is not None and metadata.surface == "http"
+        # Attribution for logs and spans, never echoed to the client.
+        assert not [name for name in response.headers if "surface" in name.lower()]
+
     def test_garbage_correlation_header_falls_back_to_generated_id(self) -> None:
         # The headers are advisory: malformed values must not fail the request.
         ctx = _execution_ctx()

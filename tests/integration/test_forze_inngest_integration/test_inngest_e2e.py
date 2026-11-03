@@ -48,6 +48,7 @@ class _CorrelationOut(BaseModel):
     correlation_id: str
     execution_id: str = ""
     causation_id: str | None = None
+    surface: str = ""
 
 
 # ....................... #
@@ -187,6 +188,7 @@ async def test_execution_context_envelope_restored_in_function(
                 correlation_id=str(meta.correlation_id),
                 execution_id=str(meta.execution_id),
                 causation_id=str(meta.causation_id) if meta.causation_id else None,
+                surface=meta.surface,
             )
         )
         return outcomes[-1]
@@ -214,6 +216,7 @@ async def test_execution_context_envelope_restored_in_function(
         metadata = InvocationMetadata(
             execution_id=producer,
             correlation_id=correlation,
+            surface="http",
         )
 
         with ctx.inv_ctx.bind_metadata(metadata=metadata):
@@ -234,6 +237,8 @@ async def test_execution_context_envelope_restored_in_function(
     # The worker mints its own execution id; the producer's becomes the causation.
     assert out.execution_id != str(producer)
     assert out.causation_id == str(producer)
+    # The worker names its own hop; the producer's surface is not carried.
+    assert out.surface == "inngest"
 
 
 @pytest.mark.integration

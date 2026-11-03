@@ -4648,3 +4648,301 @@ Review of the unit's first commit, before it was published.
 | R-13 | Bug | A spec with `query_params` failed at its first read | Fixed (D-184): refused at construction (`child_spec_parametrized`) |
 | R-14 | Bug | An update command requiring a field outside the patch raised a raw validation error at the write | Fixed (D-184): refused at construction (`child_update_requires_fields`) |
 | R-15 | Bug | `removed` could list a child another writer soft-deleted after the read | Holds by R-9 (D-185): the strict write is refused (`revision_mismatch`); tested on the mock, with and without history |
+
+---
+
+# Unit 18 · RFC 0079 P1 — invocation surface on metadata, logs and spans
+
+Branch `feat/invocation-surface`. RFC 0079 P1 per §12: §5.1–§5.5, tests 1–8 of §6, and the §7
+observability and integration docs. No P2 work: `AuditEntry` and the audit collection are
+untouched, and §10 Q1–Q3 stay open. §10 Q4 was open and is decided here at the RFC's own lean
+(D-200). This unit is measured against the decision table and the code as it stood at
+`21146218b`. Decisions 1–9 hold as written; D-205 records the measurement decision 10 asks for.
+
+**Drift count: 0.** Ten entries, D-200 to D-209: four `discovery`, six `spec-gap`. D-204
+settles a case §5.3 never considered, metadata already bound around the inbox call, on the
+fail-closed reading of Q4's "one owner per delivery".
+
+**Where each item lives.** The field, `InvocationSurface`, the token check and the
+`invocation_surface` log key (`SURFACE_KEY`) are in
+[`context/invocation.py`](../src/forze/application/execution/context/invocation.py);
+`mint_invocation_metadata(surface=)` in
+[`ingress/invoke.py`](../src/forze/application/execution/ingress/invoke.py); the `unknown` log
+binding at a top-level operation's entry in
+[`operations/run/invoke.py`](../src/forze/application/execution/operations/run/invoke.py); the
+span attribute in [`observability.py`](../src/forze/application/execution/observability.py).
+Each boundary passes its own literal:
+
+| Boundary | Site | Value |
+|---|---|---|
+| HTTP middleware | `forze_fastapi/middlewares/invocation.py`, `_decode_metadata` | `http` |
+| WS command frame | `forze_fastapi/realtime/ws.py`, the frame's `invoke_at_ingress` | `websocket` |
+| Socket.IO event | `forze_socketio/routing.py`, `_dispatch_event` | `socketio` |
+| MCP tool call | `forze_mcp/dispatch.py`, `invoke_operation` | `mcp` |
+| `forze ops call` | `forze_cli/ops/call.py`, the single call and each `--batch` line | `cli` |
+| inbox | `forze_kits/integrations/inbox/consumer.py`, `process_with_inbox`, which now always binds | `inbox` |
+| Temporal | `forze_temporal/interceptors/codecs.py`, `TemporalContextBinder.bind` | `temporal` |
+| Inngest | `forze_inngest/execution/registration.py`, `_bind_invocation` | `inngest` |
+| self-hosted durable | `forze_kits/integrations/durable/runner.py`, `_execute`, which now binds | `durable` |
+
+Tests:
+
+- `tests/unit/test_invocation_surface_guard.py`: the decision 5 sweep.
+- `test_invocation_context.py`, `test_invocation_surface_logs.py` and
+  `test_operation_telemetry.py` under `tests/unit/test_forze/application/execution/`: the
+  vocabulary, logs and spans.
+- `tests/unit/test_forze_kits/test_durable_invocation.py`: the durable binding and Q4's two
+  tests.
+- One surface test and its forgeries per boundary, in the existing suites:
+  `test_middleware_context.py`, `test_realtime_ws_metadata.py`, `test_routing_metadata.py`,
+  `test_mcp_server.py`, `test_ops_call.py`, `test_ops_batch.py`,
+  `test_inbox_consumer_headers.py`, `test_interceptors_context.py` and
+  `test_ig_identity_trust.py`.
+- The nesting test in `test_agent_tools_dispatch.py`.
+- The hop assertions in the RabbitMQ, SQS, Temporal and Inngest integration suites.
+
+Docs: `running-in-prod/observability.md` holds the vocabulary and the token rule.
+`integrations/fastapi.md`, `socketio.md`, `temporal.md`, `inngest.md`,
+`data-events/events-sagas.md` (the inbox) and `data-events/durable-execution.md` name their
+value. The `logging-metrics` and `inngest` references in `skills/forze-skills/` follow.
+
+## D-200 — §10 Q4: a fresh execution id per durable attempt, the run id as correlation id
+
+- **Touches:** §10 Q4, decision 9, §5.3's durable row.
+- **RFC said:** Q4 is open. *Lean:* "a fresh execution id per attempt and the run id as the
+  correlation id. The docs say a claim must begin and end within one attempt", matching #683's
+  choice for Inngest. P1 adds two tests.
+- **Found:** each claim of a run reaches `DurableFunctionRunner._execute` once, whether through
+  `run_now` or `recover`, so minting there is minting per attempt. The runner spawns the body
+  as a task, which copies the context, so a binding made in `_execute` reaches the body and
+  the step journal. The mock store fences commit and release on the owner as the shipped
+  stores do, and each of those has its own owner-fence conformance battery.
+- **Because:** the lean is the Inngest precedent, and the execution id is what owns a claim. If
+  an attempt shared an id with its predecessor, a superseded attempt could complete its
+  successor's claim.
+- **Class:** `spec-gap`: an open question, decided at its lean.
+- **Consequence:** `_execute` binds `mint_invocation_metadata(surface=DURABLE,
+  correlation_id=<run id>, causation_id=…)` next to the tenant, in one `bind`. Both Q4 tests
+  pass, and both fail without the binding:
+  1. A body begins a claim in a journaled step, its worker dies, and recovery replays the step.
+     The new attempt's commit is refused with `conflict` ("claim reclaimed" on the mock).
+  2. The first attempt overruns its lease and its claim's window. Its late commit is refused
+     with `conflict`, the successor's commit lands, and a replay returns the successor's
+     record.
+
+  `durable-execution.md` says to begin and commit a claim inside one step.
+- **Proposed row (RFC 0079):** `ASSUMED`: every self-hosted durable attempt binds a fresh
+  execution id and the run id as its correlation id. A claim must begin and end within one
+  attempt: one begun before a recovery and committed after it is refused with `conflict`.
+
+## D-201 — A run id that is not a UUID becomes a derived correlation id
+
+- **Touches:** §10 Q4 ("or the run id (a uuid7)").
+- **RFC said:** the run id is a uuid7.
+- **Found:** every shipped run store (Postgres, MongoDB, the mock) mints `str(uuid7())`, but
+  `DurableRunRecord.run_id` is typed `str`. A custom store may use any string, and
+  `InvocationMetadata.correlation_id` is a `UUID`.
+- **Because:** a run id that does not parse cannot be used as the correlation id.
+- **Class:** `discovery`.
+- **Consequence:** `_run_correlation_id` returns `UUID(run_id)` when it parses, so on every
+  shipped store a log line's `correlation_id` equals the run's id. Otherwise it returns
+  `uuid5(<a fixed namespace>, run_id)`, as Inngest derives one from its run id, and every
+  attempt of the run still shares it.
+- **Proposed row (RFC 0079):** `ASSUMED`: the correlation id is the run id when it is a UUID,
+  otherwise a UUIDv5 derived from it under a fixed namespace.
+
+## D-202 — A durable attempt's causation is the in-process caller's execution id
+
+- **Touches:** §10 Q4 and §5.4's durable row. The RFC is silent on the causation id.
+- **Found:** `run_now` runs an attempt inside its caller, often an HTTP request with metadata
+  bound, so the caller's execution id is in hand without any persistence. `recover` normally
+  runs with no metadata bound. When it does run under an invocation, that invocation caused
+  the attempt.
+- **Because:** Inngest records the producer's execution id as the causation (#683), and this is
+  the same link without the envelope. Carrying the *correlation* id across the hop stays out of
+  scope (§8), because it needs a `DurableRunRecord` column.
+- **Class:** `spec-gap`.
+- **Consequence:** the causation is the execution id of the metadata already bound when
+  `_execute` starts, read before the attempt binds its own, or
+  `None` when nothing is bound. The run's logs lead back to the request that called `run_now`
+  through the causation id.
+- **Proposed row (RFC 0079):** `ASSUMED`: a durable attempt records the execution id of the
+  invocation it runs inside, if any, as its causation. Nothing is persisted for it, so a
+  recovered attempt has none.
+
+## D-203 — `run_now` inside an invocation no longer inherits the caller's metadata
+
+- **Touches:** §3 ("self-hosted durable runner | none"), §9 (the new bindings' effects).
+- **RFC said:** the runner binds no metadata, and binding it "has effects beyond the surface":
+  ids in logs and events, and claims that gain an owner.
+- **Found:** "none" holds for recovery. Under `run_now` in a request, the body inherited the
+  request's whole metadata: its execution id, correlation id and causation. A claim the body
+  took was owned by the request.
+- **Because:** the RFC read the runner's own code, which binds nothing, and not what a body
+  inherits from its caller.
+- **Class:** `spec-gap`: knowable from `run_now`'s callers before any code.
+- **Consequence:** a body run by `run_now` now logs its own execution id and the run id as its
+  correlation id, not the request's. A claim it takes belongs to the attempt. The causation
+  links back to the request (D-202). The changelog gives this case a behaviour-change entry of
+  its own.
+- **Proposed row (RFC 0079):** `ASSUMED`: the durable runner rebinds metadata for every
+  attempt, including a `run_now` inside another invocation. The caller is linked through the
+  causation id only.
+
+## D-204 — Every inbox delivery mints its own execution id, whatever is bound around it
+
+- **Touches:** §5.3's inbox row ("the correlation id from the header or a fresh one, the event
+  id as causation") and §10 Q4 ("The inbox is the same with one owner per delivery").
+- **Found:** `process_with_inbox` used to keep the execution id of metadata bound around it,
+  and `test_existing_consumer_execution_id_is_kept` pinned that. The framework's consumer
+  runners bind none, so there each delivery already got a fresh execution id. An app's own
+  consumer loop can bind one metadata around many deliveries, and §5.3 does not say what
+  happens then.
+- **Because:** an execution id owns idempotency claims. If deliveries shared the consumer's
+  id, one delivery's late commit could land on another delivery's claim, the failure the
+  durable fence (D-200) exists to prevent. Q4's "one owner per delivery" is read the
+  fail-closed way: unconditionally. The bound metadata is still the context the delivery runs
+  in, so its correlation id and execution id remain useful for tracing.
+- **Class:** `spec-gap`.
+- **Consequence:**
+  - The execution id is always fresh. The earlier test is replaced by one asserting the
+    opposite.
+  - The correlation id comes from the `forze_correlation_id` header, else from the bound
+    metadata, else it is fresh.
+  - The causation id comes from the event-id header, else from the bound metadata's execution
+    id, else it is `None`.
+  - The surface is always `inbox`.
+
+  Tests pin that two deliveries under one bound metadata get distinct execution ids and share
+  its correlation id, and that a claim begun in delivery A is refused with `conflict` when
+  delivery B commits it. All three fail on the previous code. The changelog's inbox entry
+  marks the change to the bound case as a behaviour change.
+- **Proposed row (RFC 0079):** `ASSUMED`: every inbox delivery binds a fresh execution id,
+  even under metadata bound around the call, so it owns its own claims. The correlation id
+  comes from the header, else the bound metadata, else it is fresh. The causation id comes
+  from the event-id header, else the bound execution id.
+
+## D-205 — Decision 10 measured: validation stays at construction
+
+- **Touches:** decision 10, §5.5 ("The cost on the common path is one context-variable read").
+- **Found:** measured on one host, pinned to one core, base `21146218b` against this branch:
+  - **Construction.** `InvocationMetadata(...)` with the default surface costs about 450 ns,
+    against about 340 ns before (the median of three runs of 200,000 constructions). That is
+    about 110 ns of attrs validator overhead per invocation.
+  - **Common path.** An empty-plan dispatch under bound metadata is unchanged at 2.5–2.7 µs.
+  - **Unbound path.** An empty-plan dispatch with no metadata goes from about 2.5 µs before
+    to 3.3–3.6 µs after: roughly +1 µs, or +30–45%, on every top-level dispatch with no
+    metadata bound. The difference is the structlog bind and reset of
+    `invocation_surface="unknown"`. Measured alone, `bind_contextvars` plus
+    `reset_contextvars` for one key costs about 740 ns, against about 130 ns for a raw
+    `ContextVar` set and reset (structlog 26.1.0).
+  - **The gate.** The CONTRIBUTING gate comparator passes over the full `perf_gate` subset.
+    Two rows exceed 15%: `test_dispatch_hookless_benchmark` (+16.8%) and
+    `test_invoke_hookless_benchmark` (+17.0%). Both run unbound and sit below the 1 ms floor,
+    so the gate reports them for trend only. `test_invoke_direct_baseline_benchmark` runs no
+    code this change touches and moved +5.8%, so the noise is about 6%.
+- **Because:** decision 10 moves validation only if it regresses the gate, and it does not.
+  The unbound binding cannot simply be dropped: §5.5 ("Emitted even when no metadata is
+  bound") and decision 8 require the field on every operation, so its absence cannot stand
+  for `unknown`. No cheaper public path exists. `merge_contextvars` finds a field by its
+  `ContextVar`'s name, and a variable of the framework's own under that name would race
+  structlog's private registry for the same key.
+- **Class:** `discovery`.
+- **Consequence:** validation stays in `InvocationMetadata`'s validator: a set lookup first,
+  then the pattern. The unbound binding stays at a top-level operation's entry, and its cost
+  is accepted. It falls only on operations run outside any boundary: harnesses, DST, and an
+  app's own direct `run_operation` calls. Every framework boundary binds metadata, and that
+  path is unchanged. Two new gated benchmarks guard both costs:
+  `test_dispatch_hookless_bound_metadata_benchmark` and `test_mint_invocation_metadata_benchmark`.
+- **Proposed row (RFC 0079):** `ASSUMED`: the `unknown` surface is bound per top-level
+  operation with no metadata, through structlog's public API, at about 1 µs a dispatch.
+  Validation stays at construction (decision 10 held). A cheaper alternative would be a
+  processor in `configure_logging` that fills `invocation_surface="unknown"` on lines logged
+  inside an operation with no metadata. It costs nothing at dispatch, but it reaches only apps
+  that use `configure_logging`. It is left for the author, since it changes the logging
+  configuration.
+
+## D-206 — What the token check refuses, and what its error says
+
+- **Touches:** §5.1 ("Anything else raises `configuration` with code
+  `invocation_surface_invalid`"). The RFC is silent on the message and on non-string values.
+- **Found:** `surface` is typed `str`, but nothing stops a caller passing `None` or a number.
+  A token computed from a request, which the docs forbid, could carry personal data.
+- **Class:** `spec-gap`.
+- **Consequence:** any value that is not a `str` is refused with the same code. The message
+  states the pattern and says the value must be a literal. It does not echo the value. A value
+  is stored as passed, so a framework boundary's metadata holds the `InvocationSurface`
+  member, a `str` subclass. Logs, spans and equality checks see the plain value.
+- **Proposed row (RFC 0079):** none.
+
+## D-207 — The decision 5 sweep checks each site's own member, and its own coverage
+
+- **Touches:** decision 5 and §6 test 2 (the sweep, with one exemption).
+- **RFC said:** the sweep fails when a framework call site of `mint_invocation_metadata` or
+  `InvocationMetadata(` passes no `surface`. It exempts the Inngest envelope decode.
+- **Found:** "passes a `surface`" would accept a boundary that passes another boundary's value
+  or one computed at run time. The body of `mint_invocation_metadata` itself constructs
+  `InvocationMetadata` and forwards its parameter. And a sweep over a set of sites passes
+  vacuously when a boundary stops minting.
+- **Class:** `spec-gap`.
+- **Consequence:** the guard maps each boundary file to its `InvocationSurface` member. Every
+  minting call in that file must pass exactly that member as a literal attribute. Two files
+  are exempt per call, not wholesale, and each names the one form its calls may take:
+  - The Inngest envelope decode (`forze_inngest/adapters/context.py`) builds metadata from
+    caller data, so its calls must pass no `surface` at all.
+  - The minting function's own body may pass only `surface=surface`.
+
+  A `**` splat in a minting call counts as passing a surface. A second test fails when a
+  mapped boundary or an exempt site no longer mints at all. Sabotage runs confirmed the guard:
+  `InvocationSurface.CLI` at the MCP site fails it, and so does `surface=raw["surface"]`
+  added to the envelope decode.
+- **Proposed row (RFC 0079):** none.
+
+## D-208 — How tests 4 and 8 reach their hops
+
+- **Touches:** §6 tests 4 (hops) and 8 (the new bindings).
+- **RFC said:** "An HTTP operation publishes an event that `process_with_inbox` consumes", and
+  "A Temporal activity started from HTTP". Durable runs and header-less inbox messages "carry
+  `execution_id` and `correlation_id` in their log lines and in the events they publish".
+- **Found:** the end-to-end hops already exist as integration tests: the RabbitMQ and SQS
+  envelope-tracing suites (outbox, relay, broker, `process_with_inbox`) and the Temporal
+  time-skipping suite. In each, the publisher binds metadata directly, not through the FastAPI
+  middleware.
+- **Class:** `discovery`.
+- **Consequence:**
+  - **Test 4.** Those suites now bind the publisher's metadata with surface `http`. They
+    assert that the consumer records `inbox` and the activity records `temporal`, each under
+    the publisher's correlation id. The Inngest end-to-end suite asserts `inngest` the same
+    way. The HTTP middleware's own value has its unit test, and test 5 (nesting) runs through
+    the real middleware.
+  - **Test 8.** Inside the handler or body, the test reads the structlog context and builds an
+    event through `InvocationOutboxEnricher`. Outbox staging calls that same object, so the
+    test needs no outbox route.
+- **Proposed row (RFC 0079):** none.
+
+## D-209 — A claim a crashed delivery left pending blocks its redelivery until the TTL
+
+- **Touches:** §10 Q4 ("The inbox is the same with one owner per delivery") and §7 (the inbox
+  page). The RFC does not say what a delivery's crash leaves behind.
+- **Found:** a crash rolls back the delivery's transaction, and with it the inbox's dedup mark,
+  so the message is redelivered. A claim the handler took in a store outside that transaction
+  survives, owned by the dead delivery, and the redelivery has an execution id of its own
+  (D-204). Every store refuses a live pending claim, and frees it only once its TTL lapses:
+  - the mock (`forze_mock/adapters/idempotency.py:152`, `:164`);
+  - Redis (`SET NX` with `ex=ttl`, `forze_redis/adapters/idempotency.py:149`, `:199`);
+  - MongoDB (`expires_at = now + ttl`, `forze_mongo/adapters/idempotency.py:140`, `:181`);
+  - Postgres (it reclaims only `WHERE expires_at <= now()`,
+    `forze_postgres/adapters/idempotency.py:381`).
+
+  On Postgres a statement joins the transaction already bound to its client
+  (`_statement_conn`, `forze_postgres/kernel/client/client.py:762`), so a claim on the
+  inbox's own client rolls back with the crash and blocks nothing.
+- **Because:** this is the same at-least-once gap `inngest.md` documents for Inngest, and the
+  inbox page did not say it.
+- **Class:** `discovery`.
+- **Consequence:** `data-events/events-sagas.md` says a claim in a store outside the
+  delivery's transaction outlives a crashed delivery. Its redelivery's claim on the same key
+  gets `conflict` until the pending claim's `IdempotencySpec.ttl` expires. A unit test pins it
+  on the mock: a failed delivery's claim makes the redelivery fail with `conflict`, and once
+  the claim expires the next delivery runs.
+- **Proposed row (RFC 0079):** none.

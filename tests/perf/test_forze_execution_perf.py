@@ -46,7 +46,9 @@ from forze.application.execution import (
     Deps,
     DepsRegistry,
     ExecutionContext,
+    InvocationSurface,
 )
+from forze.application.execution.ingress import mint_invocation_metadata
 from forze.application.execution.operations.planning import OperationPlan
 from forze.application.execution.operations.registry import OperationRegistry
 from forze.application.execution.operations.registry.registries import (
@@ -269,6 +271,32 @@ async def test_dispatch_hooked_benchmark(async_benchmark: Any) -> None:
         return await resolved("x")
 
     await async_benchmark(_run)
+
+
+@pytest.mark.perf
+async def test_dispatch_hookless_bound_metadata_benchmark(async_benchmark: Any) -> None:
+    """Empty-plan dispatch under bound metadata: the path every framework boundary takes.
+
+    Compare with :func:`test_dispatch_hookless_benchmark`, which runs with no metadata and
+    so binds the ``unknown`` invocation-surface log field per call (RFC 0079 §5.5).
+    """
+
+    reg = _hookless_registry()
+    ctx = _context(cache=True)
+    resolved = reg.resolve(_OP, ctx)
+
+    async def _run() -> str:
+        return await resolved("x")
+
+    with ctx.inv_ctx.bind_metadata(metadata=mint_invocation_metadata(surface="http")):
+        await async_benchmark(_run)
+
+
+@pytest.mark.perf
+def test_mint_invocation_metadata_benchmark(benchmark: Any) -> None:
+    """One boundary mint: two uuid7s and the surface token's validation (RFC 0079 decision 10)."""
+
+    benchmark(lambda: mint_invocation_metadata(surface=InvocationSurface.HTTP))
 
 
 # ----------------------- #

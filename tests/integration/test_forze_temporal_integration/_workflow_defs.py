@@ -12,6 +12,9 @@ from temporalio.exceptions import ApplicationError
 # Set by integration tests so activities can read :class:`~forze.application.execution.ExecutionContext`.
 CTX_BOX: dict[str, Any] = {"exec": None}
 
+# What ``it_read_correlation`` saw, for tests that check more than the correlation id.
+SEEN_METADATA: list[Any] = []
+
 
 @activity.defn(name="it_add_numbers")
 async def it_add_numbers(a: int, b: int) -> int:
@@ -43,6 +46,7 @@ async def it_read_correlation() -> str:
         return "none"
 
     meta = ctx.inv_ctx.get_metadata()
+    SEEN_METADATA.append(meta)
     return str(meta.correlation_id) if meta else "none"
 
 

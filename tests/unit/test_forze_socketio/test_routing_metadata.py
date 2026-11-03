@@ -46,6 +46,7 @@ class _Seen(Handler[_Empty, Any]):
         return {
             "execution_id": str(metadata.execution_id) if metadata is not None else None,
             "correlation_id": str(metadata.correlation_id) if metadata is not None else None,
+            "surface": metadata.surface if metadata is not None else None,
             "principal_id": str(authn.principal_id) if authn is not None else None,
         }
 
@@ -96,3 +97,13 @@ async def test_an_anonymous_event_gets_metadata_too() -> None:
 
     assert ack["execution_id"] is not None and ack["correlation_id"] is not None
     assert ack["principal_id"] is None
+
+
+@pytest.mark.asyncio
+async def test_each_event_records_socketio_whatever_the_payload_says() -> None:
+    _sio, seen = _seen_handler()
+
+    plain = await seen("sid-1", {})
+    forged = await seen("sid-1", {"surface": "cli", "invocation_surface": "cli"})
+
+    assert plain["surface"] == forged["surface"] == "socketio"

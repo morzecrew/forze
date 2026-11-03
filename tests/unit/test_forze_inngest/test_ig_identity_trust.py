@@ -196,6 +196,22 @@ async def test_the_worker_mints_its_own_execution_id() -> None:
     assert metadata.correlation_id == correlation
 
 
+@pytest.mark.parametrize("bind_identity_from_event", [False, True])
+async def test_the_envelope_never_names_the_surface(bind_identity_from_event: bool) -> None:
+    captured: dict[str, Any] = {}
+    fn = _register(captured, bind_identity_from_event=bind_identity_from_event)
+    envelope = {
+        "execution_id": str(uuid4()),
+        "invocation_surface": "cli",
+        "surface": "cli",
+        **_event_with_identity()["_forze"],
+    }
+
+    await fn._handler(_FakeContext({"_forze": envelope, "value": "ok"}))  # pyright: ignore[reportPrivateUsage]
+
+    assert captured["metadata"].surface == "inngest"
+
+
 async def test_a_run_without_an_envelope_still_gets_metadata() -> None:
     captured: dict[str, Any] = {}
     fn = _register(captured, bind_identity_from_event=False)
