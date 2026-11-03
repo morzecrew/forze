@@ -223,7 +223,7 @@ async def test_a_root_read_leaves_nothing_on_its_pooled_connection(
     page = await adapter.run("sleep", _Params())
 
     # Both settings applied to the read, the tenant schema before public...
-    assert page.hits[0].event == "pg_catalog, public / 7s"
+    assert page.hits[0].event == "pg_catalog, public, pg_temp / 7s"
     # ...and ended with its implicit transaction, on the pool's one connection.
     assert await client.fetch_value("SHOW statement_timeout", None) == "0"
     assert await client.fetch_value("SHOW search_path", None) == '"$user", public'
@@ -335,3 +335,25 @@ async def test_a_failure_leaving_the_pipeline_unclean_closes_its_connection(
         )
 
     assert await _backend_pid(client) != before
+
+
+@pytest.mark.asyncio
+async def test_a_temporary_table_left_on_the_connection_does_not_shadow_the_tenants(
+    one_connection_client: PostgresClient,
+) -> None:
+    client = one_connection_client
+    await client.execute("CREATE SCHEMA IF NOT EXISTS shadow_tenant")
+    await client.execute("CREATE TABLE IF NOT EXISTS shadow_tenant.items (v int)")
+    await client.execute("INSERT INTO shadow_tenant.items VALUES (1)")
+    # Another request's leftover on the one pooled connection.
+    await client.execute("CREATE TEMP TABLE items (v int)")
+    await client.execute("INSERT INTO pg_temp.items VALUES (2)")
+
+    try:
+        rows = await client.fetch_all_scoped("SELECT v FROM items", search_path="shadow_tenant")
+
+        assert rows == [{"v": 1}]
+
+    finally:
+        await client.execute("DROP TABLE IF EXISTS pg_temp.items")
+        await client.execute("DROP SCHEMA shadow_tenant CASCADE")

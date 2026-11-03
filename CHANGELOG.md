@@ -63,6 +63,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- **A tenant-scoped Postgres read searches its schema and `public` before temporary tables.** A temporary table left on a pooled connection could otherwise stand in for the tenant's table.
+
 - **A DuckDB dynamic read's error detail leaves out the engine's guess at a mistyped name** (**behaviour change**). The guess could name relations outside the tenant's lake.
 
 ## [0.21.0] - 2026-11-02

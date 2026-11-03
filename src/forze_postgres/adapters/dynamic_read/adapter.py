@@ -189,9 +189,10 @@ class PostgresDynamicReadAdapter(DynamicReadAdapter):
 
         if schema is not None:
             # Tenant schema first (its relations shadow ``public``), then ``public`` so shared
-            # lookups and unqualified extension objects stay reachable.
+            # lookups and unqualified extension objects stay reachable, then ``pg_temp``, which
+            # unlisted is searched first.
             await conn.execute(
-                sql.SQL("SET LOCAL search_path TO {}, {}").format(
+                sql.SQL("SET LOCAL search_path TO {}, {}, pg_temp").format(
                     sql.Identifier(schema),
                     sql.Identifier("public"),
                 ),

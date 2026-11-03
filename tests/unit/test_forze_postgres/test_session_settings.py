@@ -48,7 +48,10 @@ def test_the_timeout_only_lowers_the_bound_in_force() -> None:
 def test_the_tenant_schema_comes_before_public() -> None:
     statement = _sql(local_settings_statement(search_path="tenant_a"))
 
-    assert "set_config('search_path', quote_ident('tenant_a') || ', public', true)" in statement
+    assert (
+        "set_config('search_path', quote_ident('tenant_a') || ', public, pg_temp', true)"
+        in statement
+    )
 
 
 @pytest.mark.asyncio

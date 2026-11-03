@@ -136,11 +136,13 @@ def _setting_values(
 
     if search_path is not None:
         # The tenant schema first (its tables shadow ``public``), then ``public``, so
-        # unqualified extension objects and shared lookups stay reachable.
+        # unqualified extension objects and shared lookups stay reachable. ``pg_temp`` last:
+        # unlisted it is searched first, and a temporary table left on a pooled connection
+        # would shadow the tenant's.
         values.append(
             (
                 "search_path",
-                sql.SQL("quote_ident({}) || ', public'").format(sql.Literal(search_path)),
+                sql.SQL("quote_ident({}) || ', public, pg_temp'").format(sql.Literal(search_path)),
             )
         )
 
