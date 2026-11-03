@@ -231,11 +231,19 @@ class ChildCollectionSync[R: BaseModel, C: BaseDTO]:
                     code="child_parent_mismatch",
                 )
 
-            if wanted.setdefault(self._cmd_key(cmd), cmd) is not cmd:
+            key = self._cmd_key(cmd)
+
+            if key in wanted:
                 raise exc.validation(
                     f"Two children share the key {self.key_fields}.",
                     code="child_key_duplicate",
                 )
+
+            # Read every compare value now, so a new child's is refused before any write too.
+            for field in self.compare_fields:
+                self._incoming(cmd, field)
+
+            wanted[key] = cmd
 
         live: dict[str, Any] = {self.parent_fk: parent_id}
 

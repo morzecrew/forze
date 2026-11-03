@@ -4550,7 +4550,7 @@ and `tests/unit/test_examples/test_child_collection.py` over the recipe's exampl
 - **Consequence:** the component takes no lock and translates nothing. The recipe touches the
   parent at the client's revision first, which refuses a stale save and, on Postgres, makes a
   second save wait on the row lock. It names `hold` as the alternative, and lists the error each
-  concurrent loss raises. Every child write still carries the revision read: updates and soft
+  concurrent loss raises. Every write to an existing child still carries the revision read: updates and soft
   deletes in their `KeyedUpdate`, and a hard delete through a `touch_many(ids, revs=...)` just
   before `kill_many`, which takes no revision. A child another writer changed since the read is
   refused (`revision_mismatch`) instead of deleted; the touch is one batched statement, and on

@@ -491,6 +491,15 @@ class TestAmbiguity:
 
         assert _refusal(ei) == (ExceptionKind.VALIDATION, "child_key_duplicate")
 
+    async def test_one_command_listed_twice_is_refused(self, ctx: ExecutionContext) -> None:
+        order = uuid4()
+        line = CreateLine(order_id=order, sku="a")
+
+        with pytest.raises(CoreException) as ei:
+            await _reconcile(ctx, _sync(), order, line, line)
+
+        assert _refusal(ei) == (ExceptionKind.VALIDATION, "child_key_duplicate")
+
     async def test_a_child_of_another_parent_is_refused(self, ctx: ExecutionContext) -> None:
         with pytest.raises(CoreException) as ei:
             await _reconcile(ctx, _sync(), uuid4(), CreateLine(order_id=uuid4(), sku="a"))
@@ -663,6 +672,21 @@ class TestValuesTypedDifferently:
                 self.SYNC,
                 order,
                 CreatePriced(order_id=order, grade="z", price=1, due=self.DUE),
+            )
+
+        assert _refusal(ei) == (ExceptionKind.VALIDATION, "child_value_unreadable")
+
+    async def test_a_new_childs_compare_value_is_read_before_any_write(
+        self, ctx: ExecutionContext
+    ) -> None:
+        order = uuid4()
+
+        with pytest.raises(CoreException) as ei:
+            await _reconcile(
+                ctx,
+                self.SYNC,
+                order,
+                CreatePriced(order_id=order, grade="a", price=float("inf"), due=self.DUE),
             )
 
         assert _refusal(ei) == (ExceptionKind.VALIDATION, "child_value_unreadable")
