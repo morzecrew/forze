@@ -4352,7 +4352,7 @@ untouched, and §10 Q1–Q3 stay open. §10 Q4 was open and is decided here at t
 (D-200). This unit is measured against the decision table and the code as it stood at
 `21146218b`. Decisions 1–9 hold as written; D-205 records the measurement decision 10 asks for.
 
-**Drift count: 0.** Ten entries, D-200 to D-209: three `discovery`, seven `spec-gap`. D-204
+**Drift count: 0.** Ten entries, D-200 to D-209: four `discovery`, six `spec-gap`. D-204
 settles a case §5.3 never considered, metadata already bound around the inbox call, on the
 fail-closed reading of Q4's "one owner per delivery".
 
@@ -4455,7 +4455,8 @@ value. The `logging-metrics` and `inngest` references in `skills/forze-skills/` 
   the same link without the envelope. Carrying the *correlation* id across the hop stays out of
   scope (§8), because it needs a `DurableRunRecord` column.
 - **Class:** `spec-gap`.
-- **Consequence:** the causation is the execution id of the metadata bound at `_execute`, or
+- **Consequence:** the causation is the execution id of the metadata already bound when
+  `_execute` starts, read before the attempt binds its own, or
   `None` when nothing is bound. The run's logs lead back to the request that called `run_now`
   through the causation id.
 - **Proposed row (RFC 0079):** `ASSUMED`: a durable attempt records the execution id of the
