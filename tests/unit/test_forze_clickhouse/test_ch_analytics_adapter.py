@@ -68,6 +68,9 @@ class _MockClient:
         self.databases_seen: list[str | None] = []
         self.inserts: list[list[dict[str, Any]]] = []
 
+    def query_timeout_limit(self) -> timedelta | None:
+        return None  # not started: no limit to check against
+
     async def run_query(
         self,
         sql: str,
@@ -396,3 +399,18 @@ def test_a_query_timeout_that_is_not_whole_seconds_is_refused(bad: timedelta) ->
         ClickHouseQueryConfig(sql="SELECT 1", timeout=bad)
 
     assert caught.value.code == "analytics_timeout_invalid"
+
+
+@pytest.mark.asyncio
+async def test_a_run_refuses_a_route_longer_than_the_started_clients_timeout() -> None:
+    # Resolved before the plain client started, the port skipped the wiring check.
+    class _Started(_MockClient):
+        def query_timeout_limit(self) -> timedelta | None:
+            return timedelta(seconds=2)
+
+    with pytest.raises(CoreException) as caught:
+        await _adapter(_Started(), timeout=timedelta(seconds=6)).run_page(
+            "counts", _Params()
+        )
+
+    assert caught.value.code == "clickhouse_read_timeout_too_short"

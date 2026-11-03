@@ -123,7 +123,7 @@ def _setting_values(
     if statement_timeout is not None:
         # Tighten-only: the bound in force (the pool's, or an invocation deadline's) still wins
         # when lower; ``0`` there means no bound at all. 0 ms here would mean the same.
-        ms = max(1, int(statement_timeout.total_seconds() * 1000))
+        ms = max(1, statement_timeout // timedelta(milliseconds=1))
         values.append(
             (
                 "statement_timeout",

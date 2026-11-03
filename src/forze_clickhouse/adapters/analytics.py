@@ -180,6 +180,10 @@ class ClickHouseAnalyticsAdapter[R: BaseModel, Ing: BaseModel](
     # ....................... #
 
     def _run_timeout(self, query_key: str, options: AnalyticsRunOptions | None) -> timedelta:
+        # A port resolved before a plain client started skipped the wiring check: run it now.
+        if (limit := self.client.query_timeout_limit()) is not None:
+            self.config.validate_against_client(str(self.spec.name), limit)
+
         return route_timeout(
             options,
             self._query_config(query_key).timeout,
