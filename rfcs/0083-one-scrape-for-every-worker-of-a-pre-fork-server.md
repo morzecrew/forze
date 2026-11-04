@@ -252,8 +252,11 @@ floor.
    that fails the check raises `configuration` (`metrics_snapshot_unlabelled`). The remedy names
    `worker_metrics_reader()`. This is what refuses eis-backend's global-registry reader,
    instead of letting it serve colliding series. A render with no family yet passes. There is
-   nothing to collide.
-3. Write the first snapshot, then start `periodic_lifecycle_step` with the same tick.
+   nothing to collide, and nothing to name the snapshot's `instance` by, so no file is written.
+3. Write the first snapshot if the render named an instance, then start
+   `periodic_lifecycle_step` with the same tick. Until a tick's render carries the label, the
+   worker writes nothing and is not served: it has no series to serve. The instance a worker
+   first names is its instance for good; a later render naming another fails the label check.
 
 **Each tick** renders off the loop, checks, and writes atomically: `mkstemp` in the directory
 (mode `0600`, name `.tmp-<pid>-<rand>`), then `os.replace` onto `<pid>-<token>.prom`. The token is
@@ -420,6 +423,8 @@ Unit (`tests/unit/test_forze_fastapi/`, `tmp_path`):
 - The age gauge has one sample per fresh snapshot, close to `now - written_at`, and 0 after a
   backwards clock step.
 - No fresh snapshot answers `503`.
+- A worker whose renders hold no family yet writes no file, and writes its first on the tick
+  whose render carries the label.
 - Shutdown during a slow tick waits for its render before the final one, and skips the final
   render when the wait would pass the budget; two renders never run at once.
 - The sweep deletes old files of dead pids and keeps old files of live ones.
