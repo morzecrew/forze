@@ -10870,6 +10870,9 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <li>
 <p><strong><code>PostgresClientPort</code> requires <code>fetch_all_scoped</code>, and <code>ClickHouseClientPort</code> requires <code>query_timeout_limit</code></strong> (<strong>Breaking</strong>). A client implemented outside forze must add them.</p>
 </li>
+<li>
+<p><strong>A set-based <code>upsert_many</code> on Postgres sends one statement fewer per chunk holding stored rows, so reloads run faster</strong> (<strong>behaviour change</strong>). It locks them before inserting: a row deleted meanwhile is inserted, not <code>not_found</code>, and a rare race with two other loads can deadlock as <code>concurrency</code>.</p>
+</li>
 </ul>
 <h3 id="removed">Removed<a class="headerlink" href="#removed" title="Permanent link">&para;</a></h3>
 <ul>
@@ -10882,6 +10885,9 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 </li>
 <li>
 <p><strong><code>OidcTokenVerifier</code> refuses a malformed signed token as an authentication failure</strong> (<code>invalid_oidc_token</code>). An out-of-range <code>exp</code> or <code>iat</code> (such as <code>1e20</code>), an empty <code>sub</code>, or a missing claim a custom <code>OidcClaimMapper</code> requires raised a raw <code>ValueError</code> instead; a boolean <code>iat</code> is refused too.</p>
+</li>
+<li>
+<p><strong>A set-based <code>upsert_many</code> on Postgres no longer slows with every chunk when it loads a table vacuumed while empty.</strong> Its id look-up is planned with its ids each time. <code>PostgresClientPort.fetch_all</code> takes <code>prepare</code> (<strong>Breaking</strong>: a client implemented outside forze must accept it).</p>
 </li>
 </ul>
 <h3 id="security">Security<a class="headerlink" href="#security" title="Permanent link">&para;</a></h3>
