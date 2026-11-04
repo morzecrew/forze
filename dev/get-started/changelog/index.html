@@ -10876,6 +10876,9 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <li>
 <p><strong>A set-based <code>upsert_many</code> on Postgres inserts a row straight from its create command when the domain is proven to add nothing to it, so fresh loads run faster</strong> (<strong>behaviour change</strong>). A chunk's inserted rows share one instant for both timestamps; any other domain still builds its model first.</p>
 </li>
+<li>
+<p><strong>Postgres sends every other array of document ids in binary too</strong>: <code>get_many</code>, <code>kill_many</code>, <code>touch_many</code>, <code>update_matching</code>, a strict <code>update_many</code>'s held rows, and the outbox's mark and requeue calls. On 10k ids <code>get_many</code> runs about 14% faster and <code>kill_many</code> over a third faster.</p>
+</li>
 </ul>
 <h3 id="removed">Removed<a class="headerlink" href="#removed" title="Permanent link">&para;</a></h3>
 <ul>

@@ -7189,8 +7189,9 @@ the application writes, can call them.</p>
   <code>PGSERVICEFILE</code> and <code>~/.pgpass</code>. DuckDB 2's extension has neither function.
   Run the worker with none of those variables set and no readable <code>~/.pgpass</code>,
   and let its egress policy allow only the metadata database and the store.</li>
-<li><strong>Run the worker in a read-only working directory</strong>, so the four
-  <code>postgres:…</code> paths cannot be written.</li>
+<li><strong>Run the worker in a read-only working directory that holds no file at the
+  four <code>postgres:…</code> paths.</strong> Read-only stops a statement writing them; the
+  allowlist still lets one read a file that is already there.</li>
 <li><strong>Call <code>evict_tenant</code> after rotating the role's password or the store key,</strong>
   or set <code>fingerprint_ttl</code>, as for an Iceberg principal.</li>
 </ul>
