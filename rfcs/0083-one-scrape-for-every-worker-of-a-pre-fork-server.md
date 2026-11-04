@@ -223,17 +223,23 @@ The writer is a lifecycle step in the runtime's plan, so every worker runs its o
 from datetime import timedelta
 from pathlib import Path
 
+from forze.application.execution import ExecutionRuntime
 from forze.base.telemetry import bootstrap_telemetry
+from forze_fastapi import runtime_lifespan
 from forze_fastapi.routes import MetricsSnapshots, attach_metrics_route, worker_metrics_reader
 
 reader = worker_metrics_reader()  # row 8
-telemetry = bootstrap_telemetry(service_name="erp-api", exporter="none",
-                                extra_metric_readers=[reader])
-
 snapshots = MetricsSnapshots(directory=Path("/run/forze-metrics"))  # row 7 defaults
 
-lifecycle = lifecycle.with_steps(snapshots.writer_step(reader))  # each worker's plan
-attach_metrics_route(router, reader, snapshots=snapshots)       # row 10
+
+def build_runtime() -> ExecutionRuntime:  # runs in each worker, after any fork
+    bootstrap_telemetry(service_name="erp-api", exporter="none", extra_metric_readers=[reader])
+    lifecycle = plan.with_steps(snapshots.writer_step(reader)).freeze()
+    return ExecutionRuntime(deps=deps, lifecycle=lifecycle)
+
+
+lifespan = runtime_lifespan(build=build_runtime)
+attach_metrics_route(router, reader, snapshots=snapshots)  # row 10
 ```
 
 `worker_metrics_reader()` returns
@@ -242,14 +248,28 @@ The dedicated registry keeps the process collectors out. The filter puts the ins
 every series. On an exporter older than 0.66b0, the helper raises `configuration` and names the
 floor.
 
+`bootstrap_telemetry` runs inside the per-worker build, never at import. It mints the
+`service.instance.id` (`bootstrap.py:242`), and gunicorn `--preload` runs import-time code once
+in the arbiter, before the fork: every worker would inherit one id, and §5.3 step 3 would
+withhold them all. The reader and the `MetricsSnapshots` value carry no identity, so they can be
+built at import and handed to the route before any worker exists. The docs (§7) state this rule.
+
 **Startup** (one bounded step, then the loop):
 
-1. Prepare the directory. Create it with mode `0700` if it is missing. Otherwise require a real
-   directory, not a symlink, owned by the effective uid, and not group- or world-writable.
-   Anything else raises `configuration` (`metrics_snapshot_directory_unsafe`).
-2. Render once and check the result. The first sample line of every family must carry exactly
-   one `service_instance_id` value, and that value must be the same in every family. A render
-   that fails the check raises `configuration` (`metrics_snapshot_unlabelled`). The remedy names
+1. Prepare the directory. Create it with mode `0700` if it is missing. Then open it once with
+   `O_DIRECTORY | O_NOFOLLOW` and check the open descriptor (`fstat`), not the path: a real
+   directory, owned by the effective uid, and not group- or world-writable. Anything else
+   raises `configuration` (`metrics_snapshot_directory_unsafe`). Every later operation (each
+   tick, the sweep, the final snapshot, and the route, which reaches the descriptor through the
+   shared `MetricsSnapshots` value) goes through that descriptor (`dir_fd=`, `os.listdir(fd)`)
+   and never resolves the path again. A user who can write to a parent directory therefore
+   cannot swap the directory after the check.
+2. Render once and check the result. Every sample line must carry exactly one
+   `service_instance_id` label, with one value across the whole render. A family's first line
+   is not enough: the exporter lets a data point's own attributes override the copied resource
+   label (exporter `__init__.py:455-464`), so a later sample can name another instance. The
+   check is a regex per line, measured at about 7 ms per MB, off the loop. A render that fails
+   the check raises `configuration` (`metrics_snapshot_unlabelled`). The remedy names
    `worker_metrics_reader()`. This is what refuses eis-backend's global-registry reader,
    instead of letting it serve colliding series. A render with no family yet passes. There is
    nothing to collide, and nothing to name the snapshot's `instance` by, so no file is written.
@@ -258,8 +278,9 @@ floor.
    worker writes nothing and is not served: it has no series to serve. The instance a worker
    first names is its instance for good; a later render naming another fails the label check.
 
-**Each tick** renders off the loop, checks, and writes atomically: `mkstemp` in the directory
-(mode `0600`, name `.tmp-<pid>-<rand>`), then `os.replace` onto `<pid>-<token>.prom`. The token is
+**Each tick** renders off the loop, checks, and writes atomically: it creates `.tmp-<pid>-<rand>`
+with `O_CREAT | O_EXCL | O_NOFOLLOW` and mode `0600` relative to the directory descriptor, then
+calls `os.replace` onto `<pid>-<token>.prom` with that descriptor as both `dir_fd`s. The token is
 a random hex string minted once per writer. The file is never visible half-written. A family
 that fails the label check on a later tick is left out of that snapshot and logged once per name.
 It is not a boot failure, because new families can appear at any time. A failed render or write
@@ -284,11 +305,14 @@ raises `ProcessLookupError`). Leftover temp files are deleted by the same rule. 
 that stalled is never swept; it is only not served. All workers share one pid namespace (§3).
 
 **Shutdown** (row 6) writes one final snapshot within a bounded time and leaves it to age out.
-The writer owns one render future, shared by its ticks and the final render, as the route
-serializes its renders (§3). A tick cancelled at shutdown leaves its render thread running, so
-the final render waits on that future first. If waiting would pass the shutdown budget, the
-final render is skipped and the last tick's snapshot stands: a render never runs beside an
-unfinished one.
+The writer's ticks and its final render go through the route's render gate (§3), which moves
+from the route to the reader: one shared future per reader. The snapshot route renders nothing
+and takes no gate (row 5). An app can still attach a plain route to the same reader, and two
+collections in flight on one reader steal each other's data, so the writer and every plain
+route on that reader wait on one future. A tick cancelled at shutdown leaves its render thread
+running, so the final render waits on that future first. If waiting would pass the shutdown
+budget, the final render is skipped and the last tick's snapshot stands: a render never runs
+beside an unfinished one.
 
 ### 5.3 W2: the union route
 
@@ -296,9 +320,10 @@ unfinished one.
 `snapshots=None` the route is the current code path, unchanged (row 3). With `snapshots`, the
 handler renders nothing (row 5). It runs this off the loop:
 
-1. List the directory. Keep regular files named `<pid>-<hex>.prom`, opened with `O_NOFOLLOW`,
-   no larger than `max_snapshot_bytes` (16 MiB by default). Skip anything else, and log it with
-   a rate limit.
+1. List the directory through its descriptor (§5.2 step 1). Keep regular files named
+   `<pid>-<hex>.prom`, opened with `O_NOFOLLOW` relative to it, owned by the effective uid, and
+   no larger than `max_snapshot_bytes` (16 MiB by default), each checked with `fstat` on the
+   open file. Skip anything else, and log it with a rate limit.
 2. Parse each header. Skip a file with a malformed header or a `written_at` older than `ttl`.
 3. If two fresh files carry the same `instance`, serve **neither**, and log an error naming both
    pids. Two processes sharing one id interleave exactly as the bug this RFC fixes. The usual
@@ -350,7 +375,7 @@ workers served, which is the alert for a worker that stopped writing.
 | Scrape cost | File reads plus a 2 ms merge for four workers. No observable callback runs on a scrape. The response is N snapshots: about 4 MB at four workers, uncompressed. |
 | Writer cost | One render per `interval` per worker, measured at 24 to 36 ms of mostly-GIL time for 200 label sets. At the leaned 10 s interval, that is today's cost of one scrape every 10 s. |
 | Route security | Unchanged class of exposure: the route serves metric names and labels, and stays internal (eis-backend's gateway already answers `/metrics` with 404). It now shows every worker, not one. |
-| Store security | `0700` directory owned by the process uid, `0600` files, no symlinks followed, regular files only, a size cap. A writer to the directory can inject series, but it already runs as the app's uid. |
+| Store security | `0700` directory owned by the process uid, checked once and then held open, so its path is never resolved again. `0600` files, served only when owned by the process uid. No symlinks followed, regular files only, a size cap. A writer to the directory can inject series, but it already runs as the app's uid. |
 | Tenant and cardinality | No tenant label anywhere, by doctrine (`metrics.md:24`). Series count is N times one worker's, as under OTLP push. Every restart adds a new set until the old one leaves the TSDB head. |
 
 ### 5.6 Failure semantics
@@ -360,16 +385,17 @@ workers served, which is the alert for a worker that stopped writing.
 - A failed tick (render error, `ENOSPC`, permission lost) is logged, and the worker keeps
   serving traffic. Its snapshot ages and drops out at `ttl`. `count()` on the age gauge shows
   the gap.
-- A malformed, oversized, symlinked or misnamed file is skipped and logged with a rate limit.
-  It is never served.
+- A malformed, oversized, symlinked, foreign-owned or misnamed file is skipped and logged with
+  a rate limit. It is never served.
 - A duplicate instance id is never served.
 - No fresh snapshot answers `503`. Any other partial state answers `200` with what is fresh.
 
 ### 5.7 What stays unchanged
 
 - `attach_metrics_route(router, reader)` and `attach_metrics_route(router, reader, path=...)`:
-  same code path, same render gate, same names, same content type. The existing tests in
-  `tests/unit/test_forze_fastapi/test_probe_routes.py` pass unmodified.
+  same code path, same names, same content type, and the same render gate, now held per reader
+  rather than per route (§5.2). With one route per reader, as today, nothing changes. The
+  existing tests in `tests/unit/test_forze_fastapi/test_probe_routes.py` pass unmodified.
 - `bootstrap_telemetry`: no new parameter, no new default.
 - OTLP push: untouched, and still the documented answer across hosts.
 - Dependencies: no new runtime dependency, no new extra. The snapshot mode needs exporter
@@ -411,14 +437,18 @@ Unit (`tests/unit/test_forze_fastapi/`, `tmp_path`):
 - The writer creates the directory `0700` and refuses a world-writable one, a symlink, and a
   file in its place. It writes `0600` files through a temp name and `os.replace`, with the header
   fields set.
+- After startup, moving the directory away and putting another directory or a symlink at its
+  path changes nothing: ticks and the route keep using the directory that was checked.
 - The first render refuses a reader on the global registry (the process collectors carry no
-  instance label) and a reader without the filter. It accepts `worker_metrics_reader()`.
+  instance label) and a reader without the filter. It accepts `worker_metrics_reader()`. A
+  family whose later sample names another `service_instance_id`, through a data point
+  attribute, fails the check.
 - The union of three synthetic snapshots parses with `text_string_to_metric_families` into one
   family per name. The family's samples are the sum of the inputs, and each sample keeps its own
   `service_instance_id`.
-- A stale snapshot is left out. A file with a bad header, an oversized file, a symlink and a
-  misnamed file are skipped. A duplicate instance id serves neither file. A conflicting `TYPE`
-  drops the later family.
+- A stale snapshot is left out. A file with a bad header, an oversized file, a symlink, a file
+  owned by another uid and a misnamed file are skipped. A duplicate instance id serves neither
+  file. A conflicting `TYPE` drops the later family.
 - A label value containing `# HELP ` does not split a family.
 - The age gauge has one sample per fresh snapshot, close to `now - written_at`, and 0 after a
   backwards clock step.
@@ -427,6 +457,8 @@ Unit (`tests/unit/test_forze_fastapi/`, `tmp_path`):
   whose render carries the label.
 - Shutdown during a slow tick waits for its render before the final one, and skips the final
   render when the wait would pass the budget; two renders never run at once.
+- A plain route on the writer's reader, scraped during a slow tick, waits for that render
+  instead of starting its own.
 - The sweep deletes old files of dead pids and keeps old files of live ones.
 - `worker_metrics_reader()` raises `configuration` when the exporter lacks
   `resource_attribute_filter`.
@@ -445,7 +477,8 @@ is not built.
 ## 7. Docs
 
 - `grafana-stack.md`: "Pull metrics, and why not" becomes two cases. One process: today's
-  wiring. Several workers on one host: the §5.2 wiring and a tmpfs mount, the queries
+  wiring. Several workers on one host: the §5.2 wiring, with `bootstrap_telemetry` in the
+  per-worker build and never at import (gunicorn `--preload`), and a tmpfs mount, the queries
   (`sum without (service_instance_id) (rate(forze_operations_total[5m]))`), and the age-gauge
   alert. The page must say plainly that the union is concatenated and not aggregated, that a
   worker restart starts a new series, and that the pull path's names and labels differ from the
@@ -525,8 +558,8 @@ default.
 | 8 | `LOCKED` | Accepted by the maintainer on 2026-11-05 (§10 Q5): forze ships `worker_metrics_reader()`, which builds `PrometheusMetricReader(registry=CollectorRegistry(), resource_attribute_filter=<service.instance.id only>)`, and the writer checks every render. Snapshot mode requires `opentelemetry-exporter-prometheus` 0.66b0 or newer, checked at wiring. The check refuses the global-registry reader eis-backend uses today. Rewriting sample lines for older exporters was rejected. |
 | 9 | `LOCKED` | Accepted by the maintainer on 2026-11-05 (§10 Q6): the instance label is `service_instance_id`, the exporter's sanitized resource attribute. It needs no scrape configuration and cannot be overwritten silently. `instance` with `honor_labels: true` was rejected: the pull path already differs from Alloy's in names (§3), so it buys no dashboard compatibility by itself. |
 | 10 | `LOCKED` | Accepted by the maintainer on 2026-11-05 (§10 Q7): a `MetricsSnapshots(directory, interval, ttl, max_snapshot_bytes)` value with `writer_step(reader)`, and `attach_metrics_route(..., snapshots=...)`. One value configures both halves, so the writer and the route cannot disagree on directory or `ttl`, and the route stays one function. A separate route function and discovery from an environment variable were rejected. |
-| 11 | `ASSUMED` | A snapshot is the reader's own text rendering, with one header line. The route merges by splitting at line-start `# HELP ` and never parses samples (2.3 ms for four workers against 91 to 132 ms per snapshot, §5.3). The writer checks the label on each family's first sample line. |
-| 12 | `ASSUMED` | Directory and file protocol, per §5.2 and §5.3: the directory is created `0700`, or refused when it is a symlink, foreign-owned, or group- or world-writable. Files are `0600`, written through `mkstemp` and `os.replace`, named `<pid>-<token>.prom`, and read with `O_NOFOLLOW` under a size cap. A refusal at startup fails the boot, after the fleet step's precedent. |
+| 11 | `ASSUMED` | A snapshot is the reader's own text rendering, with one header line. The route merges by splitting at line-start `# HELP ` and never parses samples (2.3 ms for four workers against 91 to 132 ms per snapshot, §5.3). The writer checks the label on every sample line (about 7 ms per MB), because a data point's own attribute can override the resource label. |
+| 12 | `ASSUMED` | Directory and file protocol, per §5.2 and §5.3: the directory is created `0700`, or refused when it is a symlink, foreign-owned, or group- or world-writable, then held open; every later operation goes through its descriptor, never its path. Files are `0600`, written through an exclusive temp file and `os.replace`, named `<pid>-<token>.prom`, and read with `O_NOFOLLOW`, only when owned by the effective uid, under a size cap. A refusal at startup fails the boot, after the fleet step's precedent. |
 | 13 | `ASSUMED` | Two fresh snapshots claiming one instance id are both withheld, and an error names the pids. Serving either one would interleave two processes into one series. |
 | 14 | `ASSUMED` | The age is `time.time() - written_at` as the answering worker computes it, clamped at 0. That is sound only because every worker of a group shares one host clock. A cross-host store (P3) must use the store's clock. |
 | 15 | `ASSUMED` | One directory serves one worker group. No group key is in P1, and the docs require a directory per group. |
