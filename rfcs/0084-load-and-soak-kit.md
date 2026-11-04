@@ -1,8 +1,8 @@
 # RFC 0084 — Load and soak kit for apps built on forze
 
-- **Status:** 📝 Draft — row 1 (does this belong in forze at all) is `OPEN` and decides the
-  rest. Once it is answered, P1 is one PR. The soak's gauge half (P4) waits on RFC 0083 and on
-  instruments that do not exist yet (§3.6).
+- **Status:** 📝 Draft — the maintainer settled the open rows on 2026-11-05 (rows 1–4, 6, 9,
+  12, 19, 23–25, 28, 32), each as its lean. P1 is one PR. The soak's gauge half (P4) waits on
+  RFC 0083 and on instruments that do not exist yet (§3.6).
 - **Scope:** A small library, `forze_load`, under a new `load` extra, that drives a running app
   built on forze over HTTP and writes one JSON line per step or window. It covers:
   - several principals, each logged in once and refreshed in one place;
@@ -332,6 +332,7 @@ never leave, mailbox growth and RSS. Those are mostly the rows marked **no**.
 ### 5.1 Does this belong in forze?
 
 The issue asks this first, so this RFC answers it first, as row 1 (`OPEN`, for the maintainer).
+*Settled 2026-11-05: the maintainer chose B (row 1).*
 
 | Option | What ships | For | Against |
 | --- | --- | --- | --- |
@@ -757,6 +758,7 @@ under `-m perf`, which `just test` excludes.
 
 - **The third copy.** If neither consumer ports onto P1, forze keeps an API nobody uses.
   Mitigation: row 1 is `OPEN`. P1 is small, and the docs page shows erp's ramp rewritten on it.
+  *Row 1 was settled as B on 2026-11-05; the fallback to A still applies if nobody ports.*
   Whether to port is each owner's call.
 - **Numbers read as more than they are.**
   - A knee on one machine with one mix is not capacity.
@@ -781,7 +783,7 @@ under `-m perf`, which `just test` excludes.
 ## 10. Unresolved questions
 
 - **Row 1 (does it belong) is the maintainer's** and gates everything else. Rows 2–3 follow
-  from it.
+  from it. *Settled 2026-11-05: the maintainer accepted the lean on every open row.*
 - **RFC 0083's shape** decides how the soak tells processes apart. Shared snapshots keep
   `service.instance.id` as a label per series. Fan-out may render it differently. Settle row 22's
   detection rule when 0083 is decided.
@@ -795,43 +797,44 @@ under `-m perf`, which `just test` excludes.
 
 | # | Grade | Decision |
 | --- | --- | --- |
-| 1 | `OPEN` | **Does the kit belong in forze?** Options: (A) a test-backed recipe and docs page only; (B) a thin `forze_load` library; (C) a locust plugin; (D) a k6 extension; (E) a module inside `forze_dst`. **Lean B**, with A as the fallback (§5.1). Two consumers rebuilt the same core and kept the rest app-specific; both chose Python, asyncio and httpx over existing tools. C and D fight the app's toolchain and cannot read forze's registry. E's loop refuses sockets. Flips to A if the maintainer will not keep a load API stable, or no consumer will port. The maintainer decides. |
-| 2 | `OPEN` | **Packaging.** Options: a new `forze_load` package under a `load` extra (`httpx` only); inside `forze_dst`; inside `forze_cli`. **Lean: a new package.** httpx is already an extra elsewhere, so the cost is one extra line. `forze_dst` is simulation-only and protected. `forze_cli` would pull Typer into a library import. |
-| 3 | `OPEN` | **Entry point.** Options: Python API only; a `forze load` Typer group only; both. **Lean: both.** The Python API is the contract, because plans hold callables. `forze load run module:plan` and `forze load compare` are thin wrappers using `load_object`, as `forze dst` and `forze ops` do. |
-| 4 | `OPEN` | **Load model.** Options: closed only (what erp and hh do); open only; both. **Lean: both.** Closed for the concurrency ramp the issue asks for, which finds capacity. Open for latency and for soak, where coordinated omission matters. Closed-model rows are labelled `latency: closed`. |
+| 1 | `LOCKED` | **The kit belongs in forze as a thin `forze_load` library** (option B), accepted by the maintainer on 2026-11-05 over (A) a recipe only, (C) a locust plugin, (D) a k6 extension and (E) a module inside `forze_dst` (§5.1). Two consumers rebuilt the same core and kept the rest app-specific; both chose Python, asyncio and httpx. C and D fight the app's toolchain and cannot read forze's registry; E's loop refuses sockets. A stays the fallback if no consumer ports onto P1. Every other row builds on this one. |
+| 2 | `LOCKED` | **A new `forze_load` package under a `load` extra** (`httpx` only), accepted by the maintainer on 2026-11-05 over a home inside `forze_dst` or `forze_cli`. `forze_dst` is simulation-only and protected; `forze_cli` would pull Typer into a library import. The package and extra names are public; renaming them later breaks every install line. |
+| 3 | `ASSUMED` | **Both entry points**, accepted by the maintainer on 2026-11-05. The Python API is the contract, because plans hold callables. `forze load run module:plan` and `forze load compare` are thin wrappers using `load_object`, as `forze dst` and `forze ops` do. |
+| 4 | `ASSUMED` | **Both load models**, accepted by the maintainer on 2026-11-05 over closed only or open only. Closed for the concurrency ramp the issue asks for, which finds capacity. Open for latency and for soak, where coordinated omission matters. Closed-model rows are labelled `latency: closed`. |
 | 5 | `ASSUMED` | Open-model latency runs from the intended send time. Late sends are counted as `behind_schedule`. In-flight requests are capped at rate × request timeout, and a send refused at the cap counts as `transport`. |
-| 6 | `OPEN` | **Catalog source.** Options: (a) the OpenAPI document (URL or file) plus a new `x-forze-kind` vendor key; (b) the registry and FastAPI routes in-process through `forze_cli`, which may import `forze_fastapi`; (c) both. **Lean (a).** It is what a client sees, works against any deployment, needs no app import, and the forze change is one line in `_route_openapi_extra`. (b) would tie the kit to running beside the app's code. |
+| 6 | `LOCKED` | **The catalog source is the OpenAPI document** (URL or file) **plus a new `x-forze-kind` vendor key**, accepted by the maintainer on 2026-11-05 over reading the registry in-process through `forze_cli`. It is what a client sees, works against any deployment, needs no app import, and the forze change is one line in `_route_openapi_extra`. `x-forze-kind` becomes part of every app's OpenAPI document; removing it later breaks clients that read it. |
 | 7 | `ASSUMED` | An operation reference that is missing from OpenAPI, or whose `x-forze-kind` contradicts the scenario's declared `writes`, stops the run before any load. Generated scenarios are `query` routes whose input is empty, paginated or id/rev. Other inputs are listed as skipped. There is no schema faking. |
 | 8 | `LOCKED` | **Writes are off by default and fail closed.** Generated scenarios are never `command`s. A `Scenario.call` must state `writes` (no default). A write scenario is refused at validation unless `allow_writes=True`. The kit points at shared environments. Relaxing this later cannot undo data already written, and every plan written against the relaxed default would change meaning. |
-| 9 | `OPEN` | **How a write-enabled run is guarded.** Options: the flag alone; the flag plus an exact host allowlist (loopback, `localhost`, plan `write_hosts`, `FORZE_LOAD_WRITE_HOSTS`); the flag plus a target-side opt-in (the app declares itself a load target). **Lean: flag plus allowlist**, compared exactly after `urlsplit`. The target opt-in is stronger but needs a server-side surface. It is demand-gated. |
+| 9 | `LOCKED` | **A write-enabled run needs the flag and an exact host allowlist**: loopback, `localhost`, the plan's `write_hosts`, or `FORZE_LOAD_WRITE_HOSTS`, compared exactly after `urlsplit`. Accepted by the maintainer on 2026-11-05 over the flag alone. A target-side opt-in stays demand-gated. Relaxing this guard fails open against shared environments. |
 | 10 | `ASSUMED` | One session per principal, shared by its workers. Refresh runs under a per-principal lock, ahead of `access_expires_in`. No refresh token is ever presented twice: with `reuse_grace=0`, a second presentation revokes the family (`token_lifecycle.py:318-346`). |
 | 11 | `ASSUMED` | Logins are staggered to at most 4 at once by default (forze's `hashing_concurrency`) and are not measured. The first failed login stops the run before load, which keeps a wrong password from tripping the lockout. |
-| 12 | `OPEN` | **Credential source.** Options: built-in `password_login` (forze `POST /login`/`/refresh`), `api_key`, `bearer`; an app callable returning headers; both. **Lean: both.** Credentials come from environment variables only. The helpers cover forze's own routes, and the callable covers cookies, OIDC and anything app-specific. |
+| 12 | `ASSUMED` | **Credentials come from built-in helpers and from an app callable**, accepted by the maintainer on 2026-11-05. The helpers are `password_login` (forze `POST /login` and `/refresh`), `api_key` and `bearer`; any async callable returning headers also works, for cookies, OIDC and anything app-specific. Credentials come from environment variables only, never from the plan's source. |
 | 13 | `ASSUMED` | `X-Tenant-Id` is sent only when a principal names a tenant. `tenant_conflict` or `tenant_mismatch` stops the run. |
 | 14 | `ASSUMED` | Ids are sampled per principal through list operations, once, before the first measured step, bounded by `size`. A sampled id answering 404 is `not_found` and leaves the sample. |
 | 15 | `ASSUMED` | Output holds counts, latencies and outcome classes only: no bodies, headers, tokens, credentials or ids. `target` is written without userinfo, query or fragment. |
 | 16 | `ASSUMED` | Knee rule: the first closed-model step whose goodput is under 5 % above the previous step's, confirmed by the next step. Never a `client_saturated` or `misconfigured` step. Open model: the first rate where p99 more than doubles, or where goodput falls more than 5 % below the offered rate. Thresholds may be tuned during P1 against the served mock; log the values chosen. |
 | 17 | `ASSUMED` | A step where `forbidden` plus `client_error` exceed 5 % is `misconfigured`, stops a ramp, and is never a knee. Goodput counts 2xx only. |
 | 18 | `ASSUMED` | Percentiles come from core's `DDSketch` (1 % relative accuracy), per step and per scenario. Rows store quantiles and counts, not sketches, because no serialization exists. |
-| 19 | `OPEN` | **Realtime latency measure.** Options: (a) send → delivery and answer → delivery on the one process's monotonic clock; (b) the uuid7 event id's embedded time against the client clock, with an estimated offset; (c) a new server timestamp in frames. **Lean (a).** No clock alignment is needed, and it is what erp measures. The docs call send → delivery an upper bound. (b) is pre-commit and cross-clock. (c) changes the realtime protocol for a test tool. |
+| 19 | `ASSUMED` | **Realtime latency is measured on the one process's monotonic clock**: send → delivery and answer → delivery. Accepted by the maintainer on 2026-11-05 over the uuid7 event id's embedded time with an estimated offset, and over a new server timestamp in frames. No clock alignment is needed, and it is what erp measures. The docs call send → delivery an upper bound. |
 | 20 | `ASSUMED` | Frame matching is app-supplied (`match(frame)`, `key_of(response)`). The first arrival per subscriber is timed. Duplicates and `missing` keys after a timeout are counted. |
 | 21 | `ASSUMED` | The storm resumes each subscriber from its last durable id: `Last-Event-ID` on SSE, the `last_event_id` query on WS. Writes continue during it. Gaps, duplicates and cursor fallbacks are counted. Draining answers (SSE 200 + `retry:` + `X-Error-Code: realtime_draining`, WS 1012) are reconnects, not errors. A live-only route records `resume: "none"`. |
 | 22 | `LOCKED` | **Gauge drift is computed only from scrapes of one process.** If consecutive `/metrics` scrapes name different `service.instance.id`s, every gauge series is marked `interleaved` and no drift is computed. Under a pre-fork server this depends on RFC 0083 (#838). Computing drift from interleaved scrapes produces confident false findings that later work would build on. |
-| 23 | `OPEN` | **Gauge source.** Options: the app's `/metrics` (single process now, pre-fork after RFC 0083); the deployment's Prometheus-compatible query API over the run window; both. **Lean: `/metrics` first.** It matches RFC 0083's audience of compose stacks with no collector. The query API is demand-gated, for apps that push OTLP. |
-| 24 | `OPEN` | **Server RSS/CPU source.** Options: (a) process gauges exported through forze's meter (stdlib `/proc/self/statm` and `time.process_time`, a new `instrument_process`) and read with the other gauges; (b) the kit reads `/proc/<pid>` for PIDs it is given (same host only); (c) cgroup files (containers, same host); (d) none, and leave it to the user's monitoring. **Lean (a)**, as its own small change that P4 depends on. It works through the same scrape and RFC 0083 covers pre-fork. (b)/(c) are what erp and hh already do for their stacks. |
-| 25 | `OPEN` | **The missing gauges** (§3.6): connection pool checked-out and idle per backend, SSE/WS hub subscribers and dropped, mailbox depth, bulkhead in-use. Options: add them under this RFC as part of P4; propose them as separate issues. **Lean: separate issues.** Each is production observability first, and the kit reads whatever `/metrics` serves. |
+| 23 | `ASSUMED` | **Gauges are read from the app's `/metrics` first** (single process now, pre-fork after RFC 0083), accepted by the maintainer on 2026-11-05. It matches RFC 0083's audience of compose stacks with no collector. A Prometheus-compatible query API over the run window stays demand-gated, for apps that push OTLP. |
+| 24 | `ASSUMED` | **Server RSS and CPU come from forze process gauges** exported through forze's meter (stdlib `/proc/self/statm` and `time.process_time`, a new `instrument_process`) and read with the other gauges. Accepted by the maintainer on 2026-11-05 over reading `/proc/<pid>`, reading cgroup files, or leaving it to the user's monitoring. It lands as its own small change, which P4 depends on. |
+| 25 | `ASSUMED` | **The missing gauges are separate issues**, accepted by the maintainer on 2026-11-05 over adding them in this RFC's P4: connection pool checked-out and idle per backend, SSE/WS hub subscribers and dropped, mailbox depth, bulkhead in-use. Each is production observability first, and the kit reads whatever `/metrics` serves. |
 | 26 | `ASSUMED` | Drift: after two warm-up windows, an OLS slope and a first- against last-quarter mean per series. Flagged when the slope over the run exceeds 10 % of the first-quarter mean and the last quarter is higher. Not flagged once a gauge reaches its capacity gauge. Flags never fail the run. |
 | 27 | `ASSUMED` | Output is JSONL: a meta line, rows, a summary, with `schema: 1`, following `forze_dst.campaign`'s convention. It is not pytest-benchmark's format, and `gate_compare.py` is not reused. |
-| 28 | `OPEN` | **Compare semantics.** Options: report only; exit 1 beyond default thresholds; report by default with an opt-in `--fail-on p95:15%,goodput:10%`. **Lean: report plus opt-in.** Load runs are far noisier than the micro-benchmarks `perf-check` gates at 10 %. A default failure would make every consumer's CI flaky. |
+| 28 | `ASSUMED` | **`compare` reports by default, with an opt-in `--fail-on p95:15%,goodput:10%`**, accepted by the maintainer on 2026-11-05 over report only or failing on default thresholds. Load runs are far noisier than the micro-benchmarks `perf-check` gates at 10 %, so a default failure would make every consumer's CI flaky. |
 | 29 | `ASSUMED` | One `httpx.AsyncClient` for requests with `Limits(max_connections=...)` set to the worker count or in-flight cap, and a separate client for streams. httpx's default of 100 connections would queue in the client above 100 workers. |
 | 30 | `ASSUMED` | Client self-report: `time.process_time()` over wall time per step, and a 50 ms loop-lag probe. `client_saturated` at ≥ 0.85 cores, loop lag p99 > 25 ms, or `behind_schedule` > 1 %. |
 | 31 | `ASSUMED` | `forze_load` imports `forze` core and `httpx` only. It restates the wire names it uses as constants pinned by a test to `forze_fastapi`'s. It joins import-linter's protected list with `forze_cli` as an allowed importer. |
-| 32 | `OPEN` | **Several client processes.** Options: none (single process, flagged when saturated); a process pool in P1; demand-gated later. **Lean: demand-gated.** Merging needs `DDSketch` serialization in core, and P1 first measures the single-process ceiling against the served mock. |
+| 32 | `ASSUMED` | **Several client processes are demand-gated**, accepted by the maintainer on 2026-11-05 over building a process pool in P1. P1 is one process, flagged when saturated. Merging needs `DDSketch` serialization in core, and P1 first measures the single-process ceiling against the served mock. |
 | 33 | `ASSUMED` | The kit's own tests use injected clocks, `httpx.MockTransport` and the served mock (`forze_mock.server`). No real backends. Timing-band assertions run only under `-m perf`. |
 
 ## 12. Phasing
 
 - **P0** — the maintainer answers row 1, and with it rows 2 and 3. Nothing below starts before.
+  *Done 2026-11-05.*
 - **P1** — one PR (§5.2–§5.4, §5.6, §5.9–§5.11):
   - `forze_load` and the `load` extra;
   - plans, principals with `password_login`, `api_key` and `bearer`, and tenancy headers;
