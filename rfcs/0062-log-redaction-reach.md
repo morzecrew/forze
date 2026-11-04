@@ -166,6 +166,9 @@ No new section; this is a parameter's semantics, not a feature.
 | 4 | `ASSUMED` | No stdlib `logging.Filter` is added. Foreign loggers already render through a structlog `ProcessorFormatter` that runs the scrub, and a second mechanism would drift from the first. |
 | 5 | `ASSUMED` | The narrowed path pairs with `propagate=False` on the names it attaches, and single emission is asserted rather than assumed. |
 | 6 | `OPEN` | Whether the root handler in the narrowed case renders in the app's mode or always as JSON, and whether `attach_foreign_loggers(sanitize_logs=False)` grows the symmetric warning. |
+| 7 | `ASSUMED` | The narrowed root handler sits at WARNING or the configured level, whichever is higher, so an app configured above WARNING does not print an unlisted dependency's warnings it does not print for itself. It overrides the gate answer "at WARNING" recorded in [`logs/T-0062.md`](../logs/T-0062.md) (D-2, attempt 2). |
+
+Row 7 was added by execution and accepted by the maintainer on 2026-11-04; it cites the log entry it came from, and the sections above are left as designed.
 
 ## 12. Phasing
 

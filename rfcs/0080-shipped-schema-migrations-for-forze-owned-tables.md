@@ -1,7 +1,7 @@
 # RFC 0080 — Shipped schema migrations for forze-owned tables
 
 - **Status:** 📝 Draft. Proposes an amendment to the beta rule that breaking changes ship
-  without migration code (row 2). The maintainer has not yet decided on it (§10 Q1).
+  without migration code (row 2), which the maintainer accepted on 2026-11-04 (§10 Q1).
 - **Scope:** Moves the DDL for the Postgres tables forze owns out of docstrings and markdown
   into one declaration per table, kept in code. Adds a `forze schema` CLI group:
   - `sql` prints the `CREATE` statements a fresh install needs;
@@ -644,7 +644,7 @@ second run is a no-op, as bi's `NOT LIKE ':%'` is.
 | # | Grade | Decision |
 | --- | --- | --- |
 | 1 | `LOCKED` | Forze never executes DDL against an owned table: not at startup, not from the CLI, and not during tenant provisioning. It prints SQL, and the consumer's migration tool applies it. Applying from forze would split the migration history and take unscheduled production locks. Reversing this reopens RFC 0066 §5.4. |
-| 2 | `OPEN` | Proposed: the beta rule is amended, not dropped. Forze still ships no runtime migration code: no dual reads, no transition shims, no DDL it runs. What changes: every change to an owned table's shape lands as an edit to its declaration in the same PR, and a stored-format change ships a guarded rewrite statement in its CHANGELOG entry. The declaration edit replaces the docstring edit made today. The maintainer settles this row, not an executor (§10 Q1). P1 can ship either way. |
+| 2 | `LOCKED` | Accepted by the maintainer, 2026-11-04 (§10 Q1): the beta rule is amended, not dropped. Forze still ships no runtime migration code: no dual reads, no transition shims, no DDL it runs. What changes: every change to an owned table's shape lands as an edit to its declaration in the same PR, and a stored-format change ships a guarded rewrite statement in its CHANGELOG entry. The declaration edit replaces the docstring edit made today. |
 | 3 | `LOCKED` | The delta is computed against the live catalog, never as fixed text between two forze versions. Surveyed databases name one index three ways and span 0.15.1 to 0.21.0, and nothing records which forze version a database is at. |
 | 4 | `ASSUMED` | Indexes are identified by shape (keys in order, uniqueness, predicate) and created unnamed. A retired index is dropped under the name the catalog reports, and only on a retired match: a forze-declared retired shape, not unique, backing no constraint, with exactly the retired predicate. Any other index with the retired keys gets a refusal comment. |
 | 5 | `ASSUMED` | One declaration per owned table, built from the adapter's config, is the only copy. Docstrings point at it, reference-page SQL is tested against its render, and integration tests create tables from it. |
