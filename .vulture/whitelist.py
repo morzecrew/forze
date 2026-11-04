@@ -745,6 +745,5 @@ operation_id  # unused variable (src/forze_fastapi/realtime/sse.py:127) — a Ty
 deprecated  # unused variable (src/forze_fastapi/realtime/sse.py:129) — a TypedDict key, read by APIRouter
 openapi_extra  # unused variable (src/forze_fastapi/realtime/sse.py:133) — a TypedDict key, read by APIRouter
 media_type  # unused variable (src/forze_fastapi/realtime/sse.py:139) — read by FastAPI's OpenAPI generator
-SNAPSHOT_AGE_GAUGE  # unused variable (src/forze_fastapi/routes/_snapshots.py:49) — the catalog name of the gauge the route renders as text
-metrics_union  # unused function (src/forze_fastapi/routes/health.py:226) — a route handler, registered by its decorator
-_.writer_step  # unused method (src/forze_fastapi/routes/_snapshots.py:316) — public API, called by applications
+metrics_union  # unused function (src/forze_fastapi/routes/health.py:229) — a route handler, registered by its decorator
+_.writer_step  # unused method (src/forze_fastapi/routes/_snapshots.py:374) — public API, called by applications

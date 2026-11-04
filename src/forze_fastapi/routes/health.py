@@ -22,7 +22,7 @@ from forze.application.execution.background import evaluate_readiness
 from forze.base.exceptions import CoreException, exc
 from forze.base.logging import Logger
 
-from ._snapshots import MetricsSnapshots, absorb_abandoned_failure, prometheus_renderer
+from ._snapshots import MetricsSnapshots, absorb_abandoned_failure, render_gate
 
 if TYPE_CHECKING:
     from opentelemetry.sdk.metrics.export import MetricReader
@@ -218,52 +218,38 @@ def attach_metrics_route(
         *reader* is not a ``PrometheusMetricReader``.
     """
 
-    generate_latest, registry = prometheus_renderer(reader)
+    # One render gate per reader, shared with the snapshot writer and any other plain route
+    # on it: two collections in flight on one reader steal each other's data.
+    gate = render_gate(reader)
 
     if snapshots is not None:
         union = snapshots.union
+        union_in_flight: asyncio.Future[tuple[int, bytes]] | None = None
 
         @router.get(path, include_in_schema=False)
         async def metrics_union() -> Response:  # pyright: ignore[reportUnusedFunction]
+            nonlocal union_in_flight
+
             # Off the loop: it reads every worker's file. It renders nothing, so a scrape
             # runs no observable callback and never races the writer for the collector.
-            status, body = await asyncio.to_thread(union)
+            # Concurrent scrapes share one read, as renders are shared, so a flood of
+            # scrapes costs one pass over the directory, not one each.
+            if union_in_flight is None or union_in_flight.done():
+                union_in_flight = asyncio.ensure_future(asyncio.to_thread(union))
+                union_in_flight.add_done_callback(absorb_abandoned_failure)
+
+            status, body = await asyncio.shield(union_in_flight)
 
             return Response(content=body, status_code=status, media_type=PROMETHEUS_CONTENT_TYPE)
 
         return router
 
-    scrape = asyncio.Lock()
-    in_flight: asyncio.Future[bytes] | None = None
-
     @router.get(path, include_in_schema=False)
     async def metrics() -> Response:  # pyright: ignore[reportUnusedFunction]
-        nonlocal in_flight
-
-        # Never two renders at once. The exporter's collector drains a plain
-        # unsynchronized deque: two in flight each trigger a collection, then race to pop
-        # each other's data, and one of them answers 200 with an empty or partial body.
-        # On the event loop this was serialized by accident; off it, on purpose.
-        #
-        # A lock alone would not survive cancellation, which is exactly when this happens:
-        # Prometheus times out a slow scrape, the client disconnects, the handler is
-        # cancelled — and the *thread* carries on, because nothing can cancel one. The
-        # lock would release and the retry would render straight into the running
-        # collection. So the render is a shared future rather than a critical section: a
-        # scrape that finds one in flight waits for that one instead of starting another,
-        # and an abandoned render still finishes before anything new begins.
-        async with scrape:
-            if in_flight is None or in_flight.done():
-                # Off the loop, because rendering *is* collection: it runs every
-                # observable callback in the process — pool stats, keyring stats, L1
-                # stats, bulkhead depths — and on the loop each scrape would stall every
-                # other coroutine, including the liveness probe.
-                in_flight = asyncio.ensure_future(asyncio.to_thread(generate_latest, registry))
-                in_flight.add_done_callback(absorb_abandoned_failure)
-
-            pending = in_flight
-
-        rendered = await asyncio.shield(pending)
+        # Never two renders at once, and never on the loop: see RenderGate. A scrape that
+        # finds a render in flight on this reader, its own or the snapshot writer's, waits
+        # for that one; an abandoned render still finishes before anything new begins.
+        rendered = await gate.run()
 
         return Response(content=rendered, media_type=PROMETHEUS_CONTENT_TYPE)
 

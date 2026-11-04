@@ -19,7 +19,7 @@ from fastapi import APIRouter, FastAPI
 from opentelemetry import metrics
 from opentelemetry.metrics import CallbackOptions, Observation
 
-from forze.application.execution import build_runtime
+from forze.application.execution import ExecutionRuntime, build_runtime
 from forze.base.telemetry import bootstrap_telemetry
 from forze_fastapi import runtime_lifespan
 from forze_fastapi.routes import MetricsSnapshots, attach_metrics_route, worker_metrics_reader
@@ -35,27 +35,31 @@ def _pid(_options: CallbackOptions) -> Iterable[Observation]:
 
 
 def create_app() -> FastAPI:
+    # The reader and the snapshots value carry no identity, so the factory builds them.
     reader = worker_metrics_reader()
-    bootstrap_telemetry(
-        service_name="snapshot-workers",
-        service_instance_id=os.environ.get("FORZE_TEST_INSTANCE_ID"),
-        traces=False,
-        exporter="none",
-        extra_metric_readers=[reader],
-    )
-
-    meter = metrics.get_meter("forze")
-    hits = meter.create_counter("forze.test.hits")
-    meter.create_observable_gauge("forze.test.pid", callbacks=[_pid])
-
     snapshots = MetricsSnapshots(
         directory=Path(os.environ["FORZE_TEST_SNAPSHOTS"]), interval=INTERVAL, ttl=TTL
     )
     plain = bool(os.environ.get("FORZE_TEST_PLAIN"))
-    # Plain mode runs no writer: the plain route renders the reader itself, and two renderers
-    # of one reader race for its collector.
-    steps = () if plain else (snapshots.writer_step(reader),)
-    lifespan = runtime_lifespan(build=lambda: build_runtime(lifecycle_steps=steps))
+
+    # Instruments made before the provider exists bind to it once it is installed.
+    meter = metrics.get_meter("forze")
+    hits = meter.create_counter("forze.test.hits")
+    meter.create_observable_gauge("forze.test.pid", callbacks=[_pid])
+
+    def build() -> ExecutionRuntime:
+        # In each worker, after any fork: this mints the worker's service.instance.id.
+        bootstrap_telemetry(
+            service_name="snapshot-workers",
+            service_instance_id=os.environ.get("FORZE_TEST_INSTANCE_ID"),
+            traces=False,
+            exporter="none",
+            extra_metric_readers=[reader],
+        )
+
+        return build_runtime(lifecycle_steps=() if plain else snapshots.writer_step(reader))
+
+    lifespan = runtime_lifespan(build=build)
 
     router = APIRouter()
     attach_metrics_route(router, reader, snapshots=None if plain else snapshots)

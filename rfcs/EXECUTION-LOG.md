@@ -5659,11 +5659,15 @@ for the snapshot mode. No P2 (collector recipe) and no P3 (Redis store). Measure
 decision table as the maintainer settled it on 2026-11-05, where rows 4 to 10 are `LOCKED`,
 and against §5.2 and §6 as the review of the RFC's PR amended them (the shared render future,
 and no file until a render names the worker).
-Rows 1 to 18 hold as written; nothing here conflicts with a `LOCKED` row. The dev-group floor
+Rows 1 to 18 hold as written, as the second #840 review round amended rows 11, 12, 14, 16 and
+17 and §5.2 to §5.4 (`2df244dba`, `668c2e697`, `ec8c2a4d6`): every sample line checked, the
+directory held open after one `fstat` check, freshness on the monotonic clock, the render
+gate held per reader, and `bootstrap_telemetry` in the per-worker build. Nothing here
+conflicts with a `LOCKED` row. The dev-group floor
 of `opentelemetry-exporter-prometheus` moves to 0.66b0 so the tests can build the reader row 8
 names. `uv.lock`'s specifier line follows, with no change to what it resolves.
 
-**Drift count: 0.** Six entries, D-210 to D-215: four `discovery`, two `spec-gap`.
+**Drift count: 0.** Nine entries, D-210 to D-218: five `discovery`, four `spec-gap`.
 
 **Where each item lives.** `MetricsSnapshots`, `worker_metrics_reader`, the writer, the union and
 the `SNAPSHOT_AGE_GAUGE` constant are in
@@ -5781,3 +5785,81 @@ too. The tests are `tests/unit/test_forze_fastapi/test_metrics_snapshots.py` (un
   default, one render costs about 0.5 to 0.9% of a core per worker. The RFC's render numbers
   came from a quieter run, and §9's risk stands as written.
 - **Proposed row (RFC 0083):** none.
+
+## D-216 — A malformed block costs only that family
+
+- **Touches:** §5.3 steps 1, 2 and 4 (list and read, parse each header, split at line-start
+  `# HELP`).
+- **RFC said:** a malformed header skips the file. It said nothing of a malformed family, of
+  the order of reading header and body, or of concurrent scrapes.
+- **Found:** P1 skipped a whole snapshot for one malformed family. A `# TYPE` line, or any
+  comment line, without a `# HELP` above it was folded into the family before it, so another
+  family's samples were served under the wrong `TYPE`. The route also read and decoded up to
+  `max_snapshot_bytes` before it knew the snapshot's age. Each concurrent scrape ran its own
+  pass over the directory.
+- **Class:** `spec-gap`.
+- **Consequence:**
+  - A block is malformed when its `# TYPE` line does not follow its `# HELP`, when a comment
+    line sits among its samples, or when it is text before the first `# HELP`. Only that
+    block is dropped, logged once, by the route and by the writer alike.
+  - The route reads the header line first, so a stale or foreign file costs one short read.
+  - Concurrent scrapes share one in-flight read. That is not the render gate: row 5 still
+    holds, and the snapshot route renders nothing.
+- **Proposed row (RFC 0083):** none.
+
+## D-217 — The route opens the directory itself when its process has no writer yet
+
+- **Touches:** amended §5.2 step 1 (the route "reaches the descriptor through the shared
+  `MetricsSnapshots` value").
+- **RFC said:** the writer opens and checks the directory, and the route uses that descriptor.
+- **Found:** a process can serve the route before its writer's startup has run, or with no
+  writer step in its plan at all. Every unit test of the union is such a process. The RFC
+  leaves open what such a route reads.
+- **Class:** `spec-gap`.
+- **Consequence:** `MetricsSnapshots` holds one descriptor per process. Whichever comes first,
+  the writer's startup (which creates the directory) or the route's first scrape (which does
+  not), opens it and runs the same `O_DIRECTORY | O_NOFOLLOW` open and `fstat` checks. Either
+  one then reuses it for the life of the process, and the path is never resolved again. A
+  route whose directory is missing or unsafe answers `503` and logs the reason once. It tries
+  again on the next scrape, since nothing was held.
+- **Proposed row (RFC 0083):** `ASSUMED`. One descriptor per process, opened and checked by
+  whichever of the writer and the route comes first. A route that cannot open it answers
+  `503`.
+
+## D-218 — The clocks are read through forze's time seam
+
+- **Touches:** amended §5.2 ("Freshness": `time.time()` and
+  `time.clock_gettime(time.CLOCK_MONOTONIC)`).
+- **RFC said:** read the two clocks directly.
+- **Found:** `tests/unit/test_determinism_guard.py` refuses raw clock calls in `src/`, outside
+  the time seam.
+- **Class:** `discovery`.
+- **Consequence:** `written_at` comes from `utcnow()` and `mono` from `monotonic()` in
+  `forze.base.primitives`. By default these are `datetime.now(UTC)` and `time.monotonic()`,
+  and `time.monotonic()` is `CLOCK_MONOTONIC` on Linux. A bound time source therefore controls
+  both, which is how the wall-clock step tests inject their clocks.
+- **Proposed row (RFC 0083):** none.
+
+## Review findings — 2026-11-05
+
+Fresh-eyes review of `f6602e68b`, before it was published. Every behaviour fix below has a test
+that fails on `f6602e68b`. Eight such tests ran against that commit and all eight failed.
+
+| # | Severity | Finding | Status |
+|---|---|---|---|
+| R-1 | Bug | A FIFO named like a snapshot blocked `os.open` and pinned a thread per scrape | Fixed: opened `O_NONBLOCK`, and the `S_ISREG` check is kept; a FIFO test |
+| R-2 | Security | The directory check ran once on the leaf; a parent writable by others without the sticky bit let the directory be swapped after boot | Fixed as #840 decided: the directory is opened once, with `O_DIRECTORY` and `O_NOFOLLOW`, checked with `fstat`, and every write, sweep and read goes through that descriptor; the route skips files the effective uid does not own (D-217). Tests swap the directory for a symlink after startup, and read a foreign-owned file |
+| R-3 | Cost | A snapshot was read and decoded up to 16 MiB before its age was known, and every concurrent scrape ran its own full read | Fixed (D-216): the header line is read first, and concurrent scrapes share one in-flight read; tests for a stale file with an undecodable body and for ten concurrent scrapes making one read |
+| R-4 | Bug | A `# TYPE` or other comment line without `# HELP` folded into the previous family | Fixed (D-216): that family is dropped and logged once; a test |
+| R-5 | Bug | The instance check read each family's first sample only | Fixed as amended row 11 says: every line, one value across the render; tests with an unlabelled and a foreign line, and with a data point attribute naming another instance |
+| R-6 | Bug | With every family dropped, a header-only snapshot still showed an age for a worker with no series | Fixed: nothing is written when nothing is kept; a test |
+| R-7 | Design | Ages and the ttl use the wall clock | Fixed as #840 decided (amended row 14): the header carries `mono`, a snapshot is fresh only while both its monotonic and wall-clock ages lie in `[0, ttl]`, and the age gauge shows the monotonic age, unclamped (D-218). Tests step the wall clock both ways and replay a pre-reboot `mono` |
+| R-8 | Flake | The worker test's `sum(...) == 60` depended on timing | Fixed: it polls until it holds, within 10 s. The `free_port` race stays as in `test_serve_workers.py`, the precedent, which accepts it |
+| R-9 | Quality | `SNAPSHOT_AGE_GAUGE` was unused and whitelisted | Fixed: the rendered family name derives from it, and the whitelist entry is gone |
+| R-10 | Noise | A persistent tick failure logged CRITICAL with a traceback every interval | Fixed: an oversized snapshot and an `OSError` are logged once per cause, forgotten after the next successful write; a test |
+
+The #840 amendments also brought, each with a test: the render gate moved from the plain route
+to the reader (a plain route scraped during a slow tick joins the tick's render); a snapshot
+family named `forze_metrics_snapshot_age_seconds` is dropped from the merge with a warning; the
+sweep judges a dead pid's snapshot by its header and deletes a dead pid's temp file at once; and
+the docs and the worker test's app factory call `bootstrap_telemetry` in the per-worker build.

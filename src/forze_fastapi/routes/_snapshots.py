@@ -21,8 +21,8 @@ import inspect
 import os
 import re
 import stat
-import tempfile
 import threading
+import weakref
 from collections.abc import Callable, Iterator
 from contextlib import suppress
 from datetime import timedelta
@@ -33,9 +33,9 @@ import attrs
 
 from forze.application.contracts.execution import LifecycleHook, LifecycleStep
 from forze.application.execution.background import periodic_lifecycle_step
-from forze.base.exceptions import exc
+from forze.base.exceptions import CoreException, exc
 from forze.base.logging import Logger
-from forze.base.primitives import instance_id, utcnow
+from forze.base.primitives import instance_id, monotonic, utcnow, uuid4
 
 if TYPE_CHECKING:
     from opentelemetry.exporter.prometheus import PrometheusMetricReader
@@ -49,26 +49,34 @@ if TYPE_CHECKING:
 SNAPSHOT_AGE_GAUGE = "forze.metrics.snapshot.age"
 """Seconds since a worker wrote the snapshot a scrape serves; rendered by the route."""
 
-_AGE_FAMILY: Final[str] = "forze_metrics_snapshot_age_seconds"
-"""The Prometheus name the exporter derives from :data:`SNAPSHOT_AGE_GAUGE` with unit ``s``."""
+_AGE_FAMILY: Final[str] = SNAPSHOT_AGE_GAUGE.replace(".", "_") + "_seconds"
+"""``forze_metrics_snapshot_age_seconds``: what the exporter derives from the name, unit ``s``."""
 
 _INSTANCE_ATTRIBUTE: Final[str] = "service.instance.id"
 _HEADER_PREFIX: Final[str] = "# forze-metrics-snapshot v1 "
 _HEADER: Final[re.Pattern[str]] = re.compile(
-    r"# forze-metrics-snapshot v1 written_at=(\d+(?:\.\d+)?) pid=(\d+) instance=(.*)"
+    r"# forze-metrics-snapshot v1 written_at=(\d+(?:\.\d+)?) mono=(\d+(?:\.\d+)?) "
+    r"pid=(\d+) instance=(.*)"
 )
 _SNAPSHOT_NAME: Final[re.Pattern[str]] = re.compile(r"(\d+)-[0-9a-f]{32}\.prom")
 _TEMP_NAME: Final[re.Pattern[str]] = re.compile(r"\.tmp-(\d+)-.*")
 _INSTANCE_LABEL: Final[re.Pattern[str]] = re.compile(r'[{,]service_instance_id="((?:[^"\\]|\\.)*)"')
 _EXPORTER_FLOOR: Final[str] = "0.66b0"
 _LOG_ONCE_LIMIT: Final[int] = 1024
+_HEADER_MAX_BYTES: Final[int] = 4096
+
+_CLOEXEC: Final[int] = getattr(os, "O_CLOEXEC", 0)
+_OPEN_DIRECTORY: Final[int] = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | _CLOEXEC
+# Non-blocking, so a FIFO named like a snapshot cannot pin a thread in open().
+_OPEN_SNAPSHOT: Final[int] = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | _CLOEXEC
+_OPEN_TEMP: Final[int] = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | _CLOEXEC
 
 _logger = Logger("fastapi.metrics")
 
 # ....................... #
 
 
-def prometheus_renderer(
+def _prometheus_renderer(
     reader: MetricReader,
 ) -> tuple[Callable[[CollectorRegistry], bytes], CollectorRegistry]:
     """Return ``generate_latest`` and the registry *reader* registered its collector into.
@@ -106,6 +114,96 @@ def prometheus_renderer(
 # ....................... #
 
 
+def absorb_abandoned_failure(render: asyncio.Future[Any]) -> None:
+    """Retrieve a failed render's exception so asyncio does not report it as a leak.
+
+    A render outlives the scrape (or tick) that started it — the client disconnects, the
+    handler is cancelled, the thread keeps going. If that render then raises (an observable
+    callback reading a half-disposed client, say) nobody is left to receive it, and asyncio
+    logs ``Task exception was never retrieved`` with a full traceback at ERROR. That fires
+    precisely during an incident, where it reads as a framework fault rather than as the
+    scrape timeout it actually is.
+
+    Retrieving here only clears the leak warning: a caller still awaiting this render
+    receives the exception exactly as before.
+    """
+
+    if not render.cancelled():
+        render.exception()
+
+
+# ....................... #
+
+
+@final
+@attrs.define(slots=True, eq=False)
+class RenderGate:
+    """One render of a reader in flight at a time, shared by everything that renders it.
+
+    The exporter's collector drains a plain unsynchronized deque: two collections in flight
+    each trigger a collection, then race to pop each other's data, and one of them answers
+    with an empty or partial body. Every renderer of one reader — the snapshot writer's ticks
+    and final render, and any plain metrics route — therefore waits on one shared future.
+
+    A lock alone would not survive cancellation, which is exactly when this happens:
+    Prometheus times out a slow scrape, the client disconnects, the handler is cancelled —
+    and the *thread* carries on, because nothing can cancel one. So the render is a shared
+    future rather than a critical section: whoever finds one in flight waits for that one
+    instead of starting another, and an abandoned render still finishes before anything new
+    begins. Rendering runs off the loop, because rendering *is* collection: it runs every
+    observable callback in the process.
+    """
+
+    render: Callable[[], bytes]
+    in_flight: asyncio.Future[bytes] | None = attrs.field(default=None, init=False)
+
+    # ....................... #
+
+    async def run(self) -> bytes:
+        """Render, or join the render already in flight."""
+
+        if self.in_flight is None or self.in_flight.done():
+            self.in_flight = asyncio.ensure_future(asyncio.to_thread(self.render))
+            self.in_flight.add_done_callback(absorb_abandoned_failure)
+
+        # Shielded: a cancelled caller abandons the wait, never the render.
+        return await asyncio.shield(self.in_flight)
+
+
+_GATES: weakref.WeakKeyDictionary[MetricReader, RenderGate] = weakref.WeakKeyDictionary()
+
+
+def render_gate(reader: MetricReader) -> RenderGate:
+    """The one :class:`RenderGate` of *reader*, made on first use.
+
+    :raises CoreException: ``configuration`` — the Prometheus exporter is not installed, or
+        *reader* is not a ``PrometheusMetricReader``.
+    """
+
+    gate = _GATES.get(reader)
+
+    if gate is None:
+        generate_latest, registry = _prometheus_renderer(reader)
+        # Weak: the registry reaches the reader through its collector, and a strong reference
+        # here would keep every reader alive as its own dictionary key.
+        registry_ref = weakref.ref(registry)
+
+        def render() -> bytes:
+            current = registry_ref()
+
+            if current is None:
+                raise exc.internal("The metric reader's registry no longer exists")
+
+            return generate_latest(current)
+
+        gate = _GATES.setdefault(reader, RenderGate(render=render))
+
+    return gate
+
+
+# ....................... #
+
+
 def _instance_only(attribute: str) -> bool:
     return attribute == _INSTANCE_ATTRIBUTE
 
@@ -117,7 +215,7 @@ def worker_metrics_reader() -> PrometheusMetricReader:
     process collectors ``prometheus_client`` puts on its global registry (``process_*``,
     ``python_gc_*``), which carry no instance label, stay out of the union. It copies the
     resource's ``service.instance.id`` onto every series, which is what keeps one worker's
-    series apart from another's. Register it on the meter provider as usual::
+    series apart from another's. Register it on the meter provider in each worker::
 
         reader = worker_metrics_reader()
         bootstrap_telemetry(service_name="orders-api", extra_metric_readers=[reader])
@@ -155,7 +253,7 @@ def worker_metrics_reader() -> PrometheusMetricReader:
 @final
 @attrs.define(slots=True)
 class _LogOnce:
-    """Remembers which problems were already logged, so a scrape loop does not repeat them."""
+    """Remembers which problems were already logged, so a loop does not repeat them."""
 
     seen: set[str] = attrs.field(factory=set)
     lock: threading.Lock = attrs.field(factory=threading.Lock)
@@ -175,6 +273,12 @@ class _LogOnce:
 
             return True
 
+    # ....................... #
+
+    def clear(self) -> None:
+        with self.lock:
+            self.seen.clear()
+
 
 # ....................... #
 
@@ -193,26 +297,33 @@ def _families(body: str) -> Iterator[_Family | None]:
     """Split an exposition at line-start ``# HELP`` boundaries; ``None`` for a bad block.
 
     A label value cannot hold a raw newline in the text format, so a split at a line start
-    never cuts a sample in two.
+    never cuts a sample in two. A block is bad when its ``# TYPE`` line does not follow its
+    ``# HELP`` line, or when a comment line sits among its samples: a ``# TYPE`` with no
+    ``# HELP`` above it would otherwise fold another family into this one. Text before the
+    first ``# HELP`` is a bad block too. Only the bad block is lost.
     """
 
     if not body:
         return
 
-    if not body.startswith("# HELP "):
-        yield None
-        return
+    prefix, *blocks = ("\n" + body).split("\n# HELP ")
 
-    for block in ("\n" + body).split("\n# HELP ")[1:]:
+    if prefix.strip("\n"):
+        yield None
+
+    for block in blocks:
         help_rest, _, rest = block.partition("\n")
         name = help_rest.split(" ", 1)[0]
         type_line, _, samples = rest.partition("\n")
+        samples = samples.rstrip("\n")
 
-        if not name or not type_line.startswith(f"# TYPE {name} "):
+        if (
+            not name
+            or not type_line.startswith(f"# TYPE {name} ")
+            or ("\n" + samples).find("\n#") != -1
+        ):
             yield None
             continue
-
-        samples = samples.rstrip("\n")
 
         yield _Family(
             name=name,
@@ -223,30 +334,23 @@ def _families(body: str) -> Iterator[_Family | None]:
 
 
 def _instance_of(family: _Family) -> str | None:
-    """The escaped ``service_instance_id`` value on the family's first sample line."""
+    """The escaped ``service_instance_id`` every sample line of *family* carries.
 
-    first_sample = family.samples.split("\n", 1)[0]
-    match = _INSTANCE_LABEL.search(first_sample)
-
-    return match.group(1) if match else None
-
-
-def absorb_abandoned_failure(render: asyncio.Future[Any]) -> None:
-    """Retrieve a failed render's exception so asyncio does not report it as a leak.
-
-    A render outlives the scrape (or tick) that started it — the client disconnects, the
-    handler is cancelled, the thread keeps going. If that render then raises (an observable
-    callback reading a half-disposed client, say) nobody is left to receive it, and asyncio
-    logs ``Task exception was never retrieved`` with a full traceback at ERROR. That fires
-    precisely during an incident, where it reads as a framework fault rather than as the
-    scrape timeout it actually is.
-
-    Retrieving here only clears the leak warning: a caller still awaiting this render
-    receives the exception exactly as before.
+    ``None`` when any line carries none, or another value than the rest: a data point's own
+    attribute can override the label the exporter copied from the resource.
     """
 
-    if not render.cancelled():
-        render.exception()
+    found: str | None = None
+
+    for line in family.samples.splitlines():
+        match = _INSTANCE_LABEL.search(line)
+
+        if match is None or (found is not None and match.group(1) != found):
+            return None
+
+        found = match.group(1)
+
+    return found
 
 
 def _pid_alive(pid: int) -> bool:
@@ -260,6 +364,138 @@ def _pid_alive(pid: int) -> bool:
         return True  # alive, and someone else's
 
     return True
+
+
+def _clocks() -> tuple[float, float]:
+    """The wall clock and the host's monotonic clock, read together."""
+
+    return utcnow().timestamp(), monotonic()
+
+
+# ....................... #
+
+
+@final
+@attrs.frozen(slots=True, kw_only=True)
+class _Header:
+    written_at: float
+    mono: float
+    pid: int
+    instance: str
+
+    # ....................... #
+
+    @classmethod
+    def parse(cls, line: bytes) -> _Header | None:
+        if not line.endswith(b"\n"):
+            return None
+
+        match = _HEADER.fullmatch(line[:-1].decode("utf-8", "replace"))
+
+        if match is None:
+            return None
+
+        return cls(
+            written_at=float(match.group(1)),
+            mono=float(match.group(2)),
+            pid=int(match.group(3)),
+            instance=match.group(4),
+        )
+
+    # ....................... #
+
+    def fresh_age(self, wall: float, mono: float, ttl: float) -> float | None:
+        """The monotonic age while the snapshot is fresh; ``None`` once it is not.
+
+        Fresh while both ages lie in ``[0, ttl]``. The monotonic age bounds a dead worker's
+        life in real time whatever the wall clock does; the wall-clock age catches a file
+        from before a reboot, where the monotonic clock started again. A wall-clock step
+        therefore withholds snapshots until each worker writes again, and never extends one.
+        """
+
+        mono_age = mono - self.mono
+        wall_age = wall - self.written_at
+
+        if 0.0 <= mono_age <= ttl and 0.0 <= wall_age <= ttl:
+            return mono_age
+
+        return None
+
+
+def _header_of(dfd: int, name: str) -> _Header | None:
+    """The header of the snapshot *name* in the directory *dfd*; ``None`` if it has none."""
+
+    fd = os.open(name, _OPEN_SNAPSHOT, dir_fd=dfd)
+
+    with os.fdopen(fd, "rb") as handle:
+        if not stat.S_ISREG(os.fstat(handle.fileno()).st_mode):
+            return None
+
+        return _Header.parse(handle.readline(_HEADER_MAX_BYTES))
+
+
+# ....................... #
+
+
+@final
+@attrs.define(slots=True)
+class _Directory:
+    """The snapshot directory: checked once, then held open and never resolved again."""
+
+    path: Path
+    fd: int | None = attrs.field(default=None, init=False)
+    lock: threading.Lock = attrs.field(factory=threading.Lock, init=False)
+
+    # ....................... #
+
+    def open(self, *, create: bool) -> int:
+        """The held descriptor, opening and checking the directory on first use.
+
+        :raises CoreException: ``configuration`` (``metrics_snapshot_directory_unsafe``) —
+            the directory cannot be created or opened as a real directory, or another user
+            owns it or may write into it.
+        """
+
+        with self.lock:
+            if self.fd is not None:
+                return self.fd
+
+            try:
+                if create:
+                    self.path.mkdir(mode=0o700, parents=True, exist_ok=True)
+
+                fd = os.open(self.path, _OPEN_DIRECTORY)
+
+            except OSError as error:
+                raise exc.configuration(
+                    f"Metrics snapshot directory {self.path} cannot be opened as a real "
+                    f"directory: {type(error).__name__}",
+                    code="metrics_snapshot_directory_unsafe",
+                ) from error
+
+            # Checked on the open descriptor, not the path: what passes is what is used.
+            info = os.fstat(fd)
+
+            if not stat.S_ISDIR(info.st_mode):
+                problem = "is not a directory"
+
+            elif info.st_uid != os.geteuid():
+                problem = "is owned by another user"
+
+            elif info.st_mode & 0o022:
+                problem = "is writable by other users"
+
+            else:
+                self.fd = fd
+                return fd
+
+            os.close(fd)
+
+            # Anyone who can write here can put series into every scrape of this group.
+            raise exc.configuration(
+                f"Metrics snapshot directory {self.path} {problem}",
+                code="metrics_snapshot_directory_unsafe",
+            )
 
 
 # ....................... #
@@ -280,22 +516,32 @@ class _Snapshot:
 class MetricsSnapshots:
     """Where the workers of one pre-fork group leave their metrics, and how fresh they must be.
 
-    One value configures both halves, so they cannot disagree: put
-    :meth:`writer_step` in the runtime's lifecycle plan, which every worker runs, and pass
-    the value to :func:`~forze_fastapi.routes.attach_metrics_route` as ``snapshots``::
+    One value configures both halves, so they cannot disagree: put :meth:`writer_step` in
+    the lifecycle plan each worker builds for itself, and pass the value to
+    :func:`~forze_fastapi.routes.attach_metrics_route` as ``snapshots``. Call
+    ``bootstrap_telemetry`` in that per-worker build too, never at import: it mints the
+    worker's ``service.instance.id``, and gunicorn's ``--preload`` would otherwise give every
+    worker one id, which the route then withholds. This value and the reader carry no
+    identity, so the app factory can build them::
 
         reader = worker_metrics_reader()
-        snapshots = MetricsSnapshots(directory=Path("/run/forze-metrics"))
-        runtime = build_runtime(..., lifecycle_steps=snapshots.writer_step(reader))
+        snapshots = MetricsSnapshots(directory=Path("/dev/shm/forze-metrics"))
+
+        def build() -> ExecutionRuntime:  # in each worker, after any fork
+            bootstrap_telemetry(service_name="orders-api", extra_metric_readers=[reader])
+            return build_runtime(lifecycle_steps=snapshots.writer_step(reader))
+
+        lifespan = runtime_lifespan(build=build)
         attach_metrics_route(router, reader, snapshots=snapshots)
 
     The directory serves exactly one worker group: two groups writing into one directory
-    get each other's series in their scrapes. Give it a tmpfs mount private to the
+    get each other's series in their scrapes. Give it a tmpfs path private to the
     container, so a write costs memory, not disk.
 
-    :param directory: Created with mode ``0700`` when missing. An existing one must be a
-        real directory (not a symlink) owned by this process's user and writable by no one
-        else; anything else is refused when the writer starts.
+    :param directory: Created with mode ``0700`` when missing, then opened once without
+        following a symlink and checked on the open descriptor: a real directory, owned by
+        this process's user and writable by no one else. Every later write, sweep and read
+        goes through that descriptor, so the path cannot be swapped after the check.
     :param interval: How often each worker writes its snapshot.
     :param ttl: How old a snapshot may be and still be served; three intervals by default.
     :param max_snapshot_bytes: A larger snapshot is neither written nor served.
@@ -312,6 +558,12 @@ class MetricsSnapshots:
     max_snapshot_bytes: int = 16 * 1024 * 1024
 
     _log_once: _LogOnce = attrs.field(factory=_LogOnce, init=False, repr=False, eq=False)
+    _held: _Directory = attrs.field(
+        default=attrs.Factory(lambda self: _Directory(path=self.directory), takes_self=True),
+        init=False,
+        repr=False,
+        eq=False,
+    )
 
     # ....................... #
 
@@ -340,7 +592,7 @@ class MetricsSnapshots:
         """Build the lifecycle step that writes this worker's snapshot every *interval*.
 
         At startup it prepares the directory and renders once, and any refusal fails the
-        boot: an unsafe directory, or a render whose series do not all carry one
+        boot: an unsafe directory, or a render whose sample lines do not all carry one
         ``service_instance_id`` (build the reader with :func:`worker_metrics_reader`). Then
         it renders every *interval* from a supervised loop; a failed write is logged and the
         previous snapshot ages until *ttl* drops it. Nothing is written until a render names
@@ -348,19 +600,16 @@ class MetricsSnapshots:
         first names is its own for good.
 
         On shutdown it writes once more, within one *interval*, and leaves that snapshot to
-        age out, so one more scrape sees the final counts. Renders never overlap: a tick the
-        loop's stop cancelled keeps rendering in its thread, so the final render waits for
-        it, and is skipped if that wait would pass the interval.
+        age out, so one more scrape sees the final counts. Renders never overlap: the writer
+        and any plain metrics route on *reader* share one :class:`RenderGate`, and a tick
+        the loop's stop cancelled keeps rendering in its thread, so the final render waits
+        for it, and is skipped if that wait would pass the interval.
 
         :raises CoreException: ``configuration`` — *reader* is not a
             ``PrometheusMetricReader``, or the exporter is not installed.
         """
 
-        generate_latest, registry = prometheus_renderer(reader)
-        writer = _Writer(
-            snapshots=self,
-            render=lambda: generate_latest(registry).decode("utf-8"),
-        )
+        writer = _Writer(snapshots=self, gate=render_gate(reader))
         loop = periodic_lifecycle_step(
             tick=writer.tick,
             interval=self.interval,
@@ -380,15 +629,31 @@ class MetricsSnapshots:
     def union(self) -> tuple[int, bytes]:
         """Render every fresh snapshot as one exposition; blocking, run it off the loop.
 
-        :returns: ``(200, body)``, or ``(503, reason)`` when no snapshot can be served.
+        :returns: ``(200, body)``, or ``(503, reason)`` when no snapshot is left to serve:
+            none is fresh, or every fresh one is withheld as a duplicate.
         """
 
-        served = self._without_shared_instances(list(self._read_fresh(utcnow().timestamp())))
+        try:
+            dfd = self._held.open(create=False)
+
+        except CoreException as error:
+            if self._log_once.first(f"directory:{error.summary}"):
+                _logger.error("Metrics snapshot directory unusable: %s", error.summary)
+
+            return 503, b"no metrics snapshot directory\n"
+
+        wall, mono = _clocks()
+        served = self._without_shared_instances(list(self._read_fresh(dfd, wall, mono)))
 
         if not served:
             return 503, b"no fresh metrics snapshot\n"
 
         return 200, self._merge(served).encode("utf-8")
+
+    # ....................... #
+
+    def _open(self, *, create: bool) -> int:
+        return self._held.open(create=create)
 
     # ....................... #
 
@@ -398,88 +663,92 @@ class MetricsSnapshots:
 
     # ....................... #
 
-    def _read_fresh(self, now: float) -> Iterator[_Snapshot]:
+    def _read_fresh(self, dfd: int, wall: float, mono: float) -> Iterator[_Snapshot]:
         try:
-            entries = list(os.scandir(self.directory))
+            names = os.listdir(dfd)
 
         except OSError as error:
-            if self._log_once.first(f"scandir:{error.errno}"):
+            if self._log_once.first(f"listdir:{error.errno}"):
                 _logger.error("Metrics snapshot directory unreadable: %s", type(error).__name__)
 
             return
 
-        for entry in entries:
-            if _SNAPSHOT_NAME.fullmatch(entry.name) is None:
+        for name in names:
+            if _SNAPSHOT_NAME.fullmatch(name) is None:
                 continue
 
-            snapshot = self._read_one(Path(entry.path), now)
+            snapshot = self._read_one(dfd, name, wall, mono)
 
             if snapshot is not None:
                 yield snapshot
 
     # ....................... #
 
-    def _read_one(self, path: Path, now: float) -> _Snapshot | None:
+    def _read_one(self, dfd: int, name: str, wall: float, mono: float) -> _Snapshot | None:
         try:
-            fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0))
+            fd = os.open(name, _OPEN_SNAPSHOT, dir_fd=dfd)
 
         except FileNotFoundError:
             return None  # swept or replaced since the listing
 
         except OSError:
-            self._skip(path.name, "not a regular file it may open")
+            self._skip(name, "not a regular file it may open")
             return None
 
         with os.fdopen(fd, "rb") as handle:
             info = os.fstat(handle.fileno())
 
             if not stat.S_ISREG(info.st_mode):
-                self._skip(path.name, "not a regular file")
+                self._skip(name, "not a regular file")
+                return None
+
+            if info.st_uid != os.geteuid():
+                self._skip(name, "owned by another user")
                 return None
 
             if info.st_size > self.max_snapshot_bytes:
-                self._skip(path.name, "larger than max_snapshot_bytes", version=info.st_mtime_ns)
+                self._skip(name, "larger than max_snapshot_bytes", version=info.st_mtime_ns)
                 return None
 
-            raw = handle.read(self.max_snapshot_bytes + 1)
+            # The header alone decides whether the body is worth reading at all.
+            head = handle.readline(_HEADER_MAX_BYTES)
+            header = _Header.parse(head)
 
-        if len(raw) > self.max_snapshot_bytes:
-            self._skip(path.name, "larger than max_snapshot_bytes", version=info.st_mtime_ns)
+            if header is None:
+                self._skip(name, "no snapshot header", version=info.st_mtime_ns)
+                return None
+
+            age = header.fresh_age(wall, mono, self.ttl.total_seconds())
+
+            if age is None:
+                return None  # a dead or stalled worker, or a wall-clock step: not served
+
+            raw = handle.read(self.max_snapshot_bytes + 1 - len(head))
+
+        if len(head) + len(raw) > self.max_snapshot_bytes:
+            self._skip(name, "larger than max_snapshot_bytes", version=info.st_mtime_ns)
             return None
 
         try:
-            text = raw.decode("utf-8")
+            body = raw.decode("utf-8")
 
         except UnicodeDecodeError:
-            self._skip(path.name, "not UTF-8", version=info.st_mtime_ns)
+            self._skip(name, "not UTF-8", version=info.st_mtime_ns)
             return None
-
-        header, _, body = text.partition("\n")
-        match = _HEADER.fullmatch(header)
-
-        if match is None:
-            self._skip(path.name, "no snapshot header", version=info.st_mtime_ns)
-            return None
-
-        # Every worker of a group reads one kernel clock; a backwards step clamps to 0.
-        age = max(0.0, now - float(match.group(1)))
-
-        if age > self.ttl.total_seconds():
-            return None  # a dead or stalled worker: not served, and not worth parsing
 
         families: list[_Family] = []
 
         for family in _families(body):
             if family is None:
-                self._skip(path.name, "malformed metric family", version=info.st_mtime_ns)
-                return None
+                self._skip(name, "malformed metric family", version=info.st_mtime_ns)
+                continue
 
             families.append(family)
 
         return _Snapshot(
-            name=path.name,
-            pid=int(match.group(2)),
-            instance=match.group(3),
+            name=name,
+            pid=header.pid,
+            instance=header.instance,
             age=age,
             families=families,
         )
@@ -522,6 +791,11 @@ class MetricsSnapshots:
 
         for snapshot in served:
             for family in snapshot.families:
+                if family.name == _AGE_FAMILY:
+                    # The route owns this name: a second HELP/TYPE pair would break the page.
+                    self._skip(snapshot.name, f"family {_AGE_FAMILY} is the route's own")
+                    continue
+
                 head = heads.setdefault(family.name, (family.help_line, family.type_line))
 
                 if head[1] != family.type_line:
@@ -555,10 +829,10 @@ class MetricsSnapshots:
 @final
 @attrs.define(slots=True, kw_only=True)
 class _Writer:
-    """One worker's half: render, check, write atomically, sweep."""
+    """One worker's half: render through the reader's gate, check, write atomically, sweep."""
 
     snapshots: MetricsSnapshots
-    render: Callable[[], str]
+    gate: RenderGate
 
     instance: str = attrs.field(default="", init=False)
     """The ``service_instance_id`` this worker first named; it never changes after that."""
@@ -566,99 +840,81 @@ class _Writer:
     inflight: asyncio.Future[None] | None = attrs.field(default=None, init=False)
     """The render and write in progress, shared by the ticks and the final render.
 
-    A tick cancelled at shutdown leaves its thread running, and the exporter's collector
-    cannot take two collections at once: whoever finds this unfinished waits for it instead
-    of starting another, as the plain route does with its renders."""
+    A tick cancelled at shutdown leaves its thread running: whoever finds this unfinished
+    waits for it instead of starting another."""
 
     warned: _LogOnce = attrs.field(factory=_LogOnce, init=False)
 
-    # ....................... #
-
-    @property
-    def directory(self) -> Path:
-        return self.snapshots.directory
+    failures: _LogOnce = attrs.field(factory=_LogOnce, init=False)
+    """Tick failures already logged; forgotten after the next successful write."""
 
     # ....................... #
 
     def prepare(self) -> None:
-        """Create the directory ``0700``, or refuse one another user could write into."""
+        """Create, open and check the directory, or refuse one another user could reach."""
 
-        try:
-            self.directory.mkdir(mode=0o700, parents=True, exist_ok=True)
-            info = os.lstat(self.directory)
-
-        except OSError as error:
-            raise exc.configuration(
-                f"Metrics snapshot directory {self.directory} cannot be created: "
-                f"{type(error).__name__}",
-                code="metrics_snapshot_directory_unsafe",
-            ) from error
-
-        if stat.S_ISLNK(info.st_mode) or not stat.S_ISDIR(info.st_mode):
-            problem = "is not a real directory"
-
-        elif info.st_uid != os.geteuid():
-            problem = "is owned by another user"
-
-        elif info.st_mode & 0o022:
-            problem = "is writable by other users"
-
-        else:
-            return
-
-        # Anyone who can write here can put series into every scrape of this group.
-        raise exc.configuration(
-            f"Metrics snapshot directory {self.directory} {problem}",
-            code="metrics_snapshot_directory_unsafe",
-        )
+        self.snapshots._open(create=True)  # pyright: ignore[reportPrivateUsage]
 
     # ....................... #
 
-    def write(self, *, strict: bool) -> None:
-        """Render, check every family's instance label, and write; blocking.
+    def write(self, text: str, *, strict: bool) -> None:
+        """Check every sample line of a rendered exposition, and write it; blocking.
 
         A render that names no instance yet (no family holds a sample) writes nothing: the
         worker has no series to serve and nothing to label its age by.
         """
 
-        body, instance = self._checked(self.render(), strict=strict)
+        body, instance = self._checked(text, strict=strict)
+        dfd = self.snapshots._open(create=True)  # pyright: ignore[reportPrivateUsage]
         pid = os.getpid()
 
-        if instance:
+        # Nothing kept, nothing written: a header alone would show an age for a worker that
+        # serves no series. The previous snapshot ages out instead.
+        if instance and body and self._replace(dfd, pid, body, instance, strict=strict):
             self.instance = instance
-            self._replace(pid, body)
+            self.failures.clear()
 
-        self._sweep(pid)
+        self._sweep(dfd, pid)
 
     # ....................... #
 
-    def _replace(self, pid: int, body: str) -> None:
+    def _replace(self, dfd: int, pid: int, body: str, instance: str, *, strict: bool) -> bool:
+        wall, mono = _clocks()
         header = (
-            f"{_HEADER_PREFIX}written_at={utcnow().timestamp():.3f} pid={pid} "
-            f"instance={self.instance}\n"
+            f"{_HEADER_PREFIX}written_at={wall:.3f} mono={mono:.3f} pid={pid} instance={instance}\n"
         )
         data = (header + body).encode("utf-8")
 
         if len(data) > self.snapshots.max_snapshot_bytes:
-            raise exc.configuration(
+            message = (
                 f"Metrics snapshot is {len(data)} bytes, over max_snapshot_bytes "
-                f"({self.snapshots.max_snapshot_bytes})",
-                code="metrics_snapshot_too_large",
+                f"({self.snapshots.max_snapshot_bytes}); the previous snapshot ages out"
             )
 
-        fd, temp = tempfile.mkstemp(dir=self.directory, prefix=f".tmp-{pid}-")
+            if strict:
+                raise exc.configuration(message, code="metrics_snapshot_too_large")
+
+            if self.failures.first("too_large"):
+                _logger.warning(message)
+
+            return False
+
+        temp = f".tmp-{pid}-{uuid4().hex}"
+        fd = os.open(temp, _OPEN_TEMP, 0o600, dir_fd=dfd)
 
         try:
             with os.fdopen(fd, "wb") as out:
                 out.write(data)
 
-            os.replace(temp, self.directory / _file_name(pid))
+            os.replace(temp, _file_name(pid), src_dir_fd=dfd, dst_dir_fd=dfd)
 
         except BaseException:
             with suppress(OSError):
-                os.unlink(temp)
+                os.unlink(temp, dir_fd=dfd)
 
             raise
+
+        return True
 
     # ....................... #
 
@@ -669,11 +925,17 @@ class _Writer:
 
         for family in _families(text):
             if family is None:
-                raise exc.internal("The Prometheus exporter rendered a malformed family")
+                if self.warned.first(":malformed"):
+                    _logger.warning("A rendered metric family is malformed; left out")
 
-            found = _instance_of(family) if family.samples else ""
+                continue
 
-            if found is None or (instance and found and found != instance):
+            if not family.samples:
+                continue  # it serves nothing and names no instance
+
+            found = _instance_of(family)
+
+            if found is None or (instance and found != instance):
                 unlabelled.append(family.name)
                 continue
 
@@ -700,30 +962,45 @@ class _Writer:
 
     # ....................... #
 
-    def _sweep(self, own_pid: int) -> None:
-        """Delete files older than *ttl* whose process is gone; a stalled worker's stay."""
+    def _sweep(self, dfd: int, own_pid: int) -> None:
+        """Delete what no live process will finish or refresh; a stalled worker's file stays.
 
-        cutoff = utcnow().timestamp() - self.snapshots.ttl.total_seconds()
+        A temp file goes once its pid is gone. A snapshot goes once its pid is gone and its
+        header says it is not fresh (a malformed header counts as not fresh).
+        """
 
-        for entry in os.scandir(self.directory):
-            match = _SNAPSHOT_NAME.fullmatch(entry.name) or _TEMP_NAME.fullmatch(entry.name)
+        wall, mono = _clocks()
+        ttl = self.snapshots.ttl.total_seconds()
 
-            if match is None or int(match.group(1)) == own_pid:
+        for name in os.listdir(dfd):
+            snapshot = _SNAPSHOT_NAME.fullmatch(name)
+            match = snapshot or _TEMP_NAME.fullmatch(name)
+
+            if match is None or int(match.group(1)) == own_pid or _pid_alive(int(match.group(1))):
                 continue
 
             with suppress(OSError):
-                if entry.stat(follow_symlinks=False).st_mtime < cutoff and not _pid_alive(
-                    int(match.group(1))
-                ):
-                    os.unlink(entry.path)
+                if snapshot is not None:
+                    header = _header_of(dfd, name)
+
+                    if header is not None and header.fresh_age(wall, mono, ttl) is not None:
+                        continue
+
+                os.unlink(name, dir_fd=dfd)
+
+    # ....................... #
+
+    async def _cycle(self, *, strict: bool) -> None:
+        text = (await self.gate.run()).decode("utf-8")
+        await asyncio.to_thread(self.write, text, strict=strict)
 
     # ....................... #
 
     async def render_and_write(self, *, strict: bool) -> None:
-        """Render and write, or join the render already in progress; never two at once."""
+        """Render and write, or join the cycle already in progress; never two at once."""
 
         if self.inflight is None or self.inflight.done():
-            self.inflight = asyncio.ensure_future(asyncio.to_thread(self.write, strict=strict))
+            self.inflight = asyncio.ensure_future(self._cycle(strict=strict))
             self.inflight.add_done_callback(absorb_abandoned_failure)
 
         # Shielded: a cancelled caller abandons the wait, never the render.
@@ -732,7 +1009,16 @@ class _Writer:
     # ....................... #
 
     async def tick(self) -> None:
-        await self.render_and_write(strict=False)
+        try:
+            await self.render_and_write(strict=False)
+
+        except OSError as error:
+            # A full tmpfs or a lost permission repeats every tick: say so once per cause.
+            if self.failures.first(f"os:{type(error).__name__}:{error.errno}"):
+                _logger.error(
+                    "Metrics snapshot not written (%s); the previous snapshot ages out",
+                    type(error).__name__,
+                )
 
     # ....................... #
 
@@ -792,7 +1078,7 @@ def _file_name(pid: int) -> str:
 @final
 @attrs.define(slots=True, kw_only=True)
 class _WriterStartup(LifecycleHook):
-    """Prepare the directory and write once, refusing the boot on failure; start the loop."""
+    """Prepare the directory and render once, refusing the boot on failure; start the loop."""
 
     writer: _Writer
     loop: LifecycleHook

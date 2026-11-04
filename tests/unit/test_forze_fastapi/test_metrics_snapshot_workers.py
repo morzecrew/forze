@@ -152,7 +152,15 @@ def test_every_scrape_covers_every_worker_and_a_killed_one_ages_out(tmp_path: Pa
 
             time.sleep(0.05)
 
-        assert sum(seen.values()) == 60
+        def every_hit_counted() -> bool:
+            response = _scrape(port)
+            if response is None or response.status_code != 200:
+                return False
+
+            return sum(_hits(response).values()) == 60
+
+        # Each worker's last snapshot can trail its last hit by an interval.
+        _wait_for("every hit in one scrape", every_hit_counted, within=10)
 
         before = _pids(_scrape(port))
         victim, victim_pid = next(iter(before.items()))

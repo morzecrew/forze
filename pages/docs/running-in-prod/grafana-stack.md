@@ -287,7 +287,7 @@ from pathlib import Path
 
 from fastapi import APIRouter, FastAPI
 
-from forze.application.execution import build_runtime
+from forze.application.execution import ExecutionRuntime, build_runtime
 from forze.base.telemetry import bootstrap_telemetry
 from forze_fastapi import runtime_lifespan
 from forze_fastapi.routes import MetricsSnapshots, attach_metrics_route, worker_metrics_reader
@@ -295,12 +295,15 @@ from forze_fastapi.routes import MetricsSnapshots, attach_metrics_route, worker_
 
 def create_app() -> FastAPI:  # uvicorn orders.app:create_app --factory --workers 4
     reader = worker_metrics_reader()
-    bootstrap_telemetry(service_name="orders-api", exporter="none", extra_metric_readers=[reader])
-
     snapshots = MetricsSnapshots(directory=Path("/dev/shm/forze-metrics"))
-    lifespan = runtime_lifespan(
-        build=lambda: build_runtime(lifecycle_steps=snapshots.writer_step(reader)),
-    )
+
+    def build() -> ExecutionRuntime:  # in each worker, after any fork
+        bootstrap_telemetry(
+            service_name="orders-api", exporter="none", extra_metric_readers=[reader]
+        )
+        return build_runtime(lifecycle_steps=snapshots.writer_step(reader))
+
+    lifespan = runtime_lifespan(build=build)
 
     router = APIRouter()
     attach_metrics_route(router, reader, snapshots=snapshots)
@@ -315,29 +318,37 @@ Three pieces, one per process:
 
 - **`worker_metrics_reader()`** builds the `PrometheusMetricReader` the mode needs: its own
   registry, and `service.instance.id` copied onto every series. It needs
-  `opentelemetry-exporter-prometheus` 0.66b0 or newer and refuses an older one. Call
-  `bootstrap_telemetry` **in each worker** — in the app factory, as above — so each mints
-  its own id.
+  `opentelemetry-exporter-prometheus` 0.66b0 or newer and refuses an older one.
+- **`bootstrap_telemetry`** runs **inside the per-worker build**, never at import: it mints
+  the worker's `service.instance.id`. Gunicorn's `--preload` runs import-time code once,
+  before the fork, so every worker would share one id, and the route withholds them all.
+  The reader and the `MetricsSnapshots` value carry no identity, so the factory builds
+  them.
 - **`snapshots.writer_step(reader)`** is a lifecycle step, so each worker runs its own. At
-  startup it creates the directory (`0700`) and renders once; it refuses to start on a
-  directory another user could write into, or on a reader whose series do not all carry
-  one `service_instance_id` — a plain `PrometheusMetricReader()` renders the process
-  collectors, which carry none. It then writes every `interval`, atomically, from the
-  first render that holds a series: a worker that has recorded nothing yet is not served.
-  On shutdown it writes once more.
-- **`attach_metrics_route(..., snapshots=snapshots)`** serves every snapshot younger than
-  `ttl`, merged family by family, and renders nothing itself.
+  startup it creates the directory (`0700`), opens it without following a symlink, checks
+  the open directory — owned by the app's user and writable by no one else — and renders
+  once. From then on every write, sweep and read goes through that open directory, so
+  nobody can swap the path afterwards. It refuses to start on an unsafe directory, or on a
+  reader whose sample lines do not all carry one `service_instance_id` — a plain
+  `PrometheusMetricReader()` renders the process collectors, which carry none. It then
+  writes every `interval`, atomically, from the first render that holds a series: a worker
+  that has recorded nothing yet is not served. On shutdown it writes once more. It shares
+  one render at a time with any plain metrics route on the same reader.
+- **`attach_metrics_route(..., snapshots=snapshots)`** serves every fresh snapshot owned by
+  the app's user, merged family by family, and renders nothing itself.
 
 | `MetricsSnapshots` | Default | |
 |---|---|---|
 | `directory` | required | One directory per worker group. A tmpfs path such as `/dev/shm/...` keeps writes in memory; in a container it is private to that container. |
 | `interval` | 10 s | How often each worker writes. Each write renders that worker's metrics once, the cost one scrape has today. |
-| `ttl` | 3 × `interval` | How old a snapshot may be and still be served. Below 2 × `interval` is refused. |
+| `ttl` | 3 × `interval` | How old a snapshot may be and still be served, by both the host's monotonic clock and the wall clock. Below 2 × `interval` is refused. |
 | `max_snapshot_bytes` | 16 MiB | A larger snapshot is neither written nor served. |
 
 Every scrape also carries `forze_metrics_snapshot_age_seconds{service_instance_id}`, one
-sample per worker it served: how old that worker's numbers are. Query per worker, and sum on
-the query side:
+sample per worker it served: how old that worker's numbers are, on the host's monotonic
+clock, which a wall-clock step cannot move. A step withholds the old snapshots until each
+worker writes again, within one `interval`. The route owns that name: a snapshot family
+called the same is left out. Query per worker, and sum on the query side:
 
 ```promql
 sum without (service_instance_id) (rate(forze_operations_total[5m]))
