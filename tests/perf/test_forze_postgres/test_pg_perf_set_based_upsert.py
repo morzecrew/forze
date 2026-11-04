@@ -4,8 +4,8 @@ same rows, unchanged.
 Four call shapes: a mirror per source document of a few dozen rows, the shape of a bulk import
 that upserts what each document produces, a call of one default chunk, a call of a few thousand
 rows, and one call of every row. A mixed load adds a fresh load into a table that already holds
-an eighth of the rows, unchanged, as a mirror's later revisions of a document do: there every
-set-based chunk runs all four of its statements. A changed reload rewrites one row in twenty, so
+an eighth of the rows, unchanged, as a mirror's later revisions of a document do: there each
+set-based chunk looks up and locks its stored rows, inserts the rest and patches. A changed reload rewrites one row in twenty, so
 the patch writes. A large fresh load upserts 35,000 rows in one call, as a bulk import that
 issue #792 measures does. Each round starts from the state it measures (an
 empty table for a fresh load, the loaded rows for a reload) and times only the upserts; the
