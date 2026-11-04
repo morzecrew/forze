@@ -7741,6 +7741,12 @@ the caller must re-run the whole scope. Nothing is written twice or lost. It wri
 <code>set_based_batch_size</code> rows per chunk (2,000 by default, <code>PostgresDocumentConfig</code>), not
 <code>batch_size</code>: each chunk costs a few statements, and a statement-level trigger fires once per
 statement, so a chunk per few hundred rows spends its time on statements.</p>
+<p>Inserts skip building the domain model when the domain is proven to add nothing to the
+create command: no validators, defaults, aliases, computed fields or fields of its own. The
+row is then the command's dump plus the id, <code>rev</code> 1 and the chunk's instant for both
+timestamps; any other domain is built first, as before. A command built with
+<code>model_construct</code> skips its own validation, so a value of the wrong type in one is written
+as given on this path.</p>
 <p>Like <code>update_matching</code>, it skips the domain model's update, so a spec whose updates need it
 refuses <code>set_based</code> with a <code>configuration</code> error (<code>set_based_upsert_unsupported</code>): one with
 revision history, materialized fields, a <code>SerializedBy</code> guarantee or randomized field

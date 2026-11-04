@@ -10871,7 +10871,10 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <p><strong><code>PostgresClientPort</code> requires <code>fetch_all_scoped</code>, and <code>ClickHouseClientPort</code> requires <code>query_timeout_limit</code></strong> (<strong>Breaking</strong>). A client implemented outside forze must add them.</p>
 </li>
 <li>
-<p><strong>A set-based <code>upsert_many</code> on Postgres sends one statement fewer per chunk holding stored rows, so reloads run faster</strong> (<strong>behaviour change</strong>). It locks them before inserting: a row deleted meanwhile is inserted, not <code>not_found</code>, and a rare race with two other loads can deadlock as <code>concurrency</code>.</p>
+<p><strong>A set-based <code>upsert_many</code> on Postgres sends its id arrays in binary and one statement fewer per chunk holding stored rows, so loads run faster</strong> (<strong>behaviour change</strong>). It locks those rows before inserting: one deleted meanwhile is inserted, not <code>not_found</code>; a rare race of three loads can deadlock as <code>concurrency</code>.</p>
+</li>
+<li>
+<p><strong>A set-based <code>upsert_many</code> on Postgres inserts a row straight from its create command when the domain is proven to add nothing to it, so fresh loads run faster</strong> (<strong>behaviour change</strong>). A chunk's inserted rows share one instant for both timestamps; any other domain still builds its model first.</p>
 </li>
 </ul>
 <h3 id="removed">Removed<a class="headerlink" href="#removed" title="Permanent link">&para;</a></h3>
@@ -10888,6 +10891,9 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 </li>
 <li>
 <p><strong>A set-based <code>upsert_many</code> on Postgres no longer slows with every chunk when it loads a table vacuumed while empty.</strong> Its id look-up is planned with its ids each time. <code>PostgresClientPort.fetch_all</code> takes <code>prepare</code> (<strong>Breaking</strong>: a client implemented outside forze must accept it).</p>
+</li>
+<li>
+<p><strong>Document commands, <code>get</code> and <code>get_many</code> read a <code>str</code> id as the <code>UUID</code> it names; a malformed one is <code>precondition</code></strong> (<strong>behaviour change</strong>). A non-canonical id no longer leaves a stale cached document, two spellings in a batch count as one, and set-based <code>upsert_many</code> no longer raises <code>AttributeError</code> (since 0.20).</p>
 </li>
 </ul>
 <h3 id="security">Security<a class="headerlink" href="#security" title="Permanent link">&para;</a></h3>
