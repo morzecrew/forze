@@ -111,6 +111,21 @@ from ._document_command import MockDocumentCommandMixin, as_uuid_pk, as_uuid_pks
 # ----------------------- #
 
 
+def _row_id(doc: JsonDict) -> UUID | None:
+    """A source row's id as a UUID, whatever its spelling; ``None`` when it names none."""
+
+    value = doc.get(ID_FIELD)
+
+    if isinstance(value, UUID) or value is None:
+        return value
+
+    try:
+        return UUID(str(value))
+
+    except ValueError:
+        return None
+
+
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride]
@@ -783,7 +798,7 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
 
     def _param_doc_by_pk(self, pk: UUID) -> JsonDict:
         for doc in self._param_source_rows():
-            if str(doc.get(ID_FIELD)) == str(pk):
+            if _row_id(doc) == pk:
                 return doc
         raise exc.not_found(f"Record not found: {pk}")
 
@@ -811,7 +826,7 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
         self._require_params_bound()
 
         if self.bound_params is not None:
-            by_id = {str(d.get(ID_FIELD)): d for d in self._param_source_rows()}
+            by_id = {str(_row_id(d)): d for d in self._param_source_rows()}
 
             if missing := [pk for pk in pks if str(pk) not in by_id]:
                 raise exc.not_found(f"Documents not found: {missing}")

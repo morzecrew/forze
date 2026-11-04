@@ -1387,7 +1387,7 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
         pks = as_uuid_pks(pks)
 
         if len(set(pks)) != len(pks):
-            raise exc.internal("Primary keys must be unique")
+            raise exc.precondition("Primary keys must be unique")
 
         pairs = list(zip(pks, revs if revs is not None else [None] * len(pks), strict=True))
         self._check_revisions_first(pairs)
@@ -1425,7 +1425,7 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
         pks = as_uuid_pks(pks)
 
         if len(set(pks)) != len(pks):
-            raise exc.internal("Primary keys must be unique")
+            raise exc.precondition("Primary keys must be unique")
 
         if not pks:
             return

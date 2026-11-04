@@ -185,6 +185,25 @@ async def test_bound_get_and_get_many_draw_from_source() -> None:
         await adapter.get(uuid4())  # unknown pk in the source
 
 
+@pytest.mark.asyncio
+async def test_a_source_row_id_in_another_spelling_is_still_found() -> None:
+    one = uuid4()
+
+    def _src(params: BaseModel, state: MockState) -> list[dict]:
+        return [{"id": str(one).upper(), "region": "eu", "total": 10}]
+
+    adapter: MockDocumentAdapter = MockDocumentAdapter(
+        spec=_spec(),
+        state=MockState(),
+        namespace="sales",
+        read_model=_Sale,
+        query_params_source=_src,
+    ).with_parameters(_Window())
+
+    assert (await adapter.get(one)).total == 10
+    assert [r.total for r in await adapter.get_many([one])] == [10]
+
+
 def test_param_source_rows_requires_bound_params() -> None:
     # Defensive guard: the helper is only reached with params bound, but it fails closed anyway.
     adapter: MockDocumentAdapter = MockDocumentAdapter(
