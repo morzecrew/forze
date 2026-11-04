@@ -53,7 +53,7 @@ from forze_postgres.kernel.client.errors import still_referenced
 from forze_postgres.kernel.sql.conflict_target import resolve_write_conflict_target
 
 from ._occ import postgres_occ_retry
-from .base import PostgresGateway, id_array
+from .base import ID_ARRAY, PostgresGateway
 from .history import PostgresHistoryGateway
 from .read import PostgresReadGateway
 from .types import PostgresBookkeepingStrategy
@@ -809,9 +809,7 @@ class PostgresWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
             return
 
         where, params = self._add_tenant_where(
-            sql.SQL("{pk} = ANY({ids})").format(
-                pk=self.ident_pk(), ids=id_array(await self.column_types())
-            ),
+            sql.SQL("{pk} = ANY({ids})").format(pk=self.ident_pk(), ids=ID_ARRAY),
             [list(expected)],
         )
         stmt = sql.SQL("SELECT {pk}, {rev} FROM {table} WHERE {where} FOR SHARE").format(
@@ -1504,9 +1502,7 @@ class PostgresWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
         """
 
         where, params = self._add_tenant_where(
-            sql.SQL("{pk} = ANY({arr})").format(
-                pk=self.ident_pk(), arr=id_array(await self.column_types())
-            ),
+            sql.SQL("{pk} = ANY({arr})").format(pk=self.ident_pk(), arr=ID_ARRAY),
             [list(pks)],
         )
         stmt = sql.SQL("SELECT {pk} FROM {table} WHERE {where}").format(
@@ -1571,7 +1567,7 @@ class PostgresWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
                     source=source,
                     conflict=conflict,
                     pk=self.ident_pk(),
-                    ids=id_array(column_types),
+                    ids=ID_ARRAY,
                 ),
                 [*params, part_pks],
                 row_factory="tuple",
@@ -2223,13 +2219,12 @@ class PostgresWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
 
             total = 0
             out_domains: list[D] = []
-            id_param = id_array(await self.column_types())
 
             for start in range(0, len(ids), batch_size):
                 chunk = ids[start : start + batch_size]
                 stmt = sql.SQL(
                     "UPDATE {table} SET {sets} WHERE {pk} = ANY({ids}) RETURNING {ret}"
-                ).format(table=table, sets=sets, pk=pk, ids=id_param, ret=ret)
+                ).format(table=table, sets=sets, pk=pk, ids=ID_ARRAY, ret=ret)
 
                 rows = await self.client.fetch_all(
                     stmt,
@@ -2332,7 +2327,7 @@ class PostgresWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
             await self._serialize(touched)
             where_sql = sql.SQL("{pk} = ANY({ids})").format(
                 pk=self.ident_pk(),
-                ids=id_array(await self.column_types()),
+                ids=ID_ARRAY,
             )
             trailing_params: list[Any] = []
             where_sql, trailing_params = self._add_tenant_where(  # type: ignore[assignment]

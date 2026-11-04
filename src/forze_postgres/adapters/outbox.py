@@ -25,6 +25,7 @@ from forze.application.contracts.outbox import (
     StagedOutboxEntry,
     TransactionalOutboxPasses,
 )
+from forze.application.contracts.querying import QueryValueCaster
 from forze.application.contracts.tenancy import TenancyMixin
 from forze.base.exceptions import exc
 from forze.base.primitives import HlcTimestamp, utcnow, uuid7
@@ -40,6 +41,13 @@ def _whole_ms(duration: timedelta) -> int:
     """*duration* in whole milliseconds, rounded up: Postgres reads ``0`` as no limit."""
 
     return -(-duration // timedelta(milliseconds=1))
+
+
+def _as_uuids(ids: Sequence[UUID]) -> list[UUID]:
+    """*ids* as ``UUID``s for a binary ``uuid[]``, which psycopg will not build from a list that
+    mixes ``UUID`` and ``str``; a malformed ``str`` is ``precondition``."""
+
+    return [QueryValueCaster.as_uuid(pk) for pk in ids]
 
 
 # ....................... #
@@ -410,7 +418,7 @@ class PostgresOutboxStore[M: BaseModel](
               AND status = %(pending)s
             """
         ).format(table=table.ident())
-        params: dict[str, Any] = {"ids": list(ids), "pending": OutboxStatus.PENDING.value}
+        params: dict[str, Any] = {"ids": _as_uuids(ids), "pending": OutboxStatus.PENDING.value}
 
         if self.config.delivery_log is not None:
             # One statement, so a log row exists exactly when its delete commits, and a log
@@ -468,7 +476,7 @@ class PostgresOutboxStore[M: BaseModel](
               AND status = %(pending)s
             """
         ).format(table=table.ident(), assignments=assignments)
-        params = {**params, "ids": list(ids), "pending": OutboxStatus.PENDING.value}
+        params = {**params, "ids": _as_uuids(ids), "pending": OutboxStatus.PENDING.value}
 
         return int(await self.client.execute(stmt, params, return_rowcount=True) or 0)
 
@@ -485,7 +493,7 @@ class PostgresOutboxStore[M: BaseModel](
         table = await self._table()
         now = utcnow()
         params: dict[str, Any] = {
-            "ids": list(ids),
+            "ids": _as_uuids(ids),
             "status": status.value,
             "processing": OutboxStatus.PROCESSING.value,
             "published_at": now if status == OutboxStatus.PUBLISHED else None,
@@ -529,7 +537,7 @@ class PostgresOutboxStore[M: BaseModel](
 
         table = await self._table()
         params: dict[str, Any] = {
-            "ids": list(ids),
+            "ids": _as_uuids(ids),
             "pending": OutboxStatus.PENDING.value,
             "processing": OutboxStatus.PROCESSING.value,
             "attempts": attempts,
@@ -596,7 +604,7 @@ class PostgresOutboxStore[M: BaseModel](
 
         table = await self._table()
         params: dict[str, Any] = {
-            "ids": list(ids),
+            "ids": _as_uuids(ids),
             "pending": OutboxStatus.PENDING.value,
             "failed": OutboxStatus.FAILED.value,
         }

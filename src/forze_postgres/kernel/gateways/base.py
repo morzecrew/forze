@@ -9,7 +9,7 @@ require_psycopg()
 from collections.abc import Callable, Mapping, Sequence
 from decimal import Decimal
 from functools import partial
-from typing import Any, final
+from typing import Any, Final, final
 from uuid import UUID
 
 import attrs
@@ -82,17 +82,13 @@ def _as_it_is(v: Any) -> Any:
     return v
 
 
-def id_array(column_types: PostgresColumnTypes) -> sql.Composable:
-    """The parameter an array of document ids binds to: in binary, cast to ``uuid[]``, when the
-    id column is a ``uuid``, which psycopg encodes and Postgres reads several times faster than
-    text, the cast still taking a ``str`` id; a plain parameter, as before, for any other."""
-
-    pg_t = column_types.get(ID_FIELD)
-
-    if pg_t is not None and not pg_t.is_array and _WRITE_VALUE_COERCER.matched(pg_t) == "uuid":
-        return sql.SQL("{}::uuid[]").format(sql.Placeholder(format=PyFormat.BINARY))
-
-    return sql.Placeholder()
+ID_ARRAY: Final[sql.Composable] = sql.SQL("{}::uuid[]").format(
+    sql.Placeholder(format=PyFormat.BINARY)
+)
+"""The parameter an array of document ids binds to: in binary, which psycopg encodes and
+Postgres reads several times faster than text, cast to ``uuid[]``, which also takes ``str`` ids
+and an empty list. A document id is a ``uuid``; on a column of any other type a by-id statement
+fails, as every one did before (``text = uuid``)."""
 
 
 # ....................... #
@@ -638,7 +634,7 @@ class PostgresGateway[M: BaseModel](
 
         where = sql.SQL("{pk} = ANY({arr})").format(
             pk=self.ident_pk(),
-            arr=id_array(await self.column_types()),
+            arr=ID_ARRAY,
         )
         params: list[Any] = [list(pks)]
         where, params = self._add_tenant_where(where, params)  # type: ignore[assignment]

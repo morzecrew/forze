@@ -4,14 +4,17 @@ and answers as it did: for ids passed as ``UUID``s and as their text, uppercase 
 
 from __future__ import annotations
 
+import re
 from collections.abc import Awaitable, Callable
 from typing import Any
 from uuid import UUID, uuid4
 
 import pytest
+from psycopg import sql
 
 from forze.application.contracts.document import KeyedUpdate
 from forze_postgres.kernel.client.client import PostgresClient
+from forze_postgres.kernel.gateways.base import ID_ARRAY
 from tests.integration.test_forze_postgres._document_fixtures import document_context
 from tests.integration.test_forze_postgres.test_pg_set_based_upsert import (
     _SPEC,
@@ -91,26 +94,49 @@ async def _update_matching(cmd: Any, query: Any, ids: list[Any]) -> Any:
     )
 
 
+_ANY = r'WHERE "id" = ANY\(%b::uuid\[\]\)'
+
+
 @pytest.mark.parametrize("spell", _SPELLINGS)
 @pytest.mark.parametrize(
-    ("operation", "statement"),
+    ("operation", "own"),
     [
-        pytest.param(_get_many, "SELECT", id="get_many"),
-        pytest.param(_touch_many, "SELECT", id="touch_many"),
-        pytest.param(_kill_many, "DELETE", id="kill_many"),
-        pytest.param(_update_many_unchanged, "FOR SHARE", id="update_many_held"),
-        pytest.param(_update_matching, "UPDATE", id="update_matching"),
+        pytest.param(_get_many, rf"SELECT .+ FROM \S+ {_ANY}", id="get_many"),
+        # The rows it touches, read before the write.
+        pytest.param(_touch_many, rf"SELECT .+ FROM \S+ {_ANY}", id="touch_many"),
+        pytest.param(_kill_many, rf"DELETE FROM \S+ {_ANY}", id="kill_many"),
+        pytest.param(
+            _update_many_unchanged,
+            rf'SELECT "id", "rev" FROM \S+ {_ANY} FOR SHARE',
+            id="update_many_held",
+        ),
+        pytest.param(
+            _update_matching, rf"UPDATE \S+ SET .+ {_ANY} RETURNING .+", id="update_matching"
+        ),
     ],
 )
 async def test_an_id_array_goes_in_binary_and_answers_as_before(
     pg_client: PostgresClient,
     monkeypatch: pytest.MonkeyPatch,
     operation: Callable[[Any, Any, list[Any]], Awaitable[Any]],
-    statement: str,
+    own: str,
     spell: _Spelling,
 ) -> None:
     result, rows, statements = await _run(pg_client, monkeypatch, operation, spell)
     expected_result, expected_rows, _ = await _run(pg_client, monkeypatch, operation, lambda pk: pk)
 
     assert (result, rows) == (expected_result, expected_rows)
-    assert any(statement in s and "= ANY(%b::uuid[])" in s for s in statements), statements
+    # The operation's own statement, once; and no id array in text anywhere.
+    assert len([s for s in statements if re.fullmatch(own, s.strip(), re.DOTALL)]) == 1, statements
+    assert not any("ANY(%s" in s for s in statements), statements
+
+
+async def test_an_empty_id_array_matches_nothing(pg_client: PostgresClient) -> None:
+    # Every caller returns before binding an empty list; bound anyway, it is no error.
+    t = await _table(pg_client)
+    cmd = document_context(pg_client, t).document.command(_SPEC)
+    await cmd.upsert_many([_item(uuid4(), "n", 0)], return_new=False)
+    stmt = sql.SQL("SELECT id FROM {} WHERE id = ANY({})").format(sql.Identifier(t), ID_ARRAY)
+
+    for prepare in (False, True):
+        assert await pg_client.fetch_all(stmt, [[]], prepare=prepare) == []

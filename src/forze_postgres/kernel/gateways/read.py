@@ -56,7 +56,7 @@ from forze_postgres.kernel.sql.query import (
 )
 from forze_postgres.kernel.sql.query.nested import sort_key_expr, sort_key_not_null
 
-from .base import PostgresGateway, id_array
+from .base import ID_ARRAY, PostgresGateway
 
 # ----------------------- #
 
@@ -477,7 +477,7 @@ class PostgresReadGateway[M: BaseModel](
 
         where_sql = sql.SQL("{pk} = ANY({ph})").format(
             pk=self.ident_pk(),
-            ph=id_array(await self.column_types()),
+            ph=ID_ARRAY,
         )
         where_params = [list(pks)]
 
