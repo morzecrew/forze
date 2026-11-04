@@ -289,7 +289,7 @@ is logged and the loop goes on: the previous snapshot ages, and drops out at `tt
 **The snapshot format** is the exporter's text output with one header line:
 
 ```text
-# forze-metrics-snapshot v1 written_at=1762336812.418 pid=4182 instance=6f1c…e2
+# forze-metrics-snapshot v1 written_at=1762336812.418 mono=4087760.231 pid=4182 instance=6f1c…e2
 # HELP forze_operations_total
 # TYPE forze_operations_total counter
 forze_operations_total{…,service_instance_id="6f1c…e2"} 3.0
@@ -300,9 +300,21 @@ forze_operations_total{…,service_instance_id="6f1c…e2"} 3.0
 writer learns it from what it is about to serve. It needs no access to the meter provider, and it
 works under an SDK the app installed itself.
 
-**Sweeping.** Each tick also deletes files older than `ttl` whose pid is gone (`os.kill(pid, 0)`
-raises `ProcessLookupError`). Leftover temp files are deleted by the same rule. A live worker
-that stalled is never swept; it is only not served. All workers share one pid namespace (§3).
+**Freshness.** `written_at` is `time.time()` at the write, and `mono` is
+`time.clock_gettime(time.CLOCK_MONOTONIC)`. The monotonic clock is one per host and keeps
+counting through wall-clock steps: measured on Linux, a child process's reading always falls
+between its parent's readings before and after it. A snapshot's monotonic age is the reader's
+`CLOCK_MONOTONIC` minus `mono`; its wall-clock age is `time.time()` minus `written_at`. It is
+**fresh** while both ages lie between 0 and `ttl`. The monotonic age bounds a dead worker's
+lifetime in real time, whatever the wall clock does. The wall-clock age catches a file left from
+before a reboot, where the monotonic clock started again. A wall-clock step therefore withholds
+snapshots until each worker writes again, at most one `interval`, and never extends one.
+
+**Sweeping.** Each tick also deletes snapshots that are not fresh by their header (a malformed
+header counts as not fresh) and whose pid is gone (`os.kill(pid, 0)` raises
+`ProcessLookupError`). A leftover temp file is deleted once its pid is gone, since nothing else
+can finish it. A live worker that stalled is never swept; it is only not served. All workers
+share one pid namespace (§3).
 
 **Shutdown** (row 6) writes one final snapshot within a bounded time and leaves it to age out.
 The writer's ticks and its final render go through the route's render gate (§3), which moves
@@ -324,7 +336,7 @@ handler renders nothing (row 5). It runs this off the loop:
    `<pid>-<hex>.prom`, opened with `O_NOFOLLOW` relative to it, owned by the effective uid, and
    no larger than `max_snapshot_bytes` (16 MiB by default), each checked with `fstat` on the
    open file. Skip anything else, and log it with a rate limit.
-2. Parse each header. Skip a file with a malformed header or a `written_at` older than `ttl`.
+2. Parse each header. Skip a file with a malformed header, or one that is not fresh (§5.2).
 3. If two fresh files carry the same `instance`, serve **neither**, and log an error naming both
    pids. Two processes sharing one id interleave exactly as the bug this RFC fixes. The usual
    cause is gunicorn `--preload` with `bootstrap_telemetry` at import time.
@@ -353,9 +365,9 @@ second of GIL per scrape at four workers.
 forze_metrics_snapshot_age_seconds{service_instance_id="6f1c…e2"} 4.2
 ```
 
-The route renders the family itself, from `time.time() - written_at`, clamped at 0 against a
-wall-clock step. Every worker of a group reads the same kernel clock, so there is no skew
-between writer and reader. The name is the one the exporter would derive from
+The route renders the family itself, from the snapshot's monotonic age (§5.2), which a
+wall-clock step cannot move. Every worker of a group reads the same kernel clock, so there is no
+skew between writer and reader. The name is the one the exporter would derive from
 `forze.metrics.snapshot.age` with unit `s`. That OTel name is declared as a `_GAUGE` constant, so
 the catalog parity test requires its row in `metrics.md`. The gauge describes a worker's
 snapshot, not each series in it. `count(forze_metrics_snapshot_age_seconds)` is the number of
@@ -373,7 +385,7 @@ workers served, which is the alert for a worker that stopped writing.
 | Gauge staleness | A gauge is at most `interval` plus one render old while its worker is live, and the age gauge says how old. After `ttl` the worker's series are not served, and Prometheus marks them stale. |
 | Worker death and restart | No final snapshot after a crash. The last one is served until `ttl`, then dropped, then swept once its pid is gone. Uvicorn's replacement worker, and the overlap during `restart_all`, appear as distinct instances. |
 | Shared instance id | Neither process is served (§5.3 step 3). |
-| Clock skew | None within one host. A wall-clock step is clamped. A cross-host store would need the server's clock, as the fleet adapter does. |
+| Clock skew | None within one host. Ages run on the host's monotonic clock. A wall-clock step withholds snapshots for at most one `interval` and never extends a dead worker's. A cross-host store would need the server's clock, as the fleet adapter does. |
 | Snapshot size | 0.81 to 1.08 MB per worker per 200 operation label sets, and linear in label sets. Capped at `max_snapshot_bytes`. On tmpfs a write goes to memory. |
 | Scrape cost | File reads plus a 2 ms merge for four workers. No observable callback runs on a scrape. The response is N snapshots: about 4 MB at four workers, uncompressed. |
 | Writer cost | One render per `interval` per worker, measured at 24 to 36 ms of mostly-GIL time for 200 label sets. At the leaned 10 s interval, that is today's cost of one scrape every 10 s. |
@@ -455,8 +467,10 @@ Unit (`tests/unit/test_forze_fastapi/`, `tmp_path`):
   file. A conflicting `TYPE` drops the later family. A snapshot family named
   `forze_metrics_snapshot_age_seconds` is dropped, and the route's own age family is served once.
 - A label value containing `# HELP ` does not split a family.
-- The age gauge has one sample per fresh snapshot, close to `now - written_at`, and 0 after a
-  backwards clock step.
+- The age gauge has one sample per fresh snapshot, close to its monotonic age. A wall-clock
+  step back or forward (injected clocks) withholds the old snapshots instead of extending their
+  life, and the next writes are served. A file whose `mono` is ahead of the reader's monotonic
+  clock, as after a reboot, is not served.
 - No fresh snapshot answers `503`, and so do fresh snapshots that all share one instance.
 - A worker whose renders hold no family yet writes no file, and writes its first on the tick
   whose render carries the label.
@@ -464,7 +478,8 @@ Unit (`tests/unit/test_forze_fastapi/`, `tmp_path`):
   render when the wait would pass the budget; two renders never run at once.
 - A plain route on the writer's reader, scraped during a slow tick, waits for that render
   instead of starting its own.
-- The sweep deletes old files of dead pids and keeps old files of live ones.
+- The sweep deletes stale files of dead pids, judged by their headers, keeps stale files of live
+  ones, and deletes temp files of dead pids.
 - `worker_metrics_reader()` raises `configuration` when the exporter lacks
   `resource_attribute_filter`.
 - Catalog parity: the new constant and its row in `metrics.md`.
@@ -566,7 +581,7 @@ default.
 | 11 | `ASSUMED` | A snapshot is the reader's own text rendering, with one header line. The route merges by splitting at line-start `# HELP ` and never parses samples (2.3 ms for four workers against 91 to 132 ms per snapshot, §5.3). The writer checks the label on every sample line (about 7 ms per MB), because a data point's own attribute can override the resource label. |
 | 12 | `ASSUMED` | Directory and file protocol, per §5.2 and §5.3: the directory is created `0700`, or refused when it is a symlink, foreign-owned, or group- or world-writable, then held open; every later operation goes through its descriptor, never its path. Files are `0600`, written through an exclusive temp file and `os.replace`, named `<pid>-<token>.prom`, and read with `O_NOFOLLOW`, only when owned by the effective uid, under a size cap. A refusal at startup fails the boot, after the fleet step's precedent. |
 | 13 | `ASSUMED` | Two fresh snapshots claiming one instance id are both withheld, and an error names the pids. Serving either one would interleave two processes into one series. |
-| 14 | `ASSUMED` | The age is `time.time() - written_at` as the answering worker computes it, clamped at 0. That is sound only because every worker of a group shares one host clock. A cross-host store (P3) must use the store's clock. |
+| 14 | `ASSUMED` | The age is the monotonic age: the answering worker's `CLOCK_MONOTONIC` minus the header's `mono`. A snapshot is fresh only while that age and the wall-clock age (`time.time() - written_at`) both lie between 0 and `ttl`, so a wall-clock step cannot extend a dead worker's life and a file from before a reboot is not served. That is sound only because every worker of a group shares one host clock. A cross-host store (P3) must use the store's clock. |
 | 15 | `ASSUMED` | One directory serves one worker group. No group key is in P1, and the docs require a directory per group. |
 | 16 | `ASSUMED` | With no snapshot left to serve, because none is fresh or every fresh one is withheld as a duplicate, the route answers `503`, so `up == 0` shows that no worker is served. Otherwise it answers `200` with whatever is served. |
 | 17 | `ASSUMED` | Each tick sweeps files older than `ttl` whose pid no longer exists, and stray temp files by the same rule. A stalled but live worker is withheld, not swept. |
