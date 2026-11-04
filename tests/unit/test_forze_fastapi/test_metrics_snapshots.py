@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import gc
 import os
 import stat
 import subprocess
@@ -31,8 +32,10 @@ from forze.application.execution import build_runtime
 from forze.base.exceptions import CoreException, ExceptionKind
 from forze.base.primitives import bind_time_source
 from forze_fastapi.routes import MetricsSnapshots, attach_metrics_route, worker_metrics_reader
+from forze_fastapi.routes import _snapshots as snapshots_module
 from forze_fastapi.routes._snapshots import (  # pyright: ignore[reportPrivateUsage]
     RenderGate,
+    _Directory,
     _Writer,
 )
 
@@ -971,3 +974,51 @@ class TestHardening:
             directory.chmod(0o700)
 
         assert [level for level, _ in log.records] == ["error", "error"]
+
+
+# ....................... #
+
+
+def test_snapshot_mode_refuses_a_platform_without_the_posix_flags(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The routes still import there; only snapshot mode is refused.
+    monkeypatch.setattr(snapshots_module, "_SUPPORTED", False)
+
+    with pytest.raises(CoreException) as caught:
+        MetricsSnapshots(directory=tmp_path / "m")
+
+    assert caught.value.code == "metrics_snapshots_unsupported"
+
+
+def test_a_discarded_directory_closes_its_descriptor(tmp_path: Path) -> None:
+    directory = _Directory(path=tmp_path / "m")
+    fd = directory.open(create=True)
+    os.fstat(fd)
+
+    del directory
+    gc.collect()
+
+    with pytest.raises(OSError):
+        os.fstat(fd)
+
+
+@pytest.mark.asyncio
+async def test_a_scrape_right_after_a_write_reads_the_snapshot_fresh(
+    tmp_path: Path,
+    provider: tuple[MeterProvider, PrometheusMetricReader],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Both clocks a fraction of a millisecond apart: rounding the header up made the age negative.
+    meter_provider, reader = provider
+    meter_provider.get_meter("forze").create_counter("forze.test.hits").add(1)
+    snapshots = _snapshots(tmp_path / "snaps")
+    readings = iter([(1000.0006, 50.0006), (1000.0007, 50.0007)])
+    monkeypatch.setattr(snapshots_module, "_clocks", lambda: next(readings))
+
+    async with build_runtime(lifecycle_steps=snapshots.writer_step(reader)).scope():
+        pass
+
+    monkeypatch.setattr(snapshots_module, "_clocks", lambda: (1000.0007, 50.0007))
+
+    assert snapshots.union()[0] == 200

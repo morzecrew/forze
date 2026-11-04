@@ -18,6 +18,7 @@ require_fastapi()
 import asyncio
 import hashlib
 import inspect
+import math
 import os
 import re
 import stat
@@ -65,11 +66,18 @@ _EXPORTER_FLOOR: Final[str] = "0.66b0"
 _LOG_ONCE_LIMIT: Final[int] = 1024
 _HEADER_MAX_BYTES: Final[int] = 4096
 
+# POSIX-only, so importing the routes never fails elsewhere; snapshot mode refuses itself there.
+_SUPPORTED: Final[bool] = all(
+    hasattr(os, name) for name in ("O_DIRECTORY", "O_NOFOLLOW", "O_NONBLOCK", "geteuid")
+)
 _CLOEXEC: Final[int] = getattr(os, "O_CLOEXEC", 0)
-_OPEN_DIRECTORY: Final[int] = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | _CLOEXEC
+_DIRECTORY: Final[int] = getattr(os, "O_DIRECTORY", 0)
+_NOFOLLOW: Final[int] = getattr(os, "O_NOFOLLOW", 0)
+_NONBLOCK: Final[int] = getattr(os, "O_NONBLOCK", 0)
+_OPEN_DIRECTORY: Final[int] = os.O_RDONLY | _DIRECTORY | _NOFOLLOW | _CLOEXEC
 # Non-blocking, so a FIFO named like a snapshot cannot pin a thread in open().
-_OPEN_SNAPSHOT: Final[int] = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | _CLOEXEC
-_OPEN_TEMP: Final[int] = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | _CLOEXEC
+_OPEN_SNAPSHOT: Final[int] = os.O_RDONLY | _NOFOLLOW | _NONBLOCK | _CLOEXEC
+_OPEN_TEMP: Final[int] = os.O_WRONLY | os.O_CREAT | os.O_EXCL | _NOFOLLOW | _CLOEXEC
 
 _logger = Logger("fastapi.metrics")
 
@@ -366,6 +374,12 @@ def _pid_alive(pid: int) -> bool:
     return True
 
 
+def _millis(seconds: float) -> str:
+    """*seconds* to the millisecond, truncated."""
+
+    return f"{math.floor(seconds * 1000) / 1000:.3f}"
+
+
 def _clocks() -> tuple[float, float]:
     """The wall clock and the host's monotonic clock, read together."""
 
@@ -487,6 +501,8 @@ class _Directory:
 
             else:
                 self.fd = fd
+                # A discarded app's directory closes its descriptor with it.
+                weakref.finalize(self, os.close, fd)
                 return fd
 
             os.close(fd)
@@ -568,6 +584,13 @@ class MetricsSnapshots:
     # ....................... #
 
     def __attrs_post_init__(self) -> None:
+        if not _SUPPORTED:
+            raise exc.configuration(
+                "MetricsSnapshots needs a POSIX platform (O_DIRECTORY, O_NOFOLLOW and "
+                "O_NONBLOCK); serve one worker per process here, or push OTLP",
+                code="metrics_snapshots_unsupported",
+            )
+
         if self.interval <= timedelta(0):
             raise exc.configuration("MetricsSnapshots interval must be positive")
 
@@ -880,8 +903,10 @@ class _Writer:
 
     def _replace(self, dfd: int, pid: int, body: str, instance: str, *, strict: bool) -> bool:
         wall, mono = _clocks()
+        # Truncated, never rounded up: a scrape right after the write must not read a negative age.
         header = (
-            f"{_HEADER_PREFIX}written_at={wall:.3f} mono={mono:.3f} pid={pid} instance={instance}\n"
+            f"{_HEADER_PREFIX}written_at={_millis(wall)} mono={_millis(mono)} pid={pid} "
+            f"instance={instance}\n"
         )
         data = (header + body).encode("utf-8")
 
