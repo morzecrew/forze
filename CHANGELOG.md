@@ -9,6 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- ...
+
+### Changed
+
+- ...
+
+### Fixed
+
+- ...
+
+## [0.22.0] - 2026-11-04
+
+### Added
+
 - **Grants-cache invalidations can reach every process.** `AuthzKernelConfig(grants_invalidation=...)` broadcasts each committed one best-effort, the TTL as fallback; every process runs `grants_invalidation_lifecycle_step`, which fails startup if it cannot listen. Call `invalidate_grants` after plain document commands.
 
 - **`instrument_grants_invalidation` exports the broadcast's counters to OpenTelemetry.** It reports failed publishes, cache flushes, and `forze.authz.grants_invalidation.bypasses`: grants reads that skipped the cache because the process had no live subscription.
@@ -2954,7 +2968,8 @@ Execution and mapping refactor, middleware-first usecases, split search/cache/do
 
 - Packaging metadata for PyOCI classifiers.
 
-[unreleased]: https://github.com/morzecrew/forze/compare/v0.21.0...HEAD
+[unreleased]: https://github.com/morzecrew/forze/compare/v0.22.0...HEAD
+[0.22.0]: https://github.com/morzecrew/forze/compare/v0.21.0...v0.22.0
 [0.21.0]: https://github.com/morzecrew/forze/compare/v0.20.0...v0.21.0
 [0.20.0]: https://github.com/morzecrew/forze/compare/v0.19.0...v0.20.0
 [0.19.0]: https://github.com/morzecrew/forze/compare/v0.18.0...v0.19.0
