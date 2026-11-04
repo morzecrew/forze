@@ -319,6 +319,7 @@ class RoutedPostgresClient(DsnRoutedTenantClientBase[PostgresClient], PostgresCl
         *,
         row_factory: Literal["dict"] = "dict",
         commit: bool = False,
+        prepare: bool | None = None,
     ) -> list[JsonDict]: ...
 
     @overload
@@ -329,6 +330,7 @@ class RoutedPostgresClient(DsnRoutedTenantClientBase[PostgresClient], PostgresCl
         *,
         row_factory: Literal["tuple"] = "tuple",
         commit: bool = False,
+        prepare: bool | None = None,
     ) -> list[tuple[Any, ...]]: ...
 
     async def fetch_all(
@@ -338,6 +340,7 @@ class RoutedPostgresClient(DsnRoutedTenantClientBase[PostgresClient], PostgresCl
         *,
         row_factory: RowFactory = "dict",
         commit: bool = False,
+        prepare: bool | None = None,
     ) -> list[JsonDict] | list[tuple[Any, ...]]:
         async with self.client_scope() as inner:
             return await inner.fetch_all(
@@ -345,6 +348,7 @@ class RoutedPostgresClient(DsnRoutedTenantClientBase[PostgresClient], PostgresCl
                 params,
                 row_factory=row_factory,
                 commit=commit,
+                prepare=prepare,
             )
 
     # ....................... #

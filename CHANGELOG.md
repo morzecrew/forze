@@ -51,6 +51,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **`PostgresClientPort` requires `fetch_all_scoped`, and `ClickHouseClientPort` requires `query_timeout_limit`** (**Breaking**). A client implemented outside forze must add them.
 
+- **A set-based `upsert_many` on Postgres sends one statement fewer per chunk holding stored rows, so reloads run faster** (**behaviour change**). It locks them before inserting: a row deleted meanwhile is inserted, not `not_found`, and a rare race with two other loads can deadlock as `concurrency`.
+
 ### Removed
 
 - **`AuthnSpec.token_profile`, `password_profile`, `api_key_profile`, `resolver_profile` and `AccessTokenCredentials.profile` are gone** (**Breaking**). Nothing read them: verifiers and the resolver are registered per route under the spec's name.
@@ -60,6 +62,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Redis invalidation push now clears stale local entries when its connection goes half-open or the client closes**, for the document L1 and any other subscriber.
 
 - **`OidcTokenVerifier` refuses a malformed signed token as an authentication failure** (`invalid_oidc_token`). An out-of-range `exp` or `iat` (such as `1e20`), an empty `sub`, or a missing claim a custom `OidcClaimMapper` requires raised a raw `ValueError` instead; a boolean `iat` is refused too.
+
+- **A set-based `upsert_many` on Postgres no longer slows with every chunk when it loads a table vacuumed while empty.** Its id look-up is planned with its ids each time. `PostgresClientPort.fetch_all` takes `prepare` (**Breaking**: a client implemented outside forze must accept it).
 
 ### Security
 

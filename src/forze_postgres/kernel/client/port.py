@@ -159,6 +159,7 @@ class PostgresClientPort(Protocol):
         *,
         row_factory: Literal["dict"] = "dict",
         commit: bool = False,
+        prepare: bool | None = None,
     ) -> Awaitable[list[JsonDict]]: ...
 
     @overload
@@ -169,6 +170,7 @@ class PostgresClientPort(Protocol):
         *,
         row_factory: Literal["tuple"],
         commit: bool = False,
+        prepare: bool | None = None,
     ) -> Awaitable[list[tuple[Any, ...]]]: ...
 
     def fetch_all(
@@ -178,6 +180,7 @@ class PostgresClientPort(Protocol):
         *,
         row_factory: RowFactory = "dict",
         commit: bool = False,
+        prepare: bool | None = None,
     ) -> Awaitable[list[JsonDict] | list[tuple[Any, ...]]]: ...  # pragma: no cover
 
     def fetch_all_scoped(

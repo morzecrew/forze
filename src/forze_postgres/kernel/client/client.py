@@ -1353,6 +1353,7 @@ class PostgresClient(PostgresClientPort):
         *,
         row_factory: Literal["dict"] = "dict",
         commit: bool = False,
+        prepare: bool | None = None,
     ) -> list[JsonDict]: ...
 
     @overload
@@ -1363,6 +1364,7 @@ class PostgresClient(PostgresClientPort):
         *,
         row_factory: Literal["tuple"] = "tuple",
         commit: bool = False,
+        prepare: bool | None = None,
     ) -> list[tuple[Any, ...]]: ...
 
     @exc_interceptor.coroutine("postgres.fetch_all")  # type: ignore[untyped-decorator]
@@ -1373,6 +1375,7 @@ class PostgresClient(PostgresClientPort):
         *,
         row_factory: RowFactory = "dict",
         commit: bool = False,
+        prepare: bool | None = None,
     ) -> list[JsonDict] | list[tuple[Any, ...]]:
         """Executes a query and returns all rows.
 
@@ -1384,6 +1387,9 @@ class PostgresClient(PostgresClientPort):
         :param params: Query parameters.
         :param row_factory: ``\"dict\"`` or ``\"tuple\"`` row format.
         :param commit: Accepted for API symmetry; no effect.
+        :param prepare: As psycopg's ``execute``: ``None`` prepares a statement once the
+            connection has run it often enough, ``False`` never does, so Postgres plans it
+            with its parameters each time instead of reusing a plan made for any.
         :returns: List of rows as dicts or tuples.
         """
 
@@ -1391,7 +1397,7 @@ class PostgresClient(PostgresClientPort):
 
         async with self._statement_conn() as conn:
             async with conn.cursor() as cur:
-                await cur.execute(query, params)
+                await cur.execute(query, params, prepare=prepare)
 
                 rows = await cur.fetchall()
                 res: list[JsonDict] | list[tuple[Any, ...]]

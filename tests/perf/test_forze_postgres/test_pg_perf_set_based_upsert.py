@@ -4,9 +4,12 @@ same rows, unchanged.
 Four call shapes: a mirror per source document of a few dozen rows, the shape of a bulk import
 that upserts what each document produces, a call of one default chunk, a call of a few thousand
 rows, and one call of every row. A mixed load adds a fresh load into a table that already holds
-an eighth of the rows, unchanged, as a mirror's later revisions of a document do: there every
-set-based chunk runs all four of its statements. Each round starts from the state it measures (an empty table for a fresh load,
-the loaded rows for a reload) and times only the upserts; the payloads are built before it.
+an eighth of the rows, unchanged, as a mirror's later revisions of a document do: there each
+set-based chunk looks up and locks its stored rows, inserts the rest and patches. A changed reload rewrites one row in twenty, so
+the patch writes. A large fresh load upserts 35,000 rows in one call, as a bulk import that
+issue #792 measures does. Each round starts from the state it measures (an
+empty table for a fresh load, the loaded rows for a reload) and times only the upserts; the
+payloads are built before it.
 
 Each shape runs set-based (``set_based``) and as the statement issue #792 measures it against
 (``hand_written``): one ``INSERT … ON CONFLICT DO UPDATE`` per call, its rows dumped to one JSON
@@ -59,6 +62,11 @@ _SHAPES = [
 ]
 _STORED_SHARE = 8
 """One row in this many is already stored when the mixed load runs."""
+_CHANGED_SHARE = 20
+"""One row in this many has a new value when the changed reload runs."""
+_LARGE_ROWS = 35_000
+"""Rows in the one call of the large fresh load: a bulk import's call (issue #792's ~35k)."""
+_LARGE_ROUNDS = 5
 _WAYS = ["set_based", "hand_written"]
 
 
@@ -99,7 +107,7 @@ _SPEC = DocumentSpec(
 )
 
 
-def _items(ids: Sequence[Any]) -> list[UpsertItem[_Create, Any]]:
+def _items(ids: Sequence[Any], *, changed_every: int = 0) -> list[UpsertItem[_Create, Any]]:
     at = datetime(2026, 1, 1, tzinfo=UTC)
 
     return [
@@ -108,7 +116,7 @@ def _items(ids: Sequence[Any]) -> list[UpsertItem[_Create, Any]]:
             _Create(
                 source="src",
                 seq=i,
-                name=f"name {i}",
+                name=f"name {i}" + (" new" if changed_every and i % changed_every == 0 else ""),
                 amount=i * 1.5,
                 active=bool(i % 2),
                 happened_at=at,
@@ -210,8 +218,9 @@ async def _pedantic(
     benchmark: Any,
     load: Callable[[Sequence[Any]], Awaitable[None]],
     setup: Callable[[], Awaitable[Sequence[Any]]],
+    rounds: int = _ROUNDS,
 ) -> None:
-    """Time *load* over :data:`_ROUNDS` rounds, each on what *setup* returns (untimed)."""
+    """Time *load* over *rounds* rounds, each on what *setup* returns (untimed)."""
 
     token = current_token()
 
@@ -222,7 +231,7 @@ async def _pedantic(
         return (from_thread.run(setup, token=token),), {}
 
     await to_thread.run_sync(
-        lambda: benchmark.pedantic(target, setup=prepare, rounds=_ROUNDS, warmup_rounds=1)
+        lambda: benchmark.pedantic(target, setup=prepare, rounds=rounds, warmup_rounds=1)
     )
 
 
@@ -282,3 +291,49 @@ async def test_pg_set_based_upsert_mixed_load_benchmark(
     await _pedantic(benchmark, load, setup)
     assert (await pg_client.fetch_one(f"SELECT count(*) AS n FROM {table}", [])) == {"n": _ROWS}
     assert (await pg_client.fetch_one(f"SELECT max(rev) AS rev FROM {table}", [])) == {"rev": 1}
+
+
+@pytest.mark.perf
+@pytest.mark.asyncio
+@pytest.mark.parametrize("way", _WAYS)
+@pytest.mark.parametrize(("per_call", "batch_size"), _SHAPES)
+async def test_pg_set_based_upsert_changed_reload_benchmark(
+    benchmark: Any, pg_client: PostgresClient, per_call: int, batch_size: int, way: str
+) -> None:
+    command, table = await _command(pg_client, batch_size)
+    load = _loader(command, pg_client, table, per_call, way)
+    ids = [uuid4() for _ in range(_ROWS)]
+    changed = _items(ids, changed_every=_CHANGED_SHARE)
+
+    async def setup() -> Sequence[Any]:
+        await pg_client.execute(f"TRUNCATE {table}")
+        await load(_items(ids))
+        return changed
+
+    await _pedantic(benchmark, load, setup)
+    # Only the changed rows are written, once each.
+    written = await pg_client.fetch_one(f"SELECT count(*) AS n FROM {table} WHERE rev = 2", [])
+    assert written == {"n": _ROWS // _CHANGED_SHARE}
+
+
+@pytest.mark.perf
+@pytest.mark.asyncio
+@pytest.mark.parametrize("way", _WAYS)
+async def test_pg_set_based_upsert_large_fresh_load_benchmark(
+    benchmark: Any, pg_client: PostgresClient, way: str
+) -> None:
+    """One call of :data:`_LARGE_ROWS` rows into a table emptied before each round: the call
+    shape of a bulk import, which a set-based upsert writes in many chunks and the
+    hand-written statement in one."""
+
+    command, table = await _command(pg_client, 200)
+
+    async def setup() -> Sequence[Any]:
+        await pg_client.execute(f"TRUNCATE {table}")
+        return _items([uuid4() for _ in range(_LARGE_ROWS)])
+
+    load = _loader(command, pg_client, table, _LARGE_ROWS, way)
+    await _pedantic(benchmark, load, setup, rounds=_LARGE_ROUNDS)
+    assert (await pg_client.fetch_one(f"SELECT count(*) AS n FROM {table}", [])) == {
+        "n": _LARGE_ROWS
+    }
