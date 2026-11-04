@@ -843,6 +843,23 @@ answer took the recorded lean.
 | 15 | `ASSUMED` | No typed flags, JSONL batch, remote mode, or surface field in this RFC. |
 | 16 | `LOCKED` | P2 does not wait for a surface field in `InvocationMetadata`, the log fields or `AuditEntry`. That field is its own RFC (§10 Q2). |
 | 17 | `LOCKED` | A static identity raises no production-posture finding. The required acknowledgement is the whole gate (§10 Q3). |
+| 18 | `ASSUMED` | HTTP keeps its own tenant ladder. The ingress refusal of an unverifiable requested tenant applies where the caller names the tenant explicitly, and an advisory `X-Tenant-Id` stays dropped, not refused. (D-079) |
+| 19 | `ASSUMED` | Every governed invocation runs with its own `InvocationMetadata`, a duplex command frame included. A connection is not an invocation. (D-083) |
+| 20 | `ASSUMED` | Socket.IO moves onto `invoke_at_ingress` only with a registry-backed adapter, on a named consumer, as the rest of P3 is. Until then it mints each event's metadata as the WS route does. (D-086) |
+| 21 | `ASSUMED` | A duplex command binds the identity and the tenant its connection resolved, on every transport. (D-087) |
+| 22 | `ASSUMED` | Amends decision 15: no remote mode or surface field in this RFC. Typed flags for flat scalar inputs, the JSONL batch and shell completion shipped in P3 on a named demand. (D-088) |
+| 23 | `ASSUMED` | An input takes typed flags only when every field is a scalar or an optional one, it declares no secret, and no flag shares a spelling with a call option or another flag. Otherwise it takes none. The flags build the raw object for the shared validation, read by field name. (D-089) |
+| 24 | `ASSUMED` | An option `call` does not have is read as a typed flag, and its refusal is an error object with exit 2. (D-090) |
+| 25 | `ASSUMED` | With `--batch`, stdout carries one JSON line per call that ran, numbered by its input line, its value under `result` or `error`. A refusal of the whole batch is one error object without a line number. (D-091) |
+| 26 | `ASSUMED` | A batch validates every line before building the runtime and stops at the first failure with that line's exit code. It refuses `--idempotency-key` and `--pretty`. (D-092) |
+| 27 | `ASSUMED` | A signal stops a batch after the line in flight, which gets one call's grace and cancellation. With lines left unrun, the batch exits 128 plus the signal number. (D-093) |
+| 28 | `ASSUMED` | Completion loads the declaration as `list` does, builds no runtime, and offers nothing, silently, when the declaration cannot load. (D-094) |
+| 29 | `LOCKED` | A cancel after the commit point is converted to `commit_ambiguous` only by a boundary that owns its process and result channel (the CLI) or its journal (the saga executors). Every other boundary records it at the top-level operation boundary, with a warning log and a span event, and re-raises the cancel. (D-095) |
+| 30 | `ASSUMED` | A read-only root marks no commit point only when its manager implements `ReadOnlyAware` and answers exactly `True` for the transaction it actually opened, no nested scope on another route finished its body, no after-commit callback is queued, and, on Postgres, no `detached()` statement, autocommit statement, `bound_connection()` or other write-capable root ran beside it. Every other root marks one. A manager may answer `True` only if its own store refuses every write to that transaction on every path. (D-097) |
+
+Rows 18 to 30 were added by execution and accepted by the maintainer on 2026-11-04; each cites
+the [`EXECUTION-LOG.md`](EXECUTION-LOG.md) entry it came from, and the sections above are left
+as designed. Row 22 amends decision 15, which stays as written.
 
 ## 12. Phasing
 
