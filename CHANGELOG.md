@@ -65,7 +65,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **A set-based `upsert_many` on Postgres no longer slows with every chunk when it loads a table vacuumed while empty.** Its id look-up is planned with its ids each time. `PostgresClientPort.fetch_all` takes `prepare` (**Breaking**: a client implemented outside forze must accept it).
 
-- **Document commands, `get` and `get_many` read a `str` id as the `UUID` it names and refuse a malformed one as `precondition`.** A non-canonical id no longer leaves a stale cached document, two spellings of one id in a batch count as one, and a set-based `upsert_many` no longer raises `AttributeError` (since 0.20).
+- **Document commands, `get` and `get_many` read a `str` id as the `UUID` it names; a malformed one is `precondition`** (**behaviour change**). A non-canonical id no longer leaves a stale cached document, two spellings in a batch count as one, and set-based `upsert_many` no longer raises `AttributeError` (since 0.20).
 
 ### Security
 
