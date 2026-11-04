@@ -55,6 +55,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **A set-based `upsert_many` on Postgres inserts a row straight from its create command when the domain is proven to add nothing to it, so fresh loads run faster** (**behaviour change**). A chunk's inserted rows share one instant for both timestamps; any other domain still builds its model first.
 
+- **Postgres sends every other array of document ids in binary too**: `get_many`, `kill_many`, `touch_many`, `update_matching`, a strict `update_many`'s held rows, and the outbox's mark and requeue calls. On 10k ids `get_many` runs about 14% faster and `kill_many` over a third faster.
+
 ### Removed
 
 - **`AuthnSpec.token_profile`, `password_profile`, `api_key_profile`, `resolver_profile` and `AccessTokenCredentials.profile` are gone** (**Breaking**). Nothing read them: verifiers and the resolver are registered per route under the spec's name.

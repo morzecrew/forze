@@ -9,12 +9,13 @@ require_psycopg()
 from collections.abc import Callable, Mapping, Sequence
 from decimal import Decimal
 from functools import partial
-from typing import Any, final
+from typing import Any, Final, final
 from uuid import UUID
 
 import attrs
 import orjson
 from psycopg import sql
+from psycopg.adapt import PyFormat
 from psycopg.types.json import Json, Jsonb
 from pydantic import BaseModel
 
@@ -79,6 +80,15 @@ def _as_it_is(v: Any) -> Any:
     """A value of a column the write does not coerce: one the relation does not type."""
 
     return v
+
+
+ID_ARRAY: Final[sql.Composable] = sql.SQL("{}::uuid[]").format(
+    sql.Placeholder(format=PyFormat.BINARY)
+)
+"""The parameter an array of document ids binds to: in binary, which psycopg encodes and
+Postgres reads several times faster than text, cast to ``uuid[]``, which also takes ``str`` ids
+and an empty list. A document id is a ``uuid``; on a column of any other type a by-id statement
+fails, as every one did before (``text = uuid``)."""
 
 
 # ....................... #
@@ -624,7 +634,7 @@ class PostgresGateway[M: BaseModel](
 
         where = sql.SQL("{pk} = ANY({arr})").format(
             pk=self.ident_pk(),
-            arr=sql.Placeholder(),
+            arr=ID_ARRAY,
         )
         params: list[Any] = [list(pks)]
         where, params = self._add_tenant_where(where, params)  # type: ignore[assignment]

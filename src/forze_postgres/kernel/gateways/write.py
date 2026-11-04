@@ -53,7 +53,7 @@ from forze_postgres.kernel.client.errors import still_referenced
 from forze_postgres.kernel.sql.conflict_target import resolve_write_conflict_target
 
 from ._occ import postgres_occ_retry
-from .base import PostgresGateway
+from .base import ID_ARRAY, PostgresGateway
 from .history import PostgresHistoryGateway
 from .read import PostgresReadGateway
 from .types import PostgresBookkeepingStrategy
@@ -809,7 +809,7 @@ class PostgresWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
             return
 
         where, params = self._add_tenant_where(
-            sql.SQL("{pk} = ANY({ids})").format(pk=self.ident_pk(), ids=sql.Placeholder()),
+            sql.SQL("{pk} = ANY({ids})").format(pk=self.ident_pk(), ids=ID_ARRAY),
             [list(expected)],
         )
         stmt = sql.SQL("SELECT {pk}, {rev} FROM {table} WHERE {where} FOR SHARE").format(
@@ -1502,9 +1502,7 @@ class PostgresWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
         """
 
         where, params = self._add_tenant_where(
-            sql.SQL("{pk} = ANY({arr}::uuid[])").format(
-                pk=self.ident_pk(), arr=self.__ids_placeholder(await self.column_types())
-            ),
+            sql.SQL("{pk} = ANY({arr})").format(pk=self.ident_pk(), arr=ID_ARRAY),
             [list(pks)],
         )
         stmt = sql.SQL("SELECT {pk} FROM {table} WHERE {where}").format(
@@ -1519,21 +1517,6 @@ class PostgresWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
         )
 
         return {_as_uuid(pk) for (pk,) in rows}
-
-    # ....................... #
-
-    @staticmethod
-    def __ids_placeholder(column_types: PostgresColumnTypes) -> sql.Placeholder:
-        """The parameter a set-based statement's id array binds to: in binary when the id column
-        is a ``uuid``, which psycopg encodes and Postgres reads several times faster than text;
-        as before for any other column."""
-
-        pg_t = column_types.get(ID_FIELD)
-
-        if pg_t is not None and not pg_t.is_array and _scalar_base(pg_t) == "uuid":
-            return sql.Placeholder(format=PyFormat.BINARY)
-
-        return sql.Placeholder()
 
     # ....................... #
 
@@ -1577,14 +1560,14 @@ class PostgresWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
                 sql.SQL(
                     "WITH ins AS (INSERT INTO {table} ({cols}) {source} "
                     "ON CONFLICT ({conflict}) DO NOTHING RETURNING {pk}) "
-                    "SELECT unnest({ids}::uuid[]) EXCEPT SELECT {pk}::uuid FROM ins"
+                    "SELECT unnest({ids}) EXCEPT SELECT {pk}::uuid FROM ins"
                 ).format(
                     table=table,
                     cols=sql.SQL(", ").join(sql.Identifier(k) for k in keys),
                     source=source,
                     conflict=conflict,
                     pk=self.ident_pk(),
-                    ids=self.__ids_placeholder(column_types),
+                    ids=ID_ARRAY,
                 ),
                 [*params, part_pks],
                 row_factory="tuple",
@@ -2241,7 +2224,7 @@ class PostgresWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
                 chunk = ids[start : start + batch_size]
                 stmt = sql.SQL(
                     "UPDATE {table} SET {sets} WHERE {pk} = ANY({ids}) RETURNING {ret}"
-                ).format(table=table, sets=sets, pk=pk, ids=sql.Placeholder(), ret=ret)
+                ).format(table=table, sets=sets, pk=pk, ids=ID_ARRAY, ret=ret)
 
                 rows = await self.client.fetch_all(
                     stmt,
@@ -2344,7 +2327,7 @@ class PostgresWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
             await self._serialize(touched)
             where_sql = sql.SQL("{pk} = ANY({ids})").format(
                 pk=self.ident_pk(),
-                ids=sql.Placeholder(),
+                ids=ID_ARRAY,
             )
             trailing_params: list[Any] = []
             where_sql, trailing_params = self._add_tenant_where(  # type: ignore[assignment]
