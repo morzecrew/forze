@@ -503,7 +503,7 @@ await run(plan, closed_ramp(steps=[1, 2, 4, 8, 16, 32, 64], step_s=30, warm_s=5)
   - workers or rate, calls and goodput rps;
   - p50/p90/p95/p99/p99.9/max from a `DDSketch` per step and per scenario;
   - the outcome classes and the client self-report.
-- **Stop rule:** errors (`server_error` + `transport`) above `stop_error_rate`, or a
+- **Stop rule:** errors (`server_error` + `deadline` + `transport`) above `stop_error_rate`, or a
   `misconfigured` step.
 - **Knee (row 16):** goodput stops rising.
   - The knee is the first step *k* whose goodput is less than 5 % above step *k−1*'s, and
@@ -674,7 +674,7 @@ under `-m perf`, which `just test` excludes.
   - Linear then flat: the knee is at the bend.
   - Noisy plateau: one dip is not a knee without confirmation.
   - Saturated or misconfigured steps are never named.
-  - The stop rule fires at 5 % errors.
+  - The stop rule fires at 5 % errors, and at 5 % `deadline` (504) responses alone.
 - **Principals (unit):**
   - A fake authn that revokes the family on reuse. Concurrent workers of one principal trigger
     exactly one refresh, and a sabotaged lock reproduces the 401 storm.

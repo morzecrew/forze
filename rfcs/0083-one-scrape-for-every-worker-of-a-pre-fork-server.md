@@ -281,6 +281,11 @@ raises `ProcessLookupError`). Leftover temp files are deleted by the same rule. 
 that stalled is never swept; it is only not served. All workers share one pid namespace (§3).
 
 **Shutdown** (row 6) writes one final snapshot within a bounded time and leaves it to age out.
+The writer owns one render future, shared by its ticks and the final render, as the route
+serializes its renders (§3). A tick cancelled at shutdown leaves its render thread running, so
+the final render waits on that future first. If waiting would pass the shutdown budget, the
+final render is skipped and the last tick's snapshot stands: a render never runs beside an
+unfinished one.
 
 ### 5.3 W2: the union route
 
@@ -415,6 +420,8 @@ Unit (`tests/unit/test_forze_fastapi/`, `tmp_path`):
 - The age gauge has one sample per fresh snapshot, close to `now - written_at`, and 0 after a
   backwards clock step.
 - No fresh snapshot answers `503`.
+- Shutdown during a slow tick waits for its render before the final one, and skips the final
+  render when the wait would pass the budget; two renders never run at once.
 - The sweep deletes old files of dead pids and keeps old files of live ones.
 - `worker_metrics_reader()` raises `configuration` when the exporter lacks
   `resource_attribute_filter`.
