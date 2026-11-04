@@ -1430,7 +1430,8 @@ class PostgresWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
         # deadlock, and so can a chunk that locks a raced id below one it holds (below). Postgres
         # aborts one; outside a caller's transaction the retry runs it again, inside one it is
         # ``concurrency`` for the scope's owner. ``int`` orders as ``UUID`` and Postgres's
-        # ``uuid`` do, without a Python comparison per pair.
+        # ``uuid`` do, without a Python comparison per pair; the command hands every id over as
+        # a ``UUID``.
         items = sorted(zip(ids, creates, updates, strict=True), key=lambda item: item[0].int)
 
         async with self._write_tx():
@@ -1497,7 +1498,9 @@ class PostgresWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
         """
 
         where, params = self._add_tenant_where(
-            sql.SQL("{pk} = ANY({arr})").format(pk=self.ident_pk(), arr=sql.Placeholder()),
+            sql.SQL("{pk} = ANY({arr}::uuid[])").format(
+                pk=self.ident_pk(), arr=self.__ids_placeholder(await self.column_types())
+            ),
             [list(pks)],
         )
         stmt = sql.SQL("SELECT {pk} FROM {table} WHERE {where}").format(
@@ -1512,6 +1515,21 @@ class PostgresWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
         )
 
         return {_as_uuid(pk) for (pk,) in rows}
+
+    # ....................... #
+
+    @staticmethod
+    def __ids_placeholder(column_types: PostgresColumnTypes) -> sql.Placeholder:
+        """The parameter a set-based statement's id array binds to: in binary when the id column
+        is a ``uuid``, which psycopg encodes and Postgres reads several times faster than text;
+        as before for any other column."""
+
+        pg_t = column_types.get(ID_FIELD)
+
+        if pg_t is not None and not pg_t.is_array and _scalar_base(pg_t) == "uuid":
+            return sql.Placeholder(format=PyFormat.BINARY)
+
+        return sql.Placeholder()
 
     # ....................... #
 
@@ -1559,7 +1577,7 @@ class PostgresWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
                     source=source,
                     conflict=conflict,
                     pk=self.ident_pk(),
-                    ids=sql.Placeholder(),
+                    ids=self.__ids_placeholder(column_types),
                 ),
                 [*params, part_pks],
                 row_factory="tuple",

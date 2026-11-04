@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable, Mapping, Sequence
+from collections.abc import Awaitable, Callable, Iterable, Mapping, Sequence
 from typing import (
     TYPE_CHECKING,
     Any,
@@ -29,7 +29,7 @@ from forze.application.contracts.guarantees import (
     SerializedBy,
     UniqueTogether,
 )
-from forze.application.contracts.querying import QueryFilterExpression
+from forze.application.contracts.querying import QueryFilterExpression, QueryValueCaster
 from forze.application.contracts.querying.internal.matching import instant_key
 from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict, Period, advisory_lock_key, utcnow
@@ -63,6 +63,20 @@ if TYPE_CHECKING:
     from forze_mock.state import MockState
 
 # ----------------------- #
+
+
+def as_uuid_pk(pk: Any) -> UUID:
+    """*pk* as the real adapter reads it: a ``str`` id as the ``UUID`` it names, a malformed one
+    ``precondition``, so two spellings of one id are one id."""
+
+    return pk if type(pk) is UUID else QueryValueCaster.as_uuid(pk)
+
+
+def as_uuid_pks(ids: Iterable[Any]) -> list[UUID]:
+    return [as_uuid_pk(pk) for pk in ids]
+
+
+# ....................... #
 
 
 class MockDocumentCommandMixin(Generic[R, D, C, U]):
@@ -566,7 +580,12 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
         id: UUID | None = None,
         return_new: bool = True,
     ) -> R | None:
-        return await self._insert(payload, id=id, return_new=return_new, conflict_on_duplicate=True)
+        return await self._insert(
+            payload,
+            id=None if id is None else as_uuid_pk(id),
+            return_new=return_new,
+            conflict_on_duplicate=True,
+        )
 
     async def _insert(
         self,
@@ -679,6 +698,7 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
     ) -> None: ...
 
     async def ensure(self, id: UUID, payload: C, *, return_new: bool = True) -> R | None:
+        id = as_uuid_pk(id)
         self._ensure_writable()
         domain = self._build_domain(payload, id)
         row = self._apply_tenant(self._domain_codec().encode_persistence_mapping(domain))
@@ -727,13 +747,17 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
                 return None
             return []
 
-        if len({it.id for it in items}) != len(items):
+        ids = as_uuid_pks(it.id for it in items)
+
+        if len(set(ids)) != len(items):
             raise exc.precondition("ensure_many requires distinct id values in the batch")
 
+        pairs = list(zip(ids, items, strict=True))
+
         if return_new:
-            return [await self.ensure(it.id, it.payload, return_new=True) for it in items]
-        for it in items:
-            await self.ensure(it.id, it.payload, return_new=False)
+            return [await self.ensure(pk, it.payload, return_new=True) for pk, it in pairs]
+        for pk, it in pairs:
+            await self.ensure(pk, it.payload, return_new=False)
         return None
 
     # ....................... #
@@ -766,6 +790,7 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
         *,
         return_new: bool = True,
     ) -> R | None:
+        id = as_uuid_pk(id)
         self._ensure_writable()
         patch = self._encode_patch(update)
 
@@ -849,14 +874,19 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
                 return None
             return []
 
-        if len({it.id for it in items}) != len(items):
+        ids = as_uuid_pks(it.id for it in items)
+
+        if len(set(ids)) != len(items):
             raise exc.precondition("upsert_many requires distinct id values in the batch")
 
         if return_new:
-            return [await self.upsert(it.id, it.create, it.update, return_new=True) for it in items]
+            return [
+                await self.upsert(pk, it.create, it.update, return_new=True)
+                for pk, it in zip(ids, items, strict=True)
+            ]
 
-        for it in items:
-            await self.upsert(it.id, it.create, it.update, return_new=False)
+        for pk, it in zip(ids, items, strict=True):
+            await self.upsert(pk, it.create, it.update, return_new=False)
 
         return None
 
@@ -922,6 +952,7 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
     ) -> R | JsonDict | tuple[R, JsonDict] | None:
         # The mock keeps no history, so every update is strict; `merge` has nothing to merge.
         self._require_revision_to_check(merge=merge, rev=rev)
+        pk = as_uuid_pk(pk)
         self._ensure_writable()
         patch = self._encode_patch(dto)
         await self._serialize_writes(lambda: self._sides(pk, patch), lambda: [pk])
@@ -1046,9 +1077,13 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
         if not updates:
             return [] if (return_new or return_diff) else None
 
-        pks = [u.id for u in updates]
+        pks = as_uuid_pks(u.id for u in updates)
         if len(set(pks)) != len(pks):
             raise exc.precondition("update_many requires distinct id values in the batch")
+
+        updates = [
+            KeyedUpdate(id=pk, rev=u.rev, dto=u.dto) for pk, u in zip(pks, updates, strict=True)
+        ]
 
         self._check_revisions_first([(u.id, u.rev) for u in updates])
 
@@ -1295,6 +1330,7 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
     ) -> None: ...
 
     async def touch(self, pk: UUID, *, rev: int | None = None, return_new: bool = True) -> R | None:
+        pk = as_uuid_pk(pk)
         self._ensure_writable()
         await self._serialize_stored(pk)
 
@@ -1348,8 +1384,10 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
         if not pks:
             return [] if return_new else None
 
+        pks = as_uuid_pks(pks)
+
         if len(set(pks)) != len(pks):
-            raise exc.internal("Primary keys must be unique")
+            raise exc.precondition("Primary keys must be unique")
 
         pairs = list(zip(pks, revs if revs is not None else [None] * len(pks), strict=True))
         self._check_revisions_first(pairs)
@@ -1384,9 +1422,10 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
 
     async def kill_many(self, pks: Sequence[UUID]) -> None:
         self.spec.require_hard_delete()
+        pks = as_uuid_pks(pks)
 
         if len(set(pks)) != len(pks):
-            raise exc.internal("Primary keys must be unique")
+            raise exc.precondition("Primary keys must be unique")
 
         if not pks:
             return

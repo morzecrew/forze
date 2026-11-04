@@ -21,7 +21,7 @@ from forze.base.primitives import JsonDict
 from forze.domain.constants import ID_FIELD, REV_FIELD
 
 from ..._logger import logger
-from ._base import DocumentAdapterMixinBase, DocumentQueryDelegateMixin
+from ._base import DocumentAdapterMixinBase, DocumentQueryDelegateMixin, as_uuid_pk, as_uuid_pks
 from ._limits import check_page_limit
 from ._types import C, D, R, U
 
@@ -92,7 +92,7 @@ class DocumentCommandMixin(
 
         w = self._require_write()
 
-        domain = await w.create(payload, id=id)
+        domain = await w.create(payload, id=None if id is None else as_uuid_pk(id))
         await self.document_cache.invalidate_keys_now(domain.id)
         return await self._finalize_single_write(domain, return_new=return_new)
 
@@ -161,7 +161,7 @@ class DocumentCommandMixin(
     async def ensure(self, id: UUID, payload: C, *, return_new: bool = True) -> R | None:
         w = self._require_write()
 
-        domain = await w.ensure(id, payload)
+        domain = await w.ensure(as_uuid_pk(id), payload)
         await self.document_cache.invalidate_keys_now(domain.id)
         return await self._finalize_single_write(domain, return_new=return_new)
 
@@ -197,7 +197,7 @@ class DocumentCommandMixin(
 
             return []
 
-        ids = [it.id for it in items]
+        ids = as_uuid_pks(it.id for it in items)
         _require_distinct_ids(ids)
         payloads = [it.payload for it in items]
 
@@ -238,7 +238,7 @@ class DocumentCommandMixin(
     ) -> R | None:
         w = self._require_write()
 
-        domain = await w.upsert(id, create, update)
+        domain = await w.upsert(as_uuid_pk(id), create, update)
         await self.document_cache.invalidate_keys_now(domain.id)
         return await self._finalize_single_write(domain, return_new=return_new)
 
@@ -279,7 +279,7 @@ class DocumentCommandMixin(
                 return None
             return []
 
-        ids = [it.id for it in items]
+        ids = as_uuid_pks(it.id for it in items)
         _require_distinct_ids(ids)
         creates = [it.create for it in items]
         updates = [it.update for it in items]
@@ -374,6 +374,7 @@ class DocumentCommandMixin(
         """
 
         w = self._require_write()
+        pk = as_uuid_pk(pk)
 
         # The flag goes only where it is asked for, so a gateway that predates it still serves
         # every other call, and refuses a strict one rather than merging it.
@@ -474,7 +475,7 @@ class DocumentCommandMixin(
 
             return []
 
-        pks = [u.id for u in updates]
+        pks = as_uuid_pks(u.id for u in updates)
 
         if len(set(pks)) != len(pks):
             raise exc.precondition("update_many requires distinct id values in the batch")
@@ -695,6 +696,7 @@ class DocumentCommandMixin(
         """
 
         w = self._require_write()
+        pk = as_uuid_pk(pk)
 
         domain, _ = await asyncio.gather(
             w.touch(pk) if rev is None else w.touch(pk, rev=rev),
@@ -747,6 +749,7 @@ class DocumentCommandMixin(
 
             return []
 
+        pks = as_uuid_pks(pks)
         domains, _ = await asyncio.gather(
             w.touch_many(pks, batch_size=self.eff_batch_size)
             if revs is None
@@ -797,6 +800,7 @@ class DocumentCommandMixin(
 
         self.spec.require_hard_delete()
         w = self._require_write()
+        pk = as_uuid_pk(pk)
 
         await asyncio.gather(
             w.kill(pk),
@@ -819,6 +823,7 @@ class DocumentCommandMixin(
         if not pks:
             return
 
+        pks = as_uuid_pks(pks)
         await asyncio.gather(
             w.kill_many(pks, batch_size=self.eff_batch_size),
             self.document_cache.invalidate_keys_now(*pks),

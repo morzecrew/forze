@@ -17,6 +17,7 @@ from forze.application.contracts.querying import (
 from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict
 
+from ._base import as_uuid_pk, as_uuid_pks
 from ._pagination import (
     CursorQuery,
     DocumentPaginationMixin,
@@ -59,6 +60,10 @@ class DocumentQueryMixin(DocumentPaginationMixin[R], Generic[R]):
 
         if owned_by is not None:
             owned_by.check(self.spec)
+
+        # One spelling for the cache key and the read: a fill under another would outlive every
+        # write, which drops the canonical key.
+        pk = as_uuid_pk(pk)
 
         async def fetch(lock: RowLockMode) -> R:
             if owned_by is None:
@@ -103,6 +108,8 @@ class DocumentQueryMixin(DocumentPaginationMixin[R], Generic[R]):
         names no id, and the owner is checked on the rows read (no lock is taken, so checking
         after the read reveals nothing a predicate would hide).
         """
+
+        pks = as_uuid_pks(pks)
 
         if owned_by is None:
             return await self._get_many(pks, skip_cache=skip_cache)

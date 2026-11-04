@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import functools
 import inspect
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import Awaitable, Callable, Iterable, Sequence
 from typing import TYPE_CHECKING, Any, Generic
 from uuid import UUID
 
@@ -13,6 +13,7 @@ from forze.application.contracts.document.gateways import (
     DocumentReadGatewayPort,
     DocumentWriteGatewayPort,
 )
+from forze.application.contracts.querying import QueryValueCaster
 from forze.base.exceptions import CoreException, ExceptionKind
 
 from ._types import C, D, R, U
@@ -30,6 +31,21 @@ if TYPE_CHECKING:
 
 
 _TAGS_NOT_FOUND = "__forze_tags_not_found__"
+
+
+def as_uuid_pk(pk: Any) -> UUID:
+    """*pk* as a ``UUID``, so a document command or read and its cache key see one spelling of
+    it: a ``str`` id, which the type does not allow but a caller can pass, is read as the domain
+    path reads one, and a malformed one is ``precondition``."""
+
+    return pk if type(pk) is UUID else QueryValueCaster.as_uuid(pk)
+
+
+def as_uuid_pks(pks: Iterable[Any]) -> list[UUID]:
+    """*pks* as ``UUID``s (:func:`as_uuid_pk`), so a batch's distinctness check sees one
+    spelling of each too."""
+
+    return [as_uuid_pk(pk) for pk in pks]
 
 
 def _tagging_not_found[**P, T](
