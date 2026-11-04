@@ -143,3 +143,13 @@ Recorded, not built, with an honest price:
 | 6b | Snowflake / Databricks-SQL adapters recorded with a trigger (§6.2), unbuilt — the read half is conventional and valuable, the Databricks transform half is deliberately declined (it would compete with Spark/DLT rather than seam into it) | recorded |
 | 7 | Coexistence clause: external transform tools owning the warehouse stay first-class; every route here is opt-in | locked |
 | 8 | Engine capability claims in §2 are drafting-time and **must be re-verified at pickup** — a stale row changes an adapter | recorded |
+| 9 | W4, including §6.1, ships ahead of W1 as its own phase, for every engine with a registered read or procedure route. W1–W3 wait for a ClickHouse or BigQuery consumer (D-190) | assumed |
+| 10 | On ClickHouse and BigQuery a query's own timeout replaces the client's for that query. A ClickHouse route may not exceed its client's timeout, refused at wiring; a BigQuery wait is a wall-time deadline. Ingest keeps the client's timeout (D-191) | assumed |
+| 11 | A registered analytics query's timeout is a `timeout` field on that query's config; a per-call option is clamped to it (D-192) | assumed |
+| 12 | A registered read query, or a procedure route that runs in a transaction, that sets no timeout is bounded at 60 s (D-193) | assumed |
+| 13 | On Postgres a route's timeout only lowers the `statement_timeout` already in force, whether the pool or an invocation deadline set it (D-194) | assumed |
+| 14 | A bounded Postgres read at the root costs one round trip (a pipeline), and in a transaction five exchanges. Pipelining the savepoint case too waits until a consumer measures what those exchanges cost it (D-195) | assumed |
+| 15 | An autocommit procedure route carries no route timeout; the role's or the database's `statement_timeout` bounds it, and a client-side bound waits for a later phase that can bound it without a second connection (D-196) | assumed |
+| 16 | A timeout that is not a whole number of the engine's unit, or is beyond what it can hold, fails at wiring with the plane's `*_timeout_invalid` code, or as a `validation` refusal per call. Nothing is rounded (D-197) | assumed |
+
+Rows 9 to 16 were added by execution and accepted by the maintainer on 2026-11-04; each cites the [`EXECUTION-LOG.md`](EXECUTION-LOG.md) entry it came from, and the sections above are left as designed. Row 9 departs from §8's phase order, which stands as written.

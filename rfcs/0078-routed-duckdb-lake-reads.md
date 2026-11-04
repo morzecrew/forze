@@ -287,3 +287,11 @@ Real legs run against a pinned Lakekeeper (OpenFGA or Cedar authorizer, OAuth2 I
 | 12 | Plans on this path are tenant-neutral (`DefaultNaming`, `USE lake`), and `PrefixNaming` is a writer-side choice. The tenant predicate lives in the container, and `RowPolicy` is never a tenancy boundary | proposed |
 | 13 | Same port, spec, caps and taxonomy as Postgres. The swap is wiring plus dialect | proposed |
 | 14 | `sts-token-validity-seconds` ≥ 10 × (timeout + `http_timeout`), and `MAX_TABLE_STALENESS` is never set. Mid-statement refresh is not relied on until duckdb-iceberg#1352 closes | proposed |
+| 15 | The evict-after-namespace-creation rule (D-026) holds for Iceberg catalogs only. A DuckLake instance reads a schema or table at the next statement after it is created (D-170) | assumed |
+| 16 | A route's namespace the tenant's warehouse does not make available, absent or withheld alike, is `dynamic_read_namespace_missing` (`precondition`) once the `USE` fails; a catalog refusal there is `dynamic_read_permission_denied`. This overrides §4.5's "existing codes" for that row, and §4.5 stays as written (D-171) | assumed |
+| 17 | A relation the statement names that does not resolve stays `dynamic_read_statement_invalid` on every engine. "Not built yet" is the application's to check before it reads (D-172) | assumed |
+| 18 | A dynamic read's error detail carries the engine's message without its name guesses, which can reach outside the tenant's lake (D-173) | assumed |
+| 19 | A missing namespace is `dynamic_read_namespace_missing` on DuckDB and `dynamic_read_statement_invalid` on Postgres. Decision 13's "same taxonomy" holds for every other refusal (D-174) | assumed |
+| 20 | The mock does not model namespaces; a handler scripts `dynamic_read_namespace_missing` by raising its factory, as for every engine-specific refusal (D-175) | assumed |
+
+Rows 15 to 20 were added by execution and accepted by the maintainer on 2026-11-04; each cites the [`EXECUTION-LOG.md`](EXECUTION-LOG.md) entry it came from, and the sections above are left as designed.
