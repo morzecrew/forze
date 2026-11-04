@@ -50,9 +50,9 @@
     served mock's control plane, the kit's test target);
   - [`tests/perf/gate_compare.py`](../tests/perf/gate_compare.py) and
     [`justfile`](../justfile) `perf-save` / `perf-check` (the baseline compare this mirrors);
-  - RFC 0083 (one scrape for every worker of a pre-fork server, issue
-    [#838](https://github.com/morzecrew/forze/issues/838)), drafted in parallel and not yet in
-    this directory: P4 depends on it;
+  - [RFC 0083](0083-one-scrape-for-every-worker-of-a-pre-fork-server.md) (one scrape for every
+    worker of a pre-fork server, issue [#838](https://github.com/morzecrew/forze/issues/838)):
+    P4 depends on it;
   - [RFC 0075](0075-realtime-connection-drain.md) (connection counting and drain responses the
     storm must treat as reconnects).
 - **Discussion:** [#839](https://github.com/morzecrew/forze/issues/839).
@@ -411,10 +411,13 @@ await run(plan, closed_ramp(steps=[1, 2, 4, 8, 16, 32, 64], step_s=30, warm_s=5)
   Poisson (`random.expovariate` on a seeded `Random`), whatever the answers do. **Latency is
   measured from the intended send time**, so a stall shows up in every request scheduled during
   it. Sends that start late because the client fell behind are counted (`behind_schedule`) and
-  feed the saturation flag (§5.10). In-flight requests are capped at the rate times the request
-  timeout, the most that can be outstanding while each request either answers or times out, so
-  a dead server cannot grow the client without bound. A send refused at the cap is counted as
-  `transport`, never dropped silently.
+  feed the saturation flag (§5.10). In-flight requests are capped, so a dead server cannot grow
+  the client without bound. The cap is the 1 − 10⁻⁶ quantile of a Poisson count whose mean is
+  the rate times the request timeout: 9 at a mean of 1, 151 at 100, 1,154 at 1,000. Rate ×
+  timeout itself is only the mean, because Poisson arrivals bunch: at 1 req/s, with 100 ms
+  answers and a 1 s timeout, a cap of 1 refuses 9 % of sends to a healthy server (simulated;
+  Erlang B gives 0.1 / 1.1). A send refused at the cap counts as a call and as `transport`, in
+  both the stop rule's numerator and its denominator, never dropped silently.
 - **Client:**
   - one `httpx.AsyncClient` for requests, with `Limits(max_connections=<concurrency or cap>)`;
     httpx's default of 100 connections would queue inside the client above 100 workers and be
@@ -508,10 +511,13 @@ await run(plan, closed_ramp(steps=[1, 2, 4, 8, 16, 32, 64], step_s=30, warm_s=5)
 - **Knee (row 16):** goodput stops rising.
   - The knee is the first step *k* whose goodput is less than 5 % above step *k−1*'s, and
     *k+1* confirms it (also under 5 % above *k−1*).
-  - A step marked `client_saturated` or `misconfigured` is never named. The summary says
-    "no knee found below saturation" instead.
+  - A step marked `client_saturated` or `misconfigured` is never named, and never confirms a
+    knee: a capped client flattens goodput by itself. The summary says "no knee found below
+    saturation" instead.
   - In the open model the knee is the first rate where p99 more than doubles over the previous
-    rate, or where goodput falls more than 5 % below the offered rate.
+    rate, or where goodput falls more than 5 % below the offered rate less its expected
+    answers (`conflict` and `not_found`). A write mix with 6 % conflicts is not a knee at its
+    first rate.
 
   The summary names the knee and the steps either side of it.
 
@@ -596,7 +602,9 @@ a summary, as `forze_dst.campaign.write_records` does:
 ```json
 {"kind": "meta", "schema": 1, "forze_load": "0.23.0", "target": "http://localhost:8000",
  "openapi_sha256": "9f2c…", "model": "closed", "client": {"cpus": 8, "python": "3.13.1",
- "loop": "uvloop"}, "plan": {"principals": {"viewer": 4, "planner": 1}}, "started_at": "…"}
+ "loop": "uvloop"}, "plan": {"principals": {"viewer": 4, "planner": 1},
+ "mixes": {"viewer": {"products.list": 2, "products.get": 3},
+ "planner": {"products.get": 1, "plans.create": 1}}}, "started_at": "…"}
 {"kind": "step", "workers": 32, "duration_s": 30.0, "calls": 9120, "goodput_rps": 301.2,
  "latency": "closed", "ms": {"p50": 41.0, "p95": 120.3, "p99": 210.9, "max": 803.0},
  "outcomes": {"ok": 9050, "conflict": 12, "shed": 0, "not_found": 3, "server_error": 0,
@@ -606,11 +614,13 @@ a summary, as `forze_dst.campaign.write_records` does:
 ```
 
 - **What output never holds:** bodies, headers, tokens, credentials or sampled ids. Only counts,
-  latencies and outcome classes (row 15). `target` is written without userinfo, query or
-  fragment, parsed with `urlsplit`.
+  latencies and outcome classes (row 15). `target` is written as scheme, host and port only,
+  parsed with `urlsplit`: userinfo, path, query and fragment are dropped, because a base path
+  can carry an id (`/tenants/123/api`).
 - **`compare BASE HEAD`** matches rows by `kind` plus `workers` or `rate` or `window`, and
   scenarios by name. It prints per-row deltas for goodput, p95 and p99. Rows whose meta differs
-  (`openapi_sha256`, `model`, client cores) are compared with a warning.
+  (`openapi_sha256`, `model`, client cores, principal weights or mixes) are compared with a
+  warning: a different mix is a different workload.
 - **Report only by default.** `--fail-on p95:15%,goodput:10%` exits 1 when a threshold is
   crossed (row 28). Load runs vary far more than micro-benchmarks, so a default failure would be
   a flaky gate.
@@ -636,6 +646,10 @@ a summary, as `forze_dst.campaign.write_records` does:
 
   `writes` has no default on `Scenario.call`, so every free callable states its effect.
   Validation runs before any login.
+- **`writes` is a declaration the kit trusts.** The kit cannot tell a read from a write by the
+  request, since forze's list and search routes are `POST` (§3.1). A callable declared
+  `writes=False` that writes still writes, and no host allowlist applies to it. The guard
+  catches a plan that declares writes, not a callable that hides them.
 - **Host allowlist (row 9).** With `allow_writes=True`, the target host, parsed with
   `urlsplit` and compared exactly, must be a loopback address or `localhost`, or be listed in
   the plan's `write_hosts` or in `FORZE_LOAD_WRITE_HOSTS`. A substring test would accept
@@ -667,13 +681,16 @@ under `-m perf`, which `just test` excludes.
   - **Coordinated omission:** the fake server stalls for 1 s. The open model reports the stall
     in every request scheduled during it (p99 ≈ 1 s). The closed model records it once per
     worker, and its rows are labelled `closed`.
-  - The in-flight cap refuses past the bound and counts the refusals.
+  - The in-flight cap is the Poisson quantile. It refuses past the bound and counts each
+    refusal as a `transport` call. At 1 req/s, 100 ms answers and a 1 s timeout, it refuses
+    nothing.
   - Outcome classes for each status, and the 5 % `misconfigured` rule.
   - The httpx limit equals the worker count.
 - **Knee (unit):** synthetic goodput curves.
   - Linear then flat: the knee is at the bend.
   - Noisy plateau: one dip is not a knee without confirmation.
-  - Saturated or misconfigured steps are never named.
+  - Saturated or misconfigured steps are never named, and never confirm a knee.
+  - Open model: a mix with 6 % `conflict` at every rate names no knee.
   - The stop rule fires at 5 % errors, and at 5 % `deadline` (504) responses alone.
 - **Principals (unit):**
   - A fake authn that revokes the family on reuse. Concurrent workers of one principal trigger
@@ -688,10 +705,11 @@ under `-m perf`, which `just test` excludes.
     `FORZE_LOAD_WRITE_HOSTS` is matched exactly.
 - **Output (unit):**
   - The JSONL schema round-trips.
-  - `compare` deltas and `--fail-on`.
+  - `compare` deltas and `--fail-on`, and a warning when the mixes differ.
   - Redaction: a run whose server echoes the `Authorization` header and bodies leaves neither
     in the file.
-  - `target` is stripped of userinfo and query.
+  - `target` keeps scheme, host and port only: userinfo, a path holding an id, and the query
+    are stripped.
 - **Parsers (unit):**
   - SSE frames: `id`, `event`, `data`, `retry`, keepalive comments, and multi-line data.
   - The Prometheus text subset.
@@ -801,7 +819,7 @@ under `-m perf`, which `just test` excludes.
 | 2 | `LOCKED` | **A new `forze_load` package under a `load` extra** (`httpx` only), accepted by the maintainer on 2026-11-05 over a home inside `forze_dst` or `forze_cli`. `forze_dst` is simulation-only and protected; `forze_cli` would pull Typer into a library import. The package and extra names are public; renaming them later breaks every install line. |
 | 3 | `ASSUMED` | **Both entry points**, accepted by the maintainer on 2026-11-05. The Python API is the contract, because plans hold callables. `forze load run module:plan` and `forze load compare` are thin wrappers using `load_object`, as `forze dst` and `forze ops` do. |
 | 4 | `ASSUMED` | **Both load models**, accepted by the maintainer on 2026-11-05 over closed only or open only. Closed for the concurrency ramp the issue asks for, which finds capacity. Open for latency and for soak, where coordinated omission matters. Closed-model rows are labelled `latency: closed`. |
-| 5 | `ASSUMED` | Open-model latency runs from the intended send time. Late sends are counted as `behind_schedule`. In-flight requests are capped at rate × request timeout, and a send refused at the cap counts as `transport`. |
+| 5 | `ASSUMED` | Open-model latency runs from the intended send time. Late sends are counted as `behind_schedule`. In-flight requests are capped at the 1 − 10⁻⁶ quantile of a Poisson count with mean rate × request timeout; rate × timeout itself refuses 9 % of sends to a healthy server at a mean of 1. A send refused at the cap counts as a call and as `transport`. |
 | 6 | `LOCKED` | **The catalog source is the OpenAPI document** (URL or file) **plus a new `x-forze-kind` vendor key**, accepted by the maintainer on 2026-11-05 over reading the registry in-process through `forze_cli`. It is what a client sees, works against any deployment, needs no app import, and the forze change is one line in `_route_openapi_extra`. `x-forze-kind` becomes part of every app's OpenAPI document; removing it later breaks clients that read it. |
 | 7 | `ASSUMED` | An operation reference that is missing from OpenAPI, or whose `x-forze-kind` contradicts the scenario's declared `writes`, stops the run before any load. Generated scenarios are `query` routes whose input is empty, paginated or id/rev. Other inputs are listed as skipped. There is no schema faking. |
 | 8 | `LOCKED` | **Writes are off by default and fail closed.** Generated scenarios are never `command`s. A `Scenario.call` must state `writes` (no default). A write scenario is refused at validation unless `allow_writes=True`. The kit points at shared environments. Relaxing this later cannot undo data already written, and every plan written against the relaxed default would change meaning. |
@@ -811,8 +829,8 @@ under `-m perf`, which `just test` excludes.
 | 12 | `ASSUMED` | **Credentials come from built-in helpers and from an app callable**, accepted by the maintainer on 2026-11-05. The helpers are `password_login` (forze `POST /login` and `/refresh`), `api_key` and `bearer`; any async callable returning headers also works, for cookies, OIDC and anything app-specific. Credentials come from environment variables only, never from the plan's source. |
 | 13 | `ASSUMED` | `X-Tenant-Id` is sent only when a principal names a tenant. `tenant_conflict` or `tenant_mismatch` stops the run. |
 | 14 | `ASSUMED` | Ids are sampled per principal through list operations, once, before the first measured step, bounded by `size`. A sampled id answering 404 is `not_found` and leaves the sample. |
-| 15 | `ASSUMED` | Output holds counts, latencies and outcome classes only: no bodies, headers, tokens, credentials or ids. `target` is written without userinfo, query or fragment. |
-| 16 | `ASSUMED` | Knee rule: the first closed-model step whose goodput is under 5 % above the previous step's, confirmed by the next step. Never a `client_saturated` or `misconfigured` step. Open model: the first rate where p99 more than doubles, or where goodput falls more than 5 % below the offered rate. Thresholds may be tuned during P1 against the served mock; log the values chosen. |
+| 15 | `ASSUMED` | Output holds counts, latencies and outcome classes only: no bodies, headers, tokens, credentials or ids. `target` is written as scheme, host and port only: no userinfo, path, query or fragment. |
+| 16 | `ASSUMED` | Knee rule: the first closed-model step whose goodput is under 5 % above the previous step's, confirmed by the next step. Never a `client_saturated` or `misconfigured` step, as the knee or as its confirmation. Open model: the first rate where p99 more than doubles, or where goodput falls more than 5 % below the offered rate less its `conflict` and `not_found` answers. Thresholds may be tuned during P1 against the served mock; log the values chosen. |
 | 17 | `ASSUMED` | A step where `forbidden` plus `client_error` exceed 5 % is `misconfigured`, stops a ramp, and is never a knee. Goodput counts 2xx only. |
 | 18 | `ASSUMED` | Percentiles come from core's `DDSketch` (1 % relative accuracy), per step and per scenario. Rows store quantiles and counts, not sketches, because no serialization exists. |
 | 19 | `ASSUMED` | **Realtime latency is measured on the one process's monotonic clock**: send → delivery and answer → delivery. Accepted by the maintainer on 2026-11-05 over the uuid7 event id's embedded time with an estimated offset, and over a new server timestamp in frames. No clock alignment is needed, and it is what erp measures. The docs call send → delivery an upper bound. |
