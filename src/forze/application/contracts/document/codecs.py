@@ -193,9 +193,15 @@ def rows_from_create_payloads(
 
     stamps, required = plan
 
-    # A payload built with ``model_construct`` can lack a required field the domain refuses;
-    # its values, not ``model_fields_set`` (which ``_fields_set`` can claim), say what it holds.
-    if any(type(p) is not create or not required <= p.__dict__.keys() for p in payloads):
+    # A payload built with ``model_construct`` can lack a required field the domain refuses: one
+    # it does not hold (``_fields_set`` can claim it), or one it holds unset, which the domain
+    # path's ``exclude_unset`` dump drops.
+    if any(
+        type(p) is not create
+        or not required <= p.__dict__.keys()
+        or not required <= p.model_fields_set
+        for p in payloads
+    ):
         return None
 
     fixed = {name: now if value is _NOW else value for name, value in stamps}

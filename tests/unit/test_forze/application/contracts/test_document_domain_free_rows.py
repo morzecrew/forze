@@ -420,13 +420,16 @@ def test_a_constructed_payload_missing_a_required_field_builds_the_domain() -> N
     domain, create = _pair(_Plain)
     payload = create.model_construct(name="a")
     claimed = create.model_construct(_fields_set=set(create.model_fields), name="a")
+    unset = create.model_construct(_fields_set=set(), name="a", qty=1, ratio=0.5, flag=False)
     valid = create(name="b", qty=1, ratio=0.5, flag=False)
 
     assert rows_from_create_payloads(domain, [payload], [uuid4()], now=_AT) is None
 
-    # Once the pair is confirmed, a ``_fields_set`` that claims the missing field is not believed.
+    # Once the pair is confirmed, neither a ``_fields_set`` claiming the missing field nor one
+    # leaving held fields unset gets past the guard.
     assert rows_from_create_payloads(domain, [valid], [uuid4()], now=_AT) is not None
     assert rows_from_create_payloads(domain, [claimed], [uuid4()], now=_AT) is None
+    assert rows_from_create_payloads(domain, [unset], [uuid4()], now=_AT) is None
 
     with pytest.raises(ValidationError):
         _domain_rows(domain, [payload], [uuid4()])
