@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import functools
 from collections.abc import Sequence
-from datetime import date, time, timedelta
+from datetime import date, datetime, time, timedelta
 from decimal import Decimal
 from enum import Enum
 from re import Pattern
@@ -14,7 +14,9 @@ from uuid import UUID
 import attrs
 from pydantic import BaseModel
 
+from forze.base.primitives import JsonDict, utcnow
 from forze.base.serialization import ModelCodec, default_model_codec, model_codec_for
+from forze.base.serialization.pydantic import pydantic_dump_many
 from forze.domain.constants import ID_FIELD
 from forze.domain.models import BaseDTO, Document, DocumentHistory
 
@@ -159,6 +161,229 @@ def domains_from_create_payloads(
     # Shallow: each model was just built from a dump of its payload and is thrown away
     # here, so nothing else holds its nested values; a deep copy only doubled the cost.
     return [m.model_copy(update={ID_FIELD: i}) for m, i in zip(models, ids, strict=True)]
+
+
+def rows_from_create_payloads(
+    domain: type[BaseModel],
+    payloads: Sequence[BaseModel],
+    ids: Sequence[UUID],
+    *,
+    now: datetime,
+) -> list[JsonDict] | None:
+    """The mappings the *domain* models built from *payloads* would dump to, without building
+    them: each payload's dump, its id from *ids* (positionally), the first revision, and *now*
+    for both timestamps, which the domain draws from the same clock.
+
+    :param domain: The document's domain model.
+    :param payloads: Create payloads, positionally aligned with *ids*.
+    :param ids: Per-payload ids.
+    :param now: The instant stamped as the domain's timestamp defaults would stamp it.
+    :returns: The mappings; ``None`` unless every payload is of one type the domain adds nothing
+        to (:func:`_create_row_stamps`), for the caller to build the domain models.
+    """
+
+    create = type(payloads[0])
+    stamps = _create_row_stamps(domain, create)
+
+    if stamps is None or any(type(p) is not create for p in payloads):
+        return None
+
+    fixed = {name: now if value is _NOW else value for name, value in stamps}
+    rows = pydantic_dump_many(payloads, mode="python")
+
+    for row, pk in zip(rows, ids, strict=True):
+        row.update(fixed)
+        row[ID_FIELD] = pk
+
+    return rows
+
+
+_NOW = object()
+"""Stands for the write's instant in :func:`_create_row_stamps`."""
+
+_PLAIN_FACTORIES: tuple[Any, ...] = (list, dict, set, frozenset, tuple)
+"""Default factories that build the same value whenever they are called."""
+
+_JSON_ONLY = frozenset({"json", "json-unless-none"})
+"""When a serializer runs for JSON output only."""
+
+_FIELD_KEYS = frozenset({"type", "schema", "metadata", "frozen"})
+"""What a model field may declare besides its schema: no alias, exclusion or the like."""
+
+
+def _plain_schema(node: Any) -> bool:
+    """Whether a core-schema *node* validates and dumps a value without running code of its own:
+    no validator, serializer, post-init, custom ``__init__`` or ``_missing_`` hook, and no
+    default factory but an empty container's. Data only, otherwise; a class is allowed where a
+    schema names the model or enum it builds."""
+
+    if isinstance(node, dict):
+        for key, value in node.items():
+            if key in ("metadata", "ref", "cls"):
+                continue
+
+            if key == "default_factory":
+                if value not in _PLAIN_FACTORIES or node.get("default_factory_takes_data"):
+                    return False
+
+                continue
+
+            # A serializer for JSON alone never runs on the Python dump a row is.
+            if (
+                key == "serialization"
+                and isinstance(value, dict)
+                and value.get("when_used") in _JSON_ONLY
+            ):
+                continue
+
+            if key in ("function", "serialization", "post_init", "custom_init", "missing"):
+                if value:
+                    return False
+
+                continue
+
+            if not _plain_schema(value):
+                return False
+
+        return True
+
+    if isinstance(node, list | tuple):
+        return all(_plain_schema(v) for v in node)
+
+    return node is None or isinstance(node, (*_SCHEMA_DATA, UUID, Pattern))
+
+
+def _same_schema(a: Any, b: Any) -> bool:
+    """Whether two core-schema nodes validate and dump alike: equal, but for ``metadata``,
+    which holds JSON-schema hooks pydantic builds afresh for every model."""
+
+    if isinstance(a, dict) and isinstance(b, dict):
+        keys = set(a) - {"metadata"}
+
+        return keys == set(b) - {"metadata"} and all(_same_schema(a[k], b[k]) for k in keys)
+
+    if isinstance(a, list | tuple) and isinstance(b, list | tuple):
+        return len(a) == len(b) and all(_same_schema(x, y) for x, y in zip(a, b, strict=True))
+
+    return bool(a == b)
+
+
+def _model_schema(model: type[BaseModel]) -> tuple[JsonDict, JsonDict, JsonDict] | None:
+    """*model*'s ``model`` schema, its ``model-fields`` schema and its definitions by ref, when
+    it is a plain model (nothing wraps or replaces its fields); ``None`` otherwise."""
+
+    schema: Any = model.__pydantic_core_schema__
+    definitions: JsonDict = {}
+
+    if schema.get("type") == "definitions":
+        definitions = {d["ref"]: d for d in schema["definitions"]}
+        schema = schema["schema"]
+
+        if schema.get("type") == "definition-ref":
+            schema = definitions.get(schema["schema_ref"], {})
+
+    if schema.get("type") != "model" or any(
+        schema.get(k) for k in ("serialization", "post_init", "custom_init", "root_model")
+    ):
+        return None
+
+    fields = schema.get("schema", {})
+
+    if (
+        fields.get("type") != "model-fields"
+        or fields.get("computed_fields")
+        or fields.get("extras_schema")
+        or fields.get("extra_behavior") == "allow"
+        or schema.get("config", {}).get("extra_fields_behavior") == "allow"
+    ):
+        return None
+
+    return schema, fields, definitions
+
+
+@functools.cache
+def _bare_document_fields() -> JsonDict:
+    """``Document``'s own fields' schemas, as a subclass declaring nothing has them."""
+
+    class _Bare(Document):
+        pass
+
+    shape = _model_schema(_Bare)
+
+    return {} if shape is None else shape[1]["fields"]
+
+
+@functools.cache
+def _create_row_stamps(
+    domain: type[BaseModel], create: type[BaseModel]
+) -> tuple[tuple[str, Any], ...] | None:
+    """What :func:`rows_from_create_payloads` sets on a *create* payload's dump to make the
+    *domain*'s mapping (the id aside, set per row): ``None`` unless a *create* payload's dump,
+    with the id and these, is the mapping the *domain* model validated from it dumps to.
+
+    Decided from the two models' core schemas, once per pair, and refused (``None``) for
+    anything not proven alike:
+
+    - the domain is a :class:`~forze.domain.models.Document` whose id nothing reads during
+      validation (no invariant, model validator, post-init or validator handed the data);
+    - both are plain models: no model validator or serializer, computed field, custom
+      ``__init__`` or extra fields kept, and the same core config;
+    - the domain's fields are the create's plus ``Document``'s own bookkeeping fields, each
+      create field validated and dumped by the very same schema in both;
+    - and that schema runs no code: no validator, serializer or alias, and no default factory
+      but an empty container, so validating the value it produced and dumping it again gives
+      that value, and a default the payload took is the one the domain would take.
+    """
+
+    if not issubclass(domain, Document) or not _reads_no_id(domain):
+        return None
+
+    domain_shape, create_shape = _model_schema(domain), _model_schema(create)
+
+    if domain_shape is None or create_shape is None:
+        return None
+
+    (domain_model, domain_fields, domain_defs) = domain_shape
+    (create_model, create_fields, create_defs) = create_shape
+    bare = _bare_document_fields()
+
+    def config(model: JsonDict) -> JsonDict:
+        return {k: v for k, v in model.get("config", {}).items() if k != "title"}
+
+    dfields, cfields = domain_fields["fields"], create_fields["fields"]
+
+    if (
+        config(domain_model) != config(create_model)
+        or not _same_schema(domain_defs, create_defs)
+        or not bare
+        or set(dfields) != set(cfields) | set(bare)
+        or set(cfields) & set(bare)
+        or not all(_same_schema(dfields[name], bare[name]) for name in bare)
+        or not all(_same_schema(dfields[name], field) for name, field in cfields.items())
+        or any(set(field) - _FIELD_KEYS for field in cfields.values())
+        or not all(_plain_schema(field) for field in cfields.values())
+        or not all(_plain_schema(definition) for definition in create_defs.values())
+    ):
+        return None
+
+    stamps: list[tuple[str, Any]] = []
+
+    for name in bare:
+        if name == ID_FIELD:
+            continue
+
+        default = bare[name]["schema"]
+
+        if default.get("default_factory") is utcnow:
+            stamps.append((name, _NOW))
+
+        elif "default" in default and isinstance(default["default"], int):
+            stamps.append((name, default["default"]))
+
+        else:
+            return None
+
+    return tuple(stamps)
 
 
 _SCHEMA_DATA: tuple[type, ...] = (str, bytes, int, float, Decimal, Enum, date, time, timedelta)

@@ -27,6 +27,7 @@ from forze.application.contracts.document import (
     domains_from_create_payloads,
     require_whole_update_matching,
 )
+from forze.application.contracts.document.codecs import rows_from_create_payloads
 from forze.application.contracts.document.specs import (
     require_hold_in_transaction,
     serialization_keys,
@@ -42,7 +43,7 @@ from forze.application.integrations.persistence import (
 )
 from forze.base.exceptions import CoreException, exc
 from forze.base.primitives import JsonDict, OnceCell, advisory_lock_key, utcnow
-from forze.base.serialization import ModelCodec
+from forze.base.serialization import ModelCodec, PydanticModelCodec
 from forze.domain.constants import ID_FIELD, LAST_UPDATE_AT_FIELD, REV_FIELD
 from forze.domain.models import BaseDTO, Document
 from forze_postgres.kernel.catalog.introspect import PostgresColumnTypes, PostgresType
@@ -1449,7 +1450,9 @@ class PostgresWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
                 # none.
                 present = await self.__visible_ids(id_batch, lock=True)
                 missing = [pk for pk in id_batch if pk not in present]
-                inserted = await self.__insert_set_based(missing, creates_by_id, column_types)
+                inserted = await self.__insert_set_based(
+                    missing, creates_by_id, column_types, now=now
+                )
                 # An id the insert skipped was stored by a concurrent writer after the look-up,
                 # and is patched too, once locked; one gone by then (deleted, or another
                 # tenant's) is not this call's to write. Usually there is none to look up.
@@ -1538,6 +1541,8 @@ class PostgresWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
         pks: Sequence[UUID],
         creates_by_id: Mapping[UUID, C],
         column_types: PostgresColumnTypes,
+        *,
+        now: datetime,
     ) -> set[UUID]:
         """Insert *pks* from their create payloads, skipping a conflict; the ids inserted.
 
@@ -1548,13 +1553,14 @@ class PostgresWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
         if not pks:
             return set()
 
-        models = domains_from_create_payloads(
-            self.create_codec, [creates_by_id[pk] for pk in pks], list(pks)
-        )
-        rows = await self.adapt_many_payload_for_write(
-            await self._encode_domain_many(models),
-            create=True,
-        )
+        payloads = [creates_by_id[pk] for pk in pks]
+        encoded = self.__rows_without_domains(payloads, pks, now=now)
+
+        if encoded is None:
+            models = domains_from_create_payloads(self.create_codec, payloads, list(pks))
+            encoded = await self._encode_domain_many(models)
+
+        rows = await self.adapt_many_payload_for_write(encoded, create=True)
         keys = list(rows[0].keys())
         table = (await self._qname()).ident()
         conflict = await self._ident_conflict_target()
@@ -1586,6 +1592,28 @@ class PostgresWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
             skipped.update(_as_uuid(pk) for (pk,) in found)
 
         return set(pks) - skipped
+
+    # ....................... #
+
+    def __rows_without_domains(
+        self, payloads: Sequence[C], pks: Sequence[UUID], *, now: datetime
+    ) -> list[JsonDict] | None:
+        """The mappings the domain models built from *payloads* would encode to, dumped from the
+        payloads themselves when the domain adds nothing to them
+        (:func:`~forze.application.contracts.document.codecs.rows_from_create_payloads`) and no
+        codec encrypts or materializes a field; ``None`` for the domain models to be built."""
+
+        create, read = self.create_codec, self.read_codec
+
+        if (
+            type(create) is not PydanticModelCodec
+            or type(read) is not PydanticModelCodec
+            or create.materialized
+            or read.materialized
+        ):
+            return None
+
+        return rows_from_create_payloads(create.model_type, payloads, pks, now=now)
 
     # ....................... #
 
