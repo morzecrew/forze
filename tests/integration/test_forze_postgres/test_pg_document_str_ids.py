@@ -129,3 +129,101 @@ async def test_a_non_canonical_str_id_ensures_the_row_under_its_uuid(
     await _ensure_many(cmd, [pk.hex.upper()])
 
     assert (await query.get(pk)).id == pk
+
+
+# ....................... #
+# Single-id commands
+
+
+@pytest.mark.parametrize(
+    ("command", "expected"),
+    [
+        pytest.param(
+            lambda cmd, pk: cmd.update(pk, 1, _Update(name="patched"), return_new=False),
+            ("patched", 2),
+            id="update",
+        ),
+        pytest.param(lambda cmd, pk: cmd.touch(pk, return_new=False), ("stored", 2), id="touch"),
+        pytest.param(
+            lambda cmd, pk: cmd.upsert(
+                pk, _item(uuid4(), "x", 0).create, _Update(name="patched"), return_new=False
+            ),
+            ("patched", 2),
+            id="upsert",
+        ),
+    ],
+)
+async def test_a_non_canonical_str_pk_drops_the_cached_document(
+    pg_client: PostgresClient,
+    command: Callable[[Any, str], Awaitable[Any]],
+    expected: tuple[str, int],
+) -> None:
+    cmd, query, pk, _ = await _stored(pg_client)
+
+    await command(cmd, pk.hex.upper())
+
+    read = await query.get(pk)
+    assert (read.name, read.rev) == expected
+
+
+async def test_a_non_canonical_str_pk_kill_drops_the_cached_document(
+    pg_client: PostgresClient,
+) -> None:
+    cmd, query, pk, _ = await _stored(pg_client)
+
+    await cmd.kill(pk.hex.upper())
+
+    with pytest.raises(CoreException) as gone:
+        await query.get(pk)
+
+    assert gone.value.kind == "not_found"
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        pytest.param(
+            lambda cmd, pk: cmd.ensure(pk, _item(uuid4(), "new", 3).create, return_new=False),
+            id="ensure",
+        ),
+        pytest.param(
+            lambda cmd, pk: cmd.create(_item(uuid4(), "new", 3).create, id=pk, return_new=False),
+            id="create",
+        ),
+    ],
+)
+async def test_a_non_canonical_str_pk_writes_the_row_under_its_uuid(
+    pg_client: PostgresClient, command: Callable[[Any, str], Awaitable[Any]]
+) -> None:
+    cmd, query, _, t = await _stored(pg_client)
+    pk = uuid4()
+
+    await command(cmd, pk.hex.upper())
+
+    assert (await query.get(pk)).name == "new"
+    assert pk in {row["id"] for row in await pg_client.fetch_all(f"SELECT id FROM {t}", [])}
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        pytest.param(lambda cmd, pk: cmd.update(pk, 1, _Update(name="x")), id="update"),
+        pytest.param(lambda cmd, pk: cmd.touch(pk), id="touch"),
+        pytest.param(lambda cmd, pk: cmd.kill(pk), id="kill"),
+        pytest.param(
+            lambda cmd, pk: cmd.upsert(pk, _item(uuid4(), "x", 0).create, _Update()), id="upsert"
+        ),
+        pytest.param(lambda cmd, pk: cmd.ensure(pk, _item(uuid4(), "x", 0).create), id="ensure"),
+        pytest.param(lambda cmd, pk: cmd.create(_item(uuid4(), "x", 0).create, id=pk), id="create"),
+    ],
+)
+async def test_a_malformed_str_pk_is_refused_by_a_single_id_command(
+    pg_client: PostgresClient, command: Callable[[Any, str], Awaitable[Any]]
+) -> None:
+    cmd, _, _, _ = await _stored(pg_client)
+
+    with pytest.raises(CoreException) as refused:
+        await command(cmd, "not-a-uuid")
+
+    assert refused.value.kind == "precondition"
+    assert "Invalid UUID value" in str(refused.value)

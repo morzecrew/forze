@@ -72,3 +72,39 @@ async def test_two_spellings_of_one_id_or_a_malformed_one_are_refused(command: _
 
     assert refused.value.kind == "precondition"
     assert [(r.name, r.rev) for r in (await doc.find_many()).hits] == [("a", 1)]
+
+
+_SINGLE: list[Any] = [
+    pytest.param(
+        lambda doc, pk: doc.update(pk, 1, _Update(name="patched")), [("patched", 2)], id="update"
+    ),
+    pytest.param(lambda doc, pk: doc.touch(pk), [("a", 2)], id="touch"),
+    pytest.param(lambda doc, pk: doc.kill(pk), [], id="kill"),
+    pytest.param(
+        lambda doc, pk: doc.upsert(pk, _Create(name="x"), _Update(name="patched")),
+        [("patched", 2)],
+        id="upsert",
+    ),
+    pytest.param(lambda doc, pk: doc.ensure(pk, _Create(name="x")), [("a", 1)], id="ensure"),
+]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("command", "expected"), _SINGLE)
+async def test_a_str_pk_names_the_stored_row_in_a_single_id_command(
+    command: Callable[[Any, Any], Awaitable[Any]], expected: list[tuple[str, int]]
+) -> None:
+    doc = _mock()
+    pk = uuid4()
+    await doc.create(_Create(name="a"), id=pk.hex.upper())
+
+    await command(doc, pk.hex.upper())
+
+    assert [(r.id, r.name, r.rev) for r in (await doc.find_many()).hits] == [
+        (pk, *row) for row in expected
+    ]
+
+    with pytest.raises(CoreException) as refused:
+        await command(doc, "not-a-uuid")
+
+    assert refused.value.kind == "precondition"

@@ -37,12 +37,19 @@ def _require_distinct_ids(ids: Sequence[UUID]) -> None:
         )
 
 
-def _as_uuids(ids: Iterable[Any]) -> list[UUID]:
-    """*ids* as ``UUID``s, so a batch's distinctness check, its write and its cache keys see one
-    spelling of each: a ``str`` id, which the type does not allow but a caller can pass, is read
-    as the domain path reads one, and a malformed one is ``precondition``."""
+def _as_uuid(pk: Any) -> UUID:
+    """*pk* as a ``UUID``, so a command's write and its cache key see one spelling of it: a
+    ``str`` id, which the type does not allow but a caller can pass, is read as the domain path
+    reads one, and a malformed one is ``precondition``."""
 
-    return [pk if type(pk) is UUID else QueryValueCaster.as_uuid(pk) for pk in ids]
+    return pk if type(pk) is UUID else QueryValueCaster.as_uuid(pk)
+
+
+def _as_uuids(ids: Iterable[Any]) -> list[UUID]:
+    """*ids* as ``UUID``s (:func:`_as_uuid`), so a batch's distinctness check sees one spelling
+    of each too."""
+
+    return [_as_uuid(pk) for pk in ids]
 
 
 def _require_set_based(
@@ -100,7 +107,7 @@ class DocumentCommandMixin(
 
         w = self._require_write()
 
-        domain = await w.create(payload, id=id)
+        domain = await w.create(payload, id=None if id is None else _as_uuid(id))
         await self.document_cache.invalidate_keys_now(domain.id)
         return await self._finalize_single_write(domain, return_new=return_new)
 
@@ -169,7 +176,7 @@ class DocumentCommandMixin(
     async def ensure(self, id: UUID, payload: C, *, return_new: bool = True) -> R | None:
         w = self._require_write()
 
-        domain = await w.ensure(id, payload)
+        domain = await w.ensure(_as_uuid(id), payload)
         await self.document_cache.invalidate_keys_now(domain.id)
         return await self._finalize_single_write(domain, return_new=return_new)
 
@@ -246,7 +253,7 @@ class DocumentCommandMixin(
     ) -> R | None:
         w = self._require_write()
 
-        domain = await w.upsert(id, create, update)
+        domain = await w.upsert(_as_uuid(id), create, update)
         await self.document_cache.invalidate_keys_now(domain.id)
         return await self._finalize_single_write(domain, return_new=return_new)
 
@@ -382,6 +389,7 @@ class DocumentCommandMixin(
         """
 
         w = self._require_write()
+        pk = _as_uuid(pk)
 
         # The flag goes only where it is asked for, so a gateway that predates it still serves
         # every other call, and refuses a strict one rather than merging it.
@@ -703,6 +711,7 @@ class DocumentCommandMixin(
         """
 
         w = self._require_write()
+        pk = _as_uuid(pk)
 
         domain, _ = await asyncio.gather(
             w.touch(pk) if rev is None else w.touch(pk, rev=rev),
@@ -806,6 +815,7 @@ class DocumentCommandMixin(
 
         self.spec.require_hard_delete()
         w = self._require_write()
+        pk = _as_uuid(pk)
 
         await asyncio.gather(
             w.kill(pk),
