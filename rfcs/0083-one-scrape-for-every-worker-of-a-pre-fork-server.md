@@ -333,9 +333,12 @@ handler renders nothing (row 5). It runs this off the loop:
    later snapshot whose `TYPE` disagrees for the same name loses that family, with a warning.
    That can happen while a rolling restart runs two code versions. Label values cannot contain
    a raw newline in this format, so a line-start split cannot cut a sample.
-5. Append the age family (§5.4).
-6. With no fresh snapshot at all, answer `503`, so Prometheus records `up == 0`. Otherwise
-   answer `200` with the 0.0.4 content type.
+5. Append the age family (§5.4). The route owns that name: a snapshot family called
+   `forze_metrics_snapshot_age_seconds` is left out of the merge, with a warning, so the
+   response never carries a second `HELP`/`TYPE` pair for it.
+6. With no snapshot left to serve after steps 2 and 3, answer `503`, so Prometheus records
+   `up == 0`. That includes every fresh file withheld as a duplicate, which is what gunicorn
+   `--preload` produces. Otherwise answer `200` with the 0.0.4 content type.
 
 The merge is string work, not a parse. Measured on 0.66b1 with 200 operation label sets per
 worker: one snapshot is 0.81 to 1.08 MB, merging four takes 2.3 ms, and `prometheus_client`'s
@@ -388,7 +391,8 @@ workers served, which is the alert for a worker that stopped writing.
 - A malformed, oversized, symlinked, foreign-owned or misnamed file is skipped and logged with
   a rate limit. It is never served.
 - A duplicate instance id is never served.
-- No fresh snapshot answers `503`. Any other partial state answers `200` with what is fresh.
+- No snapshot left to serve, because none is fresh or every fresh one is a duplicate, answers
+  `503`. Any other partial state answers `200` with what is served.
 
 ### 5.7 What stays unchanged
 
@@ -448,11 +452,12 @@ Unit (`tests/unit/test_forze_fastapi/`, `tmp_path`):
   `service_instance_id`.
 - A stale snapshot is left out. A file with a bad header, an oversized file, a symlink, a file
   owned by another uid and a misnamed file are skipped. A duplicate instance id serves neither
-  file. A conflicting `TYPE` drops the later family.
+  file. A conflicting `TYPE` drops the later family. A snapshot family named
+  `forze_metrics_snapshot_age_seconds` is dropped, and the route's own age family is served once.
 - A label value containing `# HELP ` does not split a family.
 - The age gauge has one sample per fresh snapshot, close to `now - written_at`, and 0 after a
   backwards clock step.
-- No fresh snapshot answers `503`.
+- No fresh snapshot answers `503`, and so do fresh snapshots that all share one instance.
 - A worker whose renders hold no family yet writes no file, and writes its first on the tick
   whose render carries the label.
 - Shutdown during a slow tick waits for its render before the final one, and skips the final
@@ -563,7 +568,7 @@ default.
 | 13 | `ASSUMED` | Two fresh snapshots claiming one instance id are both withheld, and an error names the pids. Serving either one would interleave two processes into one series. |
 | 14 | `ASSUMED` | The age is `time.time() - written_at` as the answering worker computes it, clamped at 0. That is sound only because every worker of a group shares one host clock. A cross-host store (P3) must use the store's clock. |
 | 15 | `ASSUMED` | One directory serves one worker group. No group key is in P1, and the docs require a directory per group. |
-| 16 | `ASSUMED` | With no fresh snapshot at all, the route answers `503`, so `up == 0` shows that no worker is writing. Otherwise it answers `200` with whatever is fresh. |
+| 16 | `ASSUMED` | With no snapshot left to serve, because none is fresh or every fresh one is withheld as a duplicate, the route answers `503`, so `up == 0` shows that no worker is served. Otherwise it answers `200` with whatever is served. |
 | 17 | `ASSUMED` | Each tick sweeps files older than `ttl` whose pid no longer exists, and stray temp files by the same rule. A stalled but live worker is withheld, not swept. |
 | 18 | `ASSUMED` | The code lives in `forze_fastapi.routes`, behind a private module, with the age gauge's constant declared there. There is no core change, no new dependency and no new extra. The Redis store, if built, adds the only core port. |
 
