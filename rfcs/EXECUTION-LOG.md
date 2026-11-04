@@ -5648,3 +5648,125 @@ RFC tracks neither question, so neither gets a row.
 | 0028 | 14 | Accepted | `ASSUMED` | A bounded Postgres read costs one round trip at the root and five exchanges in a transaction | D-195 |
 | 0028 | 15 | Accepted | `ASSUMED` | An autocommit procedure route carries no route timeout; the role's or the database's `statement_timeout` bounds it | D-196 |
 | 0028 | 16 | Accepted | `ASSUMED` | A timeout that is not a whole number of the engine's unit, or beyond what it can hold, is refused; nothing is rounded | D-197 |
+
+---
+
+# Unit 19 · RFC 0084 P1 — the generic load core
+
+Branch `feat/forze-load-p1`, cut from `main` at `a4572aece`. RFC 0084 P1 per §12: §5.2–§5.4,
+§5.6 and §5.9–§5.11, the §6 unit tests, the §7 docs page and the changelog. RFC 0084 is not on
+`main` yet; it is measured here as it stands on `docs/rfcs-0083-0084` at `5c62404f2`, whose
+amendment counts `deadline` (504) responses in the ramp's stop rule, and that is built. Not
+built, as §12 assigns them to later phases: operation references and `x-forze-kind` (P2),
+realtime (P3), the soak (P4). Rows 1–15, 17–18, 22–29 and 31–33 hold as written or do not
+apply to P1; row 16 is amended by D-211, row 30 by D-210.
+
+**Drift count: 3.** Seven entries, D-210 to D-216: three `drift` (D-212, D-213, D-214), three
+`spec-gap`, one `discovery`. The drifts are departures from §5.2's sketch, §6 and §7, not from
+a decision row.
+
+**Where each item lives.** Credentials in
+[`forze_load/auth.py`](../src/forze_load/auth.py); the plan, `Call` and the write guard in
+[`plan.py`](../src/forze_load/plan.py); outcome classes, step summaries and the knee in
+[`stats.py`](../src/forze_load/stats.py); the two models, sign-in and the client probe in
+[`engine.py`](../src/forze_load/engine.py); the run file and `compare` in
+[`report.py`](../src/forze_load/report.py); the CLI group in
+[`forze_cli/load.py`](../src/forze_cli/load.py).
+
+`uv.lock` is unchanged, by the executing session's rules; `uv lock` adds `load` to the
+package's `provides-extras` and should run before release.
+
+## D-210 — Saturation is judged on the event loop's thread CPU, not the process's
+
+- **Touches:** row 30 (`ASSUMED`), §5.10.
+- **RFC said:** client CPU is `time.process_time()` over wall time per step; saturated at
+  ≥ 0.85 cores.
+- **Found:** an app served in the same process (the integration test, and any harness that
+  embeds a server) adds its CPU to `process_time`, so a light client next to a busy server
+  reads as saturated. One event loop runs Python on one core, so the loop thread's CPU is the
+  quantity that saturates.
+- **Built:** `loop_cpu` from `time.thread_time()` on the loop thread drives the flag;
+  `process_cpu` is reported beside it, informational.
+- **Class:** `spec-gap`. An embedded server was foreseeable.
+- **Proposed row (RFC 0084):** `ASSUMED` — a row's `client.saturated` reads the event loop's
+  thread CPU (`time.thread_time()`), at ≥ 0.85 cores; process CPU is reported, not judged.
+
+## D-211 — The open-model knee compares answers, not goodput, with the offered rate
+
+- **Touches:** row 16 (`ASSUMED`), §5.6.
+- **RFC said:** an open-model knee is the first rate where p99 more than doubles, or where
+  goodput falls more than 5 % below the offered rate.
+- **Found:** goodput counts 2xx only, so a mix with expected 409s or 404s sits below the offer
+  at every healthy rate and would name the first step a knee.
+- **Built:** rows carry `answered_rps` (answers of any status per second) beside
+  `goodput_rps`, and the open knee compares `answered_rps` with the rate.
+- **Class:** `spec-gap`.
+- **Proposed row (RFC 0084):** `ASSUMED` — the open-model knee's second test is answered calls
+  per second more than 5 % below the offered rate; rows carry `answered_rps`.
+
+## D-212 — The public API differs from §5.2's sketch
+
+- **Touches:** §5.2, §5.4. No row fixes these shapes.
+- **RFC said:** `Scenario.call(...)` and `Scenario.op(...)`, `LoadPlan(mixes=...)`,
+  `closed_ramp(...)` / `open_ramp(...)`, and sign-in concurrency "default 4, settable".
+- **Built:** `Scenario(name, send, writes=...)`, a mix on each `Principal`, profile classes
+  `ClosedRamp` / `OpenRamp`, and `LOGIN_CONCURRENCY = 4` as a constant. `run()` takes a
+  `transport=` for tests.
+- **Because:** a mix belongs to the principal it describes, and a dict of mixes keyed by
+  principal name repeats the names and can disagree with them. `Scenario.op` is P2's; a
+  `Scenario.call` alias for the constructor adds a second spelling. The profile classes are
+  the values a function would return. A setting for sign-in concurrency is not needed until a
+  deployment raises `hashing_concurrency`.
+- **Class:** `drift`.
+- **Proposed row (RFC 0084):** `ASSUMED` — P1's API is `LoadPlan`, `Principal(mix=...)`,
+  `Scenario(name, send, writes=)`, `ClosedRamp`, `OpenRamp` and `run(plan, profile, out=)`;
+  P2 adds operation references beside `Scenario` without changing it.
+
+## D-213 — No separate `load_ramp` recipe, and no `-m perf` knee-band test
+
+- **Touches:** §6 ("Example").
+- **RFC said:** an `examples/recipes/load_ramp/` app with a fixed bulkhead and armed latency,
+  a test asserting the file's shape, and a `-m perf` twin asserting a plateau near
+  limit ÷ latency.
+- **Built:** `tests/integration/test_forze_load/` serves the existing mock-server recipe with
+  uvicorn on a socket, in a thread, and drives it: a three-step ramp, writes on loopback, the
+  guard refusing an unlisted host with zero requests reaching the server, and a CPU-bound
+  client flagged saturated and never named the knee. The knee rule is tested on synthetic rows
+  in `tests/unit/test_forze_load/test_load_stats.py`.
+- **Because:** a plateau band asserted on shared CI runners is a flaky gate, and the recipe
+  already exists and is test-backed.
+- **Class:** `drift`.
+- **Proposed row (RFC 0084):** `ASSUMED` — the kit's own tests assert behavior (rows, outcome
+  classes, guards, flags) over a real socket and the knee on synthetic rows; no timing band.
+
+## D-214 — The docs page is `testing/load-testing.md`
+
+- **Touches:** §7.
+- **RFC said:** `pages/docs/testing/load-and-soak.md`.
+- **Built:** `pages/docs/testing/load-testing.md`. P1 has no soak, and a page named for one
+  would promise it. P4 can rename the page when the soak lands.
+- **Class:** `drift`.
+
+## D-215 — `forze_load` is deferred (D4) in the skills census
+
+- **Touches:** nothing in the RFC; `tools/skills_check/coverage.toml` requires a doctrine for
+  every shipped package and extra.
+- **Found:** D1 needs a worked example in the skills corpus. P1 has no forze-specific wiring
+  to show beyond an HTTP client, so the example would teach httpx.
+- **Built:** `load` in `extras.whole-package` and `forze_load` as D4, with the trigger "RFC
+  0084 P2 lands, or a consumer app ports its harness onto `forze_load`".
+- **Class:** `spec-gap`.
+
+## D-216 — Exit codes, and a scenario that never suspends
+
+- **Touches:** §5.2 (the CLI), §5.3.
+- **Found, exit codes:** the RFC gives `forze load` no exit-code contract. Built: 0 on a
+  finished run or a report, 1 when `--fail-on` is crossed, 2 on a refusal (a refused plan, a
+  missing credential, a failed sign-in, a bad `--fail-on`) or a usage error.
+- **Found, scheduling:** a scenario that answers without suspending (a cached response, a fake
+  transport) held the event loop in the closed model's worker loop, and the step timer never
+  fired; the unit test hung. The worker now yields after every call (`asyncio.sleep(think_s)`
+  even at 0), and the open model's arrival loop yields when it is behind schedule.
+- **Class:** `discovery` (scheduling); the exit codes are a `spec-gap` folded in here.
+- **Proposed row (RFC 0084):** `ASSUMED` — `forze load` exits 0 on success, 1 when `--fail-on`
+  is crossed, 2 on a refusal or a usage error.

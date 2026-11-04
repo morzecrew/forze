@@ -28,6 +28,21 @@ def require_dst() -> None:
 # ....................... #
 
 
+def require_load() -> None:
+    """Exit with a clear message when the ``load`` extra (needed by ``forze load``) is missing."""
+
+    if find_spec("httpx") is None:
+        typer.echo(
+            "The 'forze load' commands require the load extra. "
+            "Install it with:  pip install 'forze[cli,load]'",
+            err=True,
+        )
+        raise typer.Exit(code=1)
+
+
+# ....................... #
+
+
 def require_mock_server() -> None:
     """Exit with a clear message when the ``mock-server`` extra is missing.
 

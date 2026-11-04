@@ -167,6 +167,7 @@ vault = [
 inngest = ["inngest>=0.5.18"]
 meilisearch = ["meilisearch-python-sdk>=7.2.1"]
 http = ["httpx>=0.28.0"]
+load = ["httpx>=0.28.0"]
 sandbox-container = ["httpx>=0.28.0"]
 inference-http = ["httpx>=0.28.0"]
 inference-sagemaker = [
@@ -232,6 +233,7 @@ packages = [
     "src/forze_mock",
     "src/forze_dst",
     "src/forze_cli",
+    "src/forze_load",
     "src/forze_mongo",
     "src/forze_firestore",
     "src/forze_postgres",
@@ -945,6 +947,7 @@ root_packages = [
     "forze_neo4j",
     "forze_mcp",
     "forze_sandbox",
+    "forze_load",
 ]
 exclude_type_checking_imports = true
 
@@ -1067,6 +1070,7 @@ protected_modules = [
     "forze_neo4j",
     "forze_mcp",
     "forze_sandbox",
+    "forze_load",
 ]
 allowed_importers = ["forze_cli"]
 as_packages = true
@@ -1124,6 +1128,7 @@ paths = [
     "src/forze_neo4j",
     "src/forze_mcp",
     "src/forze_sandbox",
+    "src/forze_load",
 ]
 sort_by_size = true
 min_confidence = 60
@@ -1171,6 +1176,7 @@ known_first_party = [
     "forze_neo4j",
     "forze_mcp",
     "forze_sandbox",
+    "forze_load",
 ]
 ignore_notebooks = true
 

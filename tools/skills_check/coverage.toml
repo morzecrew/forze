@@ -68,6 +68,7 @@ names = [
   "http",
   "inngest",
   "kafka",
+  "load",
   "mcp",
   "meilisearch",
   "mongo",
@@ -158,3 +159,7 @@ names = ["observability", "zstd"]
 "forze_mock.server" = { doctrine = "D2" }
 "forze_sandbox" = { doctrine = "D1" }
 "forze_sandbox.container" = { doctrine = "D1" }
+
+# RFC 0084 P1 ships the generic core (ramp, principals, JSON output): no forze-specific
+# wiring yet for a worked example to show.
+"forze_load" = { doctrine = "D4", rationale = "RFC 0084 P1 is the generic load core; app authors reach it through the testing docs page until it gains forze-specific wiring", trigger = "RFC 0084 P2 (operation references from OpenAPI) lands, or a consumer app ports its harness onto forze_load" }

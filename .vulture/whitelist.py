@@ -745,3 +745,5 @@ operation_id  # unused variable (src/forze_fastapi/realtime/sse.py:127) — a Ty
 deprecated  # unused variable (src/forze_fastapi/realtime/sse.py:129) — a TypedDict key, read by APIRouter
 openapi_extra  # unused variable (src/forze_fastapi/realtime/sse.py:133) — a TypedDict key, read by APIRouter
 media_type  # unused variable (src/forze_fastapi/realtime/sse.py:139) — read by FastAPI's OpenAPI generator
+compare_command  # unused function (src/forze_cli/load.py:124) — a Typer command callback
+_._check_margin  # unused method (src/forze_load/auth.py:129) — an attrs validator
