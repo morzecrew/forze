@@ -675,6 +675,8 @@ async def run_requeue_failed_scenario(
         await state(failed_b),
     ]
 
+    # A run id is a string matched exactly (D-201), so another spelling of a uuid7 is no run.
+    out["named_upper"] = await admin.requeue_failed(run_ids=[failed_b.upper()])
     out["unbound_named"] = await admin.requeue_failed(run_ids=[failed_b, "no-such-run"])
     out["unbound_by_name"] = await admin.requeue_failed(name="shared")
     out["requeued_again"] = await admin.requeue_failed(name="shared")
@@ -702,6 +704,7 @@ REQUEUE_FAILED_OUTCOME: dict[str, Any] = {
         ("forward_incomplete", 1, "pivot", False, True),
         ("failed", 1, "boom", False, True),
     ],
+    "named_upper": 0,
     "unbound_named": 1,
     "unbound_by_name": 2,
     "requeued_again": 0,
@@ -1141,6 +1144,7 @@ async def run_quarantine_admin_scenario(
 
     out["left_after_refusal"] = await names(admin)
     out["named_none"] = await admin.requeue_quarantined(run_ids=[])
+    out["named_upper"] = await admin.requeue_quarantined(run_ids=[held_b.run_id.upper()])
     out["named"] = await admin.requeue_quarantined(run_ids=[held_b.run_id, "no-such-run"])
 
     # With no tagged run left in quarantine, as in a single-tenant deployment, it proceeds.
@@ -1208,6 +1212,7 @@ QUARANTINE_ADMIN_OUTCOME: dict[str, Any] = {
     "unbound_unnamed": ("validation", REQUEUE_UNSCOPED_CODE),
     "left_after_refusal": ["qb", "qn"],
     "named_none": 0,
+    "named_upper": 0,
     "named": 1,
     "untagged_unnamed": 1,
     "requeued_again": 0,
