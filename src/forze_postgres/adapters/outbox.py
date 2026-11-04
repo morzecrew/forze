@@ -406,7 +406,7 @@ class PostgresOutboxStore[M: BaseModel](
         delete = sql.SQL(
             """
             DELETE FROM {table}
-            WHERE id = ANY(%(ids)s::uuid[])
+            WHERE id = ANY(%(ids)b::uuid[])
               AND status = %(pending)s
             """
         ).format(table=table.ident())
@@ -464,7 +464,7 @@ class PostgresOutboxStore[M: BaseModel](
             """
             UPDATE {table}
             SET {assignments}
-            WHERE id = ANY(%(ids)s::uuid[])
+            WHERE id = ANY(%(ids)b::uuid[])
               AND status = %(pending)s
             """
         ).format(table=table.ident(), assignments=assignments)
@@ -498,7 +498,7 @@ class PostgresOutboxStore[M: BaseModel](
             SET status = %(status)s,
                 published_at = COALESCE(%(published_at)s, published_at),
                 last_error = %(last_error)s
-            WHERE id = ANY(%(ids)s::uuid[])
+            WHERE id = ANY(%(ids)b::uuid[])
               AND status = %(processing)s
             """
         ).format(table=table.ident())
@@ -545,7 +545,7 @@ class PostgresOutboxStore[M: BaseModel](
                 attempts = %(attempts)s,
                 available_at = %(available_at)s,
                 last_error = %(last_error)s
-            WHERE id = ANY(%(ids)s::uuid[])
+            WHERE id = ANY(%(ids)b::uuid[])
               AND status = %(processing)s
             """
         ).format(table=table.ident())
@@ -616,7 +616,7 @@ class PostgresOutboxStore[M: BaseModel](
                 last_error = NULL,
                 attempts = 0,
                 available_at = NULL
-            WHERE id = ANY(%(ids)s::uuid[])
+            WHERE id = ANY(%(ids)b::uuid[])
               AND status = %(failed)s
             """
         ).format(table=table.ident(), retain_only=retain_only)

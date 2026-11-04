@@ -15,6 +15,7 @@ from uuid import UUID
 import attrs
 import orjson
 from psycopg import sql
+from psycopg.adapt import PyFormat
 from psycopg.types.json import Json, Jsonb
 from pydantic import BaseModel
 
@@ -79,6 +80,19 @@ def _as_it_is(v: Any) -> Any:
     """A value of a column the write does not coerce: one the relation does not type."""
 
     return v
+
+
+def id_array(column_types: PostgresColumnTypes) -> sql.Composable:
+    """The parameter an array of document ids binds to: in binary, cast to ``uuid[]``, when the
+    id column is a ``uuid``, which psycopg encodes and Postgres reads several times faster than
+    text, the cast still taking a ``str`` id; a plain parameter, as before, for any other."""
+
+    pg_t = column_types.get(ID_FIELD)
+
+    if pg_t is not None and not pg_t.is_array and _WRITE_VALUE_COERCER.matched(pg_t) == "uuid":
+        return sql.SQL("{}::uuid[]").format(sql.Placeholder(format=PyFormat.BINARY))
+
+    return sql.Placeholder()
 
 
 # ....................... #
@@ -624,7 +638,7 @@ class PostgresGateway[M: BaseModel](
 
         where = sql.SQL("{pk} = ANY({arr})").format(
             pk=self.ident_pk(),
-            arr=sql.Placeholder(),
+            arr=id_array(await self.column_types()),
         )
         params: list[Any] = [list(pks)]
         where, params = self._add_tenant_where(where, params)  # type: ignore[assignment]
