@@ -4649,6 +4649,23 @@ Review of the unit's first commit, before it was published.
 | R-14 | Bug | An update command requiring a field outside the patch raised a raw validation error at the write | Fixed (D-184): refused at construction (`child_update_requires_fields`) |
 | R-15 | Bug | `removed` could list a child another writer soft-deleted after the read | Holds by R-9 (D-185): the strict write is refused (`revision_mismatch`); tested on the mock, with and without history |
 
+## Decision-row outcomes — 2026-11-04 (RFC 0050)
+
+The maintainer accepted D-180 to D-187 as proposed. D-180, D-182 and D-183 settle the `OPEN`
+rows 7, 8 and 9; the other five are appended as rows 10 to 14. D-188 and D-189 proposed no
+row, and row 6 holds until P2.
+
+| RFC | Row | Outcome | Grade | Decision | From |
+|---|---|---|---|---|---|
+| 0050 | 7 | Accepted, settles the row | `ASSUMED` | A child is identified by a required business key; a keyless collection is out of scope, and an ambiguous key on either side is refused | D-180 |
+| 0050 | 8 | Accepted, settles the row | `ASSUMED` | No ordering support in P1: a position is the caller's field, compared like any other, and a reorder updates each moved child | D-182 |
+| 0050 | 9 | Accepted, settles the row | `ASSUMED` | The delete path is inferred, soft when the domain carries `is_deleted` and hard otherwise; an unwired soft delete or a forbidden hard delete is refused at construction | D-183 |
+| 0050 | 10 | Accepted | `ASSUMED` | The key is a tuple of stored fields, read off both sides, with a null as part of the key | D-181 |
+| 0050 | 11 | Accepted | `ASSUMED` | The incoming list is the child's create commands; key and compare values are read as the read model's types before matching, and each patch holds only the fields that differ | D-184 |
+| 0050 | 12 | Accepted | `ASSUMED` | `reconcile` returns the children removed, created and changed, the last as before-and-after pairs | D-185 |
+| 0050 | 13 | Accepted | `ASSUMED` | `reconcile` runs only inside a transaction its child port writes in, and never opens one | D-186 |
+| 0050 | 14 | Accepted | `ASSUMED` | No lock and no error translation; every write to an existing child is checked strictly against the revision read | D-187 |
+
 ---
 
 # Unit 18 · RFC 0079 P1 — invocation surface on metadata, logs and spans
@@ -4947,6 +4964,24 @@ value. The `logging-metrics` and `inngest` references in `skills/forze-skills/` 
   the claim expires the next delivery runs.
 - **Proposed row (RFC 0079):** none.
 
+## Decision-row outcomes — 2026-11-04 (RFC 0079)
+
+The maintainer accepted D-200 to D-205 as proposed. D-200 settles §10 Q4 at its lean. The
+table had no `OPEN` row for the question, only row 9's pointer to it, so D-200 is appended
+with the rest as rows 17 to 22. For D-205 the maintainer chose the structlog bind at a
+top-level operation's entry, as built, over the `configure_logging` processor the entry left
+open: the processor costs nothing at dispatch but reaches only apps that use
+`configure_logging`. D-206 to D-209 proposed no row.
+
+| RFC | Row | Outcome | Grade | Decision | From |
+|---|---|---|---|---|---|
+| 0079 | 17 | Accepted | `ASSUMED` | Every self-hosted durable attempt binds a fresh execution id and the run id as its correlation id; a claim must begin and end within one attempt | D-200 |
+| 0079 | 18 | Accepted | `ASSUMED` | The correlation id is the run id when it is a UUID, otherwise a UUIDv5 derived from it | D-201 |
+| 0079 | 19 | Accepted | `ASSUMED` | A durable attempt's causation is the execution id of the invocation it runs inside, if any; nothing is persisted for it | D-202 |
+| 0079 | 20 | Accepted | `ASSUMED` | The durable runner rebinds metadata for every attempt, a `run_now` inside another invocation included; the caller is linked through the causation id only | D-203 |
+| 0079 | 21 | Accepted | `ASSUMED` | Every inbox delivery binds a fresh execution id, even under metadata bound around the call | D-204 |
+| 0079 | 22 | Accepted, **the bind over the processor** | `ASSUMED` | The `unknown` surface is bound per top-level operation with no metadata, through structlog's public API; validation stays at construction | D-205 |
+
 ---
 
 # Unit 15 · RFC 0078 follow-up — a namespace created after a tenant's first read
@@ -5163,6 +5198,20 @@ A review of the branch before publishing. Each finding was fixed in place above.
 | R-5 | Low | Postgres reports a missing schema as `dynamic_read_statement_invalid`, so the code differs per engine | Recorded as D-174, documented and pinned |
 | R-6 | Low | The client fell back to the catalog's name as the namespace | Fixed: no `namespace` detail when the `USE` names a catalog alone |
 | R-7 | Low | The mock and the conformance suite do not raise the new code | Recorded as D-175 |
+
+## Decision-row outcomes — 2026-11-04 (RFC 0078)
+
+The maintainer accepted D-170 to D-175 as proposed, now RFC 0078 §10 rows 15 to 20. That
+table grades in a lowercase State column, so each row reads `assumed`.
+
+| RFC | Row | Outcome | Grade | Decision | From |
+|---|---|---|---|---|---|
+| 0078 | 15 | Accepted | `ASSUMED` | The evict-after-namespace-creation rule (D-026) holds for Iceberg catalogs only; a DuckLake instance reads a new schema or table at its next statement | D-170 |
+| 0078 | 16 | Accepted | `ASSUMED` | A namespace the tenant's warehouse does not make available is `dynamic_read_namespace_missing` (`precondition`) once the `USE` fails; a catalog refusal there is `dynamic_read_permission_denied` | D-171 |
+| 0078 | 17 | Accepted | `ASSUMED` | A relation the statement names that does not resolve stays `dynamic_read_statement_invalid` on every engine | D-172 |
+| 0078 | 18 | Accepted | `ASSUMED` | A dynamic read's error detail carries the engine's message without its name guesses | D-173 |
+| 0078 | 19 | Accepted | `ASSUMED` | A missing namespace is `dynamic_read_namespace_missing` on DuckDB and `dynamic_read_statement_invalid` on Postgres | D-174 |
+| 0078 | 20 | Accepted | `ASSUMED` | The mock does not model namespaces; a handler scripts the code by raising its factory | D-175 |
 
 ---
 
@@ -5490,3 +5539,23 @@ now describe only what stands.
 | # | Severity | Finding | Status |
 |---|---|---|---|
 | R-16 | Cost | R-14's fix closed the connection on every failure in the pipeline, so an ordinary SQL error or a fired `statement_timeout` forced the next read to reconnect | Fixed (D-195): only a cancel, or a connection not left idle and out of pipeline mode, is closed; tests pin both |
+
+## Decision-row outcomes — 2026-11-04 (RFC 0028)
+
+The maintainer accepted D-190 to D-197 as proposed, now RFC 0028 §9 rows 9 to 16, each
+`assumed` in that table's State column. D-190 is `drift` from §8's phase order, accepted as a
+departure from it: §8 stands as written, and row 9 overrides it. D-198 and D-199 stay `OPEN`
+by decision, since W1 and W2 are parked: W2 decides whether a BigQuery route timeout cancels
+the job, and W1's battery item 5 whether a route timeout gets one code on every engine. The
+RFC tracks neither question, so neither gets a row.
+
+| RFC | Row | Outcome | Grade | Decision | From |
+|---|---|---|---|---|---|
+| 0028 | 9 | Accepted, **as a departure** | `ASSUMED` | W4, including §6.1, ships ahead of W1 as its own phase; W1–W3 wait for a ClickHouse or BigQuery consumer | D-190 (drift) |
+| 0028 | 10 | Accepted | `ASSUMED` | On ClickHouse and BigQuery a query's own timeout replaces the client's; a ClickHouse route may not exceed its client's timeout, and a BigQuery wait is a wall-time deadline | D-191 |
+| 0028 | 11 | Accepted | `ASSUMED` | A registered analytics query's timeout is a `timeout` field on its config; a per-call option is clamped to it | D-192 |
+| 0028 | 12 | Accepted | `ASSUMED` | A registered read, or a procedure route in a transaction, that sets no timeout is bounded at 60 s | D-193 |
+| 0028 | 13 | Accepted | `ASSUMED` | On Postgres a route's timeout only lowers the `statement_timeout` already in force | D-194 |
+| 0028 | 14 | Accepted | `ASSUMED` | A bounded Postgres read costs one round trip at the root and five exchanges in a transaction | D-195 |
+| 0028 | 15 | Accepted | `ASSUMED` | An autocommit procedure route carries no route timeout; the role's or the database's `statement_timeout` bounds it | D-196 |
+| 0028 | 16 | Accepted | `ASSUMED` | A timeout that is not a whole number of the engine's unit, or beyond what it can hold, is refused; nothing is rounded | D-197 |

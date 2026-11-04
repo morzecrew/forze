@@ -4,9 +4,10 @@
   `InvocationSurface` vocabulary, the value minted at all nine framework boundaries, metadata
   bound by the self-hosted durable runner and by the inbox for a message without a
   correlation header, the `invocation_surface` log field and the `forze.invocation_surface`
-  span attribute. §10 Q4 was taken at its lean; that and every other departure are proposed
-  in [`EXECUTION-LOG.md`](EXECUTION-LOG.md) Unit 18 (D-200 to D-209). **P2 (the audit trail)
-  waits for §10 Q1–Q3.**
+  span attribute. §10 Q4 was taken at its lean; that and every other departure are recorded
+  in [`EXECUTION-LOG.md`](EXECUTION-LOG.md) Unit 18 (D-200 to D-209), and the maintainer
+  accepted the proposed rows on 2026-11-04 (rows 17–22). **P2 (the audit trail) waits for
+  §10 Q1–Q3.**
 - **Scope:** One field, `InvocationMetadata.surface`, naming the framework boundary an
   invocation entered through: `http`, `mcp`, `cli`, and so on. It settles:
   - the vocabulary, and who may set it: the boundary, never the caller;
@@ -712,6 +713,16 @@ applications, and the docs carry it.
 | 14 | `ASSUMED` | Integration events and the outbox do not carry the surface. The consumer records `inbox`, and the publisher's surface is reached through the event's correlation id. |
 | 15 | `ASSUMED` | RFC 0060's prose stays. When P2 lands, its decision table gets one appended row that cites this RFC (§5.6). |
 | 16 | `ASSUMED` | No metric label, no surface on versioned corrections, no correlation across the self-hosted durable hop, and no configurable HTTP value in this RFC. Each waits for a named consumer (§8). |
+| 17 | `ASSUMED` | Every self-hosted durable attempt binds a fresh execution id and the run id as its correlation id, settling §10 Q4 at its lean. A claim must begin and end within one attempt: one begun before a recovery and committed after it is refused with `conflict`. (D-200) |
+| 18 | `ASSUMED` | The correlation id is the run id when it is a UUID, otherwise a UUIDv5 derived from it under a fixed namespace. (D-201) |
+| 19 | `ASSUMED` | A durable attempt records the execution id of the invocation it runs inside, if any, as its causation. Nothing is persisted for it, so a recovered attempt keeps no link to the caller that started the run: it records the invocation `recover` runs inside, if any, and none otherwise. (D-202) |
+| 20 | `ASSUMED` | The durable runner rebinds metadata for every attempt, including a `run_now` inside another invocation. The caller is linked through the causation id only. (D-203) |
+| 21 | `ASSUMED` | Every inbox delivery binds a fresh execution id, even under metadata bound around the call, so it owns its own claims. The correlation id comes from the header, else the bound metadata, else it is fresh. The causation id comes from the event-id header, else the bound execution id. (D-204) |
+| 22 | `ASSUMED` | The `unknown` surface is bound per top-level operation with no metadata, through structlog's public API, at about 1 µs a dispatch. Validation stays at construction (decision 10 held). The maintainer chose this bind over a processor in `configure_logging`, which would cost nothing at dispatch but reach only apps that use `configure_logging`. (D-205) |
+
+Rows 17 to 22 were added by execution and accepted by the maintainer on 2026-11-04; each cites
+the [`EXECUTION-LOG.md`](EXECUTION-LOG.md) entry it came from, and the sections above are left
+as designed. Row 17 settles §10 Q4, which stays as written.
 
 ## 12. Phasing
 
