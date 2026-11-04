@@ -10898,6 +10898,9 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <li>
 <p><strong>Document commands, <code>get</code> and <code>get_many</code> read a <code>str</code> id as the <code>UUID</code> it names; a malformed one is <code>precondition</code></strong> (<strong>behaviour change</strong>). A non-canonical id no longer leaves a stale cached document, two spellings in a batch count as one, and set-based <code>upsert_many</code> no longer raises <code>AttributeError</code> (since 0.20).</p>
 </li>
+<li>
+<p><strong>The mock and MongoDB outboxes read a row id as Postgres does</strong> (<strong>behaviour change</strong>). Any spelling of it, in a list that may mix <code>UUID</code> and <code>str</code>, names its row, and a malformed one is <code>precondition</code>. The mock matched only <code>UUID</code>s and MongoDB only canonical text; both skipped a malformed id.</p>
+</li>
 </ul>
 <h3 id="security">Security<a class="headerlink" href="#security" title="Permanent link">&para;</a></h3>
 <ul>

@@ -6961,6 +6961,8 @@ relay. See <a href="../../../recipes/transactional-outbox/">Transactional outbox
 </tr>
 </tbody>
 </table>
+<p>Every backend reads <code>ids</code> as <code>UUID</code>s: a <code>str</code> in any spelling names its row, even in a list
+mixed with <code>UUID</code>s, and a malformed one is <code>precondition</code>.</p>
 <p>(Most apps use the <code>bind_outbox</code> kit rather than these directly.)
 Delivery is at-least-once and ordering is not guaranteed across
 failures/retries — a retrying row never stalls later rows of its
