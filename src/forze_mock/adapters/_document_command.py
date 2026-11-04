@@ -29,7 +29,7 @@ from forze.application.contracts.guarantees import (
     SerializedBy,
     UniqueTogether,
 )
-from forze.application.contracts.querying import QueryFilterExpression
+from forze.application.contracts.querying import QueryFilterExpression, QueryValueCaster
 from forze.application.contracts.querying.internal.matching import instant_key
 from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict, Period, advisory_lock_key, utcnow
@@ -849,14 +849,21 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
                 return None
             return []
 
-        if len({it.id for it in items}) != len(items):
+        # As the real adapter reads them: a ``str`` id as the ``UUID`` it names, a malformed one
+        # ``precondition``, so two spellings of one id are one id.
+        ids = [it.id if type(it.id) is UUID else QueryValueCaster.as_uuid(it.id) for it in items]
+
+        if len(set(ids)) != len(items):
             raise exc.precondition("upsert_many requires distinct id values in the batch")
 
         if return_new:
-            return [await self.upsert(it.id, it.create, it.update, return_new=True) for it in items]
+            return [
+                await self.upsert(pk, it.create, it.update, return_new=True)
+                for pk, it in zip(ids, items, strict=True)
+            ]
 
-        for it in items:
-            await self.upsert(it.id, it.create, it.update, return_new=False)
+        for pk, it in zip(ids, items, strict=True):
+            await self.upsert(pk, it.create, it.update, return_new=False)
 
         return None
 

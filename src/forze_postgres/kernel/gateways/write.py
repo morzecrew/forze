@@ -32,7 +32,7 @@ from forze.application.contracts.document.specs import (
     serialization_keys,
 )
 from forze.application.contracts.guarantees import SerializedBy
-from forze.application.contracts.querying import QueryFilterExpression, QueryValueCaster
+from forze.application.contracts.querying import QueryFilterExpression
 from forze.application.contracts.resilience import ResilienceExecutorPort
 from forze.application.contracts.tenancy import TENANT_ID_FIELD
 from forze.application.execution.resilience import default_resilience_executor
@@ -1430,11 +1430,9 @@ class PostgresWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
         # deadlock, and so can a chunk that locks a raced id below one it holds (below). Postgres
         # aborts one; outside a caller's transaction the retry runs it again, inside one it is
         # ``concurrency`` for the scope's owner. ``int`` orders as ``UUID`` and Postgres's
-        # ``uuid`` do, without a Python comparison per pair. A ``str`` id, which the type does
-        # not allow but a caller can pass, is read as the domain path reads one: a malformed one
-        # is ``precondition``.
-        uuids = [pk if type(pk) is UUID else QueryValueCaster.as_uuid(pk) for pk in ids]
-        items = sorted(zip(uuids, creates, updates, strict=True), key=lambda item: item[0].int)
+        # ``uuid`` do, without a Python comparison per pair; the command hands every id over as
+        # a ``UUID``.
+        items = sorted(zip(ids, creates, updates, strict=True), key=lambda item: item[0].int)
 
         async with self._write_tx():
             now = utcnow()

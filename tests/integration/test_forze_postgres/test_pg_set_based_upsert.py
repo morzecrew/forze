@@ -18,6 +18,7 @@ import pytest
 from pydantic import Field
 
 from forze.application.contracts.authn import AuthnIdentity
+from forze.application.contracts.cache import CacheDepKey, CacheSpec
 from forze.application.contracts.document import (
     DocumentCommandDepKey,
     DocumentQueryDepKey,
@@ -30,6 +31,7 @@ from forze.application.execution import Deps, ExecutionContext, InvocationMetada
 from forze.base.exceptions import CoreException, ExceptionKind
 from forze.base.primitives import FrozenTimeSource, bind_time_source
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
+from forze_mock import MockCacheAdapter, MockState, MockStateDepKey
 from forze_postgres.execution.deps import ConfigurablePostgresDocument
 from forze_postgres.execution.deps.configs import PostgresDocumentConfig
 from forze_postgres.execution.deps.keys import PostgresClientDepKey, PostgresIntrospectorDepKey
@@ -231,7 +233,8 @@ async def test_str_ids_write_what_uuid_ids_write(
 
     monkeypatch.setattr(pg_client, "fetch_all", spy)
 
-    for as_id in (lambda pk: pk, str):
+    # Uppercase and unhyphenated: a spelling the stored row and the cache key do not use.
+    for as_id in (lambda pk: pk, lambda pk: pk.hex.upper()):
         t = await _table(pg_client)
         tables.append(t)
         cmd = document_context(pg_client, t).document.command(_SPEC)
@@ -261,8 +264,6 @@ async def test_str_ids_write_what_uuid_ids_write(
     assert any("unnest(%b::uuid[])" in s for s in statements)
 
 
-# The domain path dumps the id it was handed before refusing it.
-@pytest.mark.filterwarnings("ignore:Pydantic serializer warnings")
 @pytest.mark.parametrize("set_based", [False, True])
 async def test_a_malformed_str_id_is_refused_as_on_the_domain_path(
     pg_client: PostgresClient, set_based: bool
@@ -280,6 +281,85 @@ async def test_a_malformed_str_id_is_refused_as_on_the_domain_path(
 
     assert refused.value.kind == "precondition"
     assert "Invalid UUID value" in str(refused.value)
+    assert await pg_client.fetch_all(f"SELECT id FROM {t}", []) == []
+
+
+def _cached(pg_client: PostgresClient, table: str) -> tuple[Any, Any]:
+    """A command and a query over *table* with the document cache on."""
+
+    cache = CacheSpec(name=f"cache_{table}")
+    spec = DocumentSpec(
+        name=f"cached_{table}",
+        read=_Read,
+        write=DocumentWriteTypes(domain=_Doc, create_cmd=_Create, update_cmd=_Update),
+        cache=cache,
+    )
+    doc = ConfigurablePostgresDocument(
+        config=PostgresDocumentConfig(
+            read=("public", table), write=("public", table), bookkeeping_strategy="application"
+        )
+    )
+
+    def cache_factory(ctx: ExecutionContext, spec: CacheSpec) -> MockCacheAdapter:
+        return MockCacheAdapter(state=ctx.deps.provide(MockStateDepKey), namespace=spec.name)
+
+    ctx = context_from_deps(
+        Deps.plain(
+            {
+                MockStateDepKey: MockState(),
+                PostgresClientDepKey: pg_client,
+                PostgresIntrospectorDepKey: PostgresIntrospector(client=pg_client),
+                DocumentQueryDepKey: doc,
+                DocumentCommandDepKey: doc,
+                CacheDepKey: cache_factory,
+            }
+        )
+    )
+
+    return ctx.document.command(spec), ctx.document.query(spec)
+
+
+@pytest.mark.parametrize("set_based", [False, True])
+async def test_a_str_id_in_another_spelling_invalidates_the_cached_document(
+    pg_client: PostgresClient, set_based: bool
+) -> None:
+    """The cache is keyed by the id's canonical spelling; an upsert handed it uppercase and
+    unhyphenated must still drop the cached copy, so the next read sees the new document."""
+
+    t = await _table(pg_client)
+    cmd, query = _cached(pg_client, t)
+    pk = uuid4()
+    await cmd.upsert_many([_item(pk, "stored", 1)], return_new=False)
+    assert (await query.get(pk)).name == "stored"  # now cached
+
+    item = _item(pk, "ignored", 0, {"name": "patched"})
+    await cmd.upsert_many(
+        [UpsertItem(id=pk.hex.upper(), create=item.create, update=item.update)],  # type: ignore[arg-type]
+        return_new=False,
+        set_based=set_based,
+    )
+
+    assert (await query.get(pk)).name == "patched"
+
+
+@pytest.mark.parametrize("set_based", [False, True])
+async def test_two_spellings_of_one_id_are_refused_as_duplicates(
+    pg_client: PostgresClient, set_based: bool
+) -> None:
+    t = await _table(pg_client)
+    cmd = document_context(pg_client, t).document.command(_SPEC)
+    pk = uuid4()
+    first, second = _item(pk, "a", 1), _item(pk, "b", 2)
+
+    with pytest.raises(CoreException) as refused:
+        await cmd.upsert_many(
+            [first, UpsertItem(id=str(pk), create=second.create, update=second.update)],  # type: ignore[arg-type]
+            return_new=False,
+            set_based=set_based,
+        )
+
+    assert refused.value.kind == "precondition"
+    assert "distinct id" in str(refused.value)
     assert await pg_client.fetch_all(f"SELECT id FROM {t}", []) == []
 
 

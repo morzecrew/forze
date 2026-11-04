@@ -129,3 +129,41 @@ async def test_a_mirror_is_judged_on_the_fields_of_its_create_payload() -> None:
         )
 
     assert refused.value.code == "set_based_upsert_unsupported"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("set_based", [False, True])
+async def test_a_str_id_is_read_as_the_uuid_it_names(set_based: bool) -> None:
+    """As the real adapter reads it: stored under the ``UUID``, whatever its spelling."""
+
+    doc = _mock()
+    pk = uuid4()
+    await doc.create(_Create(name="a"), id=pk)
+
+    await doc.upsert_many(
+        [UpsertItem(id=pk.hex.upper(), create=_Create(name="x"), update=_Update(name="renamed"))],  # type: ignore[arg-type]
+        return_new=False,
+        set_based=set_based,
+    )
+
+    assert [(r.id, r.name) for r in (await doc.find_many()).hits] == [(pk, "renamed")]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("set_based", [False, True])
+async def test_two_spellings_of_one_id_or_a_malformed_one_are_refused(set_based: bool) -> None:
+    doc = _mock()
+    pk = uuid4()
+
+    for ids, message in (([pk, str(pk)], "distinct id"), (["not-a-uuid"], "Invalid UUID value")):
+        with pytest.raises(CoreException) as refused:
+            await doc.upsert_many(
+                [UpsertItem(id=i, create=_Create(name="a"), update=_Update()) for i in ids],  # type: ignore[arg-type]
+                return_new=False,
+                set_based=set_based,
+            )
+
+        assert refused.value.kind == "precondition"
+        assert message in str(refused.value)
+
+    assert (await doc.find_many()).hits == []

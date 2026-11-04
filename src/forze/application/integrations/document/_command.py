@@ -14,7 +14,7 @@ from forze.application.contracts.document import (
 from forze.application.contracts.document.specs import require_hold_in_transaction
 from forze.application.contracts.domain import drain_domain_events
 from forze.application.contracts.guarantees import GUARANTEE_UNSUPPORTED
-from forze.application.contracts.querying import QueryFilterExpression
+from forze.application.contracts.querying import QueryFilterExpression, QueryValueCaster
 from forze.application.contracts.transaction import TransactionallyEnlistable
 from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict
@@ -35,6 +35,14 @@ def _require_distinct_ids(ids: Sequence[UUID]) -> None:
         raise exc.precondition(
             "ensure_many and upsert_many require distinct id values in the batch"
         )
+
+
+def _uuid_ids(items: Sequence[UpsertItem[Any, Any]]) -> list[UUID]:
+    """Each item's id as a ``UUID``, so the distinctness check, the write and the cache keys
+    see one spelling of it: a ``str`` id, which the type does not allow but a caller can pass,
+    is read as the domain path reads one, and a malformed one is ``precondition``."""
+
+    return [it.id if type(it.id) is UUID else QueryValueCaster.as_uuid(it.id) for it in items]
 
 
 def _require_set_based(
@@ -279,7 +287,7 @@ class DocumentCommandMixin(
                 return None
             return []
 
-        ids = [it.id for it in items]
+        ids = _uuid_ids(items)
         _require_distinct_ids(ids)
         creates = [it.create for it in items]
         updates = [it.update for it in items]
